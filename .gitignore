@@ -1,0 +1,11 @@
+# Rust / Bevy build artifacts
+/project/target/
+
+# Editor settings
+/.vscode/
+/.idea/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
