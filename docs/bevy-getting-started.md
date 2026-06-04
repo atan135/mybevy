@@ -511,6 +511,12 @@ android/app/build/outputs/apk/release/
 - `project/Cargo.toml`：已经包含 `crate-type = ["rlib", "cdylib"]`
 - `android/`：Android Gradle 壳工程，会加载 `libproject.so`
 
+当前 Android 壳工程使用 Bevy 0.18.1 间接依赖的 `android-activity 0.6.1`。
+因此 `android/gradle/libs.versions.toml` 里的 `androidx.games:games-activity`
+需要保持为 `4.4.0`，并且不要在 Gradle 中启用 `prefab`。否则 Java 侧
+`GameActivity` 和 Rust 侧 native glue 的 JNI 方法签名可能不匹配，启动时会出现
+`RegisterNatives failed for 'com/google/androidgamesdk/GameActivity'`。
+
 当前玩法是单界面触控/鼠标互动：
 
 1. 鼠标左键或手指按下时，在对应位置显示硬边半透明圆形反馈。
