@@ -985,6 +985,20 @@ fn handle_myserver_authority_events(
                     },
                 });
             }
+            MyServerEvent::PlayerInputAccepted(response) if is_myserver_endpoint => {
+                if response.ok {
+                    events.write(AuthorityEvent::InputAccepted {
+                        frame_id: session.frame_id,
+                    });
+                } else {
+                    events.write(AuthorityEvent::ProtocolError {
+                        error: format!(
+                            "MyServer player input rejected: room_id={} error_code={}",
+                            response.room_id, response.error_code
+                        ),
+                    });
+                }
+            }
             MyServerEvent::Disconnected { reason } if is_myserver_endpoint => {
                 events.write(AuthorityEvent::Disconnected {
                     reason: reason.clone(),

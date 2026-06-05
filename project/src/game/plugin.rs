@@ -51,7 +51,7 @@ const FADE_IN_SPEED: f32 = 16.0;
 const FADE_OUT_SPEED: f32 = 4.5;
 const ALPHA_EPSILON: f32 = 0.01;
 const REMOTE_TOUCH_IDLE_TIMEOUT_SECS: f32 = 0.35;
-const TOUCH_INPUT_DELAY_FRAMES: u32 = 2;
+const DEFAULT_TOUCH_INPUT_DELAY_FRAMES: u32 = 4;
 const MAX_PENDING_TOUCH_SAMPLES: usize = 64;
 
 pub struct GamePlugin;
@@ -153,6 +153,7 @@ struct TouchInputState {
     pending_pressed: bool,
     sent_sample_count: usize,
     sent_pressed: bool,
+    last_sent_target_frame: u32,
 }
 
 #[derive(Clone, Debug, Resource)]
@@ -259,7 +260,7 @@ impl TouchPlayerState {
                 1.0
             };
             self.release_disc = Some(ReleaseDiscRequest {
-                position: self.position,
+                position: self.target_position,
                 intensity: release_intensity,
                 press_scale: self.press_scale,
             });
@@ -274,7 +275,7 @@ impl TouchPlayerState {
     fn release(&mut self) {
         if self.was_pressed && self.intensity > ALPHA_EPSILON {
             self.release_disc = Some(ReleaseDiscRequest {
-                position: self.position,
+                position: self.target_position,
                 intensity: self.intensity,
                 press_scale: self.press_scale,
             });
@@ -503,6 +504,17 @@ fn follow_touch_myserver_events(
                 info!("starting ui touch room");
                 commands.write(MyServerCommand::StartRoom);
             }
+            MyServerEvent::PlayerInputAccepted(response) => {
+                if response.ok {
+                    debug!(room_id = %response.room_id, "ui touch input accepted");
+                } else {
+                    warn!(
+                        room_id = %response.room_id,
+                        error_code = %response.error_code,
+                        "ui touch input rejected"
+                    );
+                }
+            }
             _ => {}
         }
     }
@@ -523,9 +535,11 @@ fn send_local_touch_input(
         return;
     }
 
-    let target_frame = session
-        .frame_id
-        .saturating_add(TOUCH_INPUT_DELAY_FRAMES.max(1));
+    let target_frame = session.frame_id.saturating_add(touch_input_delay_frames());
+    if target_frame <= input_state.last_sent_target_frame {
+        return;
+    }
+
     let samples = input_state
         .pending_samples
         .iter()
@@ -557,6 +571,7 @@ fn send_local_touch_input(
         payload_json,
     });
 
+    input_state.last_sent_target_frame = target_frame;
     input_state.sent_sample_count = input_state.pending_samples.len();
     input_state.sent_pressed = input_state.pending_pressed;
     while input_state.pending_samples.len() > 1 {
@@ -801,6 +816,18 @@ fn apply_touch_frame(replay_state: &mut TouchReplayState, frame: &AuthorityFrame
             state.apply_sample(*sample, payload.pressed, frame.frame_id);
         }
 
+        if !samples_is_empty {
+            debug!(
+                frame_id = frame.frame_id,
+                player_id = %input.player_id,
+                seq = payload.seq,
+                pressed = payload.pressed,
+                sample_count = payload.samples.len(),
+                last_phase = ?payload.samples.last().map(|sample| sample.phase),
+                "applied ui touch frame"
+            );
+        }
+
         if samples_is_empty && !payload.pressed {
             state.release();
         }
@@ -998,12 +1025,21 @@ fn active_screen_position(
     touches: &Touches,
     window: &Window,
 ) -> Option<Vec2> {
-    touches.first_pressed_position().or_else(|| {
-        mouse_buttons
-            .pressed(MouseButton::Left)
+    touches
+        .first_pressed_position()
+        .or_else(|| {
+            touches
+                .iter_just_released()
+                .next()
+                .map(|touch| touch.position())
+        })
+        .or_else(|| {
+            (mouse_buttons.just_pressed(MouseButton::Left)
+                || mouse_buttons.pressed(MouseButton::Left)
+                || mouse_buttons.just_released(MouseButton::Left))
             .then(|| window.cursor_position())
             .flatten()
-    })
+        })
 }
 
 fn viewport_to_world(position: Vec2, window_size: Vec2) -> Vec2 {
@@ -1167,6 +1203,17 @@ fn env_u16(name: &str, default: u16) -> u16 {
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(default)
+}
+
+fn env_u32(name: &str, default: u32) -> u32 {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(default)
+}
+
+fn touch_input_delay_frames() -> u32 {
+    env_u32("TOUCH_INPUT_DELAY_FRAMES", DEFAULT_TOUCH_INPUT_DELAY_FRAMES).max(1)
 }
 
 fn env_transport(name: &str) -> Option<NetworkTransport> {
