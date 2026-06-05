@@ -18,6 +18,7 @@
 
 - `docs/`：项目文档
 - `docs/bevy-getting-started.md`：当前 Bevy 入门说明
+- `scripts/`：仓库级开发辅助脚本
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
 - `project/src/game/`：游戏玩法插件和系统模块
@@ -88,6 +89,12 @@ $env:JAVA_HOME="C:\Program Files\Java\jdk-21"
 
 ```powershell
 cargo update
+```
+
+一键启动两个 Touch Ripple 客户端：
+
+```powershell
+.\scripts\start-two-clients.ps1
 ```
 
 ## Bevy 代码风格建议

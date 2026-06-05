@@ -563,6 +563,13 @@ cargo run
 $env:TOUCH_AUTO_LOCAL_AUTHORITY="false"
 ```
 
+也可以在仓库根目录一键启动两个 Touch Ripple 客户端。脚本会先构建一次项目，再启动一个
+`lan-host` 客户端和一个 `lan-client` 客户端，并把日志写到 `logs/two-clients/`：
+
+```powershell
+.\scripts\start-two-clients.ps1
+```
+
 开发期可以用环境变量直接启动 authority 测试入口：
 
 ```powershell
