@@ -6,6 +6,7 @@ use std::{
 use bevy::prelude::Message;
 
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_LISTENER_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -26,6 +27,29 @@ impl ConnectionId {
 }
 
 impl Default for ConnectionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ListenerId(u64);
+
+impl ListenerId {
+    pub fn new() -> Self {
+        Self(NEXT_LISTENER_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    pub const fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+impl Default for ListenerId {
     fn default() -> Self {
         Self::new()
     }
@@ -137,6 +161,33 @@ pub struct TcpConnectConfig {
     pub addr: String,
     pub connect_timeout: Duration,
     pub read_buffer_size: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct TcpListenConfig {
+    pub listener_id: ListenerId,
+    pub addr: String,
+    pub read_buffer_size: usize,
+}
+
+impl TcpListenConfig {
+    pub fn new(addr: impl Into<String>) -> Self {
+        Self {
+            listener_id: ListenerId::new(),
+            addr: addr.into(),
+            read_buffer_size: 64 * 1024,
+        }
+    }
+
+    pub fn with_listener_id(mut self, listener_id: ListenerId) -> Self {
+        self.listener_id = listener_id;
+        self
+    }
+
+    pub fn with_read_buffer_size(mut self, size: usize) -> Self {
+        self.read_buffer_size = size.max(1);
+        self
+    }
 }
 
 impl TcpConnectConfig {
@@ -262,17 +313,56 @@ impl KcpConnectConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct KcpListenConfig {
+    pub listener_id: ListenerId,
+    pub addr: String,
+    pub read_buffer_size: usize,
+    pub session: KcpSessionOptions,
+}
+
+impl KcpListenConfig {
+    pub fn new(addr: impl Into<String>) -> Self {
+        Self {
+            listener_id: ListenerId::new(),
+            addr: addr.into(),
+            read_buffer_size: 64 * 1024,
+            session: KcpSessionOptions::default(),
+        }
+    }
+
+    pub fn with_listener_id(mut self, listener_id: ListenerId) -> Self {
+        self.listener_id = listener_id;
+        self
+    }
+
+    pub fn with_read_buffer_size(mut self, size: usize) -> Self {
+        self.read_buffer_size = size.max(1);
+        self
+    }
+
+    pub fn with_session(mut self, session: KcpSessionOptions) -> Self {
+        self.session = session;
+        self
+    }
+}
+
 #[derive(Clone, Debug, Message)]
 pub enum NetworkCommand {
     Http(HttpRequest),
     ConnectTcp(TcpConnectConfig),
     ConnectKcp(KcpConnectConfig),
+    ListenTcp(TcpListenConfig),
+    ListenKcp(KcpListenConfig),
     Send {
         connection_id: ConnectionId,
         payload: Vec<u8>,
     },
     Disconnect {
         connection_id: ConnectionId,
+    },
+    StopListener {
+        listener_id: ListenerId,
     },
 }
 
@@ -294,6 +384,23 @@ pub enum NetworkEvent {
         remote_addr: String,
         error: String,
     },
+    Listening {
+        listener_id: ListenerId,
+        transport: NetworkTransport,
+        local_addr: String,
+    },
+    ListenFailed {
+        listener_id: ListenerId,
+        transport: NetworkTransport,
+        local_addr: String,
+        error: String,
+    },
+    Accepted {
+        listener_id: ListenerId,
+        connection_id: ConnectionId,
+        transport: NetworkTransport,
+        remote_addr: String,
+    },
     Packet {
         connection_id: ConnectionId,
         transport: NetworkTransport,
@@ -312,6 +419,12 @@ pub enum NetworkEvent {
     Disconnected {
         connection_id: ConnectionId,
         transport: NetworkTransport,
+        reason: Option<String>,
+    },
+    ListenerStopped {
+        listener_id: ListenerId,
+        transport: NetworkTransport,
+        local_addr: String,
         reason: Option<String>,
     },
 }

@@ -3,16 +3,17 @@ use std::{collections::HashMap, net::SocketAddr, sync::Mutex};
 use bevy::prelude::*;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    net::{TcpListener, TcpStream},
     runtime::{Builder, Runtime},
     sync::mpsc,
     time,
 };
-use tokio_kcp::{KcpConfig, KcpNoDelayConfig, KcpStream};
+use tokio_kcp::{KcpConfig, KcpListener, KcpNoDelayConfig, KcpStream};
 
 use super::types::{
-    ConnectionId, HttpMethod, HttpRequest, HttpResponse, KcpConnectConfig, KcpSessionOptions,
-    NetworkCommand, NetworkEvent, NetworkTransport, TcpConnectConfig,
+    ConnectionId, HttpMethod, HttpRequest, HttpResponse, KcpConnectConfig, KcpListenConfig,
+    KcpSessionOptions, ListenerId, NetworkCommand, NetworkEvent, NetworkTransport,
+    TcpConnectConfig, TcpListenConfig,
 };
 
 const COMMAND_CHANNEL_SIZE: usize = 256;
@@ -75,9 +76,26 @@ impl Drop for NetworkRuntime {
 
 enum WorkerCommand {
     Network(NetworkCommand),
+    AcceptedTcp {
+        listener_id: ListenerId,
+        connection_id: ConnectionId,
+        stream: TcpStream,
+        remote_addr: String,
+        read_buffer_size: usize,
+    },
+    AcceptedKcp {
+        listener_id: ListenerId,
+        connection_id: ConnectionId,
+        stream: KcpStream,
+        remote_addr: String,
+        read_buffer_size: usize,
+    },
     ConnectionClosed {
         connection_id: ConnectionId,
         generation: u64,
+    },
+    ListenerClosed {
+        listener_id: ListenerId,
     },
     Shutdown,
 }
@@ -89,6 +107,11 @@ struct ConnectionHandle {
     shutdown_tx: mpsc::Sender<()>,
 }
 
+struct ListenerHandle {
+    transport: NetworkTransport,
+    shutdown_tx: mpsc::Sender<()>,
+}
+
 async fn run_worker(
     mut command_rx: mpsc::UnboundedReceiver<WorkerCommand>,
     command_tx: mpsc::UnboundedSender<WorkerCommand>,
@@ -96,6 +119,7 @@ async fn run_worker(
 ) {
     let http_client = reqwest::Client::new();
     let mut connections = HashMap::<ConnectionId, ConnectionHandle>::new();
+    let mut listeners = HashMap::<ListenerId, ListenerHandle>::new();
     let mut next_generation = 1_u64;
 
     while let Some(command) = command_rx.recv().await {
@@ -105,6 +129,7 @@ async fn run_worker(
                     command,
                     &http_client,
                     &mut connections,
+                    &mut listeners,
                     &event_tx,
                     &command_tx,
                     &mut next_generation,
@@ -122,6 +147,91 @@ async fn run_worker(
                     connections.remove(&connection_id);
                 }
             }
+            WorkerCommand::ListenerClosed { listener_id } => {
+                listeners.remove(&listener_id);
+            }
+            WorkerCommand::AcceptedTcp {
+                listener_id,
+                connection_id,
+                stream,
+                remote_addr,
+                read_buffer_size,
+            } => {
+                replace_existing_connection(&mut connections, connection_id);
+                let generation = reserve_generation(&mut next_generation);
+                let (send_tx, send_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
+                let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+                connections.insert(
+                    connection_id,
+                    ConnectionHandle {
+                        transport: NetworkTransport::Tcp,
+                        generation,
+                        send_tx,
+                        shutdown_tx,
+                    },
+                );
+                send_event(
+                    &event_tx,
+                    NetworkEvent::Accepted {
+                        listener_id,
+                        connection_id,
+                        transport: NetworkTransport::Tcp,
+                        remote_addr: remote_addr.clone(),
+                    },
+                );
+                tokio::spawn(run_accepted_tcp_connection(
+                    connection_id,
+                    stream,
+                    remote_addr,
+                    read_buffer_size,
+                    send_rx,
+                    shutdown_rx,
+                    event_tx.clone(),
+                    command_tx.clone(),
+                    generation,
+                ));
+            }
+            WorkerCommand::AcceptedKcp {
+                listener_id,
+                connection_id,
+                stream,
+                remote_addr,
+                read_buffer_size,
+            } => {
+                replace_existing_connection(&mut connections, connection_id);
+                let generation = reserve_generation(&mut next_generation);
+                let (send_tx, send_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
+                let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+                connections.insert(
+                    connection_id,
+                    ConnectionHandle {
+                        transport: NetworkTransport::Kcp,
+                        generation,
+                        send_tx,
+                        shutdown_tx,
+                    },
+                );
+                send_event(
+                    &event_tx,
+                    NetworkEvent::Accepted {
+                        listener_id,
+                        connection_id,
+                        transport: NetworkTransport::Kcp,
+                        remote_addr: remote_addr.clone(),
+                    },
+                );
+                tokio::spawn(run_accepted_kcp_connection(
+                    connection_id,
+                    stream,
+                    remote_addr,
+                    read_buffer_size,
+                    send_rx,
+                    shutdown_rx,
+                    event_tx.clone(),
+                    command_tx.clone(),
+                    generation,
+                ));
+            }
             WorkerCommand::Shutdown => break,
         }
     }
@@ -129,12 +239,16 @@ async fn run_worker(
     for (_, connection) in connections {
         let _ = connection.shutdown_tx.try_send(());
     }
+    for (_, listener) in listeners {
+        let _ = listener.shutdown_tx.try_send(());
+    }
 }
 
 async fn handle_network_command(
     command: NetworkCommand,
     http_client: &reqwest::Client,
     connections: &mut HashMap<ConnectionId, ConnectionHandle>,
+    listeners: &mut HashMap<ListenerId, ListenerHandle>,
     event_tx: &mpsc::UnboundedSender<NetworkEvent>,
     command_tx: &mpsc::UnboundedSender<WorkerCommand>,
     next_generation: &mut u64,
@@ -202,6 +316,40 @@ async fn handle_network_command(
                 generation,
             ));
         }
+        NetworkCommand::ListenTcp(config) => {
+            replace_existing_listener(listeners, config.listener_id);
+            let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+            listeners.insert(
+                config.listener_id,
+                ListenerHandle {
+                    transport: NetworkTransport::Tcp,
+                    shutdown_tx,
+                },
+            );
+            tokio::spawn(run_tcp_listener(
+                config,
+                shutdown_rx,
+                event_tx.clone(),
+                command_tx.clone(),
+            ));
+        }
+        NetworkCommand::ListenKcp(config) => {
+            replace_existing_listener(listeners, config.listener_id);
+            let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+            listeners.insert(
+                config.listener_id,
+                ListenerHandle {
+                    transport: NetworkTransport::Kcp,
+                    shutdown_tx,
+                },
+            );
+            tokio::spawn(run_kcp_listener(
+                config,
+                shutdown_rx,
+                event_tx.clone(),
+                command_tx.clone(),
+            ));
+        }
         NetworkCommand::Send {
             connection_id,
             payload,
@@ -245,6 +393,23 @@ async fn handle_network_command(
 
             let _ = connection.shutdown_tx.send(()).await;
         }
+        NetworkCommand::StopListener { listener_id } => {
+            let Some(listener) = listeners.remove(&listener_id) else {
+                send_event(
+                    event_tx,
+                    NetworkEvent::ListenFailed {
+                        listener_id,
+                        transport: NetworkTransport::Tcp,
+                        local_addr: String::new(),
+                        error: "listener not found".to_string(),
+                    },
+                );
+                return;
+            };
+
+            let _transport = listener.transport;
+            let _ = listener.shutdown_tx.send(()).await;
+        }
     }
 }
 
@@ -254,6 +419,15 @@ fn replace_existing_connection(
 ) {
     if let Some(connection) = connections.remove(&connection_id) {
         let _ = connection.shutdown_tx.try_send(());
+    }
+}
+
+fn replace_existing_listener(
+    listeners: &mut HashMap<ListenerId, ListenerHandle>,
+    listener_id: ListenerId,
+) {
+    if let Some(listener) = listeners.remove(&listener_id) {
+        let _ = listener.shutdown_tx.try_send(());
     }
 }
 
@@ -331,8 +505,8 @@ fn reqwest_method(method: &HttpMethod) -> Result<reqwest::Method, String> {
 
 async fn run_tcp_connection(
     config: TcpConnectConfig,
-    mut send_rx: mpsc::Receiver<Vec<u8>>,
-    mut shutdown_rx: mpsc::Receiver<()>,
+    send_rx: mpsc::Receiver<Vec<u8>>,
+    shutdown_rx: mpsc::Receiver<()>,
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     command_tx: mpsc::UnboundedSender<WorkerCommand>,
     generation: u64,
@@ -381,8 +555,135 @@ async fn run_tcp_connection(
         },
     );
 
+    run_tcp_stream(
+        connection_id,
+        stream,
+        remote_addr,
+        config.read_buffer_size,
+        send_rx,
+        shutdown_rx,
+        event_tx,
+        command_tx,
+        generation,
+    )
+    .await;
+}
+
+async fn run_tcp_listener(
+    config: TcpListenConfig,
+    mut shutdown_rx: mpsc::Receiver<()>,
+    event_tx: mpsc::UnboundedSender<NetworkEvent>,
+    command_tx: mpsc::UnboundedSender<WorkerCommand>,
+) {
+    let listener_id = config.listener_id;
+    let bind_addr = config.addr.clone();
+    let listener = match TcpListener::bind(&bind_addr).await {
+        Ok(listener) => listener,
+        Err(err) => {
+            send_event(
+                &event_tx,
+                NetworkEvent::ListenFailed {
+                    listener_id,
+                    transport: NetworkTransport::Tcp,
+                    local_addr: bind_addr,
+                    error: err.to_string(),
+                },
+            );
+            send_listener_closed(&command_tx, listener_id);
+            return;
+        }
+    };
+
+    let local_addr = listener
+        .local_addr()
+        .map(|addr| addr.to_string())
+        .unwrap_or(bind_addr);
+    send_event(
+        &event_tx,
+        NetworkEvent::Listening {
+            listener_id,
+            transport: NetworkTransport::Tcp,
+            local_addr: local_addr.clone(),
+        },
+    );
+
+    let mut reason = None;
+    loop {
+        tokio::select! {
+            accept_result = listener.accept() => {
+                match accept_result {
+                    Ok((stream, remote_addr)) => {
+                        let connection_id = ConnectionId::new();
+                        let _ = command_tx.send(WorkerCommand::AcceptedTcp {
+                            listener_id,
+                            connection_id,
+                            stream,
+                            remote_addr: remote_addr.to_string(),
+                            read_buffer_size: config.read_buffer_size,
+                        });
+                    }
+                    Err(err) => {
+                        reason = Some(err.to_string());
+                        break;
+                    }
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                break;
+            }
+        }
+    }
+
+    send_event(
+        &event_tx,
+        NetworkEvent::ListenerStopped {
+            listener_id,
+            transport: NetworkTransport::Tcp,
+            local_addr,
+            reason,
+        },
+    );
+    send_listener_closed(&command_tx, listener_id);
+}
+
+async fn run_accepted_tcp_connection(
+    connection_id: ConnectionId,
+    stream: TcpStream,
+    remote_addr: String,
+    read_buffer_size: usize,
+    send_rx: mpsc::Receiver<Vec<u8>>,
+    shutdown_rx: mpsc::Receiver<()>,
+    event_tx: mpsc::UnboundedSender<NetworkEvent>,
+    command_tx: mpsc::UnboundedSender<WorkerCommand>,
+    generation: u64,
+) {
+    run_tcp_stream(
+        connection_id,
+        stream,
+        remote_addr,
+        read_buffer_size,
+        send_rx,
+        shutdown_rx,
+        event_tx,
+        command_tx,
+        generation,
+    )
+    .await;
+}
+
+async fn run_tcp_stream(
+    connection_id: ConnectionId,
+    stream: TcpStream,
+    _remote_addr: String,
+    read_buffer_size: usize,
+    mut send_rx: mpsc::Receiver<Vec<u8>>,
+    mut shutdown_rx: mpsc::Receiver<()>,
+    event_tx: mpsc::UnboundedSender<NetworkEvent>,
+    command_tx: mpsc::UnboundedSender<WorkerCommand>,
+    generation: u64,
+) {
     let (mut reader, mut writer) = stream.into_split();
-    let mut read_buffer = vec![0; config.read_buffer_size.max(1)];
+    let mut read_buffer = vec![0; read_buffer_size.max(1)];
     let mut reason = None;
 
     loop {
@@ -456,8 +757,8 @@ async fn run_tcp_connection(
 
 async fn run_kcp_connection(
     config: KcpConnectConfig,
-    mut send_rx: mpsc::Receiver<Vec<u8>>,
-    mut shutdown_rx: mpsc::Receiver<()>,
+    send_rx: mpsc::Receiver<Vec<u8>>,
+    shutdown_rx: mpsc::Receiver<()>,
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     command_tx: mpsc::UnboundedSender<WorkerCommand>,
     generation: u64,
@@ -491,7 +792,7 @@ async fn run_kcp_connection(
     };
 
     let connect_result = time::timeout(config.connect_timeout, connect_future).await;
-    let mut stream = match connect_result {
+    let stream = match connect_result {
         Ok(Ok(stream)) => stream,
         Ok(Err(err)) => {
             send_event(
@@ -530,7 +831,131 @@ async fn run_kcp_connection(
         },
     );
 
-    let mut read_buffer = vec![0; config.read_buffer_size.max(1)];
+    run_kcp_stream(
+        connection_id,
+        stream,
+        remote_addr,
+        config.read_buffer_size,
+        send_rx,
+        shutdown_rx,
+        event_tx,
+        command_tx,
+        generation,
+    )
+    .await;
+}
+
+async fn run_kcp_listener(
+    config: KcpListenConfig,
+    mut shutdown_rx: mpsc::Receiver<()>,
+    event_tx: mpsc::UnboundedSender<NetworkEvent>,
+    command_tx: mpsc::UnboundedSender<WorkerCommand>,
+) {
+    let listener_id = config.listener_id;
+    let bind_addr = config.addr.clone();
+    let kcp_config = to_kcp_config(&config.session);
+    let mut listener = match KcpListener::bind(kcp_config, &bind_addr).await {
+        Ok(listener) => listener,
+        Err(err) => {
+            send_event(
+                &event_tx,
+                NetworkEvent::ListenFailed {
+                    listener_id,
+                    transport: NetworkTransport::Kcp,
+                    local_addr: bind_addr,
+                    error: err.to_string(),
+                },
+            );
+            send_listener_closed(&command_tx, listener_id);
+            return;
+        }
+    };
+
+    send_event(
+        &event_tx,
+        NetworkEvent::Listening {
+            listener_id,
+            transport: NetworkTransport::Kcp,
+            local_addr: bind_addr.clone(),
+        },
+    );
+
+    let mut reason = None;
+    loop {
+        tokio::select! {
+            accept_result = listener.accept() => {
+                match accept_result {
+                    Ok((stream, remote_addr)) => {
+                        let connection_id = ConnectionId::new();
+                        let _ = command_tx.send(WorkerCommand::AcceptedKcp {
+                            listener_id,
+                            connection_id,
+                            stream,
+                            remote_addr: remote_addr.to_string(),
+                            read_buffer_size: config.read_buffer_size,
+                        });
+                    }
+                    Err(err) => {
+                        reason = Some(err.to_string());
+                        break;
+                    }
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                break;
+            }
+        }
+    }
+
+    send_event(
+        &event_tx,
+        NetworkEvent::ListenerStopped {
+            listener_id,
+            transport: NetworkTransport::Kcp,
+            local_addr: bind_addr,
+            reason,
+        },
+    );
+    send_listener_closed(&command_tx, listener_id);
+}
+
+async fn run_accepted_kcp_connection(
+    connection_id: ConnectionId,
+    stream: KcpStream,
+    remote_addr: String,
+    read_buffer_size: usize,
+    send_rx: mpsc::Receiver<Vec<u8>>,
+    shutdown_rx: mpsc::Receiver<()>,
+    event_tx: mpsc::UnboundedSender<NetworkEvent>,
+    command_tx: mpsc::UnboundedSender<WorkerCommand>,
+    generation: u64,
+) {
+    run_kcp_stream(
+        connection_id,
+        stream,
+        remote_addr,
+        read_buffer_size,
+        send_rx,
+        shutdown_rx,
+        event_tx,
+        command_tx,
+        generation,
+    )
+    .await;
+}
+
+async fn run_kcp_stream(
+    connection_id: ConnectionId,
+    mut stream: KcpStream,
+    _remote_addr: String,
+    read_buffer_size: usize,
+    mut send_rx: mpsc::Receiver<Vec<u8>>,
+    mut shutdown_rx: mpsc::Receiver<()>,
+    event_tx: mpsc::UnboundedSender<NetworkEvent>,
+    command_tx: mpsc::UnboundedSender<WorkerCommand>,
+    generation: u64,
+) {
+    let mut read_buffer = vec![0; read_buffer_size.max(1)];
     let mut reason = None;
 
     loop {
@@ -646,4 +1071,11 @@ fn send_connection_closed(
         connection_id,
         generation,
     });
+}
+
+fn send_listener_closed(
+    command_tx: &mpsc::UnboundedSender<WorkerCommand>,
+    listener_id: ListenerId,
+) {
+    let _ = command_tx.send(WorkerCommand::ListenerClosed { listener_id });
 }

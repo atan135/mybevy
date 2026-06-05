@@ -326,6 +326,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "authority-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4274,6 +4282,7 @@ checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 name = "project"
 version = "0.1.0"
 dependencies = [
+ "authority-core",
  "bevy",
  "prost",
  "prost-build",

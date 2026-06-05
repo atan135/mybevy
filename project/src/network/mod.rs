@@ -6,8 +6,9 @@ use bevy::prelude::*;
 use runtime::NetworkRuntime;
 
 pub use types::{
-    ConnectionId, HttpMethod, HttpRequest, HttpResponse, KcpConnectConfig, KcpSessionOptions,
-    NetworkCommand, NetworkEvent, NetworkTransport, RequestId, TcpConnectConfig,
+    ConnectionId, HttpMethod, HttpRequest, HttpResponse, KcpConnectConfig, KcpListenConfig,
+    KcpSessionOptions, ListenerId, NetworkCommand, NetworkEvent, NetworkTransport, RequestId,
+    TcpConnectConfig, TcpListenConfig,
 };
 
 pub struct NetworkPlugin;
@@ -100,6 +101,22 @@ fn report_command_error(
                 error,
             });
         }
+        NetworkCommand::ListenTcp(config) => {
+            events.write(NetworkEvent::ListenFailed {
+                listener_id: config.listener_id,
+                transport: NetworkTransport::Tcp,
+                local_addr: config.addr.clone(),
+                error,
+            });
+        }
+        NetworkCommand::ListenKcp(config) => {
+            events.write(NetworkEvent::ListenFailed {
+                listener_id: config.listener_id,
+                transport: NetworkTransport::Kcp,
+                local_addr: config.addr.clone(),
+                error,
+            });
+        }
         NetworkCommand::Send { connection_id, .. } => {
             events.write(NetworkEvent::SendFailed {
                 connection_id: *connection_id,
@@ -111,6 +128,14 @@ fn report_command_error(
             events.write(NetworkEvent::SendFailed {
                 connection_id: *connection_id,
                 transport: None,
+                error,
+            });
+        }
+        NetworkCommand::StopListener { listener_id } => {
+            events.write(NetworkEvent::ListenFailed {
+                listener_id: *listener_id,
+                transport: NetworkTransport::Tcp,
+                local_addr: String::new(),
                 error,
             });
         }

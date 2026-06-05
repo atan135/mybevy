@@ -369,12 +369,7 @@ fn handle_network_events(
                     continue;
                 };
 
-                send_auth_request(
-                    &mut session,
-                    &mut network_commands,
-                    &mut events,
-                    ticket,
-                );
+                send_auth_request(&mut session, &mut network_commands, &mut events, ticket);
             }
             NetworkEvent::ConnectionFailed {
                 connection_id,
@@ -659,10 +654,7 @@ fn connect_with_ticket(
     }
 }
 
-fn disconnect(
-    session: &mut MyServerSession,
-    network_commands: &mut MessageWriter<NetworkCommand>,
-) {
+fn disconnect(session: &mut MyServerSession, network_commands: &mut MessageWriter<NetworkCommand>) {
     if let Some(connection_id) = session.connection_id {
         network_commands.write(NetworkCommand::Disconnect { connection_id });
     }
@@ -779,15 +771,57 @@ fn handle_game_packet(
     }
 
     match message_type {
-        MessageType::RoomStatePush => decode_push::<pb::RoomStatePush, _>(events, &packet, MyServerEvent::RoomStatePush),
-        MessageType::GameMessagePush => decode_push::<pb::GameMessagePush, _>(events, &packet, MyServerEvent::GameMessagePush),
-        MessageType::FrameBundlePush => decode_push::<pb::FrameBundlePush, _>(events, &packet, MyServerEvent::FrameBundlePush),
-        MessageType::RoomFrameRatePush => decode_push::<pb::RoomFrameRatePush, _>(events, &packet, MyServerEvent::RoomFrameRatePush),
-        MessageType::RoomMemberOfflinePush => decode_push::<pb::RoomMemberOfflinePush, _>(events, &packet, MyServerEvent::RoomMemberOfflinePush),
-        MessageType::MovementSnapshotPush => decode_push::<pb::MovementSnapshotPush, _>(events, &packet, MyServerEvent::MovementSnapshotPush),
-        MessageType::MovementRejectPush => decode_push::<pb::MovementRejectPush, _>(events, &packet, MyServerEvent::MovementRejectPush),
-        MessageType::ServerRedirectPush => decode_push::<pb::ServerRedirectPush, _>(events, &packet, MyServerEvent::ServerRedirectPush),
-        MessageType::SessionKickPush => decode_push::<pb::SessionKickPush, _>(events, &packet, MyServerEvent::SessionKickPush),
+        MessageType::RoomStatePush => {
+            decode_push::<pb::RoomStatePush, _>(events, &packet, MyServerEvent::RoomStatePush)
+        }
+        MessageType::GameMessagePush => {
+            decode_push::<pb::GameMessagePush, _>(events, &packet, MyServerEvent::GameMessagePush)
+        }
+        MessageType::FrameBundlePush => {
+            decode_push::<pb::FrameBundlePush, _>(events, &packet, MyServerEvent::FrameBundlePush)
+        }
+        MessageType::RoomFrameRatePush => decode_push::<pb::RoomFrameRatePush, _>(
+            events,
+            &packet,
+            MyServerEvent::RoomFrameRatePush,
+        ),
+        MessageType::RoomMemberOfflinePush => decode_push::<pb::RoomMemberOfflinePush, _>(
+            events,
+            &packet,
+            MyServerEvent::RoomMemberOfflinePush,
+        ),
+        MessageType::MovementSnapshotPush => decode_push::<pb::MovementSnapshotPush, _>(
+            events,
+            &packet,
+            MyServerEvent::MovementSnapshotPush,
+        ),
+        MessageType::MovementRejectPush => decode_push::<pb::MovementRejectPush, _>(
+            events,
+            &packet,
+            MyServerEvent::MovementRejectPush,
+        ),
+        MessageType::ServerRedirectPush => decode_push::<pb::ServerRedirectPush, _>(
+            events,
+            &packet,
+            MyServerEvent::ServerRedirectPush,
+        ),
+        MessageType::SessionKickPush => {
+            decode_push::<pb::SessionKickPush, _>(events, &packet, MyServerEvent::SessionKickPush)
+        }
+        MessageType::AuthorityMigrationStartPush => {
+            decode_push::<pb::AuthorityMigrationStartPush, _>(
+                events,
+                &packet,
+                MyServerEvent::AuthorityMigrationStartPush,
+            )
+        }
+        MessageType::AuthorityMigrationCompletePush => {
+            decode_push::<pb::AuthorityMigrationCompletePush, _>(
+                events,
+                &packet,
+                MyServerEvent::AuthorityMigrationCompletePush,
+            )
+        }
         _ => handle_response_packet(session, events, message_type, packet),
     }
 }
@@ -860,10 +894,20 @@ fn handle_response_packet(
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
-        MessageType::RoomReadyRes => decode_push::<pb::RoomReadyRes, _>(events, &packet, MyServerEvent::ReadyChanged),
-        MessageType::RoomStartRes => decode_push::<pb::RoomStartRes, _>(events, &packet, MyServerEvent::RoomStarted),
-        MessageType::PlayerInputRes => decode_push::<pb::PlayerInputRes, _>(events, &packet, MyServerEvent::PlayerInputAccepted),
-        MessageType::MoveInputRes => decode_push::<pb::MoveInputRes, _>(events, &packet, MyServerEvent::MoveInputAccepted),
+        MessageType::RoomReadyRes => {
+            decode_push::<pb::RoomReadyRes, _>(events, &packet, MyServerEvent::ReadyChanged)
+        }
+        MessageType::RoomStartRes => {
+            decode_push::<pb::RoomStartRes, _>(events, &packet, MyServerEvent::RoomStarted)
+        }
+        MessageType::PlayerInputRes => decode_push::<pb::PlayerInputRes, _>(
+            events,
+            &packet,
+            MyServerEvent::PlayerInputAccepted,
+        ),
+        MessageType::MoveInputRes => {
+            decode_push::<pb::MoveInputRes, _>(events, &packet, MyServerEvent::MoveInputAccepted)
+        }
         _ => {
             events.write(MyServerEvent::ProtocolError {
                 error: format!("unhandled response type {:?}", message_type),

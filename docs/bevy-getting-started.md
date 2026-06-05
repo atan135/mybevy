@@ -527,12 +527,46 @@ android/app/build/outputs/apk/release/
 
 - `project/src/network/`：网络插件、命令、事件和连接配置
 - `NetworkPlugin`：已经在 `project/src/lib.rs` 中注册
-- `NetworkCommand`：从 Bevy 系统发起 HTTP 请求、TCP 连接、KCP 连接、发送数据或断开连接
-- `NetworkEvent`：接收 HTTP 响应、连接状态、数据包、发送结果和错误
+- `NetworkCommand`：从 Bevy 系统发起 HTTP 请求、TCP/KCP 连接、TCP/KCP 监听、发送数据、断开连接或停止监听
+- `NetworkEvent`：接收 HTTP 响应、连接状态、监听状态、接入连接、数据包、发送结果和错误
 
 HTTP 是一次性请求接口；TCP 和 KCP 是长连接接口，都会返回 `ConnectionId` 对应的连接事件。
 网络实际 I/O 在后台 Tokio runtime 中执行，不阻塞 Bevy 主线程。Android 包已经在
 `android/app/src/main/AndroidManifest.xml` 中声明了 `android.permission.INTERNET`。
+
+当前工程还内置一套控制机会话接口：
+
+- `project/src/authority/`：控制机统一接口和轻量 authority 协议
+- `AuthorityPlugin`：已经在 `project/src/lib.rs` 中注册
+- `AuthorityCommand`：创建本地控制机、创建局域网控制机、加入控制机、切换控制机、发送玩法输入或离开
+- `AuthorityEvent`：接收控制机连接状态、peer 加入/离开、输入确认、权威帧、快照和迁移事件
+
+玩法层应优先依赖 `AuthorityCommand` / `AuthorityEvent`，而不是直接依赖 `MyServerCommand`。
+远端 MyServer 仍作为一种控制机 endpoint 由 adapter 桥接；本地和局域网控制机使用客户端内置 authority 协议。
+
+开发期可以用环境变量直接启动 authority 测试入口：
+
+```powershell
+# 连接 MyServer，自动登录、进房、准备、开始并定时发输入
+$env:AUTHORITY_DEV_MODE="myserver"
+$env:AUTHORITY_MYSERVER_GUEST_ID="bevy-a"
+$env:AUTHORITY_MYSERVER_ROOM="room-dev"
+$env:AUTHORITY_MYSERVER_POLICY="movement_demo"
+cargo run
+
+# 开一个局域网控制机
+$env:AUTHORITY_DEV_MODE="lan-host"
+$env:AUTHORITY_PLAYER_ID="host-a"
+$env:AUTHORITY_BIND_ADDR="127.0.0.1:15000"
+cargo run
+
+# 另一个终端连接这个控制机
+$env:AUTHORITY_DEV_MODE="lan-client"
+$env:AUTHORITY_PLAYER_ID="client-b"
+$env:AUTHORITY_REMOTE_HOST="127.0.0.1"
+$env:AUTHORITY_REMOTE_PORT="15000"
+cargo run
+```
 
 示例用法：
 

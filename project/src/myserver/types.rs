@@ -241,6 +241,8 @@ pub enum MyServerEvent {
     MovementRejectPush(pb::MovementRejectPush),
     ServerRedirectPush(pb::ServerRedirectPush),
     SessionKickPush(pb::SessionKickPush),
+    AuthorityMigrationStartPush(pb::AuthorityMigrationStartPush),
+    AuthorityMigrationCompletePush(pb::AuthorityMigrationCompletePush),
     Error {
         seq: u32,
         error_code: String,
@@ -323,7 +325,9 @@ pub fn login_session_from_response(response: &LoginResponse) -> LoginSession {
     }
 }
 
-pub fn ticket_endpoint(response: &TicketResponse) -> (Option<String>, Option<u16>, Option<NetworkTransport>) {
+pub fn ticket_endpoint(
+    response: &TicketResponse,
+) -> (Option<String>, Option<u16>, Option<NetworkTransport>) {
     game_endpoint(
         response.game_proxy_host.clone(),
         response.game_proxy_port,
@@ -362,7 +366,12 @@ fn env_string(name: &str, default: &str) -> String {
 fn env_bool(name: &str, default: bool) -> bool {
     env::var(name)
         .ok()
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "True" | "yes" | "YES"))
+        .map(|value| {
+            matches!(
+                value.as_str(),
+                "1" | "true" | "TRUE" | "True" | "yes" | "YES"
+            )
+        })
         .unwrap_or(default)
 }
 
@@ -381,5 +390,7 @@ fn env_u64(name: &str, default: u64) -> u64 {
 }
 
 fn env_transport(name: &str) -> Option<NetworkTransport> {
-    env::var(name).ok().and_then(|value| parse_transport(&value))
+    env::var(name)
+        .ok()
+        .and_then(|value| parse_transport(&value))
 }

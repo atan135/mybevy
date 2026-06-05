@@ -1,7 +1,8 @@
 use std::{env, path::PathBuf};
 
 fn main() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
     let proto_dir = manifest_dir
         .parent()
         .and_then(|path| path.parent())
