@@ -12,6 +12,7 @@ pub const DEFAULT_GAME_PROXY_HOST: &str = "127.0.0.1";
 pub const DEFAULT_GAME_PROXY_KCP_PORT: u16 = 4000;
 pub const DEFAULT_GAME_PROXY_TCP_FALLBACK_PORT: u16 = 14000;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+pub const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Resource)]
 pub struct MyServerConfig {
@@ -20,12 +21,16 @@ pub struct MyServerConfig {
     pub kcp_port: u16,
     pub tcp_fallback_port: u16,
     pub prefer_transport: NetworkTransport,
+    pub forced_transport: Option<NetworkTransport>,
     pub request_timeout: Duration,
     pub auto_reconnect_with_fresh_ticket: bool,
+    pub keepalive_enabled: bool,
+    pub keepalive_interval: Duration,
 }
 
 impl Default for MyServerConfig {
     fn default() -> Self {
+        let forced_transport = env_transport("MYSERVER_TRANSPORT");
         Self {
             http_base_url: env_string("MYSERVER_HTTP_BASE_URL", DEFAULT_AUTH_HTTP_BASE_URL),
             game_host: env_string("MYSERVER_GAME_HOST", DEFAULT_GAME_PROXY_HOST),
@@ -34,7 +39,8 @@ impl Default for MyServerConfig {
                 "MYSERVER_TCP_FALLBACK_PORT",
                 DEFAULT_GAME_PROXY_TCP_FALLBACK_PORT,
             ),
-            prefer_transport: env_transport("MYSERVER_TRANSPORT").unwrap_or(NetworkTransport::Tcp),
+            prefer_transport: forced_transport.unwrap_or(NetworkTransport::Tcp),
+            forced_transport,
             request_timeout: Duration::from_millis(env_u64(
                 "MYSERVER_REQUEST_TIMEOUT_MS",
                 DEFAULT_REQUEST_TIMEOUT.as_millis() as u64,
@@ -43,6 +49,11 @@ impl Default for MyServerConfig {
                 "MYSERVER_AUTO_RECONNECT_WITH_FRESH_TICKET",
                 false,
             ),
+            keepalive_enabled: env_bool("MYSERVER_KEEPALIVE", true),
+            keepalive_interval: Duration::from_millis(env_u64(
+                "MYSERVER_KEEPALIVE_INTERVAL_MS",
+                DEFAULT_KEEPALIVE_INTERVAL.as_millis() as u64,
+            )),
         }
     }
 }

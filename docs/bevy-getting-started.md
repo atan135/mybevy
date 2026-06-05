@@ -517,11 +517,13 @@ android/app/build/outputs/apk/release/
 `GameActivity` 和 Rust 侧 native glue 的 JNI 方法签名可能不匹配，启动时会出现
 `RegisterNatives failed for 'com/google/androidgamesdk/GameActivity'`。
 
-当前玩法是单界面触控/鼠标互动：
+当前玩法是单界面触控/鼠标互动，并已接入控制机帧同步：
 
-1. 鼠标左键或手指按下时，在对应位置显示硬边半透明圆形反馈。
-2. 按住拖动时，主圆平滑跟随，并沿拖动路径生成水波纹拖尾。
-3. 松开后，主圆在原地逐帧淡出；新一次按压会直接在新位置生成。
+1. 本地鼠标左键或手指输入会按帧聚合为 `ui_touch` 输入。
+2. 玩法层消费 `AuthorityEvent::FrameApplied`，按玩家回放触控位置。
+3. 鼠标左键或手指按下时，在对应位置显示硬边半透明圆形反馈。
+4. 按住拖动时，主圆平滑跟随，并沿拖动路径生成水波纹拖尾。
+5. 松开后，主圆在原地逐帧淡出；新一次按压会直接在新位置生成。
 
 当前工程已经内置一套网络通信接口：
 
@@ -543,6 +545,23 @@ HTTP 是一次性请求接口；TCP 和 KCP 是长连接接口，都会返回 `C
 
 玩法层应优先依赖 `AuthorityCommand` / `AuthorityEvent`，而不是直接依赖 `MyServerCommand`。
 远端 MyServer 仍作为一种控制机 endpoint 由 adapter 桥接；本地和局域网控制机使用客户端内置 authority 协议。
+
+Touch Ripple 默认会在进入玩法界面时自动启动本地控制机，方便单机验证。连接 MyServer 的
+`UITouchRoom` 时，可使用：
+
+```powershell
+$env:TOUCH_AUTHORITY_MODE="myserver"
+$env:TOUCH_ROOM_ID="ui-touch-room"
+$env:MYSERVER_GUEST_ID="bevy-a"
+cargo run
+```
+
+客户端会登录 MyServer、加入 `policy_id = "ui_touch_room"` 的房间、准备并尝试开始房间。
+如果要关闭本地自动控制机，可设置：
+
+```powershell
+$env:TOUCH_AUTO_LOCAL_AUTHORITY="false"
+```
 
 开发期可以用环境变量直接启动 authority 测试入口：
 

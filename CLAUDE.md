@@ -9,7 +9,7 @@
 - 仓库根目录用于放协作文档、说明文件和仓库级配置
 - `project/` 是实际的游戏工程根目录
 - 当前游戏工程使用 Rust stable 和 `bevy = "0.18.1"`
-- 当前玩法是单界面触控/鼠标互动：按下显示硬边圆形反馈，拖动生成水波纹拖尾，松开后在原地淡出
+- 当前玩法是单界面触控/鼠标互动，并通过 authority 帧同步回放 `ui_touch` 输入：按下显示硬边圆形反馈，拖动生成水波纹拖尾，松开后在原地淡出
 - 当前内置 `project/src/network/` 网络模块，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
 - 当前内置 `project/src/authority/` 控制机会话模块，提供本地控制机、局域网控制机和远端 MyServer 控制机的统一命令/事件接口
 - `android/` 是 Android Gradle 壳工程，用于加载 Rust 产出的 `libproject.so` 并打包 APK

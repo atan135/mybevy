@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::prelude::*;
 
 use crate::network::{
@@ -7,9 +9,10 @@ use crate::network::{
 
 use super::protocol::{MessageType, Packet, encode_proto_packet, pb};
 use super::types::{
-    ConnectPlan, LoginResponse, MovementClientState, MyServerAutoClientConfig,
-    MyServerAutoClientState, MyServerCommand, MyServerConfig, MyServerEvent, MyServerSession,
-    PendingRequest, TicketResponse, login_session_from_response, ticket_endpoint,
+    ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL, LoginResponse, MovementClientState,
+    MyServerAutoClientConfig, MyServerAutoClientState, MyServerCommand, MyServerConfig,
+    MyServerEvent, MyServerSession, PendingRequest, TicketResponse, login_session_from_response,
+    ticket_endpoint,
 };
 
 pub struct MyServerPlugin;
@@ -20,6 +23,7 @@ impl Plugin for MyServerPlugin {
             .init_resource::<MyServerSession>()
             .init_resource::<MyServerAutoClientConfig>()
             .init_resource::<MyServerAutoClientState>()
+            .init_resource::<MyServerKeepaliveState>()
             .add_message::<MyServerCommand>()
             .add_message::<MyServerEvent>()
             .add_systems(Startup, auto_client_startup)
@@ -28,10 +32,26 @@ impl Plugin for MyServerPlugin {
                 (
                     handle_myserver_commands,
                     handle_network_events,
+                    keepalive_myserver_connection,
                     auto_client_follow_events,
                 )
                     .chain(),
             );
+    }
+}
+
+#[derive(Resource, Debug)]
+struct MyServerKeepaliveState {
+    timer: Timer,
+    interval: Duration,
+}
+
+impl Default for MyServerKeepaliveState {
+    fn default() -> Self {
+        Self {
+            timer: Timer::new(DEFAULT_KEEPALIVE_INTERVAL, TimerMode::Repeating),
+            interval: DEFAULT_KEEPALIVE_INTERVAL,
+        }
     }
 }
 
@@ -427,6 +447,41 @@ fn handle_network_events(
     }
 }
 
+fn keepalive_myserver_connection(
+    config: Res<MyServerConfig>,
+    time: Res<Time>,
+    mut state: ResMut<MyServerKeepaliveState>,
+    mut session: ResMut<MyServerSession>,
+    mut network_commands: MessageWriter<NetworkCommand>,
+    mut events: MessageWriter<MyServerEvent>,
+) {
+    if state.interval != config.keepalive_interval {
+        state.interval = config.keepalive_interval;
+        state.timer = Timer::new(config.keepalive_interval, TimerMode::Repeating);
+    }
+
+    if !config.keepalive_enabled || !session.connected || !session.authenticated {
+        state.timer.reset();
+        return;
+    }
+
+    state.timer.tick(time.delta());
+    if !state.timer.just_finished() {
+        return;
+    }
+
+    send_request(
+        &mut session,
+        &mut network_commands,
+        &mut events,
+        MessageType::PingReq,
+        MessageType::PingRes,
+        &pb::PingReq {
+            client_time: current_unix_ms(),
+        },
+    );
+}
+
 fn send_guest_login(
     config: &MyServerConfig,
     session: &mut MyServerSession,
@@ -534,9 +589,13 @@ fn handle_login_response(
     events.write(MyServerEvent::LoginSucceeded(login_session.clone()));
 
     if let Some(mut plan) = session.connect_after_login.take() {
-        plan.host = plan.host.or(login_session.game_host);
-        plan.port = plan.port.or(login_session.game_port);
-        plan.transport = login_session.game_transport.unwrap_or(plan.transport);
+        apply_discovered_endpoint(
+            &mut plan,
+            login_session.game_host,
+            login_session.game_port,
+            login_session.game_transport,
+            config,
+        );
         connect_with_ticket(
             config,
             session,
@@ -589,9 +648,7 @@ fn handle_ticket_response(
     });
 
     if let Some(mut plan) = session.connect_after_login.take() {
-        plan.host = plan.host.or(host);
-        plan.port = plan.port.or(port);
-        plan.transport = transport.unwrap_or(plan.transport);
+        apply_discovered_endpoint(&mut plan, host, port, transport, config);
         connect_with_ticket(
             config,
             session,
@@ -601,6 +658,30 @@ fn handle_ticket_response(
             plan,
         );
     }
+}
+
+fn apply_discovered_endpoint(
+    plan: &mut ConnectPlan,
+    host: Option<String>,
+    port: Option<u16>,
+    transport: Option<NetworkTransport>,
+    config: &MyServerConfig,
+) {
+    plan.host = plan.host.take().or(host);
+
+    if let Some(forced_transport) = config.forced_transport {
+        plan.transport = forced_transport;
+        if plan.port.is_none() {
+            plan.port = Some(match forced_transport {
+                NetworkTransport::Tcp => config.tcp_fallback_port,
+                NetworkTransport::Kcp => config.kcp_port,
+            });
+        }
+        return;
+    }
+
+    plan.port = plan.port.or(port);
+    plan.transport = transport.unwrap_or(plan.transport);
 }
 
 fn connect_with_ticket(

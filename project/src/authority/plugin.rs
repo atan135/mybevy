@@ -22,6 +22,7 @@ impl Plugin for AuthorityPlugin {
         app.init_resource::<AuthoritySession>()
             .init_resource::<AuthorityDevConfig>()
             .init_resource::<AuthorityDevState>()
+            .init_resource::<AuthorityTickState>()
             .add_message::<AuthorityCommand>()
             .add_message::<AuthorityEvent>()
             .add_systems(Startup, authority_dev_startup)
@@ -115,6 +116,24 @@ struct AuthorityDevState {
     myserver_ready_sent: bool,
     myserver_start_sent: bool,
     last_logged_frame: u32,
+}
+
+#[derive(Resource, Debug)]
+struct AuthorityTickState {
+    timer: Timer,
+    fps: u16,
+}
+
+impl Default for AuthorityTickState {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(
+                1.0 / f32::from(DEFAULT_AUTHORITY_FPS.max(1)),
+                TimerMode::Repeating,
+            ),
+            fps: DEFAULT_AUTHORITY_FPS,
+        }
+    }
 }
 
 impl Default for AuthorityDevState {
@@ -1212,13 +1231,27 @@ fn handle_client_packet(
 }
 
 fn tick_local_authority(
+    time: Res<Time>,
     mut session: ResMut<AuthoritySession>,
+    mut tick_state: ResMut<AuthorityTickState>,
     mut network_commands: MessageWriter<NetworkCommand>,
     mut events: MessageWriter<AuthorityEvent>,
 ) {
     if session.role != Some(AuthorityRole::Host) {
         return;
     }
+
+    let fps = session.fps.max(1);
+    if tick_state.fps != fps {
+        tick_state.fps = fps;
+        tick_state.timer = Timer::from_seconds(1.0 / f32::from(fps), TimerMode::Repeating);
+    }
+
+    tick_state.timer.tick(time.delta());
+    if !tick_state.timer.just_finished() {
+        return;
+    }
+
     apply_authority_tick(&mut session, &mut network_commands, &mut events);
 }
 
