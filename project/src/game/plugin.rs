@@ -6,6 +6,8 @@ use bevy::{
     window::PrimaryWindow,
 };
 
+use super::{navigation::AppScreen, screens::ScreensPlugin};
+
 const BACKGROUND_PALETTE: [Vec3; 3] = [
     Vec3::new(0.08, 0.16, 0.30),
     Vec3::new(0.08, 0.31, 0.27),
@@ -42,9 +44,11 @@ pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ClearColor(background_color_at(0.0)))
+        app.add_plugins(ScreensPlugin)
+            .insert_resource(ClearColor(background_color_at(0.0)))
             .init_resource::<TouchGradientState>()
-            .add_systems(Startup, setup_scene)
+            .add_systems(Startup, (setup_camera, setup_touch_assets))
+            .add_systems(OnEnter(AppScreen::TouchRipple), setup_scene)
             .add_systems(
                 Update,
                 (
@@ -56,7 +60,8 @@ impl Plugin for GamePlugin {
                     animate_released_discs,
                     resize_background,
                 )
-                    .chain(),
+                    .chain()
+                    .run_if(in_state(AppScreen::TouchRipple)),
             );
     }
 }
@@ -123,23 +128,36 @@ impl Default for TouchGradientState {
     }
 }
 
-fn setup_scene(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
+}
+
+fn setup_touch_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let disc_texture = images.add(create_disc_image());
+    let ring_texture = images.add(create_ring_image());
+    commands.insert_resource(DiscImage(disc_texture));
+    commands.insert_resource(RippleImage(ring_texture));
+}
+
+fn setup_scene(
+    mut commands: Commands,
+    disc_image: Res<DiscImage>,
+    ripple_image: Res<RippleImage>,
+    mut state: ResMut<TouchGradientState>,
+) {
+    *state = TouchGradientState::default();
 
     commands.spawn((
+        DespawnOnExit(AppScreen::TouchRipple),
         Sprite::from_color(background_color_at(0.0), Vec2::ONE),
         Transform::from_xyz(0.0, 0.0, -1.0),
         Background,
     ));
 
-    let disc_texture = images.add(create_disc_image());
-    let ring_texture = images.add(create_ring_image());
-    commands.insert_resource(DiscImage(disc_texture.clone()));
-    commands.insert_resource(RippleImage(ring_texture.clone()));
-
     commands.spawn((
+        DespawnOnExit(AppScreen::TouchRipple),
         Sprite {
-            image: disc_texture,
+            image: disc_image.0.clone(),
             color: Color::WHITE.with_alpha(0.0),
             custom_size: Some(Vec2::ONE),
             ..Default::default()
@@ -149,8 +167,9 @@ fn setup_scene(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     ));
 
     commands.spawn((
+        DespawnOnExit(AppScreen::TouchRipple),
         Sprite {
-            image: ring_texture,
+            image: ripple_image.0.clone(),
             color: Color::WHITE.with_alpha(0.0),
             custom_size: Some(Vec2::ONE),
             ..Default::default()
@@ -180,21 +199,24 @@ fn update_pointer_target(
     disc_image: Res<DiscImage>,
     mut commands: Commands,
     mut state: ResMut<TouchGradientState>,
+    ui_buttons: Query<&Interaction, With<Button>>,
 ) {
     let Some(screen_position) = active_screen_position(&mouse_buttons, &touches, &window) else {
-        state.target_intensity = 0.0;
-        state.was_pressed = false;
-        state.last_ripple_position = None;
-        state.target_press_scale = PRESS_RELEASE_SCALE;
+        release_pointer_state(&mut state);
         return;
     };
 
+    if ui_buttons
+        .iter()
+        .any(|interaction| matches!(*interaction, Interaction::Pressed | Interaction::Hovered))
+    {
+        release_pointer_state(&mut state);
+        return;
+    }
+
     let (camera, camera_transform) = *camera;
     let Ok(world_position) = camera.viewport_to_world_2d(camera_transform, screen_position) else {
-        state.target_intensity = 0.0;
-        state.was_pressed = false;
-        state.last_ripple_position = None;
-        state.target_press_scale = PRESS_RELEASE_SCALE;
+        release_pointer_state(&mut state);
         return;
     };
 
@@ -230,6 +252,13 @@ fn update_pointer_target(
     }
 }
 
+fn release_pointer_state(state: &mut TouchGradientState) {
+    state.target_intensity = 0.0;
+    state.was_pressed = false;
+    state.last_ripple_position = None;
+    state.target_press_scale = PRESS_RELEASE_SCALE;
+}
+
 fn spawn_released_disc(
     commands: &mut Commands,
     disc_image: &DiscImage,
@@ -239,6 +268,7 @@ fn spawn_released_disc(
     color: Color,
 ) {
     commands.spawn((
+        DespawnOnExit(AppScreen::TouchRipple),
         Sprite {
             image: disc_image.0.clone(),
             color: color.with_alpha(intensity * PRESS_DISC_ALPHA),
@@ -343,6 +373,7 @@ fn spawn_drag_ripples(
     }
 
     commands.spawn((
+        DespawnOnExit(AppScreen::TouchRipple),
         Sprite {
             image: ripple_image.0.clone(),
             color: press_color_at(time.elapsed_secs()).with_alpha(RIPPLE_ALPHA),
