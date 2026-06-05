@@ -3,13 +3,18 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::AppScreen,
     ui::{
-        theme::{PANEL_BACKGROUND, PANEL_BORDER, SCREEN_BACKGROUND, TEXT_MUTED},
+        theme::UiTheme,
         widgets::{primary_route_button, screen_label, screen_title},
     },
 };
 
-pub(super) fn setup_login_screen(mut commands: Commands, mut clear_color: ResMut<ClearColor>) {
-    clear_color.0 = SCREEN_BACKGROUND;
+pub(super) fn setup_login_screen(
+    mut commands: Commands,
+    theme: Res<UiTheme>,
+    mut clear_color: ResMut<ClearColor>,
+) {
+    let theme = theme.into_inner();
+    clear_color.0 = theme.colors.screen_background;
 
     commands.spawn((
         DespawnOnExit(AppScreen::Login),
@@ -18,27 +23,27 @@ pub(super) fn setup_login_screen(mut commands: Commands, mut clear_color: ResMut
             height: percent(100),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            padding: UiRect::all(px(24)),
+            padding: UiRect::all(px(theme.layout.screen_padding)),
             ..default()
         },
-        BackgroundColor(SCREEN_BACKGROUND),
+        BackgroundColor(theme.colors.screen_background),
         children![(
             Node {
                 width: percent(100),
-                max_width: px(420),
+                max_width: px(theme.layout.auth_panel_width),
                 flex_direction: FlexDirection::Column,
-                row_gap: px(20),
-                padding: UiRect::all(px(28)),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(8)),
+                row_gap: px(theme.layout.panel_gap),
+                padding: UiRect::all(px(theme.panel.padding)),
+                border: UiRect::all(px(theme.panel.border)),
+                border_radius: BorderRadius::all(px(theme.panel.radius)),
                 ..default()
             },
-            BackgroundColor(PANEL_BACKGROUND),
-            BorderColor::all(PANEL_BORDER),
+            BackgroundColor(theme.colors.panel_background),
+            BorderColor::all(theme.colors.panel_border),
             children![
-                screen_title("MyBevy", 44.0),
-                screen_label("Player Login", 18.0, TEXT_MUTED),
-                primary_route_button("Guest Login", AppScreen::GameList),
+                screen_title(theme, "MyBevy", theme.text.title_large),
+                screen_label("Player Login", theme.text.subtitle, theme.colors.text_muted),
+                primary_route_button(theme, "Guest Login", AppScreen::GameList),
             ],
         )],
     ));

@@ -1,18 +1,23 @@
 use bevy::prelude::*;
 
-use crate::game::{navigation::AppScreen, ui::widgets::secondary_route_button};
+use crate::game::{
+    navigation::AppScreen,
+    ui::{theme::UiTheme, widgets::secondary_route_button},
+};
 
-pub(super) fn setup_touch_ripple_overlay(mut commands: Commands) {
+pub(super) fn setup_touch_ripple_overlay(mut commands: Commands, theme: Res<UiTheme>) {
+    let theme = theme.into_inner();
+
     commands.spawn((
         DespawnOnExit(AppScreen::TouchRipple),
         Node {
             width: percent(100),
             height: percent(100),
-            padding: UiRect::all(px(16)),
+            padding: UiRect::all(px(theme.layout.overlay_padding)),
             align_items: AlignItems::FlexStart,
             justify_content: JustifyContent::FlexEnd,
             ..default()
         },
-        children![secondary_route_button("List", AppScreen::GameList)],
+        children![secondary_route_button(theme, "List", AppScreen::GameList)],
     ));
 }

@@ -2,10 +2,7 @@ use bevy::prelude::*;
 
 use crate::game::{
     navigation::{AppScreen, RouteButton},
-    ui::theme::{
-        PRIMARY_BUTTON, PRIMARY_BUTTON_HOVERED, PRIMARY_BUTTON_PRESSED, SECONDARY_BUTTON,
-        SECONDARY_BUTTON_HOVERED, SECONDARY_BUTTON_PRESSED, TEXT_PRIMARY,
-    },
+    ui::theme::{ButtonColors, UiTheme},
 };
 
 pub(in crate::game) struct UiWidgetsPlugin;
@@ -22,14 +19,18 @@ struct PrimaryButton;
 #[derive(Component)]
 struct SecondaryButton;
 
-pub(in crate::game) fn screen_title(text: impl Into<String>, font_size: f32) -> impl Bundle {
+pub(in crate::game) fn screen_title(
+    theme: &UiTheme,
+    text: impl Into<String>,
+    font_size: f32,
+) -> impl Bundle {
     (
         Text::new(text),
         TextFont {
             font_size,
             ..default()
         },
-        TextColor(TEXT_PRIMARY),
+        TextColor(theme.colors.text_primary),
     )
 }
 
@@ -49,23 +50,38 @@ pub(in crate::game) fn screen_label(
 }
 
 pub(in crate::game) fn primary_route_button(
+    theme: &UiTheme,
     text: impl Into<String>,
     target: AppScreen,
 ) -> impl Bundle {
-    route_button(text, target, PRIMARY_BUTTON, PrimaryButton)
+    route_button(
+        theme,
+        text,
+        target,
+        theme.colors.primary_button,
+        PrimaryButton,
+    )
 }
 
 pub(in crate::game) fn secondary_route_button(
+    theme: &UiTheme,
     text: impl Into<String>,
     target: AppScreen,
 ) -> impl Bundle {
-    route_button(text, target, SECONDARY_BUTTON, SecondaryButton)
+    route_button(
+        theme,
+        text,
+        target,
+        theme.colors.secondary_button,
+        SecondaryButton,
+    )
 }
 
 fn route_button<T: Component>(
+    theme: &UiTheme,
     text: impl Into<String>,
     target: AppScreen,
-    background: Color,
+    colors: ButtonColors,
     marker: T,
 ) -> impl Bundle {
     (
@@ -73,27 +89,28 @@ fn route_button<T: Component>(
         RouteButton { target },
         marker,
         Node {
-            min_width: px(112),
-            height: px(46),
+            min_width: px(theme.button.min_width),
+            height: px(theme.button.height),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(18), px(0)),
-            border_radius: BorderRadius::all(px(6)),
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
             ..default()
         },
-        BackgroundColor(background),
+        BackgroundColor(colors.idle),
         children![(
             Text::new(text),
             TextFont {
-                font_size: 18.0,
+                font_size: theme.text.button,
                 ..default()
             },
-            TextColor(TEXT_PRIMARY),
+            TextColor(theme.colors.text_primary),
         )],
     )
 }
 
 fn update_button_visuals(
+    theme: Res<UiTheme>,
     mut buttons: Query<
         (
             &Interaction,
@@ -109,13 +126,16 @@ fn update_button_visuals(
             continue;
         }
 
-        *background = match (*interaction, is_primary) {
-            (Interaction::Pressed, true) => PRIMARY_BUTTON_PRESSED.into(),
-            (Interaction::Hovered, true) => PRIMARY_BUTTON_HOVERED.into(),
-            (Interaction::None, true) => PRIMARY_BUTTON.into(),
-            (Interaction::Pressed, false) => SECONDARY_BUTTON_PRESSED.into(),
-            (Interaction::Hovered, false) => SECONDARY_BUTTON_HOVERED.into(),
-            (Interaction::None, false) => SECONDARY_BUTTON.into(),
+        let colors = if is_primary {
+            theme.colors.primary_button
+        } else {
+            theme.colors.secondary_button
+        };
+
+        *background = match *interaction {
+            Interaction::Pressed => colors.pressed.into(),
+            Interaction::Hovered => colors.hovered.into(),
+            Interaction::None => colors.idle.into(),
         };
     }
 }
