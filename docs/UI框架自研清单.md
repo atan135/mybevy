@@ -19,6 +19,26 @@
 - 第一阶段不追求可视化编辑器完全替代代码。
 - 不把玩法实体、战斗逻辑和 UI 节点强耦合在同一套状态系统里。
 
+### 1.1 模式和界面的关系
+
+当前项目里的 `AppScreen` 名字容易让人误解为“屏幕上唯一存在的全屏 UI”。由于当前项目还没有历史遗留压力，后续 UI 框架设计中建议一步到位改为 App UI Mode。Rust 代码中建议命名为 `AppUiMode`，它表示当前所处的主流程或主模式，用来决定哪些玩法系统、默认 UI 和输入规则启用，而不是表示屏幕上只能存在一个界面。
+
+例如：
+
+- `AppUiMode::Login`：登录流程模式，默认显示登录页。
+- `AppUiMode::Lobby`：大厅流程模式，默认显示游戏列表页。
+- `AppUiMode::WanfaTouchRipple`：触控水波纹玩法模式，可以没有全屏 UI，只运行触控水波纹场景和必要 HUD。
+
+实际屏幕上同时存在的 UI 由 UI 框架自己的层级和栈管理：
+
+- 页面层：登录页、游戏列表页、玩法 HUD。
+- 弹窗层：确认框、设置面板、暂停菜单、网络错误弹窗。
+- Toast 层：顶部提示、短消息。
+- Loading 层：连接中、匹配中、资源加载中。
+- Debug 层：节点树、输入事件流、性能信息。
+
+因此，推荐直接把当前 `AppScreen` 重构为 `AppUiMode`，让它只负责主流程状态；同时新增 `UiLayer`、`UiScreenId`、`UiRouteCommand` 等框架概念来管理共存界面，避免把模式状态和具体 UI 页面混在一起。
+
 ## 2. 建议模块结构
 
 后续可以把 `project/src/game/ui/` 扩展为：
@@ -459,7 +479,9 @@ project/src/game/ui/
 - 建立 `UiFrameworkPlugin`，集中注册 theme、widgets、screen、input。
 - 明确 `screens/` 和 `ui/` 的职责边界。
 - 为所有页面根节点加统一 `UiScreenRoot` 或等价组件。
-- 保留当前 `AppScreen` 状态机，但补充页面栈设计文档。
+- 将当前 `AppScreen` 直接重命名并重构为 `AppUiMode`：它只表示主流程，不表示唯一全屏界面。
+- 将现有 `Login`、`GameList`、`TouchRipple` 的命名关系拆清楚：`AppUiMode::Login`、`AppUiMode::Lobby`、`AppUiMode::WanfaTouchRipple` 是流程状态；`UiScreenId::LoginPage`、`UiScreenId::GameListPage`、`UiScreenId::TouchRippleHud` 是实际 UI。
+- 补充页面层、弹窗层、Toast 层等共存 UI 的层级和栈设计文档。
 
 完成标志：
 
