@@ -19,6 +19,9 @@
 /.vscode/
 /.idea/
 
+# Local helper notes
+/local_help.txt
+
 # OS-generated files
 .DS_Store
 Thumbs.db
