@@ -5,7 +5,10 @@ use crate::game::{
     ui::{
         core::{UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot},
         style::UiTheme,
-        widgets::{primary_action_button, screen_label, screen_title, secondary_action_button},
+        widgets::{
+            DisabledButton, primary_action_button, screen_label, screen_title,
+            secondary_action_button,
+        },
     },
 };
 
@@ -60,7 +63,10 @@ pub(in crate::game) struct UiModalActionButton {
 pub(in crate::game) fn handle_modal_action_buttons(
     mut modal_results: MessageWriter<UiModalResult>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
-    buttons: Query<(&Interaction, &UiModalActionButton), (Changed<Interaction>, With<Button>)>,
+    buttons: Query<
+        (&Interaction, &UiModalActionButton),
+        (Changed<Interaction>, With<Button>, Without<DisabledButton>),
+    >,
 ) {
     for (interaction, action_button) in &buttons {
         if *interaction != Interaction::Pressed {

@@ -517,6 +517,7 @@ project/src/game/ui/
 - 弹窗能阻塞下层输入。
 - 返回行为优先关闭最上层 `Modal` 或 `Floating` panel。
 - `UiGallery` 能直接验证 Floating panel 和 `CloseTop` 行为。
+- 通用按钮能展示 disabled 状态，且禁用按钮不会触发业务 action。
 - 未命中 UI 的触控才进入 `ui_touch` 玩法。
 
 ### 阶段 2：主题、配置和热加载

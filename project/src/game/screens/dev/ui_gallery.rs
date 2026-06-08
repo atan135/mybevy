@@ -13,6 +13,7 @@ use crate::game::{
         },
         style::UiTheme,
         widgets::{
+            DisabledButton, disabled_primary_action_button, disabled_secondary_action_button,
             primary_action_button, screen_label, screen_title, secondary_action_button,
             secondary_route_button,
         },
@@ -115,6 +116,8 @@ pub(super) fn setup_ui_gallery(
                         .with_children(|buttons| {
                             buttons.spawn(primary_action_button(theme, "Primary"));
                             buttons.spawn(secondary_action_button(theme, "Secondary"));
+                            buttons.spawn(disabled_primary_action_button(theme, "Disabled"));
+                            buttons.spawn(disabled_secondary_action_button(theme, "Unavailable"));
                             buttons.spawn(primary_route_button_sample(theme));
                         });
                 });
@@ -158,7 +161,10 @@ pub(super) fn handle_ui_gallery_buttons(
     mut commands: Commands,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut route_commands: MessageWriter<UiRouteCommand>,
-    buttons: Query<(&Interaction, &GalleryActionButton), (Changed<Interaction>, With<Button>)>,
+    buttons: Query<
+        (&Interaction, &GalleryActionButton),
+        (Changed<Interaction>, With<Button>, Without<DisabledButton>),
+    >,
 ) {
     for (interaction, action) in &buttons {
         if *interaction != Interaction::Pressed {

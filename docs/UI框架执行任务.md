@@ -472,6 +472,8 @@ pub(in crate::game) struct UiInputState {
 - [x] `CloseTop` 能关闭最上层 `Modal` 或 `Floating` panel。
 - [x] 桌面 `Esc` 已接入 `CloseTop`。
 - [x] `UiGallery` 有 `GalleryFloating` 示例 panel，可用 `Show Floating`、`Close Top` 和 `Esc` 验证。
+- [x] 通用按钮支持 `disabled` 视觉状态，带 `DisabledButton` 的按钮不会触发路由、弹窗和页面 action。
+- [x] `UiGallery` 有禁用按钮样例，可验证 disabled 状态。
 - [x] mode 切换后不会留下旧 mode 的 panel 节点。
 - [x] `cargo fmt` 通过。
 - [x] `cargo check` 通过。
@@ -482,3 +484,10 @@ pub(in crate::game) struct UiInputState {
 - 已跑通 2：`UiGallery` 增加 `Show Floating` 和 `Close Top`，可打开 `UiPanelId::GalleryFloating` 示例 panel，并通过 `CloseTop`/`Esc` 关闭。
 - 已测试 3：`cargo fmt --check`、`cargo check`、`cargo build` 通过；以 `TOUCH_START_SCREEN=touch` 启动 `target/debug/project.exe` 后稳定运行 5 秒，确认 Touch Ripple 启动路径没有回归性崩溃。
 - 仍需人工窗口验证：在 Touch Ripple 场景中实际点击/拖动，确认水波纹视觉和 HUD 按钮输入拦截符合预期。
+
+### 按钮状态小闭环
+
+- 已新增 `DisabledButton` 标记和禁用按钮构建函数。
+- 通用按钮主题新增 `disabled` 色值，禁用按钮使用 muted 文本和禁用背景。
+- 路由按钮、弹窗按钮、Lobby Play 按钮和 `UiGallery` action 按钮都会跳过 `DisabledButton`。
+- `UiGallery` 的 Buttons 区域已增加 `Disabled` 和 `Unavailable` 样例。

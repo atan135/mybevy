@@ -8,6 +8,7 @@ use crate::game::{
         toast::{UiToast, UiToastRoot, close_toasts, spawn_toast, tick_toasts},
     },
     ui::style::UiTheme,
+    ui::widgets::DisabledButton,
 };
 
 pub(in crate::game) struct UiRouterPlugin;
@@ -45,7 +46,10 @@ pub(in crate::game) enum UiRouteCommand {
 
 fn handle_route_buttons(
     mut route_commands: MessageWriter<UiRouteCommand>,
-    buttons: Query<(&Interaction, &RouteButton), (Changed<Interaction>, With<Button>)>,
+    buttons: Query<
+        (&Interaction, &RouteButton),
+        (Changed<Interaction>, With<Button>, Without<DisabledButton>),
+    >,
 ) {
     for (interaction, route_button) in &buttons {
         if *interaction == Interaction::Pressed {

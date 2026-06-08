@@ -13,7 +13,10 @@ use crate::game::{
             UiModalResult, UiRouteCommand, UiToast,
         },
         style::UiTheme,
-        widgets::{primary_action_button, screen_label, screen_title, secondary_route_button},
+        widgets::{
+            DisabledButton, primary_action_button, screen_label, screen_title,
+            secondary_route_button,
+        },
     },
 };
 
@@ -137,7 +140,14 @@ pub(super) fn handle_game_list_touch_buttons(
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut route_commands: MessageWriter<UiRouteCommand>,
     mut modal_results: MessageReader<UiModalResult>,
-    play_buttons: Query<&Interaction, (Changed<Interaction>, With<TouchRipplePlayButton>)>,
+    play_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<TouchRipplePlayButton>,
+            Without<DisabledButton>,
+        ),
+    >,
 ) {
     if play_buttons
         .iter()

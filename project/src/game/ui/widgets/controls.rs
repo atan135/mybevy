@@ -19,6 +19,9 @@ pub(in crate::game) struct PrimaryButton;
 #[derive(Component)]
 pub(in crate::game) struct SecondaryButton;
 
+#[derive(Component)]
+pub(in crate::game) struct DisabledButton;
+
 pub(in crate::game) fn screen_title(
     theme: &UiTheme,
     text: impl Into<String>,
@@ -91,6 +94,20 @@ pub(in crate::game) fn secondary_action_button(
     action_button(theme, text, theme.colors.secondary_button, SecondaryButton)
 }
 
+pub(in crate::game) fn disabled_primary_action_button(
+    theme: &UiTheme,
+    text: impl Into<String>,
+) -> impl Bundle {
+    disabled_action_button(theme, text, theme.colors.primary_button, PrimaryButton)
+}
+
+pub(in crate::game) fn disabled_secondary_action_button(
+    theme: &UiTheme,
+    text: impl Into<String>,
+) -> impl Bundle {
+    disabled_action_button(theme, text, theme.colors.secondary_button, SecondaryButton)
+}
+
 fn route_button<T: Component>(
     theme: &UiTheme,
     text: impl Into<String>,
@@ -153,6 +170,37 @@ fn action_button<T: Component>(
     )
 }
 
+fn disabled_action_button<T: Component>(
+    theme: &UiTheme,
+    text: impl Into<String>,
+    colors: ButtonColors,
+    marker: T,
+) -> impl Bundle {
+    (
+        Button,
+        marker,
+        DisabledButton,
+        Node {
+            min_width: px(theme.button.min_width),
+            height: px(theme.button.height),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
+            ..default()
+        },
+        BackgroundColor(colors.disabled),
+        children![(
+            Text::new(text),
+            TextFont {
+                font_size: theme.text.button,
+                ..default()
+            },
+            TextColor(theme.colors.text_muted),
+        )],
+    )
+}
+
 fn update_button_visuals(
     theme: Res<UiTheme>,
     mut buttons: Query<
@@ -161,11 +209,12 @@ fn update_button_visuals(
             &mut BackgroundColor,
             Has<PrimaryButton>,
             Has<SecondaryButton>,
+            Has<DisabledButton>,
         ),
         (Changed<Interaction>, With<Button>),
     >,
 ) {
-    for (interaction, mut background, is_primary, is_secondary) in &mut buttons {
+    for (interaction, mut background, is_primary, is_secondary, is_disabled) in &mut buttons {
         if !is_primary && !is_secondary {
             continue;
         }
@@ -176,10 +225,14 @@ fn update_button_visuals(
             theme.colors.secondary_button
         };
 
-        *background = match *interaction {
-            Interaction::Pressed => colors.pressed.into(),
-            Interaction::Hovered => colors.hovered.into(),
-            Interaction::None => colors.idle.into(),
+        *background = if is_disabled {
+            colors.disabled.into()
+        } else {
+            match *interaction {
+                Interaction::Pressed => colors.pressed.into(),
+                Interaction::Hovered => colors.hovered.into(),
+                Interaction::None => colors.idle.into(),
+            }
         };
     }
 }
