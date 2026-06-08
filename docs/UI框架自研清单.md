@@ -37,7 +37,7 @@
 - Loading 层：连接中、匹配中、资源加载中。
 - Debug 层：节点树、输入事件流、性能信息。
 
-因此，推荐直接把当前 `AppScreen` 重构为 `AppUiMode`，让它只负责主流程状态；同时新增 `UiLayer`、`UiScreenId`、`UiRouteCommand` 等框架概念来管理共存界面，避免把模式状态和具体 UI 页面混在一起。
+因此，推荐直接把当前 `AppScreen` 重构为 `AppUiMode`，让它只负责主流程状态；同时新增 `UiPanelId`、`UiPanelKind`、`UiPanelRoot`、`UiPanelCommand`、`UiLayer` 等框架概念来管理共存界面，避免把模式状态和具体 UI 面板混在一起。
 
 ## 2. 建议模块结构
 
@@ -47,9 +47,9 @@
 project/src/game/ui/
   mod.rs
   framework.rs        # UI 框架插件入口，注册资源、事件、系统
-  screen.rs           # 页面注册、页面栈、页面生命周期
+  panel.rs            # Panel Manager：面板注册、面板集合、栈、生命周期和返回
   layer.rs            # UI 层级、弹窗、遮罩、顶层提示
-  router.rs           # 页面跳转、返回、深链参数
+  router.rs           # 主流程 mode 切换、返回、深链参数
   input.rs            # 输入命中测试、焦点、事件路由、输入拦截
   focus.rs            # 键盘/手柄焦点导航
   theme.rs            # 主题 token、颜色、字号、间距、圆角、动效参数
@@ -70,33 +70,37 @@ project/src/game/ui/
 
 ### 3.1 界面管理机制
 
-必须有。负责界面层级、显示隐藏、状态切换和返回行为。
+必须有。负责界面层级、显示隐藏、状态切换和返回行为。这里统一使用 Panel 概念：登录页、游戏列表页、玩法 HUD、暂停菜单、设置面板、Loading 遮罩和确认弹窗都属于不同类型的 panel；Toast 保持专用通知系统，不纳入 Panel Manager。
 
 需要支持：
 
-- 页面注册：用统一接口注册 `Login`、`GameList`、`TouchRipple`、`Settings` 等页面。
-- 页面生命周期：`on_enter`、`on_exit`、`on_pause`、`on_resume`、`on_refresh`。
-- 页面栈：`push`、`replace`、`pop`、`pop_to_root`、`pop_to(screen)`。
-- 模态弹窗：确认框、错误框、等待框、选择框，支持阻塞下层输入。
+- Panel 注册：用统一标识注册 `LoginPage`、`GameListPage`、`TouchRippleHud`、`TouchRipplePause`、`Settings` 等 panel。
+- Panel 生命周期：`on_open`、`on_close`、`on_hide`、`on_show`、`on_pause`、`on_resume`、`on_refresh`。
+- Panel 集合和栈：`Page` / `Hud` 常驻，`Floating` 可以多个共存，`Modal` 使用栈，`BlockingOverlay` 通常单例。
+- 模态弹窗：确认框、错误框、选择框，支持阻塞下层输入，并参与返回栈。
+- Loading 遮罩：作为 `BlockingOverlay` 纳入 Panel Manager，统一处理阻塞输入、关闭和 mode 切换清理。
 - 非模态面板：浮动菜单、详情面板、提示条，不阻塞全部输入。
-- 顶层系统 UI：Toast、Loading、网络状态、调试面板。
-- 统一清理：页面退出时自动 despawn 页面根节点和关联资源。
-- 参数传递：页面跳转时携带参数，例如房间 ID、返回目标、错误码。
+- 顶层系统 UI：Toast、网络状态、调试面板等；Toast 不纳入 Panel Manager，只保留专用通知生命周期。
+- 统一清理：mode 退出时自动 despawn 归属该 mode 的 panel 根节点和关联资源。
+- 参数传递：打开 panel 时携带参数，例如房间 ID、返回目标、错误码。
 
 建议抽象：
 
-- `UiScreenId`：页面标识。
+- `UiPanelId`：panel 标识。
+- `UiPanelKind`：`Page`、`Hud`、`Floating`、`Modal`、`BlockingOverlay`。
+- `UiPanelRoot`：panel 根节点组件，绑定 panel 标识、类型、归属 mode 和层级。
+- `UiPanelCommand`：打开、关闭、隐藏、显示、切换、关闭最上层、关闭某个 mode 的全部 panel。
+- `UiPanelState`：panel 当前状态。
 - `UiLayer`：背景层、页面层、弹窗层、Toast 层、调试层。
 - `UiRouteCommand`：打开、关闭、替换、返回。
-- `UiScreenRoot`：页面根节点组件，绑定页面和层级。
-- `UiScreenState`：页面当前状态。
 
 验收标准：
 
-- 任意页面可以通过统一命令打开和关闭。
+- 任意 panel 可以通过统一命令打开和关闭。
 - 弹窗打开时下层按钮不会误触。
-- 页面返回不会留下孤儿 UI 节点。
-- 页面切换可以选择立即切换或播放过渡动画。
+- 返回行为优先关闭最上层 `Modal` 或 `Floating` panel，再交给 mode 级返回逻辑。
+- mode 切换不会留下孤儿 UI 节点。
+- panel 切换可以选择立即切换或播放过渡动画。
 
 ### 3.2 UI 组件化
 
@@ -336,14 +340,14 @@ project/src/game/ui/
 - 布局边界：显示每个节点矩形、padding、border。
 - 输入事件流：按下、命中节点、冒泡路径、是否被消费。
 - 焦点调试：当前焦点、可导航节点、下一焦点目标。
-- 页面栈调试：当前页面、弹窗栈、路由历史。
+- Panel Manager 调试：当前常驻 panel、浮动 panel、modal 栈、阻塞 panel、路由历史。
 - 样式调试：最终使用的 token、样式类、状态样式。
 - i18n 调试：文案 key、实际文本、缺失 key。
 
 验收标准：
 
 - 能快速判断一次点击为什么没触发按钮。
-- 能看到当前页面栈和阻塞输入的顶层节点。
+- 能看到当前 panel 栈和阻塞输入的顶层节点。
 - 能定位布局溢出的节点。
 
 ### 3.12 性能检测机制
@@ -356,7 +360,7 @@ project/src/game/ui/
 - 每帧新增、删除、修改节点数量。
 - 文本更新次数。
 - 图片和字体资源加载数量。
-- 页面切换耗时。
+- panel 切换耗时。
 - 列表刷新耗时。
 - FPS、frame time、系统耗时。
 - 过度布局重算和整页重建。
@@ -365,14 +369,14 @@ project/src/game/ui/
 
 - 列表虚拟化，只生成可见项。
 - 对高频变化文本做节流，例如倒计时和网络延迟。
-- 避免每帧重建整个页面。
-- 常驻顶层 UI 和页面 UI 分层更新。
+- 避免每帧重建整个 panel。
+- 常驻顶层 UI 和业务 panel 分层更新。
 - 常用样式缓存，减少重复构造。
 
 验收标准：
 
 - 房间列表 100 条数据滚动稳定。
-- 页面切换没有明显卡顿。
+- panel 切换没有明显卡顿。
 - 调试面板能看到 UI 系统耗时和节点数量。
 
 ### 3.13 响应式布局和平台适配
@@ -478,32 +482,38 @@ project/src/game/ui/
 
 - 建立 `UiFrameworkPlugin`，集中注册 theme、widgets、screen、input。
 - 明确 `screens/` 和 `ui/` 的职责边界。
-- 为所有页面根节点加统一 `UiScreenRoot` 或等价组件。
+- 为所有页面根节点加统一 `UiPanelRoot` 或等价组件。
 - 将当前 `AppScreen` 直接重命名并重构为 `AppUiMode`：它只表示主流程，不表示唯一全屏界面。
-- 将现有 `Login`、`GameList`、`TouchRipple` 的命名关系拆清楚：`AppUiMode::Login`、`AppUiMode::Lobby`、`AppUiMode::WanfaTouchRipple` 是流程状态；`UiScreenId::LoginPage`、`UiScreenId::GameListPage`、`UiScreenId::TouchRippleHud` 是实际 UI。
-- 补充页面层、弹窗层、Toast 层等共存 UI 的层级和栈设计文档。
+- 将现有 `Login`、`GameList`、`TouchRipple` 的命名关系拆清楚：`AppUiMode::Login`、`AppUiMode::Lobby`、`AppUiMode::WanfaTouchRipple` 是流程状态；`UiPanelId::LoginPage`、`UiPanelId::GameListPage`、`UiPanelId::TouchRippleHud` 是实际 UI。
+- 补充页面层、弹窗层、Loading 层、Toast 层等共存 UI 的层级和 Panel Manager 设计文档。
 
 完成标志：
 
 - 现有页面功能不回退。
 - UI 插件入口清晰。
-- 页面根节点统一管理和清理。
+- panel 根节点统一管理和清理。
 
-### 阶段 1：页面栈、层级和通用控件
+### 阶段 1：Panel Manager、层级和通用控件
 
 目标：能开发常规游戏菜单和弹窗。
 
 任务：
 
-- 实现页面栈和弹窗层。
-- 实现统一按钮、文本、面板、Toast、Loading、确认弹窗。
+- 用 `UiPanelId`、`UiPanelKind`、`UiPanelRoot` 替换当前 `UiScreenId`、`UiScreenRoot`。
+- 实现 `UiPanelPlugin` 和 `UiPanelCommand`，统一处理 panel 打开、关闭、隐藏、显示、切换、关闭最上层和 mode 切换清理。
+- 实现 panel 集合和返回栈：`Page` / `Hud` 常驻，`Floating` 可以多个共存，`Modal` 使用栈，`BlockingOverlay` 通常单例。
+- 实现统一按钮、文本、视觉面板、Toast、Loading、确认弹窗。
+- Toast 保持专用通知系统，不纳入 Panel Manager。
+- Loading 作为 `BlockingOverlay` 纳入 Panel Manager。
+- 确认弹窗迁入 Panel Manager，弹窗内容仍可保留独立 `UiModal` 数据结构。
 - 实现按钮状态样式和禁用状态。
 - 实现 UI 输入拦截，避免 UI 和玩法触控冲突。
 
 完成标志：
 
-- 登录、游戏列表、设置、确认弹窗可通过统一接口打开。
+- 登录、游戏列表、玩法 HUD、设置、Loading、确认弹窗可通过统一 panel 命令打开或关闭。
 - 弹窗能阻塞下层输入。
+- 返回行为优先关闭最上层 `Modal` 或 `Floating` panel。
 - 未命中 UI 的触控才进入 `ui_touch` 玩法。
 
 ### 阶段 2：主题、配置和热加载
@@ -547,13 +557,13 @@ project/src/game/ui/
 任务：
 
 - 实现通用 UI 动画系统。
-- 实现页面过渡和弹窗动效。
-- 实现节点树、布局边界、页面栈、焦点调试。
+- 实现 panel 过渡和弹窗动效。
+- 实现节点树、布局边界、panel 栈、焦点调试。
 - 实现 UI 性能统计。
 
 完成标志：
 
-- 页面切换和弹窗出现有统一动效。
+- panel 切换和弹窗出现有统一动效。
 - 可以定位布局、输入、焦点问题。
 - 能看到节点数量、刷新次数和 UI 系统耗时。
 
@@ -580,15 +590,15 @@ project/src/game/ui/
 P0，先做：
 
 - `UiFrameworkPlugin`
-- 页面根节点和统一清理
-- 页面层级和弹窗层
+- panel 根节点和统一清理
+- panel 层级和弹窗层
 - 统一按钮、文本、面板、Toast、Loading
 - 输入拦截，保护当前 `ui_touch` 玩法
 - 主题 token 继续完善
 
 P1，随后做：
 
-- 页面栈和路由参数
+- panel 栈和路由参数
 - 配置加载和热加载
 - i18n 基础能力
 - 焦点系统和键盘/手柄导航
@@ -614,7 +624,7 @@ P3，按团队规模决定：
 - 先覆盖登录、列表、弹窗、设置这些真实页面，再做抽象扩展。
 - 控件输出事件，业务系统消费事件，避免控件直接改业务资源。
 - 样式用语义 token，不在页面里散落颜色和字号。
-- 页面重建和局部刷新要有边界，高频数据不要整页刷新。
+- panel 重建和局部刷新要有边界，高频数据不要整页刷新。
 - 输入路由必须优先于玩法输入，尤其是当前触控玩法。
 - 调试能力要跟框架一起做，不能等 UI 复杂后再补。
 - 每个阶段都保留可运行示例页面，避免框架只存在于抽象代码里。
@@ -624,12 +634,12 @@ P3，按团队规模决定：
 UI 框架的最小可用版本建议包含：
 
 - 一个统一 `UiFrameworkPlugin`。
-- 一个页面栈或页面路由资源。
+- 一个 Panel Manager 资源。
 - 至少三个层级：页面层、弹窗层、Toast 层。
 - 通用按钮、文本、面板、Loading、Toast、确认弹窗。
 - 统一主题 token。
 - UI 输入拦截和焦点预留。
-- 页面根节点统一清理。
+- panel 根节点统一清理。
 - 一个 `UiGallery` 示例页面。
 
 达到这个版本后，再继续投入配置化、热加载、复杂控件、编辑器和性能工具，收益会更稳定。

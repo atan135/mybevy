@@ -327,3 +327,142 @@ Toast 需要能显示文本、挂到 Toast 层并自动消失。
 - Loading 遮罩。
 - `UiGallery` 示例页面。
 - 更完整的 `UiInputState` 命中和遮罩阻塞规则。
+
+## 下一阶段任务：Panel Manager
+
+### 目标
+
+在 `AppUiMode` 之下建立真正的界面 panel 管理机制。`AppUiMode` 只表示主流程；当前 mode 下实际存在的登录页、游戏列表页、玩法 HUD、设置面板、暂停菜单、Loading 遮罩和确认弹窗，由 Panel Manager 统一管理。
+
+本阶段已确认：
+
+1. 用 `UiPanelId`、`UiPanelKind`、`UiPanelRoot` 替换 `UiScreenId`、`UiScreenRoot`。
+2. Toast 不纳入 Panel Manager，继续作为专用通知系统，挂在 Toast 层并自动消失。
+3. Loading 纳入 Panel Manager，作为 `BlockingOverlay` 处理输入阻塞和生命周期。
+4. Confirm modal 迁入 Panel Manager；弹窗内容数据结构可以继续保留在 modal 模块中。
+
+### 建议文件改动
+
+新增或调整：
+
+- `project/src/game/ui/core/panel.rs`
+- `project/src/game/ui/core/mod.rs`
+- `project/src/game/ui/core/framework.rs`
+- `project/src/game/ui/core/input.rs`
+- `project/src/game/ui/overlays/router.rs`
+- `project/src/game/ui/overlays/loading.rs`
+- `project/src/game/ui/overlays/modal.rs`
+- `project/src/game/screens/**/*.rs`
+
+如果迁移后 `screen.rs` 不再有独立价值，应删除或改名为 `panel.rs`，避免 `Screen` 和 `Panel` 两套概念长期并存。
+
+### 建议抽象
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(in crate::game) enum UiPanelId {
+    LoginPage,
+    GameListPage,
+    UiGalleryPage,
+    TouchRippleHud,
+    TouchRipplePause,
+    TouchRippleSettings,
+    GlobalLoading,
+    ConfirmModal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(in crate::game) enum UiPanelKind {
+    Page,
+    Hud,
+    Floating,
+    Modal,
+    BlockingOverlay,
+}
+
+#[derive(Component)]
+pub(in crate::game) struct UiPanelRoot {
+    pub id: UiPanelId,
+    pub kind: UiPanelKind,
+    pub owner_mode: Option<AppUiMode>,
+}
+
+#[derive(Message)]
+pub(in crate::game) enum UiPanelCommand {
+    Open(UiPanelRequest),
+    Close(UiPanelId),
+    Toggle(UiPanelRequest),
+    Hide(UiPanelId),
+    Show(UiPanelId),
+    CloseTop,
+    CloseAllForMode(AppUiMode),
+}
+```
+
+`UiPanelRequest` 用于承载打开 panel 所需的数据。第一版可以先支持：
+
+- `UiPanelRequest::Loading(UiLoading)`
+- `UiPanelRequest::Confirm(UiConfirmModal)`
+
+页面类 panel 仍由 `OnEnter(AppUiMode)` 创建也可以接受，但根节点必须统一标记为 `UiPanelRoot`。后续再决定是否把页面类 panel 也完全改成命令式打开。
+
+### 行为规则
+
+- `Page` / `Hud`：通常随 `AppUiMode` 进入而创建，随 mode 退出清理。
+- `Floating`：可以多个共存，参与 `CloseTop`。
+- `Modal`：使用栈结构，打开时阻塞下层 UI 和玩法输入。
+- `BlockingOverlay`：通常单例，打开时阻塞下层 UI 和玩法输入；Loading 属于这一类。
+- `Toast`：不参与 Panel Manager，不进入返回栈，不阻塞输入。
+
+返回键 / Esc 的优先级：
+
+1. 如果最上层是允许取消的 `BlockingOverlay`，关闭它；否则忽略返回。
+2. 如果存在 `Modal`，关闭最上层 modal。
+3. 如果存在 `Floating`，关闭最上层 floating panel。
+4. 都没有时，交给 mode 级返回逻辑，例如玩法返回 Lobby。
+
+### 输入拦截
+
+`UiInputState` 应扩展为：
+
+```rust
+#[derive(Resource, Default)]
+pub(in crate::game) struct UiInputState {
+    pub pointer_blocked: bool,
+    pub focused_panel: Option<UiPanelId>,
+    pub top_blocking_panel: Option<UiPanelId>,
+}
+```
+
+更新规则：
+
+- 任意按钮 hover / pressed 时，`pointer_blocked = true`。
+- 存在 `Modal` 或 `BlockingOverlay` 时，`pointer_blocked = true`。
+- `top_blocking_panel` 指向当前最高优先级阻塞 panel。
+- 玩法输入只读取 `UiInputState`，不直接扫描 UI 节点。
+
+### 执行顺序
+
+1. 新增 `panel.rs`，定义 `UiPanelId`、`UiPanelKind`、`UiPanelRoot`、`UiPanelCommand` 和基础状态资源。
+2. 将 `UiScreenId`、`UiScreenRoot` 替换为 `UiPanelId`、`UiPanelRoot`。
+3. 将 `UiScreenPlugin` 替换为 `UiPanelPlugin`，并挂入 `UiFrameworkPlugin`。
+4. 迁移登录页、游戏列表页、玩法 HUD、UiGallery 页的根节点标记。
+5. 将 Loading 从专用 overlay 命令迁入 `UiPanelCommand::Open(UiPanelRequest::Loading(...))`。
+6. 将 Confirm modal 从 `UiRouteCommand::OpenModal` 迁入 `UiPanelCommand::Open(UiPanelRequest::Confirm(...))`。
+7. 保留 Toast 的 `UiRouteCommand::ShowToast` 或改成独立 `UiToastCommand`，但不纳入 Panel Manager。
+8. 扩展 `UiInputState`，由 Panel Manager 提供当前最高阻塞 panel 信息。
+9. 实现 `CloseTop`，后续再接入 Esc / Android Back。
+10. 跑 `cargo fmt`、`cargo check`，并手动验证 Login、Lobby、UiGallery、Touch Ripple、Toast、Loading、Confirm。
+
+### 验收清单
+
+- [ ] 代码中不再使用 `UiScreenId` 和 `UiScreenRoot`。
+- [ ] 页面、HUD、Loading、Confirm 的根节点统一使用 `UiPanelRoot`。
+- [ ] Loading 通过 Panel Manager 打开和关闭，并阻塞下层输入。
+- [ ] Confirm modal 通过 Panel Manager 打开和关闭，并发出结果事件。
+- [ ] Toast 仍能显示并自动消失，且不进入 panel 栈。
+- [ ] `UiInputState.top_blocking_panel` 能反映当前阻塞输入的 panel。
+- [ ] `CloseTop` 能关闭最上层 `Modal` 或 `Floating` panel。
+- [ ] mode 切换后不会留下旧 mode 的 panel 节点。
+- [ ] `cargo fmt` 通过。
+- [ ] `cargo check` 通过。
