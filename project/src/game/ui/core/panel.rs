@@ -3,12 +3,14 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::AppUiMode,
     ui::{
+        core::{UiLayer, UiLayerRoot},
         overlays::{
             loading::{UiLoading, spawn_loading},
             modal::{UiConfirmModal, spawn_confirm_modal},
             router::UiRouteSystems,
         },
         style::UiTheme,
+        widgets::{screen_label, screen_title},
     },
 };
 
@@ -21,7 +23,8 @@ impl Plugin for UiPanelPlugin {
             .configure_sets(Update, UiPanelSystems::Commands)
             .add_systems(
                 Update,
-                handle_panel_commands
+                (write_close_top_on_escape, handle_panel_commands)
+                    .chain()
                     .in_set(UiPanelSystems::Commands)
                     .after(UiRouteSystems::Commands),
             );
@@ -39,6 +42,7 @@ pub(in crate::game) enum UiPanelId {
     LoginPage,
     GameListPage,
     UiGalleryPage,
+    GalleryFloating,
     TouchRippleHud,
     TouchRipplePause,
     TouchRippleSettings,
@@ -68,6 +72,15 @@ pub(in crate::game) struct UiPanelRoot {
 pub(in crate::game) enum UiPanelRequest {
     Loading(UiLoading),
     Confirm(UiConfirmModal),
+    Floating(UiFloatingPanel),
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::game) struct UiFloatingPanel {
+    pub id: UiPanelId,
+    pub title: String,
+    pub body: String,
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, Debug, Message)]
@@ -175,6 +188,9 @@ fn open_panel(
         UiPanelRequest::Confirm(confirm) => {
             spawn_confirm_modal(commands, theme, confirm, Some(*current_mode.get()));
         }
+        UiPanelRequest::Floating(floating) => {
+            spawn_floating_panel(commands, theme, floating, Some(*current_mode.get()));
+        }
     }
 
     if matches!(kind, UiPanelKind::Floating | UiPanelKind::Modal) {
@@ -214,15 +230,31 @@ fn close_top_panel(
     panel_roots: &Query<(Entity, &UiPanelRoot)>,
     stack: &mut UiPanelStack,
 ) {
-    while let Some(entry) = stack.open_order.pop() {
-        if !matches!(entry.kind, UiPanelKind::Floating | UiPanelKind::Modal) {
-            continue;
-        }
+    if close_top_panel_of_kind(commands, panel_roots, stack, UiPanelKind::Modal) {
+        return;
+    }
 
+    close_top_panel_of_kind(commands, panel_roots, stack, UiPanelKind::Floating);
+}
+
+fn close_top_panel_of_kind(
+    commands: &mut Commands,
+    panel_roots: &Query<(Entity, &UiPanelRoot)>,
+    stack: &mut UiPanelStack,
+    kind: UiPanelKind,
+) -> bool {
+    while let Some(index) = stack
+        .open_order
+        .iter()
+        .rposition(|entry| entry.kind == kind)
+    {
+        let entry = stack.open_order.remove(index);
         if close_panel_by_id(commands, panel_roots, entry.id) {
-            break;
+            return true;
         }
     }
+
+    false
 }
 
 fn panel_exists(panel_roots: &Query<(Entity, &UiPanelRoot)>, id: UiPanelId) -> bool {
@@ -250,6 +282,7 @@ impl UiPanelRequest {
         match self {
             UiPanelRequest::Loading(_) => UiPanelId::GlobalLoading,
             UiPanelRequest::Confirm(_) => UiPanelId::ConfirmModal,
+            UiPanelRequest::Floating(floating) => floating.id,
         }
     }
 
@@ -257,6 +290,71 @@ impl UiPanelRequest {
         match self {
             UiPanelRequest::Loading(_) => UiPanelKind::BlockingOverlay,
             UiPanelRequest::Confirm(_) => UiPanelKind::Modal,
+            UiPanelRequest::Floating(_) => UiPanelKind::Floating,
         }
     }
+}
+
+fn write_close_top_on_escape(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut panel_commands: MessageWriter<UiPanelCommand>,
+) {
+    if keyboard.just_pressed(KeyCode::Escape) {
+        panel_commands.write(UiPanelCommand::CloseTop);
+    }
+}
+
+fn spawn_floating_panel(
+    commands: &mut Commands,
+    theme: &UiTheme,
+    floating: &UiFloatingPanel,
+    owner_mode: Option<AppUiMode>,
+) {
+    commands
+        .spawn((
+            UiPanelRoot {
+                id: floating.id,
+                kind: UiPanelKind::Floating,
+                owner_mode,
+            },
+            UiLayerRoot {
+                layer: UiLayer::Floating,
+            },
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(theme.layout.screen_padding),
+                top: px(96),
+                width: px(340),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(theme.layout.card_gap),
+                padding: UiRect::all(px(theme.panel.padding)),
+                border: UiRect::all(px(theme.panel.border)),
+                border_radius: BorderRadius::all(px(theme.panel.radius)),
+                ..default()
+            },
+            ZIndex(80),
+            BackgroundColor(theme.colors.panel_background),
+            BorderColor::all(theme.colors.panel_border),
+        ))
+        .with_children(|panel| {
+            panel.spawn(screen_title(
+                theme,
+                floating.title.clone(),
+                theme.text.subtitle,
+            ));
+            panel.spawn(screen_label(
+                floating.body.clone(),
+                theme.text.body,
+                theme.colors.text_primary,
+            ));
+
+            if let Some(detail) = &floating.detail {
+                panel.spawn(screen_label(
+                    detail.clone(),
+                    theme.text.caption,
+                    theme.colors.text_muted,
+                ));
+            }
+        });
 }

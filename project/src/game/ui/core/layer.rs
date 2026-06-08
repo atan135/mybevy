@@ -9,6 +9,7 @@ impl Plugin for UiLayerPlugin {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(in crate::game) enum UiLayer {
     Page,
+    Floating,
     Modal,
     Loading,
     Toast,

@@ -4,8 +4,8 @@ use crate::game::{
     navigation::AppUiMode,
     ui::{
         core::{
-            UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
-            UiPanelRoot,
+            UiFloatingPanel, UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind,
+            UiPanelRequest, UiPanelRoot,
         },
         overlays::{
             UiConfirmModal, UiLoading, UiModalAction, UiModalActionSpec, UiModalActionStyle,
@@ -25,6 +25,8 @@ pub(super) enum GalleryActionButton {
     ShowLoading,
     HideLoading,
     Confirm,
+    Floating,
+    CloseTop,
 }
 
 #[derive(Resource)]
@@ -139,6 +141,14 @@ pub(super) fn setup_ui_gallery(
                                 primary_action_button(theme, "Show Confirm"),
                                 GalleryActionButton::Confirm,
                             ));
+                            buttons.spawn((
+                                secondary_action_button(theme, "Show Floating"),
+                                GalleryActionButton::Floating,
+                            ));
+                            buttons.spawn((
+                                secondary_action_button(theme, "Close Top"),
+                                GalleryActionButton::CloseTop,
+                            ));
                         });
                 });
         });
@@ -175,6 +185,14 @@ pub(super) fn handle_ui_gallery_buttons(
                 panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
                     gallery_confirm_modal(),
                 )));
+            }
+            GalleryActionButton::Floating => {
+                panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Floating(
+                    gallery_floating_panel(),
+                )));
+            }
+            GalleryActionButton::CloseTop => {
+                panel_commands.write(UiPanelCommand::CloseTop);
             }
         }
     }
@@ -280,5 +298,14 @@ fn gallery_confirm_modal() -> UiConfirmModal {
                 style: UiModalActionStyle::Primary,
             },
         ],
+    }
+}
+
+fn gallery_floating_panel() -> UiFloatingPanel {
+    UiFloatingPanel {
+        id: UiPanelId::GalleryFloating,
+        title: "Floating Panel".to_string(),
+        body: "This panel does not cover the whole page.".to_string(),
+        detail: Some("Use Close Top or Esc to close it.".to_string()),
     }
 }

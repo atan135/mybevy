@@ -20,7 +20,7 @@ Rust 代码命名建议使用 `AppUiMode`，而不是 `AppUIMode`。原因是 Ru
 - 新增 `UiFrameworkPlugin`，集中注册 UI 框架相关插件、资源、事件和系统。
 - 新增 UI 框架基础模块：
   - `framework.rs`
-  - `screen.rs`
+  - `panel.rs`
   - `layer.rs`
   - `router.rs`
   - `input.rs`
@@ -92,7 +92,7 @@ pub(super) enum AppUiMode {
 - 由 `UiFrameworkPlugin` 统一注册：
   - `UiThemePlugin`
   - `UiWidgetsPlugin`
-  - `UiScreenPlugin`
+  - `UiPanelPlugin`
   - `UiLayerPlugin`
   - `UiRouterPlugin`
   - `UiInputPlugin`
@@ -103,11 +103,11 @@ pub(super) enum AppUiMode {
 - UI 相关插件入口集中。
 - 后续新增 UI 框架能力只需要挂到 `UiFrameworkPlugin`。
 
-### 3. UI 屏幕和根节点
+### 3. UI Panel 和根节点
 
 文件：
 
-- `project/src/game/ui/screen.rs`
+- `project/src/game/ui/core/panel.rs`
 - `project/src/game/screens/auth/login.rs`
 - `project/src/game/screens/lobby/game_list.rs`
 - 后续可能涉及 `project/src/game/screens/gameplay/*`
@@ -115,29 +115,31 @@ pub(super) enum AppUiMode {
 建议抽象：
 
 ```rust
-pub(super) enum UiScreenId {
+pub(super) enum UiPanelId {
     LoginPage,
     GameListPage,
     TouchRippleHud,
 }
 
 #[derive(Component)]
-pub(super) struct UiScreenRoot {
-    pub id: UiScreenId,
+pub(super) struct UiPanelRoot {
+    pub id: UiPanelId,
+    pub kind: UiPanelKind,
+    pub owner_mode: Option<AppUiMode>,
 }
 ```
 
 任务：
 
-- 页面根节点统一添加 `UiScreenRoot`。
-- 登录页根节点使用 `UiScreenId::LoginPage`。
-- 游戏列表页根节点使用 `UiScreenId::GameListPage`。
-- `AppUiMode::WanfaTouchRipple` 进入后生成一个最小 `UiScreenId::TouchRippleHud` 根节点。第一版可以只作为 HUD 容器，不需要放实际按钮。
+- 页面和 HUD 根节点统一添加 `UiPanelRoot`。
+- 登录页根节点使用 `UiPanelId::LoginPage`。
+- 游戏列表页根节点使用 `UiPanelId::GameListPage`。
+- `AppUiMode::WanfaTouchRipple` 进入后生成一个最小 `UiPanelId::TouchRippleHud` 根节点。第一版可以只作为 HUD 容器，也可以放基础返回按钮。
 
 验收：
 
-- 能通过查询 `UiScreenRoot` 找到当前存在的 UI 页面根节点。
-- 页面退出后不会留下孤儿 UI 根节点。
+- 能通过查询 `UiPanelRoot` 找到当前存在的 UI 页面或 HUD 根节点。
+- mode 退出后不会留下归属该 mode 的孤儿 UI 根节点。
 
 ### 4. UI 层级
 
@@ -271,7 +273,7 @@ pub(super) struct UiInputState {
 
 1. 重构 `AppScreen` -> `AppUiMode`，确保功能不变。
 2. 新增 `UiFrameworkPlugin`，集中注册现有 UI 插件。
-3. 新增 `screen.rs`，给现有页面加 `UiScreenRoot`。
+3. 新增 `panel.rs`，给现有页面和 HUD 加 `UiPanelRoot`。
 4. 新增 `layer.rs`，定义页面层、弹窗层、Toast 层。
 5. 新增 `router.rs`，让按钮通过 `UiRouteCommand` 切换 `AppUiMode`。
 6. 新增 `input.rs`，把玩法触控输入拦截改为读取 `UiInputState`。
@@ -282,19 +284,19 @@ pub(super) struct UiInputState {
 
 ## 验收清单
 
-- [ ] `project/src/game/navigation/mod.rs` 中类型名已改为 `AppUiMode`。
-- [ ] `project/src/game/plugin.rs` 中玩法系统使用 `AppUiMode::WanfaTouchRipple`。
+- [x] `project/src/game/navigation/mod.rs` 中类型名已改为 `AppUiMode`。
+- [x] `project/src/game/plugin.rs` 中玩法系统使用 `AppUiMode::WanfaTouchRipple`。
 - [ ] 登录页进入大厅可用。
 - [ ] 大厅进入触控玩法可用。
 - [ ] 触控玩法中鼠标/触控水波纹仍可用。
 - [ ] UI 按钮输入不会被玩法触控重复消费。
-- [ ] 页面根节点带有 `UiScreenRoot`。
-- [ ] 触控玩法模式有 `UiScreenId::TouchRippleHud` 根节点。
+- [x] 页面根节点带有 `UiPanelRoot`。
+- [x] 触控玩法模式有 `UiPanelId::TouchRippleHud` 根节点。
 - [ ] Toast 可以显示并自动消失。
 - [ ] 确认弹窗可以打开、关闭并阻塞下层输入。
-- [ ] UI 框架入口集中在 `UiFrameworkPlugin`。
-- [ ] `cargo fmt` 通过。
-- [ ] `cargo check` 通过。
+- [x] UI 框架入口集中在 `UiFrameworkPlugin`。
+- [x] `cargo fmt` 通过。
+- [x] `cargo check` 通过。
 
 ## 已确认决策
 
@@ -314,7 +316,7 @@ Toast 需要能显示文本、挂到 Toast 层并自动消失。
 
 确认弹窗需要遮罩、确认/取消按钮、结果事件和输入阻塞。
 
-5. 关于 `UiScreenId::TouchRippleHud`。
+5. 关于 `UiPanelId::TouchRippleHud`。
 
 这个问题的意思是：进入触控水波纹模式时，是否创建一个属于玩法 HUD 的 UI 根节点。它不等于全屏页面，也不一定要有可见内容；它只是给暂停按钮、网络状态条、调试入口等玩法内 UI 预留挂载位置。
 
@@ -364,6 +366,7 @@ pub(in crate::game) enum UiPanelId {
     LoginPage,
     GameListPage,
     UiGalleryPage,
+    GalleryFloating,
     TouchRippleHud,
     TouchRipplePause,
     TouchRippleSettings,
@@ -403,13 +406,14 @@ pub(in crate::game) enum UiPanelCommand {
 
 - `UiPanelRequest::Loading(UiLoading)`
 - `UiPanelRequest::Confirm(UiConfirmModal)`
+- `UiPanelRequest::Floating(UiFloatingPanel)`
 
 页面类 panel 仍由 `OnEnter(AppUiMode)` 创建也可以接受，但根节点必须统一标记为 `UiPanelRoot`。后续再决定是否把页面类 panel 也完全改成命令式打开。
 
 ### 行为规则
 
 - `Page` / `Hud`：通常随 `AppUiMode` 进入而创建，随 mode 退出清理。
-- `Floating`：可以多个共存，参与 `CloseTop`。
+- `Floating`：可以多个共存，参与 `CloseTop`，不阻塞全局 pointer 输入。
 - `Modal`：使用栈结构，打开时阻塞下层 UI 和玩法输入。
 - `BlockingOverlay`：通常单例，打开时阻塞下层 UI 和玩法输入；Loading 属于这一类。
 - `Toast`：不参与 Panel Manager，不进入返回栈，不阻塞输入。
@@ -420,6 +424,8 @@ pub(in crate::game) enum UiPanelCommand {
 2. 如果存在 `Modal`，关闭最上层 modal。
 3. 如果存在 `Floating`，关闭最上层 floating panel。
 4. 都没有时，交给 mode 级返回逻辑，例如玩法返回 Lobby。
+
+当前第一版已接入桌面 `Esc`，行为等价于发送 `UiPanelCommand::CloseTop`。Android Back 后续接入同一条命令链路。
 
 ### 输入拦截
 
@@ -451,8 +457,9 @@ pub(in crate::game) struct UiInputState {
 6. 将 Confirm modal 从 `UiRouteCommand::OpenModal` 迁入 `UiPanelCommand::Open(UiPanelRequest::Confirm(...))`。
 7. 保留 Toast 的 `UiRouteCommand::ShowToast` 或改成独立 `UiToastCommand`，但不纳入 Panel Manager。
 8. 扩展 `UiInputState`，由 Panel Manager 提供当前最高阻塞 panel 信息。
-9. 实现 `CloseTop`，后续再接入 Esc / Android Back。
-10. 跑 `cargo fmt`、`cargo check`，并手动验证 Login、Lobby、UiGallery、Touch Ripple、Toast、Loading、Confirm。
+9. 实现 `CloseTop`，并接入桌面 `Esc`。
+10. 在 `UiGallery` 增加 `GalleryFloating` 示例 panel，用 `Show Floating`、`Close Top` 和 `Esc` 验证 floating 栈行为。
+11. 跑 `cargo fmt`、`cargo check`，并手动验证 Login、Lobby、UiGallery、Touch Ripple、Toast、Loading、Confirm。
 
 ### 验收清单
 
@@ -463,6 +470,15 @@ pub(in crate::game) struct UiInputState {
 - [x] Toast 仍能显示并自动消失，且不进入 panel 栈。
 - [x] `UiInputState.top_blocking_panel` 能反映当前阻塞输入的 panel。
 - [x] `CloseTop` 能关闭最上层 `Modal` 或 `Floating` panel。
+- [x] 桌面 `Esc` 已接入 `CloseTop`。
+- [x] `UiGallery` 有 `GalleryFloating` 示例 panel，可用 `Show Floating`、`Close Top` 和 `Esc` 验证。
 - [x] mode 切换后不会留下旧 mode 的 panel 节点。
 - [x] `cargo fmt` 通过。
 - [x] `cargo check` 通过。
+
+### 本轮验证记录
+
+- 已跑通 1：桌面 `Esc` 会写入 `UiPanelCommand::CloseTop`，`CloseTop` 优先关闭最上层 `Modal`，没有 modal 时关闭最上层 `Floating`。
+- 已跑通 2：`UiGallery` 增加 `Show Floating` 和 `Close Top`，可打开 `UiPanelId::GalleryFloating` 示例 panel，并通过 `CloseTop`/`Esc` 关闭。
+- 已测试 3：`cargo fmt --check`、`cargo check`、`cargo build` 通过；以 `TOUCH_START_SCREEN=touch` 启动 `target/debug/project.exe` 后稳定运行 5 秒，确认 Touch Ripple 启动路径没有回归性崩溃。
+- 仍需人工窗口验证：在 Touch Ripple 场景中实际点击/拖动，确认水波纹视觉和 HUD 按钮输入拦截符合预期。
