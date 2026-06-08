@@ -14,10 +14,10 @@ impl Plugin for UiWidgetsPlugin {
 }
 
 #[derive(Component)]
-struct PrimaryButton;
+pub(in crate::game) struct PrimaryButton;
 
 #[derive(Component)]
-struct SecondaryButton;
+pub(in crate::game) struct SecondaryButton;
 
 pub(in crate::game) fn screen_title(
     theme: &UiTheme,
@@ -77,6 +77,20 @@ pub(in crate::game) fn secondary_route_button(
     )
 }
 
+pub(in crate::game) fn primary_action_button(
+    theme: &UiTheme,
+    text: impl Into<String>,
+) -> impl Bundle {
+    action_button(theme, text, theme.colors.primary_button, PrimaryButton)
+}
+
+pub(in crate::game) fn secondary_action_button(
+    theme: &UiTheme,
+    text: impl Into<String>,
+) -> impl Bundle {
+    action_button(theme, text, theme.colors.secondary_button, SecondaryButton)
+}
+
 fn route_button<T: Component>(
     theme: &UiTheme,
     text: impl Into<String>,
@@ -87,6 +101,36 @@ fn route_button<T: Component>(
     (
         Button,
         RouteButton { target },
+        marker,
+        Node {
+            min_width: px(theme.button.min_width),
+            height: px(theme.button.height),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
+            ..default()
+        },
+        BackgroundColor(colors.idle),
+        children![(
+            Text::new(text),
+            TextFont {
+                font_size: theme.text.button,
+                ..default()
+            },
+            TextColor(theme.colors.text_primary),
+        )],
+    )
+}
+
+fn action_button<T: Component>(
+    theme: &UiTheme,
+    text: impl Into<String>,
+    colors: ButtonColors,
+    marker: T,
+) -> impl Bundle {
+    (
+        Button,
         marker,
         Node {
             min_width: px(theme.button.min_width),

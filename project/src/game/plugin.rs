@@ -64,6 +64,7 @@ impl Plugin for GamePlugin {
             .init_resource::<TouchInputState>()
             .init_resource::<TouchReplayState>()
             .init_resource::<TouchMyServerJoinState>()
+            .init_resource::<TouchLaunchMode>()
             .add_systems(Startup, (setup_camera, setup_touch_assets))
             .add_systems(OnEnter(AppScreen::TouchRipple), setup_touch_ripple_scene)
             .add_systems(OnExit(AppScreen::TouchRipple), reset_touch_sync_state)
@@ -131,6 +132,13 @@ struct TouchSyncConfig {
     auto_start_local_authority: bool,
     local_player_id: String,
     myserver_room_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Resource)]
+pub(in crate::game) enum TouchLaunchMode {
+    #[default]
+    Auto,
+    SinglePlayer,
 }
 
 impl Default for TouchSyncConfig {
@@ -328,6 +336,7 @@ fn setup_touch_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>)
 fn setup_touch_ripple_scene(
     mut commands: Commands,
     config: Res<TouchSyncConfig>,
+    launch_mode: Res<TouchLaunchMode>,
     session: Res<AuthoritySession>,
     mut authority_commands: MessageWriter<AuthorityCommand>,
     mut myserver_commands: MessageWriter<MyServerCommand>,
@@ -341,6 +350,17 @@ fn setup_touch_ripple_scene(
         Transform::from_xyz(0.0, 0.0, -1.0),
         Background,
     ));
+
+    if *launch_mode == TouchLaunchMode::SinglePlayer {
+        myserver_commands.write(MyServerCommand::Disconnect);
+        if session.role.is_some_and(|role| role != AuthorityRole::None) {
+            authority_commands.write(AuthorityCommand::Leave);
+        }
+        authority_commands.write(AuthorityCommand::HostLocal {
+            player_id: config.local_player_id.clone(),
+        });
+        return;
+    }
 
     if session.role.is_none() || session.role == Some(AuthorityRole::None) {
         if let Some(endpoint) = authority_endpoint_from_env() {

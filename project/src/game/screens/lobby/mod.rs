@@ -11,6 +11,10 @@ impl Plugin for LobbyScreensPlugin {
         app.add_systems(
             OnEnter(AppScreen::GameList),
             game_list::setup_game_list_screen,
+        )
+        .add_systems(
+            Update,
+            game_list::handle_game_list_touch_buttons.run_if(in_state(AppScreen::GameList)),
         );
     }
 }
