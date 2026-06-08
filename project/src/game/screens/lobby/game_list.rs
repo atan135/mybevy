@@ -14,7 +14,7 @@ use crate::game::{
         },
         style::UiTheme,
         widgets::{
-            DisabledButton, primary_action_button, screen_label, screen_title,
+            DisabledButton, LoadingButton, primary_action_button, screen_label, screen_title,
             secondary_route_button,
         },
     },
@@ -146,6 +146,7 @@ pub(super) fn handle_game_list_touch_buttons(
             Changed<Interaction>,
             With<TouchRipplePlayButton>,
             Without<DisabledButton>,
+            Without<LoadingButton>,
         ),
     >,
 ) {

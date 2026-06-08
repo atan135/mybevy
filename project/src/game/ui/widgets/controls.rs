@@ -22,6 +22,15 @@ pub(in crate::game) struct SecondaryButton;
 #[derive(Component)]
 pub(in crate::game) struct DisabledButton;
 
+#[derive(Component)]
+pub(in crate::game) struct FocusedButton;
+
+#[derive(Component)]
+pub(in crate::game) struct SelectedButton;
+
+#[derive(Component)]
+pub(in crate::game) struct LoadingButton;
+
 pub(in crate::game) fn screen_title(
     theme: &UiTheme,
     text: impl Into<String>,
@@ -106,6 +115,16 @@ pub(in crate::game) fn disabled_secondary_action_button(
     text: impl Into<String>,
 ) -> impl Bundle {
     disabled_action_button(theme, text, theme.colors.secondary_button, SecondaryButton)
+}
+
+pub(in crate::game) fn loading_primary_action_button(
+    theme: &UiTheme,
+    text: impl Into<String>,
+) -> impl Bundle {
+    (
+        action_button(theme, text, theme.colors.primary_button, PrimaryButton),
+        LoadingButton,
+    )
 }
 
 fn route_button<T: Component>(
@@ -210,11 +229,24 @@ fn update_button_visuals(
             Has<PrimaryButton>,
             Has<SecondaryButton>,
             Has<DisabledButton>,
+            Has<FocusedButton>,
+            Has<SelectedButton>,
+            Has<LoadingButton>,
         ),
-        (Changed<Interaction>, With<Button>),
+        With<Button>,
     >,
 ) {
-    for (interaction, mut background, is_primary, is_secondary, is_disabled) in &mut buttons {
+    for (
+        interaction,
+        mut background,
+        is_primary,
+        is_secondary,
+        is_disabled,
+        is_focused,
+        is_selected,
+        is_loading,
+    ) in &mut buttons
+    {
         if !is_primary && !is_secondary {
             continue;
         }
@@ -227,10 +259,14 @@ fn update_button_visuals(
 
         *background = if is_disabled {
             colors.disabled.into()
+        } else if is_loading {
+            colors.loading.into()
         } else {
             match *interaction {
                 Interaction::Pressed => colors.pressed.into(),
                 Interaction::Hovered => colors.hovered.into(),
+                Interaction::None if is_selected => colors.selected.into(),
+                Interaction::None if is_focused => colors.focused.into(),
                 Interaction::None => colors.idle.into(),
             }
         };

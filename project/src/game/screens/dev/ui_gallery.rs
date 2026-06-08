@@ -13,9 +13,10 @@ use crate::game::{
         },
         style::UiTheme,
         widgets::{
-            DisabledButton, disabled_primary_action_button, disabled_secondary_action_button,
-            primary_action_button, screen_label, screen_title, secondary_action_button,
-            secondary_route_button,
+            DisabledButton, FocusedButton, LoadingButton, SelectedButton,
+            disabled_primary_action_button, disabled_secondary_action_button,
+            loading_primary_action_button, primary_action_button, screen_label, screen_title,
+            secondary_action_button, secondary_route_button, ui_column, ui_grid,
         },
     },
 };
@@ -24,6 +25,7 @@ use crate::game::{
 pub(super) enum GalleryActionButton {
     Toast,
     ShowLoading,
+    ShowCancellableLoading,
     HideLoading,
     Confirm,
     Floating,
@@ -82,7 +84,7 @@ pub(super) fn setup_ui_gallery(
                 .with_children(|typography_panel| {
                     typography_panel.spawn(section_label(theme, "Typography"));
                     typography_panel
-                        .spawn(gallery_column(theme))
+                        .spawn(ui_column(theme.layout.row_gap))
                         .with_children(|samples| {
                             samples.spawn(screen_title(
                                 theme,
@@ -112,10 +114,16 @@ pub(super) fn setup_ui_gallery(
                 .with_children(|buttons_panel| {
                     buttons_panel.spawn(section_label(theme, "Buttons"));
                     buttons_panel
-                        .spawn(gallery_button_row(theme))
+                        .spawn(ui_grid(theme, 4))
                         .with_children(|buttons| {
                             buttons.spawn(primary_action_button(theme, "Primary"));
                             buttons.spawn(secondary_action_button(theme, "Secondary"));
+                            buttons.spawn((primary_action_button(theme, "Focused"), FocusedButton));
+                            buttons.spawn((
+                                secondary_action_button(theme, "Selected"),
+                                SelectedButton,
+                            ));
+                            buttons.spawn(loading_primary_action_button(theme, "Loading"));
                             buttons.spawn(disabled_primary_action_button(theme, "Disabled"));
                             buttons.spawn(disabled_secondary_action_button(theme, "Unavailable"));
                             buttons.spawn(primary_route_button_sample(theme));
@@ -126,18 +134,22 @@ pub(super) fn setup_ui_gallery(
                 .with_children(|overlays_panel| {
                     overlays_panel.spawn(section_label(theme, "Overlays"));
                     overlays_panel
-                        .spawn(gallery_button_row(theme))
+                        .spawn(ui_grid(theme, 4))
                         .with_children(|buttons| {
                             buttons.spawn((
                                 primary_action_button(theme, "Show Toast"),
                                 GalleryActionButton::Toast,
                             ));
                             buttons.spawn((
-                                secondary_action_button(theme, "Show Loading"),
+                                secondary_action_button(theme, "Loading"),
                                 GalleryActionButton::ShowLoading,
                             ));
                             buttons.spawn((
-                                secondary_action_button(theme, "Hide Loading"),
+                                secondary_action_button(theme, "Cancelable"),
+                                GalleryActionButton::ShowCancellableLoading,
+                            ));
+                            buttons.spawn((
+                                secondary_action_button(theme, "Hide"),
                                 GalleryActionButton::HideLoading,
                             ));
                             buttons.spawn((
@@ -163,7 +175,12 @@ pub(super) fn handle_ui_gallery_buttons(
     mut route_commands: MessageWriter<UiRouteCommand>,
     buttons: Query<
         (&Interaction, &GalleryActionButton),
-        (Changed<Interaction>, With<Button>, Without<DisabledButton>),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            Without<DisabledButton>,
+            Without<LoadingButton>,
+        ),
     >,
 ) {
     for (interaction, action) in &buttons {
@@ -181,6 +198,12 @@ pub(super) fn handle_ui_gallery_buttons(
                 commands.insert_resource(GalleryLoadingPreview::new());
                 panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Loading(
                     UiLoading::new("Loading preview"),
+                )));
+            }
+            GalleryActionButton::ShowCancellableLoading => {
+                commands.insert_resource(GalleryLoadingPreview::new());
+                panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Loading(
+                    UiLoading::new("Cancelable loading").cancellable(),
                 )));
             }
             GalleryActionButton::HideLoading => {
@@ -253,26 +276,6 @@ fn gallery_panel(theme: &UiTheme) -> impl Bundle {
         BackgroundColor(theme.colors.panel_background),
         BorderColor::all(theme.colors.panel_border),
     )
-}
-
-fn gallery_column(theme: &UiTheme) -> impl Bundle {
-    Node {
-        width: percent(100),
-        flex_direction: FlexDirection::Column,
-        row_gap: px(theme.layout.row_gap),
-        ..default()
-    }
-}
-
-fn gallery_button_row(theme: &UiTheme) -> impl Bundle {
-    Node {
-        width: percent(100),
-        align_items: AlignItems::Center,
-        column_gap: px(theme.layout.row_column_gap),
-        row_gap: px(theme.layout.row_gap),
-        flex_wrap: FlexWrap::Wrap,
-        ..default()
-    }
 }
 
 fn section_label(theme: &UiTheme, text: impl Into<String>) -> impl Bundle {

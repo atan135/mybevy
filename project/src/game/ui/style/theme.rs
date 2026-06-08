@@ -74,7 +74,10 @@ pub(in crate::game) struct ButtonColors {
     pub idle: Color,
     pub hovered: Color,
     pub pressed: Color,
+    pub focused: Color,
+    pub selected: Color,
     pub disabled: Color,
+    pub loading: Color,
 }
 
 impl Default for UiTheme {
@@ -90,13 +93,19 @@ impl Default for UiTheme {
                     idle: Color::srgb(0.12, 0.58, 0.52),
                     hovered: Color::srgb(0.15, 0.68, 0.60),
                     pressed: Color::srgb(0.08, 0.42, 0.39),
+                    focused: Color::srgb(0.18, 0.74, 0.66),
+                    selected: Color::srgb(0.09, 0.48, 0.44),
                     disabled: Color::srgb(0.12, 0.25, 0.24),
+                    loading: Color::srgb(0.10, 0.34, 0.32),
                 },
                 secondary_button: ButtonColors {
                     idle: Color::srgb(0.16, 0.19, 0.22),
                     hovered: Color::srgb(0.22, 0.26, 0.29),
                     pressed: Color::srgb(0.11, 0.13, 0.16),
+                    focused: Color::srgb(0.27, 0.33, 0.36),
+                    selected: Color::srgb(0.18, 0.34, 0.31),
                     disabled: Color::srgb(0.11, 0.13, 0.15),
+                    loading: Color::srgb(0.13, 0.17, 0.19),
                 },
             },
             text: UiTextTheme {

@@ -98,7 +98,7 @@ project/src/game/ui/
 
 - 任意 panel 可以通过统一命令打开和关闭。
 - 弹窗打开时下层按钮不会误触。
-- 返回行为优先关闭最上层 `Modal` 或 `Floating` panel，再交给 mode 级返回逻辑。
+- 返回行为优先处理 `BlockingOverlay`；可取消遮罩关闭，不可取消遮罩消费返回；之后才关闭最上层 `Modal` 或 `Floating` panel，再交给 mode 级返回逻辑。
 - mode 切换不会留下孤儿 UI 节点。
 - panel 切换可以选择立即切换或播放过渡动画。
 
@@ -108,6 +108,7 @@ project/src/game/ui/
 
 基础组件：
 
+- 布局：横向布局、纵向布局、自动换行、网格布局、表格布局。
 - 文本：标题、副标题、正文、说明、数字、错误文本。
 - 按钮：主按钮、次按钮、危险按钮、图标按钮、返回按钮、禁用按钮。
 - 面板：普通面板、弹窗面板、列表卡片、HUD 面板。
@@ -122,6 +123,7 @@ project/src/game/ui/
 组件要求：
 
 - 所有组件支持 `normal / hovered / pressed / focused / selected / disabled / loading` 状态。
+- 布局组件应优先封装 Bevy UI 的 Flex/Grid 能力，页面代码不应长期直接堆砌重复 `Node` 参数。
 - 控件尺寸稳定，状态变化不应造成布局跳动。
 - 控件输出统一事件，不直接写业务状态。
 - 复杂控件拆成“视图构建”和“行为系统”两部分。
@@ -503,21 +505,25 @@ project/src/game/ui/
 - 实现 `UiPanelPlugin` 和 `UiPanelCommand`，统一处理 panel 打开、关闭、隐藏、显示、切换、关闭最上层和 mode 切换清理。
 - 实现 panel 集合和返回栈：`Page` / `Hud` 常驻，`Floating` 可以多个共存，`Modal` 使用栈，`BlockingOverlay` 通常单例。
 - 接入桌面 `Esc` 和 Android Back 到 `UiPanelCommand::CloseTop`，统一返回命令链路。
+- 细化 `BlockingOverlay` 的可取消规则：Loading 默认不可取消，显式声明后才能被 `CloseTop` 关闭。
 - 在 `UiGallery` 增加 `Floating` 示例 panel，用于验证 `Show Floating`、`CloseTop` 和返回键关闭行为。
 - 实现统一按钮、文本、视觉面板、Toast、Loading、确认弹窗。
+- 实现最小布局组件：纵向、横向、横向换行、网格。表格可以先作为网格布局的上层约定，后续再补表头、列宽和行数据绑定。
 - Toast 保持专用通知系统，不纳入 Panel Manager。
 - Loading 作为 `BlockingOverlay` 纳入 Panel Manager。
 - 确认弹窗迁入 Panel Manager，弹窗内容仍可保留独立 `UiModal` 数据结构。
 - 实现按钮状态样式和禁用状态。
+- 补齐按钮 `focused`、`selected`、`loading` 状态；`loading` 状态按钮默认不触发业务点击，防止重复提交。
 - 实现 UI 输入拦截，避免 UI 和玩法触控冲突。
 
 完成标志：
 
 - 登录、游戏列表、玩法 HUD、设置、Loading、确认弹窗可通过统一 panel 命令打开或关闭。
 - 弹窗能阻塞下层输入。
-- 返回行为优先关闭最上层 `Modal` 或 `Floating` panel。
+- 返回行为优先处理 `BlockingOverlay`，再关闭最上层 `Modal` 或 `Floating` panel。
 - `UiGallery` 能直接验证 Floating panel 和 `CloseTop` 行为。
-- 通用按钮能展示 disabled 状态，且禁用按钮不会触发业务 action。
+- `UiGallery` 的按钮组和 Overlay 操作区使用框架布局组件，不会因按钮换行导致面板重叠。
+- 通用按钮能展示 `focused / selected / disabled / loading` 等状态，且禁用和加载中按钮不会触发业务 action。
 - 未命中 UI 的触控才进入 `ui_touch` 玩法。
 
 ### 阶段 2：主题、配置和热加载

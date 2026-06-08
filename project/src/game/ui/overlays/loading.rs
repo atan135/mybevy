@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::game::navigation::AppUiMode;
 use crate::game::ui::{
-    core::{UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
+    core::{UiBlockingOverlay, UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
     style::UiTheme,
     widgets::screen_label,
 };
@@ -10,12 +10,22 @@ use crate::game::ui::{
 #[derive(Clone, Debug)]
 pub(in crate::game) struct UiLoading {
     pub text: String,
+    pub cancellable: bool,
 }
 
 impl UiLoading {
     #[allow(dead_code)]
     pub fn new(text: impl Into<String>) -> Self {
-        Self { text: text.into() }
+        Self {
+            text: text.into(),
+            cancellable: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn cancellable(mut self) -> Self {
+        self.cancellable = true;
+        self
     }
 }
 
@@ -30,6 +40,9 @@ pub(in crate::game) fn spawn_loading(
             id: UiPanelId::GlobalLoading,
             kind: UiPanelKind::BlockingOverlay,
             owner_mode,
+        },
+        UiBlockingOverlay {
+            cancellable: loading.cancellable,
         },
         UiLayerRoot {
             layer: UiLayer::Loading,

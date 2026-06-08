@@ -415,17 +415,23 @@ pub(in crate::game) enum UiPanelCommand {
 - `Page` / `Hud`：通常随 `AppUiMode` 进入而创建，随 mode 退出清理。
 - `Floating`：可以多个共存，参与 `CloseTop`，不阻塞全局 pointer 输入。
 - `Modal`：使用栈结构，打开时阻塞下层 UI 和玩法输入。
-- `BlockingOverlay`：通常单例，打开时阻塞下层 UI 和玩法输入；Loading 属于这一类。
+- `BlockingOverlay`：通常单例，打开时阻塞下层 UI 和玩法输入；Loading 属于这一类。默认不可被返回键取消，只有显式标记为可取消时才响应 `CloseTop`。
 - `Toast`：不参与 Panel Manager，不进入返回栈，不阻塞输入。
 
 返回键 / Esc 的优先级：
 
-1. 如果最上层是允许取消的 `BlockingOverlay`，关闭它；否则忽略返回。
+1. 如果存在 `BlockingOverlay`，先处理最高层的阻塞遮罩：可取消则关闭，不可取消则忽略返回，不继续关闭下面的弹窗或浮动面板。
 2. 如果存在 `Modal`，关闭最上层 modal。
 3. 如果存在 `Floating`，关闭最上层 floating panel。
 4. 都没有时，交给 mode 级返回逻辑，例如玩法返回 Lobby。
 
 当前第一版已接入桌面 `Esc` 和 Android Back，行为等价于发送 `UiPanelCommand::CloseTop`。Android Back 在 Bevy 0.18 / winit 0.30 中按逻辑键 `Key::BrowserBack` 处理。
+
+Loading 的取消规则：
+
+- `UiLoading::new(text)` 默认不可取消，只能通过显式 `UiPanelCommand::Close(UiPanelId::GlobalLoading)` 或 mode 清理关闭。
+- 需要允许玩家返回取消的加载流程，使用 `UiLoading::new(text).cancellable()`。
+- 可取消只影响 `CloseTop` 行为，不影响遮罩本身的输入阻塞；Loading 打开期间下层 UI 和玩法输入仍被阻塞。
 
 ### 输入拦截
 
@@ -469,12 +475,15 @@ pub(in crate::game) struct UiInputState {
 - [x] Confirm modal 通过 Panel Manager 打开和关闭，并发出结果事件。
 - [x] Toast 仍能显示并自动消失，且不进入 panel 栈。
 - [x] `UiInputState.top_blocking_panel` 能反映当前阻塞输入的 panel。
-- [x] `CloseTop` 能关闭最上层 `Modal` 或 `Floating` panel。
+- [x] `CloseTop` 能按层级优先处理 `BlockingOverlay`、`Modal` 和 `Floating` panel。
+- [x] `BlockingOverlay` 支持可取消 / 不可取消规则；不可取消 Loading 会消费返回但不关闭下层 panel。
 - [x] 桌面 `Esc` 已接入 `CloseTop`。
 - [x] Android Back 已按 `Key::BrowserBack` 接入 `CloseTop`。
 - [x] `UiGallery` 有 `GalleryFloating` 示例 panel，可用 `Show Floating`、`Close Top`、`Esc` 和 Android Back 验证。
 - [x] 通用按钮支持 `disabled` 视觉状态，带 `DisabledButton` 的按钮不会触发路由、弹窗和页面 action。
+- [x] 通用按钮支持 `focused`、`selected`、`loading` 视觉状态；带 `LoadingButton` 的按钮不会触发路由、弹窗和页面 action。
 - [x] `UiGallery` 有禁用按钮样例，可验证 disabled 状态。
+- [x] `UiGallery` 有 Focused、Selected、Loading 按钮样例，以及不可取消 / 可取消 Loading 遮罩样例。
 - [x] mode 切换后不会留下旧 mode 的 panel 节点。
 - [x] `cargo fmt` 通过。
 - [x] `cargo check` 通过。
@@ -489,9 +498,28 @@ pub(in crate::game) struct UiInputState {
 ### 按钮状态小闭环
 
 - 已新增 `DisabledButton` 标记和禁用按钮构建函数。
-- 通用按钮主题新增 `disabled` 色值，禁用按钮使用 muted 文本和禁用背景。
-- 路由按钮、弹窗按钮、Lobby Play 按钮和 `UiGallery` action 按钮都会跳过 `DisabledButton`。
-- `UiGallery` 的 Buttons 区域已增加 `Disabled` 和 `Unavailable` 样例。
+- 已新增 `FocusedButton`、`SelectedButton`、`LoadingButton` 标记，按钮视觉状态覆盖 `normal / hovered / pressed / focused / selected / disabled / loading`。
+- 通用按钮主题新增 `focused`、`selected`、`disabled`、`loading` 色值。
+- 视觉优先级为：`disabled > loading > pressed > hovered > selected > focused > normal`。
+- 路由按钮、弹窗按钮、Lobby Play 按钮和 `UiGallery` action 按钮都会跳过 `DisabledButton` 和 `LoadingButton`。
+- `UiGallery` 的 Buttons 区域已增加 `Focused`、`Selected`、`Loading`、`Disabled` 和 `Unavailable` 样例。
+
+### 布局组件小闭环
+
+- 已新增通用布局 builder：`ui_column`、`ui_row`、`ui_wrap_row`、`ui_grid`。
+- `ui_column` 用于纵向堆叠内容。
+- `ui_row` 用于单行横向排列。
+- `ui_wrap_row` 用于轻量横向换行排列。
+- `ui_grid` 基于 Bevy UI Grid，用于固定列数网格布局，适合按钮组、卡片组、表格雏形。
+- `UiGallery` 的 Buttons 和 Overlays 区域已改为 `ui_grid(theme, 4)`，避免按钮换行后面板高度没有正确撑开导致重叠。
+
+### BlockingOverlay 可取消规则记录
+
+- Loading 作为 `UiPanelKind::BlockingOverlay` 进入 Panel Manager 栈。
+- `UiLoading::new(text)` 默认不可取消；`UiLoading::new(text).cancellable()` 明确表示可被 `CloseTop` 关闭。
+- `CloseTop` 当前优先处理 `BlockingOverlay`，再处理 `Modal`，最后处理 `Floating`。
+- 如果当前存在不可取消 `BlockingOverlay`，返回键 / Esc / Android Back 不会关闭它，也不会绕过它关闭下面的弹窗或浮动面板。
+- `UiGallery` 的 Overlays 区域已增加 `Loading` 和 `Cancelable` 两种 Loading 示例，用于验证显式关闭和返回取消两种路径。
 
 ### Android Back 接入记录
 

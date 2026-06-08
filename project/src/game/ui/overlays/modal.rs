@@ -6,7 +6,7 @@ use crate::game::{
         core::{UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot},
         style::UiTheme,
         widgets::{
-            DisabledButton, primary_action_button, screen_label, screen_title,
+            DisabledButton, LoadingButton, primary_action_button, screen_label, screen_title,
             secondary_action_button,
         },
     },
@@ -65,7 +65,12 @@ pub(in crate::game) fn handle_modal_action_buttons(
     mut panel_commands: MessageWriter<UiPanelCommand>,
     buttons: Query<
         (&Interaction, &UiModalActionButton),
-        (Changed<Interaction>, With<Button>, Without<DisabledButton>),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            Without<DisabledButton>,
+            Without<LoadingButton>,
+        ),
     >,
 ) {
     for (interaction, action_button) in &buttons {

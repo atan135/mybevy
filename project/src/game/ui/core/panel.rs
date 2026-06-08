@@ -68,6 +68,11 @@ pub(in crate::game) struct UiPanelRoot {
     pub owner_mode: Option<AppUiMode>,
 }
 
+#[derive(Component)]
+pub(in crate::game) struct UiBlockingOverlay {
+    pub cancellable: bool,
+}
+
 #[derive(Clone, Debug)]
 pub(in crate::game) enum UiPanelRequest {
     Loading(UiLoading),
@@ -111,7 +116,7 @@ fn handle_panel_commands(
     theme: Res<UiTheme>,
     current_mode: Res<State<AppUiMode>>,
     mut panel_commands: MessageReader<UiPanelCommand>,
-    panel_roots: Query<(Entity, &UiPanelRoot)>,
+    panel_roots: Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     mut visible_panels: Query<(&UiPanelRoot, &mut Visibility)>,
     mut stack: ResMut<UiPanelStack>,
 ) {
@@ -159,9 +164,9 @@ fn handle_panel_commands(
             UiPanelCommand::CloseAllForMode(mode) => {
                 close_panels_for_mode(&mut commands, &panel_roots, *mode);
                 stack.open_order.retain(|entry| {
-                    !panel_roots
-                        .iter()
-                        .any(|(_, panel)| panel.id == entry.id && panel.owner_mode == Some(*mode))
+                    !panel_roots.iter().any(|(_, panel, _)| {
+                        panel.id == entry.id && panel.owner_mode == Some(*mode)
+                    })
                 });
             }
         }
@@ -172,7 +177,7 @@ fn open_panel(
     commands: &mut Commands,
     theme: &UiTheme,
     current_mode: &State<AppUiMode>,
-    panel_roots: &Query<(Entity, &UiPanelRoot)>,
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     stack: &mut UiPanelStack,
     request: &UiPanelRequest,
 ) {
@@ -193,18 +198,21 @@ fn open_panel(
         }
     }
 
-    if matches!(kind, UiPanelKind::Floating | UiPanelKind::Modal) {
+    if matches!(
+        kind,
+        UiPanelKind::Floating | UiPanelKind::Modal | UiPanelKind::BlockingOverlay
+    ) {
         stack.open_order.push(UiPanelStackEntry { id, kind });
     }
 }
 
 fn close_panel_by_id(
     commands: &mut Commands,
-    panel_roots: &Query<(Entity, &UiPanelRoot)>,
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     id: UiPanelId,
 ) -> bool {
     let mut closed = false;
-    for (entity, panel) in panel_roots {
+    for (entity, panel, _) in panel_roots {
         if panel.id == id {
             commands.entity(entity).try_despawn();
             closed = true;
@@ -215,10 +223,10 @@ fn close_panel_by_id(
 
 fn close_panels_for_mode(
     commands: &mut Commands,
-    panel_roots: &Query<(Entity, &UiPanelRoot)>,
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     mode: AppUiMode,
 ) {
-    for (entity, panel) in panel_roots {
+    for (entity, panel, _) in panel_roots {
         if panel.owner_mode == Some(mode) {
             commands.entity(entity).try_despawn();
         }
@@ -227,42 +235,81 @@ fn close_panels_for_mode(
 
 fn close_top_panel(
     commands: &mut Commands,
-    panel_roots: &Query<(Entity, &UiPanelRoot)>,
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     stack: &mut UiPanelStack,
 ) {
-    if close_top_panel_of_kind(commands, panel_roots, stack, UiPanelKind::Modal) {
+    prune_missing_stack_entries(panel_roots, stack);
+
+    if let Some(entry) = latest_stack_entry_of_kind(stack, UiPanelKind::BlockingOverlay) {
+        if is_cancellable_blocking_overlay(panel_roots, entry.id) {
+            close_panel_by_id(commands, panel_roots, entry.id);
+            remove_from_stack(stack, entry.id);
+        }
         return;
     }
 
-    close_top_panel_of_kind(commands, panel_roots, stack, UiPanelKind::Floating);
+    if close_latest_panel_of_kind(commands, panel_roots, stack, UiPanelKind::Modal) {
+        return;
+    }
+
+    close_latest_panel_of_kind(commands, panel_roots, stack, UiPanelKind::Floating);
 }
 
-fn close_top_panel_of_kind(
+fn panel_exists(
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
+    id: UiPanelId,
+) -> bool {
+    panel_roots.iter().any(|(_, panel, _)| panel.id == id)
+}
+
+fn remove_from_stack(stack: &mut UiPanelStack, id: UiPanelId) {
+    stack.open_order.retain(|entry| entry.id != id);
+}
+
+fn prune_missing_stack_entries(
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
+    stack: &mut UiPanelStack,
+) {
+    stack
+        .open_order
+        .retain(|entry| panel_exists(panel_roots, entry.id));
+}
+
+fn latest_stack_entry_of_kind(
+    stack: &UiPanelStack,
+    kind: UiPanelKind,
+) -> Option<UiPanelStackEntry> {
+    stack
+        .open_order
+        .iter()
+        .rfind(|entry| entry.kind == kind)
+        .copied()
+}
+
+fn close_latest_panel_of_kind(
     commands: &mut Commands,
-    panel_roots: &Query<(Entity, &UiPanelRoot)>,
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     stack: &mut UiPanelStack,
     kind: UiPanelKind,
 ) -> bool {
-    while let Some(index) = stack
-        .open_order
-        .iter()
-        .rposition(|entry| entry.kind == kind)
-    {
-        let entry = stack.open_order.remove(index);
-        if close_panel_by_id(commands, panel_roots, entry.id) {
-            return true;
-        }
+    if let Some(entry) = latest_stack_entry_of_kind(stack, kind) {
+        close_panel_by_id(commands, panel_roots, entry.id);
+        remove_from_stack(stack, entry.id);
+        return true;
     }
 
     false
 }
 
-fn panel_exists(panel_roots: &Query<(Entity, &UiPanelRoot)>, id: UiPanelId) -> bool {
-    panel_roots.iter().any(|(_, panel)| panel.id == id)
-}
-
-fn remove_from_stack(stack: &mut UiPanelStack, id: UiPanelId) {
-    stack.open_order.retain(|entry| entry.id != id);
+fn is_cancellable_blocking_overlay(
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
+    id: UiPanelId,
+) -> bool {
+    panel_roots
+        .iter()
+        .find(|(_, panel, _)| panel.id == id && panel.kind == UiPanelKind::BlockingOverlay)
+        .and_then(|(_, _, overlay)| overlay)
+        .is_some_and(|overlay| overlay.cancellable)
 }
 
 fn set_panel_visibility(

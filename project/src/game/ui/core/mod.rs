@@ -7,6 +7,6 @@ pub(in crate::game) use framework::UiFrameworkPlugin;
 pub(in crate::game) use input::{UiInputState, UiInputSystems};
 pub(in crate::game) use layer::{UiLayer, UiLayerRoot};
 pub(in crate::game) use panel::{
-    UiFloatingPanel, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest, UiPanelRoot,
-    UiPanelSystems,
+    UiBlockingOverlay, UiFloatingPanel, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
+    UiPanelRoot, UiPanelSystems,
 };
