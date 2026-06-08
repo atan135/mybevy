@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{input::keyboard::Key, prelude::*};
 
 use crate::game::{
     navigation::AppUiMode,
@@ -23,7 +23,7 @@ impl Plugin for UiPanelPlugin {
             .configure_sets(Update, UiPanelSystems::Commands)
             .add_systems(
                 Update,
-                (write_close_top_on_escape, handle_panel_commands)
+                (write_close_top_on_return_input, handle_panel_commands)
                     .chain()
                     .in_set(UiPanelSystems::Commands)
                     .after(UiRouteSystems::Commands),
@@ -295,11 +295,12 @@ impl UiPanelRequest {
     }
 }
 
-fn write_close_top_on_escape(
-    keyboard: Res<ButtonInput<KeyCode>>,
+fn write_close_top_on_return_input(
+    key_codes: Res<ButtonInput<KeyCode>>,
+    keys: Res<ButtonInput<Key>>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
 ) {
-    if keyboard.just_pressed(KeyCode::Escape) {
+    if key_codes.just_pressed(KeyCode::Escape) || keys.just_pressed(Key::BrowserBack) {
         panel_commands.write(UiPanelCommand::CloseTop);
     }
 }

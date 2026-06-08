@@ -502,7 +502,7 @@ project/src/game/ui/
 - 用 `UiPanelId`、`UiPanelKind`、`UiPanelRoot` 替换当前 `UiScreenId`、`UiScreenRoot`。
 - 实现 `UiPanelPlugin` 和 `UiPanelCommand`，统一处理 panel 打开、关闭、隐藏、显示、切换、关闭最上层和 mode 切换清理。
 - 实现 panel 集合和返回栈：`Page` / `Hud` 常驻，`Floating` 可以多个共存，`Modal` 使用栈，`BlockingOverlay` 通常单例。
-- 接入桌面 `Esc` 到 `UiPanelCommand::CloseTop`，后续 Android Back 复用同一命令链路。
+- 接入桌面 `Esc` 和 Android Back 到 `UiPanelCommand::CloseTop`，统一返回命令链路。
 - 在 `UiGallery` 增加 `Floating` 示例 panel，用于验证 `Show Floating`、`CloseTop` 和返回键关闭行为。
 - 实现统一按钮、文本、视觉面板、Toast、Loading、确认弹窗。
 - Toast 保持专用通知系统，不纳入 Panel Manager。

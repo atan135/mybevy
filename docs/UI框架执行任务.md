@@ -425,7 +425,7 @@ pub(in crate::game) enum UiPanelCommand {
 3. 如果存在 `Floating`，关闭最上层 floating panel。
 4. 都没有时，交给 mode 级返回逻辑，例如玩法返回 Lobby。
 
-当前第一版已接入桌面 `Esc`，行为等价于发送 `UiPanelCommand::CloseTop`。Android Back 后续接入同一条命令链路。
+当前第一版已接入桌面 `Esc` 和 Android Back，行为等价于发送 `UiPanelCommand::CloseTop`。Android Back 在 Bevy 0.18 / winit 0.30 中按逻辑键 `Key::BrowserBack` 处理。
 
 ### 输入拦截
 
@@ -457,8 +457,8 @@ pub(in crate::game) struct UiInputState {
 6. 将 Confirm modal 从 `UiRouteCommand::OpenModal` 迁入 `UiPanelCommand::Open(UiPanelRequest::Confirm(...))`。
 7. 保留 Toast 的 `UiRouteCommand::ShowToast` 或改成独立 `UiToastCommand`，但不纳入 Panel Manager。
 8. 扩展 `UiInputState`，由 Panel Manager 提供当前最高阻塞 panel 信息。
-9. 实现 `CloseTop`，并接入桌面 `Esc`。
-10. 在 `UiGallery` 增加 `GalleryFloating` 示例 panel，用 `Show Floating`、`Close Top` 和 `Esc` 验证 floating 栈行为。
+9. 实现 `CloseTop`，并接入桌面 `Esc` 和 Android Back。
+10. 在 `UiGallery` 增加 `GalleryFloating` 示例 panel，用 `Show Floating`、`Close Top`、`Esc` 和 Android Back 验证 floating 栈行为。
 11. 跑 `cargo fmt`、`cargo check`，并手动验证 Login、Lobby、UiGallery、Touch Ripple、Toast、Loading、Confirm。
 
 ### 验收清单
@@ -471,7 +471,8 @@ pub(in crate::game) struct UiInputState {
 - [x] `UiInputState.top_blocking_panel` 能反映当前阻塞输入的 panel。
 - [x] `CloseTop` 能关闭最上层 `Modal` 或 `Floating` panel。
 - [x] 桌面 `Esc` 已接入 `CloseTop`。
-- [x] `UiGallery` 有 `GalleryFloating` 示例 panel，可用 `Show Floating`、`Close Top` 和 `Esc` 验证。
+- [x] Android Back 已按 `Key::BrowserBack` 接入 `CloseTop`。
+- [x] `UiGallery` 有 `GalleryFloating` 示例 panel，可用 `Show Floating`、`Close Top`、`Esc` 和 Android Back 验证。
 - [x] 通用按钮支持 `disabled` 视觉状态，带 `DisabledButton` 的按钮不会触发路由、弹窗和页面 action。
 - [x] `UiGallery` 有禁用按钮样例，可验证 disabled 状态。
 - [x] mode 切换后不会留下旧 mode 的 panel 节点。
@@ -480,7 +481,7 @@ pub(in crate::game) struct UiInputState {
 
 ### 本轮验证记录
 
-- 已跑通 1：桌面 `Esc` 会写入 `UiPanelCommand::CloseTop`，`CloseTop` 优先关闭最上层 `Modal`，没有 modal 时关闭最上层 `Floating`。
+- 已跑通 1：桌面 `Esc` 和 Android Back 会写入 `UiPanelCommand::CloseTop`，`CloseTop` 优先关闭最上层 `Modal`，没有 modal 时关闭最上层 `Floating`。
 - 已跑通 2：`UiGallery` 增加 `Show Floating` 和 `Close Top`，可打开 `UiPanelId::GalleryFloating` 示例 panel，并通过 `CloseTop`/`Esc` 关闭。
 - 已测试 3：`cargo fmt --check`、`cargo check`、`cargo build` 通过；以 `TOUCH_START_SCREEN=touch` 启动 `target/debug/project.exe` 后稳定运行 5 秒，确认 Touch Ripple 启动路径没有回归性崩溃。
 - 仍需人工窗口验证：在 Touch Ripple 场景中实际点击/拖动，确认水波纹视觉和 HUD 按钮输入拦截符合预期。
@@ -491,3 +492,9 @@ pub(in crate::game) struct UiInputState {
 - 通用按钮主题新增 `disabled` 色值，禁用按钮使用 muted 文本和禁用背景。
 - 路由按钮、弹窗按钮、Lobby Play 按钮和 `UiGallery` action 按钮都会跳过 `DisabledButton`。
 - `UiGallery` 的 Buttons 区域已增加 `Disabled` 和 `Unavailable` 样例。
+
+### Android Back 接入记录
+
+- Android Back 通过 Bevy 0.18 的逻辑键 `Key::BrowserBack` 接入，与桌面 `Esc` 一样写入 `UiPanelCommand::CloseTop`。
+- 已用 `cargo fmt --check` 和 `cargo check` 验证桌面目标。
+- Android 目标验证尝试过 `cargo ndk -t arm64-v8a -P 26 check`，但超过 5 分钟未完成；需要后续在 Android 构建环境中继续验证真机 Back 行为。
