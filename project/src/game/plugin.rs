@@ -20,7 +20,7 @@ use crate::network::NetworkTransport;
 use super::{
     navigation::AppUiMode,
     screens::ScreensPlugin,
-    ui::input::{UiInputState, UiInputSystems},
+    ui::core::{UiInputState, UiInputSystems},
 };
 
 const UI_TOUCH_ACTION: &str = "ui_touch";

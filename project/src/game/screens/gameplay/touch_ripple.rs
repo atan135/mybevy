@@ -3,9 +3,8 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::AppUiMode,
     ui::{
-        layer::{UiLayer, UiLayerRoot},
-        screen::{UiScreenId, UiScreenRoot},
-        theme::UiTheme,
+        core::{UiLayer, UiLayerRoot, UiScreenId, UiScreenRoot},
+        style::UiTheme,
         widgets::secondary_route_button,
     },
 };

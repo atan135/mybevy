@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::game::{
     navigation::{AppUiMode, RouteButton},
-    ui::theme::{ButtonColors, UiTheme},
+    ui::style::theme::{ButtonColors, UiTheme},
 };
 
 pub(in crate::game) struct UiWidgetsPlugin;

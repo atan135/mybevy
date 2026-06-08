@@ -1,7 +1,4 @@
-pub(super) mod framework;
-pub(super) mod input;
-pub(super) mod layer;
-pub(super) mod router;
-pub(super) mod screen;
-pub(super) mod theme;
+pub(super) mod core;
+pub(super) mod overlays;
+pub(super) mod style;
 pub(super) mod widgets;

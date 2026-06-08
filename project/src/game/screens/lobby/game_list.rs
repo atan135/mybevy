@@ -4,13 +4,12 @@ use crate::game::{
     navigation::AppUiMode,
     plugin::TouchLaunchMode,
     ui::{
-        layer::{UiLayer, UiLayerRoot},
-        router::{
+        core::{UiLayer, UiLayerRoot, UiScreenId, UiScreenRoot},
+        overlays::{
             UiConfirmModal, UiModal, UiModalAction, UiModalActionSpec, UiModalActionStyle,
             UiModalId, UiModalResult, UiRouteCommand, UiToast,
         },
-        screen::{UiScreenId, UiScreenRoot},
-        theme::UiTheme,
+        style::UiTheme,
         widgets::{primary_action_button, screen_label, screen_title, secondary_route_button},
     },
 };

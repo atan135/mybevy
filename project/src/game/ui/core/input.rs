@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::router::UiModalRoot;
+use crate::game::ui::overlays::UiModalRoot;
 
 pub(in crate::game) struct UiInputPlugin;
 

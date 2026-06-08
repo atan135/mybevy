@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 
-use super::{
-    input::UiInputPlugin, layer::UiLayerPlugin, router::UiRouterPlugin, screen::UiScreenPlugin,
-    theme::UiThemePlugin, widgets::UiWidgetsPlugin,
+use crate::game::ui::{
+    core::{input::UiInputPlugin, layer::UiLayerPlugin, screen::UiScreenPlugin},
+    overlays::UiRouterPlugin,
+    style::UiThemePlugin,
+    widgets::UiWidgetsPlugin,
 };
 
 pub(in crate::game) struct UiFrameworkPlugin;
