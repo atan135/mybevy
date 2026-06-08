@@ -55,7 +55,17 @@ pub(super) fn setup_game_list_screen(
                 },
                 children![
                     screen_title(theme, "Game List", theme.text.title),
-                    secondary_route_button(theme, "Logout", AppUiMode::Login),
+                    (
+                        Node {
+                            align_items: AlignItems::Center,
+                            column_gap: px(theme.layout.row_column_gap),
+                            ..default()
+                        },
+                        children![
+                            secondary_route_button(theme, "UI Gallery", AppUiMode::UiGallery),
+                            secondary_route_button(theme, "Logout", AppUiMode::Login),
+                        ],
+                    ),
                 ],
             ),
             (
@@ -138,7 +148,7 @@ pub(super) fn handle_game_list_touch_buttons(
         }
 
         match result.action {
-            UiModalAction::Cancel => {}
+            UiModalAction::Cancel | UiModalAction::Confirm => {}
             UiModalAction::TouchRippleSinglePlayer => {
                 *launch_mode = TouchLaunchMode::SinglePlayer;
                 route_commands.write(UiRouteCommand::ShowToast(UiToast::new(

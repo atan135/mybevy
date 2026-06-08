@@ -11,6 +11,7 @@ pub(in crate::game) enum UiScreenId {
     LoginPage,
     GameListPage,
     TouchRippleHud,
+    UiGalleryPage,
 }
 
 #[derive(Component)]

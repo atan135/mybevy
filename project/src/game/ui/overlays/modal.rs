@@ -30,11 +30,13 @@ pub(in crate::game) struct UiModalActionSpec {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(in crate::game) enum UiModalId {
     TouchRippleLaunch,
+    GalleryConfirm,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(in crate::game) enum UiModalAction {
     Cancel,
+    Confirm,
     TouchRippleSinglePlayer,
     TouchRippleNetworked,
 }

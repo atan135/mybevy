@@ -16,6 +16,7 @@ pub(super) enum AppUiMode {
     Login,
     Lobby,
     WanfaTouchRipple,
+    UiGallery,
 }
 
 #[derive(Component)]
@@ -33,6 +34,7 @@ fn setup_start_mode(mut next_mode: ResMut<NextState<AppUiMode>>) {
             AppUiMode::WanfaTouchRipple
         }
         "lobby" | "game_list" | "game-list" | "list" => AppUiMode::Lobby,
+        "ui_gallery" | "ui-gallery" | "gallery" => AppUiMode::UiGallery,
         "login" => AppUiMode::Login,
         _ => return,
     };
