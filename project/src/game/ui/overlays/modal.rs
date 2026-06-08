@@ -1,15 +1,13 @@
 use bevy::prelude::*;
 
-use crate::game::ui::{
-    core::{UiLayer, UiLayerRoot},
-    style::UiTheme,
-    widgets::{primary_action_button, screen_label, screen_title, secondary_action_button},
+use crate::game::{
+    navigation::AppUiMode,
+    ui::{
+        core::{UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot},
+        style::UiTheme,
+        widgets::{primary_action_button, screen_label, screen_title, secondary_action_button},
+    },
 };
-
-#[derive(Clone, Debug)]
-pub(in crate::game) enum UiModal {
-    Confirm(UiConfirmModal),
-}
 
 #[derive(Clone, Debug)]
 pub(in crate::game) struct UiConfirmModal {
@@ -54,19 +52,15 @@ pub(in crate::game) struct UiModalResult {
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiModalRoot;
-
-#[derive(Component)]
 pub(in crate::game) struct UiModalActionButton {
     id: UiModalId,
     action: UiModalAction,
 }
 
 pub(in crate::game) fn handle_modal_action_buttons(
-    mut commands: Commands,
     mut modal_results: MessageWriter<UiModalResult>,
+    mut panel_commands: MessageWriter<UiPanelCommand>,
     buttons: Query<(&Interaction, &UiModalActionButton), (Changed<Interaction>, With<Button>)>,
-    modal_roots: Query<Entity, With<UiModalRoot>>,
 ) {
     for (interaction, action_button) in &buttons {
         if *interaction != Interaction::Pressed {
@@ -77,20 +71,23 @@ pub(in crate::game) fn handle_modal_action_buttons(
             id: action_button.id,
             action: action_button.action,
         });
-        close_modals(&mut commands, &modal_roots);
+        panel_commands.write(UiPanelCommand::Close(UiPanelId::ConfirmModal));
     }
 }
 
-pub(in crate::game) fn spawn_modal(commands: &mut Commands, theme: &UiTheme, modal: &UiModal) {
-    match modal {
-        UiModal::Confirm(confirm) => spawn_confirm_modal(commands, theme, confirm),
-    }
-}
-
-fn spawn_confirm_modal(commands: &mut Commands, theme: &UiTheme, modal: &UiConfirmModal) {
+pub(in crate::game) fn spawn_confirm_modal(
+    commands: &mut Commands,
+    theme: &UiTheme,
+    modal: &UiConfirmModal,
+    owner_mode: Option<AppUiMode>,
+) {
     commands
         .spawn((
-            UiModalRoot,
+            UiPanelRoot {
+                id: UiPanelId::ConfirmModal,
+                kind: UiPanelKind::Modal,
+                owner_mode,
+            },
             UiLayerRoot {
                 layer: UiLayer::Modal,
             },
@@ -177,13 +174,4 @@ fn spawn_confirm_modal(commands: &mut Commands, theme: &UiTheme, modal: &UiConfi
                     });
             });
         });
-}
-
-pub(in crate::game) fn close_modals(
-    commands: &mut Commands,
-    modal_roots: &Query<Entity, With<UiModalRoot>>,
-) {
-    for entity in modal_roots {
-        commands.entity(entity).try_despawn();
-    }
 }

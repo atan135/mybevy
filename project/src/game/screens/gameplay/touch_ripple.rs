@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::AppUiMode,
     ui::{
-        core::{UiLayer, UiLayerRoot, UiScreenId, UiScreenRoot},
+        core::{UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
         style::UiTheme,
         widgets::secondary_route_button,
     },
@@ -14,8 +14,10 @@ pub(super) fn setup_touch_ripple_overlay(mut commands: Commands, theme: Res<UiTh
 
     commands.spawn((
         DespawnOnExit(AppUiMode::WanfaTouchRipple),
-        UiScreenRoot {
-            id: UiScreenId::TouchRippleHud,
+        UiPanelRoot {
+            id: UiPanelId::TouchRippleHud,
+            kind: UiPanelKind::Hud,
+            owner_mode: Some(AppUiMode::WanfaTouchRipple),
         },
         UiLayerRoot {
             layer: UiLayer::Page,

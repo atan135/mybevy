@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
+use crate::game::navigation::AppUiMode;
 use crate::game::ui::{
-    core::{UiLayer, UiLayerRoot},
+    core::{UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
     style::UiTheme,
     widgets::screen_label,
 };
@@ -18,16 +19,18 @@ impl UiLoading {
     }
 }
 
-#[derive(Component)]
-pub(in crate::game) struct UiLoadingRoot;
-
 pub(in crate::game) fn spawn_loading(
     commands: &mut Commands,
     theme: &UiTheme,
     loading: &UiLoading,
+    owner_mode: Option<AppUiMode>,
 ) {
     commands.spawn((
-        UiLoadingRoot,
+        UiPanelRoot {
+            id: UiPanelId::GlobalLoading,
+            kind: UiPanelKind::BlockingOverlay,
+            owner_mode,
+        },
         UiLayerRoot {
             layer: UiLayer::Loading,
         },
@@ -65,13 +68,4 @@ pub(in crate::game) fn spawn_loading(
             )],
         )],
     ));
-}
-
-pub(in crate::game) fn close_loading(
-    commands: &mut Commands,
-    loading_roots: &Query<Entity, With<UiLoadingRoot>>,
-) {
-    for entity in loading_roots {
-        commands.entity(entity).try_despawn();
-    }
 }

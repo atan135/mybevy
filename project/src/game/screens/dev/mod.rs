@@ -2,7 +2,7 @@ mod ui_gallery;
 
 use bevy::prelude::*;
 
-use crate::game::navigation::AppUiMode;
+use crate::game::{navigation::AppUiMode, ui::core::UiPanelSystems};
 
 pub(super) struct DevScreensPlugin;
 
@@ -19,6 +19,7 @@ impl Plugin for DevScreensPlugin {
                     ui_gallery::handle_ui_gallery_buttons,
                     ui_gallery::tick_ui_gallery_loading_preview,
                 )
+                    .before(UiPanelSystems::Commands)
                     .run_if(in_state(AppUiMode::UiGallery)),
             );
     }

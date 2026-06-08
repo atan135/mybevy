@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::ui::{
-    core::{input::UiInputPlugin, layer::UiLayerPlugin, screen::UiScreenPlugin},
+    core::{input::UiInputPlugin, layer::UiLayerPlugin, panel::UiPanelPlugin},
     overlays::UiRouterPlugin,
     style::UiThemePlugin,
     widgets::UiWidgetsPlugin,
@@ -14,9 +14,9 @@ impl Plugin for UiFrameworkPlugin {
         app.add_plugins((
             UiThemePlugin,
             UiWidgetsPlugin,
-            UiScreenPlugin,
             UiLayerPlugin,
             UiRouterPlugin,
+            UiPanelPlugin,
             UiInputPlugin,
         ));
     }

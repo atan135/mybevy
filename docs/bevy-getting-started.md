@@ -195,9 +195,13 @@ mybevy/
     |   `-- game/
     |       |-- mod.rs
     |       |-- plugin.rs
-    |       |-- player.rs
-    |       |-- camera.rs
-    |       `-- ui.rs
+    |       |-- navigation/
+    |       |-- screens/
+    |       |-- ui/
+    |       |   |-- core/
+    |       |   |-- overlays/
+    |       |   |-- style/
+    |       |   `-- widgets/
     `-- Cargo.toml
 ```
 
@@ -205,9 +209,12 @@ mybevy/
 
 - `project/src/main.rs`：程序入口、顶层插件注册
 - `project/src/game/plugin.rs`：游戏主插件
-- `project/src/game/player.rs`：玩家组件和玩家系统
-- `project/src/game/camera.rs`：摄像机初始化与跟随逻辑
-- `project/src/game/ui.rs`：HUD、菜单、按钮
+- `project/src/game/navigation/`：主流程 `AppUiMode` 和路由按钮数据
+- `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体业务页面
+- `project/src/game/ui/core/`：UI 框架入口、Panel Manager、层级、输入拦截
+- `project/src/game/ui/overlays/`：Toast、Loading、Confirm modal 等顶层 UI 实现
+- `project/src/game/ui/style/`：颜色、字号、间距、圆角等主题 token
+- `project/src/game/ui/widgets/`：按钮、文本等通用控件
 - `project/assets/`：贴图、音频、字体、场景文件
 
 ## 9. 第一阶段之后，尽快改成插件化

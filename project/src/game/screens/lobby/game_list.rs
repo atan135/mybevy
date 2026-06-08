@@ -4,10 +4,13 @@ use crate::game::{
     navigation::AppUiMode,
     plugin::TouchLaunchMode,
     ui::{
-        core::{UiLayer, UiLayerRoot, UiScreenId, UiScreenRoot},
+        core::{
+            UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
+            UiPanelRoot,
+        },
         overlays::{
-            UiConfirmModal, UiModal, UiModalAction, UiModalActionSpec, UiModalActionStyle,
-            UiModalId, UiModalResult, UiRouteCommand, UiToast,
+            UiConfirmModal, UiModalAction, UiModalActionSpec, UiModalActionStyle, UiModalId,
+            UiModalResult, UiRouteCommand, UiToast,
         },
         style::UiTheme,
         widgets::{primary_action_button, screen_label, screen_title, secondary_route_button},
@@ -27,8 +30,10 @@ pub(super) fn setup_game_list_screen(
 
     commands.spawn((
         DespawnOnExit(AppUiMode::Lobby),
-        UiScreenRoot {
-            id: UiScreenId::GameListPage,
+        UiPanelRoot {
+            id: UiPanelId::GameListPage,
+            kind: UiPanelKind::Page,
+            owner_mode: Some(AppUiMode::Lobby),
         },
         UiLayerRoot {
             layer: UiLayer::Page,
@@ -129,6 +134,7 @@ pub(super) fn setup_game_list_screen(
 
 pub(super) fn handle_game_list_touch_buttons(
     mut launch_mode: ResMut<TouchLaunchMode>,
+    mut panel_commands: MessageWriter<UiPanelCommand>,
     mut route_commands: MessageWriter<UiRouteCommand>,
     mut modal_results: MessageReader<UiModalResult>,
     play_buttons: Query<&Interaction, (Changed<Interaction>, With<TouchRipplePlayButton>)>,
@@ -137,7 +143,7 @@ pub(super) fn handle_game_list_touch_buttons(
         .iter()
         .any(|interaction| *interaction == Interaction::Pressed)
     {
-        route_commands.write(UiRouteCommand::OpenModal(UiModal::Confirm(
+        panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
             touch_ripple_confirm_modal(),
         )));
     }

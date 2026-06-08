@@ -3,10 +3,13 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::AppUiMode,
     ui::{
-        core::{UiLayer, UiLayerRoot, UiScreenId, UiScreenRoot},
+        core::{
+            UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
+            UiPanelRoot,
+        },
         overlays::{
-            UiConfirmModal, UiLoading, UiModal, UiModalAction, UiModalActionSpec,
-            UiModalActionStyle, UiModalId, UiRouteCommand, UiToast,
+            UiConfirmModal, UiLoading, UiModalAction, UiModalActionSpec, UiModalActionStyle,
+            UiModalId, UiRouteCommand, UiToast,
         },
         style::UiTheme,
         widgets::{
@@ -48,8 +51,10 @@ pub(super) fn setup_ui_gallery(
     commands
         .spawn((
             DespawnOnExit(AppUiMode::UiGallery),
-            UiScreenRoot {
-                id: UiScreenId::UiGalleryPage,
+            UiPanelRoot {
+                id: UiPanelId::UiGalleryPage,
+                kind: UiPanelKind::Page,
+                owner_mode: Some(AppUiMode::UiGallery),
             },
             UiLayerRoot {
                 layer: UiLayer::Page,
@@ -141,6 +146,7 @@ pub(super) fn setup_ui_gallery(
 
 pub(super) fn handle_ui_gallery_buttons(
     mut commands: Commands,
+    mut panel_commands: MessageWriter<UiPanelCommand>,
     mut route_commands: MessageWriter<UiRouteCommand>,
     buttons: Query<(&Interaction, &GalleryActionButton), (Changed<Interaction>, With<Button>)>,
 ) {
@@ -157,16 +163,16 @@ pub(super) fn handle_ui_gallery_buttons(
             }
             GalleryActionButton::ShowLoading => {
                 commands.insert_resource(GalleryLoadingPreview::new());
-                route_commands.write(UiRouteCommand::ShowLoading(UiLoading::new(
-                    "Loading preview",
+                panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Loading(
+                    UiLoading::new("Loading preview"),
                 )));
             }
             GalleryActionButton::HideLoading => {
                 commands.remove_resource::<GalleryLoadingPreview>();
-                route_commands.write(UiRouteCommand::HideLoading);
+                panel_commands.write(UiPanelCommand::Close(UiPanelId::GlobalLoading));
             }
             GalleryActionButton::Confirm => {
-                route_commands.write(UiRouteCommand::OpenModal(UiModal::Confirm(
+                panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
                     gallery_confirm_modal(),
                 )));
             }
@@ -178,7 +184,7 @@ pub(super) fn tick_ui_gallery_loading_preview(
     mut commands: Commands,
     time: Res<Time>,
     preview: Option<ResMut<GalleryLoadingPreview>>,
-    mut route_commands: MessageWriter<UiRouteCommand>,
+    mut panel_commands: MessageWriter<UiPanelCommand>,
 ) {
     let Some(mut preview) = preview else {
         return;
@@ -187,7 +193,7 @@ pub(super) fn tick_ui_gallery_loading_preview(
     preview.timer.tick(time.delta());
     if preview.timer.is_finished() {
         commands.remove_resource::<GalleryLoadingPreview>();
-        route_commands.write(UiRouteCommand::HideLoading);
+        panel_commands.write(UiPanelCommand::Close(UiPanelId::GlobalLoading));
     }
 }
 

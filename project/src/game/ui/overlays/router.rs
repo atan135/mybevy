@@ -2,12 +2,9 @@ use bevy::prelude::*;
 
 use crate::game::{
     navigation::{AppUiMode, RouteButton},
+    ui::core::UiPanelCommand,
     ui::overlays::{
-        loading::{UiLoading, UiLoadingRoot, close_loading, spawn_loading},
-        modal::{
-            UiModal, UiModalResult, UiModalRoot, close_modals, handle_modal_action_buttons,
-            spawn_modal,
-        },
+        modal::{UiModalResult, handle_modal_action_buttons},
         toast::{UiToast, UiToastRoot, close_toasts, spawn_toast, tick_toasts},
     },
     ui::style::UiTheme,
@@ -19,6 +16,7 @@ impl Plugin for UiRouterPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiRouteCommand>()
             .add_message::<UiModalResult>()
+            .configure_sets(Update, UiRouteSystems::Commands)
             .add_systems(
                 Update,
                 (
@@ -27,19 +25,21 @@ impl Plugin for UiRouterPlugin {
                     handle_modal_action_buttons,
                     tick_toasts,
                 )
+                    .in_set(UiRouteSystems::Commands)
                     .chain(),
             );
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub(in crate::game) enum UiRouteSystems {
+    Commands,
 }
 
 #[derive(Clone, Debug, Message)]
 #[allow(dead_code)]
 pub(in crate::game) enum UiRouteCommand {
     ChangeMode(AppUiMode),
-    OpenModal(UiModal),
-    CloseModal,
-    ShowLoading(UiLoading),
-    HideLoading,
     ShowToast(UiToast),
 }
 
@@ -59,30 +59,15 @@ fn handle_ui_route_commands(
     theme: Res<UiTheme>,
     mut route_commands: MessageReader<UiRouteCommand>,
     mut next_mode: ResMut<NextState<AppUiMode>>,
-    loading_roots: Query<Entity, With<UiLoadingRoot>>,
-    modal_roots: Query<Entity, With<UiModalRoot>>,
+    current_mode: Res<State<AppUiMode>>,
+    mut panel_commands: MessageWriter<UiPanelCommand>,
     toast_roots: Query<Entity, With<UiToastRoot>>,
 ) {
     for command in route_commands.read() {
         match command {
             UiRouteCommand::ChangeMode(mode) => {
-                close_loading(&mut commands, &loading_roots);
-                close_modals(&mut commands, &modal_roots);
+                panel_commands.write(UiPanelCommand::CloseAllForMode(*current_mode.get()));
                 next_mode.set(*mode);
-            }
-            UiRouteCommand::OpenModal(modal) => {
-                close_modals(&mut commands, &modal_roots);
-                spawn_modal(&mut commands, &theme, modal);
-            }
-            UiRouteCommand::CloseModal => {
-                close_modals(&mut commands, &modal_roots);
-            }
-            UiRouteCommand::ShowLoading(loading) => {
-                close_loading(&mut commands, &loading_roots);
-                spawn_loading(&mut commands, &theme, loading);
-            }
-            UiRouteCommand::HideLoading => {
-                close_loading(&mut commands, &loading_roots);
             }
             UiRouteCommand::ShowToast(toast) => {
                 close_toasts(&mut commands, &toast_roots);

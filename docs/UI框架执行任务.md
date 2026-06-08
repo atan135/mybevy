@@ -456,13 +456,13 @@ pub(in crate::game) struct UiInputState {
 
 ### 验收清单
 
-- [ ] 代码中不再使用 `UiScreenId` 和 `UiScreenRoot`。
-- [ ] 页面、HUD、Loading、Confirm 的根节点统一使用 `UiPanelRoot`。
-- [ ] Loading 通过 Panel Manager 打开和关闭，并阻塞下层输入。
-- [ ] Confirm modal 通过 Panel Manager 打开和关闭，并发出结果事件。
-- [ ] Toast 仍能显示并自动消失，且不进入 panel 栈。
-- [ ] `UiInputState.top_blocking_panel` 能反映当前阻塞输入的 panel。
-- [ ] `CloseTop` 能关闭最上层 `Modal` 或 `Floating` panel。
-- [ ] mode 切换后不会留下旧 mode 的 panel 节点。
-- [ ] `cargo fmt` 通过。
-- [ ] `cargo check` 通过。
+- [x] 代码中不再使用 `UiScreenId` 和 `UiScreenRoot`。
+- [x] 页面、HUD、Loading、Confirm 的根节点统一使用 `UiPanelRoot`。
+- [x] Loading 通过 Panel Manager 打开和关闭，并阻塞下层输入。
+- [x] Confirm modal 通过 Panel Manager 打开和关闭，并发出结果事件。
+- [x] Toast 仍能显示并自动消失，且不进入 panel 栈。
+- [x] `UiInputState.top_blocking_panel` 能反映当前阻塞输入的 panel。
+- [x] `CloseTop` 能关闭最上层 `Modal` 或 `Floating` panel。
+- [x] mode 切换后不会留下旧 mode 的 panel 节点。
+- [x] `cargo fmt` 通过。
+- [x] `cargo check` 通过。

@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::AppUiMode,
     ui::{
-        core::{UiLayer, UiLayerRoot, UiScreenId, UiScreenRoot},
+        core::{UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
         style::UiTheme,
         widgets::{primary_route_button, screen_label, screen_title},
     },
@@ -19,8 +19,10 @@ pub(super) fn setup_login_screen(
 
     commands.spawn((
         DespawnOnExit(AppUiMode::Login),
-        UiScreenRoot {
-            id: UiScreenId::LoginPage,
+        UiPanelRoot {
+            id: UiPanelId::LoginPage,
+            kind: UiPanelKind::Page,
+            owner_mode: Some(AppUiMode::Login),
         },
         UiLayerRoot {
             layer: UiLayer::Page,
