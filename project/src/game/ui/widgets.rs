@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::{
-    navigation::{AppScreen, RouteButton},
+    navigation::{AppUiMode, RouteButton},
     ui::theme::{ButtonColors, UiTheme},
 };
 
@@ -52,7 +52,7 @@ pub(in crate::game) fn screen_label(
 pub(in crate::game) fn primary_route_button(
     theme: &UiTheme,
     text: impl Into<String>,
-    target: AppScreen,
+    target: AppUiMode,
 ) -> impl Bundle {
     route_button(
         theme,
@@ -66,7 +66,7 @@ pub(in crate::game) fn primary_route_button(
 pub(in crate::game) fn secondary_route_button(
     theme: &UiTheme,
     text: impl Into<String>,
-    target: AppScreen,
+    target: AppUiMode,
 ) -> impl Bundle {
     route_button(
         theme,
@@ -94,7 +94,7 @@ pub(in crate::game) fn secondary_action_button(
 fn route_button<T: Component>(
     theme: &UiTheme,
     text: impl Into<String>,
-    target: AppScreen,
+    target: AppUiMode,
     colors: ButtonColors,
     marker: T,
 ) -> impl Bundle {

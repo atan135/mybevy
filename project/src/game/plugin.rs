@@ -17,7 +17,11 @@ use crate::authority::{
 use crate::myserver::{MyServerCommand, MyServerEvent};
 use crate::network::NetworkTransport;
 
-use super::{navigation::AppScreen, screens::ScreensPlugin};
+use super::{
+    navigation::AppUiMode,
+    screens::ScreensPlugin,
+    ui::input::{UiInputState, UiInputSystems},
+};
 
 const UI_TOUCH_ACTION: &str = "ui_touch";
 const LOCAL_TOUCH_POINTER_ID: u32 = 0;
@@ -66,8 +70,11 @@ impl Plugin for GamePlugin {
             .init_resource::<TouchMyServerJoinState>()
             .init_resource::<TouchLaunchMode>()
             .add_systems(Startup, (setup_camera, setup_touch_assets))
-            .add_systems(OnEnter(AppScreen::TouchRipple), setup_touch_ripple_scene)
-            .add_systems(OnExit(AppScreen::TouchRipple), reset_touch_sync_state)
+            .add_systems(
+                OnEnter(AppUiMode::WanfaTouchRipple),
+                setup_touch_ripple_scene,
+            )
+            .add_systems(OnExit(AppUiMode::WanfaTouchRipple), reset_touch_sync_state)
             .add_systems(
                 Update,
                 (
@@ -84,7 +91,8 @@ impl Plugin for GamePlugin {
                     resize_background,
                 )
                     .chain()
-                    .run_if(in_state(AppScreen::TouchRipple)),
+                    .after(UiInputSystems::Update)
+                    .run_if(in_state(AppUiMode::WanfaTouchRipple)),
             );
     }
 }
@@ -345,7 +353,7 @@ fn setup_touch_ripple_scene(
     clear_color.0 = background_color_at(0.0);
 
     commands.spawn((
-        DespawnOnExit(AppScreen::TouchRipple),
+        DespawnOnExit(AppUiMode::WanfaTouchRipple),
         Sprite::from_color(background_color_at(0.0), Vec2::ONE),
         Transform::from_xyz(0.0, 0.0, -1.0),
         Background,
@@ -426,45 +434,20 @@ fn capture_local_touch_input(
     touches: Res<Touches>,
     window: Single<&Window, With<PrimaryWindow>>,
     session: Res<AuthoritySession>,
+    ui_input: Res<UiInputState>,
     mut input_state: ResMut<TouchInputState>,
-    ui_buttons: Query<&Interaction, With<Button>>,
 ) {
     if session.local_player_id.is_none() {
         return;
     }
 
     let Some(screen_position) = active_screen_position(&mouse_buttons, &touches, &window) else {
-        if input_state.pressed {
-            input_state.pressed = false;
-            if let Some(last_position) = input_state.last_position {
-                queue_touch_sample(
-                    &mut input_state,
-                    session.frame_id,
-                    TouchSamplePhase::Up,
-                    last_position,
-                    false,
-                );
-            }
-        }
+        release_local_touch_input(&mut input_state, session.frame_id);
         return;
     };
 
-    if ui_buttons
-        .iter()
-        .any(|interaction| matches!(*interaction, Interaction::Pressed | Interaction::Hovered))
-    {
-        if input_state.pressed {
-            input_state.pressed = false;
-            if let Some(last_position) = input_state.last_position {
-                queue_touch_sample(
-                    &mut input_state,
-                    session.frame_id,
-                    TouchSamplePhase::Up,
-                    last_position,
-                    false,
-                );
-            }
-        }
+    if ui_input.pointer_blocked {
+        release_local_touch_input(&mut input_state, session.frame_id);
         return;
     }
 
@@ -730,7 +713,7 @@ fn spawn_drag_ripples(
         }
 
         commands.spawn((
-            DespawnOnExit(AppScreen::TouchRipple),
+            DespawnOnExit(AppUiMode::WanfaTouchRipple),
             Sprite {
                 image: ripple_image.0.clone(),
                 color: state.color.with_alpha(RIPPLE_ALPHA),
@@ -951,7 +934,7 @@ fn spawn_touch_visuals(
     key: TouchVisualKey,
 ) {
     commands.spawn((
-        DespawnOnExit(AppScreen::TouchRipple),
+        DespawnOnExit(AppUiMode::WanfaTouchRipple),
         Sprite {
             image: disc_image.0.clone(),
             color: Color::WHITE.with_alpha(0.0),
@@ -964,7 +947,7 @@ fn spawn_touch_visuals(
     ));
 
     commands.spawn((
-        DespawnOnExit(AppScreen::TouchRipple),
+        DespawnOnExit(AppUiMode::WanfaTouchRipple),
         Sprite {
             image: ripple_image.0.clone(),
             color: Color::WHITE.with_alpha(0.0),
@@ -975,6 +958,23 @@ fn spawn_touch_visuals(
         PlayerTouchVisual { key },
         PulseSprite,
     ));
+}
+
+fn release_local_touch_input(input_state: &mut TouchInputState, frame_id: u32) {
+    if !input_state.pressed {
+        return;
+    }
+
+    input_state.pressed = false;
+    if let Some(last_position) = input_state.last_position {
+        queue_touch_sample(
+            input_state,
+            frame_id,
+            TouchSamplePhase::Up,
+            last_position,
+            false,
+        );
+    }
 }
 
 fn queue_touch_sample(
@@ -1022,7 +1022,7 @@ fn spawn_released_disc(
     color: Color,
 ) {
     commands.spawn((
-        DespawnOnExit(AppScreen::TouchRipple),
+        DespawnOnExit(AppUiMode::WanfaTouchRipple),
         Sprite {
             image: disc_image.0.clone(),
             color: color.with_alpha(intensity * PRESS_DISC_ALPHA),

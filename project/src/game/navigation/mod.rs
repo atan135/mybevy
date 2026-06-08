@@ -5,46 +5,36 @@ pub(super) struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
     fn build(&self, app: &mut App) {
-        app.init_state::<AppScreen>()
-            .add_systems(Startup, setup_start_screen)
-            .add_systems(Update, handle_route_buttons);
+        app.init_state::<AppUiMode>()
+            .add_systems(Startup, setup_start_mode);
     }
 }
 
 #[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, States)]
-pub(super) enum AppScreen {
+pub(super) enum AppUiMode {
     #[default]
     Login,
-    GameList,
-    TouchRipple,
+    Lobby,
+    WanfaTouchRipple,
 }
 
 #[derive(Component)]
 pub(super) struct RouteButton {
-    pub(super) target: AppScreen,
+    pub(super) target: AppUiMode,
 }
 
-fn setup_start_screen(mut next_screen: ResMut<NextState<AppScreen>>) {
+fn setup_start_mode(mut next_mode: ResMut<NextState<AppUiMode>>) {
     let Ok(value) = env::var("TOUCH_START_SCREEN") else {
         return;
     };
 
-    let screen = match value.trim().to_ascii_lowercase().as_str() {
-        "touch" | "touch_ripple" | "touch-ripple" => AppScreen::TouchRipple,
-        "game_list" | "game-list" | "list" => AppScreen::GameList,
-        "login" => AppScreen::Login,
+    let mode = match value.trim().to_ascii_lowercase().as_str() {
+        "wanfa_touch_ripple" | "wanfa-touch-ripple" | "touch" | "touch_ripple" | "touch-ripple" => {
+            AppUiMode::WanfaTouchRipple
+        }
+        "lobby" | "game_list" | "game-list" | "list" => AppUiMode::Lobby,
+        "login" => AppUiMode::Login,
         _ => return,
     };
-    next_screen.set(screen);
-}
-
-fn handle_route_buttons(
-    mut next_screen: ResMut<NextState<AppScreen>>,
-    buttons: Query<(&Interaction, &RouteButton), (Changed<Interaction>, With<Button>)>,
-) {
-    for (interaction, route_button) in &buttons {
-        if *interaction == Interaction::Pressed {
-            next_screen.set(route_button.target);
-        }
-    }
+    next_mode.set(mode);
 }

@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 
 use crate::game::{
-    navigation::AppScreen,
+    navigation::AppUiMode,
     ui::{
+        layer::{UiLayer, UiLayerRoot},
+        screen::{UiScreenId, UiScreenRoot},
         theme::UiTheme,
         widgets::{primary_route_button, screen_label, screen_title},
     },
@@ -17,7 +19,13 @@ pub(super) fn setup_login_screen(
     clear_color.0 = theme.colors.screen_background;
 
     commands.spawn((
-        DespawnOnExit(AppScreen::Login),
+        DespawnOnExit(AppUiMode::Login),
+        UiScreenRoot {
+            id: UiScreenId::LoginPage,
+        },
+        UiLayerRoot {
+            layer: UiLayer::Page,
+        },
         Node {
             width: percent(100),
             height: percent(100),
@@ -43,7 +51,7 @@ pub(super) fn setup_login_screen(
             children![
                 screen_title(theme, "MyBevy", theme.text.title_large),
                 screen_label("Player Login", theme.text.subtitle, theme.colors.text_muted),
-                primary_route_button(theme, "Guest Login", AppScreen::GameList),
+                primary_route_button(theme, "Guest Login", AppUiMode::Lobby),
             ],
         )],
     ));

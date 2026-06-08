@@ -2,14 +2,14 @@ mod touch_ripple;
 
 use bevy::prelude::*;
 
-use crate::game::navigation::AppScreen;
+use crate::game::navigation::AppUiMode;
 
 pub(super) struct GameplayScreensPlugin;
 
 impl Plugin for GameplayScreensPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            OnEnter(AppScreen::TouchRipple),
+            OnEnter(AppUiMode::WanfaTouchRipple),
             touch_ripple::setup_touch_ripple_overlay,
         );
     }

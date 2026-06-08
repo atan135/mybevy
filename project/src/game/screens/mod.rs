@@ -4,16 +4,13 @@ mod lobby;
 
 use bevy::prelude::*;
 
-use crate::game::{
-    navigation::NavigationPlugin,
-    ui::{theme::UiThemePlugin, widgets::UiWidgetsPlugin},
-};
+use crate::game::{navigation::NavigationPlugin, ui::framework::UiFrameworkPlugin};
 
 pub(super) struct ScreensPlugin;
 
 impl Plugin for ScreensPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((NavigationPlugin, UiThemePlugin, UiWidgetsPlugin))
+        app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
             .add_plugins((auth::AuthScreensPlugin, lobby::LobbyScreensPlugin))
             .add_plugins(gameplay::GameplayScreensPlugin);
     }
