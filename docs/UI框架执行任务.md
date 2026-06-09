@@ -286,14 +286,14 @@ pub(super) struct UiInputState {
 
 - [x] `project/src/game/navigation/mod.rs` 中类型名已改为 `AppUiMode`。
 - [x] `project/src/game/plugin.rs` 中玩法系统使用 `AppUiMode::WanfaTouchRipple`。
-- [ ] 登录页进入大厅可用。
-- [ ] 大厅进入触控玩法可用。
-- [ ] 触控玩法中鼠标/触控水波纹仍可用。
-- [ ] UI 按钮输入不会被玩法触控重复消费。
+- [ ] 登录页进入大厅可用；仍需人工窗口点击验证。
+- [ ] 大厅进入触控玩法可用；仍需人工窗口点击验证。
+- [ ] 触控玩法中鼠标/触控水波纹仍可用；后文仅记录 `TOUCH_START_SCREEN=touch` 启动后稳定运行 5 秒，实际点击 / 拖动水波纹视觉仍需人工窗口验证。
+- [ ] UI 按钮输入不会被玩法触控重复消费；后文已记录 `UiInputState` 和 HUD 输入拦截接入，但 Touch Ripple 场景中的实际 HUD 点击拦截仍需人工窗口验证。
 - [x] 页面根节点带有 `UiPanelRoot`。
 - [x] 触控玩法模式有 `UiPanelId::TouchRippleHud` 根节点。
-- [ ] Toast 可以显示并自动消失。
-- [ ] 确认弹窗可以打开、关闭并阻塞下层输入。
+- [x] Toast 可以显示并自动消失。
+- [x] 确认弹窗可以打开、关闭并阻塞下层输入。
 - [x] UI 框架入口集中在 `UiFrameworkPlugin`。
 - [x] `cargo fmt` 通过。
 - [x] `cargo check` 通过。
@@ -329,6 +329,123 @@ Toast 需要能显示文本、挂到 Toast 层并自动消失。
 - Loading 遮罩。
 - `UiGallery` 示例页面。
 - 更完整的 `UiInputState` 命中和遮罩阻塞规则。
+
+## P0-P3 模块化执行队列
+
+串行规则：每个任务由单独 subagent 执行，主 agent 在验证通过后再 git 提交并启动下一项。subagent 只编辑任务列出的模块 / 文件范围；如果发现需要扩大范围，应先回报主 agent。
+
+### P0：收敛当前状态和测试兜底
+
+1. P0-01 文档验收状态整理
+   - 优先级：P0。
+   - 模块 / 文件范围：`docs/UI框架执行任务.md`。
+   - 目标：对齐早期验收清单和后文完成记录；保留仍需人工窗口或 Android 真机验证的未完成项和原因；维护本执行队列。
+   - 验证命令或验证方式：通读本文档，确认状态描述不与后文记录冲突。
+   - 建议提交类型：`docs`。
+
+2. P0-02 i18n 文案覆盖补齐
+   - 优先级：P0。
+   - 模块 / 文件范围：`project/assets/ui/i18n/*.ron`、`project/src/game/ui/i18n.rs`、`project/src/game/screens/**/*.rs`、`project/src/game/ui/overlays/**/*.rs`、`project/src/game/ui/widgets/**/*.rs`。
+   - 目标：审计仍使用硬编码展示文本的 UI 节点，补齐 Login、Lobby、UiGallery、Touch Ripple HUD、Toast、Loading、Confirm、Floating Panel 和通用控件的静态文案 key；动态用户输入或运行时数据不强行纳入静态 key。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；分别用 `MYBEVY_UI_LOCALE=zh_cn` 和 `MYBEVY_UI_LOCALE=en_us` 启动窗口，抽查主要页面文案。
+   - 建议提交类型：`feat(ui)`。
+
+3. P0-03 配置和 i18n 回归测试
+   - 优先级：P0。
+   - 模块 / 文件范围：`project/src/game/ui/style/theme.rs`、`project/src/game/ui/i18n.rs`、`project/assets/ui/themes/default.ron`、`project/assets/ui/i18n/*.ron`。
+   - 目标：为主题配置版本、缺失文件、坏 RON、locale 归一化、缺失 key fallback 和环境变量路径选择补测试或可重复验证脚本；不要改变已确认的兜底语义。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo test`、`cargo check`。
+   - 建议提交类型：`test(ui)`。
+
+### P1：运行时刷新闭环
+
+1. P1-01 运行时 i18n 刷新
+   - 优先级：P1。
+   - 模块 / 文件范围：`project/src/game/ui/i18n.rs`、`project/src/game/ui/core/framework.rs`、`project/src/game/screens/**/*.rs`、`project/src/game/ui/overlays/**/*.rs`。
+   - 目标：实现语言运行时切换或 i18n 文件热加载后刷新已生成 `UiI18nText` 文本节点；覆盖 Toast、Loading、Confirm、Floating Panel 等当前记录中尚未覆盖的运行时文本。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；窗口中切换语言或修改 i18n 文件，确认 Login、Lobby、UiGallery 和 overlay 文案刷新。
+   - 建议提交类型：`feat(ui)`。
+
+2. P1-02 主题运行时刷新补全
+   - 优先级：P1。
+   - 模块 / 文件范围：`project/src/game/ui/style/theme.rs`、`project/src/game/ui/widgets/**/*.rs`、`project/src/game/ui/overlays/**/*.rs`、`project/src/game/screens/dev/ui_gallery.rs`。
+   - 目标：补全当前记录中尚未运行时刷新的布局尺寸、字号、圆角、padding、z-order 和遮罩颜色等主题 token；只刷新有明确 marker 或 role 的节点，避免全量重建页面。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；运行 UiGallery 时修改主题 RON，确认按钮、输入框、面板、Toast、Loading、Confirm 的可见样式刷新。
+   - 建议提交类型：`feat(ui)`。
+
+3. P1-03 刷新路径测试
+   - 优先级：P1。
+   - 模块 / 文件范围：`project/src/game/ui/i18n.rs`、`project/src/game/ui/style/theme.rs`、相关测试模块或脚本。
+   - 目标：为 i18n 和主题运行时刷新添加最小自动化测试，覆盖成功刷新、坏配置保留当前有效值、缺失 key fallback 和已生成文本节点更新。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo test`、`cargo check`。
+   - 建议提交类型：`test(ui)`。
+
+### P2：文本输入和控件库
+
+1. P2-01 文本输入编辑能力
+   - 优先级：P2。
+   - 模块 / 文件范围：`project/src/game/ui/widgets/controls.rs`、`project/src/game/ui/core/focus.rs`、`project/src/game/screens/dev/ui_gallery.rs`。
+   - 目标：在现有文本输入第一版基础上增加光标、左右移动、Home / End、Delete、选区、复制粘贴、长度限制和 readonly / disabled 语义；IME 组合态如果无法一次完成，应明确保留限制记录。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；在 UiGallery 手动验证键盘编辑、Tab 焦点、提交和禁用态。
+   - 建议提交类型：`feat(ui)`。
+
+2. P2-02 表单状态和校验
+   - 优先级：P2。
+   - 模块 / 文件范围：`project/src/game/ui/widgets/controls.rs`、`project/src/game/ui/style/theme.rs`、`project/src/game/screens/dev/ui_gallery.rs`。
+   - 目标：为文本输入和后续表单控件建立 error、helper text、required、validation message 等状态表达；UiGallery 提供可见样例。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；窗口中验证错误态、禁用态和焦点态不会互相覆盖。
+   - 建议提交类型：`feat(ui)`。
+
+3. P2-03 通用控件库扩展
+   - 优先级：P2。
+   - 模块 / 文件范围：`project/src/game/ui/widgets/**/*.rs`、`project/src/game/ui/style/theme.rs`、`project/src/game/screens/dev/ui_gallery.rs`。
+   - 目标：按现有 builder 风格补齐 checkbox、toggle、segmented control、slider / stepper 和 icon button 等常用控件；控件应接入焦点、disabled / loading 或等价状态、主题和 i18n 文案 helper。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；UiGallery 手动验证鼠标、键盘焦点和视觉状态。
+   - 建议提交类型：`feat(ui)`。
+
+4. P2-04 控件交互测试
+   - 优先级：P2。
+   - 模块 / 文件范围：`project/src/game/ui/widgets/**/*.rs`、`project/src/game/ui/core/focus.rs`、相关测试模块或脚本。
+   - 目标：为按钮、文本输入、滚动、焦点和新增控件增加轻量交互测试或可重复验证脚本，降低后续主题 / i18n 刷新改动的回归风险。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo test`、`cargo check`。
+   - 建议提交类型：`test(ui)`。
+
+### P3：体验、诊断和平台验证
+
+1. P3-01 UI 动画基础
+   - 优先级：P3。
+   - 模块 / 文件范围：可新增 `project/src/game/ui/core/animation.rs`，并涉及 `project/src/game/ui/overlays/**/*.rs`、`project/src/game/ui/style/theme.rs`。
+   - 目标：建立轻量动画组件 / 系统，优先覆盖 Toast 淡入淡出、Confirm / Loading 出入场和按钮状态过渡；不引入复杂时间线编辑器。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；窗口中验证动画不影响输入阻塞和 `CloseTop` 顺序。
+   - 建议提交类型：`feat(ui)`。
+
+2. P3-02 数据绑定基础
+   - 优先级：P3。
+   - 模块 / 文件范围：可新增 `project/src/game/ui/core/binding.rs`，并涉及 `project/src/game/ui/core/framework.rs`、`project/src/game/ui/widgets/**/*.rs`、`project/src/game/screens/**/*.rs`。
+   - 目标：提供文本、可见性、disabled 状态和简单数值显示的绑定机制，减少页面系统手动刷新节点；先覆盖 UiGallery 示例和一个真实页面。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；窗口中验证绑定值变化后 UI 正确刷新且不重建无关节点。
+   - 建议提交类型：`feat(ui)`。
+
+3. P3-03 UI 性能巡检
+   - 优先级：P3。
+   - 模块 / 文件范围：`project/src/game/ui/**/*.rs`、`project/src/game/screens/dev/ui_gallery.rs`。
+   - 目标：检查高频系统、滚动、主题 / i18n 刷新和调试面板的 entity 查询成本；必要时增加条件运行、dirty marker 或统计日志。不要把无关重构混入本任务。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；运行 UiGallery 和 Touch Ripple，观察帧率 / 日志并记录验证结论。
+   - 建议提交类型：`perf(ui)`。
+
+4. P3-04 输入路由调试增强
+   - 优先级：P3。
+   - 模块 / 文件范围：`project/src/game/ui/debug.rs`、`project/src/game/ui/core/input.rs`、`project/src/game/ui/core/focus.rs`、`project/src/game/ui/core/panel.rs`。
+   - 目标：在现有 F3 调试面板基础上增加冻结刷新、过滤、复制当前状态、输入事件历史和可选 panel 高亮；保持面板不阻塞 pointer 输入、不进入 Panel Manager。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；窗口中用 F3 验证调试面板和下层 UI 交互互不干扰。
+   - 建议提交类型：`feat(ui)`。
+
+5. P3-05 Android 真机验证和修复
+   - 优先级：P3。
+   - 模块 / 文件范围：`project/src/game/ui/**/*.rs`、`project/src/game/screens/**/*.rs`、`android/`；如果只记录验证结果，则范围为本文档。
+   - 目标：在 Android 构建环境和真机上验证 Back、触控点击 / 拖动、字体、Toast、Loading、Confirm、文本输入和滚动；仅在发现平台问题时做针对性修复。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs build --release`；在 `android/` 运行 `.\gradlew.bat assembleDebug`；安装到真机后人工验证并记录结果。
+   - 建议提交类型：`test(android)` 或 `fix(ui)`。
 
 ## 下一阶段任务：Panel Manager
 
