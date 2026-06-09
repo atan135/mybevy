@@ -531,6 +531,14 @@ pub(in crate::game) struct UiInputState {
 - 如果当前存在不可取消 `BlockingOverlay`，返回键 / Esc / Android Back 不会关闭它，也不会绕过它关闭下面的弹窗或浮动面板。
 - `UiGallery` 的 Overlays 区域已增加 `Loading` 和 `Cancelable` 两种 Loading 示例，用于验证显式关闭和返回取消两种路径。
 
+### 阶段 2 小入口：主题配置加载
+
+- 已新增 `project/assets/ui/themes/default.ron`，用 RON 保存第一版主题 token。
+- `UiThemePlugin` 启动时会优先读取 `MYBEVY_UI_THEME` 指定文件，其次读取默认主题路径。
+- 主题配置字段包含 `version`；当前支持版本为 `1`。
+- 配置读取失败、缺失或版本不匹配时，会保留内置 `UiTheme::default()` 并输出诊断日志。
+- 当前只是启动期加载，不包含运行时热加载、样式类和 i18n。
+
 ### Android Back 接入记录
 
 - Android Back 通过 Bevy 0.18 的逻辑键 `Key::BrowserBack` 接入，与桌面 `Esc` 一样写入 `UiPanelCommand::CloseTop`。
