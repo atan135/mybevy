@@ -504,6 +504,30 @@ pub(in crate::game) struct UiInputState {
 - 路由按钮、弹窗按钮、Lobby Play 按钮和 `UiGallery` action 按钮都会跳过 `DisabledButton` 和 `LoadingButton`。
 - `UiGallery` 的 Buttons 区域已增加 `Focused`、`Selected`、`Loading`、`Disabled` 和 `Unavailable` 样例。
 
+### 焦点系统第一版小闭环
+
+- 已新增 `UiFocusPlugin` 和 `UiFocusState`，并挂入 `UiFrameworkPlugin`。
+- 通用按钮构建函数会添加 `FocusableButton`，用于区分真实按钮和遮罩根节点等阻塞用 `Button`。
+- `Tab` / `Shift+Tab` 会在当前可聚焦按钮中循环移动焦点。
+- 焦点移动时会自动给当前按钮添加 `FocusedButton`，并移除其他按钮上的 `FocusedButton`。
+- `Enter` / `Space` 会把当前聚焦按钮的 `Interaction` 写为 `Pressed`，现有基于 `Changed<Interaction> + Interaction::Pressed` 的路由按钮、弹窗按钮、Lobby Play 按钮和 `UiGallery` action 按钮可直接响应。
+- 带 `DisabledButton` 或 `LoadingButton` 的按钮不会获得焦点，也不会被键盘触发。
+- 存在 `Modal` 或 `BlockingOverlay` 时，焦点候选限制在最高层阻塞 panel 内；否则候选优先取当前最高层可聚焦 panel。
+- `Esc` / Android Back 的 `CloseTop` 路径不依赖焦点系统，仍由 Panel Manager 处理。
+
+验证方式：
+
+1. 启动 `TOUCH_START_SCREEN=ui-gallery target/debug/project.exe`。
+2. 在 UiGallery 按 `Tab`，确认按钮焦点高亮按稳定顺序移动；按 `Shift+Tab` 确认反向移动。
+3. 焦点停在 `Show Toast`、`Show Floating`、`Show Confirm` 或 `Close Top` 时，按 `Enter` / `Space` 确认行为等价于鼠标点击。
+4. 打开 Confirm 后继续按 `Tab`，确认焦点优先在弹窗按钮间循环；按 `Esc` 确认仍能关闭顶层弹窗。
+
+当前限制：
+
+- 第一版焦点顺序按 `Entity` 稳定顺序遍历，不做空间导航、声明式 tab index 或布局顺序计算。
+- 第一版只覆盖带 `FocusableButton` 的通用按钮；后续自定义控件需要显式接入 marker 或扩展统一控件接口。
+- 键盘激活通过一帧 `Interaction::Pressed` 兼容现有点击系统，不区分按下/松开完整语义。
+
 ### 布局组件小闭环
 
 - 已新增通用布局 builder：`ui_column`、`ui_row`、`ui_wrap_row`、`ui_grid`。

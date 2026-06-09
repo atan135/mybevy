@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::{AppUiMode, RouteButton},
     ui::{
+        core::UiFocusSystems,
         i18n::{UiI18n, UiI18nText},
         style::theme::{ButtonColors, UiTheme, UiThemeTextColorRole},
         widgets::scroll::UiScrollPlugin,
@@ -13,8 +14,10 @@ pub(in crate::game) struct UiWidgetsPlugin;
 
 impl Plugin for UiWidgetsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(UiScrollPlugin)
-            .add_systems(Update, update_button_visuals);
+        app.add_plugins(UiScrollPlugin).add_systems(
+            Update,
+            update_button_visuals.in_set(UiFocusSystems::Visuals),
+        );
     }
 }
 
@@ -26,6 +29,9 @@ pub(in crate::game) struct SecondaryButton;
 
 #[derive(Component)]
 pub(in crate::game) struct DisabledButton;
+
+#[derive(Component)]
+pub(in crate::game) struct FocusableButton;
 
 #[derive(Component)]
 pub(in crate::game) struct FocusedButton;
@@ -287,6 +293,7 @@ fn route_button<T: Component>(
 ) -> impl Bundle {
     (
         Button,
+        FocusableButton,
         RouteButton { target },
         marker,
         Node {
@@ -321,6 +328,7 @@ fn route_button_key_bundle<T: Component>(
 ) -> impl Bundle {
     (
         Button,
+        FocusableButton,
         RouteButton { target },
         marker,
         Node {
@@ -354,6 +362,7 @@ fn action_button<T: Component>(
 ) -> impl Bundle {
     (
         Button,
+        FocusableButton,
         marker,
         Node {
             min_width: px(theme.button.min_width),
@@ -386,6 +395,7 @@ fn action_button_key_bundle<T: Component>(
 ) -> impl Bundle {
     (
         Button,
+        FocusableButton,
         marker,
         Node {
             min_width: px(theme.button.min_width),
@@ -419,6 +429,7 @@ fn disabled_action_button<T: Component>(
 ) -> impl Bundle {
     (
         Button,
+        FocusableButton,
         marker,
         DisabledButton,
         Node {
@@ -452,6 +463,7 @@ fn disabled_action_button_key_bundle<T: Component>(
 ) -> impl Bundle {
     (
         Button,
+        FocusableButton,
         marker,
         DisabledButton,
         Node {
