@@ -4,13 +4,15 @@ use crate::game::{
     navigation::AppUiMode,
     ui::{
         core::{UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot},
+        i18n::{UiI18n, UiI18nText},
         style::{
             UiFontAssets, UiTheme,
             theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
         },
         widgets::{
-            DisabledButton, LoadingButton, primary_action_button, screen_label, screen_title,
-            secondary_action_button,
+            DisabledButton, LoadingButton, primary_action_button,
+            primary_action_button_with_i18n_text, screen_label, screen_title,
+            secondary_action_button, secondary_action_button_with_i18n_text,
         },
     },
 };
@@ -21,6 +23,9 @@ pub(in crate::game) struct UiConfirmModal {
     pub title: String,
     pub body: String,
     pub detail: Option<String>,
+    pub title_i18n_text: Option<UiI18nText>,
+    pub body_i18n_text: Option<UiI18nText>,
+    pub detail_i18n_text: Option<UiI18nText>,
     pub actions: Vec<UiModalActionSpec>,
 }
 
@@ -29,6 +34,7 @@ pub(in crate::game) struct UiModalActionSpec {
     pub label: String,
     pub action: UiModalAction,
     pub style: UiModalActionStyle,
+    pub i18n_text: Option<UiI18nText>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -61,6 +67,21 @@ pub(in crate::game) struct UiModalResult {
 pub(in crate::game) struct UiModalActionButton {
     id: UiModalId,
     action: UiModalAction,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::game) struct UiI18nTextSpec {
+    pub text: String,
+    pub i18n_text: UiI18nText,
+}
+
+impl UiI18nTextSpec {
+    pub(in crate::game) fn new(i18n: &UiI18n, key: &'static str, fallback: &'static str) -> Self {
+        Self {
+            text: i18n.tr(key, fallback),
+            i18n_text: UiI18nText::new(key, fallback),
+        }
+    }
 }
 
 pub(in crate::game) fn handle_modal_action_buttons(
@@ -139,28 +160,62 @@ pub(in crate::game) fn spawn_confirm_modal(
                 UiThemeBorderRole::Panel,
             ))
             .with_children(|panel| {
-                panel.spawn(screen_title(
-                    theme,
-                    fonts,
-                    modal.title.clone(),
-                    theme.text.subtitle,
-                ));
-                panel.spawn(screen_label(
-                    theme,
-                    fonts,
-                    modal.body.clone(),
-                    theme.text.body,
-                    UiThemeTextColorRole::Primary,
-                ));
+                if let Some(i18n_text) = modal.title_i18n_text.clone() {
+                    panel.spawn((
+                        screen_title(theme, fonts, modal.title.clone(), theme.text.subtitle),
+                        i18n_text,
+                    ));
+                } else {
+                    panel.spawn(screen_title(
+                        theme,
+                        fonts,
+                        modal.title.clone(),
+                        theme.text.subtitle,
+                    ));
+                }
 
-                if let Some(detail) = &modal.detail {
+                if let Some(i18n_text) = modal.body_i18n_text.clone() {
+                    panel.spawn((
+                        screen_label(
+                            theme,
+                            fonts,
+                            modal.body.clone(),
+                            theme.text.body,
+                            UiThemeTextColorRole::Primary,
+                        ),
+                        i18n_text,
+                    ));
+                } else {
                     panel.spawn(screen_label(
                         theme,
                         fonts,
-                        detail.clone(),
-                        theme.text.caption,
-                        UiThemeTextColorRole::Muted,
+                        modal.body.clone(),
+                        theme.text.body,
+                        UiThemeTextColorRole::Primary,
                     ));
+                }
+
+                if let Some(detail) = &modal.detail {
+                    if let Some(i18n_text) = modal.detail_i18n_text.clone() {
+                        panel.spawn((
+                            screen_label(
+                                theme,
+                                fonts,
+                                detail.clone(),
+                                theme.text.caption,
+                                UiThemeTextColorRole::Muted,
+                            ),
+                            i18n_text,
+                        ));
+                    } else {
+                        panel.spawn(screen_label(
+                            theme,
+                            fonts,
+                            detail.clone(),
+                            theme.text.caption,
+                            UiThemeTextColorRole::Muted,
+                        ));
+                    }
                 }
 
                 panel
@@ -180,16 +235,48 @@ pub(in crate::game) fn spawn_confirm_modal(
                             };
                             match action.style {
                                 UiModalActionStyle::Primary => {
-                                    actions.spawn((
-                                        primary_action_button(theme, fonts, action.label.clone()),
-                                        action_marker,
-                                    ));
+                                    if let Some(i18n_text) = action.i18n_text.clone() {
+                                        actions.spawn((
+                                            primary_action_button_with_i18n_text(
+                                                theme,
+                                                fonts,
+                                                action.label.clone(),
+                                                i18n_text,
+                                            ),
+                                            action_marker,
+                                        ));
+                                    } else {
+                                        actions.spawn((
+                                            primary_action_button(
+                                                theme,
+                                                fonts,
+                                                action.label.clone(),
+                                            ),
+                                            action_marker,
+                                        ));
+                                    }
                                 }
                                 UiModalActionStyle::Secondary => {
-                                    actions.spawn((
-                                        secondary_action_button(theme, fonts, action.label.clone()),
-                                        action_marker,
-                                    ));
+                                    if let Some(i18n_text) = action.i18n_text.clone() {
+                                        actions.spawn((
+                                            secondary_action_button_with_i18n_text(
+                                                theme,
+                                                fonts,
+                                                action.label.clone(),
+                                                i18n_text,
+                                            ),
+                                            action_marker,
+                                        ));
+                                    } else {
+                                        actions.spawn((
+                                            secondary_action_button(
+                                                theme,
+                                                fonts,
+                                                action.label.clone(),
+                                            ),
+                                            action_marker,
+                                        ));
+                                    }
                                 }
                             }
                         }

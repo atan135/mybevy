@@ -22,6 +22,12 @@ impl Plugin for DevScreensPlugin {
                 )
                     .before(UiPanelSystems::Commands)
                     .run_if(in_state(AppUiMode::UiGallery)),
+            )
+            .add_systems(
+                Update,
+                ui_gallery::tag_gallery_floating_i18n_texts
+                    .after(UiPanelSystems::Commands)
+                    .run_if(in_state(AppUiMode::UiGallery)),
             );
     }
 }

@@ -6,8 +6,9 @@ pub(in crate::game) use controls::{
     DisabledButton, FocusableButton, FocusedButton, LoadingButton, SelectedButton, UiTextInput,
     UiTextInputSubmitted, UiWidgetsPlugin, disabled_primary_action_button_key,
     disabled_secondary_action_button_key, loading_primary_action_button_key, primary_action_button,
-    primary_action_button_key, primary_route_button_key, screen_label, screen_label_key,
-    screen_title, screen_title_key, secondary_action_button, secondary_action_button_key,
+    primary_action_button_key, primary_action_button_with_i18n_text, primary_route_button_key,
+    screen_label, screen_label_key, screen_title, screen_title_key, secondary_action_button,
+    secondary_action_button_key, secondary_action_button_with_i18n_text,
     secondary_route_button_key, text_input,
 };
 pub(in crate::game) use layout::{ui_column, ui_grid};

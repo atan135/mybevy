@@ -682,13 +682,13 @@ pub(in crate::game) struct UiInputState {
 - 热加载解析成功后会替换 `UiTheme` 资源，并刷新已标记节点的通用按钮背景、页面背景、面板背景、面板边框、主文本色和弱化文本色。
 - 热加载解析失败、版本不匹配、读取失败或 stat 失败时，会保留当前有效主题并输出 `warn` 日志，不回退到坏配置。
 - 第一版热加载不包含布局尺寸、字号、圆角、padding、z-order 和半透明遮罩颜色的运行时刷新；这些值仍主要在 UI 创建时生效。
-- 当前不包含 AssetServer watcher 和样式类系统；i18n 已进入第一版启动期加载，详见下方记录。
+- 当前不包含 AssetServer watcher 和样式类系统；i18n 已进入启动期加载和文件热加载第一版，详见下方记录。
 
 ### 阶段 2 小入口：基础 i18n 文案 key
 
 - 已新增 `UiI18nPlugin`，挂入 `UiFrameworkPlugin`。
 - 已新增 `UiI18n` resource，提供 `tr(key, fallback)` 和预留的 `text(key)` 轻量 API。
-- 已新增 `UiI18nText { key, fallback }` 组件；新增 key helper 创建的文本节点会带上该 marker，供后续语言热刷新或运行中切换使用。
+- 已新增 `UiI18nText { key, fallback }` 组件；新增 key helper 创建的文本节点会带上该 marker，`UiI18n` 变化后会刷新已生成 `Text` 节点。
 - 已新增 RON 文案配置：
   - `project/assets/ui/i18n/zh_cn.ron`
   - `project/assets/ui/i18n/en_us.ron`
@@ -698,9 +698,12 @@ pub(in crate::game) struct UiInputState {
 - 未指定语言时默认使用 `zh_cn`。
 - 如果指定语言文件缺失，会回退到中文默认资源；如果所有文件读取失败，会使用内置中文文案表。
 - 缺失 key 时会输出 `warn`；如果内置中文表有该 key，则显示内置中文兜底，否则显示调用处 fallback，fallback 为空时显示 key 本身。
-- 已接入 Login、Lobby、UiGallery 的标题、导航按钮、主要说明文字和示例按钮文案。
-- 第一版暂不覆盖动态 Toast、Loading、Confirm、Floating Panel 的运行时文本，也不覆盖 Touch Ripple HUD 返回按钮。
-- 第一版暂不实现运行中语言切换和 i18n 文件热加载；`UiI18nText` 已作为后续刷新已生成文本节点的 marker 预留。
+- 已接入 Login、Lobby、UiGallery、Touch Ripple HUD 返回按钮的标题、导航按钮、主要说明文字和示例按钮文案。
+- 已新增 i18n 文件热加载第一版：运行中定时轮询当前成功加载的 i18n 文件 modified 时间；如果启动期没有成功加载配置，则优先轮询 `MYBEVY_UI_I18N` 指定路径，否则轮询当前语言资源路径。
+- 热加载解析成功后会替换 `UiI18n` 资源，并刷新带 `UiI18nText` marker 的已生成 `Text` 节点。
+- 热加载解析失败、版本不匹配、读取失败或 stat 失败时，会保留当前有效文案并输出 `warn` 日志，不回退到坏配置。
+- 动态 Toast、Loading、Confirm 和 UiGallery Floating Panel 预览文案已带 i18n marker，可随 `UiI18n` 热加载刷新。
+- 当前暂不提供运行中语言切换 UI；语言仍通过启动前环境变量选择，运行中刷新以当前轮询文件为准。
 
 ### Android Back 接入记录
 

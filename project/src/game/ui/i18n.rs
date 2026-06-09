@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs, io,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 const UI_I18N_CONFIG_VERSION: u32 = 1;
@@ -12,15 +13,22 @@ const DEFAULT_I18N_ASSET_DIR: &str = "assets/ui/i18n";
 const REPO_ROOT_I18N_ASSET_DIR: &str = "project/assets/ui/i18n";
 const UI_I18N_LOCALE_ENV_VAR: &str = "MYBEVY_UI_LOCALE";
 const UI_I18N_PATH_ENV_VAR: &str = "MYBEVY_UI_I18N";
+const UI_I18N_HOT_RELOAD_INTERVAL_SECS: f32 = 0.8;
 
 pub(in crate::game) struct UiI18nPlugin;
 
 impl Plugin for UiI18nPlugin {
     fn build(&self, app: &mut App) {
         let (i18n, source) = load_ui_i18n();
+        let hot_reload = UiI18nHotReload::new(&source);
         app.insert_resource(i18n)
             .insert_resource(source)
-            .add_systems(Startup, log_ui_i18n_source);
+            .insert_resource(hot_reload)
+            .add_systems(Startup, log_ui_i18n_source)
+            .add_systems(
+                Update,
+                (poll_ui_i18n_hot_reload, refresh_ui_i18n_texts).chain(),
+            );
     }
 }
 
@@ -42,6 +50,14 @@ pub(in crate::game) struct UiI18nText {
 struct UiI18nSource {
     loaded_path: Option<PathBuf>,
     diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Resource)]
+struct UiI18nHotReload {
+    watched_path: PathBuf,
+    last_modified: Option<SystemTime>,
+    poll_timer: Timer,
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,6 +262,112 @@ fn log_ui_i18n_source(source: Res<UiI18nSource>, i18n: Res<UiI18n>) {
             locale = %i18n.locale(),
             "using built-in ui i18n fallback"
         );
+    }
+}
+
+impl UiI18nHotReload {
+    fn new(source: &UiI18nSource) -> Self {
+        let watched_path = source
+            .loaded_path
+            .clone()
+            .unwrap_or_else(preferred_ui_i18n_watch_path);
+        let last_modified = ui_i18n_modified_time(&watched_path).ok();
+
+        Self {
+            watched_path,
+            last_modified,
+            poll_timer: Timer::from_seconds(UI_I18N_HOT_RELOAD_INTERVAL_SECS, TimerMode::Repeating),
+            last_error: None,
+        }
+    }
+}
+
+fn preferred_ui_i18n_watch_path() -> PathBuf {
+    if let Ok(path) = env::var(UI_I18N_PATH_ENV_VAR) {
+        return PathBuf::from(path);
+    }
+
+    ui_i18n_path_candidates()
+        .into_iter()
+        .find(|path| path.exists())
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join(DEFAULT_I18N_ASSET_DIR)
+                .join(format!("{}.ron", preferred_locale()))
+        })
+}
+
+fn ui_i18n_modified_time(path: &Path) -> io::Result<SystemTime> {
+    fs::metadata(path).and_then(|metadata| metadata.modified())
+}
+
+fn poll_ui_i18n_hot_reload(
+    time: Res<Time>,
+    mut i18n: ResMut<UiI18n>,
+    mut source: ResMut<UiI18nSource>,
+    mut hot_reload: ResMut<UiI18nHotReload>,
+) {
+    if !hot_reload.poll_timer.tick(time.delta()).just_finished() {
+        return;
+    }
+
+    let modified = match ui_i18n_modified_time(&hot_reload.watched_path) {
+        Ok(modified) => modified,
+        Err(error) => {
+            let message = format!(
+                "{} could not be stat'ed: {error}",
+                hot_reload.watched_path.display()
+            );
+            warn_ui_i18n_reload_error(&mut hot_reload, message);
+            return;
+        }
+    };
+
+    if hot_reload.last_modified == Some(modified) && hot_reload.last_error.is_none() {
+        return;
+    }
+
+    match load_ui_i18n_from_path(&hot_reload.watched_path, built_in_zh_cn_texts()) {
+        Ok(next_i18n) => {
+            *i18n = next_i18n;
+            source.loaded_path = Some(hot_reload.watched_path.clone());
+            source.diagnostics.clear();
+            hot_reload.last_modified = Some(modified);
+            hot_reload.last_error = None;
+            info!(
+                path = %hot_reload.watched_path.display(),
+                locale = %i18n.locale(),
+                "hot reloaded ui i18n config"
+            );
+        }
+        Err(error) => {
+            warn_ui_i18n_reload_error(&mut hot_reload, error);
+        }
+    }
+}
+
+fn warn_ui_i18n_reload_error(hot_reload: &mut UiI18nHotReload, error: String) {
+    if hot_reload.last_error.as_deref() != Some(error.as_str()) {
+        warn!(
+            path = %hot_reload.watched_path.display(),
+            error = %error,
+            "failed to hot reload ui i18n config; keeping current i18n"
+        );
+    }
+
+    hot_reload.last_error = Some(error);
+}
+
+fn refresh_ui_i18n_texts(i18n: Res<UiI18n>, mut texts: Query<(&UiI18nText, &mut Text)>) {
+    if !i18n.is_changed() {
+        return;
+    }
+
+    for (i18n_text, mut text) in &mut texts {
+        let next_text = i18n.tr(&i18n_text.key, i18n_text.fallback.clone());
+        if text.0 != next_text {
+            text.0 = next_text;
+        }
     }
 }
 
@@ -459,5 +581,69 @@ mod tests {
         };
 
         assert_eq!(i18n.tr("missing.key", ""), "missing.key");
+    }
+
+    #[test]
+    fn refresh_i18n_texts_updates_marked_text_nodes() {
+        let mut texts = HashMap::new();
+        texts.insert("app.name".to_string(), "Runtime App".to_string());
+        let i18n = UiI18n {
+            locale: "en_us".to_string(),
+            texts,
+            fallback_texts: built_in_zh_cn_texts(),
+        };
+        let mut app = App::new();
+        app.insert_resource(i18n)
+            .add_systems(Update, refresh_ui_i18n_texts);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Text::new("Old App"),
+                UiI18nText::new("app.name", "Fallback"),
+            ))
+            .id();
+
+        app.update();
+
+        let text = app.world().entity(entity).get::<Text>().unwrap();
+        assert_eq!(text.0, "Runtime App");
+    }
+
+    #[test]
+    fn hot_reload_keeps_current_i18n_when_updated_file_is_invalid() {
+        let temp = TempConfigDir::new("hot_reload_keeps_current_i18n_when_updated_file_is_invalid");
+        let path = temp.write_config(
+            "i18n.ron",
+            &valid_i18n_config_with_version(UI_I18N_CONFIG_VERSION),
+        );
+        let current_i18n = load_ui_i18n_from_path(&path, built_in_zh_cn_texts()).unwrap();
+        let current_app_name = current_i18n.tr("app.name", "Fallback");
+        fs::write(&path, "(version: 1, locale:").expect("bad temp config should be written");
+
+        let mut hot_reload = UiI18nHotReload {
+            watched_path: path,
+            last_modified: None,
+            poll_timer: Timer::from_seconds(0.0, TimerMode::Repeating),
+            last_error: None,
+        };
+        hot_reload.poll_timer.tick(std::time::Duration::ZERO);
+        let source = UiI18nSource {
+            loaded_path: Some(hot_reload.watched_path.clone()),
+            diagnostics: Vec::new(),
+        };
+        let mut app = App::new();
+        app.insert_resource(current_i18n)
+            .insert_resource(source)
+            .insert_resource(hot_reload)
+            .insert_resource(Time::<()>::default())
+            .add_systems(Update, poll_ui_i18n_hot_reload);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+
+        app.update();
+
+        let i18n = app.world().resource::<UiI18n>();
+        assert_eq!(i18n.tr("app.name", "Fallback"), current_app_name);
     }
 }

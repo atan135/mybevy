@@ -10,8 +10,8 @@ use crate::game::{
         },
         i18n::UiI18n,
         overlays::{
-            UiConfirmModal, UiModalAction, UiModalActionSpec, UiModalActionStyle, UiModalId,
-            UiModalResult, UiRouteCommand, UiToast,
+            UiConfirmModal, UiI18nTextSpec, UiModalAction, UiModalActionSpec, UiModalActionStyle,
+            UiModalId, UiModalResult, UiRouteCommand, UiToast,
         },
         style::{
             UiFontAssets, UiTheme,
@@ -222,18 +222,20 @@ pub(super) fn handle_game_list_touch_buttons(
             UiModalAction::Cancel | UiModalAction::Confirm => {}
             UiModalAction::TouchRippleSinglePlayer => {
                 *launch_mode = TouchLaunchMode::SinglePlayer;
-                route_commands.write(UiRouteCommand::ShowToast(UiToast::new(i18n.tr(
+                route_commands.write(UiRouteCommand::ShowToast(UiToast::new_key(
+                    &i18n,
                     "lobby.touch_ripple.toast.local",
                     "Starting local Touch Ripple",
-                ))));
+                )));
                 route_commands.write(UiRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
             UiModalAction::TouchRippleNetworked => {
                 *launch_mode = TouchLaunchMode::Auto;
-                route_commands.write(UiRouteCommand::ShowToast(UiToast::new(i18n.tr(
+                route_commands.write(UiRouteCommand::ShowToast(UiToast::new_key(
+                    &i18n,
                     "lobby.touch_ripple.toast.networked",
                     "Starting networked Touch Ripple",
-                ))));
+                )));
                 route_commands.write(UiRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
         };
@@ -241,32 +243,51 @@ pub(super) fn handle_game_list_touch_buttons(
 }
 
 fn touch_ripple_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
+    let title = UiI18nTextSpec::new(i18n, "lobby.touch_ripple.confirm.title", "Touch Ripple");
+    let body = UiI18nTextSpec::new(
+        i18n,
+        "lobby.touch_ripple.confirm.body",
+        "Start as a single-player session?",
+    );
+    let detail = UiI18nTextSpec::new(
+        i18n,
+        "lobby.touch_ripple.confirm.detail",
+        "Single player uses local authority only.",
+    );
+    let cancel = UiI18nTextSpec::new(i18n, "common.cancel", "Cancel");
+    let networked = UiI18nTextSpec::new(i18n, "lobby.touch_ripple.confirm.networked", "Networked");
+    let single_player = UiI18nTextSpec::new(
+        i18n,
+        "lobby.touch_ripple.confirm.single_player",
+        "Single Player",
+    );
+
     UiConfirmModal {
         id: UiModalId::TouchRippleLaunch,
-        title: i18n.tr("lobby.touch_ripple.confirm.title", "Touch Ripple"),
-        body: i18n.tr(
-            "lobby.touch_ripple.confirm.body",
-            "Start as a single-player session?",
-        ),
-        detail: Some(i18n.tr(
-            "lobby.touch_ripple.confirm.detail",
-            "Single player uses local authority only.",
-        )),
+        title: title.text,
+        body: body.text,
+        detail: Some(detail.text),
+        title_i18n_text: Some(title.i18n_text),
+        body_i18n_text: Some(body.i18n_text),
+        detail_i18n_text: Some(detail.i18n_text),
         actions: vec![
             UiModalActionSpec {
-                label: i18n.tr("common.cancel", "Cancel"),
+                label: cancel.text,
                 action: UiModalAction::Cancel,
                 style: UiModalActionStyle::Secondary,
+                i18n_text: Some(cancel.i18n_text),
             },
             UiModalActionSpec {
-                label: i18n.tr("lobby.touch_ripple.confirm.networked", "Networked"),
+                label: networked.text,
                 action: UiModalAction::TouchRippleNetworked,
                 style: UiModalActionStyle::Secondary,
+                i18n_text: Some(networked.i18n_text),
             },
             UiModalActionSpec {
-                label: i18n.tr("lobby.touch_ripple.confirm.single_player", "Single Player"),
+                label: single_player.text,
                 action: UiModalAction::TouchRippleSinglePlayer,
                 style: UiModalActionStyle::Primary,
+                i18n_text: Some(single_player.i18n_text),
             },
         ],
     }

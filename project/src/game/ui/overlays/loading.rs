@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::game::navigation::AppUiMode;
 use crate::game::ui::{
     core::{UiBlockingOverlay, UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
+    i18n::{UiI18n, UiI18nText},
     style::{
         UiFontAssets, UiTheme,
         theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
@@ -14,6 +15,7 @@ use crate::game::ui::{
 pub(in crate::game) struct UiLoading {
     pub text: String,
     pub cancellable: bool,
+    pub i18n_text: Option<UiI18nText>,
 }
 
 impl UiLoading {
@@ -22,6 +24,15 @@ impl UiLoading {
         Self {
             text: text.into(),
             cancellable: false,
+            i18n_text: None,
+        }
+    }
+
+    pub fn new_key(i18n: &UiI18n, key: &'static str, fallback: &'static str) -> Self {
+        Self {
+            text: i18n.tr(key, fallback),
+            cancellable: false,
+            i18n_text: Some(UiI18nText::new(key, fallback)),
         }
     }
 
@@ -39,54 +50,72 @@ pub(in crate::game) fn spawn_loading(
     loading: &UiLoading,
     owner_mode: Option<AppUiMode>,
 ) {
-    commands.spawn((
-        UiPanelRoot {
-            id: UiPanelId::GlobalLoading,
-            kind: UiPanelKind::BlockingOverlay,
-            owner_mode,
-        },
-        UiBlockingOverlay {
-            cancellable: loading.cancellable,
-        },
-        UiLayerRoot {
-            layer: UiLayer::Loading,
-        },
-        Button,
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(0),
-            right: px(0),
-            top: px(0),
-            bottom: px(0),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            padding: UiRect::all(px(theme.layout.screen_padding)),
-            ..default()
-        },
-        ZIndex(150),
-        BackgroundColor(Color::srgba(0.01, 0.02, 0.03, 0.56)),
-        children![(
+    commands
+        .spawn((
+            UiPanelRoot {
+                id: UiPanelId::GlobalLoading,
+                kind: UiPanelKind::BlockingOverlay,
+                owner_mode,
+            },
+            UiBlockingOverlay {
+                cancellable: loading.cancellable,
+            },
+            UiLayerRoot {
+                layer: UiLayer::Loading,
+            },
+            Button,
             Node {
-                min_width: px(260),
-                max_width: px(420),
+                position_type: PositionType::Absolute,
+                left: px(0),
+                right: px(0),
+                top: px(0),
+                bottom: px(0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                padding: UiRect::axes(px(22), px(16)),
-                border: UiRect::all(px(theme.panel.border)),
-                border_radius: BorderRadius::all(px(theme.panel.radius)),
+                padding: UiRect::all(px(theme.layout.screen_padding)),
                 ..default()
             },
-            BackgroundColor(theme.colors.panel_background),
-            BorderColor::all(theme.colors.panel_border),
-            UiThemeBackgroundRole::Panel,
-            UiThemeBorderRole::Panel,
-            children![screen_label(
-                theme,
-                fonts,
-                loading.text.clone(),
-                theme.text.body,
-                UiThemeTextColorRole::Primary,
-            )],
-        )],
-    ));
+            ZIndex(150),
+            BackgroundColor(Color::srgba(0.01, 0.02, 0.03, 0.56)),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    min_width: px(260),
+                    max_width: px(420),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    padding: UiRect::axes(px(22), px(16)),
+                    border: UiRect::all(px(theme.panel.border)),
+                    border_radius: BorderRadius::all(px(theme.panel.radius)),
+                    ..default()
+                },
+                BackgroundColor(theme.colors.panel_background),
+                BorderColor::all(theme.colors.panel_border),
+                UiThemeBackgroundRole::Panel,
+                UiThemeBorderRole::Panel,
+            ))
+            .with_children(|panel| {
+                if let Some(i18n_text) = loading.i18n_text.clone() {
+                    panel.spawn((
+                        screen_label(
+                            theme,
+                            fonts,
+                            loading.text.clone(),
+                            theme.text.body,
+                            UiThemeTextColorRole::Primary,
+                        ),
+                        i18n_text,
+                    ));
+                } else {
+                    panel.spawn(screen_label(
+                        theme,
+                        fonts,
+                        loading.text.clone(),
+                        theme.text.body,
+                        UiThemeTextColorRole::Primary,
+                    ));
+                }
+            });
+        });
 }

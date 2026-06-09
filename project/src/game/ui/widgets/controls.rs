@@ -248,6 +248,22 @@ pub(in crate::game) fn primary_action_button_key(
     )
 }
 
+pub(in crate::game) fn primary_action_button_with_i18n_text(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    i18n_text: UiI18nText,
+) -> impl Bundle {
+    action_button_key_bundle(
+        theme,
+        fonts,
+        text,
+        theme.colors.primary_button,
+        PrimaryButton,
+        i18n_text,
+    )
+}
+
 pub(in crate::game) fn secondary_action_button(
     theme: &UiTheme,
     fonts: &UiFontAssets,
@@ -259,6 +275,22 @@ pub(in crate::game) fn secondary_action_button(
         text,
         theme.colors.secondary_button,
         SecondaryButton,
+    )
+}
+
+pub(in crate::game) fn secondary_action_button_with_i18n_text(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    i18n_text: UiI18nText,
+) -> impl Bundle {
+    action_button_key_bundle(
+        theme,
+        fonts,
+        text,
+        theme.colors.secondary_button,
+        SecondaryButton,
+        i18n_text,
     )
 }
 
