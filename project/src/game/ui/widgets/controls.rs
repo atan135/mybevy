@@ -181,6 +181,7 @@ pub(in crate::game) fn primary_route_button_key(
     )
 }
 
+#[allow(dead_code)]
 pub(in crate::game) fn secondary_route_button(
     theme: &UiTheme,
     fonts: &UiFontAssets,

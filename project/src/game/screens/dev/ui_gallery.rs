@@ -246,8 +246,21 @@ pub(super) fn setup_ui_gallery(
                         inputs_panel
                             .spawn(ui_column(theme.layout.row_gap))
                             .with_children(|inputs| {
-                                inputs.spawn(text_input(theme, fonts, "Player name", "Pilot 01"));
-                                inputs.spawn(text_input(theme, fonts, "Type a note", ""));
+                                inputs.spawn(text_input(
+                                    theme,
+                                    fonts,
+                                    i18n.tr(
+                                        "ui_gallery.inputs.placeholder.player_name",
+                                        "Player name",
+                                    ),
+                                    "Pilot 01",
+                                ));
+                                inputs.spawn(text_input(
+                                    theme,
+                                    fonts,
+                                    i18n.tr("ui_gallery.inputs.placeholder.note", "Type a note"),
+                                    "",
+                                ));
                             });
                     });
 
@@ -341,6 +354,7 @@ pub(super) fn setup_ui_gallery(
 
 pub(super) fn handle_ui_gallery_buttons(
     mut commands: Commands,
+    i18n: Res<UiI18n>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut route_commands: MessageWriter<UiRouteCommand>,
     buttons: Query<
@@ -361,19 +375,20 @@ pub(super) fn handle_ui_gallery_buttons(
         match action {
             GalleryActionButton::Toast => {
                 route_commands.write(UiRouteCommand::ShowToast(UiToast::new(
-                    "Toast from UI Gallery",
+                    i18n.tr("ui_gallery.toast.preview", "Toast from UI Gallery"),
                 )));
             }
             GalleryActionButton::ShowLoading => {
                 commands.insert_resource(GalleryLoadingPreview::new());
                 panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Loading(
-                    UiLoading::new("Loading preview"),
+                    UiLoading::new(i18n.tr("ui_gallery.loading.preview", "Loading preview")),
                 )));
             }
             GalleryActionButton::ShowCancellableLoading => {
                 commands.insert_resource(GalleryLoadingPreview::new());
                 panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Loading(
-                    UiLoading::new("Cancelable loading").cancellable(),
+                    UiLoading::new(i18n.tr("ui_gallery.loading.cancelable", "Cancelable loading"))
+                        .cancellable(),
                 )));
             }
             GalleryActionButton::HideLoading => {
@@ -382,12 +397,12 @@ pub(super) fn handle_ui_gallery_buttons(
             }
             GalleryActionButton::Confirm => {
                 panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
-                    gallery_confirm_modal(),
+                    gallery_confirm_modal(&i18n),
                 )));
             }
             GalleryActionButton::Floating => {
                 panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Floating(
-                    gallery_floating_panel(),
+                    gallery_floating_panel(&i18n),
                 )));
             }
             GalleryActionButton::CloseTop => {
@@ -491,20 +506,26 @@ fn primary_route_button_sample(
     )
 }
 
-fn gallery_confirm_modal() -> UiConfirmModal {
+fn gallery_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
     UiConfirmModal {
         id: UiModalId::GalleryConfirm,
-        title: "Gallery Confirm".to_string(),
-        body: "This confirms modal layering and input blocking.".to_string(),
-        detail: Some("The page buttons below should not react while this is open.".to_string()),
+        title: i18n.tr("ui_gallery.confirm.title", "Gallery Confirm"),
+        body: i18n.tr(
+            "ui_gallery.confirm.body",
+            "This confirms modal layering and input blocking.",
+        ),
+        detail: Some(i18n.tr(
+            "ui_gallery.confirm.detail",
+            "The page buttons below should not react while this is open.",
+        )),
         actions: vec![
             UiModalActionSpec {
-                label: "Cancel".to_string(),
+                label: i18n.tr("common.cancel", "Cancel"),
                 action: UiModalAction::Cancel,
                 style: UiModalActionStyle::Secondary,
             },
             UiModalActionSpec {
-                label: "Confirm".to_string(),
+                label: i18n.tr("common.confirm", "Confirm"),
                 action: UiModalAction::Confirm,
                 style: UiModalActionStyle::Primary,
             },
@@ -512,11 +533,17 @@ fn gallery_confirm_modal() -> UiConfirmModal {
     }
 }
 
-fn gallery_floating_panel() -> UiFloatingPanel {
+fn gallery_floating_panel(i18n: &UiI18n) -> UiFloatingPanel {
     UiFloatingPanel {
         id: UiPanelId::GalleryFloating,
-        title: "Floating Panel".to_string(),
-        body: "This panel does not cover the whole page.".to_string(),
-        detail: Some("Use Close Top or Esc to close it.".to_string()),
+        title: i18n.tr("ui_gallery.floating.title", "Floating Panel"),
+        body: i18n.tr(
+            "ui_gallery.floating.body",
+            "This panel does not cover the whole page.",
+        ),
+        detail: Some(i18n.tr(
+            "ui_gallery.floating.detail",
+            "Use Close Top or Esc to close it.",
+        )),
     }
 }

@@ -190,6 +190,7 @@ pub(super) fn setup_game_list_screen(
 
 pub(super) fn handle_game_list_touch_buttons(
     mut launch_mode: ResMut<TouchLaunchMode>,
+    i18n: Res<UiI18n>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut route_commands: MessageWriter<UiRouteCommand>,
     mut modal_results: MessageReader<UiModalResult>,
@@ -208,7 +209,7 @@ pub(super) fn handle_game_list_touch_buttons(
         .any(|interaction| *interaction == Interaction::Pressed)
     {
         panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
-            touch_ripple_confirm_modal(),
+            touch_ripple_confirm_modal(&i18n),
         )));
     }
 
@@ -221,41 +222,49 @@ pub(super) fn handle_game_list_touch_buttons(
             UiModalAction::Cancel | UiModalAction::Confirm => {}
             UiModalAction::TouchRippleSinglePlayer => {
                 *launch_mode = TouchLaunchMode::SinglePlayer;
-                route_commands.write(UiRouteCommand::ShowToast(UiToast::new(
+                route_commands.write(UiRouteCommand::ShowToast(UiToast::new(i18n.tr(
+                    "lobby.touch_ripple.toast.local",
                     "Starting local Touch Ripple",
-                )));
+                ))));
                 route_commands.write(UiRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
             UiModalAction::TouchRippleNetworked => {
                 *launch_mode = TouchLaunchMode::Auto;
-                route_commands.write(UiRouteCommand::ShowToast(UiToast::new(
+                route_commands.write(UiRouteCommand::ShowToast(UiToast::new(i18n.tr(
+                    "lobby.touch_ripple.toast.networked",
                     "Starting networked Touch Ripple",
-                )));
+                ))));
                 route_commands.write(UiRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
         };
     }
 }
 
-fn touch_ripple_confirm_modal() -> UiConfirmModal {
+fn touch_ripple_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
     UiConfirmModal {
         id: UiModalId::TouchRippleLaunch,
-        title: "Touch Ripple".to_string(),
-        body: "Start as a single-player session?".to_string(),
-        detail: Some("Single player uses local authority only.".to_string()),
+        title: i18n.tr("lobby.touch_ripple.confirm.title", "Touch Ripple"),
+        body: i18n.tr(
+            "lobby.touch_ripple.confirm.body",
+            "Start as a single-player session?",
+        ),
+        detail: Some(i18n.tr(
+            "lobby.touch_ripple.confirm.detail",
+            "Single player uses local authority only.",
+        )),
         actions: vec![
             UiModalActionSpec {
-                label: "Cancel".to_string(),
+                label: i18n.tr("common.cancel", "Cancel"),
                 action: UiModalAction::Cancel,
                 style: UiModalActionStyle::Secondary,
             },
             UiModalActionSpec {
-                label: "Networked".to_string(),
+                label: i18n.tr("lobby.touch_ripple.confirm.networked", "Networked"),
                 action: UiModalAction::TouchRippleNetworked,
                 style: UiModalActionStyle::Secondary,
             },
             UiModalActionSpec {
-                label: "Single Player".to_string(),
+                label: i18n.tr("lobby.touch_ripple.confirm.single_player", "Single Player"),
                 action: UiModalAction::TouchRippleSinglePlayer,
                 style: UiModalActionStyle::Primary,
             },

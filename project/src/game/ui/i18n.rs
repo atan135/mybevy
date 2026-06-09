@@ -252,6 +252,8 @@ fn log_ui_i18n_source(source: Res<UiI18nSource>, i18n: Res<UiI18n>) {
 fn built_in_zh_cn_texts() -> HashMap<String, String> {
     [
         ("app.name", "MyBevy"),
+        ("common.cancel", "取消"),
+        ("common.confirm", "确认"),
         ("nav.lobby", "大厅"),
         ("nav.ui_gallery", "UI 示例"),
         ("nav.logout", "退出登录"),
@@ -262,6 +264,19 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
         ("lobby.touch_ripple.title", "触控水波纹"),
         ("lobby.touch_ripple.description", "当前原型"),
         ("lobby.play", "开始"),
+        ("lobby.touch_ripple.confirm.title", "触控水波纹"),
+        ("lobby.touch_ripple.confirm.body", "要以单人会话开始吗？"),
+        (
+            "lobby.touch_ripple.confirm.detail",
+            "单人模式仅使用本地控制机。",
+        ),
+        ("lobby.touch_ripple.confirm.networked", "联机"),
+        ("lobby.touch_ripple.confirm.single_player", "单人"),
+        ("lobby.touch_ripple.toast.local", "正在启动本地触控水波纹"),
+        (
+            "lobby.touch_ripple.toast.networked",
+            "正在启动联机触控水波纹",
+        ),
         ("ui_gallery.title", "UI 示例"),
         ("ui_gallery.typography.section", "文字排版"),
         ("ui_gallery.typography.large_title", "大标题"),
@@ -278,6 +293,9 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
         ("ui_gallery.buttons.disabled", "禁用"),
         ("ui_gallery.buttons.unavailable", "不可用"),
         ("ui_gallery.buttons.action", "操作"),
+        ("ui_gallery.inputs.section", "输入框"),
+        ("ui_gallery.inputs.placeholder.player_name", "玩家名称"),
+        ("ui_gallery.inputs.placeholder.note", "输入备注"),
         ("ui_gallery.overlays.section", "覆盖层"),
         ("ui_gallery.overlays.show_toast", "显示 Toast"),
         ("ui_gallery.overlays.loading", "Loading"),
@@ -286,6 +304,24 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
         ("ui_gallery.overlays.show_confirm", "显示确认框"),
         ("ui_gallery.overlays.show_floating", "显示浮动面板"),
         ("ui_gallery.overlays.close_top", "关闭顶层"),
+        ("ui_gallery.toast.preview", "来自 UI 示例的 Toast"),
+        ("ui_gallery.loading.preview", "加载预览"),
+        ("ui_gallery.loading.cancelable", "可取消加载中"),
+        ("ui_gallery.confirm.title", "示例确认框"),
+        (
+            "ui_gallery.confirm.body",
+            "这里用于确认弹窗层级和输入阻断。",
+        ),
+        (
+            "ui_gallery.confirm.detail",
+            "弹窗打开时，下方页面按钮不应响应。",
+        ),
+        ("ui_gallery.floating.title", "浮动面板"),
+        ("ui_gallery.floating.body", "此面板不会覆盖整个页面。"),
+        (
+            "ui_gallery.floating.detail",
+            "使用关闭顶层按钮或 Esc 关闭它。",
+        ),
     ]
     .into_iter()
     .map(|(key, value)| (key.to_string(), value.to_string()))
