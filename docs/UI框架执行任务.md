@@ -791,7 +791,7 @@ pub(in crate::game) struct UiInputState {
 
 ### Selection 控件第一版
 
-- P2-03 已拆为多个小任务串行处理，当前先完成 selection 类控件，numeric 类和 icon button 后续单独处理。
+- P2-03 已拆为多个小任务串行处理，当前已完成 selection 类和 numeric 类控件，icon button 后续单独处理。
 - 已新增 checkbox builder：
   - `checkbox_key(...)`
   - `checked_checkbox_key(...)`
@@ -816,6 +816,27 @@ pub(in crate::game) struct UiInputState {
 - 当前 selection 控件只提供静态状态和 builder，不提供点击后自动切换 checked/on/selected 的统一状态机或业务事件。
 - checkbox / toggle 暂未绘制独立勾选框或滑块轨道；第一版用按钮 selected/disabled 视觉表达状态。
 - segmented control 只提供选项按钮排列和 selected marker，不负责互斥选择更新。
+
+### Numeric 控件第一版
+
+- 已新增 slider builder：
+  - `slider_key(...)`
+  - `disabled_slider_key(...)`
+- 已新增 stepper builder：
+  - `stepper_key(...)`
+  - `disabled_stepper_key(...)`
+- Slider 第一版保存 `UiSlider { value, min, max }`，会对 value 做边界夹取，并根据 ratio 渲染静态 track / fill / value 文本。
+- Stepper 第一版保存 `UiStepper { value, min, max, step }`，会对 value 和 step 做边界整理，并展示 `- / value / +` 的静态控件组。
+- Numeric 控件复用现有主题 token：文本、按钮、输入框背景、panel border 和 disabled 色；未新增主题 schema。
+- `UiGallery` 已新增 Numeric Controls 区域，展示正常 / 禁用 slider 和正常 / 禁用 stepper。
+- 已补充中英文 i18n 资源和内置中文 fallback，覆盖新增 numeric 样例文案。
+- 已新增单元测试覆盖 slider ratio 夹取、反向边界排序、零范围处理，以及 stepper increment / decrement 的边界夹取。
+
+当前限制：
+
+- 当前 slider 不支持拖拽、点击定位、键盘调整或业务事件，只提供静态 value 展示。
+- 当前 stepper 的 `-` / `+` 按钮只用于视觉展示，不自动修改 `UiStepper.value`，后续需要统一控件事件协议后再接入交互。
+- Numeric 控件的 label 文案支持 i18n marker 热刷新；value 来自组件，不做 i18n 格式化、本地化小数分隔或单位显示。
 
 ### UI 字体和中文字形修复
 

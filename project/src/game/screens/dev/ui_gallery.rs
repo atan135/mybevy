@@ -24,10 +24,11 @@ use crate::game::{
             SelectedButton, UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars,
             UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key,
             checked_checkbox_key, disabled_checkbox_key, disabled_primary_action_button_key,
-            disabled_secondary_action_button_key, disabled_segment_option_key, disabled_toggle_key,
-            loading_primary_action_button_key, primary_action_button_key, screen_label_key,
-            screen_title_key, secondary_action_button_key, secondary_route_button_key,
-            segment_option_key, segmented_control, selected_segment_option_key, text_input,
+            disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
+            disabled_stepper_key, disabled_toggle_key, loading_primary_action_button_key,
+            primary_action_button_key, screen_label_key, screen_title_key,
+            secondary_action_button_key, secondary_route_button_key, segment_option_key,
+            segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
             text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_grid,
             ui_scroll_column,
         },
@@ -342,6 +343,63 @@ pub(super) fn setup_ui_gallery(
                                     "large",
                                     "ui_gallery.selection.segment.large",
                                     "Large",
+                                ));
+                            });
+                    });
+
+                body.spawn(gallery_panel(theme))
+                    .with_children(|numeric_panel| {
+                        numeric_panel.spawn(section_label_key(
+                            theme,
+                            fonts,
+                            i18n,
+                            "ui_gallery.numeric.section",
+                            "Numeric Controls",
+                        ));
+                        numeric_panel
+                            .spawn(ui_column(theme.layout.row_gap))
+                            .with_children(|controls| {
+                                controls.spawn(slider_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.numeric.slider.volume",
+                                    "Volume",
+                                    64.0,
+                                    0.0,
+                                    100.0,
+                                ));
+                                controls.spawn(disabled_slider_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.numeric.slider.disabled",
+                                    "Disabled Slider",
+                                    30.0,
+                                    0.0,
+                                    100.0,
+                                ));
+                                controls.spawn(stepper_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.numeric.stepper.players",
+                                    "Players",
+                                    4,
+                                    1,
+                                    8,
+                                    1,
+                                ));
+                                controls.spawn(disabled_stepper_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.numeric.stepper.disabled",
+                                    "Disabled Stepper",
+                                    2,
+                                    1,
+                                    8,
+                                    1,
                                 ));
                             });
                     });

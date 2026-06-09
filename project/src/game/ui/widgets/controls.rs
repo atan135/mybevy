@@ -19,6 +19,10 @@ use crate::game::{
     },
 };
 
+const NUMERIC_CONTROL_LABEL_WIDTH: f32 = 132.0;
+const SLIDER_TRACK_HEIGHT: f32 = 8.0;
+const STEPPER_VALUE_WIDTH: f32 = 72.0;
+
 pub(in crate::game) struct UiWidgetsPlugin;
 
 impl Plugin for UiWidgetsPlugin {
@@ -37,6 +41,7 @@ impl Plugin for UiWidgetsPlugin {
                 (
                     sync_text_input_display,
                     sync_text_input_form_messages,
+                    sync_numeric_control_display,
                     update_button_visuals,
                     update_text_input_visuals,
                 )
@@ -89,6 +94,64 @@ pub(in crate::game) struct UiSegmentOption {
 
 #[derive(Component)]
 pub(in crate::game) struct UiSegmentOptionSelected;
+
+#[derive(Clone, Copy, Debug, Component)]
+pub(in crate::game) struct UiSlider {
+    pub value: f32,
+    pub min: f32,
+    pub max: f32,
+}
+
+impl UiSlider {
+    pub(in crate::game) fn new(value: f32, min: f32, max: f32) -> Self {
+        let (min, max) = ordered_slider_bounds(min, max);
+        Self {
+            value: clamp_slider_value(value, min, max),
+            min,
+            max,
+        }
+    }
+
+    fn ratio(self) -> f32 {
+        slider_ratio(self.value, self.min, self.max)
+    }
+}
+
+#[derive(Component)]
+struct UiSliderFill;
+
+#[derive(Component)]
+struct UiSliderValueText;
+
+#[derive(Clone, Copy, Debug, Component)]
+pub(in crate::game) struct UiStepper {
+    pub value: i32,
+    pub min: i32,
+    pub max: i32,
+    pub step: i32,
+}
+
+impl UiStepper {
+    pub(in crate::game) fn new(value: i32, min: i32, max: i32, step: i32) -> Self {
+        let (min, max) = ordered_stepper_bounds(min, max);
+        let step = stepper_step(step);
+        Self {
+            value: clamp_stepper_value(value, min, max),
+            min,
+            max,
+            step,
+        }
+    }
+}
+
+#[derive(Component)]
+struct UiStepperDecrementButton;
+
+#[derive(Component)]
+struct UiStepperIncrementButton;
+
+#[derive(Component)]
+struct UiStepperValueText;
 
 #[derive(Component)]
 pub(in crate::game) struct UiTextInput;
@@ -754,6 +817,106 @@ pub(in crate::game) fn disabled_segment_option_key(
     )
 }
 
+pub(in crate::game) fn slider_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+    value: f32,
+    min: f32,
+    max: f32,
+) -> impl Bundle {
+    slider_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        value,
+        min,
+        max,
+        UiI18nText::new(key, fallback),
+        (),
+        false,
+    )
+}
+
+pub(in crate::game) fn disabled_slider_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+    value: f32,
+    min: f32,
+    max: f32,
+) -> impl Bundle {
+    slider_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        value,
+        min,
+        max,
+        UiI18nText::new(key, fallback),
+        DisabledButton,
+        true,
+    )
+}
+
+pub(in crate::game) fn stepper_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+    value: i32,
+    min: i32,
+    max: i32,
+    step: i32,
+) -> impl Bundle {
+    stepper_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        value,
+        min,
+        max,
+        step,
+        UiI18nText::new(key, fallback),
+        (),
+        UiStepperDecrementButton,
+        UiStepperIncrementButton,
+        false,
+    )
+}
+
+pub(in crate::game) fn disabled_stepper_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+    value: i32,
+    min: i32,
+    max: i32,
+    step: i32,
+) -> impl Bundle {
+    stepper_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        value,
+        min,
+        max,
+        step,
+        UiI18nText::new(key, fallback),
+        DisabledButton,
+        (UiStepperDecrementButton, DisabledButton),
+        (UiStepperIncrementButton, DisabledButton),
+        true,
+    )
+}
+
 pub(in crate::game) fn text_input(
     theme: &UiTheme,
     fonts: &UiFontAssets,
@@ -1186,6 +1349,272 @@ fn segment_option_key_bundle(
     )
 }
 
+fn slider_bundle<T: Bundle>(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    label: impl Into<String>,
+    value: f32,
+    min: f32,
+    max: f32,
+    label_i18n_text: UiI18nText,
+    marker: T,
+    disabled: bool,
+) -> impl Bundle {
+    let slider = UiSlider::new(value, min, max);
+    let fill_color = if disabled {
+        theme.colors.secondary_button.disabled
+    } else {
+        theme.colors.primary_button.idle
+    };
+    let value_color = if disabled {
+        UiThemeTextColorRole::Muted
+    } else {
+        UiThemeTextColorRole::Primary
+    };
+
+    (
+        Button,
+        FocusableButton,
+        UiThemeButtonNodeRole::TextInput,
+        marker,
+        slider,
+        Node {
+            width: percent(100),
+            min_height: px(theme.button.height),
+            align_items: AlignItems::Center,
+            column_gap: px(theme.layout.row_column_gap),
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border: UiRect::all(px(theme.panel.border)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
+            ..default()
+        },
+        BackgroundColor(text_input_background_color(
+            theme,
+            Interaction::None,
+            false,
+            disabled,
+        )),
+        BorderColor::all(text_input_border_color(
+            theme,
+            Interaction::None,
+            false,
+            disabled,
+            false,
+        )),
+        children![
+            (
+                slider_label_node(),
+                Text::new(label),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.button,
+                    ..default()
+                },
+                TextColor(value_color.color(theme)),
+                value_color,
+                UiThemeTextStyleRole::Button,
+                label_i18n_text,
+            ),
+            (
+                slider_track_node(),
+                BackgroundColor(theme.colors.panel_border),
+                children![(
+                    UiSliderFill,
+                    Node {
+                        width: percent(slider.ratio() * 100.0),
+                        height: percent(100),
+                        border_radius: BorderRadius::all(px(SLIDER_TRACK_HEIGHT * 0.5)),
+                        ..default()
+                    },
+                    BackgroundColor(fill_color),
+                )],
+            ),
+            (
+                slider_value_node(),
+                Text::new(format_slider_value(slider.value)),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.button,
+                    ..default()
+                },
+                TextColor(value_color.color(theme)),
+                value_color,
+                UiThemeTextStyleRole::Button,
+                UiSliderValueText,
+            ),
+        ],
+    )
+}
+
+fn stepper_bundle<T: Bundle, D: Bundle, I: Bundle>(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    label: impl Into<String>,
+    value: i32,
+    min: i32,
+    max: i32,
+    step: i32,
+    label_i18n_text: UiI18nText,
+    marker: T,
+    decrement_marker: D,
+    increment_marker: I,
+    disabled: bool,
+) -> impl Bundle {
+    let stepper = UiStepper::new(value, min, max, step);
+    let value_color = if disabled {
+        UiThemeTextColorRole::Muted
+    } else {
+        UiThemeTextColorRole::Primary
+    };
+    let stepper_button_colors = theme.colors.secondary_button;
+
+    (
+        marker,
+        stepper,
+        Node {
+            width: percent(100),
+            align_items: AlignItems::Center,
+            column_gap: px(theme.layout.row_column_gap),
+            row_gap: px(theme.layout.row_gap),
+            flex_wrap: FlexWrap::Wrap,
+            ..default()
+        },
+        children![
+            (
+                stepper_label_node(),
+                Text::new(label),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.button,
+                    ..default()
+                },
+                TextColor(value_color.color(theme)),
+                value_color,
+                UiThemeTextStyleRole::Button,
+                label_i18n_text,
+            ),
+            (
+                stepper_button(theme, fonts, "-", stepper_button_colors, disabled),
+                decrement_marker,
+            ),
+            (
+                stepper_value_node(),
+                Text::new(stepper.value.to_string()),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.button,
+                    ..default()
+                },
+                TextColor(value_color.color(theme)),
+                value_color,
+                UiThemeTextStyleRole::Button,
+                UiStepperValueText,
+            ),
+            (
+                stepper_button(theme, fonts, "+", stepper_button_colors, disabled),
+                increment_marker,
+            ),
+        ],
+    )
+}
+
+fn stepper_button(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    colors: ButtonColors,
+    disabled: bool,
+) -> impl Bundle {
+    (
+        Button,
+        FocusableButton,
+        SecondaryButton,
+        UiThemeButtonNodeRole::Button,
+        Node {
+            min_width: px(theme.button.height),
+            width: px(theme.button.height),
+            height: px(theme.button.height),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            padding: UiRect::axes(px(0), px(0)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
+            ..default()
+        },
+        BackgroundColor(button_background_color(
+            colors,
+            Interaction::None,
+            disabled,
+            false,
+            false,
+            false,
+        )),
+        children![(
+            Text::new(text),
+            TextFont {
+                font: fonts.regular.clone(),
+                font_size: theme.text.button,
+                ..default()
+            },
+            TextColor(if disabled {
+                theme.colors.text_muted
+            } else {
+                theme.colors.text_primary
+            }),
+            if disabled {
+                UiThemeTextColorRole::Muted
+            } else {
+                UiThemeTextColorRole::Primary
+            },
+            UiThemeTextStyleRole::Button,
+        )],
+    )
+}
+
+fn slider_label_node() -> Node {
+    Node {
+        width: px(NUMERIC_CONTROL_LABEL_WIDTH),
+        ..default()
+    }
+}
+
+fn slider_track_node() -> Node {
+    Node {
+        height: px(SLIDER_TRACK_HEIGHT),
+        flex_grow: 1.0,
+        overflow: Overflow::clip(),
+        border_radius: BorderRadius::all(px(SLIDER_TRACK_HEIGHT * 0.5)),
+        ..default()
+    }
+}
+
+fn slider_value_node() -> Node {
+    Node {
+        width: px(STEPPER_VALUE_WIDTH),
+        justify_content: JustifyContent::FlexEnd,
+        ..default()
+    }
+}
+
+fn stepper_label_node() -> Node {
+    Node {
+        width: px(NUMERIC_CONTROL_LABEL_WIDTH),
+        ..default()
+    }
+}
+
+fn stepper_value_node() -> Node {
+    Node {
+        width: px(STEPPER_VALUE_WIDTH),
+        min_height: px(36),
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::Center,
+        padding: UiRect::horizontal(px(8)),
+        border: UiRect::all(px(1)),
+        border_radius: BorderRadius::all(px(4)),
+        ..default()
+    }
+}
+
 fn selection_button_background_color(
     colors: ButtonColors,
     interaction: Interaction,
@@ -1460,6 +1889,60 @@ fn sync_text_input_form_messages(
     }
 }
 
+fn sync_numeric_control_display(
+    sliders: Query<&UiSlider>,
+    steppers: Query<&UiStepper>,
+    parents: Query<&ChildOf>,
+    mut slider_fills: Query<(Entity, &mut Node), With<UiSliderFill>>,
+    mut slider_value_texts: Query<(Entity, &mut Text), With<UiSliderValueText>>,
+    mut stepper_value_texts: Query<(Entity, &mut Text), With<UiStepperValueText>>,
+) {
+    for (fill_entity, mut fill_node) in &mut slider_fills {
+        let Some(slider) = parents
+            .iter_ancestors(fill_entity)
+            .find_map(|ancestor| sliders.get(ancestor).ok())
+        else {
+            continue;
+        };
+
+        let width = percent(slider.ratio() * 100.0);
+        if fill_node.width != width {
+            fill_node.width = width;
+        }
+    }
+
+    for (text_entity, mut text) in &mut slider_value_texts {
+        let Some(slider) = parents
+            .iter_ancestors(text_entity)
+            .find_map(|ancestor| sliders.get(ancestor).ok())
+        else {
+            continue;
+        };
+
+        let display = format_slider_value(slider.value);
+        if text.0 != display {
+            text.0 = display;
+        }
+    }
+
+    for (text_entity, mut text) in &mut stepper_value_texts {
+        let Some(stepper) = parents
+            .iter_ancestors(text_entity)
+            .find_map(|ancestor| steppers.get(ancestor).ok())
+        else {
+            continue;
+        };
+
+        let display = stepper.value.to_string();
+        if text.0 != display {
+            text.0 = display;
+        }
+
+        let _ = stepper_decrement_value(stepper.value, stepper.min, stepper.max, stepper.step);
+        let _ = stepper_increment_value(stepper.value, stepper.min, stepper.max, stepper.step);
+    }
+}
+
 fn update_text_input_visuals(
     theme: Res<UiTheme>,
     mut text_inputs: Query<
@@ -1604,6 +2087,58 @@ fn text_input_has_error(
     has_error: bool,
 ) -> bool {
     text_input_form_state(value, None, validation_message, required, has_error).is_error
+}
+
+fn ordered_slider_bounds(min: f32, max: f32) -> (f32, f32) {
+    if min <= max { (min, max) } else { (max, min) }
+}
+
+fn clamp_slider_value(value: f32, min: f32, max: f32) -> f32 {
+    if value.is_nan() {
+        return min;
+    }
+
+    value.clamp(min, max)
+}
+
+fn slider_ratio(value: f32, min: f32, max: f32) -> f32 {
+    let (min, max) = ordered_slider_bounds(min, max);
+    let range = max - min;
+    if range <= f32::EPSILON {
+        return 0.0;
+    }
+
+    (clamp_slider_value(value, min, max) - min) / range
+}
+
+fn format_slider_value(value: f32) -> String {
+    if value.fract().abs() < 0.05 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+fn ordered_stepper_bounds(min: i32, max: i32) -> (i32, i32) {
+    if min <= max { (min, max) } else { (max, min) }
+}
+
+fn stepper_step(step: i32) -> i32 {
+    step.abs().max(1)
+}
+
+fn clamp_stepper_value(value: i32, min: i32, max: i32) -> i32 {
+    value.clamp(min, max)
+}
+
+fn stepper_increment_value(value: i32, min: i32, max: i32, step: i32) -> i32 {
+    let (min, max) = ordered_stepper_bounds(min, max);
+    clamp_stepper_value(value.saturating_add(stepper_step(step)), min, max)
+}
+
+fn stepper_decrement_value(value: i32, min: i32, max: i32, step: i32) -> i32 {
+    let (min, max) = ordered_stepper_bounds(min, max);
+    clamp_stepper_value(value.saturating_sub(stepper_step(step)), min, max)
 }
 
 #[derive(Clone, Copy)]
@@ -2206,5 +2741,24 @@ mod tests {
             ),
             colors.focused
         );
+    }
+
+    #[test]
+    fn slider_ratio_orders_bounds_and_clamps_value() {
+        assert_eq!(slider_ratio(50.0, 0.0, 100.0), 0.5);
+        assert_eq!(slider_ratio(150.0, 0.0, 100.0), 1.0);
+        assert_eq!(slider_ratio(-10.0, 0.0, 100.0), 0.0);
+        assert_eq!(slider_ratio(25.0, 100.0, 0.0), 0.25);
+        assert_eq!(slider_ratio(10.0, 10.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn stepper_increment_and_decrement_clamp_to_bounds() {
+        assert_eq!(stepper_increment_value(4, 1, 8, 2), 6);
+        assert_eq!(stepper_increment_value(7, 1, 8, 2), 8);
+        assert_eq!(stepper_decrement_value(4, 1, 8, 2), 2);
+        assert_eq!(stepper_decrement_value(2, 1, 8, 2), 1);
+        assert_eq!(stepper_increment_value(4, 8, 1, -2), 6);
+        assert_eq!(stepper_decrement_value(4, 8, 1, 0), 3);
     }
 }
