@@ -838,6 +838,25 @@ pub(in crate::game) struct UiInputState {
 - 当前 stepper 的 `-` / `+` 按钮只用于视觉展示，不自动修改 `UiStepper.value`，后续需要统一控件事件协议后再接入交互。
 - Numeric 控件的 label 文案支持 i18n marker 热刷新；value 来自组件，不做 i18n 格式化、本地化小数分隔或单位显示。
 
+### Icon Button 控件第一版
+
+- 已新增 icon button builder：
+  - `icon_button_key(...)`
+  - `disabled_icon_button_key(...)`
+  - `loading_icon_button_key(...)`
+- Icon button 第一版复用 `Button + FocusableButton`，因此可接入现有 Tab 焦点系统；禁用态和加载态分别复用 `DisabledButton` / `LoadingButton`，不会触发现有 action 处理。
+- 已新增 `UiIconButton { label, accessible_label }` 状态组件；`label` 是当前可见短符号，`accessible_label` 使用 i18n key 解析结果，为后续无障碍名称或 tooltip 系统预留。
+- Icon button 使用稳定方形尺寸，`width / min_width / height` 都取 `theme.button.height`，不会继承普通按钮 `theme.button.min_width`。
+- `UiGallery` 已新增 Icon Buttons 区域，展示 normal、focused、selected、disabled 和 loading 样例。
+- 已补充中英文 i18n 资源和内置中文 fallback，覆盖新增 icon button 样例的 accessible label 文案。
+- 已新增单元测试覆盖 icon button 方形尺寸 helper。
+
+当前限制：
+
+- 第一版不引入外部图标库、不新增图标资产，只用 `+`、`-`、`?`、`x`、`...` 等单字符 / 短文本符号作为可见 icon。
+- 当前不实现 tooltip 系统，也不接入复杂 icon atlas；`accessible_label` 只作为组件状态保存，尚未桥接到平台无障碍树。
+- 当前只提供静态 builder 和视觉状态，不提供统一 icon button 业务事件协议。
+
 ### UI 字体和中文字形修复
 
 - 已新增 UI 字体资源 `UiFontAssets` 和 `UiFontPlugin`，挂入 `UiFrameworkPlugin`。

@@ -23,14 +23,15 @@ use crate::game::{
             DisabledButton, DisabledTextInput, FocusedButton, LoadingButton, ReadonlyTextInput,
             SelectedButton, UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars,
             UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key,
-            checked_checkbox_key, disabled_checkbox_key, disabled_primary_action_button_key,
-            disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
-            disabled_stepper_key, disabled_toggle_key, loading_primary_action_button_key,
-            primary_action_button_key, screen_label_key, screen_title_key,
-            secondary_action_button_key, secondary_route_button_key, segment_option_key,
-            segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
-            text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_grid,
-            ui_scroll_column,
+            checked_checkbox_key, disabled_checkbox_key, disabled_icon_button_key,
+            disabled_primary_action_button_key, disabled_secondary_action_button_key,
+            disabled_segment_option_key, disabled_slider_key, disabled_stepper_key,
+            disabled_toggle_key, icon_button_key, loading_icon_button_key,
+            loading_primary_action_button_key, primary_action_button_key, screen_label_key,
+            screen_title_key, secondary_action_button_key, secondary_route_button_key,
+            segment_option_key, segmented_control, selected_segment_option_key, slider_key,
+            stepper_key, text_input, text_input_form_message, toggle_key, toggle_on_key, ui_column,
+            ui_grid, ui_scroll_column,
         },
     },
 };
@@ -259,6 +260,67 @@ pub(super) fn setup_ui_gallery(
                                     "Unavailable",
                                 ));
                                 buttons.spawn(primary_route_button_sample(theme, fonts, i18n));
+                            });
+                    });
+
+                body.spawn(gallery_panel(theme))
+                    .with_children(|icon_buttons_panel| {
+                        icon_buttons_panel.spawn(section_label_key(
+                            theme,
+                            fonts,
+                            i18n,
+                            "ui_gallery.icon_buttons.section",
+                            "Icon Buttons",
+                        ));
+                        icon_buttons_panel
+                            .spawn(ui_grid(theme, 5))
+                            .with_children(|buttons| {
+                                buttons.spawn(icon_button_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "+",
+                                    "ui_gallery.icon_buttons.add",
+                                    "Add",
+                                ));
+                                buttons.spawn((
+                                    icon_button_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "-",
+                                        "ui_gallery.icon_buttons.remove",
+                                        "Remove",
+                                    ),
+                                    FocusedButton,
+                                ));
+                                buttons.spawn((
+                                    icon_button_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "?",
+                                        "ui_gallery.icon_buttons.help",
+                                        "Help",
+                                    ),
+                                    SelectedButton,
+                                ));
+                                buttons.spawn(disabled_icon_button_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "x",
+                                    "ui_gallery.icon_buttons.close",
+                                    "Close",
+                                ));
+                                buttons.spawn(loading_icon_button_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "...",
+                                    "ui_gallery.icon_buttons.loading",
+                                    "Loading",
+                                ));
                             });
                     });
 

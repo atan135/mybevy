@@ -42,6 +42,8 @@ impl Plugin for UiWidgetsPlugin {
                     sync_text_input_display,
                     sync_text_input_form_messages,
                     sync_numeric_control_display,
+                    sync_icon_button_accessible_labels,
+                    sync_icon_button_nodes,
                     update_button_visuals,
                     update_text_input_visuals,
                 )
@@ -70,6 +72,31 @@ pub(in crate::game) struct SelectedButton;
 
 #[derive(Component)]
 pub(in crate::game) struct LoadingButton;
+
+#[derive(Clone, Debug, Component)]
+#[allow(dead_code)]
+pub(in crate::game) struct UiIconButton {
+    pub label: String,
+    pub accessible_key: String,
+    pub accessible_fallback: String,
+    pub accessible_label: String,
+}
+
+impl UiIconButton {
+    fn new(
+        label: impl Into<String>,
+        accessible_key: impl Into<String>,
+        accessible_fallback: impl Into<String>,
+        accessible_label: impl Into<String>,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            accessible_key: accessible_key.into(),
+            accessible_fallback: accessible_fallback.into(),
+            accessible_label: accessible_label.into(),
+        }
+    }
+}
 
 #[derive(Component)]
 pub(in crate::game) struct UiCheckbox;
@@ -557,6 +584,69 @@ pub(in crate::game) fn loading_primary_action_button_key(
             UiI18nText::new(key, fallback),
         ),
         LoadingButton,
+    )
+}
+
+pub(in crate::game) fn icon_button_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    icon: impl Into<String>,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    icon_button_key_bundle(
+        theme,
+        fonts,
+        icon,
+        key,
+        fallback,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        SecondaryButton,
+        IconButtonVisualState::Idle,
+    )
+}
+
+pub(in crate::game) fn disabled_icon_button_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    icon: impl Into<String>,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    icon_button_key_bundle(
+        theme,
+        fonts,
+        icon,
+        key,
+        fallback,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        (SecondaryButton, DisabledButton),
+        IconButtonVisualState::Disabled,
+    )
+}
+
+pub(in crate::game) fn loading_icon_button_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    icon: impl Into<String>,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    icon_button_key_bundle(
+        theme,
+        fonts,
+        icon,
+        key,
+        fallback,
+        i18n.tr(key, fallback),
+        theme.colors.primary_button,
+        (PrimaryButton, LoadingButton),
+        IconButtonVisualState::Loading,
     )
 }
 
@@ -1233,6 +1323,54 @@ fn disabled_action_button_key_bundle<T: Component>(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IconButtonVisualState {
+    Idle,
+    Disabled,
+    Loading,
+}
+
+fn icon_button_key_bundle<T: Bundle>(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    icon: impl Into<String>,
+    accessible_key: impl Into<String>,
+    accessible_fallback: impl Into<String>,
+    accessible_label: impl Into<String>,
+    colors: ButtonColors,
+    marker: T,
+    state: IconButtonVisualState,
+) -> impl Bundle {
+    let icon = icon.into();
+    let accessible_label = accessible_label.into();
+    let text_color_role = icon_button_text_color_role(state);
+
+    (
+        Button,
+        FocusableButton,
+        UiIconButton::new(
+            icon.clone(),
+            accessible_key,
+            accessible_fallback,
+            accessible_label,
+        ),
+        marker,
+        icon_button_node(theme),
+        BackgroundColor(icon_button_background_color(colors, state)),
+        children![(
+            Text::new(icon),
+            TextFont {
+                font: fonts.regular.clone(),
+                font_size: theme.text.button,
+                ..default()
+            },
+            TextColor(text_color_role.color(theme)),
+            text_color_role,
+            UiThemeTextStyleRole::Button,
+        )],
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectionVisualState {
     Idle,
     Selected,
@@ -1570,6 +1708,20 @@ fn stepper_button(
     )
 }
 
+fn icon_button_node(theme: &UiTheme) -> Node {
+    Node {
+        min_width: px(theme.button.height),
+        width: px(theme.button.height),
+        height: px(theme.button.height),
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::Center,
+        justify_self: JustifySelf::Center,
+        padding: UiRect::ZERO,
+        border_radius: BorderRadius::all(px(theme.button.radius)),
+        ..default()
+    }
+}
+
 fn slider_label_node() -> Node {
     Node {
         width: px(NUMERIC_CONTROL_LABEL_WIDTH),
@@ -1641,6 +1793,59 @@ fn selection_button_text_color_role(state: SelectionVisualState) -> UiThemeTextC
         SelectionVisualState::Idle | SelectionVisualState::Selected => {
             UiThemeTextColorRole::Primary
         }
+    }
+}
+
+fn icon_button_background_color(colors: ButtonColors, state: IconButtonVisualState) -> Color {
+    match state {
+        IconButtonVisualState::Idle => colors.idle,
+        IconButtonVisualState::Disabled => colors.disabled,
+        IconButtonVisualState::Loading => colors.loading,
+    }
+}
+
+fn icon_button_text_color_role(state: IconButtonVisualState) -> UiThemeTextColorRole {
+    match state {
+        IconButtonVisualState::Idle | IconButtonVisualState::Loading => {
+            UiThemeTextColorRole::Primary
+        }
+        IconButtonVisualState::Disabled => UiThemeTextColorRole::Muted,
+    }
+}
+
+fn sync_icon_button_accessible_labels(
+    i18n: Res<UiI18n>,
+    mut icon_buttons: Query<&mut UiIconButton>,
+) {
+    if !i18n.is_changed() {
+        return;
+    }
+
+    for mut icon_button in &mut icon_buttons {
+        let next_label = i18n.tr(
+            &icon_button.accessible_key,
+            icon_button.accessible_fallback.clone(),
+        );
+        if icon_button.accessible_label != next_label {
+            icon_button.accessible_label = next_label;
+        }
+    }
+}
+
+fn sync_icon_button_nodes(
+    theme: Res<UiTheme>,
+    mut icon_buttons: Query<&mut Node, With<UiIconButton>>,
+) {
+    if !theme.is_changed() {
+        return;
+    }
+
+    for mut node in &mut icon_buttons {
+        node.min_width = px(theme.button.height);
+        node.width = px(theme.button.height);
+        node.height = px(theme.button.height);
+        node.padding = UiRect::ZERO;
+        node.border_radius = BorderRadius::all(px(theme.button.radius));
     }
 }
 
@@ -2740,6 +2945,21 @@ mod tests {
                 SelectionVisualState::Idle,
             ),
             colors.focused
+        );
+    }
+
+    #[test]
+    fn icon_button_node_uses_stable_square_button_size() {
+        let theme = UiTheme::default();
+        let node = icon_button_node(&theme);
+
+        assert_eq!(node.min_width, px(theme.button.height));
+        assert_eq!(node.width, px(theme.button.height));
+        assert_eq!(node.height, px(theme.button.height));
+        assert_eq!(node.padding, UiRect::ZERO);
+        assert_eq!(
+            node.border_radius,
+            BorderRadius::all(px(theme.button.radius))
         );
     }
 
