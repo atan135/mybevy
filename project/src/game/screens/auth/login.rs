@@ -6,7 +6,7 @@ use crate::game::{
         core::{UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
         i18n::UiI18n,
         style::{
-            UiTheme,
+            UiFontAssets, UiTheme,
             theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
         },
         widgets::{primary_route_button_key, screen_label_key, screen_title_key},
@@ -16,10 +16,12 @@ use crate::game::{
 pub(super) fn setup_login_screen(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
+    let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
 
@@ -59,9 +61,17 @@ pub(super) fn setup_login_screen(
             UiThemeBackgroundRole::Panel,
             UiThemeBorderRole::Panel,
             children![
-                screen_title_key(theme, i18n, "app.name", "MyBevy", theme.text.title_large),
+                screen_title_key(
+                    theme,
+                    fonts,
+                    i18n,
+                    "app.name",
+                    "MyBevy",
+                    theme.text.title_large,
+                ),
                 screen_label_key(
                     theme,
+                    fonts,
                     i18n,
                     "auth.login.subtitle",
                     "Player Login",
@@ -70,6 +80,7 @@ pub(super) fn setup_login_screen(
                 ),
                 primary_route_button_key(
                     theme,
+                    fonts,
                     i18n,
                     "auth.login.guest_login",
                     "Guest Login",

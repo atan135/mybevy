@@ -7,7 +7,7 @@ use crate::game::ui::{
     debug::UiDebugPlugin,
     i18n::UiI18nPlugin,
     overlays::UiRouterPlugin,
-    style::UiThemePlugin,
+    style::{UiFontPlugin, UiThemePlugin},
     widgets::UiWidgetsPlugin,
 };
 
@@ -16,6 +16,7 @@ pub(in crate::game) struct UiFrameworkPlugin;
 impl Plugin for UiFrameworkPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
+            UiFontPlugin,
             UiI18nPlugin,
             UiThemePlugin,
             UiWidgetsPlugin,

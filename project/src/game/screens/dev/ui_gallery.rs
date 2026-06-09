@@ -13,7 +13,7 @@ use crate::game::{
             UiModalId, UiRouteCommand, UiToast,
         },
         style::{
-            UiTheme,
+            UiFontAssets, UiTheme,
             theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
         },
         widgets::{
@@ -53,10 +53,12 @@ impl GalleryLoadingPreview {
 pub(super) fn setup_ui_gallery(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
+    let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
 
@@ -86,6 +88,7 @@ pub(super) fn setup_ui_gallery(
             root.spawn(gallery_header(theme)).with_children(|header| {
                 header.spawn(screen_title_key(
                     theme,
+                    fonts,
                     i18n,
                     "ui_gallery.title",
                     "UI Gallery",
@@ -93,6 +96,7 @@ pub(super) fn setup_ui_gallery(
                 ));
                 header.spawn(secondary_route_button_key(
                     theme,
+                    fonts,
                     i18n,
                     "nav.lobby",
                     "Lobby",
@@ -105,6 +109,7 @@ pub(super) fn setup_ui_gallery(
                     .with_children(|typography_panel| {
                         typography_panel.spawn(section_label_key(
                             theme,
+                            fonts,
                             i18n,
                             "ui_gallery.typography.section",
                             "Typography",
@@ -114,6 +119,7 @@ pub(super) fn setup_ui_gallery(
                             .with_children(|samples| {
                                 samples.spawn(screen_title_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.typography.large_title",
                                     "Large Title",
@@ -121,6 +127,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 samples.spawn(screen_title_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.typography.section_title",
                                     "Section Title",
@@ -128,6 +135,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 samples.spawn(screen_label_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.typography.subtitle",
                                     "Subtitle text",
@@ -136,6 +144,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 samples.spawn(screen_label_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.typography.body",
                                     "Body text",
@@ -144,6 +153,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 samples.spawn(screen_label_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.typography.caption",
                                     "Caption text",
@@ -157,6 +167,7 @@ pub(super) fn setup_ui_gallery(
                     .with_children(|buttons_panel| {
                         buttons_panel.spawn(section_label_key(
                             theme,
+                            fonts,
                             i18n,
                             "ui_gallery.buttons.section",
                             "Buttons",
@@ -166,12 +177,14 @@ pub(super) fn setup_ui_gallery(
                             .with_children(|buttons| {
                                 buttons.spawn(primary_action_button_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.buttons.primary",
                                     "Primary",
                                 ));
                                 buttons.spawn(secondary_action_button_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.buttons.secondary",
                                     "Secondary",
@@ -179,6 +192,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     primary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.buttons.focused",
                                         "Focused",
@@ -188,6 +202,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.buttons.selected",
                                         "Selected",
@@ -196,23 +211,26 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 buttons.spawn(loading_primary_action_button_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.buttons.loading",
                                     "Loading",
                                 ));
                                 buttons.spawn(disabled_primary_action_button_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.buttons.disabled",
                                     "Disabled",
                                 ));
                                 buttons.spawn(disabled_secondary_action_button_key(
                                     theme,
+                                    fonts,
                                     i18n,
                                     "ui_gallery.buttons.unavailable",
                                     "Unavailable",
                                 ));
-                                buttons.spawn(primary_route_button_sample(theme, i18n));
+                                buttons.spawn(primary_route_button_sample(theme, fonts, i18n));
                             });
                     });
 
@@ -220,6 +238,7 @@ pub(super) fn setup_ui_gallery(
                     .with_children(|inputs_panel| {
                         inputs_panel.spawn(section_label_key(
                             theme,
+                            fonts,
                             i18n,
                             "ui_gallery.inputs.section",
                             "Inputs",
@@ -227,8 +246,8 @@ pub(super) fn setup_ui_gallery(
                         inputs_panel
                             .spawn(ui_column(theme.layout.row_gap))
                             .with_children(|inputs| {
-                                inputs.spawn(text_input(theme, "Player name", "Pilot 01"));
-                                inputs.spawn(text_input(theme, "Type a note", ""));
+                                inputs.spawn(text_input(theme, fonts, "Player name", "Pilot 01"));
+                                inputs.spawn(text_input(theme, fonts, "Type a note", ""));
                             });
                     });
 
@@ -236,6 +255,7 @@ pub(super) fn setup_ui_gallery(
                     .with_children(|overlays_panel| {
                         overlays_panel.spawn(section_label_key(
                             theme,
+                            fonts,
                             i18n,
                             "ui_gallery.overlays.section",
                             "Overlays",
@@ -246,6 +266,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     primary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.overlays.show_toast",
                                         "Show Toast",
@@ -255,6 +276,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.overlays.loading",
                                         "Loading",
@@ -264,6 +286,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.overlays.cancelable",
                                         "Cancelable",
@@ -273,6 +296,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.overlays.hide",
                                         "Hide",
@@ -282,6 +306,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     primary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.overlays.show_confirm",
                                         "Show Confirm",
@@ -291,6 +316,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.overlays.show_floating",
                                         "Show Floating",
@@ -300,6 +326,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "ui_gallery.overlays.close_top",
                                         "Close Top",
@@ -437,12 +464,14 @@ fn gallery_panel(theme: &UiTheme) -> impl Bundle {
 
 fn section_label_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
 ) -> impl Bundle {
     screen_label_key(
         theme,
+        fonts,
         i18n,
         key,
         fallback,
@@ -451,9 +480,13 @@ fn section_label_key(
     )
 }
 
-fn primary_route_button_sample(theme: &UiTheme, i18n: &UiI18n) -> impl Bundle {
+fn primary_route_button_sample(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+) -> impl Bundle {
     (
-        primary_action_button_key(theme, i18n, "ui_gallery.buttons.action", "Action"),
+        primary_action_button_key(theme, fonts, i18n, "ui_gallery.buttons.action", "Action"),
         Name::new("Gallery action sample"),
     )
 }

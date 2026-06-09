@@ -14,7 +14,7 @@ use crate::game::{
             UiModalResult, UiRouteCommand, UiToast,
         },
         style::{
-            UiTheme,
+            UiFontAssets, UiTheme,
             theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
         },
         widgets::{
@@ -30,10 +30,12 @@ pub(super) struct TouchRipplePlayButton;
 pub(super) fn setup_game_list_screen(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
+    let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
 
@@ -69,7 +71,14 @@ pub(super) fn setup_game_list_screen(
                     ..default()
                 },
                 children![
-                    screen_title_key(theme, i18n, "lobby.title", "Game List", theme.text.title),
+                    screen_title_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "lobby.title",
+                        "Game List",
+                        theme.text.title,
+                    ),
                     (
                         Node {
                             align_items: AlignItems::Center,
@@ -79,6 +88,7 @@ pub(super) fn setup_game_list_screen(
                         children![
                             secondary_route_button_key(
                                 theme,
+                                fonts,
                                 i18n,
                                 "nav.ui_gallery",
                                 "UI Gallery",
@@ -86,6 +96,7 @@ pub(super) fn setup_game_list_screen(
                             ),
                             secondary_route_button_key(
                                 theme,
+                                fonts,
                                 i18n,
                                 "nav.logout",
                                 "Logout",
@@ -114,6 +125,7 @@ pub(super) fn setup_game_list_screen(
                 children![
                     screen_label_key(
                         theme,
+                        fonts,
                         i18n,
                         "lobby.available",
                         "Available",
@@ -140,6 +152,7 @@ pub(super) fn setup_game_list_screen(
                                 children![
                                     screen_label_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "lobby.touch_ripple.title",
                                         "Touch Ripple",
@@ -148,6 +161,7 @@ pub(super) fn setup_game_list_screen(
                                     ),
                                     screen_label_key(
                                         theme,
+                                        fonts,
                                         i18n,
                                         "lobby.touch_ripple.description",
                                         "Current prototype",
@@ -157,7 +171,13 @@ pub(super) fn setup_game_list_screen(
                                 ],
                             ),
                             (
-                                primary_action_button_key(theme, i18n, "lobby.play", "Play"),
+                                primary_action_button_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "lobby.play",
+                                    "Play",
+                                ),
                                 TouchRipplePlayButton,
                             ),
                         ],

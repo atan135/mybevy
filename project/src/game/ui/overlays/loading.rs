@@ -4,7 +4,7 @@ use crate::game::navigation::AppUiMode;
 use crate::game::ui::{
     core::{UiBlockingOverlay, UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
     style::{
-        UiTheme,
+        UiFontAssets, UiTheme,
         theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
     },
     widgets::screen_label,
@@ -35,6 +35,7 @@ impl UiLoading {
 pub(in crate::game) fn spawn_loading(
     commands: &mut Commands,
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     loading: &UiLoading,
     owner_mode: Option<AppUiMode>,
 ) {
@@ -81,6 +82,7 @@ pub(in crate::game) fn spawn_loading(
             UiThemeBorderRole::Panel,
             children![screen_label(
                 theme,
+                fonts,
                 loading.text.clone(),
                 theme.text.body,
                 UiThemeTextColorRole::Primary,

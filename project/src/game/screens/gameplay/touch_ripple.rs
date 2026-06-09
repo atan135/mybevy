@@ -4,13 +4,18 @@ use crate::game::{
     navigation::AppUiMode,
     ui::{
         core::{UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
-        style::UiTheme,
+        style::{UiFontAssets, UiTheme},
         widgets::secondary_route_button,
     },
 };
 
-pub(super) fn setup_touch_ripple_overlay(mut commands: Commands, theme: Res<UiTheme>) {
+pub(super) fn setup_touch_ripple_overlay(
+    mut commands: Commands,
+    theme: Res<UiTheme>,
+    fonts: Res<UiFontAssets>,
+) {
     let theme = theme.into_inner();
+    let fonts = fonts.into_inner();
 
     commands.spawn((
         DespawnOnExit(AppUiMode::WanfaTouchRipple),
@@ -30,6 +35,11 @@ pub(super) fn setup_touch_ripple_overlay(mut commands: Commands, theme: Res<UiTh
             justify_content: JustifyContent::FlexEnd,
             ..default()
         },
-        children![secondary_route_button(theme, "Lobby", AppUiMode::Lobby)],
+        children![secondary_route_button(
+            theme,
+            fonts,
+            "Lobby",
+            AppUiMode::Lobby
+        )],
     ));
 }

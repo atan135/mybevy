@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::game::ui::{
     core::{UiLayer, UiLayerRoot},
     style::{
-        UiTheme,
+        UiFontAssets, UiTheme,
         theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
     },
     widgets::screen_label,
@@ -44,7 +44,12 @@ pub(in crate::game) fn tick_toasts(
     }
 }
 
-pub(in crate::game) fn spawn_toast(commands: &mut Commands, theme: &UiTheme, toast: &UiToast) {
+pub(in crate::game) fn spawn_toast(
+    commands: &mut Commands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    toast: &UiToast,
+) {
     commands.spawn((
         UiToastRoot {
             timer: Timer::from_seconds(toast.duration_secs.max(0.1), TimerMode::Once),
@@ -76,6 +81,7 @@ pub(in crate::game) fn spawn_toast(commands: &mut Commands, theme: &UiTheme, toa
             UiThemeBorderRole::Panel,
             children![screen_label(
                 theme,
+                fonts,
                 toast.text.clone(),
                 theme.text.caption,
                 UiThemeTextColorRole::Primary,

@@ -7,7 +7,7 @@ use crate::game::{
         modal::{UiModalResult, handle_modal_action_buttons},
         toast::{UiToast, UiToastRoot, close_toasts, spawn_toast, tick_toasts},
     },
-    ui::style::UiTheme,
+    ui::style::{UiFontAssets, UiTheme},
     ui::widgets::{DisabledButton, LoadingButton},
 };
 
@@ -66,6 +66,7 @@ fn handle_route_buttons(
 fn handle_ui_route_commands(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    fonts: Res<UiFontAssets>,
     mut route_commands: MessageReader<UiRouteCommand>,
     mut next_mode: ResMut<NextState<AppUiMode>>,
     current_mode: Res<State<AppUiMode>>,
@@ -80,7 +81,7 @@ fn handle_ui_route_commands(
             }
             UiRouteCommand::ShowToast(toast) => {
                 close_toasts(&mut commands, &toast_roots);
-                spawn_toast(&mut commands, &theme, toast);
+                spawn_toast(&mut commands, &theme, &fonts, toast);
             }
         }
     }

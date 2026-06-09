@@ -634,3 +634,17 @@ pub(in crate::game) struct UiInputState {
 - 第一版没有 disabled / readonly 语义。
 - 第一版 value 存在组件里；业务页面如需保存数据，应监听 `UiTextInputSubmitted` 或读取对应实体上的 `UiTextInputValue`。
 - 第一版没有显式长度限制、校验规则、错误态或表单布局协议。
+
+### UI 字体和中文字形修复
+
+- 已新增 UI 字体资源 `UiFontAssets` 和 `UiFontPlugin`，挂入 `UiFrameworkPlugin`。
+- UI 字体通过 Bevy `AssetServer` 加载 `project/assets/ui/fonts/MyBevyUiCjk-Regular.otf`，Android Gradle 壳工程已把 `project/assets` 打包进 APK assets，因此桌面和 Android 使用同一项目内字体路径。
+- 桌面运行时已把 Bevy `AssetPlugin.file_path` 固定为 `project/assets` 绝对路径，避免直接启动 `target/debug/project.exe` 时从 `target/debug/assets` 查找字体。
+- 字体资产基于 Noto Sans CJK SC Regular 生成子集，并保留 `project/assets/ui/fonts/NotoSansCJKsc-LICENSE.txt`。不复制 Windows 系统字体，避免系统字体许可不明的问题。
+- 通用文本 helper、按钮文本、文本输入显示、Toast、Loading、Confirm、Floating Panel 和调试面板文本都显式使用 `UiFontAssets.regular`，避免落回 Bevy 默认 `FiraMono-subset.ttf` 导致中文显示方框。
+- 子集当前覆盖基本拉丁字符、常用标点、全角符号和 CJK Unified Ideographs `U+4E00..U+9FFF`；默认 `zh_cn` 文案和常见中文输入可正常显示。
+
+当前限制：
+
+- 字体子集不覆盖扩展汉字区、emoji、日文假名、韩文、繁体专用扩展字形等；后续新增语言或特殊符号时需要重新生成或替换字体子集。
+- 当前只有 Regular 字重，`TextFont.weight` 不单独加载 Bold/Medium 字体。

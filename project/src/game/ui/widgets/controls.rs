@@ -8,7 +8,10 @@ use crate::game::{
     ui::{
         core::{UiFocusSystems, focus::UiFocusState},
         i18n::{UiI18n, UiI18nText},
-        style::theme::{ButtonColors, UiTheme, UiThemeTextColorRole},
+        style::{
+            UiFontAssets,
+            theme::{ButtonColors, UiTheme, UiThemeTextColorRole},
+        },
         widgets::scroll::UiScrollPlugin,
     },
 };
@@ -78,12 +81,14 @@ pub(in crate::game) struct UiTextInputSubmitted {
 
 pub(in crate::game) fn screen_title(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     font_size: f32,
 ) -> impl Bundle {
     (
         Text::new(text),
         TextFont {
+            font: fonts.regular.clone(),
             font_size,
             ..default()
         },
@@ -94,19 +99,21 @@ pub(in crate::game) fn screen_title(
 
 pub(in crate::game) fn screen_title_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
     font_size: f32,
 ) -> impl Bundle {
     (
-        screen_title(theme, i18n.tr(key, fallback), font_size),
+        screen_title(theme, fonts, i18n.tr(key, fallback), font_size),
         UiI18nText::new(key, fallback),
     )
 }
 
 pub(in crate::game) fn screen_label(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     font_size: f32,
     color_role: UiThemeTextColorRole,
@@ -114,6 +121,7 @@ pub(in crate::game) fn screen_label(
     (
         Text::new(text),
         TextFont {
+            font: fonts.regular.clone(),
             font_size,
             ..default()
         },
@@ -124,6 +132,7 @@ pub(in crate::game) fn screen_label(
 
 pub(in crate::game) fn screen_label_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
@@ -131,7 +140,7 @@ pub(in crate::game) fn screen_label_key(
     color_role: UiThemeTextColorRole,
 ) -> impl Bundle {
     (
-        screen_label(theme, i18n.tr(key, fallback), font_size, color_role),
+        screen_label(theme, fonts, i18n.tr(key, fallback), font_size, color_role),
         UiI18nText::new(key, fallback),
     )
 }
@@ -139,11 +148,13 @@ pub(in crate::game) fn screen_label_key(
 #[allow(dead_code)]
 pub(in crate::game) fn primary_route_button(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     target: AppUiMode,
 ) -> impl Bundle {
     route_button(
         theme,
+        fonts,
         text,
         target,
         theme.colors.primary_button,
@@ -153,6 +164,7 @@ pub(in crate::game) fn primary_route_button(
 
 pub(in crate::game) fn primary_route_button_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
@@ -160,6 +172,7 @@ pub(in crate::game) fn primary_route_button_key(
 ) -> impl Bundle {
     route_button_key_bundle(
         theme,
+        fonts,
         i18n.tr(key, fallback),
         target,
         theme.colors.primary_button,
@@ -170,11 +183,13 @@ pub(in crate::game) fn primary_route_button_key(
 
 pub(in crate::game) fn secondary_route_button(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     target: AppUiMode,
 ) -> impl Bundle {
     route_button(
         theme,
+        fonts,
         text,
         target,
         theme.colors.secondary_button,
@@ -184,6 +199,7 @@ pub(in crate::game) fn secondary_route_button(
 
 pub(in crate::game) fn secondary_route_button_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
@@ -191,6 +207,7 @@ pub(in crate::game) fn secondary_route_button_key(
 ) -> impl Bundle {
     route_button_key_bundle(
         theme,
+        fonts,
         i18n.tr(key, fallback),
         target,
         theme.colors.secondary_button,
@@ -201,19 +218,28 @@ pub(in crate::game) fn secondary_route_button_key(
 
 pub(in crate::game) fn primary_action_button(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
-    action_button(theme, text, theme.colors.primary_button, PrimaryButton)
+    action_button(
+        theme,
+        fonts,
+        text,
+        theme.colors.primary_button,
+        PrimaryButton,
+    )
 }
 
 pub(in crate::game) fn primary_action_button_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
 ) -> impl Bundle {
     action_button_key_bundle(
         theme,
+        fonts,
         i18n.tr(key, fallback),
         theme.colors.primary_button,
         PrimaryButton,
@@ -223,19 +249,28 @@ pub(in crate::game) fn primary_action_button_key(
 
 pub(in crate::game) fn secondary_action_button(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
-    action_button(theme, text, theme.colors.secondary_button, SecondaryButton)
+    action_button(
+        theme,
+        fonts,
+        text,
+        theme.colors.secondary_button,
+        SecondaryButton,
+    )
 }
 
 pub(in crate::game) fn secondary_action_button_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
 ) -> impl Bundle {
     action_button_key_bundle(
         theme,
+        fonts,
         i18n.tr(key, fallback),
         theme.colors.secondary_button,
         SecondaryButton,
@@ -246,19 +281,28 @@ pub(in crate::game) fn secondary_action_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn disabled_primary_action_button(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
-    disabled_action_button(theme, text, theme.colors.primary_button, PrimaryButton)
+    disabled_action_button(
+        theme,
+        fonts,
+        text,
+        theme.colors.primary_button,
+        PrimaryButton,
+    )
 }
 
 pub(in crate::game) fn disabled_primary_action_button_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
 ) -> impl Bundle {
     disabled_action_button_key_bundle(
         theme,
+        fonts,
         i18n.tr(key, fallback),
         theme.colors.primary_button,
         PrimaryButton,
@@ -269,19 +313,28 @@ pub(in crate::game) fn disabled_primary_action_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn disabled_secondary_action_button(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
-    disabled_action_button(theme, text, theme.colors.secondary_button, SecondaryButton)
+    disabled_action_button(
+        theme,
+        fonts,
+        text,
+        theme.colors.secondary_button,
+        SecondaryButton,
+    )
 }
 
 pub(in crate::game) fn disabled_secondary_action_button_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
 ) -> impl Bundle {
     disabled_action_button_key_bundle(
         theme,
+        fonts,
         i18n.tr(key, fallback),
         theme.colors.secondary_button,
         SecondaryButton,
@@ -292,16 +345,24 @@ pub(in crate::game) fn disabled_secondary_action_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn loading_primary_action_button(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
     (
-        action_button(theme, text, theme.colors.primary_button, PrimaryButton),
+        action_button(
+            theme,
+            fonts,
+            text,
+            theme.colors.primary_button,
+            PrimaryButton,
+        ),
         LoadingButton,
     )
 }
 
 pub(in crate::game) fn loading_primary_action_button_key(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
@@ -309,6 +370,7 @@ pub(in crate::game) fn loading_primary_action_button_key(
     (
         action_button_key_bundle(
             theme,
+            fonts,
             i18n.tr(key, fallback),
             theme.colors.primary_button,
             PrimaryButton,
@@ -320,6 +382,7 @@ pub(in crate::game) fn loading_primary_action_button_key(
 
 pub(in crate::game) fn text_input(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     placeholder: impl Into<String>,
     value: impl Into<String>,
 ) -> impl Bundle {
@@ -357,6 +420,7 @@ pub(in crate::game) fn text_input(
         children![(
             Text::new(display_text),
             TextFont {
+                font: fonts.regular.clone(),
                 font_size: theme.text.button,
                 ..default()
             },
@@ -368,6 +432,7 @@ pub(in crate::game) fn text_input(
 
 fn route_button<T: Component>(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     target: AppUiMode,
     colors: ButtonColors,
@@ -391,6 +456,7 @@ fn route_button<T: Component>(
         children![(
             Text::new(text),
             TextFont {
+                font: fonts.regular.clone(),
                 font_size: theme.text.button,
                 ..default()
             },
@@ -402,6 +468,7 @@ fn route_button<T: Component>(
 
 fn route_button_key_bundle<T: Component>(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     target: AppUiMode,
     colors: ButtonColors,
@@ -426,6 +493,7 @@ fn route_button_key_bundle<T: Component>(
         children![(
             Text::new(text),
             TextFont {
+                font: fonts.regular.clone(),
                 font_size: theme.text.button,
                 ..default()
             },
@@ -438,6 +506,7 @@ fn route_button_key_bundle<T: Component>(
 
 fn action_button<T: Component>(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
     marker: T,
@@ -459,6 +528,7 @@ fn action_button<T: Component>(
         children![(
             Text::new(text),
             TextFont {
+                font: fonts.regular.clone(),
                 font_size: theme.text.button,
                 ..default()
             },
@@ -470,6 +540,7 @@ fn action_button<T: Component>(
 
 fn action_button_key_bundle<T: Component>(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
     marker: T,
@@ -492,6 +563,7 @@ fn action_button_key_bundle<T: Component>(
         children![(
             Text::new(text),
             TextFont {
+                font: fonts.regular.clone(),
                 font_size: theme.text.button,
                 ..default()
             },
@@ -505,6 +577,7 @@ fn action_button_key_bundle<T: Component>(
 #[allow(dead_code)]
 fn disabled_action_button<T: Component>(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
     marker: T,
@@ -527,6 +600,7 @@ fn disabled_action_button<T: Component>(
         children![(
             Text::new(text),
             TextFont {
+                font: fonts.regular.clone(),
                 font_size: theme.text.button,
                 ..default()
             },
@@ -538,6 +612,7 @@ fn disabled_action_button<T: Component>(
 
 fn disabled_action_button_key_bundle<T: Component>(
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
     marker: T,
@@ -561,6 +636,7 @@ fn disabled_action_button_key_bundle<T: Component>(
         children![(
             Text::new(text),
             TextFont {
+                font: fonts.regular.clone(),
                 font_size: theme.text.button,
                 ..default()
             },

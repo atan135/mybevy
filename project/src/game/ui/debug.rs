@@ -6,7 +6,7 @@ use crate::game::ui::{
         UiPanelSystems, focus::UiFocusState,
     },
     style::{
-        UiTheme,
+        UiFontAssets, UiTheme,
         theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
     },
     widgets::{screen_label, screen_title},
@@ -53,6 +53,7 @@ fn toggle_ui_debug_panel(
 fn sync_ui_debug_panel(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    fonts: Res<UiFontAssets>,
     mut debug_state: ResMut<UiDebugState>,
     debug_roots: Query<Entity, With<UiDebugRoot>>,
 ) {
@@ -71,7 +72,7 @@ fn sync_ui_debug_panel(
     }
 
     if debug_state.root.is_none() {
-        debug_state.root = Some(spawn_ui_debug_panel(&mut commands, &theme));
+        debug_state.root = Some(spawn_ui_debug_panel(&mut commands, &theme, &fonts));
     }
 }
 
@@ -131,7 +132,7 @@ fn refresh_ui_debug_text(
     text.0 = lines.join("\n");
 }
 
-fn spawn_ui_debug_panel(commands: &mut Commands, theme: &UiTheme) -> Entity {
+fn spawn_ui_debug_panel(commands: &mut Commands, theme: &UiTheme, fonts: &UiFontAssets) -> Entity {
     commands
         .spawn((
             UiDebugRoot,
@@ -160,11 +161,17 @@ fn spawn_ui_debug_panel(commands: &mut Commands, theme: &UiTheme) -> Entity {
         ))
         .with_children(|root| {
             root.spawn((
-                screen_title(theme, "UI Input Debug", theme.text.caption),
+                screen_title(theme, fonts, "UI Input Debug", theme.text.caption),
                 Pickable::IGNORE,
             ));
             root.spawn((
-                screen_label(theme, "", theme.text.caption, UiThemeTextColorRole::Primary),
+                screen_label(
+                    theme,
+                    fonts,
+                    "",
+                    theme.text.caption,
+                    UiThemeTextColorRole::Primary,
+                ),
                 UiDebugText,
                 Pickable::IGNORE,
             ));

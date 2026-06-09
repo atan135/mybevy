@@ -5,7 +5,7 @@ use crate::game::{
     ui::{
         core::{UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot},
         style::{
-            UiTheme,
+            UiFontAssets, UiTheme,
             theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
         },
         widgets::{
@@ -92,6 +92,7 @@ pub(in crate::game) fn handle_modal_action_buttons(
 pub(in crate::game) fn spawn_confirm_modal(
     commands: &mut Commands,
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     modal: &UiConfirmModal,
     owner_mode: Option<AppUiMode>,
 ) {
@@ -140,11 +141,13 @@ pub(in crate::game) fn spawn_confirm_modal(
             .with_children(|panel| {
                 panel.spawn(screen_title(
                     theme,
+                    fonts,
                     modal.title.clone(),
                     theme.text.subtitle,
                 ));
                 panel.spawn(screen_label(
                     theme,
+                    fonts,
                     modal.body.clone(),
                     theme.text.body,
                     UiThemeTextColorRole::Primary,
@@ -153,6 +156,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                 if let Some(detail) = &modal.detail {
                     panel.spawn(screen_label(
                         theme,
+                        fonts,
                         detail.clone(),
                         theme.text.caption,
                         UiThemeTextColorRole::Muted,
@@ -177,13 +181,13 @@ pub(in crate::game) fn spawn_confirm_modal(
                             match action.style {
                                 UiModalActionStyle::Primary => {
                                     actions.spawn((
-                                        primary_action_button(theme, action.label.clone()),
+                                        primary_action_button(theme, fonts, action.label.clone()),
                                         action_marker,
                                     ));
                                 }
                                 UiModalActionStyle::Secondary => {
                                     actions.spawn((
-                                        secondary_action_button(theme, action.label.clone()),
+                                        secondary_action_button(theme, fonts, action.label.clone()),
                                         action_marker,
                                     ));
                                 }

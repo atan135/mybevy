@@ -10,7 +10,7 @@ use crate::game::{
             router::UiRouteSystems,
         },
         style::{
-            UiTheme,
+            UiFontAssets, UiTheme,
             theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
         },
         widgets::{screen_label, screen_title},
@@ -117,6 +117,7 @@ struct UiPanelStack {
 fn handle_panel_commands(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    fonts: Res<UiFontAssets>,
     current_mode: Res<State<AppUiMode>>,
     mut panel_commands: MessageReader<UiPanelCommand>,
     panel_roots: Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
@@ -129,6 +130,7 @@ fn handle_panel_commands(
                 open_panel(
                     &mut commands,
                     &theme,
+                    &fonts,
                     &current_mode,
                     &panel_roots,
                     &mut stack,
@@ -148,6 +150,7 @@ fn handle_panel_commands(
                     open_panel(
                         &mut commands,
                         &theme,
+                        &fonts,
                         &current_mode,
                         &panel_roots,
                         &mut stack,
@@ -179,6 +182,7 @@ fn handle_panel_commands(
 fn open_panel(
     commands: &mut Commands,
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     current_mode: &State<AppUiMode>,
     panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     stack: &mut UiPanelStack,
@@ -191,13 +195,13 @@ fn open_panel(
 
     match request {
         UiPanelRequest::Loading(loading) => {
-            spawn_loading(commands, theme, loading, Some(*current_mode.get()));
+            spawn_loading(commands, theme, fonts, loading, Some(*current_mode.get()));
         }
         UiPanelRequest::Confirm(confirm) => {
-            spawn_confirm_modal(commands, theme, confirm, Some(*current_mode.get()));
+            spawn_confirm_modal(commands, theme, fonts, confirm, Some(*current_mode.get()));
         }
         UiPanelRequest::Floating(floating) => {
-            spawn_floating_panel(commands, theme, floating, Some(*current_mode.get()));
+            spawn_floating_panel(commands, theme, fonts, floating, Some(*current_mode.get()));
         }
     }
 
@@ -358,6 +362,7 @@ fn write_close_top_on_return_input(
 fn spawn_floating_panel(
     commands: &mut Commands,
     theme: &UiTheme,
+    fonts: &UiFontAssets,
     floating: &UiFloatingPanel,
     owner_mode: Option<AppUiMode>,
 ) {
@@ -393,11 +398,13 @@ fn spawn_floating_panel(
         .with_children(|panel| {
             panel.spawn(screen_title(
                 theme,
+                fonts,
                 floating.title.clone(),
                 theme.text.subtitle,
             ));
             panel.spawn(screen_label(
                 theme,
+                fonts,
                 floating.body.clone(),
                 theme.text.body,
                 UiThemeTextColorRole::Primary,
@@ -406,6 +413,7 @@ fn spawn_floating_panel(
             if let Some(detail) = &floating.detail {
                 panel.spawn(screen_label(
                     theme,
+                    fonts,
                     detail.clone(),
                     theme.text.caption,
                     UiThemeTextColorRole::Muted,
