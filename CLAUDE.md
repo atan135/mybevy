@@ -18,6 +18,7 @@
 
 - `docs/`：项目文档
 - `docs/bevy-getting-started.md`：当前 Bevy 入门说明
+- `docs/assets-workflow.md`：项目资源使用方式，覆盖首包、APK 包内和后续下载资源
 - `scripts/`：仓库级开发辅助脚本
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
@@ -35,7 +36,7 @@
 - 所有 Rust 和 Bevy 相关命令默认在 `project/` 目录执行
 - 新增游戏功能时，优先把逻辑放进 `project/src/` 下的模块，而不是持续堆在 `main.rs`
 - UI 页面结构放在 `project/src/game/screens/`，UI 框架能力放在 `project/src/game/ui/core/`，通用控件放在 `project/src/game/ui/widgets/`，颜色、字号、间距、圆角等可微调参数集中放在 `project/src/game/ui/style/theme.rs`
-- 新增资源文件时，统一放入 `project/assets/`
+- 新增首包资源文件时，统一放入 `project/assets/`；后续下载资源不要放入 `project/assets/`
 - 如果修改了项目结构、初始化方式或 Bevy 版本，同时更新相关文档
 - 如果改动影响新成员上手流程，优先同步更新 `docs/bevy-getting-started.md`
 

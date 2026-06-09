@@ -187,7 +187,8 @@ Bevy 的核心是 ECS。
 ```text
 mybevy/
 |-- docs/
-|   `-- bevy-getting-started.md
+|   |-- bevy-getting-started.md
+|   `-- assets-workflow.md
 `-- project/
     |-- assets/
     |-- src/
@@ -216,6 +217,7 @@ mybevy/
 - `project/src/game/ui/style/`：颜色、字号、间距、圆角等主题 token
 - `project/src/game/ui/widgets/`：按钮、文本等通用控件
 - `project/assets/`：贴图、音频、字体、场景文件
+- `docs/assets-workflow.md`：项目资源使用方式，覆盖开发期、APK 包内和后续下载资源
 
 ## 9. 第一阶段之后，尽快改成插件化
 
@@ -333,6 +335,7 @@ fn update_game() {}
 - Bevy Quick Start: `https://bevy.org/learn/quick-start/getting-started/`
 - Bevy Setup: `https://bevy.org/learn/quick-start/getting-started/setup/`
 - Bevy 官方 examples: `https://github.com/bevyengine/bevy/tree/latest/examples`
+- 本仓库资源使用方式：`docs/assets-workflow.md`
 
 ## 15. 本项目如何打包成 Windows 和 Android App
 
