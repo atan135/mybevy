@@ -791,7 +791,7 @@ pub(in crate::game) struct UiInputState {
 
 ### Selection 控件第一版
 
-- P2-03 已拆为多个小任务串行处理，当前已完成 selection 类和 numeric 类控件，icon button 后续单独处理。
+- P2-03 已拆为多个小任务串行处理，selection 类、numeric 类和 icon button 第一版均已完成。
 - 已新增 checkbox builder：
   - `checkbox_key(...)`
   - `checked_checkbox_key(...)`
