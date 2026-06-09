@@ -67,6 +67,30 @@ pub(in crate::game) struct SelectedButton;
 pub(in crate::game) struct LoadingButton;
 
 #[derive(Component)]
+pub(in crate::game) struct UiCheckbox;
+
+#[derive(Component)]
+pub(in crate::game) struct UiCheckboxChecked;
+
+#[derive(Component)]
+pub(in crate::game) struct UiToggle;
+
+#[derive(Component)]
+pub(in crate::game) struct UiToggleOn;
+
+#[derive(Component)]
+pub(in crate::game) struct UiSegmentedControl;
+
+#[derive(Clone, Debug, Component)]
+#[allow(dead_code)]
+pub(in crate::game) struct UiSegmentOption {
+    pub value: String,
+}
+
+#[derive(Component)]
+pub(in crate::game) struct UiSegmentOptionSelected;
+
+#[derive(Component)]
 pub(in crate::game) struct UiTextInput;
 
 #[derive(Clone, Debug, Default, Component)]
@@ -473,6 +497,263 @@ pub(in crate::game) fn loading_primary_action_button_key(
     )
 }
 
+#[allow(dead_code)]
+pub(in crate::game) fn checkbox(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+) -> impl Bundle {
+    selection_button(
+        theme,
+        fonts,
+        text,
+        theme.colors.secondary_button,
+        (SecondaryButton, UiCheckbox),
+        SelectionVisualState::Idle,
+    )
+}
+
+pub(in crate::game) fn checkbox_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    selection_button_key_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        (SecondaryButton, UiCheckbox),
+        SelectionVisualState::Idle,
+        UiI18nText::new(key, fallback),
+    )
+}
+
+#[allow(dead_code)]
+pub(in crate::game) fn checked_checkbox(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+) -> impl Bundle {
+    selection_button(
+        theme,
+        fonts,
+        text,
+        theme.colors.secondary_button,
+        (
+            SecondaryButton,
+            UiCheckbox,
+            UiCheckboxChecked,
+            SelectedButton,
+        ),
+        SelectionVisualState::Selected,
+    )
+}
+
+pub(in crate::game) fn checked_checkbox_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    selection_button_key_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        (
+            SecondaryButton,
+            UiCheckbox,
+            UiCheckboxChecked,
+            SelectedButton,
+        ),
+        SelectionVisualState::Selected,
+        UiI18nText::new(key, fallback),
+    )
+}
+
+pub(in crate::game) fn disabled_checkbox_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    selection_button_key_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        (SecondaryButton, UiCheckbox, DisabledButton),
+        SelectionVisualState::Disabled,
+        UiI18nText::new(key, fallback),
+    )
+}
+
+#[allow(dead_code)]
+pub(in crate::game) fn toggle(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+) -> impl Bundle {
+    selection_button(
+        theme,
+        fonts,
+        text,
+        theme.colors.secondary_button,
+        (SecondaryButton, UiToggle),
+        SelectionVisualState::Idle,
+    )
+}
+
+pub(in crate::game) fn toggle_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    selection_button_key_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        (SecondaryButton, UiToggle),
+        SelectionVisualState::Idle,
+        UiI18nText::new(key, fallback),
+    )
+}
+
+#[allow(dead_code)]
+pub(in crate::game) fn toggle_on(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+) -> impl Bundle {
+    selection_button(
+        theme,
+        fonts,
+        text,
+        theme.colors.primary_button,
+        (PrimaryButton, UiToggle, UiToggleOn, SelectedButton),
+        SelectionVisualState::Selected,
+    )
+}
+
+pub(in crate::game) fn toggle_on_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    selection_button_key_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        theme.colors.primary_button,
+        (PrimaryButton, UiToggle, UiToggleOn, SelectedButton),
+        SelectionVisualState::Selected,
+        UiI18nText::new(key, fallback),
+    )
+}
+
+pub(in crate::game) fn disabled_toggle_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    selection_button_key_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        (SecondaryButton, UiToggle, DisabledButton),
+        SelectionVisualState::Disabled,
+        UiI18nText::new(key, fallback),
+    )
+}
+
+pub(in crate::game) fn segmented_control(theme: &UiTheme) -> impl Bundle {
+    (
+        UiSegmentedControl,
+        Node {
+            width: percent(100),
+            align_items: AlignItems::Center,
+            column_gap: px(theme.layout.row_column_gap * 0.5),
+            row_gap: px(theme.layout.row_gap),
+            flex_wrap: FlexWrap::Wrap,
+            ..default()
+        },
+    )
+}
+
+pub(in crate::game) fn segment_option_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    value: impl Into<String>,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    segment_option_key_bundle(
+        theme,
+        fonts,
+        i18n.tr(key, fallback),
+        value,
+        SelectionVisualState::Idle,
+        UiI18nText::new(key, fallback),
+    )
+}
+
+pub(in crate::game) fn selected_segment_option_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    value: impl Into<String>,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    (
+        segment_option_key_bundle(
+            theme,
+            fonts,
+            i18n.tr(key, fallback),
+            value,
+            SelectionVisualState::Selected,
+            UiI18nText::new(key, fallback),
+        ),
+        UiSegmentOptionSelected,
+        SelectedButton,
+    )
+}
+
+pub(in crate::game) fn disabled_segment_option_key(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    value: impl Into<String>,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    (
+        segment_option_key_bundle(
+            theme,
+            fonts,
+            i18n.tr(key, fallback),
+            value,
+            SelectionVisualState::Disabled,
+            UiI18nText::new(key, fallback),
+        ),
+        DisabledButton,
+    )
+}
+
 pub(in crate::game) fn text_input(
     theme: &UiTheme,
     fonts: &UiFontAssets,
@@ -788,6 +1069,152 @@ fn disabled_action_button_key_bundle<T: Component>(
     )
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionVisualState {
+    Idle,
+    Selected,
+    Disabled,
+}
+
+fn selection_button<T: Bundle>(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    colors: ButtonColors,
+    marker: T,
+    state: SelectionVisualState,
+) -> impl Bundle {
+    (
+        Button,
+        FocusableButton,
+        marker,
+        UiThemeButtonNodeRole::Button,
+        Node {
+            min_width: px(theme.button.min_width),
+            height: px(theme.button.height),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
+            ..default()
+        },
+        BackgroundColor(selection_button_background_color(
+            colors,
+            Interaction::None,
+            false,
+            state,
+        )),
+        children![(
+            Text::new(text),
+            TextFont {
+                font: fonts.regular.clone(),
+                font_size: theme.text.button,
+                ..default()
+            },
+            TextColor(selection_button_text_color(theme, state)),
+            selection_button_text_color_role(state),
+            UiThemeTextStyleRole::Button,
+        )],
+    )
+}
+
+fn selection_button_key_bundle<T: Bundle>(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    colors: ButtonColors,
+    marker: T,
+    state: SelectionVisualState,
+    i18n_text: UiI18nText,
+) -> impl Bundle {
+    (
+        Button,
+        FocusableButton,
+        marker,
+        UiThemeButtonNodeRole::Button,
+        Node {
+            min_width: px(theme.button.min_width),
+            height: px(theme.button.height),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
+            ..default()
+        },
+        BackgroundColor(selection_button_background_color(
+            colors,
+            Interaction::None,
+            false,
+            state,
+        )),
+        children![(
+            Text::new(text),
+            TextFont {
+                font: fonts.regular.clone(),
+                font_size: theme.text.button,
+                ..default()
+            },
+            TextColor(selection_button_text_color(theme, state)),
+            selection_button_text_color_role(state),
+            UiThemeTextStyleRole::Button,
+            i18n_text,
+        )],
+    )
+}
+
+fn segment_option_key_bundle(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    value: impl Into<String>,
+    state: SelectionVisualState,
+    i18n_text: UiI18nText,
+) -> impl Bundle {
+    selection_button_key_bundle(
+        theme,
+        fonts,
+        text,
+        theme.colors.secondary_button,
+        (
+            SecondaryButton,
+            UiSegmentOption {
+                value: value.into(),
+            },
+        ),
+        state,
+        i18n_text,
+    )
+}
+
+fn selection_button_background_color(
+    colors: ButtonColors,
+    interaction: Interaction,
+    is_focused: bool,
+    state: SelectionVisualState,
+) -> Color {
+    button_background_color(
+        colors,
+        interaction,
+        state == SelectionVisualState::Disabled,
+        is_focused,
+        state == SelectionVisualState::Selected,
+        false,
+    )
+}
+
+fn selection_button_text_color(theme: &UiTheme, state: SelectionVisualState) -> Color {
+    selection_button_text_color_role(state).color(theme)
+}
+
+fn selection_button_text_color_role(state: SelectionVisualState) -> UiThemeTextColorRole {
+    match state {
+        SelectionVisualState::Disabled => UiThemeTextColorRole::Muted,
+        SelectionVisualState::Idle | SelectionVisualState::Selected => {
+            UiThemeTextColorRole::Primary
+        }
+    }
+}
+
 fn update_button_visuals(
     theme: Res<UiTheme>,
     mut buttons: Query<
@@ -825,19 +1252,40 @@ fn update_button_visuals(
             theme.colors.secondary_button
         };
 
-        *background = if is_disabled {
-            colors.disabled.into()
-        } else if is_loading {
-            colors.loading.into()
-        } else {
-            match *interaction {
-                Interaction::Pressed => colors.pressed.into(),
-                Interaction::Hovered => colors.hovered.into(),
-                Interaction::None if is_selected => colors.selected.into(),
-                Interaction::None if is_focused => colors.focused.into(),
-                Interaction::None => colors.idle.into(),
-            }
-        };
+        *background = button_background_color(
+            colors,
+            *interaction,
+            is_disabled,
+            is_focused,
+            is_selected,
+            is_loading,
+        )
+        .into();
+    }
+}
+
+fn button_background_color(
+    colors: ButtonColors,
+    interaction: Interaction,
+    is_disabled: bool,
+    is_focused: bool,
+    is_selected: bool,
+    is_loading: bool,
+) -> Color {
+    if is_disabled {
+        return colors.disabled;
+    }
+
+    if is_loading {
+        return colors.loading;
+    }
+
+    match interaction {
+        Interaction::Pressed => colors.pressed,
+        Interaction::Hovered => colors.hovered,
+        Interaction::None if is_selected => colors.selected,
+        Interaction::None if is_focused => colors.focused,
+        Interaction::None => colors.idle,
     }
 }
 
@@ -1724,6 +2172,39 @@ mod tests {
         assert_eq!(
             text_input_border_color(&theme, Interaction::None, true, false, true),
             theme.colors.error
+        );
+    }
+
+    #[test]
+    fn selection_visual_state_prioritizes_disabled_and_selected_colors() {
+        let colors = UiTheme::default().colors.secondary_button;
+
+        assert_eq!(
+            selection_button_background_color(
+                colors,
+                Interaction::Hovered,
+                true,
+                SelectionVisualState::Disabled,
+            ),
+            colors.disabled
+        );
+        assert_eq!(
+            selection_button_background_color(
+                colors,
+                Interaction::None,
+                false,
+                SelectionVisualState::Selected,
+            ),
+            colors.selected
+        );
+        assert_eq!(
+            selection_button_background_color(
+                colors,
+                Interaction::None,
+                true,
+                SelectionVisualState::Idle,
+            ),
+            colors.focused
         );
     }
 }

@@ -789,6 +789,34 @@ pub(in crate::game) struct UiInputState {
 - `UiTextInputRequired` 只做空值校验；更复杂的校验由业务系统写入 `UiTextInputValidationMessage` 或 `UiTextInputError`。
 - helper / required / validation 组件保存的是已解析字符串；运行中 i18n 热加载不会自动改写这些组件里的字符串，后续需要 key 化表单消息组件才能完全跟随语言热刷新。
 
+### Selection 控件第一版
+
+- P2-03 已拆为多个小任务串行处理，当前先完成 selection 类控件，numeric 类和 icon button 后续单独处理。
+- 已新增 checkbox builder：
+  - `checkbox_key(...)`
+  - `checked_checkbox_key(...)`
+  - `disabled_checkbox_key(...)`
+- 已新增 toggle builder：
+  - `toggle_key(...)`
+  - `toggle_on_key(...)`
+  - `disabled_toggle_key(...)`
+- 已新增 segmented control builder：
+  - `segmented_control(...)`
+  - `segment_option_key(...)`
+  - `selected_segment_option_key(...)`
+  - `disabled_segment_option_key(...)`
+- Selection 控件第一版复用 `Button + FocusableButton`，因此可接入现有 Tab 焦点系统；禁用态复用 `DisabledButton`，不会进入焦点候选。
+- 视觉状态复用现有 `primary_button` / `secondary_button` 主题 token 和 `SelectedButton` / `DisabledButton` 优先级；未新增主题 schema。
+- `UiGallery` 已新增 Selection Controls 区域，展示 checkbox 未选 / 已选 / 禁用、toggle off / on / disabled，以及 segmented small / selected medium / disabled large。
+- 已补充中英文 i18n 资源和内置中文 fallback，覆盖新增 selection 样例文案。
+- 已新增单元测试覆盖 selection 视觉优先级：disabled 高于 hovered/focused，selected 使用 selected 色，idle focused 使用 focused 色。
+
+当前限制：
+
+- 当前 selection 控件只提供静态状态和 builder，不提供点击后自动切换 checked/on/selected 的统一状态机或业务事件。
+- checkbox / toggle 暂未绘制独立勾选框或滑块轨道；第一版用按钮 selected/disabled 视觉表达状态。
+- segmented control 只提供选项按钮排列和 selected marker，不负责互斥选择更新。
+
 ### UI 字体和中文字形修复
 
 - 已新增 UI 字体资源 `UiFontAssets` 和 `UiFontPlugin`，挂入 `UiFrameworkPlugin`。

@@ -22,11 +22,14 @@ use crate::game::{
         widgets::{
             DisabledButton, DisabledTextInput, FocusedButton, LoadingButton, ReadonlyTextInput,
             SelectedButton, UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars,
-            UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage,
-            disabled_primary_action_button_key, disabled_secondary_action_button_key,
+            UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key,
+            checked_checkbox_key, disabled_checkbox_key, disabled_primary_action_button_key,
+            disabled_secondary_action_button_key, disabled_segment_option_key, disabled_toggle_key,
             loading_primary_action_button_key, primary_action_button_key, screen_label_key,
-            screen_title_key, secondary_action_button_key, secondary_route_button_key, text_input,
-            text_input_form_message, ui_column, ui_grid, ui_scroll_column,
+            screen_title_key, secondary_action_button_key, secondary_route_button_key,
+            segment_option_key, segmented_control, selected_segment_option_key, text_input,
+            text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_grid,
+            ui_scroll_column,
         },
     },
 };
@@ -255,6 +258,91 @@ pub(super) fn setup_ui_gallery(
                                     "Unavailable",
                                 ));
                                 buttons.spawn(primary_route_button_sample(theme, fonts, i18n));
+                            });
+                    });
+
+                body.spawn(gallery_panel(theme))
+                    .with_children(|selection_panel| {
+                        selection_panel.spawn(section_label_key(
+                            theme,
+                            fonts,
+                            i18n,
+                            "ui_gallery.selection.section",
+                            "Selection Controls",
+                        ));
+                        selection_panel
+                            .spawn(ui_grid(theme, 3))
+                            .with_children(|controls| {
+                                controls.spawn(checkbox_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.selection.checkbox.unchecked",
+                                    "Unchecked",
+                                ));
+                                controls.spawn(checked_checkbox_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.selection.checkbox.checked",
+                                    "Checked",
+                                ));
+                                controls.spawn(disabled_checkbox_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.selection.checkbox.disabled",
+                                    "Disabled",
+                                ));
+                                controls.spawn(toggle_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.selection.toggle.off",
+                                    "Toggle Off",
+                                ));
+                                controls.spawn(toggle_on_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.selection.toggle.on",
+                                    "Toggle On",
+                                ));
+                                controls.spawn(disabled_toggle_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "ui_gallery.selection.toggle.disabled",
+                                    "Toggle Disabled",
+                                ));
+                            });
+                        selection_panel
+                            .spawn(segmented_control(theme))
+                            .with_children(|segments| {
+                                segments.spawn(segment_option_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "small",
+                                    "ui_gallery.selection.segment.small",
+                                    "Small",
+                                ));
+                                segments.spawn(selected_segment_option_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "medium",
+                                    "ui_gallery.selection.segment.medium",
+                                    "Medium",
+                                ));
+                                segments.spawn(disabled_segment_option_key(
+                                    theme,
+                                    fonts,
+                                    i18n,
+                                    "large",
+                                    "ui_gallery.selection.segment.large",
+                                    "Large",
+                                ));
                             });
                     });
 
