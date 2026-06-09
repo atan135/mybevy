@@ -17,11 +17,11 @@ use crate::game::{
             theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
         },
         widgets::{
-            DisabledButton, FocusedButton, LoadingButton, SelectedButton,
+            DisabledButton, FocusedButton, LoadingButton, SelectedButton, UiTextInputSubmitted,
             disabled_primary_action_button_key, disabled_secondary_action_button_key,
             loading_primary_action_button_key, primary_action_button_key, screen_label_key,
-            screen_title_key, secondary_action_button_key, secondary_route_button_key, ui_column,
-            ui_grid, ui_scroll_column,
+            screen_title_key, secondary_action_button_key, secondary_route_button_key, text_input,
+            ui_column, ui_grid, ui_scroll_column,
         },
     },
 };
@@ -217,6 +217,22 @@ pub(super) fn setup_ui_gallery(
                     });
 
                 body.spawn(gallery_panel(theme))
+                    .with_children(|inputs_panel| {
+                        inputs_panel.spawn(section_label_key(
+                            theme,
+                            i18n,
+                            "ui_gallery.inputs.section",
+                            "Inputs",
+                        ));
+                        inputs_panel
+                            .spawn(ui_column(theme.layout.row_gap))
+                            .with_children(|inputs| {
+                                inputs.spawn(text_input(theme, "Player name", "Pilot 01"));
+                                inputs.spawn(text_input(theme, "Type a note", ""));
+                            });
+                    });
+
+                body.spawn(gallery_panel(theme))
                     .with_children(|overlays_panel| {
                         overlays_panel.spawn(section_label_key(
                             theme,
@@ -351,6 +367,18 @@ pub(super) fn handle_ui_gallery_buttons(
                 panel_commands.write(UiPanelCommand::CloseTop);
             }
         }
+    }
+}
+
+pub(super) fn log_ui_gallery_text_input_submissions(
+    mut submissions: MessageReader<UiTextInputSubmitted>,
+) {
+    for submission in submissions.read() {
+        info!(
+            entity = ?submission.entity,
+            value = %submission.value,
+            "ui gallery text input submitted"
+        );
     }
 }
 

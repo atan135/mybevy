@@ -611,3 +611,26 @@ pub(in crate::game) struct UiInputState {
 - 第一版只做只读诊断，不提供点击选择实体、冻结刷新、过滤、复制或历史记录。
 - 可见 panel 列表只基于 `Visibility` / `InheritedVisibility` 过滤，不做屏幕裁剪或实际命中区域判断。
 - 调试面板自身没有主题热刷新后的布局重建；已创建节点的背景、边框和文本色继续走现有主题 role 刷新。
+
+### 通用文本输入框第一版
+
+- 已新增 widgets 层通用文本输入框 `text_input(...)`，根节点使用 `Button + FocusableButton + UiTextInput`，因此可以通过鼠标点击进入焦点，也可以通过现有 `Tab` 焦点系统访问。
+- 已新增组件：
+  - `UiTextInput`
+  - `UiTextInputValue`
+  - `UiTextInputPlaceholder`
+  - `UiTextInputText`
+- 已新增提交消息 `UiTextInputSubmitted { entity, value }`；当前 `UiGallery` 在 Enter 提交时写日志，不绑定业务逻辑。
+- 文本输入基于 Bevy 0.18.1 的 `KeyboardInput` message：按下态读取 `keyboard_input.text` 追加可打印字符，`Key::Backspace` 删除末尾字符，`Key::Enter` 发送提交消息。
+- 显示文本节点单独带 `UiTextInputText` marker；内容变化时只刷新该文本节点，不重建页面或输入框根节点。
+- placeholder 在 value 为空时显示，并使用 muted 文本色；有 value 时显示当前值并使用 primary 文本色。
+- 输入框有 idle / hovered / pressed / focused 视觉状态，第一版复用现有 secondary button 背景色和 primary focused 边框色。
+- `UiInputState.pointer_blocked` 已识别当前聚焦的 `UiTextInput`，因此在 Touch Ripple 中输入文字时，玩法触控采集会被阻塞，不会同时触发水波纹。
+- `UiGallery` 已新增 Inputs 区域，展示一个带初始值的普通输入框和一个 placeholder 示例。
+
+当前限制：
+
+- 第一版不支持光标、选区、复制粘贴、左右移动、Home/End、Delete、撤销、IME 组合态显示和密码输入。
+- 第一版没有 disabled / readonly 语义。
+- 第一版 value 存在组件里；业务页面如需保存数据，应监听 `UiTextInputSubmitted` 或读取对应实体上的 `UiTextInputValue`。
+- 第一版没有显式长度限制、校验规则、错误态或表单布局协议。

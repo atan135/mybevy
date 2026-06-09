@@ -1,9 +1,12 @@
-use bevy::prelude::*;
+use bevy::{
+    input::keyboard::{Key, KeyboardInput},
+    prelude::*,
+};
 
 use crate::game::{
     navigation::{AppUiMode, RouteButton},
     ui::{
-        core::UiFocusSystems,
+        core::{UiFocusSystems, focus::UiFocusState},
         i18n::{UiI18n, UiI18nText},
         style::theme::{ButtonColors, UiTheme, UiThemeTextColorRole},
         widgets::scroll::UiScrollPlugin,
@@ -14,10 +17,23 @@ pub(in crate::game) struct UiWidgetsPlugin;
 
 impl Plugin for UiWidgetsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(UiScrollPlugin).add_systems(
-            Update,
-            update_button_visuals.in_set(UiFocusSystems::Visuals),
-        );
+        app.add_plugins(UiScrollPlugin)
+            .add_message::<UiTextInputSubmitted>()
+            .add_systems(
+                Update,
+                handle_text_input_keyboard
+                    .after(UiFocusSystems::SyncFocusedMarkers)
+                    .before(UiFocusSystems::Visuals),
+            )
+            .add_systems(
+                Update,
+                (
+                    sync_text_input_display,
+                    update_button_visuals,
+                    update_text_input_visuals,
+                )
+                    .in_set(UiFocusSystems::Visuals),
+            );
     }
 }
 
@@ -41,6 +57,24 @@ pub(in crate::game) struct SelectedButton;
 
 #[derive(Component)]
 pub(in crate::game) struct LoadingButton;
+
+#[derive(Component)]
+pub(in crate::game) struct UiTextInput;
+
+#[derive(Clone, Debug, Default, Component)]
+pub(in crate::game) struct UiTextInputValue(pub String);
+
+#[derive(Clone, Debug, Default, Component)]
+pub(in crate::game) struct UiTextInputPlaceholder(pub String);
+
+#[derive(Component)]
+pub(in crate::game) struct UiTextInputText;
+
+#[derive(Clone, Debug, Message)]
+pub(in crate::game) struct UiTextInputSubmitted {
+    pub entity: Entity,
+    pub value: String,
+}
 
 pub(in crate::game) fn screen_title(
     theme: &UiTheme,
@@ -284,6 +318,54 @@ pub(in crate::game) fn loading_primary_action_button_key(
     )
 }
 
+pub(in crate::game) fn text_input(
+    theme: &UiTheme,
+    placeholder: impl Into<String>,
+    value: impl Into<String>,
+) -> impl Bundle {
+    let value = value.into();
+    let placeholder = placeholder.into();
+    let display_text = if value.is_empty() {
+        placeholder.clone()
+    } else {
+        value.clone()
+    };
+    let display_color = if value.is_empty() {
+        theme.colors.text_muted
+    } else {
+        theme.colors.text_primary
+    };
+
+    (
+        Button,
+        FocusableButton,
+        UiTextInput,
+        UiTextInputValue(value),
+        UiTextInputPlaceholder(placeholder),
+        Node {
+            width: percent(100),
+            min_height: px(theme.button.height),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::FlexStart,
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border: UiRect::all(px(theme.panel.border)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
+            ..default()
+        },
+        BackgroundColor(text_input_background_color(theme, Interaction::None, false)),
+        BorderColor::all(text_input_border_color(theme, Interaction::None, false)),
+        children![(
+            Text::new(display_text),
+            TextFont {
+                font_size: theme.text.button,
+                ..default()
+            },
+            TextColor(display_color),
+            UiTextInputText,
+        )],
+    )
+}
+
 fn route_button<T: Component>(
     theme: &UiTheme,
     text: impl Into<String>,
@@ -502,7 +584,7 @@ fn update_button_visuals(
             Has<SelectedButton>,
             Has<LoadingButton>,
         ),
-        With<Button>,
+        (With<Button>, Without<UiTextInput>),
     >,
 ) {
     for (
@@ -540,4 +622,129 @@ fn update_button_visuals(
             }
         };
     }
+}
+
+fn handle_text_input_keyboard(
+    mut keyboard_inputs: MessageReader<KeyboardInput>,
+    focus_state: Res<UiFocusState>,
+    mut text_inputs: Query<&mut UiTextInputValue, With<UiTextInput>>,
+    mut submissions: MessageWriter<UiTextInputSubmitted>,
+) {
+    let Some(focused_entity) = focus_state.focused_entity else {
+        for _ in keyboard_inputs.read() {}
+        return;
+    };
+
+    let Ok(mut value) = text_inputs.get_mut(focused_entity) else {
+        for _ in keyboard_inputs.read() {}
+        return;
+    };
+
+    for keyboard_input in keyboard_inputs.read() {
+        if !keyboard_input.state.is_pressed() {
+            continue;
+        }
+
+        match (&keyboard_input.logical_key, &keyboard_input.text) {
+            (Key::Enter, _) => {
+                submissions.write(UiTextInputSubmitted {
+                    entity: focused_entity,
+                    value: value.0.clone(),
+                });
+            }
+            (Key::Backspace, _) => {
+                value.0.pop();
+            }
+            (_, Some(inserted_text)) if inserted_text.chars().all(is_printable_char) => {
+                value.0.push_str(inserted_text);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn sync_text_input_display(
+    theme: Res<UiTheme>,
+    parents: Query<&ChildOf>,
+    text_inputs: Query<(&UiTextInputValue, &UiTextInputPlaceholder), With<UiTextInput>>,
+    mut texts: Query<(Entity, &mut Text, &mut TextColor), With<UiTextInputText>>,
+) {
+    for (text_entity, mut text, mut text_color) in &mut texts {
+        let Some(input_entity) = parents
+            .iter_ancestors(text_entity)
+            .find(|ancestor| text_inputs.get(*ancestor).is_ok())
+        else {
+            continue;
+        };
+
+        let Ok((value, placeholder)) = text_inputs.get(input_entity) else {
+            continue;
+        };
+
+        let (display, color) = if value.0.is_empty() {
+            (placeholder.0.as_str(), theme.colors.text_muted)
+        } else {
+            (value.0.as_str(), theme.colors.text_primary)
+        };
+
+        if text.0 != display {
+            text.0 = display.to_string();
+        }
+        if text_color.0 != color {
+            text_color.0 = color;
+        }
+    }
+}
+
+fn update_text_input_visuals(
+    theme: Res<UiTheme>,
+    mut text_inputs: Query<
+        (
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Has<FocusedButton>,
+        ),
+        (With<Button>, With<UiTextInput>),
+    >,
+) {
+    for (interaction, mut background, mut border, is_focused) in &mut text_inputs {
+        let background_color = text_input_background_color(&theme, *interaction, is_focused);
+        if background.0 != background_color {
+            *background = BackgroundColor(background_color);
+        }
+
+        *border = BorderColor::all(text_input_border_color(&theme, *interaction, is_focused));
+    }
+}
+
+fn text_input_background_color(
+    theme: &UiTheme,
+    interaction: Interaction,
+    is_focused: bool,
+) -> Color {
+    match interaction {
+        Interaction::Pressed => theme.colors.secondary_button.pressed,
+        Interaction::Hovered => theme.colors.secondary_button.hovered,
+        Interaction::None if is_focused => theme.colors.secondary_button.focused,
+        Interaction::None => theme.colors.secondary_button.idle,
+    }
+}
+
+fn text_input_border_color(theme: &UiTheme, interaction: Interaction, is_focused: bool) -> Color {
+    match interaction {
+        Interaction::Pressed => theme.colors.primary_button.pressed,
+        Interaction::Hovered if is_focused => theme.colors.primary_button.focused,
+        Interaction::Hovered => theme.colors.secondary_button.focused,
+        Interaction::None if is_focused => theme.colors.primary_button.focused,
+        Interaction::None => theme.colors.panel_border,
+    }
+}
+
+fn is_printable_char(chr: char) -> bool {
+    let is_in_private_use_area = ('\u{e000}'..='\u{f8ff}').contains(&chr)
+        || ('\u{f0000}'..='\u{ffffd}').contains(&chr)
+        || ('\u{100000}'..='\u{10fffd}').contains(&chr);
+
+    !is_in_private_use_area && !chr.is_ascii_control()
 }

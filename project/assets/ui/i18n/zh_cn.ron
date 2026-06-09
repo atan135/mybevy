@@ -29,6 +29,7 @@
         "ui_gallery.buttons.disabled": "禁用",
         "ui_gallery.buttons.unavailable": "不可用",
         "ui_gallery.buttons.action": "操作",
+        "ui_gallery.inputs.section": "输入框",
         "ui_gallery.overlays.section": "覆盖层",
         "ui_gallery.overlays.show_toast": "显示 Toast",
         "ui_gallery.overlays.loading": "Loading",

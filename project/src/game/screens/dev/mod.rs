@@ -17,6 +17,7 @@ impl Plugin for DevScreensPlugin {
                 Update,
                 (
                     ui_gallery::handle_ui_gallery_buttons,
+                    ui_gallery::log_ui_gallery_text_input_submissions,
                     ui_gallery::tick_ui_gallery_loading_preview,
                 )
                     .before(UiPanelSystems::Commands)

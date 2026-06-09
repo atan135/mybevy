@@ -2,7 +2,7 @@ use bevy::{prelude::*, ui::UiSystems};
 
 use crate::game::ui::{
     core::{UiPanelKind, UiPanelRoot},
-    widgets::{DisabledButton, FocusableButton, FocusedButton, LoadingButton},
+    widgets::{DisabledButton, FocusableButton, FocusedButton, LoadingButton, UiTextInput},
 };
 
 pub(in crate::game) struct UiFocusPlugin;
@@ -21,6 +21,7 @@ impl Plugin for UiFocusPlugin {
             .add_systems(
                 Update,
                 (
+                    focus_interacted_button,
                     navigate_focus_with_tab,
                     repair_invalid_focus,
                     sync_focused_button_markers,
@@ -78,6 +79,17 @@ fn navigate_focus_with_tab(
         next_focus_entity(&candidates, focus_state.focused_entity, moving_backward);
 }
 
+fn focus_interacted_button(
+    mut focus_state: ResMut<UiFocusState>,
+    buttons: Query<(Entity, &Interaction), (Changed<Interaction>, FocusableButtonFilter)>,
+) {
+    for (entity, interaction) in &buttons {
+        if *interaction == Interaction::Pressed {
+            focus_state.focused_entity = Some(entity);
+        }
+    }
+}
+
 fn repair_invalid_focus(
     mut focus_state: ResMut<UiFocusState>,
     buttons: Query<(Entity, Option<&InheritedVisibility>), FocusableButtonFilter>,
@@ -102,10 +114,10 @@ fn repair_invalid_focus(
 fn update_keyboard_button_activation(
     key_codes: Res<ButtonInput<KeyCode>>,
     mut focus_state: ResMut<UiFocusState>,
-    mut buttons: Query<&mut Interaction, FocusableButtonFilter>,
+    mut buttons: Query<(Entity, &mut Interaction, Has<UiTextInput>), FocusableButtonFilter>,
 ) {
     if let Some(entity) = focus_state.keyboard_pressed_entity.take()
-        && let Ok(mut interaction) = buttons.get_mut(entity)
+        && let Ok((_, mut interaction, _)) = buttons.get_mut(entity)
         && *interaction == Interaction::Pressed
     {
         *interaction = Interaction::None;
@@ -119,7 +131,9 @@ fn update_keyboard_button_activation(
         return;
     };
 
-    if let Ok(mut interaction) = buttons.get_mut(focused_entity) {
+    if let Ok((_, mut interaction, is_text_input)) = buttons.get_mut(focused_entity)
+        && !is_text_input
+    {
         *interaction = Interaction::Pressed;
         focus_state.keyboard_pressed_entity = Some(focused_entity);
     }

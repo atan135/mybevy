@@ -29,6 +29,7 @@
         "ui_gallery.buttons.disabled": "Disabled",
         "ui_gallery.buttons.unavailable": "Unavailable",
         "ui_gallery.buttons.action": "Action",
+        "ui_gallery.inputs.section": "Inputs",
         "ui_gallery.overlays.section": "Overlays",
         "ui_gallery.overlays.show_toast": "Show Toast",
         "ui_gallery.overlays.loading": "Loading",

@@ -1,8 +1,10 @@
 use bevy::{picking::hover::Hovered, prelude::*};
 
 use crate::game::ui::{
-    core::{UiPanelId, UiPanelKind, UiPanelRoot, UiPanelSystems},
-    widgets::UiScrollView,
+    core::{
+        UiFocusSystems, UiPanelId, UiPanelKind, UiPanelRoot, UiPanelSystems, focus::UiFocusState,
+    },
+    widgets::{UiScrollView, UiTextInput},
 };
 
 pub(in crate::game) struct UiInputPlugin;
@@ -15,7 +17,8 @@ impl Plugin for UiInputPlugin {
                 Update,
                 update_ui_input_state
                     .in_set(UiInputSystems::Update)
-                    .after(UiPanelSystems::Commands),
+                    .after(UiPanelSystems::Commands)
+                    .after(UiFocusSystems::SyncFocusedMarkers),
             );
     }
 }
@@ -34,8 +37,10 @@ pub(in crate::game) struct UiInputState {
 
 fn update_ui_input_state(
     mut input_state: ResMut<UiInputState>,
+    focus_state: Res<UiFocusState>,
     buttons: Query<&Interaction, With<Button>>,
     scroll_views: Query<&Hovered, With<UiScrollView>>,
+    text_inputs: Query<(), With<UiTextInput>>,
     panels: Query<&UiPanelRoot>,
 ) {
     let top_blocking_panel = panels
@@ -47,6 +52,9 @@ fn update_ui_input_state(
     input_state.focused_panel = top_blocking_panel;
     input_state.top_blocking_panel = top_blocking_panel;
     input_state.pointer_blocked = top_blocking_panel.is_some()
+        || focus_state
+            .focused_entity
+            .is_some_and(|entity| text_inputs.contains(entity))
         || buttons
             .iter()
             .any(|interaction| matches!(*interaction, Interaction::Pressed | Interaction::Hovered))
