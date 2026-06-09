@@ -590,3 +590,24 @@ pub(in crate::game) struct UiInputState {
 - Android Back 通过 Bevy 0.18 的逻辑键 `Key::BrowserBack` 接入，与桌面 `Esc` 一样写入 `UiPanelCommand::CloseTop`。
 - 已用 `cargo fmt --check` 和 `cargo check` 验证桌面目标。
 - Android 目标验证尝试过 `cargo ndk -t arm64-v8a -P 26 check`，但超过 5 分钟未完成；需要后续在 Android 构建环境中继续验证真机 Back 行为。
+
+### 输入路由调试面板第一版
+
+- 已新增 `UiDebugPlugin`，挂入 `UiFrameworkPlugin`。
+- 开发快捷键为 `F3`：按下后切换显示 / 隐藏输入路由调试面板，不占用 `Esc`、`Tab`、`Enter` 等交互键。
+- 调试面板位于独立 `UiLayer::Debug`，使用高 `ZIndex(250)` 显示在常规 UI 之上。
+- 调试面板不纳入 Panel Manager，不添加 `UiPanelRoot`，不会进入 `CloseTop` 栈，也不会改变 `UiInputState.focused_panel`。
+- 调试根节点和文本节点使用 `Pickable::IGNORE`，不阻塞下层 pointer 输入，也不参与 hover / focusable button 规则。
+- 面板当前显示：
+  - `UiInputState.pointer_blocked`
+  - `UiInputState.focused_panel`
+  - `UiInputState.top_blocking_panel`
+  - `UiFocusState.focused_entity`
+  - 当前可见 `UiPanelRoot` 列表：`id`、`kind`、`owner_mode`、可见性、`Entity`
+- 文本每帧刷新，刷新顺序排在 `UiInputSystems::Update` 之后，便于观察当前帧输入路由状态。
+
+当前限制：
+
+- 第一版只做只读诊断，不提供点击选择实体、冻结刷新、过滤、复制或历史记录。
+- 可见 panel 列表只基于 `Visibility` / `InheritedVisibility` 过滤，不做屏幕裁剪或实际命中区域判断。
+- 调试面板自身没有主题热刷新后的布局重建；已创建节点的背景、边框和文本色继续走现有主题 role 刷新。

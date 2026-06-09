@@ -13,6 +13,7 @@ pub(in crate::game) enum UiLayer {
     Modal,
     Loading,
     Toast,
+    Debug,
 }
 
 #[derive(Component)]

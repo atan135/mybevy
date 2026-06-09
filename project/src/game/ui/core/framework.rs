@@ -4,6 +4,7 @@ use crate::game::ui::{
     core::{
         focus::UiFocusPlugin, input::UiInputPlugin, layer::UiLayerPlugin, panel::UiPanelPlugin,
     },
+    debug::UiDebugPlugin,
     i18n::UiI18nPlugin,
     overlays::UiRouterPlugin,
     style::UiThemePlugin,
@@ -23,6 +24,7 @@ impl Plugin for UiFrameworkPlugin {
             UiPanelPlugin,
             UiInputPlugin,
             UiFocusPlugin,
+            UiDebugPlugin,
         ));
     }
 }
