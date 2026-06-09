@@ -7,7 +7,10 @@ use crate::game::{
         i18n::{UiI18n, UiI18nText},
         style::{
             UiFontAssets, UiTheme,
-            theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
+            theme::{
+                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
+                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
+            },
         },
         widgets::{
             DisabledButton, LoadingButton, primary_action_button,
@@ -140,10 +143,13 @@ pub(in crate::game) fn spawn_confirm_modal(
                 ..default()
             },
             ZIndex(100),
-            BackgroundColor(Color::srgba(0.01, 0.02, 0.03, 0.72)),
+            BackgroundColor(theme.colors.modal_overlay_background),
+            UiThemeBackgroundRole::ModalOverlay,
+            UiThemeRootNodeRole::BlockingOverlay,
         ))
         .with_children(|root| {
             root.spawn((
+                UiThemePanelNodeRole::Standard,
                 Node {
                     width: percent(100),
                     max_width: px(460),
@@ -162,7 +168,12 @@ pub(in crate::game) fn spawn_confirm_modal(
             .with_children(|panel| {
                 if let Some(i18n_text) = modal.title_i18n_text.clone() {
                     panel.spawn((
-                        screen_title(theme, fonts, modal.title.clone(), theme.text.subtitle),
+                        screen_title(
+                            theme,
+                            fonts,
+                            modal.title.clone(),
+                            UiThemeTextStyleRole::Subtitle,
+                        ),
                         i18n_text,
                     ));
                 } else {
@@ -170,7 +181,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                         theme,
                         fonts,
                         modal.title.clone(),
-                        theme.text.subtitle,
+                        UiThemeTextStyleRole::Subtitle,
                     ));
                 }
 
@@ -180,7 +191,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                             theme,
                             fonts,
                             modal.body.clone(),
-                            theme.text.body,
+                            UiThemeTextStyleRole::Body,
                             UiThemeTextColorRole::Primary,
                         ),
                         i18n_text,
@@ -190,7 +201,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                         theme,
                         fonts,
                         modal.body.clone(),
-                        theme.text.body,
+                        UiThemeTextStyleRole::Body,
                         UiThemeTextColorRole::Primary,
                     ));
                 }
@@ -202,7 +213,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                                 theme,
                                 fonts,
                                 detail.clone(),
-                                theme.text.caption,
+                                UiThemeTextStyleRole::Caption,
                                 UiThemeTextColorRole::Muted,
                             ),
                             i18n_text,
@@ -212,7 +223,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                             theme,
                             fonts,
                             detail.clone(),
-                            theme.text.caption,
+                            UiThemeTextStyleRole::Caption,
                             UiThemeTextColorRole::Muted,
                         ));
                     }

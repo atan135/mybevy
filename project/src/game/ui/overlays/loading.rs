@@ -6,7 +6,10 @@ use crate::game::ui::{
     i18n::{UiI18n, UiI18nText},
     style::{
         UiFontAssets, UiTheme,
-        theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
+        theme::{
+            UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
+            UiThemeTextColorRole, UiThemeTextStyleRole,
+        },
     },
     widgets::screen_label,
 };
@@ -76,10 +79,13 @@ pub(in crate::game) fn spawn_loading(
                 ..default()
             },
             ZIndex(150),
-            BackgroundColor(Color::srgba(0.01, 0.02, 0.03, 0.56)),
+            BackgroundColor(theme.colors.loading_overlay_background),
+            UiThemeBackgroundRole::LoadingOverlay,
+            UiThemeRootNodeRole::BlockingOverlay,
         ))
         .with_children(|root| {
             root.spawn((
+                UiThemePanelNodeRole::Loading,
                 Node {
                     min_width: px(260),
                     max_width: px(420),
@@ -102,7 +108,7 @@ pub(in crate::game) fn spawn_loading(
                             theme,
                             fonts,
                             loading.text.clone(),
-                            theme.text.body,
+                            UiThemeTextStyleRole::Body,
                             UiThemeTextColorRole::Primary,
                         ),
                         i18n_text,
@@ -112,7 +118,7 @@ pub(in crate::game) fn spawn_loading(
                         theme,
                         fonts,
                         loading.text.clone(),
-                        theme.text.body,
+                        UiThemeTextStyleRole::Body,
                         UiThemeTextColorRole::Primary,
                     ));
                 }

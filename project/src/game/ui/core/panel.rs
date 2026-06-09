@@ -11,7 +11,10 @@ use crate::game::{
         },
         style::{
             UiFontAssets, UiTheme,
-            theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
+            theme::{
+                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
+                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
+            },
         },
         widgets::{screen_label, screen_title},
     },
@@ -377,6 +380,8 @@ fn spawn_floating_panel(
                 layer: UiLayer::Floating,
             },
             Button,
+            UiThemeRootNodeRole::FloatingPanel,
+            UiThemePanelNodeRole::Standard,
             Node {
                 position_type: PositionType::Absolute,
                 right: px(theme.layout.screen_padding),
@@ -400,13 +405,13 @@ fn spawn_floating_panel(
                 theme,
                 fonts,
                 floating.title.clone(),
-                theme.text.subtitle,
+                UiThemeTextStyleRole::Subtitle,
             ));
             panel.spawn(screen_label(
                 theme,
                 fonts,
                 floating.body.clone(),
-                theme.text.body,
+                UiThemeTextStyleRole::Body,
                 UiThemeTextColorRole::Primary,
             ));
 
@@ -415,7 +420,7 @@ fn spawn_floating_panel(
                     theme,
                     fonts,
                     detail.clone(),
-                    theme.text.caption,
+                    UiThemeTextStyleRole::Caption,
                     UiThemeTextColorRole::Muted,
                 ));
             }

@@ -7,7 +7,10 @@ use crate::game::{
         i18n::UiI18n,
         style::{
             UiFontAssets, UiTheme,
-            theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
+            theme::{
+                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
+                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
+            },
         },
         widgets::{primary_route_button_key, screen_label_key, screen_title_key},
     },
@@ -45,7 +48,9 @@ pub(super) fn setup_login_screen(
         },
         BackgroundColor(theme.colors.screen_background),
         UiThemeBackgroundRole::Screen,
+        UiThemeRootNodeRole::Screen,
         children![(
+            UiThemePanelNodeRole::Standard,
             Node {
                 width: percent(100),
                 max_width: px(theme.layout.auth_panel_width),
@@ -67,7 +72,7 @@ pub(super) fn setup_login_screen(
                     i18n,
                     "app.name",
                     "MyBevy",
-                    theme.text.title_large,
+                    UiThemeTextStyleRole::TitleLarge,
                 ),
                 screen_label_key(
                     theme,
@@ -75,7 +80,7 @@ pub(super) fn setup_login_screen(
                     i18n,
                     "auth.login.subtitle",
                     "Player Login",
-                    theme.text.subtitle,
+                    UiThemeTextStyleRole::Subtitle,
                     UiThemeTextColorRole::Muted,
                 ),
                 primary_route_button_key(

@@ -43,6 +43,8 @@ pub(in crate::game) struct UiColors {
     pub screen_background: Color,
     pub panel_background: Color,
     pub panel_border: Color,
+    pub loading_overlay_background: Color,
+    pub modal_overlay_background: Color,
     pub text_primary: Color,
     pub text_muted: Color,
     pub primary_button: ButtonColors,
@@ -105,6 +107,8 @@ pub(in crate::game) struct ButtonColors {
 pub(in crate::game) enum UiThemeBackgroundRole {
     Screen,
     Panel,
+    LoadingOverlay,
+    ModalOverlay,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
@@ -118,11 +122,49 @@ pub(in crate::game) enum UiThemeTextColorRole {
     Muted,
 }
 
+#[derive(Clone, Copy, Debug, Component)]
+pub(in crate::game) enum UiThemeTextStyleRole {
+    TitleLarge,
+    Title,
+    Subtitle,
+    SectionLabel,
+    Body,
+    Caption,
+    Button,
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+pub(in crate::game) enum UiThemeButtonNodeRole {
+    Button,
+    TextInput,
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+pub(in crate::game) enum UiThemePanelNodeRole {
+    Standard,
+    Content,
+    Toast,
+    Loading,
+    Debug,
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+pub(in crate::game) enum UiThemeRootNodeRole {
+    Screen,
+    Overlay,
+    BlockingOverlay,
+    Toast,
+    FloatingPanel,
+    Debug,
+}
+
 impl UiThemeBackgroundRole {
     fn color(self, theme: &UiTheme) -> Color {
         match self {
             Self::Screen => theme.colors.screen_background,
             Self::Panel => theme.colors.panel_background,
+            Self::LoadingOverlay => theme.colors.loading_overlay_background,
+            Self::ModalOverlay => theme.colors.modal_overlay_background,
         }
     }
 }
@@ -144,6 +186,81 @@ impl UiThemeTextColorRole {
     }
 }
 
+impl UiThemeTextStyleRole {
+    pub(in crate::game) fn font_size(self, theme: &UiTheme) -> f32 {
+        match self {
+            Self::TitleLarge => theme.text.title_large,
+            Self::Title => theme.text.title,
+            Self::Subtitle => theme.text.subtitle,
+            Self::SectionLabel => theme.text.section_label,
+            Self::Body => theme.text.body,
+            Self::Caption => theme.text.caption,
+            Self::Button => theme.text.button,
+        }
+    }
+}
+
+impl UiThemeButtonNodeRole {
+    fn apply(self, theme: &UiTheme, node: &mut Node) {
+        match self {
+            Self::Button => {
+                node.min_width = px(theme.button.min_width);
+                node.height = px(theme.button.height);
+            }
+            Self::TextInput => {
+                node.min_height = px(theme.button.height);
+            }
+        }
+
+        node.padding = UiRect::axes(px(theme.button.padding_x), px(0));
+        node.border_radius = BorderRadius::all(px(theme.button.radius));
+    }
+}
+
+impl UiThemePanelNodeRole {
+    fn apply(self, theme: &UiTheme, node: &mut Node) {
+        node.padding = match self {
+            Self::Standard => UiRect::all(px(theme.panel.padding)),
+            Self::Content => UiRect::all(px(theme.layout.panel_gap)),
+            Self::Toast => UiRect::axes(px(18), px(12)),
+            Self::Loading => UiRect::axes(px(22), px(16)),
+            Self::Debug => UiRect::all(px(14)),
+        };
+        node.border = UiRect::all(px(theme.panel.border));
+        node.border_radius = BorderRadius::all(px(match self {
+            Self::Toast => theme.button.radius,
+            Self::Standard | Self::Content | Self::Loading | Self::Debug => theme.panel.radius,
+        }));
+    }
+}
+
+impl UiThemeRootNodeRole {
+    fn apply(self, theme: &UiTheme, node: &mut Node) {
+        match self {
+            Self::Screen => {
+                node.padding = UiRect::all(px(theme.layout.screen_padding));
+            }
+            Self::Overlay => {
+                node.padding = UiRect::all(px(theme.layout.overlay_padding));
+            }
+            Self::BlockingOverlay => {
+                node.padding = UiRect::all(px(theme.layout.screen_padding));
+            }
+            Self::Toast => {
+                node.top = px(theme.layout.overlay_padding);
+                node.padding = UiRect::horizontal(px(theme.layout.overlay_padding));
+            }
+            Self::FloatingPanel => {
+                node.right = px(theme.layout.screen_padding);
+            }
+            Self::Debug => {
+                node.left = px(theme.layout.overlay_padding);
+                node.top = px(theme.layout.overlay_padding);
+            }
+        }
+    }
+}
+
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
@@ -151,6 +268,8 @@ impl Default for UiTheme {
                 screen_background: Color::srgb(0.05, 0.08, 0.11),
                 panel_background: Color::srgba(0.10, 0.13, 0.16, 0.94),
                 panel_border: Color::srgb(0.22, 0.28, 0.31),
+                loading_overlay_background: Color::srgba(0.01, 0.02, 0.03, 0.56),
+                modal_overlay_background: Color::srgba(0.01, 0.02, 0.03, 0.72),
                 text_primary: Color::srgb(0.92, 0.95, 0.95),
                 text_muted: Color::srgb(0.62, 0.68, 0.70),
                 primary_button: ButtonColors {
@@ -238,6 +357,10 @@ struct UiColorsConfig {
     screen_background: UiColorConfig,
     panel_background: UiColorConfig,
     panel_border: UiColorConfig,
+    #[serde(default = "default_loading_overlay_background")]
+    loading_overlay_background: UiColorConfig,
+    #[serde(default = "default_modal_overlay_background")]
+    modal_overlay_background: UiColorConfig,
     text_primary: UiColorConfig,
     text_muted: UiColorConfig,
     primary_button: ButtonColorsConfig,
@@ -458,6 +581,12 @@ fn refresh_ui_theme_visuals(
     mut backgrounds: Query<(&UiThemeBackgroundRole, &mut BackgroundColor)>,
     mut borders: Query<(&UiThemeBorderRole, &mut BorderColor)>,
     mut text_colors: Query<(&UiThemeTextColorRole, &mut TextColor)>,
+    mut text_styles: Query<(&UiThemeTextStyleRole, &mut TextFont)>,
+    mut node_roles: ParamSet<(
+        Query<(&UiThemeButtonNodeRole, &mut Node)>,
+        Query<(&UiThemePanelNodeRole, &mut Node)>,
+        Query<(&UiThemeRootNodeRole, &mut Node)>,
+    )>,
 ) {
     if !theme.is_changed() {
         return;
@@ -484,10 +613,44 @@ fn refresh_ui_theme_visuals(
     for (role, mut text_color) in &mut text_colors {
         *text_color = TextColor(role.color(&theme));
     }
+
+    for (role, mut font) in &mut text_styles {
+        font.font_size = role.font_size(&theme);
+    }
+
+    for (role, mut node) in &mut node_roles.p0() {
+        role.apply(&theme, &mut node);
+    }
+
+    for (role, mut node) in &mut node_roles.p1() {
+        role.apply(&theme, &mut node);
+    }
+
+    for (role, mut node) in &mut node_roles.p2() {
+        role.apply(&theme, &mut node);
+    }
 }
 
 fn default_color_alpha() -> f32 {
     1.0
+}
+
+fn default_loading_overlay_background() -> UiColorConfig {
+    UiColorConfig {
+        r: 0.01,
+        g: 0.02,
+        b: 0.03,
+        a: 0.56,
+    }
+}
+
+fn default_modal_overlay_background() -> UiColorConfig {
+    UiColorConfig {
+        r: 0.01,
+        g: 0.02,
+        b: 0.03,
+        a: 0.72,
+    }
 }
 
 impl UiThemeConfig {
@@ -508,6 +671,8 @@ impl UiColorsConfig {
             screen_background: self.screen_background.into_color(),
             panel_background: self.panel_background.into_color(),
             panel_border: self.panel_border.into_color(),
+            loading_overlay_background: self.loading_overlay_background.into_color(),
+            modal_overlay_background: self.modal_overlay_background.into_color(),
             text_primary: self.text_primary.into_color(),
             text_muted: self.text_muted.into_color(),
             primary_button: self.primary_button.into_button_colors(),
@@ -589,6 +754,8 @@ mod tests {
         screen_background: (r: 0.11, g: 0.12, b: 0.13),
         panel_background: (r: 0.21, g: 0.22, b: 0.23, a: 0.88),
         panel_border: (r: 0.31, g: 0.32, b: 0.33),
+        loading_overlay_background: (r: 0.34, g: 0.35, b: 0.36, a: 0.57),
+        modal_overlay_background: (r: 0.37, g: 0.38, b: 0.39, a: 0.73),
         text_primary: (r: 0.41, g: 0.42, b: 0.43),
         text_muted: (r: 0.51, g: 0.52, b: 0.53),
         primary_button: (
@@ -611,19 +778,19 @@ mod tests {
         ),
     ),
     text: (
-        title_large: 44.0,
-        title: 34.0,
-        subtitle: 18.0,
-        section_label: 16.0,
-        body: 24.0,
-        caption: 15.0,
-        button: 18.0,
+        title_large: 52.0,
+        title: 38.0,
+        subtitle: 22.0,
+        section_label: 17.0,
+        body: 26.0,
+        caption: 13.0,
+        button: 19.0,
     ),
     layout: (
-        screen_padding: 24.0,
-        overlay_padding: 16.0,
+        screen_padding: 30.0,
+        overlay_padding: 18.0,
         page_gap: 18.0,
-        panel_gap: 20.0,
+        panel_gap: 21.0,
         card_gap: 12.0,
         header_gap: 12.0,
         row_gap: 6.0,
@@ -633,18 +800,30 @@ mod tests {
         content_width: 760.0,
     ),
     button: (
-        min_width: 112.0,
-        height: 46.0,
-        padding_x: 18.0,
-        radius: 6.0,
+        min_width: 130.0,
+        height: 50.0,
+        padding_x: 24.0,
+        radius: 9.0,
     ),
     panel: (
-        padding: 28.0,
-        border: 1.0,
-        radius: 8.0,
+        padding: 32.0,
+        border: 2.0,
+        radius: 11.0,
     ),
 )"#
         )
+    }
+
+    fn legacy_theme_config_without_overlay_colors(version: u32) -> String {
+        valid_theme_config_with_version(version)
+            .replace(
+                "        loading_overlay_background: (r: 0.34, g: 0.35, b: 0.36, a: 0.57),\n",
+                "",
+            )
+            .replace(
+                "        modal_overlay_background: (r: 0.37, g: 0.38, b: 0.39, a: 0.73),\n",
+                "",
+            )
     }
 
     fn load_config(source: &str) -> Result<UiTheme, String> {
@@ -668,17 +847,62 @@ mod tests {
         );
     }
 
+    fn assert_px(value: Val, expected: f32) {
+        assert_eq!(value, px(expected));
+    }
+
+    fn assert_rect_all_px(rect: UiRect, expected: f32) {
+        assert_eq!(rect, UiRect::all(px(expected)));
+    }
+
+    fn assert_radius_all_px(radius: BorderRadius, expected: f32) {
+        assert_eq!(radius, BorderRadius::all(px(expected)));
+    }
+
+    fn app_with_theme(theme: UiTheme) -> App {
+        let mut app = App::new();
+        app.insert_resource(theme)
+            .insert_resource(ClearColor(Color::BLACK))
+            .add_systems(Update, refresh_ui_theme_visuals);
+        app
+    }
+
     #[test]
     fn parses_valid_ron_theme_config() {
         let theme = load_config(&valid_theme_config_with_version(UI_THEME_CONFIG_VERSION)).unwrap();
 
         assert_srgba(theme.colors.screen_background, (0.11, 0.12, 0.13, 1.0));
         assert_srgba(theme.colors.panel_background, (0.21, 0.22, 0.23, 0.88));
+        assert_srgba(
+            theme.colors.loading_overlay_background,
+            (0.34, 0.35, 0.36, 0.57),
+        );
+        assert_srgba(
+            theme.colors.modal_overlay_background,
+            (0.37, 0.38, 0.39, 0.73),
+        );
         assert_srgba(theme.colors.primary_button.hovered, (0.11, 0.21, 0.31, 1.0));
-        assert_eq!(theme.text.title_large, 44.0);
+        assert_eq!(theme.text.title_large, 52.0);
         assert_eq!(theme.layout.content_width, 760.0);
-        assert_eq!(theme.button.height, 46.0);
-        assert_eq!(theme.panel.radius, 8.0);
+        assert_eq!(theme.button.height, 50.0);
+        assert_eq!(theme.panel.radius, 11.0);
+    }
+
+    #[test]
+    fn parses_legacy_theme_config_without_overlay_colors() {
+        let theme = load_config(&legacy_theme_config_without_overlay_colors(
+            UI_THEME_CONFIG_VERSION,
+        ))
+        .unwrap();
+
+        assert_srgba(
+            theme.colors.loading_overlay_background,
+            (0.01, 0.02, 0.03, 0.56),
+        );
+        assert_srgba(
+            theme.colors.modal_overlay_background,
+            (0.01, 0.02, 0.03, 0.72),
+        );
     }
 
     #[test]
@@ -718,11 +942,211 @@ mod tests {
     }
 
     #[test]
+    fn refresh_theme_visuals_updates_text_font_sizes() {
+        let theme = load_config(&valid_theme_config_with_version(UI_THEME_CONFIG_VERSION)).unwrap();
+        let mut app = app_with_theme(theme);
+        let title = app
+            .world_mut()
+            .spawn((
+                TextFont::from_font_size(1.0),
+                UiThemeTextStyleRole::TitleLarge,
+            ))
+            .id();
+        let button = app
+            .world_mut()
+            .spawn((TextFont::from_font_size(2.0), UiThemeTextStyleRole::Button))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(title)
+                .get::<TextFont>()
+                .unwrap()
+                .font_size,
+            52.0
+        );
+        assert_eq!(
+            app.world()
+                .entity(button)
+                .get::<TextFont>()
+                .unwrap()
+                .font_size,
+            19.0
+        );
+    }
+
+    #[test]
+    fn refresh_theme_visuals_updates_button_and_text_input_nodes() {
+        let theme = load_config(&valid_theme_config_with_version(UI_THEME_CONFIG_VERSION)).unwrap();
+        let mut app = app_with_theme(theme);
+        let button = app
+            .world_mut()
+            .spawn((Node::default(), UiThemeButtonNodeRole::Button))
+            .id();
+        let text_input = app
+            .world_mut()
+            .spawn((Node::default(), UiThemeButtonNodeRole::TextInput))
+            .id();
+
+        app.update();
+
+        let button_node = app.world().entity(button).get::<Node>().unwrap();
+        assert_px(button_node.min_width, 130.0);
+        assert_px(button_node.height, 50.0);
+        assert_eq!(button_node.padding, UiRect::axes(px(24.0), px(0.0)));
+        assert_radius_all_px(button_node.border_radius, 9.0);
+
+        let input_node = app.world().entity(text_input).get::<Node>().unwrap();
+        assert_px(input_node.min_height, 50.0);
+        assert_eq!(input_node.padding, UiRect::axes(px(24.0), px(0.0)));
+        assert_radius_all_px(input_node.border_radius, 9.0);
+    }
+
+    #[test]
+    fn refresh_theme_visuals_updates_panel_nodes_and_overlay_roots() {
+        let theme = load_config(&valid_theme_config_with_version(UI_THEME_CONFIG_VERSION)).unwrap();
+        let mut app = app_with_theme(theme);
+        let panel = app
+            .world_mut()
+            .spawn((Node::default(), UiThemePanelNodeRole::Standard))
+            .id();
+        let content_panel = app
+            .world_mut()
+            .spawn((Node::default(), UiThemePanelNodeRole::Content))
+            .id();
+        let toast_panel = app
+            .world_mut()
+            .spawn((Node::default(), UiThemePanelNodeRole::Toast))
+            .id();
+        let screen_root = app
+            .world_mut()
+            .spawn((Node::default(), UiThemeRootNodeRole::Screen))
+            .id();
+        let overlay_root = app
+            .world_mut()
+            .spawn((Node::default(), UiThemeRootNodeRole::Overlay))
+            .id();
+        let toast_root = app
+            .world_mut()
+            .spawn((Node::default(), UiThemeRootNodeRole::Toast))
+            .id();
+
+        app.update();
+
+        let panel_node = app.world().entity(panel).get::<Node>().unwrap();
+        assert_rect_all_px(panel_node.padding, 32.0);
+        assert_rect_all_px(panel_node.border, 2.0);
+        assert_radius_all_px(panel_node.border_radius, 11.0);
+
+        let content_panel_node = app.world().entity(content_panel).get::<Node>().unwrap();
+        assert_rect_all_px(content_panel_node.padding, 21.0);
+        assert_rect_all_px(content_panel_node.border, 2.0);
+        assert_radius_all_px(content_panel_node.border_radius, 11.0);
+
+        let toast_panel_node = app.world().entity(toast_panel).get::<Node>().unwrap();
+        assert_eq!(toast_panel_node.padding, UiRect::axes(px(18.0), px(12.0)));
+        assert_rect_all_px(toast_panel_node.border, 2.0);
+        assert_radius_all_px(toast_panel_node.border_radius, 9.0);
+
+        let screen_root_node = app.world().entity(screen_root).get::<Node>().unwrap();
+        assert_rect_all_px(screen_root_node.padding, 30.0);
+
+        let overlay_root_node = app.world().entity(overlay_root).get::<Node>().unwrap();
+        assert_rect_all_px(overlay_root_node.padding, 18.0);
+
+        let toast_root_node = app.world().entity(toast_root).get::<Node>().unwrap();
+        assert_px(toast_root_node.top, 18.0);
+        assert_eq!(toast_root_node.padding, UiRect::horizontal(px(18.0)));
+    }
+
+    #[test]
+    fn refresh_theme_visuals_updates_overlay_background_tokens() {
+        let theme = load_config(&valid_theme_config_with_version(UI_THEME_CONFIG_VERSION)).unwrap();
+        let mut app = app_with_theme(theme);
+        let loading = app
+            .world_mut()
+            .spawn((
+                BackgroundColor(Color::BLACK),
+                UiThemeBackgroundRole::LoadingOverlay,
+            ))
+            .id();
+        let modal = app
+            .world_mut()
+            .spawn((
+                BackgroundColor(Color::BLACK),
+                UiThemeBackgroundRole::ModalOverlay,
+            ))
+            .id();
+
+        app.update();
+
+        assert_srgba(
+            app.world()
+                .entity(loading)
+                .get::<BackgroundColor>()
+                .unwrap()
+                .0,
+            (0.34, 0.35, 0.36, 0.57),
+        );
+        assert_srgba(
+            app.world()
+                .entity(modal)
+                .get::<BackgroundColor>()
+                .unwrap()
+                .0,
+            (0.37, 0.38, 0.39, 0.73),
+        );
+    }
+
+    #[test]
     fn reports_missing_theme_file() {
         let temp = TempConfigDir::new("reports_missing_theme_file");
         let path = temp.path.join("missing.ron");
         let error = load_ui_theme_from_path(Path::new(&path)).unwrap_err();
 
         assert_error_contains(&error, "not found");
+    }
+
+    #[test]
+    fn hot_reload_keeps_current_theme_when_updated_file_is_invalid() {
+        let temp =
+            TempConfigDir::new("hot_reload_keeps_current_theme_when_updated_file_is_invalid");
+        let path = temp.write_config(
+            "theme.ron",
+            &valid_theme_config_with_version(UI_THEME_CONFIG_VERSION),
+        );
+        let current_theme = load_ui_theme_from_path(&path).unwrap();
+        let current_title_size = current_theme.text.title_large;
+        let current_button_height = current_theme.button.height;
+        fs::write(&path, "(version: 1, colors:").expect("bad temp config should be written");
+
+        let mut hot_reload = UiThemeHotReload {
+            watched_path: path,
+            last_modified: None,
+            poll_timer: Timer::from_seconds(0.0, TimerMode::Repeating),
+            last_error: None,
+        };
+        hot_reload.poll_timer.tick(std::time::Duration::ZERO);
+        let source = UiThemeSource {
+            loaded_path: Some(hot_reload.watched_path.clone()),
+            diagnostics: Vec::new(),
+        };
+        let mut app = App::new();
+        app.insert_resource(current_theme)
+            .insert_resource(source)
+            .insert_resource(hot_reload)
+            .insert_resource(Time::<()>::default())
+            .add_systems(Update, poll_ui_theme_hot_reload);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+
+        app.update();
+
+        let theme = app.world().resource::<UiTheme>();
+        assert_eq!(theme.text.title_large, current_title_size);
+        assert_eq!(theme.button.height, current_button_height);
     }
 }

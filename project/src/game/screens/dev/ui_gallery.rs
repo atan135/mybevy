@@ -14,7 +14,10 @@ use crate::game::{
         },
         style::{
             UiFontAssets, UiTheme,
-            theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
+            theme::{
+                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
+                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
+            },
         },
         widgets::{
             DisabledButton, FocusedButton, LoadingButton, SelectedButton, UiTextInputSubmitted,
@@ -91,6 +94,7 @@ pub(super) fn setup_ui_gallery(
             },
             BackgroundColor(theme.colors.screen_background),
             UiThemeBackgroundRole::Screen,
+            UiThemeRootNodeRole::Screen,
         ))
         .with_children(|root| {
             root.spawn(gallery_header(theme)).with_children(|header| {
@@ -100,7 +104,7 @@ pub(super) fn setup_ui_gallery(
                     i18n,
                     "ui_gallery.title",
                     "UI Gallery",
-                    theme.text.title,
+                    UiThemeTextStyleRole::Title,
                 ));
                 header.spawn(secondary_route_button_key(
                     theme,
@@ -131,7 +135,7 @@ pub(super) fn setup_ui_gallery(
                                     i18n,
                                     "ui_gallery.typography.large_title",
                                     "Large Title",
-                                    theme.text.title_large,
+                                    UiThemeTextStyleRole::TitleLarge,
                                 ));
                                 samples.spawn(screen_title_key(
                                     theme,
@@ -139,7 +143,7 @@ pub(super) fn setup_ui_gallery(
                                     i18n,
                                     "ui_gallery.typography.section_title",
                                     "Section Title",
-                                    theme.text.title,
+                                    UiThemeTextStyleRole::Title,
                                 ));
                                 samples.spawn(screen_label_key(
                                     theme,
@@ -147,7 +151,7 @@ pub(super) fn setup_ui_gallery(
                                     i18n,
                                     "ui_gallery.typography.subtitle",
                                     "Subtitle text",
-                                    theme.text.subtitle,
+                                    UiThemeTextStyleRole::Subtitle,
                                     UiThemeTextColorRole::Muted,
                                 ));
                                 samples.spawn(screen_label_key(
@@ -156,7 +160,7 @@ pub(super) fn setup_ui_gallery(
                                     i18n,
                                     "ui_gallery.typography.body",
                                     "Body text",
-                                    theme.text.body,
+                                    UiThemeTextStyleRole::Body,
                                     UiThemeTextColorRole::Primary,
                                 ));
                                 samples.spawn(screen_label_key(
@@ -165,7 +169,7 @@ pub(super) fn setup_ui_gallery(
                                     i18n,
                                     "ui_gallery.typography.caption",
                                     "Caption text",
-                                    theme.text.caption,
+                                    UiThemeTextStyleRole::Caption,
                                     UiThemeTextColorRole::Muted,
                                 ));
                             });
@@ -516,6 +520,7 @@ fn gallery_header(theme: &UiTheme) -> impl Bundle {
 
 fn gallery_panel(theme: &UiTheme) -> impl Bundle {
     (
+        UiThemePanelNodeRole::Content,
         Node {
             width: percent(100),
             max_width: px(theme.layout.content_width),
@@ -547,7 +552,7 @@ fn section_label_key(
         i18n,
         key,
         fallback,
-        theme.text.section_label,
+        UiThemeTextStyleRole::SectionLabel,
         UiThemeTextColorRole::Muted,
     )
 }

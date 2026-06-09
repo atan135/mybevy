@@ -5,7 +5,10 @@ use crate::game::ui::{
     i18n::{UiI18n, UiI18nText},
     style::{
         UiFontAssets, UiTheme,
-        theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
+        theme::{
+            UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
+            UiThemeTextColorRole, UiThemeTextStyleRole,
+        },
     },
     widgets::screen_label,
 };
@@ -80,9 +83,11 @@ pub(in crate::game) fn spawn_toast(
                 ..default()
             },
             ZIndex(200),
+            UiThemeRootNodeRole::Toast,
         ))
         .with_children(|root| {
             root.spawn((
+                UiThemePanelNodeRole::Toast,
                 Node {
                     max_width: px(420),
                     padding: UiRect::axes(px(18), px(12)),
@@ -102,7 +107,7 @@ pub(in crate::game) fn spawn_toast(
                             theme,
                             fonts,
                             toast.text.clone(),
-                            theme.text.caption,
+                            UiThemeTextStyleRole::Caption,
                             UiThemeTextColorRole::Primary,
                         ),
                         i18n_text,
@@ -112,7 +117,7 @@ pub(in crate::game) fn spawn_toast(
                         theme,
                         fonts,
                         toast.text.clone(),
-                        theme.text.caption,
+                        UiThemeTextStyleRole::Caption,
                         UiThemeTextColorRole::Primary,
                     ));
                 }

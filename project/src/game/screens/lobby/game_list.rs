@@ -15,7 +15,10 @@ use crate::game::{
         },
         style::{
             UiFontAssets, UiTheme,
-            theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
+            theme::{
+                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
+                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
+            },
         },
         widgets::{
             DisabledButton, LoadingButton, primary_action_button_key, screen_label_key,
@@ -59,6 +62,7 @@ pub(super) fn setup_game_list_screen(
         },
         BackgroundColor(theme.colors.screen_background),
         UiThemeBackgroundRole::Screen,
+        UiThemeRootNodeRole::Screen,
         children![
             (
                 Node {
@@ -77,7 +81,7 @@ pub(super) fn setup_game_list_screen(
                         i18n,
                         "lobby.title",
                         "Game List",
-                        theme.text.title,
+                        UiThemeTextStyleRole::Title,
                     ),
                     (
                         Node {
@@ -107,6 +111,7 @@ pub(super) fn setup_game_list_screen(
                 ],
             ),
             (
+                UiThemePanelNodeRole::Content,
                 Node {
                     width: percent(100),
                     max_width: px(theme.layout.content_width),
@@ -129,7 +134,7 @@ pub(super) fn setup_game_list_screen(
                         i18n,
                         "lobby.available",
                         "Available",
-                        theme.text.section_label,
+                        UiThemeTextStyleRole::SectionLabel,
                         UiThemeTextColorRole::Muted,
                     ),
                     (
@@ -156,7 +161,7 @@ pub(super) fn setup_game_list_screen(
                                         i18n,
                                         "lobby.touch_ripple.title",
                                         "Touch Ripple",
-                                        theme.text.body,
+                                        UiThemeTextStyleRole::Body,
                                         UiThemeTextColorRole::Primary,
                                     ),
                                     screen_label_key(
@@ -165,7 +170,7 @@ pub(super) fn setup_game_list_screen(
                                         i18n,
                                         "lobby.touch_ripple.description",
                                         "Current prototype",
-                                        theme.text.caption,
+                                        UiThemeTextStyleRole::Caption,
                                         UiThemeTextColorRole::Muted,
                                     ),
                                 ],

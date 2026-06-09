@@ -7,7 +7,10 @@ use crate::game::ui::{
     },
     style::{
         UiFontAssets, UiTheme,
-        theme::{UiThemeBackgroundRole, UiThemeBorderRole, UiThemeTextColorRole},
+        theme::{
+            UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
+            UiThemeTextColorRole, UiThemeTextStyleRole,
+        },
     },
     widgets::{screen_label, screen_title},
 };
@@ -139,6 +142,8 @@ fn spawn_ui_debug_panel(commands: &mut Commands, theme: &UiTheme, fonts: &UiFont
             UiLayerRoot {
                 layer: UiLayer::Debug,
             },
+            UiThemeRootNodeRole::Debug,
+            UiThemePanelNodeRole::Debug,
             Node {
                 position_type: PositionType::Absolute,
                 left: px(theme.layout.overlay_padding),
@@ -161,7 +166,12 @@ fn spawn_ui_debug_panel(commands: &mut Commands, theme: &UiTheme, fonts: &UiFont
         ))
         .with_children(|root| {
             root.spawn((
-                screen_title(theme, fonts, "UI Input Debug", theme.text.caption),
+                screen_title(
+                    theme,
+                    fonts,
+                    "UI Input Debug",
+                    UiThemeTextStyleRole::Caption,
+                ),
                 Pickable::IGNORE,
             ));
             root.spawn((
@@ -169,7 +179,7 @@ fn spawn_ui_debug_panel(commands: &mut Commands, theme: &UiTheme, fonts: &UiFont
                     theme,
                     fonts,
                     "",
-                    theme.text.caption,
+                    UiThemeTextStyleRole::Caption,
                     UiThemeTextColorRole::Primary,
                 ),
                 UiDebugText,

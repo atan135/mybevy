@@ -4,6 +4,8 @@
         screen_background: (r: 0.05, g: 0.08, b: 0.11),
         panel_background: (r: 0.10, g: 0.13, b: 0.16, a: 0.94),
         panel_border: (r: 0.22, g: 0.28, b: 0.31),
+        loading_overlay_background: (r: 0.01, g: 0.02, b: 0.03, a: 0.56),
+        modal_overlay_background: (r: 0.01, g: 0.02, b: 0.03, a: 0.72),
         text_primary: (r: 0.92, g: 0.95, b: 0.95),
         text_muted: (r: 0.62, g: 0.68, b: 0.70),
         primary_button: (

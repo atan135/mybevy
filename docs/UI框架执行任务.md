@@ -368,9 +368,9 @@ Toast 需要能显示文本、挂到 Toast 层并自动消失。
 
 2. P1-02 主题运行时刷新补全
    - 优先级：P1。
-   - 模块 / 文件范围：`project/src/game/ui/style/theme.rs`、`project/src/game/ui/widgets/**/*.rs`、`project/src/game/ui/overlays/**/*.rs`、`project/src/game/screens/dev/ui_gallery.rs`。
-   - 目标：补全当前记录中尚未运行时刷新的布局尺寸、字号、圆角、padding、z-order 和遮罩颜色等主题 token；只刷新有明确 marker 或 role 的节点，避免全量重建页面。
-   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo check`；运行 UiGallery 时修改主题 RON，确认按钮、输入框、面板、Toast、Loading、Confirm 的可见样式刷新。
+   - 模块 / 文件范围：`project/src/game/ui/style/theme.rs`、`project/src/game/ui/widgets/**/*.rs`、`project/src/game/ui/overlays/**/*.rs`、`project/src/game/ui/core/panel.rs`、`project/src/game/ui/debug.rs`、`project/src/game/screens/**/*.rs`、`project/assets/ui/themes/default.ron`。
+   - 目标：补全已生成 UI 节点的主题热刷新，覆盖文本字号、按钮 / 文本输入尺寸、面板 padding / border / radius、页面和 overlay root padding、Loading / Confirm 遮罩颜色；只刷新有明确 marker 或 role 的节点，避免全量重建页面。
+   - 验证命令或验证方式：在 `project/` 运行 `cargo fmt --check`、`cargo test`、`cargo check`；运行 UiGallery 时修改主题 RON，确认按钮、输入框、面板、Toast、Loading、Confirm 的可见样式刷新。
    - 建议提交类型：`feat(ui)`。
 
 3. P1-03 刷新路径测试
@@ -680,8 +680,10 @@ pub(in crate::game) struct UiInputState {
 - 配置读取失败、缺失或版本不匹配时，会保留内置 `UiTheme::default()` 并输出诊断日志。
 - 已新增主题热加载第一版：运行中定时轮询当前成功加载的主题文件 modified 时间；如果启动期没有成功加载配置，则优先轮询 `MYBEVY_UI_THEME` 指定路径，否则轮询默认主题路径。
 - 热加载解析成功后会替换 `UiTheme` 资源，并刷新已标记节点的通用按钮背景、页面背景、面板背景、面板边框、主文本色和弱化文本色。
+- 已补全运行时刷新 marker：`UiThemeTextStyleRole` 覆盖 `title_large / title / subtitle / section_label / body / caption / button` 字号；`UiThemeButtonNodeRole` 覆盖通用按钮和文本输入的 `min_width / height / min_height / padding_x / radius`；`UiThemePanelNodeRole` 覆盖标准面板、内容面板、Toast、Loading 和调试面板的 `padding / border / radius`；`UiThemeRootNodeRole` 覆盖页面根、HUD overlay、blocking overlay、Toast root、Floating Panel 和调试面板的 `screen_padding / overlay_padding` 相关字段。
+- 已新增遮罩语义色 `loading_overlay_background` 和 `modal_overlay_background`，替换 Loading / Confirm 根节点硬编码半透明背景；内置默认主题和 `default.ron` 保持一致。
 - 热加载解析失败、版本不匹配、读取失败或 stat 失败时，会保留当前有效主题并输出 `warn` 日志，不回退到坏配置。
-- 第一版热加载不包含布局尺寸、字号、圆角、padding、z-order 和半透明遮罩颜色的运行时刷新；这些值仍主要在 UI 创建时生效。
+- 当前主题热刷新仍不包含未打 marker 的临时自定义节点、列表行内部 gap / margin、content width / auth panel width、z-order 和全量页面结构重排；这些值仍主要在 UI 创建时生效。
 - 当前不包含 AssetServer watcher 和样式类系统；i18n 已进入启动期加载和文件热加载第一版，详见下方记录。
 
 ### 阶段 2 小入口：基础 i18n 文案 key
@@ -730,7 +732,7 @@ pub(in crate::game) struct UiInputState {
 
 - 第一版只做只读诊断，不提供点击选择实体、冻结刷新、过滤、复制或历史记录。
 - 可见 panel 列表只基于 `Visibility` / `InheritedVisibility` 过滤，不做屏幕裁剪或实际命中区域判断。
-- 调试面板自身没有主题热刷新后的布局重建；已创建节点的背景、边框和文本色继续走现有主题 role 刷新。
+- 调试面板自身不做全量重建；已创建节点的背景、边框、文本色、字号、overlay 位置、padding 和圆角走现有主题 role 刷新。
 
 ### 通用文本输入框第一版
 

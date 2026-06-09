@@ -10,7 +10,10 @@ use crate::game::{
         i18n::{UiI18n, UiI18nText},
         style::{
             UiFontAssets,
-            theme::{ButtonColors, UiTheme, UiThemeTextColorRole},
+            theme::{
+                ButtonColors, UiTheme, UiThemeButtonNodeRole, UiThemeTextColorRole,
+                UiThemeTextStyleRole,
+            },
         },
         widgets::scroll::UiScrollPlugin,
     },
@@ -83,17 +86,18 @@ pub(in crate::game) fn screen_title(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,
-    font_size: f32,
+    style_role: UiThemeTextStyleRole,
 ) -> impl Bundle {
     (
         Text::new(text),
         TextFont {
             font: fonts.regular.clone(),
-            font_size,
+            font_size: style_role.font_size(theme),
             ..default()
         },
         TextColor(theme.colors.text_primary),
         UiThemeTextColorRole::Primary,
+        style_role,
     )
 }
 
@@ -103,10 +107,10 @@ pub(in crate::game) fn screen_title_key(
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
-    font_size: f32,
+    style_role: UiThemeTextStyleRole,
 ) -> impl Bundle {
     (
-        screen_title(theme, fonts, i18n.tr(key, fallback), font_size),
+        screen_title(theme, fonts, i18n.tr(key, fallback), style_role),
         UiI18nText::new(key, fallback),
     )
 }
@@ -115,18 +119,19 @@ pub(in crate::game) fn screen_label(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,
-    font_size: f32,
+    style_role: UiThemeTextStyleRole,
     color_role: UiThemeTextColorRole,
 ) -> impl Bundle {
     (
         Text::new(text),
         TextFont {
             font: fonts.regular.clone(),
-            font_size,
+            font_size: style_role.font_size(theme),
             ..default()
         },
         TextColor(color_role.color(theme)),
         color_role,
+        style_role,
     )
 }
 
@@ -136,11 +141,11 @@ pub(in crate::game) fn screen_label_key(
     i18n: &UiI18n,
     key: &'static str,
     fallback: &'static str,
-    font_size: f32,
+    style_role: UiThemeTextStyleRole,
     color_role: UiThemeTextColorRole,
 ) -> impl Bundle {
     (
-        screen_label(theme, fonts, i18n.tr(key, fallback), font_size, color_role),
+        screen_label(theme, fonts, i18n.tr(key, fallback), style_role, color_role),
         UiI18nText::new(key, fallback),
     )
 }
@@ -438,6 +443,7 @@ pub(in crate::game) fn text_input(
         UiTextInput,
         UiTextInputValue(value),
         UiTextInputPlaceholder(placeholder),
+        UiThemeButtonNodeRole::TextInput,
         Node {
             width: percent(100),
             min_height: px(theme.button.height),
@@ -459,6 +465,7 @@ pub(in crate::game) fn text_input(
             },
             TextColor(display_color),
             UiTextInputText,
+            UiThemeTextStyleRole::Button,
         )],
     )
 }
@@ -476,6 +483,7 @@ fn route_button<T: Component>(
         FocusableButton,
         RouteButton { target },
         marker,
+        UiThemeButtonNodeRole::Button,
         Node {
             min_width: px(theme.button.min_width),
             height: px(theme.button.height),
@@ -495,6 +503,7 @@ fn route_button<T: Component>(
             },
             TextColor(theme.colors.text_primary),
             UiThemeTextColorRole::Primary,
+            UiThemeTextStyleRole::Button,
         )],
     )
 }
@@ -513,6 +522,7 @@ fn route_button_key_bundle<T: Component>(
         FocusableButton,
         RouteButton { target },
         marker,
+        UiThemeButtonNodeRole::Button,
         Node {
             min_width: px(theme.button.min_width),
             height: px(theme.button.height),
@@ -532,6 +542,7 @@ fn route_button_key_bundle<T: Component>(
             },
             TextColor(theme.colors.text_primary),
             UiThemeTextColorRole::Primary,
+            UiThemeTextStyleRole::Button,
             i18n_text,
         )],
     )
@@ -548,6 +559,7 @@ fn action_button<T: Component>(
         Button,
         FocusableButton,
         marker,
+        UiThemeButtonNodeRole::Button,
         Node {
             min_width: px(theme.button.min_width),
             height: px(theme.button.height),
@@ -567,6 +579,7 @@ fn action_button<T: Component>(
             },
             TextColor(theme.colors.text_primary),
             UiThemeTextColorRole::Primary,
+            UiThemeTextStyleRole::Button,
         )],
     )
 }
@@ -583,6 +596,7 @@ fn action_button_key_bundle<T: Component>(
         Button,
         FocusableButton,
         marker,
+        UiThemeButtonNodeRole::Button,
         Node {
             min_width: px(theme.button.min_width),
             height: px(theme.button.height),
@@ -602,6 +616,7 @@ fn action_button_key_bundle<T: Component>(
             },
             TextColor(theme.colors.text_primary),
             UiThemeTextColorRole::Primary,
+            UiThemeTextStyleRole::Button,
             i18n_text,
         )],
     )
@@ -620,6 +635,7 @@ fn disabled_action_button<T: Component>(
         FocusableButton,
         marker,
         DisabledButton,
+        UiThemeButtonNodeRole::Button,
         Node {
             min_width: px(theme.button.min_width),
             height: px(theme.button.height),
@@ -639,6 +655,7 @@ fn disabled_action_button<T: Component>(
             },
             TextColor(theme.colors.text_muted),
             UiThemeTextColorRole::Muted,
+            UiThemeTextStyleRole::Button,
         )],
     )
 }
@@ -656,6 +673,7 @@ fn disabled_action_button_key_bundle<T: Component>(
         FocusableButton,
         marker,
         DisabledButton,
+        UiThemeButtonNodeRole::Button,
         Node {
             min_width: px(theme.button.min_width),
             height: px(theme.button.height),
@@ -675,6 +693,7 @@ fn disabled_action_button_key_bundle<T: Component>(
             },
             TextColor(theme.colors.text_muted),
             UiThemeTextColorRole::Muted,
+            UiThemeTextStyleRole::Button,
             i18n_text,
         )],
     )

@@ -5,7 +5,7 @@ use crate::game::{
     ui::{
         core::{UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
         i18n::UiI18n,
-        style::{UiFontAssets, UiTheme},
+        style::{UiFontAssets, UiTheme, theme::UiThemeRootNodeRole},
         widgets::secondary_route_button_key,
     },
 };
@@ -38,6 +38,7 @@ pub(super) fn setup_touch_ripple_overlay(
             justify_content: JustifyContent::FlexEnd,
             ..default()
         },
+        UiThemeRootNodeRole::Overlay,
         children![secondary_route_button_key(
             theme,
             fonts,
