@@ -341,3 +341,123 @@ fn missing_keys_for_locale(i18n: &UiI18n) -> HashSet<&str> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        collections::HashMap,
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct TempConfigDir {
+        path: PathBuf,
+    }
+
+    impl TempConfigDir {
+        fn new(test_name: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos();
+            let path = env::temp_dir().join(format!(
+                "mybevy-i18n-tests-{}-{unique}",
+                test_name.replace("::", "-")
+            ));
+            fs::create_dir(&path).expect("temp test directory should be created");
+            Self { path }
+        }
+
+        fn write_config(&self, file_name: &str, source: &str) -> PathBuf {
+            let path = self.path.join(file_name);
+            fs::write(&path, source).expect("temp config should be written");
+            path
+        }
+    }
+
+    impl Drop for TempConfigDir {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.path).ok();
+        }
+    }
+
+    fn valid_i18n_config_with_version(version: u32) -> String {
+        format!(
+            r#"(
+    version: {version},
+    locale: " EN-US ",
+    texts: {{
+        "app.name": "Custom App",
+        "custom.key": "Custom Text",
+    }},
+)"#
+        )
+    }
+
+    fn load_config(source: &str) -> Result<UiI18n, String> {
+        let temp = TempConfigDir::new("load_config");
+        let path = temp.write_config("i18n.ron", source);
+        load_ui_i18n_from_path(&path, built_in_zh_cn_texts())
+    }
+
+    fn assert_error_contains(error: &str, expected: &str) {
+        assert!(
+            error.contains(expected),
+            "expected error to contain {expected:?}, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_locale_names() {
+        assert_eq!(normalize_locale(" EN-US "), "en_us");
+        assert_eq!(normalize_locale("zh_CN"), "zh_cn");
+    }
+
+    #[test]
+    fn parses_valid_ron_i18n_config() {
+        let i18n = load_config(&valid_i18n_config_with_version(UI_I18N_CONFIG_VERSION)).unwrap();
+
+        assert_eq!(i18n.locale(), "en_us");
+        assert_eq!(i18n.tr("app.name", "Fallback"), "Custom App");
+        assert_eq!(i18n.tr("custom.key", "Fallback"), "Custom Text");
+    }
+
+    #[test]
+    fn rejects_unsupported_i18n_config_version() {
+        let error =
+            load_config(&valid_i18n_config_with_version(UI_I18N_CONFIG_VERSION + 1)).unwrap_err();
+
+        assert_error_contains(&error, "uses unsupported version 2, expected 1");
+    }
+
+    #[test]
+    fn reports_bad_ron_i18n_config_as_parse_error() {
+        let error = load_config("(version: 1, locale:").unwrap_err();
+
+        assert_error_contains(&error, "could not be parsed");
+    }
+
+    #[test]
+    fn missing_key_falls_back_to_built_in_chinese() {
+        let i18n = UiI18n {
+            locale: "en_us".to_string(),
+            texts: HashMap::new(),
+            fallback_texts: built_in_zh_cn_texts(),
+        };
+
+        assert_eq!(i18n.tr("common.cancel", "Cancel"), "取消");
+    }
+
+    #[test]
+    fn empty_missing_key_fallback_displays_key() {
+        let i18n = UiI18n {
+            locale: "en_us".to_string(),
+            texts: HashMap::new(),
+            fallback_texts: HashMap::new(),
+        };
+
+        assert_eq!(i18n.tr("missing.key", ""), "missing.key");
+    }
+}

@@ -540,3 +540,189 @@ impl ButtonColorsConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct TempConfigDir {
+        path: PathBuf,
+    }
+
+    impl TempConfigDir {
+        fn new(test_name: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos();
+            let path = env::temp_dir().join(format!(
+                "mybevy-theme-tests-{}-{unique}",
+                test_name.replace("::", "-")
+            ));
+            fs::create_dir(&path).expect("temp test directory should be created");
+            Self { path }
+        }
+
+        fn write_config(&self, file_name: &str, source: &str) -> PathBuf {
+            let path = self.path.join(file_name);
+            fs::write(&path, source).expect("temp config should be written");
+            path
+        }
+    }
+
+    impl Drop for TempConfigDir {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.path).ok();
+        }
+    }
+
+    fn valid_theme_config_with_version(version: u32) -> String {
+        format!(
+            r#"(
+    version: {version},
+    colors: (
+        screen_background: (r: 0.11, g: 0.12, b: 0.13),
+        panel_background: (r: 0.21, g: 0.22, b: 0.23, a: 0.88),
+        panel_border: (r: 0.31, g: 0.32, b: 0.33),
+        text_primary: (r: 0.41, g: 0.42, b: 0.43),
+        text_muted: (r: 0.51, g: 0.52, b: 0.53),
+        primary_button: (
+            idle: (r: 0.10, g: 0.20, b: 0.30),
+            hovered: (r: 0.11, g: 0.21, b: 0.31),
+            pressed: (r: 0.12, g: 0.22, b: 0.32),
+            focused: (r: 0.13, g: 0.23, b: 0.33),
+            selected: (r: 0.14, g: 0.24, b: 0.34),
+            disabled: (r: 0.15, g: 0.25, b: 0.35),
+            loading: (r: 0.16, g: 0.26, b: 0.36),
+        ),
+        secondary_button: (
+            idle: (r: 0.20, g: 0.30, b: 0.40),
+            hovered: (r: 0.21, g: 0.31, b: 0.41),
+            pressed: (r: 0.22, g: 0.32, b: 0.42),
+            focused: (r: 0.23, g: 0.33, b: 0.43),
+            selected: (r: 0.24, g: 0.34, b: 0.44),
+            disabled: (r: 0.25, g: 0.35, b: 0.45),
+            loading: (r: 0.26, g: 0.36, b: 0.46),
+        ),
+    ),
+    text: (
+        title_large: 44.0,
+        title: 34.0,
+        subtitle: 18.0,
+        section_label: 16.0,
+        body: 24.0,
+        caption: 15.0,
+        button: 18.0,
+    ),
+    layout: (
+        screen_padding: 24.0,
+        overlay_padding: 16.0,
+        page_gap: 18.0,
+        panel_gap: 20.0,
+        card_gap: 12.0,
+        header_gap: 12.0,
+        row_gap: 6.0,
+        row_padding_y: 8.0,
+        row_column_gap: 16.0,
+        auth_panel_width: 420.0,
+        content_width: 760.0,
+    ),
+    button: (
+        min_width: 112.0,
+        height: 46.0,
+        padding_x: 18.0,
+        radius: 6.0,
+    ),
+    panel: (
+        padding: 28.0,
+        border: 1.0,
+        radius: 8.0,
+    ),
+)"#
+        )
+    }
+
+    fn load_config(source: &str) -> Result<UiTheme, String> {
+        let temp = TempConfigDir::new("load_config");
+        let path = temp.write_config("theme.ron", source);
+        load_ui_theme_from_path(&path)
+    }
+
+    fn assert_error_contains(error: &str, expected: &str) {
+        assert!(
+            error.contains(expected),
+            "expected error to contain {expected:?}, got {error:?}"
+        );
+    }
+
+    fn assert_srgba(color: Color, expected: (f32, f32, f32, f32)) {
+        let actual = color.to_srgba();
+        assert_eq!(
+            (actual.red, actual.green, actual.blue, actual.alpha),
+            expected
+        );
+    }
+
+    #[test]
+    fn parses_valid_ron_theme_config() {
+        let theme = load_config(&valid_theme_config_with_version(UI_THEME_CONFIG_VERSION)).unwrap();
+
+        assert_srgba(theme.colors.screen_background, (0.11, 0.12, 0.13, 1.0));
+        assert_srgba(theme.colors.panel_background, (0.21, 0.22, 0.23, 0.88));
+        assert_srgba(theme.colors.primary_button.hovered, (0.11, 0.21, 0.31, 1.0));
+        assert_eq!(theme.text.title_large, 44.0);
+        assert_eq!(theme.layout.content_width, 760.0);
+        assert_eq!(theme.button.height, 46.0);
+        assert_eq!(theme.panel.radius, 8.0);
+    }
+
+    #[test]
+    fn rejects_unsupported_theme_config_version() {
+        let error = load_config(&valid_theme_config_with_version(
+            UI_THEME_CONFIG_VERSION + 1,
+        ))
+        .unwrap_err();
+
+        assert_error_contains(&error, "uses unsupported version 2, expected 1");
+    }
+
+    #[test]
+    fn reports_bad_ron_theme_config_as_parse_error() {
+        let error = load_config("(version: 1, colors:").unwrap_err();
+
+        assert_error_contains(&error, "could not be parsed");
+    }
+
+    #[test]
+    fn clamps_color_channels_and_defaults_alpha() {
+        assert_srgba(
+            UiColorConfig {
+                r: -1.0,
+                g: 0.42,
+                b: 2.0,
+                a: 1.5,
+            }
+            .into_color(),
+            (0.0, 0.42, 1.0, 1.0),
+        );
+
+        let parsed: UiColorConfig =
+            ron::from_str("(r: 0.2, g: 0.3, b: 0.4)").expect("color config should parse");
+
+        assert_srgba(parsed.into_color(), (0.2, 0.3, 0.4, 1.0));
+    }
+
+    #[test]
+    fn reports_missing_theme_file() {
+        let temp = TempConfigDir::new("reports_missing_theme_file");
+        let path = temp.path.join("missing.ron");
+        let error = load_ui_theme_from_path(Path::new(&path)).unwrap_err();
+
+        assert_error_contains(&error, "not found");
+    }
+}
