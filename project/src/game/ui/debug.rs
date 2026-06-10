@@ -378,6 +378,10 @@ fn sync_ui_debug_panel_highlights(
         Option<&mut UiDebugPanelHighlight>,
     )>,
 ) {
+    if !debug_state.enabled && !debug_state.highlight_panels {
+        return;
+    }
+
     for (entity, _panel, visibility, inherited_visibility, border_color, highlight) in &mut panels {
         let should_highlight = debug_state.enabled
             && debug_state.highlight_panels

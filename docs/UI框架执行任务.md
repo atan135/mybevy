@@ -744,6 +744,18 @@ pub(in crate::game) struct UiInputState {
 - 独立窗口模式使用专用 `Window + Camera2d + UiTargetCamera`，调试面板会自适应填充窗口内容区宽度；调试 UI 仍不纳入 Panel Manager，且继续使用 `Pickable::IGNORE`，不会阻塞主窗口下层 pointer 输入。
 - 手动关闭独立调试窗口时，F3 调试状态会自动关闭；再次按 `F3` 会按当前显示目标重新创建。
 
+### P3-03 UI 性能统计与高频系统巡检
+
+- P3-03-01 已新增 `UiStatsPlugin` 和 `UiStats`，当前每帧采集 UI `Node` 总数、可见 `Node` 数、`Text` 节点数、Panel 总数和按 `UiPanelKind` 聚合计数。
+- P3-03-02 已巡检高频系统：
+  - `theme.rs`：主题热加载以 0.8 秒定时轮询文件修改时间，视觉刷新已有 `theme.is_changed()` 早退；本轮无需调整。
+  - `i18n.rs`：i18n 热加载同样以 0.8 秒轮询，文本刷新已有 `i18n.is_changed()` 早退，且写文本前做差异判断；本轮无需调整。
+  - `scroll.rs`：滚轮和拖拽走事件 / observer，不存在无条件每帧写滚动位置；本轮无需调整。
+  - `controls.rs`：按钮、文本输入和控件显示系统仍在 `Update` 中运行；本轮已补充若干差异写入保护，并把 slider / stepper 数值显示同步收窄到 `Changed<UiSlider>` / `Changed<UiStepper>`。
+  - `debug.rs`：F3 文本仍按帧构建以便观察输入路由；高亮系统在调试关闭且高亮关闭时会直接早退，避免无意义扫描 Panel。
+  - `stats.rs`：统计仍保留每帧全量采集，但只有统计值变化时才写回 `UiStats`，减少下游 `Changed<UiStats>` 误触发。
+- 当前保留的成本：`UiStats` 每帧全量扫描 UI 节点，F3 打开时调试文本每帧构建。这两处是诊断能力的有意成本，后续可按需增加采样间隔、dirty marker 或只在独立调试窗口打开时提高采样频率。
+
 ### 通用文本输入框第一版
 
 - 已新增 widgets 层通用文本输入框 `text_input(...)`，根节点使用 `Button + FocusableButton + UiTextInput`，因此可以通过鼠标点击进入焦点，也可以通过现有 `Tab` 焦点系统访问。

@@ -2086,7 +2086,10 @@ fn update_slider_interactions(
             continue;
         };
 
-        slider.value = slider_value_from_normalized_x(normalized.x, slider.min, slider.max);
+        let next_value = slider_value_from_normalized_x(normalized.x, slider.min, slider.max);
+        if slider.value != next_value {
+            slider.value = next_value;
+        }
     }
 }
 
@@ -2124,11 +2127,14 @@ fn update_stepper_interactions(
             continue;
         };
 
-        stepper.value = if is_increment {
+        let next_value = if is_increment {
             stepper_increment_value(stepper.value, stepper.min, stepper.max, stepper.step)
         } else {
             stepper_decrement_value(stepper.value, stepper.min, stepper.max, stepper.step)
         };
+        if stepper.value != next_value {
+            stepper.value = next_value;
+        }
     }
 }
 
@@ -2245,15 +2251,17 @@ fn update_button_visuals(
             theme.colors.secondary_button
         };
 
-        *background = button_background_color(
+        let next_background = BackgroundColor(button_background_color(
             colors,
             *interaction,
             is_disabled,
             is_focused,
             is_selected,
             is_loading,
-        )
-        .into();
+        ));
+        if *background != next_background {
+            *background = next_background;
+        }
     }
 }
 
@@ -2561,58 +2569,48 @@ fn sync_text_input_form_messages(
 }
 
 fn sync_numeric_control_display(
-    sliders: Query<&UiSlider>,
-    steppers: Query<&UiStepper>,
-    parents: Query<&ChildOf>,
-    mut slider_fills: Query<(Entity, &mut Node), With<UiSliderFill>>,
+    sliders: Query<(Entity, &UiSlider), Changed<UiSlider>>,
+    steppers: Query<(Entity, &UiStepper), Changed<UiStepper>>,
+    children: Query<&Children>,
+    mut slider_fills: Query<&mut Node, With<UiSliderFill>>,
     mut value_texts: ParamSet<(
-        Query<(Entity, &mut Text), With<UiSliderValueText>>,
-        Query<(Entity, &mut Text), With<UiStepperValueText>>,
+        Query<&mut Text, With<UiSliderValueText>>,
+        Query<&mut Text, With<UiStepperValueText>>,
     )>,
 ) {
-    for (fill_entity, mut fill_node) in &mut slider_fills {
-        let Some(slider) = parents
-            .iter_ancestors(fill_entity)
-            .find_map(|ancestor| sliders.get(ancestor).ok())
-        else {
-            continue;
-        };
+    {
+        let mut slider_value_texts = value_texts.p0();
+        for (slider_entity, slider) in &sliders {
+            let width = percent(slider.ratio() * 100.0);
+            let display = format_slider_value(slider.value);
+            for child in children.iter_descendants(slider_entity) {
+                if let Ok(mut fill_node) = slider_fills.get_mut(child)
+                    && fill_node.width != width
+                {
+                    fill_node.width = width;
+                }
 
-        let width = percent(slider.ratio() * 100.0);
-        if fill_node.width != width {
-            fill_node.width = width;
+                if let Ok(mut text) = slider_value_texts.get_mut(child)
+                    && text.0 != display
+                {
+                    text.0 = display.clone();
+                }
+            }
         }
     }
 
-    for (text_entity, mut text) in &mut value_texts.p0() {
-        let Some(slider) = parents
-            .iter_ancestors(text_entity)
-            .find_map(|ancestor| sliders.get(ancestor).ok())
-        else {
-            continue;
-        };
-
-        let display = format_slider_value(slider.value);
-        if text.0 != display {
-            text.0 = display;
+    {
+        let mut stepper_value_texts = value_texts.p1();
+        for (stepper_entity, stepper) in &steppers {
+            let display = stepper.value.to_string();
+            for child in children.iter_descendants(stepper_entity) {
+                if let Ok(mut text) = stepper_value_texts.get_mut(child)
+                    && text.0 != display
+                {
+                    text.0 = display.clone();
+                }
+            }
         }
-    }
-
-    for (text_entity, mut text) in &mut value_texts.p1() {
-        let Some(stepper) = parents
-            .iter_ancestors(text_entity)
-            .find_map(|ancestor| steppers.get(ancestor).ok())
-        else {
-            continue;
-        };
-
-        let display = stepper.value.to_string();
-        if text.0 != display {
-            text.0 = display;
-        }
-
-        let _ = stepper_decrement_value(stepper.value, stepper.min, stepper.max, stepper.step);
-        let _ = stepper_increment_value(stepper.value, stepper.min, stepper.max, stepper.step);
     }
 }
 
@@ -2659,13 +2657,16 @@ fn update_text_input_visuals(
             *background = BackgroundColor(background_color);
         }
 
-        *border = BorderColor::all(text_input_border_color(
+        let next_border = BorderColor::all(text_input_border_color(
             &theme,
             *interaction,
             is_focused,
             is_disabled,
             is_error,
         ));
+        if *border != next_border {
+            *border = next_border;
+        }
     }
 }
 

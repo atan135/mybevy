@@ -81,7 +81,9 @@ fn collect_ui_stats(
         next_stats.panel_kind_counts.add(panel.kind);
     }
 
-    *stats = next_stats;
+    if *stats != next_stats {
+        *stats = next_stats;
+    }
 }
 
 pub(in crate::game) fn is_ui_node_visible(
