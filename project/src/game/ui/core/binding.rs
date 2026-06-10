@@ -1,12 +1,15 @@
 #![allow(dead_code)]
 
 use bevy::prelude::*;
+use std::collections::HashMap;
 
 pub(in crate::game) struct UiBindingPlugin;
 
 impl Plugin for UiBindingPlugin {
     fn build(&self, app: &mut App) {
-        app.configure_sets(Update, UiBindingSystems::Apply);
+        app.init_resource::<UiBindingValues>()
+            .configure_sets(Update, UiBindingSystems::Apply)
+            .add_systems(Update, apply_bound_texts.in_set(UiBindingSystems::Apply));
     }
 }
 
@@ -31,6 +34,63 @@ impl UiBindingPath {
 impl std::fmt::Display for UiBindingPath {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+impl AsRef<str> for UiBindingPath {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+#[derive(Clone, Debug, Default, Resource)]
+pub(in crate::game) struct UiBindingValues {
+    texts: HashMap<UiBindingPath, String>,
+}
+
+impl UiBindingValues {
+    pub(in crate::game) fn set_text(
+        &mut self,
+        path: impl AsRef<str>,
+        value: impl Into<String>,
+    ) -> bool {
+        let Some(path) = UiBindingPath::new(path) else {
+            return false;
+        };
+
+        self.set_text_path(path, value)
+    }
+
+    pub(in crate::game) fn set_text_path(
+        &mut self,
+        path: UiBindingPath,
+        value: impl Into<String>,
+    ) -> bool {
+        let value = value.into();
+        if self.texts.get(&path) == Some(&value) {
+            return false;
+        }
+
+        self.texts.insert(path, value);
+        true
+    }
+
+    pub(in crate::game) fn text(&self, path: impl AsRef<str>) -> Option<&str> {
+        let path = UiBindingPath::new(path)?;
+        self.text_path(&path)
+    }
+
+    pub(in crate::game) fn text_path(&self, path: &UiBindingPath) -> Option<&str> {
+        self.texts.get(path).map(String::as_str)
+    }
+
+    #[allow(dead_code)]
+    pub(in crate::game) fn remove_text(&mut self, path: impl AsRef<str>) -> bool {
+        let Some(path) = UiBindingPath::new(path) else {
+            return false;
+        };
+
+        self.texts.remove(&path).is_some()
     }
 }
 
@@ -156,6 +216,26 @@ pub(in crate::game) fn disabled_marker_intent(is_disabled: bool) -> UiDisabledMa
     }
 }
 
+fn apply_bound_texts(
+    values: Res<UiBindingValues>,
+    mut texts: Query<(Ref<UiBoundText>, &mut Text)>,
+) {
+    let values_changed = values.is_changed();
+
+    for (bound_text, mut text) in &mut texts {
+        if !values_changed && !bound_text.is_changed() {
+            continue;
+        }
+
+        let next_text = values
+            .text_path(&bound_text.path)
+            .unwrap_or(&bound_text.fallback);
+        if text.0 != next_text {
+            text.0 = next_text.to_string();
+        }
+    }
+}
+
 fn normalize_binding_path(path: &str) -> Option<String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -201,6 +281,54 @@ mod tests {
 
         assert_eq!(bound.path.as_str(), "status.title");
         assert_eq!(bound.fallback, "Loading");
+    }
+
+    #[test]
+    fn binding_values_set_get_and_reject_invalid_paths() {
+        let mut values = UiBindingValues::default();
+
+        assert!(values.set_text(" gallery . binding . status ", "Ready"));
+        assert_eq!(values.text("gallery.binding.status"), Some("Ready"));
+        assert!(!values.set_text("gallery.binding.status", "Ready"));
+        assert!(values.set_text("gallery.binding.status", "Updated"));
+        assert_eq!(values.text("gallery.binding.status"), Some("Updated"));
+        assert!(!values.set_text("gallery..binding", "Invalid"));
+        assert_eq!(values.text("gallery..binding"), None);
+    }
+
+    #[test]
+    fn apply_bound_texts_uses_value_and_fallback() {
+        let mut app = App::new();
+        app.add_plugins(UiBindingPlugin);
+
+        let value_entity = app
+            .world_mut()
+            .spawn((
+                Text::new(""),
+                UiBoundText::with_fallback("gallery.binding.status", "Fallback").unwrap(),
+            ))
+            .id();
+        let fallback_entity = app
+            .world_mut()
+            .spawn((
+                Text::new(""),
+                UiBoundText::with_fallback("gallery.binding.missing", "Fallback").unwrap(),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<UiBindingValues>()
+            .set_text("gallery.binding.status", "Bound value");
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Text>(value_entity).unwrap().0,
+            "Bound value"
+        );
+        assert_eq!(
+            app.world().get::<Text>(fallback_entity).unwrap().0,
+            "Fallback"
+        );
     }
 
     #[test]

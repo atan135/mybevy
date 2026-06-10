@@ -6,6 +6,7 @@ use crate::game::{
         core::{
             UiFloatingPanel, UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind,
             UiPanelRequest, UiPanelRoot,
+            binding::{UiBindingValues, UiBoundText},
         },
         i18n::{UiI18n, UiI18nText},
         overlays::{
@@ -38,6 +39,7 @@ use crate::game::{
 };
 
 const GALLERY_STRESS_ITEM_COUNT: usize = 96;
+const GALLERY_BINDING_STATUS_PATH: &str = "gallery.binding.status";
 
 #[derive(Clone, Copy, Component)]
 pub(super) enum GalleryActionButton {
@@ -48,11 +50,17 @@ pub(super) enum GalleryActionButton {
     Confirm,
     Floating,
     CloseTop,
+    UpdateBinding,
 }
 
 #[derive(Resource)]
 pub(super) struct GalleryLoadingPreview {
     timer: Timer,
+}
+
+#[derive(Default, Resource)]
+pub(super) struct GalleryBindingPreview {
+    update_count: usize,
 }
 
 #[derive(Resource)]
@@ -91,12 +99,21 @@ pub(super) fn setup_ui_gallery(
     theme: Res<UiTheme>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
+    mut binding_values: ResMut<UiBindingValues>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
+    commands.insert_resource(GalleryBindingPreview::default());
+    binding_values.set_text(
+        GALLERY_BINDING_STATUS_PATH,
+        i18n.tr(
+            "ui_gallery.binding.status.initial",
+            "Waiting for binding update.",
+        ),
+    );
 
     commands
         .spawn((
@@ -611,6 +628,60 @@ pub(super) fn setup_ui_gallery(
                     });
 
                 body.spawn(gallery_panel(theme))
+                    .with_children(|binding_panel| {
+                        binding_panel.spawn(section_label_key(
+                            theme,
+                            fonts,
+                            i18n,
+                            "ui_gallery.binding.section",
+                            "Binding Sample",
+                        ));
+                        binding_panel.spawn(screen_label_key(
+                            theme,
+                            fonts,
+                            i18n,
+                            "ui_gallery.binding.description",
+                            "The text below is driven by UiBindingValues.",
+                            UiThemeTextStyleRole::Body,
+                            UiThemeTextColorRole::Muted,
+                        ));
+                        binding_panel
+                            .spawn(ui_column(theme.layout.row_gap))
+                            .with_children(|sample| {
+                                sample.spawn((
+                                    screen_label(
+                                        theme,
+                                        fonts,
+                                        i18n.tr(
+                                            "ui_gallery.binding.status.initial",
+                                            "Waiting for binding update.",
+                                        ),
+                                        UiThemeTextStyleRole::Body,
+                                        UiThemeTextColorRole::Primary,
+                                    ),
+                                    UiBoundText::with_fallback(
+                                        GALLERY_BINDING_STATUS_PATH,
+                                        i18n.tr(
+                                            "ui_gallery.binding.status.initial",
+                                            "Waiting for binding update.",
+                                        ),
+                                    )
+                                    .expect("gallery binding path should be valid"),
+                                ));
+                                sample.spawn((
+                                    secondary_action_button_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "ui_gallery.binding.action",
+                                        "Update Binding",
+                                    ),
+                                    GalleryActionButton::UpdateBinding,
+                                ));
+                            });
+                    });
+
+                body.spawn(gallery_panel(theme))
                     .with_children(|overlays_panel| {
                         overlays_panel.spawn(section_label_key(
                             theme,
@@ -728,6 +799,8 @@ pub(super) fn setup_ui_gallery(
 pub(super) fn handle_ui_gallery_buttons(
     mut commands: Commands,
     i18n: Res<UiI18n>,
+    mut binding_values: ResMut<UiBindingValues>,
+    mut binding_preview: ResMut<GalleryBindingPreview>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut route_commands: MessageWriter<UiRouteCommand>,
     buttons: Query<
@@ -788,6 +861,17 @@ pub(super) fn handle_ui_gallery_buttons(
             GalleryActionButton::CloseTop => {
                 panel_commands.write(UiPanelCommand::CloseTop);
             }
+            GalleryActionButton::UpdateBinding => {
+                binding_preview.update_count += 1;
+                binding_values.set_text(
+                    GALLERY_BINDING_STATUS_PATH,
+                    format!(
+                        "{} {}",
+                        i18n.tr("ui_gallery.binding.status.updated", "Bound text updated"),
+                        binding_preview.update_count
+                    ),
+                );
+            }
         }
     }
 }
@@ -823,6 +907,7 @@ pub(super) fn tick_ui_gallery_loading_preview(
 
 pub(super) fn clear_ui_gallery_loading_preview(mut commands: Commands) {
     commands.remove_resource::<GalleryLoadingPreview>();
+    commands.remove_resource::<GalleryBindingPreview>();
     commands.remove_resource::<GalleryFloatingI18n>();
 }
 

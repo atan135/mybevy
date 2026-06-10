@@ -800,6 +800,14 @@ pub(in crate::game) struct UiInputState {
 - 本阶段未接入真实页面、控件行为或 `DisabledButton` / `DisabledTextInput` 等具体 marker，只建立最小 API 和测试边界。
 - 自动验证：P3-02-01 已通过 `cargo fmt --check`、`cargo test` 和 `cargo check`。
 
+- P3-02-02 已实现最小文本绑定：
+  - `UiBindingValues` 作为第一版绑定值资源，当前保存文本路径和值，提供 `set_text(...)`、`text(...)`、`set_text_path(...)` 和 `text_path(...)` API。
+  - `UiBindingPlugin` 已注册文本 apply 系统：当 `UiBindingValues` 或 `UiBoundText` 变化时，自动把绑定值写入对应 `Text`，缺值时使用 `UiBoundText.fallback`。
+  - 写入 `Text` 前会做差异判断，避免无意义刷新。
+  - `UiGallery` 已新增 `Binding Sample` 区域，包含一个绑定文本和 `Update Binding` 按钮；点击按钮只更新绑定资源，文本由绑定系统自动刷新。
+  - 已补充中英文 i18n 资源和内置中文 fallback。
+- 本阶段仍不接真实页面，不实现可见性 / disabled 绑定，也不引入每帧动态绑定刷新。
+
 ### 通用文本输入框第一版
 
 - 已新增 widgets 层通用文本输入框 `text_input(...)`，根节点使用 `Button + FocusableButton + UiTextInput`，因此可以通过鼠标点击进入焦点，也可以通过现有 `Tab` 焦点系统访问。

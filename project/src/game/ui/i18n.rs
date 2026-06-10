@@ -492,6 +492,14 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
             "ui_gallery.floating.detail",
             "使用关闭顶层按钮或 Esc 关闭它。",
         ),
+        ("ui_gallery.binding.section", "绑定样例"),
+        (
+            "ui_gallery.binding.description",
+            "下方文本由 UiBindingValues 驱动。",
+        ),
+        ("ui_gallery.binding.status.initial", "等待绑定更新。"),
+        ("ui_gallery.binding.status.updated", "绑定文本已更新"),
+        ("ui_gallery.binding.action", "更新绑定"),
         ("ui_gallery.stress.section", "压力样例"),
         (
             "ui_gallery.stress.description",
