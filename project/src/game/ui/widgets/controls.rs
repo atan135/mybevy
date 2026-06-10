@@ -1,6 +1,7 @@
 use bevy::{
     input::keyboard::{Key, KeyCode, KeyboardInput},
     prelude::*,
+    ui::RelativeCursorPosition,
 };
 
 use crate::game::{
@@ -22,7 +23,6 @@ use crate::game::{
 const NUMERIC_CONTROL_LABEL_WIDTH: f32 = 132.0;
 const SLIDER_TRACK_HEIGHT: f32 = 8.0;
 const STEPPER_VALUE_WIDTH: f32 = 72.0;
-
 pub(in crate::game) struct UiWidgetsPlugin;
 
 impl Plugin for UiWidgetsPlugin {
@@ -39,6 +39,11 @@ impl Plugin for UiWidgetsPlugin {
             .add_systems(
                 Update,
                 (
+                    update_text_input_cursor_from_pointer,
+                    update_selection_control_interactions,
+                    update_slider_interactions,
+                    update_stepper_interactions,
+                    sync_selection_control_visuals,
                     sync_text_input_display,
                     sync_text_input_form_messages,
                     sync_numeric_control_display,
@@ -122,6 +127,11 @@ pub(in crate::game) struct UiSegmentOption {
 #[derive(Component)]
 pub(in crate::game) struct UiSegmentOptionSelected;
 
+#[derive(Clone, Debug, Component)]
+struct UiSelectionLabel {
+    base_text: String,
+}
+
 #[derive(Clone, Copy, Debug, Component)]
 pub(in crate::game) struct UiSlider {
     pub value: f32,
@@ -146,6 +156,9 @@ impl UiSlider {
 
 #[derive(Component)]
 struct UiSliderFill;
+
+#[derive(Component)]
+struct UiSliderTrack;
 
 #[derive(Component)]
 struct UiSliderValueText;
@@ -220,6 +233,36 @@ impl UiTextInputRequired {
     }
 }
 
+#[derive(Clone, Debug, Component)]
+pub(in crate::game) struct UiTextInputAlphanumeric {
+    min_chars: usize,
+    max_chars: usize,
+    message: String,
+}
+
+impl UiTextInputAlphanumeric {
+    pub(in crate::game) fn new(
+        min_chars: usize,
+        max_chars: usize,
+        message: impl Into<String>,
+    ) -> Self {
+        let min_chars = min_chars.min(max_chars);
+        Self {
+            min_chars,
+            max_chars,
+            message: message.into(),
+        }
+    }
+
+    fn validate<'a>(&'a self, value: &str) -> Option<&'a str> {
+        let char_count = value.chars().count();
+        let valid = (self.min_chars..=self.max_chars).contains(&char_count)
+            && value.chars().all(|chr| chr.is_ascii_alphanumeric());
+
+        (!valid).then_some(self.message.as_str())
+    }
+}
+
 #[derive(Component)]
 pub(in crate::game) struct UiTextInputError;
 
@@ -234,6 +277,13 @@ pub(in crate::game) struct UiTextInputPlaceholder(pub String);
 
 #[derive(Component)]
 pub(in crate::game) struct UiTextInputText;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
+enum UiTextInputTextPart {
+    Plain,
+    Selected,
+    Tail,
+}
 
 #[derive(Clone, Copy, Debug, Component)]
 pub(in crate::game) struct UiTextInputFormMessage {
@@ -1031,6 +1081,7 @@ pub(in crate::game) fn text_input(
         Button,
         FocusableButton,
         UiTextInput,
+        RelativeCursorPosition::default(),
         UiTextInputValue(value),
         UiTextInputCursor {
             position: initial_cursor_position,
@@ -1062,7 +1113,7 @@ pub(in crate::game) fn text_input(
             false,
         )),
         children![(
-            Text::new(display_text),
+            Text::new(""),
             TextFont {
                 font: fonts.regular.clone(),
                 font_size: theme.text.button,
@@ -1070,7 +1121,46 @@ pub(in crate::game) fn text_input(
             },
             TextColor(display_color),
             UiTextInputText,
+            UiTextInputTextPart::Plain,
             UiThemeTextStyleRole::Button,
+            children![
+                (
+                    TextSpan::new(display_text),
+                    TextFont {
+                        font: fonts.regular.clone(),
+                        font_size: theme.text.button,
+                        ..default()
+                    },
+                    TextColor(display_color),
+                    TextBackgroundColor(Color::NONE),
+                    UiTextInputTextPart::Plain,
+                    UiThemeTextStyleRole::Button,
+                ),
+                (
+                    TextSpan::new(""),
+                    TextFont {
+                        font: fonts.regular.clone(),
+                        font_size: theme.text.button,
+                        ..default()
+                    },
+                    TextColor(theme.colors.text_primary),
+                    TextBackgroundColor(Color::NONE),
+                    UiTextInputTextPart::Selected,
+                    UiThemeTextStyleRole::Button,
+                ),
+                (
+                    TextSpan::new(""),
+                    TextFont {
+                        font: fonts.regular.clone(),
+                        font_size: theme.text.button,
+                        ..default()
+                    },
+                    TextColor(display_color),
+                    TextBackgroundColor(Color::NONE),
+                    UiTextInputTextPart::Tail,
+                    UiThemeTextStyleRole::Button,
+                ),
+            ],
         )],
     )
 }
@@ -1385,9 +1475,14 @@ fn selection_button<T: Bundle>(
     marker: T,
     state: SelectionVisualState,
 ) -> impl Bundle {
+    let text = text.into();
+
     (
         Button,
         FocusableButton,
+        UiSelectionLabel {
+            base_text: text.clone(),
+        },
         marker,
         UiThemeButtonNodeRole::Button,
         Node {
@@ -1406,7 +1501,7 @@ fn selection_button<T: Bundle>(
             state,
         )),
         children![(
-            Text::new(text),
+            Text::new(selection_display_text(&text, state)),
             TextFont {
                 font: fonts.regular.clone(),
                 font_size: theme.text.button,
@@ -1428,9 +1523,14 @@ fn selection_button_key_bundle<T: Bundle>(
     state: SelectionVisualState,
     i18n_text: UiI18nText,
 ) -> impl Bundle {
+    let text = text.into();
+
     (
         Button,
         FocusableButton,
+        UiSelectionLabel {
+            base_text: text.clone(),
+        },
         marker,
         UiThemeButtonNodeRole::Button,
         Node {
@@ -1449,7 +1549,7 @@ fn selection_button_key_bundle<T: Bundle>(
             state,
         )),
         children![(
-            Text::new(text),
+            Text::new(selection_display_text(&text, state)),
             TextFont {
                 font: fonts.regular.clone(),
                 font_size: theme.text.button,
@@ -1555,6 +1655,8 @@ fn slider_bundle<T: Bundle>(
             ),
             (
                 slider_track_node(),
+                UiSliderTrack,
+                RelativeCursorPosition::default(),
                 BackgroundColor(theme.colors.panel_border),
                 children![(
                     UiSliderFill,
@@ -1796,6 +1898,14 @@ fn selection_button_text_color_role(state: SelectionVisualState) -> UiThemeTextC
     }
 }
 
+fn selection_display_text(base_text: &str, state: SelectionVisualState) -> String {
+    match state {
+        SelectionVisualState::Selected => format!("[x] {base_text}"),
+        SelectionVisualState::Idle => format!("[ ] {base_text}"),
+        SelectionVisualState::Disabled => format!("[-] {base_text}"),
+    }
+}
+
 fn icon_button_background_color(colors: ButtonColors, state: IconButtonVisualState) -> Color {
     match state {
         IconButtonVisualState::Idle => colors.idle,
@@ -1849,6 +1959,251 @@ fn sync_icon_button_nodes(
     }
 }
 
+fn update_selection_control_interactions(
+    mut commands: Commands,
+    parents: Query<&ChildOf>,
+    segmented_roots: Query<(), With<UiSegmentedControl>>,
+    segment_options: Query<Entity, (With<UiSegmentOption>, With<UiSegmentOptionSelected>)>,
+    buttons: Query<
+        (
+            Entity,
+            &Interaction,
+            Has<UiCheckbox>,
+            Has<UiCheckboxChecked>,
+            Has<UiToggle>,
+            Has<UiToggleOn>,
+            Has<UiSegmentOption>,
+        ),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            Without<DisabledButton>,
+            Without<LoadingButton>,
+            Without<UiStepper>,
+        ),
+    >,
+) {
+    for (
+        entity,
+        interaction,
+        is_checkbox,
+        is_checked,
+        is_toggle,
+        is_toggle_on,
+        is_segment_option,
+    ) in &buttons
+    {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        if is_checkbox {
+            if is_checked {
+                commands
+                    .entity(entity)
+                    .remove::<UiCheckboxChecked>()
+                    .remove::<SelectedButton>();
+            } else {
+                commands
+                    .entity(entity)
+                    .insert((UiCheckboxChecked, SelectedButton));
+            }
+        } else if is_toggle {
+            if is_toggle_on {
+                commands
+                    .entity(entity)
+                    .remove::<UiToggleOn>()
+                    .remove::<SelectedButton>();
+            } else {
+                commands.entity(entity).insert((UiToggleOn, SelectedButton));
+            }
+        } else if is_segment_option {
+            let root = parents
+                .iter_ancestors(entity)
+                .find(|ancestor| segmented_roots.contains(*ancestor));
+
+            for selected_entity in &segment_options {
+                if selected_entity == entity {
+                    continue;
+                }
+
+                let same_root = root.is_some_and(|root| {
+                    parents
+                        .iter_ancestors(selected_entity)
+                        .any(|ancestor| ancestor == root)
+                });
+                if same_root {
+                    commands
+                        .entity(selected_entity)
+                        .remove::<UiSegmentOptionSelected>()
+                        .remove::<SelectedButton>();
+                }
+            }
+
+            commands
+                .entity(entity)
+                .insert((UiSegmentOptionSelected, SelectedButton));
+        }
+    }
+}
+
+fn update_slider_interactions(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    parents: Query<&ChildOf>,
+    mut sliders: Query<&mut UiSlider, (Without<DisabledButton>, Without<UiSliderTrack>)>,
+    tracks: Query<
+        (
+            Entity,
+            &RelativeCursorPosition,
+            Option<&InheritedVisibility>,
+        ),
+        With<UiSliderTrack>,
+    >,
+) {
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        return;
+    }
+
+    for (track_entity, relative_cursor, inherited_visibility) in &tracks {
+        if !relative_cursor.cursor_over()
+            || inherited_visibility.is_some_and(|visibility| !visibility.get())
+        {
+            continue;
+        }
+
+        let Some(normalized) = relative_cursor.normalized else {
+            continue;
+        };
+
+        let Some(slider_entity) = parents
+            .iter_ancestors(track_entity)
+            .find(|ancestor| sliders.get(*ancestor).is_ok())
+        else {
+            continue;
+        };
+
+        let Ok(mut slider) = sliders.get_mut(slider_entity) else {
+            continue;
+        };
+
+        slider.value = slider_value_from_normalized_x(normalized.x, slider.min, slider.max);
+    }
+}
+
+fn update_stepper_interactions(
+    parents: Query<&ChildOf>,
+    mut steppers: Query<&mut UiStepper>,
+    buttons: Query<
+        (
+            Entity,
+            &Interaction,
+            Has<UiStepperDecrementButton>,
+            Has<UiStepperIncrementButton>,
+        ),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            Without<DisabledButton>,
+            Without<LoadingButton>,
+        ),
+    >,
+) {
+    for (button_entity, interaction, is_decrement, is_increment) in &buttons {
+        if *interaction != Interaction::Pressed || !is_decrement && !is_increment {
+            continue;
+        }
+
+        let Some(stepper_entity) = parents
+            .iter_ancestors(button_entity)
+            .find(|ancestor| steppers.get(*ancestor).is_ok())
+        else {
+            continue;
+        };
+
+        let Ok(mut stepper) = steppers.get_mut(stepper_entity) else {
+            continue;
+        };
+
+        stepper.value = if is_increment {
+            stepper_increment_value(stepper.value, stepper.min, stepper.max, stepper.step)
+        } else {
+            stepper_decrement_value(stepper.value, stepper.min, stepper.max, stepper.step)
+        };
+    }
+}
+
+fn sync_selection_control_visuals(
+    theme: Res<UiTheme>,
+    mut controls: Query<
+        (
+            Entity,
+            &Interaction,
+            &UiSelectionLabel,
+            &mut BackgroundColor,
+            Has<FocusedButton>,
+            Has<DisabledButton>,
+            Has<UiCheckboxChecked>,
+            Has<UiToggleOn>,
+            Has<UiSegmentOptionSelected>,
+            Has<UiCheckbox>,
+            Has<UiToggle>,
+            Has<UiSegmentOption>,
+        ),
+        With<Button>,
+    >,
+    children: Query<&Children>,
+    mut texts: Query<&mut Text>,
+) {
+    for (
+        entity,
+        interaction,
+        label,
+        mut background,
+        is_focused,
+        is_disabled,
+        is_checked,
+        is_toggle_on,
+        is_segment_selected,
+        is_checkbox,
+        is_toggle,
+        is_segment_option,
+    ) in &mut controls
+    {
+        if !is_checkbox && !is_toggle && !is_segment_option {
+            continue;
+        }
+
+        let state = if is_disabled {
+            SelectionVisualState::Disabled
+        } else if is_checked || is_toggle_on || is_segment_selected {
+            SelectionVisualState::Selected
+        } else {
+            SelectionVisualState::Idle
+        };
+
+        let colors = if is_toggle_on {
+            theme.colors.primary_button
+        } else {
+            theme.colors.secondary_button
+        };
+        let next_background =
+            selection_button_background_color(colors, *interaction, is_focused, state);
+        if background.0 != next_background {
+            *background = BackgroundColor(next_background);
+        }
+
+        let display = selection_display_text(&label.base_text, state);
+        for child in children.iter_descendants(entity) {
+            let Ok(mut text) = texts.get_mut(child) else {
+                continue;
+            };
+            if text.0 != display {
+                text.0 = display.clone();
+            }
+        }
+    }
+}
+
 fn update_button_visuals(
     theme: Res<UiTheme>,
     mut buttons: Query<
@@ -1862,7 +2217,11 @@ fn update_button_visuals(
             Has<SelectedButton>,
             Has<LoadingButton>,
         ),
-        (With<Button>, Without<UiTextInput>),
+        (
+            With<Button>,
+            Without<UiTextInput>,
+            Without<UiSelectionLabel>,
+        ),
     >,
 ) {
     for (
@@ -1920,6 +2279,52 @@ fn button_background_color(
         Interaction::None if is_selected => colors.selected,
         Interaction::None if is_focused => colors.focused,
         Interaction::None => colors.idle,
+    }
+}
+
+fn update_text_input_cursor_from_pointer(
+    mut text_inputs: Query<
+        (
+            Entity,
+            &Interaction,
+            &RelativeCursorPosition,
+            &ComputedNode,
+            &mut UiTextInputCursor,
+            &UiTextInputValue,
+            Has<DisabledTextInput>,
+        ),
+        (Changed<Interaction>, With<Button>, With<UiTextInput>),
+    >,
+    children: Query<&Children>,
+    text_nodes: Query<&ComputedNode, With<UiTextInputText>>,
+) {
+    for (entity, interaction, relative_cursor, input_node, mut cursor, value, is_disabled) in
+        &mut text_inputs
+    {
+        if *interaction != Interaction::Pressed || is_disabled {
+            continue;
+        }
+
+        let Some(normalized) = relative_cursor.normalized else {
+            continue;
+        };
+
+        let text_width = children
+            .get(entity)
+            .ok()
+            .and_then(|children| {
+                children
+                    .iter()
+                    .filter_map(|child| text_nodes.get(child).ok())
+                    .map(|node| node.size.x)
+                    .find(|width| *width > 0.0)
+            })
+            .unwrap_or(input_node.content_size.x);
+        let local_x = (normalized.x + 0.5) * input_node.size.x;
+        let text_x = (local_x - input_node.padding.min_inset.x).clamp(0.0, text_width);
+        let text_ratio = text_x / text_width.max(f32::EPSILON);
+        cursor.position = text_input_cursor_position_from_ratio(&value.0, text_ratio);
+        cursor.selection = None;
     }
 }
 
@@ -2004,6 +2409,7 @@ fn sync_text_input_display(
     theme: Res<UiTheme>,
     focus_state: Res<UiFocusState>,
     parents: Query<&ChildOf>,
+    children: Query<&Children>,
     text_inputs: Query<
         (
             &UiTextInputValue,
@@ -2013,11 +2419,20 @@ fn sync_text_input_display(
         ),
         With<UiTextInput>,
     >,
-    mut texts: Query<(Entity, &mut Text, &mut TextColor), With<UiTextInputText>>,
+    mut roots: Query<(Entity, &mut Text, &mut TextColor), With<UiTextInputText>>,
+    mut spans: Query<
+        (
+            &mut TextSpan,
+            &UiTextInputTextPart,
+            &mut TextColor,
+            Option<&mut TextBackgroundColor>,
+        ),
+        Without<UiTextInputText>,
+    >,
 ) {
-    for (text_entity, mut text, mut text_color) in &mut texts {
+    for (root_entity, mut root_text, mut root_text_color) in &mut roots {
         let Some(input_entity) = parents
-            .iter_ancestors(text_entity)
+            .iter_ancestors(root_entity)
             .find(|ancestor| text_inputs.get(*ancestor).is_ok())
         else {
             continue;
@@ -2029,23 +2444,66 @@ fn sync_text_input_display(
 
         let is_focused = focus_state.focused_entity == Some(input_entity);
         let display = if value.0.is_empty() && !is_focused {
-            placeholder.0.clone()
+            UiTextInputDisplay::placeholder(placeholder.0.clone())
         } else if is_focused && !is_disabled {
-            text_input_display_with_cursor(&value.0, cursor)
+            text_input_display_parts(&value.0, cursor)
         } else {
-            value.0.clone()
+            UiTextInputDisplay::plain(value.0.clone())
         };
         let color = if is_disabled || value.0.is_empty() && !is_focused {
             theme.colors.text_muted
         } else {
             theme.colors.text_primary
         };
+        let selected_text_color = theme.colors.screen_background;
+        let selected_background = theme.colors.primary_button.focused;
 
-        if text.0 != display {
-            text.0 = display;
+        if !root_text.0.is_empty() {
+            root_text.0.clear();
         }
-        if text_color.0 != color {
-            text_color.0 = color;
+        if root_text_color.0 != color {
+            root_text_color.0 = color;
+        }
+
+        let Ok(children) = children.get(root_entity) else {
+            continue;
+        };
+
+        for child in children {
+            let Ok((mut span, part, mut span_color, background)) = spans.get_mut(*child) else {
+                continue;
+            };
+
+            let next_text = match part {
+                UiTextInputTextPart::Plain => display.plain.as_str(),
+                UiTextInputTextPart::Selected => display.selected.as_str(),
+                UiTextInputTextPart::Tail => display.tail.as_str(),
+            };
+            if span.as_str() != next_text {
+                span.0 = next_text.to_string();
+            }
+
+            let next_color = match part {
+                UiTextInputTextPart::Selected if !display.selected.is_empty() => {
+                    selected_text_color
+                }
+                _ => color,
+            };
+            if span_color.0 != next_color {
+                span_color.0 = next_color;
+            }
+
+            if let Some(mut background) = background {
+                let next_background = match part {
+                    UiTextInputTextPart::Selected if !display.selected.is_empty() => {
+                        selected_background
+                    }
+                    _ => Color::NONE,
+                };
+                if background.0 != next_background {
+                    background.0 = next_background;
+                }
+            }
         }
     }
 }
@@ -2056,6 +2514,7 @@ fn sync_text_input_form_messages(
         &UiTextInputValue,
         Option<&UiTextInputHelperText>,
         Option<&UiTextInputValidationMessage>,
+        Option<&UiTextInputAlphanumeric>,
         Option<&UiTextInputRequired>,
         Has<UiTextInputError>,
         Has<DisabledTextInput>,
@@ -2063,8 +2522,15 @@ fn sync_text_input_form_messages(
     mut messages: Query<(&UiTextInputFormMessage, &mut Text, &mut TextColor)>,
 ) {
     for (message, mut text, mut text_color) in &mut messages {
-        let Ok((value, helper_text, validation_message, required, has_error, is_disabled)) =
-            text_inputs.get(message.input)
+        let Ok((
+            value,
+            helper_text,
+            validation_message,
+            alphanumeric,
+            required,
+            has_error,
+            is_disabled,
+        )) = text_inputs.get(message.input)
         else {
             continue;
         };
@@ -2072,7 +2538,7 @@ fn sync_text_input_form_messages(
         let state = text_input_form_state(
             &value.0,
             helper_text.map(|helper| helper.0.as_str()),
-            validation_message.map(|validation| validation.0.as_str()),
+            text_input_validation_message(&value.0, validation_message, alphanumeric),
             required,
             has_error,
         );
@@ -2099,8 +2565,10 @@ fn sync_numeric_control_display(
     steppers: Query<&UiStepper>,
     parents: Query<&ChildOf>,
     mut slider_fills: Query<(Entity, &mut Node), With<UiSliderFill>>,
-    mut slider_value_texts: Query<(Entity, &mut Text), With<UiSliderValueText>>,
-    mut stepper_value_texts: Query<(Entity, &mut Text), With<UiStepperValueText>>,
+    mut value_texts: ParamSet<(
+        Query<(Entity, &mut Text), With<UiSliderValueText>>,
+        Query<(Entity, &mut Text), With<UiStepperValueText>>,
+    )>,
 ) {
     for (fill_entity, mut fill_node) in &mut slider_fills {
         let Some(slider) = parents
@@ -2116,7 +2584,7 @@ fn sync_numeric_control_display(
         }
     }
 
-    for (text_entity, mut text) in &mut slider_value_texts {
+    for (text_entity, mut text) in &mut value_texts.p0() {
         let Some(slider) = parents
             .iter_ancestors(text_entity)
             .find_map(|ancestor| sliders.get(ancestor).ok())
@@ -2130,7 +2598,7 @@ fn sync_numeric_control_display(
         }
     }
 
-    for (text_entity, mut text) in &mut stepper_value_texts {
+    for (text_entity, mut text) in &mut value_texts.p1() {
         let Some(stepper) = parents
             .iter_ancestors(text_entity)
             .find_map(|ancestor| steppers.get(ancestor).ok())
@@ -2160,6 +2628,7 @@ fn update_text_input_visuals(
             Has<UiTextInputError>,
             &UiTextInputValue,
             Option<&UiTextInputValidationMessage>,
+            Option<&UiTextInputAlphanumeric>,
             Option<&UiTextInputRequired>,
         ),
         (With<Button>, With<UiTextInput>),
@@ -2174,12 +2643,13 @@ fn update_text_input_visuals(
         has_error,
         value,
         validation_message,
+        alphanumeric,
         required,
     ) in &mut text_inputs
     {
         let is_error = text_input_has_error(
             &value.0,
-            validation_message.map(|message| message.0.as_str()),
+            text_input_validation_message(&value.0, validation_message, alphanumeric),
             required,
             has_error,
         );
@@ -2294,6 +2764,17 @@ fn text_input_has_error(
     text_input_form_state(value, None, validation_message, required, has_error).is_error
 }
 
+fn text_input_validation_message<'a>(
+    value: &str,
+    validation_message: Option<&'a UiTextInputValidationMessage>,
+    alphanumeric: Option<&'a UiTextInputAlphanumeric>,
+) -> Option<&'a str> {
+    validation_message
+        .map(|validation| validation.0.as_str())
+        .filter(|message| !message.is_empty())
+        .or_else(|| alphanumeric.and_then(|rule| rule.validate(value)))
+}
+
 fn ordered_slider_bounds(min: f32, max: f32) -> (f32, f32) {
     if min <= max { (min, max) } else { (max, min) }
 }
@@ -2314,6 +2795,12 @@ fn slider_ratio(value: f32, min: f32, max: f32) -> f32 {
     }
 
     (clamp_slider_value(value, min, max) - min) / range
+}
+
+fn slider_value_from_normalized_x(normalized_x: f32, min: f32, max: f32) -> f32 {
+    let (min, max) = ordered_slider_bounds(min, max);
+    let ratio = (normalized_x + 0.5).clamp(0.0, 1.0);
+    min + (max - min) * ratio
 }
 
 fn format_slider_value(value: f32) -> String {
@@ -2590,13 +3077,67 @@ fn nearest_char_boundary(value: &str, position: usize) -> usize {
     position
 }
 
-fn text_input_display_with_cursor(value: &str, cursor: &UiTextInputCursor) -> String {
+fn text_input_cursor_position_from_ratio(value: &str, ratio: f32) -> usize {
+    if value.is_empty() {
+        return 0;
+    }
+
+    let char_count = value.chars().count();
+    let char_index = (ratio.clamp(0.0, 1.0) * char_count as f32).round() as usize;
+    value
+        .char_indices()
+        .map(|(index, _)| index)
+        .nth(char_index)
+        .unwrap_or(value.len())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UiTextInputDisplay {
+    plain: String,
+    selected: String,
+    tail: String,
+}
+
+impl UiTextInputDisplay {
+    fn plain(text: String) -> Self {
+        Self {
+            plain: text,
+            selected: String::new(),
+            tail: String::new(),
+        }
+    }
+
+    fn placeholder(text: String) -> Self {
+        Self::plain(text)
+    }
+}
+
+fn text_input_display_parts(value: &str, cursor: &UiTextInputCursor) -> UiTextInputDisplay {
     let cursor_position = nearest_char_boundary(value, cursor.position.min(value.len()));
-    let mut display = String::with_capacity(value.len() + 1);
-    display.push_str(&value[..cursor_position]);
-    display.push('|');
-    display.push_str(&value[cursor_position..]);
-    display
+    if let Some(selection) = selection_range(cursor) {
+        let start = nearest_char_boundary(value, selection.start.min(value.len()));
+        let end = nearest_char_boundary(value, selection.end.min(value.len()));
+        let cursor_at_start = cursor_position <= start;
+        return UiTextInputDisplay {
+            plain: if cursor_at_start {
+                format!("{}|", &value[..start])
+            } else {
+                value[..start].to_string()
+            },
+            selected: value[start..end].to_string(),
+            tail: if cursor_at_start {
+                value[end..].to_string()
+            } else {
+                format!("|{}", &value[end..])
+            },
+        };
+    }
+
+    UiTextInputDisplay {
+        plain: format!("{}|", &value[..cursor_position]),
+        selected: String::new(),
+        tail: value[cursor_position..].to_string(),
+    }
 }
 
 fn is_printable_char(chr: char) -> bool {
@@ -2768,6 +3309,34 @@ mod tests {
     }
 
     #[test]
+    fn text_input_display_splits_selected_range() {
+        let cursor = UiTextInputCursor {
+            position: 3,
+            selection: Some(UiTextInputSelection { start: 1, end: 3 }),
+        };
+
+        assert_eq!(
+            text_input_display_parts("abcd", &cursor),
+            UiTextInputDisplay {
+                plain: "a".to_string(),
+                selected: "bc".to_string(),
+                tail: "|d".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn text_input_cursor_position_maps_ratio_to_char_boundary() {
+        assert_eq!(text_input_cursor_position_from_ratio("abcd", 0.0), 0);
+        assert_eq!(text_input_cursor_position_from_ratio("abcd", 0.5), 2);
+        assert_eq!(text_input_cursor_position_from_ratio("abcd", 1.0), 4);
+        assert_eq!(
+            text_input_cursor_position_from_ratio("你好吗", 0.5),
+            "你好".len()
+        );
+    }
+
+    #[test]
     fn readonly_does_not_edit_but_allows_cursor_movement() {
         let mut value = "abc".to_string();
         let mut cursor = cursor(2);
@@ -2878,6 +3447,23 @@ mod tests {
                 message: Some("Validation failed".to_string()),
                 is_error: true,
             }
+        );
+    }
+
+    #[test]
+    fn alphanumeric_validation_clears_for_matching_value() {
+        let rule = UiTextInputAlphanumeric::new(4, 8, "Use 4-8 letters or numbers.");
+
+        assert_eq!(rule.validate("33333311"), None);
+        assert_eq!(rule.validate("AB12"), None);
+        assert_eq!(
+            rule.validate("bad-code"),
+            Some("Use 4-8 letters or numbers.")
+        );
+        assert_eq!(rule.validate("abc"), Some("Use 4-8 letters or numbers."));
+        assert_eq!(
+            rule.validate("abcdefghi"),
+            Some("Use 4-8 letters or numbers.")
         );
     }
 
@@ -2999,6 +3585,22 @@ mod tests {
     }
 
     #[test]
+    fn selection_display_text_marks_state() {
+        assert_eq!(
+            selection_display_text("Medium", SelectionVisualState::Selected),
+            "[x] Medium"
+        );
+        assert_eq!(
+            selection_display_text("Medium", SelectionVisualState::Idle),
+            "[ ] Medium"
+        );
+        assert_eq!(
+            selection_display_text("Medium", SelectionVisualState::Disabled),
+            "[-] Medium"
+        );
+    }
+
+    #[test]
     fn icon_button_background_and_text_roles_match_visual_state() {
         let colors = UiTheme::default().colors.secondary_button;
 
@@ -3063,6 +3665,15 @@ mod tests {
         assert_eq!(format_slider_value(42.02), "42");
         assert_eq!(format_slider_value(42.06), "42.1");
         assert_eq!(format_slider_value(42.16), "42.2");
+    }
+
+    #[test]
+    fn slider_value_from_normalized_x_maps_track_position_to_value() {
+        assert_eq!(slider_value_from_normalized_x(-0.5, 0.0, 100.0), 0.0);
+        assert_eq!(slider_value_from_normalized_x(0.0, 0.0, 100.0), 50.0);
+        assert_eq!(slider_value_from_normalized_x(0.5, 0.0, 100.0), 100.0);
+        assert_eq!(slider_value_from_normalized_x(0.75, 0.0, 100.0), 100.0);
+        assert_eq!(slider_value_from_normalized_x(-0.75, 0.0, 100.0), 0.0);
     }
 
     #[test]

@@ -21,12 +21,12 @@ use crate::game::{
         },
         widgets::{
             DisabledButton, DisabledTextInput, FocusedButton, LoadingButton, ReadonlyTextInput,
-            SelectedButton, UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars,
-            UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key,
-            checked_checkbox_key, disabled_checkbox_key, disabled_icon_button_key,
-            disabled_primary_action_button_key, disabled_secondary_action_button_key,
-            disabled_segment_option_key, disabled_slider_key, disabled_stepper_key,
-            disabled_toggle_key, icon_button_key, loading_icon_button_key,
+            SelectedButton, UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText,
+            UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted,
+            UiTextInputValidationMessage, checkbox_key, checked_checkbox_key,
+            disabled_checkbox_key, disabled_icon_button_key, disabled_primary_action_button_key,
+            disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
+            disabled_stepper_key, disabled_toggle_key, icon_button_key, loading_icon_button_key,
             loading_primary_action_button_key, primary_action_button_key, screen_label_key,
             screen_title_key, secondary_action_button_key, secondary_route_button_key,
             segment_option_key, segmented_control, selected_segment_option_key, slider_key,
@@ -64,6 +64,11 @@ enum GalleryTextInputState {
     Helper(String),
     Required(String),
     Validation(String),
+    Alphanumeric {
+        min_chars: usize,
+        max_chars: usize,
+        message: String,
+    },
     Error,
     MaxChars(usize),
     Readonly,
@@ -515,13 +520,14 @@ pub(super) fn setup_ui_gallery(
                                     fonts,
                                     i18n.tr("ui_gallery.inputs.placeholder.error", "Error state"),
                                     "bad-code",
-                                    [
-                                        GalleryTextInputState::Error,
-                                        GalleryTextInputState::Validation(i18n.tr(
+                                    [GalleryTextInputState::Alphanumeric {
+                                        min_chars: 4,
+                                        max_chars: 8,
+                                        message: i18n.tr(
                                             "ui_gallery.inputs.validation.error",
                                             "Use 4-8 letters or numbers.",
-                                        )),
-                                    ],
+                                        ),
+                                    }],
                                 );
                                 spawn_gallery_text_input(
                                     inputs,
@@ -915,6 +921,13 @@ fn spawn_gallery_text_input<const N: usize>(
                     }
                     GalleryTextInputState::Validation(message) => {
                         input.insert(UiTextInputValidationMessage(message));
+                    }
+                    GalleryTextInputState::Alphanumeric {
+                        min_chars,
+                        max_chars,
+                        message,
+                    } => {
+                        input.insert(UiTextInputAlphanumeric::new(min_chars, max_chars, message));
                     }
                     GalleryTextInputState::Error => {
                         input.insert(UiTextInputError);

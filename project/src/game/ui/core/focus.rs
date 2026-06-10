@@ -193,7 +193,7 @@ fn focus_candidates(
         }
     }
 
-    candidates.sort_by_key(|candidate| candidate.entity);
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.entity));
     candidates
 }
 
@@ -434,7 +434,7 @@ mod tests {
         let second = spawn_focusable_button(app.world_mut());
         let third = spawn_focusable_button(app.world_mut());
         let mut expected_order = vec![first, second, third];
-        expected_order.sort();
+        expected_order.sort_by_key(|entity| std::cmp::Reverse(*entity));
 
         press_tab(&mut app, false);
         assert_eq!(

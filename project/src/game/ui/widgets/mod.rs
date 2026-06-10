@@ -4,10 +4,10 @@ pub(in crate::game) mod scroll;
 
 pub(in crate::game) use controls::{
     DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
-    ReadonlyTextInput, SelectedButton, UiTextInput, UiTextInputError, UiTextInputHelperText,
-    UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage,
-    UiWidgetsPlugin, checkbox_key, checked_checkbox_key, disabled_checkbox_key,
-    disabled_icon_button_key, disabled_primary_action_button_key,
+    ReadonlyTextInput, SelectedButton, UiTextInput, UiTextInputAlphanumeric, UiTextInputError,
+    UiTextInputHelperText, UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted,
+    UiTextInputValidationMessage, UiWidgetsPlugin, checkbox_key, checked_checkbox_key,
+    disabled_checkbox_key, disabled_icon_button_key, disabled_primary_action_button_key,
     disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
     disabled_stepper_key, disabled_toggle_key, icon_button_key, loading_icon_button_key,
     loading_primary_action_button_key, primary_action_button, primary_action_button_key,
