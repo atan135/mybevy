@@ -822,6 +822,14 @@ pub(in crate::game) struct UiInputState {
   - 本阶段只接一个低风险文本点，不批量改造页面，也不改变登录按钮路由行为。
   - 后续可选择 Lobby 状态说明、联网状态或真实表单状态作为更有业务意义的绑定来源。
 
+- P3-02-05 已完成数据绑定基础收口：
+  - 测试覆盖已包含路径规范化、非法路径拒绝、文本 / bool set-get、文本 fallback、文本 apply、可见性 apply、按钮 disabled apply 和绑定路径构造失败场景。
+  - 本次补充 `remove_text(...)` / `remove_bool(...)` 纯逻辑测试，覆盖删除已有值、重复删除和非法路径删除。
+  - 自动验证：P3-02-01 到 P3-02-04 均已通过 `cargo fmt --check`、`cargo test` 和 `cargo check`；P3-02-05 收口也按同一组命令验证。
+  - 手动验收建议：进入 UiGallery，点击 `Binding Sample` 的 `Update Binding`，确认绑定文本刷新、提示文本显隐切换、绑定按钮 disabled 状态切换；进入 Login 页面并热更新 i18n 文案时，确认副标题可通过绑定链路刷新。
+  - 当前限制：第一版绑定源仍是简单路径资源，不支持表达式、派生值、集合绑定、双向绑定、typed model、批量 diff 或跨页面生命周期回收策略。
+  - 后续建议：优先把真实页面状态文本、联网状态和表单提交状态接入绑定；等页面数量变多后，再考虑 typed binding source、列表绑定和 dev inspector 中的绑定路径可视化。
+
 ### 通用文本输入框第一版
 
 - 已新增 widgets 层通用文本输入框 `text_input(...)`，根节点使用 `Button + FocusableButton + UiTextInput`，因此可以通过鼠标点击进入焦点，也可以通过现有 `Tab` 焦点系统访问。

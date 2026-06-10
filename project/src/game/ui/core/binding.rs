@@ -396,6 +396,24 @@ mod tests {
     }
 
     #[test]
+    fn binding_values_remove_text_and_bool_values() {
+        let mut values = UiBindingValues::default();
+
+        values.set_text("gallery.binding.status", "Ready");
+        values.set_bool("gallery.binding.visible", true);
+
+        assert!(values.remove_text(" gallery . binding . status "));
+        assert_eq!(values.text("gallery.binding.status"), None);
+        assert!(!values.remove_text("gallery.binding.status"));
+        assert!(!values.remove_text("gallery..binding"));
+
+        assert!(values.remove_bool(" gallery . binding . visible "));
+        assert_eq!(values.bool("gallery.binding.visible"), None);
+        assert!(!values.remove_bool("gallery.binding.visible"));
+        assert!(!values.remove_bool("gallery..binding"));
+    }
+
+    #[test]
     fn apply_bound_texts_uses_value_and_fallback() {
         let mut app = App::new();
         app.add_plugins(UiBindingPlugin);
