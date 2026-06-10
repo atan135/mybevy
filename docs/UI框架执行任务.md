@@ -790,6 +790,16 @@ pub(in crate::game) struct UiInputState {
   - 为 panel 切换、长列表滚动和大量文本更新补充专门压力样例，区分静态节点成本和动态刷新成本。
   - 在 Android 真机记录实际帧率、触控响应和 F3 stats 表现，作为 P3-05 平台验证输入。
 
+### P3-02 数据绑定基础
+
+- P3-02-01 已新增数据绑定核心模块 `project/src/game/ui/core/binding.rs`：
+  - `UiBindingPlugin` 已挂入 `UiFrameworkPlugin`，当前只注册 `UiBindingSystems::Apply` 系统集，为后续绑定应用系统提供排序入口。
+  - 新增 `UiBindingPath`，用于表示简单字符串数据源路径；会去除路径和分段两侧空白，并拒绝空路径或空分段。
+  - 新增预留组件 `UiBoundText`、`UiBoundVisibility`、`UiBoundDisabled`，分别对应后续文本、可见性和 disabled 绑定。
+  - 新增 `UiVisibilityBindingMode` / `UiDisabledBindingMode` 和纯 helper，用于把 bool 映射为 `Visibility` 或 disabled marker 意图。
+- 本阶段未接入真实页面、控件行为或 `DisabledButton` / `DisabledTextInput` 等具体 marker，只建立最小 API 和测试边界。
+- 自动验证：P3-02-01 已通过 `cargo fmt --check`、`cargo test` 和 `cargo check`。
+
 ### 通用文本输入框第一版
 
 - 已新增 widgets 层通用文本输入框 `text_input(...)`，根节点使用 `Button + FocusableButton + UiTextInput`，因此可以通过鼠标点击进入焦点，也可以通过现有 `Tab` 焦点系统访问。

@@ -1,3 +1,4 @@
+pub(in crate::game) mod binding;
 pub(in crate::game) mod focus;
 pub(in crate::game) mod framework;
 pub(in crate::game) mod input;
