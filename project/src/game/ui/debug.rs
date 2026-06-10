@@ -52,6 +52,9 @@ struct UiDebugState {
     panel_filter: UiDebugPanelFilter,
     highlight_panels: bool,
     frozen_body: Option<String>,
+    copy_requested: bool,
+    last_display_text: Option<String>,
+    last_copied_text: Option<String>,
 }
 
 impl Default for UiDebugState {
@@ -66,6 +69,9 @@ impl Default for UiDebugState {
             panel_filter: UiDebugPanelFilter::default(),
             highlight_panels: false,
             frozen_body: None,
+            copy_requested: false,
+            last_display_text: None,
+            last_copied_text: None,
         }
     }
 }
@@ -163,6 +169,10 @@ fn handle_ui_debug_keys(
             debug_state.root = None;
         }
     }
+
+    if key_codes.just_pressed(KeyCode::F8) {
+        debug_state.copy_requested = true;
+    }
 }
 
 fn sync_ui_debug_panel(
@@ -259,29 +269,59 @@ fn refresh_ui_debug_text(
     mut texts: Query<&mut Text, With<UiDebugText>>,
 ) {
     let Ok(mut text) = texts.single_mut() else {
+        debug_state.copy_requested = false;
         return;
     };
 
-    let header = ui_debug_header_lines(&debug_state);
-    let body = if debug_state.frozen {
-        debug_state.frozen_body.clone().unwrap_or_else(|| {
-            build_ui_debug_body(&debug_state, &input_state, &focus_state, &stats, &panels)
-        })
-    } else {
-        let body = build_ui_debug_body(&debug_state, &input_state, &focus_state, &stats, &panels);
-        debug_state.frozen_body = Some(body.clone());
-        body
-    };
+    let display = build_ui_debug_display_text(&mut debug_state, |debug_state| {
+        build_ui_debug_body(debug_state, &input_state, &focus_state, &stats, &panels)
+    });
 
-    let display = if body.is_empty() {
-        header.join("\n")
-    } else {
-        format!("{}\n{}", header.join("\n"), body)
-    };
+    debug_state.last_display_text = Some(display.clone());
+
+    if debug_state.copy_requested {
+        copy_ui_debug_display_text(&mut debug_state, &display);
+    }
 
     if text.0 != display {
         text.0 = display;
     }
+}
+
+fn build_ui_debug_display_text<F>(debug_state: &mut UiDebugState, build_body: F) -> String
+where
+    F: FnOnce(&UiDebugState) -> String,
+{
+    let header = ui_debug_header_lines(debug_state);
+    let body = if debug_state.frozen {
+        debug_state
+            .frozen_body
+            .clone()
+            .unwrap_or_else(|| build_body(debug_state))
+    } else {
+        let body = build_body(debug_state);
+        debug_state.frozen_body = Some(body.clone());
+        body
+    };
+
+    compose_ui_debug_display_text(&header, &body)
+}
+
+fn compose_ui_debug_display_text(header: &[String], body: &str) -> String {
+    if body.is_empty() {
+        header.join("\n")
+    } else {
+        format!("{}\n{}", header.join("\n"), body)
+    }
+}
+
+fn copy_ui_debug_display_text(debug_state: &mut UiDebugState, display_text: &str) {
+    debug_state.last_copied_text = Some(display_text.to_string());
+    debug_state.copy_requested = false;
+    info!(
+        "UI debug state copied to internal buffer ({} bytes)",
+        display_text.len()
+    );
 }
 
 fn ui_debug_header_lines(debug_state: &UiDebugState) -> Vec<String> {
@@ -293,7 +333,8 @@ fn ui_debug_header_lines(debug_state: &UiDebugState) -> Vec<String> {
             debug_state.panel_filter.label(),
             on_off_label(debug_state.highlight_panels),
         ),
-        "keys: F3 toggle panel | F4 freeze | F5 filter | F6 highlight | F7 target".to_string(),
+        "keys: F3 toggle panel | F4 freeze | F5 filter | F6 highlight | F7 target | F8 copy"
+            .to_string(),
         String::new(),
     ]
 }
@@ -823,5 +864,41 @@ mod tests {
                 "  panels: total=5 page=1 hud=1 floating=1 modal=1 blocking=1",
             ]
         );
+    }
+
+    #[test]
+    fn debug_header_lists_copy_shortcut() {
+        let debug_state = UiDebugState::default();
+        let header = ui_debug_header_lines(&debug_state);
+
+        assert!(header[1].contains("F8 copy"));
+    }
+
+    #[test]
+    fn debug_display_text_uses_frozen_body() {
+        let mut debug_state = UiDebugState {
+            frozen: true,
+            frozen_body: Some("frozen body".to_string()),
+            ..default()
+        };
+
+        let display = build_ui_debug_display_text(&mut debug_state, |_| "live body".to_string());
+
+        assert!(display.contains("freeze=on"));
+        assert!(display.contains("frozen body"));
+        assert!(!display.contains("live body"));
+    }
+
+    #[test]
+    fn debug_copy_stores_display_text_and_clears_request() {
+        let mut debug_state = UiDebugState {
+            copy_requested: true,
+            ..default()
+        };
+
+        copy_ui_debug_display_text(&mut debug_state, "debug text");
+
+        assert!(!debug_state.copy_requested);
+        assert_eq!(debug_state.last_copied_text.as_deref(), Some("debug text"));
     }
 }

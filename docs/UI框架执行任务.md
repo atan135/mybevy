@@ -744,6 +744,13 @@ pub(in crate::game) struct UiInputState {
 - 独立窗口模式使用专用 `Window + Camera2d + UiTargetCamera`，调试面板会自适应填充窗口内容区宽度；调试 UI 仍不纳入 Panel Manager，且继续使用 `Pickable::IGNORE`，不会阻塞主窗口下层 pointer 输入。
 - 手动关闭独立调试窗口时，F3 调试状态会自动关闭；再次按 `F3` 会按当前显示目标重新创建。
 
+### P3-04-04 调试状态复制
+
+- F3 调试面板新增 `F8` 复制当前调试状态快捷键，header 的快捷键行已同步显示 `F8 copy`。
+- 第一版不接系统剪贴板、不引入新 crate；按下 `F8` 后会把当前面板显示文本写入 `UiDebugState` 内部缓存，并输出 `info!` 日志 `UI debug state copied to internal buffer (...)`。
+- 复制内容与屏幕显示保持一致：包含当前 header 和 body；如果 `F4` 冻结中，会复制当前 header 加冻结 body。
+- 当前限制：内部缓存主要用于调试和后续扩展，暂不能直接粘贴到外部编辑器。后续如需要桌面系统剪贴板，可在现有 `last_copied_text` 基础上增加平台剪贴板桥接；Android 仍建议保留内部缓存 / 日志降级。
+
 ### P3-03 UI 性能统计与高频系统巡检
 
 - P3-03-01 已新增 `UiStatsPlugin` 和 `UiStats`，当前每帧采集 UI `Node` 总数、可见 `Node` 数、`Text` 节点数、Panel 总数和按 `UiPanelKind` 聚合计数。
