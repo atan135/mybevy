@@ -764,6 +764,17 @@ pub(in crate::game) struct UiInputState {
 - 新增 helper 测试覆盖 Panel 栈行格式、`F5` 过滤不影响栈视图、`ui tree` 截断和 tree 行内容。
 - 当前限制：这不是完整可点击 Inspector，不做递归子节点展开、布局矩形、padding / border 可视化或选中实体详情；这些留给后续 `P3-04-06 布局边界调试` 或完整 UI Inspector。
 
+### P3-04-06 布局边界调试
+
+- F3 调试面板正文新增 `layout bounds` 区域：
+  - 基于 Bevy UI 布局结果 `ComputedNode` 和 `UiGlobalTransform` 输出节点尺寸与位置。
+  - 每行显示 `Entity`、可选 `Name`、`size`、`top_left`、`center`、`scale`、`rot`、`Visibility / InheritedVisibility`、`UiLayer`、Panel 标识和 `stack_index`。
+  - 默认最多显示 16 行，超出后显示剩余数量，避免调试文本过长。
+  - 调试面板自身节点带内部 `UiDebugNode` marker，不进入 `layout bounds` 列表，避免 F3 面板尺寸污染业务 UI 观察结果。
+- 新增 helper 测试覆盖布局行格式、列表截断和空列表输出。
+- 该区域属于 F3 body，因此继续遵循 `F4` freeze 语义；`F5` panel filter、`F6` highlight、`F7` target 和 `F8` copy 行为不变。
+- 当前限制：第一版只做文本诊断，不提供可视 overlay、点击选中实体、递归树展开或 padding / border 矩形分层展示；位置字段来自 UI 全局中心点推导出的 `top_left`，适合开发期快速判断尺寸和大致屏幕位置。
+
 ### P3-03 UI 性能统计与高频系统巡检
 
 - P3-03-01 已新增 `UiStatsPlugin` 和 `UiStats`，当前每帧采集 UI `Node` 总数、可见 `Node` 数、`Text` 节点数、Panel 总数和按 `UiPanelKind` 聚合计数。

@@ -23,6 +23,7 @@ use crate::game::ui::{
 const UI_DEBUG_TARGET_ENV: &str = "MYBEVY_UI_DEBUG_TARGET";
 const UI_DEBUG_RENDER_LAYER: usize = 31;
 const UI_DEBUG_TREE_MAX_LINES: usize = 24;
+const UI_DEBUG_LAYOUT_BOUNDS_MAX_LINES: usize = 16;
 
 pub(in crate::game) struct UiDebugPlugin;
 
@@ -79,6 +80,9 @@ impl Default for UiDebugState {
 
 #[derive(Component)]
 struct UiDebugRoot;
+
+#[derive(Component)]
+struct UiDebugNode;
 
 #[derive(Component)]
 struct UiDebugWindow;
@@ -280,6 +284,19 @@ fn refresh_ui_debug_text(
         ),
         With<Node>,
     >,
+    layout_nodes: Query<
+        (
+            Entity,
+            Option<&Name>,
+            &ComputedNode,
+            &UiGlobalTransform,
+            Option<&UiLayerRoot>,
+            Option<&UiPanelRoot>,
+            Option<&Visibility>,
+            Option<&InheritedVisibility>,
+        ),
+        (With<Node>, Without<UiDebugNode>),
+    >,
     mut texts: Query<&mut Text, With<UiDebugText>>,
 ) {
     let Ok(mut text) = texts.single_mut() else {
@@ -295,6 +312,7 @@ fn refresh_ui_debug_text(
             &stats,
             &panels,
             &ui_nodes,
+            &layout_nodes,
         )
     });
 
@@ -384,6 +402,19 @@ fn build_ui_debug_body(
         ),
         With<Node>,
     >,
+    layout_nodes: &Query<
+        (
+            Entity,
+            Option<&Name>,
+            &ComputedNode,
+            &UiGlobalTransform,
+            Option<&UiLayerRoot>,
+            Option<&UiPanelRoot>,
+            Option<&Visibility>,
+            Option<&InheritedVisibility>,
+        ),
+        (With<Node>, Without<UiDebugNode>),
+    >,
 ) -> String {
     let mut lines = vec![
         format!("pointer_blocked: {}", input_state.pointer_blocked),
@@ -417,6 +448,11 @@ fn build_ui_debug_body(
     lines.extend(ui_tree_debug_lines(
         &collect_ui_tree_debug_entries(ui_nodes),
         UI_DEBUG_TREE_MAX_LINES,
+    ));
+    lines.push(String::new());
+    lines.extend(layout_bounds_debug_lines(
+        &collect_layout_debug_entries(layout_nodes),
+        UI_DEBUG_LAYOUT_BOUNDS_MAX_LINES,
     ));
 
     lines.join("\n")
@@ -462,6 +498,22 @@ struct UiDebugTreeEntry {
     panel_kind: Option<UiPanelKind>,
     visible: &'static str,
     inherited_visible: &'static str,
+}
+
+#[derive(Clone, Debug)]
+struct UiDebugLayoutEntry {
+    entity: Entity,
+    name: Option<String>,
+    size: Vec2,
+    center: Vec2,
+    scale: Vec2,
+    rotation: f32,
+    layer: Option<UiLayer>,
+    panel_id: Option<UiPanelId>,
+    panel_kind: Option<UiPanelKind>,
+    visible: &'static str,
+    inherited_visible: &'static str,
+    stack_index: u32,
 }
 
 fn collect_panel_debug_entries(
@@ -645,6 +697,110 @@ fn ui_tree_entry_line(entry: &UiDebugTreeEntry) -> String {
     )
 }
 
+fn collect_layout_debug_entries(
+    layout_nodes: &Query<
+        (
+            Entity,
+            Option<&Name>,
+            &ComputedNode,
+            &UiGlobalTransform,
+            Option<&UiLayerRoot>,
+            Option<&UiPanelRoot>,
+            Option<&Visibility>,
+            Option<&InheritedVisibility>,
+        ),
+        (With<Node>, Without<UiDebugNode>),
+    >,
+) -> Vec<UiDebugLayoutEntry> {
+    let mut entries = layout_nodes
+        .iter()
+        .map(
+            |(
+                entity,
+                name,
+                computed,
+                transform,
+                layer,
+                panel,
+                visibility,
+                inherited_visibility,
+            )| {
+                let (scale, rotation, center) = transform.to_scale_angle_translation();
+
+                UiDebugLayoutEntry {
+                    entity,
+                    name: name.map(|name| name.as_str().to_string()),
+                    size: computed.size(),
+                    center,
+                    scale,
+                    rotation,
+                    layer: layer.map(|layer| layer.layer),
+                    panel_id: panel.map(|panel| panel.id),
+                    panel_kind: panel.map(|panel| panel.kind),
+                    visible: visibility_label(visibility),
+                    inherited_visible: inherited_visibility_label(inherited_visibility),
+                    stack_index: computed.stack_index(),
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+
+    sort_layout_debug_entries(&mut entries);
+    entries
+}
+
+fn sort_layout_debug_entries(entries: &mut [UiDebugLayoutEntry]) {
+    entries.sort_by_key(|entry| {
+        (
+            layout_entry_kind_order(entry),
+            entry.layer.map_or(u8::MAX, ui_layer_order),
+            entry.panel_kind.map_or(u8::MAX, panel_kind_order),
+            entry.panel_id.map_or(u8::MAX, panel_id_order),
+            entry.stack_index,
+            entry.entity,
+        )
+    });
+}
+
+fn layout_bounds_debug_lines(entries: &[UiDebugLayoutEntry], max_lines: usize) -> Vec<String> {
+    let mut lines = vec!["layout bounds:".to_string()];
+
+    if entries.is_empty() {
+        lines.push("  none".to_string());
+        return lines;
+    }
+
+    for entry in entries.iter().take(max_lines) {
+        lines.push(layout_bounds_entry_line(entry));
+    }
+
+    if entries.len() > max_lines {
+        lines.push(format!("  ... {} more UI nodes", entries.len() - max_lines));
+    }
+
+    lines
+}
+
+fn layout_bounds_entry_line(entry: &UiDebugLayoutEntry) -> String {
+    let top_left = entry.center - entry.size * 0.5;
+
+    format!(
+        "  {:?} name={} size={} top_left={} center={} scale={} rot={:.2} visible={}/{} layer={} panel={} stack={}",
+        entry.entity,
+        entry.name.as_deref().unwrap_or("-"),
+        format_vec2_size(entry.size),
+        format_vec2_point(top_left),
+        format_vec2_point(entry.center),
+        format_vec2_size(entry.scale),
+        entry.rotation,
+        entry.visible,
+        entry.inherited_visible,
+        entry.layer.map_or("-", ui_layer_label),
+        panel_tree_label(entry.panel_kind, entry.panel_id),
+        entry.stack_index,
+    )
+}
+
 fn sync_ui_debug_panel_highlights(
     mut commands: Commands,
     debug_state: Res<UiDebugState>,
@@ -720,6 +876,7 @@ fn spawn_ui_debug_panel(
 
     let mut root = commands.spawn((
         UiDebugRoot,
+        UiDebugNode,
         UiLayerRoot {
             layer: UiLayer::Debug,
         },
@@ -740,6 +897,7 @@ fn spawn_ui_debug_panel(
 
     root.with_children(|root| {
         root.spawn((
+            UiDebugNode,
             Node {
                 width: percent(100),
                 ..default()
@@ -753,6 +911,7 @@ fn spawn_ui_debug_panel(
             Pickable::IGNORE,
         ));
         root.spawn((
+            UiDebugNode,
             Node {
                 width: percent(100),
                 ..default()
@@ -901,6 +1060,14 @@ fn option_entity_label(entity: Option<Entity>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
+fn format_vec2_size(value: Vec2) -> String {
+    format!("{:.1}x{:.1}", value.x, value.y)
+}
+
+fn format_vec2_point(value: Vec2) -> String {
+    format!("({:.1},{:.1})", value.x, value.y)
+}
+
 fn panel_tree_label(kind: Option<UiPanelKind>, id: Option<UiPanelId>) -> String {
     match (kind, id) {
         (Some(kind), Some(id)) => format!("{}::{id:?}", panel_kind_label(kind)),
@@ -933,6 +1100,14 @@ fn panel_matches_filter(filter: UiDebugPanelFilter, kind: UiPanelKind, active: b
         UiDebugPanelFilter::BlockingPanelsOnly => {
             active && matches!(kind, UiPanelKind::Modal | UiPanelKind::BlockingOverlay)
         }
+    }
+}
+
+fn layout_entry_kind_order(entry: &UiDebugLayoutEntry) -> u8 {
+    if entry.layer.is_some() || entry.panel_id.is_some() {
+        0
+    } else {
+        1
     }
 }
 
@@ -1032,6 +1207,23 @@ mod tests {
             panel_kind: Some(UiPanelKind::Page),
             visible: "visible",
             inherited_visible: "inherited-visible",
+        }
+    }
+
+    fn debug_layout_entry(index: u32) -> UiDebugLayoutEntry {
+        UiDebugLayoutEntry {
+            entity: entity(index),
+            name: Some(format!("layout-node-{index}")),
+            size: Vec2::new(120.0 + index as f32, 48.0),
+            center: Vec2::new(240.0, 96.0 + index as f32),
+            scale: Vec2::ONE,
+            rotation: 0.0,
+            layer: Some(UiLayer::Page),
+            panel_id: Some(UiPanelId::UiGalleryPage),
+            panel_kind: Some(UiPanelKind::Page),
+            visible: "visible",
+            inherited_visible: "inherited-visible",
+            stack_index: index,
         }
     }
 
@@ -1266,6 +1458,61 @@ mod tests {
         assert!(line.contains("panel=Modal::ConfirmModal"));
         assert!(line.contains("parent="));
         assert!(line.contains("visible/inherited-visible"));
+    }
+
+    #[test]
+    fn layout_bounds_entry_line_includes_bounds_visibility_layer_and_panel() {
+        let entry = UiDebugLayoutEntry {
+            entity: entity(8),
+            name: Some("gallery-root".to_string()),
+            size: Vec2::new(200.0, 80.0),
+            center: Vec2::new(300.0, 140.0),
+            scale: Vec2::ONE,
+            rotation: 0.0,
+            layer: Some(UiLayer::Page),
+            panel_id: Some(UiPanelId::UiGalleryPage),
+            panel_kind: Some(UiPanelKind::Page),
+            visible: "visible",
+            inherited_visible: "inherited-visible",
+            stack_index: 12,
+        };
+
+        let line = layout_bounds_entry_line(&entry);
+
+        assert!(line.contains("gallery-root"));
+        assert!(line.contains("size=200.0x80.0"));
+        assert!(line.contains("top_left=(200.0,100.0)"));
+        assert!(line.contains("center=(300.0,140.0)"));
+        assert!(line.contains("visible/inherited-visible"));
+        assert!(line.contains("layer=Page"));
+        assert!(line.contains("panel=Page::UiGalleryPage"));
+        assert!(line.contains("stack=12"));
+    }
+
+    #[test]
+    fn layout_bounds_lines_truncate_long_lists() {
+        let entries = vec![
+            debug_layout_entry(1),
+            debug_layout_entry(2),
+            debug_layout_entry(3),
+            debug_layout_entry(4),
+        ];
+
+        let lines = layout_bounds_debug_lines(&entries, 2);
+
+        assert_eq!(lines[0], "layout bounds:");
+        assert_eq!(lines.len(), 4);
+        assert!(lines[1].contains("layout-node-1"));
+        assert!(lines[2].contains("layout-node-2"));
+        assert_eq!(lines[3], "  ... 2 more UI nodes");
+    }
+
+    #[test]
+    fn layout_bounds_lines_show_empty_state() {
+        assert_eq!(
+            layout_bounds_debug_lines(&[], 16),
+            vec!["layout bounds:", "  none"]
+        );
     }
 
     #[test]
