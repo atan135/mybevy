@@ -821,6 +821,16 @@ pub(in crate::game) struct UiInputState {
   - 为 panel 切换、长列表滚动和大量文本更新补充专门压力样例，区分静态节点成本和动态刷新成本。
   - 在 Android 真机记录实际帧率、触控响应和 F3 stats 表现，作为 P3-05 平台验证输入。
 
+### P3-01 UI 动画基础
+
+- P3-01-01 已新增 UI 动画核心模块 `project/src/game/ui/core/animation.rs`：
+  - 新增 `UiAnimationPlugin`，已挂入 `UiFrameworkPlugin`。
+  - 新增 `UiAnimationSystems::Tick` 系统集，作为后续 Toast、Loading、Confirm 等动画排序入口。
+  - 新增 `UiAnimatedAlpha` 组件，支持动画总时长、elapsed、Linear / EaseOutCubic / EaseInOutCubic 缓动、完成状态和完成策略。
+  - 当前完成策略支持保留组件、移除组件和 despawn entity；完成后保留组件的动画会停止 tick 写入。
+  - 第一版目标属性仅覆盖挂载实体自身的 `BackgroundColor` 和 `TextColor` alpha，不递归处理子节点，也未接入具体 overlay 行为。
+- 自动验证：P3-01-01 已通过 `cargo fmt --check`、`cargo test` 和 `cargo check`。
+
 ### P3-02 数据绑定基础
 
 - P3-02-01 已新增数据绑定核心模块 `project/src/game/ui/core/binding.rs`：

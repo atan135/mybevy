@@ -1,3 +1,4 @@
+pub(in crate::game) mod animation;
 pub(in crate::game) mod binding;
 pub(in crate::game) mod focus;
 pub(in crate::game) mod framework;
@@ -6,6 +7,10 @@ pub(in crate::game) mod layer;
 pub(in crate::game) mod panel;
 pub(in crate::game) mod stats;
 
+#[allow(unused_imports)]
+pub(in crate::game) use animation::{
+    UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiAnimationState, UiAnimationSystems,
+};
 pub(in crate::game) use focus::UiFocusSystems;
 pub(in crate::game) use framework::UiFrameworkPlugin;
 pub(in crate::game) use input::{UiInputState, UiInputSystems};

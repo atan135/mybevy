@@ -2,8 +2,8 @@ use bevy::prelude::*;
 
 use crate::game::ui::{
     core::{
-        binding::UiBindingPlugin, focus::UiFocusPlugin, input::UiInputPlugin, layer::UiLayerPlugin,
-        panel::UiPanelPlugin, stats::UiStatsPlugin,
+        animation::UiAnimationPlugin, binding::UiBindingPlugin, focus::UiFocusPlugin,
+        input::UiInputPlugin, layer::UiLayerPlugin, panel::UiPanelPlugin, stats::UiStatsPlugin,
     },
     debug::UiDebugPlugin,
     i18n::UiI18nPlugin,
@@ -27,6 +27,7 @@ impl Plugin for UiFrameworkPlugin {
             UiInputPlugin,
             UiFocusPlugin,
             UiBindingPlugin,
+            UiAnimationPlugin,
             UiStatsPlugin,
             UiDebugPlugin,
         ));
