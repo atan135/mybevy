@@ -830,6 +830,14 @@ pub(in crate::game) struct UiInputState {
   - 当前完成策略支持保留组件、移除组件和 despawn entity；完成后保留组件的动画会停止 tick 写入。
   - 第一版目标属性仅覆盖挂载实体自身的 `BackgroundColor` 和 `TextColor` alpha，不递归处理子节点，也未接入具体 overlay 行为。
 - 自动验证：P3-01-01 已通过 `cargo fmt --check`、`cargo test` 和 `cargo check`。
+- P3-01-02 已将 Toast 接入基础 alpha 动画：
+  - Toast panel 和文本节点生成时从 alpha 0 淡入，使用 `EaseOutCubic`，不改变 Toast root 的输入穿透和层级行为。
+  - Toast 生命周期结束前只触发一次淡出动画，淡出时长会按总 duration 收敛，避免短 Toast 出现负时间或重复插入动画。
+  - Toast panel 边框 alpha 跟随背景 alpha 同步，避免背景淡入时边框提前完整显示。
+  - `UiRouteSystems::Commands` 排在 `UiAnimationSystems::Tick` 前，Toast 边框同步排在动画 tick 后。
+  - 新增 helper 测试覆盖 duration clamp、短时长 fade 计算、淡出触发时机和防重复触发。
+- 自动验证：P3-01-02 已通过 `cargo fmt --check`、`cargo test` 和 `cargo check`。
+- 当前限制：Toast 关闭旧实例时仍是立即 despawn，未做“被新 Toast 替换时的退出动画”；未做窗口手动视觉验收。
 
 ### P3-02 数据绑定基础
 

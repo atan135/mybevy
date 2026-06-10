@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::ui::{
-    core::{UiLayer, UiLayerRoot},
+    core::{UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer, UiLayerRoot},
     i18n::{UiI18n, UiI18nText},
     style::{
         UiFontAssets, UiTheme,
@@ -10,10 +10,12 @@ use crate::game::ui::{
             UiThemeTextColorRole, UiThemeTextStyleRole,
         },
     },
-    widgets::screen_label,
 };
 
 const DEFAULT_TOAST_DURATION_SECS: f32 = 2.4;
+const MIN_TOAST_DURATION_SECS: f32 = 0.1;
+const TOAST_FADE_IN_SECS: f32 = 0.14;
+const TOAST_FADE_OUT_SECS: f32 = 0.2;
 
 #[derive(Clone, Debug)]
 pub(in crate::game) struct UiToast {
@@ -44,15 +46,39 @@ impl UiToast {
 #[derive(Component)]
 pub(in crate::game) struct UiToastRoot {
     timer: Timer,
+    fade_out_started: bool,
+    fade_out_secs: f32,
 }
+
+#[derive(Component)]
+pub(in crate::game) struct UiToastAnimatedVisual;
 
 pub(in crate::game) fn tick_toasts(
     mut commands: Commands,
     time: Res<Time>,
     mut toasts: Query<(Entity, &mut UiToastRoot)>,
+    children: Query<&Children>,
+    visuals: Query<Entity, With<UiToastAnimatedVisual>>,
 ) {
     for (entity, mut toast) in &mut toasts {
         toast.timer.tick(time.delta());
+
+        if should_start_toast_fade_out(
+            toast.timer.elapsed_secs(),
+            toast.timer.duration().as_secs_f32(),
+            toast.fade_out_secs,
+            toast.fade_out_started,
+        ) {
+            toast.fade_out_started = true;
+            start_toast_fade_out(
+                &mut commands,
+                entity,
+                toast.fade_out_secs,
+                &children,
+                &visuals,
+            );
+        }
+
         if toast.timer.is_finished() {
             commands.entity(entity).try_despawn();
         }
@@ -65,10 +91,16 @@ pub(in crate::game) fn spawn_toast(
     fonts: &UiFontAssets,
     toast: &UiToast,
 ) {
+    let duration_secs = toast_duration_secs(toast.duration_secs);
+    let fade_in_secs = toast_fade_in_secs(duration_secs);
+    let fade_out_secs = toast_fade_out_secs(duration_secs);
+
     commands
         .spawn((
             UiToastRoot {
-                timer: Timer::from_seconds(toast.duration_secs.max(0.1), TimerMode::Once),
+                timer: Timer::from_seconds(duration_secs, TimerMode::Once),
+                fade_out_started: false,
+                fade_out_secs,
             },
             UiLayerRoot {
                 layer: UiLayer::Toast,
@@ -95,31 +127,21 @@ pub(in crate::game) fn spawn_toast(
                     border_radius: BorderRadius::all(px(theme.button.radius)),
                     ..default()
                 },
-                BackgroundColor(theme.colors.panel_background),
-                BorderColor::all(theme.colors.panel_border),
+                BackgroundColor(theme.colors.panel_background.with_alpha(0.0)),
+                BorderColor::all(theme.colors.panel_border.with_alpha(0.0)),
                 UiThemeBackgroundRole::Panel,
                 UiThemeBorderRole::Panel,
+                UiToastAnimatedVisual,
+                toast_fade_in_animation(fade_in_secs),
             ))
             .with_children(|panel| {
                 if let Some(i18n_text) = toast.i18n_text.clone() {
                     panel.spawn((
-                        screen_label(
-                            theme,
-                            fonts,
-                            toast.text.clone(),
-                            UiThemeTextStyleRole::Caption,
-                            UiThemeTextColorRole::Primary,
-                        ),
+                        toast_label(theme, fonts, toast.text.clone(), fade_in_secs),
                         i18n_text,
                     ));
                 } else {
-                    panel.spawn(screen_label(
-                        theme,
-                        fonts,
-                        toast.text.clone(),
-                        UiThemeTextStyleRole::Caption,
-                        UiThemeTextColorRole::Primary,
-                    ));
+                    panel.spawn(toast_label(theme, fonts, toast.text.clone(), fade_in_secs));
                 }
             });
         });
@@ -131,5 +153,157 @@ pub(in crate::game) fn close_toasts(
 ) {
     for entity in toast_roots {
         commands.entity(entity).try_despawn();
+    }
+}
+
+pub(in crate::game) fn sync_toast_border_alpha(
+    mut panels: Query<(&BackgroundColor, &mut BorderColor), With<UiToastAnimatedVisual>>,
+) {
+    for (background, mut border) in &mut panels {
+        let next_border = border_with_alpha(*border, background.0.to_srgba().alpha);
+        if *border != next_border {
+            *border = next_border;
+        }
+    }
+}
+
+fn start_toast_fade_out(
+    commands: &mut Commands,
+    root: Entity,
+    fade_out_secs: f32,
+    children: &Query<&Children>,
+    visuals: &Query<Entity, With<UiToastAnimatedVisual>>,
+) {
+    for entity in children.iter_descendants(root) {
+        if visuals.get(entity).is_ok() {
+            commands
+                .entity(entity)
+                .insert(toast_fade_out_animation(fade_out_secs));
+        }
+    }
+}
+
+fn border_with_alpha(border: BorderColor, alpha: f32) -> BorderColor {
+    BorderColor {
+        top: border.top.with_alpha(alpha),
+        right: border.right.with_alpha(alpha),
+        bottom: border.bottom.with_alpha(alpha),
+        left: border.left.with_alpha(alpha),
+    }
+}
+
+fn toast_fade_in_animation(duration_secs: f32) -> UiAnimatedAlpha {
+    UiAnimatedAlpha::fade_in(duration_secs)
+        .with_easing(UiAnimationEasing::EaseOutCubic)
+        .with_completion(UiAnimationCompletion::RemoveComponent)
+}
+
+fn toast_fade_out_animation(duration_secs: f32) -> UiAnimatedAlpha {
+    UiAnimatedAlpha::fade_out(duration_secs)
+        .with_easing(UiAnimationEasing::EaseOutCubic)
+        .with_completion(UiAnimationCompletion::KeepComponent)
+}
+
+fn toast_label(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    fade_in_secs: f32,
+) -> impl Bundle {
+    (
+        Text::new(text),
+        TextFont {
+            font: fonts.regular.clone(),
+            font_size: UiThemeTextStyleRole::Caption.font_size(theme),
+            ..default()
+        },
+        TextColor(UiThemeTextColorRole::Primary.color(theme).with_alpha(0.0)),
+        UiThemeTextColorRole::Primary,
+        UiThemeTextStyleRole::Caption,
+        UiToastAnimatedVisual,
+        toast_fade_in_animation(fade_in_secs),
+    )
+}
+
+fn toast_duration_secs(duration_secs: f32) -> f32 {
+    duration_secs.max(MIN_TOAST_DURATION_SECS)
+}
+
+fn toast_fade_in_secs(duration_secs: f32) -> f32 {
+    TOAST_FADE_IN_SECS.min(duration_secs * 0.5)
+}
+
+fn toast_fade_out_secs(duration_secs: f32) -> f32 {
+    TOAST_FADE_OUT_SECS.min(duration_secs * 0.5)
+}
+
+fn toast_fade_out_starts_at(duration_secs: f32, fade_out_secs: f32) -> f32 {
+    (duration_secs - fade_out_secs).max(0.0)
+}
+
+fn should_start_toast_fade_out(
+    elapsed_secs: f32,
+    duration_secs: f32,
+    fade_out_secs: f32,
+    fade_out_started: bool,
+) -> bool {
+    !fade_out_started && elapsed_secs >= toast_fade_out_starts_at(duration_secs, fade_out_secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EPSILON: f32 = 0.0001;
+
+    fn assert_approx_eq(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= EPSILON,
+            "expected {actual} to be approximately {expected}"
+        );
+    }
+
+    #[test]
+    fn toast_duration_is_clamped() {
+        assert_approx_eq(toast_duration_secs(2.4), 2.4);
+        assert_approx_eq(toast_duration_secs(0.02), MIN_TOAST_DURATION_SECS);
+    }
+
+    #[test]
+    fn fade_lengths_fit_short_durations() {
+        let duration_secs = toast_duration_secs(0.1);
+
+        assert_approx_eq(toast_fade_in_secs(duration_secs), 0.05);
+        assert_approx_eq(toast_fade_out_secs(duration_secs), 0.05);
+        assert_approx_eq(
+            toast_fade_out_starts_at(duration_secs, toast_fade_out_secs(duration_secs)),
+            0.05,
+        );
+    }
+
+    #[test]
+    fn fade_out_starts_near_lifecycle_end() {
+        let duration_secs = toast_duration_secs(2.4);
+        let fade_out_secs = toast_fade_out_secs(duration_secs);
+
+        assert_approx_eq(fade_out_secs, TOAST_FADE_OUT_SECS);
+        assert_approx_eq(toast_fade_out_starts_at(duration_secs, fade_out_secs), 2.2);
+        assert!(!should_start_toast_fade_out(
+            2.19,
+            duration_secs,
+            fade_out_secs,
+            false,
+        ));
+        assert!(should_start_toast_fade_out(
+            2.2,
+            duration_secs,
+            fade_out_secs,
+            false,
+        ));
+    }
+
+    #[test]
+    fn fade_out_does_not_repeat_once_started() {
+        assert!(!should_start_toast_fade_out(2.4, 2.4, 0.2, true));
     }
 }
