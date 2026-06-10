@@ -751,6 +751,19 @@ pub(in crate::game) struct UiInputState {
 - 复制内容与屏幕显示保持一致：包含当前 header 和 body；如果 `F4` 冻结中，会复制当前 header 加冻结 body。
 - 当前限制：内部缓存主要用于调试和后续扩展，暂不能直接粘贴到外部编辑器。后续如需要桌面系统剪贴板，可在现有 `last_copied_text` 基础上增加平台剪贴板桥接；Android 仍建议保留内部缓存 / 日志降级。
 
+### P3-04-05 节点树和 Panel 栈视图
+
+- F3 调试面板正文新增 `panel stack` 区域：
+  - 基于当前 `UiPanelRoot` 查询整理 active panels。
+  - 按 `UiPanelKind`、`ZIndex`、`UiPanelId` 和 `Entity` 输出 bottom -> top 顺序。
+  - 独立于 `F5` 面板过滤；`F5` 仍只影响原 `panels (...)` 列表，避免过滤状态掩盖真实 active 栈。
+- F3 调试面板正文新增轻量 `ui tree` 区域：
+  - 第一版只显示 root-like UI nodes，即带 `UiLayerRoot` 或 `UiPanelRoot` 的 `Node`。
+  - 每行显示 `Entity`、可选 `Name`、父实体、`UiLayer`、Panel 标识和 `Visibility / InheritedVisibility`。
+  - 默认最多显示 24 行，超出后显示剩余数量，避免调试文本过长影响可读性。
+- 新增 helper 测试覆盖 Panel 栈行格式、`F5` 过滤不影响栈视图、`ui tree` 截断和 tree 行内容。
+- 当前限制：这不是完整可点击 Inspector，不做递归子节点展开、布局矩形、padding / border 可视化或选中实体详情；这些留给后续 `P3-04-06 布局边界调试` 或完整 UI Inspector。
+
 ### P3-03 UI 性能统计与高频系统巡检
 
 - P3-03-01 已新增 `UiStatsPlugin` 和 `UiStats`，当前每帧采集 UI `Node` 总数、可见 `Node` 数、`Text` 节点数、Panel 总数和按 `UiPanelKind` 聚合计数。

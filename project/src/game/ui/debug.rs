@@ -22,6 +22,7 @@ use crate::game::ui::{
 
 const UI_DEBUG_TARGET_ENV: &str = "MYBEVY_UI_DEBUG_TARGET";
 const UI_DEBUG_RENDER_LAYER: usize = 31;
+const UI_DEBUG_TREE_MAX_LINES: usize = 24;
 
 pub(in crate::game) struct UiDebugPlugin;
 
@@ -265,7 +266,20 @@ fn refresh_ui_debug_text(
         &UiPanelRoot,
         Option<&Visibility>,
         Option<&InheritedVisibility>,
+        Option<&ZIndex>,
     )>,
+    ui_nodes: Query<
+        (
+            Entity,
+            Option<&Name>,
+            Option<&ChildOf>,
+            Option<&UiLayerRoot>,
+            Option<&UiPanelRoot>,
+            Option<&Visibility>,
+            Option<&InheritedVisibility>,
+        ),
+        With<Node>,
+    >,
     mut texts: Query<&mut Text, With<UiDebugText>>,
 ) {
     let Ok(mut text) = texts.single_mut() else {
@@ -274,7 +288,14 @@ fn refresh_ui_debug_text(
     };
 
     let display = build_ui_debug_display_text(&mut debug_state, |debug_state| {
-        build_ui_debug_body(debug_state, &input_state, &focus_state, &stats, &panels)
+        build_ui_debug_body(
+            debug_state,
+            &input_state,
+            &focus_state,
+            &stats,
+            &panels,
+            &ui_nodes,
+        )
     });
 
     debug_state.last_display_text = Some(display.clone());
@@ -349,7 +370,20 @@ fn build_ui_debug_body(
         &UiPanelRoot,
         Option<&Visibility>,
         Option<&InheritedVisibility>,
+        Option<&ZIndex>,
     )>,
+    ui_nodes: &Query<
+        (
+            Entity,
+            Option<&Name>,
+            Option<&ChildOf>,
+            Option<&UiLayerRoot>,
+            Option<&UiPanelRoot>,
+            Option<&Visibility>,
+            Option<&InheritedVisibility>,
+        ),
+        With<Node>,
+    >,
 ) -> String {
     let mut lines = vec![
         format!("pointer_blocked: {}", input_state.pointer_blocked),
@@ -371,42 +405,19 @@ fn build_ui_debug_body(
         }
     }
 
-    lines.extend(["panels:".to_string()]);
-
-    let mut panel_entries = panels.iter().collect::<Vec<_>>();
-    panel_entries.sort_by_key(|(entity, panel, _, _)| {
-        (
-            panel_kind_order(panel.kind),
-            panel_id_order(panel.id),
-            *entity,
-        )
-    });
-
-    let panel_entries = panel_entries
-        .into_iter()
-        .filter(|(_, panel, visibility, inherited_visibility)| {
-            panel_matches_filter(
-                debug_state.panel_filter,
-                panel.kind,
-                is_panel_active(*visibility, *inherited_visibility),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    if panel_entries.is_empty() {
-        lines.push("  none".to_string());
-    } else {
-        for (entity, panel, visibility, _) in panel_entries {
-            lines.push(format!(
-                "  {:?} {:?} owner={:?} visible={} entity={:?}",
-                panel.id,
-                panel.kind,
-                panel.owner_mode,
-                visibility_label(visibility),
-                entity,
-            ));
-        }
-    }
+    let panel_entries = collect_panel_debug_entries(panels);
+    lines.push(String::new());
+    lines.extend(panel_list_debug_lines(
+        debug_state.panel_filter,
+        &panel_entries,
+    ));
+    lines.push(String::new());
+    lines.extend(panel_stack_debug_lines(&panel_entries));
+    lines.push(String::new());
+    lines.extend(ui_tree_debug_lines(
+        &collect_ui_tree_debug_entries(ui_nodes),
+        UI_DEBUG_TREE_MAX_LINES,
+    ));
 
     lines.join("\n")
 }
@@ -428,6 +439,210 @@ fn ui_stats_debug_lines(stats: &UiStats) -> Vec<String> {
             stats.panel_kind_counts.blocking_overlay,
         ),
     ]
+}
+
+#[derive(Clone, Debug)]
+struct UiDebugPanelEntry {
+    entity: Entity,
+    id: UiPanelId,
+    kind: UiPanelKind,
+    owner_mode: String,
+    visible: &'static str,
+    active: bool,
+    z_index: i32,
+}
+
+#[derive(Clone, Debug)]
+struct UiDebugTreeEntry {
+    entity: Entity,
+    name: Option<String>,
+    parent: Option<Entity>,
+    layer: Option<UiLayer>,
+    panel_id: Option<UiPanelId>,
+    panel_kind: Option<UiPanelKind>,
+    visible: &'static str,
+    inherited_visible: &'static str,
+}
+
+fn collect_panel_debug_entries(
+    panels: &Query<(
+        Entity,
+        &UiPanelRoot,
+        Option<&Visibility>,
+        Option<&InheritedVisibility>,
+        Option<&ZIndex>,
+    )>,
+) -> Vec<UiDebugPanelEntry> {
+    let mut entries = panels
+        .iter()
+        .map(
+            |(entity, panel, visibility, inherited_visibility, z_index)| UiDebugPanelEntry {
+                entity,
+                id: panel.id,
+                kind: panel.kind,
+                owner_mode: format!("{:?}", panel.owner_mode),
+                visible: visibility_label(visibility),
+                active: is_panel_active(visibility, inherited_visibility),
+                z_index: z_index_value(z_index),
+            },
+        )
+        .collect::<Vec<_>>();
+
+    sort_panel_debug_entries(&mut entries);
+    entries
+}
+
+fn sort_panel_debug_entries(entries: &mut [UiDebugPanelEntry]) {
+    entries.sort_by_key(|entry| {
+        (
+            panel_kind_order(entry.kind),
+            entry.z_index,
+            panel_id_order(entry.id),
+            entry.entity,
+        )
+    });
+}
+
+fn panel_list_debug_lines(
+    filter: UiDebugPanelFilter,
+    panel_entries: &[UiDebugPanelEntry],
+) -> Vec<String> {
+    let mut lines = vec![format!("panels ({})", filter.label())];
+    let entries = panel_entries
+        .iter()
+        .filter(|entry| panel_matches_filter(filter, entry.kind, entry.active))
+        .collect::<Vec<_>>();
+
+    if entries.is_empty() {
+        lines.push("  none".to_string());
+        return lines;
+    }
+
+    for entry in entries {
+        lines.push(format!(
+            "  {:?} {:?} owner={} visible={} active={} z={} entity={:?}",
+            entry.id,
+            entry.kind,
+            entry.owner_mode,
+            entry.visible,
+            entry.active,
+            entry.z_index,
+            entry.entity,
+        ));
+    }
+
+    lines
+}
+
+fn panel_stack_debug_lines(panel_entries: &[UiDebugPanelEntry]) -> Vec<String> {
+    let mut lines = vec!["panel stack:".to_string()];
+    let entries = panel_entries
+        .iter()
+        .filter(|entry| entry.active)
+        .collect::<Vec<_>>();
+
+    if entries.is_empty() {
+        lines.push("  none".to_string());
+        return lines;
+    }
+
+    lines.push("  bottom -> top (active panels):".to_string());
+    for (index, entry) in entries.iter().enumerate() {
+        lines.push(format!(
+            "  [{:02}] {} {:?} owner={} z={} entity={:?}",
+            index,
+            panel_kind_label(entry.kind),
+            entry.id,
+            entry.owner_mode,
+            entry.z_index,
+            entry.entity,
+        ));
+    }
+
+    lines
+}
+
+fn collect_ui_tree_debug_entries(
+    ui_nodes: &Query<
+        (
+            Entity,
+            Option<&Name>,
+            Option<&ChildOf>,
+            Option<&UiLayerRoot>,
+            Option<&UiPanelRoot>,
+            Option<&Visibility>,
+            Option<&InheritedVisibility>,
+        ),
+        With<Node>,
+    >,
+) -> Vec<UiDebugTreeEntry> {
+    let mut entries = ui_nodes
+        .iter()
+        .filter(|(_, _, _, layer, panel, _, _)| layer.is_some() || panel.is_some())
+        .map(
+            |(entity, name, parent, layer, panel, visibility, inherited_visibility)| {
+                UiDebugTreeEntry {
+                    entity,
+                    name: name.map(|name| name.as_str().to_string()),
+                    parent: parent.map(ChildOf::parent),
+                    layer: layer.map(|layer| layer.layer),
+                    panel_id: panel.map(|panel| panel.id),
+                    panel_kind: panel.map(|panel| panel.kind),
+                    visible: visibility_label(visibility),
+                    inherited_visible: inherited_visibility_label(inherited_visibility),
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+
+    sort_ui_tree_debug_entries(&mut entries);
+    entries
+}
+
+fn sort_ui_tree_debug_entries(entries: &mut [UiDebugTreeEntry]) {
+    entries.sort_by_key(|entry| {
+        (
+            entry.layer.map_or(u8::MAX, ui_layer_order),
+            entry.panel_kind.map_or(u8::MAX, panel_kind_order),
+            entry.panel_id.map_or(u8::MAX, panel_id_order),
+            entry.entity,
+        )
+    });
+}
+
+fn ui_tree_debug_lines(entries: &[UiDebugTreeEntry], max_lines: usize) -> Vec<String> {
+    let mut lines = vec!["ui tree:".to_string()];
+
+    if entries.is_empty() {
+        lines.push("  none".to_string());
+        return lines;
+    }
+
+    for entry in entries.iter().take(max_lines) {
+        lines.push(ui_tree_entry_line(entry));
+    }
+
+    if entries.len() > max_lines {
+        lines.push(format!(
+            "  ... {} more root-like UI nodes",
+            entries.len() - max_lines
+        ));
+    }
+
+    lines
+}
+
+fn ui_tree_entry_line(entry: &UiDebugTreeEntry) -> String {
+    format!(
+        "  {:?} name={} parent={} layer={} panel={} visible={}/{}",
+        entry.entity,
+        entry.name.as_deref().unwrap_or("-"),
+        option_entity_label(entry.parent),
+        entry.layer.map_or("-", ui_layer_label),
+        panel_tree_label(entry.panel_kind, entry.panel_id),
+        entry.visible,
+        entry.inherited_visible,
+    )
 }
 
 fn sync_ui_debug_panel_highlights(
@@ -672,6 +887,33 @@ fn visibility_label(visibility: Option<&Visibility>) -> &'static str {
     }
 }
 
+fn inherited_visibility_label(visibility: Option<&InheritedVisibility>) -> &'static str {
+    match visibility {
+        Some(visibility) if visibility.get() => "inherited-visible",
+        Some(_) => "inherited-hidden",
+        None => "inherited-unknown",
+    }
+}
+
+fn option_entity_label(entity: Option<Entity>) -> String {
+    entity
+        .map(|entity| format!("{entity:?}"))
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn panel_tree_label(kind: Option<UiPanelKind>, id: Option<UiPanelId>) -> String {
+    match (kind, id) {
+        (Some(kind), Some(id)) => format!("{}::{id:?}", panel_kind_label(kind)),
+        (Some(kind), None) => panel_kind_label(kind).to_string(),
+        (None, Some(id)) => format!("{id:?}"),
+        (None, None) => "-".to_string(),
+    }
+}
+
+fn z_index_value(z_index: Option<&ZIndex>) -> i32 {
+    z_index.map_or(0, |z_index| z_index.0)
+}
+
 fn on_off_label(value: bool) -> &'static str {
     if value { "on" } else { "off" }
 }
@@ -708,6 +950,38 @@ fn panel_kind_order(kind: UiPanelKind) -> u8 {
     }
 }
 
+fn panel_kind_label(kind: UiPanelKind) -> &'static str {
+    match kind {
+        UiPanelKind::Page => "Page",
+        UiPanelKind::Hud => "Hud",
+        UiPanelKind::Floating => "Floating",
+        UiPanelKind::Modal => "Modal",
+        UiPanelKind::BlockingOverlay => "Blocking",
+    }
+}
+
+fn ui_layer_order(layer: UiLayer) -> u8 {
+    match layer {
+        UiLayer::Page => 0,
+        UiLayer::Floating => 1,
+        UiLayer::Modal => 2,
+        UiLayer::Loading => 3,
+        UiLayer::Toast => 4,
+        UiLayer::Debug => 5,
+    }
+}
+
+fn ui_layer_label(layer: UiLayer) -> &'static str {
+    match layer {
+        UiLayer::Page => "Page",
+        UiLayer::Floating => "Floating",
+        UiLayer::Modal => "Modal",
+        UiLayer::Loading => "Loading",
+        UiLayer::Toast => "Toast",
+        UiLayer::Debug => "Debug",
+    }
+}
+
 fn panel_id_order(id: UiPanelId) -> u8 {
     match id {
         UiPanelId::LoginPage => 0,
@@ -725,6 +999,41 @@ fn panel_id_order(id: UiPanelId) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entity(index: u32) -> Entity {
+        Entity::from_raw_u32(index).unwrap()
+    }
+
+    fn debug_panel_entry(
+        index: u32,
+        id: UiPanelId,
+        kind: UiPanelKind,
+        active: bool,
+        z_index: i32,
+    ) -> UiDebugPanelEntry {
+        UiDebugPanelEntry {
+            entity: entity(index),
+            id,
+            kind,
+            owner_mode: "None".to_string(),
+            visible: if active { "visible" } else { "hidden" },
+            active,
+            z_index,
+        }
+    }
+
+    fn debug_tree_entry(index: u32, layer: UiLayer, id: UiPanelId) -> UiDebugTreeEntry {
+        UiDebugTreeEntry {
+            entity: entity(index),
+            name: Some(format!("node-{index}")),
+            parent: None,
+            layer: Some(layer),
+            panel_id: Some(id),
+            panel_kind: Some(UiPanelKind::Page),
+            visible: "visible",
+            inherited_visible: "inherited-visible",
+        }
+    }
 
     #[test]
     fn debug_panel_filter_cycles_through_modes() {
@@ -864,6 +1173,99 @@ mod tests {
                 "  panels: total=5 page=1 hud=1 floating=1 modal=1 blocking=1",
             ]
         );
+    }
+
+    #[test]
+    fn panel_stack_lines_show_active_panels_in_debug_order() {
+        let mut entries = vec![
+            debug_panel_entry(4, UiPanelId::ConfirmModal, UiPanelKind::Modal, true, 100),
+            debug_panel_entry(
+                3,
+                UiPanelId::GalleryFloating,
+                UiPanelKind::Floating,
+                false,
+                80,
+            ),
+            debug_panel_entry(2, UiPanelId::UiGalleryPage, UiPanelKind::Page, true, 0),
+            debug_panel_entry(
+                5,
+                UiPanelId::GlobalLoading,
+                UiPanelKind::BlockingOverlay,
+                true,
+                120,
+            ),
+        ];
+
+        sort_panel_debug_entries(&mut entries);
+        let lines = panel_stack_debug_lines(&entries);
+
+        assert_eq!(lines[0], "panel stack:");
+        assert_eq!(lines[1], "  bottom -> top (active panels):");
+        assert!(lines[2].contains("[00] Page UiGalleryPage"));
+        assert!(lines[3].contains("[01] Modal ConfirmModal"));
+        assert!(lines[4].contains("[02] Blocking GlobalLoading"));
+        assert!(!lines.join("\n").contains("GalleryFloating"));
+    }
+
+    #[test]
+    fn panel_list_lines_apply_filter_without_affecting_stack() {
+        let entries = vec![
+            debug_panel_entry(1, UiPanelId::UiGalleryPage, UiPanelKind::Page, true, 0),
+            debug_panel_entry(
+                2,
+                UiPanelId::GalleryFloating,
+                UiPanelKind::Floating,
+                true,
+                80,
+            ),
+            debug_panel_entry(3, UiPanelId::ConfirmModal, UiPanelKind::Modal, true, 100),
+        ];
+
+        let lines = panel_list_debug_lines(UiDebugPanelFilter::BlockingPanelsOnly, &entries);
+
+        assert_eq!(lines[0], "panels (blocking panels only)");
+        assert!(!lines.join("\n").contains("UiGalleryPage"));
+        assert!(!lines.join("\n").contains("GalleryFloating"));
+        assert!(lines.join("\n").contains("ConfirmModal"));
+    }
+
+    #[test]
+    fn ui_tree_lines_truncate_long_root_like_lists() {
+        let entries = vec![
+            debug_tree_entry(1, UiLayer::Page, UiPanelId::LoginPage),
+            debug_tree_entry(2, UiLayer::Page, UiPanelId::GameListPage),
+            debug_tree_entry(3, UiLayer::Debug, UiPanelId::UiGalleryPage),
+        ];
+
+        let lines = ui_tree_debug_lines(&entries, 2);
+
+        assert_eq!(lines[0], "ui tree:");
+        assert_eq!(lines.len(), 4);
+        assert!(lines[1].contains("node-1"));
+        assert!(lines[2].contains("node-2"));
+        assert_eq!(lines[3], "  ... 1 more root-like UI nodes");
+    }
+
+    #[test]
+    fn ui_tree_entry_line_includes_layer_panel_and_parent() {
+        let entry = UiDebugTreeEntry {
+            entity: entity(7),
+            name: Some("debug-root".to_string()),
+            parent: Some(entity(1)),
+            layer: Some(UiLayer::Debug),
+            panel_id: Some(UiPanelId::ConfirmModal),
+            panel_kind: Some(UiPanelKind::Modal),
+            visible: "visible",
+            inherited_visible: "inherited-visible",
+        };
+
+        let line = ui_tree_entry_line(&entry);
+
+        assert!(line.contains("debug-root"));
+        assert!(line.contains("layer=Debug"));
+        assert!(line.contains("panel=Modal::ConfirmModal"));
+        assert!(line.contains("parent="));
+        assert!(line.contains("visible/inherited-visible"));
     }
 
     #[test]
