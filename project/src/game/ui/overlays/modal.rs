@@ -1,24 +1,27 @@
-use bevy::prelude::*;
+use bevy::{ecs::hierarchy::ChildSpawnerCommands, prelude::*};
 
 use crate::game::{
     navigation::AppUiMode,
     ui::{
-        core::{UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot},
+        core::{
+            UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer, UiLayerRoot,
+            UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot,
+        },
         i18n::{UiI18n, UiI18nText},
         style::{
             UiFontAssets, UiTheme,
             theme::{
-                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
-                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
+                ButtonColors, UiThemeBackgroundRole, UiThemeBorderRole, UiThemeButtonNodeRole,
+                UiThemePanelNodeRole, UiThemeRootNodeRole, UiThemeTextColorRole,
+                UiThemeTextStyleRole,
             },
         },
-        widgets::{
-            DisabledButton, LoadingButton, primary_action_button,
-            primary_action_button_with_i18n_text, screen_label, screen_title,
-            secondary_action_button, secondary_action_button_with_i18n_text,
-        },
+        widgets::controls::{PrimaryButton, SecondaryButton},
+        widgets::{DisabledButton, FocusableButton, FocusedButton, LoadingButton, SelectedButton},
     },
 };
+
+const CONFIRM_ENTRY_FADE_SECS: f32 = 0.16;
 
 #[derive(Clone, Debug)]
 pub(in crate::game) struct UiConfirmModal {
@@ -87,6 +90,14 @@ impl UiI18nTextSpec {
     }
 }
 
+#[derive(Component)]
+pub(in crate::game) struct UiConfirmAnimatedPanel;
+
+#[derive(Clone, Copy, Component)]
+pub(in crate::game) struct UiConfirmAnimatedButton {
+    style: UiModalActionStyle,
+}
+
 pub(in crate::game) fn handle_modal_action_buttons(
     mut modal_results: MessageWriter<UiModalResult>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
@@ -143,9 +154,10 @@ pub(in crate::game) fn spawn_confirm_modal(
                 ..default()
             },
             ZIndex(100),
-            BackgroundColor(theme.colors.modal_overlay_background),
+            BackgroundColor(theme.colors.modal_overlay_background.with_alpha(0.0)),
             UiThemeBackgroundRole::ModalOverlay,
             UiThemeRootNodeRole::BlockingOverlay,
+            confirm_entry_fade_animation(theme.colors.modal_overlay_background),
         ))
         .with_children(|root| {
             root.spawn((
@@ -160,34 +172,38 @@ pub(in crate::game) fn spawn_confirm_modal(
                     border_radius: BorderRadius::all(px(theme.panel.radius)),
                     ..default()
                 },
-                BackgroundColor(theme.colors.panel_background),
-                BorderColor::all(theme.colors.panel_border),
+                BackgroundColor(theme.colors.panel_background.with_alpha(0.0)),
+                BorderColor::all(theme.colors.panel_border.with_alpha(0.0)),
                 UiThemeBackgroundRole::Panel,
                 UiThemeBorderRole::Panel,
+                UiConfirmAnimatedPanel,
+                confirm_entry_fade_animation(theme.colors.panel_background),
             ))
             .with_children(|panel| {
                 if let Some(i18n_text) = modal.title_i18n_text.clone() {
                     panel.spawn((
-                        screen_title(
+                        confirm_text(
                             theme,
                             fonts,
                             modal.title.clone(),
                             UiThemeTextStyleRole::Subtitle,
+                            UiThemeTextColorRole::Primary,
                         ),
                         i18n_text,
                     ));
                 } else {
-                    panel.spawn(screen_title(
+                    panel.spawn(confirm_text(
                         theme,
                         fonts,
                         modal.title.clone(),
                         UiThemeTextStyleRole::Subtitle,
+                        UiThemeTextColorRole::Primary,
                     ));
                 }
 
                 if let Some(i18n_text) = modal.body_i18n_text.clone() {
                     panel.spawn((
-                        screen_label(
+                        confirm_text(
                             theme,
                             fonts,
                             modal.body.clone(),
@@ -197,7 +213,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                         i18n_text,
                     ));
                 } else {
-                    panel.spawn(screen_label(
+                    panel.spawn(confirm_text(
                         theme,
                         fonts,
                         modal.body.clone(),
@@ -209,7 +225,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                 if let Some(detail) = &modal.detail {
                     if let Some(i18n_text) = modal.detail_i18n_text.clone() {
                         panel.spawn((
-                            screen_label(
+                            confirm_text(
                                 theme,
                                 fonts,
                                 detail.clone(),
@@ -219,7 +235,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                             i18n_text,
                         ));
                     } else {
-                        panel.spawn(screen_label(
+                        panel.spawn(confirm_text(
                             theme,
                             fonts,
                             detail.clone(),
@@ -244,54 +260,324 @@ pub(in crate::game) fn spawn_confirm_modal(
                                 id: modal.id,
                                 action: action.action,
                             };
-                            match action.style {
-                                UiModalActionStyle::Primary => {
-                                    if let Some(i18n_text) = action.i18n_text.clone() {
-                                        actions.spawn((
-                                            primary_action_button_with_i18n_text(
-                                                theme,
-                                                fonts,
-                                                action.label.clone(),
-                                                i18n_text,
-                                            ),
-                                            action_marker,
-                                        ));
-                                    } else {
-                                        actions.spawn((
-                                            primary_action_button(
-                                                theme,
-                                                fonts,
-                                                action.label.clone(),
-                                            ),
-                                            action_marker,
-                                        ));
-                                    }
-                                }
-                                UiModalActionStyle::Secondary => {
-                                    if let Some(i18n_text) = action.i18n_text.clone() {
-                                        actions.spawn((
-                                            secondary_action_button_with_i18n_text(
-                                                theme,
-                                                fonts,
-                                                action.label.clone(),
-                                                i18n_text,
-                                            ),
-                                            action_marker,
-                                        ));
-                                    } else {
-                                        actions.spawn((
-                                            secondary_action_button(
-                                                theme,
-                                                fonts,
-                                                action.label.clone(),
-                                            ),
-                                            action_marker,
-                                        ));
-                                    }
-                                }
-                            }
+                            spawn_confirm_action_button(
+                                actions,
+                                theme,
+                                fonts,
+                                action,
+                                action_marker,
+                            );
                         }
                     });
             });
         });
+}
+
+pub(in crate::game) fn sync_confirm_entry_visual_alpha(
+    theme: Res<UiTheme>,
+    mut panels: Query<(&mut BorderColor, Option<&UiAnimatedAlpha>), With<UiConfirmAnimatedPanel>>,
+    mut buttons: Query<(
+        &Interaction,
+        &mut BackgroundColor,
+        &UiConfirmAnimatedButton,
+        Option<&UiAnimatedAlpha>,
+        Has<DisabledButton>,
+        Has<FocusedButton>,
+        Has<SelectedButton>,
+        Has<LoadingButton>,
+    )>,
+) {
+    let border_target_alpha = color_alpha(theme.colors.panel_border);
+
+    for (mut border, animation) in &mut panels {
+        let next_border =
+            border_with_alpha(*border, entry_border_alpha(animation, border_target_alpha));
+        if *border != next_border {
+            *border = next_border;
+        }
+    }
+
+    for (
+        interaction,
+        mut background,
+        animated_button,
+        animation,
+        is_disabled,
+        is_focused,
+        is_selected,
+        is_loading,
+    ) in &mut buttons
+    {
+        let colors = confirm_button_colors(&theme, animated_button.style);
+        let alpha = animation
+            .map(|animation| animation.alpha())
+            .unwrap_or_else(|| color_alpha(background.0));
+        let next_background = BackgroundColor(confirm_button_background_color(
+            colors,
+            *interaction,
+            is_disabled,
+            is_focused,
+            is_selected,
+            is_loading,
+            alpha,
+        ));
+        if *background != next_background {
+            *background = next_background;
+        }
+    }
+}
+
+fn spawn_confirm_action_button(
+    actions: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    action: &UiModalActionSpec,
+    action_marker: UiModalActionButton,
+) {
+    let colors = confirm_button_colors(theme, action.style);
+    let background = colors.idle;
+
+    let mut button = match action.style {
+        UiModalActionStyle::Primary => actions.spawn((
+            confirm_button_base(theme, background),
+            PrimaryButton,
+            UiConfirmAnimatedButton {
+                style: action.style,
+            },
+            confirm_entry_fade_animation(background),
+            action_marker,
+        )),
+        UiModalActionStyle::Secondary => actions.spawn((
+            confirm_button_base(theme, background),
+            SecondaryButton,
+            UiConfirmAnimatedButton {
+                style: action.style,
+            },
+            confirm_entry_fade_animation(background),
+            action_marker,
+        )),
+    };
+
+    button.with_children(|button| {
+        if let Some(i18n_text) = action.i18n_text.clone() {
+            button.spawn((
+                confirm_button_label(theme, fonts, action.label.clone()),
+                i18n_text,
+            ));
+        } else {
+            button.spawn(confirm_button_label(theme, fonts, action.label.clone()));
+        }
+    });
+}
+
+fn confirm_button_base(theme: &UiTheme, background: Color) -> impl Bundle {
+    (
+        Button,
+        FocusableButton,
+        UiThemeButtonNodeRole::Button,
+        Node {
+            min_width: px(theme.button.min_width),
+            height: px(theme.button.height),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border_radius: BorderRadius::all(px(theme.button.radius)),
+            ..default()
+        },
+        BackgroundColor(background.with_alpha(0.0)),
+    )
+}
+
+fn confirm_button_label(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+) -> impl Bundle {
+    confirm_text(
+        theme,
+        fonts,
+        text,
+        UiThemeTextStyleRole::Button,
+        UiThemeTextColorRole::Primary,
+    )
+}
+
+fn confirm_text(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    style_role: UiThemeTextStyleRole,
+    color_role: UiThemeTextColorRole,
+) -> impl Bundle {
+    let color = color_role.color(theme);
+
+    (
+        Text::new(text),
+        TextFont {
+            font: fonts.regular.clone(),
+            font_size: style_role.font_size(theme),
+            ..default()
+        },
+        TextColor(color.with_alpha(0.0)),
+        color_role,
+        style_role,
+        confirm_entry_fade_animation(color),
+    )
+}
+
+fn confirm_entry_fade_animation(color: Color) -> UiAnimatedAlpha {
+    UiAnimatedAlpha::new(0.0, color_alpha(color), CONFIRM_ENTRY_FADE_SECS)
+        .with_easing(UiAnimationEasing::EaseOutCubic)
+        .with_completion(UiAnimationCompletion::RemoveComponent)
+}
+
+fn confirm_button_colors(theme: &UiTheme, style: UiModalActionStyle) -> ButtonColors {
+    match style {
+        UiModalActionStyle::Primary => theme.colors.primary_button,
+        UiModalActionStyle::Secondary => theme.colors.secondary_button,
+    }
+}
+
+fn confirm_button_background_color(
+    colors: ButtonColors,
+    interaction: Interaction,
+    is_disabled: bool,
+    is_focused: bool,
+    is_selected: bool,
+    is_loading: bool,
+    alpha: f32,
+) -> Color {
+    confirm_button_visual_color(
+        colors,
+        interaction,
+        is_disabled,
+        is_focused,
+        is_selected,
+        is_loading,
+    )
+    .with_alpha(alpha.clamp(0.0, 1.0))
+}
+
+fn confirm_button_visual_color(
+    colors: ButtonColors,
+    interaction: Interaction,
+    is_disabled: bool,
+    is_focused: bool,
+    is_selected: bool,
+    is_loading: bool,
+) -> Color {
+    if is_disabled {
+        return colors.disabled;
+    }
+
+    if is_loading {
+        return colors.loading;
+    }
+
+    match interaction {
+        Interaction::Pressed => colors.pressed,
+        Interaction::Hovered => colors.hovered,
+        Interaction::None if is_selected => colors.selected,
+        Interaction::None if is_focused => colors.focused,
+        Interaction::None => colors.idle,
+    }
+}
+
+fn border_with_alpha(border: BorderColor, alpha: f32) -> BorderColor {
+    BorderColor {
+        top: border.top.with_alpha(alpha),
+        right: border.right.with_alpha(alpha),
+        bottom: border.bottom.with_alpha(alpha),
+        left: border.left.with_alpha(alpha),
+    }
+}
+
+fn color_alpha(color: Color) -> f32 {
+    color.to_srgba().alpha
+}
+
+fn entry_border_alpha(animation: Option<&UiAnimatedAlpha>, target_alpha: f32) -> f32 {
+    animation
+        .map(|animation| animation.eased_progress() * target_alpha)
+        .unwrap_or(target_alpha)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EPSILON: f32 = 0.0001;
+
+    fn assert_approx_eq(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= EPSILON,
+            "expected {actual} to be approximately {expected}"
+        );
+    }
+
+    #[test]
+    fn confirm_entry_fade_uses_modal_overlay_alpha_target() {
+        let animation = confirm_entry_fade_animation(Color::srgba(0.1, 0.2, 0.3, 0.72));
+
+        assert_approx_eq(animation.from, 0.0);
+        assert_approx_eq(animation.to, 0.72);
+        assert_approx_eq(animation.duration_secs, CONFIRM_ENTRY_FADE_SECS);
+        assert_eq!(animation.easing, UiAnimationEasing::EaseOutCubic);
+        assert_eq!(animation.completion, UiAnimationCompletion::RemoveComponent);
+    }
+
+    #[test]
+    fn confirm_button_background_keeps_visual_state_and_fade_alpha() {
+        let colors = UiTheme::default().colors.primary_button;
+
+        assert_eq!(
+            confirm_button_visual_color(colors, Interaction::Pressed, true, true, true, true),
+            colors.disabled
+        );
+        assert_eq!(
+            confirm_button_visual_color(colors, Interaction::Pressed, false, true, true, true),
+            colors.loading
+        );
+        assert_eq!(
+            confirm_button_visual_color(colors, Interaction::Hovered, false, false, false, false),
+            colors.hovered
+        );
+
+        let faded = confirm_button_background_color(
+            colors,
+            Interaction::Hovered,
+            false,
+            false,
+            false,
+            false,
+            0.35,
+        );
+
+        assert_eq!(faded.with_alpha(1.0), colors.hovered);
+        assert_approx_eq(color_alpha(faded), 0.35);
+    }
+
+    #[test]
+    fn confirm_border_alpha_follows_panel_background() {
+        let border = BorderColor::all(Color::srgba(0.2, 0.3, 0.4, 1.0));
+        let synced = border_with_alpha(border, 0.58);
+
+        assert_approx_eq(color_alpha(synced.top), 0.58);
+        assert_approx_eq(color_alpha(synced.right), 0.58);
+        assert_approx_eq(color_alpha(synced.bottom), 0.58);
+        assert_approx_eq(color_alpha(synced.left), 0.58);
+    }
+
+    #[test]
+    fn confirm_border_alpha_restores_theme_target_after_entry() {
+        assert_approx_eq(entry_border_alpha(None, 0.9), 0.9);
+
+        let mut animation = confirm_entry_fade_animation(Color::srgba(0.1, 0.2, 0.3, 0.94));
+        animation.tick(CONFIRM_ENTRY_FADE_SECS * 0.5);
+
+        assert_approx_eq(
+            entry_border_alpha(Some(&animation), 0.9),
+            UiAnimationEasing::EaseOutCubic.sample(0.5) * 0.9,
+        );
+    }
 }

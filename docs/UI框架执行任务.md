@@ -838,6 +838,14 @@ pub(in crate::game) struct UiInputState {
   - 新增 helper 测试覆盖 duration clamp、短时长 fade 计算、淡出触发时机和防重复触发。
 - 自动验证：P3-01-02 已通过 `cargo fmt --check`、`cargo test` 和 `cargo check`。
 - 当前限制：Toast 关闭旧实例时仍是立即 despawn，未做“被新 Toast 替换时的退出动画”；未做窗口手动视觉验收。
+- P3-01-03 已将 Loading / Confirm 接入基础入场动画：
+  - Loading 的遮罩、面板和文本生成时从 alpha 0 淡入，完成后移除动画组件；关闭语义仍保持立即 despawn。
+  - Confirm 的遮罩、面板、文本和 action button 生成时淡入，按钮仍保留原 `UiModalActionButton`、`FocusableButton`、Primary / Secondary marker 和点击关闭行为。
+  - Loading / Confirm 的边框 alpha 跟随入场进度同步，Confirm action button 背景会在通用按钮视觉系统之后重新套入入场 alpha，避免破坏 hover / pressed / focused / selected / disabled / loading 视觉优先级。
+  - 本轮为 Confirm 局部生成 action button 结构，以便给按钮文本和按钮背景分别挂入场动画；通用 action button helper 仍保留给其他页面复用。
+  - 新增 helper 测试覆盖入场动画目标 alpha、边框 alpha 同步和 Confirm 按钮视觉优先级。
+- 自动验证：P3-01-03 已通过 `cargo fmt --check`、`cargo test` 和 `cargo check`。
+- 当前限制：Loading / Confirm 仍只做入场动画，不做退出动画；未做窗口手动视觉验收。
 
 ### P3-02 数据绑定基础
 

@@ -2,9 +2,10 @@ use bevy::prelude::*;
 
 use crate::game::{
     navigation::{AppUiMode, RouteButton},
-    ui::core::{UiAnimationSystems, UiPanelCommand},
+    ui::core::{UiAnimationSystems, UiFocusSystems, UiPanelCommand},
     ui::overlays::{
-        modal::{UiModalResult, handle_modal_action_buttons},
+        loading::sync_loading_entry_border_alpha,
+        modal::{UiModalResult, handle_modal_action_buttons, sync_confirm_entry_visual_alpha},
         toast::{
             UiToast, UiToastRoot, close_toasts, spawn_toast, sync_toast_border_alpha, tick_toasts,
         },
@@ -36,7 +37,13 @@ impl Plugin for UiRouterPlugin {
             )
             .add_systems(
                 Update,
-                sync_toast_border_alpha.after(UiAnimationSystems::Tick),
+                (
+                    sync_toast_border_alpha,
+                    sync_loading_entry_border_alpha,
+                    sync_confirm_entry_visual_alpha,
+                )
+                    .after(UiAnimationSystems::Tick)
+                    .after(UiFocusSystems::Visuals),
             );
     }
 }

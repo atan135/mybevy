@@ -2,6 +2,7 @@ pub(in crate::game) mod controls;
 pub(in crate::game) mod layout;
 pub(in crate::game) mod scroll;
 
+#[allow(unused_imports)]
 pub(in crate::game) use controls::{
     DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
     ReadonlyTextInput, SelectedButton, UiTextInput, UiTextInputAlphanumeric, UiTextInputError,

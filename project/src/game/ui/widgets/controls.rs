@@ -441,6 +441,7 @@ pub(in crate::game) fn secondary_route_button_key(
     )
 }
 
+#[allow(dead_code)]
 pub(in crate::game) fn primary_action_button(
     theme: &UiTheme,
     fonts: &UiFontAssets,
@@ -472,6 +473,7 @@ pub(in crate::game) fn primary_action_button_key(
     )
 }
 
+#[allow(dead_code)]
 pub(in crate::game) fn primary_action_button_with_i18n_text(
     theme: &UiTheme,
     fonts: &UiFontAssets,
@@ -488,6 +490,7 @@ pub(in crate::game) fn primary_action_button_with_i18n_text(
     )
 }
 
+#[allow(dead_code)]
 pub(in crate::game) fn secondary_action_button(
     theme: &UiTheme,
     fonts: &UiFontAssets,
@@ -502,6 +505,7 @@ pub(in crate::game) fn secondary_action_button(
     )
 }
 
+#[allow(dead_code)]
 pub(in crate::game) fn secondary_action_button_with_i18n_text(
     theme: &UiTheme,
     fonts: &UiFontAssets,
