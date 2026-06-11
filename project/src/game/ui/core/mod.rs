@@ -6,6 +6,7 @@ pub(in crate::game) mod input;
 pub(in crate::game) mod layer;
 pub(in crate::game) mod panel;
 pub(in crate::game) mod stats;
+pub(in crate::game) mod viewport;
 
 #[allow(unused_imports)]
 pub(in crate::game) use animation::{
@@ -18,4 +19,9 @@ pub(in crate::game) use layer::{UiLayer, UiLayerRoot};
 pub(in crate::game) use panel::{
     UiBlockingOverlay, UiFloatingPanel, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
     UiPanelRoot, UiPanelSystems,
+};
+#[allow(unused_imports)]
+pub(in crate::game) use viewport::{
+    UiHeightClass, UiInputMode, UiMetrics, UiOrientation, UiSafeArea, UiViewport, UiViewportPlugin,
+    UiWidthClass,
 };
