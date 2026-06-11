@@ -4,7 +4,7 @@ use crate::game::{
     navigation::AppUiMode,
     ui::{
         core::{
-            UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot,
+            UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot,
             binding::{UiBindingValues, UiBoundText},
         },
         i18n::UiI18n,
@@ -25,12 +25,14 @@ const LOGIN_SUBTITLE_FALLBACK: &str = "Player Login";
 pub(super) fn setup_login_screen(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut binding_values: ResMut<UiBindingValues>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
+    let metrics = metrics.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
@@ -99,6 +101,7 @@ pub(super) fn setup_login_screen(
                 ),
                 primary_route_button_key(
                     theme,
+                    metrics,
                     fonts,
                     i18n,
                     "auth.login.guest_login",

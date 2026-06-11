@@ -6,6 +6,8 @@ use std::{
     time::SystemTime,
 };
 
+use crate::game::ui::core::UiMetrics;
+
 const UI_THEME_CONFIG_VERSION: u32 = 1;
 const DEFAULT_THEME_ASSET_PATH: &str = "assets/ui/themes/default.ron";
 const REPO_ROOT_THEME_ASSET_PATH: &str = "project/assets/ui/themes/default.ron";
@@ -203,18 +205,18 @@ impl UiThemeTextStyleRole {
 }
 
 impl UiThemeButtonNodeRole {
-    fn apply(self, theme: &UiTheme, node: &mut Node) {
+    fn apply(self, theme: &UiTheme, metrics: &UiMetrics, node: &mut Node) {
         match self {
             Self::Button => {
-                node.min_width = px(theme.button.min_width);
-                node.height = px(theme.button.height);
+                node.min_width = px(theme.button.min_width.max(metrics.button_height * 2.25));
+                node.height = px(metrics.button_height);
             }
             Self::TextInput => {
-                node.min_height = px(theme.button.height);
+                node.min_height = px(metrics.input_height);
             }
         }
 
-        node.padding = UiRect::axes(px(theme.button.padding_x), px(0));
+        node.padding = UiRect::axes(px((metrics.control_gap * 2.0).clamp(12.0, 24.0)), px(0));
         node.border_radius = BorderRadius::all(px(theme.button.radius));
     }
 }
@@ -594,6 +596,7 @@ fn warn_ui_theme_reload_error(hot_reload: &mut UiThemeHotReload, error: String) 
 
 fn refresh_ui_theme_visuals(
     theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
     mut clear_color: ResMut<ClearColor>,
     mut backgrounds: Query<(&UiThemeBackgroundRole, &mut BackgroundColor)>,
     mut borders: Query<(&UiThemeBorderRole, &mut BorderColor)>,
@@ -605,7 +608,7 @@ fn refresh_ui_theme_visuals(
         Query<(&UiThemeRootNodeRole, &mut Node)>,
     )>,
 ) {
-    if !theme.is_changed() {
+    if !theme.is_changed() && !metrics.is_changed() {
         return;
     }
 
@@ -636,7 +639,7 @@ fn refresh_ui_theme_visuals(
     }
 
     for (role, mut node) in &mut node_roles.p0() {
-        role.apply(&theme, &mut node);
+        role.apply(&theme, &metrics, &mut node);
     }
 
     for (role, mut node) in &mut node_roles.p1() {
@@ -907,6 +910,7 @@ mod tests {
     fn app_with_theme(theme: UiTheme) -> App {
         let mut app = App::new();
         app.insert_resource(theme)
+            .insert_resource(UiMetrics::default())
             .insert_resource(ClearColor(Color::BLACK))
             .add_systems(Update, refresh_ui_theme_visuals);
         app
@@ -1038,6 +1042,7 @@ mod tests {
     #[test]
     fn refresh_theme_visuals_updates_button_and_text_input_nodes() {
         let theme = load_config(&valid_theme_config_with_version(UI_THEME_CONFIG_VERSION)).unwrap();
+        let metrics = UiMetrics::default();
         let mut app = app_with_theme(theme);
         let button = app
             .world_mut()
@@ -1052,12 +1057,12 @@ mod tests {
 
         let button_node = app.world().entity(button).get::<Node>().unwrap();
         assert_px(button_node.min_width, 130.0);
-        assert_px(button_node.height, 50.0);
+        assert_px(button_node.height, metrics.button_height);
         assert_eq!(button_node.padding, UiRect::axes(px(24.0), px(0.0)));
         assert_radius_all_px(button_node.border_radius, 9.0);
 
         let input_node = app.world().entity(text_input).get::<Node>().unwrap();
-        assert_px(input_node.min_height, 50.0);
+        assert_px(input_node.min_height, metrics.input_height);
         assert_eq!(input_node.padding, UiRect::axes(px(24.0), px(0.0)));
         assert_radius_all_px(input_node.border_radius, 9.0);
     }

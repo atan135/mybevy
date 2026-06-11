@@ -5,7 +5,7 @@ use crate::game::{
     ui::{
         core::{
             UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer, UiLayerRoot,
-            UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot,
+            UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot,
         },
         i18n::{UiI18n, UiI18nText},
         style::{
@@ -127,6 +127,7 @@ pub(in crate::game) fn handle_modal_action_buttons(
 pub(in crate::game) fn spawn_confirm_modal(
     commands: &mut Commands,
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     modal: &UiConfirmModal,
     owner_mode: Option<AppUiMode>,
@@ -265,6 +266,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                             spawn_confirm_action_button(
                                 actions,
                                 theme,
+                                metrics,
                                 fonts,
                                 action,
                                 action_marker,
@@ -332,6 +334,7 @@ pub(in crate::game) fn sync_confirm_entry_visual_alpha(
 fn spawn_confirm_action_button(
     actions: &mut ChildSpawnerCommands,
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     action: &UiModalActionSpec,
     action_marker: UiModalActionButton,
@@ -341,7 +344,7 @@ fn spawn_confirm_action_button(
 
     let mut button = match action.style {
         UiModalActionStyle::Primary => actions.spawn((
-            confirm_button_base(theme, background),
+            confirm_button_base(theme, metrics, background),
             PrimaryButton,
             UiConfirmAnimatedButton {
                 style: action.style,
@@ -350,7 +353,7 @@ fn spawn_confirm_action_button(
             action_marker,
         )),
         UiModalActionStyle::Secondary => actions.spawn((
-            confirm_button_base(theme, background),
+            confirm_button_base(theme, metrics, background),
             SecondaryButton,
             UiConfirmAnimatedButton {
                 style: action.style,
@@ -372,17 +375,17 @@ fn spawn_confirm_action_button(
     });
 }
 
-fn confirm_button_base(theme: &UiTheme, background: Color) -> impl Bundle {
+fn confirm_button_base(theme: &UiTheme, metrics: &UiMetrics, background: Color) -> impl Bundle {
     (
         Button,
         FocusableButton,
         UiThemeButtonNodeRole::Button,
         Node {
-            min_width: px(theme.button.min_width),
-            height: px(theme.button.height),
+            min_width: px(theme.button.min_width.max(metrics.button_height * 2.25)),
+            height: px(metrics.button_height),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            padding: UiRect::axes(px((metrics.control_gap * 2.0).clamp(12.0, 24.0)), px(0)),
             border_radius: BorderRadius::all(px(theme.button.radius)),
             ..default()
         },

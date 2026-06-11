@@ -7,7 +7,7 @@ use bevy::{
 use crate::game::{
     navigation::{AppUiMode, RouteButton},
     ui::{
-        core::{UiFocusSystems, focus::UiFocusState},
+        core::{UiFocusSystems, UiMetrics, focus::UiFocusState},
         i18n::{UiI18n, UiI18nText},
         style::{
             UiFontAssets,
@@ -21,8 +21,6 @@ use crate::game::{
 };
 
 const NUMERIC_CONTROL_LABEL_WIDTH: f32 = 132.0;
-const SLIDER_TRACK_HEIGHT: f32 = 8.0;
-const STEPPER_VALUE_WIDTH: f32 = 72.0;
 pub(in crate::game) struct UiWidgetsPlugin;
 
 impl Plugin for UiWidgetsPlugin {
@@ -372,12 +370,14 @@ pub(in crate::game) fn screen_label_key(
 #[allow(dead_code)]
 pub(in crate::game) fn primary_route_button(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     target: AppUiMode,
 ) -> impl Bundle {
     route_button(
         theme,
+        metrics,
         fonts,
         text,
         target,
@@ -388,6 +388,7 @@ pub(in crate::game) fn primary_route_button(
 
 pub(in crate::game) fn primary_route_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -396,6 +397,7 @@ pub(in crate::game) fn primary_route_button_key(
 ) -> impl Bundle {
     route_button_key_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         target,
@@ -408,12 +410,14 @@ pub(in crate::game) fn primary_route_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn secondary_route_button(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     target: AppUiMode,
 ) -> impl Bundle {
     route_button(
         theme,
+        metrics,
         fonts,
         text,
         target,
@@ -424,6 +428,7 @@ pub(in crate::game) fn secondary_route_button(
 
 pub(in crate::game) fn secondary_route_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -432,6 +437,7 @@ pub(in crate::game) fn secondary_route_button_key(
 ) -> impl Bundle {
     route_button_key_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         target,
@@ -444,11 +450,13 @@ pub(in crate::game) fn secondary_route_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn primary_action_button(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
     action_button(
         theme,
+        metrics,
         fonts,
         text,
         theme.colors.primary_button,
@@ -458,6 +466,7 @@ pub(in crate::game) fn primary_action_button(
 
 pub(in crate::game) fn primary_action_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -465,6 +474,7 @@ pub(in crate::game) fn primary_action_button_key(
 ) -> impl Bundle {
     action_button_key_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         theme.colors.primary_button,
@@ -476,12 +486,14 @@ pub(in crate::game) fn primary_action_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn primary_action_button_with_i18n_text(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     i18n_text: UiI18nText,
 ) -> impl Bundle {
     action_button_key_bundle(
         theme,
+        metrics,
         fonts,
         text,
         theme.colors.primary_button,
@@ -493,11 +505,13 @@ pub(in crate::game) fn primary_action_button_with_i18n_text(
 #[allow(dead_code)]
 pub(in crate::game) fn secondary_action_button(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
     action_button(
         theme,
+        metrics,
         fonts,
         text,
         theme.colors.secondary_button,
@@ -508,12 +522,14 @@ pub(in crate::game) fn secondary_action_button(
 #[allow(dead_code)]
 pub(in crate::game) fn secondary_action_button_with_i18n_text(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     i18n_text: UiI18nText,
 ) -> impl Bundle {
     action_button_key_bundle(
         theme,
+        metrics,
         fonts,
         text,
         theme.colors.secondary_button,
@@ -524,6 +540,7 @@ pub(in crate::game) fn secondary_action_button_with_i18n_text(
 
 pub(in crate::game) fn secondary_action_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -531,6 +548,7 @@ pub(in crate::game) fn secondary_action_button_key(
 ) -> impl Bundle {
     action_button_key_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         theme.colors.secondary_button,
@@ -542,11 +560,13 @@ pub(in crate::game) fn secondary_action_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn disabled_primary_action_button(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
     disabled_action_button(
         theme,
+        metrics,
         fonts,
         text,
         theme.colors.primary_button,
@@ -556,6 +576,7 @@ pub(in crate::game) fn disabled_primary_action_button(
 
 pub(in crate::game) fn disabled_primary_action_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -563,6 +584,7 @@ pub(in crate::game) fn disabled_primary_action_button_key(
 ) -> impl Bundle {
     disabled_action_button_key_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         theme.colors.primary_button,
@@ -574,11 +596,13 @@ pub(in crate::game) fn disabled_primary_action_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn disabled_secondary_action_button(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
     disabled_action_button(
         theme,
+        metrics,
         fonts,
         text,
         theme.colors.secondary_button,
@@ -588,6 +612,7 @@ pub(in crate::game) fn disabled_secondary_action_button(
 
 pub(in crate::game) fn disabled_secondary_action_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -595,6 +620,7 @@ pub(in crate::game) fn disabled_secondary_action_button_key(
 ) -> impl Bundle {
     disabled_action_button_key_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         theme.colors.secondary_button,
@@ -606,12 +632,14 @@ pub(in crate::game) fn disabled_secondary_action_button_key(
 #[allow(dead_code)]
 pub(in crate::game) fn loading_primary_action_button(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
 ) -> impl Bundle {
     (
         action_button(
             theme,
+            metrics,
             fonts,
             text,
             theme.colors.primary_button,
@@ -623,6 +651,7 @@ pub(in crate::game) fn loading_primary_action_button(
 
 pub(in crate::game) fn loading_primary_action_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -631,6 +660,7 @@ pub(in crate::game) fn loading_primary_action_button_key(
     (
         action_button_key_bundle(
             theme,
+            metrics,
             fonts,
             i18n.tr(key, fallback),
             theme.colors.primary_button,
@@ -643,6 +673,7 @@ pub(in crate::game) fn loading_primary_action_button_key(
 
 pub(in crate::game) fn icon_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     icon: impl Into<String>,
@@ -651,6 +682,7 @@ pub(in crate::game) fn icon_button_key(
 ) -> impl Bundle {
     icon_button_key_bundle(
         theme,
+        metrics,
         fonts,
         icon,
         key,
@@ -664,6 +696,7 @@ pub(in crate::game) fn icon_button_key(
 
 pub(in crate::game) fn disabled_icon_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     icon: impl Into<String>,
@@ -672,6 +705,7 @@ pub(in crate::game) fn disabled_icon_button_key(
 ) -> impl Bundle {
     icon_button_key_bundle(
         theme,
+        metrics,
         fonts,
         icon,
         key,
@@ -685,6 +719,7 @@ pub(in crate::game) fn disabled_icon_button_key(
 
 pub(in crate::game) fn loading_icon_button_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     icon: impl Into<String>,
@@ -693,6 +728,7 @@ pub(in crate::game) fn loading_icon_button_key(
 ) -> impl Bundle {
     icon_button_key_bundle(
         theme,
+        metrics,
         fonts,
         icon,
         key,
@@ -963,6 +999,7 @@ pub(in crate::game) fn disabled_segment_option_key(
 
 pub(in crate::game) fn slider_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -973,6 +1010,7 @@ pub(in crate::game) fn slider_key(
 ) -> impl Bundle {
     slider_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         value,
@@ -986,6 +1024,7 @@ pub(in crate::game) fn slider_key(
 
 pub(in crate::game) fn disabled_slider_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -996,6 +1035,7 @@ pub(in crate::game) fn disabled_slider_key(
 ) -> impl Bundle {
     slider_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         value,
@@ -1009,6 +1049,7 @@ pub(in crate::game) fn disabled_slider_key(
 
 pub(in crate::game) fn stepper_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -1020,6 +1061,7 @@ pub(in crate::game) fn stepper_key(
 ) -> impl Bundle {
     stepper_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         value,
@@ -1036,6 +1078,7 @@ pub(in crate::game) fn stepper_key(
 
 pub(in crate::game) fn disabled_stepper_key(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     key: &'static str,
@@ -1047,6 +1090,7 @@ pub(in crate::game) fn disabled_stepper_key(
 ) -> impl Bundle {
     stepper_bundle(
         theme,
+        metrics,
         fonts,
         i18n.tr(key, fallback),
         value,
@@ -1063,6 +1107,7 @@ pub(in crate::game) fn disabled_stepper_key(
 
 pub(in crate::game) fn text_input(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     placeholder: impl Into<String>,
     value: impl Into<String>,
@@ -1095,10 +1140,10 @@ pub(in crate::game) fn text_input(
         UiThemeButtonNodeRole::TextInput,
         Node {
             width: percent(100),
-            min_height: px(theme.button.height),
+            min_height: px(metrics.input_height),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::FlexStart,
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            padding: UiRect::axes(px(control_padding_x(metrics)), px(0)),
             border: UiRect::all(px(theme.panel.border)),
             border_radius: BorderRadius::all(px(theme.button.radius)),
             ..default()
@@ -1189,6 +1234,7 @@ pub(in crate::game) fn text_input_form_message(
 
 fn route_button<T: Component>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     target: AppUiMode,
@@ -1201,15 +1247,7 @@ fn route_button<T: Component>(
         RouteButton { target },
         marker,
         UiThemeButtonNodeRole::Button,
-        Node {
-            min_width: px(theme.button.min_width),
-            height: px(theme.button.height),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
-            border_radius: BorderRadius::all(px(theme.button.radius)),
-            ..default()
-        },
+        button_node(theme, metrics),
         BackgroundColor(colors.idle),
         children![(
             Text::new(text),
@@ -1227,6 +1265,7 @@ fn route_button<T: Component>(
 
 fn route_button_key_bundle<T: Component>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     target: AppUiMode,
@@ -1240,15 +1279,7 @@ fn route_button_key_bundle<T: Component>(
         RouteButton { target },
         marker,
         UiThemeButtonNodeRole::Button,
-        Node {
-            min_width: px(theme.button.min_width),
-            height: px(theme.button.height),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
-            border_radius: BorderRadius::all(px(theme.button.radius)),
-            ..default()
-        },
+        button_node(theme, metrics),
         BackgroundColor(colors.idle),
         children![(
             Text::new(text),
@@ -1267,6 +1298,7 @@ fn route_button_key_bundle<T: Component>(
 
 fn action_button<T: Component>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
@@ -1277,15 +1309,7 @@ fn action_button<T: Component>(
         FocusableButton,
         marker,
         UiThemeButtonNodeRole::Button,
-        Node {
-            min_width: px(theme.button.min_width),
-            height: px(theme.button.height),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
-            border_radius: BorderRadius::all(px(theme.button.radius)),
-            ..default()
-        },
+        button_node(theme, metrics),
         BackgroundColor(colors.idle),
         children![(
             Text::new(text),
@@ -1303,6 +1327,7 @@ fn action_button<T: Component>(
 
 fn action_button_key_bundle<T: Component>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
@@ -1314,15 +1339,7 @@ fn action_button_key_bundle<T: Component>(
         FocusableButton,
         marker,
         UiThemeButtonNodeRole::Button,
-        Node {
-            min_width: px(theme.button.min_width),
-            height: px(theme.button.height),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
-            border_radius: BorderRadius::all(px(theme.button.radius)),
-            ..default()
-        },
+        button_node(theme, metrics),
         BackgroundColor(colors.idle),
         children![(
             Text::new(text),
@@ -1342,6 +1359,7 @@ fn action_button_key_bundle<T: Component>(
 #[allow(dead_code)]
 fn disabled_action_button<T: Component>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
@@ -1353,15 +1371,7 @@ fn disabled_action_button<T: Component>(
         marker,
         DisabledButton,
         UiThemeButtonNodeRole::Button,
-        Node {
-            min_width: px(theme.button.min_width),
-            height: px(theme.button.height),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
-            border_radius: BorderRadius::all(px(theme.button.radius)),
-            ..default()
-        },
+        button_node(theme, metrics),
         BackgroundColor(colors.disabled),
         children![(
             Text::new(text),
@@ -1379,6 +1389,7 @@ fn disabled_action_button<T: Component>(
 
 fn disabled_action_button_key_bundle<T: Component>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
@@ -1391,15 +1402,7 @@ fn disabled_action_button_key_bundle<T: Component>(
         marker,
         DisabledButton,
         UiThemeButtonNodeRole::Button,
-        Node {
-            min_width: px(theme.button.min_width),
-            height: px(theme.button.height),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
-            border_radius: BorderRadius::all(px(theme.button.radius)),
-            ..default()
-        },
+        button_node(theme, metrics),
         BackgroundColor(colors.disabled),
         children![(
             Text::new(text),
@@ -1425,6 +1428,7 @@ enum IconButtonVisualState {
 
 fn icon_button_key_bundle<T: Bundle>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     icon: impl Into<String>,
     accessible_key: impl Into<String>,
@@ -1448,7 +1452,7 @@ fn icon_button_key_bundle<T: Bundle>(
             accessible_label,
         ),
         marker,
-        icon_button_node(theme),
+        icon_button_node(theme, metrics),
         BackgroundColor(icon_button_background_color(colors, state)),
         children![(
             Text::new(icon),
@@ -1593,6 +1597,7 @@ fn segment_option_key_bundle(
 
 fn slider_bundle<T: Bundle>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     label: impl Into<String>,
     value: f32,
@@ -1622,10 +1627,10 @@ fn slider_bundle<T: Bundle>(
         slider,
         Node {
             width: percent(100),
-            min_height: px(theme.button.height),
+            min_height: px(metrics.input_height),
             align_items: AlignItems::Center,
-            column_gap: px(theme.layout.row_column_gap),
-            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            column_gap: px(numeric_control_gap(metrics)),
+            padding: UiRect::axes(px(control_padding_x(metrics)), px(0)),
             border: UiRect::all(px(theme.panel.border)),
             border_radius: BorderRadius::all(px(theme.button.radius)),
             ..default()
@@ -1645,7 +1650,7 @@ fn slider_bundle<T: Bundle>(
         )),
         children![
             (
-                slider_label_node(),
+                slider_label_node(metrics),
                 Text::new(label),
                 TextFont {
                     font: fonts.regular.clone(),
@@ -1658,7 +1663,7 @@ fn slider_bundle<T: Bundle>(
                 label_i18n_text,
             ),
             (
-                slider_track_node(),
+                slider_track_node(metrics),
                 UiSliderTrack,
                 RelativeCursorPosition::default(),
                 BackgroundColor(theme.colors.panel_border),
@@ -1667,14 +1672,14 @@ fn slider_bundle<T: Bundle>(
                     Node {
                         width: percent(slider.ratio() * 100.0),
                         height: percent(100),
-                        border_radius: BorderRadius::all(px(SLIDER_TRACK_HEIGHT * 0.5)),
+                        border_radius: BorderRadius::all(px(slider_track_height(metrics) * 0.5)),
                         ..default()
                     },
                     BackgroundColor(fill_color),
                 )],
             ),
             (
-                slider_value_node(),
+                slider_value_node(metrics),
                 Text::new(format_slider_value(slider.value)),
                 TextFont {
                     font: fonts.regular.clone(),
@@ -1692,6 +1697,7 @@ fn slider_bundle<T: Bundle>(
 
 fn stepper_bundle<T: Bundle, D: Bundle, I: Bundle>(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     label: impl Into<String>,
     value: i32,
@@ -1718,14 +1724,14 @@ fn stepper_bundle<T: Bundle, D: Bundle, I: Bundle>(
         Node {
             width: percent(100),
             align_items: AlignItems::Center,
-            column_gap: px(theme.layout.row_column_gap),
-            row_gap: px(theme.layout.row_gap),
+            column_gap: px(numeric_control_gap(metrics)),
+            row_gap: px(metrics.control_gap),
             flex_wrap: FlexWrap::Wrap,
             ..default()
         },
         children![
             (
-                stepper_label_node(),
+                stepper_label_node(metrics),
                 Text::new(label),
                 TextFont {
                     font: fonts.regular.clone(),
@@ -1738,11 +1744,11 @@ fn stepper_bundle<T: Bundle, D: Bundle, I: Bundle>(
                 label_i18n_text,
             ),
             (
-                stepper_button(theme, fonts, "-", stepper_button_colors, disabled),
+                stepper_button(theme, metrics, fonts, "-", stepper_button_colors, disabled),
                 decrement_marker,
             ),
             (
-                stepper_value_node(),
+                stepper_value_node(metrics),
                 Text::new(stepper.value.to_string()),
                 TextFont {
                     font: fonts.regular.clone(),
@@ -1755,7 +1761,7 @@ fn stepper_bundle<T: Bundle, D: Bundle, I: Bundle>(
                 UiStepperValueText,
             ),
             (
-                stepper_button(theme, fonts, "+", stepper_button_colors, disabled),
+                stepper_button(theme, metrics, fonts, "+", stepper_button_colors, disabled),
                 increment_marker,
             ),
         ],
@@ -1764,6 +1770,7 @@ fn stepper_bundle<T: Bundle, D: Bundle, I: Bundle>(
 
 fn stepper_button(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     text: impl Into<String>,
     colors: ButtonColors,
@@ -1774,16 +1781,7 @@ fn stepper_button(
         FocusableButton,
         SecondaryButton,
         UiThemeButtonNodeRole::Button,
-        Node {
-            min_width: px(theme.button.height),
-            width: px(theme.button.height),
-            height: px(theme.button.height),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            padding: UiRect::axes(px(0), px(0)),
-            border_radius: BorderRadius::all(px(theme.button.radius)),
-            ..default()
-        },
+        square_button_node(theme, metrics),
         BackgroundColor(button_background_color(
             colors,
             Interaction::None,
@@ -1814,59 +1812,111 @@ fn stepper_button(
     )
 }
 
-fn icon_button_node(theme: &UiTheme) -> Node {
+fn button_node(theme: &UiTheme, metrics: &UiMetrics) -> Node {
     Node {
-        min_width: px(theme.button.height),
-        width: px(theme.button.height),
-        height: px(theme.button.height),
+        min_width: px(button_min_width(theme, metrics)),
+        height: px(metrics.button_height),
         align_items: AlignItems::Center,
         justify_content: JustifyContent::Center,
-        justify_self: JustifySelf::Center,
+        padding: UiRect::axes(px(control_padding_x(metrics)), px(0)),
+        border_radius: BorderRadius::all(px(theme.button.radius)),
+        ..default()
+    }
+}
+
+fn square_button_node(theme: &UiTheme, metrics: &UiMetrics) -> Node {
+    let size = square_button_size(metrics);
+    Node {
+        min_width: px(size),
+        width: px(size),
+        height: px(size),
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::Center,
         padding: UiRect::ZERO,
         border_radius: BorderRadius::all(px(theme.button.radius)),
         ..default()
     }
 }
 
-fn slider_label_node() -> Node {
+fn icon_button_node(theme: &UiTheme, metrics: &UiMetrics) -> Node {
     Node {
-        width: px(NUMERIC_CONTROL_LABEL_WIDTH),
+        justify_self: JustifySelf::Center,
+        ..square_button_node(theme, metrics)
+    }
+}
+
+fn button_min_width(theme: &UiTheme, metrics: &UiMetrics) -> f32 {
+    theme.button.min_width.max(metrics.button_height * 2.25)
+}
+
+fn square_button_size(metrics: &UiMetrics) -> f32 {
+    metrics.button_height.max(metrics.touch_target_min)
+}
+
+fn control_padding_x(metrics: &UiMetrics) -> f32 {
+    (metrics.control_gap * 2.0).clamp(12.0, 24.0)
+}
+
+fn numeric_control_gap(metrics: &UiMetrics) -> f32 {
+    metrics.control_gap.max(10.0)
+}
+
+fn numeric_control_label_width(metrics: &UiMetrics) -> f32 {
+    NUMERIC_CONTROL_LABEL_WIDTH.max(metrics.content_max_width * 0.16)
+}
+
+fn slider_track_height(metrics: &UiMetrics) -> f32 {
+    (metrics.icon_size * 0.36).clamp(8.0, 10.0)
+}
+
+fn stepper_value_width(metrics: &UiMetrics) -> f32 {
+    (square_button_size(metrics) * 1.6).max(metrics.touch_target_min + metrics.control_gap * 2.0)
+}
+
+fn stepper_value_min_height(metrics: &UiMetrics) -> f32 {
+    (metrics.button_height * 0.78).max(metrics.touch_target_min * 0.75)
+}
+
+fn slider_label_node(metrics: &UiMetrics) -> Node {
+    Node {
+        width: px(numeric_control_label_width(metrics)),
         ..default()
     }
 }
 
-fn slider_track_node() -> Node {
+fn slider_track_node(metrics: &UiMetrics) -> Node {
+    let track_height = slider_track_height(metrics);
     Node {
-        height: px(SLIDER_TRACK_HEIGHT),
+        height: px(track_height),
         flex_grow: 1.0,
         overflow: Overflow::clip(),
-        border_radius: BorderRadius::all(px(SLIDER_TRACK_HEIGHT * 0.5)),
+        border_radius: BorderRadius::all(px(track_height * 0.5)),
         ..default()
     }
 }
 
-fn slider_value_node() -> Node {
+fn slider_value_node(metrics: &UiMetrics) -> Node {
     Node {
-        width: px(STEPPER_VALUE_WIDTH),
+        width: px(stepper_value_width(metrics)),
         justify_content: JustifyContent::FlexEnd,
         ..default()
     }
 }
 
-fn stepper_label_node() -> Node {
+fn stepper_label_node(metrics: &UiMetrics) -> Node {
     Node {
-        width: px(NUMERIC_CONTROL_LABEL_WIDTH),
+        width: px(numeric_control_label_width(metrics)),
         ..default()
     }
 }
 
-fn stepper_value_node() -> Node {
+fn stepper_value_node(metrics: &UiMetrics) -> Node {
     Node {
-        width: px(STEPPER_VALUE_WIDTH),
-        min_height: px(36),
+        width: px(stepper_value_width(metrics)),
+        min_height: px(stepper_value_min_height(metrics)),
         align_items: AlignItems::Center,
         justify_content: JustifyContent::Center,
-        padding: UiRect::horizontal(px(8)),
+        padding: UiRect::horizontal(px(metrics.control_gap)),
         border: UiRect::all(px(1)),
         border_radius: BorderRadius::all(px(4)),
         ..default()
@@ -1948,16 +1998,18 @@ fn sync_icon_button_accessible_labels(
 
 fn sync_icon_button_nodes(
     theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
     mut icon_buttons: Query<&mut Node, With<UiIconButton>>,
 ) {
-    if !theme.is_changed() {
+    if !theme.is_changed() && !metrics.is_changed() {
         return;
     }
 
     for mut node in &mut icon_buttons {
-        node.min_width = px(theme.button.height);
-        node.width = px(theme.button.height);
-        node.height = px(theme.button.height);
+        let size = square_button_size(&metrics);
+        node.min_width = px(size);
+        node.width = px(size);
+        node.height = px(size);
         node.padding = UiRect::ZERO;
         node.border_radius = BorderRadius::all(px(theme.button.radius));
     }
@@ -3654,16 +3706,47 @@ mod tests {
     #[test]
     fn icon_button_node_uses_stable_square_button_size() {
         let theme = UiTheme::default();
-        let node = icon_button_node(&theme);
+        let metrics = UiMetrics::default();
+        let node = icon_button_node(&theme, &metrics);
 
-        assert_eq!(node.min_width, px(theme.button.height));
-        assert_eq!(node.width, px(theme.button.height));
-        assert_eq!(node.height, px(theme.button.height));
+        assert_eq!(node.min_width, px(square_button_size(&metrics)));
+        assert_eq!(node.width, px(square_button_size(&metrics)));
+        assert_eq!(node.height, px(square_button_size(&metrics)));
         assert_eq!(node.padding, UiRect::ZERO);
         assert_eq!(
             node.border_radius,
             BorderRadius::all(px(theme.button.radius))
         );
+    }
+
+    #[test]
+    fn compact_metrics_keep_core_control_nodes_at_touch_target() {
+        let theme = UiTheme::default();
+        let metrics = UiMetrics::default();
+        let button = button_node(&theme, &metrics);
+        let text_input = Node {
+            min_height: px(metrics.input_height),
+            ..default()
+        };
+        let icon = icon_button_node(&theme, &metrics);
+
+        assert_eq!(button.height, px(metrics.button_height));
+        assert!(metrics.button_height >= metrics.touch_target_min);
+        assert!(metrics.input_height >= metrics.touch_target_min);
+        assert_eq!(text_input.min_height, px(metrics.input_height));
+        assert_eq!(icon.width, px(square_button_size(&metrics)));
+        assert!(square_button_size(&metrics) >= metrics.touch_target_min);
+    }
+
+    #[test]
+    fn stepper_value_width_is_metrics_derived_and_stable() {
+        let metrics = UiMetrics::default();
+        let first = stepper_value_node(&metrics);
+        let second = stepper_value_node(&metrics);
+
+        assert_eq!(first.width, px(stepper_value_width(&metrics)));
+        assert_eq!(first.width, second.width);
+        assert_eq!(first.min_height, second.min_height);
     }
 
     #[test]

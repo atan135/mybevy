@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::AppUiMode,
     ui::{
-        core::{UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot},
+        core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot},
         i18n::UiI18n,
         style::{UiFontAssets, UiTheme, theme::UiThemeRootNodeRole},
         widgets::secondary_route_button_key,
@@ -13,10 +13,12 @@ use crate::game::{
 pub(super) fn setup_touch_ripple_overlay(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
 ) {
     let theme = theme.into_inner();
+    let metrics = metrics.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
 
@@ -41,6 +43,7 @@ pub(super) fn setup_touch_ripple_overlay(
         UiThemeRootNodeRole::Overlay,
         children![secondary_route_button_key(
             theme,
+            metrics,
             fonts,
             i18n,
             "nav.lobby",

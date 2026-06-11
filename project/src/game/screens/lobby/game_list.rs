@@ -5,8 +5,8 @@ use crate::game::{
     plugin::TouchLaunchMode,
     ui::{
         core::{
-            UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
-            UiPanelRoot,
+            UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind,
+            UiPanelRequest, UiPanelRoot,
         },
         i18n::UiI18n,
         overlays::{
@@ -33,11 +33,13 @@ pub(super) struct TouchRipplePlayButton;
 pub(super) fn setup_game_list_screen(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
+    let metrics = metrics.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
@@ -92,6 +94,7 @@ pub(super) fn setup_game_list_screen(
                         children![
                             secondary_route_button_key(
                                 theme,
+                                metrics,
                                 fonts,
                                 i18n,
                                 "nav.ui_gallery",
@@ -100,6 +103,7 @@ pub(super) fn setup_game_list_screen(
                             ),
                             secondary_route_button_key(
                                 theme,
+                                metrics,
                                 fonts,
                                 i18n,
                                 "nav.logout",
@@ -178,6 +182,7 @@ pub(super) fn setup_game_list_screen(
                             (
                                 primary_action_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "lobby.play",

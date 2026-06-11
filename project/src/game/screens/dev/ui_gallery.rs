@@ -4,8 +4,8 @@ use crate::game::{
     navigation::AppUiMode,
     ui::{
         core::{
-            UiFloatingPanel, UiLayer, UiLayerRoot, UiPanelCommand, UiPanelId, UiPanelKind,
-            UiPanelRequest, UiPanelRoot,
+            UiFloatingPanel, UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId,
+            UiPanelKind, UiPanelRequest, UiPanelRoot,
             binding::{UiBindingValues, UiBoundDisabled, UiBoundText, UiBoundVisibility},
         },
         i18n::{UiI18n, UiI18nText},
@@ -111,12 +111,14 @@ impl Default for GalleryBindingPreview {
 pub(super) fn setup_ui_gallery(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut binding_values: ResMut<UiBindingValues>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
+    let metrics = metrics.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
@@ -166,6 +168,7 @@ pub(super) fn setup_ui_gallery(
                 ));
                 header.spawn(secondary_route_button_key(
                     theme,
+                    metrics,
                     fonts,
                     i18n,
                     "nav.lobby",
@@ -247,6 +250,7 @@ pub(super) fn setup_ui_gallery(
                             .with_children(|buttons| {
                                 buttons.spawn(primary_action_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.buttons.primary",
@@ -254,6 +258,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 buttons.spawn(secondary_action_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.buttons.secondary",
@@ -262,6 +267,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     primary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.buttons.focused",
@@ -272,6 +278,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.buttons.selected",
@@ -281,6 +288,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 buttons.spawn(loading_primary_action_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.buttons.loading",
@@ -288,6 +296,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 buttons.spawn(disabled_primary_action_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.buttons.disabled",
@@ -295,12 +304,15 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 buttons.spawn(disabled_secondary_action_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.buttons.unavailable",
                                     "Unavailable",
                                 ));
-                                buttons.spawn(primary_route_button_sample(theme, fonts, i18n));
+                                buttons.spawn(primary_route_button_sample(
+                                    theme, metrics, fonts, i18n,
+                                ));
                             });
                     });
 
@@ -318,6 +330,7 @@ pub(super) fn setup_ui_gallery(
                             .with_children(|buttons| {
                                 buttons.spawn(icon_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "+",
@@ -327,6 +340,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     icon_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "-",
@@ -338,6 +352,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     icon_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "?",
@@ -348,6 +363,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 buttons.spawn(disabled_icon_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "x",
@@ -356,6 +372,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 buttons.spawn(loading_icon_button_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "...",
@@ -464,6 +481,7 @@ pub(super) fn setup_ui_gallery(
                             .with_children(|controls| {
                                 controls.spawn(slider_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.numeric.slider.volume",
@@ -474,6 +492,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 controls.spawn(disabled_slider_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.numeric.slider.disabled",
@@ -484,6 +503,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 controls.spawn(stepper_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.numeric.stepper.players",
@@ -495,6 +515,7 @@ pub(super) fn setup_ui_gallery(
                                 ));
                                 controls.spawn(disabled_stepper_key(
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n,
                                     "ui_gallery.numeric.stepper.disabled",
@@ -522,6 +543,7 @@ pub(super) fn setup_ui_gallery(
                                 spawn_gallery_text_input(
                                     inputs,
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n.tr(
                                         "ui_gallery.inputs.placeholder.player_name",
@@ -536,6 +558,7 @@ pub(super) fn setup_ui_gallery(
                                 spawn_gallery_text_input(
                                     inputs,
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n.tr("ui_gallery.inputs.placeholder.required", "Required"),
                                     "",
@@ -553,6 +576,7 @@ pub(super) fn setup_ui_gallery(
                                 spawn_gallery_text_input(
                                     inputs,
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n.tr("ui_gallery.inputs.placeholder.error", "Error state"),
                                     "bad-code",
@@ -568,6 +592,7 @@ pub(super) fn setup_ui_gallery(
                                 spawn_gallery_text_input(
                                     inputs,
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n.tr("ui_gallery.inputs.placeholder.note", "Type a note"),
                                     "",
@@ -582,6 +607,7 @@ pub(super) fn setup_ui_gallery(
                                 spawn_gallery_text_input(
                                     inputs,
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n.tr("ui_gallery.inputs.placeholder.readonly", "Read only"),
                                     "Readonly sample",
@@ -596,6 +622,7 @@ pub(super) fn setup_ui_gallery(
                                 spawn_gallery_text_input(
                                     inputs,
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n.tr("ui_gallery.inputs.placeholder.disabled", "Disabled"),
                                     "Disabled sample",
@@ -611,6 +638,7 @@ pub(super) fn setup_ui_gallery(
                                 spawn_gallery_text_input(
                                     inputs,
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n.tr(
                                         "ui_gallery.inputs.placeholder.short_code",
@@ -632,6 +660,7 @@ pub(super) fn setup_ui_gallery(
                                 spawn_gallery_text_input(
                                     inputs,
                                     theme,
+                                    metrics,
                                     fonts,
                                     i18n.tr("ui_gallery.inputs.placeholder.empty", "Empty input"),
                                     "",
@@ -701,6 +730,7 @@ pub(super) fn setup_ui_gallery(
                                 sample.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.binding.bound_button",
@@ -712,6 +742,7 @@ pub(super) fn setup_ui_gallery(
                                 sample.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.binding.action",
@@ -737,6 +768,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     primary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.overlays.show_toast",
@@ -747,6 +779,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.overlays.loading",
@@ -757,6 +790,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.overlays.cancelable",
@@ -767,6 +801,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.overlays.hide",
@@ -777,6 +812,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     primary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.overlays.show_confirm",
@@ -787,6 +823,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.overlays.show_floating",
@@ -797,6 +834,7 @@ pub(super) fn setup_ui_gallery(
                                 buttons.spawn((
                                     secondary_action_button_key(
                                         theme,
+                                        metrics,
                                         fonts,
                                         i18n,
                                         "ui_gallery.overlays.close_top",
@@ -829,7 +867,9 @@ pub(super) fn setup_ui_gallery(
                             .spawn(gallery_stress_grid(theme))
                             .with_children(|items| {
                                 for index in 0..GALLERY_STRESS_ITEM_COUNT {
-                                    spawn_gallery_stress_item(items, theme, fonts, i18n, index);
+                                    spawn_gallery_stress_item(
+                                        items, theme, metrics, fonts, i18n, index,
+                                    );
                                 }
                             });
                     });
@@ -1072,6 +1112,7 @@ fn gallery_stress_item(theme: &UiTheme, index: usize) -> impl Bundle {
 fn spawn_gallery_stress_item(
     items: &mut ChildSpawnerCommands,
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     index: usize,
@@ -1108,6 +1149,7 @@ fn spawn_gallery_stress_item(
             ));
             item.spawn(secondary_action_button_key(
                 theme,
+                metrics,
                 fonts,
                 i18n,
                 "ui_gallery.stress.action",
@@ -1136,11 +1178,19 @@ fn section_label_key(
 
 fn primary_route_button_sample(
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
 ) -> impl Bundle {
     (
-        primary_action_button_key(theme, fonts, i18n, "ui_gallery.buttons.action", "Action"),
+        primary_action_button_key(
+            theme,
+            metrics,
+            fonts,
+            i18n,
+            "ui_gallery.buttons.action",
+            "Action",
+        ),
         Name::new("Gallery action sample"),
     )
 }
@@ -1148,6 +1198,7 @@ fn primary_route_button_sample(
 fn spawn_gallery_text_input<const N: usize>(
     inputs: &mut ChildSpawnerCommands,
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     placeholder: String,
     value: impl Into<String>,
@@ -1156,7 +1207,7 @@ fn spawn_gallery_text_input<const N: usize>(
     inputs
         .spawn(ui_column(theme.layout.row_gap * 0.5))
         .with_children(|field| {
-            let mut input = field.spawn(text_input(theme, fonts, placeholder, value));
+            let mut input = field.spawn(text_input(theme, metrics, fonts, placeholder, value));
             for state in states {
                 match state {
                     GalleryTextInputState::Helper(message) => {

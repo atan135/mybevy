@@ -3,7 +3,7 @@ use bevy::{input::keyboard::Key, prelude::*};
 use crate::game::{
     navigation::AppUiMode,
     ui::{
-        core::{UiLayer, UiLayerRoot},
+        core::{UiLayer, UiLayerRoot, UiMetrics},
         overlays::{
             loading::{UiLoading, spawn_loading},
             modal::{UiConfirmModal, spawn_confirm_modal},
@@ -120,6 +120,7 @@ struct UiPanelStack {
 fn handle_panel_commands(
     mut commands: Commands,
     theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
     fonts: Res<UiFontAssets>,
     current_mode: Res<State<AppUiMode>>,
     mut panel_commands: MessageReader<UiPanelCommand>,
@@ -133,6 +134,7 @@ fn handle_panel_commands(
                 open_panel(
                     &mut commands,
                     &theme,
+                    &metrics,
                     &fonts,
                     &current_mode,
                     &panel_roots,
@@ -153,6 +155,7 @@ fn handle_panel_commands(
                     open_panel(
                         &mut commands,
                         &theme,
+                        &metrics,
                         &fonts,
                         &current_mode,
                         &panel_roots,
@@ -185,6 +188,7 @@ fn handle_panel_commands(
 fn open_panel(
     commands: &mut Commands,
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     current_mode: &State<AppUiMode>,
     panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
@@ -201,7 +205,14 @@ fn open_panel(
             spawn_loading(commands, theme, fonts, loading, Some(*current_mode.get()));
         }
         UiPanelRequest::Confirm(confirm) => {
-            spawn_confirm_modal(commands, theme, fonts, confirm, Some(*current_mode.get()));
+            spawn_confirm_modal(
+                commands,
+                theme,
+                metrics,
+                fonts,
+                confirm,
+                Some(*current_mode.get()),
+            );
         }
         UiPanelRequest::Floating(floating) => {
             spawn_floating_panel(commands, theme, fonts, floating, Some(*current_mode.get()));
