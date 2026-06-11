@@ -135,20 +135,21 @@ fn tick_ui_alpha_animations(
     mut animations: Query<(
         Entity,
         &mut UiAnimatedAlpha,
+        Has<Text>,
         Option<&mut BackgroundColor>,
         Option<&mut TextColor>,
     )>,
 ) {
     let delta_secs = time.delta_secs();
 
-    for (entity, mut animation, background, text_color) in &mut animations {
+    for (entity, mut animation, has_text, background, text_color) in &mut animations {
         if animation.state == UiAnimationState::Finished {
             continue;
         }
 
         let state = animation.tick(delta_secs);
         let alpha = animation.alpha();
-        apply_alpha(background, text_color, alpha);
+        apply_alpha(background, text_color, has_text, alpha);
 
         if state == UiAnimationState::Finished {
             match animation.completion {
@@ -167,9 +168,12 @@ fn tick_ui_alpha_animations(
 fn apply_alpha(
     background: Option<Mut<BackgroundColor>>,
     text_color: Option<Mut<TextColor>>,
+    has_text: bool,
     alpha: f32,
 ) {
-    if let Some(mut background) = background {
+    if let Some(mut background) = background
+        && !has_text
+    {
         let next_color = color_with_alpha(background.0, alpha);
         if background.0 != next_color {
             *background = BackgroundColor(next_color);
@@ -299,6 +303,35 @@ mod tests {
         assert_approx_eq(alpha(background.0), 0.5);
         assert_approx_eq(alpha(text_color.0), 0.5);
         assert!(app.world().get::<UiAnimatedAlpha>(entity).is_some());
+    }
+
+    #[test]
+    fn text_alpha_does_not_reveal_required_background() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .add_plugins(UiAnimationPlugin);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Text::new("Confirm"),
+                BackgroundColor(Color::NONE),
+                TextColor(Color::srgba(0.4, 0.5, 0.6, 1.0)),
+                UiAnimatedAlpha::new(0.2, 0.8, 1.0)
+                    .with_completion(UiAnimationCompletion::KeepComponent),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(500));
+        app.update();
+
+        let background = app.world().get::<BackgroundColor>(entity).unwrap();
+        let text_color = app.world().get::<TextColor>(entity).unwrap();
+
+        assert_eq!(background.0, Color::NONE);
+        assert_approx_eq(alpha(text_color.0), 0.5);
     }
 
     #[test]

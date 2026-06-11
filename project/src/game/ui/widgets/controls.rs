@@ -2707,11 +2707,13 @@ fn text_input_border_color(
         return theme.colors.error;
     }
 
+    if is_focused {
+        return theme.colors.primary_button.focused;
+    }
+
     match interaction {
         Interaction::Pressed => theme.colors.primary_button.pressed,
-        Interaction::Hovered if is_focused => theme.colors.primary_button.focused,
         Interaction::Hovered => theme.colors.secondary_button.focused,
-        Interaction::None if is_focused => theme.colors.primary_button.focused,
         Interaction::None => theme.colors.panel_border,
     }
 }
@@ -3503,6 +3505,20 @@ mod tests {
         assert_eq!(
             text_input_border_color(&theme, Interaction::None, true, false, true),
             theme.colors.error
+        );
+    }
+
+    #[test]
+    fn focused_text_input_border_is_stable_while_interacting() {
+        let theme = UiTheme::default();
+
+        assert_eq!(
+            text_input_border_color(&theme, Interaction::Pressed, true, false, false),
+            theme.colors.primary_button.focused
+        );
+        assert_eq!(
+            text_input_border_color(&theme, Interaction::Hovered, true, false, false),
+            theme.colors.primary_button.focused
         );
     }
 

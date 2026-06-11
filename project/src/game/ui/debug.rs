@@ -17,13 +17,15 @@ use crate::game::ui::{
             UiThemeTextColorRole, UiThemeTextStyleRole,
         },
     },
-    widgets::{screen_label, screen_title},
+    widgets::{UiScrollView, screen_label, screen_title},
 };
 
 const UI_DEBUG_TARGET_ENV: &str = "MYBEVY_UI_DEBUG_TARGET";
 const UI_DEBUG_RENDER_LAYER: usize = 31;
 const UI_DEBUG_TREE_MAX_LINES: usize = 24;
 const UI_DEBUG_LAYOUT_BOUNDS_MAX_LINES: usize = 16;
+const UI_DEBUG_COPY_LOG_PREVIEW_CHARS: usize = 8_000;
+const UI_DEBUG_GAME_BODY_MAX_HEIGHT: f32 = 560.0;
 
 pub(in crate::game) struct UiDebugPlugin;
 
@@ -92,6 +94,9 @@ struct UiDebugCamera;
 
 #[derive(Component)]
 struct UiDebugText;
+
+#[derive(Component)]
+struct UiDebugHeaderText;
 
 #[derive(Component)]
 struct UiDebugPanelHighlight {
@@ -297,14 +302,12 @@ fn refresh_ui_debug_text(
         ),
         (With<Node>, Without<UiDebugNode>),
     >,
-    mut texts: Query<&mut Text, With<UiDebugText>>,
+    mut texts: ParamSet<(
+        Query<&mut Text, With<UiDebugHeaderText>>,
+        Query<&mut Text, With<UiDebugText>>,
+    )>,
 ) {
-    let Ok(mut text) = texts.single_mut() else {
-        debug_state.copy_requested = false;
-        return;
-    };
-
-    let display = build_ui_debug_display_text(&mut debug_state, |debug_state| {
+    let (header, body, display) = build_ui_debug_display_parts(&mut debug_state, |debug_state| {
         build_ui_debug_body(
             debug_state,
             &input_state,
@@ -322,12 +325,30 @@ fn refresh_ui_debug_text(
         copy_ui_debug_display_text(&mut debug_state, &display);
     }
 
-    if text.0 != display {
-        text.0 = display;
+    {
+        let mut header_texts = texts.p0();
+        if let Ok(mut text) = header_texts.single_mut() {
+            let header = header.join("\n");
+            if text.0 != header {
+                text.0 = header;
+            }
+        }
+    }
+
+    {
+        let mut body_texts = texts.p1();
+        if let Ok(mut text) = body_texts.single_mut()
+            && text.0 != body
+        {
+            text.0 = body;
+        }
     }
 }
 
-fn build_ui_debug_display_text<F>(debug_state: &mut UiDebugState, build_body: F) -> String
+fn build_ui_debug_display_parts<F>(
+    debug_state: &mut UiDebugState,
+    build_body: F,
+) -> (Vec<String>, String, String)
 where
     F: FnOnce(&UiDebugState) -> String,
 {
@@ -343,7 +364,8 @@ where
         body
     };
 
-    compose_ui_debug_display_text(&header, &body)
+    let display = compose_ui_debug_display_text(&header, &body);
+    (header, body, display)
 }
 
 fn compose_ui_debug_display_text(header: &[String], body: &str) -> String {
@@ -357,10 +379,20 @@ fn compose_ui_debug_display_text(header: &[String], body: &str) -> String {
 fn copy_ui_debug_display_text(debug_state: &mut UiDebugState, display_text: &str) {
     debug_state.last_copied_text = Some(display_text.to_string());
     debug_state.copy_requested = false;
+    let preview = debug_copy_log_preview(display_text, UI_DEBUG_COPY_LOG_PREVIEW_CHARS);
     info!(
-        "UI debug state copied to internal buffer ({} bytes)",
-        display_text.len()
+        "UI debug state copied to internal buffer ({} bytes):\n{}",
+        display_text.len(),
+        preview,
     );
+}
+
+fn debug_copy_log_preview(display_text: &str, max_chars: usize) -> String {
+    let mut preview = display_text.chars().take(max_chars).collect::<String>();
+    if display_text.chars().count() > max_chars {
+        preview.push_str("\n... truncated ...");
+    }
+    preview
 }
 
 fn ui_debug_header_lines(debug_state: &UiDebugState) -> Vec<String> {
@@ -919,15 +951,63 @@ fn spawn_ui_debug_panel(
             screen_label(
                 theme,
                 fonts,
-                "",
+                ui_debug_header_lines(&UiDebugState {
+                    target,
+                    ..default()
+                })
+                .join("\n"),
                 UiThemeTextStyleRole::Caption,
                 UiThemeTextColorRole::Primary,
             ),
-            UiDebugText,
+            UiDebugHeaderText,
             Pickable::IGNORE,
         ));
+        root.spawn((
+            UiDebugNode,
+            UiScrollView,
+            ScrollPosition(Vec2::ZERO),
+            ui_debug_body_scroll_node(target),
+            Pickable {
+                is_hoverable: true,
+                should_block_lower: false,
+            },
+        ))
+        .with_children(|body| {
+            body.spawn((
+                UiDebugNode,
+                Node {
+                    width: percent(100),
+                    ..default()
+                },
+                screen_label(
+                    theme,
+                    fonts,
+                    "",
+                    UiThemeTextStyleRole::Caption,
+                    UiThemeTextColorRole::Primary,
+                ),
+                UiDebugText,
+                Pickable::IGNORE,
+            ));
+        });
     })
     .id()
+}
+
+fn ui_debug_body_scroll_node(target: UiDebugDisplayTarget) -> Node {
+    let mut node = Node {
+        width: percent(100),
+        flex_grow: 1.0,
+        flex_direction: FlexDirection::Column,
+        overflow: Overflow::scroll_y(),
+        ..default()
+    };
+
+    if target == UiDebugDisplayTarget::GameWindow {
+        node.max_height = px(UI_DEBUG_GAME_BODY_MAX_HEIGHT);
+    }
+
+    node
 }
 
 fn ui_debug_panel_node(theme: &UiTheme, target: UiDebugDisplayTarget) -> Node {
@@ -949,6 +1029,7 @@ fn ui_debug_panel_node(theme: &UiTheme, target: UiDebugDisplayTarget) -> Node {
         UiDebugDisplayTarget::GameWindow => {
             node.width = px(430);
             node.max_width = percent(94);
+            node.max_height = percent(92);
         }
         UiDebugDisplayTarget::DedicatedWindow => {
             node.right = overlay_padding;
@@ -1531,7 +1612,8 @@ mod tests {
             ..default()
         };
 
-        let display = build_ui_debug_display_text(&mut debug_state, |_| "live body".to_string());
+        let (_, _, display) =
+            build_ui_debug_display_parts(&mut debug_state, |_| "live body".to_string());
 
         assert!(display.contains("freeze=on"));
         assert!(display.contains("frozen body"));
@@ -1549,5 +1631,14 @@ mod tests {
 
         assert!(!debug_state.copy_requested);
         assert_eq!(debug_state.last_copied_text.as_deref(), Some("debug text"));
+    }
+
+    #[test]
+    fn debug_copy_log_preview_truncates_long_text() {
+        assert_eq!(debug_copy_log_preview("abcdef", 8), "abcdef");
+        assert_eq!(
+            debug_copy_log_preview("abcdef", 3),
+            "abc\n... truncated ..."
+        );
     }
 }
