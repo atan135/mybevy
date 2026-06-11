@@ -5,7 +5,7 @@ use crate::game::{
     ui::{
         core::{
             UiFloatingPanel, UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId,
-            UiPanelKind, UiPanelRequest, UiPanelRoot,
+            UiPanelKind, UiPanelRequest, UiPanelRoot, UiViewport, UiWidthClass,
             binding::{UiBindingValues, UiBoundDisabled, UiBoundText, UiBoundVisibility},
         },
         i18n::{UiI18n, UiI18nText},
@@ -22,9 +22,9 @@ use crate::game::{
         },
         widgets::{
             DisabledButton, DisabledTextInput, FocusedButton, LoadingButton, ReadonlyTextInput,
-            SelectedButton, UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText,
-            UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted,
-            UiTextInputValidationMessage, checkbox_key, checked_checkbox_key,
+            SelectedButton, UiAlign, UiJustify, UiResponsiveGridColumns, UiTextInputAlphanumeric,
+            UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars, UiTextInputRequired,
+            UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key, checked_checkbox_key,
             disabled_checkbox_key, disabled_icon_button_key, disabled_primary_action_button_key,
             disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
             disabled_stepper_key, disabled_toggle_key, icon_button_key, loading_icon_button_key,
@@ -32,8 +32,8 @@ use crate::game::{
             screen_label_key, screen_title_key, secondary_action_button_key,
             secondary_route_button_key, segment_option_key, segmented_control,
             selected_segment_option_key, slider_key, stepper_key, text_input,
-            text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_grid,
-            ui_scroll_column,
+            text_input_form_message, toggle_key, toggle_on_key, ui_action_row, ui_column,
+            ui_responsive_column, ui_responsive_grid, ui_scroll_column,
         },
     },
 };
@@ -112,6 +112,7 @@ pub(super) fn setup_ui_gallery(
     mut commands: Commands,
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
+    viewport: Res<UiViewport>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut binding_values: ResMut<UiBindingValues>,
@@ -119,6 +120,7 @@ pub(super) fn setup_ui_gallery(
 ) {
     let theme = theme.into_inner();
     let metrics = metrics.into_inner();
+    let width_class = viewport.width_class;
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
@@ -157,25 +159,26 @@ pub(super) fn setup_ui_gallery(
             UiThemeRootNodeRole::Screen,
         ))
         .with_children(|root| {
-            root.spawn(gallery_header(theme)).with_children(|header| {
-                header.spawn(screen_title_key(
-                    theme,
-                    fonts,
-                    i18n,
-                    "ui_gallery.title",
-                    "UI Gallery",
-                    UiThemeTextStyleRole::Title,
-                ));
-                header.spawn(secondary_route_button_key(
-                    theme,
-                    metrics,
-                    fonts,
-                    i18n,
-                    "nav.lobby",
-                    "Lobby",
-                    AppUiMode::Lobby,
-                ));
-            });
+            root.spawn(gallery_header(theme, metrics, width_class))
+                .with_children(|header| {
+                    header.spawn(screen_title_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "ui_gallery.title",
+                        "UI Gallery",
+                        UiThemeTextStyleRole::Title,
+                    ));
+                    header.spawn(secondary_route_button_key(
+                        theme,
+                        metrics,
+                        fonts,
+                        i18n,
+                        "nav.lobby",
+                        "Lobby",
+                        AppUiMode::Lobby,
+                    ));
+                });
 
             root.spawn(ui_scroll_column(theme)).with_children(|body| {
                 body.spawn(gallery_panel(theme))
@@ -246,7 +249,7 @@ pub(super) fn setup_ui_gallery(
                             "Buttons",
                         ));
                         buttons_panel
-                            .spawn(ui_grid(theme, 4))
+                            .spawn(gallery_grid(metrics, width_class, gallery_button_columns()))
                             .with_children(|buttons| {
                                 buttons.spawn(primary_action_button_key(
                                     theme,
@@ -326,7 +329,11 @@ pub(super) fn setup_ui_gallery(
                             "Icon Buttons",
                         ));
                         icon_buttons_panel
-                            .spawn(ui_grid(theme, 5))
+                            .spawn(gallery_grid(
+                                metrics,
+                                width_class,
+                                gallery_icon_button_columns(),
+                            ))
                             .with_children(|buttons| {
                                 buttons.spawn(icon_button_key(
                                     theme,
@@ -392,7 +399,11 @@ pub(super) fn setup_ui_gallery(
                             "Selection Controls",
                         ));
                         selection_panel
-                            .spawn(ui_grid(theme, 3))
+                            .spawn(gallery_grid(
+                                metrics,
+                                width_class,
+                                gallery_selection_columns(),
+                            ))
                             .with_children(|controls| {
                                 controls.spawn(checkbox_key(
                                     theme,
@@ -477,7 +488,11 @@ pub(super) fn setup_ui_gallery(
                             "Numeric Controls",
                         ));
                         numeric_panel
-                            .spawn(ui_column(theme.layout.row_gap))
+                            .spawn(ui_responsive_column(
+                                metrics,
+                                UiJustify::Start,
+                                UiAlign::Stretch,
+                            ))
                             .with_children(|controls| {
                                 controls.spawn(slider_key(
                                     theme,
@@ -763,7 +778,7 @@ pub(super) fn setup_ui_gallery(
                             "Overlays",
                         ));
                         overlays_panel
-                            .spawn(ui_grid(theme, 4))
+                            .spawn(ui_action_row(metrics, width_class))
                             .with_children(|buttons| {
                                 buttons.spawn((
                                     primary_action_button_key(
@@ -864,7 +879,7 @@ pub(super) fn setup_ui_gallery(
                             UiThemeTextColorRole::Muted,
                         ));
                         stress_panel
-                            .spawn(gallery_stress_grid(theme))
+                            .spawn(gallery_grid(metrics, width_class, gallery_stress_columns()))
                             .with_children(|items| {
                                 for index in 0..GALLERY_STRESS_ITEM_COUNT {
                                     spawn_gallery_stress_item(
@@ -1043,14 +1058,24 @@ pub(super) fn tag_gallery_floating_i18n_texts(
     }
 }
 
-fn gallery_header(theme: &UiTheme) -> impl Bundle {
+fn gallery_header(theme: &UiTheme, metrics: &UiMetrics, width_class: UiWidthClass) -> impl Bundle {
     Node {
         width: percent(100),
-        max_width: px(theme.layout.content_width),
+        max_width: px(theme.layout.content_width.min(metrics.content_max_width)),
         align_self: AlignSelf::Center,
-        align_items: AlignItems::Center,
-        justify_content: JustifyContent::SpaceBetween,
-        column_gap: px(theme.layout.header_gap),
+        align_items: if width_class == UiWidthClass::Compact {
+            AlignItems::Stretch
+        } else {
+            UiAlign::Center.to_align_items()
+        },
+        justify_content: if width_class == UiWidthClass::Compact {
+            JustifyContent::FlexStart
+        } else {
+            UiJustify::SpaceBetween.to_justify_content()
+        },
+        column_gap: px(metrics.control_gap),
+        row_gap: px(metrics.control_gap),
+        flex_wrap: FlexWrap::Wrap,
         ..default()
     }
 }
@@ -1076,18 +1101,28 @@ fn gallery_panel(theme: &UiTheme) -> impl Bundle {
     )
 }
 
-fn gallery_stress_grid(theme: &UiTheme) -> impl Bundle {
-    Node {
-        width: percent(100),
-        display: Display::Grid,
-        grid_template_columns: RepeatedGridTrack::flex(3, 1.0),
-        grid_auto_rows: vec![GridTrack::auto()],
-        column_gap: px(theme.layout.row_column_gap),
-        row_gap: px(theme.layout.row_gap),
-        align_items: AlignItems::Stretch,
-        justify_items: JustifyItems::Stretch,
-        ..default()
-    }
+fn gallery_grid(
+    metrics: &UiMetrics,
+    width_class: UiWidthClass,
+    columns: UiResponsiveGridColumns,
+) -> impl Bundle {
+    ui_responsive_grid(metrics, width_class, columns)
+}
+
+fn gallery_button_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 2, 4)
+}
+
+fn gallery_icon_button_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(3, 5, 5)
+}
+
+fn gallery_selection_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 2, 3)
+}
+
+fn gallery_stress_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 2, 3)
 }
 
 fn gallery_stress_item(theme: &UiTheme, index: usize) -> impl Bundle {
@@ -1315,5 +1350,46 @@ fn gallery_floating_i18n(i18n: &UiI18n) -> GalleryFloatingI18n {
             "ui_gallery.floating.detail",
             "Use Close Top or Esc to close it.",
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gallery_button_columns_are_single_column_on_compact() {
+        assert_eq!(
+            gallery_button_columns().for_width_class(UiWidthClass::Compact),
+            1
+        );
+        assert_eq!(
+            gallery_selection_columns().for_width_class(UiWidthClass::Compact),
+            1
+        );
+        assert_eq!(
+            gallery_stress_columns().for_width_class(UiWidthClass::Compact),
+            1
+        );
+    }
+
+    #[test]
+    fn gallery_columns_expand_on_expanded_width() {
+        assert_eq!(
+            gallery_button_columns().for_width_class(UiWidthClass::Expanded),
+            4
+        );
+        assert_eq!(
+            gallery_icon_button_columns().for_width_class(UiWidthClass::Expanded),
+            5
+        );
+        assert_eq!(
+            gallery_selection_columns().for_width_class(UiWidthClass::Expanded),
+            3
+        );
+        assert_eq!(
+            gallery_stress_columns().for_width_class(UiWidthClass::Expanded),
+            3
+        );
     }
 }
