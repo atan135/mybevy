@@ -441,6 +441,30 @@ cargo run -- --window-profile desktop
 - ConfirmPanel action row 是否统一按钮背景。
 - DebugPanel 是否可读、可滚动、不遮挡关键路径。
 
+推荐核心设备矩阵：
+
+```powershell
+Set-Location project
+
+# 手机竖屏，逻辑尺寸约 360x800
+cargo run -- --window-size 720x1600 --device-scale 2.0 --window-scale 75%
+
+# 手机竖屏，逻辑尺寸约 360x800
+cargo run -- --window-size 1080x2400 --device-scale 3.0 --window-scale 50%
+
+# 手机竖屏，逻辑尺寸约 394x853
+cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
+
+# 平板竖屏，逻辑尺寸约 800x1280
+cargo run -- --window-size 1600x2560 --device-scale 2.0 --window-scale 50%
+
+# 平板竖屏，逻辑尺寸约 1024x1366
+cargo run -- --window-size 2048x2732 --device-scale 2.0 --window-scale 40%
+
+# 平板横屏，逻辑尺寸约 1280x800
+cargo run -- --window-size 2560x1600 --device-scale 2.0 --window-scale 50%
+```
+
 ## 14. 真机验收矩阵
 
 Android 真机至少检查：
