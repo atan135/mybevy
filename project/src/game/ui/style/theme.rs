@@ -340,6 +340,7 @@ struct UiThemeSource {
 
 #[derive(Debug, Resource)]
 struct UiThemeHotReload {
+    enabled: bool,
     watched_path: PathBuf,
     last_modified: Option<SystemTime>,
     poll_timer: Timer,
@@ -498,9 +499,13 @@ impl UiThemeHotReload {
             .loaded_path
             .clone()
             .unwrap_or_else(preferred_ui_theme_watch_path);
-        let last_modified = ui_theme_modified_time(&watched_path).ok();
+        let enabled = source.loaded_path.is_some();
+        let last_modified = enabled
+            .then(|| ui_theme_modified_time(&watched_path).ok())
+            .flatten();
 
         Self {
+            enabled,
             watched_path,
             last_modified,
             poll_timer: Timer::from_seconds(
@@ -533,6 +538,10 @@ fn poll_ui_theme_hot_reload(
     mut source: ResMut<UiThemeSource>,
     mut hot_reload: ResMut<UiThemeHotReload>,
 ) {
+    if !hot_reload.enabled {
+        return;
+    }
+
     if !hot_reload.poll_timer.tick(time.delta()).just_finished() {
         return;
     }
@@ -1172,6 +1181,7 @@ mod tests {
         fs::write(&path, "(version: 1, colors:").expect("bad temp config should be written");
 
         let mut hot_reload = UiThemeHotReload {
+            enabled: true,
             watched_path: path,
             last_modified: None,
             poll_timer: Timer::from_seconds(0.0, TimerMode::Repeating),
@@ -1197,5 +1207,36 @@ mod tests {
         let theme = app.world().resource::<UiTheme>();
         assert_eq!(theme.text.title_large, current_title_size);
         assert_eq!(theme.button.height, current_button_height);
+    }
+
+    #[test]
+    fn disabled_hot_reload_keeps_built_in_theme_without_polling_missing_path() {
+        let missing_path = PathBuf::from("missing/theme.ron");
+        let mut hot_reload = UiThemeHotReload {
+            enabled: false,
+            watched_path: missing_path,
+            last_modified: None,
+            poll_timer: Timer::from_seconds(0.0, TimerMode::Repeating),
+            last_error: None,
+        };
+        hot_reload.poll_timer.tick(std::time::Duration::ZERO);
+        let source = UiThemeSource {
+            loaded_path: None,
+            diagnostics: Vec::new(),
+        };
+        let mut app = App::new();
+        app.insert_resource(UiTheme::default())
+            .insert_resource(source)
+            .insert_resource(hot_reload)
+            .insert_resource(Time::<()>::default())
+            .add_systems(Update, poll_ui_theme_hot_reload);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+
+        app.update();
+
+        let hot_reload = app.world().resource::<UiThemeHotReload>();
+        assert!(hot_reload.last_error.is_none());
     }
 }

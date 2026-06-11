@@ -1,6 +1,7 @@
 # Rust / Bevy build artifacts
 /project/target/
 /logs/
+/artifacts/
 
 # Android local config and build artifacts
 /android/.gradle/

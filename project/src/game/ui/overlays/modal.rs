@@ -251,6 +251,8 @@ pub(in crate::game) fn spawn_confirm_modal(
                         align_items: AlignItems::Center,
                         justify_content: JustifyContent::FlexEnd,
                         column_gap: px(theme.layout.row_column_gap),
+                        row_gap: px(theme.layout.row_gap),
+                        flex_wrap: FlexWrap::Wrap,
                         margin: UiRect::top(px(theme.layout.row_gap)),
                         ..default()
                     })
