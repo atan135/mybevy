@@ -33,7 +33,7 @@ use crate::game::{
             screen_label_key, screen_title_key, secondary_action_button_key,
             secondary_route_button_key, segment_option_key, segmented_control,
             selected_segment_option_key, slider_key, stepper_key, text_input,
-            text_input_form_message, toggle_key, toggle_on_key, ui_action_row, ui_column, ui_image,
+            text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_image,
             ui_image_panel_node, ui_responsive_column, ui_responsive_grid, ui_scroll_column,
             ui_thumbnail_grid,
         },
@@ -795,7 +795,11 @@ pub(super) fn setup_ui_gallery(
                             "Overlays",
                         ));
                         overlays_panel
-                            .spawn(ui_action_row(metrics, width_class))
+                            .spawn(gallery_grid(
+                                metrics,
+                                width_class,
+                                gallery_overlay_columns(),
+                            ))
                             .with_children(|buttons| {
                                 buttons.spawn((
                                     primary_action_button_key(
@@ -1204,6 +1208,10 @@ fn gallery_selection_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(1, 2, 3)
 }
 
+fn gallery_overlay_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 3, 5)
+}
+
 fn gallery_image_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(1, 2, 2)
 }
@@ -1551,6 +1559,10 @@ mod tests {
             1
         );
         assert_eq!(
+            gallery_overlay_columns().for_width_class(UiWidthClass::Compact),
+            1
+        );
+        assert_eq!(
             gallery_image_columns().for_width_class(UiWidthClass::Compact),
             1
         );
@@ -1577,6 +1589,10 @@ mod tests {
         assert_eq!(
             gallery_stress_columns().for_width_class(UiWidthClass::Expanded),
             3
+        );
+        assert_eq!(
+            gallery_overlay_columns().for_width_class(UiWidthClass::Expanded),
+            5
         );
         assert_eq!(
             gallery_image_columns().for_width_class(UiWidthClass::Expanded),
