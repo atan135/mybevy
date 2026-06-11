@@ -4,14 +4,14 @@ use crate::game::navigation::AppUiMode;
 use crate::game::ui::{
     core::{
         UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiBlockingOverlay, UiLayer,
-        UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot,
+        UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot,
     },
     i18n::{UiI18n, UiI18nText},
     style::{
         UiFontAssets, UiTheme,
         theme::{
-            UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
-            UiThemeTextColorRole, UiThemeTextStyleRole,
+            UiThemeBackgroundRole, UiThemeBorderRole, UiThemeRootNodeRole, UiThemeTextColorRole,
+            UiThemeTextStyleRole,
         },
     },
 };
@@ -56,6 +56,7 @@ pub(in crate::game) struct UiLoadingAnimatedPanel;
 pub(in crate::game) fn spawn_loading(
     commands: &mut Commands,
     theme: &UiTheme,
+    metrics: &UiMetrics,
     fonts: &UiFontAssets,
     loading: &UiLoading,
     owner_mode: Option<AppUiMode>,
@@ -82,7 +83,7 @@ pub(in crate::game) fn spawn_loading(
                 bottom: px(0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                padding: UiRect::all(px(theme.layout.screen_padding)),
+                padding: UiRect::all(px(metrics.page_padding)),
                 ..default()
             },
             ZIndex(150),
@@ -93,17 +94,7 @@ pub(in crate::game) fn spawn_loading(
         ))
         .with_children(|root| {
             root.spawn((
-                UiThemePanelNodeRole::Loading,
-                Node {
-                    min_width: px(260),
-                    max_width: px(420),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    padding: UiRect::axes(px(22), px(16)),
-                    border: UiRect::all(px(theme.panel.border)),
-                    border_radius: BorderRadius::all(px(theme.panel.radius)),
-                    ..default()
-                },
+                loading_panel_node(theme, metrics),
                 BackgroundColor(theme.colors.panel_background.with_alpha(0.0)),
                 BorderColor::all(theme.colors.panel_border.with_alpha(0.0)),
                 UiThemeBackgroundRole::Panel,
@@ -119,6 +110,27 @@ pub(in crate::game) fn spawn_loading(
                 }
             });
         });
+}
+
+fn loading_panel_node(theme: &UiTheme, metrics: &UiMetrics) -> Node {
+    Node {
+        min_width: px(loading_panel_min_width(metrics)),
+        max_width: px(loading_panel_max_width(metrics)),
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::Center,
+        padding: UiRect::axes(px(metrics.panel_padding), px(metrics.control_gap * 1.5)),
+        border: UiRect::all(px(theme.panel.border)),
+        border_radius: BorderRadius::all(px(theme.panel.radius)),
+        ..default()
+    }
+}
+
+fn loading_panel_min_width(metrics: &UiMetrics) -> f32 {
+    (metrics.dialog_max_width * 0.55).clamp(metrics.touch_target_min * 4.0, 320.0)
+}
+
+fn loading_panel_max_width(metrics: &UiMetrics) -> f32 {
+    metrics.dialog_max_width.min(metrics.content_max_width)
 }
 
 pub(in crate::game) fn sync_loading_entry_border_alpha(
@@ -222,6 +234,20 @@ mod tests {
         assert_approx_eq(
             entry_border_alpha(Some(&animation), 0.8),
             UiAnimationEasing::EaseOutCubic.sample(0.5) * 0.8,
+        );
+    }
+
+    #[test]
+    fn loading_panel_width_uses_metrics_bounds() {
+        let theme = UiTheme::default();
+        let metrics = UiMetrics::default();
+        let node = loading_panel_node(&theme, &metrics);
+
+        assert_eq!(node.min_width, px(loading_panel_min_width(&metrics)));
+        assert_eq!(node.max_width, px(loading_panel_max_width(&metrics)));
+        assert_eq!(
+            node.max_width,
+            px(metrics.dialog_max_width.min(metrics.content_max_width))
         );
     }
 }

@@ -5,19 +5,22 @@ use crate::game::{
     ui::{
         core::{
             UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer, UiLayerRoot,
-            UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot,
+            UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot, UiViewport,
+            UiWidthClass,
         },
         i18n::{UiI18n, UiI18nText},
         style::{
             UiFontAssets, UiTheme,
             theme::{
                 ButtonColors, UiThemeBackgroundRole, UiThemeBorderRole, UiThemeButtonNodeRole,
-                UiThemePanelNodeRole, UiThemeRootNodeRole, UiThemeTextColorRole,
-                UiThemeTextStyleRole,
+                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
             },
         },
         widgets::controls::{PrimaryButton, SecondaryButton},
-        widgets::{DisabledButton, FocusableButton, FocusedButton, LoadingButton, SelectedButton},
+        widgets::{
+            DisabledButton, FocusableButton, FocusedButton, LoadingButton, SelectedButton,
+            ui_scroll_column_with_max_height,
+        },
     },
 };
 
@@ -128,6 +131,7 @@ pub(in crate::game) fn spawn_confirm_modal(
     commands: &mut Commands,
     theme: &UiTheme,
     metrics: &UiMetrics,
+    viewport: &UiViewport,
     fonts: &UiFontAssets,
     modal: &UiConfirmModal,
     owner_mode: Option<AppUiMode>,
@@ -151,7 +155,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                 bottom: px(0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                padding: UiRect::all(px(theme.layout.screen_padding)),
+                padding: UiRect::all(px(metrics.page_padding)),
                 ..default()
             },
             ZIndex(100),
@@ -162,17 +166,7 @@ pub(in crate::game) fn spawn_confirm_modal(
         ))
         .with_children(|root| {
             root.spawn((
-                UiThemePanelNodeRole::Standard,
-                Node {
-                    width: percent(100),
-                    max_width: px(460),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(theme.layout.card_gap),
-                    padding: UiRect::all(px(theme.panel.padding)),
-                    border: UiRect::all(px(theme.panel.border)),
-                    border_radius: BorderRadius::all(px(theme.panel.radius)),
-                    ..default()
-                },
+                confirm_panel_node(theme, metrics),
                 BackgroundColor(theme.colors.panel_background.with_alpha(0.0)),
                 BorderColor::all(theme.colors.panel_border.with_alpha(0.0)),
                 UiThemeBackgroundRole::Panel,
@@ -202,61 +196,56 @@ pub(in crate::game) fn spawn_confirm_modal(
                     ));
                 }
 
-                if let Some(i18n_text) = modal.body_i18n_text.clone() {
-                    panel.spawn((
-                        confirm_text(
-                            theme,
-                            fonts,
-                            modal.body.clone(),
-                            UiThemeTextStyleRole::Body,
-                            UiThemeTextColorRole::Primary,
-                        ),
-                        i18n_text,
-                    ));
-                } else {
-                    panel.spawn(confirm_text(
-                        theme,
-                        fonts,
-                        modal.body.clone(),
-                        UiThemeTextStyleRole::Body,
-                        UiThemeTextColorRole::Primary,
-                    ));
-                }
-
-                if let Some(detail) = &modal.detail {
-                    if let Some(i18n_text) = modal.detail_i18n_text.clone() {
-                        panel.spawn((
-                            confirm_text(
+                panel
+                    .spawn(confirm_body_scroll_node(metrics))
+                    .with_children(|body| {
+                        if let Some(i18n_text) = modal.body_i18n_text.clone() {
+                            body.spawn((
+                                confirm_text(
+                                    theme,
+                                    fonts,
+                                    modal.body.clone(),
+                                    UiThemeTextStyleRole::Body,
+                                    UiThemeTextColorRole::Primary,
+                                ),
+                                i18n_text,
+                            ));
+                        } else {
+                            body.spawn(confirm_text(
                                 theme,
                                 fonts,
-                                detail.clone(),
-                                UiThemeTextStyleRole::Caption,
-                                UiThemeTextColorRole::Muted,
-                            ),
-                            i18n_text,
-                        ));
-                    } else {
-                        panel.spawn(confirm_text(
-                            theme,
-                            fonts,
-                            detail.clone(),
-                            UiThemeTextStyleRole::Caption,
-                            UiThemeTextColorRole::Muted,
-                        ));
-                    }
-                }
+                                modal.body.clone(),
+                                UiThemeTextStyleRole::Body,
+                                UiThemeTextColorRole::Primary,
+                            ));
+                        }
+
+                        if let Some(detail) = &modal.detail {
+                            if let Some(i18n_text) = modal.detail_i18n_text.clone() {
+                                body.spawn((
+                                    confirm_text(
+                                        theme,
+                                        fonts,
+                                        detail.clone(),
+                                        UiThemeTextStyleRole::Caption,
+                                        UiThemeTextColorRole::Muted,
+                                    ),
+                                    i18n_text,
+                                ));
+                            } else {
+                                body.spawn(confirm_text(
+                                    theme,
+                                    fonts,
+                                    detail.clone(),
+                                    UiThemeTextStyleRole::Caption,
+                                    UiThemeTextColorRole::Muted,
+                                ));
+                            }
+                        }
+                    });
 
                 panel
-                    .spawn(Node {
-                        width: percent(100),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::FlexEnd,
-                        column_gap: px(theme.layout.row_column_gap),
-                        row_gap: px(theme.layout.row_gap),
-                        flex_wrap: FlexWrap::Wrap,
-                        margin: UiRect::top(px(theme.layout.row_gap)),
-                        ..default()
-                    })
+                    .spawn(confirm_action_row_node(metrics, viewport.width_class))
                     .with_children(|actions| {
                         for action in &modal.actions {
                             let action_marker = UiModalActionButton {
@@ -373,6 +362,52 @@ fn spawn_confirm_action_button(
             button.spawn(confirm_button_label(theme, fonts, action.label.clone()));
         }
     });
+}
+
+fn confirm_panel_node(theme: &UiTheme, metrics: &UiMetrics) -> Node {
+    Node {
+        width: percent(100),
+        max_width: px(metrics.dialog_max_width),
+        max_height: percent(100),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(metrics.section_gap),
+        padding: UiRect::all(px(metrics.panel_padding)),
+        border: UiRect::all(px(theme.panel.border)),
+        border_radius: BorderRadius::all(px(theme.panel.radius)),
+        ..default()
+    }
+}
+
+fn confirm_body_scroll_node(metrics: &UiMetrics) -> impl Bundle {
+    ui_scroll_column_with_max_height(metrics.control_gap, confirm_body_max_height(metrics))
+}
+
+fn confirm_action_row_node(metrics: &UiMetrics, width_class: UiWidthClass) -> Node {
+    let is_compact = width_class == UiWidthClass::Compact;
+
+    Node {
+        width: percent(100),
+        align_items: AlignItems::Center,
+        justify_content: if is_compact {
+            JustifyContent::FlexStart
+        } else {
+            JustifyContent::FlexEnd
+        },
+        justify_items: if is_compact {
+            JustifyItems::Stretch
+        } else {
+            JustifyItems::End
+        },
+        column_gap: px(metrics.control_gap),
+        row_gap: px(metrics.control_gap),
+        flex_wrap: FlexWrap::Wrap,
+        margin: UiRect::top(px(metrics.control_gap)),
+        ..default()
+    }
+}
+
+fn confirm_body_max_height(metrics: &UiMetrics) -> f32 {
+    (metrics.dialog_max_width * 0.9).clamp(160.0, 420.0)
 }
 
 fn confirm_button_base(theme: &UiTheme, metrics: &UiMetrics, background: Color) -> impl Bundle {
@@ -584,5 +619,36 @@ mod tests {
             entry_border_alpha(Some(&animation), 0.9),
             UiAnimationEasing::EaseOutCubic.sample(0.5) * 0.9,
         );
+    }
+
+    #[test]
+    fn confirm_panel_width_uses_metrics_dialog_max_width() {
+        let theme = UiTheme::default();
+        let metrics = UiMetrics::default();
+        let node = confirm_panel_node(&theme, &metrics);
+
+        assert_eq!(node.width, percent(100));
+        assert_eq!(node.max_width, px(metrics.dialog_max_width));
+    }
+
+    #[test]
+    fn compact_confirm_action_row_wraps_from_start() {
+        let metrics = UiMetrics::default();
+        let node = confirm_action_row_node(&metrics, UiWidthClass::Compact);
+
+        assert_eq!(node.justify_content, JustifyContent::FlexStart);
+        assert_eq!(node.justify_items, JustifyItems::Stretch);
+        assert_eq!(node.flex_wrap, FlexWrap::Wrap);
+        assert_eq!(node.column_gap, px(metrics.control_gap));
+    }
+
+    #[test]
+    fn expanded_confirm_action_row_aligns_to_end() {
+        let metrics = UiMetrics::default();
+        let node = confirm_action_row_node(&metrics, UiWidthClass::Expanded);
+
+        assert_eq!(node.justify_content, JustifyContent::FlexEnd);
+        assert_eq!(node.justify_items, JustifyItems::End);
+        assert_eq!(node.flex_wrap, FlexWrap::Wrap);
     }
 }

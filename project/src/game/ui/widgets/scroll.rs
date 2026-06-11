@@ -33,6 +33,14 @@ struct UiScroll {
 }
 
 pub(in crate::game) fn ui_scroll_column(theme: &UiTheme) -> impl Bundle {
+    ui_scroll_column_node(theme.layout.page_gap, Val::Auto)
+}
+
+pub(in crate::game) fn ui_scroll_column_with_max_height(gap: f32, max_height: f32) -> impl Bundle {
+    ui_scroll_column_node(gap, px(max_height))
+}
+
+fn ui_scroll_column_node(row_gap: f32, max_height: Val) -> impl Bundle {
     (
         UiScrollView,
         UiScrollDragStart::default(),
@@ -41,7 +49,8 @@ pub(in crate::game) fn ui_scroll_column(theme: &UiTheme) -> impl Bundle {
             width: percent(100),
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
-            row_gap: px(theme.layout.page_gap),
+            row_gap: px(row_gap),
+            max_height,
             overflow: Overflow::scroll_y(),
             ..default()
         },

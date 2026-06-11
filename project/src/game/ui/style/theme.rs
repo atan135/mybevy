@@ -144,6 +144,7 @@ pub(in crate::game) enum UiThemeButtonNodeRole {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
+#[allow(dead_code)]
 pub(in crate::game) enum UiThemePanelNodeRole {
     Standard,
     Content,

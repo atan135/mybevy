@@ -24,4 +24,6 @@ pub(in crate::game) use layout::{
     ui_column, ui_content_container, ui_grid, ui_metrics_scroll_column, ui_responsive_column,
     ui_responsive_grid, ui_responsive_row, ui_responsive_wrap_row,
 };
-pub(in crate::game) use scroll::{UiScrollView, ui_scroll_column};
+pub(in crate::game) use scroll::{
+    UiScrollView, ui_scroll_column, ui_scroll_column_with_max_height,
+};
