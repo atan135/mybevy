@@ -54,6 +54,19 @@ Set-Location project
 cargo run
 ```
 
+用桌面窗口模拟手机/平板分辨率验收 UI：
+
+```powershell
+cargo run -- --window-profile phone-portrait
+cargo run -- --window-profile phone-1080p
+cargo run -- --window-profile phone-small
+cargo run -- --window-profile tablet-portrait
+cargo run -- --window-profile tablet-landscape
+cargo run -- --window-size 1280x2772
+cargo run -- --window-profile phone-portrait --window-scale 50%
+cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
+```
+
 格式化代码：
 
 ```powershell

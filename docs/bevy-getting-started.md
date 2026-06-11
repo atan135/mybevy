@@ -330,14 +330,57 @@ fn update_game() {}
 - 在 `project/` 目录跑通一次 `cargo run`
 - 确认窗口正常打开
 
-## 14. 官方参考入口
+## 14. 桌面端模拟设备分辨率
+
+桌面开发时可以通过窗口 profile 启动，用来模拟手机或平板分辨率验收 UI。所有命令都在 `project/` 目录执行：
+
+```powershell
+cargo run -- --window-profile phone-portrait
+cargo run -- --window-profile phone-1080p
+cargo run -- --window-profile phone-small
+cargo run -- --window-profile tablet-portrait
+cargo run -- --window-profile tablet-landscape
+cargo run -- --window-profile desktop
+```
+
+也可以直接传自定义设备物理分辨率。程序会对已知尺寸推断设备缩放，例如 `1280x2772` 会按当前 Android 验收机的 `3.25` 缩放模拟，UI 逻辑宽度约为 `394`：
+
+```powershell
+cargo run -- --window-size 1280x2772
+```
+
+如果需要模拟其它 DPI/缩放，可以显式传设备缩放：
+
+```powershell
+cargo run -- --window-size 1280x2772 --device-scale 3.25
+```
+
+如果设备分辨率在当前显示器上放不下，可以增加桌面预览缩放。预览缩放只影响桌面窗口显示尺寸，不改变 UI 逻辑排版：
+
+```powershell
+cargo run -- --window-profile phone-portrait --window-scale 50%
+cargo run -- --window-size 1280x2772 --window-scale 0.5
+```
+
+当前内置 profile：
+
+- `desktop`: `1280x720`, scale `1.0`
+- `phone-portrait`: `1280x2772`, scale `3.25`
+- `phone-1080p`: `1080x2400`, scale `3.0`
+- `phone-small`: `720x1600`, scale `2.0`
+- `tablet-portrait`: `1600x2560`, scale `2.0`
+- `tablet-landscape`: `2560x1600`, scale `2.0`
+
+如果参数非法，程序会打印 warning 并回退到默认桌面尺寸。该功能只作用于桌面端 primary window 的启动尺寸，不改变 Android 真机默认行为。
+
+## 15. 官方参考入口
 
 - Bevy Quick Start: `https://bevy.org/learn/quick-start/getting-started/`
 - Bevy Setup: `https://bevy.org/learn/quick-start/getting-started/setup/`
 - Bevy 官方 examples: `https://github.com/bevyengine/bevy/tree/latest/examples`
 - 本仓库资源使用方式：`docs/assets-workflow.md`
 
-## 15. 本项目如何打包成 Windows 和 Android App
+## 16. 本项目如何打包成 Windows 和 Android App
 
 这一节只针对当前仓库结构说明：
 
