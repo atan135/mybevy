@@ -17,7 +17,7 @@ use crate::game::ui::{
             UiThemeTextColorRole, UiThemeTextStyleRole,
         },
     },
-    widgets::{UiScrollView, screen_label, screen_title},
+    widgets::{UiScrollViewConfig, screen_label, screen_title, ui_scroll_column_bundle},
 };
 
 const UI_DEBUG_TARGET_ENV: &str = "MYBEVY_UI_DEBUG_TARGET";
@@ -999,13 +999,7 @@ fn spawn_ui_debug_panel(
         ));
         root.spawn((
             UiDebugNode,
-            UiScrollView,
-            ScrollPosition(Vec2::ZERO),
-            ui_debug_body_scroll_node(metrics, viewport, target),
-            Pickable {
-                is_hoverable: true,
-                should_block_lower: true,
-            },
+            ui_scroll_column_bundle(ui_debug_body_scroll_config(metrics, viewport, target)),
         ))
         .with_children(|body| {
             body.spawn((
@@ -1029,25 +1023,18 @@ fn spawn_ui_debug_panel(
     .id()
 }
 
-fn ui_debug_body_scroll_node(
+fn ui_debug_body_scroll_config(
     metrics: &UiMetrics,
     viewport: &UiViewport,
     target: UiDebugDisplayTarget,
-) -> Node {
-    let mut node = Node {
-        width: percent(100),
-        flex_grow: 1.0,
-        flex_direction: FlexDirection::Column,
-        row_gap: px(metrics.control_gap),
-        overflow: Overflow::scroll_y(),
-        ..default()
-    };
+) -> UiScrollViewConfig {
+    let mut config = UiScrollViewConfig::new(metrics.control_gap);
 
     if target == UiDebugDisplayTarget::GameWindow {
-        node.max_height = px(ui_debug_game_body_max_height(metrics, viewport));
+        config = config.with_max_height(ui_debug_game_body_max_height(metrics, viewport));
     }
 
-    node
+    config
 }
 
 fn ui_debug_panel_node(

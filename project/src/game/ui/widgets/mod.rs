@@ -24,6 +24,8 @@ pub(in crate::game) use layout::{
     ui_column, ui_content_container, ui_grid, ui_metrics_scroll_column, ui_responsive_column,
     ui_responsive_grid, ui_responsive_row, ui_responsive_wrap_row,
 };
+#[allow(unused_imports)]
 pub(in crate::game) use scroll::{
-    UiScrollView, ui_scroll_column, ui_scroll_column_with_max_height,
+    UiScrollView, UiScrollViewConfig, ui_scroll_column, ui_scroll_column_bundle,
+    ui_scroll_column_node, ui_scroll_column_with_max_height, ui_scroll_pickable,
 };
