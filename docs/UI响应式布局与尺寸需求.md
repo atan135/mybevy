@@ -473,3 +473,25 @@ Android 真机至少检查：
 - 页面、弹窗、调试面板在高度不足时有合理滚动。
 - 对齐方式可以通过 API 明确表达，而不是靠临时 margin。
 - 桌面模拟和 Android 真机看到的布局接近一致。
+
+## 17. 当前实现状态与开发验收记录
+
+截至第 10 节收尾，响应式 UI 基础已按分节开发接入：
+
+- `UiViewport` / `UiMetrics` 已在 `project/src/game/ui/core/viewport.rs` 实现，并由主窗口逻辑尺寸和主题 token 更新。
+- 宽度分级当前为 `Compact < 480`、`Medium < 840`、`Expanded >= 840`。
+- 高度分级当前实现为 `Short < 600`、`Regular < 800`、`Tall >= 800`。本文前文建议值曾写 `Tall >= 1000`，实际实现按开发验收用例 `394x853 => Compact + Tall + Portrait` 收敛为 800 阈值。
+- `Button`、`IconButton`、`TextInput`、`Slider`、`Stepper` 的基础尺寸已改为优先来自 `UiMetrics` 或 metrics 派生值。
+- 通用 layout helper 已提供响应式 row / column / wrap row / grid / content container / action row，以及 `UiJustify`、`UiAlign`、`UiAlignSelf`、`UiContentAlign` 等对齐表达。
+- `UiGallery` 的按钮组、图标按钮组、selection controls、numeric controls、overlay action row 和 stress grid 已接入响应式布局 helper。
+- `ConfirmPanel`、`Loading overlay`、`Toast`、`FloatingPanel`、`DebugPanel` 已接入 metrics / safe area / 最大宽高 / 内部滚动中的相应能力。
+- 页面 root 已接入 `UiViewport` safe area 与 `UiMetrics.page_padding` 合成 padding；桌面和当前 Android 第一版 safe area 值仍为 0，Android 原生 inset 后续再接。
+- ScrollView helper 已统一 `UiScrollView`、`ScrollPosition`、拖动起点组件和 `Pickable` 阻挡策略，避免外部手写滚动节点时遗漏基础组件。
+- DebugPanel 已显示 viewport / metrics 摘要，便于验收当前 logical size、width / height class、orientation、content / dialog max width。
+
+仍需用户或主 agent 后续手动自测：
+
+- 用第 13 节桌面 profile 矩阵检查 Login、Lobby、UiGallery、Overlay、DebugPanel 的真实视觉表现。
+- Android 真机检查刘海 / 圆角 / 状态栏 / 导航栏安全区；当前代码只保留 `UiSafeArea` 结构和 padding 合成能力，未接 Android 原生 inset。
+- 检查 slider 拖动与 ScrollView 触控拖动在真机上的手势归属；当前通过滚动 helper 和输入阻挡降低误触，但未做完整手势仲裁重写。
+- 检查长 Confirm 正文、长 DebugPanel 内容、Toast 顶部位置、FloatingPanel 边距和关闭路径。
