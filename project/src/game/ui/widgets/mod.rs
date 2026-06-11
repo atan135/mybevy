@@ -1,4 +1,5 @@
 pub(in crate::game) mod controls;
+pub(in crate::game) mod image;
 pub(in crate::game) mod layout;
 pub(in crate::game) mod scroll;
 
@@ -17,6 +18,10 @@ pub(in crate::game) use controls::{
     secondary_action_button_with_i18n_text, secondary_route_button_key, segment_option_key,
     segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
     text_input_form_message, toggle_key, toggle_on_key,
+};
+#[allow(unused_imports)]
+pub(in crate::game) use image::{
+    UiImageFit, UiImageSize, ui_image, ui_image_panel_node, ui_thumbnail_grid,
 };
 #[allow(unused_imports)]
 pub(in crate::game) use layout::{
