@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::game::{
     navigation::AppUiMode,
     ui::{
-        core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot},
+        core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot, UiViewport},
         i18n::UiI18n,
         style::{UiFontAssets, UiTheme, theme::UiThemeRootNodeRole},
         widgets::secondary_route_button_key,
@@ -14,6 +14,7 @@ pub(super) fn setup_touch_ripple_overlay(
     mut commands: Commands,
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
+    viewport: Res<UiViewport>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
 ) {
@@ -35,7 +36,7 @@ pub(super) fn setup_touch_ripple_overlay(
         Node {
             width: percent(100),
             height: percent(100),
-            padding: UiRect::all(px(theme.layout.overlay_padding)),
+            padding: viewport.safe_area_padding(metrics.page_padding),
             align_items: AlignItems::FlexStart,
             justify_content: JustifyContent::FlexEnd,
             ..default()

@@ -6,7 +6,7 @@ use crate::game::{
     ui::{
         core::{
             UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind,
-            UiPanelRequest, UiPanelRoot,
+            UiPanelRequest, UiPanelRoot, UiViewport,
         },
         i18n::UiI18n,
         overlays::{
@@ -34,6 +34,7 @@ pub(super) fn setup_game_list_screen(
     mut commands: Commands,
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
+    viewport: Res<UiViewport>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut clear_color: ResMut<ClearColor>,
@@ -58,7 +59,7 @@ pub(super) fn setup_game_list_screen(
             width: percent(100),
             height: percent(100),
             flex_direction: FlexDirection::Column,
-            padding: UiRect::all(px(theme.layout.screen_padding)),
+            padding: viewport.safe_area_padding(metrics.page_padding),
             row_gap: px(theme.layout.page_gap),
             ..default()
         },

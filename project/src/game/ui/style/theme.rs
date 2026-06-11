@@ -6,7 +6,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::game::ui::core::UiMetrics;
+use crate::game::ui::core::{UiMetrics, UiViewport};
 
 const UI_THEME_CONFIG_VERSION: u32 = 1;
 const DEFAULT_THEME_ASSET_PATH: &str = "assets/ui/themes/default.ron";
@@ -240,27 +240,32 @@ impl UiThemePanelNodeRole {
 }
 
 impl UiThemeRootNodeRole {
-    fn apply(self, theme: &UiTheme, node: &mut Node) {
+    fn apply(self, metrics: &UiMetrics, viewport: &UiViewport, node: &mut Node) {
         match self {
             Self::Screen => {
-                node.padding = UiRect::all(px(theme.layout.screen_padding));
+                node.padding = viewport.safe_area_padding(metrics.page_padding);
             }
             Self::Overlay => {
-                node.padding = UiRect::all(px(theme.layout.overlay_padding));
+                node.padding = viewport.safe_area_padding(metrics.page_padding);
             }
             Self::BlockingOverlay => {
-                node.padding = UiRect::all(px(theme.layout.screen_padding));
+                node.padding = viewport.safe_area_padding(metrics.page_padding);
             }
             Self::Toast => {
-                node.top = px(theme.layout.overlay_padding);
-                node.padding = UiRect::horizontal(px(theme.layout.overlay_padding));
+                node.top = px(metrics.page_padding + viewport.safe_area.top);
+                node.padding = UiRect {
+                    left: px(metrics.page_padding + viewport.safe_area.left),
+                    right: px(metrics.page_padding + viewport.safe_area.right),
+                    top: px(0),
+                    bottom: px(0),
+                };
             }
             Self::FloatingPanel => {
-                node.right = px(theme.layout.screen_padding);
+                node.right = px(metrics.page_padding + viewport.safe_area.right);
             }
             Self::Debug => {
-                node.left = px(theme.layout.overlay_padding);
-                node.top = px(theme.layout.overlay_padding);
+                node.left = px(metrics.page_padding + viewport.safe_area.left);
+                node.top = px(metrics.page_padding + viewport.safe_area.top);
             }
         }
     }
@@ -598,6 +603,7 @@ fn warn_ui_theme_reload_error(hot_reload: &mut UiThemeHotReload, error: String) 
 fn refresh_ui_theme_visuals(
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
+    viewport: Res<UiViewport>,
     mut clear_color: ResMut<ClearColor>,
     mut backgrounds: Query<(&UiThemeBackgroundRole, &mut BackgroundColor)>,
     mut borders: Query<(&UiThemeBorderRole, &mut BorderColor)>,
@@ -609,7 +615,7 @@ fn refresh_ui_theme_visuals(
         Query<(&UiThemeRootNodeRole, &mut Node)>,
     )>,
 ) {
-    if !theme.is_changed() && !metrics.is_changed() {
+    if !theme.is_changed() && !metrics.is_changed() && !viewport.is_changed() {
         return;
     }
 
@@ -648,7 +654,7 @@ fn refresh_ui_theme_visuals(
     }
 
     for (role, mut node) in &mut node_roles.p2() {
-        role.apply(&theme, &mut node);
+        role.apply(&metrics, &viewport, &mut node);
     }
 }
 
@@ -912,6 +918,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(theme)
             .insert_resource(UiMetrics::default())
+            .insert_resource(UiViewport::default())
             .insert_resource(ClearColor(Color::BLACK))
             .add_systems(Update, refresh_ui_theme_visuals);
         app
@@ -1115,14 +1122,22 @@ mod tests {
         assert_radius_all_px(toast_panel_node.border_radius, 9.0);
 
         let screen_root_node = app.world().entity(screen_root).get::<Node>().unwrap();
-        assert_rect_all_px(screen_root_node.padding, 30.0);
+        assert_rect_all_px(screen_root_node.padding, UiMetrics::default().page_padding);
 
         let overlay_root_node = app.world().entity(overlay_root).get::<Node>().unwrap();
-        assert_rect_all_px(overlay_root_node.padding, 18.0);
+        assert_rect_all_px(overlay_root_node.padding, UiMetrics::default().page_padding);
 
         let toast_root_node = app.world().entity(toast_root).get::<Node>().unwrap();
-        assert_px(toast_root_node.top, 18.0);
-        assert_eq!(toast_root_node.padding, UiRect::horizontal(px(18.0)));
+        assert_px(toast_root_node.top, UiMetrics::default().page_padding);
+        assert_eq!(
+            toast_root_node.padding,
+            UiRect {
+                left: px(UiMetrics::default().page_padding),
+                right: px(UiMetrics::default().page_padding),
+                top: px(0.0),
+                bottom: px(0.0),
+            }
+        );
     }
 
     #[test]

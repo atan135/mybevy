@@ -150,7 +150,7 @@ pub(super) fn setup_ui_gallery(
                 width: percent(100),
                 height: percent(100),
                 flex_direction: FlexDirection::Column,
-                padding: UiRect::all(px(theme.layout.screen_padding)),
+                padding: viewport.safe_area_padding(metrics.page_padding),
                 row_gap: px(theme.layout.page_gap),
                 ..default()
             },

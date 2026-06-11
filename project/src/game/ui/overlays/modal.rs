@@ -155,7 +155,7 @@ pub(in crate::game) fn spawn_confirm_modal(
                 bottom: px(0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                padding: UiRect::all(px(metrics.page_padding)),
+                padding: viewport.safe_area_padding(metrics.page_padding),
                 ..default()
             },
             ZIndex(100),

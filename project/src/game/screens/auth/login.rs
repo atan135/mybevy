@@ -4,7 +4,7 @@ use crate::game::{
     navigation::AppUiMode,
     ui::{
         core::{
-            UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot,
+            UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot, UiViewport,
             binding::{UiBindingValues, UiBoundText},
         },
         i18n::UiI18n,
@@ -26,6 +26,7 @@ pub(super) fn setup_login_screen(
     mut commands: Commands,
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
+    viewport: Res<UiViewport>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut binding_values: ResMut<UiBindingValues>,
@@ -54,7 +55,7 @@ pub(super) fn setup_login_screen(
             height: percent(100),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            padding: UiRect::all(px(theme.layout.screen_padding)),
+            padding: viewport.safe_area_padding(metrics.page_padding),
             ..default()
         },
         BackgroundColor(theme.colors.screen_background),

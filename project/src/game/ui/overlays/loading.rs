@@ -4,7 +4,7 @@ use crate::game::navigation::AppUiMode;
 use crate::game::ui::{
     core::{
         UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiBlockingOverlay, UiLayer,
-        UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot,
+        UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot, UiViewport,
     },
     i18n::{UiI18n, UiI18nText},
     style::{
@@ -57,6 +57,7 @@ pub(in crate::game) fn spawn_loading(
     commands: &mut Commands,
     theme: &UiTheme,
     metrics: &UiMetrics,
+    viewport: &UiViewport,
     fonts: &UiFontAssets,
     loading: &UiLoading,
     owner_mode: Option<AppUiMode>,
@@ -83,7 +84,7 @@ pub(in crate::game) fn spawn_loading(
                 bottom: px(0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                padding: UiRect::all(px(metrics.page_padding)),
+                padding: viewport.safe_area_padding(metrics.page_padding),
                 ..default()
             },
             ZIndex(150),

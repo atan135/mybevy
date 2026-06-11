@@ -107,6 +107,21 @@ impl UiViewport {
             safe_area,
         }
     }
+
+    pub(in crate::game) fn safe_area_padding(self, base: f32) -> UiRect {
+        self.safe_area.padding_with_base(base)
+    }
+}
+
+impl UiSafeArea {
+    pub(in crate::game) fn padding_with_base(self, base: f32) -> UiRect {
+        UiRect {
+            left: px(base + self.left),
+            right: px(base + self.right),
+            top: px(base + self.top),
+            bottom: px(base + self.bottom),
+        }
+    }
 }
 
 impl Default for UiMetrics {
@@ -268,5 +283,25 @@ mod tests {
         let metrics = UiMetrics::from_viewport_and_theme(&viewport, &UiTheme::default());
 
         assert!(metrics.button_height >= metrics.touch_target_min);
+    }
+
+    #[test]
+    fn safe_area_padding_adds_base_to_each_edge() {
+        let safe_area = UiSafeArea {
+            left: 1.0,
+            right: 2.0,
+            top: 3.0,
+            bottom: 4.0,
+        };
+
+        assert_eq!(
+            safe_area.padding_with_base(10.0),
+            UiRect {
+                left: px(11.0),
+                right: px(12.0),
+                top: px(13.0),
+                bottom: px(14.0),
+            }
+        );
     }
 }

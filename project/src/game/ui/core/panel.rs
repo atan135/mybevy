@@ -210,6 +210,7 @@ fn open_panel(
                 commands,
                 theme,
                 metrics,
+                viewport,
                 fonts,
                 loading,
                 Some(*current_mode.get()),
