@@ -294,6 +294,7 @@ fn handle_myserver_commands(
                     frame_id: *frame_id,
                     action: action.clone(),
                     payload_json: payload_json.clone(),
+                    client_timestamp_ms: current_unix_ms(),
                 },
             ),
             MyServerCommand::SendMoveInput {
@@ -788,6 +789,7 @@ fn send_move_input(
             client_x,
             client_y,
             client_frame_id,
+            client_timestamp_ms: current_unix_ms(),
         },
     );
 }
