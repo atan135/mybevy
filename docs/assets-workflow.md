@@ -106,6 +106,33 @@ content_dist/
 - 一个复杂资源一个目录，方便放主文件、依赖文件、说明和后续 LOD。
 - 源工程文件如 `.blend`、`.psd`、`.kra`、`.spp` 不放运行包；如需入库，放 `source/` 或专门资产仓库。
 
+### 3.1 Git LFS 提交约定
+
+仓库使用 Git LFS 管理 `project/assets/` 下的二进制资源。当前 `.gitattributes` 会让图片、字体、音频、二进制模型和常见源工程文件走 LFS，例如：
+
+- 图片：`.png`、`.jpg`、`.jpeg`、`.webp`、`.avif`、`.bmp`、`.tga`、`.dds`、`.ktx2`
+- 字体：`.otf`、`.ttf`、`.woff`、`.woff2`
+- 音频：`.ogg`、`.wav`、`.mp3`、`.flac`、`.aac`、`.m4a`
+- 模型和源工程：`.glb`、`.bin`、`.fbx`、`.blend`、`.psd`、`.kra`、`.spp`
+
+RON、JSON、TOML、TXT、授权说明、主题和 i18n 文案等可读文本资源保持普通 Git 提交，方便审阅 diff。
+
+首次克隆或换新机器开发时，先确认 Git LFS 可用：
+
+```powershell
+git lfs version
+git lfs install
+```
+
+新增首包二进制资源时，正常放入 `project/assets/` 后执行：
+
+```powershell
+git status
+git check-attr filter -- project/assets/ui/images/example.png
+```
+
+如果输出里有 `filter: lfs`，说明该资源会按 LFS 指针提交。若新增了未覆盖的新二进制格式，应同步更新仓库根目录的 `.gitattributes` 和本文档。
+
 ## 4. 开发期使用
 
 ### 4.1 桌面运行
@@ -615,6 +642,7 @@ cargo check
 只新增资源或文档时，至少确认：
 
 - 首包资源确实应该进入 `project/assets`。
+- 二进制首包资源已命中 Git LFS 规则，可用 `git check-attr filter -- <path>` 检查。
 - 后续下载资源没有误放进 `project/assets`。
 - Android 首包资源路径能被 APK assets 读取。
 - 后续资源清单里的路径、大小、哈希和实际文件一致。
