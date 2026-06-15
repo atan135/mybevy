@@ -42,7 +42,9 @@ impl Plugin for UiWidgetsPlugin {
                 Update,
                 (
                     update_text_input_cursor_from_pointer,
-                    sync_android_soft_keyboard,
+                    sync_android_text_input
+                        .after(update_text_input_cursor_from_pointer)
+                        .before(sync_text_input_display),
                     update_selection_control_interactions,
                     update_slider_interactions,
                     update_stepper_interactions,
@@ -305,7 +307,21 @@ struct UiTextInputDiagnostics {
     focus_changed_tick: u64,
     #[cfg(target_os = "android")]
     android_soft_keyboard_visible: bool,
+    #[cfg(target_os = "android")]
+    android_text_input_entity: Option<Entity>,
+    #[cfg(target_os = "android")]
+    android_text_input_snapshot: Option<UiTextInputNativeState>,
+    #[cfg(target_os = "android")]
+    android_text_input_skip_pull_until_tick: u64,
     missing_pointer_position_logged: HashSet<Entity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+struct UiTextInputNativeState {
+    text: String,
+    selection_start: usize,
+    selection_end: usize,
 }
 
 #[derive(Clone, Debug, Message)]
@@ -2435,41 +2451,159 @@ fn update_text_input_cursor_from_pointer(
 }
 
 #[cfg(target_os = "android")]
-fn sync_android_soft_keyboard(
+fn sync_android_text_input(
     focus_state: Res<UiFocusState>,
-    text_inputs: Query<(), (With<UiTextInput>, Without<DisabledTextInput>)>,
     mut diagnostics: ResMut<UiTextInputDiagnostics>,
+    mut text_inputs: Query<
+        (
+            &mut UiTextInputValue,
+            &mut UiTextInputCursor,
+            Option<&UiTextInputMaxChars>,
+            Has<ReadonlyTextInput>,
+            Has<DisabledTextInput>,
+        ),
+        With<UiTextInput>,
+    >,
 ) {
-    let focused_text_input = focus_state
-        .focused_entity
-        .is_some_and(|entity| text_inputs.contains(entity));
-    if focused_text_input == diagnostics.android_soft_keyboard_visible {
-        return;
-    }
+    let focused_text_input = focus_state.focused_entity.and_then(|entity| {
+        text_inputs
+            .get(entity)
+            .ok()
+            .and_then(|(_, _, _, _, is_disabled)| (!is_disabled).then_some(entity))
+    });
 
     let Some(android_app) = bevy::android::ANDROID_APP.get() else {
-        warn!("cannot sync Android soft keyboard without AndroidApp");
+        if focused_text_input.is_some() {
+            warn!("cannot sync Android text input without AndroidApp");
+        }
         return;
     };
 
-    if focused_text_input {
-        android_app.set_ime_editor_info(
-            bevy::android::android_activity::input::InputType::TYPE_CLASS_TEXT,
-            bevy::android::android_activity::input::TextInputAction::Done,
-            bevy::android::android_activity::input::ImeOptions::IME_FLAG_NO_FULLSCREEN,
-        );
-        android_app.show_soft_input(true);
-        debug!("requested Android soft keyboard show for text input focus");
-    } else {
-        android_app.hide_soft_input(false);
-        debug!("requested Android soft keyboard hide after text input blur");
+    if diagnostics.android_text_input_entity != focused_text_input {
+        if let Some(entity) = focused_text_input {
+            let Ok((value, cursor, _, _, _)) = text_inputs.get(entity) else {
+                return;
+            };
+            let state = ui_text_input_native_state_from_value(&value.0, cursor);
+
+            android_app.set_ime_editor_info(
+                bevy::android::android_activity::input::InputType::TYPE_CLASS_TEXT,
+                bevy::android::android_activity::input::TextInputAction::Done,
+                bevy::android::android_activity::input::ImeOptions::IME_FLAG_NO_FULLSCREEN,
+            );
+            android_app.set_text_input_state(state.to_android_text_input_state());
+            android_app.show_soft_input(true);
+
+            diagnostics.android_soft_keyboard_visible = true;
+            diagnostics.android_text_input_entity = Some(entity);
+            diagnostics.android_text_input_snapshot = Some(state.clone());
+            diagnostics.android_text_input_skip_pull_until_tick =
+                diagnostics.tick.saturating_add(1);
+            debug!(
+                ?entity,
+                text = %state.text,
+                selection_start = state.selection_start,
+                selection_end = state.selection_end,
+                "initialized Android text input state for focused field"
+            );
+        } else {
+            if diagnostics.android_soft_keyboard_visible {
+                android_app.hide_soft_input(false);
+                debug!("requested Android soft keyboard hide after text input blur");
+            }
+            diagnostics.android_soft_keyboard_visible = false;
+            diagnostics.android_text_input_entity = None;
+            diagnostics.android_text_input_snapshot = None;
+            diagnostics.android_text_input_skip_pull_until_tick = 0;
+        }
+        return;
     }
 
-    diagnostics.android_soft_keyboard_visible = focused_text_input;
+    let Some(entity) = focused_text_input else {
+        return;
+    };
+
+    let Ok((mut value, mut cursor, max_chars, is_readonly, is_disabled)) =
+        text_inputs.get_mut(entity)
+    else {
+        return;
+    };
+    if is_disabled {
+        return;
+    }
+
+    let app_state = ui_text_input_native_state_from_value(&value.0, &cursor);
+    if diagnostics.android_text_input_snapshot.as_ref() != Some(&app_state) {
+        android_app.set_text_input_state(app_state.to_android_text_input_state());
+        diagnostics.android_text_input_snapshot = Some(app_state.clone());
+        diagnostics.android_text_input_skip_pull_until_tick = diagnostics.tick.saturating_add(1);
+        debug!(
+            ?entity,
+            text = %app_state.text,
+            selection_start = app_state.selection_start,
+            selection_end = app_state.selection_end,
+            "pushed Bevy text input state to Android IME"
+        );
+        return;
+    }
+
+    if diagnostics.tick <= diagnostics.android_text_input_skip_pull_until_tick {
+        return;
+    }
+
+    let native_state =
+        UiTextInputNativeState::from_android_text_input_state(android_app.text_input_state());
+    if diagnostics.android_text_input_snapshot.as_ref() == Some(&native_state) {
+        return;
+    }
+
+    if is_readonly {
+        android_app.set_text_input_state(app_state.to_android_text_input_state());
+        diagnostics.android_text_input_snapshot = Some(app_state);
+        diagnostics.android_text_input_skip_pull_until_tick = diagnostics.tick.saturating_add(1);
+        debug!(
+            ?entity,
+            ime_text = %native_state.text,
+            "rejected Android IME edit for readonly text input"
+        );
+        return;
+    }
+
+    let before_value = value.0.clone();
+    let before_cursor = cursor.position;
+    let before_selection = cursor.selection;
+    apply_native_text_input_state(
+        &mut value.0,
+        &mut cursor,
+        native_state,
+        max_chars.map(|max_chars| max_chars.0),
+    );
+    let applied_state = ui_text_input_native_state_from_value(&value.0, &cursor);
+
+    if value.0 != before_value
+        || cursor.position != before_cursor
+        || cursor.selection != before_selection
+    {
+        debug!(
+            ?entity,
+            before_value = %before_value,
+            after_value = %value.0,
+            before_cursor,
+            after_cursor = cursor.position,
+            before_selection = ?before_selection,
+            after_selection = ?cursor.selection,
+            "pulled Android IME text input state into Bevy"
+        );
+    }
+
+    if diagnostics.android_text_input_snapshot.as_ref() != Some(&applied_state) {
+        android_app.set_text_input_state(applied_state.to_android_text_input_state());
+    }
+    diagnostics.android_text_input_snapshot = Some(applied_state);
 }
 
 #[cfg(not(target_os = "android"))]
-fn sync_android_soft_keyboard() {}
+fn sync_android_text_input() {}
 
 fn handle_text_input_keyboard(
     mut keyboard_inputs: MessageReader<KeyboardInput>,
@@ -2539,6 +2673,18 @@ fn handle_text_input_keyboard(
         let before_cursor = cursor.position;
         let before_selection = cursor.selection;
         let edit_event = ui_text_input_edit_event(keyboard_input, &key_codes);
+        if should_skip_keyboard_text_edit_for_native_ime(&edit_event) {
+            debug!(
+                tick = diagnostics.tick,
+                ?focused_entity,
+                key_code = ?keyboard_input.key_code,
+                logical_key = ?keyboard_input.logical_key,
+                text = ?keyboard_input.text.as_deref(),
+                "skipped keyboard text edit while Android IME state is authoritative"
+            );
+            continue;
+        }
+
         match edit_event {
             UiTextInputEditEvent::Submit => {
                 if is_readonly || is_disabled {
@@ -3053,6 +3199,19 @@ enum UiTextInputEditEvent<'a> {
     None,
 }
 
+fn should_skip_keyboard_text_edit_for_native_ime(edit_event: &UiTextInputEditEvent<'_>) -> bool {
+    cfg!(target_os = "android")
+        && matches!(
+            edit_event,
+            UiTextInputEditEvent::Edit(
+                UiTextInputEditAction::Insert(_)
+                    | UiTextInputEditAction::Paste(_)
+                    | UiTextInputEditAction::Backspace
+                    | UiTextInputEditAction::Delete
+            ) | UiTextInputEditEvent::Paste
+        )
+}
+
 fn ui_text_input_edit_event<'a>(
     keyboard_input: &'a KeyboardInput,
     key_codes: &ButtonInput<KeyCode>,
@@ -3126,6 +3285,83 @@ fn should_log_text_input_keyboard_event(
         || before_value != after_value
         || before_cursor != after_cursor
         || before_selection != after_selection
+}
+
+#[cfg(target_os = "android")]
+impl UiTextInputNativeState {
+    fn from_android_text_input_state(
+        state: bevy::android::android_activity::input::TextInputState,
+    ) -> Self {
+        Self {
+            text: state.text,
+            selection_start: state.selection.start,
+            selection_end: state.selection.end,
+        }
+    }
+
+    fn to_android_text_input_state(
+        &self,
+    ) -> bevy::android::android_activity::input::TextInputState {
+        bevy::android::android_activity::input::TextInputState {
+            text: self.text.clone(),
+            selection: bevy::android::android_activity::input::TextSpan {
+                start: self.selection_start,
+                end: self.selection_end,
+            },
+            compose_region: None,
+        }
+    }
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn ui_text_input_native_state_from_value(
+    value: &str,
+    cursor: &UiTextInputCursor,
+) -> UiTextInputNativeState {
+    let mut cursor = cursor.clone();
+    clamp_text_input_cursor(value, &mut cursor);
+    let (selection_start, selection_end) = selection_range(&cursor)
+        .map(|selection| (selection.start, selection.end))
+        .unwrap_or((cursor.position, cursor.position));
+
+    UiTextInputNativeState {
+        text: value.to_string(),
+        selection_start,
+        selection_end,
+    }
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn apply_native_text_input_state(
+    value: &mut String,
+    cursor: &mut UiTextInputCursor,
+    state: UiTextInputNativeState,
+    max_chars: Option<usize>,
+) {
+    let text = limit_text_input_text(state.text, max_chars);
+    let selection_start = native_selection_to_char_boundary(&text, state.selection_start);
+    let selection_end = native_selection_to_char_boundary(&text, state.selection_end);
+    let (selection_start, selection_end) = if selection_start <= selection_end {
+        (selection_start, selection_end)
+    } else {
+        (selection_end, selection_start)
+    };
+
+    *value = text;
+    cursor.position = selection_end;
+    cursor.selection = (selection_start < selection_end).then_some(UiTextInputSelection {
+        start: selection_start,
+        end: selection_end,
+    });
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn limit_text_input_text(text: String, max_chars: Option<usize>) -> String {
+    let Some(max_chars) = max_chars else {
+        return text;
+    };
+
+    text.chars().take(max_chars).collect()
 }
 
 fn apply_text_input_edit(
@@ -3259,6 +3495,11 @@ fn clamp_text_input_cursor(value: &str, cursor: &mut UiTextInputCursor) {
         let end = nearest_char_boundary(value, selection.end.min(value.len()));
         (start < end).then_some(UiTextInputSelection { start, end })
     });
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn native_selection_to_char_boundary(value: &str, position: usize) -> usize {
+    nearest_char_boundary(value, position.min(value.len()))
 }
 
 fn previous_char_boundary(value: &str, position: usize) -> usize {
@@ -3545,6 +3786,78 @@ mod tests {
         assert_eq!(
             text_input_cursor_position_from_ratio("你好吗", 0.5),
             "你好".len()
+        );
+    }
+
+    #[test]
+    fn native_state_from_value_uses_cursor_or_selection() {
+        let value = "abcd";
+        let selected_cursor = UiTextInputCursor {
+            position: 3,
+            selection: Some(UiTextInputSelection { start: 1, end: 3 }),
+        };
+
+        assert_eq!(
+            ui_text_input_native_state_from_value(value, &selected_cursor),
+            UiTextInputNativeState {
+                text: "abcd".to_string(),
+                selection_start: 1,
+                selection_end: 3,
+            }
+        );
+
+        assert_eq!(
+            ui_text_input_native_state_from_value(value, &cursor(2)),
+            UiTextInputNativeState {
+                text: "abcd".to_string(),
+                selection_start: 2,
+                selection_end: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_native_state_clamps_selection_and_max_chars() {
+        let mut value = String::new();
+        let mut cursor = cursor(0);
+
+        apply_native_text_input_state(
+            &mut value,
+            &mut cursor,
+            UiTextInputNativeState {
+                text: "你好吗".to_string(),
+                selection_start: "你好".len(),
+                selection_end: usize::MAX,
+            },
+            Some(2),
+        );
+
+        assert_eq!(value, "你好");
+        assert_eq!(cursor.position, value.len());
+        assert_eq!(cursor.selection, None);
+    }
+
+    #[test]
+    fn apply_native_state_normalizes_reversed_selection() {
+        let mut value = String::new();
+        let mut cursor = cursor(0);
+
+        apply_native_text_input_state(
+            &mut value,
+            &mut cursor,
+            UiTextInputNativeState {
+                text: "abcd".to_string(),
+                selection_start: 3,
+                selection_end: 1,
+            },
+            None,
+        );
+
+        assert_eq!(value, "abcd");
+        assert_eq!(cursor.position, 3);
+        assert_eq!(
+            cursor.selection,
+            Some(UiTextInputSelection { start: 1, end: 3 })
         );
     }
 
