@@ -2,6 +2,7 @@
 /project/target/
 /logs/
 /artifacts/
+/local/
 
 # Android local config and build artifacts
 /android/.gradle/
