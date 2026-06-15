@@ -313,6 +313,10 @@ struct UiTextInputDiagnostics {
     android_text_input_snapshot: Option<UiTextInputNativeState>,
     #[cfg(target_os = "android")]
     android_text_input_skip_pull_until_tick: u64,
+    #[cfg(target_os = "android")]
+    android_text_input_pressed_entity: Option<Entity>,
+    #[cfg(target_os = "android")]
+    android_text_input_pressed_tick: u64,
     missing_pointer_position_logged: HashSet<Entity>,
 }
 
@@ -2416,6 +2420,12 @@ fn update_text_input_cursor_from_pointer(
             continue;
         }
 
+        #[cfg(target_os = "android")]
+        {
+            diagnostics.android_text_input_pressed_entity = Some(entity);
+            diagnostics.android_text_input_pressed_tick = diagnostics.tick;
+        }
+
         let Some(normalized) = relative_cursor.normalized else {
             if diagnostics.missing_pointer_position_logged.insert(entity) {
                 debug!(
@@ -2522,6 +2532,9 @@ fn sync_android_text_input(
     let Some(entity) = focused_text_input else {
         return;
     };
+    let text_input_pressed_this_tick = diagnostics.android_text_input_pressed_entity
+        == Some(entity)
+        && diagnostics.android_text_input_pressed_tick == diagnostics.tick;
 
     let Ok((mut value, mut cursor, max_chars, is_readonly, is_disabled)) =
         text_inputs.get_mut(entity)
@@ -2537,6 +2550,10 @@ fn sync_android_text_input(
         android_app.set_text_input_state(app_state.to_android_text_input_state());
         diagnostics.android_text_input_snapshot = Some(app_state.clone());
         diagnostics.android_text_input_skip_pull_until_tick = diagnostics.tick.saturating_add(1);
+        if text_input_pressed_this_tick {
+            android_app.show_soft_input(true);
+            diagnostics.android_soft_keyboard_visible = true;
+        }
         debug!(
             ?entity,
             text = %app_state.text,
@@ -2545,6 +2562,15 @@ fn sync_android_text_input(
             "pushed Bevy text input state to Android IME"
         );
         return;
+    }
+
+    if text_input_pressed_this_tick {
+        android_app.show_soft_input(true);
+        diagnostics.android_soft_keyboard_visible = true;
+        debug!(
+            ?entity,
+            "requested Android soft keyboard show after focused text input press"
+        );
     }
 
     if diagnostics.tick <= diagnostics.android_text_input_skip_pull_until_tick {
