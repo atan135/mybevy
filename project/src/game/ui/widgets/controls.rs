@@ -42,6 +42,7 @@ impl Plugin for UiWidgetsPlugin {
                 Update,
                 (
                     update_text_input_cursor_from_pointer,
+                    sync_android_soft_keyboard,
                     update_selection_control_interactions,
                     update_slider_interactions,
                     update_stepper_interactions,
@@ -302,6 +303,8 @@ struct UiTextInputDiagnostics {
     tick: u64,
     focused_entity: Option<Entity>,
     focus_changed_tick: u64,
+    #[cfg(target_os = "android")]
+    android_soft_keyboard_visible: bool,
     missing_pointer_position_logged: HashSet<Entity>,
 }
 
@@ -2430,6 +2433,43 @@ fn update_text_input_cursor_from_pointer(
         cursor.selection = None;
     }
 }
+
+#[cfg(target_os = "android")]
+fn sync_android_soft_keyboard(
+    focus_state: Res<UiFocusState>,
+    text_inputs: Query<(), (With<UiTextInput>, Without<DisabledTextInput>)>,
+    mut diagnostics: ResMut<UiTextInputDiagnostics>,
+) {
+    let focused_text_input = focus_state
+        .focused_entity
+        .is_some_and(|entity| text_inputs.contains(entity));
+    if focused_text_input == diagnostics.android_soft_keyboard_visible {
+        return;
+    }
+
+    let Some(android_app) = bevy::android::ANDROID_APP.get() else {
+        warn!("cannot sync Android soft keyboard without AndroidApp");
+        return;
+    };
+
+    if focused_text_input {
+        android_app.set_ime_editor_info(
+            bevy::android::android_activity::input::InputType::TYPE_CLASS_TEXT,
+            bevy::android::android_activity::input::TextInputAction::Done,
+            bevy::android::android_activity::input::ImeOptions::IME_FLAG_NO_FULLSCREEN,
+        );
+        android_app.show_soft_input(true);
+        debug!("requested Android soft keyboard show for text input focus");
+    } else {
+        android_app.hide_soft_input(false);
+        debug!("requested Android soft keyboard hide after text input blur");
+    }
+
+    diagnostics.android_soft_keyboard_visible = focused_text_input;
+}
+
+#[cfg(not(target_os = "android"))]
+fn sync_android_soft_keyboard() {}
 
 fn handle_text_input_keyboard(
     mut keyboard_inputs: MessageReader<KeyboardInput>,
