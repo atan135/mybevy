@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use bevy::{
     input::keyboard::{Key, KeyCode, KeyboardInput},
     prelude::*,
@@ -21,12 +23,14 @@ use crate::game::{
 };
 
 const NUMERIC_CONTROL_LABEL_WIDTH: f32 = 132.0;
+const TEXT_INPUT_FOCUS_SWITCH_LOG_TICKS: u64 = 12;
 pub(in crate::game) struct UiWidgetsPlugin;
 
 impl Plugin for UiWidgetsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(UiScrollPlugin)
             .init_resource::<UiTextInputClipboard>()
+            .init_resource::<UiTextInputDiagnostics>()
             .add_message::<UiTextInputSubmitted>()
             .add_systems(
                 Update,
@@ -291,6 +295,14 @@ pub(in crate::game) struct UiTextInputFormMessage {
 #[derive(Debug, Default, Resource)]
 struct UiTextInputClipboard {
     text: String,
+}
+
+#[derive(Debug, Default, Resource)]
+struct UiTextInputDiagnostics {
+    tick: u64,
+    focused_entity: Option<Entity>,
+    focus_changed_tick: u64,
+    missing_pointer_position_logged: HashSet<Entity>,
 }
 
 #[derive(Clone, Debug, Message)]
@@ -2361,6 +2373,7 @@ fn button_background_color(
 }
 
 fn update_text_input_cursor_from_pointer(
+    mut diagnostics: ResMut<UiTextInputDiagnostics>,
     mut text_inputs: Query<
         (
             Entity,
@@ -2371,7 +2384,7 @@ fn update_text_input_cursor_from_pointer(
             &UiTextInputValue,
             Has<DisabledTextInput>,
         ),
-        (Changed<Interaction>, With<Button>, With<UiTextInput>),
+        (With<Button>, With<UiTextInput>),
     >,
     children: Query<&Children>,
     text_nodes: Query<&ComputedNode, With<UiTextInputText>>,
@@ -2380,12 +2393,24 @@ fn update_text_input_cursor_from_pointer(
         &mut text_inputs
     {
         if *interaction != Interaction::Pressed || is_disabled {
+            diagnostics.missing_pointer_position_logged.remove(&entity);
             continue;
         }
 
         let Some(normalized) = relative_cursor.normalized else {
+            if diagnostics.missing_pointer_position_logged.insert(entity) {
+                debug!(
+                    ?entity,
+                    input_size = ?input_node.size,
+                    content_size = ?input_node.content_size,
+                    cursor_position = cursor.position,
+                    value_len = value.0.len(),
+                    "text input pressed without relative cursor position"
+                );
+            }
             continue;
         };
+        diagnostics.missing_pointer_position_logged.remove(&entity);
 
         let text_width = children
             .get(entity)
@@ -2410,6 +2435,7 @@ fn handle_text_input_keyboard(
     mut keyboard_inputs: MessageReader<KeyboardInput>,
     key_codes: Res<ButtonInput<KeyCode>>,
     focus_state: Res<UiFocusState>,
+    mut diagnostics: ResMut<UiTextInputDiagnostics>,
     mut text_inputs: Query<
         (
             &mut UiTextInputValue,
@@ -2423,6 +2449,29 @@ fn handle_text_input_keyboard(
     mut clipboard: ResMut<UiTextInputClipboard>,
     mut submissions: MessageWriter<UiTextInputSubmitted>,
 ) {
+    diagnostics.tick = diagnostics.tick.wrapping_add(1);
+    let previous_focused = diagnostics.focused_entity;
+    if previous_focused != focus_state.focused_entity {
+        let previous_was_text_input =
+            previous_focused.is_some_and(|entity| text_inputs.contains(entity));
+        let focused_is_text_input = focus_state
+            .focused_entity
+            .is_some_and(|entity| text_inputs.contains(entity));
+        if previous_was_text_input || focused_is_text_input {
+            debug!(
+                tick = diagnostics.tick,
+                ?previous_focused,
+                focused_entity = ?focus_state.focused_entity,
+                "text input focus changed"
+            );
+        }
+        diagnostics.focused_entity = focus_state.focused_entity;
+        diagnostics.focus_changed_tick = diagnostics.tick;
+    }
+    let focus_ticks_ago = diagnostics
+        .tick
+        .saturating_sub(diagnostics.focus_changed_tick);
+
     let Some(focused_entity) = focus_state.focused_entity else {
         for _ in keyboard_inputs.read() {}
         return;
@@ -2446,6 +2495,9 @@ fn handle_text_input_keyboard(
             continue;
         }
 
+        let before_value = value.0.clone();
+        let before_cursor = cursor.position;
+        let before_selection = cursor.selection;
         let edit_event = ui_text_input_edit_event(keyboard_input, &key_codes);
         match edit_event {
             UiTextInputEditEvent::Submit => {
@@ -2479,6 +2531,33 @@ fn handle_text_input_keyboard(
                 apply_text_input_edit(&mut value.0, &mut cursor, action, mode);
             }
             UiTextInputEditEvent::None => {}
+        }
+
+        if should_log_text_input_keyboard_event(
+            keyboard_input,
+            focus_ticks_ago,
+            &before_value,
+            &value.0,
+            before_cursor,
+            cursor.position,
+            before_selection,
+            cursor.selection,
+        ) {
+            debug!(
+                tick = diagnostics.tick,
+                ?focused_entity,
+                focus_ticks_ago,
+                key_code = ?keyboard_input.key_code,
+                logical_key = ?keyboard_input.logical_key,
+                text = ?keyboard_input.text.as_deref(),
+                before_value = %before_value,
+                after_value = %value.0,
+                before_cursor,
+                after_cursor = cursor.position,
+                before_selection = ?before_selection,
+                after_selection = ?cursor.selection,
+                "text input keyboard event"
+            );
         }
     }
 }
@@ -2989,6 +3068,26 @@ fn ui_text_input_edit_event<'a>(
     }
 }
 
+fn should_log_text_input_keyboard_event(
+    keyboard_input: &KeyboardInput,
+    focus_ticks_ago: u64,
+    before_value: &str,
+    after_value: &str,
+    before_cursor: usize,
+    after_cursor: usize,
+    before_selection: Option<UiTextInputSelection>,
+    after_selection: Option<UiTextInputSelection>,
+) -> bool {
+    if focus_ticks_ago > TEXT_INPUT_FOCUS_SWITCH_LOG_TICKS {
+        return false;
+    }
+
+    keyboard_input.text.is_some()
+        || before_value != after_value
+        || before_cursor != after_cursor
+        || before_selection != after_selection
+}
+
 fn apply_text_input_edit(
     value: &mut String,
     cursor: &mut UiTextInputCursor,
@@ -3407,6 +3506,39 @@ mod tests {
             text_input_cursor_position_from_ratio("你好吗", 0.5),
             "你好".len()
         );
+    }
+
+    #[test]
+    fn keyboard_diagnostics_only_log_near_focus_changes() {
+        let keyboard_input = KeyboardInput {
+            key_code: KeyCode::KeyX,
+            logical_key: Key::Character("x".into()),
+            state: bevy::input::ButtonState::Pressed,
+            text: Some("x".into()),
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        };
+
+        assert!(should_log_text_input_keyboard_event(
+            &keyboard_input,
+            TEXT_INPUT_FOCUS_SWITCH_LOG_TICKS,
+            "ab",
+            "axb",
+            1,
+            2,
+            None,
+            None,
+        ));
+        assert!(!should_log_text_input_keyboard_event(
+            &keyboard_input,
+            TEXT_INPUT_FOCUS_SWITCH_LOG_TICKS + 1,
+            "ab",
+            "axb",
+            1,
+            2,
+            None,
+            None,
+        ));
     }
 
     #[test]
