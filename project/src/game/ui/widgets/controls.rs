@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use bevy::{
     input::keyboard::{Key, KeyCode, KeyboardInput},
     prelude::*,
-    ui::RelativeCursorPosition,
+    ui::{FocusPolicy, RelativeCursorPosition},
 };
 
 use crate::game::{
@@ -1660,6 +1660,7 @@ fn slider_bundle<T: Bundle>(
         UiThemeButtonNodeRole::TextInput,
         marker,
         slider,
+        RelativeCursorPosition::default(),
         Node {
             width: percent(100),
             min_height: px(metrics.input_height),
@@ -1688,6 +1689,7 @@ fn slider_bundle<T: Bundle>(
         children![
             (
                 slider_label_node(metrics),
+                FocusPolicy::Pass,
                 Text::new(label),
                 TextFont {
                     font: fonts.regular.clone(),
@@ -1703,10 +1705,11 @@ fn slider_bundle<T: Bundle>(
             (
                 slider_track_node(metrics),
                 UiSliderTrack,
-                RelativeCursorPosition::default(),
+                FocusPolicy::Pass,
                 BackgroundColor(theme.colors.panel_border),
                 children![(
                     UiSliderFill,
+                    FocusPolicy::Pass,
                     Node {
                         width: percent(slider.ratio() * 100.0),
                         height: percent(100),
@@ -1718,6 +1721,7 @@ fn slider_bundle<T: Bundle>(
             ),
             (
                 slider_value_node(metrics),
+                FocusPolicy::Pass,
                 Text::new(format_slider_value(slider.value)),
                 TextFont {
                     font: fonts.regular.clone(),
@@ -1896,10 +1900,18 @@ fn control_padding_x(metrics: &UiMetrics) -> f32 {
 }
 
 fn numeric_control_gap(metrics: &UiMetrics) -> f32 {
+    if numeric_control_is_compact(metrics) {
+        return metrics.control_gap;
+    }
+
     metrics.control_gap.max(10.0)
 }
 
 fn numeric_control_label_width(metrics: &UiMetrics) -> f32 {
+    if numeric_control_is_compact(metrics) {
+        return (metrics.dialog_max_width * 0.28).clamp(88.0, 104.0);
+    }
+
     NUMERIC_CONTROL_LABEL_WIDTH
         .min(metrics.content_max_width * 0.34)
         .max(72.0)
@@ -1910,6 +1922,10 @@ fn slider_track_height(metrics: &UiMetrics) -> f32 {
 }
 
 fn stepper_value_width(metrics: &UiMetrics) -> f32 {
+    if numeric_control_is_compact(metrics) {
+        return (metrics.touch_target_min + metrics.control_gap).max(52.0);
+    }
+
     (square_button_size(metrics) * 1.6).max(metrics.touch_target_min + metrics.control_gap * 2.0)
 }
 
@@ -1969,7 +1985,15 @@ fn stepper_value_node(metrics: &UiMetrics) -> Node {
 }
 
 fn slider_track_min_width(metrics: &UiMetrics) -> f32 {
+    if numeric_control_is_compact(metrics) {
+        return (metrics.dialog_max_width * 0.24).clamp(80.0, 96.0);
+    }
+
     (metrics.touch_target_min * 3.0).min(metrics.content_max_width * 0.42)
+}
+
+fn numeric_control_is_compact(metrics: &UiMetrics) -> bool {
+    metrics.content_max_width <= 480.0
 }
 
 fn selection_button_background_color(
@@ -2153,45 +2177,78 @@ fn update_selection_control_interactions(
 }
 
 fn update_slider_interactions(
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
-    parents: Query<&ChildOf>,
-    mut sliders: Query<&mut UiSlider, (Without<DisabledButton>, Without<UiSliderTrack>)>,
+    mut sliders: Query<
+        (
+            Entity,
+            &Interaction,
+            &RelativeCursorPosition,
+            &ComputedNode,
+            &UiGlobalTransform,
+            &mut UiSlider,
+            Option<&InheritedVisibility>,
+        ),
+        (
+            With<Button>,
+            Without<DisabledButton>,
+            Without<UiSliderTrack>,
+        ),
+    >,
     tracks: Query<
         (
             Entity,
-            &RelativeCursorPosition,
+            &ComputedNode,
+            &UiGlobalTransform,
             Option<&InheritedVisibility>,
         ),
         With<UiSliderTrack>,
     >,
+    parents: Query<&ChildOf>,
 ) {
-    if !mouse_buttons.pressed(MouseButton::Left) {
-        return;
-    }
-
-    for (track_entity, relative_cursor, inherited_visibility) in &tracks {
-        if !relative_cursor.cursor_over()
-            || inherited_visibility.is_some_and(|visibility| !visibility.get())
+    for (
+        slider_entity,
+        interaction,
+        relative_cursor,
+        slider_node,
+        slider_transform,
+        mut slider,
+        slider_inherited_visibility,
+    ) in &mut sliders
+    {
+        if *interaction != Interaction::Pressed
+            || slider_inherited_visibility.is_some_and(|visibility| !visibility.get())
         {
             continue;
         }
 
-        let Some(normalized) = relative_cursor.normalized else {
+        let Some(slider_normalized) = relative_cursor.normalized else {
             continue;
         };
 
-        let Some(slider_entity) = parents
-            .iter_ancestors(track_entity)
-            .find(|ancestor| sliders.get(*ancestor).is_ok())
+        let slider_local_position = slider_normalized * slider_node.size;
+        let slider_global_position = slider_transform
+            .affine()
+            .transform_point2(slider_local_position);
+
+        let Some((_, track_node, track_transform, _)) =
+            tracks
+                .iter()
+                .find(|(track_entity, _, _, track_inherited_visibility)| {
+                    track_inherited_visibility.is_none_or(|visibility| visibility.get())
+                        && parents
+                            .iter_ancestors(*track_entity)
+                            .any(|ancestor| ancestor == slider_entity)
+                })
         else {
             continue;
         };
 
-        let Ok(mut slider) = sliders.get_mut(slider_entity) else {
+        let Some(normalized_track_position) =
+            track_node.normalize_point(*track_transform, slider_global_position)
+        else {
             continue;
         };
-
-        let next_value = slider_value_from_normalized_x(normalized.x, slider.min, slider.max);
+        let normalized_track_x = normalized_track_position.x;
+        let next_value = slider_value_from_normalized_x(normalized_track_x, slider.min, slider.max);
         if slider.value != next_value {
             slider.value = next_value;
         }
@@ -4272,6 +4329,34 @@ mod tests {
         assert_eq!(first.width, px(stepper_value_width(&metrics)));
         assert_eq!(first.width, second.width);
         assert_eq!(first.min_height, second.min_height);
+    }
+
+    #[test]
+    fn compact_numeric_controls_fit_phone_panel_width() {
+        let theme = UiTheme::default();
+        let viewport = crate::game::ui::core::UiViewport::from_device_logical_size(
+            1080.0 / 3.0,
+            2400.0 / 3.0,
+            crate::game::ui::core::UiInputMode::MouseTouch,
+            crate::game::ui::core::UiSafeArea::default(),
+        );
+        let metrics = UiMetrics::from_viewport_and_theme(&viewport, &theme);
+        let panel_inner_width = viewport.logical_width
+            - metrics.page_padding * 2.0
+            - theme.layout.panel_gap * 2.0
+            - theme.panel.border * 2.0;
+        let slider_min_width = numeric_control_label_width(&metrics)
+            + slider_track_min_width(&metrics)
+            + stepper_value_width(&metrics)
+            + numeric_control_gap(&metrics) * 2.0
+            + control_padding_x(&metrics) * 2.0;
+        let stepper_min_width = numeric_control_label_width(&metrics)
+            + square_button_size(&metrics) * 2.0
+            + stepper_value_width(&metrics)
+            + numeric_control_gap(&metrics) * 3.0;
+
+        assert!(slider_min_width <= panel_inner_width);
+        assert!(stepper_min_width <= panel_inner_width);
     }
 
     #[test]
