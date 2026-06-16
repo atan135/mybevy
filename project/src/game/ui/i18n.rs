@@ -514,6 +514,16 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
         ),
         ("ui_gallery.binding.bound_button", "绑定按钮"),
         ("ui_gallery.binding.action", "更新绑定"),
+        ("ui_gallery.images.section", "图片"),
+        (
+            "ui_gallery.images.description",
+            "从 assets/ui/images 加载的普通首包 UI 图片。",
+        ),
+        ("ui_gallery.images.atlas_sources", "图集源图"),
+        (
+            "ui_gallery.images.atlas_sources.description",
+            "这里只展示源 PNG；不是正式图集帧预览。",
+        ),
         ("ui_gallery.stress.section", "压力样例"),
         (
             "ui_gallery.stress.description",
