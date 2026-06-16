@@ -188,7 +188,8 @@ Bevy 的核心是 ECS。
 mybevy/
 |-- docs/
 |   |-- bevy-getting-started.md
-|   `-- assets-workflow.md
+|   |-- assets-workflow.md
+|   `-- ui/
 `-- project/
     |-- assets/
     |-- src/
@@ -218,6 +219,7 @@ mybevy/
 - `project/src/game/ui/widgets/`：按钮、文本等通用控件
 - `project/assets/`：贴图、音频、字体、场景文件
 - `docs/assets-workflow.md`：项目资源使用方式，覆盖开发期、APK 包内和后续下载资源
+- `docs/ui/`：UI 框架实现机制、组件使用、响应式布局、调试验收和限制说明
 
 ## 9. 第一阶段之后，尽快改成插件化
 

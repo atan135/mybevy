@@ -19,6 +19,7 @@
 - `docs/`：项目文档
 - `docs/bevy-getting-started.md`：当前 Bevy 入门说明
 - `docs/assets-workflow.md`：项目资源使用方式，覆盖首包、APK 包内和后续下载资源
+- `docs/ui/`：UI 框架相关文档，描述整体架构、输入实现、组件使用、布局、主题和限制，不记录开发期任务流程
 - `scripts/`：仓库级开发辅助脚本
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
@@ -134,6 +135,7 @@ cargo update
 至少检查这些文件：
 
 - `docs/bevy-getting-started.md`
+- `docs/ui/`
 - `CLAUDE.md`
 
 ## Git 提交规范
