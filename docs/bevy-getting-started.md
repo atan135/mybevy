@@ -222,6 +222,7 @@ mybevy/
 - `project/src/main.rs`：程序入口、顶层插件注册
 - `project/src/framework/`：框架层横向能力，当前包含 UI、network、scene 和 fight 边界
 - `project/src/framework/network/`：网络框架能力入口，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
+- `project/src/framework/scene/`：场景框架能力入口，提供场景命令、事件、生命周期、注册表、首包 RON manifest、根实体、Loading、相机、spawn/anchor、trigger、streaming 元数据和 debug 配置
 - `project/src/framework/ui/`：UI 框架能力入口
 - `project/src/game/plugin.rs`：游戏主插件
 - `project/src/game/authority/`：游戏层控制机会话接口和轻量 authority 协议
@@ -393,7 +394,32 @@ cargo run -- --window-size 1280x2772 --window-scale 0.5
 
 如果参数非法，程序会打印 warning 并回退到默认桌面尺寸。该功能只作用于桌面端 primary window 的启动尺寸，不改变 Android 真机默认行为。
 
-## 15. 官方参考入口
+## 15. 场景框架开发期环境变量
+
+场景框架支持一组开发期环境变量，用于从启动时进入指定场景、指定 spawn、打开诊断或模拟加载异常。所有命令仍在 `project/` 目录执行：
+
+```powershell
+$env:MYBEVY_START_SCENE="dungeon.forest_001"
+$env:MYBEVY_START_SPAWN="debug.entry_a"
+$env:MYBEVY_SCENE_DEBUG="true"
+$env:MYBEVY_SCENE_LOG_LIFECYCLE="true"
+$env:MYBEVY_SCENE_SLOW_LOADING_SECONDS="1.5"
+$env:MYBEVY_SCENE_SIMULATE_FAILURE="asset_load"
+cargo run
+```
+
+变量说明：
+
+- `MYBEVY_START_SCENE`：启动后自动发送 `SceneCommand::Enter` 的场景 ID；该场景必须已经由 game layer 注册。
+- `MYBEVY_START_SPAWN`：启动场景使用的 spawn point ID。
+- `MYBEVY_SCENE_DEBUG`：启用场景 debug 配置；接受 `1`、`true`、`on`、`yes`、`enabled` 等值。
+- `MYBEVY_SCENE_LOG_LIFECYCLE`：生命周期日志开关；未设置时默认跟随 `MYBEVY_SCENE_DEBUG`。
+- `MYBEVY_SCENE_SLOW_LOADING_SECONDS`：慢加载模拟秒数配置，必须是正数。
+- `MYBEVY_SCENE_SIMULATE_FAILURE`：失败模拟类型，当前可解析 `manifest_load`、`asset_load`、`camera_setup`。
+
+这些变量只用于开发期。正式入口应来自登录、房间、存档或服务端协议。
+
+## 16. 官方参考入口
 
 - Bevy Quick Start: `https://bevy.org/learn/quick-start/getting-started/`
 - Bevy Setup: `https://bevy.org/learn/quick-start/getting-started/setup/`
@@ -401,7 +427,7 @@ cargo run -- --window-size 1280x2772 --window-scale 0.5
 - 本仓库资源使用方式：`docs/assets-workflow.md`
 - 本仓库场景框架设计：`docs/scene/README.md`
 
-## 16. 本项目如何打包成 Windows 和 Android App
+## 17. 本项目如何打包成 Windows 和 Android App
 
 这一节只针对当前仓库结构说明：
 

@@ -182,11 +182,11 @@
   - [x] 验证 manifest 缺字段、默认 spawn 缺失、required asset 失败能产出明确错误。
   - [x] 每个实现阶段结束执行 `cargo fmt` 和 `cargo check`。
 
-- [ ] 阶段 18：文档同步
-  - [ ] 更新 `docs/scene/README.md` 中“未实现设计目标”和“已落地能力”的表述，避免把规划写成事实。
-  - [ ] 如新增资源路径或 manifest 示例，检查 `docs/assets-workflow.md` 是否需要同步。
-  - [ ] 如新增开发启动环境变量，更新 `docs/bevy-getting-started.md`。
-  - [ ] 如拆分 `project/src/framework/scene/` 模块结构，检查 `CLAUDE.md` 的目录约定是否需要同步。
-  - [ ] 在文档中明确 framework 和 game layer 的职责边界。
-  - [ ] 记录首批验收命令和预期结果。
-  - [ ] 避免记录尚未实现的具体游戏接入流程。
+- [x] 阶段 18：文档同步（开始：2026-06-17 22:09:39 +08:00；结束：2026-06-17 22:18:30 +08:00）
+  - [x] 更新 `docs/scene/README.md` 中“未实现设计目标”和“已落地能力”的表述，避免把规划写成事实。
+  - [x] 如新增资源路径或 manifest 示例，检查 `docs/assets-workflow.md` 是否需要同步。
+  - [x] 如新增开发启动环境变量，更新 `docs/bevy-getting-started.md`。
+  - [x] 如拆分 `project/src/framework/scene/` 模块结构，检查 `CLAUDE.md` 的目录约定是否需要同步。
+  - [x] 在文档中明确 framework 和 game layer 的职责边界。
+  - [x] 记录首批验收命令和预期结果。
+  - [x] 避免记录尚未实现的具体游戏接入流程。

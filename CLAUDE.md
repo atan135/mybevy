@@ -26,6 +26,7 @@
 - `project/src/`：游戏源码
 - `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene 和 fight 边界
 - `project/src/framework/network/`：网络通信框架插件和 HTTP/TCP/KCP 接口
+- `project/src/framework/scene/`：场景框架插件、命令、事件、生命周期、注册表、首包 RON manifest、Loading、根实体、相机、spawn/anchor、trigger、streaming 元数据和 debug 配置
 - `project/src/framework/ui/`：UI 框架能力，包含核心系统、通用控件、覆盖层、主题和国际化
 - `project/src/game/`：游戏层插件、页面、玩法和框架适配模块
 - `project/src/game/authority/`：本地联机/远端联机的控制机会话接口和轻量 authority 协议

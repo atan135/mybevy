@@ -33,6 +33,20 @@ project/assets/ui/fonts/MyBevyUiCjk-Regular.otf
 content_cache://2026.06.09.1/models/props/crate/crate.glb
 ```
 
+场景清单也是首包资源时同样从 `project/assets/` 下一级开始写。例如实际文件是：
+
+```text
+project/assets/scenes/boot/scene.ron
+```
+
+注册到场景框架时写：
+
+```rust
+"scenes/boot/scene.ron"
+```
+
+不要写成 `project/assets/scenes/boot/scene.ron`。当前场景框架只实现首包 RON 场景清单加载；后续下载场景清单和 `content_cache://...` 场景加载仍是后续目标。
+
 ## 2. 资源来源分类
 
 MyBevy 资源按来源分三类：
@@ -59,6 +73,10 @@ project/assets/
 |   |-- characters/
 |   |-- props/
 |   `-- scenes/
+|-- scenes/
+|   |-- boot/
+|   |-- fallback/
+|   `-- touch_ripple/
 |-- textures/
 |   |-- atlas/
 |   `-- single/
@@ -79,6 +97,7 @@ content_dist/
 `-- 2026.06.09.1/
     |-- images/
     |-- models/
+    |-- scenes/
     |-- textures/
     |-- ui/
     |   |-- i18n/
