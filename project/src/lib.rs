@@ -3,6 +3,7 @@ use bevy::{asset::AssetPlugin, prelude::*, window::WindowResolution};
 pub mod authority;
 #[cfg(not(target_os = "android"))]
 mod config;
+pub mod framework;
 mod game;
 pub mod myserver;
 pub mod network;
