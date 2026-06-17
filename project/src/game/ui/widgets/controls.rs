@@ -6,20 +6,17 @@ use bevy::{
     ui::{FocusPolicy, RelativeCursorPosition},
 };
 
-use crate::game::{
-    navigation::{AppUiMode, RouteButton},
-    ui::{
-        core::{UiFocusSystems, UiMetrics, focus::UiFocusState},
-        i18n::{UiI18n, UiI18nText},
-        style::{
-            UiFontAssets,
-            theme::{
-                ButtonColors, UiTheme, UiThemeButtonNodeRole, UiThemeTextColorRole,
-                UiThemeTextStyleRole,
-            },
+use crate::game::ui::{
+    core::{UiFocusSystems, UiMetrics, focus::UiFocusState},
+    i18n::{UiI18n, UiI18nText},
+    style::{
+        UiFontAssets,
+        theme::{
+            ButtonColors, UiTheme, UiThemeButtonNodeRole, UiThemeTextColorRole,
+            UiThemeTextStyleRole,
         },
-        widgets::scroll::UiScrollPlugin,
     },
+    widgets::scroll::UiScrollPlugin,
 };
 
 const NUMERIC_CONTROL_LABEL_WIDTH: f32 = 132.0;
@@ -398,86 +395,6 @@ pub(in crate::game) fn screen_label_key(
 ) -> impl Bundle {
     (
         screen_label(theme, fonts, i18n.tr(key, fallback), style_role, color_role),
-        UiI18nText::new(key, fallback),
-    )
-}
-
-#[allow(dead_code)]
-pub(in crate::game) fn primary_route_button(
-    theme: &UiTheme,
-    metrics: &UiMetrics,
-    fonts: &UiFontAssets,
-    text: impl Into<String>,
-    target: AppUiMode,
-) -> impl Bundle {
-    route_button(
-        theme,
-        metrics,
-        fonts,
-        text,
-        target,
-        theme.colors.primary_button,
-        PrimaryButton,
-    )
-}
-
-pub(in crate::game) fn primary_route_button_key(
-    theme: &UiTheme,
-    metrics: &UiMetrics,
-    fonts: &UiFontAssets,
-    i18n: &UiI18n,
-    key: &'static str,
-    fallback: &'static str,
-    target: AppUiMode,
-) -> impl Bundle {
-    route_button_key_bundle(
-        theme,
-        metrics,
-        fonts,
-        i18n.tr(key, fallback),
-        target,
-        theme.colors.primary_button,
-        PrimaryButton,
-        UiI18nText::new(key, fallback),
-    )
-}
-
-#[allow(dead_code)]
-pub(in crate::game) fn secondary_route_button(
-    theme: &UiTheme,
-    metrics: &UiMetrics,
-    fonts: &UiFontAssets,
-    text: impl Into<String>,
-    target: AppUiMode,
-) -> impl Bundle {
-    route_button(
-        theme,
-        metrics,
-        fonts,
-        text,
-        target,
-        theme.colors.secondary_button,
-        SecondaryButton,
-    )
-}
-
-pub(in crate::game) fn secondary_route_button_key(
-    theme: &UiTheme,
-    metrics: &UiMetrics,
-    fonts: &UiFontAssets,
-    i18n: &UiI18n,
-    key: &'static str,
-    fallback: &'static str,
-    target: AppUiMode,
-) -> impl Bundle {
-    route_button_key_bundle(
-        theme,
-        metrics,
-        fonts,
-        i18n.tr(key, fallback),
-        target,
-        theme.colors.secondary_button,
-        SecondaryButton,
         UiI18nText::new(key, fallback),
     )
 }
@@ -1264,70 +1181,6 @@ pub(in crate::game) fn text_input_form_message(
         TextColor(theme.colors.text_muted),
         UiTextInputFormMessage { input },
         UiThemeTextStyleRole::Caption,
-    )
-}
-
-fn route_button<T: Component>(
-    theme: &UiTheme,
-    metrics: &UiMetrics,
-    fonts: &UiFontAssets,
-    text: impl Into<String>,
-    target: AppUiMode,
-    colors: ButtonColors,
-    marker: T,
-) -> impl Bundle {
-    (
-        Button,
-        FocusableButton,
-        RouteButton { target },
-        marker,
-        UiThemeButtonNodeRole::Button,
-        button_node(theme, metrics),
-        BackgroundColor(colors.idle),
-        children![(
-            Text::new(text),
-            TextFont {
-                font: fonts.regular.clone(),
-                font_size: theme.text.button,
-                ..default()
-            },
-            TextColor(theme.colors.text_primary),
-            UiThemeTextColorRole::Primary,
-            UiThemeTextStyleRole::Button,
-        )],
-    )
-}
-
-fn route_button_key_bundle<T: Component>(
-    theme: &UiTheme,
-    metrics: &UiMetrics,
-    fonts: &UiFontAssets,
-    text: impl Into<String>,
-    target: AppUiMode,
-    colors: ButtonColors,
-    marker: T,
-    i18n_text: UiI18nText,
-) -> impl Bundle {
-    (
-        Button,
-        FocusableButton,
-        RouteButton { target },
-        marker,
-        UiThemeButtonNodeRole::Button,
-        button_node(theme, metrics),
-        BackgroundColor(colors.idle),
-        children![(
-            Text::new(text),
-            TextFont {
-                font: fonts.regular.clone(),
-                font_size: theme.text.button,
-                ..default()
-            },
-            TextColor(theme.colors.text_primary),
-            UiThemeTextColorRole::Primary,
-            UiThemeTextStyleRole::Button,
-            i18n_text,
-        )],
     )
 }
 

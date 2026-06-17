@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::{
-    navigation::AppUiMode,
+    navigation::{AppUiMode, primary_route_button_key},
     ui::{
         core::{
             UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiPanelRoot, UiViewport,
@@ -15,7 +15,7 @@ use crate::game::{
                 UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
             },
         },
-        widgets::{primary_route_button_key, screen_label, screen_title_key},
+        widgets::{screen_label, screen_title_key},
     },
     ui_ids::{OWNER_LOGIN, PANEL_LOGIN_PAGE},
 };

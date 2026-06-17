@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::{
-    navigation::AppUiMode,
+    navigation::{AppUiMode, GameRouteCommand, secondary_route_button_key},
     plugin::TouchLaunchMode,
     ui::{
         core::{
@@ -22,7 +22,7 @@ use crate::game::{
         },
         widgets::{
             DisabledButton, LoadingButton, primary_action_button_key, screen_label_key,
-            screen_title_key, secondary_route_button_key,
+            screen_title_key,
         },
     },
     ui_ids::{
@@ -209,6 +209,7 @@ pub(super) fn handle_game_list_touch_buttons(
     i18n: Res<UiI18n>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut route_commands: MessageWriter<UiRouteCommand>,
+    mut game_route_commands: MessageWriter<GameRouteCommand>,
     mut modal_results: MessageReader<UiModalResult>,
     play_buttons: Query<
         &Interaction,
@@ -243,7 +244,8 @@ pub(super) fn handle_game_list_touch_buttons(
                     "lobby.touch_ripple.toast.local",
                     "Starting local Touch Ripple",
                 )));
-                route_commands.write(UiRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
+                game_route_commands
+                    .write(GameRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
             MODAL_ACTION_TOUCH_RIPPLE_NETWORKED => {
                 *launch_mode = TouchLaunchMode::Auto;
@@ -252,7 +254,8 @@ pub(super) fn handle_game_list_touch_buttons(
                     "lobby.touch_ripple.toast.networked",
                     "Starting networked Touch Ripple",
                 )));
-                route_commands.write(UiRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
+                game_route_commands
+                    .write(GameRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
             _ => {}
         };

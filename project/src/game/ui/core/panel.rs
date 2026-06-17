@@ -2,21 +2,23 @@ use std::fmt;
 
 use bevy::{input::keyboard::Key, prelude::*};
 
-use crate::game::ui::{
-    core::{UiLayer, UiLayerRoot, UiMetrics, UiViewport, UiWidthClass},
-    overlays::{
-        loading::{UiLoading, spawn_loading},
-        modal::{UiConfirmModal, spawn_confirm_modal},
-        router::UiRouteSystems,
-    },
-    style::{
-        UiFontAssets, UiTheme,
-        theme::{
-            UiThemeBackgroundRole, UiThemeBorderRole, UiThemeRootNodeRole, UiThemeTextColorRole,
-            UiThemeTextStyleRole,
+use crate::game::{
+    navigation::GameRouteSystems,
+    ui::{
+        core::{UiLayer, UiLayerRoot, UiMetrics, UiViewport, UiWidthClass},
+        overlays::{
+            loading::{UiLoading, spawn_loading},
+            modal::{UiConfirmModal, spawn_confirm_modal},
         },
+        style::{
+            UiFontAssets, UiTheme,
+            theme::{
+                UiThemeBackgroundRole, UiThemeBorderRole, UiThemeRootNodeRole,
+                UiThemeTextColorRole, UiThemeTextStyleRole,
+            },
+        },
+        widgets::{screen_label, screen_title},
     },
-    widgets::{screen_label, screen_title},
 };
 
 pub(in crate::game) struct UiPanelPlugin;
@@ -32,7 +34,7 @@ impl Plugin for UiPanelPlugin {
                 (write_close_top_on_return_input, handle_panel_commands)
                     .chain()
                     .in_set(UiPanelSystems::Commands)
-                    .after(UiRouteSystems::Commands),
+                    .after(GameRouteSystems::Commands),
             );
     }
 }
