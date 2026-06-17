@@ -2,6 +2,8 @@ use bevy::prelude::*;
 
 use super::id::{SceneId, SceneLayerId, SceneSessionId};
 
+pub const SCENE_DEFAULT_LAYER_ID: &str = "base";
+
 #[derive(Clone, Debug, Component, PartialEq, Eq)]
 pub struct SceneRoot {
     pub scene_id: SceneId,
@@ -76,4 +78,39 @@ pub enum SceneLayerState {
     Active,
     Unloading,
     Failed,
+}
+
+pub(crate) fn spawn_scene_world_roots(
+    commands: &mut Commands,
+    scene_id: &SceneId,
+    session_id: &SceneSessionId,
+) -> Entity {
+    let mut root = commands.spawn((
+        SceneRoot::new(scene_id.clone(), session_id.clone()),
+        SceneOwned::new(session_id.clone()),
+        Name::new(format!("SceneRoot({scene_id})")),
+    ));
+    let root_entity = root.id();
+
+    root.with_children(|root| {
+        let mut base_layer = SceneLayerRoot::new(
+            session_id.clone(),
+            SceneLayerId::from(SCENE_DEFAULT_LAYER_ID),
+        );
+        base_layer.state = SceneLayerState::Active;
+
+        root.spawn((
+            base_layer,
+            SceneOwned::new(session_id.clone()),
+            Name::new(format!("SceneLayerRoot({SCENE_DEFAULT_LAYER_ID})")),
+        ));
+
+        root.spawn((
+            SceneRuntimeRoot::new(session_id.clone()),
+            SceneOwned::new(session_id.clone()),
+            Name::new("SceneRuntimeRoot"),
+        ));
+    });
+
+    root_entity
 }

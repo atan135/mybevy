@@ -1,10 +1,21 @@
 use bevy::prelude::*;
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use super::{
-    event::SceneFailure,
+    command::{SceneCommand, SceneEnterRequest, SceneExitRequest, SceneSwitchRequest},
+    event::{
+        SceneEntered, SceneEvent, SceneExitStarted, SceneExited, SceneFailure, SceneFailureKind,
+        SceneInstantiating, SceneResolving,
+    },
     id::{SceneId, SceneSessionId, SceneSpawnPointId},
+    registry::{SceneDefinition, SceneRegistry},
+    root::{SceneOwned, spawn_scene_world_roots},
 };
+
+static NEXT_SCENE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Resource, PartialEq)]
 pub struct SceneRuntime {
@@ -178,4 +189,290 @@ impl SceneLifecycleState {
     pub fn is_failed(self) -> bool {
         matches!(self, Self::Failed)
     }
+}
+
+#[derive(Clone, Debug)]
+enum SceneLifecycleRequest {
+    Enter(SceneEnterRequest),
+    Exit(SceneExitRequest),
+    Switch(SceneSwitchRequest),
+}
+
+pub(crate) fn process_scene_lifecycle_commands(
+    mut commands: Commands,
+    mut command_reader: MessageReader<SceneCommand>,
+    registry: Res<SceneRegistry>,
+    time: Option<Res<Time>>,
+    mut runtime: ResMut<SceneRuntime>,
+    owned_entities: Query<(Entity, &SceneOwned)>,
+    mut events: MessageWriter<SceneEvent>,
+) {
+    let request = command_reader
+        .read()
+        .filter_map(|command| match command {
+            SceneCommand::Enter(request) => Some(SceneLifecycleRequest::Enter(request.clone())),
+            SceneCommand::Exit(request) => Some(SceneLifecycleRequest::Exit(request.clone())),
+            SceneCommand::Switch(request) => Some(SceneLifecycleRequest::Switch(request.clone())),
+            SceneCommand::Preload(_)
+            | SceneCommand::Unload(_)
+            | SceneCommand::ReloadCurrent(_)
+            | SceneCommand::SetLayerEnabled(_) => None,
+        })
+        .last();
+
+    let Some(request) = request else {
+        return;
+    };
+
+    let entered_at = time.as_ref().map(|time| time.elapsed());
+
+    match request {
+        SceneLifecycleRequest::Enter(request) => {
+            enter_scene(
+                &mut commands,
+                &registry,
+                &mut runtime,
+                &owned_entities,
+                &mut events,
+                request,
+                entered_at,
+                true,
+            );
+        }
+        SceneLifecycleRequest::Exit(request) => {
+            exit_scene(
+                &mut commands,
+                &mut runtime,
+                &owned_entities,
+                &mut events,
+                &request,
+            );
+        }
+        SceneLifecycleRequest::Switch(request) => {
+            // Coalescing to the last transition command avoids building an
+            // intermediate session in the same frame that cannot be queried yet.
+            // Switch owns the whole active scene in this minimal version, so it
+            // clears the current session even if the embedded exit request has
+            // stale filters.
+            exit_scene(
+                &mut commands,
+                &mut runtime,
+                &owned_entities,
+                &mut events,
+                &SceneExitRequest::default(),
+            );
+            enter_scene(
+                &mut commands,
+                &registry,
+                &mut runtime,
+                &owned_entities,
+                &mut events,
+                request.enter,
+                entered_at,
+                false,
+            );
+        }
+    }
+}
+
+fn enter_scene(
+    commands: &mut Commands,
+    registry: &SceneRegistry,
+    runtime: &mut SceneRuntime,
+    owned_entities: &Query<(Entity, &SceneOwned)>,
+    events: &mut MessageWriter<SceneEvent>,
+    request: SceneEnterRequest,
+    entered_at: Option<Duration>,
+    replace_existing: bool,
+) {
+    runtime.state = SceneLifecycleState::Resolving;
+
+    let Some(definition) = registry.get(&request.scene_id) else {
+        fail_scene_transition(
+            runtime,
+            events,
+            SceneFailure {
+                kind: SceneFailureKind::SceneNotFound,
+                scene_id: Some(request.scene_id),
+                session_id: request.session_id,
+                content_version: request.content_version,
+                state: SceneLifecycleState::Resolving,
+                asset_id: None,
+                asset_path: None,
+                message: Some("scene id is not registered".to_string()),
+            },
+        );
+        return;
+    };
+
+    let definition = definition.clone();
+
+    if replace_existing && (runtime.active.is_some() || runtime.pending.is_some()) {
+        exit_scene(
+            commands,
+            runtime,
+            owned_entities,
+            events,
+            &SceneExitRequest::default(),
+        );
+    }
+
+    let mut session = session_info_from_request(&request, &definition);
+    runtime.pending = Some(session.clone());
+    runtime.last_error = None;
+
+    events.write(SceneEvent::Resolving(SceneResolving {
+        scene_id: session.scene_id.clone(),
+        session_id: Some(session.session_id.clone()),
+    }));
+
+    runtime.state = SceneLifecycleState::LoadingAssets;
+    runtime.state = SceneLifecycleState::Instantiating;
+    events.write(SceneEvent::Instantiating(SceneInstantiating {
+        scene_id: session.scene_id.clone(),
+        session_id: session.session_id.clone(),
+    }));
+
+    if definition.has_world_root {
+        spawn_scene_world_roots(commands, &session.scene_id, &session.session_id);
+    }
+
+    runtime.state = SceneLifecycleState::Activating;
+    session.entered_at = entered_at;
+    runtime.active = Some(session.clone());
+    runtime.pending = None;
+    runtime.state = SceneLifecycleState::Active;
+
+    events.write(SceneEvent::Entered(SceneEntered {
+        scene_id: session.scene_id,
+        session_id: session.session_id,
+        content_version: session.content_version,
+    }));
+}
+
+fn exit_scene(
+    commands: &mut Commands,
+    runtime: &mut SceneRuntime,
+    owned_entities: &Query<(Entity, &SceneOwned)>,
+    events: &mut MessageWriter<SceneEvent>,
+    request: &SceneExitRequest,
+) -> bool {
+    let Some(session) = session_for_exit(runtime, request) else {
+        return false;
+    };
+
+    runtime.state = SceneLifecycleState::Deactivating;
+    events.write(SceneEvent::ExitStarted(SceneExitStarted {
+        scene_id: session.scene_id.clone(),
+        session_id: session.session_id.clone(),
+    }));
+
+    runtime.state = SceneLifecycleState::Unloading;
+    despawn_session_owned(commands, owned_entities, &session.session_id);
+    clear_runtime_session(runtime, &session.session_id);
+
+    events.write(SceneEvent::Exited(SceneExited {
+        scene_id: session.scene_id,
+        session_id: session.session_id,
+    }));
+
+    runtime.state = SceneLifecycleState::Idle;
+    true
+}
+
+fn session_for_exit(
+    runtime: &SceneRuntime,
+    request: &SceneExitRequest,
+) -> Option<SceneSessionInfo> {
+    let session = runtime.active.as_ref().or(runtime.pending.as_ref())?;
+
+    if request
+        .scene_id
+        .as_ref()
+        .is_some_and(|scene_id| scene_id != &session.scene_id)
+    {
+        return None;
+    }
+
+    if request
+        .session_id
+        .as_ref()
+        .is_some_and(|session_id| session_id != &session.session_id)
+    {
+        return None;
+    }
+
+    Some(session.clone())
+}
+
+fn clear_runtime_session(runtime: &mut SceneRuntime, session_id: &SceneSessionId) {
+    if runtime
+        .active
+        .as_ref()
+        .is_some_and(|session| &session.session_id == session_id)
+    {
+        runtime.active = None;
+    }
+
+    if runtime
+        .pending
+        .as_ref()
+        .is_some_and(|session| &session.session_id == session_id)
+    {
+        runtime.pending = None;
+    }
+}
+
+fn despawn_session_owned(
+    commands: &mut Commands,
+    owned_entities: &Query<(Entity, &SceneOwned)>,
+    session_id: &SceneSessionId,
+) {
+    for (entity, owned) in owned_entities.iter() {
+        if &owned.session_id == session_id {
+            commands.entity(entity).try_despawn();
+        }
+    }
+}
+
+fn session_info_from_request(
+    request: &SceneEnterRequest,
+    definition: &SceneDefinition,
+) -> SceneSessionInfo {
+    let session_id = request
+        .session_id
+        .clone()
+        .unwrap_or_else(|| next_session_id(&request.scene_id));
+
+    SceneSessionInfo {
+        scene_id: request.scene_id.clone(),
+        session_id,
+        authority_mode: request.authority_mode,
+        content_version: request
+            .content_version
+            .clone()
+            .or_else(|| definition.content_version.clone()),
+        spawn_point: request
+            .spawn_point
+            .clone()
+            .or_else(|| definition.default_spawn.clone()),
+        seed: request.seed,
+        entered_at: None,
+    }
+}
+
+fn next_session_id(scene_id: &SceneId) -> SceneSessionId {
+    let next_id = NEXT_SCENE_SESSION_ID.fetch_add(1, Ordering::Relaxed);
+    SceneSessionId::from(format!("{scene_id}-{next_id}"))
+}
+
+fn fail_scene_transition(
+    runtime: &mut SceneRuntime,
+    events: &mut MessageWriter<SceneEvent>,
+    failure: SceneFailure,
+) {
+    runtime.pending = None;
+    runtime.state = SceneLifecycleState::Failed;
+    runtime.last_error = Some(failure.clone());
+    events.write(SceneEvent::Failed(failure));
 }

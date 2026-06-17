@@ -1,8 +1,12 @@
 use bevy::prelude::*;
 
 use super::{
-    command::SceneCommand, debug::SceneDebugConfig, event::SceneEvent, lifecycle::SceneRuntime,
-    registry::SceneRegistry, trigger::SceneTriggerEvent,
+    command::SceneCommand,
+    debug::SceneDebugConfig,
+    event::SceneEvent,
+    lifecycle::{SceneRuntime, process_scene_lifecycle_commands},
+    registry::SceneRegistry,
+    trigger::SceneTriggerEvent,
 };
 
 pub struct ScenePlugin;
@@ -14,6 +18,7 @@ impl Plugin for ScenePlugin {
             .add_message::<SceneTriggerEvent>()
             .init_resource::<SceneRuntime>()
             .init_resource::<SceneRegistry>()
-            .init_resource::<SceneDebugConfig>();
+            .init_resource::<SceneDebugConfig>()
+            .add_systems(Update, process_scene_lifecycle_commands);
     }
 }

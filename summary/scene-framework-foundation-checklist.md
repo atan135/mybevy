@@ -47,14 +47,14 @@
   - [x] 定义 `SceneSessionInfo`，记录 `scene_id`、`session_id`、`authority_mode`、`content_version`、`spawn_point`、`seed`、`entered_at`。
   - [x] 定义 `SceneLifecycleState`，先支持 `Idle`、`Resolving`、`LoadingAssets`、`Instantiating`、`Activating`、`Active`、`Deactivating`、`Unloading`、`Failed`，`Downloading` 和 `Suspending` 可预留。
 
-- [ ] 阶段 3：最小生命周期流程
-  - [ ] 实现 `Enter` 流程：接收命令、查 registry、生成 pending session、进入 Resolving/Loading/Instantiating/Activating/Active。
-  - [ ] 实现纯 UI 场景进入能力：只创建 `SceneRuntime`，不创建 `SceneRoot`。
-  - [ ] 实现世界内容场景进入能力：按请求或 manifest 配置创建 `SceneRoot` 和默认 layer root。
-  - [ ] 实现 `Exit` 流程：发送退出事件、标记 Deactivating、清理 `SceneOwned` 实体、清空 active session。
-  - [ ] 实现 `Switch` 流程的简单版本：先 Exit 当前场景，再 Enter 目标场景。
-  - [ ] 处理重复命令和非法状态，例如 Idle 时 Exit、Active 时重复 Enter、切换中再次 Switch。
-  - [ ] 确保失败时进入 `Failed` 并写入 `SceneFailure`，而不是留下半初始化状态。
+- [x] 阶段 3：最小生命周期流程（开始：2026-06-17 18:36:47 +08:00；结束：2026-06-17 18:48:48 +08:00）
+  - [x] 实现 `Enter` 流程：接收命令、查 registry、生成 pending session、进入 Resolving/Loading/Instantiating/Activating/Active。
+  - [x] 实现纯 UI 场景进入能力：只创建 `SceneRuntime`，不创建 `SceneRoot`。
+  - [x] 实现世界内容场景进入能力：按请求或 manifest 配置创建 `SceneRoot` 和默认 layer root。
+  - [x] 实现 `Exit` 流程：发送退出事件、标记 Deactivating、清理 `SceneOwned` 实体、清空 active session。
+  - [x] 实现 `Switch` 流程的简单版本：先 Exit 当前场景，再 Enter 目标场景。
+  - [x] 处理重复命令和非法状态，例如 Idle 时 Exit、Active 时重复 Enter、切换中再次 Switch。
+  - [x] 确保失败时进入 `Failed` 并写入 `SceneFailure`，而不是留下半初始化状态。
 
 - [ ] 阶段 4：场景实体组织和清理
   - [ ] 定义 `SceneRoot` 组件，记录 `scene_id` 和 `session_id`。
