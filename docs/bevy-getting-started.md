@@ -193,30 +193,38 @@ mybevy/
 `-- project/
     |-- assets/
     |-- src/
+    |   |-- framework/
+    |   |   |-- fight/
+    |   |   |-- scene/
+    |   |   `-- ui/
+    |   |       |-- core/
+    |   |       |-- overlays/
+    |   |       |-- style/
+    |   |       `-- widgets/
     |   |-- main.rs
     |   `-- game/
     |       |-- mod.rs
     |       |-- plugin.rs
+    |       |-- features/
     |       |-- navigation/
     |       |-- screens/
-    |       |-- ui/
-    |       |   |-- core/
-    |       |   |-- overlays/
-    |       |   |-- style/
-    |       |   `-- widgets/
+    |       `-- ui_ids.rs
     `-- Cargo.toml
 ```
 
 可以按下面的职责划分：
 
 - `project/src/main.rs`：程序入口、顶层插件注册
+- `project/src/framework/`：框架层横向能力，当前包含 UI、scene 和 fight 边界
+- `project/src/framework/ui/`：UI 框架能力入口
 - `project/src/game/plugin.rs`：游戏主插件
+- `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
 - `project/src/game/navigation/`：主流程 `AppUiMode` 和路由按钮数据
 - `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体业务页面
-- `project/src/game/ui/core/`：UI 框架入口、Panel Manager、层级、输入拦截
-- `project/src/game/ui/overlays/`：Toast、Loading、Confirm modal 等顶层 UI 实现
-- `project/src/game/ui/style/`：颜色、字号、间距、圆角等主题 token
-- `project/src/game/ui/widgets/`：按钮、文本等通用控件
+- `project/src/framework/ui/core/`：UI 框架入口、Panel Manager、层级、输入拦截
+- `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 等顶层 UI 实现
+- `project/src/framework/ui/style/`：颜色、字号、间距、圆角等主题 token
+- `project/src/framework/ui/widgets/`：按钮、文本等通用控件
 - `project/assets/`：贴图、音频、字体、场景文件
 - `docs/assets-workflow.md`：项目资源使用方式，覆盖开发期、APK 包内和后续下载资源
 - `docs/ui/`：UI 框架实现机制、组件使用、响应式布局、调试验收和限制说明

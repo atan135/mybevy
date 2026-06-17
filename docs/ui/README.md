@@ -1,6 +1,6 @@
 # UI 文档总览
 
-这个目录记录当前自研 UI 框架的实现细节、运行机制、使用方式和已知限制。这里不记录阶段任务、开发流水或后续排期；需要判断框架现状时，以本目录和 `project/src/game/ui/` 的代码为准。
+这个目录记录当前自研 UI 框架的实现细节、运行机制、使用方式和已知限制。这里不记录阶段任务、开发流水或后续排期；需要判断框架现状时，以本目录和 `project/src/framework/ui/` 的代码为准。
 
 ## 阅读顺序
 
@@ -24,7 +24,8 @@ flowchart TD
     Screens["业务页面插件<br/>auth / lobby / dev / gameplay"]
 
     AppUiMode["AppUiMode<br/>Login / Lobby / WanfaTouchRipple / UiGallery"]
-    UiRouteCommand["UiRouteCommand<br/>ChangeMode / ShowToast"]
+    GameRouteCommand["GameRouteCommand<br/>ChangeMode"]
+    UiOverlayCommand["UiOverlayCommand<br/>ShowToast"]
     UiPanelCommand["UiPanelCommand<br/>Open / Close / Toggle / CloseTop"]
 
     UiViewport["UiViewport + UiMetrics"]
@@ -35,6 +36,7 @@ flowchart TD
     UiFocus["UiFocusState"]
     UiBinding["UiBindingValues"]
     UiDebug["UiDebugPlugin"]
+    UiOverlayPlugin["UiOverlayPlugin"]
 
     PanelManager["UiPanelPlugin / Panel Manager"]
     LayerRoots["UiLayerRoot<br/>Page / Floating / Modal / Loading / Toast / Debug"]
@@ -45,6 +47,9 @@ flowchart TD
     ScreensPlugin --> UiFrameworkPlugin
     ScreensPlugin --> Screens
     NavigationPlugin --> AppUiMode
+    NavigationPlugin --> GameRouteCommand
+    GameRouteCommand --> AppUiMode
+    GameRouteCommand --> UiPanelCommand
     Screens --> Panels
     UiFrameworkPlugin --> UiViewport
     UiFrameworkPlugin --> UiTheme
@@ -54,9 +59,9 @@ flowchart TD
     UiFrameworkPlugin --> UiFocus
     UiFrameworkPlugin --> UiBinding
     UiFrameworkPlugin --> UiDebug
-    UiWidgets --> UiRouteCommand
-    UiRouteCommand --> AppUiMode
-    UiRouteCommand --> Overlays
+    UiFrameworkPlugin --> UiOverlayPlugin
+    UiOverlayPlugin --> UiOverlayCommand
+    UiOverlayCommand --> Overlays
     UiPanelCommand --> PanelManager
     PanelManager --> Panels
     Panels --> LayerRoots
@@ -72,13 +77,15 @@ flowchart TD
 
 - `project/src/game/screens/mod.rs`：注册 `NavigationPlugin`、`UiFrameworkPlugin` 和各业务页面插件。
 - `project/src/game/navigation/mod.rs`：定义 `AppUiMode` 和 `RouteButton`。
-- `project/src/game/ui/core/framework.rs`：统一注册 UI 框架插件。
-- `project/src/game/ui/core/`：视口、层级、面板、输入、焦点、绑定、动画、统计。
-- `project/src/game/ui/widgets/`：通用控件、布局 helper、滚动容器、图片 helper。
-- `project/src/game/ui/overlays/`：Toast、Loading、Confirm modal 和路由命令处理。
-- `project/src/game/ui/style/`：字体加载和主题 token。
-- `project/src/game/ui/i18n.rs`：UI 文案加载、fallback 和热更新。
+- `project/src/game/navigation/widgets.rs`：定义游戏层路由按钮和 `game_panel_root` 适配 helper。
+- `project/src/game/ui_ids.rs`：集中定义游戏层 panel、owner、modal 和 action ID 常量。
+- `project/src/framework/ui/core/framework.rs`：统一注册 UI 框架插件。
+- `project/src/framework/ui/core/`：视口、层级、面板、输入、焦点、绑定、动画、统计。
+- `project/src/framework/ui/widgets/`：通用控件、布局 helper、滚动容器、图片 helper。
+- `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 和覆盖层命令处理。
+- `project/src/framework/ui/style/`：字体加载和主题 token。
+- `project/src/framework/ui/i18n.rs`：UI 文案加载、fallback 和热更新。
 
 ## 文档维护规则
 
-修改 `project/src/game/ui/`、`project/src/game/screens/` 的 UI 结构、输入规则、主题资源、i18n 资源、窗口验收方式或 Android UI 行为时，需要同步检查本目录。文档应描述已经存在的机制和限制，不应写成待办清单。
+修改 `project/src/framework/ui/`、`project/src/game/screens/` 的 UI 结构、输入规则、主题资源、i18n 资源、窗口验收方式或 Android UI 行为时，需要同步检查本目录。文档应描述已经存在的机制和限制，不应写成待办清单。

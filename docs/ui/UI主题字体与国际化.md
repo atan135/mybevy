@@ -4,7 +4,7 @@
 
 ## 主题资源
 
-主题实现位于 `project/src/game/ui/style/theme.rs`。默认配置文件：
+主题实现位于 `project/src/framework/ui/style/theme.rs`。默认配置文件：
 
 ```text
 project/assets/ui/themes/default.ron
@@ -44,7 +44,7 @@ project/assets/ui/themes/default.ron
 
 ## 字体资源
 
-字体加载位于 `project/src/game/ui/style/fonts.rs`。当前唯一字体资源：
+字体加载位于 `project/src/framework/ui/style/fonts.rs`。当前唯一字体资源：
 
 ```text
 project/assets/ui/fonts/MyBevyUiCjk-Regular.otf
@@ -62,7 +62,7 @@ ui/fonts/MyBevyUiCjk-Regular.otf
 
 ## 国际化资源
 
-i18n 实现位于 `project/src/game/ui/i18n.rs`。默认目录：
+i18n 实现位于 `project/src/framework/ui/i18n.rs`。默认目录：
 
 ```text
 project/assets/ui/i18n/

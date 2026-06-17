@@ -1,6 +1,6 @@
 # UI 组件功能与使用
 
-通用控件集中在 `project/src/game/ui/widgets/`。业务页面优先使用这些 helper 生成一致的节点、主题 marker、焦点 marker 和 i18n marker。
+通用控件集中在 `project/src/framework/ui/widgets/`。业务页面优先使用这些 helper 生成一致的节点、主题 marker、焦点 marker 和 i18n marker。
 
 ## 文本
 
@@ -15,7 +15,7 @@
 
 ## 按钮
 
-按钮 helper 分为路由按钮和普通动作按钮：
+按钮 helper 分为普通动作按钮和游戏层路由按钮：
 
 - `primary_route_button_key`
 - `secondary_route_button_key`
@@ -24,7 +24,7 @@
 - `disabled_*_button_key`
 - `loading_*_button_key`
 
-路由按钮会携带 `RouteButton { target }`，由 `UiRouterPlugin` 处理页面切换。动作按钮只提供外观、焦点和交互状态，业务系统需要自行监听 `Interaction::Pressed`。
+`project/src/framework/ui/widgets/` 提供通用动作按钮外观、焦点和交互状态；业务系统需要自行监听 `Interaction::Pressed`。`primary_route_button_key` 和 `secondary_route_button_key` 位于 `project/src/game/navigation/widgets.rs`，它们是在通用动作按钮上组合 `RouteButton { target }` 的游戏层 helper，由 `NavigationPlugin` 处理页面切换。
 
 按钮视觉优先级固定为：
 
@@ -129,7 +129,7 @@ UI 图片 helper 位于 `widgets/image.rs`，示例资源位于：
 
 ## 数据绑定
 
-绑定核心在 `project/src/game/ui/core/binding.rs`：
+绑定核心在 `project/src/framework/ui/core/binding.rs`：
 
 - `UiBindingValues` 保存 path -> text/bool。
 - `UiBoundText` 把文本节点绑定到 text path。

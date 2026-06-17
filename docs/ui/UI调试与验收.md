@@ -1,6 +1,6 @@
 # UI 调试与验收
 
-UI 调试能力集中在 `project/src/game/ui/debug.rs`。调试面板用于观察 viewport、metrics、输入路由、面板栈、UI 树和布局边界。
+UI 调试能力集中在 `project/src/framework/ui/debug.rs`。调试面板用于观察 viewport、metrics、输入路由、面板栈、UI 树和布局边界。
 
 ## F3 调试面板
 

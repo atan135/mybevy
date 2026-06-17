@@ -4,7 +4,7 @@
 
 ## 输入状态资源
 
-`project/src/game/ui/core/input.rs` 维护 `UiInputState`：
+`project/src/framework/ui/core/input.rs` 维护 `UiInputState`：
 
 ```rust
 pub struct UiInputState {
@@ -34,7 +34,7 @@ pub struct UiInputState {
 
 ## 焦点系统
 
-`project/src/game/ui/core/focus.rs` 维护 `UiFocusState`：
+`project/src/framework/ui/core/focus.rs` 维护 `UiFocusState`：
 
 ```rust
 pub struct UiFocusState {
@@ -63,7 +63,7 @@ pub struct UiFocusState {
 
 ## 滚动协作
 
-`UiScrollView` 位于 `project/src/game/ui/widgets/scroll.rs`：
+`UiScrollView` 位于 `project/src/framework/ui/widgets/scroll.rs`：
 
 - 滚轮事件根据 hover map 发送到当前 hover 链路上的实体。
 - 垂直滚动使用 Bevy `ScrollPosition` 和 `ComputedNode` 计算最大偏移。

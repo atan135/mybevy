@@ -23,7 +23,12 @@
 - `scripts/`：仓库级开发辅助脚本
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
-- `project/src/game/`：游戏玩法插件和系统模块
+- `project/src/framework/`：框架层横向能力入口，当前包含 UI、scene 和 fight 边界
+- `project/src/framework/ui/`：UI 框架能力，包含核心系统、通用控件、覆盖层、主题和国际化
+- `project/src/game/`：游戏层插件、页面、玩法和框架适配模块
+- `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体页面
+- `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
+- `project/src/game/navigation/`：游戏层页面模式、路由命令和路由按钮适配
 - `project/src/authority/`：本地联机/远端联机的控制机会话接口和轻量 authority 协议
 - `project/src/network/`：网络通信插件和 HTTP/TCP/KCP 接口
 - `project/assets/`：贴图、音频、字体和其他资源
@@ -36,7 +41,8 @@
 
 - 所有 Rust 和 Bevy 相关命令默认在 `project/` 目录执行
 - 新增游戏功能时，优先把逻辑放进 `project/src/` 下的模块，而不是持续堆在 `main.rs`
-- UI 页面结构放在 `project/src/game/screens/`，UI 框架能力放在 `project/src/game/ui/core/`，通用控件放在 `project/src/game/ui/widgets/`，颜色、字号、间距、圆角等可微调参数集中放在 `project/src/game/ui/style/theme.rs`
+- UI 页面结构放在 `project/src/game/screens/`，具体玩法放在 `project/src/game/features/`，UI 框架能力放在 `project/src/framework/ui/`
+- UI 通用控件放在 `project/src/framework/ui/widgets/`，颜色、字号、间距、圆角等可微调参数集中放在 `project/src/framework/ui/style/theme.rs`
 - 新增首包资源文件时，统一放入 `project/assets/`；后续下载资源不要放入 `project/assets/`
 - `project/assets/` 下的图片、字体、音频、二进制模型和源工程类资源通过 Git LFS 提交；RON、JSON、TXT、授权说明等文本资源保持普通 Git 提交
 - 如果修改了项目结构、初始化方式或 Bevy 版本，同时更新相关文档

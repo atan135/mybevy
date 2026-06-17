@@ -4,7 +4,7 @@
 
 ## UiViewport
 
-`project/src/game/ui/core/viewport.rs` 定义 `UiViewport`：
+`project/src/framework/ui/core/viewport.rs` 定义 `UiViewport`：
 
 ```rust
 pub struct UiViewport {

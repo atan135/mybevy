@@ -20,7 +20,7 @@
 - Toast replacement 会立即 despawn 旧 Toast，没有旧 Toast 的替换出场动画。
 - Loading 和 Confirm 目前有入场 alpha 动画，关闭时直接 despawn，没有退出动画。
 - Toast 不进入 Panel Manager，因此不参与 `CloseTop`。
-- 当前只支持一个固定 `ConfirmModal` id；并发多个 Confirm 需要扩展 id 或栈语义。
+- 当前只支持一个固定 `UI_PANEL_CONFIRM_MODAL` id；并发多个 Confirm 需要扩展 id 或栈语义。
 
 ## 数据绑定
 
