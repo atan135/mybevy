@@ -10,7 +10,10 @@ pub use super::{
         SceneCommand, SceneEnterRequest, SceneExitRequest, SceneLayerCommand, ScenePreloadRequest,
         SceneReloadRequest, SceneSwitchRequest, SceneTransition, SceneUnloadRequest,
     },
-    debug::{SceneDebugConfig, SceneDebugFailure, SceneDebugSnapshot},
+    debug::{
+        SceneDebugConfig, SceneDebugDiagnostics, SceneDebugFailure, SceneDebugSnapshot,
+        SceneDebugStartup, SceneLayerDebugInfo, scene_debug_snapshot, scene_layer_debug_info,
+    },
     event::{
         SceneChunkStatusEvent, SceneEntered, SceneEvent, SceneExitStarted, SceneExited,
         SceneFailure, SceneFailureKind, SceneInstantiating, SceneLayerStatusEvent, SceneReady,

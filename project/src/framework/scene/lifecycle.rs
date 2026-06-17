@@ -9,7 +9,9 @@ use super::{
         SceneCameraConfig, SceneCameraRig, default_scene_camera_config_for_world,
         ensure_scene_camera,
     },
-    command::{SceneCommand, SceneEnterRequest, SceneExitRequest, SceneSwitchRequest},
+    command::{
+        SceneCommand, SceneEnterRequest, SceneExitRequest, SceneReloadRequest, SceneSwitchRequest,
+    },
     event::{
         SceneEntered, SceneEvent, SceneExitStarted, SceneExited, SceneFailure, SceneFailureKind,
         SceneInstantiating, SceneResolving,
@@ -207,6 +209,7 @@ enum SceneLifecycleRequest {
     Enter(SceneEnterRequest),
     Exit(SceneExitRequest),
     Switch(SceneSwitchRequest),
+    ReloadCurrent(SceneReloadRequest),
 }
 
 pub(crate) fn process_scene_lifecycle_commands(
@@ -229,9 +232,11 @@ pub(crate) fn process_scene_lifecycle_commands(
             SceneCommand::Enter(request) => Some(SceneLifecycleRequest::Enter(request.clone())),
             SceneCommand::Exit(request) => Some(SceneLifecycleRequest::Exit(request.clone())),
             SceneCommand::Switch(request) => Some(SceneLifecycleRequest::Switch(request.clone())),
+            SceneCommand::ReloadCurrent(request) => {
+                Some(SceneLifecycleRequest::ReloadCurrent(request.clone()))
+            }
             SceneCommand::Preload(_)
             | SceneCommand::Unload(_)
-            | SceneCommand::ReloadCurrent(_)
             | SceneCommand::SetLayerEnabled(_) => None,
         })
         .last();
@@ -304,7 +309,55 @@ pub(crate) fn process_scene_lifecycle_commands(
                 false,
             );
         }
+        SceneLifecycleRequest::ReloadCurrent(request) => {
+            let Some(request) = enter_request_for_reload(&runtime, request) else {
+                return;
+            };
+
+            enter_scene(
+                &mut commands,
+                &registry,
+                &asset_server,
+                &mut runtime,
+                &mut load_queue,
+                &mut spawn_registry,
+                &scene_cameras,
+                &scene_roots,
+                &owned_entities,
+                &mut events,
+                request,
+                entered_at,
+                true,
+            );
+        }
     }
+}
+
+fn enter_request_for_reload(
+    runtime: &SceneRuntime,
+    request: SceneReloadRequest,
+) -> Option<SceneEnterRequest> {
+    let session = runtime.active.as_ref().or(runtime.pending.as_ref())?;
+    let mut enter = SceneEnterRequest::new(
+        request
+            .scene_id
+            .clone()
+            .unwrap_or_else(|| session.scene_id.clone()),
+    );
+
+    enter.session_id = request.session_id.clone();
+    enter.spawn_point = request
+        .spawn_point
+        .clone()
+        .or_else(|| session.spawn_point.clone());
+    enter.content_version = request
+        .content_version
+        .clone()
+        .or_else(|| session.content_version.clone());
+    enter.transition = request.transition;
+    enter.authority_mode = request.authority_mode.unwrap_or(session.authority_mode);
+    enter.seed = request.seed.or(session.seed);
+    Some(enter)
 }
 
 fn enter_scene(

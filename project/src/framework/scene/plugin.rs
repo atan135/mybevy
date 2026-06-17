@@ -30,7 +30,8 @@ impl Plugin for ScenePlugin {
             .init_resource::<SceneLoadingUiState>()
             .init_resource::<SceneRegistry>()
             .init_resource::<SceneSpawnRegistry>()
-            .init_resource::<SceneDebugConfig>()
+            .insert_resource(SceneDebugConfig::from_env())
+            .add_systems(Startup, send_scene_debug_startup_command)
             .add_systems(
                 Update,
                 (
@@ -43,4 +44,15 @@ impl Plugin for ScenePlugin {
                     .chain(),
             );
     }
+}
+
+fn send_scene_debug_startup_command(
+    debug_config: Res<SceneDebugConfig>,
+    mut commands: MessageWriter<SceneCommand>,
+) {
+    let Some(request) = debug_config.startup.enter_request() else {
+        return;
+    };
+
+    commands.write(SceneCommand::Enter(request));
 }

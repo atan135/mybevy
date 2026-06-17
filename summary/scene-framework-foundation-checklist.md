@@ -137,14 +137,14 @@
   - [x] 失败后清理 pending session 和临时实体，避免半场景残留。
   - [x] 保留最近错误用于 debug 面板查询。
 
-- [ ] 阶段 13：调试与开发期能力
-  - [ ] 定义 `SceneDebugConfig`，支持通过环境变量或资源开关启用。
-  - [ ] 支持启动场景环境变量：`MYBEVY_START_SCENE`、`MYBEVY_START_SPAWN`。
-  - [ ] 支持慢加载模拟和加载失败模拟的配置边界。
-  - [ ] 提供当前场景诊断数据：scene ID、session ID、state、layer 状态、实体数量、最近错误。
-  - [ ] 提供 debug overlay 所需的只读数据接口，具体 UI 面板可后续在游戏层或 UI debug 中接入。
-  - [ ] 提供命令式 reload current 能力，用于开发期快速重载 manifest。
-  - [ ] 确保 debug 能力默认关闭，不影响正式运行性能。
+- [x] 阶段 13：调试与开发期能力（开始：2026-06-17 21:10:00 +08:00；结束：2026-06-17 21:18:44 +08:00）
+  - [x] 定义 `SceneDebugConfig`，支持通过环境变量或资源开关启用。
+  - [x] 支持启动场景环境变量：`MYBEVY_START_SCENE`、`MYBEVY_START_SPAWN`。
+  - [x] 支持慢加载模拟和加载失败模拟的配置边界。
+  - [x] 提供当前场景诊断数据：scene ID、session ID、state、layer 状态、实体数量、最近错误。
+  - [x] 提供 debug overlay 所需的只读数据接口，具体 UI 面板可后续在游戏层或 UI debug 中接入。
+  - [x] 提供命令式 reload current 能力，用于开发期快速重载 manifest。
+  - [x] 确保 debug 能力默认关闭，不影响正式运行性能。
 
 - [ ] 阶段 14：分层加载预留
   - [ ] 定义 layer 状态：`Registered`、`Loading`、`Loaded`、`Active`、`Unloading`、`Failed`。
