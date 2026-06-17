@@ -61,6 +61,8 @@ scene_string_id!(SceneSpawnPointId);
 scene_string_id!(SceneAnchorId);
 scene_string_id!(SceneTriggerId);
 scene_string_id!(SceneChunkId);
+scene_string_id!(SceneZoneId);
+scene_string_id!(SceneRegionId);
 
 impl SceneId {
     pub fn validate(&self) -> Result<(), SceneIdError> {

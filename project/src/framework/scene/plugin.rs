@@ -10,6 +10,7 @@ use super::{
     },
     registry::SceneRegistry,
     spawn::SceneSpawnRegistry,
+    streaming::{SceneStreamingDriverConfig, SceneStreamingState, update_scene_streaming_driver},
     trigger::{
         SceneTriggerCommand, SceneTriggerEvent, detect_scene_triggers,
         process_scene_trigger_commands,
@@ -30,6 +31,8 @@ impl Plugin for ScenePlugin {
             .init_resource::<SceneLoadingUiState>()
             .init_resource::<SceneRegistry>()
             .init_resource::<SceneSpawnRegistry>()
+            .init_resource::<SceneStreamingState>()
+            .init_resource::<SceneStreamingDriverConfig>()
             .insert_resource(SceneDebugConfig::from_env())
             .add_systems(Startup, send_scene_debug_startup_command)
             .add_systems(
@@ -39,6 +42,7 @@ impl Plugin for ScenePlugin {
                     poll_scene_asset_loads,
                     process_scene_trigger_commands,
                     detect_scene_triggers,
+                    update_scene_streaming_driver,
                     sync_scene_loading_ui,
                 )
                     .chain(),

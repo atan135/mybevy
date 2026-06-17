@@ -21,8 +21,8 @@ pub use super::{
     },
     id::{
         SCENE_ID_ALLOWED_CHARACTERS, SceneAnchorId, SceneAssetId, SceneChunkId, SceneId,
-        SceneIdError, SceneLayerId, SceneSessionId, SceneSpawnPointId, SceneTriggerId,
-        validate_scene_id,
+        SceneIdError, SceneLayerId, SceneRegionId, SceneSessionId, SceneSpawnPointId,
+        SceneTriggerId, SceneZoneId, validate_scene_id,
     },
     lifecycle::{SceneAuthorityMode, SceneLifecycleState, SceneRuntime, SceneSessionInfo},
     loading::{
@@ -52,6 +52,10 @@ pub use super::{
         SceneSpawnLookupError, SceneSpawnPoint, SceneSpawnPointManifest, SceneSpawnRegistry,
         SceneSpawnSessionIndex, scene_anchor_transform, scene_spawn_point_transform,
         transform_from_position_rotation,
+    },
+    streaming::{
+        SceneChunkAssetRef, SceneChunkBounds, SceneChunkLayerRefs, SceneChunkLoadState,
+        SceneChunkManifest, SceneStreamingCommand, SceneStreamingDriverConfig, SceneStreamingState,
     },
     trigger::{
         SceneTrigger, SceneTriggerAction, SceneTriggerActivator, SceneTriggerCommand,

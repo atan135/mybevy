@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use super::{
     id::{SceneId, SceneLayerId, SceneSessionId, SceneSpawnPointId},
     lifecycle::SceneAuthorityMode,
+    streaming::SceneStreamingCommand,
 };
 
 #[derive(Clone, Debug, Message, PartialEq)]
@@ -14,6 +15,7 @@ pub enum SceneCommand {
     Unload(SceneUnloadRequest),
     ReloadCurrent(SceneReloadRequest),
     SetLayerEnabled(SceneLayerCommand),
+    SetStreamingEnabled(SceneStreamingCommand),
 }
 
 #[derive(Clone, Debug, PartialEq)]

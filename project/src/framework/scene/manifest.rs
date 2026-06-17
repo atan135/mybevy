@@ -18,6 +18,7 @@ use super::{
     loading::SceneLoadingPolicy,
     registry::SceneKind,
     spawn::{SceneAnchorManifest, SceneSpawnPointManifest},
+    streaming::SceneChunkManifest,
     trigger::SceneTriggerManifest,
 };
 
@@ -39,6 +40,8 @@ pub struct SceneManifest {
     pub anchors: Vec<SceneAnchorManifest>,
     #[serde(default)]
     pub triggers: Vec<SceneTriggerManifest>,
+    #[serde(default)]
+    pub chunks: Vec<SceneChunkManifest>,
 }
 
 impl Default for SceneManifest {
@@ -58,6 +61,7 @@ impl SceneManifest {
             spawn_points: Vec::new(),
             anchors: Vec::new(),
             triggers: Vec::new(),
+            chunks: Vec::new(),
         }
     }
 
@@ -83,6 +87,11 @@ impl SceneManifest {
 
     pub fn with_trigger(mut self, trigger: SceneTriggerManifest) -> Self {
         self.triggers.push(trigger);
+        self
+    }
+
+    pub fn with_chunk(mut self, chunk: SceneChunkManifest) -> Self {
+        self.chunks.push(chunk);
         self
     }
 
@@ -249,6 +258,31 @@ impl SceneManifest {
             if trigger.event.trim().is_empty() {
                 return Err(SceneManifestError::EmptyTriggerEvent {
                     trigger_id: trigger.id.clone(),
+                });
+            }
+        }
+
+        let mut chunk_ids = HashSet::new();
+        for (chunk_index, chunk) in self.chunks.iter().enumerate() {
+            if chunk.zone_id.is_empty() {
+                return Err(SceneManifestError::EmptyChunkZoneId { index: chunk_index });
+            }
+
+            if chunk.region_id.is_empty() {
+                return Err(SceneManifestError::EmptyChunkRegionId { index: chunk_index });
+            }
+
+            if chunk.chunk_id.is_empty() {
+                return Err(SceneManifestError::EmptyChunkId { index: chunk_index });
+            }
+
+            if !chunk_ids.insert(chunk.chunk_id.clone()) {
+                return Err(SceneManifestError::DuplicateChunkId(chunk.chunk_id.clone()));
+            }
+
+            if !chunk.bounds.is_valid() {
+                return Err(SceneManifestError::InvalidChunkBounds {
+                    chunk_id: chunk.chunk_id.clone(),
                 });
             }
         }
@@ -748,6 +782,19 @@ pub enum SceneManifestError {
     EmptyTriggerEvent {
         trigger_id: super::id::SceneTriggerId,
     },
+    EmptyChunkZoneId {
+        index: usize,
+    },
+    EmptyChunkRegionId {
+        index: usize,
+    },
+    EmptyChunkId {
+        index: usize,
+    },
+    DuplicateChunkId(super::id::SceneChunkId),
+    InvalidChunkBounds {
+        chunk_id: super::id::SceneChunkId,
+    },
 }
 
 #[derive(Debug)]
@@ -941,6 +988,33 @@ impl fmt::Display for SceneManifestError {
                     "scene trigger event must not be empty for trigger: {trigger_id}"
                 )
             }
+            Self::EmptyChunkZoneId { index } => {
+                write!(
+                    formatter,
+                    "scene chunk zone id must not be empty at index: {index}"
+                )
+            }
+            Self::EmptyChunkRegionId { index } => {
+                write!(
+                    formatter,
+                    "scene chunk region id must not be empty at index: {index}"
+                )
+            }
+            Self::EmptyChunkId { index } => {
+                write!(
+                    formatter,
+                    "scene chunk id must not be empty at index: {index}"
+                )
+            }
+            Self::DuplicateChunkId(chunk_id) => {
+                write!(formatter, "scene chunk id is duplicated: {chunk_id}")
+            }
+            Self::InvalidChunkBounds { chunk_id } => {
+                write!(
+                    formatter,
+                    "scene chunk bounds are invalid for chunk: {chunk_id}"
+                )
+            }
         }
     }
 }
@@ -967,4 +1041,35 @@ fn is_unsafe_asset_path(path: &str) -> bool {
 fn has_windows_drive_prefix(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framework::scene::id::SceneChunkId;
+    use crate::framework::scene::streaming::{SceneChunkBounds, SceneChunkManifest};
+
+    #[test]
+    fn validate_basic_rejects_duplicate_chunk_ids() {
+        let manifest = SceneManifest::new("scene", SceneKind::World)
+            .with_chunk(SceneChunkManifest::new(
+                "zone",
+                "region",
+                "chunk",
+                SceneChunkBounds::new(Vec3::ZERO, Vec3::ONE),
+            ))
+            .with_chunk(SceneChunkManifest::new(
+                "zone",
+                "region",
+                "chunk",
+                SceneChunkBounds::new(Vec3::ONE, Vec3::splat(2.0)),
+            ));
+
+        assert_eq!(
+            manifest.validate_basic(),
+            Err(SceneManifestError::DuplicateChunkId(SceneChunkId::from(
+                "chunk"
+            )))
+        );
+    }
 }

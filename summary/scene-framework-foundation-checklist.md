@@ -155,14 +155,14 @@
   - [x] 预留 layer asset handles 的引用管理。
   - [x] 暂不实现复杂 additive glTF、碰撞层、导航层的实际业务处理。
 
-- [ ] 阶段 15：Streaming、Partition 和 Chunk 预留
-  - [ ] 定义 `SceneZoneId`、`SceneRegionId`、`SceneChunkId` 的基础类型和 manifest 数据结构。
-  - [ ] 定义 chunk bounds、neighbor、required layers、optional layers、asset refs、priority、memory budget 字段。
-  - [ ] 定义 `SceneStreamingState` 和 `SetStreamingEnabled` 命令。
-  - [ ] 提供 chunk 查询接口：按位置查 chunk、按 chunk ID 查 bounds、列出 active/warm/cold chunk。
-  - [ ] 初期只实现元数据解析和状态记录，不做真实流式加载。
-  - [ ] 为后续按相机或玩家位置驱动加载半径预留系统入口。
-  - [ ] 明确动态实体不随 chunk 自动卸载的框架约束。
+- [x] 阶段 15：Streaming、Partition 和 Chunk 预留（开始：2026-06-17 21:32:22 +08:00；结束：2026-06-17 21:47:40 +08:00）
+  - [x] 定义 `SceneZoneId`、`SceneRegionId`、`SceneChunkId` 的基础类型和 manifest 数据结构。
+  - [x] 定义 chunk bounds、neighbor、required layers、optional layers、asset refs、priority、memory budget 字段。
+  - [x] 定义 `SceneStreamingState` 和 `SetStreamingEnabled` 命令。
+  - [x] 提供 chunk 查询接口：按位置查 chunk、按 chunk ID 查 bounds、列出 active/warm/cold chunk。
+  - [x] 初期只实现元数据解析和状态记录，不做真实流式加载。
+  - [x] 为后续按相机或玩家位置驱动加载半径预留系统入口。
+  - [x] 明确动态实体不随 chunk 自动卸载的框架约束。
 
 - [ ] 阶段 16：Authority Ready 接口预留
   - [ ] 在 `SceneEnterRequest` 和 `SceneSessionInfo` 中保留 `authority_mode`、`session_id`、`content_version`、`seed`。

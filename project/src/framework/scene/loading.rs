@@ -16,6 +16,7 @@ use super::{
         normalize_manifest_token, validate_asset_relative_path,
     },
     spawn::SceneSpawnSessionIndex,
+    streaming::SceneChunkManifest,
     trigger::SceneTriggerManifest,
 };
 
@@ -408,6 +409,7 @@ pub(crate) struct SceneAssetLoadSession {
     pub(crate) camera_config: Option<SceneCameraConfig>,
     pub(crate) spawn_index: SceneSpawnSessionIndex,
     pub(crate) triggers: Vec<SceneTriggerManifest>,
+    pub(crate) chunks: Vec<SceneChunkManifest>,
     pub(crate) layers: Vec<SceneLayerLoadInfo>,
     #[allow(dead_code)]
     pub(crate) layer_asset_handles: SceneLayerAssetHandles,
@@ -438,6 +440,7 @@ impl SceneAssetLoadSession {
             &manifest.anchors,
         );
         let triggers = manifest.triggers.clone();
+        let chunks = manifest.chunks.clone();
 
         Self {
             scene_id,
@@ -448,6 +451,7 @@ impl SceneAssetLoadSession {
             camera_config,
             spawn_index,
             triggers,
+            chunks,
             layers,
             layer_asset_handles,
             assets,

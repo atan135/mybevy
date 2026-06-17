@@ -18,6 +18,7 @@ pub mod prelude;
 mod registry;
 mod root;
 mod spawn;
+mod streaming;
 mod trigger;
 
 pub use prelude::*;

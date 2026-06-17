@@ -29,6 +29,7 @@ use super::{
         spawn_scene_world_roots, spawn_scene_world_roots_with_layers,
     },
     spawn::{SceneSpawnLookupError, SceneSpawnRegistry, SceneSpawnSessionIndex},
+    streaming::{SceneChunkManifest, SceneStreamingState},
     trigger::{SceneTriggerManifest, spawn_scene_triggers_from_manifest},
 };
 
@@ -225,6 +226,7 @@ pub(crate) fn process_scene_lifecycle_commands(
     mut runtime: ResMut<SceneRuntime>,
     mut load_queue: ResMut<SceneAssetLoadQueue>,
     mut spawn_registry: ResMut<SceneSpawnRegistry>,
+    mut streaming_state: ResMut<SceneStreamingState>,
     scene_cameras: Query<&SceneCameraRig>,
     scene_roots: Query<(Entity, &SceneRoot)>,
     mut layer_roots: Query<&mut SceneLayerRoot>,
@@ -233,6 +235,7 @@ pub(crate) fn process_scene_lifecycle_commands(
 ) {
     let mut request = None;
     let mut layer_commands = Vec::new();
+    let mut streaming_commands = Vec::new();
 
     for command in command_reader.read() {
         match command {
@@ -251,8 +254,15 @@ pub(crate) fn process_scene_lifecycle_commands(
             SceneCommand::SetLayerEnabled(layer) => {
                 layer_commands.push(layer.clone());
             }
+            SceneCommand::SetStreamingEnabled(streaming) => {
+                streaming_commands.push(streaming.clone());
+            }
             SceneCommand::Preload(_) | SceneCommand::Unload(_) => {}
         }
+    }
+
+    for streaming_command in streaming_commands {
+        streaming_state.set_enabled(streaming_command.enabled);
     }
 
     for layer_command in layer_commands {
@@ -274,6 +284,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut runtime,
                 &mut load_queue,
                 &mut spawn_registry,
+                &mut streaming_state,
                 &scene_cameras,
                 &scene_roots,
                 &owned_entities,
@@ -289,6 +300,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut runtime,
                 &mut load_queue,
                 &mut spawn_registry,
+                &mut streaming_state,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -306,6 +318,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut runtime,
                 &mut load_queue,
                 &mut spawn_registry,
+                &mut streaming_state,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -318,6 +331,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut runtime,
                 &mut load_queue,
                 &mut spawn_registry,
+                &mut streaming_state,
                 &scene_cameras,
                 &scene_roots,
                 &owned_entities,
@@ -339,6 +353,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut runtime,
                 &mut load_queue,
                 &mut spawn_registry,
+                &mut streaming_state,
                 &scene_cameras,
                 &scene_roots,
                 &owned_entities,
@@ -385,6 +400,7 @@ fn enter_scene(
     runtime: &mut SceneRuntime,
     load_queue: &mut SceneAssetLoadQueue,
     spawn_registry: &mut SceneSpawnRegistry,
+    streaming_state: &mut SceneStreamingState,
     scene_cameras: &Query<&SceneCameraRig>,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
@@ -401,6 +417,7 @@ fn enter_scene(
             runtime,
             load_queue,
             spawn_registry,
+            streaming_state,
             scene_roots,
             owned_entities,
             events,
@@ -417,6 +434,7 @@ fn enter_scene(
             runtime,
             load_queue,
             spawn_registry,
+            streaming_state,
             scene_roots,
             owned_entities,
             events,
@@ -450,10 +468,12 @@ fn enter_scene(
             SceneSpawnSessionIndex::empty(session.scene_id.clone(), session.session_id.clone()),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             session,
             scene_cameras,
             entered_at,
             spawn_registry,
+            streaming_state,
             false,
         );
         return;
@@ -468,6 +488,7 @@ fn enter_scene(
                     runtime,
                     load_queue,
                     spawn_registry,
+                    streaming_state,
                     scene_roots,
                     owned_entities,
                     events,
@@ -505,6 +526,7 @@ fn enter_scene(
                 runtime,
                 load_queue,
                 spawn_registry,
+                streaming_state,
                 scene_roots,
                 owned_entities,
                 events,
@@ -522,11 +544,13 @@ fn finish_scene_enter(
     camera_config: Option<SceneCameraConfig>,
     spawn_index: SceneSpawnSessionIndex,
     triggers: Vec<SceneTriggerManifest>,
+    chunks: Vec<SceneChunkManifest>,
     layer_specs: Vec<(SceneLayerId, bool, SceneLayerState)>,
     mut session: SceneSessionInfo,
     scene_cameras: &Query<&SceneCameraRig>,
     entered_at: Option<Duration>,
     spawn_registry: &mut SceneSpawnRegistry,
+    streaming_state: &mut SceneStreamingState,
     validate_spawn_point: bool,
 ) {
     runtime.state = SceneLifecycleState::LoadingAssets;
@@ -543,6 +567,7 @@ fn finish_scene_enter(
             fail_scene_transition_without_entity_cleanup(
                 runtime,
                 spawn_registry,
+                streaming_state,
                 events,
                 spawn_lookup_failure(&session, error),
             );
@@ -555,6 +580,7 @@ fn finish_scene_enter(
             fail_scene_transition_without_entity_cleanup(
                 runtime,
                 spawn_registry,
+                streaming_state,
                 events,
                 spawn_lookup_failure(&session, error),
             );
@@ -580,6 +606,7 @@ fn finish_scene_enter(
     }
 
     spawn_scene_triggers_from_manifest(commands, &session.session_id, &triggers);
+    streaming_state.register_chunks(session.session_id.clone(), chunks);
 
     session.entered_at = entered_at;
     spawn_registry.set_session_index(spawn_index);
@@ -599,6 +626,7 @@ fn exit_scene(
     runtime: &mut SceneRuntime,
     load_queue: &mut SceneAssetLoadQueue,
     spawn_registry: &mut SceneSpawnRegistry,
+    streaming_state: &mut SceneStreamingState,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
@@ -618,6 +646,7 @@ fn exit_scene(
     despawn_scene_session_entities(commands, &session.session_id, scene_roots, owned_entities);
     load_queue.clear_session(&session.session_id);
     spawn_registry.clear_session(&session.session_id);
+    streaming_state.clear_session(&session.session_id);
     clear_runtime_session(runtime, &session.session_id);
 
     events.write(SceneEvent::Exited(SceneExited {
@@ -747,6 +776,7 @@ fn fail_scene_transition(
     runtime: &mut SceneRuntime,
     load_queue: &mut SceneAssetLoadQueue,
     spawn_registry: &mut SceneSpawnRegistry,
+    streaming_state: &mut SceneStreamingState,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
@@ -757,6 +787,7 @@ fn fail_scene_transition(
         runtime,
         load_queue,
         spawn_registry,
+        streaming_state,
         scene_roots,
         owned_entities,
         &failure,
@@ -767,6 +798,7 @@ fn fail_scene_transition(
 fn fail_scene_transition_without_entity_cleanup(
     runtime: &mut SceneRuntime,
     spawn_registry: &mut SceneSpawnRegistry,
+    streaming_state: &mut SceneStreamingState,
     events: &mut MessageWriter<SceneEvent>,
     failure: SceneFailure,
 ) {
@@ -779,6 +811,7 @@ fn fail_scene_transition_without_entity_cleanup(
             runtime.pending = None;
         }
         spawn_registry.clear_session(session_id);
+        streaming_state.clear_session(session_id);
     }
 
     record_scene_failure(runtime, events, failure);
@@ -789,6 +822,7 @@ fn cleanup_failed_scene_transition(
     runtime: &mut SceneRuntime,
     load_queue: &mut SceneAssetLoadQueue,
     spawn_registry: &mut SceneSpawnRegistry,
+    streaming_state: &mut SceneStreamingState,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     failure: &SceneFailure,
@@ -815,6 +849,7 @@ fn cleanup_failed_scene_transition(
 
     load_queue.clear_session(session_id);
     spawn_registry.clear_session(session_id);
+    streaming_state.clear_session(session_id);
     despawn_scene_session_entities(commands, session_id, scene_roots, owned_entities);
 }
 
@@ -836,6 +871,7 @@ pub(crate) fn poll_scene_asset_loads(
     mut runtime: ResMut<SceneRuntime>,
     mut load_queue: ResMut<SceneAssetLoadQueue>,
     mut spawn_registry: ResMut<SceneSpawnRegistry>,
+    mut streaming_state: ResMut<SceneStreamingState>,
     scene_cameras: Query<&SceneCameraRig>,
     scene_roots: Query<(Entity, &SceneRoot)>,
     owned_entities: Query<(Entity, &SceneOwned)>,
@@ -879,6 +915,7 @@ pub(crate) fn poll_scene_asset_loads(
             &mut runtime,
             &mut load_queue,
             &mut spawn_registry,
+            &mut streaming_state,
             &scene_roots,
             &owned_entities,
             &mut events,
@@ -929,11 +966,13 @@ pub(crate) fn poll_scene_asset_loads(
         session_load.camera_config,
         session_load.spawn_index,
         session_load.triggers,
+        session_load.chunks,
         layer_specs,
         session_info,
         &scene_cameras,
         entered_at,
         &mut spawn_registry,
+        &mut streaming_state,
         true,
     );
 }
