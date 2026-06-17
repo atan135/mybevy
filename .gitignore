@@ -24,6 +24,10 @@
 # Local helper notes
 /local_help.txt
 
+# Local summary notes
+/summary/*
+!/summary/.gitkeep
+
 # OS-generated files
 .DS_Store
 Thumbs.db
