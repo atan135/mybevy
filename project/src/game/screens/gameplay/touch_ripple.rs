@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 
+use crate::framework::ui::{
+    core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiPanelRoot, UiViewport},
+    i18n::UiI18n,
+    style::{UiFontAssets, UiTheme, theme::UiThemeRootNodeRole},
+};
 use crate::game::{
     navigation::{AppUiMode, secondary_route_button_key},
-    ui::{
-        core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiPanelRoot, UiViewport},
-        i18n::UiI18n,
-        style::{UiFontAssets, UiTheme, theme::UiThemeRootNodeRole},
-    },
     ui_ids::{OWNER_TOUCH_RIPPLE, PANEL_TOUCH_RIPPLE_HUD},
 };
 

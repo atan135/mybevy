@@ -2,7 +2,7 @@ use bevy::{ecs::hierarchy::ChildSpawnerCommands, prelude::*};
 
 use std::fmt;
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{
         UI_PANEL_CONFIRM_MODAL, UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer,
         UiLayerRoot, UiMetrics, UiOwnerId, UiPanelCommand, UiPanelKind, UiPanelRoot, UiViewport,
@@ -26,7 +26,7 @@ use crate::game::ui::{
 const CONFIRM_ENTRY_FADE_SECS: f32 = 0.16;
 
 #[derive(Clone, Debug)]
-pub(in crate::game) struct UiConfirmModal {
+pub(crate) struct UiConfirmModal {
     pub id: UiModalId,
     pub title: String,
     pub body: String,
@@ -38,7 +38,7 @@ pub(in crate::game) struct UiConfirmModal {
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::game) struct UiModalActionSpec {
+pub(crate) struct UiModalActionSpec {
     pub label: String,
     pub action: UiModalActionId,
     pub style: UiModalActionStyle,
@@ -46,10 +46,10 @@ pub(in crate::game) struct UiModalActionSpec {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(in crate::game) struct UiModalId(&'static str);
+pub(crate) struct UiModalId(&'static str);
 
 impl UiModalId {
-    pub(in crate::game) const fn new(value: &'static str) -> Self {
+    pub(crate) const fn new(value: &'static str) -> Self {
         Self(value)
     }
 }
@@ -61,10 +61,10 @@ impl fmt::Display for UiModalId {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(in crate::game) struct UiModalActionId(&'static str);
+pub(crate) struct UiModalActionId(&'static str);
 
 impl UiModalActionId {
-    pub(in crate::game) const fn new(value: &'static str) -> Self {
+    pub(crate) const fn new(value: &'static str) -> Self {
         Self(value)
     }
 }
@@ -76,31 +76,31 @@ impl fmt::Display for UiModalActionId {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(in crate::game) enum UiModalActionStyle {
+pub(crate) enum UiModalActionStyle {
     Primary,
     Secondary,
 }
 
 #[derive(Clone, Copy, Debug, Message)]
-pub(in crate::game) struct UiModalResult {
+pub(crate) struct UiModalResult {
     pub id: UiModalId,
     pub action: UiModalActionId,
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiModalActionButton {
+pub(crate) struct UiModalActionButton {
     id: UiModalId,
     action: UiModalActionId,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::game) struct UiI18nTextSpec {
+pub(crate) struct UiI18nTextSpec {
     pub text: String,
     pub i18n_text: UiI18nText,
 }
 
 impl UiI18nTextSpec {
-    pub(in crate::game) fn new(i18n: &UiI18n, key: &'static str, fallback: &'static str) -> Self {
+    pub(crate) fn new(i18n: &UiI18n, key: &'static str, fallback: &'static str) -> Self {
         Self {
             text: i18n.tr(key, fallback),
             i18n_text: UiI18nText::new(key, fallback),
@@ -109,14 +109,14 @@ impl UiI18nTextSpec {
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiConfirmAnimatedPanel;
+pub(crate) struct UiConfirmAnimatedPanel;
 
 #[derive(Clone, Copy, Component)]
-pub(in crate::game) struct UiConfirmAnimatedButton {
+pub(crate) struct UiConfirmAnimatedButton {
     style: UiModalActionStyle,
 }
 
-pub(in crate::game) fn handle_modal_action_buttons(
+pub(crate) fn handle_modal_action_buttons(
     mut modal_results: MessageWriter<UiModalResult>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     buttons: Query<
@@ -142,7 +142,7 @@ pub(in crate::game) fn handle_modal_action_buttons(
     }
 }
 
-pub(in crate::game) fn spawn_confirm_modal(
+pub(crate) fn spawn_confirm_modal(
     commands: &mut Commands,
     theme: &UiTheme,
     metrics: &UiMetrics,
@@ -281,7 +281,7 @@ pub(in crate::game) fn spawn_confirm_modal(
         });
 }
 
-pub(in crate::game) fn sync_confirm_entry_visual_alpha(
+pub(crate) fn sync_confirm_entry_visual_alpha(
     theme: Res<UiTheme>,
     mut panels: Query<(&mut BorderColor, Option<&UiAnimatedAlpha>), With<UiConfirmAnimatedPanel>>,
     mut buttons: Query<(

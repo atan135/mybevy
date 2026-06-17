@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{
         UI_PANEL_GLOBAL_LOADING, UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing,
         UiBlockingOverlay, UiLayer, UiLayerRoot, UiMetrics, UiOwnerId, UiPanelKind, UiPanelRoot,
@@ -19,7 +19,7 @@ use crate::game::ui::{
 const LOADING_ENTRY_FADE_SECS: f32 = 0.16;
 
 #[derive(Clone, Debug)]
-pub(in crate::game) struct UiLoading {
+pub(crate) struct UiLoading {
     pub text: String,
     pub cancellable: bool,
     pub i18n_text: Option<UiI18nText>,
@@ -51,9 +51,9 @@ impl UiLoading {
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiLoadingAnimatedPanel;
+pub(crate) struct UiLoadingAnimatedPanel;
 
-pub(in crate::game) fn spawn_loading(
+pub(crate) fn spawn_loading(
     commands: &mut Commands,
     theme: &UiTheme,
     metrics: &UiMetrics,
@@ -134,7 +134,7 @@ fn loading_panel_max_width(metrics: &UiMetrics) -> f32 {
     metrics.dialog_max_width.min(metrics.content_max_width)
 }
 
-pub(in crate::game) fn sync_loading_entry_border_alpha(
+pub(crate) fn sync_loading_entry_border_alpha(
     theme: Res<UiTheme>,
     mut panels: Query<(&mut BorderColor, Option<&UiAnimatedAlpha>), With<UiLoadingAnimatedPanel>>,
 ) {

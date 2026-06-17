@@ -2,7 +2,8 @@ mod game_list;
 
 use bevy::prelude::*;
 
-use crate::game::{navigation::AppUiMode, ui::core::UiPanelSystems};
+use crate::framework::ui::core::UiPanelSystems;
+use crate::game::navigation::AppUiMode;
 
 pub(super) struct LobbyScreensPlugin;
 

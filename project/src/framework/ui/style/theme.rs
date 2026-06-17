@@ -6,7 +6,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::game::ui::core::{UiMetrics, UiViewport};
+use crate::framework::ui::core::{UiMetrics, UiViewport};
 
 const UI_THEME_CONFIG_VERSION: u32 = 1;
 const DEFAULT_THEME_ASSET_PATH: &str = "assets/ui/themes/default.ron";
@@ -14,7 +14,7 @@ const REPO_ROOT_THEME_ASSET_PATH: &str = "project/assets/ui/themes/default.ron";
 const UI_THEME_ENV_VAR: &str = "MYBEVY_UI_THEME";
 const UI_THEME_HOT_RELOAD_INTERVAL_SECS: f32 = 0.8;
 
-pub(in crate::game) struct UiThemePlugin;
+pub(crate) struct UiThemePlugin;
 
 impl Plugin for UiThemePlugin {
     fn build(&self, app: &mut App) {
@@ -32,7 +32,7 @@ impl Plugin for UiThemePlugin {
 }
 
 #[derive(Clone, Debug, Resource)]
-pub(in crate::game) struct UiTheme {
+pub(crate) struct UiTheme {
     pub colors: UiColors,
     pub text: UiTextTheme,
     pub layout: UiLayoutTheme,
@@ -41,7 +41,7 @@ pub(in crate::game) struct UiTheme {
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::game) struct UiColors {
+pub(crate) struct UiColors {
     pub screen_background: Color,
     pub panel_background: Color,
     pub panel_border: Color,
@@ -56,7 +56,7 @@ pub(in crate::game) struct UiColors {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub(in crate::game) struct UiTextTheme {
+pub(crate) struct UiTextTheme {
     pub title_large: f32,
     pub title: f32,
     pub subtitle: f32,
@@ -67,7 +67,7 @@ pub(in crate::game) struct UiTextTheme {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub(in crate::game) struct UiLayoutTheme {
+pub(crate) struct UiLayoutTheme {
     pub screen_padding: f32,
     #[allow(dead_code)]
     pub overlay_padding: f32,
@@ -83,7 +83,7 @@ pub(in crate::game) struct UiLayoutTheme {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub(in crate::game) struct UiButtonTheme {
+pub(crate) struct UiButtonTheme {
     pub min_width: f32,
     pub height: f32,
     pub padding_x: f32,
@@ -91,14 +91,14 @@ pub(in crate::game) struct UiButtonTheme {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub(in crate::game) struct UiPanelTheme {
+pub(crate) struct UiPanelTheme {
     pub padding: f32,
     pub border: f32,
     pub radius: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::game) struct ButtonColors {
+pub(crate) struct ButtonColors {
     pub idle: Color,
     pub hovered: Color,
     pub pressed: Color,
@@ -109,7 +109,7 @@ pub(in crate::game) struct ButtonColors {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) enum UiThemeBackgroundRole {
+pub(crate) enum UiThemeBackgroundRole {
     Screen,
     Panel,
     LoadingOverlay,
@@ -117,18 +117,18 @@ pub(in crate::game) enum UiThemeBackgroundRole {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) enum UiThemeBorderRole {
+pub(crate) enum UiThemeBorderRole {
     Panel,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) enum UiThemeTextColorRole {
+pub(crate) enum UiThemeTextColorRole {
     Primary,
     Muted,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) enum UiThemeTextStyleRole {
+pub(crate) enum UiThemeTextStyleRole {
     TitleLarge,
     Title,
     Subtitle,
@@ -139,14 +139,14 @@ pub(in crate::game) enum UiThemeTextStyleRole {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) enum UiThemeButtonNodeRole {
+pub(crate) enum UiThemeButtonNodeRole {
     Button,
     TextInput,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
 #[allow(dead_code)]
-pub(in crate::game) enum UiThemePanelNodeRole {
+pub(crate) enum UiThemePanelNodeRole {
     Standard,
     Content,
     Toast,
@@ -155,7 +155,7 @@ pub(in crate::game) enum UiThemePanelNodeRole {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) enum UiThemeRootNodeRole {
+pub(crate) enum UiThemeRootNodeRole {
     Screen,
     Overlay,
     BlockingOverlay,
@@ -184,7 +184,7 @@ impl UiThemeBorderRole {
 }
 
 impl UiThemeTextColorRole {
-    pub(in crate::game) fn color(self, theme: &UiTheme) -> Color {
+    pub(crate) fn color(self, theme: &UiTheme) -> Color {
         match self {
             Self::Primary => theme.colors.text_primary,
             Self::Muted => theme.colors.text_muted,
@@ -193,7 +193,7 @@ impl UiThemeTextColorRole {
 }
 
 impl UiThemeTextStyleRole {
-    pub(in crate::game) fn font_size(self, theme: &UiTheme) -> f32 {
+    pub(crate) fn font_size(self, theme: &UiTheme) -> f32 {
         match self {
             Self::TitleLarge => theme.text.title_large,
             Self::Title => theme.text.title,

@@ -2,7 +2,8 @@ mod login;
 
 use bevy::prelude::*;
 
-use crate::game::{navigation::AppUiMode, ui::core::binding::UiBindingSystems};
+use crate::framework::ui::core::binding::UiBindingSystems;
+use crate::game::navigation::AppUiMode;
 
 pub(super) struct AuthScreensPlugin;
 

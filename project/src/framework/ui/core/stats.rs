@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
-use crate::game::ui::core::{UiPanelKind, UiPanelRoot};
+use crate::framework::ui::core::{UiPanelKind, UiPanelRoot};
 
-pub(in crate::game) struct UiStatsPlugin;
+pub(crate) struct UiStatsPlugin;
 
 impl Plugin for UiStatsPlugin {
     fn build(&self, app: &mut App) {
@@ -13,12 +13,12 @@ impl Plugin for UiStatsPlugin {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, SystemSet)]
-pub(in crate::game) enum UiStatsSystems {
+pub(crate) enum UiStatsSystems {
     Collect,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Resource)]
-pub(in crate::game) struct UiStats {
+pub(crate) struct UiStats {
     pub ui_node_count: usize,
     pub visible_ui_node_count: usize,
     pub panel_count: usize,
@@ -27,7 +27,7 @@ pub(in crate::game) struct UiStats {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::game) struct UiPanelKindCounts {
+pub(crate) struct UiPanelKindCounts {
     pub page: usize,
     pub hud: usize,
     pub floating: usize,
@@ -36,7 +36,7 @@ pub(in crate::game) struct UiPanelKindCounts {
 }
 
 impl UiPanelKindCounts {
-    pub(in crate::game) fn add(&mut self, kind: UiPanelKind) {
+    pub(crate) fn add(&mut self, kind: UiPanelKind) {
         match kind {
             UiPanelKind::Page => self.page += 1,
             UiPanelKind::Hud => self.hud += 1,
@@ -86,7 +86,7 @@ fn collect_ui_stats(
     }
 }
 
-pub(in crate::game) fn is_ui_node_visible(
+pub(crate) fn is_ui_node_visible(
     visibility: Option<&Visibility>,
     inherited_visibility: Option<&InheritedVisibility>,
 ) -> bool {

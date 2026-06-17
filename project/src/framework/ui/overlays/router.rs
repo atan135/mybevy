@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{UiAnimationSystems, UiFocusSystems, UiMetrics, UiViewport},
     overlays::{
         loading::sync_loading_entry_border_alpha,
@@ -12,7 +12,7 @@ use crate::game::ui::{
     style::{UiFontAssets, UiTheme},
 };
 
-pub(in crate::game) struct UiRouterPlugin;
+pub(crate) struct UiRouterPlugin;
 
 impl Plugin for UiRouterPlugin {
     fn build(&self, app: &mut App) {
@@ -46,13 +46,13 @@ impl Plugin for UiRouterPlugin {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
-pub(in crate::game) enum UiRouteSystems {
+pub(crate) enum UiRouteSystems {
     Commands,
 }
 
 #[derive(Clone, Debug, Message)]
 #[allow(dead_code)]
-pub(in crate::game) enum UiRouteCommand {
+pub(crate) enum UiRouteCommand {
     ShowToast(UiToast),
 }
 

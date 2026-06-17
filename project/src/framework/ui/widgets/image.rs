@@ -2,28 +2,28 @@ use bevy::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[allow(dead_code)]
-pub(in crate::game) enum UiImageFit {
+pub(crate) enum UiImageFit {
     Stretch,
     Natural,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[allow(dead_code)]
-pub(in crate::game) enum UiImageSize {
+pub(crate) enum UiImageSize {
     FixedBox { width: f32, height: f32 },
     PercentBox { width: f32, height: f32 },
     FullWidthAspect { aspect_ratio: f32 },
 }
 
 impl UiImageFit {
-    pub(in crate::game) const fn to_node_image_mode(self) -> NodeImageMode {
+    pub(crate) const fn to_node_image_mode(self) -> NodeImageMode {
         match self {
             Self::Natural => NodeImageMode::Auto,
             Self::Stretch => NodeImageMode::Stretch,
         }
     }
 
-    pub(in crate::game) const fn to_align_self(self) -> AlignSelf {
+    pub(crate) const fn to_align_self(self) -> AlignSelf {
         match self {
             Self::Natural => AlignSelf::Center,
             Self::Stretch => AlignSelf::Stretch,
@@ -32,7 +32,7 @@ impl UiImageFit {
 }
 
 impl UiImageSize {
-    pub(in crate::game) fn to_node(self) -> Node {
+    pub(crate) fn to_node(self) -> Node {
         match self {
             Self::FixedBox { width, height } => Node {
                 width: px(width),
@@ -56,11 +56,7 @@ impl UiImageSize {
     }
 }
 
-pub(in crate::game) fn ui_image(
-    image: Handle<Image>,
-    fit: UiImageFit,
-    size: UiImageSize,
-) -> impl Bundle {
+pub(crate) fn ui_image(image: Handle<Image>, fit: UiImageFit, size: UiImageSize) -> impl Bundle {
     let mut node = size.to_node();
     node.align_self = fit.to_align_self();
 
@@ -71,7 +67,7 @@ pub(in crate::game) fn ui_image(
     )
 }
 
-pub(in crate::game) fn ui_image_panel_node(size: UiImageSize) -> impl Bundle {
+pub(crate) fn ui_image_panel_node(size: UiImageSize) -> impl Bundle {
     let mut node = size.to_node();
     node.overflow = Overflow::clip();
     node.align_items = AlignItems::Center;
@@ -80,7 +76,7 @@ pub(in crate::game) fn ui_image_panel_node(size: UiImageSize) -> impl Bundle {
     node
 }
 
-pub(in crate::game) fn ui_thumbnail_grid(columns: u16, gap: f32) -> impl Bundle {
+pub(crate) fn ui_thumbnail_grid(columns: u16, gap: f32) -> impl Bundle {
     Node {
         width: percent(100),
         display: Display::Grid,

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 const UI_FONT_REGULAR_PATH: &str = "ui/fonts/MyBevyUiCjk-Regular.otf";
 
-pub(in crate::game) struct UiFontPlugin;
+pub(crate) struct UiFontPlugin;
 
 impl Plugin for UiFontPlugin {
     fn build(&self, app: &mut App) {
@@ -16,6 +16,6 @@ impl Plugin for UiFontPlugin {
 }
 
 #[derive(Clone, Debug, Resource)]
-pub(in crate::game) struct UiFontAssets {
+pub(crate) struct UiFontAssets {
     pub regular: Handle<Font>,
 }

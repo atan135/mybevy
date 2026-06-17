@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 
-pub(in crate::game) struct UiLayerPlugin;
+pub(crate) struct UiLayerPlugin;
 
 impl Plugin for UiLayerPlugin {
     fn build(&self, _app: &mut App) {}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(in crate::game) enum UiLayer {
+pub(crate) enum UiLayer {
     Page,
     Floating,
     Modal,
@@ -18,6 +18,6 @@ pub(in crate::game) enum UiLayer {
 
 #[derive(Component)]
 #[allow(dead_code)]
-pub(in crate::game) struct UiLayerRoot {
+pub(crate) struct UiLayerRoot {
     pub layer: UiLayer,
 }

@@ -1,22 +1,22 @@
 use bevy::prelude::*;
 
+use crate::framework::ui::{
+    core::{
+        UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiPanelRoot, UiViewport,
+        binding::{UiBindingValues, UiBoundText},
+    },
+    i18n::UiI18n,
+    style::{
+        UiFontAssets, UiTheme,
+        theme::{
+            UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
+            UiThemeTextColorRole, UiThemeTextStyleRole,
+        },
+    },
+    widgets::{screen_label, screen_title_key},
+};
 use crate::game::{
     navigation::{AppUiMode, primary_route_button_key},
-    ui::{
-        core::{
-            UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiPanelRoot, UiViewport,
-            binding::{UiBindingValues, UiBoundText},
-        },
-        i18n::UiI18n,
-        style::{
-            UiFontAssets, UiTheme,
-            theme::{
-                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
-                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
-            },
-        },
-        widgets::{screen_label, screen_title_key},
-    },
     ui_ids::{OWNER_LOGIN, PANEL_LOGIN_PAGE},
 };
 

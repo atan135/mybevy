@@ -2,26 +2,23 @@ use std::fmt;
 
 use bevy::{input::keyboard::Key, prelude::*};
 
-use crate::game::{
-    navigation::GameRouteSystems,
-    ui::{
-        core::{UiLayer, UiLayerRoot, UiMetrics, UiViewport, UiWidthClass},
-        overlays::{
-            loading::{UiLoading, spawn_loading},
-            modal::{UiConfirmModal, spawn_confirm_modal},
-        },
-        style::{
-            UiFontAssets, UiTheme,
-            theme::{
-                UiThemeBackgroundRole, UiThemeBorderRole, UiThemeRootNodeRole,
-                UiThemeTextColorRole, UiThemeTextStyleRole,
-            },
-        },
-        widgets::{screen_label, screen_title},
+use crate::framework::ui::{
+    core::{UiLayer, UiLayerRoot, UiMetrics, UiViewport, UiWidthClass},
+    overlays::{
+        loading::{UiLoading, spawn_loading},
+        modal::{UiConfirmModal, spawn_confirm_modal},
     },
+    style::{
+        UiFontAssets, UiTheme,
+        theme::{
+            UiThemeBackgroundRole, UiThemeBorderRole, UiThemeRootNodeRole, UiThemeTextColorRole,
+            UiThemeTextStyleRole,
+        },
+    },
+    widgets::{screen_label, screen_title},
 };
 
-pub(in crate::game) struct UiPanelPlugin;
+pub(crate) struct UiPanelPlugin;
 
 impl Plugin for UiPanelPlugin {
     fn build(&self, app: &mut App) {
@@ -33,26 +30,25 @@ impl Plugin for UiPanelPlugin {
                 Update,
                 (write_close_top_on_return_input, handle_panel_commands)
                     .chain()
-                    .in_set(UiPanelSystems::Commands)
-                    .after(GameRouteSystems::Commands),
+                    .in_set(UiPanelSystems::Commands),
             );
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
-pub(in crate::game) enum UiPanelSystems {
+pub(crate) enum UiPanelSystems {
     Commands,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(in crate::game) struct UiPanelId(&'static str);
+pub(crate) struct UiPanelId(&'static str);
 
 impl UiPanelId {
-    pub(in crate::game) const fn new(value: &'static str) -> Self {
+    pub(crate) const fn new(value: &'static str) -> Self {
         Self(value)
     }
 
-    pub(in crate::game) const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         self.0
     }
 }
@@ -64,10 +60,10 @@ impl fmt::Display for UiPanelId {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(in crate::game) struct UiOwnerId(&'static str);
+pub(crate) struct UiOwnerId(&'static str);
 
 impl UiOwnerId {
-    pub(in crate::game) const fn new(value: &'static str) -> Self {
+    pub(crate) const fn new(value: &'static str) -> Self {
         Self(value)
     }
 }
@@ -78,12 +74,12 @@ impl fmt::Display for UiOwnerId {
     }
 }
 
-pub(in crate::game) const UI_PANEL_GLOBAL_LOADING: UiPanelId = UiPanelId::new("global_loading");
-pub(in crate::game) const UI_PANEL_CONFIRM_MODAL: UiPanelId = UiPanelId::new("confirm_modal");
+pub(crate) const UI_PANEL_GLOBAL_LOADING: UiPanelId = UiPanelId::new("global_loading");
+pub(crate) const UI_PANEL_CONFIRM_MODAL: UiPanelId = UiPanelId::new("confirm_modal");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[allow(dead_code)]
-pub(in crate::game) enum UiPanelKind {
+pub(crate) enum UiPanelKind {
     Page,
     Hud,
     Floating,
@@ -93,26 +89,26 @@ pub(in crate::game) enum UiPanelKind {
 
 #[derive(Component)]
 #[allow(dead_code)]
-pub(in crate::game) struct UiPanelRoot {
+pub(crate) struct UiPanelRoot {
     pub id: UiPanelId,
     pub kind: UiPanelKind,
     pub owner: Option<UiOwnerId>,
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiBlockingOverlay {
+pub(crate) struct UiBlockingOverlay {
     pub cancellable: bool,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::game) enum UiPanelRequest {
+pub(crate) enum UiPanelRequest {
     Loading(UiLoading),
     Confirm(UiConfirmModal),
     Floating(UiFloatingPanel),
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::game) struct UiFloatingPanel {
+pub(crate) struct UiFloatingPanel {
     pub id: UiPanelId,
     pub title: String,
     pub body: String,
@@ -121,7 +117,7 @@ pub(in crate::game) struct UiFloatingPanel {
 
 #[derive(Clone, Debug, Message)]
 #[allow(dead_code)]
-pub(in crate::game) enum UiPanelCommand {
+pub(crate) enum UiPanelCommand {
     Open(UiPanelRequest),
     Close(UiPanelId),
     Toggle(UiPanelRequest),
@@ -132,7 +128,7 @@ pub(in crate::game) enum UiPanelCommand {
 }
 
 #[derive(Clone, Copy, Debug, Default, Resource)]
-pub(in crate::game) struct UiCurrentOwner {
+pub(crate) struct UiCurrentOwner {
     pub owner: Option<UiOwnerId>,
 }
 
@@ -509,7 +505,7 @@ mod tests {
     fn floating_panel_position_uses_metrics_and_safe_area() {
         let theme = UiTheme::default();
         let viewport = UiViewport {
-            safe_area: crate::game::ui::core::UiSafeArea {
+            safe_area: crate::framework::ui::core::UiSafeArea {
                 top: 7.0,
                 right: 11.0,
                 ..default()

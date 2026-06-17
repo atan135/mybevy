@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-pub(in crate::game) struct UiAnimationPlugin;
+pub(crate) struct UiAnimationPlugin;
 
 impl Plugin for UiAnimationPlugin {
     fn build(&self, app: &mut App) {
@@ -15,26 +15,26 @@ impl Plugin for UiAnimationPlugin {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
-pub(in crate::game) enum UiAnimationSystems {
+pub(crate) enum UiAnimationSystems {
     Tick,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::game) enum UiAnimationCompletion {
+pub(crate) enum UiAnimationCompletion {
     KeepComponent,
     RemoveComponent,
     DespawnEntity,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::game) enum UiAnimationEasing {
+pub(crate) enum UiAnimationEasing {
     Linear,
     EaseOutCubic,
     EaseInOutCubic,
 }
 
 impl UiAnimationEasing {
-    pub(in crate::game) fn sample(self, progress: f32) -> f32 {
+    pub(crate) fn sample(self, progress: f32) -> f32 {
         let progress = clamp_progress(progress);
 
         match self {
@@ -52,13 +52,13 @@ impl UiAnimationEasing {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::game) enum UiAnimationState {
+pub(crate) enum UiAnimationState {
     Running,
     Finished,
 }
 
 #[derive(Clone, Copy, Debug, Component, PartialEq)]
-pub(in crate::game) struct UiAnimatedAlpha {
+pub(crate) struct UiAnimatedAlpha {
     pub from: f32,
     pub to: f32,
     pub duration_secs: f32,
@@ -69,7 +69,7 @@ pub(in crate::game) struct UiAnimatedAlpha {
 }
 
 impl UiAnimatedAlpha {
-    pub(in crate::game) fn new(from: f32, to: f32, duration_secs: f32) -> Self {
+    pub(crate) fn new(from: f32, to: f32, duration_secs: f32) -> Self {
         Self {
             from,
             to,
@@ -81,41 +81,41 @@ impl UiAnimatedAlpha {
         }
     }
 
-    pub(in crate::game) fn fade_in(duration_secs: f32) -> Self {
+    pub(crate) fn fade_in(duration_secs: f32) -> Self {
         Self::new(0.0, 1.0, duration_secs)
     }
 
-    pub(in crate::game) fn fade_out(duration_secs: f32) -> Self {
+    pub(crate) fn fade_out(duration_secs: f32) -> Self {
         Self::new(1.0, 0.0, duration_secs)
     }
 
-    pub(in crate::game) fn with_easing(mut self, easing: UiAnimationEasing) -> Self {
+    pub(crate) fn with_easing(mut self, easing: UiAnimationEasing) -> Self {
         self.easing = easing;
         self
     }
 
-    pub(in crate::game) fn with_completion(mut self, completion: UiAnimationCompletion) -> Self {
+    pub(crate) fn with_completion(mut self, completion: UiAnimationCompletion) -> Self {
         self.completion = completion;
         self
     }
 
-    pub(in crate::game) fn progress(self) -> f32 {
+    pub(crate) fn progress(self) -> f32 {
         animation_progress(self.elapsed_secs, self.duration_secs)
     }
 
-    pub(in crate::game) fn eased_progress(self) -> f32 {
+    pub(crate) fn eased_progress(self) -> f32 {
         self.easing.sample(self.progress())
     }
 
-    pub(in crate::game) fn alpha(self) -> f32 {
+    pub(crate) fn alpha(self) -> f32 {
         interpolate_alpha(self.from, self.to, self.eased_progress())
     }
 
-    pub(in crate::game) fn is_finished(self) -> bool {
+    pub(crate) fn is_finished(self) -> bool {
         self.state == UiAnimationState::Finished || self.progress() >= 1.0
     }
 
-    pub(in crate::game) fn tick(&mut self, delta_secs: f32) -> UiAnimationState {
+    pub(crate) fn tick(&mut self, delta_secs: f32) -> UiAnimationState {
         if self.state == UiAnimationState::Finished {
             return UiAnimationState::Finished;
         }

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{
         UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer, UiLayerRoot, UiMetrics,
         UiViewport,
@@ -21,7 +21,7 @@ const TOAST_FADE_IN_SECS: f32 = 0.14;
 const TOAST_FADE_OUT_SECS: f32 = 0.2;
 
 #[derive(Clone, Debug)]
-pub(in crate::game) struct UiToast {
+pub(crate) struct UiToast {
     pub text: String,
     pub duration_secs: f32,
     pub i18n_text: Option<UiI18nText>,
@@ -47,16 +47,16 @@ impl UiToast {
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiToastRoot {
+pub(crate) struct UiToastRoot {
     timer: Timer,
     fade_out_started: bool,
     fade_out_secs: f32,
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiToastAnimatedVisual;
+pub(crate) struct UiToastAnimatedVisual;
 
-pub(in crate::game) fn tick_toasts(
+pub(crate) fn tick_toasts(
     mut commands: Commands,
     time: Res<Time>,
     mut toasts: Query<(Entity, &mut UiToastRoot)>,
@@ -88,7 +88,7 @@ pub(in crate::game) fn tick_toasts(
     }
 }
 
-pub(in crate::game) fn spawn_toast(
+pub(crate) fn spawn_toast(
     commands: &mut Commands,
     theme: &UiTheme,
     metrics: &UiMetrics,
@@ -164,7 +164,7 @@ fn toast_panel_max_width(metrics: &UiMetrics) -> f32 {
     metrics.dialog_max_width.min(metrics.content_max_width)
 }
 
-pub(in crate::game) fn close_toasts(
+pub(crate) fn close_toasts(
     commands: &mut Commands,
     toast_roots: &Query<Entity, With<UiToastRoot>>,
 ) {
@@ -173,7 +173,7 @@ pub(in crate::game) fn close_toasts(
     }
 }
 
-pub(in crate::game) fn sync_toast_border_alpha(
+pub(crate) fn sync_toast_border_alpha(
     mut panels: Query<(&BackgroundColor, &mut BorderColor), With<UiToastAnimatedVisual>>,
 ) {
     for (background, mut border) in &mut panels {

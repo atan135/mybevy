@@ -5,7 +5,7 @@ use bevy::{
     window::{WindowRef, WindowResolution},
 };
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{
         UiInputState, UiInputSystems, UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind,
         UiPanelRoot, UiPanelSystems, UiViewport, UiWidthClass, focus::UiFocusState, stats::UiStats,
@@ -26,7 +26,7 @@ const UI_DEBUG_TREE_MAX_LINES: usize = 24;
 const UI_DEBUG_LAYOUT_BOUNDS_MAX_LINES: usize = 16;
 const UI_DEBUG_COPY_LOG_PREVIEW_CHARS: usize = 8_000;
 
-pub(in crate::game) struct UiDebugPlugin;
+pub(crate) struct UiDebugPlugin;
 
 impl Plugin for UiDebugPlugin {
     fn build(&self, app: &mut App) {
@@ -1323,12 +1323,14 @@ fn ui_layer_label(layer: UiLayer) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ui::core::{
+    use crate::framework::ui::core::{
         UI_PANEL_CONFIRM_MODAL, UI_PANEL_GLOBAL_LOADING, UiInputMode, UiPanelId, UiSafeArea,
     };
-    use crate::game::ui_ids::{
-        PANEL_GALLERY_FLOATING, PANEL_GAME_LIST_PAGE, PANEL_LOGIN_PAGE, PANEL_UI_GALLERY_PAGE,
-    };
+
+    const PANEL_LOGIN_PAGE: UiPanelId = UiPanelId::new("login_page");
+    const PANEL_GAME_LIST_PAGE: UiPanelId = UiPanelId::new("game_list_page");
+    const PANEL_UI_GALLERY_PAGE: UiPanelId = UiPanelId::new("ui_gallery_page");
+    const PANEL_GALLERY_FLOATING: UiPanelId = UiPanelId::new("gallery_floating");
 
     fn entity(index: u32) -> Entity {
         Entity::from_raw_u32(index).unwrap()
@@ -1583,7 +1585,7 @@ mod tests {
             visible_ui_node_count: 9,
             text_node_count: 4,
             panel_count: 5,
-            panel_kind_counts: crate::game::ui::core::stats::UiPanelKindCounts {
+            panel_kind_counts: crate::framework::ui::core::stats::UiPanelKindCounts {
                 page: 1,
                 hud: 1,
                 floating: 1,

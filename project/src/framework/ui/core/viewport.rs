@@ -2,9 +2,9 @@ use bevy::{prelude::*, window::PrimaryWindow};
 
 #[cfg(not(target_os = "android"))]
 use crate::config::window::WindowStartupConfig;
-use crate::game::ui::style::UiTheme;
+use crate::framework::ui::style::UiTheme;
 
-pub(in crate::game) struct UiViewportPlugin;
+pub(crate) struct UiViewportPlugin;
 
 impl Plugin for UiViewportPlugin {
     fn build(&self, app: &mut App) {
@@ -22,7 +22,7 @@ impl Plugin for UiViewportPlugin {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Resource)]
-pub(in crate::game) struct UiViewport {
+pub(crate) struct UiViewport {
     pub logical_width: f32,
     pub logical_height: f32,
     pub window_logical_width: f32,
@@ -39,35 +39,35 @@ pub(in crate::game) struct UiViewport {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::game) enum UiWidthClass {
+pub(crate) enum UiWidthClass {
     Compact,
     Medium,
     Expanded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::game) enum UiHeightClass {
+pub(crate) enum UiHeightClass {
     Short,
     Regular,
     Tall,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::game) enum UiOrientation {
+pub(crate) enum UiOrientation {
     Portrait,
     Landscape,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
-pub(in crate::game) enum UiInputMode {
+pub(crate) enum UiInputMode {
     MouseTouch,
     Touch,
     MouseKeyboard,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(in crate::game) struct UiSafeArea {
+pub(crate) struct UiSafeArea {
     pub left: f32,
     pub right: f32,
     pub top: f32,
@@ -75,7 +75,7 @@ pub(in crate::game) struct UiSafeArea {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Resource)]
-pub(in crate::game) struct UiMetrics {
+pub(crate) struct UiMetrics {
     pub page_padding: f32,
     pub panel_padding: f32,
     pub control_gap: f32,
@@ -103,7 +103,7 @@ impl Default for UiViewport {
 }
 
 impl UiViewport {
-    pub(in crate::game) fn from_device_logical_size(
+    pub(crate) fn from_device_logical_size(
         logical_width: f32,
         logical_height: f32,
         input_mode: UiInputMode,
@@ -123,7 +123,7 @@ impl UiViewport {
         )
     }
 
-    pub(in crate::game) fn from_logical_size(
+    pub(crate) fn from_logical_size(
         logical_width: f32,
         logical_height: f32,
         window_logical_width: f32,
@@ -157,7 +157,7 @@ impl UiViewport {
         }
     }
 
-    pub(in crate::game) fn safe_area_padding(self, base: f32) -> UiRect {
+    pub(crate) fn safe_area_padding(self, base: f32) -> UiRect {
         self.safe_area.padding_with_base(base)
     }
 }
@@ -175,7 +175,7 @@ struct ViewportSizeSource {
 }
 
 impl UiSafeArea {
-    pub(in crate::game) fn padding_with_base(self, base: f32) -> UiRect {
+    pub(crate) fn padding_with_base(self, base: f32) -> UiRect {
         UiRect {
             left: px(base + self.left),
             right: px(base + self.right),
@@ -192,7 +192,7 @@ impl Default for UiMetrics {
 }
 
 impl UiMetrics {
-    pub(in crate::game) fn from_viewport_and_theme(viewport: &UiViewport, theme: &UiTheme) -> Self {
+    pub(crate) fn from_viewport_and_theme(viewport: &UiViewport, theme: &UiTheme) -> Self {
         let touch_target_min = match viewport.input_mode {
             UiInputMode::MouseKeyboard => 40.0,
             UiInputMode::MouseTouch | UiInputMode::Touch => 44.0,

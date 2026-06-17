@@ -5,7 +5,8 @@ mod lobby;
 
 use bevy::prelude::*;
 
-use crate::game::{navigation::NavigationPlugin, ui::core::UiFrameworkPlugin};
+use crate::framework::ui::core::UiFrameworkPlugin;
+use crate::game::navigation::NavigationPlugin;
 
 pub(super) struct ScreensPlugin;
 

@@ -1,4 +1,4 @@
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{UiOwnerId, UiPanelId},
     overlays::{UiModalActionId, UiModalId},
 };

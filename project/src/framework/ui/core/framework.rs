@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{
         animation::UiAnimationPlugin, binding::UiBindingPlugin, focus::UiFocusPlugin,
         input::UiInputPlugin, layer::UiLayerPlugin, panel::UiPanelPlugin, stats::UiStatsPlugin,
@@ -13,7 +13,7 @@ use crate::game::ui::{
     widgets::UiWidgetsPlugin,
 };
 
-pub(in crate::game) struct UiFrameworkPlugin;
+pub(crate) struct UiFrameworkPlugin;
 
 impl Plugin for UiFrameworkPlugin {
     fn build(&self, app: &mut App) {

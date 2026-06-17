@@ -1,17 +1,15 @@
 use bevy::prelude::*;
 
-use crate::game::{
-    navigation::{AppUiMode, RouteButton},
-    ui::{
-        core::UiMetrics,
-        i18n::UiI18n,
-        style::{UiFontAssets, theme::UiTheme},
-        widgets::{
-            primary_action_button, primary_action_button_key, secondary_action_button,
-            secondary_action_button_key,
-        },
+use crate::framework::ui::{
+    core::UiMetrics,
+    i18n::UiI18n,
+    style::{UiFontAssets, theme::UiTheme},
+    widgets::{
+        primary_action_button, primary_action_button_key, secondary_action_button,
+        secondary_action_button_key,
     },
 };
+use crate::game::navigation::{AppUiMode, RouteButton};
 
 #[allow(dead_code)]
 pub(in crate::game) fn primary_route_button(

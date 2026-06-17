@@ -15,7 +15,7 @@ const UI_I18N_LOCALE_ENV_VAR: &str = "MYBEVY_UI_LOCALE";
 const UI_I18N_PATH_ENV_VAR: &str = "MYBEVY_UI_I18N";
 const UI_I18N_HOT_RELOAD_INTERVAL_SECS: f32 = 0.8;
 
-pub(in crate::game) struct UiI18nPlugin;
+pub(crate) struct UiI18nPlugin;
 
 impl Plugin for UiI18nPlugin {
     fn build(&self, app: &mut App) {
@@ -33,7 +33,7 @@ impl Plugin for UiI18nPlugin {
 }
 
 #[derive(Clone, Debug, Resource)]
-pub(in crate::game) struct UiI18n {
+pub(crate) struct UiI18n {
     locale: String,
     texts: HashMap<String, String>,
     fallback_texts: HashMap<String, String>,
@@ -41,7 +41,7 @@ pub(in crate::game) struct UiI18n {
 
 #[derive(Clone, Debug, Component)]
 #[allow(dead_code)]
-pub(in crate::game) struct UiI18nText {
+pub(crate) struct UiI18nText {
     pub key: String,
     pub fallback: String,
 }
@@ -69,11 +69,11 @@ struct UiI18nConfig {
 }
 
 impl UiI18n {
-    pub(in crate::game) fn locale(&self) -> &str {
+    pub(crate) fn locale(&self) -> &str {
         &self.locale
     }
 
-    pub(in crate::game) fn tr(&self, key: &str, fallback: impl Into<String>) -> String {
+    pub(crate) fn tr(&self, key: &str, fallback: impl Into<String>) -> String {
         if let Some(text) = self.texts.get(key) {
             return text.clone();
         }
@@ -104,7 +104,7 @@ impl UiI18n {
     }
 
     #[allow(dead_code)]
-    pub(in crate::game) fn text(&self, key: &str) -> String {
+    pub(crate) fn text(&self, key: &str) -> String {
         self.tr(key, key)
     }
 
@@ -118,7 +118,7 @@ impl UiI18n {
 }
 
 impl UiI18nText {
-    pub(in crate::game) fn new(key: impl Into<String>, fallback: impl Into<String>) -> Self {
+    pub(crate) fn new(key: impl Into<String>, fallback: impl Into<String>) -> Self {
         Self {
             key: key.into(),
             fallback: fallback.into(),

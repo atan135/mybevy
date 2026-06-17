@@ -3,14 +3,11 @@ mod widgets;
 use bevy::prelude::*;
 use std::env;
 
-use crate::game::ui::core::UiOwnerId;
-use crate::game::{
-    ui::{
-        core::{UiCurrentOwner, UiPanelCommand},
-        widgets::{DisabledButton, LoadingButton},
-    },
-    ui_ids::{OWNER_LOBBY, OWNER_LOGIN, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY},
+use crate::framework::ui::{
+    core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
+    widgets::{DisabledButton, LoadingButton},
 };
+use crate::game::ui_ids::{OWNER_LOBBY, OWNER_LOGIN, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY};
 
 pub(in crate::game) use widgets::{primary_route_button_key, secondary_route_button_key};
 
@@ -21,13 +18,16 @@ impl Plugin for NavigationPlugin {
         app.init_state::<AppUiMode>()
             .add_message::<GameRouteCommand>()
             .add_systems(Startup, setup_start_mode);
-        app.configure_sets(Update, GameRouteSystems::Commands)
-            .add_systems(
-                Update,
-                (handle_route_buttons, handle_game_route_commands)
-                    .chain()
-                    .in_set(GameRouteSystems::Commands),
-            );
+        app.configure_sets(
+            Update,
+            GameRouteSystems::Commands.before(UiPanelSystems::Commands),
+        )
+        .add_systems(
+            Update,
+            (handle_route_buttons, handle_game_route_commands)
+                .chain()
+                .in_set(GameRouteSystems::Commands),
+        );
     }
 }
 

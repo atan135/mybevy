@@ -2,13 +2,13 @@
 
 use bevy::prelude::*;
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{UiMetrics, UiWidthClass},
     style::UiTheme,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::game) enum UiJustify {
+pub(crate) enum UiJustify {
     Start,
     Center,
     End,
@@ -17,7 +17,7 @@ pub(in crate::game) enum UiJustify {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::game) enum UiAlign {
+pub(crate) enum UiAlign {
     Start,
     Center,
     End,
@@ -25,7 +25,7 @@ pub(in crate::game) enum UiAlign {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::game) enum UiAlignSelf {
+pub(crate) enum UiAlignSelf {
     Auto,
     Start,
     Center,
@@ -34,21 +34,21 @@ pub(in crate::game) enum UiAlignSelf {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::game) enum UiContentAlign {
+pub(crate) enum UiContentAlign {
     Start,
     Center,
     End,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::game) struct UiResponsiveGridColumns {
+pub(crate) struct UiResponsiveGridColumns {
     pub compact: u16,
     pub medium: u16,
     pub expanded: u16,
 }
 
 impl UiResponsiveGridColumns {
-    pub(in crate::game) const fn new(compact: u16, medium: u16, expanded: u16) -> Self {
+    pub(crate) const fn new(compact: u16, medium: u16, expanded: u16) -> Self {
         Self {
             compact,
             medium,
@@ -56,7 +56,7 @@ impl UiResponsiveGridColumns {
         }
     }
 
-    pub(in crate::game) fn for_width_class(self, width_class: UiWidthClass) -> u16 {
+    pub(crate) fn for_width_class(self, width_class: UiWidthClass) -> u16 {
         let columns = match width_class {
             UiWidthClass::Compact => self.compact,
             UiWidthClass::Medium => self.medium,
@@ -68,7 +68,7 @@ impl UiResponsiveGridColumns {
 }
 
 impl UiJustify {
-    pub(in crate::game) const fn to_justify_content(self) -> JustifyContent {
+    pub(crate) const fn to_justify_content(self) -> JustifyContent {
         match self {
             Self::Start => JustifyContent::FlexStart,
             Self::Center => JustifyContent::Center,
@@ -80,7 +80,7 @@ impl UiJustify {
 }
 
 impl UiAlign {
-    pub(in crate::game) const fn to_align_items(self) -> AlignItems {
+    pub(crate) const fn to_align_items(self) -> AlignItems {
         match self {
             Self::Start => AlignItems::FlexStart,
             Self::Center => AlignItems::Center,
@@ -89,7 +89,7 @@ impl UiAlign {
         }
     }
 
-    pub(in crate::game) const fn to_justify_items(self) -> JustifyItems {
+    pub(crate) const fn to_justify_items(self) -> JustifyItems {
         match self {
             Self::Start => JustifyItems::Start,
             Self::Center => JustifyItems::Center,
@@ -100,7 +100,7 @@ impl UiAlign {
 }
 
 impl UiAlignSelf {
-    pub(in crate::game) const fn to_align_self(self) -> AlignSelf {
+    pub(crate) const fn to_align_self(self) -> AlignSelf {
         match self {
             Self::Auto => AlignSelf::Auto,
             Self::Start => AlignSelf::FlexStart,
@@ -112,7 +112,7 @@ impl UiAlignSelf {
 }
 
 impl UiContentAlign {
-    pub(in crate::game) const fn to_justify_content(self) -> JustifyContent {
+    pub(crate) const fn to_justify_content(self) -> JustifyContent {
         match self {
             Self::Start => JustifyContent::FlexStart,
             Self::Center => JustifyContent::Center,
@@ -121,7 +121,7 @@ impl UiContentAlign {
     }
 }
 
-pub(in crate::game) fn ui_column(gap: f32) -> impl Bundle {
+pub(crate) fn ui_column(gap: f32) -> impl Bundle {
     Node {
         width: percent(100),
         flex_direction: FlexDirection::Column,
@@ -131,7 +131,7 @@ pub(in crate::game) fn ui_column(gap: f32) -> impl Bundle {
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn ui_row(theme: &UiTheme) -> impl Bundle {
+pub(crate) fn ui_row(theme: &UiTheme) -> impl Bundle {
     Node {
         width: percent(100),
         align_items: AlignItems::Center,
@@ -142,7 +142,7 @@ pub(in crate::game) fn ui_row(theme: &UiTheme) -> impl Bundle {
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn ui_wrap_row(theme: &UiTheme) -> impl Bundle {
+pub(crate) fn ui_wrap_row(theme: &UiTheme) -> impl Bundle {
     Node {
         width: percent(100),
         align_items: AlignItems::Center,
@@ -153,7 +153,7 @@ pub(in crate::game) fn ui_wrap_row(theme: &UiTheme) -> impl Bundle {
     }
 }
 
-pub(in crate::game) fn ui_grid(theme: &UiTheme, columns: u16) -> impl Bundle {
+pub(crate) fn ui_grid(theme: &UiTheme, columns: u16) -> impl Bundle {
     Node {
         width: percent(100),
         display: Display::Grid,
@@ -167,7 +167,7 @@ pub(in crate::game) fn ui_grid(theme: &UiTheme, columns: u16) -> impl Bundle {
     }
 }
 
-pub(in crate::game) fn ui_responsive_row(
+pub(crate) fn ui_responsive_row(
     metrics: &UiMetrics,
     justify: UiJustify,
     align: UiAlign,
@@ -182,7 +182,7 @@ pub(in crate::game) fn ui_responsive_row(
     }
 }
 
-pub(in crate::game) fn ui_responsive_column(
+pub(crate) fn ui_responsive_column(
     metrics: &UiMetrics,
     justify: UiJustify,
     align: UiAlign,
@@ -197,7 +197,7 @@ pub(in crate::game) fn ui_responsive_column(
     }
 }
 
-pub(in crate::game) fn ui_responsive_wrap_row(
+pub(crate) fn ui_responsive_wrap_row(
     metrics: &UiMetrics,
     justify: UiJustify,
     align: UiAlign,
@@ -213,7 +213,7 @@ pub(in crate::game) fn ui_responsive_wrap_row(
     }
 }
 
-pub(in crate::game) fn ui_responsive_grid(
+pub(crate) fn ui_responsive_grid(
     metrics: &UiMetrics,
     width_class: UiWidthClass,
     columns: UiResponsiveGridColumns,
@@ -221,14 +221,11 @@ pub(in crate::game) fn ui_responsive_grid(
     responsive_grid_node(metrics, columns.for_width_class(width_class))
 }
 
-pub(in crate::game) fn ui_content_container(metrics: &UiMetrics) -> impl Bundle {
+pub(crate) fn ui_content_container(metrics: &UiMetrics) -> impl Bundle {
     content_container_node(metrics)
 }
 
-pub(in crate::game) fn ui_action_row(
-    metrics: &UiMetrics,
-    width_class: UiWidthClass,
-) -> impl Bundle {
+pub(crate) fn ui_action_row(metrics: &UiMetrics, width_class: UiWidthClass) -> impl Bundle {
     let is_compact = width_class == UiWidthClass::Compact;
 
     Node {
@@ -251,7 +248,7 @@ pub(in crate::game) fn ui_action_row(
     }
 }
 
-pub(in crate::game) fn ui_metrics_scroll_column(metrics: &UiMetrics) -> impl Bundle {
+pub(crate) fn ui_metrics_scroll_column(metrics: &UiMetrics) -> impl Bundle {
     Node {
         width: percent(100),
         flex_grow: 1.0,
@@ -288,7 +285,7 @@ fn content_container_node(metrics: &UiMetrics) -> Node {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ui::style::UiTheme;
+    use crate::framework::ui::style::UiTheme;
 
     fn metrics() -> UiMetrics {
         UiMetrics::from_viewport_and_theme(&default(), &UiTheme::default())

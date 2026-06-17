@@ -1,43 +1,42 @@
 use bevy::{ecs::hierarchy::ChildSpawnerCommands, prelude::*};
 
-use crate::game::{
-    navigation::{AppUiMode, secondary_route_button_key},
-    ui::{
-        core::{
-            UI_PANEL_GLOBAL_LOADING, UiFloatingPanel, UiLayer, UiLayerRoot, UiMetrics,
-            UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest, UiPanelRoot, UiViewport,
-            UiWidthClass,
-            binding::{UiBindingValues, UiBoundDisabled, UiBoundText, UiBoundVisibility},
-        },
-        i18n::{UiI18n, UiI18nText},
-        overlays::{
-            UiConfirmModal, UiI18nTextSpec, UiLoading, UiModalActionSpec, UiModalActionStyle,
-            UiRouteCommand, UiToast,
-        },
-        style::{
-            UiFontAssets, UiTheme,
-            theme::{
-                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
-                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
-            },
-        },
-        widgets::{
-            DisabledButton, DisabledTextInput, FocusedButton, LoadingButton, ReadonlyTextInput,
-            SelectedButton, UiAlign, UiImageFit, UiImageSize, UiJustify, UiResponsiveGridColumns,
-            UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars,
-            UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key,
-            checked_checkbox_key, disabled_checkbox_key, disabled_icon_button_key,
-            disabled_primary_action_button_key, disabled_secondary_action_button_key,
-            disabled_segment_option_key, disabled_slider_key, disabled_stepper_key,
-            disabled_toggle_key, icon_button_key, loading_icon_button_key,
-            loading_primary_action_button_key, primary_action_button_key, screen_label,
-            screen_label_key, screen_title_key, secondary_action_button_key, segment_option_key,
-            segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
-            text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_image,
-            ui_image_panel_node, ui_responsive_column, ui_responsive_grid, ui_scroll_column,
-            ui_thumbnail_grid,
+use crate::framework::ui::{
+    core::{
+        UI_PANEL_GLOBAL_LOADING, UiFloatingPanel, UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand,
+        UiPanelId, UiPanelKind, UiPanelRequest, UiPanelRoot, UiViewport, UiWidthClass,
+        binding::{UiBindingValues, UiBoundDisabled, UiBoundText, UiBoundVisibility},
+    },
+    i18n::{UiI18n, UiI18nText},
+    overlays::{
+        UiConfirmModal, UiI18nTextSpec, UiLoading, UiModalActionSpec, UiModalActionStyle,
+        UiRouteCommand, UiToast,
+    },
+    style::{
+        UiFontAssets, UiTheme,
+        theme::{
+            UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
+            UiThemeTextColorRole, UiThemeTextStyleRole,
         },
     },
+    widgets::{
+        DisabledButton, DisabledTextInput, FocusedButton, LoadingButton, ReadonlyTextInput,
+        SelectedButton, UiAlign, UiImageFit, UiImageSize, UiJustify, UiResponsiveGridColumns,
+        UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars,
+        UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key,
+        checked_checkbox_key, disabled_checkbox_key, disabled_icon_button_key,
+        disabled_primary_action_button_key, disabled_secondary_action_button_key,
+        disabled_segment_option_key, disabled_slider_key, disabled_stepper_key,
+        disabled_toggle_key, icon_button_key, loading_icon_button_key,
+        loading_primary_action_button_key, primary_action_button_key, screen_label,
+        screen_label_key, screen_title_key, secondary_action_button_key, segment_option_key,
+        segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
+        text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_image,
+        ui_image_panel_node, ui_responsive_column, ui_responsive_grid, ui_scroll_column,
+        ui_thumbnail_grid,
+    },
+};
+use crate::game::{
+    navigation::{AppUiMode, secondary_route_button_key},
     ui_ids::{
         MODAL_ACTION_CANCEL, MODAL_ACTION_CONFIRM, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
         PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY_PAGE,

@@ -6,7 +6,7 @@ use bevy::{
     ui::{FocusPolicy, RelativeCursorPosition},
 };
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{UiFocusSystems, UiMetrics, focus::UiFocusState},
     i18n::{UiI18n, UiI18nText},
     style::{
@@ -21,7 +21,7 @@ use crate::game::ui::{
 
 const NUMERIC_CONTROL_LABEL_WIDTH: f32 = 132.0;
 const TEXT_INPUT_FOCUS_SWITCH_LOG_TICKS: u64 = 12;
-pub(in crate::game) struct UiWidgetsPlugin;
+pub(crate) struct UiWidgetsPlugin;
 
 impl Plugin for UiWidgetsPlugin {
     fn build(&self, app: &mut App) {
@@ -60,29 +60,29 @@ impl Plugin for UiWidgetsPlugin {
 }
 
 #[derive(Component)]
-pub(in crate::game) struct PrimaryButton;
+pub(crate) struct PrimaryButton;
 
 #[derive(Component)]
-pub(in crate::game) struct SecondaryButton;
+pub(crate) struct SecondaryButton;
 
 #[derive(Component)]
-pub(in crate::game) struct DisabledButton;
+pub(crate) struct DisabledButton;
 
 #[derive(Component)]
-pub(in crate::game) struct FocusableButton;
+pub(crate) struct FocusableButton;
 
 #[derive(Component)]
-pub(in crate::game) struct FocusedButton;
+pub(crate) struct FocusedButton;
 
 #[derive(Component)]
-pub(in crate::game) struct SelectedButton;
+pub(crate) struct SelectedButton;
 
 #[derive(Component)]
-pub(in crate::game) struct LoadingButton;
+pub(crate) struct LoadingButton;
 
 #[derive(Clone, Debug, Component)]
 #[allow(dead_code)]
-pub(in crate::game) struct UiIconButton {
+pub(crate) struct UiIconButton {
     pub label: String,
     pub accessible_key: String,
     pub accessible_fallback: String,
@@ -106,28 +106,28 @@ impl UiIconButton {
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiCheckbox;
+pub(crate) struct UiCheckbox;
 
 #[derive(Component)]
-pub(in crate::game) struct UiCheckboxChecked;
+pub(crate) struct UiCheckboxChecked;
 
 #[derive(Component)]
-pub(in crate::game) struct UiToggle;
+pub(crate) struct UiToggle;
 
 #[derive(Component)]
-pub(in crate::game) struct UiToggleOn;
+pub(crate) struct UiToggleOn;
 
 #[derive(Component)]
-pub(in crate::game) struct UiSegmentedControl;
+pub(crate) struct UiSegmentedControl;
 
 #[derive(Clone, Debug, Component)]
 #[allow(dead_code)]
-pub(in crate::game) struct UiSegmentOption {
+pub(crate) struct UiSegmentOption {
     pub value: String,
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiSegmentOptionSelected;
+pub(crate) struct UiSegmentOptionSelected;
 
 #[derive(Clone, Debug, Component)]
 struct UiSelectionLabel {
@@ -135,14 +135,14 @@ struct UiSelectionLabel {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) struct UiSlider {
+pub(crate) struct UiSlider {
     pub value: f32,
     pub min: f32,
     pub max: f32,
 }
 
 impl UiSlider {
-    pub(in crate::game) fn new(value: f32, min: f32, max: f32) -> Self {
+    pub(crate) fn new(value: f32, min: f32, max: f32) -> Self {
         let (min, max) = ordered_slider_bounds(min, max);
         Self {
             value: clamp_slider_value(value, min, max),
@@ -166,7 +166,7 @@ struct UiSliderTrack;
 struct UiSliderValueText;
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) struct UiStepper {
+pub(crate) struct UiStepper {
     pub value: i32,
     pub min: i32,
     pub max: i32,
@@ -174,7 +174,7 @@ pub(in crate::game) struct UiStepper {
 }
 
 impl UiStepper {
-    pub(in crate::game) fn new(value: i32, min: i32, max: i32, step: i32) -> Self {
+    pub(crate) fn new(value: i32, min: i32, max: i32, step: i32) -> Self {
         let (min, max) = ordered_stepper_bounds(min, max);
         let step = stepper_step(step);
         Self {
@@ -196,13 +196,13 @@ struct UiStepperIncrementButton;
 struct UiStepperValueText;
 
 #[derive(Component)]
-pub(in crate::game) struct UiTextInput;
+pub(crate) struct UiTextInput;
 
 #[derive(Clone, Debug, Default, Component)]
-pub(in crate::game) struct UiTextInputValue(pub String);
+pub(crate) struct UiTextInputValue(pub String);
 
 #[derive(Clone, Debug, Default, Component)]
-pub(in crate::game) struct UiTextInputCursor {
+pub(crate) struct UiTextInputCursor {
     position: usize,
     selection: Option<UiTextInputSelection>,
 }
@@ -214,21 +214,21 @@ struct UiTextInputSelection {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) struct UiTextInputMaxChars(pub usize);
+pub(crate) struct UiTextInputMaxChars(pub usize);
 
 #[derive(Component)]
-pub(in crate::game) struct ReadonlyTextInput;
+pub(crate) struct ReadonlyTextInput;
 
 #[derive(Component)]
-pub(in crate::game) struct DisabledTextInput;
+pub(crate) struct DisabledTextInput;
 
 #[derive(Clone, Debug, Component)]
-pub(in crate::game) struct UiTextInputRequired {
+pub(crate) struct UiTextInputRequired {
     message: String,
 }
 
 impl UiTextInputRequired {
-    pub(in crate::game) fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -236,18 +236,14 @@ impl UiTextInputRequired {
 }
 
 #[derive(Clone, Debug, Component)]
-pub(in crate::game) struct UiTextInputAlphanumeric {
+pub(crate) struct UiTextInputAlphanumeric {
     min_chars: usize,
     max_chars: usize,
     message: String,
 }
 
 impl UiTextInputAlphanumeric {
-    pub(in crate::game) fn new(
-        min_chars: usize,
-        max_chars: usize,
-        message: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn new(min_chars: usize, max_chars: usize, message: impl Into<String>) -> Self {
         let min_chars = min_chars.min(max_chars);
         Self {
             min_chars,
@@ -266,19 +262,19 @@ impl UiTextInputAlphanumeric {
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiTextInputError;
+pub(crate) struct UiTextInputError;
 
 #[derive(Clone, Debug, Default, Component)]
-pub(in crate::game) struct UiTextInputHelperText(pub String);
+pub(crate) struct UiTextInputHelperText(pub String);
 
 #[derive(Clone, Debug, Default, Component)]
-pub(in crate::game) struct UiTextInputValidationMessage(pub String);
+pub(crate) struct UiTextInputValidationMessage(pub String);
 
 #[derive(Clone, Debug, Default, Component)]
-pub(in crate::game) struct UiTextInputPlaceholder(pub String);
+pub(crate) struct UiTextInputPlaceholder(pub String);
 
 #[derive(Component)]
-pub(in crate::game) struct UiTextInputText;
+pub(crate) struct UiTextInputText;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
 enum UiTextInputTextPart {
@@ -288,7 +284,7 @@ enum UiTextInputTextPart {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(in crate::game) struct UiTextInputFormMessage {
+pub(crate) struct UiTextInputFormMessage {
     input: Entity,
 }
 
@@ -326,12 +322,12 @@ struct UiTextInputNativeState {
 }
 
 #[derive(Clone, Debug, Message)]
-pub(in crate::game) struct UiTextInputSubmitted {
+pub(crate) struct UiTextInputSubmitted {
     pub entity: Entity,
     pub value: String,
 }
 
-pub(in crate::game) fn screen_title(
+pub(crate) fn screen_title(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,
@@ -350,7 +346,7 @@ pub(in crate::game) fn screen_title(
     )
 }
 
-pub(in crate::game) fn screen_title_key(
+pub(crate) fn screen_title_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -364,7 +360,7 @@ pub(in crate::game) fn screen_title_key(
     )
 }
 
-pub(in crate::game) fn screen_label(
+pub(crate) fn screen_label(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,
@@ -384,7 +380,7 @@ pub(in crate::game) fn screen_label(
     )
 }
 
-pub(in crate::game) fn screen_label_key(
+pub(crate) fn screen_label_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -400,7 +396,7 @@ pub(in crate::game) fn screen_label_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn primary_action_button(
+pub(crate) fn primary_action_button(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -416,7 +412,7 @@ pub(in crate::game) fn primary_action_button(
     )
 }
 
-pub(in crate::game) fn primary_action_button_key(
+pub(crate) fn primary_action_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -436,7 +432,7 @@ pub(in crate::game) fn primary_action_button_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn primary_action_button_with_i18n_text(
+pub(crate) fn primary_action_button_with_i18n_text(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -455,7 +451,7 @@ pub(in crate::game) fn primary_action_button_with_i18n_text(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn secondary_action_button(
+pub(crate) fn secondary_action_button(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -472,7 +468,7 @@ pub(in crate::game) fn secondary_action_button(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn secondary_action_button_with_i18n_text(
+pub(crate) fn secondary_action_button_with_i18n_text(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -490,7 +486,7 @@ pub(in crate::game) fn secondary_action_button_with_i18n_text(
     )
 }
 
-pub(in crate::game) fn secondary_action_button_key(
+pub(crate) fn secondary_action_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -510,7 +506,7 @@ pub(in crate::game) fn secondary_action_button_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn disabled_primary_action_button(
+pub(crate) fn disabled_primary_action_button(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -526,7 +522,7 @@ pub(in crate::game) fn disabled_primary_action_button(
     )
 }
 
-pub(in crate::game) fn disabled_primary_action_button_key(
+pub(crate) fn disabled_primary_action_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -546,7 +542,7 @@ pub(in crate::game) fn disabled_primary_action_button_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn disabled_secondary_action_button(
+pub(crate) fn disabled_secondary_action_button(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -562,7 +558,7 @@ pub(in crate::game) fn disabled_secondary_action_button(
     )
 }
 
-pub(in crate::game) fn disabled_secondary_action_button_key(
+pub(crate) fn disabled_secondary_action_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -582,7 +578,7 @@ pub(in crate::game) fn disabled_secondary_action_button_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn loading_primary_action_button(
+pub(crate) fn loading_primary_action_button(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -601,7 +597,7 @@ pub(in crate::game) fn loading_primary_action_button(
     )
 }
 
-pub(in crate::game) fn loading_primary_action_button_key(
+pub(crate) fn loading_primary_action_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -623,7 +619,7 @@ pub(in crate::game) fn loading_primary_action_button_key(
     )
 }
 
-pub(in crate::game) fn icon_button_key(
+pub(crate) fn icon_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -646,7 +642,7 @@ pub(in crate::game) fn icon_button_key(
     )
 }
 
-pub(in crate::game) fn disabled_icon_button_key(
+pub(crate) fn disabled_icon_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -669,7 +665,7 @@ pub(in crate::game) fn disabled_icon_button_key(
     )
 }
 
-pub(in crate::game) fn loading_icon_button_key(
+pub(crate) fn loading_icon_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -693,7 +689,7 @@ pub(in crate::game) fn loading_icon_button_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn checkbox(
+pub(crate) fn checkbox(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,
@@ -708,7 +704,7 @@ pub(in crate::game) fn checkbox(
     )
 }
 
-pub(in crate::game) fn checkbox_key(
+pub(crate) fn checkbox_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -727,7 +723,7 @@ pub(in crate::game) fn checkbox_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn checked_checkbox(
+pub(crate) fn checked_checkbox(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,
@@ -747,7 +743,7 @@ pub(in crate::game) fn checked_checkbox(
     )
 }
 
-pub(in crate::game) fn checked_checkbox_key(
+pub(crate) fn checked_checkbox_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -770,7 +766,7 @@ pub(in crate::game) fn checked_checkbox_key(
     )
 }
 
-pub(in crate::game) fn disabled_checkbox_key(
+pub(crate) fn disabled_checkbox_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -789,7 +785,7 @@ pub(in crate::game) fn disabled_checkbox_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn toggle(
+pub(crate) fn toggle(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,
@@ -804,7 +800,7 @@ pub(in crate::game) fn toggle(
     )
 }
 
-pub(in crate::game) fn toggle_key(
+pub(crate) fn toggle_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -823,7 +819,7 @@ pub(in crate::game) fn toggle_key(
 }
 
 #[allow(dead_code)]
-pub(in crate::game) fn toggle_on(
+pub(crate) fn toggle_on(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,
@@ -838,7 +834,7 @@ pub(in crate::game) fn toggle_on(
     )
 }
 
-pub(in crate::game) fn toggle_on_key(
+pub(crate) fn toggle_on_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -856,7 +852,7 @@ pub(in crate::game) fn toggle_on_key(
     )
 }
 
-pub(in crate::game) fn disabled_toggle_key(
+pub(crate) fn disabled_toggle_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -874,7 +870,7 @@ pub(in crate::game) fn disabled_toggle_key(
     )
 }
 
-pub(in crate::game) fn segmented_control(theme: &UiTheme) -> impl Bundle {
+pub(crate) fn segmented_control(theme: &UiTheme) -> impl Bundle {
     (
         UiSegmentedControl,
         Node {
@@ -888,7 +884,7 @@ pub(in crate::game) fn segmented_control(theme: &UiTheme) -> impl Bundle {
     )
 }
 
-pub(in crate::game) fn segment_option_key(
+pub(crate) fn segment_option_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -906,7 +902,7 @@ pub(in crate::game) fn segment_option_key(
     )
 }
 
-pub(in crate::game) fn selected_segment_option_key(
+pub(crate) fn selected_segment_option_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -928,7 +924,7 @@ pub(in crate::game) fn selected_segment_option_key(
     )
 }
 
-pub(in crate::game) fn disabled_segment_option_key(
+pub(crate) fn disabled_segment_option_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
@@ -949,7 +945,7 @@ pub(in crate::game) fn disabled_segment_option_key(
     )
 }
 
-pub(in crate::game) fn slider_key(
+pub(crate) fn slider_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -974,7 +970,7 @@ pub(in crate::game) fn slider_key(
     )
 }
 
-pub(in crate::game) fn disabled_slider_key(
+pub(crate) fn disabled_slider_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -999,7 +995,7 @@ pub(in crate::game) fn disabled_slider_key(
     )
 }
 
-pub(in crate::game) fn stepper_key(
+pub(crate) fn stepper_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -1028,7 +1024,7 @@ pub(in crate::game) fn stepper_key(
     )
 }
 
-pub(in crate::game) fn disabled_stepper_key(
+pub(crate) fn disabled_stepper_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -1057,7 +1053,7 @@ pub(in crate::game) fn disabled_stepper_key(
     )
 }
 
-pub(in crate::game) fn text_input(
+pub(crate) fn text_input(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
@@ -1166,7 +1162,7 @@ pub(in crate::game) fn text_input(
     )
 }
 
-pub(in crate::game) fn text_input_form_message(
+pub(crate) fn text_input_form_message(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     input: Entity,
@@ -4187,11 +4183,11 @@ mod tests {
     #[test]
     fn compact_numeric_controls_fit_phone_panel_width() {
         let theme = UiTheme::default();
-        let viewport = crate::game::ui::core::UiViewport::from_device_logical_size(
+        let viewport = crate::framework::ui::core::UiViewport::from_device_logical_size(
             1080.0 / 3.0,
             2400.0 / 3.0,
-            crate::game::ui::core::UiInputMode::MouseTouch,
-            crate::game::ui::core::UiSafeArea::default(),
+            crate::framework::ui::core::UiInputMode::MouseTouch,
+            crate::framework::ui::core::UiSafeArea::default(),
         );
         let metrics = UiMetrics::from_viewport_and_theme(&viewport, &theme);
         let panel_inner_width = viewport.logical_width

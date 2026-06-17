@@ -2,14 +2,14 @@ use std::collections::VecDeque;
 
 use bevy::{picking::hover::Hovered, prelude::*};
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{
         UiFocusSystems, UiPanelId, UiPanelKind, UiPanelRoot, UiPanelSystems, focus::UiFocusState,
     },
     widgets::{UiScrollView, UiTextInput},
 };
 
-pub(in crate::game) struct UiInputPlugin;
+pub(crate) struct UiInputPlugin;
 
 impl Plugin for UiInputPlugin {
     fn build(&self, app: &mut App) {
@@ -26,14 +26,14 @@ impl Plugin for UiInputPlugin {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
-pub(in crate::game) enum UiInputSystems {
+pub(crate) enum UiInputSystems {
     Update,
 }
 
 const UI_INPUT_ROUTE_HISTORY_LIMIT: usize = 12;
 
 #[derive(Debug, Resource)]
-pub(in crate::game) struct UiInputState {
+pub(crate) struct UiInputState {
     pub pointer_blocked: bool,
     pub focused_panel: Option<UiPanelId>,
     pub top_blocking_panel: Option<UiPanelId>,
@@ -62,7 +62,7 @@ impl Default for UiInputState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::game) struct UiInputRouteHistoryEntry {
+pub(crate) struct UiInputRouteHistoryEntry {
     pub id: u64,
     pub summary: String,
 }
@@ -222,7 +222,7 @@ fn resolve_ui_input_route(signals: UiInputRouteSignals) -> UiInputRouteSnapshot 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ui::core::UI_PANEL_GLOBAL_LOADING;
+    use crate::framework::ui::core::UI_PANEL_GLOBAL_LOADING;
 
     #[test]
     fn route_reason_prefers_blocking_panel_then_text_then_button_then_scroll() {

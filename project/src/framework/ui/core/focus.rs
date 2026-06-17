@@ -1,6 +1,6 @@
 use bevy::{prelude::*, ui::UiSystems};
 
-use crate::game::ui::{
+use crate::framework::ui::{
     core::{UiPanelKind, UiPanelRoot},
     widgets::{
         DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
@@ -8,7 +8,7 @@ use crate::game::ui::{
     },
 };
 
-pub(in crate::game) struct UiFocusPlugin;
+pub(crate) struct UiFocusPlugin;
 
 impl Plugin for UiFocusPlugin {
     fn build(&self, app: &mut App) {
@@ -36,13 +36,13 @@ impl Plugin for UiFocusPlugin {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
-pub(in crate::game) enum UiFocusSystems {
+pub(crate) enum UiFocusSystems {
     SyncFocusedMarkers,
     Visuals,
 }
 
 #[derive(Debug, Default, Resource)]
-pub(in crate::game) struct UiFocusState {
+pub(crate) struct UiFocusState {
     pub focused_entity: Option<Entity>,
     keyboard_pressed_entity: Option<Entity>,
 }
@@ -297,7 +297,7 @@ fn panel_kind_order(kind: UiPanelKind) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ui::core::UiPanelId;
+    use crate::framework::ui::core::UiPanelId;
 
     fn entity(index: u32) -> Entity {
         Entity::from_raw_u32(index).unwrap()

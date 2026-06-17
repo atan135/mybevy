@@ -1,10 +1,10 @@
-pub(in crate::game) mod controls;
-pub(in crate::game) mod image;
-pub(in crate::game) mod layout;
-pub(in crate::game) mod scroll;
+pub(crate) mod controls;
+pub(crate) mod image;
+pub(crate) mod layout;
+pub(crate) mod scroll;
 
 #[allow(unused_imports)]
-pub(in crate::game) use controls::{
+pub(crate) use controls::{
     DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
     ReadonlyTextInput, SelectedButton, UiTextInput, UiTextInputAlphanumeric, UiTextInputError,
     UiTextInputHelperText, UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted,
@@ -20,17 +20,15 @@ pub(in crate::game) use controls::{
     toggle_key, toggle_on_key,
 };
 #[allow(unused_imports)]
-pub(in crate::game) use image::{
-    UiImageFit, UiImageSize, ui_image, ui_image_panel_node, ui_thumbnail_grid,
-};
+pub(crate) use image::{UiImageFit, UiImageSize, ui_image, ui_image_panel_node, ui_thumbnail_grid};
 #[allow(unused_imports)]
-pub(in crate::game) use layout::{
+pub(crate) use layout::{
     UiAlign, UiAlignSelf, UiContentAlign, UiJustify, UiResponsiveGridColumns, ui_action_row,
     ui_column, ui_content_container, ui_grid, ui_metrics_scroll_column, ui_responsive_column,
     ui_responsive_grid, ui_responsive_row, ui_responsive_wrap_row,
 };
 #[allow(unused_imports)]
-pub(in crate::game) use scroll::{
+pub(crate) use scroll::{
     UiScrollView, UiScrollViewConfig, ui_scroll_column, ui_scroll_column_bundle,
     ui_scroll_column_node, ui_scroll_column_with_max_height, ui_scroll_pickable,
 };

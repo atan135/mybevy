@@ -4,11 +4,11 @@ use bevy::{
     prelude::*,
 };
 
-use crate::game::ui::style::UiTheme;
+use crate::framework::ui::style::UiTheme;
 
 const UI_SCROLL_LINE_HEIGHT: f32 = 24.0;
 
-pub(in crate::game) struct UiScrollPlugin;
+pub(crate) struct UiScrollPlugin;
 
 impl Plugin for UiScrollPlugin {
     fn build(&self, app: &mut App) {
@@ -20,7 +20,7 @@ impl Plugin for UiScrollPlugin {
 }
 
 #[derive(Component)]
-pub(in crate::game) struct UiScrollView;
+pub(crate) struct UiScrollView;
 
 #[derive(Component, Default)]
 struct UiScrollDragStart(Vec2);
@@ -33,14 +33,14 @@ struct UiScroll {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(in crate::game) struct UiScrollViewConfig {
+pub(crate) struct UiScrollViewConfig {
     pub row_gap: f32,
     pub max_height: Val,
     pub should_block_lower: bool,
 }
 
 impl UiScrollViewConfig {
-    pub(in crate::game) const fn new(row_gap: f32) -> Self {
+    pub(crate) const fn new(row_gap: f32) -> Self {
         Self {
             row_gap,
             max_height: Val::Auto,
@@ -48,27 +48,27 @@ impl UiScrollViewConfig {
         }
     }
 
-    pub(in crate::game) fn with_max_height(mut self, max_height: f32) -> Self {
+    pub(crate) fn with_max_height(mut self, max_height: f32) -> Self {
         self.max_height = px(max_height);
         self
     }
 
     #[allow(dead_code)]
-    pub(in crate::game) const fn with_block_lower(mut self, should_block_lower: bool) -> Self {
+    pub(crate) const fn with_block_lower(mut self, should_block_lower: bool) -> Self {
         self.should_block_lower = should_block_lower;
         self
     }
 }
 
-pub(in crate::game) fn ui_scroll_column(theme: &UiTheme) -> impl Bundle {
+pub(crate) fn ui_scroll_column(theme: &UiTheme) -> impl Bundle {
     ui_scroll_column_bundle(UiScrollViewConfig::new(theme.layout.page_gap))
 }
 
-pub(in crate::game) fn ui_scroll_column_with_max_height(gap: f32, max_height: f32) -> impl Bundle {
+pub(crate) fn ui_scroll_column_with_max_height(gap: f32, max_height: f32) -> impl Bundle {
     ui_scroll_column_bundle(UiScrollViewConfig::new(gap).with_max_height(max_height))
 }
 
-pub(in crate::game) fn ui_scroll_column_bundle(config: UiScrollViewConfig) -> impl Bundle {
+pub(crate) fn ui_scroll_column_bundle(config: UiScrollViewConfig) -> impl Bundle {
     (
         UiScrollView,
         UiScrollDragStart::default(),
@@ -78,7 +78,7 @@ pub(in crate::game) fn ui_scroll_column_bundle(config: UiScrollViewConfig) -> im
     )
 }
 
-pub(in crate::game) fn ui_scroll_column_node(config: UiScrollViewConfig) -> Node {
+pub(crate) fn ui_scroll_column_node(config: UiScrollViewConfig) -> Node {
     Node {
         width: percent(100),
         flex_grow: 1.0,
@@ -90,7 +90,7 @@ pub(in crate::game) fn ui_scroll_column_node(config: UiScrollViewConfig) -> Node
     }
 }
 
-pub(in crate::game) fn ui_scroll_pickable(config: UiScrollViewConfig) -> Pickable {
+pub(crate) fn ui_scroll_pickable(config: UiScrollViewConfig) -> Pickable {
     Pickable {
         is_hoverable: true,
         should_block_lower: config.should_block_lower,

@@ -14,14 +14,11 @@ use crate::authority::{
     AuthorityCommand, AuthorityEndpoint, AuthorityEvent, AuthorityFrame, AuthorityRole,
     AuthoritySession,
 };
+use crate::framework::ui::core::{UiInputState, UiInputSystems};
 use crate::myserver::{MyServerCommand, MyServerEvent};
 use crate::network::NetworkTransport;
 
-use super::{
-    navigation::AppUiMode,
-    screens::ScreensPlugin,
-    ui::core::{UiInputState, UiInputSystems},
-};
+use super::{navigation::AppUiMode, screens::ScreensPlugin};
 
 const UI_TOUCH_ACTION: &str = "ui_touch";
 const LOCAL_TOUCH_POINTER_ID: u32 = 0;
