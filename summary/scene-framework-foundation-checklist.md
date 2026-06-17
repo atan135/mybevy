@@ -119,14 +119,14 @@
   - [x] 提供将 spawn/anchor 转为 `Transform` 的 helper。
   - [x] 预留 anchor 可视化调试接口。
 
-- [ ] 阶段 11：通用 Trigger 框架
-  - [ ] 定义 `SceneTrigger` 组件，记录 trigger ID、shape、event、enabled、session_id。
-  - [ ] 定义 `SceneTriggerShape`，先支持 2D circle/box 或 3D box，按当前项目实际维度选择最小实现。
-  - [ ] 定义 `SceneTriggerEvent`，包含 trigger ID、activator、action、session_id。
-  - [ ] 提供从 manifest 生成 trigger 实体的 helper。
-  - [ ] 提供启用/禁用 trigger 的通用命令或 API。
-  - [ ] 只做空间检测和事件派发，不处理任务、剧情、传送、战斗等业务响应。
-  - [ ] 为 trigger debug 绘制预留 shape 和 label 数据。
+- [x] 阶段 11：通用 Trigger 框架（开始：2026-06-17 20:46:40 +08:00；结束：2026-06-17 20:56:22 +08:00）
+  - [x] 定义 `SceneTrigger` 组件，记录 trigger ID、shape、event、enabled、session_id。
+  - [x] 定义 `SceneTriggerShape`，先支持 2D circle/box 或 3D box，按当前项目实际维度选择最小实现。
+  - [x] 定义 `SceneTriggerEvent`，包含 trigger ID、activator、action、session_id。
+  - [x] 提供从 manifest 生成 trigger 实体的 helper。
+  - [x] 提供启用/禁用 trigger 的通用命令或 API。
+  - [x] 只做空间检测和事件派发，不处理任务、剧情、传送、战斗等业务响应。
+  - [x] 为 trigger debug 绘制预留 shape 和 label 数据。
 
 - [ ] 阶段 12：错误分类和诊断日志
   - [ ] 定义 `SceneFailure` 和 `SceneFailureKind`，覆盖 `SceneNotFound`、`ManifestLoadFailed`、`ManifestParseFailed`、`ManifestVersionUnsupported`、`RequiredAssetMissing`、`AssetLoadFailed`、`SpawnPointMissing`、`CameraSetupFailed`。

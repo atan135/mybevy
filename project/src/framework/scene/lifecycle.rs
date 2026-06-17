@@ -23,6 +23,7 @@ use super::{
     registry::{SceneDefinition, SceneRegistry},
     root::{SceneOwned, SceneRoot, despawn_scene_session_entities, spawn_scene_world_roots},
     spawn::{SceneSpawnLookupError, SceneSpawnRegistry, SceneSpawnSessionIndex},
+    trigger::{SceneTriggerManifest, spawn_scene_triggers_from_manifest},
 };
 
 static NEXT_SCENE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -380,6 +381,7 @@ fn enter_scene(
             definition.has_world_root,
             default_scene_camera_config_for_world(definition.has_world_root),
             SceneSpawnSessionIndex::empty(session.scene_id.clone(), session.session_id.clone()),
+            Vec::new(),
             session,
             scene_cameras,
             entered_at,
@@ -448,6 +450,7 @@ fn finish_scene_enter(
     has_world_root: bool,
     camera_config: Option<SceneCameraConfig>,
     spawn_index: SceneSpawnSessionIndex,
+    triggers: Vec<SceneTriggerManifest>,
     mut session: SceneSessionInfo,
     scene_cameras: &Query<&SceneCameraRig>,
     entered_at: Option<Duration>,
@@ -484,6 +487,8 @@ fn finish_scene_enter(
     if let Some(camera_config) = camera_config {
         ensure_scene_camera(commands, &session.session_id, &camera_config, scene_cameras);
     }
+
+    spawn_scene_triggers_from_manifest(commands, &session.session_id, &triggers);
 
     session.entered_at = entered_at;
     spawn_registry.set_session_index(spawn_index);
@@ -718,6 +723,7 @@ pub(crate) fn poll_scene_asset_loads(
         session_load.has_world_root,
         session_load.camera_config,
         session_load.spawn_index,
+        session_load.triggers,
         session_info,
         &scene_cameras,
         entered_at,

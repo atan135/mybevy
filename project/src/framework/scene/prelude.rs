@@ -49,7 +49,10 @@ pub use super::{
         transform_from_position_rotation,
     },
     trigger::{
-        SceneTrigger, SceneTriggerAction, SceneTriggerEvent, SceneTriggerManifest,
-        SceneTriggerShape, SceneTriggerShapeManifest,
+        SceneTrigger, SceneTriggerAction, SceneTriggerActivator, SceneTriggerCommand,
+        SceneTriggerContactState, SceneTriggerDebugItem, SceneTriggerDebugShape, SceneTriggerEvent,
+        SceneTriggerManifest, SceneTriggerShape, SceneTriggerShapeManifest, detect_scene_triggers,
+        process_scene_trigger_commands, scene_trigger_bundle, scene_trigger_debug_items,
+        spawn_scene_trigger, spawn_scene_triggers_from_manifest,
     },
 };

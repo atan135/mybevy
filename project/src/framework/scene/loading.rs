@@ -15,6 +15,7 @@ use super::{
         validate_asset_relative_path,
     },
     spawn::SceneSpawnSessionIndex,
+    trigger::SceneTriggerManifest,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -405,6 +406,7 @@ pub(crate) struct SceneAssetLoadSession {
     pub(crate) has_world_root: bool,
     pub(crate) camera_config: Option<SceneCameraConfig>,
     pub(crate) spawn_index: SceneSpawnSessionIndex,
+    pub(crate) triggers: Vec<SceneTriggerManifest>,
     pub(crate) assets: Vec<SceneTrackedAsset>,
     required_gate_opened: bool,
     last_progress: Option<SceneLoadProgress>,
@@ -429,6 +431,7 @@ impl SceneAssetLoadSession {
             &manifest.spawn_points,
             &manifest.anchors,
         );
+        let triggers = manifest.triggers.clone();
 
         Self {
             scene_id,
@@ -438,6 +441,7 @@ impl SceneAssetLoadSession {
             has_world_root,
             camera_config,
             spawn_index,
+            triggers,
             assets,
             required_gate_opened: false,
             last_progress: None,
