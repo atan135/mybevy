@@ -9,7 +9,9 @@ use crate::framework::ui::{
 };
 use crate::game::ui_ids::{OWNER_LOBBY, OWNER_LOGIN, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY};
 
-pub(in crate::game) use widgets::{primary_route_button_key, secondary_route_button_key};
+pub(in crate::game) use widgets::{
+    game_panel_root, primary_route_button_key, secondary_route_button_key,
+};
 
 pub(super) struct NavigationPlugin;
 

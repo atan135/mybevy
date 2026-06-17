@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 
 use crate::framework::ui::{
-    core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiPanelRoot, UiViewport},
+    core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport},
     i18n::UiI18n,
     style::{UiFontAssets, UiTheme, theme::UiThemeRootNodeRole},
 };
 use crate::game::{
-    navigation::{AppUiMode, secondary_route_button_key},
+    navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{OWNER_TOUCH_RIPPLE, PANEL_TOUCH_RIPPLE_HUD},
 };
 
@@ -25,11 +25,7 @@ pub(super) fn setup_touch_ripple_overlay(
 
     commands.spawn((
         DespawnOnExit(AppUiMode::WanfaTouchRipple),
-        UiPanelRoot {
-            id: PANEL_TOUCH_RIPPLE_HUD,
-            kind: UiPanelKind::Hud,
-            owner: Some(OWNER_TOUCH_RIPPLE),
-        },
+        game_panel_root(PANEL_TOUCH_RIPPLE_HUD, UiPanelKind::Hud, OWNER_TOUCH_RIPPLE),
         UiLayerRoot {
             layer: UiLayer::Page,
         },

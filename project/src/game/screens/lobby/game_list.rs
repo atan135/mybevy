@@ -2,8 +2,7 @@ use bevy::prelude::*;
 
 use crate::framework::ui::{
     core::{
-        UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelKind, UiPanelRequest, UiPanelRoot,
-        UiViewport,
+        UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelKind, UiPanelRequest, UiViewport,
     },
     i18n::UiI18n,
     overlays::{
@@ -24,11 +23,10 @@ use crate::framework::ui::{
 };
 use crate::game::{
     features::touch_ripple::TouchLaunchMode,
-    navigation::{AppUiMode, GameRouteCommand, secondary_route_button_key},
+    navigation::{AppUiMode, GameRouteCommand, game_panel_root, secondary_route_button_key},
     ui_ids::{
-        MODAL_ACTION_CANCEL, MODAL_ACTION_CONFIRM, MODAL_ACTION_TOUCH_RIPPLE_NETWORKED,
-        MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY,
-        PANEL_GAME_LIST_PAGE,
+        ACTION_CANCEL, ACTION_CONFIRM, ACTION_TOUCH_RIPPLE_NETWORKED,
+        ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY, PANEL_GAME_LIST,
     },
 };
 
@@ -52,11 +50,7 @@ pub(super) fn setup_game_list_screen(
 
     commands.spawn((
         DespawnOnExit(AppUiMode::Lobby),
-        UiPanelRoot {
-            id: PANEL_GAME_LIST_PAGE,
-            kind: UiPanelKind::Page,
-            owner: Some(OWNER_LOBBY),
-        },
+        game_panel_root(PANEL_GAME_LIST, UiPanelKind::Page, OWNER_LOBBY),
         UiLayerRoot {
             layer: UiLayer::Page,
         },
@@ -236,8 +230,8 @@ pub(super) fn handle_game_list_touch_buttons(
         }
 
         match result.action {
-            MODAL_ACTION_CANCEL | MODAL_ACTION_CONFIRM => {}
-            MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER => {
+            ACTION_CANCEL | ACTION_CONFIRM => {}
+            ACTION_TOUCH_RIPPLE_SINGLE_PLAYER => {
                 *launch_mode = TouchLaunchMode::SinglePlayer;
                 overlay_commands.write(UiOverlayCommand::ShowToast(UiToast::new_key(
                     &i18n,
@@ -247,7 +241,7 @@ pub(super) fn handle_game_list_touch_buttons(
                 game_route_commands
                     .write(GameRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
-            MODAL_ACTION_TOUCH_RIPPLE_NETWORKED => {
+            ACTION_TOUCH_RIPPLE_NETWORKED => {
                 *launch_mode = TouchLaunchMode::Auto;
                 overlay_commands.write(UiOverlayCommand::ShowToast(UiToast::new_key(
                     &i18n,
@@ -293,19 +287,19 @@ fn touch_ripple_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
         actions: vec![
             UiModalActionSpec {
                 label: cancel.text,
-                action: MODAL_ACTION_CANCEL,
+                action: ACTION_CANCEL,
                 style: UiModalActionStyle::Secondary,
                 i18n_text: Some(cancel.i18n_text),
             },
             UiModalActionSpec {
                 label: networked.text,
-                action: MODAL_ACTION_TOUCH_RIPPLE_NETWORKED,
+                action: ACTION_TOUCH_RIPPLE_NETWORKED,
                 style: UiModalActionStyle::Secondary,
                 i18n_text: Some(networked.i18n_text),
             },
             UiModalActionSpec {
                 label: single_player.text,
-                action: MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER,
+                action: ACTION_TOUCH_RIPPLE_SINGLE_PLAYER,
                 style: UiModalActionStyle::Primary,
                 i18n_text: Some(single_player.i18n_text),
             },

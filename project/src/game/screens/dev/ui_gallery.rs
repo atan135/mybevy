@@ -36,10 +36,10 @@ use crate::framework::ui::{
     },
 };
 use crate::game::{
-    navigation::{AppUiMode, secondary_route_button_key},
+    navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{
-        MODAL_ACTION_CANCEL, MODAL_ACTION_CONFIRM, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
-        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY_PAGE,
+        ACTION_CANCEL, ACTION_CONFIRM, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
+        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY,
     },
 };
 
@@ -158,11 +158,7 @@ pub(super) fn setup_ui_gallery(
     commands
         .spawn((
             DespawnOnExit(AppUiMode::UiGallery),
-            UiPanelRoot {
-                id: PANEL_UI_GALLERY_PAGE,
-                kind: UiPanelKind::Page,
-                owner: Some(OWNER_UI_GALLERY),
-            },
+            game_panel_root(PANEL_UI_GALLERY, UiPanelKind::Page, OWNER_UI_GALLERY),
             UiLayerRoot {
                 layer: UiLayer::Page,
             },
@@ -1497,13 +1493,13 @@ fn gallery_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
         actions: vec![
             UiModalActionSpec {
                 label: cancel.text,
-                action: MODAL_ACTION_CANCEL,
+                action: ACTION_CANCEL,
                 style: UiModalActionStyle::Secondary,
                 i18n_text: Some(cancel.i18n_text),
             },
             UiModalActionSpec {
                 label: confirm.text,
-                action: MODAL_ACTION_CONFIRM,
+                action: ACTION_CONFIRM,
                 style: UiModalActionStyle::Primary,
                 i18n_text: Some(confirm.i18n_text),
             },

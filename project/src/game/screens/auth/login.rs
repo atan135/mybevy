@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::framework::ui::{
     core::{
-        UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiPanelRoot, UiViewport,
+        UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport,
         binding::{UiBindingValues, UiBoundText},
     },
     i18n::UiI18n,
@@ -16,8 +16,8 @@ use crate::framework::ui::{
     widgets::{screen_label, screen_title_key},
 };
 use crate::game::{
-    navigation::{AppUiMode, primary_route_button_key},
-    ui_ids::{OWNER_LOGIN, PANEL_LOGIN_PAGE},
+    navigation::{AppUiMode, game_panel_root, primary_route_button_key},
+    ui_ids::{OWNER_LOGIN, PANEL_LOGIN},
 };
 
 const LOGIN_SUBTITLE_BINDING_PATH: &str = "auth.login.subtitle";
@@ -43,11 +43,7 @@ pub(super) fn setup_login_screen(
 
     commands.spawn((
         DespawnOnExit(AppUiMode::Login),
-        UiPanelRoot {
-            id: PANEL_LOGIN_PAGE,
-            kind: UiPanelKind::Page,
-            owner: Some(OWNER_LOGIN),
-        },
+        game_panel_root(PANEL_LOGIN, UiPanelKind::Page, OWNER_LOGIN),
         UiLayerRoot {
             layer: UiLayer::Page,
         },

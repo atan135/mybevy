@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::framework::ui::{
-    core::UiMetrics,
+    core::{UiMetrics, UiOwnerId, UiPanelId, UiPanelKind, UiPanelRoot},
     i18n::UiI18n,
     style::{UiFontAssets, theme::UiTheme},
     widgets::{
@@ -10,6 +10,18 @@ use crate::framework::ui::{
     },
 };
 use crate::game::navigation::{AppUiMode, RouteButton};
+
+pub(in crate::game) fn game_panel_root(
+    id: UiPanelId,
+    kind: UiPanelKind,
+    owner: UiOwnerId,
+) -> UiPanelRoot {
+    UiPanelRoot {
+        id,
+        kind,
+        owner: Some(owner),
+    }
+}
 
 #[allow(dead_code)]
 pub(in crate::game) fn primary_route_button(
