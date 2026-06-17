@@ -189,6 +189,7 @@ mybevy/
 |-- docs/
 |   |-- bevy-getting-started.md
 |   |-- assets-workflow.md
+|   |-- scene/
 |   `-- ui/
 `-- project/
     |-- assets/
@@ -210,6 +211,7 @@ mybevy/
     |       |-- features/
     |       |-- myserver/
     |       |-- navigation/
+    |       |-- scenes/
     |       |-- screens/
     |       `-- ui_ids.rs
     `-- Cargo.toml
@@ -226,6 +228,7 @@ mybevy/
 - `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
 - `project/src/game/myserver/`：当前游戏的 MyServer 登录、房间和协议适配模块
 - `project/src/game/navigation/`：主流程 `AppUiMode` 和路由按钮数据
+- `project/src/game/scenes/`：具体游戏场景 ID、场景注册适配和场景专属组合逻辑
 - `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体业务页面
 - `project/src/framework/ui/core/`：UI 框架入口、Panel Manager、层级、输入拦截
 - `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 等顶层 UI 实现
@@ -233,6 +236,7 @@ mybevy/
 - `project/src/framework/ui/widgets/`：按钮、文本等通用控件
 - `project/assets/`：贴图、音频、字体、场景文件
 - `docs/assets-workflow.md`：项目资源使用方式，覆盖开发期、APK 包内和后续下载资源
+- `docs/scene/`：场景框架相关文档，当前总文档规划场景生命周期、资源、切换、流式加载、相机和联机同步
 - `docs/ui/`：UI 框架实现机制、组件使用、响应式布局、调试验收和限制说明
 
 ## 9. 第一阶段之后，尽快改成插件化
@@ -395,6 +399,7 @@ cargo run -- --window-size 1280x2772 --window-scale 0.5
 - Bevy Setup: `https://bevy.org/learn/quick-start/getting-started/setup/`
 - Bevy 官方 examples: `https://github.com/bevyengine/bevy/tree/latest/examples`
 - 本仓库资源使用方式：`docs/assets-workflow.md`
+- 本仓库场景框架设计：`docs/scene/README.md`
 
 ## 16. 本项目如何打包成 Windows 和 Android App
 

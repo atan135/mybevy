@@ -19,6 +19,7 @@
 - `docs/`：项目文档
 - `docs/bevy-getting-started.md`：当前 Bevy 入门说明
 - `docs/assets-workflow.md`：项目资源使用方式，覆盖首包、APK 包内和后续下载资源
+- `docs/scene/`：场景框架相关文档，当前总文档规划场景生命周期、资源、切换、流式加载、相机和联机同步
 - `docs/ui/`：UI 框架相关文档，描述整体架构、输入实现、组件使用、布局、主题和限制，不记录开发期任务流程
 - `scripts/`：仓库级开发辅助脚本
 - `project/`：Rust/Bevy 工程根目录
@@ -30,6 +31,7 @@
 - `project/src/game/authority/`：本地联机/远端联机的控制机会话接口和轻量 authority 协议
 - `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体页面
 - `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
+- `project/src/game/scenes/`：具体游戏场景 ID、场景注册适配和场景专属组合逻辑
 - `project/src/game/navigation/`：游戏层页面模式、路由命令和路由按钮适配
 - `project/src/game/myserver/`：当前游戏的 MyServer 登录、房间和协议适配模块
 - `project/assets/`：贴图、音频、字体和其他资源
@@ -42,7 +44,7 @@
 
 - 所有 Rust 和 Bevy 相关命令默认在 `project/` 目录执行
 - 新增游戏功能时，优先把逻辑放进 `project/src/` 下的模块，而不是持续堆在 `main.rs`
-- UI 页面结构放在 `project/src/game/screens/`，具体玩法放在 `project/src/game/features/`，UI 框架能力放在 `project/src/framework/ui/`
+- UI 页面结构放在 `project/src/game/screens/`，具体玩法放在 `project/src/game/features/`，具体游戏场景注册和适配放在 `project/src/game/scenes/`，UI 框架能力放在 `project/src/framework/ui/`
 - UI 通用控件放在 `project/src/framework/ui/widgets/`，颜色、字号、间距、圆角等可微调参数集中放在 `project/src/framework/ui/style/theme.rs`
 - 新增首包资源文件时，统一放入 `project/assets/`；后续下载资源不要放入 `project/assets/`
 - `project/assets/` 下的图片、字体、音频、二进制模型和源工程类资源通过 Git LFS 提交；RON、JSON、TXT、授权说明等文本资源保持普通 Git 提交
