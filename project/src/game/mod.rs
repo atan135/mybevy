@@ -1,3 +1,4 @@
+mod features;
 mod navigation;
 mod plugin;
 mod screens;

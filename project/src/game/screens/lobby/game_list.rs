@@ -23,8 +23,8 @@ use crate::framework::ui::{
     },
 };
 use crate::game::{
+    features::touch_ripple::TouchLaunchMode,
     navigation::{AppUiMode, GameRouteCommand, secondary_route_button_key},
-    plugin::TouchLaunchMode,
     ui_ids::{
         MODAL_ACTION_CANCEL, MODAL_ACTION_CONFIRM, MODAL_ACTION_TOUCH_RIPPLE_NETWORKED,
         MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY,
