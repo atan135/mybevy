@@ -22,7 +22,13 @@ pub use super::{
     },
     plugin::ScenePlugin,
     registry::{SceneDefinition, SceneKind, SceneRegistrationError, SceneRegistry},
-    root::{SceneLayerRoot, SceneLayerState, SceneOwned, SceneRoot, SceneRuntimeRoot},
+    root::{
+        SCENE_DEFAULT_LAYER_ID, SceneEntityCounts, SceneLayerRoot, SceneLayerState, SceneOwned,
+        SceneRoot, SceneRuntimeRoot, SceneWorldRoots, count_scene_entities,
+        count_scene_entities_for_session, scene_layer_root_bundle, scene_root_bundle,
+        scene_runtime_root_bundle, spawn_scene_default_layer_root, spawn_scene_layer_root,
+        spawn_scene_root, spawn_scene_runtime_root, spawn_scene_world_roots,
+    },
     spawn::{
         SceneAnchor, SceneAnchorManifest, SceneSpawnPoint, SceneSpawnPointManifest,
         transform_from_position_rotation,

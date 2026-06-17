@@ -56,14 +56,14 @@
   - [x] 处理重复命令和非法状态，例如 Idle 时 Exit、Active 时重复 Enter、切换中再次 Switch。
   - [x] 确保失败时进入 `Failed` 并写入 `SceneFailure`，而不是留下半初始化状态。
 
-- [ ] 阶段 4：场景实体组织和清理
-  - [ ] 定义 `SceneRoot` 组件，记录 `scene_id` 和 `session_id`。
-  - [ ] 定义 `SceneLayerRoot` 组件，记录 `layer_id`、加载状态和是否 required。
-  - [ ] 定义 `SceneOwned` 组件，所有随场景销毁的运行时实体都可挂载。
-  - [ ] 定义 `SceneRuntimeRoot` 或等价组件，用于动态实体、临时特效和测试对象的统一父节点。
-  - [ ] 提供创建 root/layer root 的 helper，避免游戏层手写不一致的层级结构。
-  - [ ] 提供按 `session_id` 清理 `SceneOwned` 的系统，并保证子实体递归清理。
-  - [ ] 提供实体计数和残留检测辅助，用于后续 debug 面板和测试。
+- [x] 阶段 4：场景实体组织和清理（开始：2026-06-17 18:49:52 +08:00；结束：2026-06-17 19:03:59 +08:00）
+  - [x] 定义 `SceneRoot` 组件，记录 `scene_id` 和 `session_id`。
+  - [x] 定义 `SceneLayerRoot` 组件，记录 `layer_id`、加载状态和是否 required。
+  - [x] 定义 `SceneOwned` 组件，所有随场景销毁的运行时实体都可挂载。
+  - [x] 定义 `SceneRuntimeRoot` 或等价组件，用于动态实体、临时特效和测试对象的统一父节点。
+  - [x] 提供创建 root/layer root 的 helper，避免游戏层手写不一致的层级结构。
+  - [x] 提供按 `session_id` 清理 `SceneOwned` 的系统，并保证子实体递归清理。
+  - [x] 提供实体计数和残留检测辅助，用于后续 debug 面板和测试。
 
 - [ ] 阶段 5：场景注册表
   - [ ] 定义 `SceneRegistry` 资源，维护 `SceneId` 到场景定义或 manifest 路径的映射。

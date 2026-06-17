@@ -4,6 +4,7 @@ use super::{
     event::SceneFailure,
     id::{SceneId, SceneSessionId},
     lifecycle::SceneLifecycleState,
+    root::SceneEntityCounts,
 };
 
 #[derive(Clone, Debug, Resource, PartialEq)]
@@ -51,7 +52,17 @@ pub struct SceneDebugSnapshot {
     pub scene_id: Option<SceneId>,
     pub session_id: Option<SceneSessionId>,
     pub state: SceneLifecycleState,
+    pub entity_counts: SceneEntityCounts,
     pub scene_owned_entities: usize,
     pub layer_count: usize,
     pub last_error: Option<SceneFailure>,
+}
+
+impl SceneDebugSnapshot {
+    pub fn with_entity_counts(mut self, entity_counts: SceneEntityCounts) -> Self {
+        self.scene_owned_entities = entity_counts.total_scene_owned;
+        self.layer_count = entity_counts.layer_roots;
+        self.entity_counts = entity_counts;
+        self
+    }
 }

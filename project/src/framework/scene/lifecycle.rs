@@ -12,7 +12,7 @@ use super::{
     },
     id::{SceneId, SceneSessionId, SceneSpawnPointId},
     registry::{SceneDefinition, SceneRegistry},
-    root::{SceneOwned, spawn_scene_world_roots},
+    root::{SceneOwned, SceneRoot, despawn_scene_session_entities, spawn_scene_world_roots},
 };
 
 static NEXT_SCENE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -204,6 +204,7 @@ pub(crate) fn process_scene_lifecycle_commands(
     registry: Res<SceneRegistry>,
     time: Option<Res<Time>>,
     mut runtime: ResMut<SceneRuntime>,
+    scene_roots: Query<(Entity, &SceneRoot)>,
     owned_entities: Query<(Entity, &SceneOwned)>,
     mut events: MessageWriter<SceneEvent>,
 ) {
@@ -232,6 +233,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut commands,
                 &registry,
                 &mut runtime,
+                &scene_roots,
                 &owned_entities,
                 &mut events,
                 request,
@@ -243,6 +245,7 @@ pub(crate) fn process_scene_lifecycle_commands(
             exit_scene(
                 &mut commands,
                 &mut runtime,
+                &scene_roots,
                 &owned_entities,
                 &mut events,
                 &request,
@@ -257,6 +260,7 @@ pub(crate) fn process_scene_lifecycle_commands(
             exit_scene(
                 &mut commands,
                 &mut runtime,
+                &scene_roots,
                 &owned_entities,
                 &mut events,
                 &SceneExitRequest::default(),
@@ -265,6 +269,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut commands,
                 &registry,
                 &mut runtime,
+                &scene_roots,
                 &owned_entities,
                 &mut events,
                 request.enter,
@@ -279,6 +284,7 @@ fn enter_scene(
     commands: &mut Commands,
     registry: &SceneRegistry,
     runtime: &mut SceneRuntime,
+    scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
     request: SceneEnterRequest,
@@ -311,6 +317,7 @@ fn enter_scene(
         exit_scene(
             commands,
             runtime,
+            scene_roots,
             owned_entities,
             events,
             &SceneExitRequest::default(),
@@ -353,6 +360,7 @@ fn enter_scene(
 fn exit_scene(
     commands: &mut Commands,
     runtime: &mut SceneRuntime,
+    scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
     request: &SceneExitRequest,
@@ -368,7 +376,7 @@ fn exit_scene(
     }));
 
     runtime.state = SceneLifecycleState::Unloading;
-    despawn_session_owned(commands, owned_entities, &session.session_id);
+    despawn_scene_session_entities(commands, &session.session_id, scene_roots, owned_entities);
     clear_runtime_session(runtime, &session.session_id);
 
     events.write(SceneEvent::Exited(SceneExited {
@@ -420,18 +428,6 @@ fn clear_runtime_session(runtime: &mut SceneRuntime, session_id: &SceneSessionId
         .is_some_and(|session| &session.session_id == session_id)
     {
         runtime.pending = None;
-    }
-}
-
-fn despawn_session_owned(
-    commands: &mut Commands,
-    owned_entities: &Query<(Entity, &SceneOwned)>,
-    session_id: &SceneSessionId,
-) {
-    for (entity, owned) in owned_entities.iter() {
-        if &owned.session_id == session_id {
-            commands.entity(entity).try_despawn();
-        }
     }
 }
 
