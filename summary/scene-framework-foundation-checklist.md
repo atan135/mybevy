@@ -92,14 +92,14 @@
   - [x] optional 资源失败不阻断进入，但要写入 warning 或事件。
   - [x] required 资源失败时发送 `SceneEvent::Failed`，并根据策略保持旧场景或进入 fallback。
 
-- [ ] 阶段 8：Loading 与 UI 框架接口
-  - [ ] 在场景框架内定义 UI 联动边界，避免场景系统直接依赖具体游戏页面。
-  - [ ] 使用现有 `UiPanelCommand` 和 `UiLoading` 打开/关闭全局 Loading，或提供可选 adapter 系统。
-  - [ ] 将 `SceneLoadProgress` 转换为 Loading 标题、说明和进度。
-  - [ ] `SceneEvent::Entered` 后关闭 Loading。
-  - [ ] `SceneEvent::Failed` 后关闭 Loading，并只发送通用错误事件，具体 Toast/Confirm 文案留给 UI/i18n。
-  - [ ] 确认全屏 Loading 打开时复用 UI 输入阻断，不新增独立输入遮罩。
-  - [ ] 支持 Loading 策略：`None`、`Spinner`、`Progress`、`Blocking`、`NonBlocking` 的最小数据表达。
+- [x] 阶段 8：Loading 与 UI 框架接口（开始：2026-06-17 19:56:10 +08:00；结束：2026-06-17 20:11:19 +08:00）
+  - [x] 在场景框架内定义 UI 联动边界，避免场景系统直接依赖具体游戏页面。
+  - [x] 使用现有 `UiPanelCommand` 和 `UiLoading` 打开/关闭全局 Loading，或提供可选 adapter 系统。
+  - [x] 将 `SceneLoadProgress` 转换为 Loading 标题、说明和进度。
+  - [x] `SceneEvent::Entered` 后关闭 Loading。
+  - [x] `SceneEvent::Failed` 后关闭 Loading，并只发送通用错误事件，具体 Toast/Confirm 文案留给 UI/i18n。
+  - [x] 确认全屏 Loading 打开时复用 UI 输入阻断，不新增独立输入遮罩。
+  - [x] 支持 Loading 策略：`None`、`Spinner`、`Progress`、`Blocking`、`NonBlocking` 的最小数据表达。
 
 - [ ] 阶段 9：相机基础能力
   - [ ] 定义 `SceneCameraMode`，先支持 `UiOnly2d`、`Gameplay2d`、`Gameplay3d`、`Fixed3d`、`DebugFree`。

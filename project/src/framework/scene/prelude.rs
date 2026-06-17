@@ -16,7 +16,10 @@ pub use super::{
         validate_scene_id,
     },
     lifecycle::{SceneAuthorityMode, SceneLifecycleState, SceneRuntime, SceneSessionInfo},
-    loading::{SceneAssetLoadFailure, SceneLoadPhase, SceneLoadProgress, SceneLoadingPolicy},
+    loading::{
+        SceneAssetLoadFailure, SceneLoadPhase, SceneLoadProgress, SceneLoadingPolicy,
+        SceneLoadingUiConfig, SceneLoadingUiSession, SceneLoadingUiState,
+    },
     manifest::{
         SCENE_MANIFEST_VERSION, SceneAssetKind, SceneAssetRef, SceneCameraRef, SceneLayerManifest,
         SceneManifest, SceneManifestEntry, SceneManifestError, SceneManifestLoadError,

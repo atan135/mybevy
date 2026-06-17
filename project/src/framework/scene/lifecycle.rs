@@ -11,7 +11,10 @@ use super::{
         SceneInstantiating, SceneResolving,
     },
     id::{SceneId, SceneSessionId, SceneSpawnPointId},
-    loading::{SceneAssetLoadQueue, SceneAssetLoadSession, SceneLoadPhase, SceneLoadProgress},
+    loading::{
+        SceneAssetLoadQueue, SceneAssetLoadSession, SceneLoadPhase, SceneLoadProgress,
+        SceneLoadingPolicy,
+    },
     manifest::{SceneManifest, SceneManifestLoadError},
     registry::{SceneDefinition, SceneRegistry},
     root::{SceneOwned, SceneRoot, despawn_scene_session_entities, spawn_scene_world_roots},
@@ -347,6 +350,13 @@ fn enter_scene(
     }));
 
     let Some(manifest_path) = definition.manifest_path.clone() else {
+        let progress = resolving_progress(
+            &session,
+            SceneLoadPhase::LoadingAssets,
+            definition.loading_policy,
+        );
+        events.write(SceneEvent::LoadProgress(progress));
+
         finish_scene_enter(
             commands,
             runtime,
@@ -386,13 +396,16 @@ fn enter_scene(
             }
 
             runtime.state = SceneLifecycleState::LoadingAssets;
-            let progress = resolving_progress(&session, SceneLoadPhase::LoadingAssets);
+            let loading_policy = manifest_loading_policy(&definition, &manifest);
+            let progress =
+                resolving_progress(&session, SceneLoadPhase::LoadingAssets, loading_policy);
             events.write(SceneEvent::LoadProgress(progress));
 
             load_queue.start(SceneAssetLoadSession::new(
                 session.scene_id.clone(),
                 session.session_id.clone(),
                 session.content_version.clone(),
+                loading_policy,
                 manifest,
                 definition.has_world_root,
                 asset_server,
@@ -635,6 +648,7 @@ pub(crate) fn poll_scene_asset_loads(
     let mut complete_progress =
         SceneLoadProgress::new(session_info.scene_id.clone(), SceneLoadPhase::Instantiating);
     complete_progress.session_id = Some(session_info.session_id.clone());
+    complete_progress.loading_policy = session_load.loading_policy;
     complete_progress.required_total = progress.required_total;
     complete_progress.required_loaded = progress.required_loaded;
     complete_progress.optional_total = progress.optional_total;
@@ -655,9 +669,14 @@ pub(crate) fn poll_scene_asset_loads(
     );
 }
 
-fn resolving_progress(session: &SceneSessionInfo, phase: SceneLoadPhase) -> SceneLoadProgress {
+fn resolving_progress(
+    session: &SceneSessionInfo,
+    phase: SceneLoadPhase,
+    loading_policy: SceneLoadingPolicy,
+) -> SceneLoadProgress {
     let mut progress = SceneLoadProgress::new(session.scene_id.clone(), phase);
     progress.session_id = Some(session.session_id.clone());
+    progress.loading_policy = loading_policy;
     progress.message_key = Some(
         match phase {
             SceneLoadPhase::Resolving => "scene.loading.resolving",
@@ -670,6 +689,17 @@ fn resolving_progress(session: &SceneSessionInfo, phase: SceneLoadPhase) -> Scen
         .to_string(),
     );
     progress
+}
+
+fn manifest_loading_policy(
+    definition: &SceneDefinition,
+    manifest: &SceneManifest,
+) -> SceneLoadingPolicy {
+    if manifest.entry.loading_policy != SceneLoadingPolicy::default() {
+        manifest.entry.loading_policy
+    } else {
+        definition.loading_policy
+    }
 }
 
 fn manifest_failure_from_error(
