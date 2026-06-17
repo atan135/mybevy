@@ -1,9 +1,23 @@
 //! Shared scene framework boundary.
 //!
-//! This module is reserved for reusable scene capabilities:
-//! scene lifecycle, scene resource loading, common camera setup, and
-//! generic entity organization helpers.
-//!
-//! Concrete gameplay scenes, level content, feature state, and screen-specific
-//! UI stay in the game layer, usually in `game/features` or `game/screens`.
-//! Code in this module must not depend on the game layer.
+//! This module contains reusable scene capabilities only: scene identity,
+//! commands, events, registration metadata, roots, loading state, camera data,
+//! spawn/anchor data, triggers, and diagnostics. Concrete gameplay scenes,
+//! level content, feature state, and screen-specific UI stay in the game layer.
+
+mod camera;
+mod command;
+mod debug;
+mod event;
+mod id;
+mod lifecycle;
+mod loading;
+mod manifest;
+mod plugin;
+pub mod prelude;
+mod registry;
+mod root;
+mod spawn;
+mod trigger;
+
+pub use prelude::*;
