@@ -109,13 +109,17 @@ pub enum SceneLayerState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SceneWorldRoots {
     pub root: Entity,
-    pub default_layer_root: Entity,
+    pub default_layer_root: Option<Entity>,
     pub runtime_root: Entity,
 }
 
 impl SceneWorldRoots {
-    pub fn entities(self) -> [Entity; 3] {
-        [self.root, self.default_layer_root, self.runtime_root]
+    pub fn entities(self) -> Vec<Entity> {
+        let mut entities = vec![self.root, self.runtime_root];
+        if let Some(default_layer_root) = self.default_layer_root {
+            entities.push(default_layer_root);
+        }
+        entities
     }
 }
 
@@ -125,6 +129,27 @@ pub struct SceneEntityCounts {
     pub scene_roots: usize,
     pub layer_roots: usize,
     pub runtime_roots: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneLayerInfo {
+    pub entity: Entity,
+    pub session_id: SceneSessionId,
+    pub layer_id: SceneLayerId,
+    pub state: SceneLayerState,
+    pub required: bool,
+}
+
+impl SceneLayerInfo {
+    pub fn from_entity_root(entity: Entity, root: &SceneLayerRoot) -> Self {
+        Self {
+            entity,
+            session_id: root.session_id.clone(),
+            layer_id: root.layer_id.clone(),
+            state: root.state,
+            required: root.required,
+        }
+    }
 }
 
 impl SceneEntityCounts {
@@ -256,9 +281,66 @@ pub fn spawn_scene_world_roots(
 
     SceneWorldRoots {
         root,
+        default_layer_root: Some(default_layer_root),
+        runtime_root,
+    }
+}
+
+pub fn spawn_scene_world_roots_with_layers(
+    commands: &mut Commands,
+    scene_id: &SceneId,
+    session_id: &SceneSessionId,
+    layers: impl IntoIterator<Item = (SceneLayerId, bool, SceneLayerState)>,
+) -> SceneWorldRoots {
+    let root = spawn_scene_root(commands, scene_id, session_id);
+    let mut default_layer_root = None;
+
+    for (layer_id, required, state) in layers {
+        let is_default_layer = layer_id.as_str() == SCENE_DEFAULT_LAYER_ID;
+        let layer_root =
+            spawn_scene_layer_root(commands, root, session_id, layer_id, state, required);
+        if is_default_layer {
+            default_layer_root = Some(layer_root);
+        }
+    }
+
+    let runtime_root = spawn_scene_runtime_root(commands, root, session_id);
+
+    SceneWorldRoots {
+        root,
         default_layer_root,
         runtime_root,
     }
+}
+
+pub fn scene_layer_info_for_session(
+    session_id: &SceneSessionId,
+    layer_id: &SceneLayerId,
+    layer_roots: &Query<(Entity, &SceneLayerRoot)>,
+) -> Option<SceneLayerInfo> {
+    layer_roots
+        .iter()
+        .find(|(_, root)| root.is_session(session_id) && &root.layer_id == layer_id)
+        .map(|(entity, root)| SceneLayerInfo::from_entity_root(entity, root))
+}
+
+pub fn scene_layer_state_for_session(
+    session_id: &SceneSessionId,
+    layer_id: &SceneLayerId,
+    layer_roots: &Query<(Entity, &SceneLayerRoot)>,
+) -> Option<SceneLayerState> {
+    scene_layer_info_for_session(session_id, layer_id, layer_roots).map(|layer| layer.state)
+}
+
+pub fn scene_layers_for_session(
+    session_id: &SceneSessionId,
+    layer_roots: &Query<(Entity, &SceneLayerRoot)>,
+) -> Vec<SceneLayerInfo> {
+    layer_roots
+        .iter()
+        .filter(|(_, root)| root.is_session(session_id))
+        .map(|(entity, root)| SceneLayerInfo::from_entity_root(entity, root))
+        .collect()
 }
 
 pub(crate) fn despawn_scene_session_entities(

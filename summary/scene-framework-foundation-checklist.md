@@ -146,14 +146,14 @@
   - [x] 提供命令式 reload current 能力，用于开发期快速重载 manifest。
   - [x] 确保 debug 能力默认关闭，不影响正式运行性能。
 
-- [ ] 阶段 14：分层加载预留
-  - [ ] 定义 layer 状态：`Registered`、`Loading`、`Loaded`、`Active`、`Unloading`、`Failed`。
-  - [ ] 实现 `SetLayerEnabled` 命令的数据结构，初期可以只更新状态和发送事件。
-  - [ ] 支持 required layer 和 optional layer 的不同失败策略。
-  - [ ] 为每个 layer 建立独立 layer root，便于后续独立卸载。
-  - [ ] 提供 layer 查询 API：按 ID 查状态、列出当前场景 layer。
-  - [ ] 预留 layer asset handles 的引用管理。
-  - [ ] 暂不实现复杂 additive glTF、碰撞层、导航层的实际业务处理。
+- [x] 阶段 14：分层加载预留（开始：2026-06-17 21:20:11 +08:00；结束：2026-06-17 21:30:37 +08:00）
+  - [x] 定义 layer 状态：`Registered`、`Loading`、`Loaded`、`Active`、`Unloading`、`Failed`。
+  - [x] 实现 `SetLayerEnabled` 命令的数据结构，初期可以只更新状态和发送事件。
+  - [x] 支持 required layer 和 optional layer 的不同失败策略。
+  - [x] 为每个 layer 建立独立 layer root，便于后续独立卸载。
+  - [x] 提供 layer 查询 API：按 ID 查状态、列出当前场景 layer。
+  - [x] 预留 layer asset handles 的引用管理。
+  - [x] 暂不实现复杂 additive glTF、碰撞层、导航层的实际业务处理。
 
 - [ ] 阶段 15：Streaming、Partition 和 Chunk 预留
   - [ ] 定义 `SceneZoneId`、`SceneRegionId`、`SceneChunkId` 的基础类型和 manifest 数据结构。

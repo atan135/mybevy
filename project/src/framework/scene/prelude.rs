@@ -39,11 +39,13 @@ pub use super::{
         SceneContentSource, SceneDefinition, SceneKind, SceneRegistrationError, SceneRegistry,
     },
     root::{
-        SCENE_DEFAULT_LAYER_ID, SceneEntityCounts, SceneLayerRoot, SceneLayerState, SceneOwned,
-        SceneRoot, SceneRuntimeRoot, SceneWorldRoots, count_scene_entities,
-        count_scene_entities_for_session, scene_layer_root_bundle, scene_root_bundle,
+        SCENE_DEFAULT_LAYER_ID, SceneEntityCounts, SceneLayerInfo, SceneLayerRoot, SceneLayerState,
+        SceneOwned, SceneRoot, SceneRuntimeRoot, SceneWorldRoots, count_scene_entities,
+        count_scene_entities_for_session, scene_layer_info_for_session, scene_layer_root_bundle,
+        scene_layer_state_for_session, scene_layers_for_session, scene_root_bundle,
         scene_runtime_root_bundle, spawn_scene_default_layer_root, spawn_scene_layer_root,
         spawn_scene_root, spawn_scene_runtime_root, spawn_scene_world_roots,
+        spawn_scene_world_roots_with_layers,
     },
     spawn::{
         SceneAnchor, SceneAnchorManifest, SceneSpawnDebugItem, SceneSpawnDebugKind,

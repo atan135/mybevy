@@ -1,5 +1,6 @@
 use bevy::{asset::LoadedUntypedAsset, ecs::message::Messages, prelude::*};
 use serde::{Deserialize, Deserializer};
+use std::collections::HashMap;
 
 use crate::framework::ui::{
     core::{UI_PANEL_GLOBAL_LOADING, UiPanelCommand, UiPanelRequest},
@@ -11,8 +12,8 @@ use super::{
     event::SceneEvent,
     id::{SceneAssetId, SceneId, SceneLayerId, SceneSessionId},
     manifest::{
-        SceneAssetRef, SceneManifest, asset_path_with_label, normalize_manifest_token,
-        validate_asset_relative_path,
+        SceneAssetRef, SceneLayerManifest, SceneManifest, asset_path_with_label,
+        normalize_manifest_token, validate_asset_relative_path,
     },
     spawn::SceneSpawnSessionIndex,
     trigger::SceneTriggerManifest,
@@ -407,6 +408,9 @@ pub(crate) struct SceneAssetLoadSession {
     pub(crate) camera_config: Option<SceneCameraConfig>,
     pub(crate) spawn_index: SceneSpawnSessionIndex,
     pub(crate) triggers: Vec<SceneTriggerManifest>,
+    pub(crate) layers: Vec<SceneLayerLoadInfo>,
+    #[allow(dead_code)]
+    pub(crate) layer_asset_handles: SceneLayerAssetHandles,
     pub(crate) assets: Vec<SceneTrackedAsset>,
     required_gate_opened: bool,
     last_progress: Option<SceneLoadProgress>,
@@ -423,7 +427,9 @@ impl SceneAssetLoadSession {
         camera_config: Option<SceneCameraConfig>,
         asset_server: &AssetServer,
     ) -> Self {
+        let layers = scene_layers_from_manifest(&manifest);
         let assets = scene_assets_from_manifest(&manifest, asset_server);
+        let layer_asset_handles = SceneLayerAssetHandles::from_assets(&assets);
         let spawn_index = SceneSpawnSessionIndex::from_manifest_parts(
             scene_id.clone(),
             session_id.clone(),
@@ -442,6 +448,8 @@ impl SceneAssetLoadSession {
             camera_config,
             spawn_index,
             triggers,
+            layers,
+            layer_asset_handles,
             assets,
             required_gate_opened: false,
             last_progress: None,
@@ -534,6 +542,98 @@ impl SceneAssetLoadSession {
     pub(crate) fn mark_required_gate_opened(&mut self) {
         self.required_gate_opened = true;
     }
+
+    pub(crate) fn layer_root_specs(
+        &self,
+        progress: &SceneLoadProgress,
+    ) -> Vec<(SceneLayerId, bool, super::root::SceneLayerState)> {
+        self.layers
+            .iter()
+            .map(|layer| {
+                let state = layer_state_from_progress(layer, progress);
+                (layer.layer_id.clone(), layer.required, state)
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SceneLayerLoadInfo {
+    pub(crate) layer_id: SceneLayerId,
+    pub(crate) required: bool,
+    pub(crate) asset_count: usize,
+    pub(crate) state: SceneLayerLoadState,
+}
+
+impl SceneLayerLoadInfo {
+    fn from_manifest(layer: &SceneLayerManifest) -> Self {
+        Self {
+            layer_id: layer.id.clone(),
+            required: layer.required,
+            asset_count: layer.assets.len(),
+            state: SceneLayerLoadState::Registered,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum SceneLayerLoadState {
+    #[default]
+    Registered,
+    Loading,
+    Loaded,
+    Active,
+    Unloading,
+    Failed,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SceneLayerAssetHandles {
+    handles_by_layer: HashMap<SceneLayerId, Vec<SceneLayerAssetHandle>>,
+}
+
+#[allow(dead_code)]
+impl SceneLayerAssetHandles {
+    fn from_assets(assets: &[SceneTrackedAsset]) -> Self {
+        let mut handles_by_layer: HashMap<SceneLayerId, Vec<SceneLayerAssetHandle>> =
+            HashMap::new();
+
+        for asset in assets {
+            handles_by_layer
+                .entry(asset.layer_id.clone())
+                .or_default()
+                .push(SceneLayerAssetHandle {
+                    asset_id: asset.asset_id.clone(),
+                    path: asset.path.clone(),
+                    required: asset.required,
+                    handle: asset.handle.clone(),
+                });
+        }
+
+        Self { handles_by_layer }
+    }
+
+    pub(crate) fn handles_for_layer(
+        &self,
+        layer_id: &SceneLayerId,
+    ) -> Option<&[SceneLayerAssetHandle]> {
+        self.handles_by_layer.get(layer_id).map(Vec::as_slice)
+    }
+
+    pub(crate) fn layer_count(&self) -> usize {
+        self.handles_by_layer.len()
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct SceneLayerAssetHandle {
+    pub(crate) asset_id: SceneAssetId,
+    pub(crate) path: String,
+    pub(crate) required: bool,
+    pub(crate) handle: Option<Handle<LoadedUntypedAsset>>,
 }
 
 #[derive(Clone, Debug)]
@@ -610,4 +710,98 @@ fn scene_assets_from_manifest(
             })
         })
         .collect()
+}
+
+fn scene_layers_from_manifest(manifest: &SceneManifest) -> Vec<SceneLayerLoadInfo> {
+    manifest
+        .layers
+        .iter()
+        .map(SceneLayerLoadInfo::from_manifest)
+        .collect()
+}
+
+fn layer_state_from_progress(
+    layer: &SceneLayerLoadInfo,
+    progress: &SceneLoadProgress,
+) -> super::root::SceneLayerState {
+    if progress
+        .failed
+        .iter()
+        .any(|failure| failure.layer_id.as_ref() == Some(&layer.layer_id))
+    {
+        return super::root::SceneLayerState::Failed;
+    }
+
+    let loaded_assets = progress.required_loaded + progress.optional_loaded;
+    if layer.asset_count == 0 {
+        super::root::SceneLayerState::Active
+    } else if loaded_assets == progress.required_total + progress.optional_total {
+        super::root::SceneLayerState::Active
+    } else if layer.required {
+        super::root::SceneLayerState::Active
+    } else {
+        super::root::SceneLayerState::Loading
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framework::scene::manifest::{SceneAssetKind, SceneAssetRef, SceneLayerManifest};
+
+    #[test]
+    fn layer_load_info_preserves_manifest_metadata() {
+        let layer = SceneLayerManifest::optional("fx").with_asset(SceneAssetRef::new(
+            "spark",
+            SceneAssetKind::Image,
+            "fx/spark.png",
+        ));
+
+        let info = SceneLayerLoadInfo::from_manifest(&layer);
+
+        assert_eq!(info.layer_id, SceneLayerId::from("fx"));
+        assert!(!info.required);
+        assert_eq!(info.asset_count, 1);
+        assert_eq!(info.state, SceneLayerLoadState::Registered);
+    }
+
+    #[test]
+    fn layer_asset_handles_group_assets_by_layer() {
+        let assets = vec![
+            SceneTrackedAsset {
+                asset_id: SceneAssetId::from("base_mesh"),
+                layer_id: SceneLayerId::from("base"),
+                path: "scenes/arena/base.glb#Scene0".to_string(),
+                required: true,
+                handle: None,
+                startup_error: None,
+            },
+            SceneTrackedAsset {
+                asset_id: SceneAssetId::from("fx_texture"),
+                layer_id: SceneLayerId::from("fx"),
+                path: "scenes/arena/fx.png".to_string(),
+                required: false,
+                handle: None,
+                startup_error: None,
+            },
+        ];
+
+        let handles = SceneLayerAssetHandles::from_assets(&assets);
+
+        assert_eq!(handles.layer_count(), 2);
+        assert_eq!(
+            handles
+                .handles_for_layer(&SceneLayerId::from("base"))
+                .unwrap()[0]
+                .asset_id,
+            SceneAssetId::from("base_mesh")
+        );
+        assert_eq!(
+            handles
+                .handles_for_layer(&SceneLayerId::from("fx"))
+                .unwrap()[0]
+                .path,
+            "scenes/arena/fx.png"
+        );
+    }
 }

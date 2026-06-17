@@ -10,20 +10,24 @@ use super::{
         ensure_scene_camera,
     },
     command::{
-        SceneCommand, SceneEnterRequest, SceneExitRequest, SceneReloadRequest, SceneSwitchRequest,
+        SceneCommand, SceneEnterRequest, SceneExitRequest, SceneLayerCommand, SceneReloadRequest,
+        SceneSwitchRequest,
     },
     event::{
         SceneEntered, SceneEvent, SceneExitStarted, SceneExited, SceneFailure, SceneFailureKind,
-        SceneInstantiating, SceneResolving,
+        SceneInstantiating, SceneLayerStatusEvent, SceneResolving,
     },
-    id::{SceneId, SceneSessionId, SceneSpawnPointId},
+    id::{SceneId, SceneLayerId, SceneSessionId, SceneSpawnPointId},
     loading::{
         SceneAssetLoadFailure, SceneAssetLoadQueue, SceneAssetLoadSession, SceneLoadPhase,
         SceneLoadProgress, SceneLoadingPolicy,
     },
     manifest::{SceneManifest, SceneManifestLoadError},
     registry::{SceneDefinition, SceneRegistry},
-    root::{SceneOwned, SceneRoot, despawn_scene_session_entities, spawn_scene_world_roots},
+    root::{
+        SceneLayerRoot, SceneLayerState, SceneOwned, SceneRoot, despawn_scene_session_entities,
+        spawn_scene_world_roots, spawn_scene_world_roots_with_layers,
+    },
     spawn::{SceneSpawnLookupError, SceneSpawnRegistry, SceneSpawnSessionIndex},
     trigger::{SceneTriggerManifest, spawn_scene_triggers_from_manifest},
 };
@@ -223,23 +227,37 @@ pub(crate) fn process_scene_lifecycle_commands(
     mut spawn_registry: ResMut<SceneSpawnRegistry>,
     scene_cameras: Query<&SceneCameraRig>,
     scene_roots: Query<(Entity, &SceneRoot)>,
+    mut layer_roots: Query<&mut SceneLayerRoot>,
     owned_entities: Query<(Entity, &SceneOwned)>,
     mut events: MessageWriter<SceneEvent>,
 ) {
-    let request = command_reader
-        .read()
-        .filter_map(|command| match command {
-            SceneCommand::Enter(request) => Some(SceneLifecycleRequest::Enter(request.clone())),
-            SceneCommand::Exit(request) => Some(SceneLifecycleRequest::Exit(request.clone())),
-            SceneCommand::Switch(request) => Some(SceneLifecycleRequest::Switch(request.clone())),
-            SceneCommand::ReloadCurrent(request) => {
-                Some(SceneLifecycleRequest::ReloadCurrent(request.clone()))
+    let mut request = None;
+    let mut layer_commands = Vec::new();
+
+    for command in command_reader.read() {
+        match command {
+            SceneCommand::Enter(enter) => {
+                request = Some(SceneLifecycleRequest::Enter(enter.clone()));
             }
-            SceneCommand::Preload(_)
-            | SceneCommand::Unload(_)
-            | SceneCommand::SetLayerEnabled(_) => None,
-        })
-        .last();
+            SceneCommand::Exit(exit) => {
+                request = Some(SceneLifecycleRequest::Exit(exit.clone()));
+            }
+            SceneCommand::Switch(switch) => {
+                request = Some(SceneLifecycleRequest::Switch(switch.clone()));
+            }
+            SceneCommand::ReloadCurrent(reload) => {
+                request = Some(SceneLifecycleRequest::ReloadCurrent(reload.clone()));
+            }
+            SceneCommand::SetLayerEnabled(layer) => {
+                layer_commands.push(layer.clone());
+            }
+            SceneCommand::Preload(_) | SceneCommand::Unload(_) => {}
+        }
+    }
+
+    for layer_command in layer_commands {
+        apply_layer_enabled_command(&runtime, &mut layer_roots, &mut events, &layer_command);
+    }
 
     let Some(request) = request else {
         return;
@@ -431,6 +449,7 @@ fn enter_scene(
             default_scene_camera_config_for_world(definition.has_world_root),
             SceneSpawnSessionIndex::empty(session.scene_id.clone(), session.session_id.clone()),
             Vec::new(),
+            Vec::new(),
             session,
             scene_cameras,
             entered_at,
@@ -503,6 +522,7 @@ fn finish_scene_enter(
     camera_config: Option<SceneCameraConfig>,
     spawn_index: SceneSpawnSessionIndex,
     triggers: Vec<SceneTriggerManifest>,
+    layer_specs: Vec<(SceneLayerId, bool, SceneLayerState)>,
     mut session: SceneSessionInfo,
     scene_cameras: &Query<&SceneCameraRig>,
     entered_at: Option<Duration>,
@@ -543,7 +563,16 @@ fn finish_scene_enter(
     }
 
     if has_world_root {
-        spawn_scene_world_roots(commands, &session.scene_id, &session.session_id);
+        if layer_specs.is_empty() {
+            spawn_scene_world_roots(commands, &session.scene_id, &session.session_id);
+        } else {
+            spawn_scene_world_roots_with_layers(
+                commands,
+                &session.scene_id,
+                &session.session_id,
+                layer_specs,
+            );
+        }
     }
 
     if let Some(camera_config) = camera_config {
@@ -598,6 +627,45 @@ fn exit_scene(
 
     runtime.state = SceneLifecycleState::Idle;
     true
+}
+
+fn apply_layer_enabled_command(
+    runtime: &SceneRuntime,
+    layer_roots: &mut Query<&mut SceneLayerRoot>,
+    events: &mut MessageWriter<SceneEvent>,
+    command: &SceneLayerCommand,
+) -> bool {
+    let Some(session) = runtime.active.as_ref() else {
+        return false;
+    };
+
+    for mut layer_root in layer_roots.iter_mut() {
+        if !layer_root.is_session(&session.session_id) || layer_root.layer_id != command.layer_id {
+            continue;
+        }
+
+        if command.enabled {
+            layer_root.state = SceneLayerState::Active;
+            events.write(SceneEvent::LayerLoaded(SceneLayerStatusEvent {
+                scene_id: session.scene_id.clone(),
+                session_id: session.session_id.clone(),
+                layer_id: layer_root.layer_id.clone(),
+                state: layer_root.state,
+            }));
+        } else {
+            layer_root.state = SceneLayerState::Loaded;
+            events.write(SceneEvent::LayerUnloaded(SceneLayerStatusEvent {
+                scene_id: session.scene_id.clone(),
+                session_id: session.session_id.clone(),
+                layer_id: layer_root.layer_id.clone(),
+                state: layer_root.state,
+            }));
+        }
+
+        return true;
+    }
+
+    false
 }
 
 fn session_for_exit(
@@ -832,6 +900,7 @@ pub(crate) fn poll_scene_asset_loads(
     }
 
     session.mark_required_gate_opened();
+    let layer_specs = session.layer_root_specs(&progress);
     let session_load = session.clone();
     let Some(session_info) = runtime.pending.clone() else {
         load_queue.take_current();
@@ -860,6 +929,7 @@ pub(crate) fn poll_scene_asset_loads(
         session_load.camera_config,
         session_load.spawn_index,
         session_load.triggers,
+        layer_specs,
         session_info,
         &scene_cameras,
         entered_at,
