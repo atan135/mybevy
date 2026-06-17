@@ -12,24 +12,24 @@ use crate::framework::ui::{
     style::{UiFontAssets, UiTheme},
 };
 
-pub(crate) struct UiRouterPlugin;
+pub(crate) struct UiOverlayPlugin;
 
-impl Plugin for UiRouterPlugin {
+impl Plugin for UiOverlayPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<UiRouteCommand>()
+        app.add_message::<UiOverlayCommand>()
             .add_message::<UiModalResult>()
             .configure_sets(
                 Update,
-                UiRouteSystems::Commands.before(UiAnimationSystems::Tick),
+                UiOverlaySystems::Commands.before(UiAnimationSystems::Tick),
             )
             .add_systems(
                 Update,
                 (
-                    handle_ui_route_commands,
+                    handle_ui_overlay_commands,
                     handle_modal_action_buttons,
                     tick_toasts,
                 )
-                    .in_set(UiRouteSystems::Commands)
+                    .in_set(UiOverlaySystems::Commands)
                     .chain(),
             )
             .add_systems(
@@ -46,28 +46,28 @@ impl Plugin for UiRouterPlugin {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
-pub(crate) enum UiRouteSystems {
+pub(crate) enum UiOverlaySystems {
     Commands,
 }
 
 #[derive(Clone, Debug, Message)]
 #[allow(dead_code)]
-pub(crate) enum UiRouteCommand {
+pub(crate) enum UiOverlayCommand {
     ShowToast(UiToast),
 }
 
-fn handle_ui_route_commands(
+fn handle_ui_overlay_commands(
     mut commands: Commands,
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
     viewport: Res<UiViewport>,
     fonts: Res<UiFontAssets>,
-    mut route_commands: MessageReader<UiRouteCommand>,
+    mut overlay_commands: MessageReader<UiOverlayCommand>,
     toast_roots: Query<Entity, With<UiToastRoot>>,
 ) {
-    for command in route_commands.read() {
+    for command in overlay_commands.read() {
         match command {
-            UiRouteCommand::ShowToast(toast) => {
+            UiOverlayCommand::ShowToast(toast) => {
                 close_toasts(&mut commands, &toast_roots);
                 spawn_toast(&mut commands, &theme, &metrics, &viewport, &fonts, toast);
             }

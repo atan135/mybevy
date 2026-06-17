@@ -8,7 +8,7 @@ use crate::framework::ui::{
     },
     debug::UiDebugPlugin,
     i18n::UiI18nPlugin,
-    overlays::UiRouterPlugin,
+    overlays::UiOverlayPlugin,
     style::{UiFontPlugin, UiThemePlugin},
     widgets::UiWidgetsPlugin,
 };
@@ -24,7 +24,7 @@ impl Plugin for UiFrameworkPlugin {
             UiViewportPlugin,
             UiWidgetsPlugin,
             UiLayerPlugin,
-            UiRouterPlugin,
+            UiOverlayPlugin,
             UiPanelPlugin,
             UiInputPlugin,
             UiFocusPlugin,

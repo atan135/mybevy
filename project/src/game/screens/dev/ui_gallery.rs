@@ -9,7 +9,7 @@ use crate::framework::ui::{
     i18n::{UiI18n, UiI18nText},
     overlays::{
         UiConfirmModal, UiI18nTextSpec, UiLoading, UiModalActionSpec, UiModalActionStyle,
-        UiRouteCommand, UiToast,
+        UiOverlayCommand, UiToast,
     },
     style::{
         UiFontAssets, UiTheme,
@@ -988,7 +988,7 @@ pub(super) fn handle_ui_gallery_buttons(
     mut binding_values: ResMut<UiBindingValues>,
     mut binding_preview: ResMut<GalleryBindingPreview>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
-    mut route_commands: MessageWriter<UiRouteCommand>,
+    mut overlay_commands: MessageWriter<UiOverlayCommand>,
     buttons: Query<
         (&Interaction, &GalleryActionButton),
         (
@@ -1006,7 +1006,7 @@ pub(super) fn handle_ui_gallery_buttons(
 
         match action {
             GalleryActionButton::Toast => {
-                route_commands.write(UiRouteCommand::ShowToast(UiToast::new_key(
+                overlay_commands.write(UiOverlayCommand::ShowToast(UiToast::new_key(
                     &i18n,
                     "ui_gallery.toast.preview",
                     "Toast from UI Gallery",

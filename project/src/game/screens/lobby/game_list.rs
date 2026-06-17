@@ -8,7 +8,7 @@ use crate::framework::ui::{
     i18n::UiI18n,
     overlays::{
         UiConfirmModal, UiI18nTextSpec, UiModalActionSpec, UiModalActionStyle, UiModalResult,
-        UiRouteCommand, UiToast,
+        UiOverlayCommand, UiToast,
     },
     style::{
         UiFontAssets, UiTheme,
@@ -208,7 +208,7 @@ pub(super) fn handle_game_list_touch_buttons(
     mut launch_mode: ResMut<TouchLaunchMode>,
     i18n: Res<UiI18n>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
-    mut route_commands: MessageWriter<UiRouteCommand>,
+    mut overlay_commands: MessageWriter<UiOverlayCommand>,
     mut game_route_commands: MessageWriter<GameRouteCommand>,
     mut modal_results: MessageReader<UiModalResult>,
     play_buttons: Query<
@@ -239,7 +239,7 @@ pub(super) fn handle_game_list_touch_buttons(
             MODAL_ACTION_CANCEL | MODAL_ACTION_CONFIRM => {}
             MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER => {
                 *launch_mode = TouchLaunchMode::SinglePlayer;
-                route_commands.write(UiRouteCommand::ShowToast(UiToast::new_key(
+                overlay_commands.write(UiOverlayCommand::ShowToast(UiToast::new_key(
                     &i18n,
                     "lobby.touch_ripple.toast.local",
                     "Starting local Touch Ripple",
@@ -249,7 +249,7 @@ pub(super) fn handle_game_list_touch_buttons(
             }
             MODAL_ACTION_TOUCH_RIPPLE_NETWORKED => {
                 *launch_mode = TouchLaunchMode::Auto;
-                route_commands.write(UiRouteCommand::ShowToast(UiToast::new_key(
+                overlay_commands.write(UiOverlayCommand::ShowToast(UiToast::new_key(
                     &i18n,
                     "lobby.touch_ripple.toast.networked",
                     "Starting networked Touch Ripple",
