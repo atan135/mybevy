@@ -1,4 +1,7 @@
+mod http;
+mod kcp;
 mod runtime;
+mod tcp;
 mod types;
 
 use bevy::prelude::*;
