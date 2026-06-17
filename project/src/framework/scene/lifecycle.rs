@@ -1328,7 +1328,64 @@ fn spawn_lookup_failure(session: &SceneSessionInfo, error: SceneSpawnLookupError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::scene::id::{SceneAssetId, SceneLayerId};
+    use crate::framework::scene::{
+        command::{SceneCommand, SceneEnterRequest, SceneExitRequest},
+        id::{SceneAssetId, SceneLayerId, SceneSessionId},
+        loading::SceneLoadingUiConfig,
+        plugin::ScenePlugin,
+        registry::{SceneDefinition, SceneKind, SceneRegistry},
+        root::{SceneLayerRoot, SceneOwned, SceneRoot},
+    };
+
+    fn app_with_scene_plugin() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin));
+        app.world_mut()
+            .resource_mut::<SceneLoadingUiConfig>()
+            .enabled = false;
+        app
+    }
+
+    fn register_scene(app: &mut App, definition: SceneDefinition) {
+        app.world_mut()
+            .resource_mut::<SceneRegistry>()
+            .register(definition)
+            .unwrap();
+    }
+
+    fn enter_scene_with_session(app: &mut App, scene_id: &str, session_id: &str) {
+        let mut request = SceneEnterRequest::new(scene_id);
+        request.session_id = Some(SceneSessionId::from(session_id));
+        app.world_mut().write_message(SceneCommand::Enter(request));
+        app.update();
+    }
+
+    fn exit_scene(app: &mut App) {
+        app.world_mut()
+            .write_message(SceneCommand::Exit(SceneExitRequest::default()));
+        app.update();
+    }
+
+    fn scene_root_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&SceneRoot>()
+            .iter(app.world())
+            .count()
+    }
+
+    fn layer_root_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&SceneLayerRoot>()
+            .iter(app.world())
+            .count()
+    }
+
+    fn scene_owned_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&SceneOwned>()
+            .iter(app.world())
+            .count()
+    }
 
     fn required_asset_failure(message: &str) -> SceneAssetLoadFailure {
         SceneAssetLoadFailure {
@@ -1403,5 +1460,85 @@ mod tests {
         assert_eq!(event.authority_mode, SceneAuthorityMode::Remote);
         assert_eq!(event.content_version.as_deref(), Some("content-v1"));
         assert_eq!(event.seed, Some(42));
+    }
+
+    #[test]
+    fn pure_ui_scene_enter_has_active_session_without_scene_root() {
+        let mut app = app_with_scene_plugin();
+        register_scene(&mut app, SceneDefinition::pure_ui("ui.login"));
+
+        enter_scene_with_session(&mut app, "ui.login", "ui-login-1");
+
+        let runtime = app.world().resource::<SceneRuntime>();
+        let active = runtime.active().unwrap();
+        assert_eq!(runtime.state(), SceneLifecycleState::Active);
+        assert_eq!(active.scene_id, SceneId::from("ui.login"));
+        assert_eq!(active.session_id, SceneSessionId::from("ui-login-1"));
+        assert_eq!(scene_root_count(&mut app), 0);
+        assert_eq!(layer_root_count(&mut app), 0);
+    }
+
+    #[test]
+    fn world_scene_enter_spawns_roots_and_preserves_session_info() {
+        let mut app = app_with_scene_plugin();
+        register_scene(
+            &mut app,
+            SceneDefinition::new("world.arena", SceneKind::World).with_world_root(),
+        );
+
+        enter_scene_with_session(&mut app, "world.arena", "world-arena-1");
+
+        let runtime = app.world().resource::<SceneRuntime>();
+        let active = runtime.active().unwrap();
+        assert_eq!(runtime.state(), SceneLifecycleState::Active);
+        assert_eq!(active.scene_id, SceneId::from("world.arena"));
+        assert_eq!(active.session_id, SceneSessionId::from("world-arena-1"));
+
+        assert_eq!(scene_root_count(&mut app), 1);
+        assert_eq!(layer_root_count(&mut app), 1);
+        assert!(scene_owned_count(&mut app) >= 3);
+
+        let mut roots = app.world_mut().query::<&SceneRoot>();
+        let root = roots.single(app.world()).unwrap();
+        assert_eq!(root.scene_id, SceneId::from("world.arena"));
+        assert_eq!(root.session_id, SceneSessionId::from("world-arena-1"));
+
+        let mut layers = app.world_mut().query::<&SceneLayerRoot>();
+        let layer = layers.single(app.world()).unwrap();
+        assert_eq!(layer.session_id, SceneSessionId::from("world-arena-1"));
+        assert_eq!(layer.layer_id, SceneLayerId::from("base"));
+        assert_eq!(layer.state, SceneLayerState::Active);
+        assert!(layer.required);
+    }
+
+    #[test]
+    fn exit_cleans_scene_owned_entities_and_repeat_enter_exit_leaves_no_residue() {
+        let mut app = app_with_scene_plugin();
+        register_scene(
+            &mut app,
+            SceneDefinition::new("world.arena", SceneKind::World).with_world_root(),
+        );
+
+        enter_scene_with_session(&mut app, "world.arena", "world-arena-1");
+        assert!(scene_owned_count(&mut app) > 0);
+        exit_scene(&mut app);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<SceneRuntime>().state(),
+            SceneLifecycleState::Idle
+        );
+        assert_eq!(scene_owned_count(&mut app), 0);
+        assert_eq!(scene_root_count(&mut app), 0);
+        assert_eq!(layer_root_count(&mut app), 0);
+
+        enter_scene_with_session(&mut app, "world.arena", "world-arena-2");
+        assert_eq!(scene_root_count(&mut app), 1);
+        exit_scene(&mut app);
+        app.update();
+
+        assert_eq!(scene_owned_count(&mut app), 0);
+        assert_eq!(scene_root_count(&mut app), 0);
+        assert_eq!(layer_root_count(&mut app), 0);
     }
 }

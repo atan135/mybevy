@@ -1046,7 +1046,8 @@ fn has_windows_drive_prefix(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::scene::id::SceneChunkId;
+    use crate::framework::scene::id::{SceneChunkId, SceneSpawnPointId};
+    use crate::framework::scene::spawn::SceneSpawnPointManifest;
     use crate::framework::scene::streaming::{SceneChunkBounds, SceneChunkManifest};
 
     #[test]
@@ -1070,6 +1071,85 @@ mod tests {
             Err(SceneManifestError::DuplicateChunkId(SceneChunkId::from(
                 "chunk"
             )))
+        );
+    }
+
+    #[test]
+    fn validate_basic_rejects_empty_scene_id() {
+        let manifest = SceneManifest::new("", SceneKind::World);
+
+        assert_eq!(
+            manifest.validate_basic(),
+            Err(SceneManifestError::EmptySceneId)
+        );
+    }
+
+    #[test]
+    fn validate_basic_rejects_missing_default_spawn() {
+        let manifest = SceneManifest::new("scene", SceneKind::World)
+            .with_entry(SceneManifestEntry::new().with_default_spawn("missing"));
+
+        assert_eq!(
+            manifest.validate_basic(),
+            Err(SceneManifestError::DefaultSpawnMissing(
+                SceneSpawnPointId::from("missing")
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_basic_accepts_defined_default_spawn() {
+        let manifest = SceneManifest::new("scene", SceneKind::World)
+            .with_entry(SceneManifestEntry::new().with_default_spawn("start"))
+            .with_spawn_point(SceneSpawnPointManifest::new("start", [0.0, 0.0, 0.0]));
+
+        assert_eq!(manifest.validate_basic(), Ok(()));
+    }
+
+    #[test]
+    fn validate_basic_rejects_required_layer_without_assets() {
+        let manifest = SceneManifest::new("scene", SceneKind::World)
+            .with_layer(SceneLayerManifest::new("base"));
+
+        assert_eq!(
+            manifest.validate_basic(),
+            Err(SceneManifestError::RequiredLayerWithoutAssets(
+                SceneLayerId::from("base")
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_basic_rejects_empty_and_unsafe_asset_paths() {
+        let empty_path_manifest = SceneManifest::new("scene", SceneKind::World).with_layer(
+            SceneLayerManifest::new("base").with_asset(SceneAssetRef::new(
+                "mesh",
+                SceneAssetKind::GltfScene,
+                "",
+            )),
+        );
+        assert_eq!(
+            empty_path_manifest.validate_basic(),
+            Err(SceneManifestError::EmptyAssetPath {
+                layer_id: SceneLayerId::from("base"),
+                asset_id: SceneAssetId::from("mesh"),
+            })
+        );
+
+        let unsafe_path_manifest = SceneManifest::new("scene", SceneKind::World).with_layer(
+            SceneLayerManifest::new("base").with_asset(SceneAssetRef::new(
+                "mesh",
+                SceneAssetKind::GltfScene,
+                "../outside.glb",
+            )),
+        );
+        assert_eq!(
+            unsafe_path_manifest.validate_basic(),
+            Err(SceneManifestError::UnsafeAssetPath {
+                layer_id: SceneLayerId::from("base"),
+                asset_id: SceneAssetId::from("mesh"),
+                path: "../outside.glb".to_string(),
+            })
         );
     }
 }

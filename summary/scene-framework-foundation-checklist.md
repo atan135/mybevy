@@ -173,14 +173,14 @@
   - [x] 切场景时提供清理输入状态的通用事件，具体输入类型由游戏层处理。
   - [x] 暂不实现远端协议、房间规则、玩家同步和帧回放逻辑。
 
-- [ ] 阶段 17：测试和验收
-  - [ ] 为 ID 校验、manifest 校验、registry 注册冲突写单元测试。
-  - [ ] 为 lifecycle 状态迁移写最小测试或 Bevy app 测试。
-  - [ ] 验证纯 UI 场景进入后没有 `SceneRoot`。
-  - [ ] 验证世界内容场景进入后存在 `SceneRoot`、layer root 和 session 信息。
-  - [ ] 验证退出后 `SceneOwned` 实体被清理，重复进入退出不残留。
-  - [ ] 验证 manifest 缺字段、默认 spawn 缺失、required asset 失败能产出明确错误。
-  - [ ] 每个实现阶段结束执行 `cargo fmt` 和 `cargo check`。
+- [x] 阶段 17：测试和验收（开始：2026-06-17 21:59:39 +08:00；结束：2026-06-17 22:08:29 +08:00）
+  - [x] 为 ID 校验、manifest 校验、registry 注册冲突写单元测试。
+  - [x] 为 lifecycle 状态迁移写最小测试或 Bevy app 测试。
+  - [x] 验证纯 UI 场景进入后没有 `SceneRoot`。
+  - [x] 验证世界内容场景进入后存在 `SceneRoot`、layer root 和 session 信息。
+  - [x] 验证退出后 `SceneOwned` 实体被清理，重复进入退出不残留。
+  - [x] 验证 manifest 缺字段、默认 spawn 缺失、required asset 失败能产出明确错误。
+  - [x] 每个实现阶段结束执行 `cargo fmt` 和 `cargo check`。
 
 - [ ] 阶段 18：文档同步
   - [ ] 更新 `docs/scene/README.md` 中“未实现设计目标”和“已落地能力”的表述，避免把规划写成事实。

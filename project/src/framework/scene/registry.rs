@@ -329,3 +329,47 @@ fn validate_definition(definition: &SceneDefinition) -> Result<(), SceneRegistra
 fn validate_scene_id(scene_id: &SceneId) -> Result<(), SceneRegistrationError> {
     scene_id.validate().map_err(SceneRegistrationError::from)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn register_rejects_duplicate_scene_id() {
+        let mut registry = SceneRegistry::default();
+
+        registry.register_pure_ui("ui.login").unwrap();
+        let error = registry.register_pure_ui("ui.login").unwrap_err();
+
+        assert_eq!(
+            error,
+            SceneRegistrationError::DuplicateSceneId(SceneId::from("ui.login"))
+        );
+    }
+
+    #[test]
+    fn set_fallback_scene_requires_registered_scene() {
+        let mut registry = SceneRegistry::default();
+
+        let error = registry.set_fallback_scene("fallback").unwrap_err();
+
+        assert_eq!(
+            error,
+            SceneRegistrationError::FallbackSceneNotRegistered(SceneId::from("fallback"))
+        );
+    }
+
+    #[test]
+    fn register_manifest_scene_rejects_empty_manifest_path() {
+        let mut registry = SceneRegistry::default();
+
+        let error = registry
+            .register_manifest_scene("world.arena", SceneKind::World, "")
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            SceneRegistrationError::EmptyManifestPath(SceneId::from("world.arena"))
+        );
+    }
+}

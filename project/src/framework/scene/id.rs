@@ -109,3 +109,31 @@ impl fmt::Display for SceneIdError {
 }
 
 impl std::error::Error for SceneIdError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_scene_id_accepts_allowed_characters() {
+        for scene_id in ["scene", "scene_01", "world.arena-2", "a1.b2_c3-d4"] {
+            assert_eq!(validate_scene_id(scene_id), Ok(()));
+            assert!(SceneId::from(scene_id).is_valid_format());
+        }
+    }
+
+    #[test]
+    fn validate_scene_id_rejects_empty_id() {
+        assert_eq!(validate_scene_id(""), Err(SceneIdError::Empty));
+    }
+
+    #[test]
+    fn validate_scene_id_rejects_invalid_characters() {
+        for scene_id in ["Scene", "scene/root", "scene root", "scene:root", "场景"] {
+            assert_eq!(
+                validate_scene_id(scene_id),
+                Err(SceneIdError::InvalidFormat(scene_id.to_string()))
+            );
+        }
+    }
+}
