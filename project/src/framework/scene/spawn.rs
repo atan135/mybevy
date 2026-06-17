@@ -45,8 +45,40 @@ pub struct SceneSpawnPointManifest {
 }
 
 impl SceneSpawnPointManifest {
+    pub fn new(id: impl Into<SceneSpawnPointId>, position: [f32; 3]) -> Self {
+        Self {
+            id: id.into(),
+            position,
+            rotation_degrees: [0.0, 0.0, 0.0],
+            tags: Vec::new(),
+        }
+    }
+
+    pub fn with_rotation_degrees(mut self, rotation_degrees: [f32; 3]) -> Self {
+        self.rotation_degrees = rotation_degrees;
+        self
+    }
+
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.push(tag.into());
+        self
+    }
+
+    pub fn with_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
     pub fn transform(&self) -> Transform {
         transform_from_position_rotation(self.position, self.rotation_degrees)
+    }
+
+    pub fn spawn_point(&self) -> SceneSpawnPoint {
+        SceneSpawnPoint {
+            id: self.id.clone(),
+            transform: self.transform(),
+            tags: self.tags.clone(),
+        }
     }
 }
 
@@ -59,8 +91,40 @@ pub struct SceneAnchorManifest {
 }
 
 impl SceneAnchorManifest {
+    pub fn new(id: impl Into<SceneAnchorId>, position: [f32; 3]) -> Self {
+        Self {
+            id: id.into(),
+            position,
+            rotation_degrees: [0.0, 0.0, 0.0],
+            tags: Vec::new(),
+        }
+    }
+
+    pub fn with_rotation_degrees(mut self, rotation_degrees: [f32; 3]) -> Self {
+        self.rotation_degrees = rotation_degrees;
+        self
+    }
+
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.push(tag.into());
+        self
+    }
+
+    pub fn with_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
     pub fn transform(&self) -> Transform {
         transform_from_position_rotation(self.position, self.rotation_degrees)
+    }
+
+    pub fn anchor(&self) -> SceneAnchor {
+        SceneAnchor {
+            id: self.id.clone(),
+            transform: self.transform(),
+            tags: self.tags.clone(),
+        }
     }
 }
 

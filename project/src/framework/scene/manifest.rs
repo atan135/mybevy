@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use super::{
     id::{
@@ -11,6 +11,7 @@ use super::{
     trigger::SceneTriggerManifest,
 };
 
+/// Scene manifests currently support exactly this version.
 pub const SCENE_MANIFEST_VERSION: &str = "1";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -26,22 +27,178 @@ pub struct SceneManifest {
 }
 
 impl SceneManifest {
+    pub fn new(scene_id: impl Into<SceneId>, kind: SceneKind) -> Self {
+        Self {
+            version: SCENE_MANIFEST_VERSION.to_string(),
+            scene_id: scene_id.into(),
+            kind,
+            entry: SceneManifestEntry::default(),
+            layers: Vec::new(),
+            spawn_points: Vec::new(),
+            anchors: Vec::new(),
+            triggers: Vec::new(),
+        }
+    }
+
+    pub fn with_entry(mut self, entry: SceneManifestEntry) -> Self {
+        self.entry = entry;
+        self
+    }
+
+    pub fn with_layer(mut self, layer: SceneLayerManifest) -> Self {
+        self.layers.push(layer);
+        self
+    }
+
+    pub fn with_spawn_point(mut self, spawn_point: SceneSpawnPointManifest) -> Self {
+        self.spawn_points.push(spawn_point);
+        self
+    }
+
+    pub fn with_anchor(mut self, anchor: SceneAnchorManifest) -> Self {
+        self.anchors.push(anchor);
+        self
+    }
+
+    pub fn with_trigger(mut self, trigger: SceneTriggerManifest) -> Self {
+        self.triggers.push(trigger);
+        self
+    }
+
+    pub fn is_supported_version(version: &str) -> bool {
+        version == SCENE_MANIFEST_VERSION
+    }
+
     pub fn validate_basic(&self) -> Result<(), SceneManifestError> {
-        if self.version != SCENE_MANIFEST_VERSION {
-            return Err(SceneManifestError::UnsupportedVersion(self.version.clone()));
+        if !Self::is_supported_version(&self.version) {
+            return Err(SceneManifestError::UnsupportedVersion {
+                found: self.version.clone(),
+                expected: SCENE_MANIFEST_VERSION,
+            });
         }
 
         self.scene_id.validate().map_err(SceneManifestError::from)?;
 
+        if self
+            .entry
+            .camera
+            .as_ref()
+            .is_some_and(SceneCameraRef::is_empty)
+        {
+            return Err(SceneManifestError::EmptyCameraRef {
+                scene_id: self.scene_id.clone(),
+            });
+        }
+
+        let mut layer_ids = HashSet::new();
+        let mut asset_ids = HashSet::new();
+
+        for (layer_index, layer) in self.layers.iter().enumerate() {
+            if layer.id.is_empty() {
+                return Err(SceneManifestError::EmptyLayerId { index: layer_index });
+            }
+
+            if !layer_ids.insert(layer.id.clone()) {
+                return Err(SceneManifestError::DuplicateLayerId(layer.id.clone()));
+            }
+
+            if layer.required && layer.assets.is_empty() {
+                return Err(SceneManifestError::RequiredLayerWithoutAssets(
+                    layer.id.clone(),
+                ));
+            }
+
+            for (asset_index, asset) in layer.assets.iter().enumerate() {
+                if asset.id.is_empty() {
+                    return Err(SceneManifestError::EmptyAssetId {
+                        layer_id: layer.id.clone(),
+                        index: asset_index,
+                    });
+                }
+
+                if !asset_ids.insert(asset.id.clone()) {
+                    return Err(SceneManifestError::DuplicateAssetId {
+                        layer_id: layer.id.clone(),
+                        asset_id: asset.id.clone(),
+                    });
+                }
+
+                if asset.kind.is_empty() {
+                    return Err(SceneManifestError::EmptyAssetKind {
+                        layer_id: layer.id.clone(),
+                        asset_id: asset.id.clone(),
+                    });
+                }
+
+                if asset.path.trim().is_empty() {
+                    return Err(SceneManifestError::EmptyAssetPath {
+                        layer_id: layer.id.clone(),
+                        asset_id: asset.id.clone(),
+                    });
+                }
+
+                if is_unsafe_asset_path(&asset.path) {
+                    return Err(SceneManifestError::UnsafeAssetPath {
+                        layer_id: layer.id.clone(),
+                        asset_id: asset.id.clone(),
+                        path: asset.path.clone(),
+                    });
+                }
+            }
+        }
+
+        let mut spawn_point_ids = HashSet::new();
+        for (spawn_index, spawn) in self.spawn_points.iter().enumerate() {
+            if spawn.id.is_empty() {
+                return Err(SceneManifestError::EmptySpawnPointId { index: spawn_index });
+            }
+
+            if !spawn_point_ids.insert(spawn.id.clone()) {
+                return Err(SceneManifestError::DuplicateSpawnPointId(spawn.id.clone()));
+            }
+        }
+
         if let Some(default_spawn) = &self.entry.default_spawn {
-            let has_default_spawn = self
-                .spawn_points
-                .iter()
-                .any(|spawn| &spawn.id == default_spawn);
-            if !has_default_spawn {
+            if default_spawn.is_empty() {
+                return Err(SceneManifestError::EmptyDefaultSpawn);
+            }
+
+            if !spawn_point_ids.contains(default_spawn) {
                 return Err(SceneManifestError::DefaultSpawnMissing(
                     default_spawn.clone(),
                 ));
+            }
+        }
+
+        let mut anchor_ids = HashSet::new();
+        for (anchor_index, anchor) in self.anchors.iter().enumerate() {
+            if anchor.id.is_empty() {
+                return Err(SceneManifestError::EmptyAnchorId {
+                    index: anchor_index,
+                });
+            }
+
+            if !anchor_ids.insert(anchor.id.clone()) {
+                return Err(SceneManifestError::DuplicateAnchorId(anchor.id.clone()));
+            }
+        }
+
+        let mut trigger_ids = HashSet::new();
+        for (trigger_index, trigger) in self.triggers.iter().enumerate() {
+            if trigger.id.is_empty() {
+                return Err(SceneManifestError::EmptyTriggerId {
+                    index: trigger_index,
+                });
+            }
+
+            if !trigger_ids.insert(trigger.id.clone()) {
+                return Err(SceneManifestError::DuplicateTriggerId(trigger.id.clone()));
+            }
+
+            if trigger.event.trim().is_empty() {
+                return Err(SceneManifestError::EmptyTriggerEvent {
+                    trigger_id: trigger.id.clone(),
+                });
             }
         }
 
@@ -52,8 +209,74 @@ impl SceneManifest {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SceneManifestEntry {
     pub default_spawn: Option<SceneSpawnPointId>,
-    pub camera: Option<String>,
+    pub camera: Option<SceneCameraRef>,
     pub loading_policy: SceneLoadingPolicy,
+}
+
+impl SceneManifestEntry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_default_spawn(mut self, default_spawn: impl Into<SceneSpawnPointId>) -> Self {
+        self.default_spawn = Some(default_spawn.into());
+        self
+    }
+
+    pub fn with_camera(mut self, camera: impl Into<SceneCameraRef>) -> Self {
+        self.camera = Some(camera.into());
+        self
+    }
+
+    pub fn with_loading_policy(mut self, loading_policy: SceneLoadingPolicy) -> Self {
+        self.loading_policy = loading_policy;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SceneCameraRef(String);
+
+impl SceneCameraRef {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<&str> for SceneCameraRef {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for SceneCameraRef {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl AsRef<str> for SceneCameraRef {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for SceneCameraRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +293,27 @@ impl SceneLayerManifest {
             required: true,
             assets: Vec::new(),
         }
+    }
+
+    pub fn optional(id: impl Into<SceneLayerId>) -> Self {
+        Self {
+            required: false,
+            ..Self::new(id)
+        }
+    }
+
+    pub fn with_required(mut self, required: bool) -> Self {
+        self.required = required;
+        self
+    }
+
+    pub fn with_asset(mut self, asset: SceneAssetRef) -> Self {
+        self.assets.push(asset);
+        self
+    }
+
+    pub fn add_asset(&mut self, asset: SceneAssetRef) {
+        self.assets.push(asset);
     }
 }
 
@@ -90,6 +334,11 @@ impl SceneAssetRef {
             label: None,
         }
     }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -102,12 +351,70 @@ pub enum SceneAssetKind {
     Other(String),
 }
 
+impl SceneAssetKind {
+    pub fn other(value: impl Into<String>) -> Self {
+        Self::Other(value.into())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Other(value) if value.trim().is_empty())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SceneManifestError {
     EmptySceneId,
     InvalidSceneIdFormat(SceneId),
-    UnsupportedVersion(String),
+    UnsupportedVersion {
+        found: String,
+        expected: &'static str,
+    },
+    EmptyCameraRef {
+        scene_id: SceneId,
+    },
+    EmptyLayerId {
+        index: usize,
+    },
+    DuplicateLayerId(SceneLayerId),
+    RequiredLayerWithoutAssets(SceneLayerId),
+    EmptyAssetId {
+        layer_id: SceneLayerId,
+        index: usize,
+    },
+    DuplicateAssetId {
+        layer_id: SceneLayerId,
+        asset_id: SceneAssetId,
+    },
+    EmptyAssetKind {
+        layer_id: SceneLayerId,
+        asset_id: SceneAssetId,
+    },
+    EmptyAssetPath {
+        layer_id: SceneLayerId,
+        asset_id: SceneAssetId,
+    },
+    UnsafeAssetPath {
+        layer_id: SceneLayerId,
+        asset_id: SceneAssetId,
+        path: String,
+    },
+    EmptyDefaultSpawn,
     DefaultSpawnMissing(SceneSpawnPointId),
+    EmptySpawnPointId {
+        index: usize,
+    },
+    DuplicateSpawnPointId(SceneSpawnPointId),
+    EmptyAnchorId {
+        index: usize,
+    },
+    DuplicateAnchorId(super::id::SceneAnchorId),
+    EmptyTriggerId {
+        index: usize,
+    },
+    DuplicateTriggerId(super::id::SceneTriggerId),
+    EmptyTriggerEvent {
+        trigger_id: super::id::SceneTriggerId,
+    },
 }
 
 impl fmt::Display for SceneManifestError {
@@ -120,11 +427,108 @@ impl fmt::Display for SceneManifestError {
                     "scene manifest scene_id has invalid format: {scene_id}; allowed characters are {SCENE_ID_ALLOWED_CHARACTERS}"
                 )
             }
-            Self::UnsupportedVersion(version) => {
-                write!(formatter, "unsupported scene manifest version: {version}")
+            Self::UnsupportedVersion { found, expected } => {
+                write!(
+                    formatter,
+                    "unsupported scene manifest version: {found}; expected {expected}"
+                )
+            }
+            Self::EmptyCameraRef { scene_id } => {
+                write!(
+                    formatter,
+                    "scene manifest camera reference must not be empty for scene: {scene_id}"
+                )
+            }
+            Self::EmptyLayerId { index } => {
+                write!(
+                    formatter,
+                    "scene manifest layer id must not be empty at index: {index}"
+                )
+            }
+            Self::DuplicateLayerId(layer_id) => {
+                write!(
+                    formatter,
+                    "scene manifest layer id is duplicated: {layer_id}"
+                )
+            }
+            Self::RequiredLayerWithoutAssets(layer_id) => {
+                write!(
+                    formatter,
+                    "required scene layer must define at least one asset: {layer_id}"
+                )
+            }
+            Self::EmptyAssetId { layer_id, index } => {
+                write!(
+                    formatter,
+                    "scene asset id must not be empty in layer {layer_id} at index: {index}"
+                )
+            }
+            Self::DuplicateAssetId { layer_id, asset_id } => {
+                write!(
+                    formatter,
+                    "scene asset id is duplicated in layer {layer_id}: {asset_id}"
+                )
+            }
+            Self::EmptyAssetKind { layer_id, asset_id } => {
+                write!(
+                    formatter,
+                    "scene asset kind must not be empty for asset {asset_id} in layer {layer_id}"
+                )
+            }
+            Self::EmptyAssetPath { layer_id, asset_id } => {
+                write!(
+                    formatter,
+                    "scene asset path must not be empty for asset {asset_id} in layer {layer_id}"
+                )
+            }
+            Self::UnsafeAssetPath {
+                layer_id,
+                asset_id,
+                path,
+            } => {
+                write!(
+                    formatter,
+                    "scene asset path is unsafe for asset {asset_id} in layer {layer_id}: {path}"
+                )
+            }
+            Self::EmptyDefaultSpawn => {
+                formatter.write_str("default spawn point id must not be empty")
             }
             Self::DefaultSpawnMissing(spawn_id) => {
                 write!(formatter, "default spawn point is not defined: {spawn_id}")
+            }
+            Self::EmptySpawnPointId { index } => {
+                write!(
+                    formatter,
+                    "scene spawn point id must not be empty at index: {index}"
+                )
+            }
+            Self::DuplicateSpawnPointId(spawn_id) => {
+                write!(formatter, "scene spawn point id is duplicated: {spawn_id}")
+            }
+            Self::EmptyAnchorId { index } => {
+                write!(
+                    formatter,
+                    "scene anchor id must not be empty at index: {index}"
+                )
+            }
+            Self::DuplicateAnchorId(anchor_id) => {
+                write!(formatter, "scene anchor id is duplicated: {anchor_id}")
+            }
+            Self::EmptyTriggerId { index } => {
+                write!(
+                    formatter,
+                    "scene trigger id must not be empty at index: {index}"
+                )
+            }
+            Self::DuplicateTriggerId(trigger_id) => {
+                write!(formatter, "scene trigger id is duplicated: {trigger_id}")
+            }
+            Self::EmptyTriggerEvent { trigger_id } => {
+                write!(
+                    formatter,
+                    "scene trigger event must not be empty for trigger: {trigger_id}"
+                )
             }
         }
     }
@@ -139,4 +543,17 @@ impl From<SceneIdError> for SceneManifestError {
             SceneIdError::InvalidFormat(value) => Self::InvalidSceneIdFormat(SceneId::from(value)),
         }
     }
+}
+
+fn is_unsafe_asset_path(path: &str) -> bool {
+    path.starts_with('/')
+        || path.starts_with('\\')
+        || path.contains('\\')
+        || has_windows_drive_prefix(path)
+        || path.split('/').any(|segment| segment == "..")
+}
+
+fn has_windows_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
 }

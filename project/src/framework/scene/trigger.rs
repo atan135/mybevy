@@ -60,9 +60,61 @@ pub struct SceneTriggerManifest {
     pub event: String,
 }
 
+impl SceneTriggerManifest {
+    pub fn new(
+        id: impl Into<SceneTriggerId>,
+        shape: SceneTriggerShapeManifest,
+        event: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            shape,
+            position: [0.0, 0.0, 0.0],
+            rotation_degrees: [0.0, 0.0, 0.0],
+            event: event.into(),
+        }
+    }
+
+    pub fn with_position(mut self, position: [f32; 3]) -> Self {
+        self.position = position;
+        self
+    }
+
+    pub fn with_rotation_degrees(mut self, rotation_degrees: [f32; 3]) -> Self {
+        self.rotation_degrees = rotation_degrees;
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SceneTriggerShapeManifest {
     Circle2d { radius: f32 },
     Box2d { half_extents: [f32; 2] },
     Box3d { half_extents: [f32; 3] },
+}
+
+impl SceneTriggerShapeManifest {
+    pub fn circle2d(radius: f32) -> Self {
+        Self::Circle2d { radius }
+    }
+
+    pub fn box2d(half_extents: [f32; 2]) -> Self {
+        Self::Box2d { half_extents }
+    }
+
+    pub fn box3d(half_extents: [f32; 3]) -> Self {
+        Self::Box3d { half_extents }
+    }
+
+    pub fn shape(&self) -> SceneTriggerShape {
+        match self {
+            Self::Circle2d { radius } => SceneTriggerShape::Circle2d { radius: *radius },
+            Self::Box2d { half_extents } => SceneTriggerShape::Box2d {
+                half_extents: Vec2::from_array(*half_extents),
+            },
+            Self::Box3d { half_extents } => SceneTriggerShape::Box3d {
+                half_extents: Vec3::from_array(*half_extents),
+            },
+        }
+    }
 }

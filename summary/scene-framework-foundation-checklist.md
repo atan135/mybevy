@@ -74,14 +74,14 @@
   - [x] 预留内容版本和内容缓存来源字段，但初期只实现首包路径。
   - [x] 增加 fallback scene 的注册约定，用于场景不存在或加载失败后的回退。
 
-- [ ] 阶段 6：场景清单结构和校验
-  - [ ] 定义 `SceneManifest`，包含 `version`、`scene_id`、`kind`、`entry`、`layers`、`spawn_points`、`anchors`、`triggers`。
-  - [ ] 定义 `SceneManifestEntry`，包含 `default_spawn`、`camera`、`loading_policy`。
-  - [ ] 定义 `SceneLayerManifest` 和 `SceneAssetRef`，描述 layer、required 标记、asset ID、kind、path、label。
-  - [ ] 定义 `SceneSpawnPointManifest` 和 `SceneAnchorManifest`，先支持 position、rotation、tags。
-  - [ ] 定义 `SceneTriggerManifest`，先支持 box/circle 这类简单形状和 event 名称。
-  - [ ] 实现 manifest 静态校验：必填字段、ID 唯一性、默认 spawn 是否存在、路径是否跳出资源根、required layer 是否有效。
-  - [ ] 明确 manifest 版本支持策略，当前只接受 `"1"` 或一个固定常量。
+- [x] 阶段 6：场景清单结构和校验（开始：2026-06-17 19:14:38 +08:00；结束：2026-06-17 19:21:17 +08:00）
+  - [x] 定义 `SceneManifest`，包含 `version`、`scene_id`、`kind`、`entry`、`layers`、`spawn_points`、`anchors`、`triggers`。
+  - [x] 定义 `SceneManifestEntry`，包含 `default_spawn`、`camera`、`loading_policy`。
+  - [x] 定义 `SceneLayerManifest` 和 `SceneAssetRef`，描述 layer、required 标记、asset ID、kind、path、label。
+  - [x] 定义 `SceneSpawnPointManifest` 和 `SceneAnchorManifest`，先支持 position、rotation、tags。
+  - [x] 定义 `SceneTriggerManifest`，先支持 box/circle 这类简单形状和 event 名称。
+  - [x] 实现 manifest 静态校验：必填字段、ID 唯一性、默认 spawn 是否存在、路径是否跳出资源根、required layer 是否有效。
+  - [x] 明确 manifest 版本支持策略，当前只接受 `"1"` 或一个固定常量。
 
 - [ ] 阶段 7：首包资源加载和 Loading 进度
   - [ ] 支持从 `project/assets/scenes/...` 加载 RON 场景清单。

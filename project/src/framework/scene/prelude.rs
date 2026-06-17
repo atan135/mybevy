@@ -18,8 +18,8 @@ pub use super::{
     lifecycle::{SceneAuthorityMode, SceneLifecycleState, SceneRuntime, SceneSessionInfo},
     loading::{SceneAssetLoadFailure, SceneLoadPhase, SceneLoadProgress, SceneLoadingPolicy},
     manifest::{
-        SCENE_MANIFEST_VERSION, SceneAssetKind, SceneAssetRef, SceneLayerManifest, SceneManifest,
-        SceneManifestEntry, SceneManifestError,
+        SCENE_MANIFEST_VERSION, SceneAssetKind, SceneAssetRef, SceneCameraRef, SceneLayerManifest,
+        SceneManifest, SceneManifestEntry, SceneManifestError,
     },
     plugin::ScenePlugin,
     registry::{
