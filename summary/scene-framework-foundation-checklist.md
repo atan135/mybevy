@@ -39,13 +39,13 @@
   - [x] 在 `framework::prelude` 或 `framework::scene::prelude` 中导出游戏层常用但不泄漏内部实现的类型。
   - [x] 明确模块可见性，框架内部实现保持 `pub(crate)`，外部只暴露命令、事件、资源只读查询和注册 API。
 
-- [ ] 阶段 2：命令、事件和运行状态
-  - [ ] 定义 `SceneCommand`，最小支持 `Enter`、`Exit`、`Switch`、`Preload`、`Unload`、`ReloadCurrent`。
-  - [ ] 定义请求结构：`SceneEnterRequest`、`SceneExitRequest`、`SceneSwitchRequest`、`ScenePreloadRequest`、`SceneUnloadRequest`、`SceneReloadRequest`。
-  - [ ] 定义 `SceneEvent`，覆盖 `Resolving`、`LoadProgress`、`Instantiating`、`Entered`、`ExitStarted`、`Exited`、`LayerLoaded`、`LayerUnloaded`、`Failed`。
-  - [ ] 定义 `SceneRuntime` 资源，包含 `active`、`pending`、`state`、`last_error` 和基础查询方法。
-  - [ ] 定义 `SceneSessionInfo`，记录 `scene_id`、`session_id`、`authority_mode`、`content_version`、`spawn_point`、`seed`、`entered_at`。
-  - [ ] 定义 `SceneLifecycleState`，先支持 `Idle`、`Resolving`、`LoadingAssets`、`Instantiating`、`Activating`、`Active`、`Deactivating`、`Unloading`、`Failed`，`Downloading` 和 `Suspending` 可预留。
+- [x] 阶段 2：命令、事件和运行状态（开始：2026-06-17 18:29:47 +08:00；结束：2026-06-17 18:36:09 +08:00）
+  - [x] 定义 `SceneCommand`，最小支持 `Enter`、`Exit`、`Switch`、`Preload`、`Unload`、`ReloadCurrent`。
+  - [x] 定义请求结构：`SceneEnterRequest`、`SceneExitRequest`、`SceneSwitchRequest`、`ScenePreloadRequest`、`SceneUnloadRequest`、`SceneReloadRequest`。
+  - [x] 定义 `SceneEvent`，覆盖 `Resolving`、`LoadProgress`、`Instantiating`、`Entered`、`ExitStarted`、`Exited`、`LayerLoaded`、`LayerUnloaded`、`Failed`。
+  - [x] 定义 `SceneRuntime` 资源，包含 `active`、`pending`、`state`、`last_error` 和基础查询方法。
+  - [x] 定义 `SceneSessionInfo`，记录 `scene_id`、`session_id`、`authority_mode`、`content_version`、`spawn_point`、`seed`、`entered_at`。
+  - [x] 定义 `SceneLifecycleState`，先支持 `Idle`、`Resolving`、`LoadingAssets`、`Instantiating`、`Activating`、`Active`、`Deactivating`、`Unloading`、`Failed`，`Downloading` 和 `Suspending` 可预留。
 
 - [ ] 阶段 3：最小生命周期流程
   - [ ] 实现 `Enter` 流程：接收命令、查 registry、生成 pending session、进入 Resolving/Loading/Instantiating/Activating/Active。

@@ -66,14 +66,20 @@ impl SceneSwitchRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScenePreloadRequest {
     pub scene_id: SceneId,
+    pub session_id: Option<SceneSessionId>,
     pub content_version: Option<String>,
+    pub authority_mode: SceneAuthorityMode,
+    pub seed: Option<u64>,
 }
 
 impl ScenePreloadRequest {
     pub fn new(scene_id: impl Into<SceneId>) -> Self {
         Self {
             scene_id: scene_id.into(),
+            session_id: None,
             content_version: None,
+            authority_mode: SceneAuthorityMode::default(),
+            seed: None,
         }
     }
 }
@@ -81,6 +87,7 @@ impl ScenePreloadRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneUnloadRequest {
     pub scene_id: SceneId,
+    pub session_id: Option<SceneSessionId>,
     pub content_version: Option<String>,
 }
 
@@ -88,6 +95,7 @@ impl SceneUnloadRequest {
     pub fn new(scene_id: impl Into<SceneId>) -> Self {
         Self {
             scene_id: scene_id.into(),
+            session_id: None,
             content_version: None,
         }
     }
@@ -95,7 +103,13 @@ impl SceneUnloadRequest {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SceneReloadRequest {
+    pub scene_id: Option<SceneId>,
     pub session_id: Option<SceneSessionId>,
+    pub spawn_point: Option<SceneSpawnPointId>,
+    pub content_version: Option<String>,
+    pub transition: SceneTransition,
+    pub authority_mode: Option<SceneAuthorityMode>,
+    pub seed: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
