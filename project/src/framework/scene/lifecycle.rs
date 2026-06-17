@@ -16,8 +16,8 @@ use super::{
     },
     id::{SceneId, SceneSessionId, SceneSpawnPointId},
     loading::{
-        SceneAssetLoadQueue, SceneAssetLoadSession, SceneLoadPhase, SceneLoadProgress,
-        SceneLoadingPolicy,
+        SceneAssetLoadFailure, SceneAssetLoadQueue, SceneAssetLoadSession, SceneLoadPhase,
+        SceneLoadProgress, SceneLoadingPolicy,
     },
     manifest::{SceneManifest, SceneManifestLoadError},
     registry::{SceneDefinition, SceneRegistry},
@@ -326,18 +326,14 @@ fn enter_scene(
 
     let Some(definition) = registry.get(&request.scene_id) else {
         fail_scene_transition(
+            commands,
             runtime,
+            load_queue,
+            spawn_registry,
+            scene_roots,
+            owned_entities,
             events,
-            SceneFailure {
-                kind: SceneFailureKind::SceneNotFound,
-                scene_id: Some(request.scene_id),
-                session_id: request.session_id,
-                content_version: request.content_version,
-                state: SceneLifecycleState::Resolving,
-                asset_id: None,
-                asset_path: None,
-                message: Some("scene id is not registered".to_string()),
-            },
+            scene_not_found_failure(request),
         );
         return;
     };
@@ -396,20 +392,14 @@ fn enter_scene(
             let manifest_scene_id = manifest.scene_id.clone();
             if manifest_scene_id != session.scene_id {
                 fail_scene_transition(
+                    commands,
                     runtime,
+                    load_queue,
+                    spawn_registry,
+                    scene_roots,
+                    owned_entities,
                     events,
-                    SceneFailure {
-                        kind: SceneFailureKind::ManifestParseFailed,
-                        scene_id: Some(session.scene_id),
-                        session_id: Some(session.session_id),
-                        content_version: session.content_version,
-                        state: SceneLifecycleState::Resolving,
-                        asset_id: None,
-                        asset_path: Some(manifest_path),
-                        message: Some(format!(
-                            "scene manifest scene_id {manifest_scene_id} does not match registered scene id"
-                        )),
-                    },
+                    manifest_scene_mismatch_failure(&session, manifest_path, &manifest_scene_id),
                 );
                 return;
             }
@@ -438,7 +428,16 @@ fn enter_scene(
         }
         Err(error) => {
             let failure = manifest_failure_from_error(&session, manifest_path, error);
-            fail_scene_transition(runtime, events, failure);
+            fail_scene_transition(
+                commands,
+                runtime,
+                load_queue,
+                spawn_registry,
+                scene_roots,
+                owned_entities,
+                events,
+                failure,
+            );
         }
     }
 }
@@ -468,14 +467,24 @@ fn finish_scene_enter(
 
     if validate_spawn_point {
         if let Err(error) = spawn_index.validate_default_spawn() {
-            fail_scene_transition(runtime, events, spawn_lookup_failure(&session, error));
+            fail_scene_transition_without_entity_cleanup(
+                runtime,
+                spawn_registry,
+                events,
+                spawn_lookup_failure(&session, error),
+            );
             return;
         }
 
         if let Some(spawn_point_id) = &session.spawn_point
             && let Err(error) = spawn_index.spawn_point(spawn_point_id)
         {
-            fail_scene_transition(runtime, events, spawn_lookup_failure(&session, error));
+            fail_scene_transition_without_entity_cleanup(
+                runtime,
+                spawn_registry,
+                events,
+                spawn_lookup_failure(&session, error),
+            );
             return;
         }
     }
@@ -613,11 +622,87 @@ fn next_session_id(scene_id: &SceneId) -> SceneSessionId {
 }
 
 fn fail_scene_transition(
+    commands: &mut Commands,
+    runtime: &mut SceneRuntime,
+    load_queue: &mut SceneAssetLoadQueue,
+    spawn_registry: &mut SceneSpawnRegistry,
+    scene_roots: &Query<(Entity, &SceneRoot)>,
+    owned_entities: &Query<(Entity, &SceneOwned)>,
+    events: &mut MessageWriter<SceneEvent>,
+    failure: SceneFailure,
+) {
+    cleanup_failed_scene_transition(
+        commands,
+        runtime,
+        load_queue,
+        spawn_registry,
+        scene_roots,
+        owned_entities,
+        &failure,
+    );
+    record_scene_failure(runtime, events, failure);
+}
+
+fn fail_scene_transition_without_entity_cleanup(
+    runtime: &mut SceneRuntime,
+    spawn_registry: &mut SceneSpawnRegistry,
+    events: &mut MessageWriter<SceneEvent>,
+    failure: SceneFailure,
+) {
+    if let Some(session_id) = &failure.session_id {
+        if runtime
+            .pending
+            .as_ref()
+            .is_some_and(|session| &session.session_id == session_id)
+        {
+            runtime.pending = None;
+        }
+        spawn_registry.clear_session(session_id);
+    }
+
+    record_scene_failure(runtime, events, failure);
+}
+
+fn cleanup_failed_scene_transition(
+    commands: &mut Commands,
+    runtime: &mut SceneRuntime,
+    load_queue: &mut SceneAssetLoadQueue,
+    spawn_registry: &mut SceneSpawnRegistry,
+    scene_roots: &Query<(Entity, &SceneRoot)>,
+    owned_entities: &Query<(Entity, &SceneOwned)>,
+    failure: &SceneFailure,
+) {
+    let session_id = failure.session_id.clone().or_else(|| {
+        runtime
+            .pending
+            .as_ref()
+            .filter(|session| failure.scene_id.as_ref() == Some(&session.scene_id))
+            .map(|session| session.session_id.clone())
+    });
+
+    let Some(session_id) = session_id.as_ref() else {
+        return;
+    };
+
+    if runtime
+        .pending
+        .as_ref()
+        .is_some_and(|session| &session.session_id == session_id)
+    {
+        runtime.pending = None;
+    }
+
+    load_queue.clear_session(session_id);
+    spawn_registry.clear_session(session_id);
+    despawn_scene_session_entities(commands, session_id, scene_roots, owned_entities);
+}
+
+fn record_scene_failure(
     runtime: &mut SceneRuntime,
     events: &mut MessageWriter<SceneEvent>,
     failure: SceneFailure,
 ) {
-    runtime.pending = None;
+    warn!("scene transition failed: {}", failure.log_description());
     runtime.state = SceneLifecycleState::Failed;
     runtime.last_error = Some(failure.clone());
     events.write(SceneEvent::Failed(failure));
@@ -631,6 +716,8 @@ pub(crate) fn poll_scene_asset_loads(
     mut load_queue: ResMut<SceneAssetLoadQueue>,
     mut spawn_registry: ResMut<SceneSpawnRegistry>,
     scene_cameras: Query<&SceneCameraRig>,
+    scene_roots: Query<(Entity, &SceneRoot)>,
+    owned_entities: Query<(Entity, &SceneOwned)>,
     mut events: MessageWriter<SceneEvent>,
 ) {
     let Some(session) = load_queue.current_mut() else {
@@ -667,18 +754,14 @@ pub(crate) fn poll_scene_asset_loads(
         let content_version = session.content_version.clone();
         load_queue.take_current();
         fail_scene_transition(
+            &mut commands,
             &mut runtime,
+            &mut load_queue,
+            &mut spawn_registry,
+            &scene_roots,
+            &owned_entities,
             &mut events,
-            SceneFailure {
-                kind: SceneFailureKind::AssetLoadFailed,
-                scene_id: Some(scene_id),
-                session_id: Some(session_id),
-                content_version,
-                state: SceneLifecycleState::LoadingAssets,
-                asset_id: failure.asset_id,
-                asset_path: failure.path,
-                message: Some(failure.message),
-            },
+            asset_load_failure(scene_id, session_id, content_version, failure),
         );
         return;
     }
@@ -777,6 +860,72 @@ fn manifest_camera_config(
         .or_else(|| default_scene_camera_config_for_world(definition.has_world_root))
 }
 
+fn scene_not_found_failure(request: SceneEnterRequest) -> SceneFailure {
+    SceneFailure::new(
+        SceneFailureKind::SceneNotFound,
+        SceneLifecycleState::Resolving,
+    )
+    .with_scene(request.scene_id)
+    .with_optional_session(request.session_id)
+    .with_optional_content_version(request.content_version)
+    .with_message("scene id is not registered")
+}
+
+fn manifest_scene_mismatch_failure(
+    session: &SceneSessionInfo,
+    manifest_path: String,
+    manifest_scene_id: &SceneId,
+) -> SceneFailure {
+    SceneFailure::new(
+        SceneFailureKind::ManifestParseFailed,
+        SceneLifecycleState::Resolving,
+    )
+    .with_scene(session.scene_id.clone())
+    .with_session(session.session_id.clone())
+    .with_optional_content_version(session.content_version.clone())
+    .with_asset_path(manifest_path)
+    .with_message(format!(
+        "scene manifest scene_id {manifest_scene_id} does not match registered scene id"
+    ))
+}
+
+fn asset_load_failure(
+    scene_id: SceneId,
+    session_id: SceneSessionId,
+    content_version: Option<String>,
+    failure: SceneAssetLoadFailure,
+) -> SceneFailure {
+    SceneFailure::new(
+        asset_failure_kind(&failure),
+        SceneLifecycleState::LoadingAssets,
+    )
+    .with_scene(scene_id)
+    .with_session(session_id)
+    .with_optional_content_version(content_version)
+    .with_optional_asset_id(failure.asset_id)
+    .with_optional_asset_path(failure.path)
+    .with_message(failure.message)
+}
+
+fn asset_failure_kind(failure: &SceneAssetLoadFailure) -> SceneFailureKind {
+    if !failure.required {
+        return SceneFailureKind::AssetLoadFailed;
+    };
+
+    let message = failure.message.to_ascii_lowercase();
+    if message.contains("must not be empty")
+        || message.contains("must be relative to assets")
+        || message.contains("stay inside assets")
+        || message.contains("not found")
+        || message.contains("no such file")
+        || message.contains("could not find")
+    {
+        SceneFailureKind::RequiredAssetMissing
+    } else {
+        SceneFailureKind::AssetLoadFailed
+    }
+}
+
 fn manifest_failure_from_error(
     session: &SceneSessionInfo,
     manifest_path: String,
@@ -806,16 +955,12 @@ fn manifest_failure_from_error(
         SceneManifestLoadError::ValidationFailed(_) => SceneFailureKind::ManifestParseFailed,
     };
 
-    SceneFailure {
-        kind,
-        scene_id: Some(session.scene_id.clone()),
-        session_id: Some(session.session_id.clone()),
-        content_version: session.content_version.clone(),
-        state: SceneLifecycleState::Resolving,
-        asset_id: None,
-        asset_path: Some(manifest_path),
-        message: Some(error.to_string()),
-    }
+    SceneFailure::new(kind, SceneLifecycleState::Resolving)
+        .with_scene(session.scene_id.clone())
+        .with_session(session.session_id.clone())
+        .with_optional_content_version(session.content_version.clone())
+        .with_asset_path(manifest_path)
+        .with_message(error.to_string())
 }
 
 fn spawn_lookup_failure(session: &SceneSessionInfo, error: SceneSpawnLookupError) -> SceneFailure {
@@ -826,14 +971,62 @@ fn spawn_lookup_failure(session: &SceneSessionInfo, error: SceneSpawnLookupError
         SceneSpawnLookupError::AnchorMissing { .. } => SceneFailureKind::SceneInstanceFailed,
     };
 
-    SceneFailure {
-        kind,
-        scene_id: Some(session.scene_id.clone()),
-        session_id: Some(session.session_id.clone()),
-        content_version: session.content_version.clone(),
-        state: SceneLifecycleState::Activating,
-        asset_id: None,
-        asset_path: None,
-        message: Some(error.to_string()),
+    SceneFailure::new(kind, SceneLifecycleState::Activating)
+        .with_scene(session.scene_id.clone())
+        .with_session(session.session_id.clone())
+        .with_optional_content_version(session.content_version.clone())
+        .with_message(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framework::scene::id::{SceneAssetId, SceneLayerId};
+
+    fn required_asset_failure(message: &str) -> SceneAssetLoadFailure {
+        SceneAssetLoadFailure {
+            asset_id: Some(SceneAssetId::from("asset")),
+            layer_id: Some(SceneLayerId::from("base")),
+            path: Some("scenes/test/missing.png".to_string()),
+            required: true,
+            message: message.to_string(),
+        }
+    }
+
+    #[test]
+    fn asset_failure_kind_distinguishes_missing_required_assets() {
+        assert_eq!(
+            asset_failure_kind(&required_asset_failure(
+                "scene manifest path must not be empty"
+            )),
+            SceneFailureKind::RequiredAssetMissing
+        );
+        assert_eq!(
+            asset_failure_kind(&required_asset_failure(
+                "scene manifest path must be relative to assets and stay inside assets: ../secret.png"
+            )),
+            SceneFailureKind::RequiredAssetMissing
+        );
+        assert_eq!(
+            asset_failure_kind(&required_asset_failure("asset file not found")),
+            SceneFailureKind::RequiredAssetMissing
+        );
+        assert_eq!(
+            asset_failure_kind(&required_asset_failure(
+                "decoder failed while reading texture"
+            )),
+            SceneFailureKind::AssetLoadFailed
+        );
+    }
+
+    #[test]
+    fn asset_failure_kind_keeps_optional_failures_non_blocking_category() {
+        let mut failure = required_asset_failure("asset file not found");
+        failure.required = false;
+
+        assert_eq!(
+            asset_failure_kind(&failure),
+            SceneFailureKind::AssetLoadFailed
+        );
     }
 }

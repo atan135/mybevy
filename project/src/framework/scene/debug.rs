@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use super::{
     event::SceneFailure,
     id::{SceneId, SceneSessionId},
-    lifecycle::SceneLifecycleState,
+    lifecycle::{SceneLifecycleState, SceneRuntime},
     root::SceneEntityCounts,
 };
 
@@ -59,6 +59,18 @@ pub struct SceneDebugSnapshot {
 }
 
 impl SceneDebugSnapshot {
+    pub fn from_runtime(runtime: &SceneRuntime) -> Self {
+        let session = runtime.active().or(runtime.pending());
+
+        Self {
+            scene_id: session.map(|session| session.scene_id.clone()),
+            session_id: session.map(|session| session.session_id.clone()),
+            state: runtime.state(),
+            last_error: runtime.last_error().cloned(),
+            ..Default::default()
+        }
+    }
+
     pub fn with_entity_counts(mut self, entity_counts: SceneEntityCounts) -> Self {
         self.scene_owned_entities = entity_counts.total_scene_owned;
         self.layer_count = entity_counts.layer_roots;

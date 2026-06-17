@@ -128,14 +128,14 @@
   - [x] 只做空间检测和事件派发，不处理任务、剧情、传送、战斗等业务响应。
   - [x] 为 trigger debug 绘制预留 shape 和 label 数据。
 
-- [ ] 阶段 12：错误分类和诊断日志
-  - [ ] 定义 `SceneFailure` 和 `SceneFailureKind`，覆盖 `SceneNotFound`、`ManifestLoadFailed`、`ManifestParseFailed`、`ManifestVersionUnsupported`、`RequiredAssetMissing`、`AssetLoadFailed`、`SpawnPointMissing`、`CameraSetupFailed`。
-  - [ ] 每个错误至少携带 `scene_id`、`session_id`、`content_version`、`state` 和可选 asset path。
-  - [ ] 为错误提供面向日志的详细描述和面向 UI 的 message key。
-  - [ ] 所有 lifecycle 分支使用统一失败入口，避免散落 `warn!` 后继续运行。
-  - [ ] 场景不存在、清单无效、资源失败和 root 创建失败分别产出可区分错误。
-  - [ ] 失败后清理 pending session 和临时实体，避免半场景残留。
-  - [ ] 保留最近错误用于 debug 面板查询。
+- [x] 阶段 12：错误分类和诊断日志（开始：2026-06-17 20:57:40 +08:00；结束：2026-06-17 21:08:39 +08:00）
+  - [x] 定义 `SceneFailure` 和 `SceneFailureKind`，覆盖 `SceneNotFound`、`ManifestLoadFailed`、`ManifestParseFailed`、`ManifestVersionUnsupported`、`RequiredAssetMissing`、`AssetLoadFailed`、`SpawnPointMissing`、`CameraSetupFailed`。
+  - [x] 每个错误至少携带 `scene_id`、`session_id`、`content_version`、`state` 和可选 asset path。
+  - [x] 为错误提供面向日志的详细描述和面向 UI 的 message key。
+  - [x] 所有 lifecycle 分支使用统一失败入口，避免散落 `warn!` 后继续运行。
+  - [x] 场景不存在、清单无效、资源失败和 root 创建失败分别产出可区分错误。
+  - [x] 失败后清理 pending session 和临时实体，避免半场景残留。
+  - [x] 保留最近错误用于 debug 面板查询。
 
 - [ ] 阶段 13：调试与开发期能力
   - [ ] 定义 `SceneDebugConfig`，支持通过环境变量或资源开关启用。
