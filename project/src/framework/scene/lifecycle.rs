@@ -5,6 +5,10 @@ use std::{
 };
 
 use super::{
+    camera::{
+        SceneCameraConfig, SceneCameraRig, default_scene_camera_config_for_world,
+        ensure_scene_camera,
+    },
     command::{SceneCommand, SceneEnterRequest, SceneExitRequest, SceneSwitchRequest},
     event::{
         SceneEntered, SceneEvent, SceneExitStarted, SceneExited, SceneFailure, SceneFailureKind,
@@ -211,6 +215,7 @@ pub(crate) fn process_scene_lifecycle_commands(
     time: Option<Res<Time>>,
     mut runtime: ResMut<SceneRuntime>,
     mut load_queue: ResMut<SceneAssetLoadQueue>,
+    scene_cameras: Query<&SceneCameraRig>,
     scene_roots: Query<(Entity, &SceneRoot)>,
     owned_entities: Query<(Entity, &SceneOwned)>,
     mut events: MessageWriter<SceneEvent>,
@@ -242,6 +247,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &asset_server,
                 &mut runtime,
                 &mut load_queue,
+                &scene_cameras,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -282,6 +288,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &asset_server,
                 &mut runtime,
                 &mut load_queue,
+                &scene_cameras,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -299,6 +306,7 @@ fn enter_scene(
     asset_server: &AssetServer,
     runtime: &mut SceneRuntime,
     load_queue: &mut SceneAssetLoadQueue,
+    scene_cameras: &Query<&SceneCameraRig>,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
@@ -362,7 +370,9 @@ fn enter_scene(
             runtime,
             events,
             definition.has_world_root,
+            default_scene_camera_config_for_world(definition.has_world_root),
             session,
+            scene_cameras,
             entered_at,
         );
         return;
@@ -397,6 +407,7 @@ fn enter_scene(
 
             runtime.state = SceneLifecycleState::LoadingAssets;
             let loading_policy = manifest_loading_policy(&definition, &manifest);
+            let camera_config = manifest_camera_config(&definition, &manifest);
             let progress =
                 resolving_progress(&session, SceneLoadPhase::LoadingAssets, loading_policy);
             events.write(SceneEvent::LoadProgress(progress));
@@ -408,6 +419,7 @@ fn enter_scene(
                 loading_policy,
                 manifest,
                 definition.has_world_root,
+                camera_config,
                 asset_server,
             ));
         }
@@ -423,7 +435,9 @@ fn finish_scene_enter(
     runtime: &mut SceneRuntime,
     events: &mut MessageWriter<SceneEvent>,
     has_world_root: bool,
+    camera_config: Option<SceneCameraConfig>,
     mut session: SceneSessionInfo,
+    scene_cameras: &Query<&SceneCameraRig>,
     entered_at: Option<Duration>,
 ) {
     runtime.state = SceneLifecycleState::LoadingAssets;
@@ -435,6 +449,10 @@ fn finish_scene_enter(
 
     if has_world_root {
         spawn_scene_world_roots(commands, &session.scene_id, &session.session_id);
+    }
+
+    if let Some(camera_config) = camera_config {
+        ensure_scene_camera(commands, &session.session_id, &camera_config, scene_cameras);
     }
 
     runtime.state = SceneLifecycleState::Activating;
@@ -574,6 +592,7 @@ pub(crate) fn poll_scene_asset_loads(
     time: Option<Res<Time>>,
     mut runtime: ResMut<SceneRuntime>,
     mut load_queue: ResMut<SceneAssetLoadQueue>,
+    scene_cameras: Query<&SceneCameraRig>,
     mut events: MessageWriter<SceneEvent>,
 ) {
     let Some(session) = load_queue.current_mut() else {
@@ -664,7 +683,9 @@ pub(crate) fn poll_scene_asset_loads(
         &mut runtime,
         &mut events,
         session_load.has_world_root,
+        session_load.camera_config,
         session_info,
+        &scene_cameras,
         entered_at,
     );
 }
@@ -700,6 +721,18 @@ fn manifest_loading_policy(
     } else {
         definition.loading_policy
     }
+}
+
+fn manifest_camera_config(
+    definition: &SceneDefinition,
+    manifest: &SceneManifest,
+) -> Option<SceneCameraConfig> {
+    manifest
+        .entry
+        .camera
+        .as_ref()
+        .map(|camera| camera.config().clone())
+        .or_else(|| default_scene_camera_config_for_world(definition.has_world_root))
 }
 
 fn manifest_failure_from_error(

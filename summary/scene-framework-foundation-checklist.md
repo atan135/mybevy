@@ -101,14 +101,14 @@
   - [x] 确认全屏 Loading 打开时复用 UI 输入阻断，不新增独立输入遮罩。
   - [x] 支持 Loading 策略：`None`、`Spinner`、`Progress`、`Blocking`、`NonBlocking` 的最小数据表达。
 
-- [ ] 阶段 9：相机基础能力
-  - [ ] 定义 `SceneCameraMode`，先支持 `UiOnly2d`、`Gameplay2d`、`Gameplay3d`、`Fixed3d`、`DebugFree`。
-  - [ ] 定义 `SceneCameraRig` 或 `SceneCameraConfig`，记录 mode、transform、projection 参数和可选 target。
-  - [ ] 场景进入时根据 manifest 或注册定义决定是否需要世界相机。
-  - [ ] 提供创建默认 2D/3D 相机的 helper。
-  - [ ] 支持复用已有相机或标记场景相机，避免重复生成无用相机。
-  - [ ] 场景退出时只清理场景拥有的相机，不误删全局 UI 相机。
-  - [ ] 预留相机跟随和调试自由相机接口，但不实现具体玩法跟随策略。
+- [x] 阶段 9：相机基础能力（开始：2026-06-17 20:12:15 +08:00；结束：2026-06-17 20:26:50 +08:00）
+  - [x] 定义 `SceneCameraMode`，先支持 `UiOnly2d`、`Gameplay2d`、`Gameplay3d`、`Fixed3d`、`DebugFree`。
+  - [x] 定义 `SceneCameraRig` 或 `SceneCameraConfig`，记录 mode、transform、projection 参数和可选 target。
+  - [x] 场景进入时根据 manifest 或注册定义决定是否需要世界相机。
+  - [x] 提供创建默认 2D/3D 相机的 helper。
+  - [x] 支持复用已有相机或标记场景相机，避免重复生成无用相机。
+  - [x] 场景退出时只清理场景拥有的相机，不误删全局 UI 相机。
+  - [x] 预留相机跟随和调试自由相机接口，但不实现具体玩法跟随策略。
 
 - [ ] 阶段 10：Spawn、Anchor 和查询接口
   - [ ] 定义运行时查询资源或索引，用于按 ID 查找 spawn point 和 anchor。

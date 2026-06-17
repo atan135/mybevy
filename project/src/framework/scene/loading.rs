@@ -7,6 +7,7 @@ use crate::framework::ui::{
 };
 
 use super::{
+    camera::SceneCameraConfig,
     event::SceneEvent,
     id::{SceneAssetId, SceneId, SceneLayerId, SceneSessionId},
     manifest::{
@@ -401,6 +402,7 @@ pub(crate) struct SceneAssetLoadSession {
     pub(crate) content_version: Option<String>,
     pub(crate) loading_policy: SceneLoadingPolicy,
     pub(crate) has_world_root: bool,
+    pub(crate) camera_config: Option<SceneCameraConfig>,
     pub(crate) assets: Vec<SceneTrackedAsset>,
     required_gate_opened: bool,
     last_progress: Option<SceneLoadProgress>,
@@ -414,6 +416,7 @@ impl SceneAssetLoadSession {
         loading_policy: SceneLoadingPolicy,
         manifest: SceneManifest,
         has_world_root: bool,
+        camera_config: Option<SceneCameraConfig>,
         asset_server: &AssetServer,
     ) -> Self {
         let assets = scene_assets_from_manifest(&manifest, asset_server);
@@ -423,6 +426,7 @@ impl SceneAssetLoadSession {
             content_version,
             loading_policy,
             has_world_root,
+            camera_config,
             assets,
             required_gate_opened: false,
             last_progress: None,

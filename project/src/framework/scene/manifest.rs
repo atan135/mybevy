@@ -1,3 +1,4 @@
+use bevy::{math::EulerRot, prelude::*};
 use serde::{Deserialize, Deserializer};
 use std::{
     collections::HashSet,
@@ -6,6 +7,10 @@ use std::{
 };
 
 use super::{
+    camera::{
+        SceneCameraConfig, SceneCameraMode, SceneCameraProjection,
+        default_scene_camera_3d_transform,
+    },
     id::{
         SCENE_ID_ALLOWED_CHARACTERS, SceneAssetId, SceneId, SceneIdError, SceneLayerId,
         SceneSpawnPointId,
@@ -252,7 +257,7 @@ impl SceneManifest {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SceneManifestEntry {
     pub default_spawn: Option<SceneSpawnPointId>,
@@ -281,24 +286,37 @@ impl SceneManifestEntry {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Hash)]
-pub struct SceneCameraRef(String);
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneCameraRef {
+    id: String,
+    config: SceneCameraConfig,
+}
 
 impl SceneCameraRef {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        let id = value.into();
+        let config = scene_camera_config_from_ref_id(&id);
+        Self { id, config }
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.id
     }
 
     pub fn into_string(self) -> String {
-        self.0
+        self.id
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.id.is_empty()
+    }
+
+    pub fn config(&self) -> &SceneCameraConfig {
+        &self.config
+    }
+
+    pub fn into_config(self) -> SceneCameraConfig {
+        self.config
     }
 }
 
@@ -323,6 +341,187 @@ impl AsRef<str> for SceneCameraRef {
 impl fmt::Display for SceneCameraRef {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SceneCameraRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum CameraRefDef {
+            Id(String),
+            Config(SceneCameraManifest),
+        }
+
+        match CameraRefDef::deserialize(deserializer)? {
+            CameraRefDef::Id(id) => Ok(Self::new(id)),
+            CameraRefDef::Config(camera) => Ok(camera.into_ref()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SceneCameraManifest {
+    pub id: Option<String>,
+    pub mode: SceneCameraMode,
+    pub position: Option<[f32; 3]>,
+    #[serde(alias = "rotation")]
+    pub rotation_degrees: Option<[f32; 3]>,
+    pub projection: Option<SceneCameraProjectionManifest>,
+    pub target: Option<super::id::SceneAnchorId>,
+}
+
+impl Default for SceneCameraManifest {
+    fn default() -> Self {
+        Self {
+            id: None,
+            mode: SceneCameraMode::Gameplay2d,
+            position: None,
+            rotation_degrees: None,
+            projection: None,
+            target: None,
+        }
+    }
+}
+
+impl SceneCameraManifest {
+    pub fn config(&self) -> SceneCameraConfig {
+        let mut config = SceneCameraConfig::new(self.mode);
+
+        if self.position.is_some() || self.rotation_degrees.is_some() {
+            config.transform =
+                scene_camera_manifest_transform(self.mode, self.position, self.rotation_degrees);
+        }
+
+        config.projection = self
+            .projection
+            .map(SceneCameraProjectionManifest::projection)
+            .unwrap_or_else(|| SceneCameraProjection::for_mode(self.mode));
+        config.target = self.target.clone();
+        config
+    }
+
+    pub fn into_ref(self) -> SceneCameraRef {
+        let id = self
+            .id
+            .clone()
+            .unwrap_or_else(|| scene_camera_ref_id_for_mode(self.mode).to_string());
+        SceneCameraRef {
+            id,
+            config: self.config(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SceneCameraProjectionManifest {
+    Default2d,
+    Default3d,
+    Orthographic2d {
+        scale: f32,
+    },
+    Perspective3d {
+        #[serde(alias = "fov_y")]
+        fov_y_radians: f32,
+        near: f32,
+        far: f32,
+    },
+}
+
+impl SceneCameraProjectionManifest {
+    fn projection(self) -> SceneCameraProjection {
+        match self {
+            Self::Default2d => SceneCameraProjection::Default2d,
+            Self::Default3d => SceneCameraProjection::Default3d,
+            Self::Orthographic2d { scale } => SceneCameraProjection::Orthographic2d { scale },
+            Self::Perspective3d {
+                fov_y_radians,
+                near,
+                far,
+            } => SceneCameraProjection::Perspective3d {
+                fov_y_radians,
+                near,
+                far,
+            },
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SceneCameraMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match normalize_manifest_token(&value).as_str() {
+            "uionly2d" | "ui2d" | "ui" => Self::UiOnly2d,
+            "gameplay2d" | "world2d" | "2d" => Self::Gameplay2d,
+            "gameplay3d" | "world3d" | "3d" => Self::Gameplay3d,
+            "fixed3d" => Self::Fixed3d,
+            "debugfree" | "free" | "freecamera" => Self::DebugFree,
+            _ => Self::Gameplay2d,
+        })
+    }
+}
+
+fn scene_camera_config_from_ref_id(id: &str) -> SceneCameraConfig {
+    SceneCameraConfig::new(scene_camera_mode_from_ref_id(id))
+}
+
+fn scene_camera_mode_from_ref_id(id: &str) -> SceneCameraMode {
+    match normalize_manifest_token(id).as_str() {
+        "uionly2d" | "ui2d" | "ui" => SceneCameraMode::UiOnly2d,
+        "gameplay3d" | "world3d" | "3d" => SceneCameraMode::Gameplay3d,
+        "fixed3d" => SceneCameraMode::Fixed3d,
+        "debugfree" | "free" | "freecamera" => SceneCameraMode::DebugFree,
+        _ => SceneCameraMode::Gameplay2d,
+    }
+}
+
+fn scene_camera_ref_id_for_mode(mode: SceneCameraMode) -> &'static str {
+    match mode {
+        SceneCameraMode::UiOnly2d => "ui_only_2d",
+        SceneCameraMode::Gameplay2d => "gameplay_2d",
+        SceneCameraMode::Gameplay3d => "gameplay_3d",
+        SceneCameraMode::Fixed3d => "fixed_3d",
+        SceneCameraMode::DebugFree => "debug_free",
+    }
+}
+
+fn scene_camera_manifest_transform(
+    mode: SceneCameraMode,
+    position: Option<[f32; 3]>,
+    rotation_degrees: Option<[f32; 3]>,
+) -> Transform {
+    let default_transform = if mode.is_3d() {
+        default_scene_camera_3d_transform()
+    } else {
+        Transform::default()
+    };
+
+    let translation = position
+        .map(Vec3::from_array)
+        .unwrap_or(default_transform.translation);
+    let rotation = rotation_degrees
+        .map(|rotation_degrees| {
+            Quat::from_euler(
+                EulerRot::XYZ,
+                rotation_degrees[0].to_radians(),
+                rotation_degrees[1].to_radians(),
+                rotation_degrees[2].to_radians(),
+            )
+        })
+        .unwrap_or(default_transform.rotation);
+
+    Transform {
+        translation,
+        rotation,
+        scale: default_transform.scale,
     }
 }
 
