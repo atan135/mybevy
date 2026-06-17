@@ -1,10 +1,12 @@
 use std::{collections::HashMap, fmt};
 
 use bevy::prelude::*;
+use serde::{Deserialize, Deserializer};
 
 use super::{
     id::{SCENE_ID_ALLOWED_CHARACTERS, SceneId, SceneIdError, SceneSpawnPointId},
     loading::SceneLoadingPolicy,
+    manifest::normalize_manifest_token,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -18,6 +20,26 @@ pub enum SceneKind {
     World,
     Arena,
     Dev,
+}
+
+impl<'de> Deserialize<'de> for SceneKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match normalize_manifest_token(&value).as_str() {
+            "boot" => Self::Boot,
+            "ui" => Self::Ui,
+            "lobby" => Self::Lobby,
+            "gameplay" => Self::Gameplay,
+            "dungeon" => Self::Dungeon,
+            "world" => Self::World,
+            "arena" => Self::Arena,
+            "dev" => Self::Dev,
+            _ => Self::Gameplay,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

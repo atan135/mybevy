@@ -1,4 +1,9 @@
-use std::{collections::HashSet, fmt};
+use serde::{Deserialize, Deserializer};
+use std::{
+    collections::HashSet,
+    fmt, fs, io,
+    path::{Path, PathBuf},
+};
 
 use super::{
     id::{
@@ -14,16 +19,27 @@ use super::{
 /// Scene manifests currently support exactly this version.
 pub const SCENE_MANIFEST_VERSION: &str = "1";
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SceneManifest {
     pub version: String,
     pub scene_id: SceneId,
     pub kind: SceneKind,
+    #[serde(default)]
     pub entry: SceneManifestEntry,
+    #[serde(default)]
     pub layers: Vec<SceneLayerManifest>,
+    #[serde(default)]
     pub spawn_points: Vec<SceneSpawnPointManifest>,
+    #[serde(default)]
     pub anchors: Vec<SceneAnchorManifest>,
+    #[serde(default)]
     pub triggers: Vec<SceneTriggerManifest>,
+}
+
+impl Default for SceneManifest {
+    fn default() -> Self {
+        Self::new(SceneId::from("scene"), SceneKind::default())
+    }
 }
 
 impl SceneManifest {
@@ -67,6 +83,36 @@ impl SceneManifest {
 
     pub fn is_supported_version(version: &str) -> bool {
         version == SCENE_MANIFEST_VERSION
+    }
+
+    pub fn load_first_package_ron(
+        manifest_path: impl AsRef<str>,
+    ) -> Result<Self, SceneManifestLoadError> {
+        let manifest_path = manifest_path.as_ref();
+        validate_asset_relative_path(manifest_path)
+            .map_err(SceneManifestLoadError::UnsafeManifestPath)?;
+
+        let fs_path = first_package_manifest_fs_path(manifest_path)
+            .ok_or_else(|| SceneManifestLoadError::ManifestNotFound(manifest_path.to_string()))?;
+
+        let manifest_source =
+            fs::read_to_string(&fs_path).map_err(|source| SceneManifestLoadError::ReadFailed {
+                path: fs_path.clone(),
+                source,
+            })?;
+
+        let manifest = ron::from_str::<Self>(&manifest_source).map_err(|source| {
+            SceneManifestLoadError::ParseFailed {
+                path: fs_path,
+                source,
+            }
+        })?;
+
+        manifest
+            .validate_basic()
+            .map_err(SceneManifestLoadError::ValidationFailed)?;
+
+        Ok(manifest)
     }
 
     pub fn validate_basic(&self) -> Result<(), SceneManifestError> {
@@ -206,7 +252,8 @@ impl SceneManifest {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct SceneManifestEntry {
     pub default_spawn: Option<SceneSpawnPointId>,
     pub camera: Option<SceneCameraRef>,
@@ -234,7 +281,7 @@ impl SceneManifestEntry {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Hash)]
 pub struct SceneCameraRef(String);
 
 impl SceneCameraRef {
@@ -279,11 +326,18 @@ impl fmt::Display for SceneCameraRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct SceneLayerManifest {
     pub id: SceneLayerId,
     pub required: bool,
     pub assets: Vec<SceneAssetRef>,
+}
+
+impl Default for SceneLayerManifest {
+    fn default() -> Self {
+        Self::new(SceneLayerId::from(""))
+    }
 }
 
 impl SceneLayerManifest {
@@ -317,12 +371,23 @@ impl SceneLayerManifest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct SceneAssetRef {
     pub id: SceneAssetId,
     pub kind: SceneAssetKind,
     pub path: String,
     pub label: Option<String>,
+}
+
+impl Default for SceneAssetRef {
+    fn default() -> Self {
+        Self::new(
+            SceneAssetId::from(""),
+            SceneAssetKind::Other(String::new()),
+            "",
+        )
+    }
 }
 
 impl SceneAssetRef {
@@ -351,6 +416,12 @@ pub enum SceneAssetKind {
     Other(String),
 }
 
+impl Default for SceneAssetKind {
+    fn default() -> Self {
+        Self::Other(String::new())
+    }
+}
+
 impl SceneAssetKind {
     pub fn other(value: impl Into<String>) -> Self {
         Self::Other(value.into())
@@ -359,6 +430,69 @@ impl SceneAssetKind {
     pub fn is_empty(&self) -> bool {
         matches!(self, Self::Other(value) if value.trim().is_empty())
     }
+}
+
+impl<'de> Deserialize<'de> for SceneAssetKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match normalize_manifest_token(&value).as_str() {
+            "gltfscene" | "gltf" | "glb" => Self::GltfScene,
+            "image" | "texture" => Self::Image,
+            "audio" | "sound" => Self::Audio,
+            "ron" => Self::Ron,
+            "json" => Self::Json,
+            _ => Self::Other(value),
+        })
+    }
+}
+
+pub(crate) fn validate_asset_relative_path(path: &str) -> Result<(), SceneManifestPathError> {
+    if path.trim().is_empty() {
+        return Err(SceneManifestPathError::Empty);
+    }
+
+    if is_unsafe_asset_path(path) {
+        return Err(SceneManifestPathError::UnsafePath(path.to_string()));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn asset_path_with_label(asset: &SceneAssetRef) -> String {
+    match asset.label.as_deref() {
+        Some(label) if !label.is_empty() => format!("{}#{label}", asset.path),
+        _ => asset.path.clone(),
+    }
+}
+
+pub(crate) fn normalize_manifest_token(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|character| !matches!(character, '-' | '_' | ' '))
+        .collect()
+}
+
+fn first_package_manifest_fs_path(manifest_path: &str) -> Option<PathBuf> {
+    first_package_asset_root_candidates()
+        .into_iter()
+        .map(|root| root.join(Path::new(manifest_path)))
+        .find(|candidate| candidate.is_file())
+}
+
+fn first_package_asset_root_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("assets"));
+        candidates.push(current_dir.join("project").join("assets"));
+    }
+    candidates.push(PathBuf::from("assets"));
+    candidates.push(PathBuf::from("project").join("assets"));
+    candidates
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -416,6 +550,84 @@ pub enum SceneManifestError {
         trigger_id: super::id::SceneTriggerId,
     },
 }
+
+#[derive(Debug)]
+pub enum SceneManifestLoadError {
+    UnsafeManifestPath(SceneManifestPathError),
+    ManifestNotFound(String),
+    ReadFailed {
+        path: PathBuf,
+        source: io::Error,
+    },
+    ParseFailed {
+        path: PathBuf,
+        source: ron::error::SpannedError,
+    },
+    ValidationFailed(SceneManifestError),
+}
+
+impl fmt::Display for SceneManifestLoadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsafeManifestPath(error) => write!(formatter, "{error}"),
+            Self::ManifestNotFound(path) => {
+                write!(
+                    formatter,
+                    "scene manifest was not found under the first package assets root: {path}"
+                )
+            }
+            Self::ReadFailed { path, source } => {
+                write!(
+                    formatter,
+                    "failed to read scene manifest at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::ParseFailed { path, source } => {
+                write!(
+                    formatter,
+                    "failed to parse scene manifest RON at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::ValidationFailed(error) => {
+                write!(formatter, "scene manifest validation failed: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SceneManifestLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::UnsafeManifestPath(error) => Some(error),
+            Self::ReadFailed { source, .. } => Some(source),
+            Self::ParseFailed { source, .. } => Some(source),
+            Self::ValidationFailed(error) => Some(error),
+            Self::ManifestNotFound(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SceneManifestPathError {
+    Empty,
+    UnsafePath(String),
+}
+
+impl fmt::Display for SceneManifestPathError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("scene manifest path must not be empty"),
+            Self::UnsafePath(path) => write!(
+                formatter,
+                "scene manifest path must be relative to assets and stay inside assets: {path}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SceneManifestPathError {}
 
 impl fmt::Display for SceneManifestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

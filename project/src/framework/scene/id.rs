@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use std::fmt;
 
 pub const SCENE_ID_ALLOWED_CHARACTERS: &str =
@@ -5,7 +6,7 @@ pub const SCENE_ID_ALLOWED_CHARACTERS: &str =
 
 macro_rules! scene_string_id {
     ($name:ident) => {
-        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Hash)]
         pub struct $name(String);
 
         impl $name {

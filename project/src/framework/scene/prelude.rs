@@ -19,7 +19,8 @@ pub use super::{
     loading::{SceneAssetLoadFailure, SceneLoadPhase, SceneLoadProgress, SceneLoadingPolicy},
     manifest::{
         SCENE_MANIFEST_VERSION, SceneAssetKind, SceneAssetRef, SceneCameraRef, SceneLayerManifest,
-        SceneManifest, SceneManifestEntry, SceneManifestError,
+        SceneManifest, SceneManifestEntry, SceneManifestError, SceneManifestLoadError,
+        SceneManifestPathError,
     },
     plugin::ScenePlugin,
     registry::{

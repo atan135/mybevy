@@ -83,14 +83,14 @@
   - [x] 实现 manifest 静态校验：必填字段、ID 唯一性、默认 spawn 是否存在、路径是否跳出资源根、required layer 是否有效。
   - [x] 明确 manifest 版本支持策略，当前只接受 `"1"` 或一个固定常量。
 
-- [ ] 阶段 7：首包资源加载和 Loading 进度
-  - [ ] 支持从 `project/assets/scenes/...` 加载 RON 场景清单。
-  - [ ] 通过 Bevy `AssetServer` 请求 required asset handles，先覆盖通用 handle 跟踪，不急于实例化所有资产类型。
-  - [ ] 定义 `SceneLoadProgress`，区分 required、optional、loaded、failed、phase 和可展示 message key。
-  - [ ] 在加载过程中发送 `SceneEvent::LoadProgress`。
-  - [ ] required 资源未完成前不进入 `Active`。
-  - [ ] optional 资源失败不阻断进入，但要写入 warning 或事件。
-  - [ ] required 资源失败时发送 `SceneEvent::Failed`，并根据策略保持旧场景或进入 fallback。
+- [x] 阶段 7：首包资源加载和 Loading 进度（开始：2026-06-17 19:22:01 +08:00；结束：2026-06-17 19:55:12 +08:00）
+  - [x] 支持从 `project/assets/scenes/...` 加载 RON 场景清单。
+  - [x] 通过 Bevy `AssetServer` 请求 required asset handles，先覆盖通用 handle 跟踪，不急于实例化所有资产类型。
+  - [x] 定义 `SceneLoadProgress`，区分 required、optional、loaded、failed、phase 和可展示 message key。
+  - [x] 在加载过程中发送 `SceneEvent::LoadProgress`。
+  - [x] required 资源未完成前不进入 `Active`。
+  - [x] optional 资源失败不阻断进入，但要写入 warning 或事件。
+  - [x] required 资源失败时发送 `SceneEvent::Failed`，并根据策略保持旧场景或进入 fallback。
 
 - [ ] 阶段 8：Loading 与 UI 框架接口
   - [ ] 在场景框架内定义 UI 联动边界，避免场景系统直接依赖具体游戏页面。

@@ -4,7 +4,8 @@ use super::{
     command::SceneCommand,
     debug::SceneDebugConfig,
     event::SceneEvent,
-    lifecycle::{SceneRuntime, process_scene_lifecycle_commands},
+    lifecycle::{SceneRuntime, poll_scene_asset_loads, process_scene_lifecycle_commands},
+    loading::SceneAssetLoadQueue,
     registry::SceneRegistry,
     trigger::SceneTriggerEvent,
 };
@@ -17,8 +18,12 @@ impl Plugin for ScenePlugin {
             .add_message::<SceneEvent>()
             .add_message::<SceneTriggerEvent>()
             .init_resource::<SceneRuntime>()
+            .init_resource::<SceneAssetLoadQueue>()
             .init_resource::<SceneRegistry>()
             .init_resource::<SceneDebugConfig>()
-            .add_systems(Update, process_scene_lifecycle_commands);
+            .add_systems(
+                Update,
+                (process_scene_lifecycle_commands, poll_scene_asset_loads),
+            );
     }
 }

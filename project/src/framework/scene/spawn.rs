@@ -1,4 +1,5 @@
 use bevy::{math::EulerRot, prelude::*};
+use serde::Deserialize;
 
 use super::id::{SceneAnchorId, SceneSpawnPointId};
 
@@ -36,12 +37,20 @@ impl SceneAnchor {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct SceneSpawnPointManifest {
     pub id: SceneSpawnPointId,
     pub position: [f32; 3],
+    #[serde(alias = "rotation")]
     pub rotation_degrees: [f32; 3],
     pub tags: Vec<String>,
+}
+
+impl Default for SceneSpawnPointManifest {
+    fn default() -> Self {
+        Self::new(SceneSpawnPointId::from(""), [0.0, 0.0, 0.0])
+    }
 }
 
 impl SceneSpawnPointManifest {
@@ -82,12 +91,20 @@ impl SceneSpawnPointManifest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct SceneAnchorManifest {
     pub id: SceneAnchorId,
     pub position: [f32; 3],
+    #[serde(alias = "rotation")]
     pub rotation_degrees: [f32; 3],
     pub tags: Vec<String>,
+}
+
+impl Default for SceneAnchorManifest {
+    fn default() -> Self {
+        Self::new(SceneAnchorId::from(""), [0.0, 0.0, 0.0])
+    }
 }
 
 impl SceneAnchorManifest {

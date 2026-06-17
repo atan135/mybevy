@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Deserializer};
 
 use super::id::{SceneSessionId, SceneTriggerId};
 
@@ -51,13 +52,25 @@ pub enum SceneTriggerAction {
     Interact,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct SceneTriggerManifest {
     pub id: SceneTriggerId,
     pub shape: SceneTriggerShapeManifest,
     pub position: [f32; 3],
+    #[serde(alias = "rotation")]
     pub rotation_degrees: [f32; 3],
     pub event: String,
+}
+
+impl Default for SceneTriggerManifest {
+    fn default() -> Self {
+        Self::new(
+            SceneTriggerId::from(""),
+            SceneTriggerShapeManifest::default(),
+            "",
+        )
+    }
 }
 
 impl SceneTriggerManifest {
@@ -91,6 +104,38 @@ pub enum SceneTriggerShapeManifest {
     Circle2d { radius: f32 },
     Box2d { half_extents: [f32; 2] },
     Box3d { half_extents: [f32; 3] },
+}
+
+impl Default for SceneTriggerShapeManifest {
+    fn default() -> Self {
+        Self::Box2d {
+            half_extents: [0.0, 0.0],
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SceneTriggerShapeManifest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum Shape {
+            Circle2d { radius: f32 },
+            Circle { radius: f32 },
+            Box2d { half_extents: [f32; 2] },
+            Box3d { half_extents: [f32; 3] },
+            Box { half_extents: [f32; 3] },
+        }
+
+        Ok(match Shape::deserialize(deserializer)? {
+            Shape::Circle2d { radius } | Shape::Circle { radius } => Self::Circle2d { radius },
+            Shape::Box2d { half_extents } => Self::Box2d { half_extents },
+            Shape::Box3d { half_extents } | Shape::Box { half_extents } => {
+                Self::Box3d { half_extents }
+            }
+        })
+    }
 }
 
 impl SceneTriggerShapeManifest {

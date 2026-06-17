@@ -11,6 +11,8 @@ use super::{
         SceneInstantiating, SceneResolving,
     },
     id::{SceneId, SceneSessionId, SceneSpawnPointId},
+    loading::{SceneAssetLoadQueue, SceneAssetLoadSession, SceneLoadPhase, SceneLoadProgress},
+    manifest::{SceneManifest, SceneManifestLoadError},
     registry::{SceneDefinition, SceneRegistry},
     root::{SceneOwned, SceneRoot, despawn_scene_session_entities, spawn_scene_world_roots},
 };
@@ -202,8 +204,10 @@ pub(crate) fn process_scene_lifecycle_commands(
     mut commands: Commands,
     mut command_reader: MessageReader<SceneCommand>,
     registry: Res<SceneRegistry>,
+    asset_server: Res<AssetServer>,
     time: Option<Res<Time>>,
     mut runtime: ResMut<SceneRuntime>,
+    mut load_queue: ResMut<SceneAssetLoadQueue>,
     scene_roots: Query<(Entity, &SceneRoot)>,
     owned_entities: Query<(Entity, &SceneOwned)>,
     mut events: MessageWriter<SceneEvent>,
@@ -232,7 +236,9 @@ pub(crate) fn process_scene_lifecycle_commands(
             enter_scene(
                 &mut commands,
                 &registry,
+                &asset_server,
                 &mut runtime,
+                &mut load_queue,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -245,6 +251,7 @@ pub(crate) fn process_scene_lifecycle_commands(
             exit_scene(
                 &mut commands,
                 &mut runtime,
+                &mut load_queue,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -260,6 +267,7 @@ pub(crate) fn process_scene_lifecycle_commands(
             exit_scene(
                 &mut commands,
                 &mut runtime,
+                &mut load_queue,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -268,7 +276,9 @@ pub(crate) fn process_scene_lifecycle_commands(
             enter_scene(
                 &mut commands,
                 &registry,
+                &asset_server,
                 &mut runtime,
+                &mut load_queue,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -283,7 +293,9 @@ pub(crate) fn process_scene_lifecycle_commands(
 fn enter_scene(
     commands: &mut Commands,
     registry: &SceneRegistry,
+    asset_server: &AssetServer,
     runtime: &mut SceneRuntime,
+    load_queue: &mut SceneAssetLoadQueue,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
@@ -317,6 +329,7 @@ fn enter_scene(
         exit_scene(
             commands,
             runtime,
+            load_queue,
             scene_roots,
             owned_entities,
             events,
@@ -333,6 +346,73 @@ fn enter_scene(
         session_id: Some(session.session_id.clone()),
     }));
 
+    let Some(manifest_path) = definition.manifest_path.clone() else {
+        finish_scene_enter(
+            commands,
+            runtime,
+            events,
+            definition.has_world_root,
+            session,
+            entered_at,
+        );
+        return;
+    };
+
+    match SceneManifest::load_first_package_ron(&manifest_path) {
+        Ok(manifest) => {
+            let manifest_scene_id = manifest.scene_id.clone();
+            if manifest_scene_id != session.scene_id {
+                fail_scene_transition(
+                    runtime,
+                    events,
+                    SceneFailure {
+                        kind: SceneFailureKind::ManifestParseFailed,
+                        scene_id: Some(session.scene_id),
+                        session_id: Some(session.session_id),
+                        content_version: session.content_version,
+                        state: SceneLifecycleState::Resolving,
+                        asset_id: None,
+                        asset_path: Some(manifest_path),
+                        message: Some(format!(
+                            "scene manifest scene_id {manifest_scene_id} does not match registered scene id"
+                        )),
+                    },
+                );
+                return;
+            }
+
+            if session.spawn_point.is_none() {
+                session.spawn_point = manifest.entry.default_spawn.clone();
+            }
+
+            runtime.state = SceneLifecycleState::LoadingAssets;
+            let progress = resolving_progress(&session, SceneLoadPhase::LoadingAssets);
+            events.write(SceneEvent::LoadProgress(progress));
+
+            load_queue.start(SceneAssetLoadSession::new(
+                session.scene_id.clone(),
+                session.session_id.clone(),
+                session.content_version.clone(),
+                manifest,
+                definition.has_world_root,
+                asset_server,
+            ));
+        }
+        Err(error) => {
+            let failure = manifest_failure_from_error(&session, manifest_path, error);
+            fail_scene_transition(runtime, events, failure);
+        }
+    }
+}
+
+fn finish_scene_enter(
+    commands: &mut Commands,
+    runtime: &mut SceneRuntime,
+    events: &mut MessageWriter<SceneEvent>,
+    has_world_root: bool,
+    mut session: SceneSessionInfo,
+    entered_at: Option<Duration>,
+) {
     runtime.state = SceneLifecycleState::LoadingAssets;
     runtime.state = SceneLifecycleState::Instantiating;
     events.write(SceneEvent::Instantiating(SceneInstantiating {
@@ -340,7 +420,7 @@ fn enter_scene(
         session_id: session.session_id.clone(),
     }));
 
-    if definition.has_world_root {
+    if has_world_root {
         spawn_scene_world_roots(commands, &session.scene_id, &session.session_id);
     }
 
@@ -360,6 +440,7 @@ fn enter_scene(
 fn exit_scene(
     commands: &mut Commands,
     runtime: &mut SceneRuntime,
+    load_queue: &mut SceneAssetLoadQueue,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
@@ -377,6 +458,7 @@ fn exit_scene(
 
     runtime.state = SceneLifecycleState::Unloading;
     despawn_scene_session_entities(commands, &session.session_id, scene_roots, owned_entities);
+    load_queue.clear_session(&session.session_id);
     clear_runtime_session(runtime, &session.session_id);
 
     events.write(SceneEvent::Exited(SceneExited {
@@ -471,4 +553,154 @@ fn fail_scene_transition(
     runtime.state = SceneLifecycleState::Failed;
     runtime.last_error = Some(failure.clone());
     events.write(SceneEvent::Failed(failure));
+}
+
+pub(crate) fn poll_scene_asset_loads(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    time: Option<Res<Time>>,
+    mut runtime: ResMut<SceneRuntime>,
+    mut load_queue: ResMut<SceneAssetLoadQueue>,
+    mut events: MessageWriter<SceneEvent>,
+) {
+    let Some(session) = load_queue.current_mut() else {
+        return;
+    };
+
+    let session_is_current = if session.required_gate_opened() {
+        runtime
+            .active
+            .as_ref()
+            .is_some_and(|active| active.session_id == session.session_id)
+    } else {
+        runtime
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.session_id == session.session_id)
+    };
+
+    if !session_is_current {
+        load_queue.take_current();
+        return;
+    }
+
+    let progress = session.progress(&asset_server);
+    if let Some(progress_event) = session.take_progress_if_changed(&asset_server) {
+        events.write(SceneEvent::LoadProgress(progress_event));
+    }
+
+    if !session.required_gate_opened()
+        && let Some(failure) = session.required_failure(&progress)
+    {
+        let session_id = session.session_id.clone();
+        let scene_id = session.scene_id.clone();
+        let content_version = session.content_version.clone();
+        load_queue.take_current();
+        fail_scene_transition(
+            &mut runtime,
+            &mut events,
+            SceneFailure {
+                kind: SceneFailureKind::AssetLoadFailed,
+                scene_id: Some(scene_id),
+                session_id: Some(session_id),
+                content_version,
+                state: SceneLifecycleState::LoadingAssets,
+                asset_id: failure.asset_id,
+                asset_path: failure.path,
+                message: Some(failure.message),
+            },
+        );
+        return;
+    }
+
+    if !session.required_gate_opened() && !session.required_assets_loaded(&progress) {
+        runtime.state = SceneLifecycleState::LoadingAssets;
+        return;
+    }
+
+    if session.required_gate_opened() {
+        if session.optional_assets_finished(&progress) {
+            load_queue.take_current();
+        }
+        return;
+    }
+
+    session.mark_required_gate_opened();
+    let session_load = session.clone();
+    let Some(session_info) = runtime.pending.clone() else {
+        load_queue.take_current();
+        return;
+    };
+
+    let mut complete_progress =
+        SceneLoadProgress::new(session_info.scene_id.clone(), SceneLoadPhase::Instantiating);
+    complete_progress.session_id = Some(session_info.session_id.clone());
+    complete_progress.required_total = progress.required_total;
+    complete_progress.required_loaded = progress.required_loaded;
+    complete_progress.optional_total = progress.optional_total;
+    complete_progress.optional_loaded = progress.optional_loaded;
+    complete_progress.optional_failed = progress.optional_failed;
+    complete_progress.failed = progress.failed;
+    complete_progress.message_key = Some("scene.loading.instantiating".to_string());
+    events.write(SceneEvent::LoadProgress(complete_progress));
+
+    let entered_at = time.as_ref().map(|time| time.elapsed());
+    finish_scene_enter(
+        &mut commands,
+        &mut runtime,
+        &mut events,
+        session_load.has_world_root,
+        session_info,
+        entered_at,
+    );
+}
+
+fn resolving_progress(session: &SceneSessionInfo, phase: SceneLoadPhase) -> SceneLoadProgress {
+    let mut progress = SceneLoadProgress::new(session.scene_id.clone(), phase);
+    progress.session_id = Some(session.session_id.clone());
+    progress.message_key = Some(
+        match phase {
+            SceneLoadPhase::Resolving => "scene.loading.resolving",
+            SceneLoadPhase::Downloading => "scene.loading.downloading",
+            SceneLoadPhase::LoadingAssets => "scene.loading.assets",
+            SceneLoadPhase::Instantiating => "scene.loading.instantiating",
+            SceneLoadPhase::Activating => "scene.loading.activating",
+            SceneLoadPhase::Complete => "scene.loading.complete",
+        }
+        .to_string(),
+    );
+    progress
+}
+
+fn manifest_failure_from_error(
+    session: &SceneSessionInfo,
+    manifest_path: String,
+    error: SceneManifestLoadError,
+) -> SceneFailure {
+    let kind = match &error {
+        SceneManifestLoadError::UnsafeManifestPath(_)
+        | SceneManifestLoadError::ManifestNotFound(_)
+        | SceneManifestLoadError::ReadFailed { .. } => SceneFailureKind::ManifestLoadFailed,
+        SceneManifestLoadError::ParseFailed { .. } => SceneFailureKind::ManifestParseFailed,
+        SceneManifestLoadError::ValidationFailed(error)
+            if matches!(
+                error,
+                super::manifest::SceneManifestError::UnsupportedVersion { .. }
+            ) =>
+        {
+            SceneFailureKind::ManifestVersionUnsupported
+        }
+        SceneManifestLoadError::ValidationFailed(_) => SceneFailureKind::ManifestParseFailed,
+    };
+
+    SceneFailure {
+        kind,
+        scene_id: Some(session.scene_id.clone()),
+        session_id: Some(session.session_id.clone()),
+        content_version: session.content_version.clone(),
+        state: SceneLifecycleState::Resolving,
+        asset_id: None,
+        asset_path: Some(manifest_path),
+        message: Some(error.to_string()),
+    }
 }
