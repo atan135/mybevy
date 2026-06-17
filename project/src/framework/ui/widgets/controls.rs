@@ -367,11 +367,12 @@ fn emit_ui_button_events(
             Without<LoadingButton>,
         ),
     >,
+    parents: Query<&ChildOf>,
 ) {
     for press in presses.read() {
-        if buttons.contains(press.entity) {
+        if let Some(button_entity) = ui_button_event_target(press.entity, &buttons, &parents) {
             button_events.write(UiButtonEvent {
-                entity: press.entity,
+                entity: button_entity,
                 kind: UiButtonEventKind::Down,
                 button: Some(press.button),
             });
@@ -379,9 +380,9 @@ fn emit_ui_button_events(
     }
 
     for click in clicks.read() {
-        if buttons.contains(click.entity) {
+        if let Some(button_entity) = ui_button_event_target(click.entity, &buttons, &parents) {
             button_events.write(UiButtonEvent {
-                entity: click.entity,
+                entity: button_entity,
                 kind: UiButtonEventKind::Click,
                 button: Some(click.button),
             });
@@ -389,9 +390,9 @@ fn emit_ui_button_events(
     }
 
     for release in releases.read() {
-        if buttons.contains(release.entity) {
+        if let Some(button_entity) = ui_button_event_target(release.entity, &buttons, &parents) {
             button_events.write(UiButtonEvent {
-                entity: release.entity,
+                entity: button_entity,
                 kind: UiButtonEventKind::Up,
                 button: Some(release.button),
             });
@@ -399,14 +400,35 @@ fn emit_ui_button_events(
     }
 
     for cancel in cancels.read() {
-        if buttons.contains(cancel.entity) {
+        if let Some(button_entity) = ui_button_event_target(cancel.entity, &buttons, &parents) {
             button_events.write(UiButtonEvent {
-                entity: cancel.entity,
+                entity: button_entity,
                 kind: UiButtonEventKind::Cancel,
                 button: None,
             });
         }
     }
+}
+
+fn ui_button_event_target(
+    entity: Entity,
+    buttons: &Query<
+        (),
+        (
+            With<Button>,
+            Without<DisabledButton>,
+            Without<LoadingButton>,
+        ),
+    >,
+    parents: &Query<&ChildOf>,
+) -> Option<Entity> {
+    if buttons.contains(entity) {
+        return Some(entity);
+    }
+
+    parents
+        .iter_ancestors(entity)
+        .find(|ancestor| buttons.contains(*ancestor))
 }
 
 pub(crate) fn screen_title(
@@ -4183,6 +4205,25 @@ mod tests {
             selection_display_text("Medium", SelectionVisualState::Disabled),
             "[-] Medium"
         );
+    }
+
+    #[test]
+    fn button_event_target_resolves_child_to_parent_button() {
+        let mut world = World::new();
+        let button = world.spawn(Button).id();
+        let label = world.spawn(Text::new("Label")).id();
+        world.entity_mut(button).add_child(label);
+
+        let mut buttons = world.query_filtered::<(), (
+            With<Button>,
+            Without<DisabledButton>,
+            Without<LoadingButton>,
+        )>();
+        let mut parents = world.query::<&ChildOf>();
+
+        let resolved =
+            ui_button_event_target(label, &buttons.query(&world), &parents.query(&world));
+        assert_eq!(resolved, Some(button));
     }
 
     #[test]
