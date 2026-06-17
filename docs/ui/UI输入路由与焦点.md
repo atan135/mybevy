@@ -59,7 +59,7 @@ pub struct UiFocusState {
 
 ## 键盘激活
 
-`Enter` 和 `Space` 会临时把当前焦点按钮的 `Interaction` 设置为 `Pressed`，从而复用普通按钮处理逻辑。带 `UiTextInput` 的实体不会通过这个路径触发按钮动作，避免输入框焦点误触发提交。
+`Enter` 和 `Space` 会临时把当前焦点按钮的 `Interaction` 设置为 `Pressed`，并写出 `UiButtonEvent::Down`、`UiButtonEvent::Click`、`UiButtonEvent::Up`。带 `UiTextInput` 的实体不会通过这个路径触发按钮动作，避免输入框焦点误触发提交。
 
 ## 滚动协作
 

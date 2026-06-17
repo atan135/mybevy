@@ -17,7 +17,7 @@ use crate::framework::ui::{
         },
     },
     widgets::{
-        DisabledButton, LoadingButton, primary_action_button_key, screen_label_key,
+        UiButtonEvent, UiButtonEventKind, primary_action_button_key, screen_label_key,
         screen_title_key,
     },
 };
@@ -205,23 +205,15 @@ pub(super) fn handle_game_list_touch_buttons(
     mut overlay_commands: MessageWriter<UiOverlayCommand>,
     mut game_route_commands: MessageWriter<GameRouteCommand>,
     mut modal_results: MessageReader<UiModalResult>,
-    play_buttons: Query<
-        &Interaction,
-        (
-            Changed<Interaction>,
-            With<TouchRipplePlayButton>,
-            Without<DisabledButton>,
-            Without<LoadingButton>,
-        ),
-    >,
+    play_buttons: Query<(), With<TouchRipplePlayButton>>,
+    mut button_events: MessageReader<UiButtonEvent>,
 ) {
-    if play_buttons
-        .iter()
-        .any(|interaction| *interaction == Interaction::Pressed)
-    {
-        panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
-            touch_ripple_confirm_modal(&i18n),
-        )));
+    for event in button_events.read() {
+        if event.kind == UiButtonEventKind::Click && play_buttons.contains(event.entity) {
+            panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
+                touch_ripple_confirm_modal(&i18n),
+            )));
+        }
     }
 
     for result in modal_results.read() {

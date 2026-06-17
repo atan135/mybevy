@@ -2,6 +2,11 @@ use std::collections::HashSet;
 
 use bevy::{
     input::keyboard::{Key, KeyCode, KeyboardInput},
+    picking::{
+        PickingSystems,
+        events::{Cancel, Click, Pointer, Press, Release},
+        pointer::PointerButton,
+    },
     prelude::*,
     ui::{FocusPolicy, RelativeCursorPosition},
 };
@@ -28,7 +33,12 @@ impl Plugin for UiWidgetsPlugin {
         app.add_plugins(UiScrollPlugin)
             .init_resource::<UiTextInputClipboard>()
             .init_resource::<UiTextInputDiagnostics>()
+            .add_message::<UiButtonEvent>()
             .add_message::<UiTextInputSubmitted>()
+            .add_systems(
+                PreUpdate,
+                emit_ui_button_events.after(PickingSystems::Hover),
+            )
             .add_systems(
                 Update,
                 handle_text_input_keyboard
@@ -79,6 +89,22 @@ pub(crate) struct SelectedButton;
 
 #[derive(Component)]
 pub(crate) struct LoadingButton;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UiButtonEventKind {
+    Down,
+    Up,
+    Click,
+    Cancel,
+}
+
+#[derive(Clone, Copy, Debug, Message)]
+#[allow(dead_code)]
+pub(crate) struct UiButtonEvent {
+    pub entity: Entity,
+    pub kind: UiButtonEventKind,
+    pub button: Option<PointerButton>,
+}
 
 #[derive(Clone, Debug, Component)]
 #[allow(dead_code)]
@@ -325,6 +351,62 @@ struct UiTextInputNativeState {
 pub(crate) struct UiTextInputSubmitted {
     pub entity: Entity,
     pub value: String,
+}
+
+fn emit_ui_button_events(
+    mut button_events: MessageWriter<UiButtonEvent>,
+    mut presses: MessageReader<Pointer<Press>>,
+    mut releases: MessageReader<Pointer<Release>>,
+    mut clicks: MessageReader<Pointer<Click>>,
+    mut cancels: MessageReader<Pointer<Cancel>>,
+    buttons: Query<
+        (),
+        (
+            With<Button>,
+            Without<DisabledButton>,
+            Without<LoadingButton>,
+        ),
+    >,
+) {
+    for press in presses.read() {
+        if buttons.contains(press.entity) {
+            button_events.write(UiButtonEvent {
+                entity: press.entity,
+                kind: UiButtonEventKind::Down,
+                button: Some(press.button),
+            });
+        }
+    }
+
+    for click in clicks.read() {
+        if buttons.contains(click.entity) {
+            button_events.write(UiButtonEvent {
+                entity: click.entity,
+                kind: UiButtonEventKind::Click,
+                button: Some(click.button),
+            });
+        }
+    }
+
+    for release in releases.read() {
+        if buttons.contains(release.entity) {
+            button_events.write(UiButtonEvent {
+                entity: release.entity,
+                kind: UiButtonEventKind::Up,
+                button: Some(release.button),
+            });
+        }
+    }
+
+    for cancel in cancels.read() {
+        if buttons.contains(cancel.entity) {
+            button_events.write(UiButtonEvent {
+                entity: cancel.entity,
+                kind: UiButtonEventKind::Cancel,
+                button: None,
+            });
+        }
+    }
 }
 
 pub(crate) fn screen_title(
@@ -1944,8 +2026,6 @@ fn update_selection_control_interactions(
     segment_options: Query<Entity, (With<UiSegmentOption>, With<UiSegmentOptionSelected>)>,
     buttons: Query<
         (
-            Entity,
-            &Interaction,
             Has<UiCheckbox>,
             Has<UiCheckboxChecked>,
             Has<UiToggle>,
@@ -1953,55 +2033,54 @@ fn update_selection_control_interactions(
             Has<UiSegmentOption>,
         ),
         (
-            Changed<Interaction>,
             With<Button>,
             Without<DisabledButton>,
             Without<LoadingButton>,
             Without<UiStepper>,
         ),
     >,
+    mut button_events: MessageReader<UiButtonEvent>,
 ) {
-    for (
-        entity,
-        interaction,
-        is_checkbox,
-        is_checked,
-        is_toggle,
-        is_toggle_on,
-        is_segment_option,
-    ) in &buttons
-    {
-        if *interaction != Interaction::Pressed {
+    for event in button_events.read() {
+        if event.kind != UiButtonEventKind::Click {
             continue;
         }
+
+        let Ok((is_checkbox, is_checked, is_toggle, is_toggle_on, is_segment_option)) =
+            buttons.get(event.entity)
+        else {
+            continue;
+        };
 
         if is_checkbox {
             if is_checked {
                 commands
-                    .entity(entity)
+                    .entity(event.entity)
                     .remove::<UiCheckboxChecked>()
                     .remove::<SelectedButton>();
             } else {
                 commands
-                    .entity(entity)
+                    .entity(event.entity)
                     .insert((UiCheckboxChecked, SelectedButton));
             }
         } else if is_toggle {
             if is_toggle_on {
                 commands
-                    .entity(entity)
+                    .entity(event.entity)
                     .remove::<UiToggleOn>()
                     .remove::<SelectedButton>();
             } else {
-                commands.entity(entity).insert((UiToggleOn, SelectedButton));
+                commands
+                    .entity(event.entity)
+                    .insert((UiToggleOn, SelectedButton));
             }
         } else if is_segment_option {
             let root = parents
-                .iter_ancestors(entity)
+                .iter_ancestors(event.entity)
                 .find(|ancestor| segmented_roots.contains(*ancestor));
 
             for selected_entity in &segment_options {
-                if selected_entity == entity {
+                if selected_entity == event.entity {
                     continue;
                 }
 
@@ -2019,7 +2098,7 @@ fn update_selection_control_interactions(
             }
 
             commands
-                .entity(entity)
+                .entity(event.entity)
                 .insert((UiSegmentOptionSelected, SelectedButton));
         }
     }
@@ -2108,27 +2187,29 @@ fn update_stepper_interactions(
     parents: Query<&ChildOf>,
     mut steppers: Query<&mut UiStepper>,
     buttons: Query<
+        (Has<UiStepperDecrementButton>, Has<UiStepperIncrementButton>),
         (
-            Entity,
-            &Interaction,
-            Has<UiStepperDecrementButton>,
-            Has<UiStepperIncrementButton>,
-        ),
-        (
-            Changed<Interaction>,
             With<Button>,
             Without<DisabledButton>,
             Without<LoadingButton>,
         ),
     >,
+    mut button_events: MessageReader<UiButtonEvent>,
 ) {
-    for (button_entity, interaction, is_decrement, is_increment) in &buttons {
-        if *interaction != Interaction::Pressed || !is_decrement && !is_increment {
+    for event in button_events.read() {
+        if event.kind != UiButtonEventKind::Click {
+            continue;
+        }
+
+        let Ok((is_decrement, is_increment)) = buttons.get(event.entity) else {
+            continue;
+        };
+        if !is_decrement && !is_increment {
             continue;
         }
 
         let Some(stepper_entity) = parents
-            .iter_ancestors(button_entity)
+            .iter_ancestors(event.entity)
             .find(|ancestor| steppers.get(*ancestor).is_ok())
         else {
             continue;
@@ -4102,6 +4183,64 @@ mod tests {
             selection_display_text("Medium", SelectionVisualState::Disabled),
             "[-] Medium"
         );
+    }
+
+    #[test]
+    fn selection_controls_toggle_only_on_click_event() {
+        let mut app = App::new();
+        app.add_message::<UiButtonEvent>()
+            .add_systems(Update, update_selection_control_interactions);
+
+        let checkbox = app
+            .world_mut()
+            .spawn((Button, UiCheckbox, Interaction::Pressed))
+            .id();
+
+        app.world_mut().write_message(UiButtonEvent {
+            entity: checkbox,
+            kind: UiButtonEventKind::Down,
+            button: None,
+        });
+        app.update();
+        assert!(!app.world().entity(checkbox).contains::<UiCheckboxChecked>());
+
+        app.world_mut().write_message(UiButtonEvent {
+            entity: checkbox,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+        assert!(app.world().entity(checkbox).contains::<UiCheckboxChecked>());
+    }
+
+    #[test]
+    fn stepper_changes_only_on_click_event() {
+        let mut app = App::new();
+        app.add_message::<UiButtonEvent>()
+            .add_systems(Update, update_stepper_interactions);
+
+        let stepper = app.world_mut().spawn(UiStepper::new(1, 1, 3, 1)).id();
+        let increment = app
+            .world_mut()
+            .spawn((Button, UiStepperIncrementButton, Interaction::Pressed))
+            .id();
+        app.world_mut().entity_mut(stepper).add_child(increment);
+
+        app.world_mut().write_message(UiButtonEvent {
+            entity: increment,
+            kind: UiButtonEventKind::Down,
+            button: None,
+        });
+        app.update();
+        assert_eq!(app.world().get::<UiStepper>(stepper).unwrap().value, 1);
+
+        app.world_mut().write_message(UiButtonEvent {
+            entity: increment,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+        assert_eq!(app.world().get::<UiStepper>(stepper).unwrap().value, 2);
     }
 
     #[test]

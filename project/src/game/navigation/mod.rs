@@ -5,7 +5,7 @@ use std::env;
 
 use crate::framework::ui::{
     core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
-    widgets::{DisabledButton, LoadingButton},
+    widgets::{UiButtonEvent, UiButtonEventKind},
 };
 use crate::game::ui_ids::{OWNER_LOBBY, OWNER_LOGIN, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY};
 
@@ -70,20 +70,18 @@ pub(in crate::game) enum GameRouteCommand {
 
 fn handle_route_buttons(
     mut route_commands: MessageWriter<GameRouteCommand>,
-    buttons: Query<
-        (&Interaction, &RouteButton),
-        (
-            Changed<Interaction>,
-            With<Button>,
-            Without<DisabledButton>,
-            Without<LoadingButton>,
-        ),
-    >,
+    route_buttons: Query<&RouteButton>,
+    mut button_events: MessageReader<UiButtonEvent>,
 ) {
-    for (interaction, route_button) in &buttons {
-        if *interaction == Interaction::Pressed {
-            route_commands.write(GameRouteCommand::ChangeMode(route_button.target));
+    for event in button_events.read() {
+        if event.kind != UiButtonEventKind::Click {
+            continue;
         }
+
+        let Ok(route_button) = route_buttons.get(event.entity) else {
+            continue;
+        };
+        route_commands.write(GameRouteCommand::ChangeMode(route_button.target));
     }
 }
 

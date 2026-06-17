@@ -47,7 +47,7 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 
 ## 核心数据流
 
-页面模式由游戏层 `AppUiMode` 表示。游戏层路由按钮携带 `RouteButton { target }` 后，`NavigationPlugin` 在按钮按下时写入 `GameRouteCommand::ChangeMode`，系统会先发送 `UiPanelCommand::CloseAllForOwner(current_mode.ui_owner())`，再设置 `NextState<AppUiMode>`。
+页面模式由游戏层 `AppUiMode` 表示。游戏层路由按钮携带 `RouteButton { target }` 后，`NavigationPlugin` 在收到按钮 `UiButtonEvent::Click` 时写入 `GameRouteCommand::ChangeMode`，系统会先发送 `UiPanelCommand::CloseAllForOwner(current_mode.ui_owner())`，再设置 `NextState<AppUiMode>`。
 
 覆盖层分两条流：
 

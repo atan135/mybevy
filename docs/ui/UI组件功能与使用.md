@@ -24,7 +24,14 @@
 - `disabled_*_button_key`
 - `loading_*_button_key`
 
-`project/src/framework/ui/widgets/` 提供通用动作按钮外观、焦点和交互状态；业务系统需要自行监听 `Interaction::Pressed`。`primary_route_button_key` 和 `secondary_route_button_key` 位于 `project/src/game/navigation/widgets.rs`，它们是在通用动作按钮上组合 `RouteButton { target }` 的游戏层 helper，由 `NavigationPlugin` 处理页面切换。
+`project/src/framework/ui/widgets/` 提供通用动作按钮外观、焦点、交互状态和 `UiButtonEvent`。按钮事件至少包含：
+
+- `Down`：指针或键盘在按钮上按下，适合做即时视觉和捕获类反馈。
+- `Up`：一次按钮按下结束。
+- `Click`：有效点击，按下和释放都落在同一按钮上；普通业务动作应监听这个事件。
+- `Cancel`：指针取消或交互被中断。
+
+`primary_route_button_key` 和 `secondary_route_button_key` 位于 `project/src/game/navigation/widgets.rs`，它们是在通用动作按钮上组合 `RouteButton { target }` 的游戏层 helper，由 `NavigationPlugin` 在 `Click` 时处理页面切换。
 
 按钮视觉优先级固定为：
 
@@ -59,7 +66,7 @@ disabled > loading > pressed > hovered > selected > focused > normal
 - Toggle：`UiToggle`、`UiToggleOn`
 - Segmented：`UiSegmentedControl`、`UiSegmentOption`、`UiSegmentOptionSelected`
 
-它们当前主要是静态状态 builder 和视觉同步。业务如果需要真正切换状态，需要监听按钮交互并自行更新对应 marker。
+它们当前以 `UiButtonEvent::Click` 切换状态，并同步对应 marker。`Down` 只影响按钮 pressed 视觉，不会提交选择变化。
 
 ## 数值控件
 
@@ -69,7 +76,7 @@ disabled > loading > pressed > hovered > selected > focused > normal
 - Stepper 会规范化 min/max/step，并支持加减后 clamp。
 - 显示文本由同步系统根据组件值刷新。
 
-当前已有 slider 从 normalized x 映射 value 的 helper，以及 stepper 加减 helper。完整拖拽/点击/键盘事件协议仍属于轻量实现，业务使用前应在 UI Gallery 和目标窗口尺寸下验证交互。
+当前已有 slider 从 normalized x 映射 value 的 helper，以及 stepper 加减 helper。Slider 在按下/拖动中持续更新；Stepper 在 `Click` 时单步加减。完整拖拽、长按连续加减和业务事件协议仍属于轻量实现，业务使用前应在 UI Gallery 和目标窗口尺寸下验证交互。
 
 ## 输入框
 

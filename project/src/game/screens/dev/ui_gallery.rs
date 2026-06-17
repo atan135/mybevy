@@ -19,14 +19,14 @@ use crate::framework::ui::{
         },
     },
     widgets::{
-        DisabledButton, DisabledTextInput, FocusedButton, LoadingButton, ReadonlyTextInput,
-        SelectedButton, UiAlign, UiImageFit, UiImageSize, UiJustify, UiResponsiveGridColumns,
-        UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars,
-        UiTextInputRequired, UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key,
-        checked_checkbox_key, disabled_checkbox_key, disabled_icon_button_key,
-        disabled_primary_action_button_key, disabled_secondary_action_button_key,
-        disabled_segment_option_key, disabled_slider_key, disabled_stepper_key,
-        disabled_toggle_key, icon_button_key, loading_icon_button_key,
+        DisabledTextInput, FocusedButton, ReadonlyTextInput, SelectedButton, UiAlign,
+        UiButtonEvent, UiButtonEventKind, UiImageFit, UiImageSize, UiJustify,
+        UiResponsiveGridColumns, UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText,
+        UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted,
+        UiTextInputValidationMessage, checkbox_key, checked_checkbox_key, disabled_checkbox_key,
+        disabled_icon_button_key, disabled_primary_action_button_key,
+        disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
+        disabled_stepper_key, disabled_toggle_key, icon_button_key, loading_icon_button_key,
         loading_primary_action_button_key, primary_action_button_key, screen_label,
         screen_label_key, screen_title_key, secondary_action_button_key, segment_option_key,
         segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
@@ -985,20 +985,17 @@ pub(super) fn handle_ui_gallery_buttons(
     mut binding_preview: ResMut<GalleryBindingPreview>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut overlay_commands: MessageWriter<UiOverlayCommand>,
-    buttons: Query<
-        (&Interaction, &GalleryActionButton),
-        (
-            Changed<Interaction>,
-            With<Button>,
-            Without<DisabledButton>,
-            Without<LoadingButton>,
-        ),
-    >,
+    action_buttons: Query<&GalleryActionButton>,
+    mut button_events: MessageReader<UiButtonEvent>,
 ) {
-    for (interaction, action) in &buttons {
-        if *interaction != Interaction::Pressed {
+    for event in button_events.read() {
+        if event.kind != UiButtonEventKind::Click {
             continue;
         }
+
+        let Ok(action) = action_buttons.get(event.entity) else {
+            continue;
+        };
 
         match action {
             GalleryActionButton::Toast => {

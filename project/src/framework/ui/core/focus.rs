@@ -4,7 +4,7 @@ use crate::framework::ui::{
     core::{UiPanelKind, UiPanelRoot},
     widgets::{
         DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
-        UiTextInput,
+        UiButtonEvent, UiButtonEventKind, UiTextInput,
     },
 };
 
@@ -119,6 +119,7 @@ fn update_keyboard_button_activation(
     key_codes: Res<ButtonInput<KeyCode>>,
     mut focus_state: ResMut<UiFocusState>,
     mut buttons: Query<(Entity, &mut Interaction, Has<UiTextInput>), FocusableButtonFilter>,
+    mut button_events: MessageWriter<UiButtonEvent>,
 ) {
     if let Some(entity) = focus_state.keyboard_pressed_entity.take()
         && let Ok((_, mut interaction, _)) = buttons.get_mut(entity)
@@ -140,6 +141,17 @@ fn update_keyboard_button_activation(
     {
         *interaction = Interaction::Pressed;
         focus_state.keyboard_pressed_entity = Some(focused_entity);
+        for kind in [
+            UiButtonEventKind::Down,
+            UiButtonEventKind::Click,
+            UiButtonEventKind::Up,
+        ] {
+            button_events.write(UiButtonEvent {
+                entity: focused_entity,
+                kind,
+                button: None,
+            });
+        }
     }
 }
 

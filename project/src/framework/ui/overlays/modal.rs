@@ -16,7 +16,7 @@ use crate::framework::ui::{
             UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
         },
     },
-    widgets::controls::{PrimaryButton, SecondaryButton},
+    widgets::controls::{PrimaryButton, SecondaryButton, UiButtonEvent, UiButtonEventKind},
     widgets::{
         DisabledButton, FocusableButton, FocusedButton, LoadingButton, SelectedButton,
         ui_scroll_column_with_max_height,
@@ -119,20 +119,17 @@ pub(crate) struct UiConfirmAnimatedButton {
 pub(crate) fn handle_modal_action_buttons(
     mut modal_results: MessageWriter<UiModalResult>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
-    buttons: Query<
-        (&Interaction, &UiModalActionButton),
-        (
-            Changed<Interaction>,
-            With<Button>,
-            Without<DisabledButton>,
-            Without<LoadingButton>,
-        ),
-    >,
+    action_buttons: Query<&UiModalActionButton>,
+    mut button_events: MessageReader<UiButtonEvent>,
 ) {
-    for (interaction, action_button) in &buttons {
-        if *interaction != Interaction::Pressed {
+    for event in button_events.read() {
+        if event.kind != UiButtonEventKind::Click {
             continue;
         }
+
+        let Ok(action_button) = action_buttons.get(event.entity) else {
+            continue;
+        };
 
         modal_results.write(UiModalResult {
             id: action_button.id,
