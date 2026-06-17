@@ -5,6 +5,7 @@
 //! spawn/anchor data, triggers, and diagnostics. Concrete gameplay scenes,
 //! level content, feature state, and screen-specific UI stay in the game layer.
 
+mod authority;
 mod camera;
 mod command;
 mod debug;

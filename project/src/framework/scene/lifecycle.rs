@@ -5,17 +5,19 @@ use std::{
 };
 
 use super::{
+    authority::SceneAuthorityReadyRequest,
     camera::{
         SceneCameraConfig, SceneCameraRig, default_scene_camera_config_for_world,
         ensure_scene_camera,
     },
     command::{
-        SceneCommand, SceneEnterRequest, SceneExitRequest, SceneLayerCommand, SceneReloadRequest,
-        SceneSwitchRequest,
+        SceneCommand, SceneEnterRequest, SceneExitRequest, SceneLayerCommand, SceneReadyCommand,
+        SceneReloadRequest, SceneSwitchRequest,
     },
     event::{
         SceneEntered, SceneEvent, SceneExitStarted, SceneExited, SceneFailure, SceneFailureKind,
-        SceneInstantiating, SceneLayerStatusEvent, SceneResolving,
+        SceneInputResetReason, SceneInputResetRequested, SceneInstantiating, SceneLayerStatusEvent,
+        SceneReady, SceneResolving,
     },
     id::{SceneId, SceneLayerId, SceneSessionId, SceneSpawnPointId},
     loading::{
@@ -39,6 +41,7 @@ static NEXT_SCENE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 pub struct SceneRuntime {
     pub active: Option<SceneSessionInfo>,
     pub pending: Option<SceneSessionInfo>,
+    pub ready: Option<SceneReadyInfo>,
     pub state: SceneLifecycleState,
     pub last_error: Option<SceneFailure>,
 }
@@ -48,6 +51,7 @@ impl Default for SceneRuntime {
         Self {
             active: None,
             pending: None,
+            ready: None,
             state: SceneLifecycleState::Idle,
             last_error: None,
         }
@@ -61,6 +65,10 @@ impl SceneRuntime {
 
     pub fn pending(&self) -> Option<&SceneSessionInfo> {
         self.pending.as_ref()
+    }
+
+    pub fn ready(&self) -> Option<&SceneReadyInfo> {
+        self.ready.as_ref()
     }
 
     pub fn state(&self) -> SceneLifecycleState {
@@ -87,12 +95,24 @@ impl SceneRuntime {
         self.pending.as_ref().map(|session| &session.session_id)
     }
 
+    pub fn ready_scene_id(&self) -> Option<&SceneId> {
+        self.ready.as_ref().map(|ready| &ready.scene_id)
+    }
+
+    pub fn ready_session_id(&self) -> Option<&SceneSessionId> {
+        self.ready.as_ref().map(|ready| &ready.session_id)
+    }
+
     pub fn has_active(&self) -> bool {
         self.active.is_some()
     }
 
     pub fn has_pending(&self) -> bool {
         self.pending.is_some()
+    }
+
+    pub fn has_ready(&self) -> bool {
+        self.ready.is_some()
     }
 
     pub fn is_active_scene(&self, scene_id: &SceneId) -> bool {
@@ -105,6 +125,25 @@ impl SceneRuntime {
         self.pending
             .as_ref()
             .is_some_and(|session| &session.scene_id == scene_id)
+    }
+
+    pub fn is_ready_scene(&self, scene_id: &SceneId) -> bool {
+        self.ready
+            .as_ref()
+            .is_some_and(|ready| &ready.scene_id == scene_id)
+    }
+
+    pub fn active_ready_state(&self) -> Option<SceneReadyState> {
+        let active = self.active.as_ref()?;
+        if self
+            .ready
+            .as_ref()
+            .is_some_and(|ready| ready.session_id == active.session_id)
+        {
+            Some(SceneReadyState::Ready)
+        } else {
+            Some(SceneReadyState::PendingAuthority)
+        }
     }
 
     pub fn is_idle(&self) -> bool {
@@ -121,6 +160,37 @@ impl SceneRuntime {
 
     pub fn is_failed(&self) -> bool {
         self.state.is_failed()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneReadyInfo {
+    pub scene_id: SceneId,
+    pub session_id: SceneSessionId,
+    pub authority_mode: SceneAuthorityMode,
+    pub content_version: Option<String>,
+    pub seed: Option<u64>,
+}
+
+impl SceneReadyInfo {
+    pub fn from_session(session: &SceneSessionInfo) -> Self {
+        Self {
+            scene_id: session.scene_id.clone(),
+            session_id: session.session_id.clone(),
+            authority_mode: session.authority_mode,
+            content_version: session.content_version.clone(),
+            seed: session.seed,
+        }
+    }
+
+    pub fn event(&self) -> SceneReady {
+        SceneReady {
+            scene_id: self.scene_id.clone(),
+            session_id: self.session_id.clone(),
+            content_version: self.content_version.clone(),
+            authority_mode: self.authority_mode,
+            seed: self.seed,
+        }
     }
 }
 
@@ -147,6 +217,12 @@ impl SceneSessionInfo {
             entered_at: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SceneReadyState {
+    PendingAuthority,
+    Ready,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -215,6 +291,7 @@ enum SceneLifecycleRequest {
     Exit(SceneExitRequest),
     Switch(SceneSwitchRequest),
     ReloadCurrent(SceneReloadRequest),
+    MarkReady(SceneReadyCommand),
 }
 
 pub(crate) fn process_scene_lifecycle_commands(
@@ -232,6 +309,7 @@ pub(crate) fn process_scene_lifecycle_commands(
     mut layer_roots: Query<&mut SceneLayerRoot>,
     owned_entities: Query<(Entity, &SceneOwned)>,
     mut events: MessageWriter<SceneEvent>,
+    mut authority_ready_requests: MessageWriter<SceneAuthorityReadyRequest>,
 ) {
     let mut request = None;
     let mut layer_commands = Vec::new();
@@ -250,6 +328,9 @@ pub(crate) fn process_scene_lifecycle_commands(
             }
             SceneCommand::ReloadCurrent(reload) => {
                 request = Some(SceneLifecycleRequest::ReloadCurrent(reload.clone()));
+            }
+            SceneCommand::MarkReady(ready) => {
+                request = Some(SceneLifecycleRequest::MarkReady(ready.clone()));
             }
             SceneCommand::SetLayerEnabled(layer) => {
                 layer_commands.push(layer.clone());
@@ -289,9 +370,11 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &scene_roots,
                 &owned_entities,
                 &mut events,
+                &mut authority_ready_requests,
                 request,
                 entered_at,
                 true,
+                SceneInputResetReason::ReplaceActive,
             );
         }
         SceneLifecycleRequest::Exit(request) => {
@@ -305,6 +388,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &owned_entities,
                 &mut events,
                 &request,
+                SceneInputResetReason::Exit,
             );
         }
         SceneLifecycleRequest::Switch(request) => {
@@ -323,6 +407,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &owned_entities,
                 &mut events,
                 &SceneExitRequest::default(),
+                SceneInputResetReason::Switch,
             );
             enter_scene(
                 &mut commands,
@@ -336,9 +421,11 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &scene_roots,
                 &owned_entities,
                 &mut events,
+                &mut authority_ready_requests,
                 request.enter,
                 entered_at,
                 false,
+                SceneInputResetReason::Switch,
             );
         }
         SceneLifecycleRequest::ReloadCurrent(request) => {
@@ -358,10 +445,15 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &scene_roots,
                 &owned_entities,
                 &mut events,
+                &mut authority_ready_requests,
                 request,
                 entered_at,
                 true,
+                SceneInputResetReason::Reload,
             );
+        }
+        SceneLifecycleRequest::MarkReady(request) => {
+            mark_scene_ready(&mut runtime, &mut events, request);
         }
     }
 }
@@ -405,9 +497,11 @@ fn enter_scene(
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
+    authority_ready_requests: &mut MessageWriter<SceneAuthorityReadyRequest>,
     request: SceneEnterRequest,
     entered_at: Option<Duration>,
     replace_existing: bool,
+    input_reset_reason: SceneInputResetReason,
 ) {
     runtime.state = SceneLifecycleState::Resolving;
 
@@ -439,6 +533,7 @@ fn enter_scene(
             owned_entities,
             events,
             &SceneExitRequest::default(),
+            input_reset_reason,
         );
     }
 
@@ -463,6 +558,7 @@ fn enter_scene(
             commands,
             runtime,
             events,
+            authority_ready_requests,
             definition.has_world_root,
             default_scene_camera_config_for_world(definition.has_world_root),
             SceneSpawnSessionIndex::empty(session.scene_id.clone(), session.session_id.clone()),
@@ -540,6 +636,7 @@ fn finish_scene_enter(
     commands: &mut Commands,
     runtime: &mut SceneRuntime,
     events: &mut MessageWriter<SceneEvent>,
+    authority_ready_requests: &mut MessageWriter<SceneAuthorityReadyRequest>,
     has_world_root: bool,
     camera_config: Option<SceneCameraConfig>,
     spawn_index: SceneSpawnSessionIndex,
@@ -615,10 +712,12 @@ fn finish_scene_enter(
     runtime.state = SceneLifecycleState::Active;
 
     events.write(SceneEvent::Entered(SceneEntered {
-        scene_id: session.scene_id,
-        session_id: session.session_id,
-        content_version: session.content_version,
+        scene_id: session.scene_id.clone(),
+        session_id: session.session_id.clone(),
+        content_version: session.content_version.clone(),
     }));
+
+    update_ready_after_enter(runtime, events, authority_ready_requests, &session);
 }
 
 fn exit_scene(
@@ -631,12 +730,18 @@ fn exit_scene(
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
     request: &SceneExitRequest,
+    input_reset_reason: SceneInputResetReason,
 ) -> bool {
     let Some(session) = session_for_exit(runtime, request) else {
         return false;
     };
 
     runtime.state = SceneLifecycleState::Deactivating;
+    events.write(SceneEvent::InputResetRequested(SceneInputResetRequested {
+        scene_id: session.scene_id.clone(),
+        session_id: session.session_id.clone(),
+        reason: input_reset_reason,
+    }));
     events.write(SceneEvent::ExitStarted(SceneExitStarted {
         scene_id: session.scene_id.clone(),
         session_id: session.session_id.clone(),
@@ -738,6 +843,84 @@ fn clear_runtime_session(runtime: &mut SceneRuntime, session_id: &SceneSessionId
     {
         runtime.pending = None;
     }
+
+    if runtime
+        .ready
+        .as_ref()
+        .is_some_and(|ready| &ready.session_id == session_id)
+    {
+        runtime.ready = None;
+    }
+}
+
+fn update_ready_after_enter(
+    runtime: &mut SceneRuntime,
+    events: &mut MessageWriter<SceneEvent>,
+    authority_ready_requests: &mut MessageWriter<SceneAuthorityReadyRequest>,
+    session: &SceneSessionInfo,
+) {
+    if authority_mode_is_local_ready(session.authority_mode) {
+        let ready = SceneReadyInfo::from_session(session);
+        runtime.ready = Some(ready.clone());
+        events.write(SceneEvent::Ready(ready.event()));
+    } else {
+        runtime.ready = None;
+        authority_ready_requests.write(SceneAuthorityReadyRequest {
+            scene_id: session.scene_id.clone(),
+            session_id: session.session_id.clone(),
+            authority_mode: session.authority_mode,
+            content_version: session.content_version.clone(),
+            seed: session.seed,
+        });
+    }
+}
+
+fn mark_scene_ready(
+    runtime: &mut SceneRuntime,
+    events: &mut MessageWriter<SceneEvent>,
+    request: SceneReadyCommand,
+) -> bool {
+    let Some(session) = runtime.active.as_ref() else {
+        return false;
+    };
+
+    if session.scene_id != request.scene_id || session.session_id != request.session_id {
+        return false;
+    }
+
+    if request.content_version != session.content_version {
+        runtime.last_error = Some(
+            SceneFailure::new(
+                SceneFailureKind::ContentHashMismatch,
+                SceneLifecycleState::Active,
+            )
+            .with_scene(session.scene_id.clone())
+            .with_session(session.session_id.clone())
+            .with_optional_content_version(session.content_version.clone())
+            .with_message("ready command content version does not match active scene session"),
+        );
+        return false;
+    }
+
+    let ready = SceneReadyInfo::from_session(session);
+    if runtime
+        .ready
+        .as_ref()
+        .is_some_and(|current| current.session_id == ready.session_id)
+    {
+        return true;
+    }
+
+    runtime.ready = Some(ready.clone());
+    events.write(SceneEvent::Ready(ready.event()));
+    true
+}
+
+fn authority_mode_is_local_ready(authority_mode: SceneAuthorityMode) -> bool {
+    matches!(
+        authority_mode,
+        SceneAuthorityMode::Local | SceneAuthorityMode::LocalHost
+    )
 }
 
 fn session_info_from_request(
@@ -876,6 +1059,7 @@ pub(crate) fn poll_scene_asset_loads(
     scene_roots: Query<(Entity, &SceneRoot)>,
     owned_entities: Query<(Entity, &SceneOwned)>,
     mut events: MessageWriter<SceneEvent>,
+    mut authority_ready_requests: MessageWriter<SceneAuthorityReadyRequest>,
 ) {
     let Some(session) = load_queue.current_mut() else {
         return;
@@ -962,6 +1146,7 @@ pub(crate) fn poll_scene_asset_loads(
         &mut commands,
         &mut runtime,
         &mut events,
+        &mut authority_ready_requests,
         session_load.has_world_root,
         session_load.camera_config,
         session_load.spawn_index,
@@ -1190,5 +1375,33 @@ mod tests {
             asset_failure_kind(&failure),
             SceneFailureKind::AssetLoadFailed
         );
+    }
+
+    #[test]
+    fn authority_ready_policy_marks_local_modes_ready() {
+        assert!(authority_mode_is_local_ready(SceneAuthorityMode::Local));
+        assert!(authority_mode_is_local_ready(SceneAuthorityMode::LocalHost));
+        assert!(!authority_mode_is_local_ready(SceneAuthorityMode::Remote));
+        assert!(!authority_mode_is_local_ready(SceneAuthorityMode::External));
+    }
+
+    #[test]
+    fn ready_info_preserves_authority_session_payload() {
+        let mut session = SceneSessionInfo::new("arena", "arena-1");
+        session.authority_mode = SceneAuthorityMode::Remote;
+        session.content_version = Some("content-v1".to_string());
+        session.seed = Some(42);
+
+        let ready = SceneReadyInfo::from_session(&session);
+        let event = ready.event();
+
+        assert_eq!(ready.scene_id, SceneId::from("arena"));
+        assert_eq!(ready.session_id, SceneSessionId::from("arena-1"));
+        assert_eq!(ready.authority_mode, SceneAuthorityMode::Remote);
+        assert_eq!(ready.content_version.as_deref(), Some("content-v1"));
+        assert_eq!(ready.seed, Some(42));
+        assert_eq!(event.authority_mode, SceneAuthorityMode::Remote);
+        assert_eq!(event.content_version.as_deref(), Some("content-v1"));
+        assert_eq!(event.seed, Some(42));
     }
 }

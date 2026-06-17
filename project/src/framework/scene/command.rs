@@ -11,6 +11,7 @@ pub enum SceneCommand {
     Enter(SceneEnterRequest),
     Exit(SceneExitRequest),
     Switch(SceneSwitchRequest),
+    MarkReady(SceneReadyCommand),
     Preload(ScenePreloadRequest),
     Unload(SceneUnloadRequest),
     ReloadCurrent(SceneReloadRequest),
@@ -41,6 +42,13 @@ impl SceneEnterRequest {
             seed: None,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneReadyCommand {
+    pub scene_id: SceneId,
+    pub session_id: SceneSessionId,
+    pub content_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

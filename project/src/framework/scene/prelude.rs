@@ -1,4 +1,8 @@
 pub use super::{
+    authority::{
+        SceneAuthorityAdapter, SceneAuthorityReadyRequest, SceneAuthorityReadyState,
+        SceneAuthorityReadyStatus,
+    },
     camera::{
         SceneCameraConfig, SceneCameraMode, SceneCameraProjection, SceneCameraRig,
         default_scene_camera_2d_config, default_scene_camera_3d_config,
@@ -8,7 +12,8 @@ pub use super::{
     },
     command::{
         SceneCommand, SceneEnterRequest, SceneExitRequest, SceneLayerCommand, ScenePreloadRequest,
-        SceneReloadRequest, SceneSwitchRequest, SceneTransition, SceneUnloadRequest,
+        SceneReadyCommand, SceneReloadRequest, SceneSwitchRequest, SceneTransition,
+        SceneUnloadRequest,
     },
     debug::{
         SceneDebugConfig, SceneDebugDiagnostics, SceneDebugFailure, SceneDebugSnapshot,
@@ -16,15 +21,18 @@ pub use super::{
     },
     event::{
         SceneChunkStatusEvent, SceneEntered, SceneEvent, SceneExitStarted, SceneExited,
-        SceneFailure, SceneFailureKind, SceneInstantiating, SceneLayerStatusEvent, SceneReady,
-        SceneResolving,
+        SceneFailure, SceneFailureKind, SceneInputResetReason, SceneInputResetRequested,
+        SceneInstantiating, SceneLayerStatusEvent, SceneReady, SceneResolving,
     },
     id::{
         SCENE_ID_ALLOWED_CHARACTERS, SceneAnchorId, SceneAssetId, SceneChunkId, SceneId,
         SceneIdError, SceneLayerId, SceneRegionId, SceneSessionId, SceneSpawnPointId,
         SceneTriggerId, SceneZoneId, validate_scene_id,
     },
-    lifecycle::{SceneAuthorityMode, SceneLifecycleState, SceneRuntime, SceneSessionInfo},
+    lifecycle::{
+        SceneAuthorityMode, SceneLifecycleState, SceneReadyInfo, SceneReadyState, SceneRuntime,
+        SceneSessionInfo,
+    },
     loading::{
         SceneAssetLoadFailure, SceneLoadPhase, SceneLoadProgress, SceneLoadingPolicy,
         SceneLoadingUiConfig, SceneLoadingUiSession, SceneLoadingUiState,

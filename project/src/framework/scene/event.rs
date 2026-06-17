@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use super::{
     id::{SceneAssetId, SceneChunkId, SceneId, SceneLayerId, SceneSessionId},
-    lifecycle::SceneLifecycleState,
+    lifecycle::{SceneAuthorityMode, SceneLifecycleState},
     loading::SceneLoadProgress,
     root::SceneLayerState,
 };
@@ -16,6 +16,7 @@ pub enum SceneEvent {
     Instantiating(SceneInstantiating),
     Entered(SceneEntered),
     Ready(SceneReady),
+    InputResetRequested(SceneInputResetRequested),
     ExitStarted(SceneExitStarted),
     Exited(SceneExited),
     LayerLoaded(SceneLayerStatusEvent),
@@ -48,6 +49,25 @@ pub struct SceneEntered {
 pub struct SceneReady {
     pub scene_id: SceneId,
     pub session_id: SceneSessionId,
+    pub content_version: Option<String>,
+    pub authority_mode: SceneAuthorityMode,
+    pub seed: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneInputResetRequested {
+    pub scene_id: SceneId,
+    pub session_id: SceneSessionId,
+    pub reason: SceneInputResetReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SceneInputResetReason {
+    Exit,
+    Switch,
+    ReplaceActive,
+    Reload,
+    FailedTransition,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,6 +268,22 @@ mod tests {
             failure
                 .log_description()
                 .contains("asset_path=scenes/arena/hero.png")
+        );
+    }
+
+    #[test]
+    fn authority_failure_kinds_have_stable_message_keys() {
+        assert_eq!(
+            SceneFailureKind::ContentVersionMissing.message_key(),
+            "scene.error.content_version_missing"
+        );
+        assert_eq!(
+            SceneFailureKind::ContentHashMismatch.message_key(),
+            "scene.error.content_hash_mismatch"
+        );
+        assert_eq!(
+            SceneFailureKind::AuthorityRejected.message_key(),
+            "scene.error.authority_rejected"
         );
     }
 }

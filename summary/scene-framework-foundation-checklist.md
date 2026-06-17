@@ -164,14 +164,14 @@
   - [x] 为后续按相机或玩家位置驱动加载半径预留系统入口。
   - [x] 明确动态实体不随 chunk 自动卸载的框架约束。
 
-- [ ] 阶段 16：Authority Ready 接口预留
-  - [ ] 在 `SceneEnterRequest` 和 `SceneSessionInfo` 中保留 `authority_mode`、`session_id`、`content_version`、`seed`。
-  - [ ] 定义场景 ready 状态，区分本地 Active 和可开始消费 gameplay frame 的 Ready。
-  - [ ] 提供 `SceneEvent::Entered` 和可选 `SceneEvent::Ready` 的语义边界。
-  - [ ] 预留加载完成后通知 authority 的 adapter 接口，但不在 framework 依赖 game authority 模块。
-  - [ ] 预留版本不一致错误：`ContentVersionMissing`、`ContentHashMismatch`、`AuthorityRejected`。
-  - [ ] 切场景时提供清理输入状态的通用事件，具体输入类型由游戏层处理。
-  - [ ] 暂不实现远端协议、房间规则、玩家同步和帧回放逻辑。
+- [x] 阶段 16：Authority Ready 接口预留（开始：2026-06-17 21:49:28 +08:00；结束：2026-06-17 21:57:48 +08:00）
+  - [x] 在 `SceneEnterRequest` 和 `SceneSessionInfo` 中保留 `authority_mode`、`session_id`、`content_version`、`seed`。
+  - [x] 定义场景 ready 状态，区分本地 Active 和可开始消费 gameplay frame 的 Ready。
+  - [x] 提供 `SceneEvent::Entered` 和可选 `SceneEvent::Ready` 的语义边界。
+  - [x] 预留加载完成后通知 authority 的 adapter 接口，但不在 framework 依赖 game authority 模块。
+  - [x] 预留版本不一致错误：`ContentVersionMissing`、`ContentHashMismatch`、`AuthorityRejected`。
+  - [x] 切场景时提供清理输入状态的通用事件，具体输入类型由游戏层处理。
+  - [x] 暂不实现远端协议、房间规则、玩家同步和帧回放逻辑。
 
 - [ ] 阶段 17：测试和验收
   - [ ] 为 ID 校验、manifest 校验、registry 注册冲突写单元测试。
