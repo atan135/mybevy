@@ -9,6 +9,7 @@ use super::{
         SceneAssetLoadQueue, SceneLoadingUiConfig, SceneLoadingUiState, sync_scene_loading_ui,
     },
     registry::SceneRegistry,
+    spawn::SceneSpawnRegistry,
     trigger::SceneTriggerEvent,
 };
 
@@ -24,6 +25,7 @@ impl Plugin for ScenePlugin {
             .init_resource::<SceneLoadingUiConfig>()
             .init_resource::<SceneLoadingUiState>()
             .init_resource::<SceneRegistry>()
+            .init_resource::<SceneSpawnRegistry>()
             .init_resource::<SceneDebugConfig>()
             .add_systems(
                 Update,

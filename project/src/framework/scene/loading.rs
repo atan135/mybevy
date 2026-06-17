@@ -14,6 +14,7 @@ use super::{
         SceneAssetRef, SceneManifest, asset_path_with_label, normalize_manifest_token,
         validate_asset_relative_path,
     },
+    spawn::SceneSpawnSessionIndex,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -403,6 +404,7 @@ pub(crate) struct SceneAssetLoadSession {
     pub(crate) loading_policy: SceneLoadingPolicy,
     pub(crate) has_world_root: bool,
     pub(crate) camera_config: Option<SceneCameraConfig>,
+    pub(crate) spawn_index: SceneSpawnSessionIndex,
     pub(crate) assets: Vec<SceneTrackedAsset>,
     required_gate_opened: bool,
     last_progress: Option<SceneLoadProgress>,
@@ -420,6 +422,14 @@ impl SceneAssetLoadSession {
         asset_server: &AssetServer,
     ) -> Self {
         let assets = scene_assets_from_manifest(&manifest, asset_server);
+        let spawn_index = SceneSpawnSessionIndex::from_manifest_parts(
+            scene_id.clone(),
+            session_id.clone(),
+            manifest.entry.default_spawn.clone(),
+            &manifest.spawn_points,
+            &manifest.anchors,
+        );
+
         Self {
             scene_id,
             session_id,
@@ -427,6 +437,7 @@ impl SceneAssetLoadSession {
             loading_policy,
             has_world_root,
             camera_config,
+            spawn_index,
             assets,
             required_gate_opened: false,
             last_progress: None,

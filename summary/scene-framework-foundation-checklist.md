@@ -110,14 +110,14 @@
   - [x] 场景退出时只清理场景拥有的相机，不误删全局 UI 相机。
   - [x] 预留相机跟随和调试自由相机接口，但不实现具体玩法跟随策略。
 
-- [ ] 阶段 10：Spawn、Anchor 和查询接口
-  - [ ] 定义运行时查询资源或索引，用于按 ID 查找 spawn point 和 anchor。
-  - [ ] 场景激活时将 manifest 中的 spawn point 和 anchor 写入当前 session 的查询索引。
-  - [ ] 提供 `default_spawn` 查询方法。
-  - [ ] 提供按 tag 查询 spawn point/anchor 的方法。
-  - [ ] 缺失 spawn point 时返回 `SceneFailure::SpawnPointMissing`，不 panic。
-  - [ ] 提供将 spawn/anchor 转为 `Transform` 的 helper。
-  - [ ] 预留 anchor 可视化调试接口。
+- [x] 阶段 10：Spawn、Anchor 和查询接口（开始：2026-06-17 20:27:42 +08:00；结束：2026-06-17 20:45:33 +08:00）
+  - [x] 定义运行时查询资源或索引，用于按 ID 查找 spawn point 和 anchor。
+  - [x] 场景激活时将 manifest 中的 spawn point 和 anchor 写入当前 session 的查询索引。
+  - [x] 提供 `default_spawn` 查询方法。
+  - [x] 提供按 tag 查询 spawn point/anchor 的方法。
+  - [x] 缺失 spawn point 时返回 `SceneFailure::SpawnPointMissing`，不 panic。
+  - [x] 提供将 spawn/anchor 转为 `Transform` 的 helper。
+  - [x] 预留 anchor 可视化调试接口。
 
 - [ ] 阶段 11：通用 Trigger 框架
   - [ ] 定义 `SceneTrigger` 组件，记录 trigger ID、shape、event、enabled、session_id。

@@ -22,6 +22,7 @@ use super::{
     manifest::{SceneManifest, SceneManifestLoadError},
     registry::{SceneDefinition, SceneRegistry},
     root::{SceneOwned, SceneRoot, despawn_scene_session_entities, spawn_scene_world_roots},
+    spawn::{SceneSpawnLookupError, SceneSpawnRegistry, SceneSpawnSessionIndex},
 };
 
 static NEXT_SCENE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -215,6 +216,7 @@ pub(crate) fn process_scene_lifecycle_commands(
     time: Option<Res<Time>>,
     mut runtime: ResMut<SceneRuntime>,
     mut load_queue: ResMut<SceneAssetLoadQueue>,
+    mut spawn_registry: ResMut<SceneSpawnRegistry>,
     scene_cameras: Query<&SceneCameraRig>,
     scene_roots: Query<(Entity, &SceneRoot)>,
     owned_entities: Query<(Entity, &SceneOwned)>,
@@ -247,6 +249,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &asset_server,
                 &mut runtime,
                 &mut load_queue,
+                &mut spawn_registry,
                 &scene_cameras,
                 &scene_roots,
                 &owned_entities,
@@ -261,6 +264,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut commands,
                 &mut runtime,
                 &mut load_queue,
+                &mut spawn_registry,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -277,6 +281,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &mut commands,
                 &mut runtime,
                 &mut load_queue,
+                &mut spawn_registry,
                 &scene_roots,
                 &owned_entities,
                 &mut events,
@@ -288,6 +293,7 @@ pub(crate) fn process_scene_lifecycle_commands(
                 &asset_server,
                 &mut runtime,
                 &mut load_queue,
+                &mut spawn_registry,
                 &scene_cameras,
                 &scene_roots,
                 &owned_entities,
@@ -306,6 +312,7 @@ fn enter_scene(
     asset_server: &AssetServer,
     runtime: &mut SceneRuntime,
     load_queue: &mut SceneAssetLoadQueue,
+    spawn_registry: &mut SceneSpawnRegistry,
     scene_cameras: &Query<&SceneCameraRig>,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
@@ -341,6 +348,7 @@ fn enter_scene(
             commands,
             runtime,
             load_queue,
+            spawn_registry,
             scene_roots,
             owned_entities,
             events,
@@ -371,9 +379,12 @@ fn enter_scene(
             events,
             definition.has_world_root,
             default_scene_camera_config_for_world(definition.has_world_root),
+            SceneSpawnSessionIndex::empty(session.scene_id.clone(), session.session_id.clone()),
             session,
             scene_cameras,
             entered_at,
+            spawn_registry,
+            false,
         );
         return;
     };
@@ -436,9 +447,12 @@ fn finish_scene_enter(
     events: &mut MessageWriter<SceneEvent>,
     has_world_root: bool,
     camera_config: Option<SceneCameraConfig>,
+    spawn_index: SceneSpawnSessionIndex,
     mut session: SceneSessionInfo,
     scene_cameras: &Query<&SceneCameraRig>,
     entered_at: Option<Duration>,
+    spawn_registry: &mut SceneSpawnRegistry,
+    validate_spawn_point: bool,
 ) {
     runtime.state = SceneLifecycleState::LoadingAssets;
     runtime.state = SceneLifecycleState::Instantiating;
@@ -446,6 +460,22 @@ fn finish_scene_enter(
         scene_id: session.scene_id.clone(),
         session_id: session.session_id.clone(),
     }));
+
+    runtime.state = SceneLifecycleState::Activating;
+
+    if validate_spawn_point {
+        if let Err(error) = spawn_index.validate_default_spawn() {
+            fail_scene_transition(runtime, events, spawn_lookup_failure(&session, error));
+            return;
+        }
+
+        if let Some(spawn_point_id) = &session.spawn_point
+            && let Err(error) = spawn_index.spawn_point(spawn_point_id)
+        {
+            fail_scene_transition(runtime, events, spawn_lookup_failure(&session, error));
+            return;
+        }
+    }
 
     if has_world_root {
         spawn_scene_world_roots(commands, &session.scene_id, &session.session_id);
@@ -455,8 +485,8 @@ fn finish_scene_enter(
         ensure_scene_camera(commands, &session.session_id, &camera_config, scene_cameras);
     }
 
-    runtime.state = SceneLifecycleState::Activating;
     session.entered_at = entered_at;
+    spawn_registry.set_session_index(spawn_index);
     runtime.active = Some(session.clone());
     runtime.pending = None;
     runtime.state = SceneLifecycleState::Active;
@@ -472,6 +502,7 @@ fn exit_scene(
     commands: &mut Commands,
     runtime: &mut SceneRuntime,
     load_queue: &mut SceneAssetLoadQueue,
+    spawn_registry: &mut SceneSpawnRegistry,
     scene_roots: &Query<(Entity, &SceneRoot)>,
     owned_entities: &Query<(Entity, &SceneOwned)>,
     events: &mut MessageWriter<SceneEvent>,
@@ -490,6 +521,7 @@ fn exit_scene(
     runtime.state = SceneLifecycleState::Unloading;
     despawn_scene_session_entities(commands, &session.session_id, scene_roots, owned_entities);
     load_queue.clear_session(&session.session_id);
+    spawn_registry.clear_session(&session.session_id);
     clear_runtime_session(runtime, &session.session_id);
 
     events.write(SceneEvent::Exited(SceneExited {
@@ -592,6 +624,7 @@ pub(crate) fn poll_scene_asset_loads(
     time: Option<Res<Time>>,
     mut runtime: ResMut<SceneRuntime>,
     mut load_queue: ResMut<SceneAssetLoadQueue>,
+    mut spawn_registry: ResMut<SceneSpawnRegistry>,
     scene_cameras: Query<&SceneCameraRig>,
     mut events: MessageWriter<SceneEvent>,
 ) {
@@ -684,9 +717,12 @@ pub(crate) fn poll_scene_asset_loads(
         &mut events,
         session_load.has_world_root,
         session_load.camera_config,
+        session_load.spawn_index,
         session_info,
         &scene_cameras,
         entered_at,
+        &mut spawn_registry,
+        true,
     );
 }
 
@@ -753,6 +789,14 @@ fn manifest_failure_from_error(
         {
             SceneFailureKind::ManifestVersionUnsupported
         }
+        SceneManifestLoadError::ValidationFailed(error)
+            if matches!(
+                error,
+                super::manifest::SceneManifestError::DefaultSpawnMissing(_)
+            ) =>
+        {
+            SceneFailureKind::SpawnPointMissing
+        }
         SceneManifestLoadError::ValidationFailed(_) => SceneFailureKind::ManifestParseFailed,
     };
 
@@ -764,6 +808,26 @@ fn manifest_failure_from_error(
         state: SceneLifecycleState::Resolving,
         asset_id: None,
         asset_path: Some(manifest_path),
+        message: Some(error.to_string()),
+    }
+}
+
+fn spawn_lookup_failure(session: &SceneSessionInfo, error: SceneSpawnLookupError) -> SceneFailure {
+    let kind = match error {
+        SceneSpawnLookupError::SessionMissing { .. }
+        | SceneSpawnLookupError::DefaultSpawnMissing { .. }
+        | SceneSpawnLookupError::SpawnPointMissing { .. } => SceneFailureKind::SpawnPointMissing,
+        SceneSpawnLookupError::AnchorMissing { .. } => SceneFailureKind::SceneInstanceFailed,
+    };
+
+    SceneFailure {
+        kind,
+        scene_id: Some(session.scene_id.clone()),
+        session_id: Some(session.session_id.clone()),
+        content_version: session.content_version.clone(),
+        state: SceneLifecycleState::Activating,
+        asset_id: None,
+        asset_path: None,
         message: Some(error.to_string()),
     }
 }

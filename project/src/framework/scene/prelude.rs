@@ -43,7 +43,9 @@ pub use super::{
         spawn_scene_root, spawn_scene_runtime_root, spawn_scene_world_roots,
     },
     spawn::{
-        SceneAnchor, SceneAnchorManifest, SceneSpawnPoint, SceneSpawnPointManifest,
+        SceneAnchor, SceneAnchorManifest, SceneSpawnDebugItem, SceneSpawnDebugKind,
+        SceneSpawnLookupError, SceneSpawnPoint, SceneSpawnPointManifest, SceneSpawnRegistry,
+        SceneSpawnSessionIndex, scene_anchor_transform, scene_spawn_point_transform,
         transform_from_position_rotation,
     },
     trigger::{
