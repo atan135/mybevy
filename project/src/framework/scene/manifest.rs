@@ -1,7 +1,10 @@
 use std::fmt;
 
 use super::{
-    id::{SceneAssetId, SceneId, SceneLayerId, SceneSpawnPointId},
+    id::{
+        SCENE_ID_ALLOWED_CHARACTERS, SceneAssetId, SceneId, SceneIdError, SceneLayerId,
+        SceneSpawnPointId,
+    },
     loading::SceneLoadingPolicy,
     registry::SceneKind,
     spawn::{SceneAnchorManifest, SceneSpawnPointManifest},
@@ -28,9 +31,7 @@ impl SceneManifest {
             return Err(SceneManifestError::UnsupportedVersion(self.version.clone()));
         }
 
-        if self.scene_id.is_empty() {
-            return Err(SceneManifestError::EmptySceneId);
-        }
+        self.scene_id.validate().map_err(SceneManifestError::from)?;
 
         if let Some(default_spawn) = &self.entry.default_spawn {
             let has_default_spawn = self
@@ -104,6 +105,7 @@ pub enum SceneAssetKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SceneManifestError {
     EmptySceneId,
+    InvalidSceneIdFormat(SceneId),
     UnsupportedVersion(String),
     DefaultSpawnMissing(SceneSpawnPointId),
 }
@@ -112,12 +114,29 @@ impl fmt::Display for SceneManifestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptySceneId => formatter.write_str("scene manifest scene_id must not be empty"),
+            Self::InvalidSceneIdFormat(scene_id) => {
+                write!(
+                    formatter,
+                    "scene manifest scene_id has invalid format: {scene_id}; allowed characters are {SCENE_ID_ALLOWED_CHARACTERS}"
+                )
+            }
             Self::UnsupportedVersion(version) => {
                 write!(formatter, "unsupported scene manifest version: {version}")
             }
             Self::DefaultSpawnMissing(spawn_id) => {
                 write!(formatter, "default spawn point is not defined: {spawn_id}")
             }
+        }
+    }
+}
+
+impl std::error::Error for SceneManifestError {}
+
+impl From<SceneIdError> for SceneManifestError {
+    fn from(error: SceneIdError) -> Self {
+        match error {
+            SceneIdError::Empty => Self::EmptySceneId,
+            SceneIdError::InvalidFormat(value) => Self::InvalidSceneIdFormat(SceneId::from(value)),
         }
     }
 }

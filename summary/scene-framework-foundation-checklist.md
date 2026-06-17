@@ -65,14 +65,14 @@
   - [x] 提供按 `session_id` 清理 `SceneOwned` 的系统，并保证子实体递归清理。
   - [x] 提供实体计数和残留检测辅助，用于后续 debug 面板和测试。
 
-- [ ] 阶段 5：场景注册表
-  - [ ] 定义 `SceneRegistry` 资源，维护 `SceneId` 到场景定义或 manifest 路径的映射。
-  - [ ] 提供注册 API：注册纯 UI 场景、注册首包 manifest 场景、注册 fallback 场景。
-  - [ ] 支持场景定义中的基础元数据：`scene_id`、`kind`、`has_world_root`、`default_spawn`、`manifest_path`、`loading_policy`。
-  - [ ] 提供查询 API：按 `SceneId` 获取定义、判断场景是否存在、列出已注册场景。
-  - [ ] 对重复注册、空 ID、非法 ID 格式给出明确错误。
-  - [ ] 预留内容版本和内容缓存来源字段，但初期只实现首包路径。
-  - [ ] 增加 fallback scene 的注册约定，用于场景不存在或加载失败后的回退。
+- [x] 阶段 5：场景注册表（开始：2026-06-17 19:05:08 +08:00；结束：2026-06-17 19:13:46 +08:00）
+  - [x] 定义 `SceneRegistry` 资源，维护 `SceneId` 到场景定义或 manifest 路径的映射。
+  - [x] 提供注册 API：注册纯 UI 场景、注册首包 manifest 场景、注册 fallback 场景。
+  - [x] 支持场景定义中的基础元数据：`scene_id`、`kind`、`has_world_root`、`default_spawn`、`manifest_path`、`loading_policy`。
+  - [x] 提供查询 API：按 `SceneId` 获取定义、判断场景是否存在、列出已注册场景。
+  - [x] 对重复注册、空 ID、非法 ID 格式给出明确错误。
+  - [x] 预留内容版本和内容缓存来源字段，但初期只实现首包路径。
+  - [x] 增加 fallback scene 的注册约定，用于场景不存在或加载失败后的回退。
 
 - [ ] 阶段 6：场景清单结构和校验
   - [ ] 定义 `SceneManifest`，包含 `version`、`scene_id`、`kind`、`entry`、`layers`、`spawn_points`、`anchors`、`triggers`。

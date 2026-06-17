@@ -11,8 +11,9 @@ pub use super::{
         SceneResolving,
     },
     id::{
-        SceneAnchorId, SceneAssetId, SceneChunkId, SceneId, SceneLayerId, SceneSessionId,
-        SceneSpawnPointId, SceneTriggerId,
+        SCENE_ID_ALLOWED_CHARACTERS, SceneAnchorId, SceneAssetId, SceneChunkId, SceneId,
+        SceneIdError, SceneLayerId, SceneSessionId, SceneSpawnPointId, SceneTriggerId,
+        validate_scene_id,
     },
     lifecycle::{SceneAuthorityMode, SceneLifecycleState, SceneRuntime, SceneSessionInfo},
     loading::{SceneAssetLoadFailure, SceneLoadPhase, SceneLoadProgress, SceneLoadingPolicy},
@@ -21,7 +22,9 @@ pub use super::{
         SceneManifestEntry, SceneManifestError,
     },
     plugin::ScenePlugin,
-    registry::{SceneDefinition, SceneKind, SceneRegistrationError, SceneRegistry},
+    registry::{
+        SceneContentSource, SceneDefinition, SceneKind, SceneRegistrationError, SceneRegistry,
+    },
     root::{
         SCENE_DEFAULT_LAYER_ID, SceneEntityCounts, SceneLayerRoot, SceneLayerState, SceneOwned,
         SceneRoot, SceneRuntimeRoot, SceneWorldRoots, count_scene_entities,

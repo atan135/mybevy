@@ -1,5 +1,8 @@
 use std::fmt;
 
+pub const SCENE_ID_ALLOWED_CHARACTERS: &str =
+    "lowercase ASCII letters, digits, dots, underscores, and hyphens";
+
 macro_rules! scene_string_id {
     ($name:ident) => {
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -57,3 +60,49 @@ scene_string_id!(SceneSpawnPointId);
 scene_string_id!(SceneAnchorId);
 scene_string_id!(SceneTriggerId);
 scene_string_id!(SceneChunkId);
+
+impl SceneId {
+    pub fn validate(&self) -> Result<(), SceneIdError> {
+        validate_scene_id(self.as_str())
+    }
+
+    pub fn is_valid_format(&self) -> bool {
+        self.validate().is_ok()
+    }
+}
+
+pub fn validate_scene_id(value: &str) -> Result<(), SceneIdError> {
+    if value.is_empty() {
+        return Err(SceneIdError::Empty);
+    }
+
+    if value.chars().all(is_valid_scene_id_char) {
+        Ok(())
+    } else {
+        Err(SceneIdError::InvalidFormat(value.to_string()))
+    }
+}
+
+fn is_valid_scene_id_char(value: char) -> bool {
+    value.is_ascii_lowercase() || value.is_ascii_digit() || matches!(value, '.' | '_' | '-')
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SceneIdError {
+    Empty,
+    InvalidFormat(String),
+}
+
+impl fmt::Display for SceneIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("scene id must not be empty"),
+            Self::InvalidFormat(value) => write!(
+                formatter,
+                "scene id has invalid format: {value}; allowed characters are {SCENE_ID_ALLOWED_CHARACTERS}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SceneIdError {}
