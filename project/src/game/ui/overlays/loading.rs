@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
-use crate::game::navigation::AppUiMode;
 use crate::game::ui::{
     core::{
-        UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiBlockingOverlay, UiLayer,
-        UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot, UiViewport,
+        UI_PANEL_GLOBAL_LOADING, UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing,
+        UiBlockingOverlay, UiLayer, UiLayerRoot, UiMetrics, UiOwnerId, UiPanelKind, UiPanelRoot,
+        UiViewport,
     },
     i18n::{UiI18n, UiI18nText},
     style::{
@@ -60,14 +60,14 @@ pub(in crate::game) fn spawn_loading(
     viewport: &UiViewport,
     fonts: &UiFontAssets,
     loading: &UiLoading,
-    owner_mode: Option<AppUiMode>,
+    owner: Option<UiOwnerId>,
 ) {
     commands
         .spawn((
             UiPanelRoot {
-                id: UiPanelId::GlobalLoading,
+                id: UI_PANEL_GLOBAL_LOADING,
                 kind: UiPanelKind::BlockingOverlay,
-                owner_mode,
+                owner,
             },
             UiBlockingOverlay {
                 cancellable: loading.cancellable,

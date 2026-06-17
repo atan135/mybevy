@@ -4,14 +4,15 @@ use crate::game::{
     navigation::AppUiMode,
     ui::{
         core::{
-            UiFloatingPanel, UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId,
-            UiPanelKind, UiPanelRequest, UiPanelRoot, UiViewport, UiWidthClass,
+            UI_PANEL_GLOBAL_LOADING, UiFloatingPanel, UiLayer, UiLayerRoot, UiMetrics,
+            UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest, UiPanelRoot, UiViewport,
+            UiWidthClass,
             binding::{UiBindingValues, UiBoundDisabled, UiBoundText, UiBoundVisibility},
         },
         i18n::{UiI18n, UiI18nText},
         overlays::{
-            UiConfirmModal, UiI18nTextSpec, UiLoading, UiModalAction, UiModalActionSpec,
-            UiModalActionStyle, UiModalId, UiRouteCommand, UiToast,
+            UiConfirmModal, UiI18nTextSpec, UiLoading, UiModalActionSpec, UiModalActionStyle,
+            UiRouteCommand, UiToast,
         },
         style::{
             UiFontAssets, UiTheme,
@@ -37,6 +38,10 @@ use crate::game::{
             ui_image_panel_node, ui_responsive_column, ui_responsive_grid, ui_scroll_column,
             ui_thumbnail_grid,
         },
+    },
+    ui_ids::{
+        MODAL_ACTION_CANCEL, MODAL_ACTION_CONFIRM, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
+        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY_PAGE,
     },
 };
 
@@ -156,9 +161,9 @@ pub(super) fn setup_ui_gallery(
         .spawn((
             DespawnOnExit(AppUiMode::UiGallery),
             UiPanelRoot {
-                id: UiPanelId::UiGalleryPage,
+                id: PANEL_UI_GALLERY_PAGE,
                 kind: UiPanelKind::Page,
-                owner_mode: Some(AppUiMode::UiGallery),
+                owner: Some(OWNER_UI_GALLERY),
             },
             UiLayerRoot {
                 layer: UiLayer::Page,
@@ -1028,7 +1033,7 @@ pub(super) fn handle_ui_gallery_buttons(
             }
             GalleryActionButton::HideLoading => {
                 commands.remove_resource::<GalleryLoadingPreview>();
-                panel_commands.write(UiPanelCommand::Close(UiPanelId::GlobalLoading));
+                panel_commands.write(UiPanelCommand::Close(UI_PANEL_GLOBAL_LOADING));
             }
             GalleryActionButton::Confirm => {
                 panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
@@ -1094,7 +1099,7 @@ pub(super) fn tick_ui_gallery_loading_preview(
     preview.timer.tick(time.delta());
     if preview.timer.is_finished() {
         commands.remove_resource::<GalleryLoadingPreview>();
-        panel_commands.write(UiPanelCommand::Close(UiPanelId::GlobalLoading));
+        panel_commands.write(UiPanelCommand::Close(UI_PANEL_GLOBAL_LOADING));
     }
 }
 
@@ -1484,7 +1489,7 @@ fn gallery_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
     let confirm = UiI18nTextSpec::new(i18n, "common.confirm", "Confirm");
 
     UiConfirmModal {
-        id: UiModalId::GalleryConfirm,
+        id: MODAL_GALLERY_CONFIRM,
         title: title.text,
         body: body.text,
         detail: Some(detail.text),
@@ -1494,13 +1499,13 @@ fn gallery_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
         actions: vec![
             UiModalActionSpec {
                 label: cancel.text,
-                action: UiModalAction::Cancel,
+                action: MODAL_ACTION_CANCEL,
                 style: UiModalActionStyle::Secondary,
                 i18n_text: Some(cancel.i18n_text),
             },
             UiModalActionSpec {
                 label: confirm.text,
-                action: UiModalAction::Confirm,
+                action: MODAL_ACTION_CONFIRM,
                 style: UiModalActionStyle::Primary,
                 i18n_text: Some(confirm.i18n_text),
             },
@@ -1510,7 +1515,7 @@ fn gallery_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
 
 fn gallery_floating_panel(i18n: &UiI18n) -> UiFloatingPanel {
     UiFloatingPanel {
-        id: UiPanelId::GalleryFloating,
+        id: PANEL_GALLERY_FLOATING,
         title: i18n.tr("ui_gallery.floating.title", "Floating Panel"),
         body: i18n.tr(
             "ui_gallery.floating.body",
@@ -1525,7 +1530,7 @@ fn gallery_floating_panel(i18n: &UiI18n) -> UiFloatingPanel {
 
 fn gallery_floating_i18n(i18n: &UiI18n) -> GalleryFloatingI18n {
     GalleryFloatingI18n {
-        panel_id: UiPanelId::GalleryFloating,
+        panel_id: PANEL_GALLERY_FLOATING,
         title: UiI18nTextSpec::new(i18n, "ui_gallery.floating.title", "Floating Panel"),
         body: UiI18nTextSpec::new(
             i18n,

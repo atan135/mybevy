@@ -2,7 +2,9 @@ use bevy::prelude::*;
 
 use crate::game::{
     navigation::{AppUiMode, RouteButton},
-    ui::core::{UiAnimationSystems, UiFocusSystems, UiMetrics, UiPanelCommand, UiViewport},
+    ui::core::{
+        UiAnimationSystems, UiCurrentOwner, UiFocusSystems, UiMetrics, UiPanelCommand, UiViewport,
+    },
     ui::overlays::{
         loading::sync_loading_entry_border_alpha,
         modal::{UiModalResult, handle_modal_action_buttons, sync_confirm_entry_visual_alpha},
@@ -88,13 +90,19 @@ fn handle_ui_route_commands(
     mut route_commands: MessageReader<UiRouteCommand>,
     mut next_mode: ResMut<NextState<AppUiMode>>,
     current_mode: Res<State<AppUiMode>>,
+    mut current_owner: ResMut<UiCurrentOwner>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     toast_roots: Query<Entity, With<UiToastRoot>>,
 ) {
+    current_owner.owner = Some(current_mode.get().ui_owner());
+
     for command in route_commands.read() {
         match command {
             UiRouteCommand::ChangeMode(mode) => {
-                panel_commands.write(UiPanelCommand::CloseAllForMode(*current_mode.get()));
+                panel_commands.write(UiPanelCommand::CloseAllForOwner(
+                    current_mode.get().ui_owner(),
+                ));
+                current_owner.owner = Some(mode.ui_owner());
                 next_mode.set(*mode);
             }
             UiRouteCommand::ShowToast(toast) => {

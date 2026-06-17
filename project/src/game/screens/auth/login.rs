@@ -4,7 +4,7 @@ use crate::game::{
     navigation::AppUiMode,
     ui::{
         core::{
-            UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind, UiPanelRoot, UiViewport,
+            UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiPanelRoot, UiViewport,
             binding::{UiBindingValues, UiBoundText},
         },
         i18n::UiI18n,
@@ -17,6 +17,7 @@ use crate::game::{
         },
         widgets::{primary_route_button_key, screen_label, screen_title_key},
     },
+    ui_ids::{OWNER_LOGIN, PANEL_LOGIN_PAGE},
 };
 
 const LOGIN_SUBTITLE_BINDING_PATH: &str = "auth.login.subtitle";
@@ -43,9 +44,9 @@ pub(super) fn setup_login_screen(
     commands.spawn((
         DespawnOnExit(AppUiMode::Login),
         UiPanelRoot {
-            id: UiPanelId::LoginPage,
+            id: PANEL_LOGIN_PAGE,
             kind: UiPanelKind::Page,
-            owner_mode: Some(AppUiMode::Login),
+            owner: Some(OWNER_LOGIN),
         },
         UiLayerRoot {
             layer: UiLayer::Page,

@@ -312,9 +312,9 @@ mod tests {
 
     fn test_panel(kind: UiPanelKind) -> UiPanelRoot {
         UiPanelRoot {
-            id: UiPanelId::UiGalleryPage,
+            id: UiPanelId::new("test_panel"),
             kind,
-            owner_mode: None,
+            owner: None,
         }
     }
 

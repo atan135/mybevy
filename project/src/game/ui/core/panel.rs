@@ -1,23 +1,22 @@
+use std::fmt;
+
 use bevy::{input::keyboard::Key, prelude::*};
 
-use crate::game::{
-    navigation::AppUiMode,
-    ui::{
-        core::{UiLayer, UiLayerRoot, UiMetrics, UiViewport, UiWidthClass},
-        overlays::{
-            loading::{UiLoading, spawn_loading},
-            modal::{UiConfirmModal, spawn_confirm_modal},
-            router::UiRouteSystems,
-        },
-        style::{
-            UiFontAssets, UiTheme,
-            theme::{
-                UiThemeBackgroundRole, UiThemeBorderRole, UiThemeRootNodeRole,
-                UiThemeTextColorRole, UiThemeTextStyleRole,
-            },
-        },
-        widgets::{screen_label, screen_title},
+use crate::game::ui::{
+    core::{UiLayer, UiLayerRoot, UiMetrics, UiViewport, UiWidthClass},
+    overlays::{
+        loading::{UiLoading, spawn_loading},
+        modal::{UiConfirmModal, spawn_confirm_modal},
+        router::UiRouteSystems,
     },
+    style::{
+        UiFontAssets, UiTheme,
+        theme::{
+            UiThemeBackgroundRole, UiThemeBorderRole, UiThemeRootNodeRole, UiThemeTextColorRole,
+            UiThemeTextStyleRole,
+        },
+    },
+    widgets::{screen_label, screen_title},
 };
 
 pub(in crate::game) struct UiPanelPlugin;
@@ -25,6 +24,7 @@ pub(in crate::game) struct UiPanelPlugin;
 impl Plugin for UiPanelPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiPanelCommand>()
+            .init_resource::<UiCurrentOwner>()
             .init_resource::<UiPanelStack>()
             .configure_sets(Update, UiPanelSystems::Commands)
             .add_systems(
@@ -43,18 +43,41 @@ pub(in crate::game) enum UiPanelSystems {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-#[allow(dead_code)]
-pub(in crate::game) enum UiPanelId {
-    LoginPage,
-    GameListPage,
-    UiGalleryPage,
-    GalleryFloating,
-    TouchRippleHud,
-    TouchRipplePause,
-    TouchRippleSettings,
-    GlobalLoading,
-    ConfirmModal,
+pub(in crate::game) struct UiPanelId(&'static str);
+
+impl UiPanelId {
+    pub(in crate::game) const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    pub(in crate::game) const fn as_str(self) -> &'static str {
+        self.0
+    }
 }
+
+impl fmt::Display for UiPanelId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(in crate::game) struct UiOwnerId(&'static str);
+
+impl UiOwnerId {
+    pub(in crate::game) const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for UiOwnerId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+pub(in crate::game) const UI_PANEL_GLOBAL_LOADING: UiPanelId = UiPanelId::new("global_loading");
+pub(in crate::game) const UI_PANEL_CONFIRM_MODAL: UiPanelId = UiPanelId::new("confirm_modal");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[allow(dead_code)]
@@ -71,7 +94,7 @@ pub(in crate::game) enum UiPanelKind {
 pub(in crate::game) struct UiPanelRoot {
     pub id: UiPanelId,
     pub kind: UiPanelKind,
-    pub owner_mode: Option<AppUiMode>,
+    pub owner: Option<UiOwnerId>,
 }
 
 #[derive(Component)]
@@ -103,7 +126,12 @@ pub(in crate::game) enum UiPanelCommand {
     Hide(UiPanelId),
     Show(UiPanelId),
     CloseTop,
-    CloseAllForMode(AppUiMode),
+    CloseAllForOwner(UiOwnerId),
+}
+
+#[derive(Clone, Copy, Debug, Default, Resource)]
+pub(in crate::game) struct UiCurrentOwner {
+    pub owner: Option<UiOwnerId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -123,7 +151,7 @@ fn handle_panel_commands(
     metrics: Res<UiMetrics>,
     viewport: Res<UiViewport>,
     fonts: Res<UiFontAssets>,
-    current_mode: Res<State<AppUiMode>>,
+    current_owner: Res<UiCurrentOwner>,
     mut panel_commands: MessageReader<UiPanelCommand>,
     panel_roots: Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     mut visible_panels: Query<(&UiPanelRoot, &mut Visibility)>,
@@ -138,7 +166,7 @@ fn handle_panel_commands(
                     &metrics,
                     &viewport,
                     &fonts,
-                    &current_mode,
+                    current_owner.owner,
                     &panel_roots,
                     &mut stack,
                     request,
@@ -160,7 +188,7 @@ fn handle_panel_commands(
                         &metrics,
                         &viewport,
                         &fonts,
-                        &current_mode,
+                        current_owner.owner,
                         &panel_roots,
                         &mut stack,
                         request,
@@ -176,12 +204,12 @@ fn handle_panel_commands(
             UiPanelCommand::CloseTop => {
                 close_top_panel(&mut commands, &panel_roots, &mut stack);
             }
-            UiPanelCommand::CloseAllForMode(mode) => {
-                close_panels_for_mode(&mut commands, &panel_roots, *mode);
+            UiPanelCommand::CloseAllForOwner(owner) => {
+                close_panels_for_owner(&mut commands, &panel_roots, *owner);
                 stack.open_order.retain(|entry| {
-                    !panel_roots.iter().any(|(_, panel, _)| {
-                        panel.id == entry.id && panel.owner_mode == Some(*mode)
-                    })
+                    !panel_roots
+                        .iter()
+                        .any(|(_, panel, _)| panel.id == entry.id && panel.owner == Some(*owner))
                 });
             }
         }
@@ -194,7 +222,7 @@ fn open_panel(
     metrics: &UiMetrics,
     viewport: &UiViewport,
     fonts: &UiFontAssets,
-    current_mode: &State<AppUiMode>,
+    owner: Option<UiOwnerId>,
     panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     stack: &mut UiPanelStack,
     request: &UiPanelRequest,
@@ -206,37 +234,13 @@ fn open_panel(
 
     match request {
         UiPanelRequest::Loading(loading) => {
-            spawn_loading(
-                commands,
-                theme,
-                metrics,
-                viewport,
-                fonts,
-                loading,
-                Some(*current_mode.get()),
-            );
+            spawn_loading(commands, theme, metrics, viewport, fonts, loading, owner);
         }
         UiPanelRequest::Confirm(confirm) => {
-            spawn_confirm_modal(
-                commands,
-                theme,
-                metrics,
-                viewport,
-                fonts,
-                confirm,
-                Some(*current_mode.get()),
-            );
+            spawn_confirm_modal(commands, theme, metrics, viewport, fonts, confirm, owner);
         }
         UiPanelRequest::Floating(floating) => {
-            spawn_floating_panel(
-                commands,
-                theme,
-                metrics,
-                viewport,
-                fonts,
-                floating,
-                Some(*current_mode.get()),
-            );
+            spawn_floating_panel(commands, theme, metrics, viewport, fonts, floating, owner);
         }
     }
 
@@ -263,13 +267,13 @@ fn close_panel_by_id(
     closed
 }
 
-fn close_panels_for_mode(
+fn close_panels_for_owner(
     commands: &mut Commands,
     panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
-    mode: AppUiMode,
+    owner: UiOwnerId,
 ) {
     for (entity, panel, _) in panel_roots {
-        if panel.owner_mode == Some(mode) {
+        if panel.owner == Some(owner) {
             commands.entity(entity).try_despawn();
         }
     }
@@ -369,8 +373,8 @@ fn set_panel_visibility(
 impl UiPanelRequest {
     fn id(&self) -> UiPanelId {
         match self {
-            UiPanelRequest::Loading(_) => UiPanelId::GlobalLoading,
-            UiPanelRequest::Confirm(_) => UiPanelId::ConfirmModal,
+            UiPanelRequest::Loading(_) => UI_PANEL_GLOBAL_LOADING,
+            UiPanelRequest::Confirm(_) => UI_PANEL_CONFIRM_MODAL,
             UiPanelRequest::Floating(floating) => floating.id,
         }
     }
@@ -401,14 +405,14 @@ fn spawn_floating_panel(
     viewport: &UiViewport,
     fonts: &UiFontAssets,
     floating: &UiFloatingPanel,
-    owner_mode: Option<AppUiMode>,
+    owner: Option<UiOwnerId>,
 ) {
     commands
         .spawn((
             UiPanelRoot {
                 id: floating.id,
                 kind: UiPanelKind::Floating,
-                owner_mode,
+                owner,
             },
             UiLayerRoot {
                 layer: UiLayer::Floating,

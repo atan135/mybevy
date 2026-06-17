@@ -158,11 +158,11 @@ impl Default for UiInputRouteSnapshot {
 impl UiInputRouteSnapshot {
     fn summary(&self) -> String {
         format!(
-            "blocked={} reason={} focused_panel={:?} top_blocking_panel={:?}",
+            "blocked={} reason={} focused_panel={} top_blocking_panel={}",
             self.pointer_blocked,
             self.block_reason.summary(),
-            self.focused_panel,
-            self.top_blocking_panel,
+            optional_panel_id_label(self.focused_panel),
+            optional_panel_id_label(self.top_blocking_panel),
         )
     }
 }
@@ -181,13 +181,18 @@ impl UiInputBlockReason {
     fn summary(&self) -> String {
         match self {
             Self::None => "none".to_string(),
-            Self::BlockingPanel { id, kind } => format!("{:?} {:?}", id, kind),
+            Self::BlockingPanel { id, kind } => format!("{id} {kind:?}"),
             Self::FocusedTextInput => "focused text input".to_string(),
             Self::PressedButton => "pressed button".to_string(),
             Self::HoveredButton => "hovered button".to_string(),
             Self::HoveredScrollView => "hovered scroll view".to_string(),
         }
     }
+}
+
+fn optional_panel_id_label(id: Option<UiPanelId>) -> String {
+    id.map(|id| id.to_string())
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn resolve_ui_input_route(signals: UiInputRouteSignals) -> UiInputRouteSnapshot {
@@ -217,11 +222,12 @@ fn resolve_ui_input_route(signals: UiInputRouteSignals) -> UiInputRouteSnapshot 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::ui::core::UI_PANEL_GLOBAL_LOADING;
 
     #[test]
     fn route_reason_prefers_blocking_panel_then_text_then_button_then_scroll() {
         let snapshot = resolve_ui_input_route(UiInputRouteSignals {
-            top_blocking_panel: Some((UiPanelId::GlobalLoading, UiPanelKind::BlockingOverlay)),
+            top_blocking_panel: Some((UI_PANEL_GLOBAL_LOADING, UiPanelKind::BlockingOverlay)),
             focused_text_input: true,
             pressed_button: true,
             hovered_button: true,
@@ -230,7 +236,7 @@ mod tests {
         assert_eq!(
             snapshot.block_reason,
             UiInputBlockReason::BlockingPanel {
-                id: UiPanelId::GlobalLoading,
+                id: UI_PANEL_GLOBAL_LOADING,
                 kind: UiPanelKind::BlockingOverlay,
             },
         );

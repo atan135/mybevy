@@ -5,7 +5,7 @@ pub(in crate::game) mod toast;
 
 pub(in crate::game) use loading::UiLoading;
 pub(in crate::game) use modal::{
-    UiConfirmModal, UiI18nTextSpec, UiModalAction, UiModalActionSpec, UiModalActionStyle,
+    UiConfirmModal, UiI18nTextSpec, UiModalActionId, UiModalActionSpec, UiModalActionStyle,
     UiModalId, UiModalResult,
 };
 pub(in crate::game) use router::{UiRouteCommand, UiRouterPlugin};

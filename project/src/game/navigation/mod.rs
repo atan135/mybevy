@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 use std::env;
 
+use crate::game::ui::core::UiOwnerId;
+use crate::game::ui_ids::{OWNER_LOBBY, OWNER_LOGIN, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY};
+
 pub(super) struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
@@ -17,6 +20,17 @@ pub(super) enum AppUiMode {
     Lobby,
     WanfaTouchRipple,
     UiGallery,
+}
+
+impl AppUiMode {
+    pub(super) const fn ui_owner(self) -> UiOwnerId {
+        match self {
+            Self::Login => OWNER_LOGIN,
+            Self::Lobby => OWNER_LOBBY,
+            Self::WanfaTouchRipple => OWNER_TOUCH_RIPPLE,
+            Self::UiGallery => OWNER_UI_GALLERY,
+        }
+    }
 }
 
 #[derive(Component)]

@@ -1,26 +1,25 @@
 use bevy::{ecs::hierarchy::ChildSpawnerCommands, prelude::*};
 
-use crate::game::{
-    navigation::AppUiMode,
-    ui::{
-        core::{
-            UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer, UiLayerRoot,
-            UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRoot, UiViewport,
-            UiWidthClass,
+use std::fmt;
+
+use crate::game::ui::{
+    core::{
+        UI_PANEL_CONFIRM_MODAL, UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer,
+        UiLayerRoot, UiMetrics, UiOwnerId, UiPanelCommand, UiPanelKind, UiPanelRoot, UiViewport,
+        UiWidthClass,
+    },
+    i18n::{UiI18n, UiI18nText},
+    style::{
+        UiFontAssets, UiTheme,
+        theme::{
+            ButtonColors, UiThemeBackgroundRole, UiThemeBorderRole, UiThemeButtonNodeRole,
+            UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
         },
-        i18n::{UiI18n, UiI18nText},
-        style::{
-            UiFontAssets, UiTheme,
-            theme::{
-                ButtonColors, UiThemeBackgroundRole, UiThemeBorderRole, UiThemeButtonNodeRole,
-                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
-            },
-        },
-        widgets::controls::{PrimaryButton, SecondaryButton},
-        widgets::{
-            DisabledButton, FocusableButton, FocusedButton, LoadingButton, SelectedButton,
-            ui_scroll_column_with_max_height,
-        },
+    },
+    widgets::controls::{PrimaryButton, SecondaryButton},
+    widgets::{
+        DisabledButton, FocusableButton, FocusedButton, LoadingButton, SelectedButton,
+        ui_scroll_column_with_max_height,
     },
 };
 
@@ -41,23 +40,39 @@ pub(in crate::game) struct UiConfirmModal {
 #[derive(Clone, Debug)]
 pub(in crate::game) struct UiModalActionSpec {
     pub label: String,
-    pub action: UiModalAction,
+    pub action: UiModalActionId,
     pub style: UiModalActionStyle,
     pub i18n_text: Option<UiI18nText>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(in crate::game) enum UiModalId {
-    TouchRippleLaunch,
-    GalleryConfirm,
+pub(in crate::game) struct UiModalId(&'static str);
+
+impl UiModalId {
+    pub(in crate::game) const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for UiModalId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(in crate::game) enum UiModalAction {
-    Cancel,
-    Confirm,
-    TouchRippleSinglePlayer,
-    TouchRippleNetworked,
+pub(in crate::game) struct UiModalActionId(&'static str);
+
+impl UiModalActionId {
+    pub(in crate::game) const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for UiModalActionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -69,13 +84,13 @@ pub(in crate::game) enum UiModalActionStyle {
 #[derive(Clone, Copy, Debug, Message)]
 pub(in crate::game) struct UiModalResult {
     pub id: UiModalId,
-    pub action: UiModalAction,
+    pub action: UiModalActionId,
 }
 
 #[derive(Component)]
 pub(in crate::game) struct UiModalActionButton {
     id: UiModalId,
-    action: UiModalAction,
+    action: UiModalActionId,
 }
 
 #[derive(Clone, Debug)]
@@ -123,7 +138,7 @@ pub(in crate::game) fn handle_modal_action_buttons(
             id: action_button.id,
             action: action_button.action,
         });
-        panel_commands.write(UiPanelCommand::Close(UiPanelId::ConfirmModal));
+        panel_commands.write(UiPanelCommand::Close(UI_PANEL_CONFIRM_MODAL));
     }
 }
 
@@ -134,14 +149,14 @@ pub(in crate::game) fn spawn_confirm_modal(
     viewport: &UiViewport,
     fonts: &UiFontAssets,
     modal: &UiConfirmModal,
-    owner_mode: Option<AppUiMode>,
+    owner: Option<UiOwnerId>,
 ) {
     commands
         .spawn((
             UiPanelRoot {
-                id: UiPanelId::ConfirmModal,
+                id: UI_PANEL_CONFIRM_MODAL,
                 kind: UiPanelKind::Modal,
-                owner_mode,
+                owner,
             },
             UiLayerRoot {
                 layer: UiLayer::Modal,

@@ -1,0 +1,26 @@
+use crate::game::ui::{
+    core::{UiOwnerId, UiPanelId},
+    overlays::{UiModalActionId, UiModalId},
+};
+
+pub(in crate::game) const OWNER_LOGIN: UiOwnerId = UiOwnerId::new("login");
+pub(in crate::game) const OWNER_LOBBY: UiOwnerId = UiOwnerId::new("lobby");
+pub(in crate::game) const OWNER_TOUCH_RIPPLE: UiOwnerId = UiOwnerId::new("wanfa_touch_ripple");
+pub(in crate::game) const OWNER_UI_GALLERY: UiOwnerId = UiOwnerId::new("ui_gallery");
+
+pub(in crate::game) const PANEL_LOGIN_PAGE: UiPanelId = UiPanelId::new("login_page");
+pub(in crate::game) const PANEL_GAME_LIST_PAGE: UiPanelId = UiPanelId::new("game_list_page");
+pub(in crate::game) const PANEL_UI_GALLERY_PAGE: UiPanelId = UiPanelId::new("ui_gallery_page");
+pub(in crate::game) const PANEL_GALLERY_FLOATING: UiPanelId = UiPanelId::new("gallery_floating");
+pub(in crate::game) const PANEL_TOUCH_RIPPLE_HUD: UiPanelId = UiPanelId::new("touch_ripple_hud");
+
+pub(in crate::game) const MODAL_TOUCH_RIPPLE_LAUNCH: UiModalId =
+    UiModalId::new("touch_ripple_launch");
+pub(in crate::game) const MODAL_GALLERY_CONFIRM: UiModalId = UiModalId::new("gallery_confirm");
+
+pub(in crate::game) const MODAL_ACTION_CANCEL: UiModalActionId = UiModalActionId::new("cancel");
+pub(in crate::game) const MODAL_ACTION_CONFIRM: UiModalActionId = UiModalActionId::new("confirm");
+pub(in crate::game) const MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER: UiModalActionId =
+    UiModalActionId::new("touch_ripple_single_player");
+pub(in crate::game) const MODAL_ACTION_TOUCH_RIPPLE_NETWORKED: UiModalActionId =
+    UiModalActionId::new("touch_ripple_networked");

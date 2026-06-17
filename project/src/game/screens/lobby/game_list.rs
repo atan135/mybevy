@@ -5,13 +5,13 @@ use crate::game::{
     plugin::TouchLaunchMode,
     ui::{
         core::{
-            UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind,
-            UiPanelRequest, UiPanelRoot, UiViewport,
+            UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelKind, UiPanelRequest,
+            UiPanelRoot, UiViewport,
         },
         i18n::UiI18n,
         overlays::{
-            UiConfirmModal, UiI18nTextSpec, UiModalAction, UiModalActionSpec, UiModalActionStyle,
-            UiModalId, UiModalResult, UiRouteCommand, UiToast,
+            UiConfirmModal, UiI18nTextSpec, UiModalActionSpec, UiModalActionStyle, UiModalResult,
+            UiRouteCommand, UiToast,
         },
         style::{
             UiFontAssets, UiTheme,
@@ -24,6 +24,11 @@ use crate::game::{
             DisabledButton, LoadingButton, primary_action_button_key, screen_label_key,
             screen_title_key, secondary_route_button_key,
         },
+    },
+    ui_ids::{
+        MODAL_ACTION_CANCEL, MODAL_ACTION_CONFIRM, MODAL_ACTION_TOUCH_RIPPLE_NETWORKED,
+        MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY,
+        PANEL_GAME_LIST_PAGE,
     },
 };
 
@@ -48,9 +53,9 @@ pub(super) fn setup_game_list_screen(
     commands.spawn((
         DespawnOnExit(AppUiMode::Lobby),
         UiPanelRoot {
-            id: UiPanelId::GameListPage,
+            id: PANEL_GAME_LIST_PAGE,
             kind: UiPanelKind::Page,
-            owner_mode: Some(AppUiMode::Lobby),
+            owner: Some(OWNER_LOBBY),
         },
         UiLayerRoot {
             layer: UiLayer::Page,
@@ -225,13 +230,13 @@ pub(super) fn handle_game_list_touch_buttons(
     }
 
     for result in modal_results.read() {
-        if result.id != UiModalId::TouchRippleLaunch {
+        if result.id != MODAL_TOUCH_RIPPLE_LAUNCH {
             continue;
         }
 
         match result.action {
-            UiModalAction::Cancel | UiModalAction::Confirm => {}
-            UiModalAction::TouchRippleSinglePlayer => {
+            MODAL_ACTION_CANCEL | MODAL_ACTION_CONFIRM => {}
+            MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER => {
                 *launch_mode = TouchLaunchMode::SinglePlayer;
                 route_commands.write(UiRouteCommand::ShowToast(UiToast::new_key(
                     &i18n,
@@ -240,7 +245,7 @@ pub(super) fn handle_game_list_touch_buttons(
                 )));
                 route_commands.write(UiRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
-            UiModalAction::TouchRippleNetworked => {
+            MODAL_ACTION_TOUCH_RIPPLE_NETWORKED => {
                 *launch_mode = TouchLaunchMode::Auto;
                 route_commands.write(UiRouteCommand::ShowToast(UiToast::new_key(
                     &i18n,
@@ -249,6 +254,7 @@ pub(super) fn handle_game_list_touch_buttons(
                 )));
                 route_commands.write(UiRouteCommand::ChangeMode(AppUiMode::WanfaTouchRipple));
             }
+            _ => {}
         };
     }
 }
@@ -274,7 +280,7 @@ fn touch_ripple_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
     );
 
     UiConfirmModal {
-        id: UiModalId::TouchRippleLaunch,
+        id: MODAL_TOUCH_RIPPLE_LAUNCH,
         title: title.text,
         body: body.text,
         detail: Some(detail.text),
@@ -284,19 +290,19 @@ fn touch_ripple_confirm_modal(i18n: &UiI18n) -> UiConfirmModal {
         actions: vec![
             UiModalActionSpec {
                 label: cancel.text,
-                action: UiModalAction::Cancel,
+                action: MODAL_ACTION_CANCEL,
                 style: UiModalActionStyle::Secondary,
                 i18n_text: Some(cancel.i18n_text),
             },
             UiModalActionSpec {
                 label: networked.text,
-                action: UiModalAction::TouchRippleNetworked,
+                action: MODAL_ACTION_TOUCH_RIPPLE_NETWORKED,
                 style: UiModalActionStyle::Secondary,
                 i18n_text: Some(networked.i18n_text),
             },
             UiModalActionSpec {
                 label: single_player.text,
-                action: UiModalAction::TouchRippleSinglePlayer,
+                action: MODAL_ACTION_TOUCH_RIPPLE_SINGLE_PLAYER,
                 style: UiModalActionStyle::Primary,
                 i18n_text: Some(single_player.i18n_text),
             },
