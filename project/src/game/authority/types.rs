@@ -1,9 +1,11 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use bevy::prelude::{Message, Resource};
 use serde::{Deserialize, Serialize};
 
-use crate::network::{ConnectionId, ListenerId, NetworkTransport};
+use crate::framework::network::{ConnectionId, ListenerId, NetworkTransport};
 
 pub const DEFAULT_AUTHORITY_HOST: &str = "127.0.0.1";
 pub const DEFAULT_AUTHORITY_PORT: u16 = 15000;

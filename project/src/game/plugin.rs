@@ -1,13 +1,21 @@
 use bevy::prelude::*;
 
-use super::{features::touch_ripple::TouchRipplePlugin, screens::ScreensPlugin};
+use super::{
+    authority::AuthorityPlugin, features::touch_ripple::TouchRipplePlugin,
+    myserver::MyServerPlugin, screens::ScreensPlugin,
+};
 
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((ScreensPlugin, TouchRipplePlugin))
-            .add_systems(Startup, setup_camera);
+        app.add_plugins((
+            MyServerPlugin,
+            AuthorityPlugin,
+            ScreensPlugin,
+            TouchRipplePlugin,
+        ))
+        .add_systems(Startup, setup_camera);
     }
 }
 

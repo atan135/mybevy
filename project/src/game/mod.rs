@@ -1,4 +1,6 @@
+pub mod authority;
 mod features;
+pub mod myserver;
 mod navigation;
 mod plugin;
 mod screens;

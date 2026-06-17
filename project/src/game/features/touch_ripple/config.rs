@@ -2,7 +2,7 @@ use std::env;
 
 use bevy::prelude::*;
 
-use crate::{authority::AuthorityEndpoint, network::NetworkTransport};
+use crate::{framework::network::NetworkTransport, game::authority::AuthorityEndpoint};
 
 const DEFAULT_TOUCH_PLAYER_ID: &str = "touch-local";
 const DEFAULT_UI_TOUCH_ROOM_ID: &str = "ui-touch-room";

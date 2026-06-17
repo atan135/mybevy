@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 
-use crate::network::{
+use crate::framework::network::{
     ConnectionId, HttpRequest, KcpConnectConfig, KcpSessionOptions, NetworkCommand, NetworkEvent,
     NetworkTransport, TcpConnectConfig,
 };

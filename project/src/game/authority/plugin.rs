@@ -2,17 +2,17 @@ use std::{env, time::Duration};
 
 use bevy::prelude::*;
 
-use crate::myserver::{MyServerCommand, MyServerEvent};
-use crate::network::{
+use crate::framework::network::{
     ConnectionId, KcpConnectConfig, KcpListenConfig, KcpSessionOptions, ListenerId, NetworkCommand,
     NetworkEvent, NetworkTransport, TcpConnectConfig, TcpListenConfig,
 };
+use crate::game::myserver::{MyServerCommand, MyServerEvent};
 
 use super::types::{
     AUTHORITY_PROTOCOL_VERSION, AuthorityCommand, AuthorityEndpoint, AuthorityEvent,
     AuthorityFrame, AuthorityMigration, AuthorityPeer, AuthorityRole, AuthoritySession,
-    AuthoritySnapshot, AuthorityWireMessage, DEFAULT_AUTHORITY_FPS, PlayerInput,
-    encode_authority_message,
+    AuthoritySnapshot, AuthorityWireMessage, DEFAULT_AUTHORITY_FPS, DEFAULT_AUTHORITY_HOST,
+    DEFAULT_AUTHORITY_PORT, PlayerInput, encode_authority_message,
 };
 
 pub struct AuthorityPlugin;
@@ -73,20 +73,10 @@ impl Default for AuthorityDevConfig {
             player_id: env_string("AUTHORITY_PLAYER_ID", "bevy-player"),
             bind_addr: env_string(
                 "AUTHORITY_BIND_ADDR",
-                &format!(
-                    "{}:{}",
-                    super::types::DEFAULT_AUTHORITY_HOST,
-                    super::types::DEFAULT_AUTHORITY_PORT
-                ),
+                &format!("{}:{}", DEFAULT_AUTHORITY_HOST, DEFAULT_AUTHORITY_PORT),
             ),
-            remote_host: env_string(
-                "AUTHORITY_REMOTE_HOST",
-                super::types::DEFAULT_AUTHORITY_HOST,
-            ),
-            remote_port: env_u16(
-                "AUTHORITY_REMOTE_PORT",
-                super::types::DEFAULT_AUTHORITY_PORT,
-            ),
+            remote_host: env_string("AUTHORITY_REMOTE_HOST", DEFAULT_AUTHORITY_HOST),
+            remote_port: env_u16("AUTHORITY_REMOTE_PORT", DEFAULT_AUTHORITY_PORT),
             transport: env_transport("AUTHORITY_TRANSPORT").unwrap_or(NetworkTransport::Tcp),
             auto_input: env_bool("AUTHORITY_DEV_AUTO_INPUT", true),
             input_interval: Duration::from_millis(env_u64("AUTHORITY_DEV_INPUT_INTERVAL_MS", 500)),
@@ -1041,7 +1031,7 @@ fn handle_myserver_authority_events(
 }
 
 fn migration_from_myserver_payload(
-    payload: &crate::myserver::protocol::pb::AuthorityMigrationPayload,
+    payload: &crate::game::myserver::protocol::pb::AuthorityMigrationPayload,
 ) -> Option<AuthorityMigration> {
     let snapshot = payload.snapshot.as_ref()?;
     let new_authority = payload.new_authority.as_ref()?;
@@ -1065,7 +1055,7 @@ fn migration_from_myserver_payload(
 }
 
 fn snapshot_from_myserver_authority(
-    snapshot: &crate::myserver::protocol::pb::AuthoritySnapshot,
+    snapshot: &crate::game::myserver::protocol::pb::AuthoritySnapshot,
 ) -> AuthoritySnapshot {
     AuthoritySnapshot {
         authority_epoch: snapshot.authority_epoch,

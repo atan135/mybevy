@@ -4,12 +4,14 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    authority::{
-        AuthorityCommand, AuthorityEndpoint, AuthorityEvent, AuthorityFrame, AuthorityRole,
-        AuthoritySession,
+    framework::network::NetworkTransport,
+    game::{
+        authority::{
+            AuthorityCommand, AuthorityEndpoint, AuthorityEvent, AuthorityFrame, AuthorityRole,
+            AuthoritySession,
+        },
+        myserver::{MyServerCommand, MyServerEvent},
     },
-    myserver::{MyServerCommand, MyServerEvent},
-    network::NetworkTransport,
 };
 
 use super::{

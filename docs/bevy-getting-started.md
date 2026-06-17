@@ -195,6 +195,7 @@ mybevy/
     |-- src/
     |   |-- framework/
     |   |   |-- fight/
+    |   |   |-- network/
     |   |   |-- scene/
     |   |   `-- ui/
     |   |       |-- core/
@@ -205,7 +206,9 @@ mybevy/
     |   `-- game/
     |       |-- mod.rs
     |       |-- plugin.rs
+    |       |-- authority/
     |       |-- features/
+    |       |-- myserver/
     |       |-- navigation/
     |       |-- screens/
     |       `-- ui_ids.rs
@@ -215,10 +218,13 @@ mybevy/
 可以按下面的职责划分：
 
 - `project/src/main.rs`：程序入口、顶层插件注册
-- `project/src/framework/`：框架层横向能力，当前包含 UI、scene 和 fight 边界
+- `project/src/framework/`：框架层横向能力，当前包含 UI、network、scene 和 fight 边界
+- `project/src/framework/network/`：网络框架能力入口，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
 - `project/src/framework/ui/`：UI 框架能力入口
 - `project/src/game/plugin.rs`：游戏主插件
+- `project/src/game/authority/`：游戏层控制机会话接口和轻量 authority 协议
 - `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
+- `project/src/game/myserver/`：当前游戏的 MyServer 登录、房间和协议适配模块
 - `project/src/game/navigation/`：主流程 `AppUiMode` 和路由按钮数据
 - `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体业务页面
 - `project/src/framework/ui/core/`：UI 框架入口、Panel Manager、层级、输入拦截
@@ -590,7 +596,7 @@ android/app/build/outputs/apk/release/
 
 当前工程已经内置一套网络通信接口：
 
-- `project/src/network/`：网络插件、命令、事件和连接配置
+- `project/src/framework/network/`：网络框架插件、命令、事件和连接配置
 - `NetworkPlugin`：已经在 `project/src/lib.rs` 中注册
 - `NetworkCommand`：从 Bevy 系统发起 HTTP 请求、TCP/KCP 连接、TCP/KCP 监听、发送数据、断开连接或停止监听
 - `NetworkEvent`：接收 HTTP 响应、连接状态、监听状态、接入连接、数据包、发送结果和错误
@@ -601,8 +607,8 @@ HTTP 是一次性请求接口；TCP 和 KCP 是长连接接口，都会返回 `C
 
 当前工程还内置一套控制机会话接口：
 
-- `project/src/authority/`：控制机统一接口和轻量 authority 协议
-- `AuthorityPlugin`：已经在 `project/src/lib.rs` 中注册
+- `project/src/game/authority/`：控制机统一接口和轻量 authority 协议
+- `AuthorityPlugin`：已经在 `project/src/game/plugin.rs` 中注册
 - `AuthorityCommand`：创建本地控制机、创建局域网控制机、加入控制机、切换控制机、发送玩法输入或离开
 - `AuthorityEvent`：接收控制机连接状态、peer 加入/离开、输入确认、权威帧、快照和迁移事件
 

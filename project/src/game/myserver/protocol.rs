@@ -1,6 +1,8 @@
 use prost::Message;
 
 pub mod pb {
+    #![allow(dead_code)]
+
     include!(concat!(env!("OUT_DIR"), "/myserver.game.rs"));
 }
 

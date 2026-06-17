@@ -1,12 +1,9 @@
 use bevy::{asset::AssetPlugin, prelude::*, window::WindowResolution};
 
-pub mod authority;
 #[cfg(not(target_os = "android"))]
 mod config;
 pub mod framework;
 mod game;
-pub mod myserver;
-pub mod network;
 
 #[bevy_main]
 pub fn main() {
@@ -24,9 +21,7 @@ pub fn run() {
 
     let mut app = App::new();
     app.add_plugins(default_plugins)
-        .add_plugins(network::NetworkPlugin)
-        .add_plugins(authority::AuthorityPlugin)
-        .add_plugins(myserver::MyServerPlugin);
+        .add_plugins(framework::network::NetworkPlugin);
 
     #[cfg(not(target_os = "android"))]
     app.insert_resource(window_config);

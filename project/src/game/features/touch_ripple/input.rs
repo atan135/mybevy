@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use bevy::{input::touch::Touches, prelude::*, window::PrimaryWindow};
 use serde::{Deserialize, Serialize};
 
-use crate::{authority::AuthoritySession, framework::ui::core::UiInputState};
+use crate::{framework::ui::core::UiInputState, game::authority::AuthoritySession};
 
 const MAX_PENDING_TOUCH_SAMPLES: usize = 64;
 
