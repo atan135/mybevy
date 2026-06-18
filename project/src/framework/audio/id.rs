@@ -139,6 +139,28 @@ mod tests {
     }
 
     #[test]
+    fn string_ids_display_their_inner_value() {
+        assert_eq!(
+            AudioClipId::try_from("ui.click_01").unwrap().to_string(),
+            "ui.click_01"
+        );
+        assert_eq!(
+            AudioCueId::try_from("battle-hit.light")
+                .unwrap()
+                .to_string(),
+            "battle-hit.light"
+        );
+        assert_eq!(
+            AudioGroupId::try_from("common_01").unwrap().to_string(),
+            "common_01"
+        );
+        assert_eq!(
+            AudioScopeId::try_from("scene.demo").unwrap().to_string(),
+            "scene.demo"
+        );
+    }
+
+    #[test]
     fn string_ids_reject_empty_or_unsafe_names() {
         for value in [
             "",

@@ -815,6 +815,42 @@ mod tests {
     }
 
     #[test]
+    fn unsafe_content_cache_paths_are_rejected_with_specific_reasons() {
+        for (path, expected_reason) in [
+            (
+                "content_cache://v1/audio/../secret.ogg",
+                AudioCatalogPathError::ParentSegment,
+            ),
+            (
+                "content_cache://v1//audio/click.ogg",
+                AudioCatalogPathError::ParentSegment,
+            ),
+            ("content_cache://", AudioCatalogPathError::ParentSegment),
+            (
+                "asset_cache://v1/audio/click.ogg",
+                AudioCatalogPathError::UnsupportedScheme,
+            ),
+        ] {
+            let config = AudioCatalogConfig {
+                clips: vec![AudioClipConfig {
+                    id: "ui.click".to_string(),
+                    path: path.to_string(),
+                }],
+                cues: Vec::new(),
+                groups: Vec::new(),
+            };
+
+            let error = config.into_catalog().unwrap_err();
+            match error {
+                AudioCatalogConfigError::InvalidPath { reason, .. } => {
+                    assert_eq!(reason, expected_reason, "{path} failed with wrong reason");
+                }
+                other => panic!("{path} failed with unexpected error: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn invalid_ron_returns_fallback_catalog() {
         let fallback_clip = clip_id("ui.fallback");
         let mut fallback = AudioCatalog::default();

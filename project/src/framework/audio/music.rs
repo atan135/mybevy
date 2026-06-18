@@ -657,6 +657,40 @@ mod tests {
     }
 
     #[test]
+    fn fade_in_state_reaches_target_volume_without_stopping_instance() {
+        let mut playback = AudioPlaybackState::default();
+        let instance_id = AudioInstanceId::from_raw(301);
+        playback.instances.insert(
+            instance_id,
+            super::super::playback::AudioInstanceState {
+                entity: Entity::from_raw_u32(301).unwrap(),
+                clip_id: clip_id("music.title"),
+                cue_id: None,
+                scope: AudioScope::Global,
+                bus: AudioBus::Music,
+                volume: 0.0,
+                priority: 0,
+                asset_path: "audio/music/title.ogg".to_string(),
+                source: Handle::<AudioSource>::default(),
+                failed: false,
+                paused: false,
+                stopping: false,
+                fade: AudioFadeState::new(0.5, 0.0, 0.8, false),
+                spatial: false,
+            },
+        );
+
+        assert!(advance_fade_state(&mut playback, 0.25).is_empty());
+        assert_eq!(playback.instances.get(&instance_id).unwrap().volume, 0.4);
+
+        assert!(advance_fade_state(&mut playback, 0.25).is_empty());
+        let instance = playback.instances.get(&instance_id).unwrap();
+        assert_eq!(instance.volume, 0.8);
+        assert_eq!(instance.fade, None);
+        assert!(!instance.stopping);
+    }
+
+    #[test]
     fn faded_out_old_music_instance_is_cleaned_after_crossfade() {
         let mut app = music_app();
         let title = clip_id("music.title");

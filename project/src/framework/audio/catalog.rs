@@ -483,12 +483,42 @@ mod tests {
             AudioCueEntry::from_clips([
                 AudioCueClip::new(click.clone()),
                 AudioCueClip::weighted(click_alt.clone(), 3.0),
-            ]),
+            ])
+            .with_playback(AudioCuePlayback {
+                bus: AudioBus::Ui,
+                scope: AudioScope::Ui,
+                looped: true,
+            })
+            .with_rules(AudioCueRules {
+                volume: 0.75,
+                pitch: 0.9,
+                cooldown_seconds: Some(0.1),
+                max_concurrent: Some(2),
+                priority: 5,
+            }),
         );
 
         let resolved = catalog.resolve_cue(&cue_id).unwrap();
 
         assert_eq!(resolved.cue_id, cue_id);
+        assert_eq!(
+            resolved.playback,
+            AudioCuePlayback {
+                bus: AudioBus::Ui,
+                scope: AudioScope::Ui,
+                looped: true,
+            }
+        );
+        assert_eq!(
+            resolved.rules,
+            AudioCueRules {
+                volume: 0.75,
+                pitch: 0.9,
+                cooldown_seconds: Some(0.1),
+                max_concurrent: Some(2),
+                priority: 5,
+            }
+        );
         assert_eq!(
             resolved.clips,
             vec![

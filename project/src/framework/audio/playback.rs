@@ -1295,6 +1295,45 @@ mod tests {
     }
 
     #[test]
+    fn battle_cue_cooldown_takes_precedence_over_max_concurrency_skip_reason() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.hit.light_01");
+        let cue_id = cue_id("battle.hit.light");
+        register_battle_cue(
+            &mut app,
+            cue_id.clone(),
+            clip_id,
+            AudioCueRules {
+                cooldown_seconds: Some(1.0),
+                max_concurrent: Some(1),
+                ..AudioCueRules::default()
+            },
+        );
+
+        for _ in 0..2 {
+            app.world_mut()
+                .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                    battle_id("battle_01"),
+                    cue_id.clone(),
+                )));
+        }
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<AudioPlaybackState>().instances.len(),
+            1
+        );
+        let skip_reasons = read_events(&app)
+            .into_iter()
+            .filter_map(|event| match event {
+                AudioEvent::CueSkipped(skipped) => Some(skipped.reason),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(skip_reasons, vec![AudioCueSkipReason::Cooldown]);
+    }
+
+    #[test]
     fn higher_priority_cue_replaces_lower_priority_when_concurrent_limit_is_full() {
         let mut app = playback_app();
         let clip_id = clip_id("battle.hit.light_01");
@@ -1997,6 +2036,120 @@ mod tests {
                 && stopped_cue == &cue_id
                 && scope == &scene_scope
         )));
+    }
+
+    #[test]
+    fn stop_by_scope_removes_matching_spatial_and_non_spatial_instances() {
+        let mut app = playback_app();
+        let scene_scope = AudioScope::scene("scene-1").unwrap();
+        let scene_clip = clip_id("ambience.room");
+        let spatial_clip = clip_id("ambience.waterfall");
+        let spatial_cue = cue_id("scene.waterfall");
+        let ui_clip = clip_id("ui.click");
+
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(scene_clip.clone(), "audio/ambience/room.ogg");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(spatial_clip.clone(), "audio/ambience/waterfall.ogg");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(ui_clip, "audio/ui/click.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            spatial_cue.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(spatial_clip.clone())]),
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest {
+                clip_id: scene_clip.clone(),
+                scope: scene_scope.clone(),
+                bus: AudioBus::Sfx,
+                volume: 0.8,
+                pitch: 1.0,
+                looped: true,
+                fade_in_seconds: None,
+            }));
+        app.world_mut()
+            .write_message(AudioCommand::PlaySpatialCue(AudioSpatialCueRequest {
+                cue_id: spatial_cue.clone(),
+                scope: scene_scope.clone(),
+                bus: Some(AudioBus::Sfx),
+                volume: 1.0,
+                pitch: 1.0,
+                looped: true,
+                fade_in_seconds: None,
+                source: AudioSpatialSource::fixed(Transform::from_xyz(4.0, 0.0, 0.0)),
+                attenuation: AudioSpatialAttenuation::new(20.0, 1.0),
+            }));
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest {
+                clip_id: clip_id("ui.click"),
+                scope: AudioScope::Ui,
+                bus: AudioBus::Ui,
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+            }));
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 3);
+        assert_eq!(
+            playback
+                .instances
+                .values()
+                .filter(|instance| instance.scope == scene_scope)
+                .count(),
+            2
+        );
+        assert_eq!(
+            playback
+                .instances
+                .values()
+                .filter(|instance| instance.scope == scene_scope && instance.spatial)
+                .count(),
+            1
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::StopByScope(AudioScopeFadeCommand {
+                scope: scene_scope.clone(),
+                fade_out_seconds: None,
+            }));
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        assert!(
+            playback
+                .instances
+                .values()
+                .all(|instance| instance.scope == AudioScope::Ui)
+        );
+
+        let stopped = read_events(&app)
+            .into_iter()
+            .filter_map(|event| match event {
+                AudioEvent::InstanceStopped(stopped)
+                    if stopped.scope == scene_scope
+                        && stopped.reason == AudioStopReason::StoppedByScope =>
+                {
+                    Some(stopped)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(stopped.len(), 2);
+        assert!(stopped.iter().any(|stopped| {
+            stopped.clip_id.as_ref() == Some(&scene_clip) && stopped.cue_id.is_none()
+        }));
+        assert!(stopped.iter().any(|stopped| {
+            stopped.clip_id.as_ref() == Some(&spatial_clip)
+                && stopped.cue_id.as_ref() == Some(&spatial_cue)
+        }));
     }
 
     #[test]
