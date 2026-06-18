@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::framework::scene::prelude::{SceneId, SceneKind, SceneSpawnPointId};
+use crate::framework::scene::prelude::{SceneId, SceneKind, SceneRegistry, SceneSpawnPointId};
 
 const GAME_SCENE_CATALOG_PATH: &str = "game/scenes.csv";
 
@@ -13,8 +13,10 @@ pub(crate) struct GameSceneCatalogPlugin;
 
 impl Plugin for GameSceneCatalogPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<GameSceneCatalog>()
-            .add_systems(Startup, load_game_scene_catalog);
+        app.init_resource::<GameSceneCatalog>().add_systems(
+            Startup,
+            (load_game_scene_catalog, register_game_scene_catalog).chain(),
+        );
     }
 }
 
@@ -265,6 +267,60 @@ fn load_game_scene_catalog(mut catalog: ResMut<GameSceneCatalog>) {
     }
 }
 
+fn register_game_scene_catalog(
+    catalog: Res<GameSceneCatalog>,
+    mut registry: ResMut<SceneRegistry>,
+) {
+    let summary = register_game_scene_catalog_entries(&catalog, &mut registry);
+
+    if summary.registered_count > 0 || summary.failed_count > 0 {
+        info!(
+            "registered game scene catalog: {} registered, {} skipped, {} failed",
+            summary.registered_count, summary.skipped_count, summary.failed_count
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct GameSceneCatalogRegistrationSummary {
+    registered_count: usize,
+    skipped_count: usize,
+    failed_count: usize,
+}
+
+fn register_game_scene_catalog_entries(
+    catalog: &GameSceneCatalog,
+    registry: &mut SceneRegistry,
+) -> GameSceneCatalogRegistrationSummary {
+    let mut summary = GameSceneCatalogRegistrationSummary::default();
+
+    for entry in catalog.entries() {
+        if !entry.enabled {
+            summary.skipped_count += 1;
+            continue;
+        }
+
+        match registry.register_manifest_scene(
+            entry.scene_id.clone(),
+            entry.kind,
+            entry.manifest_path.clone(),
+        ) {
+            Ok(()) => {
+                summary.registered_count += 1;
+            }
+            Err(error) => {
+                summary.failed_count += 1;
+                warn!(
+                    "failed to register game scene `{}` from catalog manifest `{}`: {error}",
+                    entry.scene_id, entry.manifest_path
+                );
+            }
+        }
+    }
+
+    summary
+}
+
 fn parse_scene_id(row: usize, value: String) -> Result<SceneId, GameSceneCatalogParseError> {
     let value = required_trimmed_field(row, "scene_id", value)?;
     let scene_id = SceneId::from(value.clone());
@@ -354,20 +410,38 @@ fn first_package_asset_root_candidates() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::scenes::sample_dungeon_room::SAMPLE_DUNGEON_ROOM_SCENE_ID;
 
     const HEADER: &str = "scene_id,enabled,sort_order,title_key,title_fallback,description_key,description_fallback,kind,manifest_path,layout_path,default_spawn,ui_mode\n";
+
+    fn test_entry(scene_id: &str, enabled: bool, sort_order: i32) -> GameSceneEntry {
+        GameSceneEntry {
+            scene_id: SceneId::from(scene_id),
+            enabled,
+            sort_order,
+            title_key: format!("scene.{scene_id}.title"),
+            title_fallback: scene_id.to_string(),
+            description_key: format!("scene.{scene_id}.description"),
+            description_fallback: "Description".to_string(),
+            kind: SceneKind::Dungeon,
+            manifest_path: format!("scenes/{scene_id}/scene.ron"),
+            layout_path: None,
+            default_spawn: None,
+            ui_mode: GameSceneUiMode::SampleScene,
+        }
+    }
 
     #[test]
     fn parse_catalog_accepts_valid_row() {
         let catalog = GameSceneCatalog::from_csv_str(&format!(
-            "{HEADER}sample.dungeon_room,true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,scenes/sample/layout.ron,spawn.default,sample_scene\n"
+            "{HEADER}{SAMPLE_DUNGEON_ROOM_SCENE_ID},true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,scenes/sample/layout.ron,spawn.default,sample_scene\n"
         ))
         .unwrap();
 
         let entry = catalog
-            .find_enabled(&SceneId::from("sample.dungeon_room"))
+            .find_enabled(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID))
             .unwrap();
-        assert_eq!(entry.scene_id, SceneId::from("sample.dungeon_room"));
+        assert_eq!(entry.scene_id, SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID));
         assert!(entry.enabled);
         assert_eq!(entry.sort_order, 100);
         assert_eq!(entry.kind, SceneKind::Dungeon);
@@ -381,6 +455,96 @@ mod tests {
             Some(SceneSpawnPointId::from("spawn.default"))
         );
         assert_eq!(entry.ui_mode, GameSceneUiMode::SampleScene);
+    }
+
+    #[test]
+    fn register_catalog_entries_registers_enabled_manifest_scenes() {
+        let catalog = GameSceneCatalog::from_entries(vec![test_entry(
+            SAMPLE_DUNGEON_ROOM_SCENE_ID,
+            true,
+            100,
+        )]);
+        let mut registry = SceneRegistry::default();
+
+        let summary = register_game_scene_catalog_entries(&catalog, &mut registry);
+
+        assert_eq!(
+            summary,
+            GameSceneCatalogRegistrationSummary {
+                registered_count: 1,
+                skipped_count: 0,
+                failed_count: 0
+            }
+        );
+
+        let definition = registry
+            .get(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID))
+            .unwrap();
+        assert_eq!(definition.kind, SceneKind::Dungeon);
+        assert_eq!(
+            definition.manifest_path.as_deref(),
+            Some("scenes/sample.dungeon_room/scene.ron")
+        );
+    }
+
+    #[test]
+    fn register_catalog_entries_skips_disabled_scenes() {
+        let catalog = GameSceneCatalog::from_entries(vec![test_entry(
+            SAMPLE_DUNGEON_ROOM_SCENE_ID,
+            false,
+            100,
+        )]);
+        let mut registry = SceneRegistry::default();
+
+        let summary = register_game_scene_catalog_entries(&catalog, &mut registry);
+
+        assert_eq!(
+            summary,
+            GameSceneCatalogRegistrationSummary {
+                registered_count: 0,
+                skipped_count: 1,
+                failed_count: 0
+            }
+        );
+        assert!(!registry.contains(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID)));
+    }
+
+    #[test]
+    fn register_catalog_entries_warns_and_keeps_existing_scene_on_duplicate() {
+        let catalog = GameSceneCatalog::from_entries(vec![test_entry(
+            SAMPLE_DUNGEON_ROOM_SCENE_ID,
+            true,
+            100,
+        )]);
+        let mut registry = SceneRegistry::default();
+        registry
+            .register_manifest_scene(
+                SAMPLE_DUNGEON_ROOM_SCENE_ID,
+                SceneKind::Dev,
+                "scenes/existing/scene.ron",
+            )
+            .unwrap();
+
+        let summary = register_game_scene_catalog_entries(&catalog, &mut registry);
+
+        assert_eq!(
+            summary,
+            GameSceneCatalogRegistrationSummary {
+                registered_count: 0,
+                skipped_count: 0,
+                failed_count: 1
+            }
+        );
+
+        let definition = registry
+            .get(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID))
+            .unwrap();
+        assert_eq!(registry.len(), 1);
+        assert_eq!(definition.kind, SceneKind::Dev);
+        assert_eq!(
+            definition.manifest_path.as_deref(),
+            Some("scenes/existing/scene.ron")
+        );
     }
 
     #[test]

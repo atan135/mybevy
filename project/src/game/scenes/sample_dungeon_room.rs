@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-pub(super) const SAMPLE_DUNGEON_ROOM_SCENE_ID: &str = "sample.dungeon_room";
+pub(in crate::game::scenes) const SAMPLE_DUNGEON_ROOM_SCENE_ID: &str = "sample.dungeon_room";
 
 pub(super) struct SampleDungeonRoomPlugin;
 
