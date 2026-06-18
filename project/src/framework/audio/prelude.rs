@@ -18,6 +18,6 @@ pub use super::id::{
 };
 pub use super::mixer::{AudioBusState, AudioMixer};
 pub use super::music::MusicController;
-pub use super::playback::{AudioInstanceState, AudioPlaybackState};
+pub use super::playback::{AudioInstanceState, AudioPlaybackInstance, AudioPlaybackState};
 pub use super::plugin::{AudioPlugin, AudioSystemSet};
 pub use super::scope::{AudioBus, AudioScope};

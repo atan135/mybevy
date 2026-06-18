@@ -26,6 +26,16 @@ impl Plugin for AudioPlugin {
                     AudioSystemSet::Debug,
                 )
                     .chain(),
+            )
+            .add_systems(
+                Update,
+                (
+                    super::playback::handle_audio_playback_commands
+                        .in_set(AudioSystemSet::Commands),
+                    super::playback::report_audio_load_failures.in_set(AudioSystemSet::Playback),
+                    super::playback::cleanup_finished_audio_instances
+                        .in_set(AudioSystemSet::Cleanup),
+                ),
             );
     }
 }

@@ -144,15 +144,15 @@
   - [x] 使用 `git check-attr filter -- <path>` 确认二进制音频命中 Git LFS。
   - [x] 记录资源授权来源或确认只使用可发布资源。
 
-- [ ] 8. 实现普通音效播放
-  - 开始时间：
-  - 结束时间：
-  - [ ] 处理 `AudioCommand::PlayCue`。
-  - [ ] 处理 `AudioCommand::PlayClip`。
-  - [ ] 根据 catalog 解析资源路径并加载 `AudioSource` handle。
-  - [ ] 生成播放实体并记录 `AudioInstanceId`、bus、scope 和 cue 信息。
-  - [ ] 支持短音效自然播放结束后的实例清理。
-  - [ ] 播放失败时发送 `AudioEvent::LoadFailed` 或等价错误事件。
+- [x] 8. 实现普通音效播放
+  - 开始时间：2026-06-18 18:16:21 +08:00
+  - 结束时间：2026-06-18 18:43:42 +08:00
+  - [x] 处理 `AudioCommand::PlayCue`。
+  - [x] 处理 `AudioCommand::PlayClip`。
+  - [x] 根据 catalog 解析资源路径并加载 `AudioSource` handle。
+  - [x] 生成播放实体并记录 `AudioInstanceId`、bus、scope 和 cue 信息。
+  - [x] 支持短音效自然播放结束后的实例清理。
+  - [x] 播放失败时发送 `AudioEvent::LoadFailed` 或等价错误事件。
 
 - [ ] 9. 实现 mixer 和运行中音量同步
   - 开始时间：
