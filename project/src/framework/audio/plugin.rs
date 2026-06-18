@@ -8,6 +8,7 @@ use super::{
     command::AudioCommand,
     debug::{AudioDebugConfig, AudioDebugSnapshot, AudioDebugState},
     event::AudioEvent,
+    lifecycle::{AudioLifecyclePausePolicy, AudioLifecyclePauseState},
     loading::AudioLoadingState,
     mixer::AudioMixer,
     music::MusicController,
@@ -23,8 +24,11 @@ impl Plugin for AudioPlugin {
             .add_message::<AudioEvent>()
             .add_message::<SceneEvent>()
             .add_message::<UiButtonEvent>()
+            .add_message::<bevy::window::AppLifecycle>()
             .init_resource::<AudioCatalog>()
             .init_resource::<AudioMixer>()
+            .init_resource::<AudioLifecyclePausePolicy>()
+            .init_resource::<AudioLifecyclePauseState>()
             .init_resource::<AudioPlaybackState>()
             .init_resource::<AudioLoadingState>()
             .init_resource::<MusicController>()
@@ -49,6 +53,7 @@ impl Plugin for AudioPlugin {
                 Update,
                 (
                     (
+                        super::lifecycle::handle_audio_lifecycle_pause_policy,
                         super::mixer::handle_audio_mixer_commands,
                         super::scene::play_scene_audio_on_lifecycle,
                         super::ui::play_ui_button_audio,
@@ -90,8 +95,9 @@ mod tests {
     use crate::framework::audio::{
         AudioBus, AudioBusVolumeCommand, AudioCatalog, AudioClipId, AudioClipRequest, AudioCommand,
         AudioCueClip, AudioCueEntry, AudioCueId, AudioCueStarted, AudioEvent, AudioInstanceId,
-        AudioInstanceState, AudioLoadingState, AudioMixer, AudioPlaybackInstance,
-        AudioPlaybackState, AudioScope, AudioSpatialListenerEntity, DEFAULT_UI_CLICK_CUE_ID,
+        AudioInstanceState, AudioLifecyclePausePolicy, AudioLifecyclePauseState, AudioLoadingState,
+        AudioMixer, AudioPlaybackInstance, AudioPlaybackState, AudioScope,
+        AudioSpatialListenerEntity, DEFAULT_BACKGROUND_PAUSED_BUSES, DEFAULT_UI_CLICK_CUE_ID,
         SceneAudioAdapterConfig, SceneAudioCue, SceneAudioEntry, SceneAudioPlayback,
     };
     use crate::framework::scene::prelude::{
@@ -111,6 +117,8 @@ mod tests {
         assert!(app.world().contains_resource::<Messages<SceneEvent>>());
         assert!(app.world().contains_resource::<AudioCatalog>());
         assert!(app.world().contains_resource::<AudioMixer>());
+        assert!(app.world().contains_resource::<AudioLifecyclePausePolicy>());
+        assert!(app.world().contains_resource::<AudioLifecyclePauseState>());
         assert!(app.world().contains_resource::<AudioPlaybackState>());
         assert!(app.world().contains_resource::<AudioLoadingState>());
         assert!(app.world().contains_resource::<MusicController>());
@@ -121,6 +129,10 @@ mod tests {
             !app.world()
                 .contains_resource::<AudioSpatialListenerEntity>()
         );
+        assert!(
+            app.world()
+                .contains_resource::<Messages<bevy::window::AppLifecycle>>()
+        );
 
         let mixer = app.world().resource::<AudioMixer>();
         assert!(mixer.buses.contains_key(&AudioBus::Master));
@@ -128,6 +140,13 @@ mod tests {
         assert!(mixer.buses.contains_key(&AudioBus::Sfx));
         assert!(mixer.buses.contains_key(&AudioBus::Ui));
         assert!(mixer.buses.contains_key(&AudioBus::Battle));
+
+        let lifecycle_policy = app.world().resource::<AudioLifecyclePausePolicy>();
+        assert_eq!(
+            lifecycle_policy.paused_buses,
+            DEFAULT_BACKGROUND_PAUSED_BUSES
+        );
+        assert!(!lifecycle_policy.paused_buses.contains(&AudioBus::Ui));
     }
 
     #[derive(Debug, Default, Resource)]
@@ -290,6 +309,72 @@ mod tests {
             scope: AudioScope::Ui,
             bus: AudioBus::Ui,
         })));
+    }
+
+    #[test]
+    fn plugin_pauses_background_audio_buses_for_mobile_lifecycle() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), AudioPlugin));
+
+        app.world_mut()
+            .resource_mut::<AudioMixer>()
+            .set_bus_paused(AudioBus::Battle, true);
+        app.world_mut()
+            .write_message(bevy::window::AppLifecycle::WillSuspend);
+        app.update();
+
+        let mixer = app.world().resource::<AudioMixer>();
+        assert!(mixer.bus_state(AudioBus::Music).paused);
+        assert!(mixer.bus_state(AudioBus::Sfx).paused);
+        assert!(mixer.bus_state(AudioBus::Battle).paused);
+        assert!(!mixer.bus_state(AudioBus::Ui).paused);
+
+        app.world_mut()
+            .write_message(bevy::window::AppLifecycle::WillResume);
+        app.update();
+
+        let mixer = app.world().resource::<AudioMixer>();
+        assert!(!mixer.bus_state(AudioBus::Music).paused);
+        assert!(!mixer.bus_state(AudioBus::Sfx).paused);
+        assert!(mixer.bus_state(AudioBus::Battle).paused);
+        assert!(!mixer.bus_state(AudioBus::Ui).paused);
+    }
+
+    #[test]
+    fn ui_button_audio_still_works_under_phone_profile_dimensions() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), AudioPlugin))
+            .init_asset::<AudioSource>();
+
+        let cue_id = AudioCueId::try_from(DEFAULT_UI_CLICK_CUE_ID).unwrap();
+        let clip_id = AudioClipId::try_from("ui.click").unwrap();
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/ui/click_wood_01.wav");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id.clone())]),
+        );
+        app.world_mut().spawn(bevy::window::Window {
+            resolution: bevy::window::WindowResolution::new(720, 1600)
+                .with_scale_factor_override(2.0),
+            ..default()
+        });
+
+        let button = app.world_mut().spawn_empty().id();
+        app.world_mut().write_message(UiButtonEvent {
+            entity: button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        let instance = playback.instances.values().next().unwrap();
+        assert_eq!(instance.bus, AudioBus::Ui);
+        assert_eq!(instance.scope, AudioScope::Ui);
+        assert_eq!(instance.asset_path, "audio/ui/click_wood_01.wav");
     }
 
     #[test]

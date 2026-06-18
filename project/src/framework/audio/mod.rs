@@ -11,6 +11,7 @@ mod command;
 mod debug;
 mod event;
 mod id;
+mod lifecycle;
 mod loading;
 mod mixer;
 mod music;

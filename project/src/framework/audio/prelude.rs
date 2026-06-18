@@ -32,6 +32,9 @@ pub use super::event::{
 pub use super::id::{
     AudioClipId, AudioCueId, AudioGroupId, AudioIdError, AudioInstanceId, AudioScopeId,
 };
+pub use super::lifecycle::{
+    AudioLifecyclePausePolicy, AudioLifecyclePauseState, DEFAULT_BACKGROUND_PAUSED_BUSES,
+};
 pub use super::loading::{
     AudioClipLoadState, AudioClipLoadStatus, AudioGroupLoadState, AudioGroupProgress,
     AudioLoadingState,
