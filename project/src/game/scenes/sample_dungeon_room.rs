@@ -8,6 +8,7 @@ use std::{
 use crate::framework::scene::prelude::{
     SceneEvent, SceneLayerRoot, SceneOwned, SceneRuntimeRoot, SceneSessionId,
 };
+use crate::game::navigation::{AppUiMode, GameRouteCommand};
 
 pub(in crate::game) const SAMPLE_DUNGEON_ROOM_SCENE_ID: &str = "sample.dungeon_room";
 const SAMPLE_DUNGEON_ROOM_LAYOUT_PATH: &str = "scenes/sample_dungeon_room/layout.ron";
@@ -260,6 +261,7 @@ fn instantiate_sample_dungeon_room_content(
     layer_roots: Query<(Entity, &SceneLayerRoot)>,
     runtime_roots: Query<(Entity, &SceneRuntimeRoot)>,
     existing_content: Query<&SampleDungeonRoomContent>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
 ) {
     let mut instantiated_sessions = Vec::new();
 
@@ -305,6 +307,7 @@ fn instantiate_sample_dungeon_room_content(
             &entered.session_id,
             runtime_roots.iter(),
         );
+        route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::SampleScene));
     }
 }
 

@@ -41,6 +41,17 @@ pub(super) struct TouchRipplePlayButton;
 #[derive(Component)]
 pub(super) struct SampleDungeonRoomPlayButton;
 
+#[derive(Resource, Default)]
+pub(super) struct SampleDungeonRoomEntryState {
+    pending: bool,
+}
+
+impl SampleDungeonRoomEntryState {
+    pub(super) fn clear(&mut self) {
+        self.pending = false;
+    }
+}
+
 pub(super) fn setup_game_list_screen(
     mut commands: Commands,
     theme: Res<UiTheme>,
@@ -259,6 +270,7 @@ pub(super) fn setup_game_list_screen(
 
 pub(super) fn handle_game_list_buttons(
     mut launch_mode: ResMut<TouchLaunchMode>,
+    mut sample_scene_entry: ResMut<SampleDungeonRoomEntryState>,
     i18n: Res<UiI18n>,
     mut scene_commands: MessageWriter<SceneCommand>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
@@ -279,6 +291,11 @@ pub(super) fn handle_game_list_buttons(
                 touch_ripple_confirm_modal(&i18n),
             )));
         } else if sample_scene_buttons.contains(event.entity) {
+            if sample_scene_entry.pending {
+                continue;
+            }
+
+            sample_scene_entry.pending = true;
             scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
                 SAMPLE_DUNGEON_ROOM_SCENE_ID,
             )));

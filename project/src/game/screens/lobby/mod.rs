@@ -10,16 +10,20 @@ use crate::framework::{
         overlays::{UiOverlayCommand, UiToast},
     },
 };
-use crate::game::{
-    navigation::{AppUiMode, GameRouteCommand},
-    scenes::SAMPLE_DUNGEON_ROOM_SCENE_ID,
-};
+use crate::game::{navigation::AppUiMode, scenes::SAMPLE_DUNGEON_ROOM_SCENE_ID};
 
 pub(super) struct LobbyScreensPlugin;
 
 impl Plugin for LobbyScreensPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppUiMode::Lobby), game_list::setup_game_list_screen)
+        app.init_resource::<game_list::SampleDungeonRoomEntryState>()
+            .add_systems(
+                OnEnter(AppUiMode::Lobby),
+                (
+                    reset_sample_dungeon_room_entry_state,
+                    game_list::setup_game_list_screen,
+                ),
+            )
             .add_systems(
                 Update,
                 (
@@ -35,7 +39,7 @@ impl Plugin for LobbyScreensPlugin {
 fn handle_sample_dungeon_room_scene_events(
     i18n: Res<UiI18n>,
     mut scene_events: MessageReader<SceneEvent>,
-    mut route_commands: MessageWriter<GameRouteCommand>,
+    mut sample_scene_entry: ResMut<game_list::SampleDungeonRoomEntryState>,
     mut overlay_commands: MessageWriter<UiOverlayCommand>,
 ) {
     for event in scene_events.read() {
@@ -43,7 +47,7 @@ fn handle_sample_dungeon_room_scene_events(
             SceneEvent::Entered(entered)
                 if entered.scene_id.as_str() == SAMPLE_DUNGEON_ROOM_SCENE_ID =>
             {
-                route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::SampleScene));
+                sample_scene_entry.clear();
             }
             SceneEvent::Failed(failure)
                 if failure
@@ -51,6 +55,7 @@ fn handle_sample_dungeon_room_scene_events(
                     .as_ref()
                     .is_some_and(|scene_id| scene_id.as_str() == SAMPLE_DUNGEON_ROOM_SCENE_ID) =>
             {
+                sample_scene_entry.clear();
                 overlay_commands.write(UiOverlayCommand::ShowToast(UiToast::new_key(
                     &i18n,
                     "lobby.sample_scene.toast.failed",
@@ -60,4 +65,10 @@ fn handle_sample_dungeon_room_scene_events(
             _ => {}
         }
     }
+}
+
+fn reset_sample_dungeon_room_entry_state(
+    mut sample_scene_entry: ResMut<game_list::SampleDungeonRoomEntryState>,
+) {
+    sample_scene_entry.clear();
 }
