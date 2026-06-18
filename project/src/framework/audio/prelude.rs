@@ -4,6 +4,13 @@ pub use super::catalog::{
     AudioCueRules, AudioGroupClip, AudioGroupEntry, AudioResolvedCue, AudioResolvedCueClip,
     AudioResolvedGroup, AudioResolvedGroupClip,
 };
+pub use super::catalog_config::{
+    AudioBusConfig, AudioCatalogConfig, AudioCatalogConfigError, AudioCatalogLoadError,
+    AudioCatalogPathError, AudioClipConfig, AudioCueClipConfig, AudioCueConfig,
+    AudioCuePlaybackConfig, AudioCueRulesConfig, AudioGroupClipConfig, AudioGroupConfig,
+    AudioScopeConfig, apply_catalog_config_or_keep_existing, load_catalog_from_first_package_ron,
+    load_catalog_from_ron_or_fallback,
+};
 pub use super::command::{
     AudioBattleCueRequest, AudioBusMutedCommand, AudioBusPausedCommand, AudioBusVolumeCommand,
     AudioClipRequest, AudioCommand, AudioCrossfadeMusicRequest, AudioCueRequest, AudioGroupCommand,

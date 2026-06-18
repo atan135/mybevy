@@ -6,6 +6,7 @@
 
 mod battle;
 mod catalog;
+mod catalog_config;
 mod command;
 mod debug;
 mod event;
