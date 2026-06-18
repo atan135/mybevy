@@ -284,11 +284,11 @@
   - [x] 进入并退出样板场景，验证场景音频无残留。
   - [x] 修改 bus 音量，验证当前播放实例同步变化。
 
-- [ ] 22. 最终验收和提交
-  - 开始时间：
-  - 结束时间：
-  - [ ] 主 agent 做代码审核，重点检查 framework/game 边界、scope 清理、运行中音量同步和测试覆盖。
-  - [ ] 完整执行 `cargo fmt --check`、`cargo check`、`cargo test`、`git diff --check`。
-  - [ ] 确认 checklist 所有二级任务有开始时间和结束时间。
-  - [ ] 使用 `$mygit-skill` 检查改动拆分和提交信息。
-  - [ ] 提交通过验收的代码、资源和文档。
+- [x] 22. 最终验收和提交
+  - 开始时间：2026-06-19 00:01:18 +08:00
+  - 结束时间：2026-06-19 00:07:50 +08:00
+  - [x] 主 agent 做代码审核，重点检查 framework/game 边界、scope 清理、运行中音量同步和测试覆盖。
+  - [x] 完整执行 `cargo fmt --check`、`cargo check`、`cargo test`、`git diff --check`。
+  - [x] 确认 checklist 所有二级任务有开始时间和结束时间。
+  - [x] 使用 `$mygit-skill` 检查改动拆分和提交信息。
+  - [x] 提交通过验收的代码、资源和文档。
