@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod fight;
 pub mod network;
 pub mod prelude;

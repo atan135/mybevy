@@ -85,14 +85,14 @@
   - Android 构建沿用 Bevy/rodio/cpal 输出链路；默认 feature 中包含 `android_shared_stdcxx`，项目当前无需额外开启即可走默认 Android 支持。若以后关闭默认 features，需要显式保留 `bevy_audio`、`vorbis` 和 Android 相关 feature。
   - Bevy 音频 loader 的可选格式由 features 决定：默认 OGG/Vorbis；`.mp3` 需 `bevy/mp3`，`.flac` 需 `bevy/flac`，`.wav` 需 `bevy/wav`，也可走对应 `symphonia-*` features。第一版首包资源建议统一 OGG/Vorbis，减少 Android 包体和 feature 风险。
 
-- [ ] 2. 建立 `framework/audio/` 模块骨架
-  - 开始时间：
-  - 结束时间：
-  - [ ] 新增 `project/src/framework/audio/` 目录。
-  - [ ] 新增 `mod.rs`、`prelude.rs`、`plugin.rs`。
-  - [ ] 在 `project/src/framework/mod.rs` 暴露 audio 模块。
-  - [ ] 按需在 `project/src/framework/prelude.rs` 导出常用 audio 类型。
-  - [ ] 确认新增模块不依赖 game layer。
+- [x] 2. 建立 `framework/audio/` 模块骨架
+  - 开始时间：2026-06-18 17:12:09 +08:00
+  - 结束时间：2026-06-18 17:15:10 +08:00
+  - [x] 新增 `project/src/framework/audio/` 目录。
+  - [x] 新增 `mod.rs`、`prelude.rs`、`plugin.rs`。
+  - [x] 在 `project/src/framework/mod.rs` 暴露 audio 模块。
+  - [x] 按需在 `project/src/framework/prelude.rs` 导出常用 audio 类型。
+  - [x] 确认新增模块不依赖 game layer。
 
 - [ ] 3. 定义音频 ID、bus 和 scope 类型
   - 开始时间：
