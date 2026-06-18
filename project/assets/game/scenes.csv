@@ -1,0 +1,2 @@
+scene_id,enabled,sort_order,title_key,title_fallback,description_key,description_fallback,kind,manifest_path,layout_path,default_spawn,ui_mode
+sample.dungeon_room,true,100,scene.sample_dungeon_room.title,Sample Dungeon Room,scene.sample_dungeon_room.description,Scene directory entry for showcase registration and routing only; prefab transforms live in scene data,dungeon,scenes/sample_dungeon_room/scene.ron,scenes/sample_dungeon_room/layout.ron,spawn.default,sample_scene
