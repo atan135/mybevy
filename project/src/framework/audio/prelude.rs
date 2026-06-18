@@ -1,4 +1,7 @@
-pub use super::catalog::AudioCatalog;
+pub use super::catalog::{
+    AudioCatalog, AudioCatalogError, AudioClipEntry, AudioCueClip, AudioCueEntry, AudioCuePlayback,
+    AudioCueRules, AudioResolvedCue, AudioResolvedCueClip,
+};
 pub use super::command::{
     AudioBusMutedCommand, AudioBusPausedCommand, AudioBusVolumeCommand, AudioClipRequest,
     AudioCommand, AudioCrossfadeMusicRequest, AudioCueRequest, AudioGroupCommand,
