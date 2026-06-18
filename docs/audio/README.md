@@ -1,212 +1,204 @@
-# MyBevy 音频框架设计文档
+# MyBevy 音频框架说明
 
-这个目录记录 MyBevy 音频框架相关设计。当前项目尚未实现独立 `framework::audio` 模块，本文描述后续补齐音频框架时建议采用的边界、模块结构、数据流和落地顺序。
+这个目录记录 MyBevy 音频框架的当前实现、使用边界和后续目标。当前项目已经落地独立的 `project/src/framework/audio/` 模块，并在 `GamePlugin` 中接入 `AudioPlugin`。
 
-本文中的设计目标应按阶段落地；除非代码已经接入，否则不要在业务文档中写成已完成能力。
+本文中“已落地能力”描述当前代码事实；“后续目标”只表示设计方向，不应在业务文档或接入说明中写成已完成。
 
 ## 1. 文档目标
 
-音频框架的目标是给游戏层提供统一、可复用的播放和管理接口，让 UI、场景、战斗、活动和后续下载内容都能通过同一套命令流播放声音。
+音频框架给游戏层提供统一的播放、加载、混音、作用域清理和诊断接口，让 UI、场景、战斗和后续下载内容可以通过同一套命令流表达音频意图。
 
 框架层负责：
 
-- 管理音频资源 ID、路径、加载状态和播放配置。
-- 提供音效、音乐、环境音、空间音频和战斗音效的统一命令接口。
-- 管理音量总线、静音、暂停、淡入淡出和运行中音量更新。
-- 管理音频播放实例、作用域和生命周期清理。
-- 提供调试、诊断和基础性能约束。
+- 管理音频 ID、catalog、cue、group、播放实例和加载状态。
+- 提供 Bevy message 风格的 `AudioCommand` 和 `AudioEvent`。
+- 通过 bus 管理音量、静音、暂停，并同步到运行中的 `AudioSink` 和 `SpatialAudioSink`。
+- 管理音乐播放、停止、暂停、恢复、淡入淡出和交叉淡入淡出。
+- 按 `AudioScope` 停止、暂停、恢复和清理播放实例。
+- 提供 UI、场景、战斗和空间音频的轻量 adapter。
+- 提供 `MYBEVY_AUDIO_DEBUG` 诊断开关和 `AudioDebugSnapshot`。
+- 在移动端生命周期进入后台时按策略暂停 background bus。
 
 框架层不负责：
 
-- 决定具体按钮、技能、角色、怪物或剧情使用哪个音效。
-- 编写具体游戏音乐编排规则。
-- 处理音频资源授权、美术制作和导出规范以外的内容生产流程。
-- 处理运营活动的具体资源下发策略。
-- 直接依赖 game layer、具体 UI 页面、具体战斗系统或远端房间协议。
+- 决定具体按钮、角色、技能、怪物、任务或剧情使用哪个音效。
+- 编排具体游戏音乐、剧情语音或活动资源下发策略。
+- 管理音频授权、美术制作和资源导出流程。
+- 处理真实后续下载、CDN、缓存配额、版本哈希校验或内容回滚。
+- 提供复杂空间音频能力，例如 HRTF、混响区域、遮挡模拟或高级衰减曲线。
 
 具体映射和业务规则应放在：
 
-- `project/src/game/screens/`：页面和 HUD 对音频 cue 的使用。
-- `project/src/game/features/`：玩法功能触发音效。
-- `project/src/game/scenes/`：具体场景的音乐、环境音和空间音源配置。
-- `project/src/framework/fight/` 或 game layer 战斗模块：发出战斗事件或 cue 意图，但不直接控制底层播放实体。
+- `project/src/game/screens/`：页面、HUD 和控件对音频 cue 的使用。
+- `project/src/game/features/`：具体玩法触发音效。
+- `project/src/game/scenes/`：具体场景注册、场景音频 adapter 和场景专属组合逻辑。
+- `project/src/framework/fight/` 或 game layer 战斗模块：发出战斗事件或 cue 意图。
 
 ## 2. 当前项目边界
 
 当前仓库约定：
 
-- Rust/Bevy 工程根目录是 `project/`
-- 当前 Bevy 版本是 `bevy = "0.18.1"`
-- 首包资源目录是 `project/assets/`
-- 后续下载资源不放入 `project/assets/`
-- `docs/assets-workflow.md` 已经约定音频资源可放在 `project/assets/audio/`
-- `project/src/framework/scene/manifest.rs` 已能识别 `audio` 和 `sound` 资源类型，但只用于场景资源加载跟踪，尚未接入音频播放框架
+- Rust/Bevy 工程根目录是 `project/`。
+- 当前 Bevy 依赖是 `bevy = { version = "0.18.1", features = ["wav"] }`。
+- 首包资源目录是 `project/assets/`。
+- 首包音频目录是 `project/assets/audio/`，当前实际样例资源主要是 `.wav`。
+- Android Gradle 壳工程会把 `../../project/assets` 打包进 APK assets。
+- 后续下载资源不放入 `project/assets/`。
 
-音频框架建议位于：
+音频框架位于：
 
 ```text
 project/src/framework/audio/
 ```
 
-并作为 `framework` 下的横向能力，与 `ui`、`scene`、`network`、`fight` 同级。不要把通用音频能力塞进 UI、场景或战斗模块内部。
+它是 `framework` 下的横向能力，与 `ui`、`scene`、`network`、`fight` 同级。当前 game layer 已在 `project/src/game/scenes/mod.rs` 为 `sample.dungeon_room` 注册了样板场景 ambience cue，使用首包资源：
 
-## 3. 核心术语
+```text
+audio/ambience/light_rain_loop.wav
+```
 
-### 3.1 AudioClipId
+## 3. 已落地模块
+
+当前 `project/src/framework/audio/` 模块结构：
+
+```text
+project/src/framework/audio/
+|-- mod.rs
+|-- battle.rs
+|-- catalog.rs
+|-- catalog_config.rs
+|-- command.rs
+|-- debug.rs
+|-- event.rs
+|-- id.rs
+|-- lifecycle.rs
+|-- loading.rs
+|-- mixer.rs
+|-- music.rs
+|-- playback.rs
+|-- plugin.rs
+|-- prelude.rs
+|-- scene.rs
+|-- scope.rs
+|-- spatial.rs
+`-- ui.rs
+```
+
+职责说明：
+
+- `plugin.rs`：`AudioPlugin` 入口，注册 messages、resources 和系统顺序。
+- `id.rs`：`AudioClipId`、`AudioCueId`、`AudioGroupId`、`AudioScopeId`、`AudioInstanceId`。
+- `scope.rs`：`AudioBus` 和 `AudioScope`。
+- `command.rs`：播放、停止、scope 控制、bus 控制、音乐和 group 加载命令。
+- `event.rs`：播放开始、跳过、停止、加载失败、加载进度、音乐变化和 bus 变化事件。
+- `catalog.rs`：内存版 clip、cue、group 目录和解析逻辑。
+- `catalog_config.rs`：RON catalog 结构、路径安全校验和首包 catalog 文件读取 helper。
+- `playback.rs`：cue/clip/spatial/battle 播放实例、冷却、并发、优先级、淡入淡出和 scope 清理。
+- `mixer.rs`：bus 音量、静音、暂停和运行中 sink 同步。
+- `music.rs`：`MusicController` 和音乐切换、暂停恢复、停止、淡入淡出、交叉淡入淡出。
+- `loading.rs`：`PreloadGroup`、`UnloadGroup`、group 加载进度和失败事件。
+- `ui.rs`：消费 `UiButtonEvent` 播放默认或覆盖的 UI click cue，并做短冷却。
+- `scene.rs`：消费 `SceneEvent`，按 `SceneAudioAdapterConfig` 在进入场景时播放、退出时按 scene scope 停止。
+- `spatial.rs`：基础空间 cue、listener 绑定、固定或跟随实体音源、简单距离衰减和空间 sink 同步。
+- `battle.rs`：`BattleAudioCue` helper，把战斗 cue 映射成 `PlayBattleCue`。
+- `lifecycle.rs`：应用后台/恢复时按策略暂停或恢复 `Music`、`Sfx`、`Battle` bus。
+- `debug.rs`：`MYBEVY_AUDIO_DEBUG`、最近 cue/失败记录、活跃实例和加载 group 快照。
+
+## 4. 核心类型
+
+### 4.1 AudioClipId
 
 `AudioClipId` 是稳定音频文件 ID，指向一个具体音频 asset。
 
 示例：
 
 ```text
-ui.click.default
-ui.modal.open
-music.lobby.main
-ambience.dungeon.room
-battle.hit.light_01
+ui.click_wood_01
+music.menu_loop
+ambience.sample_dungeon_room
+battle.sword_hit_01
+voice.line_01
 ```
 
-`AudioClipId` 应稳定，不建议携带内容版本号、平台后缀或临时路径。
+`AudioClipId` 不应携带内容版本号、平台后缀或临时路径。
 
-### 3.2 AudioCueId
+### 4.2 AudioCueId
 
-`AudioCueId` 是播放语义 ID。游戏层通常播放 cue，而不是直接播放某个文件。
+`AudioCueId` 是播放语义 ID。游戏层优先播放 cue，而不是直接散落资源路径。
 
 示例：
 
 ```text
-button.primary.click
-panel.open
-scene.dungeon.enter
-battle.skill.cast
+ui.button.click
+scene.sample_dungeon_room.ambience
 battle.weapon.hit
 ```
 
-一个 cue 可以映射到：
+一个 cue 当前可以映射到单个或多个 clip，支持权重、默认 bus、默认 scope、looped、音量、音高、冷却时间、最大并发和优先级。当前变体选择是确定性的加权轮转，不是随机播放。
 
-- 单个 clip。
-- 多个随机 clip。
-- 带音量、音高随机的 clip 列表。
-- 带冷却、并发限制和优先级的播放规则。
+### 4.3 AudioBus
 
-### 3.3 AudioBus
-
-`AudioBus` 是音量和静音控制分组。
-
-建议基础分组：
+当前已实现的 bus：
 
 - `Master`：总音量。
 - `Music`：背景音乐。
-- `Sfx`：通用音效。
+- `Sfx`：通用音效和当前场景 ambience。
 - `Ui`：UI 音效。
-- `Ambience`：环境循环音。
 - `Battle`：战斗音效。
-- `Voice`：语音和对白。
 
-最终音量通常是 `Master * Bus * Cue * Instance` 的组合结果。
+当前还没有独立 `Ambience` 或 `Voice` bus。环境音和语音可以先按业务需要映射到现有 bus，后续如果需要更细粒度设置再扩展。
 
-### 3.4 AudioScope
+有效音量由 `Master`、具体 bus 和实例音量共同计算。运行中修改 bus 音量、静音或暂停会同步到已经存在的非空间和空间 audio sink。
 
-`AudioScope` 表示播放实例的生命周期归属。
+### 4.4 AudioScope
 
-建议 scope：
+当前已实现的 scope：
 
-- `Global`：全局常驻，例如主菜单音乐控制器。
-- `Ui`：页面、弹窗、Toast、按钮等 UI 音效。
-- `Scene(session_id)`：随场景 session 清理。
-- `Entity(entity)`：跟随某个实体或空间音源。
-- `Battle(battle_id)`：随战斗实例清理。
+- `Global`：全局常驻实例。
+- `Ui`：UI 音效。
+- `Scene(AudioScopeId)`：随场景 session 清理。
+- `Entity(Entity)`：跟随某个实体或空间音源。
+- `Battle(AudioScopeId)`：随战斗实例清理。
 
-切场景、关弹窗、结束战斗时，框架可以按 scope 停止或淡出音频，避免残留。
+`StopByScope`、`PauseByScope` 和 `ResumeByScope` 会按 scope 控制实例。场景退出时，`SceneAudioAdapterConfig` 会按当前 scene session scope 停止场景音频。
 
-### 3.5 AudioInstanceId
+### 4.5 AudioInstanceId
 
-`AudioInstanceId` 是一次播放实例的 ID，用于停止、暂停、淡出或查询状态。
+`AudioInstanceId` 表示一次播放实例，用于停止、淡出、调试和事件关联。短音效通常不需要业务保存 instance ID；音乐、循环音、空间音源和语音更适合保留或通过 scope 管理。
 
-短音效通常不需要业务保存 instance ID；背景音乐、循环环境音、语音和空间音源更需要可追踪实例。
+## 5. 命令和事件
 
-## 4. 目标能力总览
-
-音频框架建议覆盖：
-
-- 音效资源管理：ID、路径、分组、首包和后续下载来源。
-- 音效资源加载：预加载、加载组、加载状态、失败回退。
-- 游戏内 UI 音效：按钮、弹窗、切页、输入、错误提示。
-- 游戏内背景音乐：播放、停止、暂停、恢复、淡入淡出、交叉淡入淡出。
-- 游戏内场景声音：环境循环音、空间音源、区域切换和触发器联动。
-- 游戏内战斗音效：技能、命中、格挡、暴击、死亡、倒计时和并发控制。
-- 音量总线：总音量、音乐、音效、UI、环境、战斗和语音。
-- 播放实例管理：暂停、恢复、停止、淡出、作用域清理。
-- 调试诊断：活跃实例数、bus 状态、最近 cue、失败资源和静音开关。
-
-## 5. 建议模块结构
-
-建议后续新增：
-
-```text
-project/src/framework/audio/
-|-- mod.rs
-|-- prelude.rs
-|-- plugin.rs
-|-- id.rs
-|-- command.rs
-|-- event.rs
-|-- catalog.rs
-|-- loading.rs
-|-- playback.rs
-|-- mixer.rs
-|-- music.rs
-|-- spatial.rs
-|-- scope.rs
-`-- debug.rs
-```
-
-职责说明：
-
-- `mod.rs`：音频框架模块边界。
-- `prelude.rs`：对 game layer 暴露常用类型。
-- `plugin.rs`：`AudioPlugin` 入口，注册消息、资源和系统。
-- `id.rs`：`AudioClipId`、`AudioCueId`、`AudioGroupId`、`AudioInstanceId` 等 newtype。
-- `command.rs`：播放、停止、预加载、bus 控制和音乐切换命令。
-- `event.rs`：播放开始、完成、失败、加载状态变化等事件。
-- `catalog.rs`：音频资源目录、cue 规则、group 和路径映射。
-- `loading.rs`：音频预加载和加载状态跟踪。
-- `playback.rs`：普通音效播放实例管理。
-- `mixer.rs`：bus 音量、静音、暂停和运行中音量同步。
-- `music.rs`：背景音乐状态机、淡入淡出和交叉淡入淡出。
-- `spatial.rs`：空间音源、监听器和场景音频区域。
-- `scope.rs`：播放实例归属和清理规则。
-- `debug.rs`：环境变量、诊断快照和调试开关。
-
-## 6. 命令和事件
-
-音频框架应优先使用 Bevy message 风格，保持和当前 `SceneCommand`、`UiOverlayCommand` 一致。
-
-建议命令：
+音频框架使用 Bevy message 风格。常用命令：
 
 ```text
 AudioCommand::PlayCue
+AudioCommand::PlayBattleCue
+AudioCommand::PlaySpatialCue
 AudioCommand::PlayClip
 AudioCommand::PlayMusic
 AudioCommand::CrossfadeMusic
+AudioCommand::StopMusic
+AudioCommand::PauseMusic
+AudioCommand::ResumeMusic
 AudioCommand::StopInstance
 AudioCommand::StopByScope
 AudioCommand::PauseByScope
 AudioCommand::ResumeByScope
-AudioCommand::PreloadGroup
-AudioCommand::UnloadGroup
 AudioCommand::SetBusVolume
 AudioCommand::SetBusMuted
 AudioCommand::SetBusPaused
-AudioCommand::SetListener
+AudioCommand::PreloadGroup
+AudioCommand::UnloadGroup
 ```
 
-建议事件：
+当前没有 `AudioCommand::SetListener`。空间音频 listener 使用 `AudioSpatialListenerBinding` resource 绑定目标实体。
+
+常用事件：
 
 ```text
 AudioEvent::CueStarted
+AudioEvent::ClipStarted
 AudioEvent::CueSkipped
-AudioEvent::InstanceFinished
 AudioEvent::InstanceStopped
 AudioEvent::LoadProgress
 AudioEvent::LoadFailed
@@ -214,417 +206,287 @@ AudioEvent::MusicChanged
 AudioEvent::BusChanged
 ```
 
-`CueSkipped` 应能表达被冷却、并发限制、静音策略或资源缺失跳过，方便调试。
+`CueSkipped` 当前能表达冷却、最大并发、低优先级替换失败、缺 cue/clip、bus 暂停和 scope 暂停等原因。
 
-## 7. 资源目录和 Catalog
+## 6. Catalog 和资源路径
 
-首包音频建议目录：
+首包音频目录：
 
 ```text
 project/assets/audio/
-|-- ui/
-|-- music/
 |-- ambience/
 |-- battle/
-|-- voice/
-`-- common/
+|-- common/
+|-- music/
+|-- spatial/
+|-- ui/
+`-- voice/
 ```
 
-代码中路径从 `project/assets/` 下一级开始写：
+代码和 catalog 中的首包路径从 `project/assets/` 下一级开始写：
 
 ```text
-audio/ui/click.ogg
-audio/music/lobby_main.ogg
+audio/ui/click_wood_01.wav
+audio/music/menu_loop.wav
+audio/ambience/light_rain_loop.wav
 ```
 
-后续下载音频继续遵守 `docs/assets-workflow.md`：
+当前 `AudioCatalog` 可以由代码注册，也可以通过 `AudioCatalogConfig` 从 RON 构建。RON catalog 支持：
 
-```text
-content_cache://2026.06.09.1/audio/music/event_theme.ogg
+- `clips`：clip ID 到资源路径的映射。
+- `cues`：cue ID、clip 列表、权重、playback 和 rules。
+- `groups`：预加载分组和 required/optional 标记。
+- `playback.bus`：`master`、`music`、`sfx`、`ui`、`battle`。
+- `playback.scope`：`global`、`ui`、`scene`、`battle`。
+- `rules.volume`、`rules.pitch`、`rules.cooldown_seconds`、`rules.max_concurrent`、`rules.priority`。
+
+路径安全规则：
+
+- 使用正斜杠。
+- 不允许空路径、绝对路径、Windows 盘符、反斜杠、`..`。
+- 只允许普通 assets 相对路径或 `content_cache://...`。
+
+`content_cache://...` 目前只是 catalog 路径校验层允许的 URI 形式。真实下载、缓存注册、版本哈希校验和 Android 私有缓存读取还没有完整落地，不能把后续下载音频写成已完成能力。
+
+## 7. 当前首包资源和格式
+
+当前首包音频样例在 `project/assets/audio/`，主要用于音频框架开发和内部测试。该目录下的 `readme.md` 已说明这些文件是开发期占位资源，不是最终游戏内容。
+
+当前实际文件是 `.wav`，并且 `project/Cargo.toml` 已开启 Bevy `wav` feature：
+
+```toml
+bevy = { version = "0.18.1", features = ["wav"] }
 ```
 
-建议引入音频 catalog，记录：
+新增首包音频时：
 
-- clip ID。
-- 资源路径。
-- 所属 group。
-- 默认 bus。
-- 是否循环。
-- 默认音量和音高。
-- 是否首包必需。
-- 内容版本或来源。
+- 放入 `project/assets/audio/<category>/...`。
+- 使用小写英文、数字、下划线或短横线命名。
+- 代码路径写 `audio/...`，不要写 `project/assets/audio/...`。
+- Android 路径大小写必须和文件完全一致。
+- 二进制音频文件按 Git LFS 规则提交。
 
-cue 规则记录：
+格式边界：
 
-- cue ID。
-- 可选 clip 列表。
-- 随机权重。
-- 音量随机范围。
-- 音高随机范围。
-- 冷却时间。
-- 最大并发。
-- 优先级。
-- 默认 scope。
+- 当前已验证和启用的是 `.wav`。
+- 文档或测试里可能仍有 `.ogg` 示例路径，但当前依赖只显式开启 `wav` feature；新增 OGG/Vorbis、MP3、FLAC 等格式前，需要先确认 Bevy feature 和目标平台支持。
+- 大体积音乐、活动语音和可替换内容仍应走后续下载设计，不应直接放进首包。
 
-## 8. 加载策略
+## 8. UI 音效
 
-建议分组加载：
+已落地能力：
 
-- `audio.ui.core`：基础 UI 点击、确认、取消、错误提示，适合首包预加载。
-- `audio.music.lobby`：大厅音乐，按页面或场景加载。
-- `audio.scene.<scene_id>`：场景音乐、环境音和空间音源。
-- `audio.battle.common`：通用战斗命中、释放、受击和倒计时音效。
-- `audio.voice.<content_id>`：对白或语音，优先后续下载。
+- `AudioPlugin` 注册 `UiAudioAdapterConfig` 和 `UiAudioCooldowns`。
+- `play_ui_button_audio` 消费 `UiButtonEvent`。
+- 默认 cue 是 `DEFAULT_UI_CLICK_CUE_ID`。
+- 控件可挂 `UiAudioCueOverride` 覆盖 cue。
+- UI click 有短冷却，避免高频连点无限堆叠。
+- UI bus 或 Master bus 静音、暂停时会跳过 UI 音效并发送 skip 事件。
 
-基础原则：
+边界：
 
-- 短 UI 音效和关键反馈音可进首包。
-- 背景音乐、活动语音、大体积音频优先走后续下载。
-- 音频加载失败通常不应阻塞关键流程，除非资源被显式标记为 required。
-- 场景 manifest 中的 audio 资源可先作为加载依赖跟踪，后续再映射到 audio catalog 和播放策略。
+- 当前 adapter 只覆盖按钮点击事件，不自动覆盖所有弹窗、Toast、输入错误或页面切换。
+- 具体 UI cue 的 catalog 注册仍由 game layer 或初始化代码负责。
 
-## 9. UI 音效
+## 9. 背景音乐
 
-UI 音效应通过事件或 adapter 接入，不应让每个按钮直接操作 Bevy 音频实体。
+已落地能力：
 
-建议接入点：
+- `AudioCommand::PlayMusic` 播放音乐，默认走 `Music` bus。
+- `StopMusic` 支持立即停止或淡出停止。
+- `PauseMusic` 和 `ResumeMusic` 更新 `MusicController` 和当前实例暂停状态。
+- `CrossfadeMusic` 支持旧音乐淡出、新音乐淡入。
+- `MusicController` 记录当前和淡出中的 track。
+- bus 音量和暂停状态会影响当前播放音乐。
 
-- `UiButtonEvent`：按钮按下、点击、取消。
-- `UiModalResult`：确认、取消、关闭。
-- `UiPanelCommand` 或 panel 状态变化：打开、关闭、切换。
-- 文本输入提交、错误提示、Toast 显示。
+边界：
 
-建议策略：
+- 具体哪个页面或场景播放哪首音乐由 game layer 注册。
+- 当前没有复杂音乐状态机、分层音乐、节拍同步、stinger 或过场音乐编排。
 
-- 提供默认点击 cue，例如 `ui.button.click`。
-- 支持具体控件覆盖 cue。
-- 对高频 UI cue 增加短冷却，避免连点造成刺耳堆叠。
-- UI 音效默认走 `Ui` bus，不受 `Battle` bus 影响。
-- 打开全屏 Loading 时可继续播放 UI 提示音，但 gameplay 音效应按场景或输入状态控制。
+## 10. 场景音频
 
-## 10. 背景音乐
+已落地能力：
 
-背景音乐建议由独立 `MusicController` 管理。
+- `SceneAudioAdapterConfig` 可按 `SceneId` 注册 `SceneAudioEntry`。
+- `SceneAudioEntry` 支持 `on_enter` 播放 cue 或 music。
+- 进入场景后，adapter 消费 `SceneEvent::Entered`，把播放命令写入 scene session scope。
+- `SceneEvent::ExitStarted` 可按配置淡出 scene scope。
+- `SceneEvent::Exited` 会再次按 scene scope 停止，避免残留。
+- 当前 `sample.dungeon_room` 已在 game layer 注册一个循环 ambience cue：`scene.sample_dungeon_room.ambience`。
 
-基础能力：
+重要边界：
 
-- 播放一首音乐。
-- 停止当前音乐。
-- 暂停和恢复。
-- 淡入。
-- 淡出。
-- 交叉淡入淡出。
-- 记录当前音乐 ID 和播放状态。
+- `SceneManifest` 当前能把 `audio` / `sound` asset kind 当作资源依赖加载跟踪。
+- manifest 的 `audio` / `sound` asset 不会自动注册 catalog，也不会自动播放。
+- 实际场景音频播放由 `SceneAudioAdapterConfig` 和 game layer 注册决定。
+- 当前还没有 manifest 声明式音频区域、自动空间音源、区域混响或触发器自动切换音频。
 
-典型场景：
+## 11. 空间音频
 
-- 登录页播放登录音乐。
-- 大厅播放大厅音乐。
-- 进入副本时切副本音乐。
-- 触发战斗时切战斗音乐。
-- 战斗结束后恢复场景音乐。
+已落地能力：
 
-音乐通常走 `Music` bus，并使用 `Global` 或 `Scene(session_id)` scope。场景音乐建议随场景退出淡出；全局音乐可跨场景持续。
+- `AudioCommand::PlaySpatialCue`。
+- `AudioSpatialSource::Fixed` 和 `AudioSpatialSource::FollowEntity`。
+- `AudioSpatialListenerBinding` 绑定 listener 到实体。
+- 空间 emitter Transform 跟随实体更新。
+- 目标实体消失时停止对应空间实例并发送停止事件。
+- 基于 listener 和 emitter 距离做简单线性/指数衰减计算。
+- 空间 sink 同步 bus 音量和暂停状态。
 
-## 11. 场景声音
+边界：
 
-场景声音包括：
-
-- 背景音乐。
-- 环境循环音，例如风声、水声、地下城底噪。
-- 空间音源，例如火把、瀑布、机关和 NPC。
-- 区域音频，例如进入洞穴后切换 ambience。
-- 过场音频。
-
-建议与 scene framework 的关系：
-
-- 场景进入后，根据 `SceneEvent::Entered` 播放场景音乐和基础 ambience。
-- 场景退出或切换时，按 `Scene(session_id)` scope 停止或淡出。
-- 场景 trigger 可发送业务事件，由 game layer 决定是否切换音乐或环境音。
-- 空间音源应挂到实体或 anchor，并使用 `Entity(entity)` 或 `Scene(session_id)` scope。
-
-当前 `SceneManifest` 已能识别 `audio` 和 `sound` asset kind。后续可以扩展 manifest 或 game layer layout，让场景声明音频资源和音源位置，但 framework scene 不应硬编码具体播放规则。
+- Bevy 0.18.1 空间音频是基础 stereo panning。
+- 当前不提供 HRTF、混响、遮挡、区域声学、复杂曲线或自动 Audio LOD。
+- 当前没有 `MYBEVY_AUDIO_DISABLE_SPATIAL` 环境变量。
 
 ## 12. 战斗音效
 
-战斗音效应由战斗事件驱动，音频框架只处理播放策略。
+已落地能力：
 
-常见 cue：
+- `AudioCommand::PlayBattleCue` 使用 `Battle(AudioScopeId)` scope。
+- 如果 cue 默认 bus 是 `Sfx`，战斗 cue 会默认映射到 `Battle` bus。
+- `BattleAudioCue` helper 可生成 `PlayBattleCue` 命令。
+- cue rules 支持冷却、最大并发和优先级。并发已满时，高优先级 cue 可替换低优先级实例；同优先级或更低优先级会跳过。
+- `StopByScope(AudioScope::Battle(...))` 可清理指定 battle scope。
 
-- 技能开始。
-- 技能释放。
-- 命中。
-- 暴击。
-- 格挡。
-- 受击。
-- 护盾破裂。
-- 死亡。
-- 回合开始。
-- 倒计时。
+边界：
 
-战斗音效需要额外约束：
+- 具体技能、武器、怪物、命中类型和战斗状态到 cue 的映射仍属于 game layer 或 fight adapter。
+- 当前没有完整战斗音频编排、混音 ducking、技能优先级矩阵、语音抢占规则或音频事件表。
 
-- 高频命中音应有最大并发。
-- 同类音效可做随机变体，减少重复感。
-- 重要音效应有更高优先级。
-- 同一帧大量事件不应无限创建播放实例。
-- 战斗结束时按 `Battle(battle_id)` scope 清理循环音和延迟音。
+## 13. 加载和后续下载边界
 
-具体角色、武器、技能和怪物映射哪个 cue，属于 game layer 或 fight adapter，不属于 audio framework。
+已落地能力：
 
-## 13. 音量和运行时控制
+- `AudioGroupEntry` 可声明 group 中 clip 的 required/optional。
+- `AudioCommand::PreloadGroup` 会为 group 中的 clip 创建 `AudioSource` handle。
+- `AudioLoadingState` 记录 group 加载状态。
+- `AudioEvent::LoadProgress` 报告 loaded/failed/required 计数。
+- optional clip 失败不影响 required 进度统计。
+- `AudioCommand::UnloadGroup` 会移除框架保存的 group 加载状态。
 
-音量控制建议分两层：
+边界：
 
-- 配置层：玩家设置中的 bus 音量、静音和开关。
-- 实例层：当前正在播放的实体实际音量。
+- 当前 group 加载只管理 `AssetServer` handle 和框架状态，不实现磁盘缓存下载。
+- `UnloadGroup` 不保证 Bevy 全局 asset 缓存立即释放内存，只移除 audio loading state 中的引用。
+- `content_cache://...` 路径已可通过 catalog 路径校验，但真实内容缓存源注册、下载和校验仍是后续目标。
 
-Bevy 的全局音量适合初始化总量，但运行中修改音量时，应由框架追踪活跃播放实例并同步到 `AudioSink` 或空间音频 sink。不要假设修改全局音量会自动影响所有已经播放的音频实例。
+## 14. 调试和诊断
 
-建议保存：
-
-- `master_volume`
-- `music_volume`
-- `sfx_volume`
-- `ui_volume`
-- `ambience_volume`
-- `battle_volume`
-- `voice_volume`
-- 各 bus muted/paused 状态
-
-设置页只应发送 `AudioCommand::SetBusVolume` 或 `AudioCommand::SetBusMuted`，不直接访问底层 sink。
-
-## 14. 空间音频
-
-空间音频适用于 2D/3D 场景中的位置声音。
-
-建议能力：
-
-- 设置 listener 实体或 Transform。
-- 播放空间 cue。
-- 跟随实体更新音源位置。
-- 设置最大距离、衰减曲线和基础音量。
-- 随场景或实体清理。
-
-Bevy 当前空间音频能力偏轻量，适合左右声道 panning 和基础距离感。复杂 HRTF、混响区域和遮挡模拟应作为后续扩展，不作为第一阶段目标。
-
-## 15. 失败处理
-
-音频失败不应让游戏主流程崩溃。
-
-建议错误类型：
-
-- `ClipNotFound`
-- `CueNotFound`
-- `GroupNotFound`
-- `AssetLoadFailed`
-- `InvalidVolume`
-- `InstanceNotFound`
-- `PlaybackUnavailable`
-- `UnsupportedFormat`
-
-错误日志应包含：
-
-- cue ID。
-- clip ID。
-- 资源路径。
-- bus。
-- scope。
-- 原始错误信息。
-
-玩家侧通常不需要展示音频错误，开发期通过日志和 debug 面板查看。
-
-## 16. 调试和诊断
-
-建议提供调试信息：
-
-- 当前 master 和各 bus 音量。
-- bus 静音和暂停状态。
-- 当前音乐 ID。
-- 活跃音频实例数量。
-- 按 bus 统计的实例数量。
-- 最近播放 cue。
-- 最近跳过 cue。
-- 最近加载失败资源。
-- 当前 listener 位置。
-
-建议环境变量：
+当前支持的环境变量：
 
 ```powershell
 $env:MYBEVY_AUDIO_DEBUG="true"
+cargo run
+```
+
+支持的真值包括 `1`、`true`、`on`、`yes`、`enabled`，假值包括 `0`、`false`、`off`、`no`、`disabled`。
+
+启用后，`AudioDebugSnapshot` 会记录：
+
+- 是否启用 debug。
+- 当前活跃实例总数和按 bus 统计。
+- 活跃实例详情：instance、clip、cue、scope、bus、路径、暂停、停止中、失败、空间音频标记。
+- 当前加载 group 进度。
+- 最近开始的 cue。
+- 最近跳过的 cue。
+- 最近加载失败资源。
+
+当前没有实现这些旧设计变量：
+
+```powershell
 $env:MYBEVY_AUDIO_MUTE="music"
 $env:MYBEVY_AUDIO_LOG_CUES="true"
 $env:MYBEVY_AUDIO_DISABLE_SPATIAL="true"
 ```
 
-这些变量只用于开发期。正式设置应来自玩家设置或游戏配置。
+如需这些能力，应先补代码，再更新文档。
 
-## 17. 移动端注意事项
+## 15. 移动端和 Android
 
-移动端音频应控制：
+当前 Android 工程在 `android/app/build.gradle` 中把 `../../project/assets` 加入 APK assets，因此 `project/assets/audio/...` 会随 APK 打包。运行时首包路径仍写 `audio/...`。
 
-- 同时播放实例数。
-- 短音效高频创建。
-- 大体积音乐首包占用。
-- 未使用音频 handle 长期保留。
-- 音频文件格式和平台兼容性。
-- 后台、息屏、来电时的暂停和恢复策略。
+当前移动端相关能力：
 
-建议：
+- Bevy/rodio/cpal 音频链路沿用 Bevy 0.18.1 默认行为。
+- `AudioLifecyclePausePolicy` 默认在 `WillSuspend` / `Suspended` 暂停 `Music`、`Sfx`、`Battle` bus。
+- `WillResume` / `Running` 时只恢复由策略暂停的 bus，不覆盖用户或业务原本暂停的 bus。
+- `Ui` bus 默认不随后台策略暂停。
 
-- 短音效优先使用 OGG 或经验证的平台格式。
-- 音乐和语音优先后续下载。
-- UI 核心音效保持小体积并进首包。
-- 战斗高频 cue 必须有并发限制。
-- 进入后台时暂停 `Music`、`Ambience` 和 `Battle` bus，按产品需求决定 UI 和 Voice。
+移动端新增音频时仍需关注：
 
-## 18. 与现有系统的关系
+- 同时播放实例数量和高频短音效堆叠。
+- `.wav` 体积较大，大体积音乐和语音不要盲目进首包。
+- Android 路径大小写。
+- 资源授权是否允许随 APK 分发。
 
-### 18.1 与资源流程
+## 16. 与现有系统的关系
+
+### 16.1 与资源流程
 
 音频资源遵守 `docs/assets-workflow.md`：
 
 - 首包资源放在 `project/assets/audio/`。
-- 代码路径从 `audio/...` 开始写。
-- 后续下载资源走内容清单、缓存和 `content_cache://...`。
+- 代码和 catalog 路径从 `audio/...` 开始写。
+- Android 当前会把整个 `project/assets` 打进 APK assets。
+- 后续下载资源设计使用 `content_cache://<version>/audio/...`，但真实下载和缓存加载还未完整接入。
 - 音频二进制文件通过 Git LFS 提交。
 
-### 18.2 与 UI 框架
+### 16.2 与 UI 框架
 
 UI 框架负责 UI 事件、面板和输入阻断。音频框架通过 adapter 消费 UI 事件并播放 cue，不直接管理 UI 层级。
 
-### 18.3 与场景框架
+### 16.3 与场景框架
 
-场景框架负责场景生命周期、manifest 和 `SceneOwned` 清理。音频框架按 `Scene(session_id)` scope 管理场景音频，并响应场景进入、退出或 trigger 事件。
+场景框架负责场景生命周期、manifest 资源加载跟踪和 `SceneOwned` 清理。音频框架通过 `SceneAudioAdapterConfig` 响应 `SceneEvent`，按 `Scene(session_id)` scope 管理场景音频。
 
-### 18.4 与战斗框架
+manifest 中的 `audio` / `sound` 当前只表示“这个资源需要被场景加载流程跟踪”，不是自动播放声明。
 
-战斗框架或 game layer 发出战斗事件或音频 cue。音频框架负责并发、优先级、bus、scope 和实际播放。
+### 16.4 与战斗框架
 
-### 18.5 与网络和 Authority
+战斗框架或 game layer 发出战斗事件或音频 cue。音频框架负责 cue 解析、并发、优先级、bus、scope 和实际播放。
+
+### 16.5 与网络和 Authority
 
 联机玩法中，关键 gameplay 音效可以由 authority 帧或已确认事件驱动，避免客户端预测和回滚造成明显错音。纯 UI 音效仍可本地即时播放。
 
-## 19. 推荐落地顺序
+## 17. 当前未实现能力
 
-### 阶段 1：最小播放闭环
+以下内容仍是后续目标，不要写成当前已完成：
 
-目标：让 game layer 通过命令播放首包音效和音乐。
+- 真实后续下载、CDN、缓存配额、版本哈希校验和 `content_cache://` 音频加载闭环。
+- 独立 `Ambience`、`Voice` bus 和玩家设置持久化。
+- manifest 声明式音频区域、自动音源生成、自动触发器切换音乐。
+- 复杂空间音频：HRTF、混响、遮挡、环境区域、复杂衰减曲线和 Audio LOD。
+- 完整战斗音频编排：ducking、优先级矩阵、角色语音抢占、按技能表自动映射。
+- UI 全量音效 adapter：弹窗、Toast、输入错误、页面切换等。
+- 游戏内 audio debug overlay 或设置页面。
+- 音频资源热重载、远端 catalog 热更新和授权检查工具。
 
-实现：
+## 18. 基础验收
 
-1. 新增 `framework/audio/` 模块和 `AudioPlugin`。
-2. 定义 `AudioCommand`、`AudioEvent`、`AudioCueId`、`AudioClipId`。
-3. 支持 `PlayCue`、`PlayClip`、`StopInstance`。
-4. 支持 `Master`、`Music`、`Sfx`、`Ui` bus。
-5. 用内存 catalog 注册少量首包音频。
+修改音频框架代码后至少执行：
 
-验收：
+```powershell
+Set-Location project
+cargo fmt --check
+cargo check
+cargo test
+Set-Location ..
+git diff --check
+```
 
-- 能通过命令播放一个 UI 音效。
-- 能播放并停止一首背景音乐。
-- 能调整 UI 和 Music bus 音量。
+只改文档时，至少执行：
 
-### 阶段 2：UI 音效接入
+```powershell
+git diff --check
+```
 
-目标：基础 UI 交互自动播放音效。
-
-实现：
-
-1. 接入 `UiButtonEvent`。
-2. 提供默认按钮点击 cue。
-3. 支持控件或 action 覆盖 cue。
-4. 增加 UI cue 冷却。
-
-验收：
-
-- 普通按钮点击有反馈音。
-- 连点不会无限堆叠音效。
-- 静音 UI bus 后 UI 音效停止，其他 bus 不受影响。
-
-### 阶段 3：音乐控制器
-
-目标：支持页面和场景音乐切换。
-
-实现：
-
-1. 增加 `MusicController`。
-2. 支持淡入、淡出和交叉淡入淡出。
-3. 支持按 scope 停止场景音乐。
-
-验收：
-
-- 大厅和样板场景能切换不同音乐。
-- 切场景时旧音乐淡出，新音乐淡入。
-- 修改 Music bus 音量能影响当前播放音乐。
-
-### 阶段 4：场景音频
-
-目标：场景拥有环境循环音和基础空间音源。
-
-实现：
-
-1. 按 `SceneEvent::Entered` 播放场景 ambience。
-2. 按 `SceneEvent::Exited` 清理 `Scene(session_id)` 音频。
-3. 支持 `PlaySpatialCue`。
-4. 支持 listener 绑定相机或玩家。
-
-验收：
-
-- 进入样板场景播放环境音。
-- 退出场景后环境音停止。
-- 空间音源随相机或玩家位置变化有左右声道变化。
-
-### 阶段 5：战斗音效和并发限制
-
-目标：高频战斗事件不会造成音频失控。
-
-实现：
-
-1. 支持 cue 最大并发。
-2. 支持 cue 冷却和优先级。
-3. 支持随机变体。
-4. 支持 `Battle(battle_id)` scope。
-
-验收：
-
-- 同一帧大量命中事件不会创建无限音频实例。
-- 重要技能音效不会被普通命中音完全盖住。
-- 战斗结束时循环音和残留音能清理。
-
-### 阶段 6：后续下载和调试面板
-
-目标：音频资源接入内容清单，并提供可视化诊断。
-
-实现：
-
-1. catalog 支持 `content_cache://...` 路径。
-2. 支持 `PreloadGroup` 和加载进度。
-3. 增加 debug snapshot。
-4. 在 UI debug 面板显示 audio 状态。
-
-验收：
-
-- 下载音频资源后可播放。
-- 资源缺失时能记录明确错误。
-- debug 面板能看到 bus、音乐和实例状态。
-
-## 20. 验收清单
-
-新增或修改音频能力时至少检查：
-
-- 首包资源路径符合 `project/assets/` 相对路径规则。
-- Android 路径大小写正确。
-- 音量设置能影响当前播放实例。
-- 静音和暂停按 bus 生效。
-- 场景退出后场景音频无残留。
-- 战斗高频音效有并发限制。
-- 资源加载失败不导致主流程崩溃。
-- 后续下载资源没有误放进 `project/assets/`。
-- `cargo fmt` 和 `cargo check` 通过。
-
-只改文档时，至少确认：
+验收时还应确认：
 
 - 文档没有把未实现能力写成已实现。
-- 路径符合当前仓库结构。
-- 和 `docs/assets-workflow.md` 的资源约定一致。
+- 首包资源路径符合 `project/assets/` 相对路径规则。
+- Android 路径大小写正确。
+- `.wav` 支持和 `Cargo.toml` feature 描述一致。
+- 后续下载资源没有误放进 `project/assets/`。

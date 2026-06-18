@@ -70,6 +70,13 @@ MyBevy 资源按来源分三类：
 ```text
 project/assets/
 |-- audio/
+|   |-- ambience/
+|   |-- battle/
+|   |-- common/
+|   |-- music/
+|   |-- spatial/
+|   |-- ui/
+|   `-- voice/
 |-- game/
 |   `-- scenes.csv
 |-- images/
@@ -518,12 +525,18 @@ project/assets/ui/i18n/en_us.ron
 
 ### 7.5 音频
 
-首包音频：
+当前音频框架位于 `project/src/framework/audio/`，首包音频放在 `project/assets/audio/`。当前样例资源主要是 `.wav`，`project/Cargo.toml` 已显式开启 Bevy `wav` feature：
+
+```toml
+bevy = { version = "0.18.1", features = ["wav"] }
+```
+
+首包音频路径从 `project/assets/` 下一级开始写：
 
 ```rust
 fn play_sound(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(AudioPlayer::new(
-        asset_server.load("audio/click.ogg"),
+        asset_server.load("audio/ui/click_wood_01.wav"),
     ));
 }
 ```
@@ -531,15 +544,18 @@ fn play_sound(mut commands: Commands, asset_server: Res<AssetServer>) {
 后续下载音频：
 
 ```rust
-let path = format!("content_cache://{}/{}", manifest.version, "audio/event_theme.ogg");
+let path = format!("content_cache://{}/{}", manifest.version, "audio/music/event_theme.wav");
 let audio = asset_server.load::<AudioSource>(path);
 ```
 
 建议：
 
-- 短音效可进首包。
-- 背景音乐、活动语音、大体积音频走后续下载。
-- 音频格式优先使用 OGG；如果改用其他格式，先确认 Bevy feature 和目标平台支持。
+- 短 UI 音效、关键反馈音和小体积默认 ambience 可进首包。
+- 背景音乐、活动语音、大体积音频优先走后续下载。
+- 当前首包音频目录包含 `ui/`、`common/`、`ambience/`、`music/`、`battle/`、`voice/`、`spatial/`，新增路径必须保持小写和 Android 大小写一致。
+- 当前已验证和显式启用的是 `.wav`；新增 OGG/Vorbis、MP3、FLAC、AAC 等格式前，先确认 Bevy feature 和目标平台支持。
+- `project/assets/audio/readme.md` 中的现有文件是开发期占位资源；公开发布前应替换为自有、委托制作或明确可再分发的音频，并记录授权。
+- `AudioCatalogConfig` 已允许 `content_cache://...` 路径，但真实下载、缓存源注册和版本哈希校验仍是后续目标；不要把后续下载音频直接放进 `project/assets/`。
 
 ### 7.6 3D 模型和场景
 
@@ -626,6 +642,8 @@ RON/JSON 等配置文件分两类：
 - `project/assets/scenes/sample_dungeon_room/layout.ron`：game layer layout，声明样板房间的 prefab 和 light 实例。当前由 `project/src/game/scenes/sample_dungeon_room.rs` 在 `SceneEvent::Entered` 后读取并实例化。
 
 这三类路径都按首包资源规则书写，也就是相对 `project/assets/`。后续下载版本的 CSV、manifest 或 layout 仍未接入 `content_cache://...`。
+
+场景 manifest 当前可把 `audio` / `sound` 作为 asset kind 进行加载跟踪，但不会自动注册 audio catalog 或播放音频。具体场景音频仍由 `project/src/framework/audio/scene.rs` 的 `SceneAudioAdapterConfig` 和 game layer 注册决定。
 
 ## 8. 加载状态与页面时机
 

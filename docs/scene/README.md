@@ -82,6 +82,7 @@
 - `project/assets/scenes/sample_dungeon_room/scene.ron` 是 framework manifest，声明 dungeon 场景、fixed 3D 相机、blocking required asset Loading、`terrain`/`walls` required layer、`props`/`torches` optional layer、spawn point 和 anchors。
 - `project/assets/scenes/sample_dungeon_room/layout.ron` 是 game layer layout，描述 5x5 地板、四周墙体、南侧门、箱桶火把等 prefab 摆放，以及一个方向光和两个点光。
 - `project/src/game/scenes/sample_dungeon_room.rs` 监听 `SceneEvent::Entered` 后读取 layout，使用 Bevy glTF `SceneRoot` 实例化 prefab 和 light，把实体挂到 framework layer/runtime root，并统一挂 `SceneOwned(session_id)`。
+- `project/src/game/scenes/mod.rs` 当前为 `sample.dungeon_room` 注册了场景 ambience cue；该播放关系走 `SceneAudioAdapterConfig`，不是由 scene manifest 自动驱动。
 - 大厅 `game_list` 当前有样板场景固定入口；显示文案使用 `lobby.sample_scene.*`，CSV 中的 `scene.sample_dungeon_room.*` 字段保留给后续 catalog 动态渲染。点击后发送 `SceneCommand::Switch("sample.dungeon_room")`，进入成功后切到 `AppUiMode::SampleScene` 并打开 `project/src/game/screens/gameplay/sample_scene.rs` HUD。
 - 样板 HUD 返回按钮会发送 `SceneCommand::Exit` 并路由回大厅；退出时 framework 会清理 `SceneOwned` 场景实体，HUD 由 UI state 退出清理。
 
@@ -90,7 +91,7 @@
 以下内容仍是后续目标，不应在业务文档或接入说明中写成已完成：
 
 - 尚未实现真实后续下载、CDN、内容缓存读取、内容版本哈希校验和 `content_cache://` 场景加载。
-- 尚未实现复杂 glTF/additive scene 实例化、碰撞层、导航层、音频区域、光照环境和 LOD 应用。
+- 尚未实现复杂 glTF/additive scene 实例化、碰撞层、导航层、manifest 声明式音频区域、光照环境和 LOD 应用。
 - 尚未实现按玩家或相机位置驱动的真实 chunk 加载/卸载；当前 streaming 只保留 chunk 元数据、状态和查询接口。
 - 尚未实现任务/剧情/战斗响应、玩家生成、复杂交互、样板场景内容编辑器或 Touch Ripple 业务改造。
 - 尚未实现完整远端 authority 协议接入、房间规则、玩家同步、ready 汇总和帧回放 gating；framework 只提供 ready 语义和 adapter 边界。
@@ -1063,7 +1064,14 @@ LOD 建议分层：
 
 ## 20. 音频场景
 
-场景音频包括：
+当前项目已有 `project/src/framework/audio/`，场景音频和 scene framework 的边界如下：
+
+- Scene manifest 当前可用 `audio` / `sound` asset kind 跟踪资源加载依赖。
+- 这些 asset kind 只参与场景资源加载状态，不会自动注册 audio catalog，也不会自动播放。
+- 实际播放由 `SceneAudioAdapterConfig` 和 game layer 注册决定；当前 `sample.dungeon_room` 的 ambience 就在 `project/src/game/scenes/mod.rs` 注册。
+- 进入场景时，audio adapter 响应 `SceneEvent::Entered` 写入播放命令；退出时按 `Scene(session_id)` scope 停止或淡出。
+
+后续目标中的场景音频包括：
 
 - 背景音乐。
 - 环境循环音。
@@ -1080,6 +1088,8 @@ LOD 建议分层：
 - 触发器可切换音乐状态。
 - 大体积音乐走后续下载。
 - 音频失败不应阻塞关键场景进入，除非该资源被标记为 required。
+
+当前尚未实现 manifest 声明式音频区域、自动空间音源、区域混响、触发器自动切换音乐或按场景清单自动生成音频实体。
 
 ## 21. 联机与 Authority 场景同步
 

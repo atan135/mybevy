@@ -189,10 +189,12 @@ mybevy/
 |-- docs/
 |   |-- bevy-getting-started.md
 |   |-- assets-workflow.md
+|   |-- audio/
 |   |-- scene/
 |   `-- ui/
 `-- project/
     |-- assets/
+    |   |-- audio/
     |   |-- game/
     |   |-- licenses/
     |   |-- models/
@@ -200,6 +202,7 @@ mybevy/
     |   `-- ui/
     |-- src/
     |   |-- framework/
+    |   |   |-- audio/
     |   |   |-- fight/
     |   |   |-- network/
     |   |   |-- scene/
@@ -225,7 +228,8 @@ mybevy/
 可以按下面的职责划分：
 
 - `project/src/main.rs`：程序入口、顶层插件注册
-- `project/src/framework/`：框架层横向能力，当前包含 UI、network、scene 和 fight 边界
+- `project/src/framework/`：框架层横向能力，当前包含 audio、UI、network、scene 和 fight 边界
+- `project/src/framework/audio/`：音频框架能力入口，提供音频命令、事件、catalog、loading、playback、mixer、music、UI/scene/battle adapter、基础空间音频、生命周期暂停和 debug 配置
 - `project/src/framework/network/`：网络框架能力入口，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
 - `project/src/framework/scene/`：场景框架能力入口，提供场景命令、事件、生命周期、注册表、首包 RON manifest、根实体、Loading、相机、spawn/anchor、trigger、streaming 元数据和 debug 配置
 - `project/src/framework/ui/`：UI 框架能力入口
@@ -241,6 +245,7 @@ mybevy/
 - `project/src/framework/ui/style/`：颜色、字号、间距、圆角等主题 token
 - `project/src/framework/ui/widgets/`：按钮、文本等通用控件
 - `project/assets/`：贴图、音频、字体、场景文件和首包配置数据
+- `project/assets/audio/`：首包音频资源，当前样例以 `.wav` 为主，公开发布前需替换占位资源并确认授权
 - `project/assets/game/scenes.csv`：游戏层场景目录表，当前注册 `sample.dungeon_room`
 - `project/assets/scenes/sample_dungeon_room/scene.ron`：样板场景 framework manifest
 - `project/assets/scenes/sample_dungeon_room/layout.ron`：样板场景 game layer prefab/light 摆放数据
@@ -431,15 +436,37 @@ cargo run
 
 `TOUCH_START_SCREEN=sample_scene` 只会把 UI state 切到样板场景 HUD，适合调试 HUD 本身；它不会自动发送 `SceneCommand::Enter`，因此不是完整场景加载验收方式。完整验收优先使用大厅入口或 `MYBEVY_START_SCENE="sample.dungeon_room"`。
 
-## 16. 官方参考入口
+## 16. 音频框架开发期环境变量
+
+音频框架当前支持开发期 debug 开关。所有命令仍在 `project/` 目录执行：
+
+```powershell
+$env:MYBEVY_AUDIO_DEBUG="true"
+cargo run
+```
+
+变量说明：
+
+- `MYBEVY_AUDIO_DEBUG`：启用 `AudioDebugSnapshot` 更新；接受 `1`、`true`、`on`、`yes`、`enabled` 等值。
+
+启用后可以从资源中查看当前活跃音频实例数量、按 bus 统计、实例详情、加载 group 进度、最近播放 cue、最近跳过 cue 和最近加载失败资源。当前没有成品游戏内 audio debug 面板。
+
+基本验收入口：
+
+- 注册或加载 `ui.click` cue 后，启动游戏并点击普通 UI 按钮，验证默认 UI click adapter 可触发音效。
+- 从大厅进入 `Sample Scene`，验证 `sample.dungeon_room` 的场景 ambience 由 game layer 注册并在退出时按 scene scope 清理。
+- 需要同时看场景和音频诊断时，可同时设置 `MYBEVY_START_SCENE="sample.dungeon_room"`、`MYBEVY_SCENE_DEBUG="true"` 和 `MYBEVY_AUDIO_DEBUG="true"`。
+
+## 17. 官方参考入口
 
 - Bevy Quick Start: `https://bevy.org/learn/quick-start/getting-started/`
 - Bevy Setup: `https://bevy.org/learn/quick-start/getting-started/setup/`
 - Bevy 官方 examples: `https://github.com/bevyengine/bevy/tree/latest/examples`
 - 本仓库资源使用方式：`docs/assets-workflow.md`
+- 本仓库音频框架说明：`docs/audio/README.md`
 - 本仓库场景框架设计：`docs/scene/README.md`
 
-## 17. 本项目如何打包成 Windows 和 Android App
+## 18. 本项目如何打包成 Windows 和 Android App
 
 这一节只针对当前仓库结构说明：
 
