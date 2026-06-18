@@ -10,6 +10,7 @@ mod command;
 mod debug;
 mod event;
 mod id;
+mod loading;
 mod mixer;
 mod music;
 mod playback;

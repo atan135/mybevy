@@ -3,7 +3,7 @@ use std::{collections::HashMap, error::Error, fmt};
 use bevy::prelude::*;
 
 use super::{
-    id::{AudioClipId, AudioCueId},
+    id::{AudioClipId, AudioCueId, AudioGroupId},
     scope::{AudioBus, AudioScope},
 };
 
@@ -11,6 +11,7 @@ use super::{
 pub struct AudioCatalog {
     clips: HashMap<AudioClipId, AudioClipEntry>,
     cues: HashMap<AudioCueId, AudioCueEntry>,
+    groups: HashMap<AudioGroupId, AudioGroupEntry>,
 }
 
 impl AudioCatalog {
@@ -30,6 +31,14 @@ impl AudioCatalog {
         self.cues.insert(cue_id, cue)
     }
 
+    pub fn register_group(
+        &mut self,
+        group_id: AudioGroupId,
+        group: AudioGroupEntry,
+    ) -> Option<AudioGroupEntry> {
+        self.groups.insert(group_id, group)
+    }
+
     pub fn clip(&self, clip_id: &AudioClipId) -> Result<&AudioClipEntry, AudioCatalogError> {
         self.clips
             .get(clip_id)
@@ -40,6 +49,12 @@ impl AudioCatalog {
         self.cues
             .get(cue_id)
             .ok_or_else(|| AudioCatalogError::MissingCue(cue_id.clone()))
+    }
+
+    pub fn group(&self, group_id: &AudioGroupId) -> Result<&AudioGroupEntry, AudioCatalogError> {
+        self.groups
+            .get(group_id)
+            .ok_or_else(|| AudioCatalogError::MissingGroup(group_id.clone()))
     }
 
     pub fn resolve_cue(&self, cue_id: &AudioCueId) -> Result<AudioResolvedCue, AudioCatalogError> {
@@ -64,6 +79,32 @@ impl AudioCatalog {
             clips,
             playback: cue.playback.clone(),
             rules: cue.rules,
+        })
+    }
+
+    pub fn resolve_group(
+        &self,
+        group_id: &AudioGroupId,
+    ) -> Result<AudioResolvedGroup, AudioCatalogError> {
+        let group = self.group(group_id)?;
+        if group.clips.is_empty() {
+            return Err(AudioCatalogError::EmptyGroup(group_id.clone()));
+        }
+
+        let mut clips = Vec::with_capacity(group.clips.len());
+
+        for group_clip in &group.clips {
+            let clip = self.clip(&group_clip.clip_id)?;
+            clips.push(AudioResolvedGroupClip {
+                clip_id: group_clip.clip_id.clone(),
+                path: clip.path.clone(),
+                required: group_clip.required,
+            });
+        }
+
+        Ok(AudioResolvedGroup {
+            group_id: group_id.clone(),
+            clips,
         })
     }
 }
@@ -134,6 +175,47 @@ impl AudioCueClip {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioGroupEntry {
+    pub clips: Vec<AudioGroupClip>,
+}
+
+impl AudioGroupEntry {
+    pub fn from_required(clips: impl IntoIterator<Item = AudioClipId>) -> Self {
+        Self {
+            clips: clips.into_iter().map(AudioGroupClip::required).collect(),
+        }
+    }
+
+    pub fn from_clips(clips: impl IntoIterator<Item = AudioGroupClip>) -> Self {
+        Self {
+            clips: clips.into_iter().collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioGroupClip {
+    pub clip_id: AudioClipId,
+    pub required: bool,
+}
+
+impl AudioGroupClip {
+    pub fn required(clip_id: AudioClipId) -> Self {
+        Self {
+            clip_id,
+            required: true,
+        }
+    }
+
+    pub fn optional(clip_id: AudioClipId) -> Self {
+        Self {
+            clip_id,
+            required: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AudioCuePlayback {
     pub bus: AudioBus,
     pub scope: AudioScope,
@@ -187,10 +269,25 @@ pub struct AudioResolvedCueClip {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioResolvedGroup {
+    pub group_id: AudioGroupId,
+    pub clips: Vec<AudioResolvedGroupClip>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioResolvedGroupClip {
+    pub clip_id: AudioClipId,
+    pub path: String,
+    pub required: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AudioCatalogError {
     MissingCue(AudioCueId),
     MissingClip(AudioClipId),
+    MissingGroup(AudioGroupId),
     EmptyCue(AudioCueId),
+    EmptyGroup(AudioGroupId),
 }
 
 impl fmt::Display for AudioCatalogError {
@@ -198,7 +295,11 @@ impl fmt::Display for AudioCatalogError {
         match self {
             Self::MissingCue(cue_id) => write!(formatter, "audio cue not found: {cue_id}"),
             Self::MissingClip(clip_id) => write!(formatter, "audio clip not found: {clip_id}"),
+            Self::MissingGroup(group_id) => write!(formatter, "audio group not found: {group_id}"),
             Self::EmptyCue(cue_id) => write!(formatter, "audio cue has no clips: {cue_id}"),
+            Self::EmptyGroup(group_id) => {
+                write!(formatter, "audio group has no clips: {group_id}")
+            }
         }
     }
 }
@@ -215,6 +316,10 @@ mod tests {
 
     fn cue_id(value: &str) -> AudioCueId {
         AudioCueId::try_from(value).unwrap()
+    }
+
+    fn group_id(value: &str) -> AudioGroupId {
+        AudioGroupId::try_from(value).unwrap()
     }
 
     #[test]
@@ -251,6 +356,115 @@ mod tests {
             vec![
                 AudioCueClip::new(click),
                 AudioCueClip::weighted(click_alt, 2.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn registers_group_with_required_and_optional_clips() {
+        let mut catalog = AudioCatalog::default();
+        let required = clip_id("ui.click");
+        let optional = clip_id("ui.confirm");
+        let group_id = group_id("boot");
+
+        catalog.register_group(
+            group_id.clone(),
+            AudioGroupEntry::from_clips([
+                AudioGroupClip::required(required.clone()),
+                AudioGroupClip::optional(optional.clone()),
+            ]),
+        );
+
+        let group = catalog.group(&group_id).unwrap();
+        assert_eq!(
+            group.clips,
+            vec![
+                AudioGroupClip::required(required),
+                AudioGroupClip::optional(optional)
+            ]
+        );
+    }
+
+    #[test]
+    fn resolves_group_to_clip_paths_and_required_flags() {
+        let mut catalog = AudioCatalog::default();
+        let required = clip_id("ui.click");
+        let optional = clip_id("ui.confirm");
+        let group_id = group_id("boot");
+
+        catalog.register_clip(required.clone(), "audio/ui/click_wood_01.wav");
+        catalog.register_clip(optional.clone(), "audio/ui/confirm_brick_01.wav");
+        catalog.register_group(
+            group_id.clone(),
+            AudioGroupEntry::from_clips([
+                AudioGroupClip::required(required.clone()),
+                AudioGroupClip::optional(optional.clone()),
+            ]),
+        );
+
+        let resolved = catalog.resolve_group(&group_id).unwrap();
+
+        assert_eq!(
+            resolved,
+            AudioResolvedGroup {
+                group_id,
+                clips: vec![
+                    AudioResolvedGroupClip {
+                        clip_id: required,
+                        path: "audio/ui/click_wood_01.wav".to_string(),
+                        required: true,
+                    },
+                    AudioResolvedGroupClip {
+                        clip_id: optional,
+                        path: "audio/ui/confirm_brick_01.wav".to_string(),
+                        required: false,
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn reports_group_resolution_errors() {
+        let missing_group = group_id("missing.group");
+        let mut catalog = AudioCatalog::default();
+
+        assert_eq!(
+            catalog.resolve_group(&missing_group),
+            Err(AudioCatalogError::MissingGroup(missing_group))
+        );
+
+        let empty_group = group_id("empty.group");
+        catalog.register_group(empty_group.clone(), AudioGroupEntry::from_clips([]));
+        assert_eq!(
+            catalog.resolve_group(&empty_group),
+            Err(AudioCatalogError::EmptyGroup(empty_group))
+        );
+
+        let missing_clip = clip_id("ui.missing");
+        let group_id = group_id("boot");
+        catalog.register_group(
+            group_id.clone(),
+            AudioGroupEntry::from_required([missing_clip.clone()]),
+        );
+        assert_eq!(
+            catalog.resolve_group(&group_id),
+            Err(AudioCatalogError::MissingClip(missing_clip))
+        );
+    }
+
+    #[test]
+    fn required_group_constructor_marks_all_clips_required() {
+        let click = clip_id("ui.click");
+        let confirm = clip_id("ui.confirm");
+
+        let group = AudioGroupEntry::from_required([click.clone(), confirm.clone()]);
+
+        assert_eq!(
+            group.clips,
+            vec![
+                AudioGroupClip::required(click),
+                AudioGroupClip::required(confirm)
             ]
         );
     }

@@ -1,7 +1,8 @@
 pub use super::battle::{BattleAudioCue, DEFAULT_BATTLE_AUDIO_BUS};
 pub use super::catalog::{
     AudioCatalog, AudioCatalogError, AudioClipEntry, AudioCueClip, AudioCueEntry, AudioCuePlayback,
-    AudioCueRules, AudioResolvedCue, AudioResolvedCueClip,
+    AudioCueRules, AudioGroupClip, AudioGroupEntry, AudioResolvedCue, AudioResolvedCueClip,
+    AudioResolvedGroup, AudioResolvedGroupClip,
 };
 pub use super::command::{
     AudioBattleCueRequest, AudioBusMutedCommand, AudioBusPausedCommand, AudioBusVolumeCommand,
@@ -12,11 +13,15 @@ pub use super::command::{
 pub use super::debug::AudioDebugConfig;
 pub use super::event::{
     AudioBusChange, AudioBusChanged, AudioClipStarted, AudioCueSkipReason, AudioCueSkipped,
-    AudioCueStarted, AudioEvent, AudioInstanceStopped, AudioLoadFailed, AudioMusicChanged,
-    AudioStopReason,
+    AudioCueStarted, AudioEvent, AudioInstanceStopped, AudioLoadFailed, AudioLoadProgress,
+    AudioMusicChanged, AudioStopReason,
 };
 pub use super::id::{
     AudioClipId, AudioCueId, AudioGroupId, AudioIdError, AudioInstanceId, AudioScopeId,
+};
+pub use super::loading::{
+    AudioClipLoadState, AudioClipLoadStatus, AudioGroupLoadState, AudioGroupProgress,
+    AudioLoadingState,
 };
 pub use super::mixer::{AudioBusState, AudioMixer};
 pub use super::music::{MusicController, MusicFadePlan, MusicTrackState};

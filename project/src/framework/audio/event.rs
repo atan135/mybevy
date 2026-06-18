@@ -11,6 +11,7 @@ pub enum AudioEvent {
     ClipStarted(AudioClipStarted),
     CueSkipped(AudioCueSkipped),
     InstanceStopped(AudioInstanceStopped),
+    LoadProgress(AudioLoadProgress),
     LoadFailed(AudioLoadFailed),
     MusicChanged(AudioMusicChanged),
     BusChanged(AudioBusChanged),
@@ -59,6 +60,19 @@ pub struct AudioInstanceStopped {
     pub scope: AudioScope,
     pub bus: AudioBus,
     pub reason: AudioStopReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioLoadProgress {
+    pub group_id: AudioGroupId,
+    pub loaded: usize,
+    pub total: usize,
+    pub failed: usize,
+    pub required_loaded: usize,
+    pub required_total: usize,
+    pub required_failed: usize,
+    pub clip_id: Option<AudioClipId>,
+    pub asset_path: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

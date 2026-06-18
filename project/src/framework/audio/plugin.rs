@@ -8,6 +8,7 @@ use super::{
     command::AudioCommand,
     debug::AudioDebugConfig,
     event::AudioEvent,
+    loading::AudioLoadingState,
     mixer::AudioMixer,
     music::MusicController,
     playback::AudioPlaybackState,
@@ -25,6 +26,7 @@ impl Plugin for AudioPlugin {
             .init_resource::<AudioCatalog>()
             .init_resource::<AudioMixer>()
             .init_resource::<AudioPlaybackState>()
+            .init_resource::<AudioLoadingState>()
             .init_resource::<MusicController>()
             .init_resource::<AudioDebugConfig>()
             .init_resource::<UiAudioAdapterConfig>()
@@ -50,9 +52,11 @@ impl Plugin for AudioPlugin {
                         super::ui::play_ui_button_audio,
                         super::music::handle_music_commands,
                         super::playback::handle_audio_playback_commands,
+                        super::loading::handle_audio_loading_commands,
                     )
                         .chain()
                         .in_set(AudioSystemSet::Commands),
+                    super::loading::poll_audio_group_load_progress.in_set(AudioSystemSet::Playback),
                     super::playback::report_audio_load_failures.in_set(AudioSystemSet::Playback),
                     super::spatial::sync_spatial_listener_binding.in_set(AudioSystemSet::Playback),
                     super::spatial::sync_spatial_emitters.in_set(AudioSystemSet::Playback),
@@ -83,9 +87,9 @@ mod tests {
     use crate::framework::audio::{
         AudioBus, AudioBusVolumeCommand, AudioCatalog, AudioClipId, AudioClipRequest, AudioCommand,
         AudioCueClip, AudioCueEntry, AudioCueId, AudioCueStarted, AudioEvent, AudioInstanceId,
-        AudioInstanceState, AudioMixer, AudioPlaybackInstance, AudioPlaybackState, AudioScope,
-        AudioSpatialListenerEntity, DEFAULT_UI_CLICK_CUE_ID, SceneAudioAdapterConfig,
-        SceneAudioCue, SceneAudioEntry, SceneAudioPlayback,
+        AudioInstanceState, AudioLoadingState, AudioMixer, AudioPlaybackInstance,
+        AudioPlaybackState, AudioScope, AudioSpatialListenerEntity, DEFAULT_UI_CLICK_CUE_ID,
+        SceneAudioAdapterConfig, SceneAudioCue, SceneAudioEntry, SceneAudioPlayback,
     };
     use crate::framework::scene::prelude::{
         SceneEntered, SceneEvent, SceneExitStarted, SceneExited, SceneId, SceneSessionId,
@@ -105,6 +109,7 @@ mod tests {
         assert!(app.world().contains_resource::<AudioCatalog>());
         assert!(app.world().contains_resource::<AudioMixer>());
         assert!(app.world().contains_resource::<AudioPlaybackState>());
+        assert!(app.world().contains_resource::<AudioLoadingState>());
         assert!(app.world().contains_resource::<MusicController>());
         assert!(app.world().contains_resource::<AudioDebugConfig>());
         assert!(

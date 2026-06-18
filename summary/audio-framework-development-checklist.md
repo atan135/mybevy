@@ -214,15 +214,15 @@
   - [x] 支持 `Battle(battle_id)` scope 清理。
   - [x] 编写高频 cue 不无限创建实例的测试。
 
-- [ ] 15. 实现加载组和预加载接口
-  - 开始时间：
-  - 结束时间：
-  - [ ] 支持 `AudioCommand::PreloadGroup`。
-  - [ ] 支持 `AudioCommand::UnloadGroup`。
-  - [ ] 记录 group 中 clip 加载进度。
-  - [ ] 发送 `AudioEvent::LoadProgress`。
-  - [ ] 资源缺失时记录 clip ID、路径和 group。
-  - [ ] 确认 optional 音频失败不阻塞主流程。
+- [x] 15. 实现加载组和预加载接口
+  - 开始时间：2026-06-18 21:48:58 +08:00
+  - 结束时间：2026-06-18 22:13:03 +08:00
+  - [x] 支持 `AudioCommand::PreloadGroup`。
+  - [x] 支持 `AudioCommand::UnloadGroup`。
+  - [x] 记录 group 中 clip 加载进度。
+  - [x] 发送 `AudioEvent::LoadProgress`。
+  - [x] 资源缺失时记录 clip ID、路径和 group。
+  - [x] 确认 optional 音频失败不阻塞主流程。
 
 - [ ] 16. 支持 catalog 外部配置预留
   - 开始时间：

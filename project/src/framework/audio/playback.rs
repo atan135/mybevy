@@ -812,6 +812,9 @@ fn send_catalog_failure(
         AudioCatalogError::MissingCue(missing_cue) => (None, Some(missing_cue.clone()), None),
         AudioCatalogError::MissingClip(missing_clip) => (Some(missing_clip.clone()), cue_id, None),
         AudioCatalogError::EmptyCue(empty_cue) => (None, Some(empty_cue.clone()), None),
+        AudioCatalogError::MissingGroup(_) | AudioCatalogError::EmptyGroup(_) => {
+            (None, cue_id, None)
+        }
     };
 
     audio_events.write(AudioEvent::LoadFailed(AudioLoadFailed {
