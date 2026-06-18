@@ -529,8 +529,10 @@ project/
 
 ```toml
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 ```
+
+桌面开发默认只构建 `rlib`，避免 Windows 本地运行和测试额外链接动态库。Android 需要的 `libproject.so` 在构建时通过 `cargo ndk ... rustc --lib -- --crate-type cdylib` 显式产出。
 
 如果你准备跟 Bevy 当前移动端默认方案保持一致，通常用 `GameActivity` 即可；如果你要兼容更老的 Android API，再考虑 `android-native-activity`。
 
@@ -559,7 +561,7 @@ mybevy/
 在 `project/` 目录执行类似命令：
 
 ```powershell
-cargo ndk -t arm64-v8a -o ..\android\app\src\main\jniLibs build --release
+cargo ndk -t arm64-v8a -o ..\android\app\src\main\jniLibs rustc --release --lib -- --crate-type cdylib
 ```
 
 执行后会在 `android/app/src/main/jniLibs/arm64-v8a/` 下得到对应的 Rust 动态库。
@@ -608,7 +610,7 @@ android/app/build/outputs/apk/release/
 - `project/src/main.rs`：桌面入口，只负责调用 `project::run()`
 - `project/src/lib.rs`：共享 Bevy App 入口，并通过 `#[bevy_main]` 支持移动端入口
 - `project/src/game/`：当前游戏玩法模块
-- `project/Cargo.toml`：已经包含 `crate-type = ["rlib", "cdylib"]`
+- `project/Cargo.toml`：桌面默认构建 `rlib`；Android 动态库由 `cargo ndk ... rustc --lib -- --crate-type cdylib` 产出
 - `android/`：Android Gradle 壳工程，会加载 `libproject.so`
 
 当前 Android 壳工程使用 Bevy 0.18.1 间接依赖的 `android-activity 0.6.1`。
@@ -733,7 +735,7 @@ rustup target add aarch64-linux-android
 cargo install cargo-ndk
 
 Set-Location project
-cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs build --release
+cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib -- --crate-type cdylib
 
 Set-Location ..\android
 .\gradlew.bat assembleDebug

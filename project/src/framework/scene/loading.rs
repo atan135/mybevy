@@ -326,6 +326,7 @@ pub(crate) fn sync_scene_loading_ui(
         return;
     }
 
+    let mut pending_action = SceneLoadingUiAction::None;
     for event in scene_events.read() {
         let action = match event {
             SceneEvent::Resolving(resolving) => {
@@ -345,8 +346,12 @@ pub(crate) fn sync_scene_loading_ui(
             _ => SceneLoadingUiAction::None,
         };
 
-        write_scene_loading_ui_action(&mut ui_panel_messages, action);
+        if action != SceneLoadingUiAction::None {
+            pending_action = action;
+        }
     }
+
+    write_scene_loading_ui_action(&mut ui_panel_messages, pending_action);
 }
 
 fn write_scene_loading_ui_action(
@@ -751,7 +756,9 @@ fn layer_state_from_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::scene::event::SceneEntered;
     use crate::framework::scene::manifest::{SceneAssetKind, SceneAssetRef, SceneLayerManifest};
+    use bevy::ecs::message::MessageCursor;
 
     #[test]
     fn layer_load_info_preserves_manifest_metadata() {
@@ -807,5 +814,44 @@ mod tests {
                 .path,
             "scenes/arena/fx.png"
         );
+    }
+
+    #[test]
+    fn loading_ui_keeps_only_final_action_when_progress_and_entered_share_frame() {
+        let mut app = App::new();
+        app.add_message::<SceneEvent>()
+            .add_message::<UiPanelCommand>()
+            .init_resource::<SceneLoadingUiConfig>()
+            .init_resource::<SceneLoadingUiState>()
+            .add_systems(Update, sync_scene_loading_ui);
+
+        let scene_id = SceneId::from("sample.dungeon_room");
+        let session_id = SceneSessionId::from("sample-session");
+        let mut progress = SceneLoadProgress::new(scene_id.clone(), SceneLoadPhase::LoadingAssets);
+        progress.session_id = Some(session_id.clone());
+        progress.loading_policy = SceneLoadingPolicy::Blocking;
+        progress.required_total = 8;
+        progress.required_loaded = 8;
+
+        app.world_mut()
+            .write_message(SceneEvent::LoadProgress(progress));
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id,
+                session_id,
+                content_version: None,
+            }));
+
+        app.update();
+
+        let messages = app.world().resource::<Messages<UiPanelCommand>>();
+        let mut cursor = MessageCursor::default();
+        let commands = cursor.read(messages).collect::<Vec<_>>();
+
+        assert_eq!(commands.len(), 1);
+        assert!(matches!(
+            commands[0],
+            UiPanelCommand::Close(UI_PANEL_GLOBAL_LOADING)
+        ));
     }
 }

@@ -5,7 +5,7 @@ edition = "2024"
 
 [lib]
 name = "project"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
 bevy = "0.18.1"

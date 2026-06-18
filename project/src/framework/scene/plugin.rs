@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use crate::framework::ui::core::UiPanelSystems;
+
 use super::{
     authority::{SceneAuthorityReadyRequest, SceneAuthorityReadyStatus},
     command::SceneCommand,
@@ -46,7 +48,7 @@ impl Plugin for ScenePlugin {
                     process_scene_trigger_commands,
                     detect_scene_triggers,
                     update_scene_streaming_driver,
-                    sync_scene_loading_ui,
+                    sync_scene_loading_ui.before(UiPanelSystems::Commands),
                 )
                     .chain(),
             );

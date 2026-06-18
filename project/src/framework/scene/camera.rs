@@ -3,6 +3,9 @@ use bevy::prelude::*;
 use super::id::{SceneAnchorId, SceneSessionId};
 use super::root::SceneOwned;
 
+pub const SCENE_CAMERA_3D_ORDER: isize = -1;
+pub const SCENE_CAMERA_2D_ORDER: isize = 0;
+
 #[derive(Clone, Debug, Component, PartialEq)]
 pub struct SceneCameraRig {
     pub session_id: SceneSessionId,
@@ -285,6 +288,10 @@ fn spawn_scene_camera_2d(
     commands
         .spawn((
             Camera2d,
+            Camera {
+                order: scene_camera_order(config.mode),
+                ..Default::default()
+            },
             transform,
             projection,
             SceneCameraRig::new(session_id.clone(), config),
@@ -305,6 +312,10 @@ fn spawn_scene_camera_3d(
     commands
         .spawn((
             Camera3d::default(),
+            Camera {
+                order: scene_camera_order(config.mode),
+                ..Default::default()
+            },
             transform,
             projection,
             SceneCameraRig::new(session_id.clone(), config),
@@ -312,4 +323,47 @@ fn spawn_scene_camera_3d(
             Name::new("SceneCamera3d"),
         ))
         .id()
+}
+
+fn scene_camera_order(mode: SceneCameraMode) -> isize {
+    if mode.is_3d() {
+        SCENE_CAMERA_3D_ORDER
+    } else {
+        SCENE_CAMERA_2D_ORDER
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app_with_scene_camera(session_id: &str, config: SceneCameraConfig) -> App {
+        let mut app = App::new();
+        let session_id = SceneSessionId::from(session_id);
+        app.add_systems(Startup, move |mut commands: Commands| {
+            spawn_scene_camera(&mut commands, &session_id, config.clone());
+        });
+        app.update();
+        app
+    }
+
+    #[test]
+    fn scene_camera_orders_keep_3d_below_2d_and_ui() {
+        assert!(SCENE_CAMERA_3D_ORDER < SCENE_CAMERA_2D_ORDER);
+    }
+
+    #[test]
+    fn spawned_3d_scene_camera_order_does_not_conflict_with_2d_order() {
+        let mut app = app_with_scene_camera("scene-3d", SceneCameraConfig::gameplay_3d());
+
+        let mut cameras = app
+            .world_mut()
+            .query_filtered::<(&Camera, &SceneCameraRig, &SceneOwned), With<Camera3d>>();
+        let (camera, rig, owned) = cameras.single(app.world()).unwrap();
+
+        assert_eq!(camera.order, SCENE_CAMERA_3D_ORDER);
+        assert_ne!(camera.order, SCENE_CAMERA_2D_ORDER);
+        assert_eq!(rig.session_id, SceneSessionId::from("scene-3d"));
+        assert_eq!(owned.session_id, SceneSessionId::from("scene-3d"));
+    }
 }

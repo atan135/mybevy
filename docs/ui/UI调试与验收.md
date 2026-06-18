@@ -81,7 +81,7 @@ Android 打包命令：
 
 ```powershell
 Set-Location project
-cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs build --release
+cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib -- --crate-type cdylib
 Set-Location ..\android
 .\gradlew.bat assembleDebug
 ```
