@@ -1,3 +1,4 @@
+mod sample_scene;
 mod touch_ripple;
 
 use bevy::prelude::*;
@@ -11,6 +12,14 @@ impl Plugin for GameplayScreensPlugin {
         app.add_systems(
             OnEnter(AppUiMode::WanfaTouchRipple),
             touch_ripple::setup_touch_ripple_overlay,
+        )
+        .add_systems(
+            OnEnter(AppUiMode::SampleScene),
+            sample_scene::setup_sample_scene_hud,
+        )
+        .add_systems(
+            Update,
+            sample_scene::handle_sample_scene_hud_buttons.run_if(in_state(AppUiMode::SampleScene)),
         );
     }
 }
