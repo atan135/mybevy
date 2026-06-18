@@ -19,7 +19,12 @@ impl Plugin for GameplayScreensPlugin {
         )
         .add_systems(
             Update,
-            sample_scene::handle_sample_scene_hud_buttons.run_if(in_state(AppUiMode::SampleScene)),
+            (
+                sample_scene::handle_sample_scene_hud_buttons,
+                sample_scene::route_to_lobby_on_sample_scene_exit,
+            )
+                .chain()
+                .run_if(in_state(AppUiMode::SampleScene)),
         );
     }
 }

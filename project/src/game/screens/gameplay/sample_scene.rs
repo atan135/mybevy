@@ -1,7 +1,10 @@
-use bevy::prelude::*;
+use bevy::{
+    ecs::message::{MessageCursor, Messages},
+    prelude::*,
+};
 
 use crate::framework::{
-    scene::prelude::{SceneCommand, SceneExitRequest},
+    scene::prelude::{SceneCommand, SceneEvent, SceneExitRequest},
     ui::{
         core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport},
         i18n::UiI18n,
@@ -112,5 +115,131 @@ pub(super) fn handle_sample_scene_hud_buttons(
 
         scene_commands.write(SceneCommand::Exit(SceneExitRequest::default()));
         route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+    }
+}
+
+pub(super) fn route_to_lobby_on_sample_scene_exit(
+    mut scene_events: MessageReader<SceneEvent>,
+    current_mode: Res<State<AppUiMode>>,
+    mut route_cursor: Local<MessageCursor<GameRouteCommand>>,
+    mut route_messages: ResMut<Messages<GameRouteCommand>>,
+) {
+    let already_routing_to_lobby = route_cursor
+        .read(&route_messages)
+        .any(is_lobby_route_command);
+
+    let mut sample_scene_exited = false;
+    for event in scene_events.read() {
+        let SceneEvent::Exited(exited) = event else {
+            continue;
+        };
+
+        if exited.scene_id.as_str() != crate::game::scenes::SAMPLE_DUNGEON_ROOM_SCENE_ID {
+            continue;
+        }
+
+        sample_scene_exited = true;
+        break;
+    }
+
+    if should_route_sample_scene_exit_to_lobby(*current_mode.get(), already_routing_to_lobby)
+        && sample_scene_exited
+    {
+        route_messages.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+    }
+}
+
+fn should_route_sample_scene_exit_to_lobby(
+    current_mode: AppUiMode,
+    already_routing_to_lobby: bool,
+) -> bool {
+    current_mode == AppUiMode::SampleScene && !already_routing_to_lobby
+}
+
+fn is_lobby_route_command(command: &GameRouteCommand) -> bool {
+    matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Lobby))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framework::ui::widgets::UiButtonEvent;
+
+    #[test]
+    fn lobby_button_writes_scene_exit_and_lobby_route() {
+        let mut app = App::new();
+        app.add_message::<SceneCommand>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<UiButtonEvent>()
+            .add_systems(Update, handle_sample_scene_hud_buttons);
+
+        let lobby_button = app.world_mut().spawn(SampleSceneLobbyButton).id();
+        let ignored_button = app.world_mut().spawn_empty().id();
+
+        app.world_mut().write_message(UiButtonEvent {
+            entity: ignored_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.world_mut().write_message(UiButtonEvent {
+            entity: lobby_button,
+            kind: UiButtonEventKind::Down,
+            button: None,
+        });
+        app.world_mut().write_message(UiButtonEvent {
+            entity: lobby_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+
+        app.update();
+
+        let scene_commands = read_messages::<SceneCommand>(app.world());
+        assert_eq!(
+            scene_commands,
+            vec![SceneCommand::Exit(SceneExitRequest::default())]
+        );
+
+        let route_commands = read_messages::<GameRouteCommand>(app.world());
+        assert_eq!(route_commands.len(), 1);
+        assert!(matches!(
+            route_commands[0],
+            GameRouteCommand::ChangeMode(AppUiMode::Lobby)
+        ));
+    }
+
+    #[test]
+    fn sample_scene_exit_fallback_only_routes_while_hud_is_active() {
+        assert!(should_route_sample_scene_exit_to_lobby(
+            AppUiMode::SampleScene,
+            false
+        ));
+        assert!(!should_route_sample_scene_exit_to_lobby(
+            AppUiMode::SampleScene,
+            true
+        ));
+        assert!(!should_route_sample_scene_exit_to_lobby(
+            AppUiMode::Lobby,
+            false
+        ));
+        assert!(!should_route_sample_scene_exit_to_lobby(
+            AppUiMode::Login,
+            false
+        ));
+        assert!(is_lobby_route_command(&GameRouteCommand::ChangeMode(
+            AppUiMode::Lobby
+        )));
+        assert!(!is_lobby_route_command(&GameRouteCommand::ChangeMode(
+            AppUiMode::SampleScene
+        )));
+    }
+
+    fn read_messages<M>(world: &World) -> Vec<M>
+    where
+        M: Message + Clone,
+    {
+        let messages = world.resource::<Messages<M>>();
+        let mut cursor = MessageCursor::default();
+        cursor.read(messages).cloned().collect()
     }
 }

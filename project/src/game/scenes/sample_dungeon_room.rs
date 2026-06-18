@@ -457,8 +457,43 @@ fn first_package_asset_root_candidates() -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use crate::framework::scene::prelude::{
-        SceneLayerState, spawn_scene_layer_root, spawn_scene_root, spawn_scene_runtime_root,
+        SceneEntered, SceneLayerState, spawn_scene_layer_root, spawn_scene_root,
+        spawn_scene_runtime_root,
     };
+
+    fn sample_layout_with_prefabs_and_lights() -> SampleDungeonRoomLayout {
+        SampleDungeonRoomLayout {
+            prefabs: vec![SampleDungeonRoomPrefab {
+                id: "floor.center".to_string(),
+                asset_path: "models/scenes/kaykit_dungeon_remastered/floor_tile_large.gltf"
+                    .to_string(),
+                layer: "terrain".to_string(),
+                translation: [1.0, 2.0, 3.0],
+                rotation: [0.0, 90.0, 180.0],
+                scale: [1.0, 2.0, 3.0],
+            }],
+            lights: vec![
+                SampleDungeonRoomLight {
+                    id: "sun".to_string(),
+                    kind: SampleDungeonRoomLightKind::Directional,
+                    translation: [0.0, 6.0, 0.0],
+                    rotation: [-45.0, -25.0, 0.0],
+                    color: [1.0, 0.94, 0.82],
+                    intensity: 2500.0,
+                    range: None,
+                },
+                SampleDungeonRoomLight {
+                    id: "torch.light.northwest".to_string(),
+                    kind: SampleDungeonRoomLightKind::Point,
+                    translation: [-4.2, 1.8, -2.0],
+                    rotation: [0.0, 0.0, 0.0],
+                    color: [1.0, 0.58, 0.28],
+                    intensity: 350.0,
+                    range: Some(5.0),
+                },
+            ],
+        }
+    }
 
     #[test]
     fn parse_layout_reads_prefabs_and_lights() {
@@ -708,6 +743,134 @@ mod tests {
                 && point.intensity == 300.0
                 && point.range == 4.5
         }));
+    }
+
+    #[test]
+    fn spawn_prefabs_parents_to_layer_root_and_marks_session() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<bevy::scene::Scene>();
+        let session_id = SceneSessionId::from("sample-session");
+        let scene_root = spawn_scene_root(
+            &mut app.world_mut().commands(),
+            &SAMPLE_DUNGEON_ROOM_SCENE_ID.into(),
+            &session_id,
+        );
+        let terrain_root = spawn_scene_layer_root(
+            &mut app.world_mut().commands(),
+            scene_root,
+            &session_id,
+            "terrain",
+            SceneLayerState::Active,
+            true,
+        );
+        let runtime_root =
+            spawn_scene_runtime_root(&mut app.world_mut().commands(), scene_root, &session_id);
+        app.update();
+
+        let layout = sample_layout_with_prefabs_and_lights();
+        let asset_server = app.world().resource::<AssetServer>().clone();
+        let layer_root_entries = {
+            let mut layer_roots = app.world_mut().query::<(Entity, &SceneLayerRoot)>();
+            layer_roots
+                .iter(app.world())
+                .map(|(entity, root)| (entity, root.clone()))
+                .collect::<Vec<_>>()
+        };
+        let runtime_root_entries = {
+            let mut runtime_roots = app.world_mut().query::<(Entity, &SceneRuntimeRoot)>();
+            runtime_roots
+                .iter(app.world())
+                .map(|(entity, root)| (entity, root.clone()))
+                .collect::<Vec<_>>()
+        };
+
+        spawn_sample_dungeon_room_prefabs(
+            &mut app.world_mut().commands(),
+            &asset_server,
+            &layout,
+            &session_id,
+            layer_root_entries
+                .iter()
+                .map(|(entity, root)| (*entity, root)),
+            runtime_root_entries
+                .iter()
+                .map(|(entity, root)| (*entity, root)),
+        );
+        app.update();
+
+        let mut prefabs = app.world_mut().query::<(
+            Entity,
+            &BevySceneRoot,
+            &Transform,
+            &ChildOf,
+            &SceneOwned,
+            &SampleDungeonRoomContent,
+            &Name,
+        )>();
+        let prefab_entities = prefabs.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(prefab_entities.len(), 1);
+
+        let (_, _, transform, parent, owned, content, name) = prefab_entities[0];
+        assert_eq!(parent.parent(), terrain_root);
+        assert_ne!(parent.parent(), runtime_root);
+        assert_eq!(owned.session_id, session_id);
+        assert_eq!(content.session_id, session_id);
+        assert_eq!(name.as_str(), "SampleDungeonPrefab(floor.center)");
+        assert_eq!(transform.translation, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(transform.scale, Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn duplicate_enter_events_for_same_session_do_not_duplicate_content() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<bevy::scene::Scene>()
+            .add_message::<SceneEvent>()
+            .add_message::<GameRouteCommand>()
+            .add_systems(Update, instantiate_sample_dungeon_room_content);
+
+        let session_id = SceneSessionId::from("sample-session");
+        let scene_root = spawn_scene_root(
+            &mut app.world_mut().commands(),
+            &SAMPLE_DUNGEON_ROOM_SCENE_ID.into(),
+            &session_id,
+        );
+        spawn_scene_layer_root(
+            &mut app.world_mut().commands(),
+            scene_root,
+            &session_id,
+            "terrain",
+            SceneLayerState::Active,
+            true,
+        );
+        spawn_scene_runtime_root(&mut app.world_mut().commands(), scene_root, &session_id);
+        app.update();
+
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id: SAMPLE_DUNGEON_ROOM_SCENE_ID.into(),
+                session_id: session_id.clone(),
+                content_version: None,
+            }));
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id: SAMPLE_DUNGEON_ROOM_SCENE_ID.into(),
+                session_id: session_id.clone(),
+                content_version: None,
+            }));
+        app.update();
+
+        let mut content = app.world_mut().query::<&SampleDungeonRoomContent>();
+        let content_sessions = content
+            .iter(app.world())
+            .filter(|content| content.session_id == session_id)
+            .count();
+        let expected_content_count =
+            SampleDungeonRoomLayout::load_first_package_ron(SAMPLE_DUNGEON_ROOM_LAYOUT_PATH)
+                .map(|layout| layout.prefabs.len() + layout.lights.len())
+                .unwrap();
+        assert_eq!(content_sessions, expected_content_count);
     }
 
     #[test]
