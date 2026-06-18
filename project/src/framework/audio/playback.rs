@@ -12,6 +12,7 @@ use super::{
         AudioStopReason,
     },
     id::{AudioClipId, AudioCueId, AudioInstanceId},
+    mixer::AudioMixer,
     scope::{AudioBus, AudioScope},
 };
 
@@ -27,6 +28,7 @@ pub struct AudioInstanceState {
     pub cue_id: Option<AudioCueId>,
     pub scope: AudioScope,
     pub bus: AudioBus,
+    pub volume: f32,
     pub asset_path: String,
     pub source: Handle<AudioSource>,
     pub failed: bool,
@@ -43,6 +45,7 @@ pub fn handle_audio_playback_commands(
     mut audio_events: MessageWriter<AudioEvent>,
     asset_server: Res<AssetServer>,
     catalog: Res<AudioCatalog>,
+    mixer: Res<AudioMixer>,
     mut playback: ResMut<AudioPlaybackState>,
 ) {
     for command in audio_commands.read() {
@@ -54,6 +57,7 @@ pub fn handle_audio_playback_commands(
                     &mut audio_events,
                     &asset_server,
                     &catalog,
+                    &mixer,
                     &mut playback,
                 );
             }
@@ -65,6 +69,7 @@ pub fn handle_audio_playback_commands(
                     &mut audio_events,
                     &asset_server,
                     &catalog,
+                    &mixer,
                     &mut playback,
                 );
             }
@@ -149,6 +154,7 @@ fn play_cue(
     audio_events: &mut MessageWriter<AudioEvent>,
     asset_server: &AssetServer,
     catalog: &AudioCatalog,
+    mixer: &AudioMixer,
     playback: &mut AudioPlaybackState,
 ) {
     let resolved = match catalog.resolve_cue(&request.cue_id) {
@@ -182,6 +188,7 @@ fn play_cue(
     let Some(instance_id) = spawn_audio_instance(
         commands,
         asset_server,
+        mixer,
         playback,
         SpawnAudioInstance {
             clip_id: clip.clip_id.clone(),
@@ -213,6 +220,7 @@ fn play_clip(
     audio_events: &mut MessageWriter<AudioEvent>,
     asset_server: &AssetServer,
     catalog: &AudioCatalog,
+    mixer: &AudioMixer,
     playback: &mut AudioPlaybackState,
 ) {
     let clip = match catalog.clip(&request.clip_id) {
@@ -226,6 +234,7 @@ fn play_clip(
     let Some(instance_id) = spawn_audio_instance(
         commands,
         asset_server,
+        mixer,
         playback,
         SpawnAudioInstance {
             clip_id: request.clip_id.clone(),
@@ -264,19 +273,22 @@ struct SpawnAudioInstance {
 fn spawn_audio_instance(
     commands: &mut Commands,
     asset_server: &AssetServer,
+    mixer: &AudioMixer,
     playback: &mut AudioPlaybackState,
     request: SpawnAudioInstance,
 ) -> Option<AudioInstanceId> {
     let instance_id = AudioInstanceId::new();
     let source = asset_server.load::<AudioSource>(request.asset_path.clone());
+    let volume = request.volume.max(0.0);
     let settings = PlaybackSettings {
         mode: if request.looped {
             PlaybackMode::Loop
         } else {
             PlaybackMode::Despawn
         },
-        volume: Volume::Linear(request.volume.max(0.0)),
+        volume: Volume::Linear(mixer.target_instance_volume(volume, request.bus)),
         speed: request.pitch.max(0.01),
+        paused: mixer.effective_bus_paused(request.bus),
         ..PlaybackSettings::default()
     };
 
@@ -296,6 +308,7 @@ fn spawn_audio_instance(
             cue_id: request.cue_id,
             scope: request.scope,
             bus: request.bus,
+            volume,
             asset_path: request.asset_path,
             source,
             failed: false,
@@ -354,6 +367,7 @@ mod tests {
             .add_message::<AudioEvent>()
             .init_asset::<AudioSource>()
             .init_resource::<AudioCatalog>()
+            .init_resource::<AudioMixer>()
             .init_resource::<AudioPlaybackState>()
             .add_systems(Update, handle_audio_playback_commands);
         app
@@ -392,6 +406,7 @@ mod tests {
         assert_eq!(instance.cue_id, None);
         assert_eq!(instance.scope, AudioScope::Ui);
         assert_eq!(instance.bus, AudioBus::Ui);
+        assert_eq!(instance.volume, 0.75);
         assert_eq!(instance.asset_path, "audio/ui/click.ogg");
 
         let entity = app.world().entity(instance.entity);
@@ -460,6 +475,7 @@ mod tests {
         assert_eq!(instance.cue_id, Some(cue_id.clone()));
         assert_eq!(instance.scope, AudioScope::Ui);
         assert_eq!(instance.bus, AudioBus::Ui);
+        assert_eq!(instance.volume, 0.4);
         assert_eq!(instance.asset_path, "audio/ui/click.ogg");
 
         let settings = app
@@ -481,6 +497,77 @@ mod tests {
                 bus: AudioBus::Ui,
             })]
         );
+    }
+
+    #[test]
+    fn play_clip_keeps_base_volume_but_uses_mixer_for_initial_settings() {
+        let mut app = playback_app();
+        let clip_id = clip_id("music.title");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/music/title.ogg");
+        app.world_mut()
+            .resource_mut::<AudioMixer>()
+            .set_bus_volume(AudioBus::Music, 0.25);
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest {
+                clip_id: clip_id.clone(),
+                scope: AudioScope::Global,
+                bus: AudioBus::Music,
+                volume: 0.8,
+                pitch: 1.0,
+                looped: true,
+                fade_in_seconds: None,
+            }));
+
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        let instance = playback.instances.values().next().unwrap();
+        assert_eq!(instance.volume, 0.8);
+
+        let settings = app
+            .world()
+            .entity(instance.entity)
+            .get::<PlaybackSettings>()
+            .unwrap();
+        assert_eq!(settings.volume, Volume::Linear(0.2));
+    }
+
+    #[test]
+    fn play_clip_uses_mixer_paused_state_for_initial_settings() {
+        let mut app = playback_app();
+        let clip_id = clip_id("ui.notice");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/ui/notice.ogg");
+        app.world_mut()
+            .resource_mut::<AudioMixer>()
+            .set_bus_paused(AudioBus::Master, true);
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest {
+                clip_id: clip_id.clone(),
+                scope: AudioScope::Ui,
+                bus: AudioBus::Ui,
+                volume: 0.6,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+            }));
+
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        let instance = playback.instances.values().next().unwrap();
+        assert_eq!(instance.volume, 0.6);
+
+        let settings = app
+            .world()
+            .entity(instance.entity)
+            .get::<PlaybackSettings>()
+            .unwrap();
+        assert!(settings.paused);
+        assert_eq!(settings.volume, Volume::Linear(0.6));
     }
 
     #[test]
@@ -570,6 +657,7 @@ mod tests {
                     cue_id: Some(cue_id.clone()),
                     scope: AudioScope::Ui,
                     bus: AudioBus::Ui,
+                    volume: 1.0,
                     asset_path: "audio/ui/click.ogg".to_string(),
                     source,
                     failed: false,

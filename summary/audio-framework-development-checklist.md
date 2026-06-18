@@ -154,15 +154,15 @@
   - [x] 支持短音效自然播放结束后的实例清理。
   - [x] 播放失败时发送 `AudioEvent::LoadFailed` 或等价错误事件。
 
-- [ ] 9. 实现 mixer 和运行中音量同步
-  - 开始时间：
-  - 结束时间：
-  - [ ] 保存 `Master`、`Music`、`Sfx`、`Ui` bus 音量。
-  - [ ] 支持 bus 静音和暂停状态。
-  - [ ] 处理 `SetBusVolume`、`SetBusMuted`、`SetBusPaused`。
-  - [ ] 将 bus 变化同步到已存在的 `AudioSink`。
-  - [ ] 验证运行中修改 Music 或 Ui bus 能影响当前播放实例。
-  - [ ] 为音量 clamp 和 muted 计算增加单元测试。
+- [x] 9. 实现 mixer 和运行中音量同步
+  - 开始时间：2026-06-18 18:44:46 +08:00
+  - 结束时间：2026-06-18 19:13:53 +08:00
+  - [x] 保存 `Master`、`Music`、`Sfx`、`Ui` bus 音量。
+  - [x] 支持 bus 静音和暂停状态。
+  - [x] 处理 `SetBusVolume`、`SetBusMuted`、`SetBusPaused`。
+  - [x] 将 bus 变化同步到已存在的 `AudioSink`。
+  - [x] 验证运行中修改 Music 或 Ui bus 能影响当前播放实例。
+  - [x] 为音量 clamp 和 muted 计算增加单元测试。
 
 - [ ] 10. 实现背景音乐控制器
   - 开始时间：
