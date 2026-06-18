@@ -1,12 +1,12 @@
-# Audio Test Assets
+# Audio Placeholder Assets
 
-This directory contains a small development-only sample set copied from:
+This directory contains a small development-only placeholder set copied from:
 
 ```text
 E:\audiokinectic\SampleProject\Originals
 ```
 
-The files are intentionally limited to a few WAV assets for framework testing. Do not treat this set as final game content.
+The files are intentionally limited to a few WAV assets for audio framework testing. They are not final game content.
 
 ## Layout
 
@@ -22,4 +22,5 @@ The files are intentionally limited to a few WAV assets for framework testing. D
 
 - Source Wwise project files such as `.ssm`, `.ssp`, `.mid`, `.amb`, and `.model` were not copied.
 - File names were normalized to lowercase snake case for stable asset paths.
-- Verify the original Audiokinetic Sample Project license before redistributing these assets outside local development builds.
+- Treat these files as placeholder resources for local development and internal test builds only.
+- Before any public release, replace these placeholders with owned, commissioned, or clearly redistributable audio and record the license/source next to the asset or in `project/assets/licenses/`.
