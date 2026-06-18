@@ -17,7 +17,13 @@ pub use super::command::{
     AudioMusicFadeCommand, AudioMusicRequest, AudioScopeCommand, AudioScopeFadeCommand,
     AudioSpatialCueRequest, AudioStopInstanceCommand,
 };
-pub use super::debug::AudioDebugConfig;
+pub use super::debug::{
+    AudioDebugActiveInstanceCounts, AudioDebugBusInstanceCount, AudioDebugConfig,
+    AudioDebugCueSkipped, AudioDebugCueStarted, AudioDebugDiagnostics, AudioDebugInstanceInfo,
+    AudioDebugLoadFailure, AudioDebugLoadingGroupInfo, AudioDebugSnapshot, AudioDebugState,
+    DEFAULT_AUDIO_DEBUG_RECENT_LIMIT, active_audio_instance_counts, audio_debug_instance_info,
+    audio_debug_loading_group_info, audio_debug_snapshot,
+};
 pub use super::event::{
     AudioBusChange, AudioBusChanged, AudioClipStarted, AudioCueSkipReason, AudioCueSkipped,
     AudioCueStarted, AudioEvent, AudioInstanceStopped, AudioLoadFailed, AudioLoadProgress,

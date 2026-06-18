@@ -6,7 +6,7 @@ use crate::framework::ui::widgets::UiButtonEvent;
 use super::{
     catalog::AudioCatalog,
     command::AudioCommand,
-    debug::AudioDebugConfig,
+    debug::{AudioDebugConfig, AudioDebugSnapshot, AudioDebugState},
     event::AudioEvent,
     loading::AudioLoadingState,
     mixer::AudioMixer,
@@ -28,7 +28,9 @@ impl Plugin for AudioPlugin {
             .init_resource::<AudioPlaybackState>()
             .init_resource::<AudioLoadingState>()
             .init_resource::<MusicController>()
-            .init_resource::<AudioDebugConfig>()
+            .insert_resource(AudioDebugConfig::from_env())
+            .init_resource::<AudioDebugState>()
+            .init_resource::<AudioDebugSnapshot>()
             .init_resource::<UiAudioAdapterConfig>()
             .init_resource::<UiAudioCooldowns>()
             .init_resource::<super::scene::SceneAudioAdapterConfig>()
@@ -67,6 +69,7 @@ impl Plugin for AudioPlugin {
                     super::playback::cleanup_finished_audio_instances
                         .in_set(AudioSystemSet::Cleanup),
                     super::music::cleanup_music_controller.in_set(AudioSystemSet::Cleanup),
+                    super::debug::update_audio_debug_snapshot.in_set(AudioSystemSet::Debug),
                 ),
             );
     }
@@ -112,6 +115,8 @@ mod tests {
         assert!(app.world().contains_resource::<AudioLoadingState>());
         assert!(app.world().contains_resource::<MusicController>());
         assert!(app.world().contains_resource::<AudioDebugConfig>());
+        assert!(app.world().contains_resource::<AudioDebugState>());
+        assert!(app.world().contains_resource::<AudioDebugSnapshot>());
         assert!(
             !app.world()
                 .contains_resource::<AudioSpatialListenerEntity>()
