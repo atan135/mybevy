@@ -4,7 +4,7 @@ use crate::framework::scene::ScenePlugin;
 
 use super::{
     authority::AuthorityPlugin, features::touch_ripple::TouchRipplePlugin,
-    myserver::MyServerPlugin, screens::ScreensPlugin,
+    myserver::MyServerPlugin, scenes::GameScenesPlugin, screens::ScreensPlugin,
 };
 
 pub struct GamePlugin;
@@ -13,6 +13,7 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             ScenePlugin,
+            GameScenesPlugin,
             MyServerPlugin,
             AuthorityPlugin,
             ScreensPlugin,
