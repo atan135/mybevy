@@ -94,16 +94,16 @@
   - [x] 按需在 `project/src/framework/prelude.rs` 导出常用 audio 类型。
   - [x] 确认新增模块不依赖 game layer。
 
-- [ ] 3. 定义音频 ID、bus 和 scope 类型
-  - 开始时间：
-  - 结束时间：
-  - [ ] 定义 `AudioClipId`。
-  - [ ] 定义 `AudioCueId`。
-  - [ ] 定义 `AudioGroupId`。
-  - [ ] 定义 `AudioInstanceId`。
-  - [ ] 定义 `AudioBus`，至少包含 `Master`、`Music`、`Sfx`、`Ui`。
-  - [ ] 定义 `AudioScope`，至少包含 `Global`、`Ui`、`Scene`、`Entity`、`Battle`。
-  - [ ] 为 ID 类型补充基础校验、Display、From<&str> 或等价构造能力。
+- [x] 3. 定义音频 ID、bus 和 scope 类型
+  - 开始时间：2026-06-18 17:16:00 +08:00
+  - 结束时间：2026-06-18 17:33:55 +08:00
+  - [x] 定义 `AudioClipId`。
+  - [x] 定义 `AudioCueId`。
+  - [x] 定义 `AudioGroupId`。
+  - [x] 定义 `AudioInstanceId`。
+  - [x] 定义 `AudioBus`，至少包含 `Master`、`Music`、`Sfx`、`Ui`。
+  - [x] 定义 `AudioScope`，至少包含 `Global`、`Ui`、`Scene`、`Entity`、`Battle`。
+  - [x] 为 ID 类型补充基础校验、Display、From<&str> 或等价构造能力。
 
 - [ ] 4. 定义音频命令和事件
   - 开始时间：
