@@ -16,7 +16,7 @@ pub(super) struct SampleDungeonRoomPlugin;
 
 impl Plugin for SampleDungeonRoomPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostUpdate, instantiate_sample_dungeon_room_prefabs);
+        app.add_systems(PostUpdate, instantiate_sample_dungeon_room_content);
     }
 }
 
@@ -86,12 +86,7 @@ impl SampleDungeonRoomPrefab {
     fn transform(&self) -> Transform {
         Transform {
             translation: Vec3::from_array(self.translation),
-            rotation: Quat::from_euler(
-                EulerRot::XYZ,
-                self.rotation[0].to_radians(),
-                self.rotation[1].to_radians(),
-                self.rotation[2].to_radians(),
-            ),
+            rotation: rotation_from_degrees(self.rotation),
             scale: Vec3::from_array(self.scale),
         }
     }
@@ -126,6 +121,41 @@ impl Default for SampleDungeonRoomLight {
     }
 }
 
+impl SampleDungeonRoomLight {
+    const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
+
+    fn transform(&self) -> Transform {
+        Transform {
+            translation: Vec3::from_array(self.translation),
+            rotation: rotation_from_degrees(self.rotation),
+            scale: Vec3::ONE,
+        }
+    }
+
+    fn color(&self) -> Color {
+        Color::srgb(self.color[0], self.color[1], self.color[2])
+    }
+
+    fn point_light(&self) -> PointLight {
+        PointLight {
+            color: self.color(),
+            intensity: self.intensity,
+            range: self.range.unwrap_or(Self::DEFAULT_POINT_LIGHT_RANGE),
+            shadows_enabled: false,
+            ..default()
+        }
+    }
+
+    fn directional_light(&self) -> DirectionalLight {
+        DirectionalLight {
+            color: self.color(),
+            illuminance: self.intensity,
+            shadows_enabled: false,
+            ..default()
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum SampleDungeonRoomLightKind {
     Directional,
@@ -150,6 +180,27 @@ impl<'de> Deserialize<'de> for SampleDungeonRoomLightKind {
 #[derive(Clone, Debug, Component, PartialEq, Eq)]
 struct SampleDungeonRoomContent {
     session_id: SceneSessionId,
+}
+
+#[derive(Bundle)]
+struct SampleDungeonRoomCommonLightBundle {
+    transform: Transform,
+    scene_owned: SceneOwned,
+    content: SampleDungeonRoomContent,
+    name: Name,
+}
+
+impl SampleDungeonRoomCommonLightBundle {
+    fn new(light: &SampleDungeonRoomLight, session_id: &SceneSessionId) -> Self {
+        Self {
+            transform: light.transform(),
+            scene_owned: SceneOwned::new(session_id.clone()),
+            content: SampleDungeonRoomContent {
+                session_id: session_id.clone(),
+            },
+            name: Name::new(format!("SampleDungeonLight({})", light.id)),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -202,7 +253,7 @@ impl std::error::Error for SampleLayoutLoadError {
     }
 }
 
-fn instantiate_sample_dungeon_room_prefabs(
+fn instantiate_sample_dungeon_room_content(
     mut commands: Commands,
     mut scene_events: MessageReader<SceneEvent>,
     asset_server: Res<AssetServer>,
@@ -240,36 +291,90 @@ fn instantiate_sample_dungeon_room_prefabs(
         };
         instantiated_sessions.push(entered.session_id.clone());
 
-        for prefab in &layout.prefabs {
-            let parent = parent_for_prefab(
-                &prefab.layer,
-                &entered.session_id,
-                layer_roots.iter(),
-                runtime_roots.iter(),
-            );
-            let Some(parent) = parent else {
-                warn!(
-                    "skipping sample dungeon prefab `{}` because session `{}` has no layer or runtime root",
-                    prefab.id, entered.session_id
-                );
-                continue;
-            };
+        spawn_sample_dungeon_room_prefabs(
+            &mut commands,
+            &asset_server,
+            &layout,
+            &entered.session_id,
+            layer_roots.iter(),
+            runtime_roots.iter(),
+        );
+        spawn_sample_dungeon_room_lights(
+            &mut commands,
+            &layout,
+            &entered.session_id,
+            runtime_roots.iter(),
+        );
+    }
+}
 
-            let scene_handle =
-                asset_server.load(GltfAssetLabel::Scene(0).from_asset(prefab.asset_path.clone()));
-            let prefab_entity = commands
+fn spawn_sample_dungeon_room_prefabs<'layer, 'runtime>(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    layout: &SampleDungeonRoomLayout,
+    session_id: &SceneSessionId,
+    layer_roots: impl IntoIterator<Item = (Entity, &'layer SceneLayerRoot)> + Clone,
+    runtime_roots: impl IntoIterator<Item = (Entity, &'runtime SceneRuntimeRoot)> + Clone,
+) {
+    for prefab in &layout.prefabs {
+        let parent = parent_for_prefab(
+            &prefab.layer,
+            session_id,
+            layer_roots.clone(),
+            runtime_roots.clone(),
+        );
+        let Some(parent) = parent else {
+            warn!(
+                "skipping sample dungeon prefab `{}` because session `{}` has no layer or runtime root",
+                prefab.id, session_id
+            );
+            continue;
+        };
+
+        let scene_handle =
+            asset_server.load(GltfAssetLabel::Scene(0).from_asset(prefab.asset_path.clone()));
+        let prefab_entity = commands
+            .spawn((
+                BevySceneRoot(scene_handle),
+                prefab.transform(),
+                SceneOwned::new(session_id.clone()),
+                SampleDungeonRoomContent {
+                    session_id: session_id.clone(),
+                },
+                Name::new(format!("SampleDungeonPrefab({})", prefab.id)),
+            ))
+            .id();
+        commands.entity(parent).add_child(prefab_entity);
+    }
+}
+
+fn spawn_sample_dungeon_room_lights<'runtime>(
+    commands: &mut Commands,
+    layout: &SampleDungeonRoomLayout,
+    session_id: &SceneSessionId,
+    runtime_roots: impl IntoIterator<Item = (Entity, &'runtime SceneRuntimeRoot)> + Clone,
+) {
+    let Some(parent) = find_runtime_root_entity(session_id, runtime_roots.clone()) else {
+        warn!("skipping sample dungeon lights because session `{session_id}` has no runtime root");
+        return;
+    };
+
+    for light in &layout.lights {
+        let light_entity = match light.kind {
+            SampleDungeonRoomLightKind::Directional => commands
                 .spawn((
-                    BevySceneRoot(scene_handle),
-                    prefab.transform(),
-                    SceneOwned::new(entered.session_id.clone()),
-                    SampleDungeonRoomContent {
-                        session_id: entered.session_id.clone(),
-                    },
-                    Name::new(format!("SampleDungeonPrefab({})", prefab.id)),
+                    light.directional_light(),
+                    SampleDungeonRoomCommonLightBundle::new(light, session_id),
                 ))
-                .id();
-            commands.entity(parent).add_child(prefab_entity);
-        }
+                .id(),
+            SampleDungeonRoomLightKind::Point => commands
+                .spawn((
+                    light.point_light(),
+                    SampleDungeonRoomCommonLightBundle::new(light, session_id),
+                ))
+                .id(),
+        };
+        commands.entity(parent).add_child(light_entity);
     }
 }
 
@@ -316,6 +421,15 @@ where
             &"exactly three f32 values",
         )),
     }
+}
+
+fn rotation_from_degrees(rotation: [f32; 3]) -> Quat {
+    Quat::from_euler(
+        EulerRot::XYZ,
+        rotation[0].to_radians(),
+        rotation[1].to_radians(),
+        rotation[2].to_radians(),
+    )
 }
 
 fn first_package_layout_fs_path(layout_path: &str) -> Option<PathBuf> {
@@ -419,6 +533,178 @@ mod tests {
                 .any(|prefab| prefab.id == "floor.center")
         );
         assert!(layout.lights.iter().any(|light| light.id == "sun"));
+        assert_eq!(
+            layout
+                .lights
+                .iter()
+                .filter(|light| light.kind == SampleDungeonRoomLightKind::Directional)
+                .count(),
+            1
+        );
+        assert_eq!(
+            layout
+                .lights
+                .iter()
+                .filter(|light| light.kind == SampleDungeonRoomLightKind::Point)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn light_helpers_map_transform_color_kind_and_range() {
+        let directional = SampleDungeonRoomLight {
+            id: "sun".to_string(),
+            kind: SampleDungeonRoomLightKind::Directional,
+            translation: [1.0, 2.0, 3.0],
+            rotation: [-45.0, -25.0, 0.0],
+            color: [1.0, 0.94, 0.82],
+            intensity: 2500.0,
+            range: None,
+        };
+        let point = SampleDungeonRoomLight {
+            id: "torch".to_string(),
+            kind: SampleDungeonRoomLightKind::Point,
+            translation: [4.2, 1.8, 2.0],
+            rotation: [0.0, 90.0, 0.0],
+            color: [1.0, 0.58, 0.28],
+            intensity: 300.0,
+            range: Some(4.5),
+        };
+
+        let directional_transform = directional.transform();
+        assert_eq!(directional_transform.translation, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(
+            directional_transform.rotation,
+            rotation_from_degrees([-45.0, -25.0, 0.0])
+        );
+        assert_eq!(directional_transform.scale, Vec3::ONE);
+
+        let directional_light = directional.directional_light();
+        assert_eq!(directional_light.illuminance, 2500.0);
+        assert_eq!(directional_light.color.to_srgba().red, 1.0);
+        assert_eq!(directional_light.color.to_srgba().green, 0.94);
+        assert_eq!(directional_light.color.to_srgba().blue, 0.82);
+        assert!(!directional_light.shadows_enabled);
+
+        let point_light = point.point_light();
+        assert_eq!(point_light.intensity, 300.0);
+        assert_eq!(point_light.range, 4.5);
+        assert_eq!(point_light.color.to_srgba().green, 0.58);
+        assert!(!point_light.shadows_enabled);
+    }
+
+    #[test]
+    fn spawn_lights_parents_to_runtime_root_and_marks_session() {
+        let mut app = App::new();
+        let session_id = SceneSessionId::from("sample-session");
+        let scene_root = spawn_scene_root(
+            &mut app.world_mut().commands(),
+            &SAMPLE_DUNGEON_ROOM_SCENE_ID.into(),
+            &session_id,
+        );
+        let runtime_root =
+            spawn_scene_runtime_root(&mut app.world_mut().commands(), scene_root, &session_id);
+        app.update();
+
+        let layout = SampleDungeonRoomLayout {
+            prefabs: Vec::new(),
+            lights: vec![
+                SampleDungeonRoomLight {
+                    id: "sun".to_string(),
+                    kind: SampleDungeonRoomLightKind::Directional,
+                    translation: [0.0, 6.0, 0.0],
+                    rotation: [-45.0, -25.0, 0.0],
+                    color: [1.0, 0.94, 0.82],
+                    intensity: 2500.0,
+                    range: None,
+                },
+                SampleDungeonRoomLight {
+                    id: "torch.light.northwest".to_string(),
+                    kind: SampleDungeonRoomLightKind::Point,
+                    translation: [-4.2, 1.8, -2.0],
+                    rotation: [0.0, 0.0, 0.0],
+                    color: [1.0, 0.58, 0.28],
+                    intensity: 350.0,
+                    range: Some(5.0),
+                },
+                SampleDungeonRoomLight {
+                    id: "torch.light.southeast".to_string(),
+                    kind: SampleDungeonRoomLightKind::Point,
+                    translation: [4.2, 1.8, 2.0],
+                    rotation: [0.0, 0.0, 0.0],
+                    color: [1.0, 0.58, 0.28],
+                    intensity: 300.0,
+                    range: Some(4.5),
+                },
+            ],
+        };
+
+        let runtime_root_entries = {
+            let mut runtime_roots = app.world_mut().query::<(Entity, &SceneRuntimeRoot)>();
+            runtime_roots
+                .iter(app.world())
+                .map(|(entity, root)| (entity, root.clone()))
+                .collect::<Vec<_>>()
+        };
+        {
+            spawn_sample_dungeon_room_lights(
+                &mut app.world_mut().commands(),
+                &layout,
+                &session_id,
+                runtime_root_entries
+                    .iter()
+                    .map(|(entity, root)| (*entity, root)),
+            );
+        }
+        app.update();
+
+        let mut directional_lights = app.world_mut().query::<(
+            Entity,
+            &DirectionalLight,
+            &ChildOf,
+            &SceneOwned,
+            &SampleDungeonRoomContent,
+            &Name,
+        )>();
+        let directional_entities = directional_lights.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(directional_entities.len(), 1);
+        let (_, directional, parent, owned, content, name) = directional_entities[0];
+        assert_eq!(parent.parent(), runtime_root);
+        assert_eq!(owned.session_id, session_id);
+        assert_eq!(content.session_id, session_id);
+        assert_eq!(name.as_str(), "SampleDungeonLight(sun)");
+        assert_eq!(directional.illuminance, 2500.0);
+
+        let mut point_lights = app.world_mut().query::<(
+            Entity,
+            &PointLight,
+            &ChildOf,
+            &SceneOwned,
+            &SampleDungeonRoomContent,
+            &Name,
+        )>();
+        let point_entities = point_lights.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(point_entities.len(), 2);
+        assert!(
+            point_entities
+                .iter()
+                .all(|(_, _, parent, owned, content, _)| {
+                    parent.parent() == runtime_root
+                        && owned.session_id == session_id
+                        && content.session_id == session_id
+                })
+        );
+        assert!(point_entities.iter().any(|(_, point, _, _, _, name)| {
+            name.as_str() == "SampleDungeonLight(torch.light.northwest)"
+                && point.intensity == 350.0
+                && point.range == 5.0
+        }));
+        assert!(point_entities.iter().any(|(_, point, _, _, _, name)| {
+            name.as_str() == "SampleDungeonLight(torch.light.southeast)"
+                && point.intensity == 300.0
+                && point.range == 4.5
+        }));
     }
 
     #[test]
