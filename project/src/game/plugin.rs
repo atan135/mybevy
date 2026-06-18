@@ -1,6 +1,6 @@
 use bevy::{prelude::*, ui::IsDefaultUiCamera};
 
-use crate::framework::scene::ScenePlugin;
+use crate::framework::{audio::AudioPlugin, scene::ScenePlugin};
 
 use super::{
     authority::AuthorityPlugin, features::touch_ripple::TouchRipplePlugin,
@@ -14,6 +14,7 @@ pub const GLOBAL_UI_CAMERA_ORDER: isize = 1;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
+            AudioPlugin,
             ScenePlugin,
             GameScenesPlugin,
             MyServerPlugin,

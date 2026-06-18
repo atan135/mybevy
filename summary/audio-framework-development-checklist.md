@@ -116,14 +116,14 @@
   - [x] 定义 `PreloadGroup`、`UnloadGroup`。
   - [x] 定义播放、跳过、停止、加载失败、音乐切换和 bus 变化事件。
 
-- [ ] 5. 接入 `AudioPlugin`
-  - 开始时间：
-  - 结束时间：
-  - [ ] 在 `AudioPlugin` 中注册 `AudioCommand`。
-  - [ ] 在 `AudioPlugin` 中注册 `AudioEvent`。
-  - [ ] 初始化 catalog、mixer、playback、music 和 debug 资源。
-  - [ ] 配置 audio 相关 system set，保证命令处理、sink 同步和清理顺序稳定。
-  - [ ] 在 `GamePlugin` 或上层插件中接入 `AudioPlugin`。
+- [x] 5. 接入 `AudioPlugin`
+  - 开始时间：2026-06-18 17:44:08 +08:00
+  - 结束时间：2026-06-18 17:51:36 +08:00
+  - [x] 在 `AudioPlugin` 中注册 `AudioCommand`。
+  - [x] 在 `AudioPlugin` 中注册 `AudioEvent`。
+  - [x] 初始化 catalog、mixer、playback、music 和 debug 资源。
+  - [x] 配置 audio 相关 system set，保证命令处理、sink 同步和清理顺序稳定。
+  - [x] 在 `GamePlugin` 或上层插件中接入 `AudioPlugin`。
 
 - [ ] 6. 实现内存版 `AudioCatalog`
   - 开始时间：
