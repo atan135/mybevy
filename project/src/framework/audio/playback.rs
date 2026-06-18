@@ -5,14 +5,14 @@ use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
 use super::{
-    catalog::{AudioCatalog, AudioCatalogError, AudioResolvedCueClip},
+    catalog::{AudioCatalog, AudioCatalogError, AudioResolvedCue, AudioResolvedCueClip},
     command::{
-        AudioClipRequest, AudioCommand, AudioCueRequest, AudioScopeCommand, AudioScopeFadeCommand,
-        AudioSpatialCueRequest,
+        AudioBattleCueRequest, AudioClipRequest, AudioCommand, AudioCueRequest, AudioScopeCommand,
+        AudioScopeFadeCommand, AudioSpatialCueRequest,
     },
     event::{
-        AudioClipStarted, AudioCueStarted, AudioEvent, AudioInstanceStopped, AudioLoadFailed,
-        AudioStopReason,
+        AudioClipStarted, AudioCueSkipReason, AudioCueSkipped, AudioCueStarted, AudioEvent,
+        AudioInstanceStopped, AudioLoadFailed, AudioStopReason,
     },
     id::{AudioClipId, AudioCueId, AudioInstanceId},
     mixer::AudioMixer,
@@ -23,6 +23,8 @@ use super::{
 #[derive(Debug, Default, Resource)]
 pub struct AudioPlaybackState {
     pub instances: HashMap<AudioInstanceId, AudioInstanceState>,
+    cue_cooldowns: HashMap<AudioCuePlaybackKey, f64>,
+    cue_variant_cursors: HashMap<AudioCuePlaybackKey, usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,6 +35,7 @@ pub struct AudioInstanceState {
     pub scope: AudioScope,
     pub bus: AudioBus,
     pub volume: f32,
+    pub priority: i32,
     pub asset_path: String,
     pub source: Handle<AudioSource>,
     pub failed: bool,
@@ -40,6 +43,26 @@ pub struct AudioInstanceState {
     pub stopping: bool,
     pub fade: Option<AudioFadeState>,
     pub spatial: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct AudioCuePlaybackKey {
+    cue_id: AudioCueId,
+    scope: AudioScope,
+}
+
+impl AudioCuePlaybackKey {
+    fn new(cue_id: AudioCueId, scope: AudioScope) -> Self {
+        Self { cue_id, scope }
+    }
+}
+
+impl AudioPlaybackState {
+    fn clear_cue_state_for_scope(&mut self, scope: &AudioScope) {
+        self.cue_cooldowns.retain(|key, _| key.scope != *scope);
+        self.cue_variant_cursors
+            .retain(|key, _| key.scope != *scope);
+    }
 }
 
 #[derive(Clone, Debug, Component, PartialEq)]
@@ -94,8 +117,11 @@ pub fn handle_audio_playback_commands(
     asset_server: Res<AssetServer>,
     catalog: Res<AudioCatalog>,
     mixer: Res<AudioMixer>,
+    time: Res<Time>,
     mut playback: ResMut<AudioPlaybackState>,
 ) {
+    let now_seconds = time.elapsed_secs_f64();
+
     for command in audio_commands.read() {
         match command {
             AudioCommand::PlayCue(request) => {
@@ -106,6 +132,19 @@ pub fn handle_audio_playback_commands(
                     &asset_server,
                     &catalog,
                     &mixer,
+                    now_seconds,
+                    &mut playback,
+                );
+            }
+            AudioCommand::PlayBattleCue(request) => {
+                play_battle_cue(
+                    request,
+                    &mut commands,
+                    &mut audio_events,
+                    &asset_server,
+                    &catalog,
+                    &mixer,
+                    now_seconds,
                     &mut playback,
                 );
             }
@@ -129,6 +168,7 @@ pub fn handle_audio_playback_commands(
                     &asset_server,
                     &catalog,
                     &mixer,
+                    now_seconds,
                     &mut playback,
                 );
             }
@@ -239,6 +279,7 @@ fn play_cue(
     asset_server: &AssetServer,
     catalog: &AudioCatalog,
     mixer: &AudioMixer,
+    now_seconds: f64,
     playback: &mut AudioPlaybackState,
 ) {
     let resolved = match catalog.resolve_cue(&request.cue_id) {
@@ -249,55 +290,74 @@ fn play_cue(
         }
     };
 
-    let Some(clip) = choose_cue_clip(&resolved.clips) else {
-        send_catalog_failure(
-            audio_events,
-            &AudioCatalogError::EmptyCue(request.cue_id.clone()),
-            Some(request.cue_id.clone()),
-        );
-        return;
-    };
-
     let bus = request.bus.unwrap_or(resolved.playback.bus);
     let scope = if request.scope == AudioScope::Global {
-        resolved.playback.scope
+        resolved.playback.scope.clone()
     } else {
         request.scope.clone()
     };
-    let event_scope = scope.clone();
-    let volume = request.volume * resolved.rules.volume;
-    let pitch = request.pitch * resolved.rules.pitch;
-    let looped = request.looped || resolved.playback.looped;
 
-    let Some(instance_id) = spawn_audio_instance(
+    play_resolved_cue(
+        &request.cue_id,
+        &resolved,
+        CuePlaybackOptions {
+            scope,
+            bus,
+            volume: request.volume,
+            pitch: request.pitch,
+            looped: request.looped,
+            fade_in_seconds: request.fade_in_seconds,
+            spatial: None,
+        },
         commands,
         asset_server,
         mixer,
+        audio_events,
+        now_seconds,
         playback,
-        SpawnAudioInstance {
-            clip_id: clip.clip_id.clone(),
-            cue_id: Some(request.cue_id.clone()),
-            asset_path: clip.path.clone(),
-            scope,
-            bus,
-            volume,
-            pitch,
-            looped,
-            fade_in_seconds: request.fade_in_seconds,
-            paused: false,
-            spatial: None,
-        },
-    ) else {
-        return;
+    );
+}
+
+fn play_battle_cue(
+    request: &AudioBattleCueRequest,
+    commands: &mut Commands,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    asset_server: &AssetServer,
+    catalog: &AudioCatalog,
+    mixer: &AudioMixer,
+    now_seconds: f64,
+    playback: &mut AudioPlaybackState,
+) {
+    let resolved = match catalog.resolve_cue(&request.cue_id) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            send_catalog_failure(audio_events, &error, Some(request.cue_id.clone()));
+            return;
+        }
     };
 
-    audio_events.write(AudioEvent::CueStarted(AudioCueStarted {
-        cue_id: request.cue_id.clone(),
-        clip_id: clip.clip_id.clone(),
-        instance_id,
-        scope: event_scope,
-        bus,
-    }));
+    let scope = request.scope();
+    let bus = request.bus.unwrap_or_else(|| battle_cue_bus(&resolved));
+
+    play_resolved_cue(
+        &request.cue_id,
+        &resolved,
+        CuePlaybackOptions {
+            scope,
+            bus,
+            volume: request.volume,
+            pitch: request.pitch,
+            looped: request.looped,
+            fade_in_seconds: request.fade_in_seconds,
+            spatial: None,
+        },
+        commands,
+        asset_server,
+        mixer,
+        audio_events,
+        now_seconds,
+        playback,
+    );
 }
 
 fn play_clip(
@@ -335,6 +395,7 @@ fn play_clip(
             fade_in_seconds: request.fade_in_seconds,
             paused: false,
             spatial: None,
+            priority: 0,
         },
     ) else {
         return;
@@ -355,6 +416,7 @@ fn play_spatial_cue(
     asset_server: &AssetServer,
     catalog: &AudioCatalog,
     mixer: &AudioMixer,
+    now_seconds: f64,
     playback: &mut AudioPlaybackState,
 ) {
     let resolved = match catalog.resolve_cue(&request.cue_id) {
@@ -365,18 +427,9 @@ fn play_spatial_cue(
         }
     };
 
-    let Some(clip) = choose_cue_clip(&resolved.clips) else {
-        send_catalog_failure(
-            audio_events,
-            &AudioCatalogError::EmptyCue(request.cue_id.clone()),
-            Some(request.cue_id.clone()),
-        );
-        return;
-    };
-
     let bus = request.bus.unwrap_or(resolved.playback.bus);
     let scope = if request.scope == AudioScope::Global {
-        resolved.playback.scope
+        resolved.playback.scope.clone()
     } else {
         request.scope.clone()
     };
@@ -386,10 +439,105 @@ fn play_spatial_cue(
         }
         _ => scope,
     };
-    let event_scope = scope.clone();
-    let volume = request.volume * resolved.rules.volume;
-    let pitch = request.pitch * resolved.rules.pitch;
-    let looped = request.looped || resolved.playback.looped;
+
+    play_resolved_cue(
+        &request.cue_id,
+        &resolved,
+        CuePlaybackOptions {
+            scope,
+            bus,
+            volume: request.volume,
+            pitch: request.pitch,
+            looped: request.looped,
+            fade_in_seconds: request.fade_in_seconds,
+            spatial: Some(SpawnSpatialAudioInstance {
+                source: request.source.clone(),
+                attenuation: request.attenuation.normalized(),
+            }),
+        },
+        commands,
+        asset_server,
+        mixer,
+        audio_events,
+        now_seconds,
+        playback,
+    );
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct CuePlaybackOptions {
+    scope: AudioScope,
+    bus: AudioBus,
+    volume: f32,
+    pitch: f32,
+    looped: bool,
+    fade_in_seconds: Option<f32>,
+    spatial: Option<SpawnSpatialAudioInstance>,
+}
+
+fn play_resolved_cue(
+    cue_id: &AudioCueId,
+    resolved: &AudioResolvedCue,
+    options: CuePlaybackOptions,
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    mixer: &AudioMixer,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    now_seconds: f64,
+    playback: &mut AudioPlaybackState,
+) {
+    let key = AudioCuePlaybackKey::new(cue_id.clone(), options.scope.clone());
+
+    if cue_is_in_cooldown(playback, &key, resolved.rules.cooldown_seconds, now_seconds) {
+        send_cue_skipped(
+            audio_events,
+            cue_id.clone(),
+            options.scope,
+            AudioCueSkipReason::Cooldown,
+        );
+        return;
+    }
+
+    if resolved.clips.is_empty() {
+        send_catalog_failure(
+            audio_events,
+            &AudioCatalogError::EmptyCue(cue_id.clone()),
+            Some(cue_id.clone()),
+        );
+        return;
+    }
+
+    if !enforce_cue_concurrency(
+        cue_id,
+        &options.scope,
+        resolved.rules.max_concurrent,
+        resolved.rules.priority,
+        commands,
+        audio_events,
+        playback,
+    ) {
+        send_cue_skipped(
+            audio_events,
+            cue_id.clone(),
+            options.scope,
+            AudioCueSkipReason::MaxConcurrency,
+        );
+        return;
+    }
+
+    let Some(clip) = choose_cue_clip(&resolved.clips, playback, &key) else {
+        send_catalog_failure(
+            audio_events,
+            &AudioCatalogError::EmptyCue(cue_id.clone()),
+            Some(cue_id.clone()),
+        );
+        return;
+    };
+
+    let event_scope = options.scope.clone();
+    let volume = options.volume * resolved.rules.volume;
+    let pitch = options.pitch * resolved.rules.pitch;
+    let looped = options.looped || resolved.playback.looped;
 
     let Some(instance_id) = spawn_audio_instance(
         commands,
@@ -398,30 +546,29 @@ fn play_spatial_cue(
         playback,
         SpawnAudioInstance {
             clip_id: clip.clip_id.clone(),
-            cue_id: Some(request.cue_id.clone()),
+            cue_id: Some(cue_id.clone()),
             asset_path: clip.path.clone(),
-            scope,
-            bus,
+            scope: options.scope,
+            bus: options.bus,
             volume,
             pitch,
             looped,
-            fade_in_seconds: request.fade_in_seconds,
+            fade_in_seconds: options.fade_in_seconds,
             paused: false,
-            spatial: Some(SpawnSpatialAudioInstance {
-                source: request.source.clone(),
-                attenuation: request.attenuation.normalized(),
-            }),
+            spatial: options.spatial,
+            priority: resolved.rules.priority,
         },
     ) else {
         return;
     };
 
+    record_cue_trigger(playback, key, resolved.rules.cooldown_seconds, now_seconds);
     audio_events.write(AudioEvent::CueStarted(AudioCueStarted {
-        cue_id: request.cue_id.clone(),
+        cue_id: cue_id.clone(),
         clip_id: clip.clip_id.clone(),
         instance_id,
         scope: event_scope,
-        bus,
+        bus: options.bus,
     }));
 }
 
@@ -438,6 +585,7 @@ pub(crate) struct SpawnAudioInstance {
     pub fade_in_seconds: Option<f32>,
     pub paused: bool,
     pub spatial: Option<SpawnSpatialAudioInstance>,
+    pub priority: i32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -508,6 +656,7 @@ pub(crate) fn spawn_audio_instance(
             scope: request.scope,
             bus: request.bus,
             volume,
+            priority: request.priority,
             asset_path: request.asset_path,
             source,
             failed: false,
@@ -521,12 +670,137 @@ pub(crate) fn spawn_audio_instance(
     Some(instance_id)
 }
 
-fn choose_cue_clip(clips: &[AudioResolvedCueClip]) -> Option<&AudioResolvedCueClip> {
+fn battle_cue_bus(resolved: &AudioResolvedCue) -> AudioBus {
+    if resolved.playback.bus == AudioBus::Sfx {
+        AudioBus::Battle
+    } else {
+        resolved.playback.bus
+    }
+}
+
+fn cue_is_in_cooldown(
+    playback: &AudioPlaybackState,
+    key: &AudioCuePlaybackKey,
+    cooldown_seconds: Option<f32>,
+    now_seconds: f64,
+) -> bool {
+    let Some(cooldown_seconds) = cooldown_seconds else {
+        return false;
+    };
+    let cooldown_seconds = cooldown_seconds.max(0.0) as f64;
+    if cooldown_seconds <= 0.0 {
+        return false;
+    }
+
+    playback
+        .cue_cooldowns
+        .get(key)
+        .is_some_and(|last_trigger_seconds| now_seconds - *last_trigger_seconds < cooldown_seconds)
+}
+
+fn record_cue_trigger(
+    playback: &mut AudioPlaybackState,
+    key: AudioCuePlaybackKey,
+    cooldown_seconds: Option<f32>,
+    now_seconds: f64,
+) {
+    if cooldown_seconds.is_some_and(|seconds| seconds.max(0.0) > 0.0) {
+        playback.cue_cooldowns.insert(key, now_seconds);
+    }
+}
+
+fn enforce_cue_concurrency(
+    cue_id: &AudioCueId,
+    scope: &AudioScope,
+    max_concurrent: Option<usize>,
+    priority: i32,
+    commands: &mut Commands,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    playback: &mut AudioPlaybackState,
+) -> bool {
+    let Some(max_concurrent) = max_concurrent else {
+        return true;
+    };
+    if max_concurrent == 0 {
+        return false;
+    }
+
+    let mut active_instances = playback
+        .instances
+        .iter()
+        .filter_map(|(instance_id, instance)| {
+            (instance.cue_id.as_ref() == Some(cue_id)
+                && &instance.scope == scope
+                && !instance.stopping)
+                .then_some((*instance_id, instance.priority))
+        })
+        .collect::<Vec<_>>();
+
+    if active_instances.len() < max_concurrent {
+        return true;
+    }
+
+    active_instances
+        .sort_by_key(|(instance_id, instance_priority)| (*instance_priority, instance_id.raw()));
+
+    let Some((lowest_instance_id, lowest_priority)) = active_instances.first().copied() else {
+        return true;
+    };
+    if priority <= lowest_priority {
+        return false;
+    }
+
+    stop_instance_immediately(
+        lowest_instance_id,
+        commands,
+        audio_events,
+        playback,
+        AudioStopReason::Stopped,
+    );
+    true
+}
+
+fn choose_cue_clip<'a>(
+    clips: &'a [AudioResolvedCueClip],
+    playback: &mut AudioPlaybackState,
+    key: &AudioCuePlaybackKey,
+) -> Option<&'a AudioResolvedCueClip> {
+    if clips.is_empty() {
+        return None;
+    }
+
+    let total_weight = clips.iter().map(|clip| clip.weight.max(0.0)).sum::<f32>();
+    if total_weight <= 0.0 {
+        return clips.first();
+    }
+
+    let cursor = playback.cue_variant_cursors.entry(key.clone()).or_default();
+    let target = (*cursor as f32) % total_weight;
+    *cursor = cursor.wrapping_add(1);
+
+    let mut accumulated = 0.0;
     clips
         .iter()
-        .filter(|clip| clip.weight > 0.0)
-        .max_by(|left, right| left.weight.total_cmp(&right.weight))
+        .find(|clip| {
+            let weight = clip.weight.max(0.0);
+            accumulated += weight;
+            weight > 0.0 && target < accumulated
+        })
+        .or_else(|| clips.iter().find(|clip| clip.weight > 0.0))
         .or_else(|| clips.first())
+}
+
+fn send_cue_skipped(
+    audio_events: &mut MessageWriter<AudioEvent>,
+    cue_id: AudioCueId,
+    scope: AudioScope,
+    reason: AudioCueSkipReason,
+) {
+    audio_events.write(AudioEvent::CueSkipped(AudioCueSkipped {
+        cue_id,
+        reason,
+        scope,
+    }));
 }
 
 fn send_catalog_failure(
@@ -576,6 +850,7 @@ pub(crate) fn stop_by_scope(
             reason,
         );
     }
+    playback.clear_cue_state_for_scope(&command.scope);
 
     instance_ids
 }
@@ -645,8 +920,9 @@ fn set_scope_paused(command: &AudioScopeCommand, paused: bool, playback: &mut Au
 mod tests {
     use super::*;
     use crate::framework::audio::{
-        AudioCueClip, AudioCueEntry, AudioCuePlayback, AudioCueRules, AudioSpatialAttenuation,
-        AudioSpatialCueRequest, AudioSpatialEmitter, AudioSpatialSource,
+        AudioBattleCueRequest, AudioCueClip, AudioCueEntry, AudioCuePlayback, AudioCueRules,
+        AudioScopeId, AudioSpatialAttenuation, AudioSpatialCueRequest, AudioSpatialEmitter,
+        AudioSpatialSource,
     };
     use bevy::ecs::message::MessageCursor;
 
@@ -656,6 +932,10 @@ mod tests {
 
     fn cue_id(value: &str) -> AudioCueId {
         AudioCueId::try_from(value).unwrap()
+    }
+
+    fn battle_id(value: &str) -> AudioScopeId {
+        AudioScopeId::try_from(value).unwrap()
     }
 
     fn playback_app() -> App {
@@ -675,6 +955,27 @@ mod tests {
         let messages = app.world().resource::<Messages<AudioEvent>>();
         let mut cursor = MessageCursor::default();
         cursor.read(messages).cloned().collect()
+    }
+
+    fn register_battle_cue(
+        app: &mut App,
+        cue_id: AudioCueId,
+        clip_id: AudioClipId,
+        rules: AudioCueRules,
+    ) {
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), format!("audio/battle/{clip_id}.ogg"));
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id,
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id)])
+                .with_playback(AudioCuePlayback {
+                    bus: AudioBus::Sfx,
+                    scope: AudioScope::Global,
+                    looped: false,
+                })
+                .with_rules(rules),
+        );
     }
 
     #[test]
@@ -794,6 +1095,346 @@ mod tests {
                 scope: AudioScope::Ui,
                 bus: AudioBus::Ui,
             })]
+        );
+    }
+
+    #[test]
+    fn play_battle_cue_defaults_to_battle_scope_and_battle_bus() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.hit.light_01");
+        let cue_id = cue_id("battle.hit.light");
+        register_battle_cue(
+            &mut app,
+            cue_id.clone(),
+            clip_id.clone(),
+            AudioCueRules {
+                volume: 0.5,
+                pitch: 1.25,
+                cooldown_seconds: None,
+                max_concurrent: Some(3),
+                priority: 4,
+            },
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest {
+                battle_id: battle_id("battle_01"),
+                cue_id: cue_id.clone(),
+                bus: None,
+                volume: 0.8,
+                pitch: 0.8,
+                looped: false,
+                fade_in_seconds: None,
+            }));
+        app.update();
+
+        let battle_scope = AudioScope::battle("battle_01").unwrap();
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        let (instance_id, instance) = playback.instances.iter().next().unwrap();
+        assert_eq!(instance.clip_id, clip_id);
+        assert_eq!(instance.cue_id, Some(cue_id.clone()));
+        assert_eq!(instance.scope, battle_scope);
+        assert_eq!(instance.bus, AudioBus::Battle);
+        assert_eq!(instance.volume, 0.4);
+        assert_eq!(instance.priority, 4);
+
+        assert_eq!(
+            read_events(&app),
+            vec![AudioEvent::CueStarted(AudioCueStarted {
+                cue_id,
+                clip_id,
+                instance_id: *instance_id,
+                scope: AudioScope::battle("battle_01").unwrap(),
+                bus: AudioBus::Battle,
+            })]
+        );
+    }
+
+    #[test]
+    fn battle_cue_uses_catalog_non_sfx_bus_when_configured() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.voice.shout_01");
+        let cue_id = cue_id("battle.voice.shout");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/battle/voice_shout_01.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id.clone())]).with_playback(
+                AudioCuePlayback {
+                    bus: AudioBus::Ui,
+                    scope: AudioScope::Global,
+                    looped: false,
+                },
+            ),
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                battle_id("battle_01"),
+                cue_id.clone(),
+            )));
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<AudioPlaybackState>()
+                .instances
+                .values()
+                .next()
+                .unwrap()
+                .bus,
+            AudioBus::Ui
+        );
+    }
+
+    #[test]
+    fn battle_cue_cooldown_is_per_battle_scope() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.hit.light_01");
+        let cue_id = cue_id("battle.hit.light");
+        register_battle_cue(
+            &mut app,
+            cue_id.clone(),
+            clip_id.clone(),
+            AudioCueRules {
+                cooldown_seconds: Some(0.5),
+                ..AudioCueRules::default()
+            },
+        );
+
+        for battle in ["battle_01", "battle_01", "battle_02"] {
+            app.world_mut()
+                .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                    battle_id(battle),
+                    cue_id.clone(),
+                )));
+        }
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 2);
+        assert_eq!(
+            playback
+                .instances
+                .values()
+                .filter(|instance| instance.scope == AudioScope::battle("battle_01").unwrap())
+                .count(),
+            1
+        );
+        assert_eq!(
+            playback
+                .instances
+                .values()
+                .filter(|instance| instance.scope == AudioScope::battle("battle_02").unwrap())
+                .count(),
+            1
+        );
+        assert!(read_events(&app).iter().any(|event| matches!(
+            event,
+            AudioEvent::CueSkipped(AudioCueSkipped {
+                cue_id: skipped,
+                reason: AudioCueSkipReason::Cooldown,
+                scope,
+            }) if skipped == &cue_id && scope == &AudioScope::battle("battle_01").unwrap()
+        )));
+    }
+
+    #[test]
+    fn battle_cue_max_concurrent_limits_high_frequency_instances() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.hit.light_01");
+        let cue_id = cue_id("battle.hit.light");
+        register_battle_cue(
+            &mut app,
+            cue_id.clone(),
+            clip_id,
+            AudioCueRules {
+                max_concurrent: Some(2),
+                ..AudioCueRules::default()
+            },
+        );
+
+        for _ in 0..20 {
+            app.world_mut()
+                .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                    battle_id("battle_01"),
+                    cue_id.clone(),
+                )));
+        }
+        app.update();
+
+        let battle_scope = AudioScope::battle("battle_01").unwrap();
+        assert_eq!(
+            app.world()
+                .resource::<AudioPlaybackState>()
+                .instances
+                .values()
+                .filter(|instance| instance.cue_id.as_ref() == Some(&cue_id)
+                    && instance.scope == battle_scope)
+                .count(),
+            2
+        );
+        assert_eq!(
+            read_events(&app)
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    AudioEvent::CueSkipped(AudioCueSkipped {
+                        reason: AudioCueSkipReason::MaxConcurrency,
+                        ..
+                    })
+                ))
+                .count(),
+            18
+        );
+    }
+
+    #[test]
+    fn higher_priority_cue_replaces_lower_priority_when_concurrent_limit_is_full() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.hit.light_01");
+        let cue_id = cue_id("battle.hit.light");
+        register_battle_cue(
+            &mut app,
+            cue_id.clone(),
+            clip_id.clone(),
+            AudioCueRules {
+                max_concurrent: Some(1),
+                priority: 1,
+                ..AudioCueRules::default()
+            },
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                battle_id("battle_01"),
+                cue_id.clone(),
+            )));
+        app.update();
+        let first_instance_id = *app
+            .world()
+            .resource::<AudioPlaybackState>()
+            .instances
+            .keys()
+            .next()
+            .unwrap();
+
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id.clone())]).with_rules(
+                AudioCueRules {
+                    max_concurrent: Some(1),
+                    priority: 10,
+                    ..AudioCueRules::default()
+                },
+            ),
+        );
+        app.world_mut()
+            .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                battle_id("battle_01"),
+                cue_id.clone(),
+            )));
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        assert!(!playback.instances.contains_key(&first_instance_id));
+        assert_eq!(playback.instances.values().next().unwrap().priority, 10);
+        assert!(read_events(&app).iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceStopped(AudioInstanceStopped {
+                instance_id,
+                cue_id: Some(stopped_cue),
+                reason: AudioStopReason::Stopped,
+                ..
+            }) if instance_id == &first_instance_id && stopped_cue == &cue_id
+        )));
+    }
+
+    #[test]
+    fn equal_or_lower_priority_cue_is_skipped_when_concurrent_limit_is_full() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.hit.light_01");
+        let cue_id = cue_id("battle.hit.light");
+        register_battle_cue(
+            &mut app,
+            cue_id.clone(),
+            clip_id.clone(),
+            AudioCueRules {
+                max_concurrent: Some(1),
+                priority: 5,
+                ..AudioCueRules::default()
+            },
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                battle_id("battle_01"),
+                cue_id.clone(),
+            )));
+        app.update();
+        app.world_mut()
+            .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                battle_id("battle_01"),
+                cue_id.clone(),
+            )));
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<AudioPlaybackState>().instances.len(),
+            1
+        );
+        assert!(read_events(&app).iter().any(|event| matches!(
+            event,
+            AudioEvent::CueSkipped(AudioCueSkipped {
+                cue_id: skipped,
+                reason: AudioCueSkipReason::MaxConcurrency,
+                scope,
+            }) if skipped == &cue_id && scope == &AudioScope::battle("battle_01").unwrap()
+        )));
+    }
+
+    #[test]
+    fn cue_variants_rotate_through_weighted_clips_deterministically() {
+        let mut app = playback_app();
+        let first = clip_id("battle.hit.light_01");
+        let second = clip_id("battle.hit.light_02");
+        let cue_id = cue_id("battle.hit.light");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(first.clone(), "audio/battle/hit_light_01.ogg");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(second.clone(), "audio/battle/hit_light_02.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([
+                AudioCueClip::weighted(first.clone(), 1.0),
+                AudioCueClip::weighted(second.clone(), 2.0),
+            ]),
+        );
+
+        for _ in 0..4 {
+            app.world_mut()
+                .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest::new(
+                    battle_id("battle_01"),
+                    cue_id.clone(),
+                )));
+        }
+        app.update();
+
+        let started_clips = read_events(&app)
+            .into_iter()
+            .filter_map(|event| match event {
+                AudioEvent::CueStarted(started) => Some(started.clip_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            started_clips,
+            vec![first.clone(), second.clone(), second, first]
         );
     }
 
@@ -1067,6 +1708,7 @@ mod tests {
                     scope: AudioScope::Ui,
                     bus: AudioBus::Ui,
                     volume: 1.0,
+                    priority: 0,
                     asset_path: "audio/ui/click.ogg".to_string(),
                     source,
                     failed: false,
@@ -1157,6 +1799,136 @@ mod tests {
                 ..
             }) if clip_id == &scene_clip && scope == &AudioScope::scene("scene-1").unwrap()
         )));
+    }
+
+    #[test]
+    fn stop_by_scope_removes_battle_scope_instances() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.aura.loop");
+        let cue_id = cue_id("battle.aura.loop");
+        register_battle_cue(
+            &mut app,
+            cue_id.clone(),
+            clip_id.clone(),
+            AudioCueRules {
+                cooldown_seconds: Some(1.0),
+                max_concurrent: Some(4),
+                ..AudioCueRules::default()
+            },
+        );
+
+        for battle in ["battle_01", "battle_02"] {
+            app.world_mut()
+                .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest {
+                    battle_id: battle_id(battle),
+                    cue_id: cue_id.clone(),
+                    bus: None,
+                    volume: 1.0,
+                    pitch: 1.0,
+                    looped: true,
+                    fade_in_seconds: None,
+                }));
+        }
+        app.update();
+
+        let battle_scope = AudioScope::battle("battle_01").unwrap();
+        app.world_mut()
+            .write_message(AudioCommand::StopByScope(AudioScopeFadeCommand {
+                scope: battle_scope.clone(),
+                fade_out_seconds: None,
+            }));
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        assert!(
+            playback
+                .instances
+                .values()
+                .all(|instance| instance.scope == AudioScope::battle("battle_02").unwrap())
+        );
+        assert!(
+            !playback
+                .cue_cooldowns
+                .keys()
+                .any(|key| key.scope == battle_scope)
+        );
+        assert!(read_events(&app).iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceStopped(AudioInstanceStopped {
+                clip_id: Some(stopped_clip),
+                cue_id: Some(stopped_cue),
+                scope,
+                reason: AudioStopReason::StoppedByScope,
+                ..
+            }) if stopped_clip == &clip_id && stopped_cue == &cue_id && scope == &battle_scope
+        )));
+    }
+
+    #[test]
+    fn stop_by_scope_clears_battle_cue_state_even_when_fading_out() {
+        let mut app = playback_app();
+        let clip_id = clip_id("battle.aura.loop");
+        let cue_id = cue_id("battle.aura.loop");
+        register_battle_cue(
+            &mut app,
+            cue_id.clone(),
+            clip_id,
+            AudioCueRules {
+                cooldown_seconds: Some(1.0),
+                max_concurrent: Some(4),
+                ..AudioCueRules::default()
+            },
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayBattleCue(AudioBattleCueRequest {
+                battle_id: battle_id("battle_01"),
+                cue_id,
+                bus: None,
+                volume: 1.0,
+                pitch: 1.0,
+                looped: true,
+                fade_in_seconds: None,
+            }));
+        app.update();
+
+        let battle_scope = AudioScope::battle("battle_01").unwrap();
+        assert!(
+            app.world()
+                .resource::<AudioPlaybackState>()
+                .cue_cooldowns
+                .keys()
+                .any(|key| key.scope == battle_scope)
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::StopByScope(AudioScopeFadeCommand {
+                scope: battle_scope.clone(),
+                fade_out_seconds: Some(0.5),
+            }));
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        assert!(
+            playback
+                .instances
+                .values()
+                .all(|instance| instance.stopping)
+        );
+        assert!(
+            !playback
+                .cue_cooldowns
+                .keys()
+                .any(|key| key.scope == battle_scope)
+        );
+        assert!(
+            !playback
+                .cue_variant_cursors
+                .keys()
+                .any(|key| key.scope == battle_scope)
+        );
     }
 
     #[test]

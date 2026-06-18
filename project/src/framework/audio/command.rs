@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use super::{
-    id::{AudioClipId, AudioCueId, AudioGroupId, AudioInstanceId},
+    id::{AudioClipId, AudioCueId, AudioGroupId, AudioInstanceId, AudioScopeId},
     scope::{AudioBus, AudioScope},
     spatial::{AudioSpatialAttenuation, AudioSpatialSource},
 };
@@ -9,6 +9,7 @@ use super::{
 #[derive(Clone, Debug, Message, PartialEq)]
 pub enum AudioCommand {
     PlayCue(AudioCueRequest),
+    PlayBattleCue(AudioBattleCueRequest),
     PlaySpatialCue(AudioSpatialCueRequest),
     PlayClip(AudioClipRequest),
     PlayMusic(AudioMusicRequest),
@@ -25,6 +26,35 @@ pub enum AudioCommand {
     SetBusPaused(AudioBusPausedCommand),
     PreloadGroup(AudioGroupCommand),
     UnloadGroup(AudioGroupCommand),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioBattleCueRequest {
+    pub battle_id: AudioScopeId,
+    pub cue_id: AudioCueId,
+    pub bus: Option<AudioBus>,
+    pub volume: f32,
+    pub pitch: f32,
+    pub looped: bool,
+    pub fade_in_seconds: Option<f32>,
+}
+
+impl AudioBattleCueRequest {
+    pub fn new(battle_id: AudioScopeId, cue_id: AudioCueId) -> Self {
+        Self {
+            battle_id,
+            cue_id,
+            bus: None,
+            volume: 1.0,
+            pitch: 1.0,
+            looped: false,
+            fade_in_seconds: None,
+        }
+    }
+
+    pub fn scope(&self) -> AudioScope {
+        AudioScope::Battle(self.battle_id.clone())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -283,6 +313,22 @@ mod tests {
         assert_eq!(request.fade_in_seconds, None);
         assert_eq!(request.source, AudioSpatialSource::Fixed(transform));
         assert_eq!(request.attenuation, AudioSpatialAttenuation::default());
+    }
+
+    #[test]
+    fn battle_cue_request_defaults_to_battle_scope_without_forcing_bus() {
+        let battle_id = AudioScopeId::try_from("battle_01").unwrap();
+        let cue_id = AudioCueId::try_from("battle.hit.light").unwrap();
+        let request = AudioBattleCueRequest::new(battle_id.clone(), cue_id.clone());
+
+        assert_eq!(request.battle_id, battle_id.clone());
+        assert_eq!(request.cue_id, cue_id);
+        assert_eq!(request.scope(), AudioScope::Battle(battle_id));
+        assert_eq!(request.bus, None);
+        assert_eq!(request.volume, 1.0);
+        assert_eq!(request.pitch, 1.0);
+        assert!(!request.looped);
+        assert_eq!(request.fade_in_seconds, None);
     }
 
     #[test]

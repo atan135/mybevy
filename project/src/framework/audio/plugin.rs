@@ -117,6 +117,7 @@ mod tests {
         assert!(mixer.buses.contains_key(&AudioBus::Music));
         assert!(mixer.buses.contains_key(&AudioBus::Sfx));
         assert!(mixer.buses.contains_key(&AudioBus::Ui));
+        assert!(mixer.buses.contains_key(&AudioBus::Battle));
     }
 
     #[derive(Debug, Default, Resource)]
@@ -164,6 +165,7 @@ mod tests {
                     scope: AudioScope::Global,
                     bus: AudioBus::Music,
                     volume: 0.8,
+                    priority: 0,
                     asset_path: "audio/music/title.ogg".to_string(),
                     source: Handle::<AudioSource>::default(),
                     failed: false,

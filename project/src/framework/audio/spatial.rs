@@ -489,6 +489,7 @@ mod tests {
                     scope: AudioScope::Entity(target),
                     bus: AudioBus::Sfx,
                     volume: 1.0,
+                    priority: 0,
                     asset_path: "audio/ambience/torch.ogg".to_string(),
                     source: Handle::<AudioSource>::default(),
                     failed: false,

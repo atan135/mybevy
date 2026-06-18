@@ -186,6 +186,7 @@ fn play_music(
             fade_in_seconds: request.fade_in_seconds,
             paused: music.paused,
             spatial: None,
+            priority: 0,
         },
     ) else {
         return;
@@ -635,6 +636,7 @@ mod tests {
                 scope: AudioScope::Global,
                 bus: AudioBus::Music,
                 volume: 1.0,
+                priority: 0,
                 asset_path: "audio/music/title.ogg".to_string(),
                 source: Handle::<AudioSource>::default(),
                 failed: false,

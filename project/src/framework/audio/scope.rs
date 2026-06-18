@@ -10,6 +10,7 @@ pub enum AudioBus {
     Music,
     Sfx,
     Ui,
+    Battle,
 }
 
 impl fmt::Display for AudioBus {
@@ -19,6 +20,7 @@ impl fmt::Display for AudioBus {
             Self::Music => "music",
             Self::Sfx => "sfx",
             Self::Ui => "ui",
+            Self::Battle => "battle",
         })
     }
 }
@@ -64,6 +66,7 @@ mod tests {
         assert_eq!(AudioBus::Music.to_string(), "music");
         assert_eq!(AudioBus::Sfx.to_string(), "sfx");
         assert_eq!(AudioBus::Ui.to_string(), "ui");
+        assert_eq!(AudioBus::Battle.to_string(), "battle");
     }
 
     #[test]

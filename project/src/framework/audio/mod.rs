@@ -4,6 +4,7 @@
 //! audio rules, cue catalogs, and screen-specific adapters stay in the game
 //! layer or later framework extensions.
 
+mod battle;
 mod catalog;
 mod command;
 mod debug;

@@ -27,6 +27,7 @@ impl Default for AudioMixer {
                 (AudioBus::Music, AudioBusState::default()),
                 (AudioBus::Sfx, AudioBusState::default()),
                 (AudioBus::Ui, AudioBusState::default()),
+                (AudioBus::Battle, AudioBusState::default()),
             ]
             .into(),
         }
@@ -383,6 +384,7 @@ mod tests {
             scope: AudioScope::Global,
             bus: AudioBus::Music,
             volume: 0.8,
+            priority: 0,
             asset_path: "audio/music/title.ogg".to_string(),
             source: Handle::<AudioSource>::default(),
             failed: false,
@@ -432,6 +434,7 @@ mod tests {
             scope: AudioScope::Ui,
             bus: AudioBus::Ui,
             volume: 0.8,
+            priority: 0,
             asset_path: "audio/ui/click.ogg".to_string(),
             source: Handle::<AudioSource>::default(),
             failed: false,

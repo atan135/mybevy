@@ -1,10 +1,11 @@
+pub use super::battle::{BattleAudioCue, DEFAULT_BATTLE_AUDIO_BUS};
 pub use super::catalog::{
     AudioCatalog, AudioCatalogError, AudioClipEntry, AudioCueClip, AudioCueEntry, AudioCuePlayback,
     AudioCueRules, AudioResolvedCue, AudioResolvedCueClip,
 };
 pub use super::command::{
-    AudioBusMutedCommand, AudioBusPausedCommand, AudioBusVolumeCommand, AudioClipRequest,
-    AudioCommand, AudioCrossfadeMusicRequest, AudioCueRequest, AudioGroupCommand,
+    AudioBattleCueRequest, AudioBusMutedCommand, AudioBusPausedCommand, AudioBusVolumeCommand,
+    AudioClipRequest, AudioCommand, AudioCrossfadeMusicRequest, AudioCueRequest, AudioGroupCommand,
     AudioMusicFadeCommand, AudioMusicRequest, AudioScopeCommand, AudioScopeFadeCommand,
     AudioSpatialCueRequest, AudioStopInstanceCommand,
 };
