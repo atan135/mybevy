@@ -9,6 +9,8 @@ mod sample_dungeon_room;
 
 use bevy::prelude::*;
 
+pub(in crate::game) use sample_dungeon_room::SAMPLE_DUNGEON_ROOM_SCENE_ID;
+
 pub(in crate::game) struct GameScenesPlugin;
 
 impl Plugin for GameScenesPlugin {

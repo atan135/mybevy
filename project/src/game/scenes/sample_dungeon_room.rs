@@ -9,7 +9,7 @@ use crate::framework::scene::prelude::{
     SceneEvent, SceneLayerRoot, SceneOwned, SceneRuntimeRoot, SceneSessionId,
 };
 
-pub(in crate::game::scenes) const SAMPLE_DUNGEON_ROOM_SCENE_ID: &str = "sample.dungeon_room";
+pub(in crate::game) const SAMPLE_DUNGEON_ROOM_SCENE_ID: &str = "sample.dungeon_room";
 const SAMPLE_DUNGEON_ROOM_LAYOUT_PATH: &str = "scenes/sample_dungeon_room/layout.ron";
 
 pub(super) struct SampleDungeonRoomPlugin;

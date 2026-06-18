@@ -1,29 +1,34 @@
 use bevy::prelude::*;
 
-use crate::framework::ui::{
-    core::{
-        UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelKind, UiPanelRequest, UiViewport,
-    },
-    i18n::UiI18n,
-    overlays::{
-        UiConfirmModal, UiI18nTextSpec, UiModalActionSpec, UiModalActionStyle, UiModalResult,
-        UiOverlayCommand, UiToast,
-    },
-    style::{
-        UiFontAssets, UiTheme,
-        theme::{
-            UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
-            UiThemeTextColorRole, UiThemeTextStyleRole,
+use crate::framework::{
+    scene::prelude::{SceneCommand, SceneSwitchRequest},
+    ui::{
+        core::{
+            UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelKind, UiPanelRequest,
+            UiViewport,
         },
-    },
-    widgets::{
-        UiButtonEvent, UiButtonEventKind, primary_action_button_key, screen_label_key,
-        screen_title_key,
+        i18n::UiI18n,
+        overlays::{
+            UiConfirmModal, UiI18nTextSpec, UiModalActionSpec, UiModalActionStyle, UiModalResult,
+            UiOverlayCommand, UiToast,
+        },
+        style::{
+            UiFontAssets, UiTheme,
+            theme::{
+                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
+                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
+            },
+        },
+        widgets::{
+            UiButtonEvent, UiButtonEventKind, primary_action_button_key, screen_label_key,
+            screen_title_key,
+        },
     },
 };
 use crate::game::{
     features::touch_ripple::TouchLaunchMode,
     navigation::{AppUiMode, GameRouteCommand, game_panel_root, secondary_route_button_key},
+    scenes::SAMPLE_DUNGEON_ROOM_SCENE_ID,
     ui_ids::{
         ACTION_CANCEL, ACTION_CONFIRM, ACTION_TOUCH_RIPPLE_NETWORKED,
         ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY, PANEL_GAME_LIST,
@@ -32,6 +37,9 @@ use crate::game::{
 
 #[derive(Component)]
 pub(super) struct TouchRipplePlayButton;
+
+#[derive(Component)]
+pub(super) struct SampleDungeonRoomPlayButton;
 
 pub(super) fn setup_game_list_screen(
     mut commands: Commands,
@@ -192,26 +200,87 @@ pub(super) fn setup_game_list_screen(
                             ),
                         ],
                     ),
+                    (
+                        Node {
+                            width: percent(100),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::SpaceBetween,
+                            column_gap: px(theme.layout.row_column_gap),
+                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
+                            ..default()
+                        },
+                        children![
+                            (
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: px(theme.layout.row_gap),
+                                    flex_grow: 1.0,
+                                    ..default()
+                                },
+                                children![
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.sample_scene.title",
+                                        "Sample Scene",
+                                        UiThemeTextStyleRole::Body,
+                                        UiThemeTextColorRole::Primary,
+                                    ),
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.sample_scene.description",
+                                        "Dungeon room scene prototype",
+                                        UiThemeTextStyleRole::Caption,
+                                        UiThemeTextColorRole::Muted,
+                                    ),
+                                ],
+                            ),
+                            (
+                                primary_action_button_key(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    "lobby.enter",
+                                    "Enter",
+                                ),
+                                SampleDungeonRoomPlayButton,
+                            ),
+                        ],
+                    ),
                 ],
             ),
         ],
     ));
 }
 
-pub(super) fn handle_game_list_touch_buttons(
+pub(super) fn handle_game_list_buttons(
     mut launch_mode: ResMut<TouchLaunchMode>,
     i18n: Res<UiI18n>,
+    mut scene_commands: MessageWriter<SceneCommand>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut overlay_commands: MessageWriter<UiOverlayCommand>,
     mut game_route_commands: MessageWriter<GameRouteCommand>,
     mut modal_results: MessageReader<UiModalResult>,
     play_buttons: Query<(), With<TouchRipplePlayButton>>,
+    sample_scene_buttons: Query<(), With<SampleDungeonRoomPlayButton>>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
     for event in button_events.read() {
-        if event.kind == UiButtonEventKind::Click && play_buttons.contains(event.entity) {
+        if event.kind != UiButtonEventKind::Click {
+            continue;
+        }
+
+        if play_buttons.contains(event.entity) {
             panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
                 touch_ripple_confirm_modal(&i18n),
+            )));
+        } else if sample_scene_buttons.contains(event.entity) {
+            scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
+                SAMPLE_DUNGEON_ROOM_SCENE_ID,
             )));
         }
     }
