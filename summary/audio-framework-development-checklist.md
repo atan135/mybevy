@@ -105,16 +105,16 @@
   - [x] 定义 `AudioScope`，至少包含 `Global`、`Ui`、`Scene`、`Entity`、`Battle`。
   - [x] 为 ID 类型补充基础校验、Display、From<&str> 或等价构造能力。
 
-- [ ] 4. 定义音频命令和事件
-  - 开始时间：
-  - 结束时间：
-  - [ ] 定义 `AudioCommand::PlayCue`。
-  - [ ] 定义 `AudioCommand::PlayClip`。
-  - [ ] 定义 `AudioCommand::PlayMusic` 和 `CrossfadeMusic`。
-  - [ ] 定义 `StopInstance`、`StopByScope`、`PauseByScope`、`ResumeByScope`。
-  - [ ] 定义 `SetBusVolume`、`SetBusMuted`、`SetBusPaused`。
-  - [ ] 定义 `PreloadGroup`、`UnloadGroup`。
-  - [ ] 定义播放、跳过、停止、加载失败、音乐切换和 bus 变化事件。
+- [x] 4. 定义音频命令和事件
+  - 开始时间：2026-06-18 17:35:11 +08:00
+  - 结束时间：2026-06-18 17:43:03 +08:00
+  - [x] 定义 `AudioCommand::PlayCue`。
+  - [x] 定义 `AudioCommand::PlayClip`。
+  - [x] 定义 `AudioCommand::PlayMusic` 和 `CrossfadeMusic`。
+  - [x] 定义 `StopInstance`、`StopByScope`、`PauseByScope`、`ResumeByScope`。
+  - [x] 定义 `SetBusVolume`、`SetBusMuted`、`SetBusPaused`。
+  - [x] 定义 `PreloadGroup`、`UnloadGroup`。
+  - [x] 定义播放、跳过、停止、加载失败、音乐切换和 bus 变化事件。
 
 - [ ] 5. 接入 `AudioPlugin`
   - 开始时间：
