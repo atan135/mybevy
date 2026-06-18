@@ -24,3 +24,7 @@ pub use super::playback::{
 };
 pub use super::plugin::{AudioPlugin, AudioSystemSet};
 pub use super::scope::{AudioBus, AudioScope};
+pub use super::ui::{
+    DEFAULT_UI_CLICK_CUE_ID, DEFAULT_UI_CUE_COOLDOWN_SECONDS, UiAudioAdapterConfig,
+    UiAudioCooldowns, UiAudioCueOverride,
+};

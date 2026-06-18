@@ -15,5 +15,6 @@ mod playback;
 mod plugin;
 pub mod prelude;
 mod scope;
+mod ui;
 
 pub use prelude::*;

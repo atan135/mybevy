@@ -1,8 +1,16 @@
 use bevy::prelude::*;
 
+use crate::framework::ui::widgets::UiButtonEvent;
+
 use super::{
-    catalog::AudioCatalog, command::AudioCommand, debug::AudioDebugConfig, event::AudioEvent,
-    mixer::AudioMixer, music::MusicController, playback::AudioPlaybackState,
+    catalog::AudioCatalog,
+    command::AudioCommand,
+    debug::AudioDebugConfig,
+    event::AudioEvent,
+    mixer::AudioMixer,
+    music::MusicController,
+    playback::AudioPlaybackState,
+    ui::{UiAudioAdapterConfig, UiAudioCooldowns},
 };
 
 pub struct AudioPlugin;
@@ -11,11 +19,14 @@ impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<AudioCommand>()
             .add_message::<AudioEvent>()
+            .add_message::<UiButtonEvent>()
             .init_resource::<AudioCatalog>()
             .init_resource::<AudioMixer>()
             .init_resource::<AudioPlaybackState>()
             .init_resource::<MusicController>()
             .init_resource::<AudioDebugConfig>()
+            .init_resource::<UiAudioAdapterConfig>()
+            .init_resource::<UiAudioCooldowns>()
             .configure_sets(
                 Update,
                 (
@@ -32,6 +43,7 @@ impl Plugin for AudioPlugin {
                 (
                     (
                         super::mixer::handle_audio_mixer_commands,
+                        super::ui::play_ui_button_audio,
                         super::music::handle_music_commands,
                         super::playback::handle_audio_playback_commands,
                     )
@@ -62,10 +74,13 @@ mod tests {
     use super::*;
     use crate::framework::audio::{
         AudioBus, AudioBusVolumeCommand, AudioCatalog, AudioClipId, AudioClipRequest, AudioCommand,
-        AudioEvent, AudioInstanceId, AudioInstanceState, AudioMixer, AudioPlaybackState,
-        AudioScope,
+        AudioCueClip, AudioCueEntry, AudioCueId, AudioCueStarted, AudioEvent, AudioInstanceId,
+        AudioInstanceState, AudioMixer, AudioPlaybackInstance, AudioPlaybackState, AudioScope,
+        DEFAULT_UI_CLICK_CUE_ID,
     };
+    use crate::framework::ui::widgets::UiButtonEventKind;
     use bevy::audio::{AudioSource, PlaybackSettings, Volume};
+    use bevy::ecs::message::MessageCursor;
 
     #[test]
     fn audio_plugin_registers_messages_and_resources() {
@@ -115,12 +130,16 @@ mod tests {
                 capture_music_target_after_mixer.after(AudioSystemSet::Mixer),
             );
 
-        let entity = app.world_mut().spawn_empty().id();
+        let instance_id = AudioInstanceId::from_raw(7);
+        let entity = app
+            .world_mut()
+            .spawn(AudioPlaybackInstance { instance_id })
+            .id();
         app.world_mut()
             .resource_mut::<AudioPlaybackState>()
             .instances
             .insert(
-                AudioInstanceId::from_raw(7),
+                instance_id,
                 AudioInstanceState {
                     entity,
                     clip_id: AudioClipId::try_from("music.title").unwrap(),
@@ -197,5 +216,49 @@ mod tests {
             .get::<PlaybackSettings>()
             .unwrap();
         assert_eq!(settings.volume, Volume::Linear(0.2));
+    }
+
+    #[test]
+    fn plugin_consumes_ui_button_audio_command_in_same_update() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), AudioPlugin))
+            .init_asset::<AudioSource>();
+
+        let cue_id = AudioCueId::try_from(DEFAULT_UI_CLICK_CUE_ID).unwrap();
+        let clip_id = AudioClipId::try_from("ui.click").unwrap();
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/ui/click.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id.clone())]),
+        );
+
+        let button = app.world_mut().spawn_empty().id();
+        app.world_mut().write_message(UiButtonEvent {
+            entity: button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        let (instance_id, instance) = playback.instances.iter().next().unwrap();
+        assert_eq!(instance.bus, AudioBus::Ui);
+        assert_eq!(instance.scope, AudioScope::Ui);
+        assert_eq!(instance.cue_id, Some(cue_id.clone()));
+
+        let messages = app.world().resource::<Messages<AudioEvent>>();
+        let mut cursor = MessageCursor::default();
+        let events = cursor.read(messages).cloned().collect::<Vec<_>>();
+        assert!(events.contains(&AudioEvent::CueStarted(AudioCueStarted {
+            cue_id,
+            clip_id,
+            instance_id: *instance_id,
+            scope: AudioScope::Ui,
+            bus: AudioBus::Ui,
+        })));
     }
 }
