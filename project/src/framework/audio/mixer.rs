@@ -8,6 +8,7 @@ use super::{
     event::{AudioBusChange, AudioBusChanged, AudioEvent},
     playback::{AudioInstanceState, AudioPlaybackInstance, AudioPlaybackState},
     scope::AudioBus,
+    spatial::AudioSpatialEmitter,
 };
 
 pub const MIN_BUS_VOLUME: f32 = 0.0;
@@ -182,7 +183,7 @@ pub fn handle_audio_mixer_commands(
 pub fn sync_audio_sinks_with_mixer(
     mixer: Res<AudioMixer>,
     playback: Res<AudioPlaybackState>,
-    mut sinks: Query<(&AudioPlaybackInstance, &mut AudioSink)>,
+    mut sinks: Query<(&AudioPlaybackInstance, &mut AudioSink), Without<AudioSpatialEmitter>>,
 ) {
     for (playback_instance, mut sink) in &mut sinks {
         let Some(instance) = playback.instances.get(&playback_instance.instance_id) else {
@@ -388,6 +389,7 @@ mod tests {
             paused: false,
             stopping: false,
             fade: None,
+            spatial: false,
         };
 
         assert_eq!(
@@ -436,6 +438,7 @@ mod tests {
             paused: false,
             stopping: false,
             fade: None,
+            spatial: false,
         };
 
         assert_eq!(

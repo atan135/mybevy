@@ -185,6 +185,7 @@ fn play_music(
             looped: request.looped,
             fade_in_seconds: request.fade_in_seconds,
             paused: music.paused,
+            spatial: None,
         },
     ) else {
         return;
@@ -640,6 +641,7 @@ mod tests {
                 paused: false,
                 stopping: true,
                 fade: AudioFadeState::new(0.5, 1.0, 0.0, true),
+                spatial: false,
             },
         );
 

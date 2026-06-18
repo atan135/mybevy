@@ -8,6 +8,7 @@ use super::{
     catalog::{AudioCatalog, AudioCatalogError, AudioResolvedCueClip},
     command::{
         AudioClipRequest, AudioCommand, AudioCueRequest, AudioScopeCommand, AudioScopeFadeCommand,
+        AudioSpatialCueRequest,
     },
     event::{
         AudioClipStarted, AudioCueStarted, AudioEvent, AudioInstanceStopped, AudioLoadFailed,
@@ -16,6 +17,7 @@ use super::{
     id::{AudioClipId, AudioCueId, AudioInstanceId},
     mixer::AudioMixer,
     scope::{AudioBus, AudioScope},
+    spatial::{AudioSpatialEmitter, AudioSpatialSource},
 };
 
 #[derive(Debug, Default, Resource)]
@@ -37,6 +39,7 @@ pub struct AudioInstanceState {
     pub paused: bool,
     pub stopping: bool,
     pub fade: Option<AudioFadeState>,
+    pub spatial: bool,
 }
 
 #[derive(Clone, Debug, Component, PartialEq)]
@@ -110,6 +113,17 @@ pub fn handle_audio_playback_commands(
                 play_clip(
                     request,
                     None,
+                    &mut commands,
+                    &mut audio_events,
+                    &asset_server,
+                    &catalog,
+                    &mixer,
+                    &mut playback,
+                );
+            }
+            AudioCommand::PlaySpatialCue(request) => {
+                play_spatial_cue(
+                    request,
                     &mut commands,
                     &mut audio_events,
                     &asset_server,
@@ -271,6 +285,7 @@ fn play_cue(
             looped,
             fade_in_seconds: request.fade_in_seconds,
             paused: false,
+            spatial: None,
         },
     ) else {
         return;
@@ -319,6 +334,7 @@ fn play_clip(
             looped: request.looped,
             fade_in_seconds: request.fade_in_seconds,
             paused: false,
+            spatial: None,
         },
     ) else {
         return;
@@ -329,6 +345,83 @@ fn play_clip(
         instance_id,
         scope: request.scope.clone(),
         bus: request.bus,
+    }));
+}
+
+fn play_spatial_cue(
+    request: &AudioSpatialCueRequest,
+    commands: &mut Commands,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    asset_server: &AssetServer,
+    catalog: &AudioCatalog,
+    mixer: &AudioMixer,
+    playback: &mut AudioPlaybackState,
+) {
+    let resolved = match catalog.resolve_cue(&request.cue_id) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            send_catalog_failure(audio_events, &error, Some(request.cue_id.clone()));
+            return;
+        }
+    };
+
+    let Some(clip) = choose_cue_clip(&resolved.clips) else {
+        send_catalog_failure(
+            audio_events,
+            &AudioCatalogError::EmptyCue(request.cue_id.clone()),
+            Some(request.cue_id.clone()),
+        );
+        return;
+    };
+
+    let bus = request.bus.unwrap_or(resolved.playback.bus);
+    let scope = if request.scope == AudioScope::Global {
+        resolved.playback.scope
+    } else {
+        request.scope.clone()
+    };
+    let scope = match (&scope, &request.source) {
+        (AudioScope::Global, AudioSpatialSource::FollowEntity(target)) => {
+            AudioScope::Entity(*target)
+        }
+        _ => scope,
+    };
+    let event_scope = scope.clone();
+    let volume = request.volume * resolved.rules.volume;
+    let pitch = request.pitch * resolved.rules.pitch;
+    let looped = request.looped || resolved.playback.looped;
+
+    let Some(instance_id) = spawn_audio_instance(
+        commands,
+        asset_server,
+        mixer,
+        playback,
+        SpawnAudioInstance {
+            clip_id: clip.clip_id.clone(),
+            cue_id: Some(request.cue_id.clone()),
+            asset_path: clip.path.clone(),
+            scope,
+            bus,
+            volume,
+            pitch,
+            looped,
+            fade_in_seconds: request.fade_in_seconds,
+            paused: false,
+            spatial: Some(SpawnSpatialAudioInstance {
+                source: request.source.clone(),
+                attenuation: request.attenuation.normalized(),
+            }),
+        },
+    ) else {
+        return;
+    };
+
+    audio_events.write(AudioEvent::CueStarted(AudioCueStarted {
+        cue_id: request.cue_id.clone(),
+        clip_id: clip.clip_id.clone(),
+        instance_id,
+        scope: event_scope,
+        bus,
     }));
 }
 
@@ -344,6 +437,13 @@ pub(crate) struct SpawnAudioInstance {
     pub looped: bool,
     pub fade_in_seconds: Option<f32>,
     pub paused: bool,
+    pub spatial: Option<SpawnSpatialAudioInstance>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SpawnSpatialAudioInstance {
+    pub source: AudioSpatialSource,
+    pub attenuation: super::spatial::AudioSpatialAttenuation,
 }
 
 pub(crate) fn spawn_audio_instance(
@@ -370,15 +470,34 @@ pub(crate) fn spawn_audio_instance(
         speed: request.pitch.max(0.01),
         paused: request.paused || mixer.effective_bus_paused(request.bus),
         ..PlaybackSettings::default()
-    };
+    }
+    .with_spatial(request.spatial.is_some());
 
-    let entity = commands
-        .spawn((
-            AudioPlayer::new(source.clone()),
-            settings,
-            AudioPlaybackInstance { instance_id },
-        ))
-        .id();
+    let spatial = request.spatial.clone();
+    let transform = spatial
+        .as_ref()
+        .map(|spatial| match spatial.source {
+            AudioSpatialSource::Fixed(transform) => transform,
+            AudioSpatialSource::FollowEntity(_) => Transform::default(),
+        })
+        .unwrap_or_default();
+    let global_transform = GlobalTransform::from(transform);
+    let is_spatial = spatial.is_some();
+
+    let mut entity_commands = commands.spawn((
+        AudioPlayer::new(source.clone()),
+        settings,
+        AudioPlaybackInstance { instance_id },
+        transform,
+        global_transform,
+    ));
+    if let Some(spatial) = spatial {
+        entity_commands.insert(AudioSpatialEmitter {
+            source: spatial.source,
+            attenuation: spatial.attenuation,
+        });
+    }
+    let entity = entity_commands.id();
 
     playback.instances.insert(
         instance_id,
@@ -395,6 +514,7 @@ pub(crate) fn spawn_audio_instance(
             paused: request.paused,
             stopping: false,
             fade,
+            spatial: is_spatial,
         },
     );
 
@@ -524,7 +644,10 @@ fn set_scope_paused(command: &AudioScopeCommand, paused: bool, playback: &mut Au
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::audio::{AudioCueClip, AudioCueEntry, AudioCuePlayback, AudioCueRules};
+    use crate::framework::audio::{
+        AudioCueClip, AudioCueEntry, AudioCuePlayback, AudioCueRules, AudioSpatialAttenuation,
+        AudioSpatialCueRequest, AudioSpatialEmitter, AudioSpatialSource,
+    };
     use bevy::ecs::message::MessageCursor;
 
     fn clip_id(value: &str) -> AudioClipId {
@@ -672,6 +795,117 @@ mod tests {
                 bus: AudioBus::Ui,
             })]
         );
+    }
+
+    #[test]
+    fn play_spatial_cue_spawns_spatial_audio_entity_with_fixed_transform() {
+        let mut app = playback_app();
+        let clip_id = clip_id("ambience.torch");
+        let cue_id = cue_id("scene.torch");
+        let transform = Transform::from_xyz(10.0, 20.0, 0.0);
+        let attenuation = AudioSpatialAttenuation::new(30.0, 2.0);
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/ambience/torch.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id.clone())]).with_playback(
+                AudioCuePlayback {
+                    bus: AudioBus::Sfx,
+                    scope: AudioScope::scene("scene-1").unwrap(),
+                    looped: true,
+                },
+            ),
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlaySpatialCue(AudioSpatialCueRequest {
+                cue_id: cue_id.clone(),
+                scope: AudioScope::Global,
+                bus: None,
+                volume: 0.5,
+                pitch: 1.25,
+                looped: false,
+                fade_in_seconds: None,
+                source: AudioSpatialSource::fixed(transform),
+                attenuation,
+            }));
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        let (instance_id, instance) = playback.instances.iter().next().unwrap();
+        assert_eq!(instance.clip_id, clip_id);
+        assert_eq!(instance.cue_id, Some(cue_id.clone()));
+        assert_eq!(instance.scope, AudioScope::scene("scene-1").unwrap());
+        assert_eq!(instance.bus, AudioBus::Sfx);
+        assert_eq!(instance.volume, 0.5);
+        assert!(instance.spatial);
+
+        let entity = app.world().entity(instance.entity);
+        let settings = entity.get::<PlaybackSettings>().unwrap();
+        assert!(settings.spatial);
+        assert!(matches!(settings.mode, PlaybackMode::Loop));
+        assert_eq!(settings.volume, Volume::Linear(0.5));
+        assert_eq!(settings.speed, 1.25);
+        assert_eq!(*entity.get::<Transform>().unwrap(), transform);
+        assert!(entity.get::<GlobalTransform>().is_some());
+        assert_eq!(
+            entity.get::<AudioSpatialEmitter>().unwrap(),
+            &AudioSpatialEmitter {
+                source: AudioSpatialSource::fixed(transform),
+                attenuation,
+            }
+        );
+
+        assert_eq!(
+            read_events(&app),
+            vec![AudioEvent::CueStarted(AudioCueStarted {
+                cue_id,
+                clip_id,
+                instance_id: *instance_id,
+                scope: AudioScope::scene("scene-1").unwrap(),
+                bus: AudioBus::Sfx,
+            })]
+        );
+    }
+
+    #[test]
+    fn play_spatial_cue_can_follow_entity_and_default_scope_to_entity() {
+        let mut app = playback_app();
+        let clip_id = clip_id("ambience.crystal");
+        let cue_id = cue_id("scene.crystal");
+        let target = app
+            .world_mut()
+            .spawn(Transform::from_xyz(2.0, 0.0, 0.0))
+            .id();
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/ambience/crystal.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id.clone())]),
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlaySpatialCue(AudioSpatialCueRequest::new(
+                cue_id.clone(),
+                AudioSpatialSource::follow_entity(target),
+            )));
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        let instance = playback.instances.values().next().unwrap();
+        assert_eq!(instance.scope, AudioScope::Entity(target));
+        assert!(instance.spatial);
+
+        let entity = app.world().entity(instance.entity);
+        assert_eq!(
+            entity.get::<AudioSpatialEmitter>().unwrap().source,
+            AudioSpatialSource::follow_entity(target)
+        );
+        assert_eq!(*entity.get::<Transform>().unwrap(), Transform::default());
+        assert!(entity.get::<PlaybackSettings>().unwrap().spatial);
     }
 
     #[test]
@@ -839,6 +1073,7 @@ mod tests {
                     paused: false,
                     stopping: false,
                     fade: None,
+                    spatial: false,
                 },
             );
         app.world_mut().entity_mut(entity).despawn();
@@ -921,6 +1156,71 @@ mod tests {
                 reason: AudioStopReason::StoppedByScope,
                 ..
             }) if clip_id == &scene_clip && scope == &AudioScope::scene("scene-1").unwrap()
+        )));
+    }
+
+    #[test]
+    fn stop_by_scope_removes_matching_spatial_instances() {
+        let mut app = playback_app();
+        let clip_id = clip_id("ambience.waterfall");
+        let cue_id = cue_id("scene.waterfall");
+        let scene_scope = AudioScope::scene("scene-1").unwrap();
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/ambience/waterfall.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id.clone())]),
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlaySpatialCue(AudioSpatialCueRequest {
+                cue_id: cue_id.clone(),
+                scope: scene_scope.clone(),
+                bus: Some(AudioBus::Sfx),
+                volume: 1.0,
+                pitch: 1.0,
+                looped: true,
+                fade_in_seconds: None,
+                source: AudioSpatialSource::fixed(Transform::from_xyz(4.0, 0.0, 0.0)),
+                attenuation: AudioSpatialAttenuation::new(20.0, 1.0),
+            }));
+        app.update();
+
+        let instance_id = *app
+            .world()
+            .resource::<AudioPlaybackState>()
+            .instances
+            .keys()
+            .next()
+            .unwrap();
+
+        app.world_mut()
+            .write_message(AudioCommand::StopByScope(AudioScopeFadeCommand {
+                scope: scene_scope.clone(),
+                fade_out_seconds: None,
+            }));
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<AudioPlaybackState>()
+                .instances
+                .is_empty()
+        );
+        assert!(read_events(&app).iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceStopped(AudioInstanceStopped {
+                instance_id: stopped,
+                clip_id: Some(stopped_clip),
+                cue_id: Some(stopped_cue),
+                scope,
+                bus: AudioBus::Sfx,
+                reason: AudioStopReason::StoppedByScope,
+            }) if stopped == &instance_id
+                && stopped_clip == &clip_id
+                && stopped_cue == &cue_id
+                && scope == &scene_scope
         )));
     }
 

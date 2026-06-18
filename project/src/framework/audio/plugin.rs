@@ -54,8 +54,12 @@ impl Plugin for AudioPlugin {
                         .chain()
                         .in_set(AudioSystemSet::Commands),
                     super::playback::report_audio_load_failures.in_set(AudioSystemSet::Playback),
+                    super::spatial::sync_spatial_listener_binding.in_set(AudioSystemSet::Playback),
+                    super::spatial::sync_spatial_emitters.in_set(AudioSystemSet::Playback),
                     super::music::advance_music_fades.in_set(AudioSystemSet::Playback),
                     super::mixer::sync_audio_sinks_with_mixer.in_set(AudioSystemSet::Mixer),
+                    super::spatial::sync_spatial_audio_sinks_with_mixer
+                        .in_set(AudioSystemSet::Mixer),
                     super::playback::cleanup_finished_audio_instances
                         .in_set(AudioSystemSet::Cleanup),
                     super::music::cleanup_music_controller.in_set(AudioSystemSet::Cleanup),
@@ -80,8 +84,8 @@ mod tests {
         AudioBus, AudioBusVolumeCommand, AudioCatalog, AudioClipId, AudioClipRequest, AudioCommand,
         AudioCueClip, AudioCueEntry, AudioCueId, AudioCueStarted, AudioEvent, AudioInstanceId,
         AudioInstanceState, AudioMixer, AudioPlaybackInstance, AudioPlaybackState, AudioScope,
-        DEFAULT_UI_CLICK_CUE_ID, SceneAudioAdapterConfig, SceneAudioCue, SceneAudioEntry,
-        SceneAudioPlayback,
+        AudioSpatialListenerEntity, DEFAULT_UI_CLICK_CUE_ID, SceneAudioAdapterConfig,
+        SceneAudioCue, SceneAudioEntry, SceneAudioPlayback,
     };
     use crate::framework::scene::prelude::{
         SceneEntered, SceneEvent, SceneExitStarted, SceneExited, SceneId, SceneSessionId,
@@ -103,6 +107,10 @@ mod tests {
         assert!(app.world().contains_resource::<AudioPlaybackState>());
         assert!(app.world().contains_resource::<MusicController>());
         assert!(app.world().contains_resource::<AudioDebugConfig>());
+        assert!(
+            !app.world()
+                .contains_resource::<AudioSpatialListenerEntity>()
+        );
 
         let mixer = app.world().resource::<AudioMixer>();
         assert!(mixer.buses.contains_key(&AudioBus::Master));
@@ -162,6 +170,7 @@ mod tests {
                     paused: false,
                     stopping: false,
                     fade: None,
+                    spatial: false,
                 },
             );
         app.world_mut()

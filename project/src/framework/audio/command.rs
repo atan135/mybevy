@@ -3,11 +3,13 @@ use bevy::prelude::*;
 use super::{
     id::{AudioClipId, AudioCueId, AudioGroupId, AudioInstanceId},
     scope::{AudioBus, AudioScope},
+    spatial::{AudioSpatialAttenuation, AudioSpatialSource},
 };
 
 #[derive(Clone, Debug, Message, PartialEq)]
 pub enum AudioCommand {
     PlayCue(AudioCueRequest),
+    PlaySpatialCue(AudioSpatialCueRequest),
     PlayClip(AudioClipRequest),
     PlayMusic(AudioMusicRequest),
     CrossfadeMusic(AudioCrossfadeMusicRequest),
@@ -46,6 +48,35 @@ impl AudioCueRequest {
             pitch: 1.0,
             looped: false,
             fade_in_seconds: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioSpatialCueRequest {
+    pub cue_id: AudioCueId,
+    pub scope: AudioScope,
+    pub bus: Option<AudioBus>,
+    pub volume: f32,
+    pub pitch: f32,
+    pub looped: bool,
+    pub fade_in_seconds: Option<f32>,
+    pub source: AudioSpatialSource,
+    pub attenuation: AudioSpatialAttenuation,
+}
+
+impl AudioSpatialCueRequest {
+    pub fn new(cue_id: AudioCueId, source: AudioSpatialSource) -> Self {
+        Self {
+            cue_id,
+            scope: AudioScope::Global,
+            bus: None,
+            volume: 1.0,
+            pitch: 1.0,
+            looped: false,
+            fade_in_seconds: None,
+            source,
+            attenuation: AudioSpatialAttenuation::default(),
         }
     }
 }
@@ -234,6 +265,24 @@ mod tests {
         assert_eq!(request.pitch, 1.0);
         assert!(!request.looped);
         assert_eq!(request.fade_in_seconds, None);
+    }
+
+    #[test]
+    fn spatial_cue_request_defaults_keep_listener_and_attenuation_explicit() {
+        let cue_id = AudioCueId::try_from("ambience.torch").unwrap();
+        let transform = Transform::from_xyz(1.0, 2.0, 3.0);
+        let request =
+            AudioSpatialCueRequest::new(cue_id.clone(), AudioSpatialSource::fixed(transform));
+
+        assert_eq!(request.cue_id, cue_id);
+        assert_eq!(request.scope, AudioScope::Global);
+        assert_eq!(request.bus, None);
+        assert_eq!(request.volume, 1.0);
+        assert_eq!(request.pitch, 1.0);
+        assert!(!request.looped);
+        assert_eq!(request.fade_in_seconds, None);
+        assert_eq!(request.source, AudioSpatialSource::Fixed(transform));
+        assert_eq!(request.attenuation, AudioSpatialAttenuation::default());
     }
 
     #[test]

@@ -6,7 +6,7 @@ pub use super::command::{
     AudioBusMutedCommand, AudioBusPausedCommand, AudioBusVolumeCommand, AudioClipRequest,
     AudioCommand, AudioCrossfadeMusicRequest, AudioCueRequest, AudioGroupCommand,
     AudioMusicFadeCommand, AudioMusicRequest, AudioScopeCommand, AudioScopeFadeCommand,
-    AudioStopInstanceCommand,
+    AudioSpatialCueRequest, AudioStopInstanceCommand,
 };
 pub use super::debug::AudioDebugConfig;
 pub use super::event::{
@@ -27,6 +27,11 @@ pub use super::scene::{
     SceneAudioAdapterConfig, SceneAudioCue, SceneAudioEntry, SceneAudioMusic, SceneAudioPlayback,
 };
 pub use super::scope::{AudioBus, AudioScope};
+pub use super::spatial::{
+    AudioSpatialAttenuation, AudioSpatialEmitter, AudioSpatialListenerBinding,
+    AudioSpatialListenerEntity, AudioSpatialListenerProxy, AudioSpatialSource,
+    BEVY_SPATIAL_AUDIO_LIMITS,
+};
 pub use super::ui::{
     DEFAULT_UI_CLICK_CUE_ID, DEFAULT_UI_CUE_COOLDOWN_SECONDS, UiAudioAdapterConfig,
     UiAudioCooldowns, UiAudioCueOverride,

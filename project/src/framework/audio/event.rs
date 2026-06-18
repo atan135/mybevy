@@ -68,6 +68,7 @@ pub enum AudioStopReason {
     StoppedByScope,
     ReplacedByMusic,
     LoadFailed,
+    SourceEntityDespawned,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

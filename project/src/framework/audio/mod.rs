@@ -16,6 +16,7 @@ mod plugin;
 pub mod prelude;
 mod scene;
 mod scope;
+mod spatial;
 mod ui;
 
 pub use prelude::*;
