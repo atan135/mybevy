@@ -193,6 +193,11 @@ mybevy/
 |   `-- ui/
 `-- project/
     |-- assets/
+    |   |-- game/
+    |   |-- licenses/
+    |   |-- models/
+    |   |-- scenes/
+    |   `-- ui/
     |-- src/
     |   |-- framework/
     |   |   |-- fight/
@@ -229,13 +234,16 @@ mybevy/
 - `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
 - `project/src/game/myserver/`：当前游戏的 MyServer 登录、房间和协议适配模块
 - `project/src/game/navigation/`：主流程 `AppUiMode` 和路由按钮数据
-- `project/src/game/scenes/`：具体游戏场景 ID、场景注册适配和场景专属组合逻辑
+- `project/src/game/scenes/`：具体游戏场景 ID、场景目录 CSV 注册适配和场景专属组合逻辑，当前包含 `sample.dungeon_room`
 - `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体业务页面
 - `project/src/framework/ui/core/`：UI 框架入口、Panel Manager、层级、输入拦截
 - `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 等顶层 UI 实现
 - `project/src/framework/ui/style/`：颜色、字号、间距、圆角等主题 token
 - `project/src/framework/ui/widgets/`：按钮、文本等通用控件
-- `project/assets/`：贴图、音频、字体、场景文件
+- `project/assets/`：贴图、音频、字体、场景文件和首包配置数据
+- `project/assets/game/scenes.csv`：游戏层场景目录表，当前注册 `sample.dungeon_room`
+- `project/assets/scenes/sample_dungeon_room/scene.ron`：样板场景 framework manifest
+- `project/assets/scenes/sample_dungeon_room/layout.ron`：样板场景 game layer prefab/light 摆放数据
 - `docs/assets-workflow.md`：项目资源使用方式，覆盖开发期、APK 包内和后续下载资源
 - `docs/scene/`：场景框架相关文档，当前总文档规划场景生命周期、资源、切换、流式加载、相机和联机同步
 - `docs/ui/`：UI 框架实现机制、组件使用、响应式布局、调试验收和限制说明
@@ -399,8 +407,8 @@ cargo run -- --window-size 1280x2772 --window-scale 0.5
 场景框架支持一组开发期环境变量，用于从启动时进入指定场景、指定 spawn、打开诊断或模拟加载异常。所有命令仍在 `project/` 目录执行：
 
 ```powershell
-$env:MYBEVY_START_SCENE="dungeon.forest_001"
-$env:MYBEVY_START_SPAWN="debug.entry_a"
+$env:MYBEVY_START_SCENE="sample.dungeon_room"
+$env:MYBEVY_START_SPAWN="spawn.default"
 $env:MYBEVY_SCENE_DEBUG="true"
 $env:MYBEVY_SCENE_LOG_LIFECYCLE="true"
 $env:MYBEVY_SCENE_SLOW_LOADING_SECONDS="1.5"
@@ -418,6 +426,10 @@ cargo run
 - `MYBEVY_SCENE_SIMULATE_FAILURE`：失败模拟类型，当前可解析 `manifest_load`、`asset_load`、`camera_setup`。
 
 这些变量只用于开发期。正式入口应来自登录、房间、存档或服务端协议。
+
+当前已注册的首包样板场景是 `sample.dungeon_room`，它来自 `project/assets/game/scenes.csv`，manifest 在 `project/assets/scenes/sample_dungeon_room/scene.ron`，layout 在同目录的 `layout.ron`。也可以从正常 UI 流程进入：启动游戏、登录到大厅，在 `game_list` 点击 `Sample Scene` 的 `Enter` 按钮；进入成功后会显示样板场景 HUD，点击 `Lobby` 返回大厅。
+
+`TOUCH_START_SCREEN=sample_scene` 只会把 UI state 切到样板场景 HUD，适合调试 HUD 本身；它不会自动发送 `SceneCommand::Enter`，因此不是完整场景加载验收方式。完整验收优先使用大厅入口或 `MYBEVY_START_SCENE="sample.dungeon_room"`。
 
 ## 16. 官方参考入口
 

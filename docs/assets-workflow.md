@@ -33,19 +33,21 @@ project/assets/ui/fonts/MyBevyUiCjk-Regular.otf
 content_cache://2026.06.09.1/models/props/crate/crate.glb
 ```
 
-场景清单也是首包资源时同样从 `project/assets/` 下一级开始写。例如实际文件是：
+场景清单、游戏层场景目录表和 layout 数据也是首包资源时，同样从 `project/assets/` 下一级开始写。例如实际文件是：
 
 ```text
-project/assets/scenes/boot/scene.ron
+project/assets/game/scenes.csv
+project/assets/scenes/sample_dungeon_room/scene.ron
+project/assets/scenes/sample_dungeon_room/layout.ron
 ```
 
 注册到场景框架时写：
 
 ```rust
-"scenes/boot/scene.ron"
+"scenes/sample_dungeon_room/scene.ron"
 ```
 
-不要写成 `project/assets/scenes/boot/scene.ron`。当前场景框架只实现首包 RON 场景清单加载；后续下载场景清单和 `content_cache://...` 场景加载仍是后续目标。
+不要写成 `project/assets/scenes/sample_dungeon_room/scene.ron`。当前场景框架只实现首包 RON 场景清单加载；后续下载场景清单和 `content_cache://...` 场景加载仍是后续目标。
 
 ## 2. 资源来源分类
 
@@ -68,7 +70,10 @@ MyBevy 资源按来源分三类：
 ```text
 project/assets/
 |-- audio/
+|-- game/
+|   `-- scenes.csv
 |-- images/
+|-- licenses/
 |-- models/
 |   |-- characters/
 |   |-- props/
@@ -76,6 +81,7 @@ project/assets/
 |-- scenes/
 |   |-- boot/
 |   |-- fallback/
+|   |-- sample_dungeon_room/
 |   `-- touch_ripple/
 |-- textures/
 |   |-- atlas/
@@ -135,6 +141,20 @@ content_dist/
 - 模型和源工程：`.glb`、`.bin`、`.fbx`、`.blend`、`.psd`、`.kra`、`.spp`
 
 RON、JSON、TOML、TXT、授权说明、主题和 i18n 文案等可读文本资源保持普通 Git 提交，方便审阅 diff。
+
+当前已经落地的样板场景首包资源：
+
+```text
+project/assets/game/scenes.csv
+project/assets/scenes/sample_dungeon_room/scene.ron
+project/assets/scenes/sample_dungeon_room/layout.ron
+project/assets/models/scenes/kaykit_dungeon_remastered/
+project/assets/models/props/kaykit_dungeon_remastered/
+project/assets/licenses/kaykit_dungeon_remastered_license.txt
+project/assets/licenses/kaykit_adventurers_license.txt
+```
+
+其中 `game/scenes.csv` 是游戏层场景目录表，`scenes/sample_dungeon_room/scene.ron` 是 framework manifest，`scenes/sample_dungeon_room/layout.ron` 是 game layer prefab/light 摆放数据。CSV、manifest 和 layout 都是文本资源，保持普通 Git 提交；`.gltf`、`.bin`、`.glb`、`.png` 等模型和贴图资源走 Git LFS。
 
 首次克隆或换新机器开发时，先确认 Git LFS 可用：
 
@@ -596,6 +616,16 @@ RON/JSON 等配置文件分两类：
 - 每个配置文件有 `version` 字段。
 - 解析失败不能让应用崩溃，应记录错误并使用上一版缓存或首包默认值。
 - 不要把不可信远端配置直接反序列化后驱动危险操作；先做字段校验和范围限制。
+
+### 7.8 场景 CSV、Manifest 和 Layout
+
+当前样板场景使用三类首包文本数据：
+
+- `project/assets/game/scenes.csv`：游戏层场景目录表，当前包含 `sample.dungeon_room`。它只描述场景是否启用、展示排序、标题/描述 key、`kind`、manifest path、layout path、默认 spawn 和 UI 模式，不写 prefab 坐标。
+- `project/assets/scenes/sample_dungeon_room/scene.ron`：framework manifest，声明场景 ID、相机、Loading 策略、资源 layer、spawn point 和 anchors。manifest 中的 glTF 只会被框架加载跟踪，不会自动摆放到世界。
+- `project/assets/scenes/sample_dungeon_room/layout.ron`：game layer layout，声明样板房间的 prefab 和 light 实例。当前由 `project/src/game/scenes/sample_dungeon_room.rs` 在 `SceneEvent::Entered` 后读取并实例化。
+
+这三类路径都按首包资源规则书写，也就是相对 `project/assets/`。后续下载版本的 CSV、manifest 或 layout 仍未接入 `content_cache://...`。
 
 ## 8. 加载状态与页面时机
 
