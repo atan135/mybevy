@@ -11,6 +11,9 @@ pub enum AudioCommand {
     PlayClip(AudioClipRequest),
     PlayMusic(AudioMusicRequest),
     CrossfadeMusic(AudioCrossfadeMusicRequest),
+    StopMusic(AudioMusicFadeCommand),
+    PauseMusic,
+    ResumeMusic,
     StopInstance(AudioStopInstanceCommand),
     StopByScope(AudioScopeFadeCommand),
     PauseByScope(AudioScopeCommand),
@@ -110,6 +113,19 @@ impl AudioCrossfadeMusicRequest {
             volume: 1.0,
             looped: true,
             fade_seconds,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AudioMusicFadeCommand {
+    pub fade_out_seconds: Option<f32>,
+}
+
+impl AudioMusicFadeCommand {
+    pub const fn new() -> Self {
+        Self {
+            fade_out_seconds: None,
         }
     }
 }

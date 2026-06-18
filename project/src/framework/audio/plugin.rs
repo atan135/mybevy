@@ -32,14 +32,17 @@ impl Plugin for AudioPlugin {
                 (
                     (
                         super::mixer::handle_audio_mixer_commands,
+                        super::music::handle_music_commands,
                         super::playback::handle_audio_playback_commands,
                     )
                         .chain()
                         .in_set(AudioSystemSet::Commands),
                     super::playback::report_audio_load_failures.in_set(AudioSystemSet::Playback),
+                    super::music::advance_music_fades.in_set(AudioSystemSet::Playback),
                     super::mixer::sync_audio_sinks_with_mixer.in_set(AudioSystemSet::Mixer),
                     super::playback::cleanup_finished_audio_instances
                         .in_set(AudioSystemSet::Cleanup),
+                    super::music::cleanup_music_controller.in_set(AudioSystemSet::Cleanup),
                 ),
             );
     }
@@ -128,6 +131,9 @@ mod tests {
                     asset_path: "audio/music/title.ogg".to_string(),
                     source: Handle::<AudioSource>::default(),
                     failed: false,
+                    paused: false,
+                    stopping: false,
+                    fade: None,
                 },
             );
         app.world_mut()

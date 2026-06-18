@@ -136,7 +136,7 @@ pub fn calculate_sink_sync_target(
 ) -> AudioSinkSyncTarget {
     AudioSinkSyncTarget {
         volume: mixer.target_instance_volume(instance.volume, instance.bus),
-        paused: mixer.effective_bus_paused(instance.bus),
+        paused: instance.paused || mixer.effective_bus_paused(instance.bus),
     }
 }
 
@@ -385,6 +385,9 @@ mod tests {
             asset_path: "audio/music/title.ogg".to_string(),
             source: Handle::<AudioSource>::default(),
             failed: false,
+            paused: false,
+            stopping: false,
+            fade: None,
         };
 
         assert_eq!(
@@ -430,6 +433,9 @@ mod tests {
             asset_path: "audio/ui/click.ogg".to_string(),
             source: Handle::<AudioSource>::default(),
             failed: false,
+            paused: false,
+            stopping: false,
+            fade: None,
         };
 
         assert_eq!(

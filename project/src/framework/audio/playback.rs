@@ -32,11 +32,54 @@ pub struct AudioInstanceState {
     pub asset_path: String,
     pub source: Handle<AudioSource>,
     pub failed: bool,
+    pub paused: bool,
+    pub stopping: bool,
+    pub fade: Option<AudioFadeState>,
 }
 
 #[derive(Clone, Debug, Component, PartialEq)]
 pub struct AudioPlaybackInstance {
     pub instance_id: AudioInstanceId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AudioFadeState {
+    pub elapsed_seconds: f32,
+    pub duration_seconds: f32,
+    pub from_volume: f32,
+    pub to_volume: f32,
+    pub stop_when_finished: bool,
+}
+
+impl AudioFadeState {
+    pub fn new(
+        duration_seconds: f32,
+        from_volume: f32,
+        to_volume: f32,
+        stop_when_finished: bool,
+    ) -> Option<Self> {
+        let duration_seconds = duration_seconds.max(0.0);
+        (duration_seconds > 0.0).then_some(Self {
+            elapsed_seconds: 0.0,
+            duration_seconds,
+            from_volume: from_volume.max(0.0),
+            to_volume: to_volume.max(0.0),
+            stop_when_finished,
+        })
+    }
+
+    pub fn target_volume(&self) -> f32 {
+        let progress = if self.duration_seconds <= 0.0 {
+            1.0
+        } else {
+            (self.elapsed_seconds / self.duration_seconds).clamp(0.0, 1.0)
+        };
+        self.from_volume + (self.to_volume - self.from_volume) * progress
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.elapsed_seconds >= self.duration_seconds
+    }
 }
 
 pub fn handle_audio_playback_commands(
@@ -199,6 +242,8 @@ fn play_cue(
             volume,
             pitch,
             looped,
+            fade_in_seconds: request.fade_in_seconds,
+            paused: false,
         },
     ) else {
         return;
@@ -245,6 +290,8 @@ fn play_clip(
             volume: request.volume,
             pitch: request.pitch,
             looped: request.looped,
+            fade_in_seconds: request.fade_in_seconds,
+            paused: false,
         },
     ) else {
         return;
@@ -259,18 +306,20 @@ fn play_clip(
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct SpawnAudioInstance {
-    clip_id: AudioClipId,
-    cue_id: Option<AudioCueId>,
-    asset_path: String,
-    scope: AudioScope,
-    bus: AudioBus,
-    volume: f32,
-    pitch: f32,
-    looped: bool,
+pub(crate) struct SpawnAudioInstance {
+    pub clip_id: AudioClipId,
+    pub cue_id: Option<AudioCueId>,
+    pub asset_path: String,
+    pub scope: AudioScope,
+    pub bus: AudioBus,
+    pub volume: f32,
+    pub pitch: f32,
+    pub looped: bool,
+    pub fade_in_seconds: Option<f32>,
+    pub paused: bool,
 }
 
-fn spawn_audio_instance(
+pub(crate) fn spawn_audio_instance(
     commands: &mut Commands,
     asset_server: &AssetServer,
     mixer: &AudioMixer,
@@ -280,15 +329,19 @@ fn spawn_audio_instance(
     let instance_id = AudioInstanceId::new();
     let source = asset_server.load::<AudioSource>(request.asset_path.clone());
     let volume = request.volume.max(0.0);
+    let fade = request
+        .fade_in_seconds
+        .and_then(|seconds| AudioFadeState::new(seconds, 0.0, volume, false));
+    let startup_volume = fade.as_ref().map_or(volume, AudioFadeState::target_volume);
     let settings = PlaybackSettings {
         mode: if request.looped {
             PlaybackMode::Loop
         } else {
             PlaybackMode::Despawn
         },
-        volume: Volume::Linear(mixer.target_instance_volume(volume, request.bus)),
+        volume: Volume::Linear(mixer.target_instance_volume(startup_volume, request.bus)),
         speed: request.pitch.max(0.01),
-        paused: mixer.effective_bus_paused(request.bus),
+        paused: request.paused || mixer.effective_bus_paused(request.bus),
         ..PlaybackSettings::default()
     };
 
@@ -312,6 +365,9 @@ fn spawn_audio_instance(
             asset_path: request.asset_path,
             source,
             failed: false,
+            paused: request.paused,
+            stopping: false,
+            fade,
         },
     );
 
@@ -661,6 +717,9 @@ mod tests {
                     asset_path: "audio/ui/click.ogg".to_string(),
                     source,
                     failed: false,
+                    paused: false,
+                    stopping: false,
+                    fade: None,
                 },
             );
         app.world_mut().entity_mut(entity).despawn();

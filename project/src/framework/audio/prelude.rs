@@ -5,7 +5,8 @@ pub use super::catalog::{
 pub use super::command::{
     AudioBusMutedCommand, AudioBusPausedCommand, AudioBusVolumeCommand, AudioClipRequest,
     AudioCommand, AudioCrossfadeMusicRequest, AudioCueRequest, AudioGroupCommand,
-    AudioMusicRequest, AudioScopeCommand, AudioScopeFadeCommand, AudioStopInstanceCommand,
+    AudioMusicFadeCommand, AudioMusicRequest, AudioScopeCommand, AudioScopeFadeCommand,
+    AudioStopInstanceCommand,
 };
 pub use super::debug::AudioDebugConfig;
 pub use super::event::{
@@ -17,7 +18,9 @@ pub use super::id::{
     AudioClipId, AudioCueId, AudioGroupId, AudioIdError, AudioInstanceId, AudioScopeId,
 };
 pub use super::mixer::{AudioBusState, AudioMixer};
-pub use super::music::MusicController;
-pub use super::playback::{AudioInstanceState, AudioPlaybackInstance, AudioPlaybackState};
+pub use super::music::{MusicController, MusicFadePlan, MusicTrackState};
+pub use super::playback::{
+    AudioFadeState, AudioInstanceState, AudioPlaybackInstance, AudioPlaybackState,
+};
 pub use super::plugin::{AudioPlugin, AudioSystemSet};
 pub use super::scope::{AudioBus, AudioScope};
