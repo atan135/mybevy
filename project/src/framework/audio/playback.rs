@@ -6,7 +6,9 @@ use bevy::prelude::*;
 
 use super::{
     catalog::{AudioCatalog, AudioCatalogError, AudioResolvedCueClip},
-    command::{AudioClipRequest, AudioCommand, AudioCueRequest},
+    command::{
+        AudioClipRequest, AudioCommand, AudioCueRequest, AudioScopeCommand, AudioScopeFadeCommand,
+    },
     event::{
         AudioClipStarted, AudioCueStarted, AudioEvent, AudioInstanceStopped, AudioLoadFailed,
         AudioStopReason,
@@ -115,6 +117,31 @@ pub fn handle_audio_playback_commands(
                     &mixer,
                     &mut playback,
                 );
+            }
+            AudioCommand::StopInstance(command) => {
+                stop_instance_now(
+                    command.instance_id,
+                    command.fade_out_seconds,
+                    &mut commands,
+                    &mut audio_events,
+                    &mut playback,
+                    AudioStopReason::Stopped,
+                );
+            }
+            AudioCommand::StopByScope(command) => {
+                stop_by_scope(
+                    command,
+                    &mut commands,
+                    &mut audio_events,
+                    &mut playback,
+                    AudioStopReason::StoppedByScope,
+                );
+            }
+            AudioCommand::PauseByScope(command) => {
+                set_scope_paused(command, true, &mut playback);
+            }
+            AudioCommand::ResumeByScope(command) => {
+                set_scope_paused(command, false, &mut playback);
             }
             _ => {}
         }
@@ -400,6 +427,98 @@ fn send_catalog_failure(
         asset_path,
         message: error.to_string(),
     }));
+}
+
+pub(crate) fn stop_by_scope(
+    command: &AudioScopeFadeCommand,
+    commands: &mut Commands,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    playback: &mut AudioPlaybackState,
+    reason: AudioStopReason,
+) -> Vec<AudioInstanceId> {
+    let instance_ids = playback
+        .instances
+        .iter()
+        .filter_map(|(instance_id, instance)| {
+            (instance.scope == command.scope
+                && (!instance.stopping || command.fade_out_seconds.is_none()))
+            .then_some(*instance_id)
+        })
+        .collect::<Vec<_>>();
+
+    for instance_id in &instance_ids {
+        stop_instance_now(
+            *instance_id,
+            command.fade_out_seconds,
+            commands,
+            audio_events,
+            playback,
+            reason,
+        );
+    }
+
+    instance_ids
+}
+
+pub(crate) fn stop_instance_now(
+    instance_id: AudioInstanceId,
+    fade_out_seconds: Option<f32>,
+    commands: &mut Commands,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    playback: &mut AudioPlaybackState,
+    reason: AudioStopReason,
+) -> bool {
+    if let Some(seconds) = fade_out_seconds.filter(|seconds| *seconds > 0.0) {
+        fade_out_instance(instance_id, seconds, playback);
+        return playback.instances.contains_key(&instance_id);
+    }
+
+    stop_instance_immediately(instance_id, commands, audio_events, playback, reason)
+}
+
+pub(crate) fn stop_instance_immediately(
+    instance_id: AudioInstanceId,
+    commands: &mut Commands,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    playback: &mut AudioPlaybackState,
+    reason: AudioStopReason,
+) -> bool {
+    let Some(instance) = playback.instances.remove(&instance_id) else {
+        return false;
+    };
+
+    commands.entity(instance.entity).try_despawn();
+    audio_events.write(AudioEvent::InstanceStopped(AudioInstanceStopped {
+        instance_id,
+        clip_id: Some(instance.clip_id),
+        cue_id: instance.cue_id,
+        scope: instance.scope,
+        bus: instance.bus,
+        reason,
+    }));
+    true
+}
+
+pub(crate) fn fade_out_instance(
+    instance_id: AudioInstanceId,
+    fade_out_seconds: f32,
+    playback: &mut AudioPlaybackState,
+) -> bool {
+    let Some(instance) = playback.instances.get_mut(&instance_id) else {
+        return false;
+    };
+
+    instance.fade = AudioFadeState::new(fade_out_seconds, instance.volume, 0.0, true);
+    instance.stopping = true;
+    true
+}
+
+fn set_scope_paused(command: &AudioScopeCommand, paused: bool, playback: &mut AudioPlaybackState) {
+    for instance in playback.instances.values_mut() {
+        if instance.scope == command.scope {
+            instance.paused = paused;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -742,6 +861,116 @@ mod tests {
                 bus: AudioBus::Ui,
                 reason: AudioStopReason::Completed,
             })]
+        );
+    }
+
+    #[test]
+    fn stop_by_scope_removes_matching_instances_and_reports_stopped_by_scope() {
+        let mut app = playback_app();
+        let scene_clip = clip_id("ambience.room");
+        let ui_clip = clip_id("ui.click");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(scene_clip.clone(), "audio/ambience/room.ogg");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(ui_clip.clone(), "audio/ui/click.ogg");
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest {
+                clip_id: scene_clip.clone(),
+                scope: AudioScope::scene("scene-1").unwrap(),
+                bus: AudioBus::Sfx,
+                volume: 0.5,
+                pitch: 1.0,
+                looped: true,
+                fade_in_seconds: None,
+            }));
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest {
+                clip_id: ui_clip,
+                scope: AudioScope::Ui,
+                bus: AudioBus::Ui,
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+            }));
+        app.update();
+
+        app.world_mut()
+            .write_message(AudioCommand::StopByScope(AudioScopeFadeCommand {
+                scope: AudioScope::scene("scene-1").unwrap(),
+                fade_out_seconds: None,
+            }));
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert_eq!(playback.instances.len(), 1);
+        assert!(
+            playback
+                .instances
+                .values()
+                .all(|instance| instance.scope == AudioScope::Ui)
+        );
+        assert!(read_events(&app).iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceStopped(AudioInstanceStopped {
+                clip_id: Some(clip_id),
+                scope,
+                reason: AudioStopReason::StoppedByScope,
+                ..
+            }) if clip_id == &scene_clip && scope == &AudioScope::scene("scene-1").unwrap()
+        )));
+    }
+
+    #[test]
+    fn stop_by_scope_can_force_clear_instance_already_fading_out() {
+        let mut app = playback_app();
+        let clip_id = clip_id("ambience.room");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/ambience/room.ogg");
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest {
+                clip_id,
+                scope: AudioScope::scene("scene-1").unwrap(),
+                bus: AudioBus::Sfx,
+                volume: 0.5,
+                pitch: 1.0,
+                looped: true,
+                fade_in_seconds: None,
+            }));
+        app.update();
+
+        app.world_mut()
+            .write_message(AudioCommand::StopByScope(AudioScopeFadeCommand {
+                scope: AudioScope::scene("scene-1").unwrap(),
+                fade_out_seconds: Some(0.5),
+            }));
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<AudioPlaybackState>()
+                .instances
+                .values()
+                .filter(|instance| instance.stopping)
+                .count(),
+            1
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::StopByScope(AudioScopeFadeCommand {
+                scope: AudioScope::scene("scene-1").unwrap(),
+                fade_out_seconds: None,
+            }));
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<AudioPlaybackState>()
+                .instances
+                .is_empty()
         );
     }
 }

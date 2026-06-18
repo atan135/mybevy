@@ -14,6 +14,7 @@ mod music;
 mod playback;
 mod plugin;
 pub mod prelude;
+mod scene;
 mod scope;
 mod ui;
 

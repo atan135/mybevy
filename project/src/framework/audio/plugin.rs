@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::framework::scene::prelude::SceneEvent;
 use crate::framework::ui::widgets::UiButtonEvent;
 
 use super::{
@@ -19,6 +20,7 @@ impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<AudioCommand>()
             .add_message::<AudioEvent>()
+            .add_message::<SceneEvent>()
             .add_message::<UiButtonEvent>()
             .init_resource::<AudioCatalog>()
             .init_resource::<AudioMixer>()
@@ -27,6 +29,7 @@ impl Plugin for AudioPlugin {
             .init_resource::<AudioDebugConfig>()
             .init_resource::<UiAudioAdapterConfig>()
             .init_resource::<UiAudioCooldowns>()
+            .init_resource::<super::scene::SceneAudioAdapterConfig>()
             .configure_sets(
                 Update,
                 (
@@ -43,6 +46,7 @@ impl Plugin for AudioPlugin {
                 (
                     (
                         super::mixer::handle_audio_mixer_commands,
+                        super::scene::play_scene_audio_on_lifecycle,
                         super::ui::play_ui_button_audio,
                         super::music::handle_music_commands,
                         super::playback::handle_audio_playback_commands,
@@ -76,7 +80,11 @@ mod tests {
         AudioBus, AudioBusVolumeCommand, AudioCatalog, AudioClipId, AudioClipRequest, AudioCommand,
         AudioCueClip, AudioCueEntry, AudioCueId, AudioCueStarted, AudioEvent, AudioInstanceId,
         AudioInstanceState, AudioMixer, AudioPlaybackInstance, AudioPlaybackState, AudioScope,
-        DEFAULT_UI_CLICK_CUE_ID,
+        DEFAULT_UI_CLICK_CUE_ID, SceneAudioAdapterConfig, SceneAudioCue, SceneAudioEntry,
+        SceneAudioPlayback,
+    };
+    use crate::framework::scene::prelude::{
+        SceneEntered, SceneEvent, SceneExitStarted, SceneExited, SceneId, SceneSessionId,
     };
     use crate::framework::ui::widgets::UiButtonEventKind;
     use bevy::audio::{AudioSource, PlaybackSettings, Volume};
@@ -89,6 +97,7 @@ mod tests {
 
         assert!(app.world().contains_resource::<Messages<AudioCommand>>());
         assert!(app.world().contains_resource::<Messages<AudioEvent>>());
+        assert!(app.world().contains_resource::<Messages<SceneEvent>>());
         assert!(app.world().contains_resource::<AudioCatalog>());
         assert!(app.world().contains_resource::<AudioMixer>());
         assert!(app.world().contains_resource::<AudioPlaybackState>());
@@ -260,5 +269,75 @@ mod tests {
             scope: AudioScope::Ui,
             bus: AudioBus::Ui,
         })));
+    }
+
+    #[test]
+    fn plugin_consumes_scene_audio_lifecycle_without_residual_instances() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), AudioPlugin))
+            .init_asset::<AudioSource>();
+
+        let scene_id = SceneId::from("sample.scene");
+        let cue_id = AudioCueId::try_from("scene.sample.ambience").unwrap();
+        let clip_id = AudioClipId::try_from("ambience.sample").unwrap();
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id, "audio/ambience/sample.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(
+                AudioClipId::try_from("ambience.sample").unwrap(),
+            )]),
+        );
+        app.world_mut()
+            .resource_mut::<SceneAudioAdapterConfig>()
+            .register(
+                scene_id.clone(),
+                SceneAudioEntry::from_playback(SceneAudioPlayback::Cue(
+                    SceneAudioCue::ambience(cue_id).with_fade_in_seconds(0.1),
+                ))
+                .with_exit_fade_out_seconds(0.5),
+            );
+
+        for index in 1..=2 {
+            let session_id = SceneSessionId::from(format!("sample.scene-{index}"));
+            app.world_mut()
+                .write_message(SceneEvent::Entered(SceneEntered {
+                    scene_id: scene_id.clone(),
+                    session_id: session_id.clone(),
+                    content_version: None,
+                }));
+            app.update();
+
+            let scene_scope = AudioScope::scene(session_id.as_str()).unwrap();
+            assert_eq!(
+                app.world()
+                    .resource::<AudioPlaybackState>()
+                    .instances
+                    .values()
+                    .filter(|instance| instance.scope == scene_scope)
+                    .count(),
+                1
+            );
+
+            app.world_mut()
+                .write_message(SceneEvent::ExitStarted(SceneExitStarted {
+                    scene_id: scene_id.clone(),
+                    session_id: session_id.clone(),
+                }));
+            app.world_mut()
+                .write_message(SceneEvent::Exited(SceneExited {
+                    scene_id: scene_id.clone(),
+                    session_id,
+                }));
+            app.update();
+
+            assert!(
+                app.world()
+                    .resource::<AudioPlaybackState>()
+                    .instances
+                    .is_empty()
+            );
+        }
     }
 }

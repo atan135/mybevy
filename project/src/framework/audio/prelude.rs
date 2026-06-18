@@ -23,6 +23,9 @@ pub use super::playback::{
     AudioFadeState, AudioInstanceState, AudioPlaybackInstance, AudioPlaybackState,
 };
 pub use super::plugin::{AudioPlugin, AudioSystemSet};
+pub use super::scene::{
+    SceneAudioAdapterConfig, SceneAudioCue, SceneAudioEntry, SceneAudioMusic, SceneAudioPlayback,
+};
 pub use super::scope::{AudioBus, AudioScope};
 pub use super::ui::{
     DEFAULT_UI_CLICK_CUE_ID, DEFAULT_UI_CUE_COOLDOWN_SECONDS, UiAudioAdapterConfig,

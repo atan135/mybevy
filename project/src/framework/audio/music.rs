@@ -3,12 +3,13 @@ use bevy::prelude::*;
 use super::{
     catalog::AudioCatalog,
     command::{AudioCommand, AudioCrossfadeMusicRequest, AudioMusicRequest},
-    event::{
-        AudioEvent, AudioInstanceStopped, AudioLoadFailed, AudioMusicChanged, AudioStopReason,
-    },
+    event::{AudioEvent, AudioLoadFailed, AudioMusicChanged, AudioStopReason},
     id::{AudioClipId, AudioInstanceId},
     mixer::AudioMixer,
-    playback::{AudioFadeState, AudioPlaybackState, SpawnAudioInstance, spawn_audio_instance},
+    playback::{
+        AudioPlaybackState, SpawnAudioInstance, fade_out_instance, spawn_audio_instance,
+        stop_by_scope, stop_instance_immediately,
+    },
     scope::{AudioBus, AudioScope},
 };
 
@@ -83,6 +84,19 @@ pub fn handle_music_commands(
                     &mut music,
                 );
             }
+            AudioCommand::StopInstance(command) => {
+                remove_music_tracks_by_instance(command.instance_id, &mut music);
+            }
+            AudioCommand::StopByScope(command) => {
+                let stopped = stop_by_scope(
+                    command,
+                    &mut commands,
+                    &mut audio_events,
+                    &mut playback,
+                    AudioStopReason::StoppedByScope,
+                );
+                remove_music_tracks_by_instances(&stopped, &mut music);
+            }
             AudioCommand::PauseMusic => {
                 music.paused = true;
                 if let Some(current) = &music.current {
@@ -145,7 +159,7 @@ fn play_music(
                 ..previous.clone()
             });
         } else {
-            stop_instance_now(
+            stop_instance_immediately(
                 previous.instance_id,
                 commands,
                 audio_events,
@@ -218,7 +232,7 @@ fn stop_current_music(
             ..current
         });
     } else {
-        stop_instance_now(
+        stop_instance_immediately(
             current.instance_id,
             commands,
             audio_events,
@@ -226,39 +240,6 @@ fn stop_current_music(
             AudioStopReason::Stopped,
         );
     }
-}
-
-fn fade_out_instance(
-    instance_id: AudioInstanceId,
-    fade_out_seconds: f32,
-    playback: &mut AudioPlaybackState,
-) {
-    if let Some(instance) = playback.instances.get_mut(&instance_id) {
-        instance.fade = AudioFadeState::new(fade_out_seconds, instance.volume, 0.0, true);
-        instance.stopping = true;
-    }
-}
-
-fn stop_instance_now(
-    instance_id: AudioInstanceId,
-    commands: &mut Commands,
-    audio_events: &mut MessageWriter<AudioEvent>,
-    playback: &mut AudioPlaybackState,
-    reason: AudioStopReason,
-) {
-    let Some(instance) = playback.instances.remove(&instance_id) else {
-        return;
-    };
-
-    commands.entity(instance.entity).try_despawn();
-    audio_events.write(AudioEvent::InstanceStopped(AudioInstanceStopped {
-        instance_id,
-        clip_id: Some(instance.clip_id),
-        cue_id: instance.cue_id,
-        scope: instance.scope,
-        bus: instance.bus,
-        reason,
-    }));
 }
 
 pub fn advance_music_fades(
@@ -286,7 +267,7 @@ pub(crate) fn stop_faded_music_instances(
     music: &mut MusicController,
 ) {
     for instance_id in fading_instances {
-        stop_instance_now(
+        stop_instance_immediately(
             instance_id,
             commands,
             audio_events,
@@ -297,6 +278,25 @@ pub(crate) fn stop_faded_music_instances(
             .outgoing
             .retain(|track| track.instance_id != instance_id);
     }
+}
+
+fn remove_music_tracks_by_instances(instance_ids: &[AudioInstanceId], music: &mut MusicController) {
+    for instance_id in instance_ids {
+        remove_music_tracks_by_instance(*instance_id, music);
+    }
+}
+
+fn remove_music_tracks_by_instance(instance_id: AudioInstanceId, music: &mut MusicController) {
+    if music
+        .current
+        .as_ref()
+        .is_some_and(|current| current.instance_id == instance_id)
+    {
+        music.current = None;
+    }
+    music
+        .outgoing
+        .retain(|track| track.instance_id != instance_id);
 }
 
 pub fn advance_fade_state(
@@ -342,7 +342,7 @@ pub fn cleanup_music_controller(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::audio::AudioMusicFadeCommand;
+    use crate::framework::audio::{AudioFadeState, AudioMusicFadeCommand};
     use bevy::audio::PlaybackSettings;
     use bevy::ecs::message::MessageCursor;
 
