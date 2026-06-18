@@ -7,7 +7,9 @@ use crate::framework::ui::{
     core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
     widgets::{UiButtonEvent, UiButtonEventKind},
 };
-use crate::game::ui_ids::{OWNER_LOBBY, OWNER_LOGIN, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY};
+use crate::game::ui_ids::{
+    OWNER_LOBBY, OWNER_LOGIN, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
+};
 
 pub(in crate::game) use widgets::{
     game_panel_root, primary_route_button_key, secondary_route_button_key,
@@ -40,6 +42,7 @@ pub(super) enum AppUiMode {
     Lobby,
     WanfaTouchRipple,
     UiGallery,
+    SampleScene,
 }
 
 impl AppUiMode {
@@ -49,6 +52,7 @@ impl AppUiMode {
             Self::Lobby => OWNER_LOBBY,
             Self::WanfaTouchRipple => OWNER_TOUCH_RIPPLE,
             Self::UiGallery => OWNER_UI_GALLERY,
+            Self::SampleScene => OWNER_SAMPLE_SCENE,
         }
     }
 }
@@ -118,6 +122,7 @@ fn setup_start_mode(mut next_mode: ResMut<NextState<AppUiMode>>) {
         }
         "lobby" | "game_list" | "game-list" | "list" => AppUiMode::Lobby,
         "ui_gallery" | "ui-gallery" | "gallery" => AppUiMode::UiGallery,
+        "sample_scene" | "sample-scene" | "sample" => AppUiMode::SampleScene,
         "login" => AppUiMode::Login,
         _ => return,
     };
