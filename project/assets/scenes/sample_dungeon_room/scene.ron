@@ -1,0 +1,112 @@
+(
+  version: "1",
+  scene_id: SceneId("sample.dungeon_room"),
+  kind: "dungeon",
+  entry: (
+    default_spawn: Some(SceneSpawnPointId("spawn.default")),
+    camera: Some((
+      id: Some("camera.room_overview"),
+      mode: "fixed3d",
+      position: Some((0.0, 8.0, 10.0)),
+      rotation: Some((-38.0, 0.0, 0.0)),
+      projection: Some((kind: "perspective3d", fov_y: 0.9, near: 0.1, far: 200.0)),
+    )),
+    loading_policy: "blocking_required_assets",
+  ),
+  layers: [
+    (
+      id: SceneLayerId("terrain"),
+      required: true,
+      assets: [
+        (
+          id: SceneAssetId("terrain.floor.large"),
+          kind: "gltf_scene",
+          path: "models/scenes/kaykit_dungeon_remastered/floor_tile_large.gltf",
+        ),
+      ],
+    ),
+    (
+      id: SceneLayerId("walls"),
+      required: true,
+      assets: [
+        (
+          id: SceneAssetId("walls.straight"),
+          kind: "gltf_scene",
+          path: "models/scenes/kaykit_dungeon_remastered/wall.gltf",
+        ),
+        (
+          id: SceneAssetId("walls.corner"),
+          kind: "gltf_scene",
+          path: "models/scenes/kaykit_dungeon_remastered/wall_corner.gltf",
+        ),
+        (
+          id: SceneAssetId("walls.doorway"),
+          kind: "gltf_scene",
+          path: "models/scenes/kaykit_dungeon_remastered/wall_doorway.gltf",
+        ),
+      ],
+    ),
+    (
+      id: SceneLayerId("props"),
+      required: false,
+      assets: [
+        (
+          id: SceneAssetId("props.chest"),
+          kind: "gltf_scene",
+          path: "models/props/kaykit_dungeon_remastered/chest.gltf",
+        ),
+        (
+          id: SceneAssetId("props.barrel.large"),
+          kind: "gltf_scene",
+          path: "models/props/kaykit_dungeon_remastered/barrel_large.gltf",
+        ),
+        (
+          id: SceneAssetId("props.box.large"),
+          kind: "gltf_scene",
+          path: "models/props/kaykit_dungeon_remastered/box_large.gltf",
+        ),
+      ],
+    ),
+    (
+      id: SceneLayerId("torches"),
+      required: false,
+      assets: [
+        (
+          id: SceneAssetId("props.torch.lit"),
+          kind: "gltf_scene",
+          path: "models/props/kaykit_dungeon_remastered/torch_lit.gltf",
+        ),
+      ],
+    ),
+  ],
+  spawn_points: [
+    (
+      id: SceneSpawnPointId("spawn.default"),
+      position: (0.0, 0.0, 0.0),
+      rotation: (0.0, 0.0, 0.0),
+      tags: ["default", "player"],
+    ),
+  ],
+  anchors: [
+    (
+      id: SceneAnchorId("anchor.center"),
+      position: (0.0, 0.0, 0.0),
+      rotation: (0.0, 0.0, 0.0),
+      tags: ["center"],
+    ),
+    (
+      id: SceneAnchorId("anchor.exit"),
+      position: (0.0, 0.0, -4.0),
+      rotation: (0.0, 180.0, 0.0),
+      tags: ["exit"],
+    ),
+    (
+      id: SceneAnchorId("anchor.camera_target"),
+      position: (0.0, 0.0, 0.0),
+      rotation: (0.0, 0.0, 0.0),
+      tags: ["camera", "target"],
+    ),
+  ],
+  triggers: [],
+  chunks: [],
+)
