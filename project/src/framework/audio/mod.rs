@@ -13,6 +13,7 @@ mod event;
 mod id;
 mod lifecycle;
 mod loading;
+mod metadata;
 mod mixer;
 mod music;
 mod playback;

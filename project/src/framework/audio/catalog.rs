@@ -107,6 +107,15 @@ impl AudioCatalog {
             clips,
         })
     }
+
+    pub fn clip_duration_seconds(
+        &self,
+        clip_id: &AudioClipId,
+        metadata: &super::metadata::AudioMetadata,
+    ) -> Option<f32> {
+        let clip = self.clip(clip_id).ok()?;
+        metadata.clip_duration_seconds_by_path(&clip.path)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -609,5 +618,57 @@ mod tests {
         assert_eq!(cue.rules.cooldown_seconds, Some(0.2));
         assert_eq!(cue.rules.max_concurrent, Some(3));
         assert_eq!(cue.rules.priority, 10);
+    }
+
+    #[test]
+    fn clip_duration_query_requires_registered_clip_and_matching_manifest_path() {
+        let mut catalog = AudioCatalog::default();
+        let click_clip_id = clip_id("ui.click");
+        catalog.register_clip(click_clip_id.clone(), "audio/ui/click.wav");
+
+        let mut metadata = super::super::metadata::AudioMetadata::default();
+        metadata.insert_clip(
+            click_clip_id.clone(),
+            super::super::metadata::AudioClipMetadata::new("audio/ui/click.wav", 0.25),
+        );
+
+        assert_eq!(
+            catalog.clip_duration_seconds(&click_clip_id, &metadata),
+            Some(0.25)
+        );
+        assert_eq!(
+            catalog.clip_duration_seconds(&clip_id("ui.missing"), &metadata),
+            None
+        );
+
+        metadata.insert_clip(
+            click_clip_id.clone(),
+            super::super::metadata::AudioClipMetadata::new("audio/ui/other.wav", 1.0),
+        );
+        assert_eq!(
+            catalog.clip_duration_seconds(&click_clip_id, &metadata),
+            None
+        );
+    }
+
+    #[test]
+    fn clip_duration_query_uses_catalog_path_for_semantic_clip_ids() {
+        let mut catalog = AudioCatalog::default();
+        let scene_music_id = clip_id("music.sample_dungeon_room");
+        catalog.register_clip(scene_music_id.clone(), "audio/music/stealth_bass_loop.wav");
+
+        let mut metadata = super::super::metadata::AudioMetadata::default();
+        metadata.insert_clip(
+            clip_id("music.stealth_bass_loop"),
+            super::super::metadata::AudioClipMetadata::new(
+                "audio/music/stealth_bass_loop.wav",
+                26.666_834,
+            ),
+        );
+
+        assert_eq!(
+            catalog.clip_duration_seconds(&scene_music_id, &metadata),
+            Some(26.666_834)
+        );
     }
 }

@@ -73,6 +73,7 @@ project/src/framework/audio/
 |-- id.rs
 |-- lifecycle.rs
 |-- loading.rs
+|-- metadata.rs
 |-- mixer.rs
 |-- music.rs
 |-- playback.rs
@@ -97,6 +98,7 @@ project/src/framework/audio/
 - `mixer.rs`：bus 音量、静音、暂停和运行中 sink 同步。
 - `music.rs`：`MusicController` 和音乐切换、暂停恢复、停止、淡入淡出、交叉淡入淡出。
 - `loading.rs`：`PreloadGroup`、`UnloadGroup`、group 加载进度和失败事件。
+- `metadata.rs`：首包音频元数据 manifest 读取、时长缓存和按 clip/path 查询 helper。
 - `ui.rs`：消费 `UiButtonEvent` 播放默认或覆盖的 UI click cue，并做短冷却。
 - `scene.rs`：消费 `SceneEvent`，按 `SceneAudioAdapterConfig` 在进入场景时播放、退出时按 scene scope 停止。
 - `spatial.rs`：基础空间 cue、listener 绑定、固定或跟随实体音源、简单距离衰减和空间 sink 同步。
@@ -270,6 +272,17 @@ audio/ambience/light_rain_loop.wav
 bevy = { version = "0.18.1", features = ["wav"] }
 ```
 
+当前已落地首包音频时长预处理：
+
+- `scripts/update-audio-manifest.ps1` 会扫描 `project/assets/audio/` 下的首包音频资源。
+- 脚本当前用 WAV 文件头中的 RIFF、`fmt ` 和 `data` chunk 计算原始 `duration_seconds`，不依赖 Bevy 运行时 `AudioSource` 加载。
+- 输出文件是 `project/assets/audio/audio_manifest.ron`，运行时资源路径从 `project/assets/` 下一级开始写，例如 `audio/music/stealth_bass_loop.wav`。
+- manifest 中的 `id` 由资源路径生成，例如 `audio/music/stealth_bass_loop.wav` 对应 `music.stealth_bass_loop`；game layer 仍可以用语义 `AudioClipId` 指向同一个资源路径。
+- `AudioPlugin` 启动时读取 `audio/audio_manifest.ron`，加载到 `AudioMetadata` resource。读取失败不会阻断启动，会记录 warning 并保留空 metadata。
+- 运行时查询优先通过 `AudioCatalog` 找到 clip 的资源路径，再从 `AudioMetadata` 按 path 查询时长；因此语义 clip ID 只要指向 manifest 中存在的 path，也能查到时长。
+- 可直接使用 `AudioMetadata::clip_duration_seconds_by_path("audio/...")` 查询资源路径时长，或使用 `AudioCatalog::clip_duration_seconds(&clip_id, &metadata)` 查询 catalog clip 时长。
+- 查询不会触发音频 bytes 或 `AudioSource` 加载；metadata 缺失、catalog clip 缺失或 path 不在 manifest 中时返回 `None`。
+
 新增首包音频时：
 
 - 放入 `project/assets/audio/<category>/...`。
@@ -277,11 +290,13 @@ bevy = { version = "0.18.1", features = ["wav"] }
 - 代码路径写 `audio/...`，不要写 `project/assets/audio/...`。
 - Android 路径大小写必须和文件完全一致。
 - 二进制音频文件按 Git LFS 规则提交。
+- 新增或替换首包音频后运行 `.\scripts\update-audio-manifest.ps1` 更新 `audio/audio_manifest.ron`。
 
 格式边界：
 
-- 当前已验证和启用的是 `.wav`。
-- 文档或测试里可能仍有 `.ogg` 示例路径，但当前依赖只显式开启 `wav` feature；新增 OGG/Vorbis、MP3、FLAC 等格式前，需要先确认 Bevy feature 和目标平台支持。
+- 当前时长预处理和 Bevy 运行时已验证的是 `.wav`。
+- `scripts/update-audio-manifest.ps1` 已为 OGG、MP3、FLAC 留出扩展点，但这些格式当前没有 parser；脚本遇到这些扩展名会报错，避免生成不完整时长。
+- 文档或测试里可能仍有 `.ogg` 示例路径，但当前依赖只显式开启 `wav` feature；新增 OGG/Vorbis、MP3、FLAC 等格式前，需要补预处理 parser，并确认 Bevy feature 和目标平台支持。
 - 大体积音乐、活动语音和可替换内容仍应走后续下载设计，不应直接放进首包。
 
 ## 8. UI 音效

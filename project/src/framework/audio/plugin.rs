@@ -10,6 +10,9 @@ use super::{
     event::AudioEvent,
     lifecycle::{AudioLifecyclePausePolicy, AudioLifecyclePauseState},
     loading::AudioLoadingState,
+    metadata::{
+        AudioMetadata, DEFAULT_AUDIO_MANIFEST_PATH, load_audio_metadata_from_first_package_ron,
+    },
     mixer::AudioMixer,
     music::MusicController,
     playback::AudioPlaybackState,
@@ -26,6 +29,7 @@ impl Plugin for AudioPlugin {
             .add_message::<UiButtonEvent>()
             .add_message::<bevy::window::AppLifecycle>()
             .init_resource::<AudioCatalog>()
+            .init_resource::<AudioMetadata>()
             .init_resource::<AudioMixer>()
             .init_resource::<AudioLifecyclePausePolicy>()
             .init_resource::<AudioLifecyclePauseState>()
@@ -49,6 +53,7 @@ impl Plugin for AudioPlugin {
                 )
                     .chain(),
             )
+            .add_systems(Startup, load_default_audio_metadata_manifest)
             .add_systems(
                 Update,
                 (
@@ -90,6 +95,17 @@ pub enum AudioSystemSet {
     Debug,
 }
 
+fn load_default_audio_metadata_manifest(mut metadata: ResMut<AudioMetadata>) {
+    match load_audio_metadata_from_first_package_ron(DEFAULT_AUDIO_MANIFEST_PATH) {
+        Ok(loaded_metadata) => {
+            *metadata = loaded_metadata;
+        }
+        Err(error) => {
+            warn!("{error}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +133,7 @@ mod tests {
         assert!(app.world().contains_resource::<Messages<AudioEvent>>());
         assert!(app.world().contains_resource::<Messages<SceneEvent>>());
         assert!(app.world().contains_resource::<AudioCatalog>());
+        assert!(app.world().contains_resource::<AudioMetadata>());
         assert!(app.world().contains_resource::<AudioMixer>());
         assert!(app.world().contains_resource::<AudioLifecyclePausePolicy>());
         assert!(app.world().contains_resource::<AudioLifecyclePauseState>());
@@ -148,6 +165,23 @@ mod tests {
             DEFAULT_BACKGROUND_PAUSED_BUSES
         );
         assert!(!lifecycle_policy.paused_buses.contains(&AudioBus::Ui));
+    }
+
+    #[test]
+    fn plugin_startup_loads_audio_metadata_without_audio_source_assets() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), AudioPlugin))
+            .init_asset::<AudioSource>();
+
+        app.update();
+
+        let metadata = app.world().resource::<AudioMetadata>();
+        assert!(!metadata.is_empty());
+        assert_eq!(
+            metadata.clip_duration_seconds(&AudioClipId::try_from("ui.click_wood_01").unwrap()),
+            Some(0.088_718_75)
+        );
+        assert!(app.world().resource::<Assets<AudioSource>>().is_empty());
     }
 
     #[derive(Debug, Default, Resource)]

@@ -1,0 +1,23 @@
+(
+    clips: [
+        (id: "ambience.city_walla_loop", path: "audio/ambience/city_walla_loop.wav", duration_seconds: 21.42904167),
+        (id: "ambience.light_rain_loop", path: "audio/ambience/light_rain_loop.wav", duration_seconds: 15.0125625),
+        (id: "battle.minigun_barrel_up", path: "audio/battle/minigun_barrel_up.wav", duration_seconds: 1.15283333),
+        (id: "battle.minigun_fire_01", path: "audio/battle/minigun_fire_01.wav", duration_seconds: 1),
+        (id: "battle.sword_hit_01", path: "audio/battle/sword_hit_01.wav", duration_seconds: 0.392375),
+        (id: "battle.sword_shield_01", path: "audio/battle/sword_shield_01.wav", duration_seconds: 0.52465625),
+        (id: "common.footstep_concrete_01", path: "audio/common/footstep_concrete_01.wav", duration_seconds: 0.3090625),
+        (id: "common.footstep_hardwood_01", path: "audio/common/footstep_hardwood_01.wav", duration_seconds: 0.23445833),
+        (id: "common.footstep_water_01", path: "audio/common/footstep_water_01.wav", duration_seconds: 0.36783333),
+        (id: "music.menu_loop", path: "audio/music/menu_loop.wav", duration_seconds: 30.66675),
+        (id: "music.stealth_bass_loop", path: "audio/music/stealth_bass_loop.wav", duration_seconds: 26.66683333),
+        (id: "spatial.car_horn_taps", path: "audio/spatial/car_horn_taps.wav", duration_seconds: 1.304),
+        (id: "spatial.dog_bark_city_03", path: "audio/spatial/dog_bark_city_03.wav", duration_seconds: 2.00235417),
+        (id: "ui.click_wood_01", path: "audio/ui/click_wood_01.wav", duration_seconds: 0.08871875),
+        (id: "ui.confirm_brick_01", path: "audio/ui/confirm_brick_01.wav", duration_seconds: 0.07652083),
+        (id: "ui.notify_horn_01", path: "audio/ui/notify_horn_01.wav", duration_seconds: 0.16645833),
+        (id: "voice.en_us_una_hs_lo_01", path: "audio/voice/en_us_una_hs_lo_01.wav", duration_seconds: 1.33258333),
+        (id: "voice.en_us_una_ob_cp_03", path: "audio/voice/en_us_una_ob_cp_03.wav", duration_seconds: 0.86916667),
+        (id: "voice.en_us_unb_rh_cp_01", path: "audio/voice/en_us_unb_rh_cp_01.wav", duration_seconds: 1.10420833),
+    ],
+)

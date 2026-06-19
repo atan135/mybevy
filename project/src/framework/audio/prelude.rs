@@ -41,6 +41,10 @@ pub use super::loading::{
     AudioClipLoadState, AudioClipLoadStatus, AudioGroupLoadState, AudioGroupProgress,
     AudioLoadingState,
 };
+pub use super::metadata::{
+    AudioClipMetadata, AudioManifest, AudioManifestClip, AudioManifestLoadError, AudioMetadata,
+    AudioMetadataError, DEFAULT_AUDIO_MANIFEST_PATH, load_audio_metadata_from_first_package_ron,
+};
 pub use super::mixer::{AudioBusState, AudioMixer};
 pub use super::music::{MusicController, MusicFadePlan, MusicTrackState};
 pub use super::playback::{
