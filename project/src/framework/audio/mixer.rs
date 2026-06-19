@@ -276,6 +276,27 @@ mod tests {
     }
 
     #[test]
+    fn master_mute_zeroes_effective_volume_without_overwriting_volume() {
+        let mut mixer = AudioMixer::default();
+        mixer.set_bus_volume(AudioBus::Master, 0.4);
+        mixer.set_bus_volume(AudioBus::Music, 0.5);
+        mixer.set_bus_volume(AudioBus::Sfx, 0.75);
+
+        mixer.set_bus_muted(AudioBus::Master, true);
+
+        assert_eq!(mixer.bus_state(AudioBus::Master).volume, 0.4);
+        assert_eq!(mixer.effective_bus_volume(AudioBus::Master), 0.0);
+        assert_eq!(mixer.target_instance_volume(0.8, AudioBus::Music), 0.0);
+        assert_eq!(mixer.target_instance_volume(0.8, AudioBus::Sfx), 0.0);
+
+        mixer.set_bus_muted(AudioBus::Master, false);
+
+        assert_eq!(mixer.bus_state(AudioBus::Master).volume, 0.4);
+        assert!((mixer.target_instance_volume(0.8, AudioBus::Music) - 0.16).abs() < f32::EPSILON);
+        assert!((mixer.target_instance_volume(0.8, AudioBus::Sfx) - 0.24).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn effective_pause_combines_master_and_bus_state() {
         assert!(!calculate_effective_bus_paused(
             AudioBusState::default(),

@@ -298,5 +298,21 @@ mod tests {
         app.update();
 
         assert!(read_commands(&app).is_empty());
+        assert_eq!(
+            read_events(&app),
+            vec![AudioEvent::CueSkipped(AudioCueSkipped {
+                cue_id: cue_id(DEFAULT_UI_CLICK_CUE_ID),
+                reason: AudioCueSkipReason::BusPaused,
+                scope: AudioScope::Ui,
+            })]
+        );
+
+        app.world_mut()
+            .resource_mut::<AudioMixer>()
+            .set_bus_muted(AudioBus::Master, false);
+        click_button(&mut app, button);
+        app.update();
+
+        assert_eq!(read_commands(&app).len(), 1);
     }
 }

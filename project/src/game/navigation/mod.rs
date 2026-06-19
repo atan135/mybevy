@@ -8,7 +8,8 @@ use crate::framework::ui::{
     widgets::{UiButtonEvent, UiButtonEventKind},
 };
 use crate::game::ui_ids::{
-    OWNER_LOBBY, OWNER_LOGIN, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
+    OWNER_AUDIO_SETTINGS, OWNER_LOBBY, OWNER_LOGIN, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
+    OWNER_UI_GALLERY,
 };
 
 pub(in crate::game) use widgets::{
@@ -40,6 +41,7 @@ pub(super) enum AppUiMode {
     #[default]
     Login,
     Lobby,
+    AudioSettings,
     WanfaTouchRipple,
     UiGallery,
     SampleScene,
@@ -50,6 +52,7 @@ impl AppUiMode {
         match self {
             Self::Login => OWNER_LOGIN,
             Self::Lobby => OWNER_LOBBY,
+            Self::AudioSettings => OWNER_AUDIO_SETTINGS,
             Self::WanfaTouchRipple => OWNER_TOUCH_RIPPLE,
             Self::UiGallery => OWNER_UI_GALLERY,
             Self::SampleScene => OWNER_SAMPLE_SCENE,
@@ -121,10 +124,22 @@ fn setup_start_mode(mut next_mode: ResMut<NextState<AppUiMode>>) {
             AppUiMode::WanfaTouchRipple
         }
         "lobby" | "game_list" | "game-list" | "list" => AppUiMode::Lobby,
+        "audio_settings" | "audio-settings" | "audio" | "settings" => AppUiMode::AudioSettings,
         "ui_gallery" | "ui-gallery" | "gallery" => AppUiMode::UiGallery,
         "sample_scene" | "sample-scene" | "sample" => AppUiMode::SampleScene,
         "login" => AppUiMode::Login,
         _ => return,
     };
     next_mode.set(mode);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::ui_ids::OWNER_AUDIO_SETTINGS;
+
+    #[test]
+    fn audio_settings_mode_uses_dedicated_owner() {
+        assert_eq!(AppUiMode::AudioSettings.ui_owner(), OWNER_AUDIO_SETTINGS);
+    }
 }
