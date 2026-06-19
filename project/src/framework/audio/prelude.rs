@@ -20,10 +20,12 @@ pub use super::command::{
 };
 pub use super::debug::{
     AudioDebugActiveInstanceCounts, AudioDebugBusInstanceCount, AudioDebugConfig,
-    AudioDebugCueSkipped, AudioDebugCueStarted, AudioDebugDiagnostics, AudioDebugInstanceInfo,
-    AudioDebugLoadFailure, AudioDebugLoadingGroupInfo, AudioDebugSnapshot, AudioDebugState,
-    DEFAULT_AUDIO_DEBUG_RECENT_LIMIT, active_audio_instance_counts, audio_debug_instance_info,
-    audio_debug_loading_group_info, audio_debug_snapshot,
+    AudioDebugCueSkipped, AudioDebugCueStarted, AudioDebugDiagnostics, AudioDebugDirectoryBytes,
+    AudioDebugInstanceInfo, AudioDebugLoadFailure, AudioDebugLoadingGroupInfo,
+    AudioDebugPerformanceSummary, AudioDebugResourceMemorySummary, AudioDebugSnapshot,
+    AudioDebugState, DEFAULT_AUDIO_DEBUG_RECENT_LIMIT, active_audio_instance_counts,
+    audio_debug_instance_info, audio_debug_loading_group_info, audio_debug_performance_summary,
+    audio_debug_resource_memory_summary, audio_debug_snapshot,
 };
 pub use super::event::{
     AudioBusChange, AudioBusChanged, AudioClipStarted, AudioCueSkipReason, AudioCueSkipped,

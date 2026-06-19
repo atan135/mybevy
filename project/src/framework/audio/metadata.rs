@@ -16,6 +16,7 @@ pub const DEFAULT_AUDIO_MANIFEST_PATH: &str = "audio/audio_manifest.ron";
 pub struct AudioMetadata {
     clips: HashMap<AudioClipId, AudioClipMetadata>,
     durations_by_path: HashMap<String, f32>,
+    bytes_by_path: HashMap<String, u64>,
 }
 
 impl AudioMetadata {
@@ -32,10 +33,17 @@ impl AudioMetadata {
         if let Some(previous) = &previous {
             if !self.clips.values().any(|clip| clip.path == previous.path) {
                 self.durations_by_path.remove(&previous.path);
+                self.bytes_by_path.remove(&previous.path);
             }
         }
         self.durations_by_path
             .insert(metadata.path.clone(), metadata.duration_seconds);
+        if let Some(estimated_bytes) = metadata.estimated_bytes {
+            self.bytes_by_path
+                .insert(metadata.path.clone(), estimated_bytes);
+        } else {
+            self.bytes_by_path.remove(&metadata.path);
+        }
         previous
     }
 
@@ -51,6 +59,18 @@ impl AudioMetadata {
         self.durations_by_path.get(path).copied()
     }
 
+    pub fn clip_estimated_bytes(&self, clip_id: &AudioClipId) -> Option<u64> {
+        self.clip(clip_id).and_then(|clip| clip.estimated_bytes)
+    }
+
+    pub fn clip_estimated_bytes_by_path(&self, path: &str) -> Option<u64> {
+        self.bytes_by_path.get(path).copied()
+    }
+
+    pub fn clips(&self) -> impl Iterator<Item = (&AudioClipId, &AudioClipMetadata)> {
+        self.clips.iter()
+    }
+
     pub fn len(&self) -> usize {
         self.clips.len()
     }
@@ -64,6 +84,7 @@ impl AudioMetadata {
 pub struct AudioClipMetadata {
     pub path: String,
     pub duration_seconds: f32,
+    pub estimated_bytes: Option<u64>,
 }
 
 impl AudioClipMetadata {
@@ -71,6 +92,38 @@ impl AudioClipMetadata {
         Self {
             path: path.into(),
             duration_seconds,
+            estimated_bytes: None,
+        }
+    }
+
+    pub fn with_estimated_bytes(mut self, estimated_bytes: u64) -> Self {
+        self.estimated_bytes = Some(estimated_bytes);
+        self
+    }
+
+    pub fn set_estimated_bytes(&mut self, estimated_bytes: u64) {
+        self.estimated_bytes = Some(estimated_bytes);
+    }
+}
+
+impl AudioMetadata {
+    pub fn attach_first_package_byte_sizes(&mut self) {
+        let updates = self
+            .clips
+            .iter()
+            .filter_map(|(clip_id, clip)| {
+                first_package_asset_fs_path(&clip.path)
+                    .and_then(|path| fs::metadata(path).ok())
+                    .map(|metadata| (clip_id.clone(), metadata.len()))
+            })
+            .collect::<Vec<_>>();
+
+        for (clip_id, estimated_bytes) in updates {
+            if let Some(clip) = self.clips.get_mut(&clip_id) {
+                clip.set_estimated_bytes(estimated_bytes);
+                self.bytes_by_path
+                    .insert(clip.path.clone(), estimated_bytes);
+            }
         }
     }
 }
@@ -274,12 +327,14 @@ pub fn load_audio_metadata_from_first_package_ron(
     manifest_path: impl AsRef<str>,
 ) -> Result<AudioMetadata, AudioManifestLoadError> {
     let manifest_path = manifest_path.as_ref();
-    AudioManifest::load_first_package_ron(manifest_path)?
+    let mut metadata = AudioManifest::load_first_package_ron(manifest_path)?
         .into_metadata()
         .map_err(|source| AudioManifestLoadError::ParseFailed {
             path: PathBuf::from(manifest_path),
             source,
-        })
+        })?;
+    metadata.attach_first_package_byte_sizes();
+    Ok(metadata)
 }
 
 pub(crate) fn validate_audio_manifest_asset_path(path: &str) -> Result<(), AudioCatalogPathError> {
@@ -326,9 +381,13 @@ fn has_windows_drive_prefix(path: &str) -> bool {
 }
 
 fn first_package_manifest_fs_path(manifest_path: &str) -> Option<PathBuf> {
+    first_package_asset_fs_path(manifest_path)
+}
+
+fn first_package_asset_fs_path(asset_path: &str) -> Option<PathBuf> {
     first_package_asset_root_candidates()
         .into_iter()
-        .map(|root| root.join(Path::new(manifest_path)))
+        .map(|root| root.join(Path::new(asset_path)))
         .find(|candidate| candidate.is_file())
 }
 
@@ -377,6 +436,10 @@ mod tests {
             "audio/music/menu.wav"
         );
         assert_eq!(
+            metadata.clip_estimated_bytes_by_path("audio/music/menu.wav"),
+            None
+        );
+        assert_eq!(
             metadata.clip_duration_seconds_by_path("audio/music/menu.wav"),
             Some(12.5)
         );
@@ -387,6 +450,25 @@ mod tests {
         let metadata = AudioMetadata::default();
 
         assert_eq!(metadata.clip_duration_seconds(&clip_id("ui.missing")), None);
+        assert_eq!(metadata.clip_estimated_bytes(&clip_id("ui.missing")), None);
+    }
+
+    #[test]
+    fn metadata_tracks_estimated_bytes_by_clip_and_path() {
+        let mut metadata = AudioMetadata::default();
+        metadata.insert_clip(
+            clip_id("ui.click"),
+            AudioClipMetadata::new("audio/ui/click.wav", 0.25).with_estimated_bytes(4096),
+        );
+
+        assert_eq!(
+            metadata.clip_estimated_bytes(&clip_id("ui.click")),
+            Some(4096)
+        );
+        assert_eq!(
+            metadata.clip_estimated_bytes_by_path("audio/ui/click.wav"),
+            Some(4096)
+        );
     }
 
     #[test]

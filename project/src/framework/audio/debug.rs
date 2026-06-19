@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy::prelude::*;
 
@@ -6,12 +6,16 @@ use super::{
     event::{AudioCueSkipped, AudioCueStarted, AudioEvent, AudioLoadFailed},
     id::{AudioClipId, AudioCueId, AudioGroupId, AudioInstanceId},
     loading::AudioLoadingState,
+    metadata::AudioMetadata,
     playback::AudioPlaybackState,
     scope::{AudioBus, AudioScope},
 };
 
 const ENV_AUDIO_DEBUG: &str = "MYBEVY_AUDIO_DEBUG";
 pub const DEFAULT_AUDIO_DEBUG_RECENT_LIMIT: usize = 32;
+const HIGH_ACTIVE_INSTANCE_THRESHOLD: usize = 32;
+const HIGH_CUE_CONCURRENCY_THRESHOLD: usize = 8;
+const LARGE_AUDIO_RESOURCE_BYTES_THRESHOLD: u64 = 5 * 1024 * 1024;
 
 #[derive(Clone, Debug, Resource, PartialEq)]
 pub struct AudioDebugConfig {
@@ -124,6 +128,8 @@ impl AudioDebugState {
 pub struct AudioDebugSnapshot {
     pub enabled: bool,
     pub active_instances: AudioDebugActiveInstanceCounts,
+    pub performance: AudioDebugPerformanceSummary,
+    pub resource_memory: AudioDebugResourceMemorySummary,
     pub instance_details: Vec<AudioDebugInstanceInfo>,
     pub loading_groups: Vec<AudioDebugLoadingGroupInfo>,
     pub recent_started_cues: Vec<AudioDebugCueStarted>,
@@ -137,6 +143,31 @@ pub type AudioDebugDiagnostics = AudioDebugSnapshot;
 pub struct AudioDebugActiveInstanceCounts {
     pub total: usize,
     pub by_bus: Vec<AudioDebugBusInstanceCount>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AudioDebugPerformanceSummary {
+    pub paused_instances: usize,
+    pub stopping_or_fading_instances: usize,
+    pub spatial_instances: usize,
+    pub looped_instances: usize,
+    pub referenced_resource_estimated_bytes: u64,
+    pub threshold_hints: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AudioDebugResourceMemorySummary {
+    pub resource_count: usize,
+    pub total_estimated_bytes: u64,
+    pub by_directory: Vec<AudioDebugDirectoryBytes>,
+    pub largest_resource_path: Option<String>,
+    pub largest_resource_estimated_bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioDebugDirectoryBytes {
+    pub directory: String,
+    pub estimated_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,6 +191,7 @@ pub struct AudioDebugInstanceInfo {
     pub looped: bool,
     pub start_seconds: f32,
     pub position_seconds: f32,
+    pub duration_seconds: Option<f32>,
     pub pending_seek_seconds: Option<f32>,
 }
 
@@ -240,6 +272,7 @@ pub fn update_audio_debug_snapshot(
     mut audio_events: MessageReader<AudioEvent>,
     playback: Res<AudioPlaybackState>,
     loading: Res<AudioLoadingState>,
+    metadata: Res<AudioMetadata>,
 ) {
     if !config.is_active() {
         for _ in audio_events.read() {}
@@ -252,7 +285,7 @@ pub fn update_audio_debug_snapshot(
         state.record_event(event);
     }
 
-    *snapshot = audio_debug_snapshot(&config, &state, &playback, &loading);
+    *snapshot = audio_debug_snapshot(&config, &state, &playback, &loading, &metadata);
 }
 
 pub fn audio_debug_snapshot(
@@ -260,15 +293,147 @@ pub fn audio_debug_snapshot(
     state: &AudioDebugState,
     playback: &AudioPlaybackState,
     loading: &AudioLoadingState,
+    metadata: &AudioMetadata,
 ) -> AudioDebugSnapshot {
     AudioDebugSnapshot {
         enabled: config.is_active(),
         active_instances: active_audio_instance_counts(playback),
-        instance_details: audio_debug_instance_info(playback),
+        performance: audio_debug_performance_summary(playback, loading, metadata),
+        resource_memory: audio_debug_resource_memory_summary(metadata),
+        instance_details: audio_debug_instance_info(playback, metadata),
         loading_groups: audio_debug_loading_group_info(loading),
         recent_started_cues: state.recent_started_cues(),
         recent_skipped_cues: state.recent_skipped_cues(),
         recent_load_failures: state.recent_load_failures(),
+    }
+}
+
+pub fn audio_debug_performance_summary(
+    playback: &AudioPlaybackState,
+    loading: &AudioLoadingState,
+    metadata: &AudioMetadata,
+) -> AudioDebugPerformanceSummary {
+    let mut paused_instances = 0;
+    let mut stopping_or_fading_instances = 0;
+    let mut spatial_instances = 0;
+    let mut looped_instances = 0;
+    let mut referenced_paths = HashSet::<&str>::new();
+    let mut cue_counts = HashMap::<AudioCueId, usize>::new();
+
+    for instance in playback.instances.values() {
+        paused_instances += usize::from(instance.paused);
+        stopping_or_fading_instances += usize::from(instance.stopping || instance.fade.is_some());
+        spatial_instances += usize::from(instance.spatial);
+        looped_instances += usize::from(instance.looped);
+        referenced_paths.insert(instance.asset_path.as_str());
+
+        if let Some(cue_id) = &instance.cue_id {
+            *cue_counts.entry(cue_id.clone()).or_default() += 1;
+        }
+    }
+
+    let referenced_resource_estimated_bytes = referenced_paths
+        .into_iter()
+        .filter_map(|path| metadata.clip_estimated_bytes_by_path(path))
+        .sum();
+
+    let mut threshold_hints = Vec::new();
+    if playback.instances.len() > HIGH_ACTIVE_INSTANCE_THRESHOLD {
+        threshold_hints.push(format!(
+            "active instances {} exceed threshold {}",
+            playback.instances.len(),
+            HIGH_ACTIVE_INSTANCE_THRESHOLD
+        ));
+    }
+
+    let mut high_cue_counts = cue_counts
+        .into_iter()
+        .filter(|(_, count)| *count > HIGH_CUE_CONCURRENCY_THRESHOLD)
+        .collect::<Vec<_>>();
+    high_cue_counts.sort_by(|left, right| left.0.cmp(&right.0));
+    for (cue_id, count) in high_cue_counts {
+        threshold_hints.push(format!(
+            "cue {cue_id} has {count} concurrent instances; threshold is {HIGH_CUE_CONCURRENCY_THRESHOLD}"
+        ));
+    }
+
+    for group in audio_debug_loading_group_info(loading) {
+        if group.required_failed > 0 {
+            threshold_hints.push(format!(
+                "loading group {} has {} required failures",
+                group.group_id, group.required_failed
+            ));
+        }
+    }
+
+    let resource_memory = audio_debug_resource_memory_summary(metadata);
+    if resource_memory.largest_resource_estimated_bytes > LARGE_AUDIO_RESOURCE_BYTES_THRESHOLD {
+        let path = resource_memory
+            .largest_resource_path
+            .as_deref()
+            .unwrap_or("<unknown>");
+        threshold_hints.push(format!(
+            "audio resource {path} is {} bytes; threshold is {} bytes",
+            resource_memory.largest_resource_estimated_bytes, LARGE_AUDIO_RESOURCE_BYTES_THRESHOLD
+        ));
+    }
+
+    AudioDebugPerformanceSummary {
+        paused_instances,
+        stopping_or_fading_instances,
+        spatial_instances,
+        looped_instances,
+        referenced_resource_estimated_bytes,
+        threshold_hints,
+    }
+}
+
+pub fn audio_debug_resource_memory_summary(
+    metadata: &AudioMetadata,
+) -> AudioDebugResourceMemorySummary {
+    let mut resource_count = 0;
+    let mut total_estimated_bytes = 0;
+    let mut by_directory = HashMap::<String, u64>::new();
+    let mut largest_resource_path = None::<String>;
+    let mut largest_resource_estimated_bytes = 0;
+
+    for (_, clip) in metadata.clips() {
+        let Some(estimated_bytes) = clip.estimated_bytes else {
+            continue;
+        };
+
+        resource_count += 1;
+        total_estimated_bytes += estimated_bytes;
+        *by_directory
+            .entry(audio_resource_directory(&clip.path))
+            .or_default() += estimated_bytes;
+
+        if estimated_bytes > largest_resource_estimated_bytes {
+            largest_resource_path = Some(clip.path.clone());
+            largest_resource_estimated_bytes = estimated_bytes;
+        }
+    }
+
+    let mut by_directory = by_directory
+        .into_iter()
+        .map(|(directory, estimated_bytes)| AudioDebugDirectoryBytes {
+            directory,
+            estimated_bytes,
+        })
+        .collect::<Vec<_>>();
+    by_directory.sort_by(|left, right| {
+        right
+            .estimated_bytes
+            .cmp(&left.estimated_bytes)
+            .then_with(|| left.directory.cmp(&right.directory))
+    });
+
+    AudioDebugResourceMemorySummary {
+        resource_count,
+        total_estimated_bytes,
+        by_directory,
+        largest_resource_path,
+        largest_resource_estimated_bytes,
     }
 }
 
@@ -292,7 +457,10 @@ pub fn active_audio_instance_counts(
     }
 }
 
-pub fn audio_debug_instance_info(playback: &AudioPlaybackState) -> Vec<AudioDebugInstanceInfo> {
+pub fn audio_debug_instance_info(
+    playback: &AudioPlaybackState,
+    metadata: &AudioMetadata,
+) -> Vec<AudioDebugInstanceInfo> {
     let mut instances = playback
         .instances
         .iter()
@@ -310,6 +478,7 @@ pub fn audio_debug_instance_info(playback: &AudioPlaybackState) -> Vec<AudioDebu
             looped: instance.looped,
             start_seconds: instance.start_seconds,
             position_seconds: instance.position_seconds,
+            duration_seconds: metadata.clip_duration_seconds_by_path(&instance.asset_path),
             pending_seek_seconds: instance.pending_seek_seconds,
         })
         .collect::<Vec<_>>();
@@ -360,6 +529,17 @@ fn audio_bus_sort_key(bus: AudioBus) -> u8 {
         AudioBus::Ui => 3,
         AudioBus::Battle => 4,
     }
+}
+
+fn audio_resource_directory(path: &str) -> String {
+    let mut segments = path.split('/');
+    let Some(first) = segments.next() else {
+        return "<unknown>".to_string();
+    };
+    let Some(second) = segments.next() else {
+        return first.to_string();
+    };
+    format!("{first}/{second}")
 }
 
 fn read_bool(read: &mut impl FnMut(&str) -> Option<String>, key: &str) -> Option<bool> {
@@ -565,6 +745,7 @@ mod tests {
             &AudioDebugState::default(),
             &playback,
             &AudioLoadingState::default(),
+            &AudioMetadata::default(),
         );
 
         assert!(snapshot.enabled);
@@ -626,6 +807,7 @@ mod tests {
             &AudioDebugState::default(),
             &AudioPlaybackState::default(),
             app.world().resource::<AudioLoadingState>(),
+            &AudioMetadata::default(),
         );
 
         assert_eq!(
@@ -652,6 +834,7 @@ mod tests {
             .init_resource::<AudioDebugSnapshot>()
             .init_resource::<AudioPlaybackState>()
             .init_resource::<AudioLoadingState>()
+            .init_resource::<AudioMetadata>()
             .add_systems(Update, update_audio_debug_snapshot);
 
         let cue = cue_id("ui.click");
@@ -691,6 +874,7 @@ mod tests {
             .init_resource::<AudioDebugSnapshot>()
             .init_resource::<AudioPlaybackState>()
             .init_resource::<AudioLoadingState>()
+            .init_resource::<AudioMetadata>()
             .add_systems(Update, update_audio_debug_snapshot);
 
         app.world_mut()
@@ -708,6 +892,165 @@ mod tests {
         let messages = app.world().resource::<Messages<AudioEvent>>();
         let mut cursor = MessageCursor::default();
         assert_eq!(cursor.read(messages).count(), 1);
+    }
+
+    #[test]
+    fn performance_summary_counts_instance_states_and_referenced_bytes() {
+        let mut playback = AudioPlaybackState::default();
+        insert_instance_with_path(
+            &mut playback,
+            AudioInstanceId::from_raw(1),
+            clip_id("music.loop"),
+            Some(cue_id("music.loop")),
+            AudioBus::Music,
+            "audio/music/menu.wav",
+            InstanceFlags {
+                paused: true,
+                stopping: false,
+                fading: false,
+                spatial: false,
+                looped: true,
+            },
+        );
+        insert_instance_with_path(
+            &mut playback,
+            AudioInstanceId::from_raw(2),
+            clip_id("sfx.spatial"),
+            Some(cue_id("sfx.wind")),
+            AudioBus::Sfx,
+            "audio/sfx/wind.wav",
+            InstanceFlags {
+                paused: false,
+                stopping: true,
+                fading: false,
+                spatial: true,
+                looped: false,
+            },
+        );
+        insert_instance_with_path(
+            &mut playback,
+            AudioInstanceId::from_raw(3),
+            clip_id("sfx.spatial_copy"),
+            Some(cue_id("sfx.wind")),
+            AudioBus::Sfx,
+            "audio/sfx/wind.wav",
+            InstanceFlags {
+                paused: false,
+                stopping: false,
+                fading: true,
+                spatial: false,
+                looped: false,
+            },
+        );
+        let mut metadata = AudioMetadata::default();
+        metadata.insert_clip(
+            clip_id("music.loop"),
+            super::super::metadata::AudioClipMetadata::new("audio/music/menu.wav", 10.0)
+                .with_estimated_bytes(1000),
+        );
+        metadata.insert_clip(
+            clip_id("sfx.spatial"),
+            super::super::metadata::AudioClipMetadata::new("audio/sfx/wind.wav", 1.0)
+                .with_estimated_bytes(250),
+        );
+
+        let summary =
+            audio_debug_performance_summary(&playback, &AudioLoadingState::default(), &metadata);
+
+        assert_eq!(summary.paused_instances, 1);
+        assert_eq!(summary.stopping_or_fading_instances, 2);
+        assert_eq!(summary.spatial_instances, 1);
+        assert_eq!(summary.looped_instances, 1);
+        assert_eq!(summary.referenced_resource_estimated_bytes, 1250);
+    }
+
+    #[test]
+    fn resource_memory_summary_groups_bytes_and_tracks_largest_resource() {
+        let mut metadata = AudioMetadata::default();
+        metadata.insert_clip(
+            clip_id("ui.click"),
+            super::super::metadata::AudioClipMetadata::new("audio/ui/click.wav", 0.2)
+                .with_estimated_bytes(100),
+        );
+        metadata.insert_clip(
+            clip_id("music.menu"),
+            super::super::metadata::AudioClipMetadata::new("audio/music/menu.wav", 12.0)
+                .with_estimated_bytes(500),
+        );
+        metadata.insert_clip(
+            clip_id("music.battle"),
+            super::super::metadata::AudioClipMetadata::new("audio/music/battle.wav", 20.0)
+                .with_estimated_bytes(700),
+        );
+
+        let summary = audio_debug_resource_memory_summary(&metadata);
+
+        assert_eq!(summary.resource_count, 3);
+        assert_eq!(summary.total_estimated_bytes, 1300);
+        assert_eq!(
+            summary.by_directory,
+            vec![
+                AudioDebugDirectoryBytes {
+                    directory: "audio/music".to_string(),
+                    estimated_bytes: 1200,
+                },
+                AudioDebugDirectoryBytes {
+                    directory: "audio/ui".to_string(),
+                    estimated_bytes: 100,
+                },
+            ]
+        );
+        assert_eq!(
+            summary.largest_resource_path.as_deref(),
+            Some("audio/music/battle.wav")
+        );
+        assert_eq!(summary.largest_resource_estimated_bytes, 700);
+    }
+
+    #[test]
+    fn performance_summary_reports_threshold_hints() {
+        let mut playback = AudioPlaybackState::default();
+        let cue = cue_id("ui.spam");
+        for raw in 1..=9 {
+            insert_instance(
+                &mut playback,
+                AudioInstanceId::from_raw(raw),
+                clip_id(&format!("ui.click_{raw}")),
+                Some(cue.clone()),
+                AudioBus::Ui,
+            );
+        }
+        let mut metadata = AudioMetadata::default();
+        metadata.insert_clip(
+            clip_id("music.large"),
+            super::super::metadata::AudioClipMetadata::new("audio/music/large.wav", 120.0)
+                .with_estimated_bytes(6 * 1024 * 1024),
+        );
+
+        let summary =
+            audio_debug_performance_summary(&playback, &AudioLoadingState::default(), &metadata);
+
+        assert!(
+            summary
+                .threshold_hints
+                .iter()
+                .any(|hint| hint.contains("cue ui.spam has 9 concurrent instances"))
+        );
+        assert!(
+            summary
+                .threshold_hints
+                .iter()
+                .any(|hint| hint.contains("audio resource audio/music/large.wav"))
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    struct InstanceFlags {
+        paused: bool,
+        stopping: bool,
+        fading: bool,
+        spatial: bool,
+        looped: bool,
     }
 
     fn insert_instance(
@@ -735,6 +1078,48 @@ mod tests {
                 stopping: false,
                 fade: None,
                 spatial: false,
+                start_seconds: 0.0,
+                position_seconds: 0.0,
+                pending_seek_seconds: None,
+            },
+        );
+    }
+
+    fn insert_instance_with_path(
+        playback: &mut AudioPlaybackState,
+        instance_id: AudioInstanceId,
+        clip_id: AudioClipId,
+        cue_id: Option<AudioCueId>,
+        bus: AudioBus,
+        asset_path: &str,
+        flags: InstanceFlags,
+    ) {
+        playback.instances.insert(
+            instance_id,
+            super::super::playback::AudioInstanceState {
+                entity: Entity::from_raw_u32(instance_id.raw() as u32).unwrap(),
+                clip_id,
+                cue_id,
+                scope: AudioScope::Ui,
+                bus,
+                volume: 1.0,
+                priority: 0,
+                looped: flags.looped,
+                asset_path: asset_path.to_string(),
+                source: Handle::<AudioSource>::default(),
+                failed: false,
+                paused: flags.paused,
+                stopping: flags.stopping,
+                fade: flags
+                    .fading
+                    .then(|| super::super::playback::AudioFadeState {
+                        elapsed_seconds: 0.0,
+                        duration_seconds: 1.0,
+                        from_volume: 1.0,
+                        to_volume: 0.0,
+                        stop_when_finished: true,
+                    }),
+                spatial: flags.spatial,
                 start_seconds: 0.0,
                 position_seconds: 0.0,
                 pending_seek_seconds: None,
