@@ -283,6 +283,14 @@ bevy = { version = "0.18.1", features = ["wav"] }
 - UI click 有短冷却，避免高频连点无限堆叠。
 - UI bus 或 Master bus 静音、暂停时会跳过 UI 音效并发送 skip 事件。
 
+应用层接入约定：
+
+- 默认按钮点击音效使用确认语义，监听 `UiButtonEventKind::Click`，也就是按下后在按钮内松开并真正触发按钮动作时播放。
+- 不把默认点击音效放在 `Down` 按压瞬间播放，避免用户按下后拖出按钮、取消或被输入阻断时出现“没触发动作但已经响了”的假反馈。
+- 普通按钮不需要挂额外组件，默认播放 `UiAudioAdapterConfig.default_click_cue_id`。
+- 需要特殊音效的按钮挂 `UiAudioCueOverride` 指向自定义 cue，例如确认、警告或特殊入口按钮。
+- 默认点击 cue 和特殊点击 cue 的 clip 注册由 game layer 或初始化代码负责。
+
 边界：
 
 - 当前 adapter 只覆盖按钮点击事件，不自动覆盖所有弹窗、Toast、输入错误或页面切换。
@@ -314,6 +322,14 @@ bevy = { version = "0.18.1", features = ["wav"] }
 - `SceneEvent::ExitStarted` 可按配置淡出 scene scope。
 - `SceneEvent::Exited` 会再次按 scene scope 停止，避免残留。
 - 当前 `sample.dungeon_room` 已在 game layer 注册一个循环 ambience cue：`scene.sample_dungeon_room.ambience`。
+
+应用层接入约定：
+
+- 场景背景音乐由 game layer 的场景表配置，而不是硬编码在 scene framework 中。
+- 场景表应能表达当前场景的背景音乐 clip ID、资源路径、音量、淡入和退出淡出参数。
+- 注册场景表时同步把音乐资源注册进 `AudioCatalog`，并把对应 `SceneAudioMusic` 注册进 `SceneAudioAdapterConfig`。
+- 场景 BGM 默认循环播放，进入场景时随 `SceneEvent::Entered` 播放，退出场景时按 `Scene(session_id)` scope 停止或淡出。
+- 当前可先使用 `project/assets/audio/music/` 下已有的首包音乐，例如 `audio/music/stealth_bass_loop.wav` 或 `audio/music/menu_loop.wav`。
 
 重要边界：
 
