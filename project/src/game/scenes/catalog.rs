@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::framework::audio::prelude::AudioClipId;
 use crate::framework::scene::prelude::{SceneId, SceneKind, SceneRegistry, SceneSpawnPointId};
 
 const GAME_SCENE_CATALOG_PATH: &str = "game/scenes.csv";
@@ -13,12 +14,19 @@ pub(crate) struct GameSceneCatalogPlugin;
 
 impl Plugin for GameSceneCatalogPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<GameSceneCatalog>().add_systems(
-            Startup,
-            (load_game_scene_catalog, register_game_scene_catalog).chain(),
-        );
+        app.init_resource::<GameSceneCatalog>()
+            .configure_sets(Startup, GameSceneCatalogStartupSet)
+            .add_systems(
+                Startup,
+                (load_game_scene_catalog, register_game_scene_catalog)
+                    .chain()
+                    .in_set(GameSceneCatalogStartupSet),
+            );
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
+pub(crate) struct GameSceneCatalogStartupSet;
 
 #[derive(Clone, Debug, Default, Resource)]
 pub(crate) struct GameSceneCatalog {
@@ -79,7 +87,7 @@ impl GameSceneCatalog {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GameSceneEntry {
     pub(crate) scene_id: SceneId,
     pub(crate) enabled: bool,
@@ -93,6 +101,16 @@ pub(crate) struct GameSceneEntry {
     pub(crate) layout_path: Option<String>,
     pub(crate) default_spawn: Option<SceneSpawnPointId>,
     pub(crate) ui_mode: GameSceneUiMode,
+    pub(crate) music: Option<GameSceneMusicConfig>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GameSceneMusicConfig {
+    pub(crate) clip_id: AudioClipId,
+    pub(crate) path: String,
+    pub(crate) volume: Option<f32>,
+    pub(crate) fade_in_seconds: Option<f32>,
+    pub(crate) exit_fade_out_seconds: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -114,6 +132,16 @@ struct GameSceneCsvRow {
     layout_path: String,
     default_spawn: String,
     ui_mode: String,
+    #[serde(default)]
+    music_clip_id: String,
+    #[serde(default)]
+    music_path: String,
+    #[serde(default)]
+    music_volume: String,
+    #[serde(default)]
+    music_fade_in_seconds: String,
+    #[serde(default)]
+    music_exit_fade_out_seconds: String,
 }
 
 impl GameSceneCsvRow {
@@ -135,6 +163,14 @@ impl GameSceneCsvRow {
             layout_path: optional_trimmed_field(self.layout_path),
             default_spawn: optional_trimmed_field(self.default_spawn).map(SceneSpawnPointId::from),
             ui_mode: parse_ui_mode(row_number, &self.ui_mode)?,
+            music: parse_music_config(
+                row_number,
+                self.music_clip_id,
+                self.music_path,
+                self.music_volume,
+                self.music_fade_in_seconds,
+                self.music_exit_fade_out_seconds,
+            )?,
         })
     }
 }
@@ -158,6 +194,21 @@ pub(crate) enum GameSceneCatalogParseError {
     InvalidUiMode {
         row: usize,
         value: String,
+    },
+    IncompleteMusicConfig {
+        row: usize,
+        missing_field: &'static str,
+    },
+    InvalidMusicClipId {
+        row: usize,
+        value: String,
+        reason: String,
+    },
+    InvalidMusicNumber {
+        row: usize,
+        field: &'static str,
+        value: String,
+        reason: String,
     },
 }
 
@@ -191,6 +242,23 @@ impl fmt::Display for GameSceneCatalogParseError {
                     "scene catalog row {row} has invalid ui_mode `{value}`"
                 )
             }
+            Self::IncompleteMusicConfig { row, missing_field } => write!(
+                formatter,
+                "scene catalog row {row} has incomplete music config: missing required field `{missing_field}`"
+            ),
+            Self::InvalidMusicClipId { row, value, reason } => write!(
+                formatter,
+                "scene catalog row {row} has invalid music_clip_id `{value}`: {reason}"
+            ),
+            Self::InvalidMusicNumber {
+                row,
+                field,
+                value,
+                reason,
+            } => write!(
+                formatter,
+                "scene catalog row {row} has invalid {field} `{value}`: {reason}"
+            ),
         }
     }
 }
@@ -362,6 +430,86 @@ fn parse_ui_mode(row: usize, value: &str) -> Result<GameSceneUiMode, GameSceneCa
     }
 }
 
+fn parse_music_config(
+    row: usize,
+    clip_id: String,
+    path: String,
+    volume: String,
+    fade_in_seconds: String,
+    exit_fade_out_seconds: String,
+) -> Result<Option<GameSceneMusicConfig>, GameSceneCatalogParseError> {
+    let clip_id = optional_trimmed_field(clip_id);
+    let path = optional_trimmed_field(path);
+    let volume = optional_non_negative_f32(row, "music_volume", volume)?;
+    let fade_in_seconds = optional_non_negative_f32(row, "music_fade_in_seconds", fade_in_seconds)?;
+    let exit_fade_out_seconds =
+        optional_non_negative_f32(row, "music_exit_fade_out_seconds", exit_fade_out_seconds)?;
+
+    if clip_id.is_none()
+        && path.is_none()
+        && volume.is_none()
+        && fade_in_seconds.is_none()
+        && exit_fade_out_seconds.is_none()
+    {
+        return Ok(None);
+    }
+
+    let clip_id = clip_id.ok_or(GameSceneCatalogParseError::IncompleteMusicConfig {
+        row,
+        missing_field: "music_clip_id",
+    })?;
+    let path = path.ok_or(GameSceneCatalogParseError::IncompleteMusicConfig {
+        row,
+        missing_field: "music_path",
+    })?;
+    let clip_id = AudioClipId::try_from(clip_id.clone()).map_err(|reason| {
+        GameSceneCatalogParseError::InvalidMusicClipId {
+            row,
+            value: clip_id,
+            reason: reason.to_string(),
+        }
+    })?;
+
+    Ok(Some(GameSceneMusicConfig {
+        clip_id,
+        path,
+        volume,
+        fade_in_seconds,
+        exit_fade_out_seconds,
+    }))
+}
+
+fn optional_non_negative_f32(
+    row: usize,
+    field: &'static str,
+    value: String,
+) -> Result<Option<f32>, GameSceneCatalogParseError> {
+    let Some(value) = optional_trimmed_field(value) else {
+        return Ok(None);
+    };
+
+    let parsed =
+        value
+            .parse::<f32>()
+            .map_err(|error| GameSceneCatalogParseError::InvalidMusicNumber {
+                row,
+                field,
+                value: value.clone(),
+                reason: error.to_string(),
+            })?;
+
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err(GameSceneCatalogParseError::InvalidMusicNumber {
+            row,
+            field,
+            value,
+            reason: "value must be a finite number greater than or equal to 0".to_string(),
+        });
+    }
+
+    Ok(Some(parsed))
+}
+
 fn required_trimmed_field(
     row: usize,
     field: &'static str,
@@ -412,7 +560,7 @@ mod tests {
     use super::*;
     use crate::game::scenes::sample_dungeon_room::SAMPLE_DUNGEON_ROOM_SCENE_ID;
 
-    const HEADER: &str = "scene_id,enabled,sort_order,title_key,title_fallback,description_key,description_fallback,kind,manifest_path,layout_path,default_spawn,ui_mode\n";
+    const HEADER: &str = "scene_id,enabled,sort_order,title_key,title_fallback,description_key,description_fallback,kind,manifest_path,layout_path,default_spawn,ui_mode,music_clip_id,music_path,music_volume,music_fade_in_seconds,music_exit_fade_out_seconds\n";
 
     fn test_entry(scene_id: &str, enabled: bool, sort_order: i32) -> GameSceneEntry {
         GameSceneEntry {
@@ -428,13 +576,14 @@ mod tests {
             layout_path: None,
             default_spawn: None,
             ui_mode: GameSceneUiMode::SampleScene,
+            music: None,
         }
     }
 
     #[test]
     fn parse_catalog_accepts_valid_row() {
         let catalog = GameSceneCatalog::from_csv_str(&format!(
-            "{HEADER}{SAMPLE_DUNGEON_ROOM_SCENE_ID},true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,scenes/sample/layout.ron,spawn.default,sample_scene\n"
+            "{HEADER}{SAMPLE_DUNGEON_ROOM_SCENE_ID},true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,scenes/sample/layout.ron,spawn.default,sample_scene,music.sample,audio/music/sample.wav,0.65,0.25,0.5\n"
         ))
         .unwrap();
 
@@ -455,6 +604,16 @@ mod tests {
             Some(SceneSpawnPointId::from("spawn.default"))
         );
         assert_eq!(entry.ui_mode, GameSceneUiMode::SampleScene);
+        assert_eq!(
+            entry.music,
+            Some(GameSceneMusicConfig {
+                clip_id: AudioClipId::try_from("music.sample").unwrap(),
+                path: "audio/music/sample.wav".to_string(),
+                volume: Some(0.65),
+                fade_in_seconds: Some(0.25),
+                exit_fade_out_seconds: Some(0.5),
+            })
+        );
     }
 
     #[test]
@@ -550,7 +709,7 @@ mod tests {
     #[test]
     fn disabled_row_is_not_returned_by_enabled_queries() {
         let catalog = GameSceneCatalog::from_csv_str(&format!(
-            "{HEADER}disabled.scene,false,10,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,sample_scene\n"
+            "{HEADER}disabled.scene,false,10,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,sample_scene,,,,,\n"
         ))
         .unwrap();
 
@@ -564,9 +723,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_catalog_keeps_empty_music_config_optional() {
+        let catalog = GameSceneCatalog::from_csv_str(&format!(
+            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,sample_scene,,,,,\n"
+        ))
+        .unwrap();
+
+        assert_eq!(catalog.entries()[0].music, None);
+    }
+
+    #[test]
+    fn parse_catalog_rejects_partial_music_config() {
+        let error = GameSceneCatalog::from_csv_str(&format!(
+            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,sample_scene,music.sample,,,,\n"
+        ))
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GameSceneCatalogParseError::IncompleteMusicConfig {
+                row: 2,
+                missing_field: "music_path"
+            }
+        );
+    }
+
+    #[test]
+    fn parse_catalog_rejects_invalid_music_number() {
+        let error = GameSceneCatalog::from_csv_str(&format!(
+            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,sample_scene,music.sample,audio/music/sample.wav,-0.1,,\n"
+        ))
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            GameSceneCatalogParseError::InvalidMusicNumber {
+                row: 2,
+                field: "music_volume",
+                value: "-0.1".to_string(),
+                reason: "value must be a finite number greater than or equal to 0".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn parse_catalog_sorts_entries_by_sort_order() {
         let catalog = GameSceneCatalog::from_csv_str(&format!(
-            "{HEADER}second.scene,true,20,scene.title,Second,scene.description,Description,dungeon,scenes/second/scene.ron,,,sample_scene\nfirst.scene,true,10,scene.title,First,scene.description,Description,dungeon,scenes/first/scene.ron,,,sample_scene\n"
+            "{HEADER}second.scene,true,20,scene.title,Second,scene.description,Description,dungeon,scenes/second/scene.ron,,,sample_scene,,,,,\nfirst.scene,true,10,scene.title,First,scene.description,Description,dungeon,scenes/first/scene.ron,,,sample_scene,,,,,\n"
         ))
         .unwrap();
 
@@ -580,7 +783,7 @@ mod tests {
     #[test]
     fn parse_catalog_rejects_invalid_kind() {
         let error = GameSceneCatalog::from_csv_str(&format!(
-            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,unknown,scenes/sample/scene.ron,,,sample_scene\n"
+            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,unknown,scenes/sample/scene.ron,,,sample_scene,,,,,\n"
         ))
         .unwrap_err();
 
@@ -596,7 +799,7 @@ mod tests {
     #[test]
     fn parse_catalog_rejects_invalid_ui_mode() {
         let error = GameSceneCatalog::from_csv_str(&format!(
-            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,unknown\n"
+            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,unknown,,,,,\n"
         ))
         .unwrap_err();
 
@@ -612,7 +815,7 @@ mod tests {
     #[test]
     fn parse_catalog_rejects_empty_manifest_path() {
         let error = GameSceneCatalog::from_csv_str(&format!(
-            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,dungeon,,,,sample_scene\n"
+            "{HEADER}sample.scene,true,100,scene.title,Sample,scene.description,Description,dungeon,,,,sample_scene,,,,,\n"
         ))
         .unwrap_err();
 
@@ -628,7 +831,7 @@ mod tests {
     #[test]
     fn parse_catalog_rejects_invalid_scene_id() {
         let error = GameSceneCatalog::from_csv_str(&format!(
-            "{HEADER}Sample.Scene,true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,sample_scene\n"
+            "{HEADER}Sample.Scene,true,100,scene.title,Sample,scene.description,Description,dungeon,scenes/sample/scene.ron,,,sample_scene,,,,,\n"
         ))
         .unwrap_err();
 

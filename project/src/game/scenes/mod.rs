@@ -10,9 +10,11 @@ mod sample_dungeon_room;
 use crate::framework::audio::prelude::{
     AudioBus, AudioCatalog, AudioClipId, AudioCueClip, AudioCueEntry, AudioCueId, AudioCuePlayback,
     AudioCueRules, AudioScope, SceneAudioAdapterConfig, SceneAudioCue, SceneAudioEntry,
-    SceneAudioPlayback,
+    SceneAudioMusic, SceneAudioPlayback,
 };
+use crate::framework::scene::prelude::SceneId;
 use bevy::prelude::*;
+use catalog::GameSceneCatalog;
 
 pub(in crate::game) use sample_dungeon_room::SAMPLE_DUNGEON_ROOM_SCENE_ID;
 
@@ -28,11 +30,15 @@ impl Plugin for GameScenesPlugin {
             catalog::GameSceneCatalogPlugin,
             sample_dungeon_room::SampleDungeonRoomPlugin,
         ))
-        .add_systems(Startup, register_game_scene_audio);
+        .add_systems(
+            Startup,
+            register_game_scene_audio.after(catalog::GameSceneCatalogStartupSet),
+        );
     }
 }
 
 fn register_game_scene_audio(
+    game_scenes: Res<GameSceneCatalog>,
     catalog: Option<ResMut<AudioCatalog>>,
     scene_audio: Option<ResMut<SceneAudioAdapterConfig>>,
 ) {
@@ -63,15 +69,70 @@ fn register_game_scene_audio(
             }),
     );
 
+    let sample_entry = SceneAudioEntry::from_playback(SceneAudioPlayback::Cue(
+        SceneAudioCue::ambience(cue_id)
+            .with_volume(1.0)
+            .with_fade_in_seconds(0.25),
+    ))
+    .with_exit_fade_out_seconds(0.2);
+
     scene_audio.register(
         SAMPLE_DUNGEON_ROOM_SCENE_ID,
-        SceneAudioEntry::from_playback(SceneAudioPlayback::Cue(
-            SceneAudioCue::ambience(cue_id)
-                .with_volume(1.0)
-                .with_fade_in_seconds(0.25),
-        ))
-        .with_exit_fade_out_seconds(0.2),
+        scene_entry_with_catalog_music(
+            sample_entry,
+            game_scenes.find_enabled(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID)),
+            &mut catalog,
+        ),
     );
+
+    for entry in game_scenes.enabled_entries() {
+        if entry.scene_id.as_str() == SAMPLE_DUNGEON_ROOM_SCENE_ID {
+            continue;
+        }
+
+        if entry.music.is_some() {
+            scene_audio.register(
+                entry.scene_id.clone(),
+                scene_entry_with_catalog_music(
+                    SceneAudioEntry {
+                        on_enter: Vec::new(),
+                        exit_fade_out_seconds: None,
+                    },
+                    Some(entry),
+                    &mut catalog,
+                ),
+            );
+        }
+    }
+}
+
+fn scene_entry_with_catalog_music(
+    mut scene_entry: SceneAudioEntry,
+    game_entry: Option<&catalog::GameSceneEntry>,
+    catalog: &mut AudioCatalog,
+) -> SceneAudioEntry {
+    let Some(music) = game_entry.and_then(|entry| entry.music.as_ref()) else {
+        return scene_entry;
+    };
+
+    catalog.register_clip(music.clip_id.clone(), music.path.clone());
+
+    let mut scene_music = SceneAudioMusic::new(music.clip_id.clone());
+    if let Some(volume) = music.volume {
+        scene_music = scene_music.with_volume(volume);
+    }
+    if let Some(fade_in_seconds) = music.fade_in_seconds {
+        scene_music = scene_music.with_fade_in_seconds(fade_in_seconds);
+    }
+
+    scene_entry
+        .on_enter
+        .push(SceneAudioPlayback::Music(scene_music));
+    if let Some(exit_fade_out_seconds) = music.exit_fade_out_seconds {
+        scene_entry.exit_fade_out_seconds = Some(exit_fade_out_seconds);
+    }
+
+    scene_entry
 }
 
 #[cfg(test)]
@@ -132,8 +193,8 @@ mod tests {
         let entry = scene_audio
             .get(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID))
             .unwrap();
-        assert_eq!(entry.on_enter.len(), 1);
-        assert_eq!(entry.exit_fade_out_seconds, Some(0.2));
+        assert_eq!(entry.on_enter.len(), 2);
+        assert_eq!(entry.exit_fade_out_seconds, Some(0.4));
         assert!(matches!(
             &entry.on_enter[0],
             SceneAudioPlayback::Cue(cue)
@@ -141,5 +202,35 @@ mod tests {
                     && cue.bus == Some(AudioBus::Sfx)
                     && cue.looped
         ));
+        assert!(matches!(
+            &entry.on_enter[1],
+            SceneAudioPlayback::Music(music)
+                if music.clip_id.as_str() == "music.sample_dungeon_room"
+                    && music.volume == 0.35
+                    && music.looped
+                    && music.fade_in_seconds == Some(0.5)
+        ));
+    }
+
+    #[test]
+    fn scene_plugins_register_sample_dungeon_room_music_clip_from_catalog() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            AudioPlugin,
+            ScenePlugin,
+        ))
+        .add_message::<GameRouteCommand>()
+        .add_plugins(GameScenesPlugin);
+
+        app.update();
+
+        let audio_catalog = app.world().resource::<AudioCatalog>();
+        let music_clip = AudioClipId::try_from("music.sample_dungeon_room").unwrap();
+        assert_eq!(
+            audio_catalog.clip(&music_clip).unwrap().path,
+            "audio/music/stealth_bass_loop.wav"
+        );
     }
 }
