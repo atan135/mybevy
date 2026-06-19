@@ -120,7 +120,7 @@ impl AudioDebugState {
     }
 }
 
-#[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Resource, PartialEq)]
 pub struct AudioDebugSnapshot {
     pub enabled: bool,
     pub active_instances: AudioDebugActiveInstanceCounts,
@@ -145,7 +145,7 @@ pub struct AudioDebugBusInstanceCount {
     pub count: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AudioDebugInstanceInfo {
     pub instance_id: AudioInstanceId,
     pub clip_id: AudioClipId,
@@ -157,6 +157,10 @@ pub struct AudioDebugInstanceInfo {
     pub stopping: bool,
     pub failed: bool,
     pub spatial: bool,
+    pub looped: bool,
+    pub start_seconds: f32,
+    pub position_seconds: f32,
+    pub pending_seek_seconds: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -303,6 +307,10 @@ pub fn audio_debug_instance_info(playback: &AudioPlaybackState) -> Vec<AudioDebu
             stopping: instance.stopping,
             failed: instance.failed,
             spatial: instance.spatial,
+            looped: instance.looped,
+            start_seconds: instance.start_seconds,
+            position_seconds: instance.position_seconds,
+            pending_seek_seconds: instance.pending_seek_seconds,
         })
         .collect::<Vec<_>>();
     instances.sort_by_key(|instance| instance.instance_id.raw());
@@ -719,6 +727,7 @@ mod tests {
                 bus,
                 volume: 1.0,
                 priority: 0,
+                looped: false,
                 asset_path: "audio/test.ogg".to_string(),
                 source: Handle::<AudioSource>::default(),
                 failed: false,
@@ -726,6 +735,9 @@ mod tests {
                 stopping: false,
                 fade: None,
                 spatial: false,
+                start_seconds: 0.0,
+                position_seconds: 0.0,
+                pending_seek_seconds: None,
             },
         );
     }

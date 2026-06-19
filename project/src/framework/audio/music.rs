@@ -65,6 +65,7 @@ pub fn handle_music_commands(
                     volume: request.volume,
                     looped: request.looped,
                     fade_in_seconds: Some(request.fade_seconds),
+                    start_seconds: None,
                 },
                 Some(request),
                 &mut commands,
@@ -184,6 +185,7 @@ fn play_music(
             pitch: 1.0,
             looped: request.looped,
             fade_in_seconds: request.fade_in_seconds,
+            start_seconds: request.start_seconds,
             paused: music.paused,
             spatial: None,
             priority: 0,
@@ -568,6 +570,42 @@ mod tests {
     }
 
     #[test]
+    fn play_music_start_seconds_sets_initial_position_and_playback_settings() {
+        let mut app = music_app();
+        let title = clip_id("music.title");
+        register_music(&mut app, &title, "audio/music/title.ogg");
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayMusic(AudioMusicRequest {
+                clip_id: title,
+                scope: AudioScope::Global,
+                volume: 0.8,
+                looped: true,
+                fade_in_seconds: None,
+                start_seconds: Some(42.25),
+            }));
+        app.update();
+
+        let current = app
+            .world()
+            .resource::<MusicController>()
+            .current
+            .clone()
+            .unwrap();
+        let playback = app.world().resource::<AudioPlaybackState>();
+        let instance = playback.instances.get(&current.instance_id).unwrap();
+        assert_eq!(instance.start_seconds, 42.25);
+        assert_eq!(instance.position_seconds, 42.25);
+
+        let settings = app
+            .world()
+            .entity(instance.entity)
+            .get::<PlaybackSettings>()
+            .unwrap();
+        assert_eq!(settings.start_position.unwrap().as_secs_f32(), 42.25);
+    }
+
+    #[test]
     fn stop_pause_and_resume_music_update_controller_and_instance_state() {
         let mut app = music_app();
         let title = clip_id("music.title");
@@ -637,6 +675,7 @@ mod tests {
                 bus: AudioBus::Music,
                 volume: 1.0,
                 priority: 0,
+                looped: false,
                 asset_path: "audio/music/title.ogg".to_string(),
                 source: Handle::<AudioSource>::default(),
                 failed: false,
@@ -644,6 +683,9 @@ mod tests {
                 stopping: true,
                 fade: AudioFadeState::new(0.5, 1.0, 0.0, true),
                 spatial: false,
+                start_seconds: 0.0,
+                position_seconds: 0.0,
+                pending_seek_seconds: None,
             },
         );
 
@@ -670,6 +712,7 @@ mod tests {
                 bus: AudioBus::Music,
                 volume: 0.0,
                 priority: 0,
+                looped: false,
                 asset_path: "audio/music/title.ogg".to_string(),
                 source: Handle::<AudioSource>::default(),
                 failed: false,
@@ -677,6 +720,9 @@ mod tests {
                 stopping: false,
                 fade: AudioFadeState::new(0.5, 0.0, 0.8, false),
                 spatial: false,
+                start_seconds: 0.0,
+                position_seconds: 0.0,
+                pending_seek_seconds: None,
             },
         );
 

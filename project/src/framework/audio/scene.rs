@@ -195,6 +195,7 @@ impl SceneAudioPlayback {
                 pitch: cue.pitch,
                 looped: cue.looped,
                 fade_in_seconds: cue.fade_in_seconds,
+                start_seconds: None,
             }),
             Self::Music(music) => AudioCommand::PlayMusic(AudioMusicRequest {
                 clip_id: music.clip_id.clone(),
@@ -202,6 +203,7 @@ impl SceneAudioPlayback {
                 volume: music.volume,
                 looped: music.looped,
                 fade_in_seconds: music.fade_in_seconds,
+                start_seconds: None,
             }),
         }
     }
@@ -291,6 +293,7 @@ mod tests {
                     pitch: 1.0,
                     looped: true,
                     fade_in_seconds: Some(0.2),
+                    start_seconds: None,
                 }),
                 AudioCommand::PlayMusic(AudioMusicRequest {
                     clip_id: clip_id("music.room"),
@@ -298,6 +301,7 @@ mod tests {
                     volume: 0.5,
                     looped: true,
                     fade_in_seconds: None,
+                    start_seconds: None,
                 }),
             ]
         );

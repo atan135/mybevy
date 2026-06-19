@@ -406,6 +406,7 @@ mod tests {
             bus: AudioBus::Music,
             volume: 0.8,
             priority: 0,
+            looped: false,
             asset_path: "audio/music/title.ogg".to_string(),
             source: Handle::<AudioSource>::default(),
             failed: false,
@@ -413,6 +414,9 @@ mod tests {
             stopping: false,
             fade: None,
             spatial: false,
+            start_seconds: 0.0,
+            position_seconds: 0.0,
+            pending_seek_seconds: None,
         };
 
         assert_eq!(
@@ -456,6 +460,7 @@ mod tests {
             bus: AudioBus::Ui,
             volume: 0.8,
             priority: 0,
+            looped: false,
             asset_path: "audio/ui/click.ogg".to_string(),
             source: Handle::<AudioSource>::default(),
             failed: false,
@@ -463,6 +468,9 @@ mod tests {
             stopping: false,
             fade: None,
             spatial: false,
+            start_seconds: 0.0,
+            position_seconds: 0.0,
+            pending_seek_seconds: None,
         };
 
         assert_eq!(

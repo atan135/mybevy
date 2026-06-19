@@ -1,18 +1,22 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use bevy::asset::LoadState;
-use bevy::audio::{PlaybackMode, Volume};
+use bevy::audio::{
+    AudioSink, AudioSinkPlayback, PlaybackMode, SeekError, SpatialAudioSink, Volume,
+};
 use bevy::prelude::*;
 
 use super::{
     catalog::{AudioCatalog, AudioCatalogError, AudioResolvedCue, AudioResolvedCueClip},
     command::{
-        AudioBattleCueRequest, AudioClipRequest, AudioCommand, AudioCueRequest, AudioScopeCommand,
-        AudioScopeFadeCommand, AudioSpatialCueRequest,
+        AudioBattleCueRequest, AudioClipRequest, AudioCommand, AudioCueRequest,
+        AudioInstanceCommand, AudioScopeCommand, AudioScopeFadeCommand, AudioSeekInstanceCommand,
+        AudioSpatialCueRequest,
     },
     event::{
         AudioClipStarted, AudioCueSkipReason, AudioCueSkipped, AudioCueStarted, AudioEvent,
-        AudioInstanceStopped, AudioLoadFailed, AudioStopReason,
+        AudioInstanceControlAction, AudioInstanceControlFailed, AudioInstanceControlFailureReason,
+        AudioInstanceProgress, AudioInstanceStopped, AudioLoadFailed, AudioStopReason,
     },
     id::{AudioClipId, AudioCueId, AudioInstanceId},
     mixer::AudioMixer,
@@ -36,6 +40,7 @@ pub struct AudioInstanceState {
     pub bus: AudioBus,
     pub volume: f32,
     pub priority: i32,
+    pub looped: bool,
     pub asset_path: String,
     pub source: Handle<AudioSource>,
     pub failed: bool,
@@ -43,6 +48,9 @@ pub struct AudioInstanceState {
     pub stopping: bool,
     pub fade: Option<AudioFadeState>,
     pub spatial: bool,
+    pub start_seconds: f32,
+    pub position_seconds: f32,
+    pub pending_seek_seconds: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -182,6 +190,18 @@ pub fn handle_audio_playback_commands(
                     AudioStopReason::Stopped,
                 );
             }
+            AudioCommand::PauseInstance(command) => {
+                set_instance_paused(command, true, &mut audio_events, &mut playback);
+            }
+            AudioCommand::ResumeInstance(command) => {
+                set_instance_paused(command, false, &mut audio_events, &mut playback);
+            }
+            AudioCommand::SeekInstance(command) => {
+                queue_instance_seek(command, &mut audio_events, &mut playback);
+            }
+            AudioCommand::QueryInstanceProgress(command) => {
+                write_instance_progress(command, &mut audio_events, &playback);
+            }
             AudioCommand::StopByScope(command) => {
                 stop_by_scope(
                     command,
@@ -227,6 +247,33 @@ pub fn cleanup_finished_audio_instances(
                 reason: AudioStopReason::Completed,
             }));
         }
+    }
+}
+
+pub fn sync_audio_playback_positions(
+    mut audio_events: MessageWriter<AudioEvent>,
+    mut playback: ResMut<AudioPlaybackState>,
+    sinks: Query<(&AudioPlaybackInstance, &AudioSink), Without<AudioSpatialEmitter>>,
+    spatial_sinks: Query<(&AudioPlaybackInstance, &SpatialAudioSink), With<AudioSpatialEmitter>>,
+) {
+    for (playback_instance, sink) in &sinks {
+        sync_instance_sink_position(
+            playback_instance.instance_id,
+            false,
+            sink,
+            &mut audio_events,
+            &mut playback,
+        );
+    }
+
+    for (playback_instance, sink) in &spatial_sinks {
+        sync_instance_sink_position(
+            playback_instance.instance_id,
+            true,
+            sink,
+            &mut audio_events,
+            &mut playback,
+        );
     }
 }
 
@@ -307,6 +354,7 @@ fn play_cue(
             pitch: request.pitch,
             looped: request.looped,
             fade_in_seconds: request.fade_in_seconds,
+            start_seconds: request.start_seconds,
             spatial: None,
         },
         commands,
@@ -349,6 +397,7 @@ fn play_battle_cue(
             pitch: request.pitch,
             looped: request.looped,
             fade_in_seconds: request.fade_in_seconds,
+            start_seconds: request.start_seconds,
             spatial: None,
         },
         commands,
@@ -393,6 +442,7 @@ fn play_clip(
             pitch: request.pitch,
             looped: request.looped,
             fade_in_seconds: request.fade_in_seconds,
+            start_seconds: request.start_seconds,
             paused: false,
             spatial: None,
             priority: 0,
@@ -450,6 +500,7 @@ fn play_spatial_cue(
             pitch: request.pitch,
             looped: request.looped,
             fade_in_seconds: request.fade_in_seconds,
+            start_seconds: request.start_seconds,
             spatial: Some(SpawnSpatialAudioInstance {
                 source: request.source.clone(),
                 attenuation: request.attenuation.normalized(),
@@ -472,6 +523,7 @@ struct CuePlaybackOptions {
     pitch: f32,
     looped: bool,
     fade_in_seconds: Option<f32>,
+    start_seconds: Option<f32>,
     spatial: Option<SpawnSpatialAudioInstance>,
 }
 
@@ -554,6 +606,7 @@ fn play_resolved_cue(
             pitch,
             looped,
             fade_in_seconds: options.fade_in_seconds,
+            start_seconds: options.start_seconds,
             paused: false,
             spatial: options.spatial,
             priority: resolved.rules.priority,
@@ -583,6 +636,7 @@ pub(crate) struct SpawnAudioInstance {
     pub pitch: f32,
     pub looped: bool,
     pub fade_in_seconds: Option<f32>,
+    pub start_seconds: Option<f32>,
     pub paused: bool,
     pub spatial: Option<SpawnSpatialAudioInstance>,
     pub priority: i32,
@@ -608,6 +662,7 @@ pub(crate) fn spawn_audio_instance(
         .fade_in_seconds
         .and_then(|seconds| AudioFadeState::new(seconds, 0.0, volume, false));
     let startup_volume = fade.as_ref().map_or(volume, AudioFadeState::target_volume);
+    let start_seconds = normalized_position_seconds(request.start_seconds.unwrap_or(0.0));
     let settings = PlaybackSettings {
         mode: if request.looped {
             PlaybackMode::Loop
@@ -617,6 +672,7 @@ pub(crate) fn spawn_audio_instance(
         volume: Volume::Linear(mixer.target_instance_volume(startup_volume, request.bus)),
         speed: request.pitch.max(0.01),
         paused: request.paused || mixer.effective_bus_paused(request.bus),
+        start_position: (start_seconds > 0.0).then(|| Duration::from_secs_f32(start_seconds)),
         ..PlaybackSettings::default()
     }
     .with_spatial(request.spatial.is_some());
@@ -657,6 +713,7 @@ pub(crate) fn spawn_audio_instance(
             bus: request.bus,
             volume,
             priority: request.priority,
+            looped: request.looped,
             asset_path: request.asset_path,
             source,
             failed: false,
@@ -664,6 +721,9 @@ pub(crate) fn spawn_audio_instance(
             stopping: false,
             fade,
             spatial: is_spatial,
+            start_seconds,
+            position_seconds: start_seconds,
+            pending_seek_seconds: None,
         },
     );
 
@@ -919,13 +979,184 @@ fn set_scope_paused(command: &AudioScopeCommand, paused: bool, playback: &mut Au
     }
 }
 
+fn set_instance_paused(
+    command: &AudioInstanceCommand,
+    paused: bool,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    playback: &mut AudioPlaybackState,
+) {
+    let Some(instance) = playback.instances.get_mut(&command.instance_id) else {
+        write_instance_control_failed(
+            audio_events,
+            command.instance_id,
+            if paused {
+                AudioInstanceControlAction::Pause
+            } else {
+                AudioInstanceControlAction::Resume
+            },
+            AudioInstanceControlFailureReason::MissingInstance,
+            "audio instance is not active",
+        );
+        return;
+    };
+
+    if instance.stopping {
+        write_instance_control_failed(
+            audio_events,
+            command.instance_id,
+            if paused {
+                AudioInstanceControlAction::Pause
+            } else {
+                AudioInstanceControlAction::Resume
+            },
+            AudioInstanceControlFailureReason::StoppedInstance,
+            "audio instance is stopping",
+        );
+        return;
+    }
+
+    instance.paused = paused;
+}
+
+fn queue_instance_seek(
+    command: &AudioSeekInstanceCommand,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    playback: &mut AudioPlaybackState,
+) {
+    let seconds = normalized_position_seconds(command.seconds);
+    if !seconds.is_finite() {
+        write_instance_control_failed(
+            audio_events,
+            command.instance_id,
+            AudioInstanceControlAction::Seek,
+            AudioInstanceControlFailureReason::InvalidPosition,
+            "seek position must be finite",
+        );
+        return;
+    }
+
+    let Some(instance) = playback.instances.get_mut(&command.instance_id) else {
+        write_instance_control_failed(
+            audio_events,
+            command.instance_id,
+            AudioInstanceControlAction::Seek,
+            AudioInstanceControlFailureReason::MissingInstance,
+            "audio instance is not active",
+        );
+        return;
+    };
+
+    if instance.stopping {
+        write_instance_control_failed(
+            audio_events,
+            command.instance_id,
+            AudioInstanceControlAction::Seek,
+            AudioInstanceControlFailureReason::StoppedInstance,
+            "audio instance is stopping",
+        );
+        return;
+    }
+
+    instance.position_seconds = seconds;
+    instance.pending_seek_seconds = Some(seconds);
+}
+
+fn write_instance_progress(
+    command: &AudioInstanceCommand,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    playback: &AudioPlaybackState,
+) {
+    let Some(instance) = playback.instances.get(&command.instance_id) else {
+        write_instance_control_failed(
+            audio_events,
+            command.instance_id,
+            AudioInstanceControlAction::QueryProgress,
+            AudioInstanceControlFailureReason::MissingInstance,
+            "audio instance is not active",
+        );
+        return;
+    };
+
+    audio_events.write(AudioEvent::InstanceProgress(AudioInstanceProgress {
+        instance_id: command.instance_id,
+        clip_id: instance.clip_id.clone(),
+        cue_id: instance.cue_id.clone(),
+        scope: instance.scope.clone(),
+        bus: instance.bus,
+        position_seconds: instance.position_seconds,
+        paused: instance.paused,
+        spatial: instance.spatial,
+    }));
+}
+
+fn sync_instance_sink_position<T: AudioSinkPlayback>(
+    instance_id: AudioInstanceId,
+    spatial: bool,
+    sink: &T,
+    audio_events: &mut MessageWriter<AudioEvent>,
+    playback: &mut AudioPlaybackState,
+) {
+    let Some(instance) = playback.instances.get_mut(&instance_id) else {
+        return;
+    };
+
+    if let Some(position_seconds) = instance.pending_seek_seconds.take() {
+        if let Err(error) = sink.try_seek(Duration::from_secs_f32(position_seconds)) {
+            let reason = seek_failure_reason(&error);
+            write_instance_control_failed(
+                audio_events,
+                instance_id,
+                AudioInstanceControlAction::Seek,
+                reason,
+                format!("audio sink seek failed: {error}"),
+            );
+        }
+    }
+
+    instance.position_seconds = sink.position().as_secs_f32();
+    instance.spatial = spatial;
+}
+
+fn seek_failure_reason(error: &SeekError) -> AudioInstanceControlFailureReason {
+    if matches!(error, SeekError::NotSupported { .. }) {
+        AudioInstanceControlFailureReason::SeekUnsupported
+    } else {
+        AudioInstanceControlFailureReason::SinkNotReady
+    }
+}
+
+fn write_instance_control_failed(
+    audio_events: &mut MessageWriter<AudioEvent>,
+    instance_id: AudioInstanceId,
+    action: AudioInstanceControlAction,
+    reason: AudioInstanceControlFailureReason,
+    message: impl Into<String>,
+) {
+    audio_events.write(AudioEvent::InstanceControlFailed(
+        AudioInstanceControlFailed {
+            instance_id,
+            action,
+            reason,
+            message: message.into(),
+        },
+    ));
+}
+
+fn normalized_position_seconds(seconds: f32) -> f32 {
+    if seconds.is_finite() {
+        seconds.max(0.0)
+    } else {
+        f32::NAN
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::framework::audio::{
         AudioBattleCueRequest, AudioCueClip, AudioCueEntry, AudioCuePlayback, AudioCueRules,
         AudioScopeId, AudioSpatialAttenuation, AudioSpatialCueRequest, AudioSpatialEmitter,
-        AudioSpatialSource,
+        AudioSpatialSource, AudioStopInstanceCommand,
     };
     use bevy::ecs::message::MessageCursor;
 
@@ -997,6 +1228,7 @@ mod tests {
                 pitch: 1.25,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
 
         app.update();
@@ -1034,6 +1266,291 @@ mod tests {
     }
 
     #[test]
+    fn play_clip_start_seconds_sets_initial_position_and_playback_settings() {
+        let mut app = playback_app();
+        let clip_id = clip_id("voice.line_01");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/voice/line_01.ogg");
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest {
+                clip_id,
+                scope: AudioScope::Global,
+                bus: AudioBus::Sfx,
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: Some(12.5),
+            }));
+
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        let instance = playback.instances.values().next().unwrap();
+        assert_eq!(instance.start_seconds, 12.5);
+        assert_eq!(instance.position_seconds, 12.5);
+
+        let settings = app
+            .world()
+            .entity(instance.entity)
+            .get::<PlaybackSettings>()
+            .unwrap();
+        assert_eq!(settings.start_position.unwrap().as_secs_f32(), 12.5);
+    }
+
+    #[test]
+    fn play_cue_and_spatial_cue_forward_start_seconds() {
+        let mut app = playback_app();
+        let clip_id = clip_id("voice.narration");
+        let cue_id = cue_id("voice.narration");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/voice/narration.ogg");
+        app.world_mut().resource_mut::<AudioCatalog>().register_cue(
+            cue_id.clone(),
+            AudioCueEntry::from_clips([AudioCueClip::new(clip_id)]),
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::PlayCue(AudioCueRequest {
+                cue_id: cue_id.clone(),
+                scope: AudioScope::Global,
+                bus: None,
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: Some(3.0),
+            }));
+        app.world_mut()
+            .write_message(AudioCommand::PlaySpatialCue(AudioSpatialCueRequest {
+                cue_id,
+                scope: AudioScope::Global,
+                bus: Some(AudioBus::Sfx),
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: Some(7.0),
+                source: AudioSpatialSource::fixed(Transform::default()),
+                attenuation: AudioSpatialAttenuation::default(),
+            }));
+        app.update();
+
+        let mut starts = app
+            .world()
+            .resource::<AudioPlaybackState>()
+            .instances
+            .values()
+            .map(|instance| instance.start_seconds)
+            .collect::<Vec<_>>();
+        starts.sort_by(f32::total_cmp);
+        assert_eq!(starts, vec![3.0, 7.0]);
+    }
+
+    #[test]
+    fn pause_resume_stop_instance_update_single_instance_state() {
+        let mut app = playback_app();
+        let voice_clip_id = clip_id("voice.line_02");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(voice_clip_id.clone(), "audio/voice/line_02.ogg");
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest::new(voice_clip_id)));
+        app.update();
+        let instance_id = *app
+            .world()
+            .resource::<AudioPlaybackState>()
+            .instances
+            .keys()
+            .next()
+            .unwrap();
+
+        app.world_mut()
+            .write_message(AudioCommand::PauseInstance(AudioInstanceCommand::new(
+                instance_id,
+            )));
+        app.update();
+        assert!(
+            app.world()
+                .resource::<AudioPlaybackState>()
+                .instances
+                .get(&instance_id)
+                .unwrap()
+                .paused
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::ResumeInstance(AudioInstanceCommand::new(
+                instance_id,
+            )));
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<AudioPlaybackState>()
+                .instances
+                .get(&instance_id)
+                .unwrap()
+                .paused
+        );
+
+        app.world_mut()
+            .write_message(AudioCommand::StopInstance(AudioStopInstanceCommand::new(
+                instance_id,
+            )));
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<AudioPlaybackState>()
+                .instances
+                .contains_key(&instance_id)
+        );
+    }
+
+    #[test]
+    fn seek_before_sink_is_ready_records_pending_seek_and_progress_snapshot() {
+        let mut app = playback_app();
+        let clip_id = clip_id("voice.line_03");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/voice/line_03.ogg");
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest::new(clip_id)));
+        app.update();
+        let instance_id = *app
+            .world()
+            .resource::<AudioPlaybackState>()
+            .instances
+            .keys()
+            .next()
+            .unwrap();
+
+        app.world_mut()
+            .write_message(AudioCommand::SeekInstance(AudioSeekInstanceCommand::new(
+                instance_id,
+                18.75,
+            )));
+        app.world_mut()
+            .write_message(AudioCommand::QueryInstanceProgress(
+                AudioInstanceCommand::new(instance_id),
+            ));
+        app.update();
+
+        let instance = app
+            .world()
+            .resource::<AudioPlaybackState>()
+            .instances
+            .get(&instance_id)
+            .unwrap();
+        assert_eq!(instance.pending_seek_seconds, Some(18.75));
+        assert_eq!(instance.position_seconds, 18.75);
+        assert!(read_events(&app).iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceProgress(AudioInstanceProgress {
+                instance_id: progress_id,
+                position_seconds,
+                ..
+            }) if progress_id == &instance_id && *position_seconds == 18.75
+        )));
+    }
+
+    #[test]
+    fn seek_not_supported_error_maps_to_seek_unsupported_failure_reason() {
+        let error = SeekError::NotSupported {
+            underlying_source: "test-source",
+        };
+
+        assert_eq!(
+            seek_failure_reason(&error),
+            AudioInstanceControlFailureReason::SeekUnsupported
+        );
+    }
+
+    #[test]
+    fn missing_stopping_and_invalid_instance_control_report_failures() {
+        let mut app = playback_app();
+        let missing = AudioInstanceId::from_raw(404);
+        app.world_mut()
+            .write_message(AudioCommand::PauseInstance(AudioInstanceCommand::new(
+                missing,
+            )));
+        app.world_mut()
+            .write_message(AudioCommand::SeekInstance(AudioSeekInstanceCommand::new(
+                missing, 1.0,
+            )));
+        app.world_mut()
+            .write_message(AudioCommand::SeekInstance(AudioSeekInstanceCommand::new(
+                missing,
+                f32::NAN,
+            )));
+        app.update();
+
+        let events = read_events(&app);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceControlFailed(AudioInstanceControlFailed {
+                instance_id,
+                action: AudioInstanceControlAction::Pause,
+                reason: AudioInstanceControlFailureReason::MissingInstance,
+                ..
+            }) if instance_id == &missing
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceControlFailed(AudioInstanceControlFailed {
+                action: AudioInstanceControlAction::Seek,
+                reason: AudioInstanceControlFailureReason::MissingInstance,
+                ..
+            })
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceControlFailed(AudioInstanceControlFailed {
+                action: AudioInstanceControlAction::Seek,
+                reason: AudioInstanceControlFailureReason::InvalidPosition,
+                ..
+            })
+        )));
+
+        let clip_id = clip_id("voice.line_04");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/voice/line_04.ogg");
+        app.world_mut()
+            .write_message(AudioCommand::PlayClip(AudioClipRequest::new(clip_id)));
+        app.update();
+        let instance_id = *app
+            .world()
+            .resource::<AudioPlaybackState>()
+            .instances
+            .keys()
+            .next()
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<AudioPlaybackState>()
+            .instances
+            .get_mut(&instance_id)
+            .unwrap()
+            .stopping = true;
+        app.world_mut()
+            .write_message(AudioCommand::ResumeInstance(AudioInstanceCommand::new(
+                instance_id,
+            )));
+        app.update();
+
+        assert!(read_events(&app).iter().any(|event| matches!(
+            event,
+            AudioEvent::InstanceControlFailed(AudioInstanceControlFailed {
+                instance_id: failed_id,
+                action: AudioInstanceControlAction::Resume,
+                reason: AudioInstanceControlFailureReason::StoppedInstance,
+                ..
+            }) if failed_id == &instance_id
+        )));
+    }
+
+    #[test]
     fn play_cue_uses_catalog_defaults_rules_and_reports_cue_started() {
         let mut app = playback_app();
         let clip_id = clip_id("ui.click");
@@ -1066,6 +1583,7 @@ mod tests {
                 pitch: 0.5,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
 
         app.update();
@@ -1128,6 +1646,7 @@ mod tests {
                 pitch: 0.8,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
         app.update();
 
@@ -1510,6 +2029,7 @@ mod tests {
                 pitch: 1.25,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
                 source: AudioSpatialSource::fixed(transform),
                 attenuation,
             }));
@@ -1610,6 +2130,7 @@ mod tests {
                 pitch: 1.0,
                 looped: true,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
 
         app.update();
@@ -1645,6 +2166,7 @@ mod tests {
                 pitch: 1.0,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
 
         app.update();
@@ -1751,6 +2273,7 @@ mod tests {
                     bus: AudioBus::Ui,
                     volume: 1.0,
                     priority: 0,
+                    looped: false,
                     asset_path: "audio/ui/click.ogg".to_string(),
                     source,
                     failed: false,
@@ -1758,6 +2281,9 @@ mod tests {
                     stopping: false,
                     fade: None,
                     spatial: false,
+                    start_seconds: 0.0,
+                    position_seconds: 0.0,
+                    pending_seek_seconds: None,
                 },
             );
         app.world_mut().entity_mut(entity).despawn();
@@ -1804,6 +2330,7 @@ mod tests {
                 pitch: 1.0,
                 looped: true,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
         app.world_mut()
             .write_message(AudioCommand::PlayClip(AudioClipRequest {
@@ -1814,6 +2341,7 @@ mod tests {
                 pitch: 1.0,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
         app.update();
 
@@ -1869,6 +2397,7 @@ mod tests {
                     pitch: 1.0,
                     looped: true,
                     fade_in_seconds: None,
+                    start_seconds: None,
                 }));
         }
         app.update();
@@ -1932,6 +2461,7 @@ mod tests {
                 pitch: 1.0,
                 looped: true,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
         app.update();
 
@@ -1996,6 +2526,7 @@ mod tests {
                 pitch: 1.0,
                 looped: true,
                 fade_in_seconds: None,
+                start_seconds: None,
                 source: AudioSpatialSource::fixed(Transform::from_xyz(4.0, 0.0, 0.0)),
                 attenuation: AudioSpatialAttenuation::new(20.0, 1.0),
             }));
@@ -2070,6 +2601,7 @@ mod tests {
                 pitch: 1.0,
                 looped: true,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
         app.world_mut()
             .write_message(AudioCommand::PlaySpatialCue(AudioSpatialCueRequest {
@@ -2080,6 +2612,7 @@ mod tests {
                 pitch: 1.0,
                 looped: true,
                 fade_in_seconds: None,
+                start_seconds: None,
                 source: AudioSpatialSource::fixed(Transform::from_xyz(4.0, 0.0, 0.0)),
                 attenuation: AudioSpatialAttenuation::new(20.0, 1.0),
             }));
@@ -2092,6 +2625,7 @@ mod tests {
                 pitch: 1.0,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
         app.update();
 
@@ -2168,6 +2702,7 @@ mod tests {
                 pitch: 1.0,
                 looped: true,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
         app.update();
 

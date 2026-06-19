@@ -62,6 +62,7 @@ impl BattleAudioCue {
             pitch: self.pitch,
             looped: self.looped,
             fade_in_seconds: self.fade_in_seconds,
+            start_seconds: None,
         })
     }
 }

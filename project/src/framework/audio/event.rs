@@ -11,6 +11,8 @@ pub enum AudioEvent {
     ClipStarted(AudioClipStarted),
     CueSkipped(AudioCueSkipped),
     InstanceStopped(AudioInstanceStopped),
+    InstanceProgress(AudioInstanceProgress),
+    InstanceControlFailed(AudioInstanceControlFailed),
     LoadProgress(AudioLoadProgress),
     LoadFailed(AudioLoadFailed),
     MusicChanged(AudioMusicChanged),
@@ -60,6 +62,43 @@ pub struct AudioInstanceStopped {
     pub scope: AudioScope,
     pub bus: AudioBus,
     pub reason: AudioStopReason,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioInstanceProgress {
+    pub instance_id: AudioInstanceId,
+    pub clip_id: AudioClipId,
+    pub cue_id: Option<AudioCueId>,
+    pub scope: AudioScope,
+    pub bus: AudioBus,
+    pub position_seconds: f32,
+    pub paused: bool,
+    pub spatial: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioInstanceControlFailed {
+    pub instance_id: AudioInstanceId,
+    pub action: AudioInstanceControlAction,
+    pub reason: AudioInstanceControlFailureReason,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AudioInstanceControlAction {
+    Pause,
+    Resume,
+    Seek,
+    QueryProgress,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AudioInstanceControlFailureReason {
+    MissingInstance,
+    StoppedInstance,
+    SinkNotReady,
+    SeekUnsupported,
+    InvalidPosition,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -186,5 +225,43 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[test]
+    fn instance_control_events_are_explicit_about_progress_and_failures() {
+        let instance_id = AudioInstanceId::from_raw(42);
+        let progress = AudioEvent::InstanceProgress(AudioInstanceProgress {
+            instance_id,
+            clip_id: AudioClipId::try_from("voice.line").unwrap(),
+            cue_id: Some(AudioCueId::try_from("voice.line").unwrap()),
+            scope: AudioScope::Global,
+            bus: AudioBus::Sfx,
+            position_seconds: 12.25,
+            paused: true,
+            spatial: false,
+        });
+        let failure = AudioEvent::InstanceControlFailed(AudioInstanceControlFailed {
+            instance_id,
+            action: AudioInstanceControlAction::Seek,
+            reason: AudioInstanceControlFailureReason::SinkNotReady,
+            message: "audio sink is not ready yet".to_string(),
+        });
+
+        assert!(matches!(
+            progress,
+            AudioEvent::InstanceProgress(AudioInstanceProgress {
+                position_seconds: 12.25,
+                paused: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            failure,
+            AudioEvent::InstanceControlFailed(AudioInstanceControlFailed {
+                action: AudioInstanceControlAction::Seek,
+                reason: AudioInstanceControlFailureReason::SinkNotReady,
+                ..
+            })
+        ));
     }
 }

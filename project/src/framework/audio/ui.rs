@@ -120,6 +120,7 @@ pub fn play_ui_button_audio(
             pitch: 1.0,
             looped: false,
             fade_in_seconds: None,
+            start_seconds: None,
         }));
     }
 }
@@ -184,6 +185,7 @@ mod tests {
                 pitch: 1.0,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             })]
         );
     }
@@ -209,6 +211,7 @@ mod tests {
                 pitch: 1.0,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             })]
         );
     }

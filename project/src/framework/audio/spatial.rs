@@ -490,6 +490,7 @@ mod tests {
                     bus: AudioBus::Sfx,
                     volume: 1.0,
                     priority: 0,
+                    looped: false,
                     asset_path: "audio/ambience/torch.ogg".to_string(),
                     source: Handle::<AudioSource>::default(),
                     failed: false,
@@ -497,6 +498,9 @@ mod tests {
                     stopping: false,
                     fade: None,
                     spatial: true,
+                    start_seconds: 0.0,
+                    position_seconds: 0.0,
+                    pending_seek_seconds: None,
                 },
             );
 

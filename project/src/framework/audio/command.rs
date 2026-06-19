@@ -18,6 +18,10 @@ pub enum AudioCommand {
     PauseMusic,
     ResumeMusic,
     StopInstance(AudioStopInstanceCommand),
+    PauseInstance(AudioInstanceCommand),
+    ResumeInstance(AudioInstanceCommand),
+    SeekInstance(AudioSeekInstanceCommand),
+    QueryInstanceProgress(AudioInstanceCommand),
     StopByScope(AudioScopeFadeCommand),
     PauseByScope(AudioScopeCommand),
     ResumeByScope(AudioScopeCommand),
@@ -37,6 +41,7 @@ pub struct AudioBattleCueRequest {
     pub pitch: f32,
     pub looped: bool,
     pub fade_in_seconds: Option<f32>,
+    pub start_seconds: Option<f32>,
 }
 
 impl AudioBattleCueRequest {
@@ -49,6 +54,7 @@ impl AudioBattleCueRequest {
             pitch: 1.0,
             looped: false,
             fade_in_seconds: None,
+            start_seconds: None,
         }
     }
 
@@ -66,6 +72,7 @@ pub struct AudioCueRequest {
     pub pitch: f32,
     pub looped: bool,
     pub fade_in_seconds: Option<f32>,
+    pub start_seconds: Option<f32>,
 }
 
 impl AudioCueRequest {
@@ -78,6 +85,7 @@ impl AudioCueRequest {
             pitch: 1.0,
             looped: false,
             fade_in_seconds: None,
+            start_seconds: None,
         }
     }
 }
@@ -91,6 +99,7 @@ pub struct AudioSpatialCueRequest {
     pub pitch: f32,
     pub looped: bool,
     pub fade_in_seconds: Option<f32>,
+    pub start_seconds: Option<f32>,
     pub source: AudioSpatialSource,
     pub attenuation: AudioSpatialAttenuation,
 }
@@ -105,6 +114,7 @@ impl AudioSpatialCueRequest {
             pitch: 1.0,
             looped: false,
             fade_in_seconds: None,
+            start_seconds: None,
             source,
             attenuation: AudioSpatialAttenuation::default(),
         }
@@ -120,6 +130,7 @@ pub struct AudioClipRequest {
     pub pitch: f32,
     pub looped: bool,
     pub fade_in_seconds: Option<f32>,
+    pub start_seconds: Option<f32>,
 }
 
 impl AudioClipRequest {
@@ -132,6 +143,7 @@ impl AudioClipRequest {
             pitch: 1.0,
             looped: false,
             fade_in_seconds: None,
+            start_seconds: None,
         }
     }
 }
@@ -143,6 +155,7 @@ pub struct AudioMusicRequest {
     pub volume: f32,
     pub looped: bool,
     pub fade_in_seconds: Option<f32>,
+    pub start_seconds: Option<f32>,
 }
 
 impl AudioMusicRequest {
@@ -153,6 +166,7 @@ impl AudioMusicRequest {
             volume: 1.0,
             looped: true,
             fade_in_seconds: None,
+            start_seconds: None,
         }
     }
 }
@@ -202,6 +216,32 @@ impl AudioStopInstanceCommand {
         Self {
             instance_id,
             fade_out_seconds: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AudioInstanceCommand {
+    pub instance_id: AudioInstanceId,
+}
+
+impl AudioInstanceCommand {
+    pub const fn new(instance_id: AudioInstanceId) -> Self {
+        Self { instance_id }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AudioSeekInstanceCommand {
+    pub instance_id: AudioInstanceId,
+    pub seconds: f32,
+}
+
+impl AudioSeekInstanceCommand {
+    pub const fn new(instance_id: AudioInstanceId, seconds: f32) -> Self {
+        Self {
+            instance_id,
+            seconds,
         }
     }
 }
@@ -295,6 +335,7 @@ mod tests {
         assert_eq!(request.pitch, 1.0);
         assert!(!request.looped);
         assert_eq!(request.fade_in_seconds, None);
+        assert_eq!(request.start_seconds, None);
     }
 
     #[test]
@@ -311,6 +352,7 @@ mod tests {
         assert_eq!(request.pitch, 1.0);
         assert!(!request.looped);
         assert_eq!(request.fade_in_seconds, None);
+        assert_eq!(request.start_seconds, None);
         assert_eq!(request.source, AudioSpatialSource::Fixed(transform));
         assert_eq!(request.attenuation, AudioSpatialAttenuation::default());
     }
@@ -329,6 +371,7 @@ mod tests {
         assert_eq!(request.pitch, 1.0);
         assert!(!request.looped);
         assert_eq!(request.fade_in_seconds, None);
+        assert_eq!(request.start_seconds, None);
     }
 
     #[test]
@@ -356,6 +399,18 @@ mod tests {
             AudioCommand::StopInstance(AudioStopInstanceCommand {
                 instance_id,
                 fade_out_seconds: Some(0.25),
+            })
+        );
+
+        assert_eq!(
+            AudioCommand::PauseInstance(AudioInstanceCommand::new(instance_id)),
+            AudioCommand::PauseInstance(AudioInstanceCommand { instance_id })
+        );
+        assert_eq!(
+            AudioCommand::SeekInstance(AudioSeekInstanceCommand::new(instance_id, 12.5)),
+            AudioCommand::SeekInstance(AudioSeekInstanceCommand {
+                instance_id,
+                seconds: 12.5,
             })
         );
     }

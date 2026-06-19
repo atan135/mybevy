@@ -65,6 +65,7 @@ impl Plugin for AudioPlugin {
                         .in_set(AudioSystemSet::Commands),
                     super::loading::poll_audio_group_load_progress.in_set(AudioSystemSet::Playback),
                     super::playback::report_audio_load_failures.in_set(AudioSystemSet::Playback),
+                    super::playback::sync_audio_playback_positions.in_set(AudioSystemSet::Playback),
                     super::spatial::sync_spatial_listener_binding.in_set(AudioSystemSet::Playback),
                     super::spatial::sync_spatial_emitters.in_set(AudioSystemSet::Playback),
                     super::music::advance_music_fades.in_set(AudioSystemSet::Playback),
@@ -195,6 +196,7 @@ mod tests {
                     bus: AudioBus::Music,
                     volume: 0.8,
                     priority: 0,
+                    looped: false,
                     asset_path: "audio/music/title.ogg".to_string(),
                     source: Handle::<AudioSource>::default(),
                     failed: false,
@@ -202,6 +204,9 @@ mod tests {
                     stopping: false,
                     fade: None,
                     spatial: false,
+                    start_seconds: 0.0,
+                    position_seconds: 0.0,
+                    pending_seek_seconds: None,
                 },
             );
         app.world_mut()
@@ -251,6 +256,7 @@ mod tests {
                 pitch: 1.0,
                 looped: false,
                 fade_in_seconds: None,
+                start_seconds: None,
             }));
 
         app.update();

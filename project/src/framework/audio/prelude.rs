@@ -14,8 +14,9 @@ pub use super::catalog_config::{
 pub use super::command::{
     AudioBattleCueRequest, AudioBusMutedCommand, AudioBusPausedCommand, AudioBusVolumeCommand,
     AudioClipRequest, AudioCommand, AudioCrossfadeMusicRequest, AudioCueRequest, AudioGroupCommand,
-    AudioMusicFadeCommand, AudioMusicRequest, AudioScopeCommand, AudioScopeFadeCommand,
-    AudioSpatialCueRequest, AudioStopInstanceCommand,
+    AudioInstanceCommand, AudioMusicFadeCommand, AudioMusicRequest, AudioScopeCommand,
+    AudioScopeFadeCommand, AudioSeekInstanceCommand, AudioSpatialCueRequest,
+    AudioStopInstanceCommand,
 };
 pub use super::debug::{
     AudioDebugActiveInstanceCounts, AudioDebugBusInstanceCount, AudioDebugConfig,
@@ -26,8 +27,9 @@ pub use super::debug::{
 };
 pub use super::event::{
     AudioBusChange, AudioBusChanged, AudioClipStarted, AudioCueSkipReason, AudioCueSkipped,
-    AudioCueStarted, AudioEvent, AudioInstanceStopped, AudioLoadFailed, AudioLoadProgress,
-    AudioMusicChanged, AudioStopReason,
+    AudioCueStarted, AudioEvent, AudioInstanceControlAction, AudioInstanceControlFailed,
+    AudioInstanceControlFailureReason, AudioInstanceProgress, AudioInstanceStopped,
+    AudioLoadFailed, AudioLoadProgress, AudioMusicChanged, AudioStopReason,
 };
 pub use super::id::{
     AudioClipId, AudioCueId, AudioGroupId, AudioIdError, AudioInstanceId, AudioScopeId,
