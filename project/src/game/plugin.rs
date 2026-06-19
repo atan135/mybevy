@@ -3,7 +3,7 @@ use bevy::{prelude::*, ui::IsDefaultUiCamera};
 use crate::framework::{audio::AudioPlugin, scene::ScenePlugin};
 
 use super::{
-    authority::AuthorityPlugin, features::touch_ripple::TouchRipplePlugin,
+    audio::GameAudioPlugin, authority::AuthorityPlugin, features::touch_ripple::TouchRipplePlugin,
     myserver::MyServerPlugin, scenes::GameScenesPlugin, screens::ScreensPlugin,
 };
 
@@ -15,6 +15,7 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             AudioPlugin,
+            GameAudioPlugin,
             ScenePlugin,
             GameScenesPlugin,
             MyServerPlugin,

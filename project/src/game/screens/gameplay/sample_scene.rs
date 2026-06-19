@@ -4,6 +4,7 @@ use bevy::{
 };
 
 use crate::framework::{
+    audio::prelude::UiAudioCueOverride,
     scene::prelude::{SceneCommand, SceneEvent, SceneExitRequest},
     ui::{
         core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport},
@@ -22,6 +23,7 @@ use crate::framework::{
     },
 };
 use crate::game::{
+    audio::UI_CONFIRM_CUE_ID,
     navigation::{AppUiMode, GameRouteCommand, game_panel_root},
     ui_ids::{OWNER_SAMPLE_SCENE, PANEL_SAMPLE_SCENE_HUD},
 };
@@ -96,10 +98,16 @@ pub(super) fn setup_sample_scene_hud(
             ),
             (
                 secondary_action_button_key(theme, metrics, fonts, i18n, "nav.lobby", "Lobby",),
+                sample_scene_lobby_button_audio_override(),
                 SampleSceneLobbyButton,
             ),
         ],
     ));
+}
+
+fn sample_scene_lobby_button_audio_override() -> UiAudioCueOverride {
+    UiAudioCueOverride::try_from(UI_CONFIRM_CUE_ID)
+        .expect("sample scene lobby button UI audio cue id must be valid")
 }
 
 pub(super) fn handle_sample_scene_hud_buttons(
@@ -232,6 +240,14 @@ mod tests {
         assert!(!is_lobby_route_command(&GameRouteCommand::ChangeMode(
             AppUiMode::SampleScene
         )));
+    }
+
+    #[test]
+    fn lobby_button_uses_confirm_audio_override() {
+        assert_eq!(
+            sample_scene_lobby_button_audio_override().cue_id.as_str(),
+            UI_CONFIRM_CUE_ID
+        );
     }
 
     fn read_messages<M>(world: &World) -> Vec<M>

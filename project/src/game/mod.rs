@@ -1,3 +1,4 @@
+mod audio;
 pub mod authority;
 mod features;
 pub mod myserver;
