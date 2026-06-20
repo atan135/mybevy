@@ -116,6 +116,7 @@ pub(crate) struct GameSceneMusicConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum GameSceneUiMode {
     SampleScene,
+    RobotSyncScene,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -423,6 +424,7 @@ fn parse_scene_kind(row: usize, value: &str) -> Result<SceneKind, GameSceneCatal
 fn parse_ui_mode(row: usize, value: &str) -> Result<GameSceneUiMode, GameSceneCatalogParseError> {
     match normalize_catalog_token(value).as_str() {
         "samplescene" => Ok(GameSceneUiMode::SampleScene),
+        "robotsyncscene" => Ok(GameSceneUiMode::RobotSyncScene),
         _ => Err(GameSceneCatalogParseError::InvalidUiMode {
             row,
             value: value.trim().to_string(),
@@ -614,6 +616,37 @@ mod tests {
                 exit_fade_out_seconds: Some(0.5),
             })
         );
+    }
+
+    #[test]
+    fn parse_catalog_accepts_robot_sync_ui_mode() {
+        let catalog = GameSceneCatalog::from_csv_str(&format!(
+            "{HEADER}arena.robot_sync,true,200,scene.title,Arena,scene.description,Description,arena,scenes/arena/scene.ron,,,robot_sync_scene,,,,,\nrobot-sync-alias,true,201,scene.title,Arena,scene.description,Description,arena,scenes/arena/scene.ron,,,robot-sync-scene,,,,,\nrobot.space.alias,true,202,scene.title,Arena,scene.description,Description,arena,scenes/arena/scene.ron,,,robot sync scene,,,,,\n"
+        ))
+        .unwrap();
+
+        assert!(
+            catalog
+                .entries()
+                .iter()
+                .all(|entry| entry.ui_mode == GameSceneUiMode::RobotSyncScene)
+        );
+    }
+
+    #[test]
+    fn load_game_scene_catalog_from_first_package_assets() {
+        let catalog = GameSceneCatalog::load_first_package_csv(GAME_SCENE_CATALOG_PATH).unwrap();
+
+        let sample_entry = catalog
+            .find_enabled(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID))
+            .unwrap();
+        assert_eq!(sample_entry.ui_mode, GameSceneUiMode::SampleScene);
+
+        let robot_sync_entry = catalog
+            .find_enabled(&SceneId::from("arena.robot_sync"))
+            .unwrap();
+        assert_eq!(robot_sync_entry.ui_mode, GameSceneUiMode::RobotSyncScene);
+        assert_eq!(robot_sync_entry.music, None);
     }
 
     #[test]
