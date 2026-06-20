@@ -137,6 +137,14 @@ struct RobotSyncArenaContent {
     session_id: SceneSessionId,
 }
 
+#[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
+enum RobotSyncArenaVisual {
+    ArenaFill,
+    Boundary,
+    Grid,
+    SpawnMarker,
+}
+
 #[derive(Debug)]
 enum RobotLayoutLoadError {
     LayoutNotFound(String),
@@ -239,7 +247,7 @@ fn instantiate_robot_sync_arena_content(
             continue;
         };
 
-        spawn_robot_sync_arena_content(&mut commands, runtime_root, &entered.session_id);
+        spawn_robot_sync_arena_content(&mut commands, runtime_root, &entered.session_id, &layout);
         instantiated_sessions.push(entered.session_id.clone());
     }
 }
@@ -248,6 +256,7 @@ fn spawn_robot_sync_arena_content(
     commands: &mut Commands,
     parent: Entity,
     session_id: &SceneSessionId,
+    layout: &RobotSyncArenaLayout,
 ) -> Entity {
     let content = commands
         .spawn((
@@ -259,7 +268,247 @@ fn spawn_robot_sync_arena_content(
         ))
         .id();
     commands.entity(parent).add_child(content);
+    spawn_robot_sync_arena_visuals(commands, content, session_id, layout);
     content
+}
+
+fn spawn_robot_sync_arena_visuals(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    layout: &RobotSyncArenaLayout,
+) {
+    let arena_center = arena_center(&layout.arena.min, &layout.arena.max);
+    spawn_robot_sync_arena_rect(
+        commands,
+        parent,
+        session_id,
+        RobotSyncArenaVisual::ArenaFill,
+        "RobotSyncArenaFill".to_string(),
+        color_from_rgb(layout.colors.arena_fill),
+        Vec2::new(layout.arena.width, layout.arena.height),
+        Vec3::new(arena_center.x, arena_center.y, 0.0),
+    );
+
+    spawn_robot_sync_arena_grid(commands, parent, session_id, layout);
+    spawn_robot_sync_arena_boundary(commands, parent, session_id, layout);
+    spawn_robot_sync_arena_spawn_markers(commands, parent, session_id, layout);
+}
+
+fn spawn_robot_sync_arena_grid(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    layout: &RobotSyncArenaLayout,
+) {
+    let arena_width = layout.arena.max[0] - layout.arena.min[0];
+    let arena_height = layout.arena.max[1] - layout.arena.min[1];
+    let arena_center = arena_center(&layout.arena.min, &layout.arena.max);
+    let minor_color = color_from_rgb_alpha(layout.colors.grid_minor, 0.46);
+    let major_color = color_from_rgb_alpha(layout.colors.grid_major, 0.68);
+
+    for x in grid_line_positions(
+        layout.arena.min[0],
+        layout.arena.max[0],
+        layout.grid.spacing,
+        layout.grid.origin[0],
+    ) {
+        let major = is_major_grid_line(
+            x,
+            layout.grid.origin[0],
+            layout.grid.spacing,
+            layout.grid.major_every,
+        );
+        let thickness = if major { 2.0 } else { 1.0 };
+        let color = if major { major_color } else { minor_color };
+        let kind = if major { "major" } else { "minor" };
+        spawn_robot_sync_arena_rect(
+            commands,
+            parent,
+            session_id,
+            RobotSyncArenaVisual::Grid,
+            format!("RobotSyncArenaGrid({kind}:vertical:{x:.0})"),
+            color,
+            Vec2::new(thickness, arena_height),
+            Vec3::new(x, arena_center.y, 0.1),
+        );
+    }
+
+    for y in grid_line_positions(
+        layout.arena.min[1],
+        layout.arena.max[1],
+        layout.grid.spacing,
+        layout.grid.origin[1],
+    ) {
+        let major = is_major_grid_line(
+            y,
+            layout.grid.origin[1],
+            layout.grid.spacing,
+            layout.grid.major_every,
+        );
+        let thickness = if major { 2.0 } else { 1.0 };
+        let color = if major { major_color } else { minor_color };
+        let kind = if major { "major" } else { "minor" };
+        spawn_robot_sync_arena_rect(
+            commands,
+            parent,
+            session_id,
+            RobotSyncArenaVisual::Grid,
+            format!("RobotSyncArenaGrid({kind}:horizontal:{y:.0})"),
+            color,
+            Vec2::new(arena_width, thickness),
+            Vec3::new(arena_center.x, y, 0.1),
+        );
+    }
+}
+
+fn spawn_robot_sync_arena_boundary(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    layout: &RobotSyncArenaLayout,
+) {
+    let min = layout.boundary.min;
+    let max = layout.boundary.max;
+    let thickness = layout.boundary.thickness.max(1.0);
+    let width = max[0] - min[0];
+    let height = max[1] - min[1];
+    let center_x = (min[0] + max[0]) * 0.5;
+    let center_y = (min[1] + max[1]) * 0.5;
+    let color = color_from_rgb(layout.colors.boundary);
+
+    let boundary_specs = [
+        (
+            "left",
+            Vec2::new(thickness, height),
+            Vec3::new(min[0] + thickness * 0.5, center_y, 0.3),
+        ),
+        (
+            "right",
+            Vec2::new(thickness, height),
+            Vec3::new(max[0] - thickness * 0.5, center_y, 0.3),
+        ),
+        (
+            "bottom",
+            Vec2::new(width, thickness),
+            Vec3::new(center_x, min[1] + thickness * 0.5, 0.3),
+        ),
+        (
+            "top",
+            Vec2::new(width, thickness),
+            Vec3::new(center_x, max[1] - thickness * 0.5, 0.3),
+        ),
+    ];
+
+    for (side, size, translation) in boundary_specs {
+        spawn_robot_sync_arena_rect(
+            commands,
+            parent,
+            session_id,
+            RobotSyncArenaVisual::Boundary,
+            format!("RobotSyncArenaBoundary({side})"),
+            color,
+            size,
+            translation,
+        );
+    }
+}
+
+fn spawn_robot_sync_arena_spawn_markers(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    layout: &RobotSyncArenaLayout,
+) {
+    for (index, spawn_point) in layout.spawn_points.iter().enumerate() {
+        spawn_robot_sync_arena_rect(
+            commands,
+            parent,
+            session_id,
+            RobotSyncArenaVisual::SpawnMarker,
+            format!("RobotSyncArenaSpawnMarker({})", spawn_point.id),
+            spawn_marker_color(layout, index, spawn_point),
+            Vec2::splat(24.0),
+            Vec3::new(spawn_point.position[0], spawn_point.position[1], 0.5),
+        );
+    }
+}
+
+fn spawn_robot_sync_arena_rect(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    visual: RobotSyncArenaVisual,
+    name: String,
+    color: Color,
+    size: Vec2,
+    translation: Vec3,
+) -> Entity {
+    let entity = commands
+        .spawn((
+            Sprite::from_color(color, size),
+            Transform::from_translation(translation),
+            SceneOwned::new(session_id.clone()),
+            RobotSyncArenaContent {
+                session_id: session_id.clone(),
+            },
+            visual,
+            Name::new(name),
+        ))
+        .id();
+    commands.entity(parent).add_child(entity);
+    entity
+}
+
+fn arena_center(min: &[f32; 2], max: &[f32; 2]) -> Vec2 {
+    Vec2::new((min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5)
+}
+
+fn grid_line_positions(min: f32, max: f32, spacing: f32, origin: f32) -> Vec<f32> {
+    if spacing <= 0.0 || min > max {
+        return Vec::new();
+    }
+
+    let first_index = ((min - origin) / spacing).ceil() as i32;
+    let last_index = ((max - origin) / spacing).floor() as i32;
+    (first_index..=last_index)
+        .map(|index| origin + index as f32 * spacing)
+        .collect()
+}
+
+fn is_major_grid_line(position: f32, origin: f32, spacing: f32, major_every: u32) -> bool {
+    if spacing <= 0.0 || major_every == 0 {
+        return false;
+    }
+
+    let grid_index = ((position - origin) / spacing).round() as i32;
+    grid_index % major_every as i32 == 0
+}
+
+fn spawn_marker_color(
+    layout: &RobotSyncArenaLayout,
+    index: usize,
+    spawn_point: &RobotSyncArenaSpawnPoint,
+) -> Color {
+    let rgb = match index {
+        0 => layout.colors.spawn_a,
+        1 => layout.colors.spawn_b,
+        _ => layout
+            .robots
+            .iter()
+            .find(|robot| robot.spawn_point == spawn_point.id)
+            .map(|robot| robot.color)
+            .unwrap_or(layout.colors.spawn_a),
+    };
+    color_from_rgb_alpha(rgb, 0.92)
+}
+
+fn color_from_rgb(rgb: [f32; 3]) -> Color {
+    Color::srgb(rgb[0], rgb[1], rgb[2])
+}
+
+fn color_from_rgb_alpha(rgb: [f32; 3], alpha: f32) -> Color {
+    Color::srgba(rgb[0], rgb[1], rgb[2], alpha)
 }
 
 fn find_runtime_root_entity<'runtime>(
@@ -372,17 +621,74 @@ mod tests {
             }));
         app.update();
 
-        let mut content =
-            app.world_mut()
-                .query::<(Entity, &ChildOf, &SceneOwned, &RobotSyncArenaContent, &Name)>();
+        let mut content = app.world_mut().query_filtered::<(
+            Entity,
+            &ChildOf,
+            &SceneOwned,
+            &RobotSyncArenaContent,
+            &Name,
+        ), Without<RobotSyncArenaVisual>>();
         let content_entities = content.iter(app.world()).collect::<Vec<_>>();
         assert_eq!(content_entities.len(), 1);
 
-        let (_, parent, owned, content, name) = content_entities[0];
+        let (content_entity, parent, owned, content, name) = content_entities[0];
         assert_eq!(parent.parent(), runtime_root);
         assert_eq!(owned.session_id, session_id);
         assert_eq!(content.session_id, session_id);
         assert_eq!(name.as_str(), "RobotSyncArenaContent(robot-sync-session)");
+
+        let mut visuals = app.world_mut().query::<(
+            &ChildOf,
+            &SceneOwned,
+            &RobotSyncArenaContent,
+            &RobotSyncArenaVisual,
+            &Name,
+        )>();
+        let visual_entities = visuals.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(visual_entities.len(), 29);
+
+        let mut arena_fill_count = 0;
+        let mut boundary_count = 0;
+        let mut grid_count = 0;
+        let mut spawn_marker_count = 0;
+        for (parent, owned, content, visual, name) in visual_entities {
+            assert_eq!(parent.parent(), content_entity);
+            assert_eq!(owned.session_id, session_id);
+            assert_eq!(content.session_id, session_id);
+            assert!(name.as_str().starts_with("RobotSyncArena"));
+            match visual {
+                RobotSyncArenaVisual::ArenaFill => arena_fill_count += 1,
+                RobotSyncArenaVisual::Boundary => boundary_count += 1,
+                RobotSyncArenaVisual::Grid => grid_count += 1,
+                RobotSyncArenaVisual::SpawnMarker => spawn_marker_count += 1,
+            }
+        }
+        assert_eq!(arena_fill_count, 1);
+        assert_eq!(boundary_count, 4);
+        assert_eq!(grid_count, 22);
+        assert_eq!(spawn_marker_count, 2);
+
+        let mut robot_a_spawn = app.world_mut().query::<(
+            &Name,
+            &RobotSyncArenaVisual,
+            &Transform,
+            &ChildOf,
+            &SceneOwned,
+            &RobotSyncArenaContent,
+        )>();
+        let robot_a_spawn = robot_a_spawn
+            .iter(app.world())
+            .find(|(name, visual, _, _, _, _)| {
+                **visual == RobotSyncArenaVisual::SpawnMarker
+                    && name.as_str() == "RobotSyncArenaSpawnMarker(spawn.robot_a)"
+            })
+            .expect("spawn.robot_a marker should be generated");
+        assert_eq!(robot_a_spawn.2.translation.x, -180.0);
+        assert_eq!(robot_a_spawn.2.translation.y, -180.0);
+        assert_eq!(robot_a_spawn.2.translation.z, 0.5);
+        assert_eq!(robot_a_spawn.3.parent(), content_entity);
+        assert_eq!(robot_a_spawn.4.session_id, session_id);
+        assert_eq!(robot_a_spawn.5.session_id, session_id);
     }
 
     #[test]
@@ -414,11 +720,22 @@ mod tests {
             }));
         app.update();
 
-        let mut content = app.world_mut().query::<&RobotSyncArenaContent>();
+        let mut content = app
+            .world_mut()
+            .query_filtered::<&RobotSyncArenaContent, Without<RobotSyncArenaVisual>>();
         let content_sessions = content
             .iter(app.world())
             .filter(|content| content.session_id == session_id)
             .count();
         assert_eq!(content_sessions, 1);
+
+        let mut visuals = app
+            .world_mut()
+            .query_filtered::<&RobotSyncArenaContent, With<RobotSyncArenaVisual>>();
+        let visual_sessions = visuals
+            .iter(app.world())
+            .filter(|content| content.session_id == session_id)
+            .count();
+        assert_eq!(visual_sessions, 29);
     }
 }
