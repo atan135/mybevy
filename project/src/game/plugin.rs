@@ -3,8 +3,12 @@ use bevy::{prelude::*, ui::IsDefaultUiCamera};
 use crate::framework::{audio::AudioPlugin, scene::ScenePlugin};
 
 use super::{
-    audio::GameAudioPlugin, authority::AuthorityPlugin, features::touch_ripple::TouchRipplePlugin,
-    myserver::MyServerPlugin, scenes::GameScenesPlugin, screens::ScreensPlugin,
+    audio::GameAudioPlugin,
+    authority::AuthorityPlugin,
+    features::{RobotSyncPlugin, TouchRipplePlugin},
+    myserver::MyServerPlugin,
+    scenes::GameScenesPlugin,
+    screens::ScreensPlugin,
 };
 
 pub struct GamePlugin;
@@ -22,6 +26,7 @@ impl Plugin for GamePlugin {
             AuthorityPlugin,
             ScreensPlugin,
             TouchRipplePlugin,
+            RobotSyncPlugin,
         ))
         .add_systems(Startup, setup_camera);
     }
