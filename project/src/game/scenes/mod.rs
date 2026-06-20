@@ -5,6 +5,7 @@
 //! here as the project grows.
 
 mod catalog;
+mod robot_sync_arena;
 mod sample_dungeon_room;
 
 use crate::framework::audio::prelude::{
@@ -16,6 +17,7 @@ use crate::framework::scene::prelude::SceneId;
 use bevy::prelude::*;
 use catalog::GameSceneCatalog;
 
+pub(in crate::game) use robot_sync_arena::ROBOT_SYNC_ARENA_SCENE_ID;
 pub(in crate::game) use sample_dungeon_room::SAMPLE_DUNGEON_ROOM_SCENE_ID;
 
 const SAMPLE_DUNGEON_ROOM_AMBIENCE_CLIP_ID: &str = "ambience.sample_dungeon_room";
@@ -28,6 +30,7 @@ impl Plugin for GameScenesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             catalog::GameSceneCatalogPlugin,
+            robot_sync_arena::RobotSyncArenaPlugin,
             sample_dungeon_room::SampleDungeonRoomPlugin,
         ))
         .add_systems(
@@ -173,6 +176,36 @@ mod tests {
                 manifest_path: "scenes/sample_dungeon_room/scene.ron".to_string()
             }
         );
+    }
+
+    #[test]
+    fn scene_plugins_register_robot_sync_arena_from_first_package_catalog() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin))
+            .add_message::<GameRouteCommand>()
+            .add_plugins(GameScenesPlugin);
+
+        app.update();
+
+        let registry = app.world().resource::<SceneRegistry>();
+        let scene_id = SceneId::from(ROBOT_SYNC_ARENA_SCENE_ID);
+        let definition = registry.get(&scene_id).unwrap();
+
+        assert_eq!(definition.scene_id, scene_id);
+        assert_eq!(definition.kind, SceneKind::Arena);
+        assert!(definition.has_world_root);
+        assert_eq!(
+            definition.manifest_path.as_deref(),
+            Some("scenes/robot_sync_arena/scene.ron")
+        );
+        assert_eq!(
+            definition.content_source,
+            SceneContentSource::FirstPackage {
+                manifest_path: "scenes/robot_sync_arena/scene.ron".to_string()
+            }
+        );
+
+        assert!(registry.contains(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID)));
     }
 
     #[test]
