@@ -1,0 +1,58 @@
+(
+  version: "1",
+  scene_id: "arena.robot_sync",
+  arena: (
+    width: 500.0,
+    height: 500.0,
+    half_extents: [250.0, 250.0],
+    min: [-250.0, -250.0],
+    max: [250.0, 250.0],
+  ),
+  grid: (
+    spacing: 50.0,
+    major_every: 5,
+    origin: [0.0, 0.0],
+  ),
+  boundary: (
+    min: [-250.0, -250.0],
+    max: [250.0, 250.0],
+    thickness: 4.0,
+  ),
+  spawn_points: [
+    (
+      id: "spawn.robot_a",
+      position: [-180.0, -180.0],
+      facing_degrees: 0.0,
+      tags: ["default", "player", "robot", "robot_a"],
+    ),
+    (
+      id: "spawn.robot_b",
+      position: [180.0, 180.0],
+      facing_degrees: 180.0,
+      tags: ["player", "robot", "robot_b"],
+    ),
+  ],
+  robots: [
+    (
+      id: "robot.a",
+      spawn_point: "spawn.robot_a",
+      radius: 18.0,
+      color: [0.18, 0.55, 0.95],
+    ),
+    (
+      id: "robot.b",
+      spawn_point: "spawn.robot_b",
+      radius: 18.0,
+      color: [0.95, 0.36, 0.22],
+    ),
+  ],
+  colors: (
+    background: [0.07, 0.08, 0.10],
+    arena_fill: [0.12, 0.14, 0.16],
+    grid_minor: [0.24, 0.28, 0.32],
+    grid_major: [0.38, 0.44, 0.50],
+    boundary: [0.80, 0.86, 0.92],
+    spawn_a: [0.18, 0.55, 0.95],
+    spawn_b: [0.95, 0.36, 0.22],
+  ),
+)
