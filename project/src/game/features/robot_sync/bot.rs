@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub(in crate::game::features::robot_sync) const ROBOT_MOVE_ACTION: &str = "robot_move";
+pub(in crate::game::features::robot_sync) const ROBOT_MOVE_PAYLOAD_VERSION: u32 = 1;
 
-const ROBOT_MOVE_PAYLOAD_VERSION: u32 = 1;
 const BOT_DIRECTION_SEGMENT_TICKS: u32 = 20;
 const BOT_DIRECTIONS: [RobotMoveDirection; 8] = [
     RobotMoveDirection {
@@ -48,6 +48,7 @@ pub(in crate::game::features::robot_sync) struct RobotMoveDirection {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(in crate::game::features::robot_sync) struct RobotMovePayload {
     pub(in crate::game::features::robot_sync) version: u32,
     pub(in crate::game::features::robot_sync) seq: u32,

@@ -1,19 +1,59 @@
+use std::collections::{BTreeMap, btree_map::Entry};
+
 use bevy::prelude::*;
 
 use crate::game::{
-    authority::{AuthorityCommand, AuthorityEndpoint, AuthorityRole, AuthoritySession},
+    authority::{
+        AuthorityCommand, AuthorityEndpoint, AuthorityEvent, AuthorityFrame, AuthorityRole,
+        AuthoritySession, AuthoritySnapshot, PlayerInput,
+    },
     myserver::{MyServerCommand, MyServerEvent},
 };
 
 use super::{
+    bot::{ROBOT_MOVE_ACTION, ROBOT_MOVE_PAYLOAD_VERSION, RobotMovePayload},
     config::{RobotSyncAuthorityMode, RobotSyncConfig},
     state::RobotSyncSceneState,
 };
+
+pub(in crate::game::features::robot_sync) const FIXED_UNIT: i32 = 1000;
+pub(in crate::game::features::robot_sync) const ARENA_MIN_FIXED: i32 = -250_000;
+pub(in crate::game::features::robot_sync) const ARENA_MAX_FIXED: i32 = 250_000;
+pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SPEED: u32 = 60_000;
+const MAX_ROBOT_SPEED: u32 = 60_000;
+const SPAWN_POINTS: [FixedPosition; 4] = [
+    FixedPosition {
+        x: -200_000,
+        y: -200_000,
+    },
+    FixedPosition {
+        x: 200_000,
+        y: 200_000,
+    },
+    FixedPosition {
+        x: -200_000,
+        y: 200_000,
+    },
+    FixedPosition {
+        x: 200_000,
+        y: -200_000,
+    },
+];
+const DEFAULT_DIRECTIONS: [(i32, i32); 6] = [
+    (1000, 0),
+    (-1000, 0),
+    (0, 1000),
+    (0, -1000),
+    (707, 707),
+    (-707, -707),
+];
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
 pub(in crate::game::features::robot_sync) struct RobotSyncReplayState {
     pub(in crate::game::features::robot_sync) buffered_frame_count: usize,
     pub(in crate::game::features::robot_sync) last_frame_id: Option<u32>,
+    pub(in crate::game::features::robot_sync) last_applied_frame: Option<u32>,
+    pub(in crate::game::features::robot_sync) robots: BTreeMap<String, RobotState>,
 }
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
@@ -26,10 +66,76 @@ pub(in crate::game::features::robot_sync) struct RobotSyncMyServerJoinState {
     pub(in crate::game::features::robot_sync) started: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::game::features::robot_sync) struct FixedPosition {
+    pub(in crate::game::features::robot_sync) x: i32,
+    pub(in crate::game::features::robot_sync) y: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::game::features::robot_sync) struct RobotState {
+    pub(in crate::game::features::robot_sync) player_id: String,
+    pub(in crate::game::features::robot_sync) position: FixedPosition,
+    pub(in crate::game::features::robot_sync) dir_x: i32,
+    pub(in crate::game::features::robot_sync) dir_y: i32,
+    pub(in crate::game::features::robot_sync) speed: u32,
+    pub(in crate::game::features::robot_sync) last_input_seq: Option<u32>,
+    pub(in crate::game::features::robot_sync) last_frame: Option<u32>,
+    pub(in crate::game::features::robot_sync) spawn_index: usize,
+    pub(in crate::game::features::robot_sync) color_index: usize,
+}
+
 impl RobotSyncReplayState {
     pub(in crate::game::features::robot_sync) fn reset(&mut self) {
         *self = Self::default();
     }
+}
+
+impl RobotState {
+    fn new(player_id: String, spawn_index: usize) -> Self {
+        let position = spawn_point_for_index(spawn_index);
+        let (dir_x, dir_y) = default_direction_for_spawn(spawn_index);
+
+        Self {
+            player_id,
+            position,
+            dir_x,
+            dir_y,
+            speed: DEFAULT_ROBOT_SPEED,
+            last_input_seq: None,
+            last_frame: None,
+            spawn_index,
+            color_index: spawn_index,
+        }
+    }
+
+    fn apply_input(&mut self, input: RobotMoveInput) {
+        self.dir_x = input.dir_x;
+        self.dir_y = input.dir_y;
+        self.speed = input.speed;
+        self.last_input_seq = Some(input.seq);
+    }
+
+    fn advance(&mut self, frame_id: u32, fps: u16) {
+        let fps = i64::from(fps);
+        let denom = i64::from(FIXED_UNIT) * fps;
+        let speed = i64::from(self.speed);
+        let delta_x = i64::from(self.dir_x) * speed / denom;
+        let delta_y = i64::from(self.dir_y) * speed / denom;
+
+        self.position.x = clamp_fixed_i64(i64::from(self.position.x) + delta_x);
+        self.position.y = clamp_fixed_i64(i64::from(self.position.y) + delta_y);
+        self.last_frame = Some(frame_id);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RobotMoveInput {
+    seq: u32,
+    dir_x: i32,
+    dir_y: i32,
+    speed: u32,
+    original_index: usize,
 }
 
 impl RobotSyncMyServerJoinState {
@@ -42,6 +148,654 @@ pub(in crate::game::features::robot_sync) fn reset_robot_sync_replay(
     state: &mut RobotSyncReplayState,
 ) {
     state.reset();
+}
+
+pub(in crate::game::features::robot_sync) fn apply_robot_sync_authority_events(
+    scene_state: Res<RobotSyncSceneState>,
+    mut events: MessageReader<AuthorityEvent>,
+    mut replay_state: ResMut<RobotSyncReplayState>,
+) {
+    let is_active = scene_state.active;
+    for event in events.read() {
+        if !is_active {
+            continue;
+        }
+
+        match event {
+            AuthorityEvent::Snapshot { snapshot } => {
+                apply_robot_sync_snapshot(&mut replay_state, snapshot);
+            }
+            AuthorityEvent::FrameApplied { frame } => {
+                apply_robot_sync_frame(&mut replay_state, frame);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn apply_robot_sync_snapshot(
+    replay_state: &mut RobotSyncReplayState,
+    snapshot: &AuthoritySnapshot,
+) {
+    let mut players = snapshot.players.clone();
+    players.sort();
+    players.dedup();
+
+    replay_state
+        .robots
+        .retain(|player_id, _| players.binary_search(player_id).is_ok());
+
+    for (index, player_id) in players.into_iter().enumerate() {
+        match replay_state.robots.entry(player_id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(RobotState::new(player_id, index));
+            }
+            Entry::Occupied(mut entry) => {
+                let robot = entry.get_mut();
+                robot.spawn_index = index;
+                robot.color_index = index;
+            }
+        }
+    }
+
+    if replay_state.last_applied_frame.is_none() {
+        replay_state.last_applied_frame = Some(snapshot.frame_id);
+    }
+    replay_state.last_frame_id = Some(snapshot.frame_id);
+    replay_state.buffered_frame_count = replay_state.robots.len();
+
+    debug!(
+        frame_id = snapshot.frame_id,
+        authority_epoch = snapshot.authority_epoch,
+        player_count = replay_state.robots.len(),
+        "applied robot sync snapshot"
+    );
+}
+
+fn apply_robot_sync_frame(replay_state: &mut RobotSyncReplayState, frame: &AuthorityFrame) {
+    if let Some(last_applied_frame) = replay_state.last_applied_frame {
+        if frame.frame_id <= last_applied_frame {
+            debug!(
+                frame_id = frame.frame_id,
+                last_applied_frame, "ignored duplicate or out-of-order robot sync frame"
+            );
+            return;
+        }
+    }
+
+    if frame.fps == 0 {
+        warn!(
+            frame_id = frame.frame_id,
+            "ignored robot sync frame with zero fps"
+        );
+        return;
+    }
+
+    let selected_inputs = select_robot_move_inputs(&frame.inputs, frame.frame_id);
+    ensure_players_for_frame(replay_state, frame, &selected_inputs);
+
+    for (player_id, input) in selected_inputs {
+        if let Some(robot) = replay_state.robots.get_mut(&player_id) {
+            robot.apply_input(input);
+        }
+    }
+
+    for robot in replay_state.robots.values_mut() {
+        robot.advance(frame.frame_id, frame.fps);
+    }
+
+    replay_state.last_applied_frame = Some(frame.frame_id);
+    replay_state.last_frame_id = Some(frame.frame_id);
+    replay_state.buffered_frame_count = replay_state.robots.len();
+}
+
+fn ensure_players_for_frame(
+    replay_state: &mut RobotSyncReplayState,
+    frame: &AuthorityFrame,
+    selected_inputs: &BTreeMap<String, RobotMoveInput>,
+) {
+    let mut players = frame.snapshot.players.clone();
+    players.extend(selected_inputs.keys().cloned());
+    players.sort();
+    players.dedup();
+
+    for (index, player_id) in players.into_iter().enumerate() {
+        match replay_state.robots.entry(player_id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(RobotState::new(player_id, index));
+            }
+            Entry::Occupied(mut entry) => {
+                let robot = entry.get_mut();
+                robot.spawn_index = index;
+                robot.color_index = index;
+            }
+        }
+    }
+}
+
+fn select_robot_move_inputs(
+    inputs: &[PlayerInput],
+    frame_id: u32,
+) -> BTreeMap<String, RobotMoveInput> {
+    let mut selected = BTreeMap::new();
+
+    for (original_index, input) in inputs.iter().enumerate() {
+        if input.action != ROBOT_MOVE_ACTION {
+            debug!(
+                frame_id,
+                player_id = %input.player_id,
+                action = %input.action,
+                "ignored non robot_move authority input"
+            );
+            continue;
+        }
+
+        let Some(move_input) = parse_robot_move_input(input, original_index, frame_id) else {
+            continue;
+        };
+
+        match selected.entry(input.player_id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(move_input);
+            }
+            Entry::Occupied(mut entry) if should_replace_robot_move(*entry.get(), move_input) => {
+                entry.insert(move_input);
+            }
+            Entry::Occupied(_) => {}
+        }
+    }
+
+    selected
+}
+
+fn parse_robot_move_input(
+    input: &PlayerInput,
+    original_index: usize,
+    frame_id: u32,
+) -> Option<RobotMoveInput> {
+    let payload = match serde_json::from_str::<RobotMovePayload>(&input.payload_json) {
+        Ok(payload) => payload,
+        Err(error) => {
+            warn!(
+                frame_id,
+                player_id = %input.player_id,
+                reason = %error,
+                "ignored invalid robot_move payload"
+            );
+            return None;
+        }
+    };
+
+    if payload.version != ROBOT_MOVE_PAYLOAD_VERSION {
+        warn!(
+            frame_id,
+            player_id = %input.player_id,
+            version = payload.version,
+            "ignored unsupported robot_move payload version"
+        );
+        return None;
+    }
+
+    let length_squared = i64::from(payload.dir_x) * i64::from(payload.dir_x)
+        + i64::from(payload.dir_y) * i64::from(payload.dir_y);
+    if !(-FIXED_UNIT..=FIXED_UNIT).contains(&payload.dir_x)
+        || !(-FIXED_UNIT..=FIXED_UNIT).contains(&payload.dir_y)
+        || length_squared > i64::from(FIXED_UNIT) * i64::from(FIXED_UNIT)
+    {
+        warn!(
+            frame_id,
+            player_id = %input.player_id,
+            dirX = payload.dir_x,
+            dirY = payload.dir_y,
+            "ignored out-of-range robot_move direction"
+        );
+        return None;
+    }
+
+    if payload.speed > MAX_ROBOT_SPEED {
+        warn!(
+            frame_id,
+            player_id = %input.player_id,
+            speed = payload.speed,
+            max_speed = MAX_ROBOT_SPEED,
+            "ignored out-of-range robot_move speed"
+        );
+        return None;
+    }
+
+    if payload.speed > 0 && payload.dir_x == 0 && payload.dir_y == 0 {
+        warn!(
+            frame_id,
+            player_id = %input.player_id,
+            speed = payload.speed,
+            "ignored moving robot_move payload with zero direction"
+        );
+        return None;
+    }
+
+    Some(RobotMoveInput {
+        seq: payload.seq,
+        dir_x: payload.dir_x,
+        dir_y: payload.dir_y,
+        speed: payload.speed,
+        original_index,
+    })
+}
+
+fn should_replace_robot_move(existing: RobotMoveInput, candidate: RobotMoveInput) -> bool {
+    candidate.seq > existing.seq
+        || (candidate.seq == existing.seq && candidate.original_index > existing.original_index)
+}
+
+fn spawn_point_for_index(index: usize) -> FixedPosition {
+    SPAWN_POINTS[index % SPAWN_POINTS.len()]
+}
+
+fn default_direction_for_spawn(index: usize) -> (i32, i32) {
+    DEFAULT_DIRECTIONS[index % DEFAULT_DIRECTIONS.len()]
+}
+
+fn clamp_fixed_i64(value: i64) -> i32 {
+    value.clamp(i64::from(ARENA_MIN_FIXED), i64::from(ARENA_MAX_FIXED)) as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(frame_id: u32, players: &[&str]) -> AuthoritySnapshot {
+        AuthoritySnapshot {
+            authority_epoch: 1,
+            frame_id,
+            authority_player_id: players.first().copied().unwrap_or_default().to_string(),
+            players: players.iter().map(|player| (*player).to_string()).collect(),
+            game_state_json: "{}".to_string(),
+        }
+    }
+
+    fn frame(
+        frame_id: u32,
+        fps: u16,
+        players: &[&str],
+        inputs: Vec<PlayerInput>,
+    ) -> AuthorityFrame {
+        AuthorityFrame {
+            authority_epoch: 1,
+            frame_id,
+            fps,
+            inputs,
+            snapshot: snapshot(frame_id, players),
+        }
+    }
+
+    fn robot_move(
+        player_id: &str,
+        frame_id: u32,
+        seq: u32,
+        dir_x: i32,
+        dir_y: i32,
+        speed: u32,
+    ) -> PlayerInput {
+        PlayerInput {
+            player_id: player_id.to_string(),
+            frame_id,
+            action: ROBOT_MOVE_ACTION.to_string(),
+            payload_json: serde_json::json!({
+                "version": 1,
+                "seq": seq,
+                "botTick": seq,
+                "dirX": dir_x,
+                "dirY": dir_y,
+                "speed": speed,
+            })
+            .to_string(),
+        }
+    }
+
+    fn bad_payload(player_id: &str, frame_id: u32, payload_json: &str) -> PlayerInput {
+        PlayerInput {
+            player_id: player_id.to_string(),
+            frame_id,
+            action: ROBOT_MOVE_ACTION.to_string(),
+            payload_json: payload_json.to_string(),
+        }
+    }
+
+    #[test]
+    fn robot_sync_snapshot_builds_sorted_initial_robot_state() {
+        let mut state = RobotSyncReplayState::default();
+
+        apply_robot_sync_snapshot(
+            &mut state,
+            &snapshot(10, &["player-b", "player-a", "player-a"]),
+        );
+
+        assert_eq!(state.last_applied_frame, Some(10));
+        assert_eq!(state.last_frame_id, Some(10));
+        assert_eq!(state.robots.len(), 2);
+        let player_ids = state.robots.keys().cloned().collect::<Vec<_>>();
+        assert_eq!(player_ids, vec!["player-a", "player-b"]);
+        assert_eq!(
+            state.robots.get("player-a").unwrap().position,
+            FixedPosition {
+                x: -200_000,
+                y: -200_000
+            }
+        );
+        assert_eq!(
+            state.robots.get("player-b").unwrap().position,
+            FixedPosition {
+                x: 200_000,
+                y: 200_000
+            }
+        );
+    }
+
+    #[test]
+    fn robot_sync_snapshot_preserves_existing_robot_motion_state() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a"]));
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                20,
+                &["player-a"],
+                vec![robot_move("player-a", 1, 5, 0, 1000, 60_000)],
+            ),
+        );
+
+        apply_robot_sync_snapshot(&mut state, &snapshot(1, &["player-a", "player-b"]));
+
+        let player_a = state.robots.get("player-a").unwrap();
+        assert_eq!(
+            player_a.position,
+            FixedPosition {
+                x: -200_000,
+                y: -197_000
+            }
+        );
+        assert_eq!(player_a.dir_x, 0);
+        assert_eq!(player_a.dir_y, 1000);
+        assert_eq!(player_a.last_input_seq, Some(5));
+        assert_eq!(state.last_applied_frame, Some(1));
+        assert!(state.robots.contains_key("player-b"));
+
+        apply_robot_sync_snapshot(&mut state, &snapshot(2, &["player-b"]));
+        assert!(!state.robots.contains_key("player-a"));
+        assert!(state.robots.contains_key("player-b"));
+        assert_eq!(state.last_applied_frame, Some(1));
+    }
+
+    #[test]
+    fn robot_sync_payload_parsing_accepts_valid_and_rejects_invalid_payloads() {
+        let valid = robot_move("player-a", 11, 7, 1000, 0, 60_000);
+        let parsed = parse_robot_move_input(&valid, 0, 11).unwrap();
+        assert_eq!(parsed.seq, 7);
+        assert_eq!(parsed.dir_x, 1000);
+        assert_eq!(parsed.speed, 60_000);
+
+        let invalid_json = bad_payload("player-a", 11, "{");
+        assert!(parse_robot_move_input(&invalid_json, 0, 11).is_none());
+
+        let unknown_field = bad_payload(
+            "player-a",
+            11,
+            r#"{"version":1,"seq":1,"botTick":1,"dirX":1000,"dirY":0,"speed":1000,"extra":1}"#,
+        );
+        assert!(parse_robot_move_input(&unknown_field, 0, 11).is_none());
+
+        let diagonal_too_long = robot_move("player-a", 11, 1, 1000, 1000, 1000);
+        assert!(parse_robot_move_input(&diagonal_too_long, 0, 11).is_none());
+
+        let speed_too_high = robot_move("player-a", 11, 1, 1000, 0, 60_001);
+        assert!(parse_robot_move_input(&speed_too_high, 0, 11).is_none());
+
+        let zero_direction_with_speed = robot_move("player-a", 11, 1, 0, 0, 1);
+        assert!(parse_robot_move_input(&zero_direction_with_speed, 0, 11).is_none());
+    }
+
+    #[test]
+    fn robot_sync_frame_selects_highest_seq_then_last_input_per_player() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a"]));
+
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                20,
+                &["player-a"],
+                vec![
+                    robot_move("player-a", 1, 3, 0, 1000, 60_000),
+                    robot_move("player-a", 1, 5, -1000, 0, 60_000),
+                    robot_move("player-a", 1, 5, 1000, 0, 60_000),
+                ],
+            ),
+        );
+
+        let robot = state.robots.get("player-a").unwrap();
+        assert_eq!(robot.last_input_seq, Some(5));
+        assert_eq!(robot.dir_x, 1000);
+        assert_eq!(robot.dir_y, 0);
+        assert_eq!(
+            robot.position,
+            FixedPosition {
+                x: -197_000,
+                y: -200_000
+            }
+        );
+    }
+
+    #[test]
+    fn robot_sync_frame_advances_all_players_with_fixed_dt() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-b", "player-a"]));
+
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                20,
+                &["player-a", "player-b"],
+                vec![
+                    robot_move("player-b", 1, 1, -1000, 0, 60_000),
+                    robot_move("player-a", 1, 1, 0, 1000, 60_000),
+                ],
+            ),
+        );
+
+        assert_eq!(
+            state.robots.get("player-a").unwrap().position,
+            FixedPosition {
+                x: -200_000,
+                y: -197_000
+            }
+        );
+        assert_eq!(
+            state.robots.get("player-b").unwrap().position,
+            FixedPosition {
+                x: 197_000,
+                y: 200_000
+            }
+        );
+        assert_eq!(state.last_applied_frame, Some(1));
+    }
+
+    #[test]
+    fn robot_sync_frame_adds_new_players_with_sorted_spawn_index() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-z"]));
+
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(1, 20, &["player-a", "player-z"], Vec::new()),
+        );
+
+        assert_eq!(state.robots.get("player-a").unwrap().spawn_index, 0);
+        assert_eq!(state.robots.get("player-z").unwrap().spawn_index, 1);
+        assert_eq!(
+            state.robots.get("player-a").unwrap().position,
+            FixedPosition {
+                x: -197_000,
+                y: -200_000
+            }
+        );
+        assert_eq!(
+            state.robots.get("player-z").unwrap().position,
+            FixedPosition {
+                x: -197_000,
+                y: -200_000
+            }
+        );
+    }
+
+    #[test]
+    fn robot_sync_frame_clamps_positions_to_arena_bounds() {
+        let mut state = RobotSyncReplayState::default();
+        state.robots.insert(
+            "player-a".to_string(),
+            RobotState {
+                player_id: "player-a".to_string(),
+                position: FixedPosition {
+                    x: 249_000,
+                    y: 249_000,
+                },
+                dir_x: 1000,
+                dir_y: 1000,
+                speed: 60_000,
+                last_input_seq: None,
+                last_frame: None,
+                spawn_index: 0,
+                color_index: 0,
+            },
+        );
+
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                20,
+                &["player-a"],
+                vec![robot_move("player-a", 1, 1, 707, 707, 60_000)],
+            ),
+        );
+
+        assert_eq!(
+            state.robots.get("player-a").unwrap().position,
+            FixedPosition {
+                x: 250_000,
+                y: 250_000
+            }
+        );
+    }
+
+    #[test]
+    fn robot_sync_frame_ignores_duplicate_and_out_of_order_frames() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a"]));
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                2,
+                20,
+                &["player-a"],
+                vec![robot_move("player-a", 2, 1, 1000, 0, 60_000)],
+            ),
+        );
+        let after_frame_two = state.robots.get("player-a").unwrap().position;
+
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                2,
+                20,
+                &["player-a"],
+                vec![robot_move("player-a", 2, 2, 0, 1000, 60_000)],
+            ),
+        );
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                20,
+                &["player-a"],
+                vec![robot_move("player-a", 1, 3, -1000, 0, 60_000)],
+            ),
+        );
+
+        assert_eq!(
+            state.robots.get("player-a").unwrap().position,
+            after_frame_two
+        );
+        assert_eq!(state.last_applied_frame, Some(2));
+    }
+
+    #[test]
+    fn robot_sync_missing_input_keeps_previous_or_default_movement() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a", "player-b"]));
+
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                20,
+                &["player-a", "player-b"],
+                vec![robot_move("player-a", 1, 1, 0, 1000, 60_000)],
+            ),
+        );
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(2, 20, &["player-a", "player-b"], Vec::new()),
+        );
+
+        assert_eq!(
+            state.robots.get("player-a").unwrap().position,
+            FixedPosition {
+                x: -200_000,
+                y: -194_000
+            }
+        );
+        assert_eq!(
+            state.robots.get("player-b").unwrap().position,
+            FixedPosition {
+                x: 194_000,
+                y: 200_000
+            }
+        );
+    }
+
+    #[test]
+    fn robot_sync_authority_event_system_drains_inactive_events() {
+        let mut app = App::new();
+        app.add_message::<AuthorityEvent>()
+            .init_resource::<RobotSyncSceneState>()
+            .init_resource::<RobotSyncReplayState>()
+            .add_systems(Update, apply_robot_sync_authority_events);
+
+        app.world_mut().write_message(AuthorityEvent::Snapshot {
+            snapshot: snapshot(10, &["stale-player"]),
+        });
+        app.update();
+        assert!(
+            app.world()
+                .resource::<RobotSyncReplayState>()
+                .robots
+                .is_empty()
+        );
+
+        app.world_mut().resource_mut::<RobotSyncSceneState>().active = true;
+        app.world_mut().write_message(AuthorityEvent::Snapshot {
+            snapshot: snapshot(11, &["active-player"]),
+        });
+        app.update();
+
+        let replay_state = app.world().resource::<RobotSyncReplayState>();
+        assert!(!replay_state.robots.contains_key("stale-player"));
+        assert!(replay_state.robots.contains_key("active-player"));
+        assert_eq!(replay_state.last_applied_frame, Some(11));
+    }
 }
 
 pub(in crate::game::features::robot_sync) fn start_robot_sync_authority(

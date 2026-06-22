@@ -13,8 +13,9 @@ use super::{
     config::RobotSyncConfig,
     state::RobotSyncSceneState,
     sync::{
-        RobotSyncMyServerJoinState, RobotSyncReplayState, cleanup_robot_sync_authority,
-        follow_robot_sync_myserver_events, reset_robot_sync_replay, start_robot_sync_authority,
+        RobotSyncMyServerJoinState, RobotSyncReplayState, apply_robot_sync_authority_events,
+        cleanup_robot_sync_authority, follow_robot_sync_myserver_events, reset_robot_sync_replay,
+        start_robot_sync_authority,
     },
     visual::{RobotSyncVisualState, clear_robot_sync_visuals},
 };
@@ -33,6 +34,7 @@ impl Plugin for RobotSyncPlugin {
                 Update,
                 (
                     follow_robot_sync_myserver_events,
+                    apply_robot_sync_authority_events,
                     send_local_robot_sync_bot_input,
                 ),
             )
@@ -136,7 +138,7 @@ mod tests {
         framework::network::NetworkTransport,
         framework::scene::prelude::{SceneEntered, SceneExited, SceneId, SceneSessionId},
         game::{
-            authority::AuthorityEndpoint,
+            authority::{AuthorityEndpoint, AuthorityEvent},
             features::robot_sync::{
                 config::{
                     DEFAULT_ROBOT_SYNC_PLAYER_ID, ROBOT_SYNC_MYSERVER_POLICY_ID,
@@ -154,6 +156,7 @@ mod tests {
         let mut app = App::new();
         app.add_message::<SceneEvent>()
             .add_message::<AuthorityCommand>()
+            .add_message::<AuthorityEvent>()
             .add_message::<MyServerCommand>()
             .add_message::<MyServerEvent>()
             .init_resource::<AuthoritySession>()
