@@ -19,7 +19,6 @@ use super::{
 pub(in crate::game::features::robot_sync) const FIXED_UNIT: i32 = 1000;
 pub(in crate::game::features::robot_sync) const ARENA_MIN_FIXED: i32 = -250_000;
 pub(in crate::game::features::robot_sync) const ARENA_MAX_FIXED: i32 = 250_000;
-pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SPEED: u32 = 60_000;
 const MAX_ROBOT_SPEED: u32 = 60_000;
 const SPAWN_POINTS: [FixedPosition; 4] = [
     FixedPosition {
@@ -39,15 +38,6 @@ const SPAWN_POINTS: [FixedPosition; 4] = [
         y: -200_000,
     },
 ];
-const DEFAULT_DIRECTIONS: [(i32, i32); 6] = [
-    (1000, 0),
-    (-1000, 0),
-    (0, 1000),
-    (0, -1000),
-    (707, 707),
-    (-707, -707),
-];
-
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
 pub(in crate::game) struct RobotSyncReplayState {
     pub(in crate::game::features::robot_sync) buffered_frame_count: usize,
@@ -109,14 +99,13 @@ impl RobotSyncReplayState {
 impl RobotState {
     fn new(player_id: String, spawn_index: usize) -> Self {
         let position = spawn_point_for_index(spawn_index);
-        let (dir_x, dir_y) = default_direction_for_spawn(spawn_index);
 
         Self {
             player_id,
             position,
-            dir_x,
-            dir_y,
-            speed: DEFAULT_ROBOT_SPEED,
+            dir_x: 0,
+            dir_y: 0,
+            speed: 0,
             last_input_seq: None,
             last_frame: None,
             spawn_index,
@@ -408,10 +397,6 @@ fn should_replace_robot_move(existing: RobotMoveInput, candidate: RobotMoveInput
 
 fn spawn_point_for_index(index: usize) -> FixedPosition {
     SPAWN_POINTS[index % SPAWN_POINTS.len()]
-}
-
-fn default_direction_for_spawn(index: usize) -> (i32, i32) {
-    DEFAULT_DIRECTIONS[index % DEFAULT_DIRECTIONS.len()]
 }
 
 fn clamp_fixed_i64(value: i64) -> i32 {
@@ -847,14 +832,14 @@ mod tests {
         assert_eq!(
             state.robots.get("player-a").unwrap().position,
             FixedPosition {
-                x: -197_000,
+                x: -200_000,
                 y: -200_000
             }
         );
         assert_eq!(
             state.robots.get("player-z").unwrap().position,
             FixedPosition {
-                x: -197_000,
+                x: -200_000,
                 y: -200_000
             }
         );
@@ -971,7 +956,7 @@ mod tests {
     }
 
     #[test]
-    fn robot_sync_missing_input_keeps_previous_or_default_movement() {
+    fn robot_sync_missing_input_keeps_previous_movement_but_initially_stops() {
         let mut state = RobotSyncReplayState::default();
         apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a", "player-b"]));
 
@@ -999,7 +984,7 @@ mod tests {
         assert_eq!(
             state.robots.get("player-b").unwrap().position,
             FixedPosition {
-                x: 194_000,
+                x: 200_000,
                 y: 200_000
             }
         );

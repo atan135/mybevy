@@ -1248,6 +1248,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-stack.ps1 -WithMatch
 - 当前本地 MyServer 完整栈需要 `dev-stack.ps1 -WithMatch`，否则 `game-server` 可能因为发现不到 `match-service.grpc` 而无法正常对外服务。
 - `start-robot-sync-two-clients.ps1` 默认 `-Mode myserver`、`-Transport tcp`、同一 `AUTHORITY_MYSERVER_ROOM=robot-sync-room`、`AUTHORITY_MYSERVER_POLICY=robot_sync_room`，并为两个客户端设置不同的 `AUTHORITY_PLAYER_ID` / `AUTHORITY_MYSERVER_GUEST_ID`。
 - 脚本默认 `-InputModeA bot -InputModeB bot`。手动验收可加 `-InputModeA manual`，让 A 端使用 `WASD` 或方向键控制本地机器人，B 端继续自动 bot。
+- 脚本只设置 `ROBOT_SYNC_AUTHORITY_MODE`，并在 client launcher 中清空继承的 `AUTHORITY_DEV_MODE`，避免全局 dev authority 和场景内 Robot Sync authority 重复启动并抢占同一端口。
 - MyServer mode 下，脚本会按 transport 写入 `MYSERVER_GAME_HOST` 与 `MYSERVER_TCP_FALLBACK_PORT` 或 `MYSERVER_KCP_PORT`。本地常见 TCP fallback 端口取决于 MyServer `game-proxy` 配置；仓库 `.env` 可覆盖为 `17002`，默认代码口径也可能是 `PROXY_PORT + 10000`。
 - 如果只验证客户端 authority 回放，不依赖 MyServer，可使用 LAN fallback：
 

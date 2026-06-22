@@ -141,8 +141,8 @@ impl RobotSyncBotState {
         self.last_dir == Some(direction) && self.last_speed == speed
     }
 
-    pub(in crate::game::features::robot_sync) fn last_input_was_stop_or_none(&self) -> bool {
-        self.last_dir.is_none_or(RobotMoveDirection::is_zero) && self.last_speed == 0
+    pub(in crate::game::features::robot_sync) fn last_input_was_stop(&self) -> bool {
+        self.last_dir == Some(RobotMoveDirection::ZERO) && self.last_speed == 0
     }
 
     fn ensure_seed(&mut self, player_id: &str) {

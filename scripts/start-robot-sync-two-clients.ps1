@@ -25,7 +25,7 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptRoot "..")
 $projectRoot = Join-Path $repoRoot "project"
-$runId = Get-Date -Format "yyyyMMdd-HHmmss"
+$runId = Get-Date -Format "yyyyMMdd-HHmmss-fff"
 $logRoot = Join-Path $repoRoot (Join-Path "logs" (Join-Path "robot-sync-two-clients" $runId))
 $launchRoot = Join-Path $logRoot "launch"
 
@@ -107,6 +107,7 @@ function Start-RobotSyncClient {
     $launcherLines = @(
         '$ErrorActionPreference = "Stop"',
         ('Set-Location {0}' -f (ConvertTo-PowerShellLiteral $projectRoot)),
+        '$env:AUTHORITY_DEV_MODE=$null',
         $envLines
     ) + @(
         ('& cmd.exe /d /c {0} | Tee-Object -FilePath {1}' -f (ConvertTo-PowerShellLiteral $cmdCommand), (ConvertTo-PowerShellLiteral $LogFile))
@@ -150,7 +151,6 @@ if ($Mode -eq "myserver") {
 
     $clientAEnv = $commonEnv.Clone()
     $clientAEnv["ROBOT_SYNC_AUTHORITY_MODE"] = "myserver"
-    $clientAEnv["AUTHORITY_DEV_MODE"] = "myserver"
     $clientAEnv["AUTHORITY_PLAYER_ID"] = $PlayerAId
     $clientAEnv["ROBOT_SYNC_PLAYER_ID"] = $PlayerAId
     $clientAEnv["ROBOT_SYNC_INPUT_MODE"] = $InputModeA
@@ -167,7 +167,6 @@ if ($Mode -eq "myserver") {
 
     $clientBEnv = $commonEnv.Clone()
     $clientBEnv["ROBOT_SYNC_AUTHORITY_MODE"] = "myserver"
-    $clientBEnv["AUTHORITY_DEV_MODE"] = "myserver"
     $clientBEnv["AUTHORITY_PLAYER_ID"] = $PlayerBId
     $clientBEnv["ROBOT_SYNC_PLAYER_ID"] = $PlayerBId
     $clientBEnv["ROBOT_SYNC_INPUT_MODE"] = $InputModeB
@@ -184,7 +183,6 @@ if ($Mode -eq "myserver") {
 } else {
     $clientAEnv = $commonEnv.Clone()
     $clientAEnv["ROBOT_SYNC_AUTHORITY_MODE"] = "lan-host"
-    $clientAEnv["AUTHORITY_DEV_MODE"] = "lan-host"
     $clientAEnv["AUTHORITY_PLAYER_ID"] = $PlayerAId
     $clientAEnv["ROBOT_SYNC_PLAYER_ID"] = $PlayerAId
     $clientAEnv["ROBOT_SYNC_INPUT_MODE"] = $InputModeA
@@ -193,7 +191,6 @@ if ($Mode -eq "myserver") {
 
     $clientBEnv = $commonEnv.Clone()
     $clientBEnv["ROBOT_SYNC_AUTHORITY_MODE"] = "lan-client"
-    $clientBEnv["AUTHORITY_DEV_MODE"] = "lan-client"
     $clientBEnv["AUTHORITY_PLAYER_ID"] = $PlayerBId
     $clientBEnv["ROBOT_SYNC_PLAYER_ID"] = $PlayerBId
     $clientBEnv["ROBOT_SYNC_INPUT_MODE"] = $InputModeB

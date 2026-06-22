@@ -139,7 +139,7 @@ fn send_local_robot_sync_manual_input(
         .frame_id
         .saturating_add(config.input_delay_frames);
 
-    if direction.is_zero() && bot_state.last_input_was_stop_or_none() {
+    if direction.is_zero() && bot_state.last_input_was_stop() {
         return;
     }
     if bot_state.last_input_matches(direction, speed)
@@ -809,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn robot_sync_manual_input_skips_idle_until_key_is_pressed() {
+    fn robot_sync_manual_input_sends_initial_stop_while_idle() {
         let mut app = test_app();
         let mut config = test_config(RobotSyncAuthorityMode::Off);
         config.input_mode = RobotSyncInputMode::Manual;
@@ -823,7 +823,41 @@ mod tests {
 
         app.update();
 
-        assert!(read_messages::<AuthorityCommand>(app.world()).is_empty());
+        let authority_commands = read_messages::<AuthorityCommand>(app.world());
+        assert_eq!(authority_commands.len(), 1);
+        let payload = robot_move_payload(&authority_commands[0]);
+        assert_eq!(
+            payload.get("dirX").and_then(|value| value.as_i64()),
+            Some(0)
+        );
+        assert_eq!(
+            payload.get("dirY").and_then(|value| value.as_i64()),
+            Some(0)
+        );
+        assert_eq!(
+            payload.get("speed").and_then(|value| value.as_i64()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn robot_sync_manual_input_does_not_repeat_idle_stop() {
+        let mut app = test_app();
+        let mut config = test_config(RobotSyncAuthorityMode::Off);
+        config.input_mode = RobotSyncInputMode::Manual;
+        app.insert_resource(config);
+        activate_robot_sync_scene(&mut app);
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("robot-player-a".to_string());
+            session.frame_id = 40;
+        }
+
+        app.update();
+        app.world_mut().resource_mut::<AuthoritySession>().frame_id = 41;
+        app.update();
+
+        assert_eq!(read_messages::<AuthorityCommand>(app.world()).len(), 1);
     }
 
     #[test]
