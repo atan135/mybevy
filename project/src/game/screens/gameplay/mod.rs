@@ -1,3 +1,4 @@
+mod robot_sync_scene;
 mod sample_scene;
 mod touch_ripple;
 
@@ -18,6 +19,10 @@ impl Plugin for GameplayScreensPlugin {
             sample_scene::setup_sample_scene_hud,
         )
         .add_systems(
+            OnEnter(AppUiMode::RobotSyncScene),
+            robot_sync_scene::setup_robot_sync_scene_hud,
+        )
+        .add_systems(
             Update,
             (
                 sample_scene::handle_sample_scene_hud_buttons,
@@ -25,6 +30,16 @@ impl Plugin for GameplayScreensPlugin {
             )
                 .chain()
                 .run_if(in_state(AppUiMode::SampleScene)),
+        )
+        .add_systems(
+            Update,
+            (
+                robot_sync_scene::update_robot_sync_scene_hud_status,
+                robot_sync_scene::handle_robot_sync_scene_hud_buttons,
+                robot_sync_scene::route_to_lobby_on_robot_sync_scene_exit,
+            )
+                .chain()
+                .run_if(in_state(AppUiMode::RobotSyncScene)),
         );
     }
 }

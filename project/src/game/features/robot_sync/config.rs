@@ -18,7 +18,7 @@ pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_BOT_SPEED: u3
 const MAX_ROBOT_SYNC_BOT_SPEED: u32 = 10_000;
 
 #[derive(Clone, Debug, Resource, PartialEq, Eq)]
-pub(in crate::game::features::robot_sync) struct RobotSyncConfig {
+pub(in crate::game) struct RobotSyncConfig {
     pub(in crate::game::features::robot_sync) scene_id: SceneId,
     pub(in crate::game::features::robot_sync) local_player_id: String,
     pub(in crate::game::features::robot_sync) authority_mode: RobotSyncAuthorityMode,

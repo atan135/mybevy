@@ -8,8 +8,8 @@ use crate::framework::ui::{
     widgets::{UiButtonEvent, UiButtonEventKind},
 };
 use crate::game::ui_ids::{
-    OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_LOBBY, OWNER_LOGIN, OWNER_SAMPLE_SCENE,
-    OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
+    OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE,
+    OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
 };
 
 pub(in crate::game) use widgets::{
@@ -46,6 +46,7 @@ pub(super) enum AppUiMode {
     WanfaTouchRipple,
     UiGallery,
     SampleScene,
+    RobotSyncScene,
 }
 
 impl AppUiMode {
@@ -58,6 +59,7 @@ impl AppUiMode {
             Self::WanfaTouchRipple => OWNER_TOUCH_RIPPLE,
             Self::UiGallery => OWNER_UI_GALLERY,
             Self::SampleScene => OWNER_SAMPLE_SCENE,
+            Self::RobotSyncScene => OWNER_ROBOT_SYNC_SCENE,
         }
     }
 }
@@ -141,7 +143,7 @@ fn setup_start_mode(mut next_mode: ResMut<NextState<AppUiMode>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ui_ids::OWNER_AUDIO_SETTINGS;
+    use crate::game::ui_ids::{OWNER_AUDIO_SETTINGS, OWNER_ROBOT_SYNC_SCENE};
 
     #[test]
     fn audio_settings_mode_uses_dedicated_owner() {
@@ -151,5 +153,10 @@ mod tests {
     #[test]
     fn audio_monitor_mode_uses_dedicated_owner() {
         assert_eq!(AppUiMode::AudioMonitor.ui_owner(), OWNER_AUDIO_MONITOR);
+    }
+
+    #[test]
+    fn robot_sync_scene_mode_uses_dedicated_owner() {
+        assert_eq!(AppUiMode::RobotSyncScene.ui_owner(), OWNER_ROBOT_SYNC_SCENE);
     }
 }

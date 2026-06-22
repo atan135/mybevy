@@ -49,7 +49,7 @@ const DEFAULT_DIRECTIONS: [(i32, i32); 6] = [
 ];
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
-pub(in crate::game::features::robot_sync) struct RobotSyncReplayState {
+pub(in crate::game) struct RobotSyncReplayState {
     pub(in crate::game::features::robot_sync) buffered_frame_count: usize,
     pub(in crate::game::features::robot_sync) last_frame_id: Option<u32>,
     pub(in crate::game::features::robot_sync) last_applied_frame: Option<u32>,

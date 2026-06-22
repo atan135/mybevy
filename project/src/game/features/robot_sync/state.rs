@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::framework::scene::prelude::{SceneId, SceneSessionId};
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
-pub(in crate::game::features::robot_sync) struct RobotSyncSceneState {
+pub(in crate::game) struct RobotSyncSceneState {
     pub(in crate::game::features::robot_sync) active: bool,
     pub(in crate::game::features::robot_sync) session_id: Option<SceneSessionId>,
     pub(in crate::game::features::robot_sync) scene_id: Option<SceneId>,
