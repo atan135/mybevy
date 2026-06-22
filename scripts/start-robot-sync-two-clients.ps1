@@ -142,6 +142,8 @@ $commonEnv = @{
 }
 
 if ($Mode -eq "myserver") {
+    $myserverPortEnvName = if ($Transport -eq "kcp") { "MYSERVER_KCP_PORT" } else { "MYSERVER_TCP_FALLBACK_PORT" }
+
     $clientAEnv = $commonEnv.Clone()
     $clientAEnv["ROBOT_SYNC_AUTHORITY_MODE"] = "myserver"
     $clientAEnv["AUTHORITY_DEV_MODE"] = "myserver"
@@ -155,6 +157,8 @@ if ($Mode -eq "myserver") {
     $clientAEnv["ROBOT_SYNC_MYSERVER_GUEST_ID"] = $GuestAId
     $clientAEnv["MYSERVER_GUEST_ID"] = $GuestAId
     $clientAEnv["MYSERVER_TRANSPORT"] = $Transport
+    $clientAEnv["MYSERVER_GAME_HOST"] = $HostAddress
+    $clientAEnv[$myserverPortEnvName] = "$Port"
 
     $clientBEnv = $commonEnv.Clone()
     $clientBEnv["ROBOT_SYNC_AUTHORITY_MODE"] = "myserver"
@@ -169,6 +173,8 @@ if ($Mode -eq "myserver") {
     $clientBEnv["ROBOT_SYNC_MYSERVER_GUEST_ID"] = $GuestBId
     $clientBEnv["MYSERVER_GUEST_ID"] = $GuestBId
     $clientBEnv["MYSERVER_TRANSPORT"] = $Transport
+    $clientBEnv["MYSERVER_GAME_HOST"] = $HostAddress
+    $clientBEnv[$myserverPortEnvName] = "$Port"
 } else {
     $clientAEnv = $commonEnv.Clone()
     $clientAEnv["ROBOT_SYNC_AUTHORITY_MODE"] = "lan-host"

@@ -54,6 +54,7 @@ pub(in crate::game) struct RobotSyncReplayState {
     pub(in crate::game::features::robot_sync) last_frame_id: Option<u32>,
     pub(in crate::game::features::robot_sync) last_applied_frame: Option<u32>,
     pub(in crate::game::features::robot_sync) robots: BTreeMap<String, RobotState>,
+    telemetry: RobotSyncTelemetryState,
 }
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
@@ -83,6 +84,20 @@ pub(in crate::game::features::robot_sync) struct RobotState {
     pub(in crate::game::features::robot_sync) last_frame: Option<u32>,
     pub(in crate::game::features::robot_sync) spawn_index: usize,
     pub(in crate::game::features::robot_sync) color_index: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RobotSyncTelemetryState {
+    last_logged_frame: Option<u32>,
+    last_logged_robot_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RobotSyncFrameTelemetry {
+    frame_id: u32,
+    robot_count: usize,
+    checksum: u32,
+    robots: String,
 }
 
 impl RobotSyncReplayState {
@@ -181,17 +196,19 @@ fn apply_robot_sync_snapshot(
     players.sort();
     players.dedup();
 
-    replay_state
-        .robots
-        .retain(|player_id, _| players.binary_search(player_id).is_ok());
+    let existing_players = replay_state.robots.keys().cloned().collect::<Vec<_>>();
+    let player_set_changed = existing_players != players;
 
-    for (index, player_id) in players.into_iter().enumerate() {
-        match replay_state.robots.entry(player_id.clone()) {
-            Entry::Vacant(entry) => {
-                entry.insert(RobotState::new(player_id, index));
-            }
-            Entry::Occupied(mut entry) => {
-                let robot = entry.get_mut();
+    if player_set_changed {
+        replay_state.robots.clear();
+        for (index, player_id) in players.into_iter().enumerate() {
+            replay_state
+                .robots
+                .insert(player_id.clone(), RobotState::new(player_id, index));
+        }
+    } else {
+        for (index, player_id) in players.into_iter().enumerate() {
+            if let Some(robot) = replay_state.robots.get_mut(&player_id) {
                 robot.spawn_index = index;
                 robot.color_index = index;
             }
@@ -208,6 +225,7 @@ fn apply_robot_sync_snapshot(
         frame_id = snapshot.frame_id,
         authority_epoch = snapshot.authority_epoch,
         player_count = replay_state.robots.len(),
+        player_set_changed,
         "applied robot sync snapshot"
     );
 }
@@ -247,6 +265,7 @@ fn apply_robot_sync_frame(replay_state: &mut RobotSyncReplayState, frame: &Autho
     replay_state.last_applied_frame = Some(frame.frame_id);
     replay_state.last_frame_id = Some(frame.frame_id);
     replay_state.buffered_frame_count = replay_state.robots.len();
+    maybe_log_robot_sync_frame_telemetry(replay_state, frame.frame_id);
 }
 
 fn ensure_players_for_frame(
@@ -399,6 +418,89 @@ fn clamp_fixed_i64(value: i64) -> i32 {
     value.clamp(i64::from(ARENA_MIN_FIXED), i64::from(ARENA_MAX_FIXED)) as i32
 }
 
+fn maybe_log_robot_sync_frame_telemetry(replay_state: &mut RobotSyncReplayState, frame_id: u32) {
+    let robot_count = replay_state.robots.len();
+    let should_log = replay_state
+        .telemetry
+        .last_logged_frame
+        .is_none_or(|last_frame| frame_id.saturating_sub(last_frame) >= 20)
+        || replay_state.telemetry.last_logged_robot_count != robot_count;
+
+    if !should_log {
+        return;
+    }
+
+    replay_state.telemetry.last_logged_frame = Some(frame_id);
+    replay_state.telemetry.last_logged_robot_count = robot_count;
+    let telemetry = robot_sync_frame_telemetry(frame_id, &replay_state.robots);
+    info!(
+        frame_id = telemetry.frame_id,
+        robot_count = telemetry.robot_count,
+        checksum = format_args!("{:08x}", telemetry.checksum),
+        robots = %telemetry.robots,
+        "robot sync frame applied"
+    );
+}
+
+fn robot_sync_frame_telemetry(
+    frame_id: u32,
+    robots: &BTreeMap<String, RobotState>,
+) -> RobotSyncFrameTelemetry {
+    RobotSyncFrameTelemetry {
+        frame_id,
+        robot_count: robots.len(),
+        checksum: robot_sync_checksum(frame_id, robots),
+        robots: robot_sync_robot_summary(robots),
+    }
+}
+
+fn robot_sync_robot_summary(robots: &BTreeMap<String, RobotState>) -> String {
+    robots
+        .values()
+        .map(|robot| {
+            format!(
+                "{}:x={},y={},last_frame={}",
+                robot.player_id,
+                robot.position.x,
+                robot.position.y,
+                robot
+                    .last_frame
+                    .map(|frame| frame.to_string())
+                    .unwrap_or_else(|| "none".to_string())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn robot_sync_checksum(frame_id: u32, robots: &BTreeMap<String, RobotState>) -> u32 {
+    let robot_sum = robots.values().fold(0_u32, |sum, robot| {
+        let heading_milli_degrees = 0_u32;
+        let last_frame = robot.last_frame.unwrap_or_default();
+        let robot_value = fnv1a32(robot.player_id.as_bytes())
+            ^ low32_i32(robot.position.x)
+            ^ low32_i32(robot.position.y).rotate_left(1)
+            ^ heading_milli_degrees.rotate_left(7)
+            ^ last_frame;
+        sum.wrapping_add(robot_value)
+    });
+
+    robot_sum ^ frame_id
+}
+
+fn fnv1a32(bytes: &[u8]) -> u32 {
+    const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
+    const FNV_PRIME: u32 = 16_777_619;
+
+    bytes.iter().fold(FNV_OFFSET_BASIS, |hash, byte| {
+        (hash ^ u32::from(*byte)).wrapping_mul(FNV_PRIME)
+    })
+}
+
+fn low32_i32(value: i32) -> u32 {
+    value as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,6 +563,20 @@ mod tests {
         }
     }
 
+    fn robot_state(player_id: &str, x: i32, y: i32, last_frame: Option<u32>) -> RobotState {
+        RobotState {
+            player_id: player_id.to_string(),
+            position: FixedPosition { x, y },
+            dir_x: 1000,
+            dir_y: 0,
+            speed: 60_000,
+            last_input_seq: Some(1),
+            last_frame,
+            spawn_index: 0,
+            color_index: 0,
+        }
+    }
+
     #[test]
     fn robot_sync_snapshot_builds_sorted_initial_robot_state() {
         let mut state = RobotSyncReplayState::default();
@@ -492,7 +608,37 @@ mod tests {
     }
 
     #[test]
-    fn robot_sync_snapshot_preserves_existing_robot_motion_state() {
+    fn robot_sync_snapshot_preserves_existing_robot_motion_state_when_player_set_is_unchanged() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a"]));
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                20,
+                &["player-a"],
+                vec![robot_move("player-a", 1, 5, 0, 1000, 60_000)],
+            ),
+        );
+
+        apply_robot_sync_snapshot(&mut state, &snapshot(1, &["player-a"]));
+
+        let player_a = state.robots.get("player-a").unwrap();
+        assert_eq!(
+            player_a.position,
+            FixedPosition {
+                x: -200_000,
+                y: -197_000
+            }
+        );
+        assert_eq!(player_a.dir_x, 0);
+        assert_eq!(player_a.dir_y, 1000);
+        assert_eq!(player_a.last_input_seq, Some(5));
+        assert_eq!(state.last_applied_frame, Some(1));
+    }
+
+    #[test]
+    fn robot_sync_snapshot_rebuilds_state_when_player_set_changes() {
         let mut state = RobotSyncReplayState::default();
         apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a"]));
         apply_robot_sync_frame(
@@ -507,24 +653,32 @@ mod tests {
 
         apply_robot_sync_snapshot(&mut state, &snapshot(1, &["player-a", "player-b"]));
 
-        let player_a = state.robots.get("player-a").unwrap();
         assert_eq!(
-            player_a.position,
+            state.robots.get("player-a").unwrap().position,
             FixedPosition {
                 x: -200_000,
-                y: -197_000
+                y: -200_000
             }
         );
-        assert_eq!(player_a.dir_x, 0);
-        assert_eq!(player_a.dir_y, 1000);
-        assert_eq!(player_a.last_input_seq, Some(5));
-        assert_eq!(state.last_applied_frame, Some(1));
-        assert!(state.robots.contains_key("player-b"));
+        assert_eq!(state.robots.get("player-a").unwrap().last_input_seq, None);
+        assert_eq!(
+            state.robots.get("player-b").unwrap().position,
+            FixedPosition {
+                x: 200_000,
+                y: 200_000
+            }
+        );
 
         apply_robot_sync_snapshot(&mut state, &snapshot(2, &["player-b"]));
         assert!(!state.robots.contains_key("player-a"));
         assert!(state.robots.contains_key("player-b"));
-        assert_eq!(state.last_applied_frame, Some(1));
+        assert_eq!(
+            state.robots.get("player-b").unwrap().position,
+            FixedPosition {
+                x: -200_000,
+                y: -200_000
+            }
+        );
     }
 
     #[test]
@@ -849,6 +1003,60 @@ mod tests {
                 y: 200_000
             }
         );
+    }
+
+    #[test]
+    fn robot_sync_telemetry_summary_uses_stable_player_order() {
+        let mut robots = BTreeMap::new();
+        robots.insert(
+            "player-b".to_string(),
+            robot_state("player-b", 20, -30, Some(7)),
+        );
+        robots.insert(
+            "player-a".to_string(),
+            robot_state("player-a", -10, 40, Some(7)),
+        );
+
+        assert_eq!(
+            robot_sync_robot_summary(&robots),
+            "player-a:x=-10,y=40,last_frame=7;player-b:x=20,y=-30,last_frame=7"
+        );
+    }
+
+    #[test]
+    fn robot_sync_checksum_is_stable_and_uses_fixed_coordinates() {
+        let mut robots = BTreeMap::new();
+        robots.insert(
+            "player-b".to_string(),
+            robot_state("player-b", 20, -30, Some(7)),
+        );
+        robots.insert(
+            "player-a".to_string(),
+            robot_state("player-a", -10, 40, Some(7)),
+        );
+
+        let checksum = robot_sync_checksum(120, &robots);
+        assert_eq!(checksum, robot_sync_checksum(120, &robots));
+
+        let mut changed = robots.clone();
+        changed.get_mut("player-a").unwrap().position.x = -9;
+        assert_ne!(checksum, robot_sync_checksum(120, &changed));
+    }
+
+    #[test]
+    fn robot_sync_frame_telemetry_contains_checksum_and_robot_summary() {
+        let mut robots = BTreeMap::new();
+        robots.insert(
+            "player-a".to_string(),
+            robot_state("player-a", 10240, -5000, Some(120)),
+        );
+
+        let telemetry = robot_sync_frame_telemetry(120, &robots);
+
+        assert_eq!(telemetry.frame_id, 120);
+        assert_eq!(telemetry.robot_count, 1);
+        assert_eq!(telemetry.robots, "player-a:x=10240,y=-5000,last_frame=120");
+        assert_eq!(telemetry.checksum, robot_sync_checksum(120, &robots));
     }
 
     #[test]
