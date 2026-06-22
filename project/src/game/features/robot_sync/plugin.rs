@@ -17,7 +17,7 @@ use super::{
         cleanup_robot_sync_authority, follow_robot_sync_myserver_events, reset_robot_sync_replay,
         start_robot_sync_authority,
     },
-    visual::{RobotSyncVisualState, clear_robot_sync_visuals},
+    visual::{RobotSyncVisualState, clear_robot_sync_visuals, sync_robot_sync_robot_visuals},
 };
 
 pub(in crate::game) struct RobotSyncPlugin;
@@ -38,7 +38,10 @@ impl Plugin for RobotSyncPlugin {
                     send_local_robot_sync_bot_input,
                 ),
             )
-            .add_systems(PostUpdate, update_robot_sync_scene_state);
+            .add_systems(
+                PostUpdate,
+                (update_robot_sync_scene_state, sync_robot_sync_robot_visuals),
+            );
     }
 }
 
