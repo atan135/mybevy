@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    bot::{RobotSyncBotState, clear_robot_sync_bots},
+    bot::{ROBOT_MOVE_ACTION, RobotSyncBotState, clear_robot_sync_bots},
     config::RobotSyncConfig,
     state::RobotSyncSceneState,
     sync::{
@@ -29,9 +29,60 @@ impl Plugin for RobotSyncPlugin {
             .init_resource::<RobotSyncReplayState>()
             .init_resource::<RobotSyncMyServerJoinState>()
             .init_resource::<RobotSyncVisualState>()
-            .add_systems(Update, follow_robot_sync_myserver_events)
+            .add_systems(
+                Update,
+                (
+                    follow_robot_sync_myserver_events,
+                    send_local_robot_sync_bot_input,
+                ),
+            )
             .add_systems(PostUpdate, update_robot_sync_scene_state);
     }
+}
+
+fn send_local_robot_sync_bot_input(
+    config: Res<RobotSyncConfig>,
+    scene_state: Res<RobotSyncSceneState>,
+    authority_session: Res<AuthoritySession>,
+    mut bot_state: ResMut<RobotSyncBotState>,
+    mut authority_commands: MessageWriter<AuthorityCommand>,
+) {
+    if !scene_state.active {
+        return;
+    }
+
+    let Some(local_player_id) = authority_session.local_player_id.as_deref() else {
+        return;
+    };
+
+    let target_frame = authority_session
+        .frame_id
+        .saturating_add(config.input_delay_frames);
+    if !bot_state.should_send_target_frame(target_frame, config.bot_input_interval_frames) {
+        return;
+    }
+
+    let payload = bot_state.next_move_payload(local_player_id, config.bot_speed);
+    let Ok(payload_json) = serde_json::to_string(&payload) else {
+        return;
+    };
+
+    debug!(
+        player_id = %local_player_id,
+        target_frame,
+        seq = payload.seq,
+        botTick = payload.bot_tick,
+        dirX = payload.dir_x,
+        dirY = payload.dir_y,
+        speed = payload.speed,
+        "sending robot sync bot input"
+    );
+    authority_commands.write(AuthorityCommand::SendInput {
+        frame_id: target_frame,
+        action: ROBOT_MOVE_ACTION.to_string(),
+        payload_json,
+    });
+    bot_state.mark_sent_target_frame(target_frame);
 }
 
 fn update_robot_sync_scene_state(
@@ -122,6 +173,9 @@ mod tests {
             myserver_guest_id: Some("robot-guest".to_string()),
             myserver_room_id: "robot-room".to_string(),
             myserver_policy_id: ROBOT_SYNC_MYSERVER_POLICY_ID.to_string(),
+            input_delay_frames: 2,
+            bot_input_interval_frames: 1,
+            bot_speed: 10000,
         }
     }
 
@@ -413,6 +467,123 @@ mod tests {
             myserver_commands.last(),
             Some(MyServerCommand::Disconnect)
         ));
+    }
+
+    #[test]
+    fn active_robot_sync_with_local_player_sends_robot_move_input_for_delayed_frame() {
+        let mut app = test_app();
+        app.insert_resource(test_config(RobotSyncAuthorityMode::Off));
+        activate_robot_sync_scene(&mut app);
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("robot-player-a".to_string());
+            session.frame_id = 40;
+        }
+
+        app.update();
+
+        let authority_commands = read_messages::<AuthorityCommand>(app.world());
+        assert_eq!(authority_commands.len(), 1);
+        let AuthorityCommand::SendInput {
+            frame_id,
+            action,
+            payload_json,
+        } = &authority_commands[0]
+        else {
+            panic!("expected robot move input command");
+        };
+        assert_eq!(*frame_id, 42);
+        assert_eq!(action, ROBOT_MOVE_ACTION);
+
+        let payload = serde_json::from_str::<serde_json::Value>(payload_json).unwrap();
+        assert_eq!(
+            payload.get("version").and_then(|value| value.as_i64()),
+            Some(1)
+        );
+        assert_eq!(payload.get("seq").and_then(|value| value.as_i64()), Some(1));
+        assert_eq!(
+            payload.get("botTick").and_then(|value| value.as_i64()),
+            Some(0)
+        );
+        assert_eq!(
+            payload.get("speed").and_then(|value| value.as_i64()),
+            Some(10000)
+        );
+        assert!(
+            payload
+                .get("dirX")
+                .and_then(|value| value.as_i64())
+                .is_some()
+        );
+        assert!(
+            payload
+                .get("dirY")
+                .and_then(|value| value.as_i64())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn robot_sync_bot_input_does_not_repeat_same_target_frame() {
+        let mut app = test_app();
+        app.insert_resource(test_config(RobotSyncAuthorityMode::Off));
+        activate_robot_sync_scene(&mut app);
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("robot-player-a".to_string());
+            session.frame_id = 40;
+        }
+
+        app.update();
+        app.update();
+
+        let authority_commands = read_messages::<AuthorityCommand>(app.world());
+        let robot_move_count = authority_commands
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command,
+                    AuthorityCommand::SendInput { action, .. } if action == ROBOT_MOVE_ACTION
+                )
+            })
+            .count();
+        assert_eq!(robot_move_count, 1);
+    }
+
+    #[test]
+    fn robot_sync_bot_input_skips_inactive_scene() {
+        let mut app = test_app();
+        app.insert_resource(test_config(RobotSyncAuthorityMode::Off));
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("robot-player-a".to_string());
+            session.frame_id = 40;
+        }
+
+        app.update();
+
+        assert!(read_messages::<AuthorityCommand>(app.world()).is_empty());
+    }
+
+    #[test]
+    fn robot_sync_bot_input_skips_missing_local_player() {
+        let mut app = test_app();
+        app.insert_resource(test_config(RobotSyncAuthorityMode::Off));
+        activate_robot_sync_scene(&mut app);
+        app.world_mut().resource_mut::<AuthoritySession>().frame_id = 40;
+
+        app.update();
+
+        assert!(read_messages::<AuthorityCommand>(app.world()).is_empty());
+    }
+
+    fn activate_robot_sync_scene(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<RobotSyncSceneState>()
+            .activate(
+                SceneId::from(ROBOT_SYNC_ARENA_SCENE_ID),
+                SceneSessionId::from("robot-sync-session"),
+            );
     }
 
     fn read_messages<M>(world: &World) -> Vec<M>

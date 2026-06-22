@@ -11,6 +11,11 @@ pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_PLAYER_ID: &s
 pub(in crate::game::features::robot_sync) const ROBOT_SYNC_MYSERVER_POLICY_ID: &str =
     "robot_sync_room";
 const DEFAULT_ROBOT_SYNC_MYSERVER_ROOM_ID: &str = "robot-sync-room";
+pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_INPUT_DELAY_FRAMES: u32 = 2;
+pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_BOT_INPUT_INTERVAL_FRAMES: u32 =
+    1;
+pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_BOT_SPEED: u32 = 10_000;
+const MAX_ROBOT_SYNC_BOT_SPEED: u32 = 10_000;
 
 #[derive(Clone, Debug, Resource, PartialEq, Eq)]
 pub(in crate::game::features::robot_sync) struct RobotSyncConfig {
@@ -24,6 +29,9 @@ pub(in crate::game::features::robot_sync) struct RobotSyncConfig {
     pub(in crate::game::features::robot_sync) myserver_guest_id: Option<String>,
     pub(in crate::game::features::robot_sync) myserver_room_id: String,
     pub(in crate::game::features::robot_sync) myserver_policy_id: String,
+    pub(in crate::game::features::robot_sync) input_delay_frames: u32,
+    pub(in crate::game::features::robot_sync) bot_input_interval_frames: u32,
+    pub(in crate::game::features::robot_sync) bot_speed: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -47,6 +55,15 @@ impl Default for RobotSyncConfig {
                 policy_id = %myserver_policy_id,
                 default_policy_id = ROBOT_SYNC_MYSERVER_POLICY_ID,
                 "robot sync MyServer policy overridden"
+            );
+        }
+
+        let bot_speed = env_u32(&["ROBOT_SYNC_BOT_SPEED"], DEFAULT_ROBOT_SYNC_BOT_SPEED);
+        if bot_speed > MAX_ROBOT_SYNC_BOT_SPEED {
+            warn!(
+                speed = bot_speed,
+                max_speed = MAX_ROBOT_SYNC_BOT_SPEED,
+                "robot sync bot speed clamped to current MyServer validation range"
             );
         }
 
@@ -86,6 +103,20 @@ impl Default for RobotSyncConfig {
                 DEFAULT_ROBOT_SYNC_MYSERVER_ROOM_ID,
             ),
             myserver_policy_id,
+            input_delay_frames: env_u32(
+                &["ROBOT_SYNC_INPUT_DELAY_FRAMES"],
+                DEFAULT_ROBOT_SYNC_INPUT_DELAY_FRAMES,
+            )
+            .max(1),
+            bot_input_interval_frames: env_u32(
+                &["ROBOT_SYNC_BOT_INPUT_INTERVAL_FRAMES"],
+                DEFAULT_ROBOT_SYNC_BOT_INPUT_INTERVAL_FRAMES,
+            )
+            .max(1),
+            // The design doc's long-term default is 60000, but the current MyServer
+            // robot_move validator accepts 0..=10000. Keep the client default legal
+            // end-to-end until the server policy range is widened.
+            bot_speed: bot_speed.min(MAX_ROBOT_SYNC_BOT_SPEED),
         }
     }
 }
@@ -128,6 +159,12 @@ fn env_u16(names: &[&str], default: u16) -> u16 {
         .unwrap_or(default)
 }
 
+fn env_u32(names: &[&str], default: u32) -> u32 {
+    env_first(names)
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(default)
+}
+
 fn env_transport(names: &[&str]) -> Option<NetworkTransport> {
     match env_first(names)?.trim().to_ascii_lowercase().as_str() {
         "tcp" => Some(NetworkTransport::Tcp),
@@ -153,5 +190,21 @@ mod tests {
         let config = RobotSyncConfig::default();
 
         assert_eq!(config.myserver_policy_id, ROBOT_SYNC_MYSERVER_POLICY_ID);
+    }
+
+    #[test]
+    fn robot_sync_config_defaults_to_server_legal_bot_input_settings() {
+        let config = RobotSyncConfig::default();
+
+        assert_eq!(
+            config.input_delay_frames,
+            DEFAULT_ROBOT_SYNC_INPUT_DELAY_FRAMES
+        );
+        assert_eq!(
+            config.bot_input_interval_frames,
+            DEFAULT_ROBOT_SYNC_BOT_INPUT_INTERVAL_FRAMES
+        );
+        assert_eq!(config.bot_speed, DEFAULT_ROBOT_SYNC_BOT_SPEED);
+        assert!(config.bot_speed <= MAX_ROBOT_SYNC_BOT_SPEED);
     }
 }
