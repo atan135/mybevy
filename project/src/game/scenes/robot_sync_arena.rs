@@ -264,6 +264,7 @@ fn spawn_robot_sync_arena_content(
             RobotSyncArenaContent {
                 session_id: session_id.clone(),
             },
+            Transform::default(),
             Name::new(format!("RobotSyncArenaContent({session_id})")),
         ))
         .id();
@@ -626,15 +627,17 @@ mod tests {
             &ChildOf,
             &SceneOwned,
             &RobotSyncArenaContent,
+            &Transform,
             &Name,
         ), Without<RobotSyncArenaVisual>>();
         let content_entities = content.iter(app.world()).collect::<Vec<_>>();
         assert_eq!(content_entities.len(), 1);
 
-        let (content_entity, parent, owned, content, name) = content_entities[0];
+        let (content_entity, parent, owned, content, transform, name) = content_entities[0];
         assert_eq!(parent.parent(), runtime_root);
         assert_eq!(owned.session_id, session_id);
         assert_eq!(content.session_id, session_id);
+        assert_eq!(transform, &Transform::default());
         assert_eq!(name.as_str(), "RobotSyncArenaContent(robot-sync-session)");
 
         let mut visuals = app.world_mut().query::<(

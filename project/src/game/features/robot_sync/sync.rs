@@ -553,6 +553,20 @@ mod tests {
 
         let zero_direction_with_speed = robot_move("player-a", 11, 1, 0, 0, 1);
         assert!(parse_robot_move_input(&zero_direction_with_speed, 0, 11).is_none());
+
+        let string_seq = bad_payload(
+            "player-a",
+            11,
+            r#"{"version":1,"seq":"1","botTick":1,"dirX":1000,"dirY":0,"speed":1000}"#,
+        );
+        assert!(parse_robot_move_input(&string_seq, 0, 11).is_none());
+
+        let float_direction = bad_payload(
+            "player-a",
+            11,
+            r#"{"version":1,"seq":1,"botTick":1,"dirX":1.5,"dirY":0,"speed":1000}"#,
+        );
+        assert!(parse_robot_move_input(&float_direction, 0, 11).is_none());
     }
 
     #[test]
@@ -585,6 +599,48 @@ mod tests {
                 y: -200_000
             }
         );
+    }
+
+    #[test]
+    fn robot_sync_frame_ignores_unknown_action_and_bad_payload_without_blocking_valid_input() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a"]));
+
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                20,
+                &["player-a"],
+                vec![
+                    PlayerInput {
+                        player_id: "player-a".to_string(),
+                        frame_id: 1,
+                        action: "unknown_action".to_string(),
+                        payload_json: "{}".to_string(),
+                    },
+                    bad_payload(
+                        "player-a",
+                        1,
+                        r#"{"version":1,"seq":2,"botTick":2,"dirX":1000,"dirY":0,"speed":70000}"#,
+                    ),
+                    robot_move("player-a", 1, 3, 0, 1000, 60_000),
+                ],
+            ),
+        );
+
+        let robot = state.robots.get("player-a").unwrap();
+        assert_eq!(robot.last_input_seq, Some(3));
+        assert_eq!(robot.dir_x, 0);
+        assert_eq!(robot.dir_y, 1000);
+        assert_eq!(
+            robot.position,
+            FixedPosition {
+                x: -200_000,
+                y: -197_000
+            }
+        );
+        assert_eq!(state.last_applied_frame, Some(1));
     }
 
     #[test]
@@ -688,6 +744,35 @@ mod tests {
                 y: 250_000
             }
         );
+    }
+
+    #[test]
+    fn robot_sync_frame_with_zero_fps_does_not_advance_or_mark_applied() {
+        let mut state = RobotSyncReplayState::default();
+        apply_robot_sync_snapshot(&mut state, &snapshot(0, &["player-a"]));
+
+        apply_robot_sync_frame(
+            &mut state,
+            &frame(
+                1,
+                0,
+                &["player-a"],
+                vec![robot_move("player-a", 1, 1, 0, 1000, 60_000)],
+            ),
+        );
+
+        let robot = state.robots.get("player-a").unwrap();
+        assert_eq!(
+            robot.position,
+            FixedPosition {
+                x: -200_000,
+                y: -200_000
+            }
+        );
+        assert_eq!(robot.last_input_seq, None);
+        assert_eq!(robot.last_frame, None);
+        assert_eq!(state.last_applied_frame, Some(0));
+        assert_eq!(state.last_frame_id, Some(0));
     }
 
     #[test]
