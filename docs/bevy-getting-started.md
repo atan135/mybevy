@@ -235,10 +235,10 @@ mybevy/
 - `project/src/framework/ui/`：UI 框架能力入口
 - `project/src/game/plugin.rs`：游戏主插件
 - `project/src/game/authority/`：游戏层控制机会话接口和轻量 authority 协议
-- `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
+- `project/src/game/features/`：Touch Ripple、Robot Sync 等具体玩法功能模块
 - `project/src/game/myserver/`：当前游戏的 MyServer 登录、房间和协议适配模块
 - `project/src/game/navigation/`：主流程 `AppUiMode` 和路由按钮数据
-- `project/src/game/scenes/`：具体游戏场景 ID、场景目录 CSV 注册适配和场景专属组合逻辑，当前包含 `sample.dungeon_room`
+- `project/src/game/scenes/`：具体游戏场景 ID、场景目录 CSV 注册适配和场景专属组合逻辑，当前包含 `sample.dungeon_room` 和 `arena.robot_sync`
 - `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体业务页面
 - `project/src/framework/ui/core/`：UI 框架入口、Panel Manager、层级、输入拦截
 - `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 等顶层 UI 实现
@@ -246,9 +246,11 @@ mybevy/
 - `project/src/framework/ui/widgets/`：按钮、文本等通用控件
 - `project/assets/`：贴图、音频、字体、场景文件和首包配置数据
 - `project/assets/audio/`：首包音频资源，当前样例以 `.wav` 为主，公开发布前需替换占位资源并确认授权
-- `project/assets/game/scenes.csv`：游戏层场景目录表，当前注册 `sample.dungeon_room`
+- `project/assets/game/scenes.csv`：游戏层场景目录表，当前注册 `sample.dungeon_room` 和 `arena.robot_sync`
 - `project/assets/scenes/sample_dungeon_room/scene.ron`：样板场景 framework manifest
 - `project/assets/scenes/sample_dungeon_room/layout.ron`：样板场景 game layer prefab/light 摆放数据
+- `project/assets/scenes/robot_sync_arena/scene.ron`：Robot Sync 场景 framework manifest
+- `project/assets/scenes/robot_sync_arena/layout.ron`：Robot Sync 场景 game layer arena/grid/spawn 摆放数据
 - `docs/assets-workflow.md`：项目资源使用方式，覆盖开发期、APK 包内和后续下载资源
 - `docs/scene/`：场景框架相关文档，当前总文档规划场景生命周期、资源、切换、流式加载、相机和联机同步
 - `docs/ui/`：UI 框架实现机制、组件使用、响应式布局、调试验收和限制说明
@@ -432,7 +434,38 @@ cargo run
 
 这些变量只用于开发期。正式入口应来自登录、房间、存档或服务端协议。
 
-当前已注册的首包样板场景是 `sample.dungeon_room`，它来自 `project/assets/game/scenes.csv`，manifest 在 `project/assets/scenes/sample_dungeon_room/scene.ron`，layout 在同目录的 `layout.ron`。也可以从正常 UI 流程进入：启动游戏、登录到大厅，在 `game_list` 点击 `Sample Scene` 的 `Enter` 按钮；进入成功后会显示样板场景 HUD，点击 `Lobby` 返回大厅。
+当前已注册的首包场景包括：
+
+- `sample.dungeon_room`：来自 `project/assets/scenes/sample_dungeon_room/scene.ron` 和同目录 `layout.ron`，用于验证基础世界内容流程。
+- `arena.robot_sync`：来自 `project/assets/scenes/robot_sync_arena/scene.ron` 和同目录 `layout.ron`，用于验证 500x500 机器人帧同步场景。
+
+也可以从正常 UI 流程进入：启动游戏、登录到大厅，在 `game_list` 点击 `Sample Scene` 或 `Robot Sync` 的 `Enter` 按钮；进入成功后会显示对应 HUD，点击 `Lobby` 返回大厅。
+
+Robot Sync 单客户端本地验收：
+
+```powershell
+Set-Location project
+$env:MYBEVY_START_SCENE="arena.robot_sync"
+cargo run -- --window-profile phone-small --window-scale 50%
+```
+
+Robot Sync MyServer 模式常用环境变量：
+
+```powershell
+Set-Location project
+$env:MYBEVY_START_SCENE="arena.robot_sync"
+$env:ROBOT_SYNC_AUTHORITY_MODE="myserver"
+$env:AUTHORITY_PLAYER_ID="robot-player-a"
+$env:AUTHORITY_MYSERVER_GUEST_ID="robot-guest-a"
+$env:AUTHORITY_MYSERVER_ROOM="robot-sync-room"
+$env:AUTHORITY_MYSERVER_POLICY="robot_sync_room"
+$env:MYSERVER_TRANSPORT="tcp"
+$env:MYSERVER_GAME_HOST="127.0.0.1"
+$env:MYSERVER_TCP_FALLBACK_PORT="17002"
+cargo run -- --window-profile phone-small --window-scale 50%
+```
+
+如果本机 MyServer `game-proxy` 没有覆盖 TCP fallback 端口，端口也可能是默认 `PROXY_PORT + 10000`。以 `C:\project\MyServer\apps\game-proxy\.env` 或启动日志为准。
 
 `TOUCH_START_SCREEN=sample_scene` 只会把 UI state 切到样板场景 HUD，适合调试 HUD 本身；它不会自动发送 `SceneCommand::Enter`，因此不是完整场景加载验收方式。完整验收优先使用大厅入口或 `MYBEVY_START_SCENE="sample.dungeon_room"`。
 
@@ -666,6 +699,14 @@ android/app/build/outputs/apk/release/
 4. 按住拖动时，主圆平滑跟随，并沿拖动路径生成水波纹拖尾。
 5. 松开后，主圆在原地逐帧淡出；新一次按压会直接在新位置生成。
 
+当前还内置 `arena.robot_sync` 场景，用于正式验证场景内机器人帧同步：
+
+1. 场景显示 500x500 arena、边界、网格、出生点和机器人。
+2. 本地 bot 发送 `robot_move` 输入。
+3. 玩法层只消费 `AuthorityEvent::FrameApplied` 推进机器人 fixed 坐标。
+4. Robot Sync HUD 显示 room、player、authority 状态、frame、机器人数量和本地坐标。
+5. 双客户端 MyServer 联调依赖 MyServer `robot_sync_room` policy；服务端只校验和转发 `robot_move`，不广播机器人坐标。
+
 当前工程已经内置一套网络通信接口：
 
 - `project/src/framework/network/`：网络框架插件、命令、事件和连接配置
@@ -734,6 +775,28 @@ $env:AUTHORITY_REMOTE_HOST="127.0.0.1"
 $env:AUTHORITY_REMOTE_PORT="15000"
 cargo run
 ```
+
+Robot Sync 双客户端脚本会默认启动两个 `arena.robot_sync` 客户端，设置同一 room、`robot_sync_room` policy、不同 player/guest，并把日志写到 `logs/robot-sync-two-clients/<timestamp>/`：
+
+```powershell
+# 只打印两端环境变量和 launcher，不启动窗口
+.\scripts\start-robot-sync-two-clients.ps1 -DryRun -SkipBuild
+
+# MyServer 模式，默认使用 tcp transport
+.\scripts\start-robot-sync-two-clients.ps1 -SkipBuild -HostAddress 127.0.0.1 -Port 17002
+
+# LAN fallback，不依赖 MyServer
+.\scripts\start-robot-sync-two-clients.ps1 -Mode lan -SkipBuild
+```
+
+MyServer 本地联调前，先在服务端仓库启动完整栈：
+
+```powershell
+Set-Location C:\project\MyServer
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-stack.ps1 -WithMatch
+```
+
+当前本地完整栈需要 `-WithMatch`，否则 `game-server` 可能因为缺少 `match-service.grpc` 发现而无法正常启动。Robot Sync 使用的 TCP fallback 端口由 `game-proxy` 配置决定；脚本的 `-Port` 会写入 `MYSERVER_TCP_FALLBACK_PORT`，KCP transport 时写入 `MYSERVER_KCP_PORT`。
 
 示例用法：
 

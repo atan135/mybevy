@@ -5,7 +5,7 @@
 ## 专题文档索引
 
 - [场景框架层功能说明](./场景框架层功能说明.md)：说明 `project/src/framework/scene/` 当前已提供的通用 Scene 能力、生命周期、manifest、资源加载、根实体、相机、spawn/anchor、trigger、streaming、authority ready 和调试边界。
-- [游戏层场景使用说明](./游戏层场景使用说明.md)：说明 game layer 如何通过场景表 CSV、framework manifest、layout RON、大厅入口和 HUD 接入具体游戏场景，重点面向 `sample.dungeon_room` 样板场景。
+- [游戏层场景使用说明](./游戏层场景使用说明.md)：说明 game layer 如何通过场景表 CSV、framework manifest、layout RON、大厅入口和 HUD 接入具体游戏场景，当前覆盖 `sample.dungeon_room` 样板场景和 `arena.robot_sync` 机器人帧同步场景。
 
 ## 1. 文档目标
 
@@ -75,7 +75,9 @@
 - debug 配置可从环境变量读取启动场景、启动 spawn、调试开关、生命周期日志开关、慢加载模拟和失败模拟；当前提供诊断数据接口，不提供成品游戏内调试面板。
 - authority ready 已有框架层消息和状态边界，framework 不依赖 `project/src/game/authority/`。
 
-当前 game layer 已接入一个基础样板场景 `sample.dungeon_room`：
+当前 game layer 已接入两个首包世界内容场景：
+
+`sample.dungeon_room` 是基础样板场景：
 
 - `project/assets/game/scenes.csv` 是游戏层场景目录表，当前包含 `sample.dungeon_room`，字段覆盖 `scene_id`、启用状态、排序、i18n key/fallback、`kind`、`manifest_path`、`layout_path`、默认 spawn 和 `ui_mode`。
 - `project/src/game/scenes/catalog.rs` 在启动时读取首包 CSV，按 `enabled` 过滤并向 `SceneRegistry` 注册 manifest 场景；CSV 解析失败会记录 warning 并保留空 catalog。
@@ -86,6 +88,16 @@
 - 大厅 `game_list` 当前有样板场景固定入口；显示文案使用 `lobby.sample_scene.*`，CSV 中的 `scene.sample_dungeon_room.*` 字段保留给后续 catalog 动态渲染。点击后发送 `SceneCommand::Switch("sample.dungeon_room")`，进入成功后切到 `AppUiMode::SampleScene` 并打开 `project/src/game/screens/gameplay/sample_scene.rs` HUD。
 - 样板 HUD 返回按钮会发送 `SceneCommand::Exit` 并路由回大厅；退出时 framework 会清理 `SceneOwned` 场景实体，HUD 由 UI state 退出清理。
 
+`arena.robot_sync` 是正式的机器人帧同步小场景：
+
+- `project/assets/game/scenes.csv` 当前包含 `arena.robot_sync`，`kind=arena`，`manifest_path=scenes/robot_sync_arena/scene.ron`，`layout_path=scenes/robot_sync_arena/layout.ron`，`default_spawn=spawn.robot_a`，`ui_mode=robot_sync_scene`。
+- `project/assets/scenes/robot_sync_arena/scene.ron` 是 framework manifest，声明 2D 正交相机、`arena` / `grid` / `spawns` / `robots` 轻量 layer、两个 spawn point 和场地 bounds anchors。
+- `project/assets/scenes/robot_sync_arena/layout.ron` 是 game layer layout，声明 500x500 场地、50 单位网格、边界、出生点、机器人半径和基础颜色；第一版不依赖重型美术资源。
+- `project/src/game/scenes/robot_sync_arena.rs` 监听 `SceneEvent::Entered("arena.robot_sync")`，读取 layout，在当前 `SceneRuntimeRoot` 下生成场地填充、边界、网格和 spawn marker，所有实体都挂 `SceneOwned(session_id)`。
+- `project/src/game/features/robot_sync/` 承载机器人同步玩法：进入场景后按配置启动 local、LAN 或 MyServer authority；本地 bot 发送 `robot_move`；玩法只消费 `AuthorityEvent::FrameApplied` 推进确定性 replay；视觉系统按 replay 状态生成和移动机器人实体；HUD 读取 snapshot 显示 room、player、authority frame、机器人数量和本地坐标；日志 telemetry 输出 checksum 和全量机器人 fixed 坐标摘要。
+- `project/src/game/screens/gameplay/robot_sync_scene.rs` 是机器人场景 HUD，进入成功后切到 `AppUiMode::RobotSyncScene`，返回按钮发送 `SceneCommand::Exit` 并路由回大厅。
+- MyServer 模式使用 `robot_sync_room` policy。game layer 通过 authority frame 回放 `robot_move` 输入；`project/src/framework/scene/` 仍不承载机器人业务同步规则、payload 校验或房间策略。
+
 ### 2.2 未实现设计目标和后续目标
 
 以下内容仍是后续目标，不应在业务文档或接入说明中写成已完成：
@@ -94,7 +106,7 @@
 - 尚未实现复杂 glTF/additive scene 实例化、碰撞层、导航层、manifest 声明式音频区域、光照环境和 LOD 应用。
 - 尚未实现按玩家或相机位置驱动的真实 chunk 加载/卸载；当前 streaming 只保留 chunk 元数据、状态和查询接口。
 - 尚未实现任务/剧情/战斗响应、玩家生成、复杂交互、样板场景内容编辑器或 Touch Ripple 业务改造。
-- 尚未实现完整远端 authority 协议接入、房间规则、玩家同步、ready 汇总和帧回放 gating；framework 只提供 ready 语义和 adapter 边界。
+- 场景 framework 尚未实现通用远端房间规则、玩家同步、ready 汇总和帧回放 gating；`arena.robot_sync` 的 MyServer 加房、`robot_move` 输入和 replay 规则属于 game layer 具体玩法闭环。
 - 尚未提供完整热重载、可视化调试 overlay、chunk/trigger/anchor 绘制和编辑器工具。
 
 ### 2.3 Framework 与 Game Layer 边界
@@ -1095,6 +1107,16 @@ LOD 建议分层：
 
 当前项目已有 `AuthorityCommand` / `AuthorityEvent`。场景系统接入联机时应把 authority 作为权威来源之一。
 
+当前已落地的联机场景样例是 `arena.robot_sync`。它不是 framework 通用同步规则，而是 game layer 在 `project/src/game/features/robot_sync/` 中完成的机器人玩法闭环：
+
+- 场景进入后，玩法层按 `ROBOT_SYNC_AUTHORITY_MODE` / `AUTHORITY_DEV_MODE` 启动 local、LAN host/client 或 MyServer authority。
+- MyServer 模式下，客户端使用 `AUTHORITY_MYSERVER_ROOM` / `ROBOT_SYNC_MYSERVER_ROOM` 指定 room，使用 `AUTHORITY_MYSERVER_POLICY` / `ROBOT_SYNC_MYSERVER_POLICY` 指定 policy；默认 policy 为 `robot_sync_room`。
+- 本地 bot 只发送 `AuthorityCommand::SendInput { action: "robot_move", frame_id: session.frame_id + input_delay_frames, payload_json }`，不直接修改机器人权威位置。
+- 两端都只在收到 `AuthorityEvent::FrameApplied` 后回放同一批 `robot_move` 输入，按 fixed units 推进机器人状态，并把状态映射到视觉实体。
+- 客户端日志会周期性输出 `robot sync frame applied`，字段包含 `frame_id`、`robot_count`、`checksum` 和按 `player_id` 稳定排序的 fixed 坐标摘要，可用于双客户端一致性比对。
+
+因此 framework 层只提供场景生命周期、root、相机、manifest 和 ready 边界；具体 room policy、输入 payload、deterministic replay、checksum 和 HUD snapshot 都留在 game layer / MyServer 对应实现中。
+
 ### 21.1 场景进入
 
 联机场景进入建议流程：
@@ -1202,6 +1224,35 @@ cargo run
 - `MYBEVY_SCENE_SIMULATE_FAILURE`：失败模拟类型，当前可解析 `manifest_load`、`asset_load`、`camera_setup`。
 
 这些变量只用于开发期，正式版本应由登录、房间、存档或服务端协议决定场景入口。
+
+`arena.robot_sync` 可直接从启动场景进入：
+
+```powershell
+Set-Location project
+$env:MYBEVY_START_SCENE="arena.robot_sync"
+cargo run -- --window-profile phone-small --window-scale 50%
+```
+
+MyServer 双客户端联调建议先启动 MyServer 完整本地栈，再启动客户端：
+
+```powershell
+# C:\project\MyServer
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-stack.ps1 -WithMatch
+
+# C:\project\mybevy
+.\scripts\start-robot-sync-two-clients.ps1 -SkipBuild -HostAddress 127.0.0.1 -Port 17002
+```
+
+注意：
+
+- 当前本地 MyServer 完整栈需要 `dev-stack.ps1 -WithMatch`，否则 `game-server` 可能因为发现不到 `match-service.grpc` 而无法正常对外服务。
+- `start-robot-sync-two-clients.ps1` 默认 `-Mode myserver`、`-Transport tcp`、同一 `AUTHORITY_MYSERVER_ROOM=robot-sync-room`、`AUTHORITY_MYSERVER_POLICY=robot_sync_room`，并为两个客户端设置不同的 `AUTHORITY_PLAYER_ID` / `AUTHORITY_MYSERVER_GUEST_ID`。
+- MyServer mode 下，脚本会按 transport 写入 `MYSERVER_GAME_HOST` 与 `MYSERVER_TCP_FALLBACK_PORT` 或 `MYSERVER_KCP_PORT`。本地常见 TCP fallback 端口取决于 MyServer `game-proxy` 配置；仓库 `.env` 可覆盖为 `17002`，默认代码口径也可能是 `PROXY_PORT + 10000`。
+- 如果只验证客户端 authority 回放，不依赖 MyServer，可使用 LAN fallback：
+
+```powershell
+.\scripts\start-robot-sync-two-clients.ps1 -Mode lan -SkipBuild
+```
 
 ## 24. 调试面板
 
@@ -1477,6 +1528,19 @@ git diff --check
 - `cargo check` 编译通过。
 - `cargo test` 单元测试和 Bevy app 测试通过。
 - `git diff --check` 不报告空白错误。
+
+`arena.robot_sync` 开发期手动验收可追加：
+
+```powershell
+Set-Location project
+$env:MYBEVY_START_SCENE="arena.robot_sync"
+cargo run -- --window-profile phone-small --window-scale 50%
+Set-Location ..
+.\scripts\start-robot-sync-two-clients.ps1 -DryRun -SkipBuild
+.\scripts\start-robot-sync-two-clients.ps1 -Mode lan -DryRun -SkipBuild
+```
+
+MyServer 双客户端验收时，重点对比两个客户端日志中的 `robot sync frame applied`：同一 `frame_id` 的 `checksum` 和 `robots` fixed 坐标摘要必须一致；同时确认 HUD 显示两个机器人，退出后无残留进程和重复实体。
 
 只改文档时，至少确认：
 
