@@ -10,7 +10,7 @@
       position: Some((0.0, 0.0, 0.0)),
       rotation: Some((0.0, 0.0, 0.0)),
       projection: Some((kind: "orthographic2d", scale: 560.0)),
-      target: Some(SceneAnchorId("anchor.camera_target")),
+      target: Some("anchor.camera_target"),
     )),
     loading_policy: "blocking_required_assets",
   ),

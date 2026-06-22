@@ -9,6 +9,8 @@ use crate::framework::scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot,
 
 pub(in crate::game) const ROBOT_SYNC_ARENA_SCENE_ID: &str = "arena.robot_sync";
 const ROBOT_SYNC_ARENA_LAYOUT_PATH: &str = "scenes/robot_sync_arena/layout.ron";
+#[cfg(test)]
+const ROBOT_SYNC_ARENA_SCENE_MANIFEST_PATH: &str = "scenes/robot_sync_arena/scene.ron";
 
 pub(super) struct RobotSyncArenaPlugin;
 
@@ -572,8 +574,26 @@ fn first_package_asset_root_candidates() -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use crate::framework::scene::prelude::{
-        SceneEntered, spawn_scene_root, spawn_scene_runtime_root,
+        SceneEntered, SceneManifest, spawn_scene_root, spawn_scene_runtime_root,
     };
+
+    #[test]
+    fn load_robot_sync_arena_manifest_from_first_package_assets() {
+        let manifest =
+            SceneManifest::load_first_package_ron(ROBOT_SYNC_ARENA_SCENE_MANIFEST_PATH).unwrap();
+
+        assert_eq!(manifest.version, "1");
+        assert_eq!(manifest.scene_id.as_str(), ROBOT_SYNC_ARENA_SCENE_ID);
+        assert_eq!(
+            manifest
+                .entry
+                .camera
+                .as_ref()
+                .and_then(|camera| camera.config().target.as_ref())
+                .map(|target| target.as_str()),
+            Some("anchor.camera_target")
+        );
+    }
 
     #[test]
     fn load_robot_sync_arena_layout_from_first_package_assets() {
