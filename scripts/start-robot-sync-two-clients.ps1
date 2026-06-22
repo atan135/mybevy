@@ -7,6 +7,10 @@ param(
     [string]$PlayerBId = "robot-player-b",
     [string]$GuestAId = "robot-guest-a",
     [string]$GuestBId = "robot-guest-b",
+    [ValidateSet("bot", "manual", "off")]
+    [string]$InputModeA = "bot",
+    [ValidateSet("bot", "manual", "off")]
+    [string]$InputModeB = "bot",
     [ValidateSet("tcp", "kcp")]
     [string]$Transport = "tcp",
     [string]$HostAddress = "127.0.0.1",
@@ -149,6 +153,7 @@ if ($Mode -eq "myserver") {
     $clientAEnv["AUTHORITY_DEV_MODE"] = "myserver"
     $clientAEnv["AUTHORITY_PLAYER_ID"] = $PlayerAId
     $clientAEnv["ROBOT_SYNC_PLAYER_ID"] = $PlayerAId
+    $clientAEnv["ROBOT_SYNC_INPUT_MODE"] = $InputModeA
     $clientAEnv["AUTHORITY_MYSERVER_ROOM"] = $RoomId
     $clientAEnv["ROBOT_SYNC_MYSERVER_ROOM"] = $RoomId
     $clientAEnv["AUTHORITY_MYSERVER_POLICY"] = $PolicyId
@@ -165,6 +170,7 @@ if ($Mode -eq "myserver") {
     $clientBEnv["AUTHORITY_DEV_MODE"] = "myserver"
     $clientBEnv["AUTHORITY_PLAYER_ID"] = $PlayerBId
     $clientBEnv["ROBOT_SYNC_PLAYER_ID"] = $PlayerBId
+    $clientBEnv["ROBOT_SYNC_INPUT_MODE"] = $InputModeB
     $clientBEnv["AUTHORITY_MYSERVER_ROOM"] = $RoomId
     $clientBEnv["ROBOT_SYNC_MYSERVER_ROOM"] = $RoomId
     $clientBEnv["AUTHORITY_MYSERVER_POLICY"] = $PolicyId
@@ -181,6 +187,7 @@ if ($Mode -eq "myserver") {
     $clientAEnv["AUTHORITY_DEV_MODE"] = "lan-host"
     $clientAEnv["AUTHORITY_PLAYER_ID"] = $PlayerAId
     $clientAEnv["ROBOT_SYNC_PLAYER_ID"] = $PlayerAId
+    $clientAEnv["ROBOT_SYNC_INPUT_MODE"] = $InputModeA
     $clientAEnv["AUTHORITY_BIND_ADDR"] = $bindAddr
     $clientAEnv["ROBOT_SYNC_LAN_BIND_ADDR"] = $bindAddr
 
@@ -189,6 +196,7 @@ if ($Mode -eq "myserver") {
     $clientBEnv["AUTHORITY_DEV_MODE"] = "lan-client"
     $clientBEnv["AUTHORITY_PLAYER_ID"] = $PlayerBId
     $clientBEnv["ROBOT_SYNC_PLAYER_ID"] = $PlayerBId
+    $clientBEnv["ROBOT_SYNC_INPUT_MODE"] = $InputModeB
     $clientBEnv["AUTHORITY_REMOTE_HOST"] = $HostAddress
     $clientBEnv["AUTHORITY_REMOTE_PORT"] = "$Port"
     $clientBEnv["ROBOT_SYNC_REMOTE_HOST"] = $HostAddress
@@ -219,6 +227,7 @@ if ($DryRun) {
 }
 
 Write-Host "Mode: $Mode"
+Write-Host "Input modes: A=$InputModeA, B=$InputModeB"
 Write-Host "Transport: $Transport"
 if ($Mode -eq "myserver") {
     Write-Host "Room: $RoomId"

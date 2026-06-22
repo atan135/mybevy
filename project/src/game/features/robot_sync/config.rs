@@ -15,6 +15,7 @@ pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_INPUT_DELAY_F
 pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_BOT_INPUT_INTERVAL_FRAMES: u32 =
     1;
 pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_BOT_SPEED: u32 = 10_000;
+pub(in crate::game::features::robot_sync) const DEFAULT_ROBOT_SYNC_MANUAL_SPEED: u32 = 10_000;
 const MAX_ROBOT_SYNC_BOT_SPEED: u32 = 10_000;
 
 #[derive(Clone, Debug, Resource, PartialEq, Eq)]
@@ -29,9 +30,11 @@ pub(in crate::game) struct RobotSyncConfig {
     pub(in crate::game::features::robot_sync) myserver_guest_id: Option<String>,
     pub(in crate::game::features::robot_sync) myserver_room_id: String,
     pub(in crate::game::features::robot_sync) myserver_policy_id: String,
+    pub(in crate::game::features::robot_sync) input_mode: RobotSyncInputMode,
     pub(in crate::game::features::robot_sync) input_delay_frames: u32,
     pub(in crate::game::features::robot_sync) bot_input_interval_frames: u32,
     pub(in crate::game::features::robot_sync) bot_speed: u32,
+    pub(in crate::game::features::robot_sync) manual_speed: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -41,6 +44,14 @@ pub(in crate::game::features::robot_sync) enum RobotSyncAuthorityMode {
     LanHost,
     LanClient,
     MyServer,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::game::features::robot_sync) enum RobotSyncInputMode {
+    #[default]
+    Bot,
+    Manual,
     Off,
 }
 
@@ -64,6 +75,17 @@ impl Default for RobotSyncConfig {
                 speed = bot_speed,
                 max_speed = MAX_ROBOT_SYNC_BOT_SPEED,
                 "robot sync bot speed clamped to current MyServer validation range"
+            );
+        }
+        let manual_speed = env_u32(
+            &["ROBOT_SYNC_MANUAL_SPEED"],
+            DEFAULT_ROBOT_SYNC_MANUAL_SPEED,
+        );
+        if manual_speed > MAX_ROBOT_SYNC_BOT_SPEED {
+            warn!(
+                speed = manual_speed,
+                max_speed = MAX_ROBOT_SYNC_BOT_SPEED,
+                "robot sync manual speed clamped to current MyServer validation range"
             );
         }
 
@@ -103,6 +125,7 @@ impl Default for RobotSyncConfig {
                 DEFAULT_ROBOT_SYNC_MYSERVER_ROOM_ID,
             ),
             myserver_policy_id,
+            input_mode: env_input_mode(&["ROBOT_SYNC_INPUT_MODE"]),
             input_delay_frames: env_u32(
                 &["ROBOT_SYNC_INPUT_DELAY_FRAMES"],
                 DEFAULT_ROBOT_SYNC_INPUT_DELAY_FRAMES,
@@ -117,6 +140,7 @@ impl Default for RobotSyncConfig {
             // robot_move validator accepts 0..=10000. Keep the client default legal
             // end-to-end until the server policy range is widened.
             bot_speed: bot_speed.min(MAX_ROBOT_SYNC_BOT_SPEED),
+            manual_speed: manual_speed.min(MAX_ROBOT_SYNC_BOT_SPEED),
         }
     }
 }
@@ -141,6 +165,22 @@ fn env_authority_mode(names: &[&str]) -> RobotSyncAuthorityMode {
         other => {
             warn!(mode = %other, "unknown robot sync authority mode; using local");
             RobotSyncAuthorityMode::Local
+        }
+    }
+}
+
+fn env_input_mode(names: &[&str]) -> RobotSyncInputMode {
+    parse_input_mode(&env_first(names).unwrap_or_default())
+}
+
+fn parse_input_mode(value: &str) -> RobotSyncInputMode {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "manual" | "keyboard" | "player" | "human" => RobotSyncInputMode::Manual,
+        "off" | "none" | "disabled" => RobotSyncInputMode::Off,
+        "bot" | "auto" | "automatic" | "" => RobotSyncInputMode::Bot,
+        other => {
+            warn!(mode = %other, "unknown robot sync input mode; using bot");
+            RobotSyncInputMode::Bot
         }
     }
 }
@@ -196,6 +236,7 @@ mod tests {
     fn robot_sync_config_defaults_to_server_legal_bot_input_settings() {
         let config = RobotSyncConfig::default();
 
+        assert_eq!(config.input_mode, RobotSyncInputMode::Bot);
         assert_eq!(
             config.input_delay_frames,
             DEFAULT_ROBOT_SYNC_INPUT_DELAY_FRAMES
@@ -206,5 +247,16 @@ mod tests {
         );
         assert_eq!(config.bot_speed, DEFAULT_ROBOT_SYNC_BOT_SPEED);
         assert!(config.bot_speed <= MAX_ROBOT_SYNC_BOT_SPEED);
+        assert_eq!(config.manual_speed, DEFAULT_ROBOT_SYNC_MANUAL_SPEED);
+        assert!(config.manual_speed <= MAX_ROBOT_SYNC_BOT_SPEED);
+    }
+
+    #[test]
+    fn robot_sync_input_mode_accepts_manual_aliases() {
+        assert_eq!(parse_input_mode("manual"), RobotSyncInputMode::Manual);
+        assert_eq!(parse_input_mode("keyboard"), RobotSyncInputMode::Manual);
+        assert_eq!(parse_input_mode("player"), RobotSyncInputMode::Manual);
+        assert_eq!(parse_input_mode("bot"), RobotSyncInputMode::Bot);
+        assert_eq!(parse_input_mode("off"), RobotSyncInputMode::Off);
     }
 }

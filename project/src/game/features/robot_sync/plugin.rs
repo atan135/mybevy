@@ -9,8 +9,11 @@ use crate::{
 };
 
 use super::{
-    bot::{ROBOT_MOVE_ACTION, RobotSyncBotState, clear_robot_sync_bots},
-    config::RobotSyncConfig,
+    bot::{
+        ROBOT_MOVE_ACTION, RobotMoveDirection, RobotMovePayload, RobotSyncBotState,
+        clear_robot_sync_bots,
+    },
+    config::{RobotSyncConfig, RobotSyncInputMode},
     state::RobotSyncSceneState,
     sync::{
         RobotSyncMyServerJoinState, RobotSyncReplayState, apply_robot_sync_authority_events,
@@ -35,7 +38,7 @@ impl Plugin for RobotSyncPlugin {
                 (
                     follow_robot_sync_myserver_events,
                     apply_robot_sync_authority_events,
-                    send_local_robot_sync_bot_input,
+                    send_local_robot_sync_input,
                 ),
             )
             .add_systems(
@@ -45,10 +48,11 @@ impl Plugin for RobotSyncPlugin {
     }
 }
 
-fn send_local_robot_sync_bot_input(
+fn send_local_robot_sync_input(
     config: Res<RobotSyncConfig>,
     scene_state: Res<RobotSyncSceneState>,
     authority_session: Res<AuthoritySession>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
     mut bot_state: ResMut<RobotSyncBotState>,
     mut authority_commands: MessageWriter<AuthorityCommand>,
 ) {
@@ -60,6 +64,33 @@ fn send_local_robot_sync_bot_input(
         return;
     };
 
+    match config.input_mode {
+        RobotSyncInputMode::Bot => send_local_robot_sync_bot_input(
+            &config,
+            &authority_session,
+            &mut bot_state,
+            &mut authority_commands,
+            local_player_id,
+        ),
+        RobotSyncInputMode::Manual => send_local_robot_sync_manual_input(
+            &config,
+            &authority_session,
+            &keyboard_input,
+            &mut bot_state,
+            &mut authority_commands,
+            local_player_id,
+        ),
+        RobotSyncInputMode::Off => {}
+    }
+}
+
+fn send_local_robot_sync_bot_input(
+    config: &RobotSyncConfig,
+    authority_session: &AuthoritySession,
+    bot_state: &mut RobotSyncBotState,
+    authority_commands: &mut MessageWriter<AuthorityCommand>,
+    local_player_id: &str,
+) {
     let target_frame = authority_session
         .frame_id
         .saturating_add(config.input_delay_frames);
@@ -88,6 +119,120 @@ fn send_local_robot_sync_bot_input(
         payload_json,
     });
     bot_state.mark_sent_target_frame(target_frame);
+}
+
+fn send_local_robot_sync_manual_input(
+    config: &RobotSyncConfig,
+    authority_session: &AuthoritySession,
+    keyboard_input: &ButtonInput<KeyCode>,
+    bot_state: &mut RobotSyncBotState,
+    authority_commands: &mut MessageWriter<AuthorityCommand>,
+    local_player_id: &str,
+) {
+    let direction = manual_robot_sync_direction(keyboard_input);
+    let speed = if direction.is_zero() {
+        0
+    } else {
+        config.manual_speed
+    };
+    let target_frame = authority_session
+        .frame_id
+        .saturating_add(config.input_delay_frames);
+
+    if direction.is_zero() && bot_state.last_input_was_stop_or_none() {
+        return;
+    }
+    if bot_state.last_input_matches(direction, speed)
+        && !bot_state.should_send_target_frame(target_frame, config.bot_input_interval_frames)
+    {
+        return;
+    }
+    if !bot_state.last_input_matches(direction, speed)
+        && matches!(bot_state.last_sent_target_frame, Some(last) if target_frame <= last)
+    {
+        return;
+    }
+
+    let payload = bot_state.next_move_payload_for_direction(direction, speed);
+    send_robot_sync_input(
+        authority_commands,
+        local_player_id,
+        target_frame,
+        &payload,
+        "sending robot sync manual input",
+    );
+    bot_state.mark_sent_target_frame(target_frame);
+}
+
+fn manual_robot_sync_direction(keyboard_input: &ButtonInput<KeyCode>) -> RobotMoveDirection {
+    let x = pressed_axis(
+        keyboard_input,
+        [KeyCode::KeyA, KeyCode::ArrowLeft],
+        [KeyCode::KeyD, KeyCode::ArrowRight],
+    );
+    let y = pressed_axis(
+        keyboard_input,
+        [KeyCode::KeyS, KeyCode::ArrowDown],
+        [KeyCode::KeyW, KeyCode::ArrowUp],
+    );
+
+    match (x, y) {
+        (0, 0) => RobotMoveDirection::ZERO,
+        (x, 0) => RobotMoveDirection {
+            dir_x: x * 1000,
+            dir_y: 0,
+        },
+        (0, y) => RobotMoveDirection {
+            dir_x: 0,
+            dir_y: y * 1000,
+        },
+        (x, y) => RobotMoveDirection {
+            dir_x: x * 707,
+            dir_y: y * 707,
+        },
+    }
+}
+
+fn pressed_axis(
+    keyboard_input: &ButtonInput<KeyCode>,
+    negative_keys: [KeyCode; 2],
+    positive_keys: [KeyCode; 2],
+) -> i32 {
+    let negative = keyboard_input.any_pressed(negative_keys);
+    let positive = keyboard_input.any_pressed(positive_keys);
+    match (negative, positive) {
+        (true, false) => -1,
+        (false, true) => 1,
+        _ => 0,
+    }
+}
+
+fn send_robot_sync_input(
+    authority_commands: &mut MessageWriter<AuthorityCommand>,
+    local_player_id: &str,
+    target_frame: u32,
+    payload: &RobotMovePayload,
+    message: &str,
+) {
+    let Ok(payload_json) = serde_json::to_string(payload) else {
+        return;
+    };
+
+    debug!(
+        player_id = %local_player_id,
+        target_frame,
+        seq = payload.seq,
+        botTick = payload.bot_tick,
+        dirX = payload.dir_x,
+        dirY = payload.dir_y,
+        speed = payload.speed,
+        "{message}"
+    );
+    authority_commands.write(AuthorityCommand::SendInput {
+        frame_id: target_frame,
+        action: ROBOT_MOVE_ACTION.to_string(),
+        payload_json,
+    });
 }
 
 fn update_robot_sync_scene_state(
@@ -145,7 +290,7 @@ mod tests {
             features::robot_sync::{
                 config::{
                     DEFAULT_ROBOT_SYNC_PLAYER_ID, ROBOT_SYNC_MYSERVER_POLICY_ID,
-                    RobotSyncAuthorityMode,
+                    RobotSyncAuthorityMode, RobotSyncInputMode,
                 },
                 sync::RobotSyncMyServerJoinState,
             },
@@ -163,6 +308,7 @@ mod tests {
             .add_message::<MyServerCommand>()
             .add_message::<MyServerEvent>()
             .init_resource::<AuthoritySession>()
+            .init_resource::<ButtonInput<KeyCode>>()
             .add_plugins(RobotSyncPlugin);
         app
     }
@@ -179,9 +325,11 @@ mod tests {
             myserver_guest_id: Some("robot-guest".to_string()),
             myserver_room_id: "robot-room".to_string(),
             myserver_policy_id: ROBOT_SYNC_MYSERVER_POLICY_ID.to_string(),
+            input_mode: RobotSyncInputMode::Bot,
             input_delay_frames: 2,
             bot_input_interval_frames: 1,
             bot_speed: 10000,
+            manual_speed: 10000,
         }
     }
 
@@ -583,6 +731,122 @@ mod tests {
         assert!(read_messages::<AuthorityCommand>(app.world()).is_empty());
     }
 
+    #[test]
+    fn robot_sync_manual_input_uses_keyboard_direction() {
+        let mut app = test_app();
+        let mut config = test_config(RobotSyncAuthorityMode::Off);
+        config.input_mode = RobotSyncInputMode::Manual;
+        app.insert_resource(config);
+        activate_robot_sync_scene(&mut app);
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("robot-player-a".to_string());
+            session.frame_id = 40;
+        }
+        {
+            let mut keyboard = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keyboard.press(KeyCode::KeyW);
+            keyboard.press(KeyCode::KeyD);
+        }
+
+        app.update();
+
+        let authority_commands = read_messages::<AuthorityCommand>(app.world());
+        assert_eq!(authority_commands.len(), 1);
+        let payload = robot_move_payload(&authority_commands[0]);
+        assert_eq!(
+            payload.get("dirX").and_then(|value| value.as_i64()),
+            Some(707)
+        );
+        assert_eq!(
+            payload.get("dirY").and_then(|value| value.as_i64()),
+            Some(707)
+        );
+        assert_eq!(
+            payload.get("speed").and_then(|value| value.as_i64()),
+            Some(10000)
+        );
+    }
+
+    #[test]
+    fn robot_sync_manual_input_sends_stop_after_key_release() {
+        let mut app = test_app();
+        let mut config = test_config(RobotSyncAuthorityMode::Off);
+        config.input_mode = RobotSyncInputMode::Manual;
+        app.insert_resource(config);
+        activate_robot_sync_scene(&mut app);
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("robot-player-a".to_string());
+            session.frame_id = 40;
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        app.update();
+
+        app.world_mut().resource_mut::<AuthoritySession>().frame_id = 41;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyW);
+        app.update();
+
+        let authority_commands = read_messages::<AuthorityCommand>(app.world());
+        assert_eq!(authority_commands.len(), 2);
+        let payload = robot_move_payload(&authority_commands[1]);
+        assert_eq!(
+            payload.get("dirX").and_then(|value| value.as_i64()),
+            Some(0)
+        );
+        assert_eq!(
+            payload.get("dirY").and_then(|value| value.as_i64()),
+            Some(0)
+        );
+        assert_eq!(
+            payload.get("speed").and_then(|value| value.as_i64()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn robot_sync_manual_input_skips_idle_until_key_is_pressed() {
+        let mut app = test_app();
+        let mut config = test_config(RobotSyncAuthorityMode::Off);
+        config.input_mode = RobotSyncInputMode::Manual;
+        app.insert_resource(config);
+        activate_robot_sync_scene(&mut app);
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("robot-player-a".to_string());
+            session.frame_id = 40;
+        }
+
+        app.update();
+
+        assert!(read_messages::<AuthorityCommand>(app.world()).is_empty());
+    }
+
+    #[test]
+    fn robot_sync_input_mode_off_does_not_send_local_input() {
+        let mut app = test_app();
+        let mut config = test_config(RobotSyncAuthorityMode::Off);
+        config.input_mode = RobotSyncInputMode::Off;
+        app.insert_resource(config);
+        activate_robot_sync_scene(&mut app);
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("robot-player-a".to_string());
+            session.frame_id = 40;
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+
+        app.update();
+
+        assert!(read_messages::<AuthorityCommand>(app.world()).is_empty());
+    }
+
     fn activate_robot_sync_scene(app: &mut App) {
         app.world_mut()
             .resource_mut::<RobotSyncSceneState>()
@@ -599,5 +863,18 @@ mod tests {
         let messages = world.resource::<Messages<M>>();
         let mut cursor = MessageCursor::default();
         cursor.read(messages).cloned().collect()
+    }
+
+    fn robot_move_payload(command: &AuthorityCommand) -> serde_json::Value {
+        let AuthorityCommand::SendInput {
+            action,
+            payload_json,
+            ..
+        } = command
+        else {
+            panic!("expected robot move input command");
+        };
+        assert_eq!(action, ROBOT_MOVE_ACTION);
+        serde_json::from_str(payload_json).unwrap()
     }
 }

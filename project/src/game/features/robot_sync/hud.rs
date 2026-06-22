@@ -110,7 +110,8 @@ mod tests {
     use super::*;
     use crate::framework::{network::NetworkTransport, scene::prelude::SceneId};
     use crate::game::{
-        authority::AuthoritySession, features::robot_sync::config::ROBOT_SYNC_MYSERVER_POLICY_ID,
+        authority::AuthoritySession,
+        features::robot_sync::config::{ROBOT_SYNC_MYSERVER_POLICY_ID, RobotSyncInputMode},
         scenes::ROBOT_SYNC_ARENA_SCENE_ID,
     };
 
@@ -165,9 +166,11 @@ mod tests {
             myserver_guest_id: Some("guest-a".to_string()),
             myserver_room_id: "robot-room".to_string(),
             myserver_policy_id: ROBOT_SYNC_MYSERVER_POLICY_ID.to_string(),
+            input_mode: RobotSyncInputMode::Bot,
             input_delay_frames: 2,
             bot_input_interval_frames: 1,
             bot_speed: 10_000,
+            manual_speed: 10_000,
         }
     }
 }

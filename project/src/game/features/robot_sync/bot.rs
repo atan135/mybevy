@@ -46,6 +46,14 @@ pub(in crate::game::features::robot_sync) struct RobotMoveDirection {
     pub(in crate::game::features::robot_sync) dir_y: i32,
 }
 
+impl RobotMoveDirection {
+    pub(in crate::game::features::robot_sync) const ZERO: Self = Self { dir_x: 0, dir_y: 0 };
+
+    pub(in crate::game::features::robot_sync) fn is_zero(self) -> bool {
+        self == Self::ZERO
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -65,6 +73,7 @@ pub(in crate::game::features::robot_sync) struct RobotSyncBotState {
     pub(in crate::game::features::robot_sync) bot_tick: u32,
     pub(in crate::game::features::robot_sync) last_sent_target_frame: Option<u32>,
     pub(in crate::game::features::robot_sync) last_dir: Option<RobotMoveDirection>,
+    pub(in crate::game::features::robot_sync) last_speed: u32,
     pub(in crate::game::features::robot_sync) seed: u32,
     pub(in crate::game::features::robot_sync) seed_player_id: Option<String>,
 }
@@ -90,6 +99,14 @@ impl RobotSyncBotState {
     ) -> RobotMovePayload {
         self.ensure_seed(player_id);
         let direction = direction_for_seed_and_tick(self.seed, self.bot_tick);
+        self.next_move_payload_for_direction(direction, speed)
+    }
+
+    pub(in crate::game::features::robot_sync) fn next_move_payload_for_direction(
+        &mut self,
+        direction: RobotMoveDirection,
+        speed: u32,
+    ) -> RobotMovePayload {
         self.seq = self.seq.saturating_add(1);
         let payload = RobotMovePayload {
             version: ROBOT_MOVE_PAYLOAD_VERSION,
@@ -101,6 +118,7 @@ impl RobotSyncBotState {
         };
         self.bot_tick = self.bot_tick.saturating_add(1);
         self.last_dir = Some(direction);
+        self.last_speed = speed;
         payload
     }
 
@@ -113,6 +131,18 @@ impl RobotSyncBotState {
 
     pub(in crate::game::features::robot_sync) fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    pub(in crate::game::features::robot_sync) fn last_input_matches(
+        &self,
+        direction: RobotMoveDirection,
+        speed: u32,
+    ) -> bool {
+        self.last_dir == Some(direction) && self.last_speed == speed
+    }
+
+    pub(in crate::game::features::robot_sync) fn last_input_was_stop_or_none(&self) -> bool {
+        self.last_dir.is_none_or(RobotMoveDirection::is_zero) && self.last_speed == 0
     }
 
     fn ensure_seed(&mut self, player_id: &str) {
