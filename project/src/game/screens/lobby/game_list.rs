@@ -28,7 +28,7 @@ use crate::framework::{
 use crate::game::{
     features::touch_ripple::TouchLaunchMode,
     navigation::{AppUiMode, GameRouteCommand, game_panel_root, secondary_route_button_key},
-    scenes::SAMPLE_DUNGEON_ROOM_SCENE_ID,
+    scenes::{ROBOT_SYNC_ARENA_SCENE_ID, SAMPLE_DUNGEON_ROOM_SCENE_ID},
     ui_ids::{
         ACTION_CANCEL, ACTION_CONFIRM, ACTION_TOUCH_RIPPLE_NETWORKED,
         ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY, PANEL_GAME_LIST,
@@ -41,12 +41,36 @@ pub(super) struct TouchRipplePlayButton;
 #[derive(Component)]
 pub(super) struct SampleDungeonRoomPlayButton;
 
+#[derive(Component)]
+pub(super) struct RobotSyncArenaPlayButton;
+
 #[derive(Resource, Default)]
 pub(super) struct SampleDungeonRoomEntryState {
     pending: bool,
 }
 
 impl SampleDungeonRoomEntryState {
+    pub(super) fn clear(&mut self) {
+        self.pending = false;
+    }
+}
+
+#[derive(Resource, Default)]
+pub(super) struct RobotSyncArenaEntryState {
+    pending: bool,
+}
+
+impl RobotSyncArenaEntryState {
+    #[cfg(test)]
+    pub(super) fn is_pending(&self) -> bool {
+        self.pending
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_pending_for_test(&mut self, pending: bool) {
+        self.pending = pending;
+    }
+
     pub(super) fn clear(&mut self) {
         self.pending = false;
     }
@@ -280,6 +304,57 @@ pub(super) fn setup_game_list_screen(
                             ),
                         ],
                     ),
+                    (
+                        Node {
+                            width: percent(100),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::SpaceBetween,
+                            column_gap: px(theme.layout.row_column_gap),
+                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
+                            ..default()
+                        },
+                        children![
+                            (
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: px(theme.layout.row_gap),
+                                    flex_grow: 1.0,
+                                    ..default()
+                                },
+                                children![
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.robot_sync_scene.title",
+                                        "Robot Sync",
+                                        UiThemeTextStyleRole::Body,
+                                        UiThemeTextColorRole::Primary,
+                                    ),
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.robot_sync_scene.description",
+                                        "500x500 authority frame robot arena",
+                                        UiThemeTextStyleRole::Caption,
+                                        UiThemeTextColorRole::Muted,
+                                    ),
+                                ],
+                            ),
+                            (
+                                primary_action_button_key(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    "lobby.enter",
+                                    "Enter",
+                                ),
+                                RobotSyncArenaPlayButton,
+                            ),
+                        ],
+                    ),
                 ],
             ),
         ],
@@ -289,6 +364,7 @@ pub(super) fn setup_game_list_screen(
 pub(super) fn handle_game_list_buttons(
     mut launch_mode: ResMut<TouchLaunchMode>,
     mut sample_scene_entry: ResMut<SampleDungeonRoomEntryState>,
+    mut robot_sync_entry: ResMut<RobotSyncArenaEntryState>,
     i18n: Res<UiI18n>,
     mut scene_commands: MessageWriter<SceneCommand>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
@@ -297,6 +373,7 @@ pub(super) fn handle_game_list_buttons(
     mut modal_results: MessageReader<UiModalResult>,
     play_buttons: Query<(), With<TouchRipplePlayButton>>,
     sample_scene_buttons: Query<(), With<SampleDungeonRoomPlayButton>>,
+    robot_sync_buttons: Query<(), With<RobotSyncArenaPlayButton>>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
     for event in button_events.read() {
@@ -316,6 +393,15 @@ pub(super) fn handle_game_list_buttons(
             sample_scene_entry.pending = true;
             scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
                 SAMPLE_DUNGEON_ROOM_SCENE_ID,
+            )));
+        } else if robot_sync_buttons.contains(event.entity) {
+            if robot_sync_entry.pending {
+                continue;
+            }
+
+            robot_sync_entry.pending = true;
+            scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
+                ROBOT_SYNC_ARENA_SCENE_ID,
             )));
         }
     }
