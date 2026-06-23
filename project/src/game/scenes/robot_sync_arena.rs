@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{gltf::GltfAssetLabel, prelude::*, scene::SceneRoot as BevySceneRoot};
 use serde::{Deserialize, Deserializer, de};
 use std::{
     fs, io,
@@ -11,13 +11,28 @@ pub(in crate::game) const ROBOT_SYNC_ARENA_SCENE_ID: &str = "arena.robot_sync";
 const ROBOT_SYNC_ARENA_LAYOUT_PATH: &str = "scenes/robot_sync_arena/layout.ron";
 #[cfg(test)]
 const ROBOT_SYNC_ARENA_SCENE_MANIFEST_PATH: &str = "scenes/robot_sync_arena/scene.ron";
+const ROBOT_SYNC_ARENA_FLOOR_TILE_ASSET_PATH: &str =
+    "models/scenes/kaykit_dungeon_remastered/floor_tile_large.gltf";
 const ARENA_BASE_THICKNESS: f32 = 4.0;
+const ARENA_BASE_TOP_Y: f32 = -0.25;
+const FLOOR_TILE_SOURCE_HALF_EXTENT: f32 = 2.0;
+const FLOOR_TILE_SCALE_XZ: f32 = 50.0;
+const FLOOR_TILE_SCALE_Y: f32 = 1.0;
+const FLOOR_TILE_Y: f32 = 0.0;
+const FLOOR_TILE_TOP_Y: f32 = 0.05;
+const FLOOR_SURFACE_CLEARANCE: f32 = 0.05;
 const GRID_LINE_HEIGHT: f32 = 0.18;
-const GRID_LINE_Y: f32 = 0.18;
+const GRID_LINE_Y: f32 = FLOOR_TILE_TOP_Y + FLOOR_SURFACE_CLEARANCE + GRID_LINE_HEIGHT * 0.5;
 const BOUNDARY_WALL_HEIGHT: f32 = 5.0;
+const BOUNDARY_WALL_Y: f32 =
+    FLOOR_TILE_TOP_Y + FLOOR_SURFACE_CLEARANCE + BOUNDARY_WALL_HEIGHT * 0.5;
 const SPAWN_MARKER_INNER_RADIUS: f32 = 11.0;
 const SPAWN_MARKER_OUTER_RADIUS: f32 = 16.0;
-const SPAWN_MARKER_Y: f32 = 0.85;
+const SPAWN_MARKER_VERTICAL_SCALE: f32 = 0.12;
+const SPAWN_MARKER_Y: f32 = GRID_LINE_Y
+    + GRID_LINE_HEIGHT * 0.5
+    + spawn_marker_vertical_half_extent()
+    + FLOOR_SURFACE_CLEARANCE;
 const SPAWN_MARKER_COLOR: Color = Color::srgb(1.0, 0.84, 0.18);
 
 pub(super) struct RobotSyncArenaPlugin;
@@ -152,6 +167,7 @@ struct RobotSyncArenaContent {
 #[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
 enum RobotSyncArenaVisual {
     ArenaBase,
+    FloorTile,
     Boundary,
     Grid,
     SpawnMarker,
@@ -213,6 +229,7 @@ fn instantiate_robot_sync_arena_content(
     mut scene_events: MessageReader<SceneEvent>,
     runtime_roots: Query<(Entity, &SceneRuntimeRoot)>,
     existing_content: Query<&RobotSyncArenaContent>,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -267,6 +284,7 @@ fn instantiate_robot_sync_arena_content(
             runtime_root,
             &entered.session_id,
             &layout,
+            &asset_server,
             &mut meshes,
             &mut materials,
         );
@@ -279,6 +297,7 @@ fn spawn_robot_sync_arena_content(
     parent: Entity,
     session_id: &SceneSessionId,
     layout: &RobotSyncArenaLayout,
+    asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) -> Entity {
@@ -293,7 +312,15 @@ fn spawn_robot_sync_arena_content(
         ))
         .id();
     commands.entity(parent).add_child(content);
-    spawn_robot_sync_arena_visuals(commands, content, session_id, layout, meshes, materials);
+    spawn_robot_sync_arena_visuals(
+        commands,
+        content,
+        session_id,
+        layout,
+        asset_server,
+        meshes,
+        materials,
+    );
     content
 }
 
@@ -302,6 +329,7 @@ fn spawn_robot_sync_arena_visuals(
     parent: Entity,
     session_id: &SceneSessionId,
     layout: &RobotSyncArenaLayout,
+    asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
@@ -318,15 +346,54 @@ fn spawn_robot_sync_arena_visuals(
             ARENA_BASE_THICKNESS,
             layout.arena.height,
         ),
-        Vec3::new(arena_center.x, -ARENA_BASE_THICKNESS * 0.5, arena_center.y),
+        Vec3::new(
+            arena_center.x,
+            ARENA_BASE_TOP_Y - ARENA_BASE_THICKNESS * 0.5,
+            arena_center.y,
+        ),
         meshes,
         materials,
     );
 
+    spawn_robot_sync_arena_floor_tiles(commands, parent, session_id, layout, asset_server);
     spawn_robot_sync_arena_grid(commands, parent, session_id, layout, meshes, materials);
     spawn_robot_sync_arena_boundary(commands, parent, session_id, layout, meshes, materials);
     spawn_robot_sync_arena_spawn_markers(commands, parent, session_id, layout, meshes, materials);
     spawn_robot_sync_arena_directional_light(commands, parent, session_id);
+}
+
+fn spawn_robot_sync_arena_floor_tiles(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    layout: &RobotSyncArenaLayout,
+    asset_server: &AssetServer,
+) {
+    let scene_handle = asset_server
+        .load(GltfAssetLabel::Scene(0).from_asset(ROBOT_SYNC_ARENA_FLOOR_TILE_ASSET_PATH));
+
+    for center in floor_tile_centers_for_bounds(&layout.arena.min, &layout.arena.max) {
+        let entity = commands
+            .spawn((
+                BevySceneRoot(scene_handle.clone()),
+                Transform {
+                    translation: Vec3::new(center.x, FLOOR_TILE_Y, center.y),
+                    scale: Vec3::new(FLOOR_TILE_SCALE_XZ, FLOOR_TILE_SCALE_Y, FLOOR_TILE_SCALE_XZ),
+                    ..default()
+                },
+                SceneOwned::new(session_id.clone()),
+                RobotSyncArenaContent {
+                    session_id: session_id.clone(),
+                },
+                RobotSyncArenaVisual::FloorTile,
+                Name::new(format!(
+                    "RobotSyncArenaFloorTile({:.0},{:.0})",
+                    center.x, center.y
+                )),
+            ))
+            .id();
+        commands.entity(parent).add_child(entity);
+    }
 }
 
 fn spawn_robot_sync_arena_grid(
@@ -423,38 +490,22 @@ fn spawn_robot_sync_arena_boundary(
         (
             "left",
             Vec3::new(thickness, BOUNDARY_WALL_HEIGHT, height),
-            Vec3::new(
-                min[0] + thickness * 0.5,
-                BOUNDARY_WALL_HEIGHT * 0.5,
-                center_y,
-            ),
+            Vec3::new(min[0] + thickness * 0.5, BOUNDARY_WALL_Y, center_y),
         ),
         (
             "right",
             Vec3::new(thickness, BOUNDARY_WALL_HEIGHT, height),
-            Vec3::new(
-                max[0] - thickness * 0.5,
-                BOUNDARY_WALL_HEIGHT * 0.5,
-                center_y,
-            ),
+            Vec3::new(max[0] - thickness * 0.5, BOUNDARY_WALL_Y, center_y),
         ),
         (
             "bottom",
             Vec3::new(width, BOUNDARY_WALL_HEIGHT, thickness),
-            Vec3::new(
-                center_x,
-                BOUNDARY_WALL_HEIGHT * 0.5,
-                min[1] + thickness * 0.5,
-            ),
+            Vec3::new(center_x, BOUNDARY_WALL_Y, min[1] + thickness * 0.5),
         ),
         (
             "top",
             Vec3::new(width, BOUNDARY_WALL_HEIGHT, thickness),
-            Vec3::new(
-                center_x,
-                BOUNDARY_WALL_HEIGHT * 0.5,
-                max[1] - thickness * 0.5,
-            ),
+            Vec3::new(center_x, BOUNDARY_WALL_Y, max[1] - thickness * 0.5),
         ),
     ];
 
@@ -515,7 +566,11 @@ fn spawn_robot_sync_arena_spawn_marker(
                 SPAWN_MARKER_OUTER_RADIUS,
             ))),
             MeshMaterial3d(materials.add(standard_material_from_color(SPAWN_MARKER_COLOR))),
-            Transform::from_translation(translation),
+            Transform::from_translation(translation).with_scale(Vec3::new(
+                1.0,
+                SPAWN_MARKER_VERTICAL_SCALE,
+                1.0,
+            )),
             SceneOwned::new(session_id.clone()),
             RobotSyncArenaContent {
                 session_id: session_id.clone(),
@@ -590,6 +645,59 @@ fn spawn_robot_sync_arena_directional_light(
 
 fn arena_center(min: &[f32; 2], max: &[f32; 2]) -> Vec2 {
     Vec2::new((min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5)
+}
+
+const fn spawn_marker_vertical_half_extent() -> f32 {
+    (SPAWN_MARKER_OUTER_RADIUS - SPAWN_MARKER_INNER_RADIUS) * 0.5 * SPAWN_MARKER_VERTICAL_SCALE
+}
+
+fn floor_tile_world_half_extent() -> f32 {
+    FLOOR_TILE_SOURCE_HALF_EXTENT * FLOOR_TILE_SCALE_XZ
+}
+
+fn floor_tile_world_spacing() -> f32 {
+    floor_tile_world_half_extent() * 2.0
+}
+
+fn floor_tile_centers_for_bounds(min: &[f32; 2], max: &[f32; 2]) -> Vec<Vec2> {
+    let x_centers = floor_tile_axis_centers(min[0], max[0]);
+    let z_centers = floor_tile_axis_centers(min[1], max[1]);
+    z_centers
+        .into_iter()
+        .flat_map(|z| x_centers.iter().copied().map(move |x| Vec2::new(x, z)))
+        .collect()
+}
+
+fn floor_tile_axis_centers(min: f32, max: f32) -> Vec<f32> {
+    if min > max {
+        return Vec::new();
+    }
+
+    let span = max - min;
+    let spacing = floor_tile_world_spacing();
+    let count = (span / spacing).ceil().max(1.0) as usize;
+    let center = (min + max) * 0.5;
+    let first_offset = -((count - 1) as f32) * spacing * 0.5;
+    (0..count)
+        .map(|index| center + first_offset + index as f32 * spacing)
+        .collect()
+}
+
+#[cfg(test)]
+fn floor_tile_coverage(centers: &[Vec2]) -> Option<([f32; 2], [f32; 2])> {
+    let half_extent = floor_tile_world_half_extent();
+    let first = centers.first()?;
+    let mut min = [first.x - half_extent, first.y - half_extent];
+    let mut max = [first.x + half_extent, first.y + half_extent];
+
+    for center in centers.iter().skip(1) {
+        min[0] = min[0].min(center.x - half_extent);
+        min[1] = min[1].min(center.y - half_extent);
+        max[0] = max[0].max(center.x + half_extent);
+        max[1] = max[1].max(center.y + half_extent);
+    }
+
+    Some((min, max))
 }
 
 fn grid_line_positions(min: f32, max: f32, spacing: f32, origin: f32) -> Vec<f32> {
@@ -700,11 +808,14 @@ mod tests {
     };
 
     const EXPECTED_MESH_VISUALS: usize = 29;
-    const EXPECTED_TOTAL_VISUALS: usize = EXPECTED_MESH_VISUALS + 1;
+    const EXPECTED_FLOOR_TILE_VISUALS: usize = 9;
+    const EXPECTED_TOTAL_VISUALS: usize = EXPECTED_MESH_VISUALS + EXPECTED_FLOOR_TILE_VISUALS + 1;
 
     fn app_with_robot_sync_arena_system() -> App {
         let mut app = App::new();
-        app.init_resource::<Assets<Mesh>>()
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<bevy::scene::Scene>()
+            .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .add_message::<SceneEvent>()
             .add_systems(Update, instantiate_robot_sync_arena_content);
@@ -769,6 +880,40 @@ mod tests {
     }
 
     #[test]
+    fn robot_sync_floor_tiles_cover_arena_bounds() {
+        let layout =
+            RobotSyncArenaLayout::load_first_package_ron(ROBOT_SYNC_ARENA_LAYOUT_PATH).unwrap();
+
+        let centers = floor_tile_centers_for_bounds(&layout.arena.min, &layout.arena.max);
+        assert_eq!(centers.len(), EXPECTED_FLOOR_TILE_VISUALS);
+        assert_eq!(floor_tile_world_half_extent(), 100.0);
+        assert_eq!(floor_tile_world_spacing(), 200.0);
+        assert_eq!(
+            centers,
+            vec![
+                Vec2::new(-200.0, -200.0),
+                Vec2::new(0.0, -200.0),
+                Vec2::new(200.0, -200.0),
+                Vec2::new(-200.0, 0.0),
+                Vec2::new(0.0, 0.0),
+                Vec2::new(200.0, 0.0),
+                Vec2::new(-200.0, 200.0),
+                Vec2::new(0.0, 200.0),
+                Vec2::new(200.0, 200.0),
+            ]
+        );
+
+        let (coverage_min, coverage_max) =
+            floor_tile_coverage(&centers).expect("floor tile coverage should exist");
+        assert!(coverage_min[0] <= layout.arena.min[0]);
+        assert!(coverage_min[1] <= layout.arena.min[1]);
+        assert!(coverage_max[0] >= layout.arena.max[0]);
+        assert!(coverage_max[1] >= layout.arena.max[1]);
+        assert_eq!(coverage_min, [-300.0, -300.0]);
+        assert_eq!(coverage_max, [300.0, 300.0]);
+    }
+
+    #[test]
     fn entered_robot_sync_arena_spawns_content_under_runtime_root() {
         let mut app = app_with_robot_sync_arena_system();
 
@@ -819,6 +964,7 @@ mod tests {
         assert_eq!(visual_entities.len(), EXPECTED_TOTAL_VISUALS);
 
         let mut arena_base_count = 0;
+        let mut floor_tile_count = 0;
         let mut boundary_count = 0;
         let mut grid_count = 0;
         let mut spawn_marker_count = 0;
@@ -830,6 +976,7 @@ mod tests {
             assert!(name.as_str().starts_with("RobotSyncArena"));
             match visual {
                 RobotSyncArenaVisual::ArenaBase => arena_base_count += 1,
+                RobotSyncArenaVisual::FloorTile => floor_tile_count += 1,
                 RobotSyncArenaVisual::Boundary => boundary_count += 1,
                 RobotSyncArenaVisual::Grid => grid_count += 1,
                 RobotSyncArenaVisual::SpawnMarker => spawn_marker_count += 1,
@@ -837,10 +984,40 @@ mod tests {
             }
         }
         assert_eq!(arena_base_count, 1);
+        assert_eq!(floor_tile_count, EXPECTED_FLOOR_TILE_VISUALS);
         assert_eq!(boundary_count, 4);
         assert_eq!(grid_count, 22);
         assert_eq!(spawn_marker_count, 2);
         assert_eq!(directional_light_count, 1);
+
+        let mut floor_tiles = app.world_mut().query::<(
+            &BevySceneRoot,
+            &Transform,
+            &ChildOf,
+            &SceneOwned,
+            &RobotSyncArenaContent,
+            &RobotSyncArenaVisual,
+            &Name,
+        )>();
+        let floor_tile_entities = floor_tiles.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(floor_tile_entities.len(), EXPECTED_FLOOR_TILE_VISUALS);
+        assert!(floor_tile_entities.iter().all(
+            |(_, transform, parent, owned, content, visual, name)| {
+                **visual == RobotSyncArenaVisual::FloorTile
+                    && parent.parent() == content_entity
+                    && owned.session_id == session_id
+                    && content.session_id == session_id
+                    && name.as_str().starts_with("RobotSyncArenaFloorTile(")
+                    && transform.translation.y == FLOOR_TILE_Y
+                    && transform.scale
+                        == Vec3::new(FLOOR_TILE_SCALE_XZ, FLOOR_TILE_SCALE_Y, FLOOR_TILE_SCALE_XZ)
+            }
+        ));
+        assert!(
+            floor_tile_entities.iter().any(|(_, _, _, _, _, _, name)| {
+                name.as_str() == "RobotSyncArenaFloorTile(0,0)"
+            })
+        );
 
         let mut mesh_visuals = app.world_mut().query::<(
             &Mesh3d,
@@ -852,6 +1029,19 @@ mod tests {
         assert_eq!(mesh_visual_entities.len(), EXPECTED_MESH_VISUALS);
         assert!(mesh_visual_entities.iter().all(|(_, _, visual, owned)| {
             **visual != RobotSyncArenaVisual::DirectionalLight && owned.session_id == session_id
+        }));
+
+        let mut boundaries = app
+            .world_mut()
+            .query::<(&RobotSyncArenaVisual, &Transform, &Name)>();
+        let boundary_entities = boundaries
+            .iter(app.world())
+            .filter(|(visual, _, _)| **visual == RobotSyncArenaVisual::Boundary)
+            .collect::<Vec<_>>();
+        assert_eq!(boundary_entities.len(), 4);
+        assert!(boundary_entities.iter().all(|(_, transform, name)| {
+            name.as_str().starts_with("RobotSyncArenaBoundary(")
+                && transform.translation.y - BOUNDARY_WALL_HEIGHT * 0.5 > FLOOR_TILE_TOP_Y
         }));
 
         let mut lights = app.world_mut().query::<(
@@ -889,9 +1079,16 @@ mod tests {
             })
             .expect("spawn.robot_a marker should be generated");
         assert_eq!(robot_a_spawn.2.translation.x, -120.0);
-        assert!(robot_a_spawn.2.translation.y > 0.0);
+        assert!(robot_a_spawn.2.translation.x < 0.0);
+        assert!(robot_a_spawn.2.translation.y > FLOOR_TILE_TOP_Y);
+        assert!(robot_a_spawn.2.translation.y > GRID_LINE_Y + GRID_LINE_HEIGHT * 0.5);
+        assert!(
+            robot_a_spawn.2.translation.y - spawn_marker_vertical_half_extent()
+                > GRID_LINE_Y + GRID_LINE_HEIGHT * 0.5
+        );
         assert_eq!(robot_a_spawn.2.translation.y, SPAWN_MARKER_Y);
         assert_eq!(robot_a_spawn.2.translation.z, 0.0);
+        assert_eq!(robot_a_spawn.2.rotation, Quat::IDENTITY);
         assert_eq!(robot_a_spawn.3.parent(), content_entity);
         assert_eq!(robot_a_spawn.4.session_id, session_id);
         assert_eq!(robot_a_spawn.5.session_id, session_id);
@@ -907,7 +1104,13 @@ mod tests {
             })
             .expect("spawn.robot_b marker should be generated");
         assert_eq!(robot_b_spawn.2.translation.x, 120.0);
-        assert!(robot_b_spawn.2.translation.y > 0.0);
+        assert!(robot_b_spawn.2.translation.x > 0.0);
+        assert!(robot_b_spawn.2.translation.y > FLOOR_TILE_TOP_Y);
+        assert!(robot_b_spawn.2.translation.y > GRID_LINE_Y + GRID_LINE_HEIGHT * 0.5);
+        assert!(
+            robot_b_spawn.2.translation.y - spawn_marker_vertical_half_extent()
+                > GRID_LINE_Y + GRID_LINE_HEIGHT * 0.5
+        );
         assert_eq!(robot_b_spawn.2.translation.z, 0.0);
 
         let mut sprites = app.world_mut().query_filtered::<Entity, With<Sprite>>();
