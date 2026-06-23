@@ -711,7 +711,7 @@ android/app/build/outputs/apk/release/
 
 当前还内置 `arena.robot_sync` 场景，用于正式验证场景内机器人帧同步：
 
-1. 场景显示 500x500 arena、glTF 地板、边界、网格、出生点和机器人。
+1. 场景显示 500x500 arena、glTF 地板、边界、网格、出生点和 GLB 人物机器人。
 2. 本地 bot 发送 `robot_move` 输入。
 3. 玩法层只消费 `AuthorityEvent::FrameApplied` 推进机器人 fixed 坐标。
 4. Robot Sync HUD 显示 room、player、authority 状态、frame、机器人数量和本地坐标。
