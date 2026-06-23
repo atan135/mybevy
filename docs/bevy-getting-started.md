@@ -711,10 +711,10 @@ android/app/build/outputs/apk/release/
 
 当前还内置 `arena.robot_sync` 场景，用于正式验证场景内机器人帧同步：
 
-1. 场景显示 500x500 arena、glTF 地板、边界、网格、出生点和 GLB 人物机器人。
+1. 场景显示 500x500 sync arena，并按 `0.1 world3d units / sync unit` 渲染 glTF 地板、边界、网格、出生点和 GLB 人物机器人。
 2. 本地 bot 发送 `robot_move` 输入。
 3. 玩法层只消费 `AuthorityEvent::FrameApplied` 推进机器人 fixed 坐标。
-4. Robot Sync HUD 显示 room、player、authority 状态、frame、机器人数量和本地坐标。
+4. Robot Sync HUD 显示 room、player、authority 状态、frame、机器人数量和本地 fixed/sync/world3d 坐标。
 5. 双客户端 MyServer 联调依赖 MyServer `robot_sync_room` policy；服务端只校验和转发 `robot_move`，不广播机器人坐标。
 
 当前工程已经内置一套网络通信接口：

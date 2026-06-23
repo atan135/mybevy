@@ -6,6 +6,10 @@ use std::{
 };
 
 use crate::framework::scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId};
+use crate::game::features::robot_sync::coordinates::{
+    ROBOT_SYNC_WORLD_UNITS_PER_SYNC_UNIT, robot_sync_axis_world_units_from_sync,
+    robot_sync_world_position_from_sync,
+};
 
 pub(in crate::game) const ROBOT_SYNC_ARENA_SCENE_ID: &str = "arena.robot_sync";
 const ROBOT_SYNC_ARENA_LAYOUT_PATH: &str = "scenes/robot_sync_arena/layout.ron";
@@ -26,8 +30,12 @@ const GRID_LINE_Y: f32 = FLOOR_TILE_TOP_Y + FLOOR_SURFACE_CLEARANCE + GRID_LINE_
 const BOUNDARY_WALL_HEIGHT: f32 = 5.0;
 const BOUNDARY_WALL_Y: f32 =
     FLOOR_TILE_TOP_Y + FLOOR_SURFACE_CLEARANCE + BOUNDARY_WALL_HEIGHT * 0.5;
-const SPAWN_MARKER_INNER_RADIUS: f32 = 11.0;
-const SPAWN_MARKER_OUTER_RADIUS: f32 = 16.0;
+const SPAWN_MARKER_INNER_RADIUS_SYNC: f32 = 11.0;
+const SPAWN_MARKER_OUTER_RADIUS_SYNC: f32 = 16.0;
+const SPAWN_MARKER_INNER_RADIUS: f32 =
+    SPAWN_MARKER_INNER_RADIUS_SYNC * ROBOT_SYNC_WORLD_UNITS_PER_SYNC_UNIT;
+const SPAWN_MARKER_OUTER_RADIUS: f32 =
+    SPAWN_MARKER_OUTER_RADIUS_SYNC * ROBOT_SYNC_WORLD_UNITS_PER_SYNC_UNIT;
 const SPAWN_MARKER_VERTICAL_SCALE: f32 = 0.12;
 const SPAWN_MARKER_Y: f32 = GRID_LINE_Y
     + GRID_LINE_HEIGHT * 0.5
@@ -333,7 +341,7 @@ fn spawn_robot_sync_arena_visuals(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let arena_center = arena_center(&layout.arena.min, &layout.arena.max);
+    let arena_center = arena_world_center(&layout.arena.min, &layout.arena.max);
     spawn_robot_sync_arena_box(
         commands,
         parent,
@@ -342,9 +350,9 @@ fn spawn_robot_sync_arena_visuals(
         "RobotSyncArenaBase".to_string(),
         color_from_rgb(layout.colors.arena_fill),
         Vec3::new(
-            layout.arena.width,
+            robot_sync_axis_world_units_from_sync(layout.arena.width),
             ARENA_BASE_THICKNESS,
-            layout.arena.height,
+            robot_sync_axis_world_units_from_sync(layout.arena.height),
         ),
         Vec3::new(
             arena_center.x,
@@ -372,7 +380,10 @@ fn spawn_robot_sync_arena_floor_tiles(
     let scene_handle = asset_server
         .load(GltfAssetLabel::Scene(0).from_asset(ROBOT_SYNC_ARENA_FLOOR_TILE_ASSET_PATH));
 
-    for center in floor_tile_centers_for_bounds(&layout.arena.min, &layout.arena.max) {
+    for center in floor_tile_centers_for_bounds(
+        arena_world_min(&layout.arena.min),
+        arena_world_max(&layout.arena.max),
+    ) {
         let entity = commands
             .spawn((
                 BevySceneRoot(scene_handle.clone()),
@@ -404,25 +415,25 @@ fn spawn_robot_sync_arena_grid(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let arena_width = layout.arena.max[0] - layout.arena.min[0];
-    let arena_height = layout.arena.max[1] - layout.arena.min[1];
-    let arena_center = arena_center(&layout.arena.min, &layout.arena.max);
+    let arena_world_min = arena_world_min(&layout.arena.min);
+    let arena_world_max = arena_world_max(&layout.arena.max);
+    let arena_width = arena_world_max.x - arena_world_min.x;
+    let arena_height = arena_world_max.y - arena_world_min.y;
+    let arena_center = arena_world_center(&layout.arena.min, &layout.arena.max);
+    let grid_spacing = robot_sync_axis_world_units_from_sync(layout.grid.spacing);
+    let grid_origin =
+        robot_sync_world_position_from_sync(layout.grid.origin[0], layout.grid.origin[1]);
     let minor_color = color_from_rgb_alpha(layout.colors.grid_minor, 0.46);
     let major_color = color_from_rgb_alpha(layout.colors.grid_major, 0.68);
 
     for x in grid_line_positions(
-        layout.arena.min[0],
-        layout.arena.max[0],
-        layout.grid.spacing,
-        layout.grid.origin[0],
+        arena_world_min.x,
+        arena_world_max.x,
+        grid_spacing,
+        grid_origin.x,
     ) {
-        let major = is_major_grid_line(
-            x,
-            layout.grid.origin[0],
-            layout.grid.spacing,
-            layout.grid.major_every,
-        );
-        let thickness = if major { 2.0 } else { 1.0 };
+        let major = is_major_grid_line(x, grid_origin.x, grid_spacing, layout.grid.major_every);
+        let thickness = robot_sync_axis_world_units_from_sync(if major { 2.0 } else { 1.0 });
         let color = if major { major_color } else { minor_color };
         let kind = if major { "major" } else { "minor" };
         spawn_robot_sync_arena_box(
@@ -440,18 +451,13 @@ fn spawn_robot_sync_arena_grid(
     }
 
     for y in grid_line_positions(
-        layout.arena.min[1],
-        layout.arena.max[1],
-        layout.grid.spacing,
-        layout.grid.origin[1],
+        arena_world_min.y,
+        arena_world_max.y,
+        grid_spacing,
+        grid_origin.y,
     ) {
-        let major = is_major_grid_line(
-            y,
-            layout.grid.origin[1],
-            layout.grid.spacing,
-            layout.grid.major_every,
-        );
-        let thickness = if major { 2.0 } else { 1.0 };
+        let major = is_major_grid_line(y, grid_origin.y, grid_spacing, layout.grid.major_every);
+        let thickness = robot_sync_axis_world_units_from_sync(if major { 2.0 } else { 1.0 });
         let color = if major { major_color } else { minor_color };
         let kind = if major { "major" } else { "minor" };
         spawn_robot_sync_arena_box(
@@ -477,35 +483,35 @@ fn spawn_robot_sync_arena_boundary(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let min = layout.boundary.min;
-    let max = layout.boundary.max;
-    let thickness = layout.boundary.thickness.max(1.0);
-    let width = max[0] - min[0];
-    let height = max[1] - min[1];
-    let center_x = (min[0] + max[0]) * 0.5;
-    let center_y = (min[1] + max[1]) * 0.5;
+    let min = arena_world_min(&layout.boundary.min);
+    let max = arena_world_max(&layout.boundary.max);
+    let thickness = robot_sync_axis_world_units_from_sync(layout.boundary.thickness.max(1.0));
+    let width = max.x - min.x;
+    let height = max.y - min.y;
+    let center_x = (min.x + max.x) * 0.5;
+    let center_y = (min.y + max.y) * 0.5;
     let color = color_from_rgb(layout.colors.boundary);
 
     let boundary_specs = [
         (
             "left",
             Vec3::new(thickness, BOUNDARY_WALL_HEIGHT, height),
-            Vec3::new(min[0] + thickness * 0.5, BOUNDARY_WALL_Y, center_y),
+            Vec3::new(min.x + thickness * 0.5, BOUNDARY_WALL_Y, center_y),
         ),
         (
             "right",
             Vec3::new(thickness, BOUNDARY_WALL_HEIGHT, height),
-            Vec3::new(max[0] - thickness * 0.5, BOUNDARY_WALL_Y, center_y),
+            Vec3::new(max.x - thickness * 0.5, BOUNDARY_WALL_Y, center_y),
         ),
         (
             "bottom",
             Vec3::new(width, BOUNDARY_WALL_HEIGHT, thickness),
-            Vec3::new(center_x, BOUNDARY_WALL_Y, min[1] + thickness * 0.5),
+            Vec3::new(center_x, BOUNDARY_WALL_Y, min.y + thickness * 0.5),
         ),
         (
             "top",
             Vec3::new(width, BOUNDARY_WALL_HEIGHT, thickness),
-            Vec3::new(center_x, BOUNDARY_WALL_Y, max[1] - thickness * 0.5),
+            Vec3::new(center_x, BOUNDARY_WALL_Y, max.y - thickness * 0.5),
         ),
     ];
 
@@ -534,16 +540,14 @@ fn spawn_robot_sync_arena_spawn_markers(
     materials: &mut Assets<StandardMaterial>,
 ) {
     for (index, spawn_point) in layout.spawn_points.iter().enumerate() {
+        let position =
+            robot_sync_world_position_from_sync(spawn_point.position[0], spawn_point.position[1]);
         spawn_robot_sync_arena_spawn_marker(
             commands,
             parent,
             session_id,
             format!("RobotSyncArenaSpawnMarker({})", spawn_point.id),
-            Vec3::new(
-                spawn_point.position[0],
-                SPAWN_MARKER_Y + index as f32 * 0.02,
-                spawn_point.position[1],
-            ),
+            Vec3::new(position.x, SPAWN_MARKER_Y + index as f32 * 0.02, position.y),
             meshes,
             materials,
         );
@@ -647,6 +651,19 @@ fn arena_center(min: &[f32; 2], max: &[f32; 2]) -> Vec2 {
     Vec2::new((min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5)
 }
 
+fn arena_world_min(min: &[f32; 2]) -> Vec2 {
+    robot_sync_world_position_from_sync(min[0], min[1])
+}
+
+fn arena_world_max(max: &[f32; 2]) -> Vec2 {
+    robot_sync_world_position_from_sync(max[0], max[1])
+}
+
+fn arena_world_center(min: &[f32; 2], max: &[f32; 2]) -> Vec2 {
+    let center = arena_center(min, max);
+    robot_sync_world_position_from_sync(center.x, center.y)
+}
+
 const fn spawn_marker_vertical_half_extent() -> f32 {
     (SPAWN_MARKER_OUTER_RADIUS - SPAWN_MARKER_INNER_RADIUS) * 0.5 * SPAWN_MARKER_VERTICAL_SCALE
 }
@@ -659,9 +676,9 @@ fn floor_tile_world_spacing() -> f32 {
     floor_tile_world_half_extent() * 2.0
 }
 
-fn floor_tile_centers_for_bounds(min: &[f32; 2], max: &[f32; 2]) -> Vec<Vec2> {
-    let x_centers = floor_tile_axis_centers(min[0], max[0]);
-    let z_centers = floor_tile_axis_centers(min[1], max[1]);
+fn floor_tile_centers_for_bounds(min: Vec2, max: Vec2) -> Vec<Vec2> {
+    let x_centers = floor_tile_axis_centers(min.x, max.x);
+    let z_centers = floor_tile_axis_centers(min.y, max.y);
     z_centers
         .into_iter()
         .flat_map(|z| x_centers.iter().copied().map(move |x| Vec2::new(x, z)))
@@ -806,9 +823,10 @@ mod tests {
         SceneCameraMode, SceneCameraProjection, SceneEntered, SceneManifest, spawn_scene_root,
         spawn_scene_runtime_root,
     };
+    use bevy::mesh::VertexAttributeValues;
 
     const EXPECTED_MESH_VISUALS: usize = 29;
-    const EXPECTED_FLOOR_TILE_VISUALS: usize = 9;
+    const EXPECTED_FLOOR_TILE_VISUALS: usize = 1;
     const EXPECTED_TOTAL_VISUALS: usize = EXPECTED_MESH_VISUALS + EXPECTED_FLOOR_TILE_VISUALS + 1;
 
     fn app_with_robot_sync_arena_system() -> App {
@@ -884,33 +902,24 @@ mod tests {
         let layout =
             RobotSyncArenaLayout::load_first_package_ron(ROBOT_SYNC_ARENA_LAYOUT_PATH).unwrap();
 
-        let centers = floor_tile_centers_for_bounds(&layout.arena.min, &layout.arena.max);
-        assert_eq!(centers.len(), EXPECTED_FLOOR_TILE_VISUALS);
+        let world_min = arena_world_min(&layout.arena.min);
+        let world_max = arena_world_max(&layout.arena.max);
+        let centers = floor_tile_centers_for_bounds(world_min, world_max);
+        assert_eq!(centers.len(), 1);
         assert_eq!(floor_tile_world_half_extent(), 100.0);
         assert_eq!(floor_tile_world_spacing(), 200.0);
-        assert_eq!(
-            centers,
-            vec![
-                Vec2::new(-200.0, -200.0),
-                Vec2::new(0.0, -200.0),
-                Vec2::new(200.0, -200.0),
-                Vec2::new(-200.0, 0.0),
-                Vec2::new(0.0, 0.0),
-                Vec2::new(200.0, 0.0),
-                Vec2::new(-200.0, 200.0),
-                Vec2::new(0.0, 200.0),
-                Vec2::new(200.0, 200.0),
-            ]
-        );
+        assert_eq!(centers, vec![Vec2::ZERO]);
 
         let (coverage_min, coverage_max) =
             floor_tile_coverage(&centers).expect("floor tile coverage should exist");
-        assert!(coverage_min[0] <= layout.arena.min[0]);
-        assert!(coverage_min[1] <= layout.arena.min[1]);
-        assert!(coverage_max[0] >= layout.arena.max[0]);
-        assert!(coverage_max[1] >= layout.arena.max[1]);
-        assert_eq!(coverage_min, [-300.0, -300.0]);
-        assert_eq!(coverage_max, [300.0, 300.0]);
+        assert!(coverage_min[0] <= world_min.x);
+        assert!(coverage_min[1] <= world_min.y);
+        assert!(coverage_max[0] >= world_max.x);
+        assert!(coverage_max[1] >= world_max.y);
+        assert_eq!(world_min, Vec2::new(-25.0, -25.0));
+        assert_eq!(world_max, Vec2::new(25.0, 25.0));
+        assert_eq!(coverage_min, [-100.0, -100.0]);
+        assert_eq!(coverage_max, [100.0, 100.0]);
     }
 
     #[test]
@@ -984,7 +993,7 @@ mod tests {
             }
         }
         assert_eq!(arena_base_count, 1);
-        assert_eq!(floor_tile_count, EXPECTED_FLOOR_TILE_VISUALS);
+        assert_eq!(floor_tile_count, 1);
         assert_eq!(boundary_count, 4);
         assert_eq!(grid_count, 22);
         assert_eq!(spawn_marker_count, 2);
@@ -1000,7 +1009,7 @@ mod tests {
             &Name,
         )>();
         let floor_tile_entities = floor_tiles.iter(app.world()).collect::<Vec<_>>();
-        assert_eq!(floor_tile_entities.len(), EXPECTED_FLOOR_TILE_VISUALS);
+        assert_eq!(floor_tile_entities.len(), 1);
         assert!(floor_tile_entities.iter().all(
             |(_, transform, parent, owned, content, visual, name)| {
                 **visual == RobotSyncArenaVisual::FloorTile
@@ -1017,6 +1026,86 @@ mod tests {
             floor_tile_entities.iter().any(|(_, _, _, _, _, _, name)| {
                 name.as_str() == "RobotSyncArenaFloorTile(0,0)"
             })
+        );
+
+        let (arena_base_translation, arena_base_mesh) = {
+            let mut arena_base = app
+                .world_mut()
+                .query::<(&RobotSyncArenaVisual, &Transform, &Mesh3d, &Name)>();
+            let (_, arena_base_transform, arena_base_mesh, _) = arena_base
+                .iter(app.world())
+                .find(|(visual, _, _, name)| {
+                    **visual == RobotSyncArenaVisual::ArenaBase
+                        && name.as_str() == "RobotSyncArenaBase"
+                })
+                .expect("arena base visual should exist");
+            (arena_base_transform.translation, arena_base_mesh.0.clone())
+        };
+        assert_eq!(
+            arena_base_translation,
+            Vec3::new(0.0, ARENA_BASE_TOP_Y - ARENA_BASE_THICKNESS * 0.5, 0.0)
+        );
+        assert_eq!(
+            mesh_position_size(
+                app.world()
+                    .resource::<Assets<Mesh>>()
+                    .get(&arena_base_mesh)
+                    .unwrap()
+            ),
+            Vec3::new(50.0, ARENA_BASE_THICKNESS, 50.0)
+        );
+
+        let (vertical_grid_x, minor_grid_mesh, major_grid_mesh) = {
+            let mut grid_visuals =
+                app.world_mut()
+                    .query::<(&RobotSyncArenaVisual, &Transform, &Mesh3d, &Name)>();
+            let grid_entries = grid_visuals
+                .iter(app.world())
+                .filter(|(visual, _, _, _)| **visual == RobotSyncArenaVisual::Grid)
+                .collect::<Vec<_>>();
+            assert_eq!(grid_entries.len(), 22);
+            let vertical_grid_x = grid_entries
+                .iter()
+                .filter(|(_, _, _, name)| name.as_str().contains(":vertical:"))
+                .map(|(_, transform, _, _)| transform.translation.x)
+                .collect::<Vec<_>>();
+            let (_, _, minor_grid_mesh, _) = grid_entries
+                .iter()
+                .find(|(_, _, _, name)| name.as_str() == "RobotSyncArenaGrid(minor:vertical:-20)")
+                .expect("minor vertical grid line should exist");
+            let (_, _, major_grid_mesh, _) = grid_entries
+                .iter()
+                .find(|(_, _, _, name)| name.as_str() == "RobotSyncArenaGrid(major:vertical:-25)")
+                .expect("major vertical grid line should exist");
+            (
+                vertical_grid_x,
+                minor_grid_mesh.0.clone(),
+                major_grid_mesh.0.clone(),
+            )
+        };
+        assert_eq!(
+            vertical_grid_x,
+            vec![
+                -25.0, -20.0, -15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0
+            ]
+        );
+        assert_eq!(
+            mesh_position_size(
+                app.world()
+                    .resource::<Assets<Mesh>>()
+                    .get(&minor_grid_mesh)
+                    .unwrap()
+            ),
+            Vec3::new(0.1, GRID_LINE_HEIGHT, 50.0)
+        );
+        assert_eq!(
+            mesh_position_size(
+                app.world()
+                    .resource::<Assets<Mesh>>()
+                    .get(&major_grid_mesh)
+                    .unwrap()
+            ),
+            Vec3::new(0.2, GRID_LINE_HEIGHT, 50.0)
         );
 
         let mut mesh_visuals = app.world_mut().query::<(
@@ -1043,6 +1132,35 @@ mod tests {
             name.as_str().starts_with("RobotSyncArenaBoundary(")
                 && transform.translation.y - BOUNDARY_WALL_HEIGHT * 0.5 > FLOOR_TILE_TOP_Y
         }));
+        let (left_boundary_translation, left_boundary_mesh) = {
+            let mut boundary_meshes =
+                app.world_mut()
+                    .query::<(&RobotSyncArenaVisual, &Transform, &Mesh3d, &Name)>();
+            let (_, left_boundary_transform, left_boundary_mesh, _) = boundary_meshes
+                .iter(app.world())
+                .find(|(visual, _, _, name)| {
+                    **visual == RobotSyncArenaVisual::Boundary
+                        && name.as_str() == "RobotSyncArenaBoundary(left)"
+                })
+                .expect("left boundary should exist");
+            (
+                left_boundary_transform.translation,
+                left_boundary_mesh.0.clone(),
+            )
+        };
+        assert_eq!(
+            left_boundary_translation,
+            Vec3::new(-24.8, BOUNDARY_WALL_Y, 0.0)
+        );
+        assert_eq!(
+            mesh_position_size(
+                app.world()
+                    .resource::<Assets<Mesh>>()
+                    .get(&left_boundary_mesh)
+                    .unwrap()
+            ),
+            Vec3::new(0.4, BOUNDARY_WALL_HEIGHT, 50.0)
+        );
 
         let mut lights = app.world_mut().query::<(
             &DirectionalLight,
@@ -1078,7 +1196,7 @@ mod tests {
                     && name.as_str() == "RobotSyncArenaSpawnMarker(spawn.robot_a)"
             })
             .expect("spawn.robot_a marker should be generated");
-        assert_eq!(robot_a_spawn.2.translation.x, -120.0);
+        assert_eq!(robot_a_spawn.2.translation.x, -12.0);
         assert!(robot_a_spawn.2.translation.x < 0.0);
         assert!(robot_a_spawn.2.translation.y > FLOOR_TILE_TOP_Y);
         assert!(robot_a_spawn.2.translation.y > GRID_LINE_Y + GRID_LINE_HEIGHT * 0.5);
@@ -1103,7 +1221,7 @@ mod tests {
                     && name.as_str() == "RobotSyncArenaSpawnMarker(spawn.robot_b)"
             })
             .expect("spawn.robot_b marker should be generated");
-        assert_eq!(robot_b_spawn.2.translation.x, 120.0);
+        assert_eq!(robot_b_spawn.2.translation.x, 12.0);
         assert!(robot_b_spawn.2.translation.x > 0.0);
         assert!(robot_b_spawn.2.translation.y > FLOOR_TILE_TOP_Y);
         assert!(robot_b_spawn.2.translation.y > GRID_LINE_Y + GRID_LINE_HEIGHT * 0.5);
@@ -1117,6 +1235,22 @@ mod tests {
         assert_eq!(sprites.iter(app.world()).count(), 0);
         let mut mesh2d = app.world_mut().query_filtered::<Entity, With<Mesh2d>>();
         assert_eq!(mesh2d.iter(app.world()).count(), 0);
+    }
+
+    fn mesh_position_size(mesh: &Mesh) -> Vec3 {
+        let Some(VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("mesh should have f32x3 positions");
+        };
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for position in positions {
+            let position = Vec3::from(*position);
+            min = min.min(position);
+            max = max.max(position);
+        }
+        max - min
     }
 
     #[test]

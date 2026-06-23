@@ -92,9 +92,9 @@
 
 - `project/assets/game/scenes.csv` 当前包含 `arena.robot_sync`，`kind=arena`，`manifest_path=scenes/robot_sync_arena/scene.ron`，`layout_path=scenes/robot_sync_arena/layout.ron`，`default_spawn=spawn.robot_a`，`ui_mode=robot_sync_scene`。
 - `project/assets/scenes/robot_sync_arena/scene.ron` 是 framework manifest，声明固定 3D 透视相机、`arena` / `grid` / `spawns` / `robots` 轻量 layer、两个 spawn point 和场地 bounds anchors。
-- `project/assets/scenes/robot_sync_arena/layout.ron` 是 game layer layout，声明 500x500 场地、50 单位网格、边界、出生点、机器人半径和基础颜色；地板复用首包 `floor_tile_large.gltf`。
-- `project/src/game/scenes/robot_sync_arena.rs` 监听 `SceneEvent::Entered("arena.robot_sync")`，读取 layout，在当前 `SceneRuntimeRoot` 下生成 glTF 地板拼片、下沉 primitive 场地底座、边界、网格、贴地 spawn marker 和基础方向光，所有实体都挂 `SceneOwned(session_id)`。
-- `project/src/game/features/robot_sync/` 承载机器人同步玩法：进入场景后按配置启动 local、LAN 或 MyServer authority；本地 bot 发送 `robot_move`；玩法只消费 `AuthorityEvent::FrameApplied` 推进确定性 replay；视觉系统按 replay 状态生成和移动 GLB 人物机器人实体；HUD 读取 snapshot 显示 room、player、authority frame、机器人数量和本地坐标；日志 telemetry 输出 checksum 和全量机器人 fixed 坐标摘要。
+- `project/assets/scenes/robot_sync_arena/layout.ron` 是 game layer layout，声明 500x500 sync 场地、50 sync units 网格、边界、出生点、机器人半径和基础颜色；地板复用首包 `floor_tile_large.gltf`。
+- `project/src/game/scenes/robot_sync_arena.rs` 监听 `SceneEvent::Entered("arena.robot_sync")`，读取 layout，在当前 `SceneRuntimeRoot` 下按 `0.1 world3d units / sync unit` 生成 glTF 地板、下沉 primitive 场地底座、边界、网格、贴地 spawn marker 和基础方向光，所有实体都挂 `SceneOwned(session_id)`。
+- `project/src/game/features/robot_sync/` 承载机器人同步玩法：进入场景后按配置启动 local、LAN 或 MyServer authority；本地 bot 发送 `robot_move`；玩法只消费 `AuthorityEvent::FrameApplied` 推进确定性 replay；视觉系统按 replay 状态生成和移动 GLB 人物机器人实体，并按 `sync.x -> world3d.x`、`sync.y -> world3d.z`、脚底高度 `world3d.y = 0.05` 做表现层映射；HUD 读取 snapshot 显示 room、player、authority frame、机器人数量以及 fixed/sync/world3d 坐标；日志 telemetry 输出 checksum 和全量机器人 fixed 坐标摘要。
 - `project/src/game/screens/gameplay/robot_sync_scene.rs` 是机器人场景 HUD，进入成功后切到 `AppUiMode::RobotSyncScene`，返回按钮发送 `SceneCommand::Exit` 并路由回大厅。
 - MyServer 模式使用 `robot_sync_room` policy。game layer 通过 authority frame 回放 `robot_move` 输入；`project/src/framework/scene/` 仍不承载机器人业务同步规则、payload 校验或房间策略。
 
@@ -1112,7 +1112,7 @@ LOD 建议分层：
 - 场景进入后，玩法层按 `ROBOT_SYNC_AUTHORITY_MODE` / `AUTHORITY_DEV_MODE` 启动 local、LAN host/client 或 MyServer authority。
 - MyServer 模式下，客户端使用 `AUTHORITY_MYSERVER_ROOM` / `ROBOT_SYNC_MYSERVER_ROOM` 指定 room，使用 `AUTHORITY_MYSERVER_POLICY` / `ROBOT_SYNC_MYSERVER_POLICY` 指定 policy；默认 policy 为 `robot_sync_room`。
 - 本地 bot 只发送 `AuthorityCommand::SendInput { action: "robot_move", frame_id: session.frame_id + input_delay_frames, payload_json }`，不直接修改机器人权威位置。
-- 两端都只在收到 `AuthorityEvent::FrameApplied` 后回放同一批 `robot_move` 输入，按 fixed units 推进机器人状态，并把状态映射到视觉实体。
+- 两端都只在收到 `AuthorityEvent::FrameApplied` 后回放同一批 `robot_move` 输入，按 fixed units 推进机器人状态，并把状态映射到视觉实体；3D 表现层使用 `0.1 world3d units / sync unit`，其中 `sync = fixed / FIXED_UNIT`。
 - 客户端日志会周期性输出 `robot sync frame applied`，字段包含 `frame_id`、`robot_count`、`checksum` 和按 `player_id` 稳定排序的 fixed 坐标摘要，可用于双客户端一致性比对。
 
 因此 framework 层只提供场景生命周期、root、相机、manifest 和 ready 边界；具体 room policy、输入 payload、deterministic replay、checksum 和 HUD snapshot 都留在 game layer / MyServer 对应实现中。

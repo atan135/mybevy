@@ -1,5 +1,6 @@
 mod bot;
 mod config;
+pub(in crate::game) mod coordinates;
 mod hud;
 mod plugin;
 mod state;

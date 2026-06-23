@@ -6,8 +6,12 @@ use std::collections::BTreeMap;
 
 use super::{
     config::{RobotSyncAuthorityMode, RobotSyncConfig},
+    coordinates::{
+        ROBOT_SYNC_ROBOT_FOOT_WORLD_Y, robot_sync_axis_sync_units_from_fixed,
+        robot_sync_axis_world_units_from_fixed,
+    },
     state::RobotSyncSceneState,
-    sync::{FIXED_UNIT, FixedPosition, RobotState, RobotSyncReplayState},
+    sync::{FixedPosition, RobotState, RobotSyncReplayState},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,11 +106,14 @@ fn robot_sync_frame_label(last_applied_frame: Option<u32>, authority_frame: u32)
 
 fn format_fixed_position(position: FixedPosition) -> String {
     format!(
-        "local: x={} y={} world=({:.3},{:.3})",
+        "local: fixed=({},{}) sync=({:.3},{:.3}) world3d=({:.3},{:.3},{:.3})",
         position.x,
         position.y,
-        f64::from(position.x) / f64::from(FIXED_UNIT),
-        f64::from(position.y) / f64::from(FIXED_UNIT)
+        robot_sync_axis_sync_units_from_fixed(position.x),
+        robot_sync_axis_sync_units_from_fixed(position.y),
+        robot_sync_axis_world_units_from_fixed(position.x),
+        f64::from(ROBOT_SYNC_ROBOT_FOOT_WORLD_Y),
+        robot_sync_axis_world_units_from_fixed(position.y)
     )
 }
 
@@ -119,10 +126,15 @@ fn format_robot_positions(robots: &BTreeMap<String, RobotState>) -> String {
         .iter()
         .map(|(player_id, robot)| {
             format!(
-                "{}=({:.1},{:.1})",
+                "{}=fixed=({},{}) sync=({:.1},{:.1}) world3d=({:.2},{:.2},{:.2})",
                 short_robot_player_label(player_id),
-                f64::from(robot.position.x) / f64::from(FIXED_UNIT),
-                f64::from(robot.position.y) / f64::from(FIXED_UNIT)
+                robot.position.x,
+                robot.position.y,
+                robot_sync_axis_sync_units_from_fixed(robot.position.x),
+                robot_sync_axis_sync_units_from_fixed(robot.position.y),
+                robot_sync_axis_world_units_from_fixed(robot.position.x),
+                f64::from(ROBOT_SYNC_ROBOT_FOOT_WORLD_Y),
+                robot_sync_axis_world_units_from_fixed(robot.position.y)
             )
         })
         .collect::<Vec<_>>()
@@ -152,13 +164,73 @@ mod tests {
             authority_status: "MyServer/active/client".to_string(),
             frame: "42".to_string(),
             robot_count: 2,
-            local_position: "local: x=10240 y=-5000 world=(10.240,-5.000)".to_string(),
-            robot_positions: "all: a=(10.2,-5.0) b=(0.0,0.0)".to_string(),
+            local_position:
+                "local: fixed=(10240,-5000) sync=(10.240,-5.000) world3d=(1.024,0.050,-0.500)"
+                    .to_string(),
+            robot_positions:
+                "all: a=fixed=(10240,-5000) sync=(10.2,-5.0) world3d=(1.02,0.05,-0.50) b=fixed=(0,0) sync=(0.0,0.0) world3d=(0.00,0.05,0.00)"
+                    .to_string(),
         };
 
         assert_eq!(
             format_robot_sync_hud_status(&snapshot),
-            "room=robot-room player=player-a authority=MyServer/active/client frame=42 robots=2 local: x=10240 y=-5000 world=(10.240,-5.000)\nall: a=(10.2,-5.0) b=(0.0,0.0)"
+            "room=robot-room player=player-a authority=MyServer/active/client frame=42 robots=2 local: fixed=(10240,-5000) sync=(10.240,-5.000) world3d=(1.024,0.050,-0.500)\nall: a=fixed=(10240,-5000) sync=(10.2,-5.0) world3d=(1.02,0.05,-0.50) b=fixed=(0,0) sync=(0.0,0.0) world3d=(0.00,0.05,0.00)"
+        );
+    }
+
+    #[test]
+    fn hud_snapshot_formats_fixed_sync_and_world3d_coordinates() {
+        let config = test_config();
+        let mut scene_state = RobotSyncSceneState::default();
+        scene_state.active = true;
+        let mut authority_session = AuthoritySession::default();
+        authority_session.role = Some(AuthorityRole::Client);
+        authority_session.local_player_id = Some("robot-player-a".to_string());
+        authority_session.frame_id = 41;
+        let mut replay_state = RobotSyncReplayState::default();
+        replay_state.last_applied_frame = Some(42);
+        replay_state.robots.insert(
+            "robot-player-a".to_string(),
+            RobotState {
+                player_id: "robot-player-a".to_string(),
+                position: FixedPosition {
+                    x: 10_240,
+                    y: -5_000,
+                },
+                dir_x: 1000,
+                dir_y: 0,
+                speed: 10_000,
+                last_input_seq: Some(1),
+                last_frame: Some(42),
+                spawn_index: 0,
+                color_index: 0,
+            },
+        );
+        replay_state.robots.insert(
+            "robot-player-b".to_string(),
+            RobotState {
+                player_id: "robot-player-b".to_string(),
+                position: FixedPosition { x: 0, y: 0 },
+                dir_x: 0,
+                dir_y: 0,
+                speed: 0,
+                last_input_seq: None,
+                last_frame: Some(42),
+                spawn_index: 1,
+                color_index: 1,
+            },
+        );
+
+        let snapshot =
+            robot_sync_hud_snapshot(&config, &scene_state, &authority_session, &replay_state);
+
+        assert_eq!(
+            snapshot.local_position,
+            "local: fixed=(10240,-5000) sync=(10.240,-5.000) world3d=(1.024,0.050,-0.500)"
+        );
+        assert_eq!(
+            snapshot.robot_positions,
+            "all: a=fixed=(10240,-5000) sync=(10.2,-5.0) world3d=(1.02,0.05,-0.50) b=fixed=(0,0) sync=(0.0,0.0) world3d=(0.00,0.05,0.00)"
         );
     }
 

@@ -8,9 +8,8 @@ use crate::{
 };
 
 use super::{
-    config::RobotSyncConfig,
-    state::RobotSyncSceneState,
-    sync::{FIXED_UNIT, RobotState},
+    config::RobotSyncConfig, coordinates::robot_sync_world_position_from_fixed,
+    state::RobotSyncSceneState, sync::RobotState,
 };
 
 const ROBOT_LOCAL_MODEL_ASSET_PATH: &str = "models/characters/kaykit_adventurers/Knight.glb";
@@ -19,7 +18,6 @@ const ROBOT_REMOTE_MODEL_ASSET_PATHS: [&str; 2] = [
     "models/characters/kaykit_adventurers/Mage.glb",
 ];
 const ROBOT_MODEL_SCALE: f32 = 14.0;
-const ROBOT_MODEL_Y: f32 = 0.05;
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
 pub(in crate::game::features::robot_sync) struct RobotSyncVisualState {
@@ -221,11 +219,7 @@ fn robot_model_transform(robot: &RobotState) -> Transform {
 }
 
 fn robot_world_translation(robot: &RobotState) -> Vec3 {
-    Vec3::new(
-        robot.position.x as f32 / FIXED_UNIT as f32,
-        ROBOT_MODEL_Y,
-        robot.position.y as f32 / FIXED_UNIT as f32,
-    )
+    robot_sync_world_position_from_fixed(robot.position)
 }
 
 fn robot_model_asset_path(color_index: usize, is_local_player: bool) -> &'static str {
@@ -264,6 +258,7 @@ mod tests {
         game::{
             authority::AuthoritySession,
             features::robot_sync::{
+                coordinates::ROBOT_SYNC_ROBOT_FOOT_WORLD_Y,
                 state::RobotSyncSceneState,
                 sync::{FixedPosition, RobotSyncReplayState},
             },
@@ -409,7 +404,7 @@ mod tests {
         assert_eq!(local.5, session_id);
         assert!(local.2);
         assert_eq!(local.3, 0);
-        assert_eq!(local.6, Vec3::new(0.0, ROBOT_MODEL_Y, 0.0));
+        assert_eq!(local.6, Vec3::new(0.0, ROBOT_SYNC_ROBOT_FOOT_WORLD_Y, 0.0));
         assert_eq!(local.7, Vec3::splat(ROBOT_MODEL_SCALE));
         assert_eq!(
             local.8,
@@ -425,7 +420,7 @@ mod tests {
         assert_eq!(remote.5, session_id);
         assert!(!remote.2);
         assert_eq!(remote.3, 1);
-        assert_eq!(remote.6, Vec3::new(0.0, ROBOT_MODEL_Y, 0.0));
+        assert_eq!(remote.6, Vec3::new(0.0, ROBOT_SYNC_ROBOT_FOOT_WORLD_Y, 0.0));
         assert_eq!(remote.7, Vec3::splat(ROBOT_MODEL_SCALE));
         assert_eq!(
             remote.8,
@@ -439,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn robot_sync_visuals_map_fixed_coordinates_to_3d_xz_plane() {
+    fn robot_sync_visuals_map_fixed_coordinates_to_scaled_3d_xz_plane() {
         let robot = RobotState {
             player_id: "player-a".to_string(),
             position: FixedPosition {
@@ -457,7 +452,7 @@ mod tests {
 
         assert_eq!(
             robot_world_translation(&robot),
-            Vec3::new(123.0, ROBOT_MODEL_Y, -45.0)
+            Vec3::new(12.3, ROBOT_SYNC_ROBOT_FOOT_WORLD_Y, -4.5)
         );
         assert_eq!(
             robot_model_transform(&robot).scale,
@@ -516,7 +511,7 @@ mod tests {
             .expect("robot visual should exist");
         assert_eq!(
             transform.translation,
-            Vec3::new(123.0, ROBOT_MODEL_Y, -45.0)
+            Vec3::new(12.3, ROBOT_SYNC_ROBOT_FOOT_WORLD_Y, -4.5)
         );
         assert_eq!(transform.scale, Vec3::splat(ROBOT_MODEL_SCALE));
     }
@@ -550,7 +545,10 @@ mod tests {
             .find(|(visual, _, _)| visual.player_id == "player-a")
             .expect("robot visual should exist");
 
-        let expected = Vec3::new(-119.176, ROBOT_MODEL_Y, -20.824);
+        let expected = robot_sync_world_position_from_fixed(FixedPosition {
+            x: -119_176,
+            y: -20_824,
+        });
         assert_eq!(transform.translation, expected);
         assert_eq!(global_transform.translation(), expected);
     }
@@ -776,7 +774,7 @@ mod tests {
             .unwrap();
 
         assert!(local.2);
-        assert_eq!(local.6, Vec3::new(20.0, ROBOT_MODEL_Y, 0.0));
+        assert_eq!(local.6, Vec3::new(2.0, ROBOT_SYNC_ROBOT_FOOT_WORLD_Y, 0.0));
         assert_eq!(
             local.8,
             "models/characters/kaykit_adventurers/Knight.glb#Scene0"
