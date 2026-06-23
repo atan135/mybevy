@@ -39,13 +39,13 @@
   spawn_points: [
     (
       id: SceneSpawnPointId("spawn.robot_a"),
-      position: (0.0, 0.0, 0.0),
+      position: (-120.0, 0.0, 0.0),
       rotation: (0.0, 0.0, 0.0),
       tags: ["default", "player", "robot", "robot_a"],
     ),
     (
       id: SceneSpawnPointId("spawn.robot_b"),
-      position: (0.0, 0.0, 0.0),
+      position: (120.0, 0.0, 0.0),
       rotation: (0.0, 180.0, 0.0),
       tags: ["player", "robot", "robot_b"],
     ),

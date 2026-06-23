@@ -21,8 +21,8 @@ pub(in crate::game::features::robot_sync) const ARENA_MIN_FIXED: i32 = -250_000;
 pub(in crate::game::features::robot_sync) const ARENA_MAX_FIXED: i32 = 250_000;
 const MAX_ROBOT_SPEED: u32 = 60_000;
 const SPAWN_POINTS: [FixedPosition; 4] = [
-    FixedPosition { x: 0, y: 0 },
-    FixedPosition { x: 0, y: 0 },
+    FixedPosition { x: -120_000, y: 0 },
+    FixedPosition { x: 120_000, y: 0 },
     FixedPosition {
         x: -200_000,
         y: 200_000,
@@ -572,11 +572,11 @@ mod tests {
         assert_eq!(player_ids, vec!["player-a", "player-b"]);
         assert_eq!(
             state.robots.get("player-a").unwrap().position,
-            FixedPosition { x: 0, y: 0 }
+            FixedPosition { x: -120_000, y: 0 }
         );
         assert_eq!(
             state.robots.get("player-b").unwrap().position,
-            FixedPosition { x: 0, y: 0 }
+            FixedPosition { x: 120_000, y: 0 }
         );
     }
 
@@ -597,7 +597,13 @@ mod tests {
         apply_robot_sync_snapshot(&mut state, &snapshot(1, &["player-a"]));
 
         let player_a = state.robots.get("player-a").unwrap();
-        assert_eq!(player_a.position, FixedPosition { x: 0, y: 3_000 });
+        assert_eq!(
+            player_a.position,
+            FixedPosition {
+                x: -120_000,
+                y: 3_000
+            }
+        );
         assert_eq!(player_a.dir_x, 0);
         assert_eq!(player_a.dir_y, 1000);
         assert_eq!(player_a.last_input_seq, Some(5));
@@ -622,12 +628,12 @@ mod tests {
 
         assert_eq!(
             state.robots.get("player-a").unwrap().position,
-            FixedPosition { x: 0, y: 0 }
+            FixedPosition { x: -120_000, y: 0 }
         );
         assert_eq!(state.robots.get("player-a").unwrap().last_input_seq, None);
         assert_eq!(
             state.robots.get("player-b").unwrap().position,
-            FixedPosition { x: 0, y: 0 }
+            FixedPosition { x: 120_000, y: 0 }
         );
 
         apply_robot_sync_snapshot(&mut state, &snapshot(2, &["player-b"]));
@@ -635,7 +641,7 @@ mod tests {
         assert!(state.robots.contains_key("player-b"));
         assert_eq!(
             state.robots.get("player-b").unwrap().position,
-            FixedPosition { x: 0, y: 0 }
+            FixedPosition { x: -120_000, y: 0 }
         );
     }
 
@@ -704,7 +710,7 @@ mod tests {
         assert_eq!(robot.last_input_seq, Some(5));
         assert_eq!(robot.dir_x, 1000);
         assert_eq!(robot.dir_y, 0);
-        assert_eq!(robot.position, FixedPosition { x: 3_000, y: 0 });
+        assert_eq!(robot.position, FixedPosition { x: -117_000, y: 0 });
     }
 
     #[test]
@@ -739,7 +745,13 @@ mod tests {
         assert_eq!(robot.last_input_seq, Some(3));
         assert_eq!(robot.dir_x, 0);
         assert_eq!(robot.dir_y, 1000);
-        assert_eq!(robot.position, FixedPosition { x: 0, y: 3_000 });
+        assert_eq!(
+            robot.position,
+            FixedPosition {
+                x: -120_000,
+                y: 3_000
+            }
+        );
         assert_eq!(state.last_applied_frame, Some(1));
     }
 
@@ -763,11 +775,14 @@ mod tests {
 
         assert_eq!(
             state.robots.get("player-a").unwrap().position,
-            FixedPosition { x: 0, y: 3_000 }
+            FixedPosition {
+                x: -120_000,
+                y: 3_000
+            }
         );
         assert_eq!(
             state.robots.get("player-b").unwrap().position,
-            FixedPosition { x: -3_000, y: 0 }
+            FixedPosition { x: 117_000, y: 0 }
         );
         assert_eq!(state.last_applied_frame, Some(1));
     }
@@ -786,11 +801,11 @@ mod tests {
         assert_eq!(state.robots.get("player-z").unwrap().spawn_index, 1);
         assert_eq!(
             state.robots.get("player-a").unwrap().position,
-            FixedPosition { x: 0, y: 0 }
+            FixedPosition { x: -120_000, y: 0 }
         );
         assert_eq!(
             state.robots.get("player-z").unwrap().position,
-            FixedPosition { x: 0, y: 0 }
+            FixedPosition { x: -120_000, y: 0 }
         );
     }
 
@@ -850,7 +865,7 @@ mod tests {
         );
 
         let robot = state.robots.get("player-a").unwrap();
-        assert_eq!(robot.position, FixedPosition { x: 0, y: 0 });
+        assert_eq!(robot.position, FixedPosition { x: -120_000, y: 0 });
         assert_eq!(robot.last_input_seq, None);
         assert_eq!(robot.last_frame, None);
         assert_eq!(state.last_applied_frame, Some(0));
@@ -919,11 +934,14 @@ mod tests {
 
         assert_eq!(
             state.robots.get("player-a").unwrap().position,
-            FixedPosition { x: 0, y: 6_000 }
+            FixedPosition {
+                x: -120_000,
+                y: 6_000
+            }
         );
         assert_eq!(
             state.robots.get("player-b").unwrap().position,
-            FixedPosition { x: 0, y: 0 }
+            FixedPosition { x: 120_000, y: 0 }
         );
     }
 

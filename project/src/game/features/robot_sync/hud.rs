@@ -2,10 +2,12 @@ use bevy::prelude::*;
 
 use crate::game::authority::{AuthorityRole, AuthoritySession};
 
+use std::collections::BTreeMap;
+
 use super::{
     config::{RobotSyncAuthorityMode, RobotSyncConfig},
     state::RobotSyncSceneState,
-    sync::{FIXED_UNIT, FixedPosition, RobotSyncReplayState},
+    sync::{FIXED_UNIT, FixedPosition, RobotState, RobotSyncReplayState},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,6 +18,7 @@ pub(in crate::game) struct RobotSyncHudSnapshot {
     pub(in crate::game) frame: String,
     pub(in crate::game) robot_count: usize,
     pub(in crate::game) local_position: String,
+    pub(in crate::game) robot_positions: String,
 }
 
 pub(in crate::game) fn robot_sync_hud_snapshot(
@@ -46,18 +49,20 @@ pub(in crate::game) fn robot_sync_hud_snapshot(
         frame: robot_sync_frame_label(replay_state.last_applied_frame, authority_session.frame_id),
         robot_count: replay_state.robots.len(),
         local_position,
+        robot_positions: format_robot_positions(&replay_state.robots),
     }
 }
 
 pub(in crate::game) fn format_robot_sync_hud_status(snapshot: &RobotSyncHudSnapshot) -> String {
     format!(
-        "room={} player={} authority={} frame={} robots={} {}",
+        "room={} player={} authority={} frame={} robots={} {}\n{}",
         snapshot.room,
         snapshot.player,
         snapshot.authority_status,
         snapshot.frame,
         snapshot.robot_count,
-        snapshot.local_position
+        snapshot.local_position,
+        snapshot.robot_positions
     )
 }
 
@@ -105,6 +110,30 @@ fn format_fixed_position(position: FixedPosition) -> String {
     )
 }
 
+fn format_robot_positions(robots: &BTreeMap<String, RobotState>) -> String {
+    if robots.is_empty() {
+        return "all: pending".to_string();
+    }
+
+    let positions = robots
+        .iter()
+        .map(|(player_id, robot)| {
+            format!(
+                "{}=({:.1},{:.1})",
+                short_robot_player_label(player_id),
+                f64::from(robot.position.x) / f64::from(FIXED_UNIT),
+                f64::from(robot.position.y) / f64::from(FIXED_UNIT)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("all: {positions}")
+}
+
+fn short_robot_player_label(player_id: &str) -> &str {
+    player_id.strip_prefix("robot-player-").unwrap_or(player_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,11 +153,12 @@ mod tests {
             frame: "42".to_string(),
             robot_count: 2,
             local_position: "local: x=10240 y=-5000 world=(10.240,-5.000)".to_string(),
+            robot_positions: "all: a=(10.2,-5.0) b=(0.0,0.0)".to_string(),
         };
 
         assert_eq!(
             format_robot_sync_hud_status(&snapshot),
-            "room=robot-room player=player-a authority=MyServer/active/client frame=42 robots=2 local: x=10240 y=-5000 world=(10.240,-5.000)"
+            "room=robot-room player=player-a authority=MyServer/active/client frame=42 robots=2 local: x=10240 y=-5000 world=(10.240,-5.000)\nall: a=(10.2,-5.0) b=(0.0,0.0)"
         );
     }
 
@@ -152,6 +182,7 @@ mod tests {
         assert_eq!(snapshot.frame, "pending(authority=8)");
         assert_eq!(snapshot.robot_count, 0);
         assert_eq!(snapshot.local_position, "local: pending");
+        assert_eq!(snapshot.robot_positions, "all: pending");
     }
 
     fn test_config() -> RobotSyncConfig {

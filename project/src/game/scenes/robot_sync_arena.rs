@@ -11,12 +11,18 @@ pub(in crate::game) const ROBOT_SYNC_ARENA_SCENE_ID: &str = "arena.robot_sync";
 const ROBOT_SYNC_ARENA_LAYOUT_PATH: &str = "scenes/robot_sync_arena/layout.ron";
 #[cfg(test)]
 const ROBOT_SYNC_ARENA_SCENE_MANIFEST_PATH: &str = "scenes/robot_sync_arena/scene.ron";
+const SPAWN_MARKER_INNER_RADIUS: f32 = 11.0;
+const SPAWN_MARKER_OUTER_RADIUS: f32 = 16.0;
+const SPAWN_MARKER_Z: f32 = 0.55;
+const SPAWN_MARKER_COLOR: Color = Color::srgb(1.0, 0.84, 0.18);
 
 pub(super) struct RobotSyncArenaPlugin;
 
 impl Plugin for RobotSyncArenaPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostUpdate, instantiate_robot_sync_arena_content);
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<ColorMaterial>>()
+            .add_systems(PostUpdate, instantiate_robot_sync_arena_content);
     }
 }
 
@@ -202,6 +208,8 @@ fn instantiate_robot_sync_arena_content(
     mut scene_events: MessageReader<SceneEvent>,
     runtime_roots: Query<(Entity, &SceneRuntimeRoot)>,
     existing_content: Query<&RobotSyncArenaContent>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let mut instantiated_sessions = Vec::new();
 
@@ -249,7 +257,14 @@ fn instantiate_robot_sync_arena_content(
             continue;
         };
 
-        spawn_robot_sync_arena_content(&mut commands, runtime_root, &entered.session_id, &layout);
+        spawn_robot_sync_arena_content(
+            &mut commands,
+            runtime_root,
+            &entered.session_id,
+            &layout,
+            &mut meshes,
+            &mut materials,
+        );
         instantiated_sessions.push(entered.session_id.clone());
     }
 }
@@ -259,6 +274,8 @@ fn spawn_robot_sync_arena_content(
     parent: Entity,
     session_id: &SceneSessionId,
     layout: &RobotSyncArenaLayout,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
 ) -> Entity {
     let content = commands
         .spawn((
@@ -271,7 +288,7 @@ fn spawn_robot_sync_arena_content(
         ))
         .id();
     commands.entity(parent).add_child(content);
-    spawn_robot_sync_arena_visuals(commands, content, session_id, layout);
+    spawn_robot_sync_arena_visuals(commands, content, session_id, layout, meshes, materials);
     content
 }
 
@@ -280,6 +297,8 @@ fn spawn_robot_sync_arena_visuals(
     parent: Entity,
     session_id: &SceneSessionId,
     layout: &RobotSyncArenaLayout,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
 ) {
     let arena_center = arena_center(&layout.arena.min, &layout.arena.max);
     spawn_robot_sync_arena_rect(
@@ -295,7 +314,7 @@ fn spawn_robot_sync_arena_visuals(
 
     spawn_robot_sync_arena_grid(commands, parent, session_id, layout);
     spawn_robot_sync_arena_boundary(commands, parent, session_id, layout);
-    spawn_robot_sync_arena_spawn_markers(commands, parent, session_id, layout);
+    spawn_robot_sync_arena_spawn_markers(commands, parent, session_id, layout, meshes, materials);
 }
 
 fn spawn_robot_sync_arena_grid(
@@ -422,19 +441,53 @@ fn spawn_robot_sync_arena_spawn_markers(
     parent: Entity,
     session_id: &SceneSessionId,
     layout: &RobotSyncArenaLayout,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
 ) {
     for (index, spawn_point) in layout.spawn_points.iter().enumerate() {
-        spawn_robot_sync_arena_rect(
+        spawn_robot_sync_arena_spawn_marker(
             commands,
             parent,
             session_id,
-            RobotSyncArenaVisual::SpawnMarker,
             format!("RobotSyncArenaSpawnMarker({})", spawn_point.id),
-            spawn_marker_color(layout, index, spawn_point),
-            Vec2::splat(24.0),
-            Vec3::new(spawn_point.position[0], spawn_point.position[1], 0.5),
+            Vec3::new(
+                spawn_point.position[0],
+                spawn_point.position[1],
+                SPAWN_MARKER_Z + index as f32 * 0.01,
+            ),
+            meshes,
+            materials,
         );
     }
+}
+
+fn spawn_robot_sync_arena_spawn_marker(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    name: String,
+    translation: Vec3,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
+) -> Entity {
+    let entity = commands
+        .spawn((
+            Mesh2d(meshes.add(Annulus::new(
+                SPAWN_MARKER_INNER_RADIUS,
+                SPAWN_MARKER_OUTER_RADIUS,
+            ))),
+            MeshMaterial2d(materials.add(SPAWN_MARKER_COLOR)),
+            Transform::from_translation(translation),
+            SceneOwned::new(session_id.clone()),
+            RobotSyncArenaContent {
+                session_id: session_id.clone(),
+            },
+            RobotSyncArenaVisual::SpawnMarker,
+            Name::new(name),
+        ))
+        .id();
+    commands.entity(parent).add_child(entity);
+    entity
 }
 
 fn spawn_robot_sync_arena_rect(
@@ -486,24 +539,6 @@ fn is_major_grid_line(position: f32, origin: f32, spacing: f32, major_every: u32
 
     let grid_index = ((position - origin) / spacing).round() as i32;
     grid_index % major_every as i32 == 0
-}
-
-fn spawn_marker_color(
-    layout: &RobotSyncArenaLayout,
-    index: usize,
-    spawn_point: &RobotSyncArenaSpawnPoint,
-) -> Color {
-    let rgb = match index {
-        0 => layout.colors.spawn_a,
-        1 => layout.colors.spawn_b,
-        _ => layout
-            .robots
-            .iter()
-            .find(|robot| robot.spawn_point == spawn_point.id)
-            .map(|robot| robot.color)
-            .unwrap_or(layout.colors.spawn_a),
-    };
-    color_from_rgb_alpha(rgb, 0.92)
 }
 
 fn color_from_rgb(rgb: [f32; 3]) -> Color {
@@ -614,6 +649,8 @@ mod tests {
         assert_eq!(layout.boundary.max, [250.0, 250.0]);
         assert_eq!(layout.boundary.thickness, 4.0);
         assert!(layout.spawn_points.len() >= 2);
+        assert_eq!(layout.spawn_points[0].position, [-120.0, 0.0]);
+        assert_eq!(layout.spawn_points[1].position, [120.0, 0.0]);
         assert!(layout.robots.len() >= 2);
         assert_eq!(layout.colors.boundary, [0.80, 0.86, 0.92]);
     }
@@ -621,7 +658,9 @@ mod tests {
     #[test]
     fn entered_robot_sync_arena_spawns_content_under_runtime_root() {
         let mut app = App::new();
-        app.add_message::<SceneEvent>()
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<ColorMaterial>>()
+            .add_message::<SceneEvent>()
             .add_systems(Update, instantiate_robot_sync_arena_content);
 
         let session_id = SceneSessionId::from("robot-sync-session");
@@ -706,9 +745,9 @@ mod tests {
                     && name.as_str() == "RobotSyncArenaSpawnMarker(spawn.robot_a)"
             })
             .expect("spawn.robot_a marker should be generated");
-        assert_eq!(robot_a_spawn.2.translation.x, 0.0);
+        assert_eq!(robot_a_spawn.2.translation.x, -120.0);
         assert_eq!(robot_a_spawn.2.translation.y, 0.0);
-        assert_eq!(robot_a_spawn.2.translation.z, 0.5);
+        assert_eq!(robot_a_spawn.2.translation.z, SPAWN_MARKER_Z);
         assert_eq!(robot_a_spawn.3.parent(), content_entity);
         assert_eq!(robot_a_spawn.4.session_id, session_id);
         assert_eq!(robot_a_spawn.5.session_id, session_id);
@@ -717,7 +756,9 @@ mod tests {
     #[test]
     fn duplicate_enter_events_for_same_session_do_not_duplicate_content() {
         let mut app = App::new();
-        app.add_message::<SceneEvent>()
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<ColorMaterial>>()
+            .add_message::<SceneEvent>()
             .add_systems(Update, instantiate_robot_sync_arena_content);
 
         let session_id = SceneSessionId::from("robot-sync-session");

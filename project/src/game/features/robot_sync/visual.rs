@@ -8,24 +8,14 @@ use crate::{
 };
 
 use super::{
+    config::RobotSyncConfig,
     state::RobotSyncSceneState,
     sync::{FIXED_UNIT, RobotState},
 };
 
-const ROBOT_REMOTE_SIZE: f32 = 24.0;
-const ROBOT_LOCAL_SIZE: f32 = 32.0;
-const ROBOT_Z: f32 = 1.0;
-const ROBOT_LOCAL_Z: f32 = 1.2;
-const ROBOT_COLORS: [[f32; 3]; 8] = [
-    [0.94, 0.34, 0.32],
-    [0.20, 0.66, 0.96],
-    [0.36, 0.82, 0.46],
-    [0.98, 0.78, 0.28],
-    [0.82, 0.48, 0.96],
-    [0.28, 0.88, 0.78],
-    [0.98, 0.52, 0.22],
-    [0.72, 0.82, 0.92],
-];
+const ROBOT_SIZE: f32 = 30.0;
+const ROBOT_LOCAL_Z: f32 = 1.3;
+const ROBOT_REMOTE_Z: f32 = 1.2;
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
 pub(in crate::game::features::robot_sync) struct RobotSyncVisualState {
@@ -55,6 +45,7 @@ pub(in crate::game::features::robot_sync) fn clear_robot_sync_visuals(
 
 pub(in crate::game::features::robot_sync) fn sync_robot_sync_robot_visuals(
     mut commands: Commands,
+    config: Res<RobotSyncConfig>,
     scene_state: Res<RobotSyncSceneState>,
     replay_state: Res<super::sync::RobotSyncReplayState>,
     authority_session: Res<AuthoritySession>,
@@ -75,7 +66,11 @@ pub(in crate::game::features::robot_sync) fn sync_robot_sync_robot_visuals(
     let Some(session_id) = scene_state.session_id.as_ref() else {
         return;
     };
-    let local_player_id = authority_session.local_player_id.as_deref();
+    let local_player_id = authority_session
+        .local_player_id
+        .as_deref()
+        .unwrap_or(config.local_player_id.as_str());
+    let mut live_robot_entities = BTreeMap::new();
 
     for (entity, mut visual, mut transform, mut sprite) in &mut robot_visuals {
         let should_remove = &visual.session_id != session_id
@@ -90,14 +85,13 @@ pub(in crate::game::features::robot_sync) fn sync_robot_sync_robot_visuals(
         let Some(robot) = replay_state.robots.get(&visual.player_id) else {
             continue;
         };
-        let is_local_player = local_player_id == Some(visual.player_id.as_str());
+        let is_local_player = local_player_id == visual.player_id.as_str();
         visual.color_index = robot.color_index;
         visual.is_local_player = is_local_player;
         apply_robot_visual_state(&mut transform, &mut sprite, robot, is_local_player);
-        visual_state
-            .robot_entities
-            .insert(visual.player_id.clone(), entity);
+        live_robot_entities.insert(visual.player_id.clone(), entity);
     }
+    visual_state.robot_entities = live_robot_entities;
 
     let Some(runtime_root) = find_runtime_root_entity(session_id, runtime_roots.iter()) else {
         if !replay_state.robots.is_empty() {
@@ -115,7 +109,7 @@ pub(in crate::game::features::robot_sync) fn sync_robot_sync_robot_visuals(
             continue;
         }
 
-        let is_local_player = local_player_id == Some(player_id.as_str());
+        let is_local_player = local_player_id == player_id.as_str();
         let entity = spawn_robot_visual(
             &mut commands,
             runtime_root,
@@ -169,8 +163,8 @@ fn spawn_robot_visual(
     let entity = commands
         .spawn((
             Sprite::from_color(
-                robot_visual_color(robot.color_index, is_local_player),
-                Vec2::splat(robot_visual_size(is_local_player)),
+                robot_visual_color(is_local_player),
+                Vec2::splat(robot_visual_size()),
             ),
             Transform::from_translation(robot_world_translation(robot, is_local_player)),
             SceneOwned::new(session_id.clone()),
@@ -194,8 +188,8 @@ fn apply_robot_visual_state(
     is_local_player: bool,
 ) {
     transform.translation = robot_world_translation(robot, is_local_player);
-    sprite.color = robot_visual_color(robot.color_index, is_local_player);
-    sprite.custom_size = Some(Vec2::splat(robot_visual_size(is_local_player)));
+    sprite.color = robot_visual_color(is_local_player);
+    sprite.custom_size = Some(Vec2::splat(robot_visual_size()));
 }
 
 fn robot_world_translation(robot: &RobotState, is_local_player: bool) -> Vec3 {
@@ -205,23 +199,21 @@ fn robot_world_translation(robot: &RobotState, is_local_player: bool) -> Vec3 {
         if is_local_player {
             ROBOT_LOCAL_Z
         } else {
-            ROBOT_Z
+            ROBOT_REMOTE_Z
         },
     )
 }
 
-fn robot_visual_color(color_index: usize, is_local_player: bool) -> Color {
-    let rgb = ROBOT_COLORS[color_index % ROBOT_COLORS.len()];
-    let alpha = if is_local_player { 1.0 } else { 0.78 };
-    Color::srgba(rgb[0], rgb[1], rgb[2], alpha)
+fn robot_visual_color(is_local_player: bool) -> Color {
+    if is_local_player {
+        Color::srgb(0.22, 0.82, 0.38)
+    } else {
+        Color::srgb(0.94, 0.22, 0.18)
+    }
 }
 
-fn robot_visual_size(is_local_player: bool) -> f32 {
-    if is_local_player {
-        ROBOT_LOCAL_SIZE
-    } else {
-        ROBOT_REMOTE_SIZE
-    }
+fn robot_visual_size() -> f32 {
+    ROBOT_SIZE
 }
 
 fn find_runtime_root_entity<'runtime>(
@@ -251,7 +243,9 @@ mod tests {
 
     fn test_app() -> App {
         let mut app = App::new();
-        app.init_resource::<RobotSyncSceneState>()
+        app.add_plugins(TransformPlugin)
+            .init_resource::<RobotSyncConfig>()
+            .init_resource::<RobotSyncSceneState>()
             .init_resource::<RobotSyncReplayState>()
             .init_resource::<RobotSyncVisualState>()
             .init_resource::<AuthoritySession>()
@@ -314,36 +308,55 @@ mod tests {
         app.update();
 
         let mut query = app.world_mut().query::<(
+            Entity,
             &RobotSyncRobotVisual,
             &ChildOf,
             &SceneOwned,
             &Transform,
             &Sprite,
         )>();
-        let visuals = query.iter(app.world()).collect::<Vec<_>>();
+        let visuals = query
+            .iter(app.world())
+            .map(|(entity, visual, parent, owned, transform, sprite)| {
+                (
+                    entity,
+                    visual.player_id.clone(),
+                    visual.is_local_player,
+                    visual.color_index,
+                    parent.parent(),
+                    owned.session_id.clone(),
+                    transform.translation,
+                    sprite.color,
+                    sprite.custom_size,
+                )
+            })
+            .collect::<Vec<_>>();
         assert_eq!(visuals.len(), 2);
 
         let local = visuals
             .iter()
-            .find(|(visual, _, _, _, _)| visual.player_id == "player-a")
+            .find(|(_, player_id, _, _, _, _, _, _, _)| player_id == "player-a")
             .expect("local robot visual should exist");
-        assert_eq!(local.1.parent(), runtime_root);
-        assert_eq!(local.2.session_id, session_id);
-        assert!(local.0.is_local_player);
-        assert_eq!(local.0.color_index, 0);
-        assert_eq!(local.3.translation, Vec3::new(0.0, 0.0, ROBOT_LOCAL_Z));
-        assert_eq!(local.4.custom_size, Some(Vec2::splat(ROBOT_LOCAL_SIZE)));
+        assert_eq!(local.4, runtime_root);
+        assert_eq!(local.5, session_id);
+        assert!(local.2);
+        assert_eq!(local.3, 0);
+        assert_eq!(local.6, Vec3::new(0.0, 0.0, ROBOT_LOCAL_Z));
+        assert_eq!(local.7, robot_visual_color(true));
+        assert_eq!(local.8, Some(Vec2::splat(ROBOT_SIZE)));
 
         let remote = visuals
             .iter()
-            .find(|(visual, _, _, _, _)| visual.player_id == "player-b")
+            .find(|(_, player_id, _, _, _, _, _, _, _)| player_id == "player-b")
             .expect("remote robot visual should exist");
-        assert_eq!(remote.1.parent(), runtime_root);
-        assert_eq!(remote.2.session_id, session_id);
-        assert!(!remote.0.is_local_player);
-        assert_eq!(remote.0.color_index, 1);
-        assert_eq!(remote.3.translation, Vec3::new(0.0, 0.0, ROBOT_Z));
-        assert_eq!(remote.4.custom_size, Some(Vec2::splat(ROBOT_REMOTE_SIZE)));
+        assert_eq!(remote.4, runtime_root);
+        assert_eq!(remote.5, session_id);
+        assert!(!remote.2);
+        assert_eq!(remote.3, 1);
+        assert_eq!(remote.6, Vec3::new(0.0, 0.0, ROBOT_REMOTE_Z));
+        assert!(local.6.z > remote.6.z);
+        assert_eq!(remote.7, robot_visual_color(false));
+        assert_eq!(remote.8, Some(Vec2::splat(ROBOT_SIZE)));
 
         let visual_state = app.world().resource::<RobotSyncVisualState>();
         assert_eq!(visual_state.tracked_robot_entities, 2);
@@ -375,7 +388,44 @@ mod tests {
             .iter(app.world())
             .find(|(visual, _)| visual.player_id == "player-a")
             .expect("robot visual should exist");
-        assert_eq!(transform.translation, Vec3::new(123.0, -45.0, ROBOT_Z));
+        assert_eq!(
+            transform.translation,
+            Vec3::new(123.0, -45.0, ROBOT_REMOTE_Z)
+        );
+    }
+
+    #[test]
+    fn robot_sync_visuals_update_global_transform_for_rendering() {
+        let mut app = test_app();
+        activate_scene_with_runtime_root(&mut app);
+        app.world_mut()
+            .resource_mut::<AuthoritySession>()
+            .local_player_id = Some("player-a".to_string());
+        insert_robot(
+            &mut app,
+            "player-a",
+            FixedPosition {
+                x: -119_176,
+                y: -20_824,
+            },
+            0,
+            0,
+        );
+
+        app.update();
+        app.update();
+
+        let mut query = app
+            .world_mut()
+            .query::<(&RobotSyncRobotVisual, &Transform, &GlobalTransform)>();
+        let (_, transform, global_transform) = query
+            .iter(app.world())
+            .find(|(visual, _, _)| visual.player_id == "player-a")
+            .expect("robot visual should exist");
+
+        let expected = Vec3::new(-119.176, -20.824, ROBOT_LOCAL_Z);
+        assert_eq!(transform.translation, expected);
+        assert_eq!(global_transform.translation(), expected);
     }
 
     #[test]
@@ -466,6 +516,31 @@ mod tests {
     }
 
     #[test]
+    fn robot_sync_visuals_recover_from_stale_entity_mapping() {
+        let mut app = test_app();
+        activate_scene_with_runtime_root(&mut app);
+        insert_robot(&mut app, "player-a", FixedPosition { x: 0, y: 0 }, 0, 0);
+        app.world_mut()
+            .resource_mut::<RobotSyncVisualState>()
+            .robot_entities
+            .insert("player-a".to_string(), Entity::PLACEHOLDER);
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&RobotSyncRobotVisual>();
+        let visuals = query.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(visuals.len(), 1);
+        assert_eq!(visuals[0].player_id, "player-a");
+
+        let visual_state = app.world().resource::<RobotSyncVisualState>();
+        assert_ne!(
+            visual_state.robot_entities.get("player-a"),
+            Some(&Entity::PLACEHOLDER)
+        );
+        assert_eq!(visual_state.tracked_robot_entities, 1);
+    }
+
+    #[test]
     fn robot_sync_visuals_clear_entities_and_state_when_scene_inactive() {
         let mut app = test_app();
         activate_scene_with_runtime_root(&mut app);
@@ -519,6 +594,53 @@ mod tests {
         assert!(local.0.is_local_player);
         assert!(!remote.0.is_local_player);
         assert!(local.1.translation.z > remote.1.translation.z);
-        assert!(local.2.custom_size.unwrap().x > remote.2.custom_size.unwrap().x);
+        assert_eq!(local.2.color, robot_visual_color(true));
+        assert_eq!(remote.2.color, robot_visual_color(false));
+        assert_eq!(local.2.custom_size, Some(Vec2::splat(ROBOT_SIZE)));
+        assert_eq!(remote.2.custom_size, Some(Vec2::splat(ROBOT_SIZE)));
+    }
+
+    #[test]
+    fn robot_sync_visuals_use_configured_local_player_when_session_is_pending() {
+        let mut app = test_app();
+        activate_scene_with_runtime_root(&mut app);
+        app.world_mut()
+            .resource_mut::<RobotSyncConfig>()
+            .local_player_id = "player-local".to_string();
+        insert_robot(
+            &mut app,
+            "player-local",
+            FixedPosition { x: 20_000, y: 0 },
+            0,
+            0,
+        );
+        insert_robot(
+            &mut app,
+            "player-remote",
+            FixedPosition { x: 0, y: 0 },
+            1,
+            1,
+        );
+
+        app.update();
+
+        let mut query = app
+            .world_mut()
+            .query::<(&RobotSyncRobotVisual, &Transform, &Sprite)>();
+        let visuals = query.iter(app.world()).collect::<Vec<_>>();
+        let local = visuals
+            .iter()
+            .find(|(visual, _, _)| visual.player_id == "player-local")
+            .unwrap();
+        let remote = visuals
+            .iter()
+            .find(|(visual, _, _)| visual.player_id == "player-remote")
+            .unwrap();
+
+        assert!(local.0.is_local_player);
+        assert_eq!(local.1.translation, Vec3::new(20.0, 0.0, ROBOT_LOCAL_Z));
+        assert_eq!(local.2.color, robot_visual_color(true));
+        assert!(!remote.0.is_local_player);
+        assert_eq!(remote.2.color, robot_visual_color(false));
     }
 }

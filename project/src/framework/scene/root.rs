@@ -180,6 +180,8 @@ pub fn scene_root_bundle(
     (
         SceneRoot::new(scene_id, session_id.clone()),
         SceneOwned::new(session_id),
+        Transform::default(),
+        GlobalTransform::default(),
         Name::new(name),
     )
 }
@@ -199,6 +201,8 @@ pub fn scene_layer_root_bundle(
             .with_state(state)
             .required(required),
         SceneOwned::new(session_id),
+        Transform::default(),
+        GlobalTransform::default(),
         Name::new(name),
     )
 }
@@ -209,6 +213,8 @@ pub fn scene_runtime_root_bundle(session_id: impl Into<SceneSessionId>) -> impl 
     (
         SceneRuntimeRoot::new(session_id.clone()),
         SceneOwned::new(session_id),
+        Transform::default(),
+        GlobalTransform::default(),
         Name::new("SceneRuntimeRoot"),
     )
 }
