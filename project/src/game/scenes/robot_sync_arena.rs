@@ -853,7 +853,7 @@ mod tests {
         assert!(camera_config.is_3d());
         assert_eq!(
             camera_config.transform.translation,
-            Vec3::new(0.0, 420.0, 520.0)
+            Vec3::new(0.0, 110.0, 136.0)
         );
         let SceneCameraProjection::Perspective3d {
             fov_y_radians,
@@ -865,11 +865,64 @@ mod tests {
         };
         assert!((fov_y_radians - 0.78).abs() < f32::EPSILON);
         assert!((near - 0.1).abs() < f32::EPSILON);
-        assert!((far - 2000.0).abs() < f32::EPSILON);
+        assert!((far - 300.0).abs() < f32::EPSILON);
         assert_eq!(
             camera_config.target.as_ref().map(|target| target.as_str()),
             Some("anchor.camera_target")
         );
+    }
+
+    #[test]
+    fn robot_sync_arena_fixed_camera_covers_phone_portrait_bounds_and_spawns() {
+        let manifest =
+            SceneManifest::load_first_package_ron(ROBOT_SYNC_ARENA_SCENE_MANIFEST_PATH).unwrap();
+        let layout =
+            RobotSyncArenaLayout::load_first_package_ron(ROBOT_SYNC_ARENA_LAYOUT_PATH).unwrap();
+
+        let camera_config = manifest.entry.camera.as_ref().unwrap().config();
+        let SceneCameraProjection::Perspective3d {
+            fov_y_radians,
+            near,
+            far,
+        } = camera_config.projection
+        else {
+            panic!("robot sync arena camera should use a perspective 3D projection");
+        };
+
+        let aspect_ratio = 1280.0 / 2772.0;
+        let world_min = arena_world_min(&layout.arena.min);
+        let world_max = arena_world_max(&layout.arena.max);
+        let mut points = vec![
+            Vec3::new(world_min.x, 0.0, world_min.y),
+            Vec3::new(world_min.x, 0.0, world_max.y),
+            Vec3::new(world_max.x, 0.0, world_min.y),
+            Vec3::new(world_max.x, 0.0, world_max.y),
+            Vec3::new(world_min.x, BOUNDARY_WALL_HEIGHT, world_min.y),
+            Vec3::new(world_min.x, BOUNDARY_WALL_HEIGHT, world_max.y),
+            Vec3::new(world_max.x, BOUNDARY_WALL_HEIGHT, world_min.y),
+            Vec3::new(world_max.x, BOUNDARY_WALL_HEIGHT, world_max.y),
+        ];
+        points.extend(layout.spawn_points.iter().map(|spawn_point| {
+            let position = robot_sync_world_position_from_sync(
+                spawn_point.position[0],
+                spawn_point.position[1],
+            );
+            Vec3::new(position.x, 0.0, position.y)
+        }));
+
+        for point in points {
+            assert!(
+                point_is_inside_camera_frustum(
+                    camera_config.transform,
+                    fov_y_radians,
+                    aspect_ratio,
+                    near,
+                    far,
+                    point,
+                ),
+                "point {point:?} should be visible from the fixed robot sync camera"
+            );
+        }
     }
 
     #[test]
@@ -1251,6 +1304,28 @@ mod tests {
             max = max.max(position);
         }
         max - min
+    }
+
+    fn point_is_inside_camera_frustum(
+        camera_transform: Transform,
+        fov_y_radians: f32,
+        aspect_ratio: f32,
+        near: f32,
+        far: f32,
+        point: Vec3,
+    ) -> bool {
+        let view_point = camera_transform
+            .to_matrix()
+            .inverse()
+            .transform_point3(point);
+        let depth = -view_point.z;
+        if depth < near || depth > far {
+            return false;
+        }
+
+        let half_height = depth * (fov_y_radians * 0.5).tan();
+        let half_width = half_height * aspect_ratio;
+        view_point.x.abs() <= half_width && view_point.y.abs() <= half_height
     }
 
     #[test]
