@@ -91,9 +91,9 @@
 `arena.robot_sync` 是正式的机器人帧同步小场景：
 
 - `project/assets/game/scenes.csv` 当前包含 `arena.robot_sync`，`kind=arena`，`manifest_path=scenes/robot_sync_arena/scene.ron`，`layout_path=scenes/robot_sync_arena/layout.ron`，`default_spawn=spawn.robot_a`，`ui_mode=robot_sync_scene`。
-- `project/assets/scenes/robot_sync_arena/scene.ron` 是 framework manifest，声明 2D 正交相机、`arena` / `grid` / `spawns` / `robots` 轻量 layer、两个 spawn point 和场地 bounds anchors。
+- `project/assets/scenes/robot_sync_arena/scene.ron` 是 framework manifest，声明固定 3D 透视相机、`arena` / `grid` / `spawns` / `robots` 轻量 layer、两个 spawn point 和场地 bounds anchors。
 - `project/assets/scenes/robot_sync_arena/layout.ron` 是 game layer layout，声明 500x500 场地、50 单位网格、边界、出生点、机器人半径和基础颜色；第一版不依赖重型美术资源。
-- `project/src/game/scenes/robot_sync_arena.rs` 监听 `SceneEvent::Entered("arena.robot_sync")`，读取 layout，在当前 `SceneRuntimeRoot` 下生成场地填充、边界、网格和 spawn marker，所有实体都挂 `SceneOwned(session_id)`。
+- `project/src/game/scenes/robot_sync_arena.rs` 监听 `SceneEvent::Entered("arena.robot_sync")`，读取 layout，在当前 `SceneRuntimeRoot` 下生成 3D primitive 场地底座、边界、网格、贴地 spawn marker 和基础方向光，所有实体都挂 `SceneOwned(session_id)`。
 - `project/src/game/features/robot_sync/` 承载机器人同步玩法：进入场景后按配置启动 local、LAN 或 MyServer authority；本地 bot 发送 `robot_move`；玩法只消费 `AuthorityEvent::FrameApplied` 推进确定性 replay；视觉系统按 replay 状态生成和移动机器人实体；HUD 读取 snapshot 显示 room、player、authority frame、机器人数量和本地坐标；日志 telemetry 输出 checksum 和全量机器人 fixed 坐标摘要。
 - `project/src/game/screens/gameplay/robot_sync_scene.rs` 是机器人场景 HUD，进入成功后切到 `AppUiMode::RobotSyncScene`，返回按钮发送 `SceneCommand::Exit` 并路由回大厅。
 - MyServer 模式使用 `robot_sync_room` policy。game layer 通过 authority frame 回放 `robot_move` 输入；`project/src/framework/scene/` 仍不承载机器人业务同步规则、payload 校验或房间策略。
