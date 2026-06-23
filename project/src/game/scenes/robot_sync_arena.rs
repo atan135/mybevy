@@ -706,8 +706,8 @@ mod tests {
                     && name.as_str() == "RobotSyncArenaSpawnMarker(spawn.robot_a)"
             })
             .expect("spawn.robot_a marker should be generated");
-        assert_eq!(robot_a_spawn.2.translation.x, -180.0);
-        assert_eq!(robot_a_spawn.2.translation.y, -180.0);
+        assert_eq!(robot_a_spawn.2.translation.x, 0.0);
+        assert_eq!(robot_a_spawn.2.translation.y, 0.0);
         assert_eq!(robot_a_spawn.2.translation.z, 0.5);
         assert_eq!(robot_a_spawn.3.parent(), content_entity);
         assert_eq!(robot_a_spawn.4.session_id, session_id);

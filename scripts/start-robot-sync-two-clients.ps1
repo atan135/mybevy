@@ -8,9 +8,9 @@ param(
     [string]$GuestAId = "robot-guest-a",
     [string]$GuestBId = "robot-guest-b",
     [ValidateSet("bot", "manual", "off")]
-    [string]$InputModeA = "bot",
+    [string]$InputModeA = "manual",
     [ValidateSet("bot", "manual", "off")]
-    [string]$InputModeB = "bot",
+    [string]$InputModeB = "off",
     [ValidateSet("tcp", "kcp")]
     [string]$Transport = "tcp",
     [string]$HostAddress = "127.0.0.1",

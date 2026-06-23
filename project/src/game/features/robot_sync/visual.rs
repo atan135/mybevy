@@ -308,26 +308,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<AuthoritySession>()
             .local_player_id = Some("player-a".to_string());
-        insert_robot(
-            &mut app,
-            "player-a",
-            FixedPosition {
-                x: -200_000,
-                y: -200_000,
-            },
-            0,
-            0,
-        );
-        insert_robot(
-            &mut app,
-            "player-b",
-            FixedPosition {
-                x: 200_000,
-                y: 200_000,
-            },
-            1,
-            1,
-        );
+        insert_robot(&mut app, "player-a", FixedPosition { x: 0, y: 0 }, 0, 0);
+        insert_robot(&mut app, "player-b", FixedPosition { x: 0, y: 0 }, 1, 1);
 
         app.update();
 
@@ -349,10 +331,7 @@ mod tests {
         assert_eq!(local.2.session_id, session_id);
         assert!(local.0.is_local_player);
         assert_eq!(local.0.color_index, 0);
-        assert_eq!(
-            local.3.translation,
-            Vec3::new(-200.0, -200.0, ROBOT_LOCAL_Z)
-        );
+        assert_eq!(local.3.translation, Vec3::new(0.0, 0.0, ROBOT_LOCAL_Z));
         assert_eq!(local.4.custom_size, Some(Vec2::splat(ROBOT_LOCAL_SIZE)));
 
         let remote = visuals
@@ -363,7 +342,7 @@ mod tests {
         assert_eq!(remote.2.session_id, session_id);
         assert!(!remote.0.is_local_player);
         assert_eq!(remote.0.color_index, 1);
-        assert_eq!(remote.3.translation, Vec3::new(200.0, 200.0, ROBOT_Z));
+        assert_eq!(remote.3.translation, Vec3::new(0.0, 0.0, ROBOT_Z));
         assert_eq!(remote.4.custom_size, Some(Vec2::splat(ROBOT_REMOTE_SIZE)));
 
         let visual_state = app.world().resource::<RobotSyncVisualState>();

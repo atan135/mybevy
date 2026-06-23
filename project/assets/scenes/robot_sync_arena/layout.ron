@@ -21,13 +21,13 @@
   spawn_points: [
     (
       id: "spawn.robot_a",
-      position: [-180.0, -180.0],
+      position: [0.0, 0.0],
       facing_degrees: 0.0,
       tags: ["default", "player", "robot", "robot_a"],
     ),
     (
       id: "spawn.robot_b",
-      position: [180.0, 180.0],
+      position: [0.0, 0.0],
       facing_degrees: 180.0,
       tags: ["player", "robot", "robot_b"],
     ),
