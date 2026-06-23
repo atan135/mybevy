@@ -404,6 +404,8 @@ bevy = { version = "0.18.1", features = ["wav"] }
 
 ## 13. 加载和后续下载边界
 
+### 13.1 当前 group 加载能力
+
 已落地能力：
 
 - `AudioGroupEntry` 可声明 group 中 clip 的 required/optional。
@@ -418,6 +420,48 @@ bevy = { version = "0.18.1", features = ["wav"] }
 - 当前 group 加载只管理 `AssetServer` handle 和框架状态，不实现磁盘缓存下载。
 - `UnloadGroup` 不保证 Bevy 全局 asset 缓存立即释放内存，只移除 audio loading state 中的引用。
 - `content_cache://...` 路径已可通过 catalog 路径校验，但真实内容缓存源注册、下载和校验仍是后续目标。
+
+### 13.2 后续目标：基础 Audio Bank 和 Lazy Unload
+
+后续可以把现有 `AudioGroup` 作为轻量 audio bank 使用。第一版目标不是复刻 Wwise bank，只解决“把一组可能同时播放的音频一起加载并持有 handle”的基础需求。
+
+建议运行时策略：
+
+- 播放 group 内任意 cue/clip 时，自动确保整个 group 处于 loading 或 loaded 状态。
+- 当前这次播放请求不等待整个 group 完成加载，继续允许现有 lazy play 兜底，避免第一次点击无响应。
+- group 中其他音频异步加载，并由 `AudioLoadingState` 或后续 bank runtime 持有 `AudioSource` handle。
+- 只要 group 内仍有任意活跃播放实例，就保持 group 加载状态。
+- group 内所有实例停止后，启动 lazy-unload 计时器。
+- 计时器到期前如果再次播放 group 内成员，取消本轮自动卸载。
+- 计时器到期且 group 内仍无活跃实例时，发送或执行 `UnloadGroup`，释放框架持有的 group handles。
+
+每个 group 应能单独配置 lazy-unload 时长：
+
+- `0` 表示 resident group，默认不自动卸载，适合 UI、战斗通用、常用脚步等高频音效。
+- 大于 `0` 表示 idle 超时自动卸载，适合开发测试页、场景局部 ambience、低频玩法音效或临时活动资源。
+
+第一版约束：
+
+- 一个 cue/clip 最多归属一个 lazy group，避免同一实例跨多个 group 导致 active count 和卸载归属复杂化。
+- 手动 `PreloadGroup` 仍可提前加载 group。
+- 手动 `UnloadGroup` 只释放 group 持有的 handles，不负责停止正在播放的实例；停止播放仍使用 `StopInstance`、`StopMusic` 或 `StopByScope`。
+- paused、looped、music crossfade 中的实例只要仍活跃，就继续阻止 group 自动卸载。
+- `UnloadGroup` 仍不承诺 Bevy 全局 asset 缓存立即释放内存；如果其他 strong handle 仍存在，资源可以继续留在 Bevy asset 系统中。
+
+Audio Gallery 应作为该机制的第一批验证页面：
+
+- 注册 `bank.audio_gallery`，包含 SFX、loop、music、spatial 和 voice 样例。
+- 配置一个非 0 lazy-unload group，用于验证 idle countdown 和自动卸载。
+- 配置一个 lazy-unload 时长为 `0` 的 resident group 样例，用于验证常驻行为。
+- 页面显示 group 状态：not loaded、loading、loaded、idle countdown、resident。
+- Audio Monitor 显示 group 加载进度、最近 started/skipped cue 和 load failed，辅助验证 bank 行为。
+
+仍不属于第一版目标：
+
+- Wwise event、RTPC、state、switch 或 soundbank 运行时。
+- LRU、全局内存预算、优先级淘汰和跨场景资源热迁移。
+- 音频 streaming、远端 catalog 热更新和后续下载闭环。
+- 自动扫描 manifest 生成 bank 或 UI。
 
 ## 14. 调试和诊断
 
