@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use bevy::{gltf::GltfAssetLabel, prelude::*, scene::SceneRoot as BevySceneRoot};
 
@@ -17,6 +17,13 @@ const ROBOT_REMOTE_MODEL_ASSET_PATHS: [&str; 2] = [
     "models/characters/kaykit_adventurers/Rogue.glb",
     "models/characters/kaykit_adventurers/Mage.glb",
 ];
+const ROBOT_IDLE_ANIMATION_ASSET_PATH: &str =
+    "models/animations/kaykit_adventurers/Rig_Medium_General.glb";
+const ROBOT_RUN_ANIMATION_ASSET_PATH: &str =
+    "models/animations/kaykit_adventurers/Rig_Medium_MovementBasic.glb";
+const ROBOT_IDLE_ANIMATION_INDEX: usize = 6; // Idle_A in Rig_Medium_General.glb.
+const ROBOT_RUN_ANIMATION_INDEX: usize = 5; // Running_A in Rig_Medium_MovementBasic.glb.
+const ROBOT_ANIMATION_BLEND: Duration = Duration::from_millis(120);
 const ROBOT_MODEL_SCALE: f32 = 14.0;
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
@@ -37,6 +44,28 @@ pub(in crate::game::features::robot_sync) struct RobotSyncRobotVisual {
     pub(in crate::game::features::robot_sync) session_id: SceneSessionId,
     pub(in crate::game::features::robot_sync) color_index: usize,
     pub(in crate::game::features::robot_sync) is_local_player: bool,
+    pub(in crate::game::features::robot_sync) animation_state: RobotSyncRobotAnimationState,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::game::features::robot_sync) enum RobotSyncRobotAnimationState {
+    #[default]
+    Idle,
+    Run,
+}
+
+#[derive(Clone, Debug, Component, PartialEq, Eq)]
+pub(in crate::game::features::robot_sync) struct RobotSyncRobotAnimationBinding {
+    visual_root: Entity,
+    player_id: String,
+    animation_state: RobotSyncRobotAnimationState,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::game::features::robot_sync) struct RobotSyncAnimationAssets {
+    graph_handle: Handle<AnimationGraph>,
+    idle_node: AnimationNodeIndex,
+    run_node: AnimationNodeIndex,
 }
 
 pub(in crate::game::features::robot_sync) fn clear_robot_sync_visuals(
@@ -104,6 +133,7 @@ pub(in crate::game::features::robot_sync) fn sync_robot_sync_robot_visuals(
             visual.color_index != robot.color_index || visual.is_local_player != is_local_player;
         visual.color_index = robot.color_index;
         visual.is_local_player = is_local_player;
+        visual.animation_state = robot_animation_state(robot);
         if should_update_model && let Some(asset_server) = asset_server.as_deref() {
             scene_root.0 =
                 robot_model_scene_handle(asset_server, robot.color_index, is_local_player);
@@ -154,6 +184,62 @@ pub(in crate::game::features::robot_sync) fn sync_robot_sync_robot_visuals(
     visual_state.tracked_robot_entities = visual_state.robot_entities.len();
 }
 
+pub(in crate::game::features::robot_sync) fn sync_robot_sync_robot_visual_animations(
+    mut commands: Commands,
+    asset_server: Option<Res<AssetServer>>,
+    mut animation_graphs: Option<ResMut<Assets<AnimationGraph>>>,
+    mut animation_assets: Local<Option<RobotSyncAnimationAssets>>,
+    robot_visuals: Query<&RobotSyncRobotVisual>,
+    parents: Query<&ChildOf>,
+    mut animation_players: Query<(
+        Entity,
+        &mut AnimationPlayer,
+        Option<&mut AnimationTransitions>,
+        Option<&RobotSyncRobotAnimationBinding>,
+    )>,
+) {
+    let (Some(asset_server), Some(animation_graphs)) =
+        (asset_server.as_deref(), animation_graphs.as_deref_mut())
+    else {
+        return;
+    };
+    let animation_assets =
+        robot_sync_animation_assets(asset_server, animation_graphs, &mut animation_assets);
+
+    for (entity, mut player, transitions, binding) in &mut animation_players {
+        let Some((visual_root, visual)) =
+            find_robot_visual_ancestor(entity, &parents, &robot_visuals)
+        else {
+            continue;
+        };
+        if binding.is_some_and(|binding| {
+            binding.visual_root == visual_root
+                && binding.player_id == visual.player_id
+                && binding.animation_state == visual.animation_state
+        }) {
+            continue;
+        }
+
+        let animation_node = animation_assets.node_for(visual.animation_state);
+        play_robot_sync_animation(
+            &mut commands,
+            entity,
+            &mut player,
+            transitions,
+            animation_node,
+            binding.is_none(),
+        );
+        commands.entity(entity).insert((
+            AnimationGraphHandle(animation_assets.graph_handle.clone()),
+            RobotSyncRobotAnimationBinding {
+                visual_root,
+                player_id: visual.player_id.clone(),
+                animation_state: visual.animation_state,
+            },
+        ));
+    }
+}
+
 fn remove_robot_entity_mapping_if_current(
     visual_state: &mut RobotSyncVisualState,
     player_id: &str,
@@ -201,6 +287,7 @@ fn spawn_robot_visual(
                 session_id: session_id.clone(),
                 color_index: robot.color_index,
                 is_local_player,
+                animation_state: robot_animation_state(robot),
             },
             Name::new(format!("RobotSyncRobot({})", robot.player_id)),
         ))
@@ -241,6 +328,22 @@ fn robot_model_yaw_from_direction(dir_x: i32, dir_y: i32) -> Option<f32> {
     }
 }
 
+fn robot_animation_state(robot: &RobotState) -> RobotSyncRobotAnimationState {
+    robot_animation_state_from_motion(robot.speed, robot.dir_x, robot.dir_y)
+}
+
+fn robot_animation_state_from_motion(
+    speed: u32,
+    dir_x: i32,
+    dir_y: i32,
+) -> RobotSyncRobotAnimationState {
+    if speed > 0 && (dir_x != 0 || dir_y != 0) {
+        RobotSyncRobotAnimationState::Run
+    } else {
+        RobotSyncRobotAnimationState::Idle
+    }
+}
+
 fn robot_model_asset_path(color_index: usize, is_local_player: bool) -> &'static str {
     if is_local_player {
         ROBOT_LOCAL_MODEL_ASSET_PATH
@@ -257,6 +360,83 @@ fn robot_model_scene_handle(
     asset_server.load(
         GltfAssetLabel::Scene(0).from_asset(robot_model_asset_path(color_index, is_local_player)),
     )
+}
+
+fn robot_sync_animation_assets(
+    asset_server: &AssetServer,
+    animation_graphs: &mut Assets<AnimationGraph>,
+    animation_assets: &mut Option<RobotSyncAnimationAssets>,
+) -> RobotSyncAnimationAssets {
+    animation_assets
+        .get_or_insert_with(|| {
+            let (graph, nodes) = AnimationGraph::from_clips([
+                asset_server.load(
+                    GltfAssetLabel::Animation(ROBOT_IDLE_ANIMATION_INDEX)
+                        .from_asset(ROBOT_IDLE_ANIMATION_ASSET_PATH),
+                ),
+                asset_server.load(
+                    GltfAssetLabel::Animation(ROBOT_RUN_ANIMATION_INDEX)
+                        .from_asset(ROBOT_RUN_ANIMATION_ASSET_PATH),
+                ),
+            ]);
+            RobotSyncAnimationAssets {
+                graph_handle: animation_graphs.add(graph),
+                idle_node: nodes[0],
+                run_node: nodes[1],
+            }
+        })
+        .clone()
+}
+
+impl RobotSyncAnimationAssets {
+    fn node_for(&self, state: RobotSyncRobotAnimationState) -> AnimationNodeIndex {
+        match state {
+            RobotSyncRobotAnimationState::Idle => self.idle_node,
+            RobotSyncRobotAnimationState::Run => self.run_node,
+        }
+    }
+}
+
+fn find_robot_visual_ancestor<'visual>(
+    entity: Entity,
+    parents: &Query<&ChildOf>,
+    robot_visuals: &'visual Query<&RobotSyncRobotVisual>,
+) -> Option<(Entity, &'visual RobotSyncRobotVisual)> {
+    let mut current = entity;
+    loop {
+        if let Ok(visual) = robot_visuals.get(current) {
+            return Some((current, visual));
+        }
+        current = parents.get(current).ok()?.parent();
+    }
+}
+
+fn play_robot_sync_animation(
+    commands: &mut Commands,
+    entity: Entity,
+    player: &mut AnimationPlayer,
+    transitions: Option<Mut<AnimationTransitions>>,
+    animation_node: AnimationNodeIndex,
+    is_initial_bind: bool,
+) {
+    let transition_duration = if is_initial_bind {
+        Duration::ZERO
+    } else {
+        ROBOT_ANIMATION_BLEND
+    };
+
+    if let Some(mut transitions) = transitions {
+        transitions
+            .play(player, animation_node, transition_duration)
+            .repeat();
+        return;
+    }
+
+    let mut transitions = AnimationTransitions::new();
+    transitions
+        .play(player, animation_node, Duration::ZERO)
+        .repeat();
+    commands.entity(entity).insert(transitions);
 }
 
 fn find_runtime_root_entity<'runtime>(
@@ -295,6 +475,15 @@ mod tests {
             .init_resource::<RobotSyncVisualState>()
             .init_resource::<AuthoritySession>()
             .add_systems(Update, sync_robot_sync_robot_visuals);
+        app
+    }
+
+    fn animation_test_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), TransformPlugin))
+            .init_asset::<AnimationClip>()
+            .init_asset::<AnimationGraph>()
+            .add_systems(Update, sync_robot_sync_robot_visual_animations);
         app
     }
 
@@ -416,6 +605,20 @@ mod tests {
         *app.world()
             .get::<Transform>(visual_entity_for(app, player_id))
             .expect("robot visual should have a transform")
+    }
+
+    fn robot_visual_for(app: &App, player_id: &str) -> RobotSyncRobotVisual {
+        app.world()
+            .get::<RobotSyncRobotVisual>(visual_entity_for(app, player_id))
+            .expect("robot visual should exist")
+            .clone()
+    }
+
+    fn active_animation_node(app: &App, entity: Entity) -> AnimationNodeIndex {
+        app.world()
+            .get::<AnimationTransitions>(entity)
+            .and_then(AnimationTransitions::get_main_animation)
+            .expect("animation player should have a main animation")
     }
 
     fn assert_close(actual: f32, expected: f32) {
@@ -578,6 +781,30 @@ mod tests {
     }
 
     #[test]
+    fn robot_sync_animation_state_uses_replay_speed_and_direction() {
+        assert_eq!(
+            robot_animation_state_from_motion(0, 0, 0),
+            RobotSyncRobotAnimationState::Idle
+        );
+        assert_eq!(
+            robot_animation_state_from_motion(0, 1000, 0),
+            RobotSyncRobotAnimationState::Idle
+        );
+        assert_eq!(
+            robot_animation_state_from_motion(60_000, 0, 0),
+            RobotSyncRobotAnimationState::Idle
+        );
+        assert_eq!(
+            robot_animation_state_from_motion(60_000, 1000, 0),
+            RobotSyncRobotAnimationState::Run
+        );
+        assert_eq!(
+            robot_animation_state_from_motion(60_000, 0, -1000),
+            RobotSyncRobotAnimationState::Run
+        );
+    }
+
+    #[test]
     fn robot_sync_visuals_update_transform_from_fixed_position() {
         let mut app = test_app();
         activate_scene_with_runtime_root(&mut app);
@@ -607,6 +834,114 @@ mod tests {
             Vec3::new(12.3, ROBOT_SYNC_ROBOT_FOOT_WORLD_Y, -4.5)
         );
         assert_eq!(transform.scale, Vec3::splat(ROBOT_MODEL_SCALE));
+    }
+
+    #[test]
+    fn robot_sync_visuals_record_target_animation_state_from_replay_motion() {
+        let mut app = test_app();
+        activate_scene_with_runtime_root(&mut app);
+        insert_robot_with_direction(
+            &mut app,
+            "player-a",
+            FixedPosition { x: 0, y: 0 },
+            0,
+            0,
+            0,
+            0,
+        );
+        app.update();
+
+        let entity = visual_entity_for(&app, "player-a");
+        assert_eq!(
+            robot_visual_for(&app, "player-a").animation_state,
+            RobotSyncRobotAnimationState::Idle
+        );
+
+        {
+            let mut replay_state = app.world_mut().resource_mut::<RobotSyncReplayState>();
+            let robot = replay_state.robots.get_mut("player-a").unwrap();
+            robot.dir_x = 1000;
+            robot.dir_y = 0;
+            robot.speed = 60_000;
+        }
+        app.update();
+
+        assert_eq!(visual_entity_for(&app, "player-a"), entity);
+        assert_eq!(
+            robot_visual_for(&app, "player-a").animation_state,
+            RobotSyncRobotAnimationState::Run
+        );
+
+        {
+            let mut replay_state = app.world_mut().resource_mut::<RobotSyncReplayState>();
+            let robot = replay_state.robots.get_mut("player-a").unwrap();
+            robot.dir_x = 0;
+            robot.dir_y = 0;
+            robot.speed = 60_000;
+        }
+        app.update();
+
+        assert_eq!(visual_entity_for(&app, "player-a"), entity);
+        assert_eq!(
+            robot_visual_for(&app, "player-a").animation_state,
+            RobotSyncRobotAnimationState::Idle
+        );
+    }
+
+    #[test]
+    fn robot_sync_visual_animations_bind_loaded_scene_player_to_visual_state() {
+        let mut app = animation_test_app();
+        let session_id = SceneSessionId::from("robot-sync-session");
+        let visual_root = app
+            .world_mut()
+            .spawn(RobotSyncRobotVisual {
+                player_id: "player-a".to_string(),
+                session_id: session_id.clone(),
+                color_index: 0,
+                is_local_player: true,
+                animation_state: RobotSyncRobotAnimationState::Idle,
+            })
+            .id();
+        let player_entity = app
+            .world_mut()
+            .spawn((
+                AnimationPlayer::default(),
+                Name::new("SyntheticAnimationPlayer"),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(visual_root)
+            .add_child(player_entity);
+
+        app.update();
+
+        let binding = app
+            .world()
+            .get::<RobotSyncRobotAnimationBinding>(player_entity)
+            .expect("animation player should be bound to robot visual");
+        assert_eq!(binding.visual_root, visual_root);
+        assert_eq!(binding.player_id, "player-a");
+        assert_eq!(binding.animation_state, RobotSyncRobotAnimationState::Idle);
+        assert!(
+            app.world()
+                .get::<AnimationGraphHandle>(player_entity)
+                .is_some()
+        );
+        let idle_node = active_animation_node(&app, player_entity);
+
+        app.world_mut()
+            .get_mut::<RobotSyncRobotVisual>(visual_root)
+            .unwrap()
+            .animation_state = RobotSyncRobotAnimationState::Run;
+        app.update();
+
+        let binding = app
+            .world()
+            .get::<RobotSyncRobotAnimationBinding>(player_entity)
+            .expect("animation player should keep robot animation binding");
+        assert_eq!(binding.animation_state, RobotSyncRobotAnimationState::Run);
+        let run_node = active_animation_node(&app, player_entity);
+        assert_ne!(run_node, idle_node);
     }
 
     #[test]
@@ -754,6 +1089,7 @@ mod tests {
                     session_id: SceneSessionId::from("old-session"),
                     color_index: 0,
                     is_local_player: false,
+                    animation_state: RobotSyncRobotAnimationState::Idle,
                 },
                 Name::new("RobotSyncRobot(stale-player-a)"),
             ))
