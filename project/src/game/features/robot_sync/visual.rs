@@ -211,15 +211,34 @@ fn spawn_robot_visual(
 
 fn apply_robot_visual_state(transform: &mut Transform, robot: &RobotState) {
     transform.translation = robot_world_translation(robot);
+    if let Some(rotation) = robot_model_rotation_from_direction(robot.dir_x, robot.dir_y) {
+        transform.rotation = rotation;
+    }
 }
 
 fn robot_model_transform(robot: &RobotState) -> Transform {
-    Transform::from_translation(robot_world_translation(robot))
-        .with_scale(Vec3::splat(ROBOT_MODEL_SCALE))
+    let mut transform = Transform::from_translation(robot_world_translation(robot))
+        .with_scale(Vec3::splat(ROBOT_MODEL_SCALE));
+    if let Some(rotation) = robot_model_rotation_from_direction(robot.dir_x, robot.dir_y) {
+        transform.rotation = rotation;
+    }
+    transform
 }
 
 fn robot_world_translation(robot: &RobotState) -> Vec3 {
     robot_sync_world_position_from_fixed(robot.position)
+}
+
+fn robot_model_rotation_from_direction(dir_x: i32, dir_y: i32) -> Option<Quat> {
+    robot_model_yaw_from_direction(dir_x, dir_y).map(Quat::from_rotation_y)
+}
+
+fn robot_model_yaw_from_direction(dir_x: i32, dir_y: i32) -> Option<f32> {
+    if dir_x == 0 && dir_y == 0 {
+        None
+    } else {
+        Some((dir_x as f32).atan2(dir_y as f32))
+    }
 }
 
 fn robot_model_asset_path(color_index: usize, is_local_player: bool) -> &'static str {
@@ -302,6 +321,18 @@ mod tests {
         spawn_index: usize,
         color_index: usize,
     ) {
+        insert_robot_with_direction(app, player_id, position, spawn_index, color_index, 1000, 0);
+    }
+
+    fn insert_robot_with_direction(
+        app: &mut App,
+        player_id: &str,
+        position: FixedPosition,
+        spawn_index: usize,
+        color_index: usize,
+        dir_x: i32,
+        dir_y: i32,
+    ) {
         app.world_mut()
             .resource_mut::<RobotSyncReplayState>()
             .robots
@@ -310,9 +341,9 @@ mod tests {
                 RobotState {
                     player_id: player_id.to_string(),
                     position,
-                    dir_x: 1000,
-                    dir_y: 0,
-                    speed: 60_000,
+                    dir_x,
+                    dir_y,
+                    speed: if dir_x == 0 && dir_y == 0 { 0 } else { 60_000 },
                     last_input_seq: None,
                     last_frame: None,
                     spawn_index,
@@ -379,6 +410,34 @@ mod tests {
             .robot_entities
             .get(player_id)
             .expect("robot visual should be tracked")
+    }
+
+    fn robot_transform_for(app: &App, player_id: &str) -> Transform {
+        *app.world()
+            .get::<Transform>(visual_entity_for(app, player_id))
+            .expect("robot visual should have a transform")
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.000_001,
+            "expected {actual} to be close to {expected}"
+        );
+    }
+
+    fn assert_vec3_close(actual: Vec3, expected: Vec3) {
+        assert!(
+            actual.abs_diff_eq(expected, 0.000_001),
+            "expected {actual:?} to be close to {expected:?}"
+        );
+    }
+
+    fn assert_same_rotation(actual: Quat, expected: Quat) {
+        let same_rotation = actual.dot(expected).abs();
+        assert!(
+            (1.0 - same_rotation) < 0.000_001,
+            "expected {actual:?} to represent the same rotation as {expected:?}"
+        );
     }
 
     #[test]
@@ -461,6 +520,40 @@ mod tests {
     }
 
     #[test]
+    fn robot_sync_model_yaw_maps_replay_direction_to_world_xz_plane() {
+        assert_close(robot_model_yaw_from_direction(0, 1000).unwrap(), 0.0);
+        assert_close(
+            robot_model_yaw_from_direction(1000, 0).unwrap(),
+            std::f32::consts::FRAC_PI_2,
+        );
+        assert_close(
+            robot_model_yaw_from_direction(-1000, 0).unwrap(),
+            -std::f32::consts::FRAC_PI_2,
+        );
+        assert_close(
+            robot_model_yaw_from_direction(0, -1000).unwrap(),
+            std::f32::consts::PI,
+        );
+        assert_eq!(robot_model_yaw_from_direction(0, 0), None);
+    }
+
+    #[test]
+    fn robot_sync_model_rotation_points_default_forward_along_replay_direction() {
+        let cases = [
+            ((1000, 0), Vec3::X),
+            ((-1000, 0), Vec3::NEG_X),
+            ((0, 1000), Vec3::Z),
+            ((0, -1000), Vec3::NEG_Z),
+            ((707, 707), Vec3::new(1.0, 0.0, 1.0).normalize()),
+        ];
+
+        for ((dir_x, dir_y), expected_forward) in cases {
+            let rotation = robot_model_rotation_from_direction(dir_x, dir_y).unwrap();
+            assert_vec3_close(rotation * Vec3::Z, expected_forward);
+        }
+    }
+
+    #[test]
     fn robot_sync_model_asset_selection_distinguishes_local_and_remote_color_index() {
         assert_eq!(
             robot_model_asset_path(0, true),
@@ -514,6 +607,49 @@ mod tests {
             Vec3::new(12.3, ROBOT_SYNC_ROBOT_FOOT_WORLD_Y, -4.5)
         );
         assert_eq!(transform.scale, Vec3::splat(ROBOT_MODEL_SCALE));
+    }
+
+    #[test]
+    fn robot_sync_visuals_keep_last_rotation_after_moving_robot_stops() {
+        let mut app = test_app();
+        activate_scene_with_runtime_root(&mut app);
+        insert_robot_with_direction(
+            &mut app,
+            "player-a",
+            FixedPosition { x: 0, y: 0 },
+            0,
+            0,
+            0,
+            0,
+        );
+        app.update();
+
+        let initial_transform = robot_transform_for(&app, "player-a");
+        assert_same_rotation(initial_transform.rotation, Quat::IDENTITY);
+
+        {
+            let mut replay_state = app.world_mut().resource_mut::<RobotSyncReplayState>();
+            let robot = replay_state.robots.get_mut("player-a").unwrap();
+            robot.dir_x = 0;
+            robot.dir_y = -1000;
+            robot.speed = 60_000;
+        }
+        app.update();
+
+        let moving_rotation = robot_transform_for(&app, "player-a").rotation;
+        assert_same_rotation(moving_rotation, Quat::from_rotation_y(std::f32::consts::PI));
+
+        {
+            let mut replay_state = app.world_mut().resource_mut::<RobotSyncReplayState>();
+            let robot = replay_state.robots.get_mut("player-a").unwrap();
+            robot.dir_x = 0;
+            robot.dir_y = 0;
+            robot.speed = 0;
+        }
+        app.update();
+
+        let stopped_rotation = robot_transform_for(&app, "player-a").rotation;
+        assert_same_rotation(stopped_rotation, moving_rotation);
     }
 
     #[test]
