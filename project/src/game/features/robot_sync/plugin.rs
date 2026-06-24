@@ -578,6 +578,20 @@ mod tests {
             }));
         app.update();
         let myserver_commands = read_messages::<MyServerCommand>(app.world());
+        assert!(
+            !myserver_commands
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::StartRoom))
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::RoomStatePush(robot_sync_room_state_push(
+                "robot-room",
+                "robot-player",
+                &[("robot-player", true), ("robot-player-b", true)],
+            )));
+        app.update();
+        let myserver_commands = read_messages::<MyServerCommand>(app.world());
         assert!(matches!(
             myserver_commands.last(),
             Some(MyServerCommand::StartRoom)
@@ -587,6 +601,94 @@ mod tests {
         assert!(join_state.join_sent);
         assert!(join_state.ready_sent);
         assert!(join_state.start_sent);
+    }
+
+    #[test]
+    fn robot_sync_myserver_owner_waits_for_second_member_before_starting_room() {
+        let mut app = test_app();
+        app.insert_resource(test_config(RobotSyncAuthorityMode::MyServer));
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id: SceneId::from(ROBOT_SYNC_ARENA_SCENE_ID),
+                session_id: SceneSessionId::from("robot-sync-session"),
+                content_version: None,
+            }));
+        app.update();
+
+        app.world_mut().write_message(MyServerEvent::Authenticated {
+            player_id: "robot-player-a".to_string(),
+        });
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
+                ok: true,
+                room_id: "robot-room".to_string(),
+                error_code: String::new(),
+            }));
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomStatePush(robot_sync_room_state_push(
+                "robot-room",
+                "robot-player-a",
+                &[("robot-player-a", true)],
+            )));
+        app.update();
+
+        let myserver_commands = read_messages::<MyServerCommand>(app.world());
+        assert!(
+            !myserver_commands
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::StartRoom))
+        );
+        assert!(
+            !app.world()
+                .resource::<RobotSyncMyServerJoinState>()
+                .start_sent
+        );
+    }
+
+    #[test]
+    fn robot_sync_myserver_non_owner_does_not_start_room() {
+        let mut app = test_app();
+        app.insert_resource(test_config(RobotSyncAuthorityMode::MyServer));
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id: SceneId::from(ROBOT_SYNC_ARENA_SCENE_ID),
+                session_id: SceneSessionId::from("robot-sync-session"),
+                content_version: None,
+            }));
+        app.update();
+
+        app.world_mut().write_message(MyServerEvent::Authenticated {
+            player_id: "robot-player-b".to_string(),
+        });
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
+                ok: true,
+                room_id: "robot-room".to_string(),
+                error_code: String::new(),
+            }));
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomStatePush(robot_sync_room_state_push(
+                "robot-room",
+                "robot-player-a",
+                &[("robot-player-a", true), ("robot-player-b", true)],
+            )));
+        app.update();
+
+        let myserver_commands = read_messages::<MyServerCommand>(app.world());
+        assert!(
+            !myserver_commands
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::StartRoom))
+        );
+        assert!(
+            !app.world()
+                .resource::<RobotSyncMyServerJoinState>()
+                .start_sent
+        );
     }
 
     #[test]
@@ -942,5 +1044,32 @@ mod tests {
         };
         assert_eq!(action, ROBOT_MOVE_ACTION);
         serde_json::from_str(payload_json).unwrap()
+    }
+
+    fn robot_sync_room_state_push(
+        room_id: &str,
+        owner_player_id: &str,
+        members: &[(&str, bool)],
+    ) -> pb::RoomStatePush {
+        pb::RoomStatePush {
+            event: "ready_changed".to_string(),
+            snapshot: Some(pb::RoomSnapshot {
+                room_id: room_id.to_string(),
+                owner_player_id: owner_player_id.to_string(),
+                state: "ready".to_string(),
+                members: members
+                    .iter()
+                    .map(|(player_id, ready)| pb::RoomMember {
+                        player_id: (*player_id).to_string(),
+                        ready: *ready,
+                        is_owner: *player_id == owner_player_id,
+                        offline: false,
+                        role: pb::MemberRole::Player as i32,
+                    })
+                    .collect(),
+                current_frame_id: 0,
+                game_state: "{}".to_string(),
+            }),
+        }
     }
 }

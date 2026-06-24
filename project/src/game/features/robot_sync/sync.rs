@@ -49,6 +49,7 @@ pub(in crate::game::features::robot_sync) struct RobotSyncMyServerJoinState {
     pub(in crate::game::features::robot_sync) ready_sent: bool,
     pub(in crate::game::features::robot_sync) start_sent: bool,
     pub(in crate::game::features::robot_sync) started: bool,
+    authenticated_player_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1174,6 +1175,7 @@ fn handle_robot_sync_myserver_event(
 ) {
     match event {
         MyServerEvent::Authenticated { player_id } if !state.join_sent => {
+            state.authenticated_player_id = Some(player_id.clone());
             state.join_sent = true;
             info!(
                 player_id = %player_id,
@@ -1209,10 +1211,7 @@ fn handle_robot_sync_myserver_event(
                 "robot sync MyServer room join rejected"
             );
         }
-        MyServerEvent::ReadyChanged(response)
-            if response.ok && state.ready_sent && !state.start_sent =>
-        {
-            state.start_sent = true;
+        MyServerEvent::ReadyChanged(response) if response.ok && state.ready_sent => {
             info!(
                 room_id = %response.room_id,
                 policy_id = %config.myserver_policy_id,
@@ -1220,7 +1219,6 @@ fn handle_robot_sync_myserver_event(
                 guest_id = config.myserver_guest_id.as_deref().unwrap_or_default(),
                 "robot sync MyServer ready changed"
             );
-            commands.write(MyServerCommand::StartRoom);
         }
         MyServerEvent::ReadyChanged(response) if !response.ok => {
             warn!(
@@ -1250,6 +1248,24 @@ fn handle_robot_sync_myserver_event(
                 error_code = %response.error_code,
                 "robot sync MyServer room start rejected"
             );
+        }
+        MyServerEvent::RoomStatePush(push)
+            if state.ready_sent
+                && !state.start_sent
+                && should_start_robot_sync_room(state, push) =>
+        {
+            let Some(snapshot) = push.snapshot.as_ref() else {
+                return;
+            };
+            state.start_sent = true;
+            info!(
+                room_id = %snapshot.room_id,
+                policy_id = %config.myserver_policy_id,
+                owner_player_id = %snapshot.owner_player_id,
+                member_count = snapshot.members.len(),
+                "robot sync MyServer starting room after all players ready"
+            );
+            commands.write(MyServerCommand::StartRoom);
         }
         MyServerEvent::ConnectionFailed {
             transport,
@@ -1331,6 +1347,33 @@ fn handle_robot_sync_myserver_event(
         }
         _ => {}
     }
+}
+
+fn should_start_robot_sync_room(
+    state: &RobotSyncMyServerJoinState,
+    push: &crate::game::myserver::protocol::pb::RoomStatePush,
+) -> bool {
+    let Some(snapshot) = push.snapshot.as_ref() else {
+        return false;
+    };
+    let Some(player_id) = state.authenticated_player_id.as_deref() else {
+        return false;
+    };
+    if snapshot.owner_player_id != player_id || snapshot.state == "in_game" {
+        return false;
+    }
+
+    if snapshot.members.len() < 2 {
+        return false;
+    }
+
+    for member in &snapshot.members {
+        if !member.ready {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn leave_existing_authority_if_needed(
