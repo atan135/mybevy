@@ -14,7 +14,11 @@ impl Plugin for DevScreensPlugin {
         app.add_systems(OnEnter(AppUiMode::UiGallery), ui_gallery::setup_ui_gallery)
             .add_systems(
                 OnEnter(AppUiMode::AudioGallery),
-                audio_gallery::setup_audio_gallery,
+                (
+                    audio_gallery::enable_audio_gallery_debug,
+                    audio_gallery::setup_audio_gallery,
+                )
+                    .chain(),
             )
             .add_systems(
                 OnEnter(AppUiMode::AudioMonitor),

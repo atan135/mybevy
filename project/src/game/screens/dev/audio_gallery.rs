@@ -4,14 +4,17 @@ use bevy::prelude::*;
 
 use crate::framework::{
     audio::prelude::{
-        AudioBus, AudioClipId, AudioClipRequest, AudioCommand, AudioCrossfadeMusicRequest,
-        AudioCueId, AudioCueRequest, AudioEvent, AudioInstanceCommand, AudioInstanceControlAction,
-        AudioInstanceControlFailed, AudioInstanceControlFailureReason, AudioInstanceId,
-        AudioInstanceProgress, AudioLoadFailed, AudioMusicChanged, AudioMusicFadeCommand,
-        AudioMusicRequest, AudioScope, AudioScopeFadeCommand, AudioSeekInstanceCommand,
-        AudioSpatialAttenuation, AudioSpatialCueRequest, AudioSpatialListenerBinding,
-        AudioSpatialListenerEntity, AudioSpatialSource, AudioStopInstanceCommand,
-        BEVY_SPATIAL_AUDIO_LIMITS,
+        AudioBankGroupState, AudioBankLoadStatus, AudioBankRuntime, AudioBus, AudioBusChange,
+        AudioBusChanged, AudioBusMutedCommand, AudioBusPausedCommand, AudioBusState,
+        AudioBusVolumeCommand, AudioClipId, AudioClipRequest, AudioCommand,
+        AudioCrossfadeMusicRequest, AudioCueId, AudioCueRequest, AudioCueSkipped, AudioDebugConfig,
+        AudioEvent, AudioGroupCommand, AudioGroupId, AudioInstanceCommand,
+        AudioInstanceControlAction, AudioInstanceControlFailed, AudioInstanceControlFailureReason,
+        AudioInstanceId, AudioInstanceProgress, AudioLoadFailed, AudioLoadProgress, AudioMixer,
+        AudioMusicChanged, AudioMusicFadeCommand, AudioMusicRequest, AudioScope,
+        AudioScopeFadeCommand, AudioSeekInstanceCommand, AudioSpatialAttenuation,
+        AudioSpatialCueRequest, AudioSpatialListenerBinding, AudioSpatialListenerEntity,
+        AudioSpatialSource, AudioStopInstanceCommand, BEVY_SPATIAL_AUDIO_LIMITS,
     },
     ui::{
         core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport, UiWidthClass},
@@ -32,11 +35,13 @@ use crate::framework::{
 };
 use crate::game::{
     audio::dev_samples::{
-        AUDIO_GALLERY_CAR_HORN_CUE_ID, AUDIO_GALLERY_DOG_BARK_CUE_ID,
-        AUDIO_GALLERY_FOOTSTEP_CUE_ID, AUDIO_GALLERY_MENU_MUSIC_CLIP_ID,
-        AUDIO_GALLERY_RAIN_LOOP_CUE_ID, AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID,
-        AUDIO_GALLERY_SWORD_HIT_CUE_ID, AUDIO_GALLERY_UI_NOTIFY_CUE_ID,
-        AUDIO_GALLERY_VOICE_CLIP_ID,
+        AUDIO_GALLERY_BANK_GROUP_ID, AUDIO_GALLERY_CAR_HORN_CUE_ID, AUDIO_GALLERY_COOLDOWN_CUE_ID,
+        AUDIO_GALLERY_DOG_BARK_CUE_ID, AUDIO_GALLERY_FOOTSTEP_CUE_ID,
+        AUDIO_GALLERY_MAX_CONCURRENT_CUE_ID, AUDIO_GALLERY_MENU_MUSIC_CLIP_ID,
+        AUDIO_GALLERY_MISSING_CLIP_ID, AUDIO_GALLERY_MISSING_CUE_ID,
+        AUDIO_GALLERY_RAIN_LOOP_CUE_ID, AUDIO_GALLERY_RESIDENT_BANK_GROUP_ID,
+        AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID, AUDIO_GALLERY_SWORD_HIT_CUE_ID,
+        AUDIO_GALLERY_UI_NOTIFY_CUE_ID, AUDIO_GALLERY_VOICE_CLIP_ID,
     },
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{OWNER_AUDIO_GALLERY, PANEL_AUDIO_GALLERY},
@@ -46,10 +51,20 @@ const AUDIO_GALLERY_SCOPE_ID: &str = "dev.audio_gallery";
 const DEFAULT_LONG_SEEK_SECONDS: f32 = 8.0;
 const DEFAULT_MUSIC_START_SECONDS: f32 = 12.0;
 const DEFAULT_MUSIC_CROSSFADE_SECONDS: f32 = 1.5;
+const AUDIO_GALLERY_BUSES: [AudioBus; 5] = [
+    AudioBus::Master,
+    AudioBus::Music,
+    AudioBus::Sfx,
+    AudioBus::Ui,
+    AudioBus::Battle,
+];
 
 #[derive(Clone, Copy, Debug, Component, Eq, PartialEq)]
 pub(super) enum AudioGalleryTextRow {
     Parameters,
+    Mixer,
+    Loading,
+    Diagnostics,
     Spatial,
     Instances,
     Status,
@@ -78,6 +93,17 @@ pub(super) enum AudioGalleryButton {
     SpatialAttenuation(AudioGallerySpatialAttenuationPreset),
     QuerySpatialProgress,
     StopSpatial,
+    BusVolume(AudioBus, AudioGalleryBusVolumePreset),
+    ToggleMasterMute,
+    ToggleBusMute(AudioBus),
+    PauseBus(AudioBus),
+    ResumeBus(AudioBus),
+    PreloadGalleryBank,
+    UnloadGalleryBank,
+    PlayCooldownRuleCue,
+    PlayMaxConcurrentRuleCue,
+    PlayMissingCue,
+    PlayMissingClip,
     PlayClip,
     PlayLong,
     PauseRecent,
@@ -145,6 +171,12 @@ pub(super) enum AudioGalleryFadePreset {
     Off,
     Short,
     Long,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AudioGalleryBusVolumePreset {
+    Low,
+    Full,
 }
 
 #[derive(Clone, Copy, Debug, Component, Eq, PartialEq)]
@@ -243,6 +275,14 @@ struct AudioGalleryInstanceRecord {
     spatial: bool,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+struct AudioGalleryDiagnosticsState {
+    last_started_cue: Option<String>,
+    last_skipped_cue: Option<String>,
+    last_load_failed: Option<String>,
+    last_loading_progress: Option<AudioLoadProgress>,
+}
+
 #[derive(Debug, Resource)]
 pub(super) struct AudioGalleryState {
     frames_open: u64,
@@ -260,6 +300,8 @@ pub(super) struct AudioGalleryState {
     long_instance: AudioGalleryInstanceRecord,
     music_instance: AudioGalleryInstanceRecord,
     spatial_instance: AudioGalleryInstanceRecord,
+    buses: [(AudioBus, AudioBusState); 5],
+    diagnostics: AudioGalleryDiagnosticsState,
     status: String,
 }
 
@@ -281,7 +323,9 @@ impl AudioGalleryState {
             long_instance: AudioGalleryInstanceRecord::default(),
             music_instance: AudioGalleryInstanceRecord::default(),
             spatial_instance: AudioGalleryInstanceRecord::default(),
-            status: "Ready. Use the buttons to start dev audio samples.".to_string(),
+            buses: default_audio_gallery_bus_states(),
+            diagnostics: AudioGalleryDiagnosticsState::default(),
+            status: "Ready. Audio debug capture is enabled for this page.".to_string(),
         }
     }
 
@@ -401,6 +445,33 @@ impl AudioGalleryState {
             &mut self.spatial_instance,
         ]
     }
+
+    fn bus_state(&self, bus: AudioBus) -> AudioBusState {
+        self.buses
+            .iter()
+            .find_map(|(entry_bus, state)| (*entry_bus == bus).then_some(*state))
+            .unwrap_or_default()
+    }
+
+    fn set_bus_state(&mut self, bus: AudioBus, state: AudioBusState) {
+        if let Some((_, entry_state)) = self
+            .buses
+            .iter_mut()
+            .find(|(entry_bus, _)| *entry_bus == bus)
+        {
+            *entry_state = state;
+        }
+    }
+
+    fn update_bus_change(&mut self, changed: &AudioBusChanged) {
+        let mut state = self.bus_state(changed.bus);
+        match changed.change {
+            AudioBusChange::Volume { current, .. } => state.volume = current,
+            AudioBusChange::Muted { current, .. } => state.muted = current,
+            AudioBusChange::Paused { current, .. } => state.paused = current,
+        }
+        self.set_bus_state(changed.bus, state);
+    }
 }
 
 pub(super) fn setup_audio_gallery(
@@ -411,6 +482,7 @@ pub(super) fn setup_audio_gallery(
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut clear_color: ResMut<ClearColor>,
+    mixer: Option<Res<AudioMixer>>,
 ) {
     let theme = theme.into_inner();
     let metrics = metrics.into_inner();
@@ -418,7 +490,7 @@ pub(super) fn setup_audio_gallery(
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
-    setup_audio_gallery_state_and_spatial_helpers(&mut commands);
+    setup_audio_gallery_state_and_spatial_helpers(&mut commands, mixer.as_deref());
 
     commands
         .spawn((
@@ -614,6 +686,195 @@ pub(super) fn setup_audio_gallery(
                                     AudioGalleryButton::FadeOut(AudioGalleryFadePreset::Long),
                                     "audio_gallery.params.fade_out.long",
                                     "Fade Out 2s",
+                                );
+                            });
+                    });
+
+                body.spawn(audio_gallery_panel(theme))
+                    .with_children(|panel| {
+                        panel.spawn(section_label(
+                            theme,
+                            fonts,
+                            i18n,
+                            "audio_gallery.mixer_loading.section",
+                            "Mixer / Loading",
+                        ));
+                        panel.spawn((
+                            metric_label(
+                                theme,
+                                fonts,
+                                audio_gallery_mixer_text(&AudioGalleryState::new()),
+                            ),
+                            AudioGalleryTextRow::Mixer,
+                        ));
+                        panel.spawn((
+                            metric_label(
+                                theme,
+                                fonts,
+                                audio_gallery_loading_text(&AudioGalleryState::new(), None),
+                            ),
+                            AudioGalleryTextRow::Loading,
+                        ));
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_button_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                for bus in AUDIO_GALLERY_BUSES {
+                                    spawn_gallery_button(
+                                        buttons,
+                                        theme,
+                                        metrics,
+                                        fonts,
+                                        i18n,
+                                        AudioGalleryButton::BusVolume(
+                                            bus,
+                                            AudioGalleryBusVolumePreset::Low,
+                                        ),
+                                        bus_action_i18n_key(bus, AudioGalleryBusAction::VolumeLow),
+                                        bus_action_fallback(bus, AudioGalleryBusAction::VolumeLow),
+                                    );
+                                    spawn_gallery_button(
+                                        buttons,
+                                        theme,
+                                        metrics,
+                                        fonts,
+                                        i18n,
+                                        AudioGalleryButton::BusVolume(
+                                            bus,
+                                            AudioGalleryBusVolumePreset::Full,
+                                        ),
+                                        bus_action_i18n_key(bus, AudioGalleryBusAction::VolumeFull),
+                                        bus_action_fallback(bus, AudioGalleryBusAction::VolumeFull),
+                                    );
+                                }
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::ToggleMasterMute,
+                                    "audio_gallery.bus.master_mute",
+                                    "Master Mute",
+                                );
+                                for bus in [
+                                    AudioBus::Music,
+                                    AudioBus::Sfx,
+                                    AudioBus::Ui,
+                                    AudioBus::Battle,
+                                ] {
+                                    spawn_gallery_button(
+                                        buttons,
+                                        theme,
+                                        metrics,
+                                        fonts,
+                                        i18n,
+                                        AudioGalleryButton::ToggleBusMute(bus),
+                                        bus_action_i18n_key(bus, AudioGalleryBusAction::Mute),
+                                        bus_action_fallback(bus, AudioGalleryBusAction::Mute),
+                                    );
+                                    spawn_gallery_button(
+                                        buttons,
+                                        theme,
+                                        metrics,
+                                        fonts,
+                                        i18n,
+                                        AudioGalleryButton::PauseBus(bus),
+                                        bus_action_i18n_key(bus, AudioGalleryBusAction::Pause),
+                                        bus_action_fallback(bus, AudioGalleryBusAction::Pause),
+                                    );
+                                    spawn_gallery_button(
+                                        buttons,
+                                        theme,
+                                        metrics,
+                                        fonts,
+                                        i18n,
+                                        AudioGalleryButton::ResumeBus(bus),
+                                        bus_action_i18n_key(bus, AudioGalleryBusAction::Resume),
+                                        bus_action_fallback(bus, AudioGalleryBusAction::Resume),
+                                    );
+                                }
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PreloadGalleryBank,
+                                    "audio_gallery.bank.preload",
+                                    "Preload Bank",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::UnloadGalleryBank,
+                                    "audio_gallery.bank.unload",
+                                    "Unload Bank",
+                                );
+                            });
+                    });
+
+                body.spawn(audio_gallery_panel(theme))
+                    .with_children(|panel| {
+                        panel.spawn(section_label(
+                            theme,
+                            fonts,
+                            i18n,
+                            "audio_gallery.rules.section",
+                            "Rules / Stress",
+                        ));
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_button_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayCooldownRuleCue,
+                                    "audio_gallery.rules.cooldown",
+                                    "Cooldown Cue",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayMaxConcurrentRuleCue,
+                                    "audio_gallery.rules.max_concurrent",
+                                    "Max Concurrent Cue",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayMissingCue,
+                                    "audio_gallery.failure.missing_cue",
+                                    "Missing Cue",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayMissingClip,
+                                    "audio_gallery.failure.missing_clip",
+                                    "Missing Clip",
                                 );
                             });
                     });
@@ -1138,6 +1399,31 @@ pub(super) fn setup_audio_gallery(
                             ),
                             AudioGalleryTextRow::Status,
                         ));
+                        panel.spawn((
+                            metric_label(
+                                theme,
+                                fonts,
+                                audio_gallery_diagnostics_text(&AudioGalleryState::new()),
+                            ),
+                            AudioGalleryTextRow::Diagnostics,
+                        ));
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_button_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                buttons.spawn(secondary_route_button_key(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    "nav.audio_monitor",
+                                    "Open Audio Monitor",
+                                    AppUiMode::AudioMonitor,
+                                ));
+                            });
                     });
             });
         });
@@ -1187,6 +1473,7 @@ pub(super) fn handle_audio_gallery_events(
 pub(super) fn update_audio_gallery_status(
     mut state: ResMut<AudioGalleryState>,
     mut rows: Query<(&AudioGalleryTextRow, &mut Text)>,
+    bank: Option<Res<AudioBankRuntime>>,
 ) {
     state.frames_open = state.frames_open.saturating_add(1);
 
@@ -1194,6 +1481,15 @@ pub(super) fn update_audio_gallery_status(
         match row {
             AudioGalleryTextRow::Parameters => {
                 text.0 = audio_gallery_params_text(&state.params);
+            }
+            AudioGalleryTextRow::Mixer => {
+                text.0 = audio_gallery_mixer_text(&state);
+            }
+            AudioGalleryTextRow::Loading => {
+                text.0 = audio_gallery_loading_text(&state, bank.as_deref());
+            }
+            AudioGalleryTextRow::Diagnostics => {
+                text.0 = audio_gallery_diagnostics_text(&state);
             }
             AudioGalleryTextRow::Spatial => {
                 text.0 = audio_gallery_spatial_text(&state);
@@ -1234,9 +1530,19 @@ pub(super) fn cleanup_audio_gallery(
     commands.remove_resource::<AudioGalleryState>();
 }
 
-fn setup_audio_gallery_state_and_spatial_helpers(commands: &mut Commands) {
+pub(super) fn enable_audio_gallery_debug(mut config: ResMut<AudioDebugConfig>) {
+    config.enabled = true;
+}
+
+fn setup_audio_gallery_state_and_spatial_helpers(
+    commands: &mut Commands,
+    mixer: Option<&AudioMixer>,
+) {
     let (listener_target, emitter_target) = spawn_audio_gallery_spatial_helpers(commands);
     let mut state = AudioGalleryState::new();
+    if let Some(mixer) = mixer {
+        state.buses = default_audio_gallery_bus_states_from_mixer(mixer);
+    }
     state.spatial_listener_target = Some(listener_target);
     state.spatial_emitter_target = Some(emitter_target);
     commands.insert_resource(AudioSpatialListenerBinding::new(listener_target));
@@ -1245,7 +1551,7 @@ fn setup_audio_gallery_state_and_spatial_helpers(commands: &mut Commands) {
 
 #[cfg(test)]
 fn setup_audio_gallery_state_and_spatial_helpers_system(mut commands: Commands) {
-    setup_audio_gallery_state_and_spatial_helpers(&mut commands);
+    setup_audio_gallery_state_and_spatial_helpers(&mut commands, None);
 }
 
 fn spawn_audio_gallery_spatial_helpers(commands: &mut Commands) -> (Entity, Entity) {
@@ -1627,6 +1933,174 @@ fn apply_audio_gallery_button(
                 outcome.status = "No spatial instance is active yet.".to_string();
             }
         }
+        AudioGalleryButton::BusVolume(bus, preset) => {
+            let volume = preset.value();
+            let mut state_for_bus = state.bus_state(bus);
+            state_for_bus.volume = volume;
+            state.set_bus_state(bus, state_for_bus);
+            outcome
+                .commands
+                .push(AudioCommand::SetBusVolume(AudioBusVolumeCommand::new(
+                    bus, volume,
+                )));
+            outcome.status = format!(
+                "{} bus volume set to {}. Existing normal and spatial instances on that bus should update.",
+                bus,
+                preset.label()
+            );
+        }
+        AudioGalleryButton::ToggleMasterMute => {
+            let muted = !state.bus_state(AudioBus::Master).muted;
+            let mut master = state.bus_state(AudioBus::Master);
+            master.muted = muted;
+            state.set_bus_state(AudioBus::Master, master);
+            outcome
+                .commands
+                .push(AudioCommand::SetBusMuted(AudioBusMutedCommand::new(
+                    AudioBus::Master,
+                    muted,
+                )));
+            outcome.status = format!(
+                "Master mute {}. Existing normal and spatial instances should update.",
+                if muted { "enabled" } else { "disabled" }
+            );
+        }
+        AudioGalleryButton::ToggleBusMute(bus) => {
+            let muted = !state.bus_state(bus).muted;
+            let mut bus_state = state.bus_state(bus);
+            bus_state.muted = muted;
+            state.set_bus_state(bus, bus_state);
+            outcome
+                .commands
+                .push(AudioCommand::SetBusMuted(AudioBusMutedCommand::new(
+                    bus, muted,
+                )));
+            outcome.status = format!(
+                "{} bus mute {}. Existing normal and spatial instances on that bus should update.",
+                bus,
+                if muted { "enabled" } else { "disabled" }
+            );
+        }
+        AudioGalleryButton::PauseBus(bus) => {
+            let mut bus_state = state.bus_state(bus);
+            bus_state.paused = true;
+            state.set_bus_state(bus, bus_state);
+            outcome
+                .commands
+                .push(AudioCommand::SetBusPaused(AudioBusPausedCommand::new(
+                    bus, true,
+                )));
+            outcome.status = format!(
+                "{} bus pause requested. Existing normal and spatial instances on that bus should pause.",
+                bus
+            );
+        }
+        AudioGalleryButton::ResumeBus(bus) => {
+            let mut bus_state = state.bus_state(bus);
+            bus_state.paused = false;
+            state.set_bus_state(bus, bus_state);
+            outcome
+                .commands
+                .push(AudioCommand::SetBusPaused(AudioBusPausedCommand::new(
+                    bus, false,
+                )));
+            outcome.status = format!(
+                "{} bus resume requested. Existing normal and spatial instances on that bus should resume.",
+                bus
+            );
+        }
+        AudioGalleryButton::PreloadGalleryBank => {
+            let group_id = group_id(AUDIO_GALLERY_BANK_GROUP_ID);
+            outcome
+                .commands
+                .push(AudioCommand::PreloadGroup(AudioGroupCommand::new(
+                    group_id.clone(),
+                )));
+            outcome.status = format!("Preload requested for {group_id}.");
+        }
+        AudioGalleryButton::UnloadGalleryBank => {
+            let group_id = group_id(AUDIO_GALLERY_BANK_GROUP_ID);
+            outcome
+                .commands
+                .push(AudioCommand::UnloadGroup(AudioGroupCommand::new(
+                    group_id.clone(),
+                )));
+            outcome.status =
+                format!("Unload requested for {group_id}; active instances are not stopped.");
+        }
+        AudioGalleryButton::PlayCooldownRuleCue => {
+            let cue_id = cue_id(AUDIO_GALLERY_COOLDOWN_CUE_ID);
+            outcome.launches.push(AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id.clone(),
+                slot: AudioGalleryInstanceSlot::Sfx,
+            });
+            outcome
+                .commands
+                .push(AudioCommand::PlayCue(gallery_cue_request(
+                    cue_id,
+                    state.params,
+                    false,
+                    Some(AudioBus::Ui),
+                )));
+            outcome.status =
+                "Requested cooldown cue; click repeatedly to produce CueSkipped(Cooldown)."
+                    .to_string();
+        }
+        AudioGalleryButton::PlayMaxConcurrentRuleCue => {
+            let cue_id = cue_id(AUDIO_GALLERY_MAX_CONCURRENT_CUE_ID);
+            outcome.launches.push(AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id.clone(),
+                slot: AudioGalleryInstanceSlot::Sfx,
+            });
+            outcome
+                .commands
+                .push(AudioCommand::PlayCue(gallery_cue_request(
+                    cue_id,
+                    state.params,
+                    false,
+                    Some(AudioBus::Sfx),
+                )));
+            outcome.status =
+                "Requested max_concurrent cue; click rapidly to produce skip or replacement behavior."
+                    .to_string();
+        }
+        AudioGalleryButton::PlayMissingCue => {
+            let cue_id = cue_id(AUDIO_GALLERY_MISSING_CUE_ID);
+            outcome.launches.push(AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id.clone(),
+                slot: AudioGalleryInstanceSlot::Clip,
+            });
+            outcome
+                .commands
+                .push(AudioCommand::PlayCue(gallery_cue_request(
+                    cue_id,
+                    state.params,
+                    false,
+                    Some(AudioBus::Sfx),
+                )));
+            outcome.status =
+                "Requested missing-asset cue; LoadFailed should appear here and in Audio Monitor."
+                    .to_string();
+        }
+        AudioGalleryButton::PlayMissingClip => {
+            let clip_id = clip_id(AUDIO_GALLERY_MISSING_CLIP_ID);
+            outcome.launches.push(AudioGalleryLaunchKind::Clip {
+                clip_id: clip_id.clone(),
+                slot: AudioGalleryInstanceSlot::Clip,
+            });
+            outcome
+                .commands
+                .push(AudioCommand::PlayClip(gallery_clip_request(
+                    clip_id,
+                    state.params,
+                    false,
+                    AudioBus::Sfx,
+                    None,
+                )));
+            outcome.status =
+                "Requested missing clip directly; LoadFailed should appear here and in Audio Monitor."
+                    .to_string();
+        }
         AudioGalleryButton::PlayClip => {
             let clip_id = clip_id(AUDIO_GALLERY_VOICE_CLIP_ID);
             outcome.launches.push(AudioGalleryLaunchKind::Clip {
@@ -1771,6 +2245,10 @@ fn apply_audio_gallery_event(state: &mut AudioGalleryState, event: &AudioEvent) 
                 return;
             };
 
+            state.diagnostics.last_started_cue = Some(format!(
+                "{} -> {} #{} {} {}",
+                started.cue_id, started.clip_id, started.instance_id, started.bus, started.scope
+            ));
             state.record_started(slot, started.instance_id, started.cue_id.to_string());
             state.status = format!(
                 "Started cue {} as instance {} on {} bus.",
@@ -1804,9 +2282,26 @@ fn apply_audio_gallery_event(state: &mut AudioGalleryState, event: &AudioEvent) 
             }
         }
         AudioEvent::LoadFailed(failed) => {
+            state.diagnostics.last_load_failed = Some(audio_gallery_load_failed_text(failed));
             if load_failure_is_gallery_owned(state, failed) {
                 state.status = audio_gallery_load_failed_text(failed);
             }
+        }
+        AudioEvent::LoadProgress(progress) => {
+            if progress.group_id.as_str() == AUDIO_GALLERY_BANK_GROUP_ID {
+                state.diagnostics.last_loading_progress = Some(progress.clone());
+                state.status = audio_gallery_load_progress_text(progress);
+            }
+        }
+        AudioEvent::CueSkipped(skipped) => {
+            state.diagnostics.last_skipped_cue = Some(audio_gallery_cue_skipped_text(skipped));
+            if dev_cue_slot(&skipped.cue_id).is_some() {
+                state.status = audio_gallery_cue_skipped_text(skipped);
+            }
+        }
+        AudioEvent::BusChanged(changed) => {
+            state.update_bus_change(changed);
+            state.status = audio_gallery_bus_changed_text(changed);
         }
         AudioEvent::InstanceProgress(progress) => {
             if state.update_progress(progress) {
@@ -1827,7 +2322,6 @@ fn apply_audio_gallery_event(state: &mut AudioGalleryState, event: &AudioEvent) 
                 }
             }
         }
-        _ => {}
     }
 }
 
@@ -1992,7 +2486,7 @@ fn load_failure_is_gallery_owned(state: &AudioGalleryState, failed: &AudioLoadFa
         || failed
             .group_id
             .as_ref()
-            .is_some_and(|group_id| group_id.as_str() == "bank.audio_gallery")
+            .is_some_and(|group_id| group_id.as_str() == AUDIO_GALLERY_BANK_GROUP_ID)
         || state.pending_launches.iter().any(|launch| match launch {
             AudioGalleryLaunchKind::Cue { cue_id, .. } => failed.cue_id.as_ref() == Some(cue_id),
             AudioGalleryLaunchKind::Clip { clip_id, .. } => {
@@ -2018,11 +2512,14 @@ fn dev_cue_slot(cue_id: &AudioCueId) -> Option<AudioGalleryInstanceSlot> {
     match cue_id.as_str() {
         AUDIO_GALLERY_UI_NOTIFY_CUE_ID
         | AUDIO_GALLERY_FOOTSTEP_CUE_ID
-        | AUDIO_GALLERY_SWORD_HIT_CUE_ID => Some(AudioGalleryInstanceSlot::Sfx),
+        | AUDIO_GALLERY_SWORD_HIT_CUE_ID
+        | AUDIO_GALLERY_COOLDOWN_CUE_ID
+        | AUDIO_GALLERY_MAX_CONCURRENT_CUE_ID => Some(AudioGalleryInstanceSlot::Sfx),
         AUDIO_GALLERY_RAIN_LOOP_CUE_ID => Some(AudioGalleryInstanceSlot::Loop),
         AUDIO_GALLERY_CAR_HORN_CUE_ID | AUDIO_GALLERY_DOG_BARK_CUE_ID => {
             Some(AudioGalleryInstanceSlot::Spatial)
         }
+        AUDIO_GALLERY_MISSING_CUE_ID => Some(AudioGalleryInstanceSlot::Clip),
         value if value.starts_with("dev.audio.music.") => Some(AudioGalleryInstanceSlot::Music),
         _ => None,
     }
@@ -2054,6 +2551,69 @@ fn audio_gallery_params_text(params: &AudioGalleryPlaybackParams) -> String {
         yes_no(params.looped),
         format_seconds(params.fade_in_seconds),
         format_seconds(params.fade_out_seconds)
+    )
+}
+
+fn audio_gallery_mixer_text(state: &AudioGalleryState) -> String {
+    AUDIO_GALLERY_BUSES
+        .iter()
+        .map(|bus| {
+            let bus_state = state.bus_state(*bus);
+            format!(
+                "{} {:.0}% muted={} paused={}",
+                bus,
+                bus_state.volume * 100.0,
+                yes_no(bus_state.muted),
+                yes_no(bus_state.paused)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn audio_gallery_loading_text(
+    state: &AudioGalleryState,
+    bank: Option<&AudioBankRuntime>,
+) -> String {
+    let gallery_group = group_status_text(
+        AUDIO_GALLERY_BANK_GROUP_ID,
+        bank.and_then(|bank| bank.groups.get(&group_id(AUDIO_GALLERY_BANK_GROUP_ID))),
+    );
+    let resident_group = group_status_text(
+        AUDIO_GALLERY_RESIDENT_BANK_GROUP_ID,
+        bank.and_then(|bank| {
+            bank.groups
+                .get(&group_id(AUDIO_GALLERY_RESIDENT_BANK_GROUP_ID))
+        }),
+    );
+    let progress = state
+        .diagnostics
+        .last_loading_progress
+        .as_ref()
+        .map(audio_gallery_load_progress_line)
+        .unwrap_or_else(|| "last progress none".to_string());
+
+    format!("{gallery_group} | {resident_group} | {progress}")
+}
+
+fn audio_gallery_diagnostics_text(state: &AudioGalleryState) -> String {
+    format!(
+        "last started: {} | last skipped: {} | last failed: {} | Debug capture is enabled; open Audio Monitor for full snapshot.",
+        state
+            .diagnostics
+            .last_started_cue
+            .as_deref()
+            .unwrap_or("none"),
+        state
+            .diagnostics
+            .last_skipped_cue
+            .as_deref()
+            .unwrap_or("none"),
+        state
+            .diagnostics
+            .last_load_failed
+            .as_deref()
+            .unwrap_or("none"),
     )
 }
 
@@ -2129,6 +2689,61 @@ fn audio_gallery_load_failed_text(failed: &AudioLoadFailed) -> String {
         .or_else(|| failed.group_id.as_ref().map(|id| format!("group {id}")))
         .unwrap_or_else(|| "gallery audio".to_string());
     format!("Load failed for {id}: {}", failed.message)
+}
+
+fn audio_gallery_load_progress_text(progress: &AudioLoadProgress) -> String {
+    format!(
+        "Loading progress: {}",
+        audio_gallery_load_progress_line(progress)
+    )
+}
+
+fn audio_gallery_load_progress_line(progress: &AudioLoadProgress) -> String {
+    format!(
+        "{} {}/{} loaded, {} failed, required {}/{} loaded, {} required failed{}",
+        progress.group_id,
+        progress.loaded,
+        progress.total,
+        progress.failed,
+        progress.required_loaded,
+        progress.required_total,
+        progress.required_failed,
+        progress
+            .clip_id
+            .as_ref()
+            .map(|clip_id| format!(" ({clip_id})"))
+            .unwrap_or_default()
+    )
+}
+
+fn audio_gallery_cue_skipped_text(skipped: &AudioCueSkipped) -> String {
+    format!(
+        "Cue skipped: {} {:?} in {}.",
+        skipped.cue_id, skipped.reason, skipped.scope
+    )
+}
+
+fn audio_gallery_bus_changed_text(changed: &AudioBusChanged) -> String {
+    match changed.change {
+        AudioBusChange::Volume { previous, current } => format!(
+            "{} bus volume changed from {:.0}% to {:.0}%.",
+            changed.bus,
+            previous * 100.0,
+            current * 100.0
+        ),
+        AudioBusChange::Muted { previous, current } => format!(
+            "{} bus muted changed from {} to {}.",
+            changed.bus,
+            yes_no(previous),
+            yes_no(current)
+        ),
+        AudioBusChange::Paused { previous, current } => format!(
+            "{} bus paused changed from {} to {}.",
+            changed.bus,
+            yes_no(previous),
+            yes_no(current)
+        ),
+    }
 }
 
 fn audio_gallery_control_failed_text(failed: &AudioInstanceControlFailed) -> String {
@@ -2378,6 +2993,31 @@ impl AudioGalleryFadePreset {
     }
 }
 
+impl AudioGalleryBusVolumePreset {
+    fn value(self) -> f32 {
+        match self {
+            Self::Low => 0.5,
+            Self::Full => 1.0,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Low => "50%",
+            Self::Full => "100%",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AudioGalleryBusAction {
+    VolumeLow,
+    VolumeFull,
+    Mute,
+    Pause,
+    Resume,
+}
+
 impl fmt::Display for AudioGalleryInstanceSlot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -2515,6 +3155,76 @@ fn section_label(
     )
 }
 
+fn bus_action_i18n_key(bus: AudioBus, action: AudioGalleryBusAction) -> &'static str {
+    match (bus, action) {
+        (AudioBus::Master, AudioGalleryBusAction::VolumeLow) => {
+            "audio_gallery.bus.master_volume_low"
+        }
+        (AudioBus::Master, AudioGalleryBusAction::VolumeFull) => {
+            "audio_gallery.bus.master_volume_full"
+        }
+        (AudioBus::Master, AudioGalleryBusAction::Mute) => "audio_gallery.bus.master_mute_toggle",
+        (AudioBus::Master, AudioGalleryBusAction::Pause) => "audio_gallery.bus.master_pause",
+        (AudioBus::Master, AudioGalleryBusAction::Resume) => "audio_gallery.bus.master_resume",
+        (AudioBus::Music, AudioGalleryBusAction::VolumeLow) => "audio_gallery.bus.music_volume_low",
+        (AudioBus::Music, AudioGalleryBusAction::VolumeFull) => {
+            "audio_gallery.bus.music_volume_full"
+        }
+        (AudioBus::Music, AudioGalleryBusAction::Mute) => "audio_gallery.bus.music_mute",
+        (AudioBus::Music, AudioGalleryBusAction::Pause) => "audio_gallery.bus.music_pause",
+        (AudioBus::Music, AudioGalleryBusAction::Resume) => "audio_gallery.bus.music_resume",
+        (AudioBus::Sfx, AudioGalleryBusAction::VolumeLow) => "audio_gallery.bus.sfx_volume_low",
+        (AudioBus::Sfx, AudioGalleryBusAction::VolumeFull) => "audio_gallery.bus.sfx_volume_full",
+        (AudioBus::Sfx, AudioGalleryBusAction::Mute) => "audio_gallery.bus.sfx_mute",
+        (AudioBus::Sfx, AudioGalleryBusAction::Pause) => "audio_gallery.bus.sfx_pause",
+        (AudioBus::Sfx, AudioGalleryBusAction::Resume) => "audio_gallery.bus.sfx_resume",
+        (AudioBus::Ui, AudioGalleryBusAction::VolumeLow) => "audio_gallery.bus.ui_volume_low",
+        (AudioBus::Ui, AudioGalleryBusAction::VolumeFull) => "audio_gallery.bus.ui_volume_full",
+        (AudioBus::Ui, AudioGalleryBusAction::Mute) => "audio_gallery.bus.ui_mute",
+        (AudioBus::Ui, AudioGalleryBusAction::Pause) => "audio_gallery.bus.ui_pause",
+        (AudioBus::Ui, AudioGalleryBusAction::Resume) => "audio_gallery.bus.ui_resume",
+        (AudioBus::Battle, AudioGalleryBusAction::VolumeLow) => {
+            "audio_gallery.bus.battle_volume_low"
+        }
+        (AudioBus::Battle, AudioGalleryBusAction::VolumeFull) => {
+            "audio_gallery.bus.battle_volume_full"
+        }
+        (AudioBus::Battle, AudioGalleryBusAction::Mute) => "audio_gallery.bus.battle_mute",
+        (AudioBus::Battle, AudioGalleryBusAction::Pause) => "audio_gallery.bus.battle_pause",
+        (AudioBus::Battle, AudioGalleryBusAction::Resume) => "audio_gallery.bus.battle_resume",
+    }
+}
+
+fn bus_action_fallback(bus: AudioBus, action: AudioGalleryBusAction) -> &'static str {
+    match (bus, action) {
+        (AudioBus::Master, AudioGalleryBusAction::VolumeLow) => "Master 50%",
+        (AudioBus::Master, AudioGalleryBusAction::VolumeFull) => "Master 100%",
+        (AudioBus::Master, AudioGalleryBusAction::Mute) => "Master Mute",
+        (AudioBus::Master, AudioGalleryBusAction::Pause) => "Master Pause",
+        (AudioBus::Master, AudioGalleryBusAction::Resume) => "Master Resume",
+        (AudioBus::Music, AudioGalleryBusAction::VolumeLow) => "Music 50%",
+        (AudioBus::Music, AudioGalleryBusAction::VolumeFull) => "Music 100%",
+        (AudioBus::Music, AudioGalleryBusAction::Mute) => "Music Mute",
+        (AudioBus::Music, AudioGalleryBusAction::Pause) => "Music Pause",
+        (AudioBus::Music, AudioGalleryBusAction::Resume) => "Music Resume",
+        (AudioBus::Sfx, AudioGalleryBusAction::VolumeLow) => "Sfx 50%",
+        (AudioBus::Sfx, AudioGalleryBusAction::VolumeFull) => "Sfx 100%",
+        (AudioBus::Sfx, AudioGalleryBusAction::Mute) => "Sfx Mute",
+        (AudioBus::Sfx, AudioGalleryBusAction::Pause) => "Sfx Pause",
+        (AudioBus::Sfx, AudioGalleryBusAction::Resume) => "Sfx Resume",
+        (AudioBus::Ui, AudioGalleryBusAction::VolumeLow) => "Ui 50%",
+        (AudioBus::Ui, AudioGalleryBusAction::VolumeFull) => "Ui 100%",
+        (AudioBus::Ui, AudioGalleryBusAction::Mute) => "Ui Mute",
+        (AudioBus::Ui, AudioGalleryBusAction::Pause) => "Ui Pause",
+        (AudioBus::Ui, AudioGalleryBusAction::Resume) => "Ui Resume",
+        (AudioBus::Battle, AudioGalleryBusAction::VolumeLow) => "Battle 50%",
+        (AudioBus::Battle, AudioGalleryBusAction::VolumeFull) => "Battle 100%",
+        (AudioBus::Battle, AudioGalleryBusAction::Mute) => "Battle Mute",
+        (AudioBus::Battle, AudioGalleryBusAction::Pause) => "Battle Pause",
+        (AudioBus::Battle, AudioGalleryBusAction::Resume) => "Battle Resume",
+    }
+}
+
 fn metric_label(theme: &UiTheme, fonts: &UiFontAssets, text: impl Into<String>) -> impl Bundle {
     screen_label(
         theme,
@@ -2533,11 +3243,65 @@ fn clip_id(value: &str) -> AudioClipId {
     AudioClipId::try_from(value).expect("audio gallery clip id must be valid")
 }
 
+fn group_id(value: &str) -> AudioGroupId {
+    AudioGroupId::try_from(value).expect("audio gallery group id must be valid")
+}
+
+fn default_audio_gallery_bus_states() -> [(AudioBus, AudioBusState); 5] {
+    AUDIO_GALLERY_BUSES.map(|bus| (bus, AudioBusState::default()))
+}
+
+fn default_audio_gallery_bus_states_from_mixer(
+    mixer: &AudioMixer,
+) -> [(AudioBus, AudioBusState); 5] {
+    AUDIO_GALLERY_BUSES.map(|bus| (bus, mixer.bus_state(bus)))
+}
+
+fn group_status_text(group_id: &str, state: Option<&AudioBankGroupState>) -> String {
+    let Some(state) = state else {
+        return format!("{group_id}: not loaded");
+    };
+
+    if state.resident() {
+        return format!(
+            "{}: resident {} active={}",
+            state.group_id,
+            bank_load_status_label(state.load_status),
+            state.active_instance_ids.len()
+        );
+    }
+
+    if let Some(countdown) = state.idle_countdown_seconds {
+        return format!(
+            "{}: idle countdown {:.1}s active={}",
+            state.group_id,
+            countdown.max(0.0),
+            state.active_instance_ids.len()
+        );
+    }
+
+    format!(
+        "{}: {} active={}",
+        state.group_id,
+        bank_load_status_label(state.load_status),
+        state.active_instance_ids.len()
+    )
+}
+
+fn bank_load_status_label(status: AudioBankLoadStatus) -> &'static str {
+    match status {
+        AudioBankLoadStatus::NotLoaded => "not loaded",
+        AudioBankLoadStatus::Loading => "loading",
+        AudioBankLoadStatus::Loaded => "loaded",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::framework::audio::prelude::{
-        AudioClipStarted, AudioCueStarted, AudioInstanceStopped, AudioLoadFailed, AudioStopReason,
+        AudioBankGroupConfig, AudioBusChanged, AudioClipStarted, AudioCueSkipReason,
+        AudioCueStarted, AudioInstanceStopped, AudioLoadFailed, AudioStopReason,
         DEFAULT_UI_CLICK_CUE_ID,
     };
     use crate::framework::ui::widgets::{UiButtonEvent, UiButtonEventKind};
@@ -3156,6 +3920,7 @@ mod tests {
         );
 
         assert_eq!(state.last_sfx.instance_id, None);
+        assert_eq!(state.diagnostics.last_started_cue, None);
         assert!(state.status.starts_with("Ready."));
     }
 
@@ -3181,6 +3946,22 @@ mod tests {
         assert_eq!(
             state.last_sfx.instance_id,
             Some(AudioInstanceId::from_raw(2))
+        );
+        assert!(
+            state
+                .diagnostics
+                .last_started_cue
+                .as_deref()
+                .unwrap()
+                .contains(AUDIO_GALLERY_FOOTSTEP_CUE_ID)
+        );
+        assert!(
+            state
+                .diagnostics
+                .last_started_cue
+                .as_deref()
+                .unwrap()
+                .contains("#2")
         );
         assert!(state.pending_launches.is_empty());
     }
@@ -3430,6 +4211,321 @@ mod tests {
 
         assert!(state.status.contains("Load failed"));
         assert!(state.status.contains(AUDIO_GALLERY_VOICE_CLIP_ID));
+    }
+
+    #[test]
+    fn bus_controls_map_to_volume_mute_pause_commands_and_update_display_state() {
+        let mut state = AudioGalleryState::new();
+
+        let master_volume = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::BusVolume(AudioBus::Master, AudioGalleryBusVolumePreset::Low),
+        );
+        let music_volume = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::BusVolume(AudioBus::Music, AudioGalleryBusVolumePreset::Full),
+        );
+        let master_mute =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::ToggleMasterMute);
+        let sfx_mute = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::ToggleBusMute(AudioBus::Sfx),
+        );
+        let ui_pause =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::PauseBus(AudioBus::Ui));
+        let battle_resume =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::ResumeBus(AudioBus::Battle));
+
+        assert_eq!(
+            master_volume.commands,
+            vec![AudioCommand::SetBusVolume(AudioBusVolumeCommand::new(
+                AudioBus::Master,
+                0.5,
+            ))]
+        );
+        assert_eq!(
+            music_volume.commands,
+            vec![AudioCommand::SetBusVolume(AudioBusVolumeCommand::new(
+                AudioBus::Music,
+                1.0,
+            ))]
+        );
+        assert_eq!(
+            master_mute.commands,
+            vec![AudioCommand::SetBusMuted(AudioBusMutedCommand::new(
+                AudioBus::Master,
+                true,
+            ))]
+        );
+        assert_eq!(
+            sfx_mute.commands,
+            vec![AudioCommand::SetBusMuted(AudioBusMutedCommand::new(
+                AudioBus::Sfx,
+                true,
+            ))]
+        );
+        assert_eq!(
+            ui_pause.commands,
+            vec![AudioCommand::SetBusPaused(AudioBusPausedCommand::new(
+                AudioBus::Ui,
+                true,
+            ))]
+        );
+        assert_eq!(
+            battle_resume.commands,
+            vec![AudioCommand::SetBusPaused(AudioBusPausedCommand::new(
+                AudioBus::Battle,
+                false,
+            ))]
+        );
+
+        let mixer_text = audio_gallery_mixer_text(&state);
+        assert!(mixer_text.contains("master 50% muted=yes paused=no"));
+        assert!(mixer_text.contains("music 100% muted=no paused=no"));
+        assert!(mixer_text.contains("sfx 100% muted=yes paused=no"));
+        assert!(mixer_text.contains("ui 100% muted=no paused=yes"));
+        assert!(mixer_text.contains("battle 100% muted=no paused=no"));
+        assert!(ui_pause.status.contains("spatial instances"));
+    }
+
+    #[test]
+    fn bus_changed_events_update_gallery_bus_display() {
+        let mut state = AudioGalleryState::new();
+
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::BusChanged(AudioBusChanged {
+                bus: AudioBus::Music,
+                change: AudioBusChange::Volume {
+                    previous: 1.0,
+                    current: 0.25,
+                },
+            }),
+        );
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::BusChanged(AudioBusChanged {
+                bus: AudioBus::Sfx,
+                change: AudioBusChange::Paused {
+                    previous: false,
+                    current: true,
+                },
+            }),
+        );
+
+        assert_eq!(state.bus_state(AudioBus::Music).volume, 0.25);
+        assert!(state.bus_state(AudioBus::Sfx).paused);
+        assert!(state.status.contains("sfx bus paused changed"));
+        assert!(audio_gallery_mixer_text(&state).contains("music 25%"));
+    }
+
+    #[test]
+    fn preload_unload_and_loading_events_update_bank_status() {
+        let mut state = AudioGalleryState::new();
+
+        let preload =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::PreloadGalleryBank);
+        let unload = apply_audio_gallery_button(&mut state, AudioGalleryButton::UnloadGalleryBank);
+
+        assert_eq!(
+            preload.commands,
+            vec![AudioCommand::PreloadGroup(AudioGroupCommand::new(
+                group_id(AUDIO_GALLERY_BANK_GROUP_ID)
+            ))]
+        );
+        assert_eq!(
+            unload.commands,
+            vec![AudioCommand::UnloadGroup(AudioGroupCommand::new(group_id(
+                AUDIO_GALLERY_BANK_GROUP_ID
+            )))]
+        );
+
+        let progress = AudioLoadProgress {
+            group_id: group_id(AUDIO_GALLERY_BANK_GROUP_ID),
+            loaded: 3,
+            total: 10,
+            failed: 1,
+            required_loaded: 3,
+            required_total: 9,
+            required_failed: 0,
+            clip_id: Some(clip_id(AUDIO_GALLERY_MISSING_CLIP_ID)),
+            asset_path: Some("audio/dev_gallery/missing_asset.wav".to_string()),
+        };
+        apply_audio_gallery_event(&mut state, &AudioEvent::LoadProgress(progress.clone()));
+        assert_eq!(state.diagnostics.last_loading_progress, Some(progress));
+        assert!(state.status.contains("Loading progress"));
+
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::LoadFailed(AudioLoadFailed {
+                clip_id: Some(clip_id(AUDIO_GALLERY_MISSING_CLIP_ID)),
+                cue_id: None,
+                group_id: Some(group_id(AUDIO_GALLERY_BANK_GROUP_ID)),
+                asset_path: Some("audio/dev_gallery/missing_asset.wav".to_string()),
+                message: "missing asset".to_string(),
+            }),
+        );
+        assert!(
+            state
+                .diagnostics
+                .last_load_failed
+                .as_deref()
+                .unwrap()
+                .contains(AUDIO_GALLERY_MISSING_CLIP_ID)
+        );
+
+        let mut bank = AudioBankRuntime::default();
+        bank.register_group_config(AudioBankGroupConfig::new(
+            group_id(AUDIO_GALLERY_BANK_GROUP_ID),
+            std::time::Duration::from_secs_f32(12.0),
+        ));
+        bank.register_group_config(AudioBankGroupConfig::new(
+            group_id(AUDIO_GALLERY_RESIDENT_BANK_GROUP_ID),
+            std::time::Duration::ZERO,
+        ));
+        {
+            let group = bank
+                .groups
+                .get_mut(&group_id(AUDIO_GALLERY_BANK_GROUP_ID))
+                .unwrap();
+            group.load_status = AudioBankLoadStatus::Loaded;
+            group.preload_requested = true;
+            group.idle_countdown_seconds = Some(6.5);
+        }
+        {
+            let group = bank
+                .groups
+                .get_mut(&group_id(AUDIO_GALLERY_RESIDENT_BANK_GROUP_ID))
+                .unwrap();
+            group.load_status = AudioBankLoadStatus::Loaded;
+            group.preload_requested = true;
+        }
+        let loading_text = audio_gallery_loading_text(&state, Some(&bank));
+        assert!(loading_text.contains("bank.audio_gallery: idle countdown 6.5s"));
+        assert!(loading_text.contains("bank.audio_gallery.resident: resident loaded"));
+        assert!(loading_text.contains("3/10 loaded"));
+    }
+
+    #[test]
+    fn rules_and_failure_buttons_map_to_expected_cue_and_clip_commands() {
+        let mut state = AudioGalleryState::new();
+
+        let cooldown =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::PlayCooldownRuleCue);
+        let max_concurrent =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::PlayMaxConcurrentRuleCue);
+        let missing_cue =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::PlayMissingCue);
+        let missing_clip =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::PlayMissingClip);
+
+        assert_eq!(
+            cooldown.commands,
+            vec![AudioCommand::PlayCue(AudioCueRequest {
+                cue_id: cue_id(AUDIO_GALLERY_COOLDOWN_CUE_ID),
+                scope: audio_gallery_scope(),
+                bus: Some(AudioBus::Ui),
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            max_concurrent.commands,
+            vec![AudioCommand::PlayCue(AudioCueRequest {
+                cue_id: cue_id(AUDIO_GALLERY_MAX_CONCURRENT_CUE_ID),
+                scope: audio_gallery_scope(),
+                bus: Some(AudioBus::Sfx),
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            missing_cue.commands,
+            vec![AudioCommand::PlayCue(AudioCueRequest {
+                cue_id: cue_id(AUDIO_GALLERY_MISSING_CUE_ID),
+                scope: audio_gallery_scope(),
+                bus: Some(AudioBus::Sfx),
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            missing_clip.commands,
+            vec![AudioCommand::PlayClip(AudioClipRequest {
+                clip_id: clip_id(AUDIO_GALLERY_MISSING_CLIP_ID),
+                scope: audio_gallery_scope(),
+                bus: AudioBus::Sfx,
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            cooldown.launches,
+            vec![AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id(AUDIO_GALLERY_COOLDOWN_CUE_ID),
+                slot: AudioGalleryInstanceSlot::Sfx,
+            }]
+        );
+    }
+
+    #[test]
+    fn skipped_and_failure_events_update_diagnostics_text() {
+        let mut state = AudioGalleryState::new();
+
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::CueSkipped(AudioCueSkipped {
+                cue_id: cue_id(AUDIO_GALLERY_COOLDOWN_CUE_ID),
+                reason: AudioCueSkipReason::Cooldown,
+                scope: AudioScope::Ui,
+            }),
+        );
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::CueSkipped(AudioCueSkipped {
+                cue_id: cue_id(AUDIO_GALLERY_MAX_CONCURRENT_CUE_ID),
+                reason: AudioCueSkipReason::MaxConcurrency,
+                scope: audio_gallery_scope(),
+            }),
+        );
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::LoadFailed(AudioLoadFailed {
+                clip_id: Some(clip_id(AUDIO_GALLERY_MISSING_CLIP_ID)),
+                cue_id: Some(cue_id(AUDIO_GALLERY_MISSING_CUE_ID)),
+                group_id: None,
+                asset_path: Some("audio/dev_gallery/missing_asset.wav".to_string()),
+                message: "missing asset".to_string(),
+            }),
+        );
+
+        assert!(state.status.contains("Load failed"));
+        let diagnostics = audio_gallery_diagnostics_text(&state);
+        assert!(diagnostics.contains("MaxConcurrency"));
+        assert!(diagnostics.contains(AUDIO_GALLERY_MISSING_CUE_ID));
+    }
+
+    #[test]
+    fn enable_audio_gallery_debug_turns_on_debug_capture() {
+        let mut app = App::new();
+        app.insert_resource(AudioDebugConfig { enabled: false })
+            .add_systems(Update, enable_audio_gallery_debug);
+
+        app.update();
+
+        assert!(app.world().resource::<AudioDebugConfig>().enabled);
     }
 
     #[test]
