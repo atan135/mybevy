@@ -5,6 +5,9 @@ use crate::framework::audio::prelude::{
     AudioCueRules, AudioScope, DEFAULT_UI_CLICK_CUE_ID,
 };
 
+#[path = "audio_dev_samples.rs"]
+pub(in crate::game) mod dev_samples;
+
 const UI_CLICK_CLIP_ID: &str = "ui.click_wood_01";
 const UI_CLICK_CLIP_PATH: &str = "audio/ui/click_wood_01.wav";
 const UI_CONFIRM_CLIP_ID: &str = "ui.confirm_brick_01";
@@ -15,7 +18,14 @@ pub(in crate::game) struct GameAudioPlugin;
 
 impl Plugin for GameAudioPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, register_game_ui_audio);
+        app.init_resource::<dev_samples::AudioGalleryDevBankConfig>()
+            .add_systems(
+                Startup,
+                (
+                    register_game_ui_audio,
+                    dev_samples::register_audio_gallery_dev_samples,
+                ),
+            );
     }
 }
 
