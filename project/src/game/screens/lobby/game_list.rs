@@ -117,6 +117,8 @@ pub(super) fn setup_game_list_screen(
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::SpaceBetween,
                     column_gap: px(theme.layout.header_gap),
+                    row_gap: px(theme.layout.row_gap),
+                    flex_wrap: FlexWrap::Wrap,
                     ..default()
                 },
                 children![
@@ -132,6 +134,8 @@ pub(super) fn setup_game_list_screen(
                         Node {
                             align_items: AlignItems::Center,
                             column_gap: px(theme.layout.row_column_gap),
+                            row_gap: px(theme.layout.row_gap),
+                            flex_wrap: FlexWrap::Wrap,
                             ..default()
                         },
                         children![
@@ -152,6 +156,15 @@ pub(super) fn setup_game_list_screen(
                                 "nav.audio_monitor",
                                 "Audio Monitor",
                                 AppUiMode::AudioMonitor,
+                            ),
+                            secondary_route_button_key(
+                                theme,
+                                metrics,
+                                fonts,
+                                i18n,
+                                "nav.audio_gallery",
+                                "Audio Gallery",
+                                AppUiMode::AudioGallery,
                             ),
                             secondary_route_button_key(
                                 theme,

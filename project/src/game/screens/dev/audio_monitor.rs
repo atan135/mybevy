@@ -107,6 +107,15 @@ pub(super) fn setup_audio_monitor(
                         metrics,
                         fonts,
                         i18n,
+                        "nav.audio_gallery",
+                        "Audio Gallery",
+                        AppUiMode::AudioGallery,
+                    ));
+                    header.spawn(secondary_route_button_key(
+                        theme,
+                        metrics,
+                        fonts,
+                        i18n,
                         "nav.audio_settings",
                         "Audio Settings",
                         AppUiMode::AudioSettings,

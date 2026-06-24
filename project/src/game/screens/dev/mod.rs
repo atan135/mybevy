@@ -1,3 +1,4 @@
+mod audio_gallery;
 mod audio_monitor;
 mod ui_gallery;
 
@@ -11,6 +12,10 @@ pub(super) struct DevScreensPlugin;
 impl Plugin for DevScreensPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppUiMode::UiGallery), ui_gallery::setup_ui_gallery)
+            .add_systems(
+                OnEnter(AppUiMode::AudioGallery),
+                audio_gallery::setup_audio_gallery,
+            )
             .add_systems(
                 OnEnter(AppUiMode::AudioMonitor),
                 (
@@ -28,6 +33,15 @@ impl Plugin for DevScreensPlugin {
             .add_systems(
                 OnExit(AppUiMode::UiGallery),
                 ui_gallery::clear_ui_gallery_loading_preview,
+            )
+            .add_systems(
+                OnExit(AppUiMode::AudioGallery),
+                audio_gallery::clear_audio_gallery_state,
+            )
+            .add_systems(
+                Update,
+                audio_gallery::update_audio_gallery_status
+                    .run_if(in_state(AppUiMode::AudioGallery)),
             )
             .add_systems(
                 Update,

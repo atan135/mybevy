@@ -8,8 +8,8 @@ use crate::framework::ui::{
     widgets::{UiButtonEvent, UiButtonEventKind},
 };
 use crate::game::ui_ids::{
-    OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE,
-    OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
+    OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_LOBBY, OWNER_LOGIN,
+    OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
 };
 
 pub(in crate::game) use widgets::{
@@ -43,6 +43,7 @@ pub(super) enum AppUiMode {
     Lobby,
     AudioSettings,
     AudioMonitor,
+    AudioGallery,
     WanfaTouchRipple,
     UiGallery,
     SampleScene,
@@ -56,6 +57,7 @@ impl AppUiMode {
             Self::Lobby => OWNER_LOBBY,
             Self::AudioSettings => OWNER_AUDIO_SETTINGS,
             Self::AudioMonitor => OWNER_AUDIO_MONITOR,
+            Self::AudioGallery => OWNER_AUDIO_GALLERY,
             Self::WanfaTouchRipple => OWNER_TOUCH_RIPPLE,
             Self::UiGallery => OWNER_UI_GALLERY,
             Self::SampleScene => OWNER_SAMPLE_SCENE,
@@ -123,27 +125,36 @@ fn setup_start_mode(mut next_mode: ResMut<NextState<AppUiMode>>) {
         return;
     };
 
-    let mode = match value.trim().to_ascii_lowercase().as_str() {
-        "wanfa_touch_ripple" | "wanfa-touch-ripple" | "touch" | "touch_ripple" | "touch-ripple" => {
-            AppUiMode::WanfaTouchRipple
-        }
-        "lobby" | "game_list" | "game-list" | "list" => AppUiMode::Lobby,
-        "audio_settings" | "audio-settings" | "audio" | "settings" => AppUiMode::AudioSettings,
-        "audio_monitor" | "audio-monitor" | "audio_debug" | "audio-debug" => {
-            AppUiMode::AudioMonitor
-        }
-        "ui_gallery" | "ui-gallery" | "gallery" => AppUiMode::UiGallery,
-        "sample_scene" | "sample-scene" | "sample" => AppUiMode::SampleScene,
-        "login" => AppUiMode::Login,
-        _ => return,
+    let Some(mode) = parse_start_screen_mode(&value) else {
+        return;
     };
     next_mode.set(mode);
+}
+
+fn parse_start_screen_mode(value: &str) -> Option<AppUiMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "wanfa_touch_ripple" | "wanfa-touch-ripple" | "touch" | "touch_ripple" | "touch-ripple" => {
+            Some(AppUiMode::WanfaTouchRipple)
+        }
+        "lobby" | "game_list" | "game-list" | "list" => Some(AppUiMode::Lobby),
+        "audio_settings" | "audio-settings" | "audio" | "settings" => {
+            Some(AppUiMode::AudioSettings)
+        }
+        "audio_monitor" | "audio-monitor" | "audio_debug" | "audio-debug" => {
+            Some(AppUiMode::AudioMonitor)
+        }
+        "audio_gallery" | "audio-gallery" => Some(AppUiMode::AudioGallery),
+        "ui_gallery" | "ui-gallery" | "gallery" => Some(AppUiMode::UiGallery),
+        "sample_scene" | "sample-scene" | "sample" => Some(AppUiMode::SampleScene),
+        "login" => Some(AppUiMode::Login),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ui_ids::{OWNER_AUDIO_SETTINGS, OWNER_ROBOT_SYNC_SCENE};
+    use crate::game::ui_ids::{OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_ROBOT_SYNC_SCENE};
 
     #[test]
     fn audio_settings_mode_uses_dedicated_owner() {
@@ -156,7 +167,24 @@ mod tests {
     }
 
     #[test]
+    fn audio_gallery_mode_uses_dedicated_owner() {
+        assert_eq!(AppUiMode::AudioGallery.ui_owner(), OWNER_AUDIO_GALLERY);
+    }
+
+    #[test]
     fn robot_sync_scene_mode_uses_dedicated_owner() {
         assert_eq!(AppUiMode::RobotSyncScene.ui_owner(), OWNER_ROBOT_SYNC_SCENE);
+    }
+
+    #[test]
+    fn start_screen_aliases_include_audio_gallery() {
+        assert_eq!(
+            parse_start_screen_mode("audio_gallery"),
+            Some(AppUiMode::AudioGallery)
+        );
+        assert_eq!(
+            parse_start_screen_mode("audio-gallery"),
+            Some(AppUiMode::AudioGallery)
+        );
     }
 }
