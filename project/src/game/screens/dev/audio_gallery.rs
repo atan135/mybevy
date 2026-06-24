@@ -9,7 +9,9 @@ use crate::framework::{
         AudioInstanceControlFailed, AudioInstanceControlFailureReason, AudioInstanceId,
         AudioInstanceProgress, AudioLoadFailed, AudioMusicChanged, AudioMusicFadeCommand,
         AudioMusicRequest, AudioScope, AudioScopeFadeCommand, AudioSeekInstanceCommand,
-        AudioStopInstanceCommand,
+        AudioSpatialAttenuation, AudioSpatialCueRequest, AudioSpatialListenerBinding,
+        AudioSpatialListenerEntity, AudioSpatialSource, AudioStopInstanceCommand,
+        BEVY_SPATIAL_AUDIO_LIMITS,
     },
     ui::{
         core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport, UiWidthClass},
@@ -30,10 +32,11 @@ use crate::framework::{
 };
 use crate::game::{
     audio::dev_samples::{
-        AUDIO_GALLERY_CAR_HORN_CUE_ID, AUDIO_GALLERY_FOOTSTEP_CUE_ID,
-        AUDIO_GALLERY_MENU_MUSIC_CLIP_ID, AUDIO_GALLERY_RAIN_LOOP_CUE_ID,
-        AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID, AUDIO_GALLERY_SWORD_HIT_CUE_ID,
-        AUDIO_GALLERY_UI_NOTIFY_CUE_ID, AUDIO_GALLERY_VOICE_CLIP_ID,
+        AUDIO_GALLERY_CAR_HORN_CUE_ID, AUDIO_GALLERY_DOG_BARK_CUE_ID,
+        AUDIO_GALLERY_FOOTSTEP_CUE_ID, AUDIO_GALLERY_MENU_MUSIC_CLIP_ID,
+        AUDIO_GALLERY_RAIN_LOOP_CUE_ID, AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID,
+        AUDIO_GALLERY_SWORD_HIT_CUE_ID, AUDIO_GALLERY_UI_NOTIFY_CUE_ID,
+        AUDIO_GALLERY_VOICE_CLIP_ID,
     },
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{OWNER_AUDIO_GALLERY, PANEL_AUDIO_GALLERY},
@@ -47,6 +50,7 @@ const DEFAULT_MUSIC_CROSSFADE_SECONDS: f32 = 1.5;
 #[derive(Clone, Copy, Debug, Component, Eq, PartialEq)]
 pub(super) enum AudioGalleryTextRow {
     Parameters,
+    Spatial,
     Instances,
     Status,
 }
@@ -67,6 +71,13 @@ pub(super) enum AudioGalleryButton {
     FadeOutMusic,
     QueryMusicProgress,
     CrossfadeMusic(AudioGalleryMusicClip, AudioGalleryMusicFadePreset),
+    PlaySpatialFixed(AudioGallerySpatialFixedPosition),
+    PlaySpatialFollowEmitter,
+    MoveSpatialEmitter,
+    MoveSpatialListener,
+    SpatialAttenuation(AudioGallerySpatialAttenuationPreset),
+    QuerySpatialProgress,
+    StopSpatial,
     PlayClip,
     PlayLong,
     PauseRecent,
@@ -101,6 +112,21 @@ pub(super) enum AudioGalleryMusicFadePreset {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AudioGallerySpatialFixedPosition {
+    Left,
+    Right,
+    Near,
+    Far,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AudioGallerySpatialAttenuationPreset {
+    Close,
+    Wide,
+    Steep,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AudioGalleryVolumePreset {
     Soft,
     Normal,
@@ -119,6 +145,46 @@ pub(super) enum AudioGalleryFadePreset {
     Off,
     Short,
     Long,
+}
+
+#[derive(Clone, Copy, Debug, Component, Eq, PartialEq)]
+pub(super) struct AudioGallerySpatialHelper {
+    kind: AudioGallerySpatialHelperKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AudioGallerySpatialHelperKind {
+    ListenerTarget,
+    EmitterTarget,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AudioGallerySpatialListenerPosition {
+    Center,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AudioGallerySpatialEmitterPosition {
+    Left,
+    Right,
+    Near,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AudioGallerySpatialSourceKind {
+    Fixed(AudioGallerySpatialFixedPosition),
+    FollowEmitter,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AudioGallerySpatialDetails {
+    source_kind: AudioGallerySpatialSourceKind,
+    position: Vec3,
+    listener_position: Vec3,
+    distance: f32,
+    attenuation: AudioSpatialAttenuation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,12 +240,19 @@ struct AudioGalleryInstanceRecord {
     label: Option<String>,
     paused: bool,
     position_seconds: Option<f32>,
+    spatial: bool,
 }
 
 #[derive(Debug, Resource)]
 pub(super) struct AudioGalleryState {
     frames_open: u64,
     params: AudioGalleryPlaybackParams,
+    spatial_listener_target: Option<Entity>,
+    spatial_emitter_target: Option<Entity>,
+    spatial_listener_position: AudioGallerySpatialListenerPosition,
+    spatial_emitter_position: AudioGallerySpatialEmitterPosition,
+    spatial_attenuation: AudioGallerySpatialAttenuationPreset,
+    spatial_details: Option<AudioGallerySpatialDetails>,
     pending_launches: Vec<AudioGalleryLaunchKind>,
     last_sfx: AudioGalleryInstanceRecord,
     loop_instance: AudioGalleryInstanceRecord,
@@ -195,6 +268,12 @@ impl AudioGalleryState {
         Self {
             frames_open: 0,
             params: AudioGalleryPlaybackParams::default(),
+            spatial_listener_target: None,
+            spatial_emitter_target: None,
+            spatial_listener_position: AudioGallerySpatialListenerPosition::Center,
+            spatial_emitter_position: AudioGallerySpatialEmitterPosition::Left,
+            spatial_attenuation: AudioGallerySpatialAttenuationPreset::Wide,
+            spatial_details: None,
             pending_launches: Vec::new(),
             last_sfx: AudioGalleryInstanceRecord::default(),
             loop_instance: AudioGalleryInstanceRecord::default(),
@@ -221,6 +300,7 @@ impl AudioGalleryState {
         record.label = Some(label);
         record.paused = false;
         record.position_seconds = None;
+        record.spatial = slot == AudioGalleryInstanceSlot::Spatial;
     }
 
     fn mark_instance_paused(&mut self, instance_id: AudioInstanceId, paused: bool) {
@@ -238,6 +318,7 @@ impl AudioGalleryState {
                 record.instance_id = None;
                 record.paused = false;
                 record.position_seconds = None;
+                record.spatial = false;
                 cleared = true;
             }
         }
@@ -255,7 +336,32 @@ impl AudioGalleryState {
 
         record.paused = progress.paused;
         record.position_seconds = Some(progress.position_seconds);
+        record.spatial = progress.spatial;
         true
+    }
+
+    fn update_spatial_details(
+        &mut self,
+        source_kind: AudioGallerySpatialSourceKind,
+        position: Vec3,
+    ) {
+        let listener_position = self.spatial_listener_position.position();
+        self.spatial_details = Some(AudioGallerySpatialDetails {
+            source_kind,
+            position,
+            listener_position,
+            distance: listener_position.distance(position),
+            attenuation: self.spatial_attenuation.value(),
+        });
+    }
+
+    fn refresh_spatial_distance(&mut self) {
+        if let Some(mut details) = self.spatial_details {
+            details.listener_position = self.spatial_listener_position.position();
+            details.distance = details.listener_position.distance(details.position);
+            details.attenuation = self.spatial_attenuation.value();
+            self.spatial_details = Some(details);
+        }
     }
 
     fn recent_standard_instance(&self) -> Option<AudioInstanceId> {
@@ -312,7 +418,7 @@ pub(super) fn setup_audio_gallery(
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
-    commands.insert_resource(AudioGalleryState::new());
+    setup_audio_gallery_state_and_spatial_helpers(&mut commands);
 
     commands
         .spawn((
@@ -508,6 +614,167 @@ pub(super) fn setup_audio_gallery(
                                     AudioGalleryButton::FadeOut(AudioGalleryFadePreset::Long),
                                     "audio_gallery.params.fade_out.long",
                                     "Fade Out 2s",
+                                );
+                            });
+                    });
+
+                body.spawn(audio_gallery_panel(theme))
+                    .with_children(|panel| {
+                        panel.spawn(section_label(
+                            theme,
+                            fonts,
+                            i18n,
+                            "audio_gallery.spatial.section",
+                            "Spatial",
+                        ));
+                        panel.spawn((
+                            metric_label(
+                                theme,
+                                fonts,
+                                audio_gallery_spatial_text(&AudioGalleryState::new()),
+                            ),
+                            AudioGalleryTextRow::Spatial,
+                        ));
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_button_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlaySpatialFixed(
+                                        AudioGallerySpatialFixedPosition::Left,
+                                    ),
+                                    "audio_gallery.spatial.left",
+                                    "Play Left",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlaySpatialFixed(
+                                        AudioGallerySpatialFixedPosition::Right,
+                                    ),
+                                    "audio_gallery.spatial.right",
+                                    "Play Right",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlaySpatialFixed(
+                                        AudioGallerySpatialFixedPosition::Near,
+                                    ),
+                                    "audio_gallery.spatial.near",
+                                    "Play Near",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlaySpatialFixed(
+                                        AudioGallerySpatialFixedPosition::Far,
+                                    ),
+                                    "audio_gallery.spatial.far",
+                                    "Play Far",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlaySpatialFollowEmitter,
+                                    "audio_gallery.spatial.follow",
+                                    "Follow Emitter",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::MoveSpatialEmitter,
+                                    "audio_gallery.spatial.move_emitter",
+                                    "Move Emitter",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::MoveSpatialListener,
+                                    "audio_gallery.spatial.move_listener",
+                                    "Move Listener",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::SpatialAttenuation(
+                                        AudioGallerySpatialAttenuationPreset::Close,
+                                    ),
+                                    "audio_gallery.spatial.atten_close",
+                                    "Atten Close",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::SpatialAttenuation(
+                                        AudioGallerySpatialAttenuationPreset::Wide,
+                                    ),
+                                    "audio_gallery.spatial.atten_wide",
+                                    "Atten Wide",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::SpatialAttenuation(
+                                        AudioGallerySpatialAttenuationPreset::Steep,
+                                    ),
+                                    "audio_gallery.spatial.atten_steep",
+                                    "Atten Steep",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::QuerySpatialProgress,
+                                    "audio_gallery.spatial.progress",
+                                    "Spatial Progress",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::StopSpatial,
+                                    "audio_gallery.spatial.stop",
+                                    "Stop Spatial",
                                 );
                             });
                     });
@@ -881,6 +1148,11 @@ pub(super) fn handle_audio_gallery_buttons(
     mut button_events: MessageReader<UiButtonEvent>,
     mut state: ResMut<AudioGalleryState>,
     mut audio_commands: MessageWriter<AudioCommand>,
+    mut helpers: Query<(
+        &AudioGallerySpatialHelper,
+        &mut Transform,
+        Option<&mut GlobalTransform>,
+    )>,
 ) {
     for event in button_events.read() {
         if event.kind != UiButtonEventKind::Click {
@@ -899,6 +1171,7 @@ pub(super) fn handle_audio_gallery_buttons(
         for command in outcome.commands {
             audio_commands.write(command);
         }
+        apply_audio_gallery_spatial_helper_transforms(&state, &mut helpers);
     }
 }
 
@@ -922,6 +1195,9 @@ pub(super) fn update_audio_gallery_status(
             AudioGalleryTextRow::Parameters => {
                 text.0 = audio_gallery_params_text(&state.params);
             }
+            AudioGalleryTextRow::Spatial => {
+                text.0 = audio_gallery_spatial_text(&state);
+            }
             AudioGalleryTextRow::Instances => {
                 text.0 = audio_gallery_instances_text(&state);
             }
@@ -935,12 +1211,92 @@ pub(super) fn update_audio_gallery_status(
 pub(super) fn cleanup_audio_gallery(
     mut commands: Commands,
     mut audio_commands: MessageWriter<AudioCommand>,
+    state: Option<Res<AudioGalleryState>>,
+    listener_entity: Option<Res<AudioSpatialListenerEntity>>,
 ) {
     audio_commands.write(AudioCommand::StopByScope(AudioScopeFadeCommand {
         scope: audio_gallery_scope(),
         fade_out_seconds: Some(0.1),
     }));
+    if let Some(state) = state {
+        if let Some(entity) = state.spatial_listener_target {
+            commands.entity(entity).try_despawn();
+        }
+        if let Some(entity) = state.spatial_emitter_target {
+            commands.entity(entity).try_despawn();
+        }
+    }
+    if let Some(listener_entity) = listener_entity {
+        commands.entity(listener_entity.0).try_despawn();
+        commands.remove_resource::<AudioSpatialListenerEntity>();
+    }
+    commands.remove_resource::<AudioSpatialListenerBinding>();
     commands.remove_resource::<AudioGalleryState>();
+}
+
+fn setup_audio_gallery_state_and_spatial_helpers(commands: &mut Commands) {
+    let (listener_target, emitter_target) = spawn_audio_gallery_spatial_helpers(commands);
+    let mut state = AudioGalleryState::new();
+    state.spatial_listener_target = Some(listener_target);
+    state.spatial_emitter_target = Some(emitter_target);
+    commands.insert_resource(AudioSpatialListenerBinding::new(listener_target));
+    commands.insert_resource(state);
+}
+
+#[cfg(test)]
+fn setup_audio_gallery_state_and_spatial_helpers_system(mut commands: Commands) {
+    setup_audio_gallery_state_and_spatial_helpers(&mut commands);
+}
+
+fn spawn_audio_gallery_spatial_helpers(commands: &mut Commands) -> (Entity, Entity) {
+    let listener_target = commands
+        .spawn((
+            AudioGallerySpatialHelper {
+                kind: AudioGallerySpatialHelperKind::ListenerTarget,
+            },
+            Transform::from_translation(AudioGallerySpatialListenerPosition::Center.position()),
+            GlobalTransform::from_translation(
+                AudioGallerySpatialListenerPosition::Center.position(),
+            ),
+            Name::new("AudioGallerySpatialListenerTarget"),
+        ))
+        .id();
+    let emitter_target = commands
+        .spawn((
+            AudioGallerySpatialHelper {
+                kind: AudioGallerySpatialHelperKind::EmitterTarget,
+            },
+            Transform::from_translation(AudioGallerySpatialEmitterPosition::Left.position()),
+            GlobalTransform::from_translation(AudioGallerySpatialEmitterPosition::Left.position()),
+            Name::new("AudioGallerySpatialEmitterTarget"),
+        ))
+        .id();
+
+    (listener_target, emitter_target)
+}
+
+fn apply_audio_gallery_spatial_helper_transforms(
+    state: &AudioGalleryState,
+    helpers: &mut Query<(
+        &AudioGallerySpatialHelper,
+        &mut Transform,
+        Option<&mut GlobalTransform>,
+    )>,
+) {
+    for (helper, mut transform, global_transform) in helpers {
+        let position = match helper.kind {
+            AudioGallerySpatialHelperKind::ListenerTarget => {
+                state.spatial_listener_position.position()
+            }
+            AudioGallerySpatialHelperKind::EmitterTarget => {
+                state.spatial_emitter_position.position()
+            }
+        };
+        *transform = Transform::from_translation(position);
+        if let Some(mut global_transform) = global_transform {
+            *global_transform = GlobalTransform::from_translation(position);
+        }
+    }
 }
 
 fn apply_audio_gallery_button(
@@ -1153,6 +1509,123 @@ fn apply_audio_gallery_button(
                 music_clip.label(),
                 format_seconds(Some(fade_seconds))
             );
+        }
+        AudioGalleryButton::PlaySpatialFixed(position) => {
+            let cue_id = cue_id(AUDIO_GALLERY_CAR_HORN_CUE_ID);
+            let source_position = position.position();
+            state.update_spatial_details(
+                AudioGallerySpatialSourceKind::Fixed(position),
+                source_position,
+            );
+            outcome.launches.push(AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id.clone(),
+                slot: AudioGalleryInstanceSlot::Spatial,
+            });
+            outcome
+                .commands
+                .push(AudioCommand::PlaySpatialCue(gallery_spatial_cue_request(
+                    cue_id,
+                    state.params,
+                    AudioSpatialSource::fixed(Transform::from_translation(source_position)),
+                    state.spatial_attenuation.value(),
+                )));
+            outcome.status = format!(
+                "Requested fixed spatial cue at {} with {} attenuation. {}",
+                position.label(),
+                state.spatial_attenuation.label(),
+                BEVY_SPATIAL_AUDIO_LIMITS
+            );
+        }
+        AudioGalleryButton::PlaySpatialFollowEmitter => {
+            let Some(emitter_target) = state.spatial_emitter_target else {
+                outcome.status =
+                    "Spatial emitter helper is missing; re-enter Audio Gallery.".to_string();
+                return outcome;
+            };
+            let cue_id = cue_id(AUDIO_GALLERY_DOG_BARK_CUE_ID);
+            let source_position = state.spatial_emitter_position.position();
+            state.update_spatial_details(
+                AudioGallerySpatialSourceKind::FollowEmitter,
+                source_position,
+            );
+            outcome.launches.push(AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id.clone(),
+                slot: AudioGalleryInstanceSlot::Spatial,
+            });
+            outcome
+                .commands
+                .push(AudioCommand::PlaySpatialCue(gallery_spatial_cue_request(
+                    cue_id,
+                    state.params,
+                    AudioSpatialSource::follow_entity(emitter_target),
+                    state.spatial_attenuation.value(),
+                )));
+            outcome.status = format!(
+                "Requested follow-emitter spatial cue at {}. Move Emitter updates the target entity. {}",
+                state.spatial_emitter_position.label(),
+                BEVY_SPATIAL_AUDIO_LIMITS
+            );
+        }
+        AudioGalleryButton::MoveSpatialEmitter => {
+            state.spatial_emitter_position = state.spatial_emitter_position.next();
+            if matches!(
+                state.spatial_details.map(|details| details.source_kind),
+                Some(AudioGallerySpatialSourceKind::FollowEmitter)
+            ) {
+                state.update_spatial_details(
+                    AudioGallerySpatialSourceKind::FollowEmitter,
+                    state.spatial_emitter_position.position(),
+                );
+            }
+            outcome.status = format!(
+                "Moved spatial emitter helper to {}.",
+                state.spatial_emitter_position.label()
+            );
+        }
+        AudioGalleryButton::MoveSpatialListener => {
+            state.spatial_listener_position = state.spatial_listener_position.next();
+            state.refresh_spatial_distance();
+            outcome.status = format!(
+                "Moved spatial listener helper to {}.",
+                state.spatial_listener_position.label()
+            );
+        }
+        AudioGalleryButton::SpatialAttenuation(preset) => {
+            state.spatial_attenuation = preset;
+            state.refresh_spatial_distance();
+            outcome.status = format!(
+                "Spatial attenuation set to {} (max {:.0}, rolloff {:.1}).",
+                preset.label(),
+                preset.value().max_distance,
+                preset.value().rolloff_factor
+            );
+        }
+        AudioGalleryButton::QuerySpatialProgress => {
+            if let Some(instance_id) = state.spatial_instance.instance_id {
+                outcome.commands.push(AudioCommand::QueryInstanceProgress(
+                    AudioInstanceCommand::new(instance_id),
+                ));
+                outcome.status =
+                    format!("Progress query requested for spatial instance {instance_id}.");
+            } else {
+                outcome.status = "No spatial instance is active yet.".to_string();
+            }
+        }
+        AudioGalleryButton::StopSpatial => {
+            if let Some(instance_id) = state.spatial_instance.instance_id {
+                outcome
+                    .commands
+                    .push(AudioCommand::StopInstance(AudioStopInstanceCommand {
+                        instance_id,
+                        fade_out_seconds: state.params.fade_out_seconds,
+                    }));
+                outcome.status = format!(
+                    "Stop requested for spatial instance {instance_id} (fade-out {}).",
+                    format_seconds(state.params.fade_out_seconds)
+                );
+            } else {
+                outcome.status = "No spatial instance is active yet.".to_string();
+            }
         }
         AudioGalleryButton::PlayClip => {
             let clip_id = clip_id(AUDIO_GALLERY_VOICE_CLIP_ID);
@@ -1417,6 +1890,26 @@ fn gallery_music_request(
     }
 }
 
+fn gallery_spatial_cue_request(
+    cue_id: AudioCueId,
+    params: AudioGalleryPlaybackParams,
+    source: AudioSpatialSource,
+    attenuation: AudioSpatialAttenuation,
+) -> AudioSpatialCueRequest {
+    AudioSpatialCueRequest {
+        cue_id,
+        scope: audio_gallery_scope(),
+        bus: Some(AudioBus::Sfx),
+        volume: params.volume,
+        pitch: params.pitch,
+        looped: params.looped,
+        fade_in_seconds: params.fade_in_seconds,
+        start_seconds: None,
+        source,
+        attenuation,
+    }
+}
+
 fn apply_audio_gallery_music_changed(state: &mut AudioGalleryState, changed: &AudioMusicChanged) {
     if !gallery_scope_matches(&changed.scope) {
         return;
@@ -1527,7 +2020,9 @@ fn dev_cue_slot(cue_id: &AudioCueId) -> Option<AudioGalleryInstanceSlot> {
         | AUDIO_GALLERY_FOOTSTEP_CUE_ID
         | AUDIO_GALLERY_SWORD_HIT_CUE_ID => Some(AudioGalleryInstanceSlot::Sfx),
         AUDIO_GALLERY_RAIN_LOOP_CUE_ID => Some(AudioGalleryInstanceSlot::Loop),
-        AUDIO_GALLERY_CAR_HORN_CUE_ID => Some(AudioGalleryInstanceSlot::Spatial),
+        AUDIO_GALLERY_CAR_HORN_CUE_ID | AUDIO_GALLERY_DOG_BARK_CUE_ID => {
+            Some(AudioGalleryInstanceSlot::Spatial)
+        }
         value if value.starts_with("dev.audio.music.") => Some(AudioGalleryInstanceSlot::Music),
         _ => None,
     }
@@ -1562,12 +2057,45 @@ fn audio_gallery_params_text(params: &AudioGalleryPlaybackParams) -> String {
     )
 }
 
+fn audio_gallery_spatial_text(state: &AudioGalleryState) -> String {
+    let attenuation = state.spatial_attenuation.value();
+    let boundary = "Boundary: Bevy stereo panning + distance attenuation only; no HRTF, reverb, occlusion, or full 3D audio.";
+    let base = format!(
+        "listener {} {} | emitter {} {} | attenuation {} max {:.0} rolloff {:.1}",
+        state.spatial_listener_position.label(),
+        format_vec3(state.spatial_listener_position.position()),
+        state.spatial_emitter_position.label(),
+        format_vec3(state.spatial_emitter_position.position()),
+        state.spatial_attenuation.label(),
+        attenuation.max_distance,
+        attenuation.rolloff_factor,
+    );
+
+    let Some(details) = state.spatial_details else {
+        return format!("{base} | source none | {boundary}");
+    };
+
+    format!(
+        "{base} | instance {} | source {} | pos {} | distance {:.1} | spatial {} | {boundary}",
+        state
+            .spatial_instance
+            .instance_id
+            .map(|instance_id| format!("#{instance_id}"))
+            .unwrap_or_else(|| "pending/none".to_string()),
+        details.source_kind.label(),
+        format_vec3(details.position),
+        details.distance,
+        yes_no(state.spatial_instance.spatial),
+    )
+}
+
 fn audio_gallery_instances_text(state: &AudioGalleryState) -> String {
     format!(
-        "sfx {} | loop {} | music {} | clip {} | long {}",
+        "sfx {} | loop {} | music {} | spatial {} | clip {} | long {}",
         record_text(&state.last_sfx),
         record_text(&state.loop_instance),
         record_text(&state.music_instance),
+        record_text(&state.spatial_instance),
         record_text(&state.clip_instance),
         record_text(&state.long_instance)
     )
@@ -1584,11 +2112,12 @@ fn record_text(record: &AudioGalleryInstanceRecord) -> String {
 
     let label = record.label.as_deref().unwrap_or("unknown");
     let paused = if record.paused { ", paused" } else { "" };
+    let spatial = if record.spatial { ", spatial" } else { "" };
     let progress = record
         .position_seconds
         .map(|seconds| format!(", {:.2}s", seconds))
         .unwrap_or_default();
-    format!("#{instance_id} {label}{paused}{progress}")
+    format!("#{instance_id} {label}{paused}{spatial}{progress}")
 }
 
 fn audio_gallery_load_failed_text(failed: &AudioLoadFailed) -> String {
@@ -1644,6 +2173,10 @@ fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
+fn format_vec3(value: Vec3) -> String {
+    format!("({:.1}, {:.1}, {:.1})", value.x, value.y, value.z)
+}
+
 impl AudioGalleryState {
     fn records(&self) -> [&AudioGalleryInstanceRecord; 6] {
         [
@@ -1696,6 +2229,105 @@ impl AudioGalleryMusicFadePreset {
         match self {
             Self::Instant => 0.0,
             Self::Smooth => DEFAULT_MUSIC_CROSSFADE_SECONDS,
+        }
+    }
+}
+
+impl AudioGallerySpatialFixedPosition {
+    fn position(self) -> Vec3 {
+        match self {
+            Self::Left => Vec3::new(-18.0, 0.0, 0.0),
+            Self::Right => Vec3::new(18.0, 0.0, 0.0),
+            Self::Near => Vec3::new(0.0, 0.0, 6.0),
+            Self::Far => Vec3::new(0.0, 0.0, 48.0),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Near => "near",
+            Self::Far => "far",
+        }
+    }
+}
+
+impl AudioGallerySpatialAttenuationPreset {
+    fn value(self) -> AudioSpatialAttenuation {
+        match self {
+            Self::Close => AudioSpatialAttenuation::new(18.0, 1.0),
+            Self::Wide => AudioSpatialAttenuation::new(64.0, 1.0),
+            Self::Steep => AudioSpatialAttenuation::new(64.0, 2.5),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Close => "close",
+            Self::Wide => "wide",
+            Self::Steep => "steep",
+        }
+    }
+}
+
+impl AudioGallerySpatialListenerPosition {
+    fn position(self) -> Vec3 {
+        match self {
+            Self::Center => Vec3::ZERO,
+            Self::Left => Vec3::new(-12.0, 0.0, 0.0),
+            Self::Right => Vec3::new(12.0, 0.0, 0.0),
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Center => Self::Left,
+            Self::Left => Self::Right,
+            Self::Right => Self::Center,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Center => "center",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+}
+
+impl AudioGallerySpatialEmitterPosition {
+    fn position(self) -> Vec3 {
+        match self {
+            Self::Left => Vec3::new(-20.0, 0.0, 8.0),
+            Self::Right => Vec3::new(20.0, 0.0, 8.0),
+            Self::Near => Vec3::new(0.0, 0.0, 4.0),
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Near,
+            Self::Near => Self::Left,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Near => "near",
+        }
+    }
+}
+
+impl AudioGallerySpatialSourceKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Fixed(position) => position.label(),
+            Self::FollowEmitter => "follow_entity",
         }
     }
 }
@@ -1910,6 +2542,7 @@ mod tests {
     };
     use crate::framework::ui::widgets::{UiButtonEvent, UiButtonEventKind};
     use bevy::ecs::message::MessageCursor;
+    use bevy::ecs::system::RunSystemOnce;
 
     fn read_audio_commands(app: &App) -> Vec<AudioCommand> {
         let messages = app.world().resource::<Messages<AudioCommand>>();
@@ -2123,6 +2756,205 @@ mod tests {
                 fade_seconds: DEFAULT_MUSIC_CROSSFADE_SECONDS,
             })]
         );
+    }
+
+    #[test]
+    fn setup_state_creates_spatial_listener_target_binding_and_helpers() {
+        let mut app = App::new();
+        app.world_mut()
+            .run_system_once(setup_audio_gallery_state_and_spatial_helpers_system)
+            .expect("setup system should run");
+
+        let state = app.world().resource::<AudioGalleryState>();
+        let listener_target = state
+            .spatial_listener_target
+            .expect("listener helper should be stored");
+        let emitter_target = state
+            .spatial_emitter_target
+            .expect("emitter helper should be stored");
+        assert_ne!(listener_target, emitter_target);
+        assert_eq!(
+            app.world().resource::<AudioSpatialListenerBinding>().target,
+            listener_target
+        );
+        assert_eq!(
+            app.world()
+                .entity(listener_target)
+                .get::<AudioGallerySpatialHelper>()
+                .unwrap()
+                .kind,
+            AudioGallerySpatialHelperKind::ListenerTarget
+        );
+        assert_eq!(
+            app.world()
+                .entity(emitter_target)
+                .get::<AudioGallerySpatialHelper>()
+                .unwrap()
+                .kind,
+            AudioGallerySpatialHelperKind::EmitterTarget
+        );
+    }
+
+    #[test]
+    fn spatial_fixed_buttons_map_to_play_spatial_cue_commands_with_attenuation() {
+        let mut state = AudioGalleryState::new();
+        state.params.volume = 0.5;
+        state.params.pitch = 1.2;
+        apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::SpatialAttenuation(AudioGallerySpatialAttenuationPreset::Close),
+        );
+
+        let left = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::PlaySpatialFixed(AudioGallerySpatialFixedPosition::Left),
+        );
+        let right = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::PlaySpatialFixed(AudioGallerySpatialFixedPosition::Right),
+        );
+        let near = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::PlaySpatialFixed(AudioGallerySpatialFixedPosition::Near),
+        );
+        let far = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::PlaySpatialFixed(AudioGallerySpatialFixedPosition::Far),
+        );
+
+        assert_eq!(
+            left.commands,
+            vec![AudioCommand::PlaySpatialCue(AudioSpatialCueRequest {
+                cue_id: cue_id(AUDIO_GALLERY_CAR_HORN_CUE_ID),
+                scope: audio_gallery_scope(),
+                bus: Some(AudioBus::Sfx),
+                volume: 0.5,
+                pitch: 1.2,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: None,
+                source: AudioSpatialSource::fixed(Transform::from_translation(
+                    AudioGallerySpatialFixedPosition::Left.position(),
+                )),
+                attenuation: AudioSpatialAttenuation::new(18.0, 1.0),
+            })]
+        );
+        assert_eq!(
+            left.launches,
+            vec![AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id(AUDIO_GALLERY_CAR_HORN_CUE_ID),
+                slot: AudioGalleryInstanceSlot::Spatial,
+            }]
+        );
+
+        for (outcome, position) in [
+            (right, AudioGallerySpatialFixedPosition::Right),
+            (near, AudioGallerySpatialFixedPosition::Near),
+            (far, AudioGallerySpatialFixedPosition::Far),
+        ] {
+            let [AudioCommand::PlaySpatialCue(request)] = outcome.commands.as_slice() else {
+                panic!("expected PlaySpatialCue");
+            };
+            assert_eq!(
+                request.source,
+                AudioSpatialSource::fixed(Transform::from_translation(position.position()))
+            );
+            assert_eq!(request.attenuation, AudioSpatialAttenuation::new(18.0, 1.0));
+        }
+    }
+
+    #[test]
+    fn spatial_follow_emitter_and_move_buttons_update_state_and_command() {
+        let mut app = App::new();
+        app.add_message::<UiButtonEvent>()
+            .add_message::<AudioCommand>();
+        app.world_mut()
+            .run_system_once(setup_audio_gallery_state_and_spatial_helpers_system)
+            .expect("setup system should run");
+        app.add_systems(Update, handle_audio_gallery_buttons);
+
+        let emitter_target = app
+            .world()
+            .resource::<AudioGalleryState>()
+            .spatial_emitter_target
+            .unwrap();
+        let move_emitter = app
+            .world_mut()
+            .spawn(AudioGalleryButton::MoveSpatialEmitter)
+            .id();
+        let follow = app
+            .world_mut()
+            .spawn(AudioGalleryButton::PlaySpatialFollowEmitter)
+            .id();
+        app.world_mut().write_message(UiButtonEvent {
+            entity: move_emitter,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.world_mut().write_message(UiButtonEvent {
+            entity: follow,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+
+        app.update();
+
+        let state = app.world().resource::<AudioGalleryState>();
+        assert_eq!(
+            state.spatial_emitter_position,
+            AudioGallerySpatialEmitterPosition::Right
+        );
+        assert_eq!(
+            app.world()
+                .entity(emitter_target)
+                .get::<Transform>()
+                .unwrap()
+                .translation,
+            AudioGallerySpatialEmitterPosition::Right.position()
+        );
+        assert_eq!(
+            read_audio_commands(&app),
+            vec![AudioCommand::PlaySpatialCue(AudioSpatialCueRequest {
+                cue_id: cue_id(AUDIO_GALLERY_DOG_BARK_CUE_ID),
+                scope: audio_gallery_scope(),
+                bus: Some(AudioBus::Sfx),
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: None,
+                source: AudioSpatialSource::follow_entity(emitter_target),
+                attenuation: AudioSpatialAttenuation::new(64.0, 1.0),
+            })]
+        );
+        assert_eq!(
+            state.pending_launches,
+            vec![AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id(AUDIO_GALLERY_DOG_BARK_CUE_ID),
+                slot: AudioGalleryInstanceSlot::Spatial,
+            }]
+        );
+    }
+
+    #[test]
+    fn moving_listener_updates_spatial_distance_text() {
+        let mut state = AudioGalleryState::new();
+        apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::PlaySpatialFixed(AudioGallerySpatialFixedPosition::Left),
+        );
+
+        let before = state.spatial_details.unwrap().distance;
+        apply_audio_gallery_button(&mut state, AudioGalleryButton::MoveSpatialListener);
+        let after = state.spatial_details.unwrap().distance;
+
+        assert_ne!(before, after);
+        assert_eq!(
+            state.spatial_listener_position,
+            AudioGallerySpatialListenerPosition::Left
+        );
+        assert!(audio_gallery_spatial_text(&state).contains("distance"));
+        assert!(audio_gallery_spatial_text(&state).contains("no HRTF"));
     }
 
     #[test]
@@ -2453,6 +3285,58 @@ mod tests {
     }
 
     #[test]
+    fn spatial_progress_and_stopped_events_update_spatial_record_and_text() {
+        let mut state = AudioGalleryState::new();
+        let instance_id = AudioInstanceId::from_raw(10);
+        state.record_started(
+            AudioGalleryInstanceSlot::Spatial,
+            instance_id,
+            AUDIO_GALLERY_CAR_HORN_CUE_ID.to_string(),
+        );
+        state.update_spatial_details(
+            AudioGallerySpatialSourceKind::Fixed(AudioGallerySpatialFixedPosition::Far),
+            AudioGallerySpatialFixedPosition::Far.position(),
+        );
+
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::InstanceProgress(AudioInstanceProgress {
+                instance_id,
+                clip_id: clip_id("dev.audio.spatial.car_horn_taps"),
+                cue_id: Some(cue_id(AUDIO_GALLERY_CAR_HORN_CUE_ID)),
+                scope: audio_gallery_scope(),
+                bus: AudioBus::Sfx,
+                position_seconds: 2.5,
+                paused: false,
+                spatial: true,
+            }),
+        );
+
+        assert_eq!(state.spatial_instance.position_seconds, Some(2.5));
+        assert!(state.spatial_instance.spatial);
+        let spatial_text = audio_gallery_spatial_text(&state);
+        assert!(spatial_text.contains("instance #10"));
+        assert!(spatial_text.contains("source far"));
+        assert!(audio_gallery_instances_text(&state).contains("spatial #10"));
+
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::InstanceStopped(AudioInstanceStopped {
+                instance_id,
+                clip_id: Some(clip_id("dev.audio.spatial.car_horn_taps")),
+                cue_id: Some(cue_id(AUDIO_GALLERY_CAR_HORN_CUE_ID)),
+                scope: audio_gallery_scope(),
+                bus: AudioBus::Sfx,
+                reason: AudioStopReason::Stopped,
+            }),
+        );
+
+        assert_eq!(state.spatial_instance.instance_id, None);
+        assert!(!state.spatial_instance.spatial);
+        assert!(state.status.contains("stopped"));
+    }
+
+    #[test]
     fn stop_progress_and_failure_events_update_gallery_state() {
         let mut state = AudioGalleryState::new();
         let instance_id = AudioInstanceId::from_raw(4);
@@ -2551,13 +3435,38 @@ mod tests {
     #[test]
     fn cleanup_sends_stop_by_gallery_scope_and_removes_state() {
         let mut app = App::new();
-        app.add_message::<AudioCommand>()
-            .insert_resource(AudioGalleryState::new())
-            .add_systems(Update, cleanup_audio_gallery);
-
-        app.update();
+        app.add_message::<AudioCommand>();
+        app.world_mut()
+            .run_system_once(setup_audio_gallery_state_and_spatial_helpers_system)
+            .expect("setup system should run");
+        let listener_target = app
+            .world()
+            .resource::<AudioGalleryState>()
+            .spatial_listener_target
+            .unwrap();
+        let emitter_target = app
+            .world()
+            .resource::<AudioGalleryState>()
+            .spatial_emitter_target
+            .unwrap();
+        let listener_proxy = app.world_mut().spawn_empty().id();
+        app.insert_resource(AudioSpatialListenerEntity(listener_proxy));
+        app.world_mut()
+            .run_system_once(cleanup_audio_gallery)
+            .expect("cleanup system should run");
 
         assert!(!app.world().contains_resource::<AudioGalleryState>());
+        assert!(
+            !app.world()
+                .contains_resource::<AudioSpatialListenerBinding>()
+        );
+        assert!(
+            !app.world()
+                .contains_resource::<AudioSpatialListenerEntity>()
+        );
+        assert!(app.world().get_entity(listener_target).is_err());
+        assert!(app.world().get_entity(emitter_target).is_err());
+        assert!(app.world().get_entity(listener_proxy).is_err());
         assert_eq!(
             read_audio_commands(&app),
             vec![AudioCommand::StopByScope(AudioScopeFadeCommand {
