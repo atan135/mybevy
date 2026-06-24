@@ -15,6 +15,7 @@
 - 通过 bus 管理音量、静音、暂停，并同步到运行中的 `AudioSink` 和 `SpatialAudioSink`。
 - 管理音乐播放、停止、暂停、恢复、淡入淡出和交叉淡入淡出。
 - 按 `AudioScope` 停止、暂停、恢复和清理播放实例。
+- 以 `AudioGroup` 为基础提供轻量 audio bank runtime，支持 load-on-first-use 和 lazy-unload。
 - 提供 UI、场景、战斗和空间音频的轻量 adapter。
 - 提供 `MYBEVY_AUDIO_DEBUG` 诊断开关和 `AudioDebugSnapshot`。
 - 在移动端生命周期进入后台时按策略暂停 background bus。
@@ -65,6 +66,7 @@ audio/ambience/light_rain_loop.wav
 project/src/framework/audio/
 |-- mod.rs
 |-- battle.rs
+|-- bank.rs
 |-- catalog.rs
 |-- catalog_config.rs
 |-- command.rs
@@ -93,6 +95,7 @@ project/src/framework/audio/
 - `command.rs`：播放、停止、scope 控制、bus 控制、音乐和 group 加载命令。
 - `event.rs`：播放开始、跳过、停止、加载失败、加载进度、音乐变化和 bus 变化事件。
 - `catalog.rs`：内存版 clip、cue、group 目录和解析逻辑。
+- `bank.rs`：基于 `AudioGroup` 的轻量 audio bank runtime、播放触发预加载、活跃实例归属和 lazy-unload。
 - `catalog_config.rs`：RON catalog 结构、路径安全校验和首包 catalog 文件读取 helper。
 - `playback.rs`：cue/clip/spatial/battle 播放实例、冷却、并发、优先级、淡入淡出和 scope 清理。
 - `mixer.rs`：bus 音量、静音、暂停和运行中 sink 同步。
@@ -421,26 +424,24 @@ bevy = { version = "0.18.1", features = ["wav"] }
 - `UnloadGroup` 不保证 Bevy 全局 asset 缓存立即释放内存，只移除 audio loading state 中的引用。
 - `content_cache://...` 路径已可通过 catalog 路径校验，但真实内容缓存源注册、下载和校验仍是后续目标。
 
-### 13.2 后续目标：基础 Audio Bank 和 Lazy Unload
+### 13.2 基础 Audio Bank 和 Lazy Unload
 
-后续可以把现有 `AudioGroup` 作为轻量 audio bank 使用。第一版目标不是复刻 Wwise bank，只解决“把一组可能同时播放的音频一起加载并持有 handle”的基础需求。
-
-建议运行时策略：
+已落地能力：
 
 - 播放 group 内任意 cue/clip 时，自动确保整个 group 处于 loading 或 loaded 状态。
 - 当前这次播放请求不等待整个 group 完成加载，继续允许现有 lazy play 兜底，避免第一次点击无响应。
-- group 中其他音频异步加载，并由 `AudioLoadingState` 或后续 bank runtime 持有 `AudioSource` handle。
+- group 中其他音频异步加载，并由 `AudioLoadingState` 持有 `AudioSource` handle。
 - 只要 group 内仍有任意活跃播放实例，就保持 group 加载状态。
 - group 内所有实例停止后，启动 lazy-unload 计时器。
 - 计时器到期前如果再次播放 group 内成员，取消本轮自动卸载。
-- 计时器到期且 group 内仍无活跃实例时，发送或执行 `UnloadGroup`，释放框架持有的 group handles。
-
-每个 group 应能单独配置 lazy-unload 时长：
+- 计时器到期且 group 内仍无活跃实例时，发送 `AudioCommand::UnloadGroup`，释放框架持有的 group handles。
+- `AudioBankRuntime` 记录 group 配置、加载状态、活跃实例集合、实例归属、idle countdown 和重复映射诊断。
+- `AudioBankGroupConfig` 可为每个 group 单独配置 lazy-unload 时长。
 
 - `0` 表示 resident group，默认不自动卸载，适合 UI、战斗通用、常用脚步等高频音效。
 - 大于 `0` 表示 idle 超时自动卸载，适合开发测试页、场景局部 ambience、低频玩法音效或临时活动资源。
 
-第一版约束：
+当前约束：
 
 - 一个 cue/clip 最多归属一个 lazy group，避免同一实例跨多个 group 导致 active count 和卸载归属复杂化。
 - 手动 `PreloadGroup` 仍可提前加载 group。
@@ -448,7 +449,7 @@ bevy = { version = "0.18.1", features = ["wav"] }
 - paused、looped、music crossfade 中的实例只要仍活跃，就继续阻止 group 自动卸载。
 - `UnloadGroup` 仍不承诺 Bevy 全局 asset 缓存立即释放内存；如果其他 strong handle 仍存在，资源可以继续留在 Bevy asset 系统中。
 
-Audio Gallery 应作为该机制的第一批验证页面：
+Audio Gallery 是该机制的第一批验证页面：
 
 - 注册 `bank.audio_gallery`，包含 SFX、loop、music、spatial 和 voice 样例。
 - 配置一个非 0 lazy-unload group，用于验证 idle countdown 和自动卸载。
@@ -462,6 +463,46 @@ Audio Gallery 应作为该机制的第一批验证页面：
 - LRU、全局内存预算、优先级淘汰和跨场景资源热迁移。
 - 音频 streaming、远端 catalog 热更新和后续下载闭环。
 - 自动扫描 manifest 生成 bank 或 UI。
+
+### 13.3 Audio Gallery 开发测试页
+
+Audio Gallery 是开发期音频测试页面，位于 `AppUiMode::AudioGallery`。它只用于客户端开发和验收，不改变正式玩法音频语义，也不作为成品游戏音频配置入口。
+
+入口：
+
+- 大厅顶部的 `Audio Gallery` 按钮。
+- `Audio Settings` 和 `Audio Monitor` 页面内的跳转入口。
+- 桌面开发可用环境变量直达：
+
+```powershell
+$env:TOUCH_START_SCREEN="audio_gallery"
+cargo run
+```
+
+`audio-gallery` 是同等可用的 alias。
+
+页面能力：
+
+- SFX、Loop/Ambience、普通 clip、长音频 seek/progress、Music、Spatial、Mixer/Loading、Rules/Stress 和 Diagnostics 分区。
+- 播放入口覆盖 `PlayCue`、`PlayClip`、`PlayMusic`、`CrossfadeMusic` 和 `PlaySpatialCue`。
+- 实例控制覆盖 pause、resume、stop、fade-out stop、seek 和 progress query。
+- Mixer 区可发出 bus volume、mute、pause/resume 命令，验证运行中普通实例和空间实例跟随 bus 状态。
+- Loading 区可手动 `PreloadGroup` / `UnloadGroup` `bank.audio_gallery`，并显示 lazy group 和 resident group 状态。
+- Rules / Stress 区提供 cooldown、max_concurrent、missing cue/clip 样例，用于观察 skipped 和 load failed。
+
+页面清理策略：
+
+- Audio Gallery 主动播放的普通、空间和音乐实例统一使用 `dev.audio_gallery` scope。
+- 退出 `AppUiMode::AudioGallery` 时发送 `StopByScope(dev.audio_gallery)`，移除页面 state、空间 listener binding、listener proxy 和 helper entities。
+- 退出时只清理 `bank.audio_gallery` 这类非 resident dev bank 的 runtime/idle 状态并发起 unload，不误卸载 `bank.audio_gallery.resident`。
+- 页面状态追踪会过滤默认 `ui.click`，避免按钮点击音效覆盖 Gallery 主动启动的实例状态。
+
+边界：
+
+- 当前空间音频只验证 Bevy 0.18.1 的基础 stereo panning 和距离衰减，不承诺 HRTF、混响、遮挡或完整 3D 音频。
+- 页面复用首包 `project/assets/audio/` 样例和 `dev.audio.*` clip/cue ID；不要把这些 ID 当作正式玩法语义。
+- Audio Gallery 不自动扫描全部 manifest 或 catalog，不负责音频资源授权、格式转换或远端下载验收。
+- `bank.audio_gallery` 的 lazy-unload 只表示框架释放 group handles；不保证 Bevy 全局 asset 缓存立即释放真实内存。
 
 ## 14. 调试和诊断
 

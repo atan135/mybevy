@@ -492,12 +492,26 @@ cargo run
 
 - `MYBEVY_AUDIO_DEBUG`：启用 `AudioDebugSnapshot` 更新；接受 `1`、`true`、`on`、`yes`、`enabled` 等值。
 
-启用后可以从资源中查看当前活跃音频实例数量、按 bus 统计、实例详情、加载 group 进度、最近播放 cue、最近跳过 cue 和最近加载失败资源。当前没有成品游戏内 audio debug 面板。
+启用后可以从资源中查看当前活跃音频实例数量、按 bus 统计、实例详情、加载 group 进度、最近播放 cue、最近跳过 cue 和最近加载失败资源。游戏内 `Audio Monitor` 页面会自动启用采集，并展示当前 debug snapshot。
+
+开发期可以直接打开音频页面：
+
+```powershell
+Set-Location project
+$env:TOUCH_START_SCREEN="audio_monitor"
+cargo run
+
+$env:TOUCH_START_SCREEN="audio_gallery"
+cargo run
+```
+
+`TOUCH_START_SCREEN=audio-gallery` 也会进入 Audio Gallery。Audio Gallery 是开发测试页，可主动触发 SFX、loop、music、spatial、bus、rules 和 `bank.audio_gallery` lazy-unload 行为；它使用 `dev.audio_gallery` scope，退出页面时会清理本页测试实例。
 
 基本验收入口：
 
 - 注册或加载 `ui.click` cue 后，启动游戏并点击普通 UI 按钮，验证默认 UI click adapter 可触发音效。
 - 从大厅进入 `Sample Scene`，验证 `sample.dungeon_room` 的场景 ambience 由 game layer 注册并在退出时按 scene scope 清理。
+- 从大厅、`Audio Settings` 或 `Audio Monitor` 进入 `Audio Gallery`，验证开发样例音频、bus 控制、diagnostics 和 lazy bank 状态。
 - 需要同时看场景和音频诊断时，可同时设置 `MYBEVY_START_SCENE="sample.dungeon_room"`、`MYBEVY_SCENE_DEBUG="true"` 和 `MYBEVY_AUDIO_DEBUG="true"`。
 
 ## 17. 官方参考入口
