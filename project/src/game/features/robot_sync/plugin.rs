@@ -180,8 +180,8 @@ fn manual_robot_sync_direction(keyboard_input: &ButtonInput<KeyCode>) -> RobotMo
     );
     let y = pressed_axis(
         keyboard_input,
-        [KeyCode::KeyS, KeyCode::ArrowDown],
         [KeyCode::KeyW, KeyCode::ArrowUp],
+        [KeyCode::KeyS, KeyCode::ArrowDown],
     );
 
     match (x, y) {
@@ -768,11 +768,35 @@ mod tests {
         );
         assert_eq!(
             payload.get("dirY").and_then(|value| value.as_i64()),
-            Some(707)
+            Some(-707)
         );
         assert_eq!(
             payload.get("speed").and_then(|value| value.as_i64()),
             Some(10000)
+        );
+    }
+
+    #[test]
+    fn robot_sync_manual_input_maps_vertical_keys_to_screen_direction() {
+        let mut keyboard = ButtonInput::<KeyCode>::default();
+
+        keyboard.press(KeyCode::ArrowUp);
+        assert_eq!(
+            manual_robot_sync_direction(&keyboard),
+            RobotMoveDirection {
+                dir_x: 0,
+                dir_y: -1000
+            }
+        );
+
+        keyboard.release(KeyCode::ArrowUp);
+        keyboard.press(KeyCode::ArrowDown);
+        assert_eq!(
+            manual_robot_sync_direction(&keyboard),
+            RobotMoveDirection {
+                dir_x: 0,
+                dir_y: 1000
+            }
         );
     }
 

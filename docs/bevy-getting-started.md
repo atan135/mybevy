@@ -449,7 +449,7 @@ $env:MYBEVY_START_SCENE="arena.robot_sync"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
-Robot Sync 默认使用自动 bot 发送移动输入。手动验收时可以改用键盘输入，`WASD` 或方向键控制本地机器人，松开按键会发送停止输入：
+Robot Sync 默认使用自动 bot 发送移动输入。手动验收时可以改用键盘输入，`WASD` 或方向键控制本地机器人，`W` / `ArrowUp` 对应屏幕上方，`S` / `ArrowDown` 对应屏幕下方，松开按键会发送停止输入：
 
 ```powershell
 Set-Location project
