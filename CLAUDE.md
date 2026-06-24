@@ -134,6 +134,8 @@ cargo update
 
 ## 文档维护约定
 
+- `summary/` 下的 checklist 完成后，转移并归档到 `docs/<领域>/checklists/` 目录，再纳入 Git 提交。
+
 以下变更应同步检查文档是否需要更新：
 
 - `project/` 目录结构变化
