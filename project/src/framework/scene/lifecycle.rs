@@ -1330,6 +1330,7 @@ mod tests {
     use super::*;
     use crate::framework::scene::{
         command::{SceneCommand, SceneEnterRequest, SceneExitRequest},
+        debug::SceneDebugConfig,
         id::{SceneAssetId, SceneLayerId, SceneSessionId},
         loading::SceneLoadingUiConfig,
         plugin::ScenePlugin,
@@ -1340,6 +1341,7 @@ mod tests {
     fn app_with_scene_plugin() -> App {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin));
+        app.insert_resource(SceneDebugConfig::default());
         app.world_mut()
             .resource_mut::<SceneLoadingUiConfig>()
             .enabled = false;

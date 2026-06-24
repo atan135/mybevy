@@ -57,7 +57,14 @@ pub(in crate::game::features::robot_sync) enum RobotSyncInputMode {
 
 impl Default for RobotSyncConfig {
     fn default() -> Self {
+        Self::from_env_reader(|key| env::var(key).ok())
+    }
+}
+
+impl RobotSyncConfig {
+    fn from_env_reader(mut read: impl FnMut(&str) -> Option<String>) -> Self {
         let myserver_policy_id = env_string(
+            &mut read,
             &["AUTHORITY_MYSERVER_POLICY", "ROBOT_SYNC_MYSERVER_POLICY"],
             ROBOT_SYNC_MYSERVER_POLICY_ID,
         );
@@ -69,7 +76,11 @@ impl Default for RobotSyncConfig {
             );
         }
 
-        let bot_speed = env_u32(&["ROBOT_SYNC_BOT_SPEED"], DEFAULT_ROBOT_SYNC_BOT_SPEED);
+        let bot_speed = env_u32(
+            &mut read,
+            &["ROBOT_SYNC_BOT_SPEED"],
+            DEFAULT_ROBOT_SYNC_BOT_SPEED,
+        );
         if bot_speed > MAX_ROBOT_SYNC_BOT_SPEED {
             warn!(
                 speed = bot_speed,
@@ -78,6 +89,7 @@ impl Default for RobotSyncConfig {
             );
         }
         let manual_speed = env_u32(
+            &mut read,
             &["ROBOT_SYNC_MANUAL_SPEED"],
             DEFAULT_ROBOT_SYNC_MANUAL_SPEED,
         );
@@ -92,46 +104,65 @@ impl Default for RobotSyncConfig {
         Self {
             scene_id: SceneId::from(ROBOT_SYNC_ARENA_SCENE_ID),
             local_player_id: env_string(
+                &mut read,
                 &["AUTHORITY_PLAYER_ID", "ROBOT_SYNC_PLAYER_ID"],
                 DEFAULT_ROBOT_SYNC_PLAYER_ID,
             ),
-            authority_mode: env_authority_mode(&[
-                "ROBOT_SYNC_AUTHORITY_MODE",
-                "AUTHORITY_DEV_MODE",
-                "AUTHORITY_MODE",
-            ]),
+            authority_mode: env_authority_mode(
+                &mut read,
+                &[
+                    "ROBOT_SYNC_AUTHORITY_MODE",
+                    "AUTHORITY_DEV_MODE",
+                    "AUTHORITY_MODE",
+                ],
+            ),
             lan_bind_addr: env_string(
+                &mut read,
                 &["ROBOT_SYNC_LAN_BIND_ADDR", "AUTHORITY_BIND_ADDR"],
                 "127.0.0.1:15000",
             ),
             remote_host: env_string(
+                &mut read,
                 &["ROBOT_SYNC_REMOTE_HOST", "AUTHORITY_REMOTE_HOST"],
                 "127.0.0.1",
             ),
-            remote_port: env_u16(&["ROBOT_SYNC_REMOTE_PORT", "AUTHORITY_REMOTE_PORT"], 15000),
-            transport: env_transport(&[
-                "ROBOT_SYNC_TRANSPORT",
-                "AUTHORITY_TRANSPORT",
-                "MYSERVER_TRANSPORT",
-            ])
+            remote_port: env_u16(
+                &mut read,
+                &["ROBOT_SYNC_REMOTE_PORT", "AUTHORITY_REMOTE_PORT"],
+                15000,
+            ),
+            transport: env_transport(
+                &mut read,
+                &[
+                    "ROBOT_SYNC_TRANSPORT",
+                    "AUTHORITY_TRANSPORT",
+                    "MYSERVER_TRANSPORT",
+                ],
+            )
             .unwrap_or(NetworkTransport::Tcp),
-            myserver_guest_id: env_optional_string(&[
-                "AUTHORITY_MYSERVER_GUEST_ID",
-                "ROBOT_SYNC_MYSERVER_GUEST_ID",
-                "MYSERVER_GUEST_ID",
-            ]),
+            myserver_guest_id: env_optional_string(
+                &mut read,
+                &[
+                    "AUTHORITY_MYSERVER_GUEST_ID",
+                    "ROBOT_SYNC_MYSERVER_GUEST_ID",
+                    "MYSERVER_GUEST_ID",
+                ],
+            ),
             myserver_room_id: env_string(
+                &mut read,
                 &["AUTHORITY_MYSERVER_ROOM", "ROBOT_SYNC_MYSERVER_ROOM"],
                 DEFAULT_ROBOT_SYNC_MYSERVER_ROOM_ID,
             ),
             myserver_policy_id,
-            input_mode: env_input_mode(&["ROBOT_SYNC_INPUT_MODE"]),
+            input_mode: env_input_mode(&mut read, &["ROBOT_SYNC_INPUT_MODE"]),
             input_delay_frames: env_u32(
+                &mut read,
                 &["ROBOT_SYNC_INPUT_DELAY_FRAMES"],
                 DEFAULT_ROBOT_SYNC_INPUT_DELAY_FRAMES,
             )
             .max(1),
             bot_input_interval_frames: env_u32(
+                &mut read,
                 &["ROBOT_SYNC_BOT_INPUT_INTERVAL_FRAMES"],
                 DEFAULT_ROBOT_SYNC_BOT_INPUT_INTERVAL_FRAMES,
             )
@@ -143,9 +174,7 @@ impl Default for RobotSyncConfig {
             manual_speed: manual_speed.min(MAX_ROBOT_SYNC_BOT_SPEED),
         }
     }
-}
 
-impl RobotSyncConfig {
     pub(in crate::game::features::robot_sync) fn is_robot_sync_scene(
         &self,
         scene_id: &SceneId,
@@ -154,8 +183,11 @@ impl RobotSyncConfig {
     }
 }
 
-fn env_authority_mode(names: &[&str]) -> RobotSyncAuthorityMode {
-    let value = env_first(names).unwrap_or_default();
+fn env_authority_mode(
+    read: &mut impl FnMut(&str) -> Option<String>,
+    names: &[&str],
+) -> RobotSyncAuthorityMode {
+    let value = env_first(read, names).unwrap_or_default();
     match value.trim().to_ascii_lowercase().as_str() {
         "off" | "none" | "disabled" => RobotSyncAuthorityMode::Off,
         "lan-host" | "host" => RobotSyncAuthorityMode::LanHost,
@@ -169,8 +201,11 @@ fn env_authority_mode(names: &[&str]) -> RobotSyncAuthorityMode {
     }
 }
 
-fn env_input_mode(names: &[&str]) -> RobotSyncInputMode {
-    parse_input_mode(&env_first(names).unwrap_or_default())
+fn env_input_mode(
+    read: &mut impl FnMut(&str) -> Option<String>,
+    names: &[&str],
+) -> RobotSyncInputMode {
+    parse_input_mode(&env_first(read, names).unwrap_or_default())
 }
 
 fn parse_input_mode(value: &str) -> RobotSyncInputMode {
@@ -185,38 +220,48 @@ fn parse_input_mode(value: &str) -> RobotSyncInputMode {
     }
 }
 
-fn env_string(names: &[&str], default: &str) -> String {
-    env_first(names).unwrap_or_else(|| default.to_string())
+fn env_string(
+    read: &mut impl FnMut(&str) -> Option<String>,
+    names: &[&str],
+    default: &str,
+) -> String {
+    env_first(read, names).unwrap_or_else(|| default.to_string())
 }
 
-fn env_optional_string(names: &[&str]) -> Option<String> {
-    env_first(names)
+fn env_optional_string(
+    read: &mut impl FnMut(&str) -> Option<String>,
+    names: &[&str],
+) -> Option<String> {
+    env_first(read, names)
 }
 
-fn env_u16(names: &[&str], default: u16) -> u16 {
-    env_first(names)
+fn env_u16(read: &mut impl FnMut(&str) -> Option<String>, names: &[&str], default: u16) -> u16 {
+    env_first(read, names)
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(default)
 }
 
-fn env_u32(names: &[&str], default: u32) -> u32 {
-    env_first(names)
+fn env_u32(read: &mut impl FnMut(&str) -> Option<String>, names: &[&str], default: u32) -> u32 {
+    env_first(read, names)
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(default)
 }
 
-fn env_transport(names: &[&str]) -> Option<NetworkTransport> {
-    match env_first(names)?.trim().to_ascii_lowercase().as_str() {
+fn env_transport(
+    read: &mut impl FnMut(&str) -> Option<String>,
+    names: &[&str],
+) -> Option<NetworkTransport> {
+    match env_first(read, names)?.trim().to_ascii_lowercase().as_str() {
         "tcp" => Some(NetworkTransport::Tcp),
         "kcp" => Some(NetworkTransport::Kcp),
         _ => None,
     }
 }
 
-fn env_first(names: &[&str]) -> Option<String> {
+fn env_first(read: &mut impl FnMut(&str) -> Option<String>, names: &[&str]) -> Option<String> {
     names
         .iter()
-        .find_map(|name| env::var(name).ok())
+        .find_map(|name| read(name))
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
@@ -225,16 +270,24 @@ fn env_first(names: &[&str]) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn env_reader<'a>(values: &'a [(&'a str, &'a str)]) -> impl FnMut(&str) -> Option<String> + 'a {
+        |key| {
+            values
+                .iter()
+                .find_map(|(name, value)| (*name == key).then_some((*value).to_string()))
+        }
+    }
+
     #[test]
     fn robot_sync_config_defaults_to_robot_sync_room_policy() {
-        let config = RobotSyncConfig::default();
+        let config = RobotSyncConfig::from_env_reader(env_reader(&[]));
 
         assert_eq!(config.myserver_policy_id, ROBOT_SYNC_MYSERVER_POLICY_ID);
     }
 
     #[test]
     fn robot_sync_config_defaults_to_server_legal_bot_input_settings() {
-        let config = RobotSyncConfig::default();
+        let config = RobotSyncConfig::from_env_reader(env_reader(&[]));
 
         assert_eq!(config.input_mode, RobotSyncInputMode::Bot);
         assert_eq!(

@@ -144,18 +144,41 @@ mod tests {
     use crate::{
         framework::{
             audio::prelude::{AudioPlugin, SceneAudioAdapterConfig},
-            scene::prelude::{SceneContentSource, SceneId, SceneKind, ScenePlugin, SceneRegistry},
+            scene::prelude::{
+                SceneContentSource, SceneDebugConfig, SceneId, SceneKind, ScenePlugin,
+                SceneRegistry,
+            },
         },
         game::navigation::GameRouteCommand,
     };
     use bevy::asset::AssetPlugin;
 
-    #[test]
-    fn scene_plugins_register_sample_dungeon_room_from_first_package_catalog() {
+    fn app_with_scene_registration_plugins() -> App {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin))
             .add_message::<GameRouteCommand>()
             .add_plugins(GameScenesPlugin);
+        app.insert_resource(SceneDebugConfig::default());
+        app
+    }
+
+    fn app_with_scene_audio_registration_plugins() -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            AudioPlugin,
+            ScenePlugin,
+        ))
+        .add_message::<GameRouteCommand>()
+        .add_plugins(GameScenesPlugin);
+        app.insert_resource(SceneDebugConfig::default());
+        app
+    }
+
+    #[test]
+    fn scene_plugins_register_sample_dungeon_room_from_first_package_catalog() {
+        let mut app = app_with_scene_registration_plugins();
 
         app.update();
 
@@ -180,10 +203,7 @@ mod tests {
 
     #[test]
     fn scene_plugins_register_robot_sync_arena_from_first_package_catalog() {
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin))
-            .add_message::<GameRouteCommand>()
-            .add_plugins(GameScenesPlugin);
+        let mut app = app_with_scene_registration_plugins();
 
         app.update();
 
@@ -210,15 +230,7 @@ mod tests {
 
     #[test]
     fn scene_plugins_register_sample_dungeon_room_audio_adapter() {
-        let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            AssetPlugin::default(),
-            AudioPlugin,
-            ScenePlugin,
-        ))
-        .add_message::<GameRouteCommand>()
-        .add_plugins(GameScenesPlugin);
+        let mut app = app_with_scene_audio_registration_plugins();
 
         app.update();
 
@@ -247,15 +259,7 @@ mod tests {
 
     #[test]
     fn scene_plugins_register_sample_dungeon_room_music_clip_from_catalog() {
-        let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            AssetPlugin::default(),
-            AudioPlugin,
-            ScenePlugin,
-        ))
-        .add_message::<GameRouteCommand>()
-        .add_plugins(GameScenesPlugin);
+        let mut app = app_with_scene_audio_registration_plugins();
 
         app.update();
 
