@@ -36,11 +36,22 @@ impl Plugin for DevScreensPlugin {
             )
             .add_systems(
                 OnExit(AppUiMode::AudioGallery),
-                audio_gallery::clear_audio_gallery_state,
+                audio_gallery::cleanup_audio_gallery,
             )
             .add_systems(
                 Update,
-                audio_gallery::update_audio_gallery_status
+                audio_gallery::handle_audio_gallery_buttons
+                    .before(AudioSystemSet::Commands)
+                    .run_if(in_state(AppUiMode::AudioGallery)),
+            )
+            .add_systems(
+                Update,
+                (
+                    audio_gallery::handle_audio_gallery_events,
+                    audio_gallery::update_audio_gallery_status,
+                )
+                    .chain()
+                    .after(AudioSystemSet::Debug)
                     .run_if(in_state(AppUiMode::AudioGallery)),
             )
             .add_systems(
