@@ -57,6 +57,10 @@ impl AudioCatalog {
             .ok_or_else(|| AudioCatalogError::MissingGroup(group_id.clone()))
     }
 
+    pub fn cues(&self) -> impl Iterator<Item = (&AudioCueId, &AudioCueEntry)> {
+        self.cues.iter()
+    }
+
     pub fn resolve_cue(&self, cue_id: &AudioCueId) -> Result<AudioResolvedCue, AudioCatalogError> {
         let cue = self.cue(cue_id)?;
         if cue.clips.is_empty() {

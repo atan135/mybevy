@@ -159,7 +159,7 @@ pub fn handle_audio_loading_commands(
     for command in audio_commands.read() {
         match command {
             AudioCommand::PreloadGroup(command) => {
-                preload_group(
+                preload_audio_group(
                     command.group_id.clone(),
                     &asset_server,
                     &catalog,
@@ -219,7 +219,7 @@ pub fn poll_audio_group_load_progress(
     }
 }
 
-fn preload_group(
+pub(crate) fn preload_audio_group(
     group_id: AudioGroupId,
     asset_server: &AssetServer,
     catalog: &AudioCatalog,

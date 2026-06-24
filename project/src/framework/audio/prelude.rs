@@ -1,3 +1,7 @@
+pub use super::bank::{
+    AudioBankGroupConfig, AudioBankGroupState, AudioBankLoadStatus, AudioBankMappingConflict,
+    AudioBankMappingConflictItem, AudioBankRuntime,
+};
 pub use super::battle::{BattleAudioCue, DEFAULT_BATTLE_AUDIO_BUS};
 pub use super::catalog::{
     AudioCatalog, AudioCatalogError, AudioClipEntry, AudioCueClip, AudioCueEntry, AudioCuePlayback,

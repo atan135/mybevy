@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 
 use crate::framework::audio::prelude::{
-    AudioBus, AudioCatalog, AudioClipId, AudioCueClip, AudioCueEntry, AudioCueId, AudioCuePlayback,
-    AudioCueRules, AudioScope, DEFAULT_UI_CLICK_CUE_ID,
+    AudioBankGroupConfig, AudioBankRuntime, AudioBus, AudioCatalog, AudioClipId, AudioCueClip,
+    AudioCueEntry, AudioCueId, AudioCuePlayback, AudioCueRules, AudioScope,
+    DEFAULT_UI_CLICK_CUE_ID,
 };
 
 #[path = "audio_dev_samples.rs"]
@@ -24,8 +25,25 @@ impl Plugin for GameAudioPlugin {
                 (
                     register_game_ui_audio,
                     dev_samples::register_audio_gallery_dev_samples,
+                    register_audio_gallery_dev_banks,
                 ),
             );
+    }
+}
+
+fn register_audio_gallery_dev_banks(
+    config: Option<Res<dev_samples::AudioGalleryDevBankConfig>>,
+    bank: Option<ResMut<AudioBankRuntime>>,
+) {
+    let (Some(config), Some(mut bank)) = (config, bank) else {
+        return;
+    };
+
+    for setting in &config.banks {
+        bank.register_group_config(AudioBankGroupConfig::new(
+            setting.group_id.clone(),
+            setting.lazy_unload,
+        ));
     }
 }
 
@@ -81,7 +99,8 @@ mod tests {
     use super::*;
     use crate::framework::{
         audio::prelude::{
-            AudioPlaybackState, AudioPlugin, DEFAULT_UI_CLICK_CUE_ID, UiAudioCueOverride,
+            AudioBankRuntime, AudioPlaybackState, AudioPlugin, DEFAULT_UI_CLICK_CUE_ID,
+            UiAudioCueOverride,
         },
         ui::widgets::{UiButtonEvent, UiButtonEventKind},
     };
@@ -93,6 +112,10 @@ mod tests {
 
     fn clip_id(value: &str) -> AudioClipId {
         AudioClipId::try_from(value).unwrap()
+    }
+
+    fn group_id(value: &str) -> crate::framework::audio::prelude::AudioGroupId {
+        crate::framework::audio::prelude::AudioGroupId::try_from(value).unwrap()
     }
 
     #[test]
@@ -137,6 +160,30 @@ mod tests {
                 .path,
             UI_CONFIRM_CLIP_PATH
         );
+    }
+
+    #[test]
+    fn game_audio_registers_audio_gallery_dev_banks_with_framework_runtime() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            AudioPlugin,
+            GameAudioPlugin,
+        ))
+        .init_asset::<bevy::audio::AudioSource>();
+
+        app.update();
+
+        let bank = app.world().resource::<AudioBankRuntime>();
+        let lazy_group_id = group_id(dev_samples::AUDIO_GALLERY_BANK_GROUP_ID);
+        let resident_group_id = group_id(dev_samples::AUDIO_GALLERY_RESIDENT_BANK_GROUP_ID);
+        let lazy = bank.groups.get(&lazy_group_id).unwrap();
+        let resident = bank.groups.get(&resident_group_id).unwrap();
+
+        assert_eq!(lazy.lazy_unload, std::time::Duration::from_secs_f32(12.0));
+        assert_eq!(resident.lazy_unload, std::time::Duration::ZERO);
+        assert!(resident.resident());
     }
 
     #[test]

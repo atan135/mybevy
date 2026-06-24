@@ -4,6 +4,7 @@ use crate::framework::scene::prelude::SceneEvent;
 use crate::framework::ui::widgets::UiButtonEvent;
 
 use super::{
+    bank::AudioBankRuntime,
     catalog::AudioCatalog,
     command::AudioCommand,
     debug::{AudioDebugConfig, AudioDebugSnapshot, AudioDebugState},
@@ -35,6 +36,7 @@ impl Plugin for AudioPlugin {
             .init_resource::<AudioLifecyclePauseState>()
             .init_resource::<AudioPlaybackState>()
             .init_resource::<AudioLoadingState>()
+            .init_resource::<AudioBankRuntime>()
             .init_resource::<MusicController>()
             .insert_resource(AudioDebugConfig::from_env())
             .init_resource::<AudioDebugState>()
@@ -62,6 +64,7 @@ impl Plugin for AudioPlugin {
                         super::mixer::handle_audio_mixer_commands,
                         super::scene::play_scene_audio_on_lifecycle,
                         super::ui::play_ui_button_audio,
+                        super::bank::handle_audio_bank_commands,
                         super::music::handle_music_commands,
                         super::playback::handle_audio_playback_commands,
                         super::loading::handle_audio_loading_commands,
@@ -80,6 +83,7 @@ impl Plugin for AudioPlugin {
                     super::playback::cleanup_finished_audio_instances
                         .in_set(AudioSystemSet::Cleanup),
                     super::music::cleanup_music_controller.in_set(AudioSystemSet::Cleanup),
+                    super::bank::update_audio_bank_runtime.in_set(AudioSystemSet::Cleanup),
                     super::debug::update_audio_debug_snapshot.in_set(AudioSystemSet::Debug),
                 ),
             );
@@ -139,6 +143,7 @@ mod tests {
         assert!(app.world().contains_resource::<AudioLifecyclePauseState>());
         assert!(app.world().contains_resource::<AudioPlaybackState>());
         assert!(app.world().contains_resource::<AudioLoadingState>());
+        assert!(app.world().contains_resource::<AudioBankRuntime>());
         assert!(app.world().contains_resource::<MusicController>());
         assert!(app.world().contains_resource::<AudioDebugConfig>());
         assert!(app.world().contains_resource::<AudioDebugState>());
