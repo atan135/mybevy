@@ -1510,13 +1510,24 @@ pub(super) fn update_audio_gallery_status(
 pub(super) fn cleanup_audio_gallery(
     mut commands: Commands,
     mut audio_commands: MessageWriter<AudioCommand>,
+    mut bank: Option<ResMut<AudioBankRuntime>>,
     state: Option<Res<AudioGalleryState>>,
     listener_entity: Option<Res<AudioSpatialListenerEntity>>,
 ) {
+    let gallery_bank_group_id = group_id(AUDIO_GALLERY_BANK_GROUP_ID);
+    let unload_gallery_bank = bank
+        .as_deref()
+        .and_then(|bank| bank.groups.get(&gallery_bank_group_id))
+        .is_some_and(|state| !state.resident());
     audio_commands.write(AudioCommand::StopByScope(AudioScopeFadeCommand {
         scope: audio_gallery_scope(),
-        fade_out_seconds: Some(0.1),
+        fade_out_seconds: None,
     }));
+    if unload_gallery_bank {
+        audio_commands.write(AudioCommand::UnloadGroup(AudioGroupCommand::new(
+            gallery_bank_group_id.clone(),
+        )));
+    }
     if let Some(state) = state {
         if let Some(entity) = state.spatial_listener_target {
             commands.entity(entity).try_despawn();
@@ -1531,6 +1542,9 @@ pub(super) fn cleanup_audio_gallery(
     }
     commands.remove_resource::<AudioSpatialListenerBinding>();
     commands.remove_resource::<AudioGalleryState>();
+    if let Some(bank) = bank.as_deref_mut() {
+        bank.clear_transient_group_runtime(&gallery_bank_group_id);
+    }
 }
 
 pub(super) fn enable_audio_gallery_debug(mut config: ResMut<AudioDebugConfig>) {
@@ -3367,10 +3381,13 @@ fn bank_load_status_label(status: AudioBankLoadStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::audio::prelude::AudioPlugin;
     use crate::framework::audio::prelude::{
-        AudioBankGroupConfig, AudioBusChanged, AudioClipStarted, AudioCueSkipReason,
-        AudioCueStarted, AudioInstanceStopped, AudioLoadFailed, AudioStopReason,
-        DEFAULT_UI_CLICK_CUE_ID,
+        AudioBankGroupConfig, AudioBusChanged, AudioCatalog, AudioClipStarted, AudioCueSkipReason,
+        AudioCueStarted, AudioDebugState, AudioFadeState, AudioGroupClip, AudioGroupEntry,
+        AudioInstanceState, AudioInstanceStopped, AudioLoadFailed, AudioLoadingState,
+        AudioMetadata, AudioPlaybackInstance, AudioPlaybackState, AudioStopReason,
+        DEFAULT_UI_CLICK_CUE_ID, audio_debug_snapshot,
     };
     use crate::framework::ui::widgets::{UiButtonEvent, UiButtonEventKind};
     use crate::framework::ui::{
@@ -3385,6 +3402,65 @@ mod tests {
         let messages = app.world().resource::<Messages<AudioCommand>>();
         let mut cursor = MessageCursor::default();
         cursor.read(messages).cloned().collect()
+    }
+
+    fn register_test_banked_menu_music(app: &mut App) {
+        let group_id = group_id(AUDIO_GALLERY_BANK_GROUP_ID);
+        let clip_id = clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID);
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_clip(clip_id.clone(), "audio/music/menu_loop.wav");
+        app.world_mut()
+            .resource_mut::<AudioCatalog>()
+            .register_group(
+                group_id.clone(),
+                AudioGroupEntry::from_clips([AudioGroupClip::required(clip_id)]),
+            );
+        app.world_mut()
+            .resource_mut::<AudioBankRuntime>()
+            .register_group_config(AudioBankGroupConfig::new(
+                group_id,
+                std::time::Duration::from_secs_f32(12.0),
+            ));
+    }
+
+    fn insert_playback_instance(
+        app: &mut App,
+        instance_id: AudioInstanceId,
+        clip_id: AudioClipId,
+        scope: AudioScope,
+        bus: AudioBus,
+    ) {
+        let entity = app
+            .world_mut()
+            .spawn(AudioPlaybackInstance { instance_id })
+            .id();
+        app.world_mut()
+            .resource_mut::<AudioPlaybackState>()
+            .instances
+            .insert(
+                instance_id,
+                AudioInstanceState {
+                    entity,
+                    clip_id,
+                    cue_id: None,
+                    scope,
+                    bus,
+                    volume: 1.0,
+                    priority: 0,
+                    looped: true,
+                    asset_path: "audio/music/menu_loop.wav".to_string(),
+                    source: Handle::default(),
+                    failed: false,
+                    paused: false,
+                    stopping: false,
+                    fade: AudioFadeState::new(0.25, 1.0, 0.0, true),
+                    spatial: false,
+                    start_seconds: 0.0,
+                    position_seconds: 0.0,
+                    pending_seek_seconds: None,
+                },
+            );
     }
 
     fn phone_portrait_viewport() -> UiViewport {
@@ -4756,9 +4832,16 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_sends_stop_by_gallery_scope_and_removes_state() {
+    fn cleanup_sends_gallery_scope_stop_bank_unload_and_removes_state() {
         let mut app = App::new();
         app.add_message::<AudioCommand>();
+        app.init_resource::<AudioBankRuntime>();
+        app.world_mut()
+            .resource_mut::<AudioBankRuntime>()
+            .register_group_config(AudioBankGroupConfig::new(
+                group_id(AUDIO_GALLERY_BANK_GROUP_ID),
+                std::time::Duration::from_secs_f32(12.0),
+            ));
         app.world_mut()
             .run_system_once(setup_audio_gallery_state_and_spatial_helpers_system)
             .expect("setup system should run");
@@ -4792,10 +4875,216 @@ mod tests {
         assert!(app.world().get_entity(listener_proxy).is_err());
         assert_eq!(
             read_audio_commands(&app),
-            vec![AudioCommand::StopByScope(AudioScopeFadeCommand {
-                scope: audio_gallery_scope(),
-                fade_out_seconds: Some(0.1),
-            })]
+            vec![
+                AudioCommand::StopByScope(AudioScopeFadeCommand {
+                    scope: audio_gallery_scope(),
+                    fade_out_seconds: None,
+                }),
+                AudioCommand::UnloadGroup(AudioGroupCommand::new(group_id(
+                    AUDIO_GALLERY_BANK_GROUP_ID
+                ))),
+            ]
+        );
+    }
+
+    #[test]
+    fn cleanup_clears_transient_gallery_bank_runtime_without_unloading_resident_group() {
+        let gallery_group_id = group_id(AUDIO_GALLERY_BANK_GROUP_ID);
+        let resident_group_id = group_id(AUDIO_GALLERY_RESIDENT_BANK_GROUP_ID);
+        let mut app = App::new();
+        app.add_message::<AudioCommand>()
+            .init_resource::<AudioBankRuntime>();
+        app.world_mut()
+            .resource_mut::<AudioBankRuntime>()
+            .register_group_config(AudioBankGroupConfig::new(
+                gallery_group_id.clone(),
+                std::time::Duration::from_secs_f32(12.0),
+            ));
+        app.world_mut()
+            .resource_mut::<AudioBankRuntime>()
+            .register_group_config(AudioBankGroupConfig::new(
+                resident_group_id.clone(),
+                std::time::Duration::ZERO,
+            ));
+        {
+            let mut bank = app.world_mut().resource_mut::<AudioBankRuntime>();
+            let gallery = bank.groups.get_mut(&gallery_group_id).unwrap();
+            gallery.preload_requested = true;
+            gallery.load_status = AudioBankLoadStatus::Loaded;
+            gallery
+                .active_instance_ids
+                .insert(AudioInstanceId::from_raw(1));
+            gallery.idle_countdown_seconds = Some(6.0);
+            let resident = bank.groups.get_mut(&resident_group_id).unwrap();
+            resident.preload_requested = true;
+            resident.load_status = AudioBankLoadStatus::Loaded;
+            resident
+                .active_instance_ids
+                .insert(AudioInstanceId::from_raw(2));
+            resident.idle_countdown_seconds = Some(6.0);
+        }
+
+        app.world_mut()
+            .run_system_once(cleanup_audio_gallery)
+            .expect("cleanup system should run");
+
+        let bank = app.world().resource::<AudioBankRuntime>();
+        let gallery = bank.groups.get(&gallery_group_id).unwrap();
+        assert!(!gallery.preload_requested);
+        assert_eq!(gallery.load_status, AudioBankLoadStatus::NotLoaded);
+        assert!(gallery.active_instance_ids.is_empty());
+        assert_eq!(gallery.idle_countdown_seconds, None);
+        let resident = bank.groups.get(&resident_group_id).unwrap();
+        assert!(resident.preload_requested);
+        assert_eq!(resident.load_status, AudioBankLoadStatus::Loaded);
+        assert_eq!(resident.active_instance_ids.len(), 1);
+        assert_eq!(resident.idle_countdown_seconds, Some(6.0));
+        assert_eq!(
+            read_audio_commands(&app),
+            vec![
+                AudioCommand::StopByScope(AudioScopeFadeCommand {
+                    scope: audio_gallery_scope(),
+                    fade_out_seconds: None,
+                }),
+                AudioCommand::UnloadGroup(AudioGroupCommand::new(gallery_group_id)),
+            ]
+        );
+    }
+
+    #[test]
+    fn rapid_repeated_play_pause_stop_paths_stay_bounded_and_do_not_panic() {
+        let mut state = AudioGalleryState::new();
+        let loop_instance = AudioInstanceId::from_raw(11);
+        let music_instance = AudioInstanceId::from_raw(12);
+        state.record_started(
+            AudioGalleryInstanceSlot::Loop,
+            loop_instance,
+            AUDIO_GALLERY_RAIN_LOOP_CUE_ID.to_string(),
+        );
+        state.record_started(
+            AudioGalleryInstanceSlot::Music,
+            music_instance,
+            AUDIO_GALLERY_MENU_MUSIC_CLIP_ID.to_string(),
+        );
+
+        let buttons = [
+            AudioGalleryButton::PlaySfx(AudioGallerySfxCue::Notify),
+            AudioGalleryButton::PlaySfx(AudioGallerySfxCue::Notify),
+            AudioGalleryButton::PauseLoop,
+            AudioGalleryButton::PauseLoop,
+            AudioGalleryButton::ResumeLoop,
+            AudioGalleryButton::StopLoop,
+            AudioGalleryButton::StopLoop,
+            AudioGalleryButton::PauseMusic,
+            AudioGalleryButton::ResumeMusic,
+            AudioGalleryButton::StopMusic,
+            AudioGalleryButton::StopMusic,
+        ];
+        let mut total_commands = 0;
+        let mut total_launches = 0;
+
+        for button in buttons {
+            let outcome = apply_audio_gallery_button(&mut state, button);
+            total_commands += outcome.commands.len();
+            total_launches += outcome.launches.len();
+        }
+
+        assert_eq!(total_commands, 11);
+        assert_eq!(total_launches, 2);
+        assert_eq!(state.pending_launches.len(), 0);
+        assert!(state.loop_instance.instance_id.is_some());
+        assert!(state.music_instance.instance_id.is_some());
+    }
+
+    #[test]
+    fn lazy_unload_after_cleanup_allows_group_member_to_request_preload_again() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), AudioPlugin))
+            .init_asset::<AudioSource>();
+        app.update();
+        register_test_banked_menu_music(&mut app);
+
+        let clip_id = clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID);
+        app.world_mut()
+            .write_message(AudioCommand::PlayMusic(AudioMusicRequest::new(
+                clip_id.clone(),
+            )));
+        app.update();
+        app.world_mut()
+            .run_system_once(cleanup_audio_gallery)
+            .expect("cleanup system should run");
+        app.update();
+        app.world_mut()
+            .write_message(AudioCommand::PlayMusic(AudioMusicRequest::new(clip_id)));
+        app.update();
+
+        let commands = read_audio_commands(&app);
+        let preload_count = commands
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command,
+                    AudioCommand::PreloadGroup(command)
+                        if command.group_id.as_str() == AUDIO_GALLERY_BANK_GROUP_ID
+                )
+            })
+            .count();
+        assert_eq!(preload_count, 2);
+        let gallery_bank = app
+            .world()
+            .resource::<AudioBankRuntime>()
+            .groups
+            .get(&group_id(AUDIO_GALLERY_BANK_GROUP_ID))
+            .unwrap();
+        assert!(gallery_bank.preload_requested);
+        assert_eq!(gallery_bank.load_status, AudioBankLoadStatus::Loading);
+        assert_eq!(gallery_bank.idle_countdown_seconds, None);
+    }
+
+    #[test]
+    fn cleanup_processed_by_audio_plugin_leaves_no_gallery_scope_instances_for_monitor() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), AudioPlugin))
+            .init_asset::<AudioSource>();
+        app.update();
+        app.world_mut().resource_mut::<AudioDebugConfig>().enabled = true;
+        let gallery_instance = AudioInstanceId::from_raw(21);
+        let global_instance = AudioInstanceId::from_raw(22);
+        insert_playback_instance(
+            &mut app,
+            gallery_instance,
+            clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID),
+            audio_gallery_scope(),
+            AudioBus::Music,
+        );
+        insert_playback_instance(
+            &mut app,
+            global_instance,
+            clip_id(DEFAULT_UI_CLICK_CUE_ID),
+            AudioScope::Global,
+            AudioBus::Ui,
+        );
+
+        app.world_mut()
+            .run_system_once(cleanup_audio_gallery)
+            .expect("cleanup system should run");
+        app.update();
+
+        let playback = app.world().resource::<AudioPlaybackState>();
+        assert!(!playback.instances.contains_key(&gallery_instance));
+        assert!(playback.instances.contains_key(&global_instance));
+        let snapshot = audio_debug_snapshot(
+            app.world().resource::<AudioDebugConfig>(),
+            app.world().resource::<AudioDebugState>(),
+            playback,
+            app.world().resource::<AudioLoadingState>(),
+            app.world().resource::<AudioMetadata>(),
+        );
+        assert!(
+            snapshot
+                .instance_details
+                .iter()
+                .all(|instance| instance.scope != audio_gallery_scope())
         );
     }
 }

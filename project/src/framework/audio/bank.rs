@@ -237,6 +237,24 @@ impl AudioBankRuntime {
         state.idle_countdown_seconds = None;
     }
 
+    pub fn clear_transient_group_runtime(&mut self, group_id: &AudioGroupId) {
+        let Some(state) = self.groups.get_mut(group_id) else {
+            return;
+        };
+
+        if state.resident() {
+            state.idle_countdown_seconds = None;
+            return;
+        }
+
+        state.preload_requested = false;
+        state.load_status = AudioBankLoadStatus::NotLoaded;
+        state.active_instance_ids.clear();
+        state.idle_countdown_seconds = None;
+        self.instance_to_group
+            .retain(|_, instance_group_id| instance_group_id != group_id);
+    }
+
     fn sync_loading_state(&mut self, loading: &AudioLoadingState) {
         for (group_id, state) in &mut self.groups {
             let Some(group) = loading.groups.get(group_id) else {
@@ -725,6 +743,57 @@ mod tests {
             .unwrap();
         assert_eq!(state.load_status, AudioBankLoadStatus::NotLoaded);
         assert!(state.active_instance_ids.contains(&instance_id));
+    }
+
+    #[test]
+    fn clear_transient_group_runtime_resets_non_resident_without_touching_resident_groups() {
+        let transient_group = group_id("bank.transient");
+        let resident_group = group_id("bank.resident");
+        let transient_instance = AudioInstanceId::from_raw(1);
+        let resident_instance = AudioInstanceId::from_raw(2);
+        let mut bank = AudioBankRuntime::default();
+        bank.register_group_config(AudioBankGroupConfig::new(
+            transient_group.clone(),
+            Duration::from_secs(5),
+        ));
+        bank.register_group_config(AudioBankGroupConfig::new(
+            resident_group.clone(),
+            Duration::ZERO,
+        ));
+        bank.record_active_instance(&transient_group, transient_instance);
+        bank.record_active_instance(&resident_group, resident_instance);
+        {
+            let transient = bank.groups.get_mut(&transient_group).unwrap();
+            transient.preload_requested = true;
+            transient.load_status = AudioBankLoadStatus::Loaded;
+            transient.idle_countdown_seconds = Some(2.0);
+        }
+        {
+            let resident = bank.groups.get_mut(&resident_group).unwrap();
+            resident.preload_requested = true;
+            resident.load_status = AudioBankLoadStatus::Loaded;
+            resident.idle_countdown_seconds = Some(2.0);
+        }
+
+        bank.clear_transient_group_runtime(&transient_group);
+        bank.clear_transient_group_runtime(&resident_group);
+
+        let transient = bank.groups.get(&transient_group).unwrap();
+        assert!(!transient.preload_requested);
+        assert_eq!(transient.load_status, AudioBankLoadStatus::NotLoaded);
+        assert!(transient.active_instance_ids.is_empty());
+        assert_eq!(transient.idle_countdown_seconds, None);
+        assert_eq!(bank.instance_to_group.get(&transient_instance), None);
+
+        let resident = bank.groups.get(&resident_group).unwrap();
+        assert!(resident.preload_requested);
+        assert_eq!(resident.load_status, AudioBankLoadStatus::Loaded);
+        assert!(resident.active_instance_ids.contains(&resident_instance));
+        assert_eq!(resident.idle_countdown_seconds, None);
+        assert_eq!(
+            bank.instance_to_group.get(&resident_instance),
+            Some(&resident_group)
+        );
     }
 
     #[test]
