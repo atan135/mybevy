@@ -4,10 +4,12 @@ use bevy::prelude::*;
 
 use crate::framework::{
     audio::prelude::{
-        AudioBus, AudioClipId, AudioClipRequest, AudioCommand, AudioCueId, AudioCueRequest,
-        AudioEvent, AudioInstanceCommand, AudioInstanceControlAction, AudioInstanceControlFailed,
-        AudioInstanceControlFailureReason, AudioInstanceId, AudioInstanceProgress, AudioLoadFailed,
-        AudioScope, AudioScopeFadeCommand, AudioSeekInstanceCommand, AudioStopInstanceCommand,
+        AudioBus, AudioClipId, AudioClipRequest, AudioCommand, AudioCrossfadeMusicRequest,
+        AudioCueId, AudioCueRequest, AudioEvent, AudioInstanceCommand, AudioInstanceControlAction,
+        AudioInstanceControlFailed, AudioInstanceControlFailureReason, AudioInstanceId,
+        AudioInstanceProgress, AudioLoadFailed, AudioMusicChanged, AudioMusicFadeCommand,
+        AudioMusicRequest, AudioScope, AudioScopeFadeCommand, AudioSeekInstanceCommand,
+        AudioStopInstanceCommand,
     },
     ui::{
         core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport, UiWidthClass},
@@ -30,8 +32,8 @@ use crate::game::{
     audio::dev_samples::{
         AUDIO_GALLERY_CAR_HORN_CUE_ID, AUDIO_GALLERY_FOOTSTEP_CUE_ID,
         AUDIO_GALLERY_MENU_MUSIC_CLIP_ID, AUDIO_GALLERY_RAIN_LOOP_CUE_ID,
-        AUDIO_GALLERY_SWORD_HIT_CUE_ID, AUDIO_GALLERY_UI_NOTIFY_CUE_ID,
-        AUDIO_GALLERY_VOICE_CLIP_ID,
+        AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID, AUDIO_GALLERY_SWORD_HIT_CUE_ID,
+        AUDIO_GALLERY_UI_NOTIFY_CUE_ID, AUDIO_GALLERY_VOICE_CLIP_ID,
     },
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{OWNER_AUDIO_GALLERY, PANEL_AUDIO_GALLERY},
@@ -39,6 +41,8 @@ use crate::game::{
 
 const AUDIO_GALLERY_SCOPE_ID: &str = "dev.audio_gallery";
 const DEFAULT_LONG_SEEK_SECONDS: f32 = 8.0;
+const DEFAULT_MUSIC_START_SECONDS: f32 = 12.0;
+const DEFAULT_MUSIC_CROSSFADE_SECONDS: f32 = 1.5;
 
 #[derive(Clone, Copy, Debug, Component, Eq, PartialEq)]
 pub(super) enum AudioGalleryTextRow {
@@ -55,6 +59,14 @@ pub(super) enum AudioGalleryButton {
     ResumeLoop,
     StopLoop,
     FadeOutLoop,
+    PlayMusic(AudioGalleryMusicClip),
+    PlayMusicFromStart(AudioGalleryMusicClip),
+    PauseMusic,
+    ResumeMusic,
+    StopMusic,
+    FadeOutMusic,
+    QueryMusicProgress,
+    CrossfadeMusic(AudioGalleryMusicClip, AudioGalleryMusicFadePreset),
     PlayClip,
     PlayLong,
     PauseRecent,
@@ -74,6 +86,18 @@ pub(super) enum AudioGallerySfxCue {
     Notify,
     Footstep,
     SwordHit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AudioGalleryMusicClip {
+    Menu,
+    Stealth,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AudioGalleryMusicFadePreset {
+    Instant,
+    Smooth,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,7 +131,7 @@ enum AudioGalleryInstanceSlot {
     Spatial,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum AudioGalleryLaunchKind {
     Cue {
         cue_id: AudioCueId,
@@ -116,6 +140,10 @@ enum AudioGalleryLaunchKind {
     Clip {
         clip_id: AudioClipId,
         slot: AudioGalleryInstanceSlot,
+    },
+    Music {
+        clip_id: AudioClipId,
+        start_seconds: Option<f32>,
     },
 }
 
@@ -480,6 +508,133 @@ pub(super) fn setup_audio_gallery(
                                     AudioGalleryButton::FadeOut(AudioGalleryFadePreset::Long),
                                     "audio_gallery.params.fade_out.long",
                                     "Fade Out 2s",
+                                );
+                            });
+                    });
+
+                body.spawn(audio_gallery_panel(theme))
+                    .with_children(|panel| {
+                        panel.spawn(section_label(
+                            theme,
+                            fonts,
+                            i18n,
+                            "audio_gallery.music.section",
+                            "Music",
+                        ));
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_button_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayMusic(AudioGalleryMusicClip::Menu),
+                                    "audio_gallery.music.play_menu",
+                                    "Play Menu",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayMusic(AudioGalleryMusicClip::Stealth),
+                                    "audio_gallery.music.play_stealth",
+                                    "Play Stealth",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayMusicFromStart(
+                                        AudioGalleryMusicClip::Menu,
+                                    ),
+                                    "audio_gallery.music.play_menu_start",
+                                    "Menu From 12s",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PauseMusic,
+                                    "audio_gallery.music.pause",
+                                    "Pause Music",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::ResumeMusic,
+                                    "audio_gallery.music.resume",
+                                    "Resume Music",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::StopMusic,
+                                    "audio_gallery.music.stop",
+                                    "Stop Music",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::FadeOutMusic,
+                                    "audio_gallery.music.fade_stop",
+                                    "Fade Stop Music",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::QueryMusicProgress,
+                                    "audio_gallery.music.progress",
+                                    "Music Progress",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::CrossfadeMusic(
+                                        AudioGalleryMusicClip::Stealth,
+                                        AudioGalleryMusicFadePreset::Instant,
+                                    ),
+                                    "audio_gallery.music.crossfade_0",
+                                    "Crossfade 0s",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::CrossfadeMusic(
+                                        AudioGalleryMusicClip::Menu,
+                                        AudioGalleryMusicFadePreset::Smooth,
+                                    ),
+                                    "audio_gallery.music.crossfade_smooth",
+                                    "Crossfade 1.5s",
                                 );
                             });
                     });
@@ -882,6 +1037,123 @@ fn apply_audio_gallery_button(
                 outcome.status = "No loop instance is active yet.".to_string();
             }
         }
+        AudioGalleryButton::PlayMusic(music_clip) => {
+            let clip_id = music_clip.clip_id();
+            outcome.launches.push(AudioGalleryLaunchKind::Music {
+                clip_id: clip_id.clone(),
+                start_seconds: None,
+            });
+            outcome
+                .commands
+                .push(AudioCommand::PlayMusic(gallery_music_request(
+                    clip_id,
+                    state.params,
+                    None,
+                )));
+            outcome.status = format!("Requested music: {}.", music_clip.label());
+        }
+        AudioGalleryButton::PlayMusicFromStart(music_clip) => {
+            let clip_id = music_clip.clip_id();
+            outcome.launches.push(AudioGalleryLaunchKind::Music {
+                clip_id: clip_id.clone(),
+                start_seconds: Some(DEFAULT_MUSIC_START_SECONDS),
+            });
+            outcome
+                .commands
+                .push(AudioCommand::PlayMusic(gallery_music_request(
+                    clip_id,
+                    state.params,
+                    Some(DEFAULT_MUSIC_START_SECONDS),
+                )));
+            outcome.status = format!(
+                "Requested music {} from {DEFAULT_MUSIC_START_SECONDS:.1}s.",
+                music_clip.label()
+            );
+        }
+        AudioGalleryButton::PauseMusic => {
+            outcome.commands.push(AudioCommand::PauseMusic);
+            if let Some(instance_id) = state.music_instance.instance_id {
+                state.mark_instance_paused(instance_id, true);
+                outcome.status = format!("Pause requested for music instance {instance_id}.");
+            } else {
+                outcome.status =
+                    "Pause requested for music; no gallery music instance is recorded yet."
+                        .to_string();
+            }
+        }
+        AudioGalleryButton::ResumeMusic => {
+            outcome.commands.push(AudioCommand::ResumeMusic);
+            if let Some(instance_id) = state.music_instance.instance_id {
+                state.mark_instance_paused(instance_id, false);
+                outcome.status = format!("Resume requested for music instance {instance_id}.");
+            } else {
+                outcome.status =
+                    "Resume requested for music; no gallery music instance is recorded yet."
+                        .to_string();
+            }
+        }
+        AudioGalleryButton::StopMusic => {
+            outcome
+                .commands
+                .push(AudioCommand::StopMusic(AudioMusicFadeCommand::new()));
+            outcome.status = if let Some(instance_id) = state.music_instance.instance_id {
+                format!("Immediate stop requested for music instance {instance_id}.")
+            } else {
+                "Immediate music stop requested.".to_string()
+            };
+        }
+        AudioGalleryButton::FadeOutMusic => {
+            let fade_out_seconds = state.params.fade_out_seconds.or(Some(0.5));
+            outcome
+                .commands
+                .push(AudioCommand::StopMusic(AudioMusicFadeCommand {
+                    fade_out_seconds,
+                }));
+            outcome.status = if let Some(instance_id) = state.music_instance.instance_id {
+                format!(
+                    "Fade-out stop requested for music instance {instance_id} ({}).",
+                    format_seconds(fade_out_seconds)
+                )
+            } else {
+                format!(
+                    "Fade-out music stop requested ({}).",
+                    format_seconds(fade_out_seconds)
+                )
+            };
+        }
+        AudioGalleryButton::QueryMusicProgress => {
+            if let Some(instance_id) = state.music_instance.instance_id {
+                outcome.commands.push(AudioCommand::QueryInstanceProgress(
+                    AudioInstanceCommand::new(instance_id),
+                ));
+                outcome.status =
+                    format!("Progress query requested for music instance {instance_id}.");
+            } else {
+                outcome.status = "No gallery music instance is active yet.".to_string();
+            }
+        }
+        AudioGalleryButton::CrossfadeMusic(music_clip, fade_preset) => {
+            let clip_id = music_clip.clip_id();
+            let fade_seconds = fade_preset.seconds();
+            outcome.launches.push(AudioGalleryLaunchKind::Music {
+                clip_id: clip_id.clone(),
+                start_seconds: None,
+            });
+            outcome
+                .commands
+                .push(AudioCommand::CrossfadeMusic(AudioCrossfadeMusicRequest {
+                    clip_id,
+                    scope: audio_gallery_scope(),
+                    volume: state.params.volume,
+                    looped: true,
+                    fade_seconds,
+                }));
+            outcome.status = format!(
+                "Crossfade requested to {} ({}).",
+                music_clip.label(),
+                format_seconds(Some(fade_seconds))
+            );
+        }
         AudioGalleryButton::PlayClip => {
             let clip_id = clip_id(AUDIO_GALLERY_VOICE_CLIP_ID);
             outcome.launches.push(AudioGalleryLaunchKind::Clip {
@@ -1047,6 +1319,9 @@ fn apply_audio_gallery_event(state: &mut AudioGalleryState, event: &AudioEvent) 
                 started.clip_id, started.instance_id, started.bus
             );
         }
+        AudioEvent::MusicChanged(changed) => {
+            apply_audio_gallery_music_changed(state, changed);
+        }
         AudioEvent::InstanceStopped(stopped) => {
             if state.clear_instance(stopped.instance_id) {
                 state.status = format!(
@@ -1127,6 +1402,50 @@ fn gallery_clip_request(
     }
 }
 
+fn gallery_music_request(
+    clip_id: AudioClipId,
+    params: AudioGalleryPlaybackParams,
+    start_seconds: Option<f32>,
+) -> AudioMusicRequest {
+    AudioMusicRequest {
+        clip_id,
+        scope: audio_gallery_scope(),
+        volume: params.volume,
+        looped: true,
+        fade_in_seconds: params.fade_in_seconds,
+        start_seconds,
+    }
+}
+
+fn apply_audio_gallery_music_changed(state: &mut AudioGalleryState, changed: &AudioMusicChanged) {
+    if !gallery_scope_matches(&changed.scope) {
+        return;
+    }
+
+    let pending_start = take_pending_music_start(state, &changed.new_clip_id);
+    if let Some(instance_id) = changed.new_instance_id {
+        state.record_started(
+            AudioGalleryInstanceSlot::Music,
+            instance_id,
+            changed.new_clip_id.to_string(),
+        );
+        state.music_instance.position_seconds = pending_start.flatten();
+        state.status = format!(
+            "Music changed to {} as instance {} (crossfade {}).",
+            changed.new_clip_id,
+            instance_id,
+            format_seconds(changed.crossfade_seconds)
+        );
+    } else {
+        state.music_instance.label = Some(changed.new_clip_id.to_string());
+        state.music_instance.position_seconds = pending_start.flatten();
+        state.status = format!(
+            "Music changed to {} but no instance was reported.",
+            changed.new_clip_id
+        );
+    }
+}
+
 fn take_pending_cue_slot(
     state: &mut AudioGalleryState,
     cue_id: &AudioCueId,
@@ -1137,7 +1456,7 @@ fn take_pending_cue_slot(
         .position(|launch| matches!(launch, AudioGalleryLaunchKind::Cue { cue_id: pending, .. } if pending == cue_id))?;
     match state.pending_launches.remove(index) {
         AudioGalleryLaunchKind::Cue { slot, .. } => Some(slot),
-        AudioGalleryLaunchKind::Clip { .. } => None,
+        AudioGalleryLaunchKind::Clip { .. } | AudioGalleryLaunchKind::Music { .. } => None,
     }
 }
 
@@ -1151,7 +1470,20 @@ fn take_pending_clip_slot(
         .position(|launch| matches!(launch, AudioGalleryLaunchKind::Clip { clip_id: pending, .. } if pending == clip_id))?;
     match state.pending_launches.remove(index) {
         AudioGalleryLaunchKind::Clip { slot, .. } => Some(slot),
-        AudioGalleryLaunchKind::Cue { .. } => None,
+        AudioGalleryLaunchKind::Cue { .. } | AudioGalleryLaunchKind::Music { .. } => None,
+    }
+}
+
+fn take_pending_music_start(
+    state: &mut AudioGalleryState,
+    clip_id: &AudioClipId,
+) -> Option<Option<f32>> {
+    let index = state.pending_launches.iter().position(|launch| {
+        matches!(launch, AudioGalleryLaunchKind::Music { clip_id: pending, .. } if pending == clip_id)
+    })?;
+    match state.pending_launches.remove(index) {
+        AudioGalleryLaunchKind::Music { start_seconds, .. } => Some(start_seconds),
+        AudioGalleryLaunchKind::Cue { .. } | AudioGalleryLaunchKind::Clip { .. } => None,
     }
 }
 
@@ -1171,6 +1503,9 @@ fn load_failure_is_gallery_owned(state: &AudioGalleryState, failed: &AudioLoadFa
         || state.pending_launches.iter().any(|launch| match launch {
             AudioGalleryLaunchKind::Cue { cue_id, .. } => failed.cue_id.as_ref() == Some(cue_id),
             AudioGalleryLaunchKind::Clip { clip_id, .. } => {
+                failed.clip_id.as_ref() == Some(clip_id)
+            }
+            AudioGalleryLaunchKind::Music { clip_id, .. } => {
                 failed.clip_id.as_ref() == Some(clip_id)
             }
         })
@@ -1200,7 +1535,6 @@ fn dev_cue_slot(cue_id: &AudioCueId) -> Option<AudioGalleryInstanceSlot> {
 
 fn dev_clip_slot(clip_id: &AudioClipId) -> Option<AudioGalleryInstanceSlot> {
     match clip_id.as_str() {
-        AUDIO_GALLERY_MENU_MUSIC_CLIP_ID => Some(AudioGalleryInstanceSlot::Long),
         AUDIO_GALLERY_VOICE_CLIP_ID => Some(AudioGalleryInstanceSlot::Clip),
         value if value.starts_with("dev.audio.music.") => Some(AudioGalleryInstanceSlot::Music),
         value if value.starts_with("dev.audio.spatial.") => Some(AudioGalleryInstanceSlot::Spatial),
@@ -1230,9 +1564,10 @@ fn audio_gallery_params_text(params: &AudioGalleryPlaybackParams) -> String {
 
 fn audio_gallery_instances_text(state: &AudioGalleryState) -> String {
     format!(
-        "sfx {} | loop {} | clip {} | long {}",
+        "sfx {} | loop {} | music {} | clip {} | long {}",
         record_text(&state.last_sfx),
         record_text(&state.loop_instance),
+        record_text(&state.music_instance),
         record_text(&state.clip_instance),
         record_text(&state.long_instance)
     )
@@ -1336,6 +1671,31 @@ impl AudioGallerySfxCue {
             Self::Notify => "notify",
             Self::Footstep => "footstep",
             Self::SwordHit => "sword hit",
+        }
+    }
+}
+
+impl AudioGalleryMusicClip {
+    fn clip_id(self) -> AudioClipId {
+        clip_id(match self {
+            Self::Menu => AUDIO_GALLERY_MENU_MUSIC_CLIP_ID,
+            Self::Stealth => AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID,
+        })
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Menu => "menu_loop",
+            Self::Stealth => "stealth_bass_loop",
+        }
+    }
+}
+
+impl AudioGalleryMusicFadePreset {
+    fn seconds(self) -> f32 {
+        match self {
+            Self::Instant => 0.0,
+            Self::Smooth => DEFAULT_MUSIC_CROSSFADE_SECONDS,
         }
     }
 }
@@ -1628,6 +1988,144 @@ mod tests {
     }
 
     #[test]
+    fn music_play_buttons_map_to_music_commands() {
+        let mut state = AudioGalleryState::new();
+        state.params.volume = 0.5;
+        state.params.fade_in_seconds = Some(0.5);
+
+        let menu = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::PlayMusic(AudioGalleryMusicClip::Menu),
+        );
+        let stealth = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::PlayMusic(AudioGalleryMusicClip::Stealth),
+        );
+        let start = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::PlayMusicFromStart(AudioGalleryMusicClip::Menu),
+        );
+
+        assert_eq!(
+            menu.commands,
+            vec![AudioCommand::PlayMusic(AudioMusicRequest {
+                clip_id: clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID),
+                scope: audio_gallery_scope(),
+                volume: 0.5,
+                looped: true,
+                fade_in_seconds: Some(0.5),
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            stealth.commands,
+            vec![AudioCommand::PlayMusic(AudioMusicRequest {
+                clip_id: clip_id(AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID),
+                scope: audio_gallery_scope(),
+                volume: 0.5,
+                looped: true,
+                fade_in_seconds: Some(0.5),
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            start.commands,
+            vec![AudioCommand::PlayMusic(AudioMusicRequest {
+                clip_id: clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID),
+                scope: audio_gallery_scope(),
+                volume: 0.5,
+                looped: true,
+                fade_in_seconds: Some(0.5),
+                start_seconds: Some(DEFAULT_MUSIC_START_SECONDS),
+            })]
+        );
+        assert_eq!(
+            start.launches,
+            vec![AudioGalleryLaunchKind::Music {
+                clip_id: clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID),
+                start_seconds: Some(DEFAULT_MUSIC_START_SECONDS),
+            }]
+        );
+    }
+
+    #[test]
+    fn music_controls_map_to_music_commands_with_stop_and_crossfade_fades() {
+        let mut state = AudioGalleryState::new();
+        let instance_id = AudioInstanceId::from_raw(66);
+        state.record_started(
+            AudioGalleryInstanceSlot::Music,
+            instance_id,
+            AUDIO_GALLERY_MENU_MUSIC_CLIP_ID.to_string(),
+        );
+        state.params.volume = 0.5;
+        state.params.fade_out_seconds = Some(2.0);
+
+        let pause = apply_audio_gallery_button(&mut state, AudioGalleryButton::PauseMusic);
+        assert_eq!(pause.commands, vec![AudioCommand::PauseMusic]);
+        assert!(state.music_instance.paused);
+
+        let resume = apply_audio_gallery_button(&mut state, AudioGalleryButton::ResumeMusic);
+        assert_eq!(resume.commands, vec![AudioCommand::ResumeMusic]);
+        assert!(!state.music_instance.paused);
+
+        let progress =
+            apply_audio_gallery_button(&mut state, AudioGalleryButton::QueryMusicProgress);
+        let stop = apply_audio_gallery_button(&mut state, AudioGalleryButton::StopMusic);
+        let fade_stop = apply_audio_gallery_button(&mut state, AudioGalleryButton::FadeOutMusic);
+        let crossfade_zero = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::CrossfadeMusic(
+                AudioGalleryMusicClip::Stealth,
+                AudioGalleryMusicFadePreset::Instant,
+            ),
+        );
+        let crossfade_smooth = apply_audio_gallery_button(
+            &mut state,
+            AudioGalleryButton::CrossfadeMusic(
+                AudioGalleryMusicClip::Menu,
+                AudioGalleryMusicFadePreset::Smooth,
+            ),
+        );
+
+        assert_eq!(
+            progress.commands,
+            vec![AudioCommand::QueryInstanceProgress(
+                AudioInstanceCommand::new(instance_id)
+            )]
+        );
+        assert_eq!(
+            stop.commands,
+            vec![AudioCommand::StopMusic(AudioMusicFadeCommand::new())]
+        );
+        assert_eq!(
+            fade_stop.commands,
+            vec![AudioCommand::StopMusic(AudioMusicFadeCommand {
+                fade_out_seconds: Some(2.0),
+            })]
+        );
+        assert_eq!(
+            crossfade_zero.commands,
+            vec![AudioCommand::CrossfadeMusic(AudioCrossfadeMusicRequest {
+                clip_id: clip_id(AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID),
+                scope: audio_gallery_scope(),
+                volume: 0.5,
+                looped: true,
+                fade_seconds: 0.0,
+            })]
+        );
+        assert_eq!(
+            crossfade_smooth.commands,
+            vec![AudioCommand::CrossfadeMusic(AudioCrossfadeMusicRequest {
+                clip_id: clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID),
+                scope: audio_gallery_scope(),
+                volume: 0.5,
+                looped: true,
+                fade_seconds: DEFAULT_MUSIC_CROSSFADE_SECONDS,
+            })]
+        );
+    }
+
+    #[test]
     fn long_controls_seek_and_query_recent_long_instance() {
         let mut state = AudioGalleryState::new();
         let instance_id = AudioInstanceId::from_raw(77);
@@ -1769,6 +2267,47 @@ mod tests {
     }
 
     #[test]
+    fn button_event_system_writes_music_command_and_pending_launch() {
+        let mut app = App::new();
+        app.add_message::<UiButtonEvent>()
+            .add_message::<AudioCommand>()
+            .insert_resource(AudioGalleryState::new())
+            .add_systems(Update, handle_audio_gallery_buttons);
+
+        let button = app
+            .world_mut()
+            .spawn(AudioGalleryButton::PlayMusic(
+                AudioGalleryMusicClip::Stealth,
+            ))
+            .id();
+        app.world_mut().write_message(UiButtonEvent {
+            entity: button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+
+        assert_eq!(
+            read_audio_commands(&app),
+            vec![AudioCommand::PlayMusic(AudioMusicRequest {
+                clip_id: clip_id(AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID),
+                scope: audio_gallery_scope(),
+                volume: 1.0,
+                looped: true,
+                fade_in_seconds: None,
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            app.world().resource::<AudioGalleryState>().pending_launches,
+            vec![AudioGalleryLaunchKind::Music {
+                clip_id: clip_id(AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID),
+                start_seconds: None,
+            }]
+        );
+    }
+
+    #[test]
     fn started_event_filter_ignores_default_ui_click() {
         let mut state = AudioGalleryState::new();
         let ui_click = cue_id(DEFAULT_UI_CLICK_CUE_ID);
@@ -1832,6 +2371,85 @@ mod tests {
             state.clip_instance.instance_id,
             Some(AudioInstanceId::from_raw(3))
         );
+    }
+
+    #[test]
+    fn music_changed_event_records_music_instance_and_start_progress() {
+        let mut state = AudioGalleryState::new();
+        state.record_pending_launch(AudioGalleryLaunchKind::Music {
+            clip_id: clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID),
+            start_seconds: Some(DEFAULT_MUSIC_START_SECONDS),
+        });
+
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::MusicChanged(AudioMusicChanged {
+                previous_instance_id: None,
+                previous_clip_id: None,
+                new_instance_id: Some(AudioInstanceId::from_raw(8)),
+                new_clip_id: clip_id(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID),
+                scope: audio_gallery_scope(),
+                crossfade_seconds: None,
+            }),
+        );
+
+        assert_eq!(
+            state.music_instance.instance_id,
+            Some(AudioInstanceId::from_raw(8))
+        );
+        assert_eq!(
+            state.music_instance.label.as_deref(),
+            Some(AUDIO_GALLERY_MENU_MUSIC_CLIP_ID)
+        );
+        assert_eq!(
+            state.music_instance.position_seconds,
+            Some(DEFAULT_MUSIC_START_SECONDS)
+        );
+        assert!(state.pending_launches.is_empty());
+        assert!(audio_gallery_instances_text(&state).contains("music #8"));
+        assert!(audio_gallery_instances_text(&state).contains("12.00s"));
+    }
+
+    #[test]
+    fn music_progress_and_stopped_events_update_music_record() {
+        let mut state = AudioGalleryState::new();
+        let instance_id = AudioInstanceId::from_raw(9);
+        state.record_started(
+            AudioGalleryInstanceSlot::Music,
+            instance_id,
+            AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID.to_string(),
+        );
+
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::InstanceProgress(AudioInstanceProgress {
+                instance_id,
+                clip_id: clip_id(AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID),
+                cue_id: None,
+                scope: audio_gallery_scope(),
+                bus: AudioBus::Music,
+                position_seconds: 18.5,
+                paused: true,
+                spatial: false,
+            }),
+        );
+        assert_eq!(state.music_instance.position_seconds, Some(18.5));
+        assert!(state.music_instance.paused);
+
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::InstanceStopped(AudioInstanceStopped {
+                instance_id,
+                clip_id: Some(clip_id(AUDIO_GALLERY_STEALTH_MUSIC_CLIP_ID)),
+                cue_id: None,
+                scope: audio_gallery_scope(),
+                bus: AudioBus::Music,
+                reason: AudioStopReason::Stopped,
+            }),
+        );
+        assert_eq!(state.music_instance.instance_id, None);
+        assert!(!state.music_instance.paused);
+        assert_eq!(state.music_instance.position_seconds, None);
     }
 
     #[test]
