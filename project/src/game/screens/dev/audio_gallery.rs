@@ -51,6 +51,9 @@ const AUDIO_GALLERY_SCOPE_ID: &str = "dev.audio_gallery";
 const DEFAULT_LONG_SEEK_SECONDS: f32 = 8.0;
 const DEFAULT_MUSIC_START_SECONDS: f32 = 12.0;
 const DEFAULT_MUSIC_CROSSFADE_SECONDS: f32 = 1.5;
+const AUDIO_GALLERY_STATUS_VALUE_LIMIT: usize = 96;
+const AUDIO_GALLERY_RECORD_LABEL_LIMIT: usize = 40;
+const AUDIO_GALLERY_ASSET_LABEL_LIMIT: usize = 48;
 const AUDIO_GALLERY_BUSES: [AudioBus; 5] = [
     AudioBus::Master,
     AudioBus::Music,
@@ -2568,7 +2571,7 @@ fn audio_gallery_mixer_text(state: &AudioGalleryState) -> String {
             )
         })
         .collect::<Vec<_>>()
-        .join(" | ")
+        .join("\n")
 }
 
 fn audio_gallery_loading_text(
@@ -2593,22 +2596,26 @@ fn audio_gallery_loading_text(
         .map(audio_gallery_load_progress_line)
         .unwrap_or_else(|| "last progress none".to_string());
 
-    format!("{gallery_group} | {resident_group} | {progress}")
+    format!("{gallery_group}\n{resident_group}\n{progress}")
 }
 
 fn audio_gallery_diagnostics_text(state: &AudioGalleryState) -> String {
     format!(
-        "last started: {} | last skipped: {} | last failed: {} | Debug capture is enabled; open Audio Monitor for full snapshot.",
-        state
-            .diagnostics
-            .last_started_cue
-            .as_deref()
-            .unwrap_or("none"),
-        state
-            .diagnostics
-            .last_skipped_cue
-            .as_deref()
-            .unwrap_or("none"),
+        "started: {}\nskipped: {}\nfailed: {}\ndebug: enabled; open Audio Monitor for full snapshot",
+        compact_status_value(
+            state
+                .diagnostics
+                .last_started_cue
+                .as_deref()
+                .unwrap_or("none")
+        ),
+        compact_status_value(
+            state
+                .diagnostics
+                .last_skipped_cue
+                .as_deref()
+                .unwrap_or("none")
+        ),
         state
             .diagnostics
             .last_load_failed
@@ -2619,9 +2626,8 @@ fn audio_gallery_diagnostics_text(state: &AudioGalleryState) -> String {
 
 fn audio_gallery_spatial_text(state: &AudioGalleryState) -> String {
     let attenuation = state.spatial_attenuation.value();
-    let boundary = "Boundary: Bevy stereo panning + distance attenuation only; no HRTF, reverb, occlusion, or full 3D audio.";
     let base = format!(
-        "listener {} {} | emitter {} {} | attenuation {} max {:.0} rolloff {:.1}",
+        "listener {} {} / emitter {} {}\nattenuation {} max {:.0} rolloff {:.1}",
         state.spatial_listener_position.label(),
         format_vec3(state.spatial_listener_position.position()),
         state.spatial_emitter_position.label(),
@@ -2632,11 +2638,13 @@ fn audio_gallery_spatial_text(state: &AudioGalleryState) -> String {
     );
 
     let Some(details) = state.spatial_details else {
-        return format!("{base} | source none | {boundary}");
+        return format!(
+            "{base}\nsource none\nboundary: Bevy stereo panning + distance attenuation only; no HRTF/reverb/occlusion/full 3D audio"
+        );
     };
 
     format!(
-        "{base} | instance {} | source {} | pos {} | distance {:.1} | spatial {} | {boundary}",
+        "{base}\ninstance {} / source {} / pos {} / distance {:.1} / spatial {}\nboundary: Bevy stereo panning + distance attenuation only; no HRTF/reverb/occlusion/full 3D audio",
         state
             .spatial_instance
             .instance_id
@@ -2651,7 +2659,7 @@ fn audio_gallery_spatial_text(state: &AudioGalleryState) -> String {
 
 fn audio_gallery_instances_text(state: &AudioGalleryState) -> String {
     format!(
-        "sfx {} | loop {} | music {} | spatial {} | clip {} | long {}",
+        "sfx {}\nloop {}\nmusic {}\nspatial {}\nclip {}\nlong {}",
         record_text(&state.last_sfx),
         record_text(&state.loop_instance),
         record_text(&state.music_instance),
@@ -2662,7 +2670,11 @@ fn audio_gallery_instances_text(state: &AudioGalleryState) -> String {
 }
 
 fn audio_gallery_status_text(state: &AudioGalleryState) -> String {
-    format!("{} Frames open: {}", state.status, state.frames_open)
+    format!(
+        "{}\nframes open: {}",
+        compact_status_value(&state.status),
+        state.frames_open
+    )
 }
 
 fn record_text(record: &AudioGalleryInstanceRecord) -> String {
@@ -2670,7 +2682,10 @@ fn record_text(record: &AudioGalleryInstanceRecord) -> String {
         return "none".to_string();
     };
 
-    let label = record.label.as_deref().unwrap_or("unknown");
+    let label = compact_label(
+        record.label.as_deref().unwrap_or("unknown"),
+        AUDIO_GALLERY_RECORD_LABEL_LIMIT,
+    );
     let paused = if record.paused { ", paused" } else { "" };
     let spatial = if record.spatial { ", spatial" } else { "" };
     let progress = record
@@ -2688,7 +2703,18 @@ fn audio_gallery_load_failed_text(failed: &AudioLoadFailed) -> String {
         .or_else(|| failed.clip_id.as_ref().map(|id| format!("clip {id}")))
         .or_else(|| failed.group_id.as_ref().map(|id| format!("group {id}")))
         .unwrap_or_else(|| "gallery audio".to_string());
-    format!("Load failed for {id}: {}", failed.message)
+    let asset = failed
+        .asset_path
+        .as_deref()
+        .map(compact_asset_label)
+        .map(|asset| format!(" ({asset})"))
+        .unwrap_or_default();
+    format!(
+        "Load failed for {}{}: {}",
+        compact_status_value(&id),
+        asset,
+        compact_label(&failed.message, 32)
+    )
 }
 
 fn audio_gallery_load_progress_text(progress: &AudioLoadProgress) -> String {
@@ -2701,7 +2727,7 @@ fn audio_gallery_load_progress_text(progress: &AudioLoadProgress) -> String {
 fn audio_gallery_load_progress_line(progress: &AudioLoadProgress) -> String {
     format!(
         "{} {}/{} loaded, {} failed, required {}/{} loaded, {} required failed{}",
-        progress.group_id,
+        compact_status_value(progress.group_id.as_str()),
         progress.loaded,
         progress.total,
         progress.failed,
@@ -2711,7 +2737,7 @@ fn audio_gallery_load_progress_line(progress: &AudioLoadProgress) -> String {
         progress
             .clip_id
             .as_ref()
-            .map(|clip_id| format!(" ({clip_id})"))
+            .map(|clip_id| format!(" ({})", compact_status_value(clip_id.as_str())))
             .unwrap_or_default()
     )
 }
@@ -2790,6 +2816,41 @@ fn yes_no(value: bool) -> &'static str {
 
 fn format_vec3(value: Vec3) -> String {
     format!("({:.1}, {:.1}, {:.1})", value.x, value.y, value.z)
+}
+
+fn compact_status_value(value: &str) -> String {
+    compact_label(
+        &value.replace(['\r', '\n'], " "),
+        AUDIO_GALLERY_STATUS_VALUE_LIMIT,
+    )
+}
+
+fn compact_asset_label(path: &str) -> String {
+    compact_label(
+        path.rsplit(['/', '\\']).next().unwrap_or(path),
+        AUDIO_GALLERY_ASSET_LABEL_LIMIT,
+    )
+}
+
+fn compact_label(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        return value.to_string();
+    }
+
+    if limit <= 3 {
+        return value.chars().take(limit).collect();
+    }
+
+    let keep = limit - 3;
+    let tail = value
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("...{tail}")
 }
 
 impl AudioGalleryState {
@@ -3226,12 +3287,19 @@ fn bus_action_fallback(bus: AudioBus, action: AudioGalleryBusAction) -> &'static
 }
 
 fn metric_label(theme: &UiTheme, fonts: &UiFontAssets, text: impl Into<String>) -> impl Bundle {
-    screen_label(
-        theme,
-        fonts,
-        text,
-        UiThemeTextStyleRole::Caption,
-        UiThemeTextColorRole::Primary,
+    (
+        Node {
+            width: percent(100),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        screen_label(
+            theme,
+            fonts,
+            text,
+            UiThemeTextStyleRole::Caption,
+            UiThemeTextColorRole::Primary,
+        ),
     )
 }
 
@@ -3305,13 +3373,172 @@ mod tests {
         DEFAULT_UI_CLICK_CUE_ID,
     };
     use crate::framework::ui::widgets::{UiButtonEvent, UiButtonEventKind};
+    use crate::framework::ui::{
+        core::{UiInputMode, UiPanelRoot, UiSafeArea},
+        i18n::{UiI18nPlugin, UiI18nText},
+    };
     use bevy::ecs::message::MessageCursor;
     use bevy::ecs::system::RunSystemOnce;
+    use std::collections::HashSet;
 
     fn read_audio_commands(app: &App) -> Vec<AudioCommand> {
         let messages = app.world().resource::<Messages<AudioCommand>>();
         let mut cursor = MessageCursor::default();
         cursor.read(messages).cloned().collect()
+    }
+
+    fn phone_portrait_viewport() -> UiViewport {
+        UiViewport::from_device_logical_size(
+            1080.0 / 3.0,
+            2400.0 / 3.0,
+            UiInputMode::MouseTouch,
+            UiSafeArea::default(),
+        )
+    }
+
+    fn insert_audio_gallery_ui_test_resources(app: &mut App, viewport: UiViewport) {
+        let theme = UiTheme::default();
+        let metrics = UiMetrics::from_viewport_and_theme(&viewport, &theme);
+        app.insert_resource(theme)
+            .insert_resource(metrics)
+            .insert_resource(viewport)
+            .insert_resource(UiFontAssets {
+                regular: Handle::<Font>::default(),
+            })
+            .insert_resource(ClearColor(Color::srgb(0.0, 0.0, 0.0)))
+            .add_message::<AudioCommand>();
+    }
+
+    fn setup_audio_gallery_test_app(viewport: UiViewport) -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, UiI18nPlugin));
+        insert_audio_gallery_ui_test_resources(&mut app, viewport);
+        app.world_mut()
+            .run_system_once(setup_audio_gallery)
+            .expect("audio gallery setup should run");
+        app
+    }
+
+    fn audio_gallery_i18n_keys(app: &mut App) -> HashSet<String> {
+        let mut query = app.world_mut().query::<&UiI18nText>();
+        query
+            .iter(app.world())
+            .map(|text| text.key.clone())
+            .collect()
+    }
+
+    #[test]
+    fn audio_gallery_layout_spawns_stage8_sections_and_navigation_buttons_with_i18n() {
+        let mut app = setup_audio_gallery_test_app(phone_portrait_viewport());
+        let keys = audio_gallery_i18n_keys(&mut app);
+
+        for key in [
+            "audio_gallery.title",
+            "audio_gallery.sfx.section",
+            "audio_gallery.loop.section",
+            "audio_gallery.music.section",
+            "audio_gallery.spatial.section",
+            "audio_gallery.mixer_loading.section",
+            "audio_gallery.rules.section",
+            "audio_gallery.status.section",
+            "nav.audio_settings",
+            "nav.audio_monitor",
+            "nav.lobby",
+        ] {
+            assert!(keys.contains(key), "missing i18n key {key}");
+        }
+
+        let mut buttons = app.world_mut().query::<&AudioGalleryButton>();
+        let buttons = buttons.iter(app.world()).copied().collect::<Vec<_>>();
+        assert!(
+            buttons
+                .iter()
+                .any(|button| matches!(button, AudioGalleryButton::PlaySfx(_)))
+        );
+        assert!(buttons.contains(&AudioGalleryButton::PlayLoop));
+        assert!(
+            buttons
+                .iter()
+                .any(|button| matches!(button, AudioGalleryButton::PlayMusic(_)))
+        );
+        assert!(
+            buttons
+                .iter()
+                .any(|button| matches!(button, AudioGalleryButton::PlaySpatialFixed(_)))
+        );
+        assert!(buttons.contains(&AudioGalleryButton::PreloadGalleryBank));
+        assert!(buttons.contains(&AudioGalleryButton::PlayCooldownRuleCue));
+    }
+
+    #[test]
+    fn audio_gallery_compact_layout_uses_single_button_columns() {
+        assert_eq!(
+            audio_gallery_button_columns().for_width_class(UiWidthClass::Compact),
+            1
+        );
+        assert_eq!(
+            audio_gallery_parameter_columns().for_width_class(UiWidthClass::Compact),
+            1
+        );
+        assert_eq!(phone_portrait_viewport().width_class, UiWidthClass::Compact);
+    }
+
+    #[test]
+    fn audio_gallery_page_panel_is_owned_and_marked_for_route_cleanup() {
+        let mut app = setup_audio_gallery_test_app(phone_portrait_viewport());
+        let mut panels = app
+            .world_mut()
+            .query::<(&UiPanelRoot, Option<&DespawnOnExit<AppUiMode>>)>();
+        let mut found = false;
+
+        for (panel, cleanup) in panels.iter(app.world()) {
+            if panel.id == PANEL_AUDIO_GALLERY {
+                found = true;
+                assert_eq!(panel.kind, UiPanelKind::Page);
+                assert_eq!(panel.owner, Some(OWNER_AUDIO_GALLERY));
+                let cleanup = cleanup.expect("Audio Gallery page should despawn on exit");
+                assert_eq!(cleanup.0, AppUiMode::AudioGallery);
+            }
+        }
+
+        assert!(found, "Audio Gallery panel root was not spawned");
+    }
+
+    #[test]
+    fn long_audio_gallery_status_text_is_split_and_compacted() {
+        let mut state = AudioGalleryState::new();
+        let raw_path = "audio/dev_gallery/deeply/nested/with/a/very/very/very/long/path/that/should/not/render/in/full/missing_asset_with_a_long_file_name.wav";
+        state.record_started(
+            AudioGalleryInstanceSlot::Clip,
+            AudioInstanceId::from_raw(123456),
+            "dev.audio.clip.with.an.extremely.long.identifier.that.should.be.shortened.for.phone.portrait"
+                .to_string(),
+        );
+        apply_audio_gallery_event(
+            &mut state,
+            &AudioEvent::LoadFailed(AudioLoadFailed {
+                clip_id: Some(clip_id(AUDIO_GALLERY_MISSING_CLIP_ID)),
+                cue_id: None,
+                group_id: Some(group_id(AUDIO_GALLERY_BANK_GROUP_ID)),
+                asset_path: Some(raw_path.to_string()),
+                message: "failed after trying a deliberately verbose platform path".to_string(),
+            }),
+        );
+
+        let status_text = audio_gallery_status_text(&state);
+        let diagnostics_text = audio_gallery_diagnostics_text(&state);
+        let instances_text = audio_gallery_instances_text(&state);
+
+        assert!(status_text.contains('\n'));
+        assert!(diagnostics_text.contains('\n'));
+        assert!(instances_text.contains('\n'));
+        assert!(!status_text.contains(raw_path));
+        assert!(!diagnostics_text.contains(raw_path));
+        assert!(!instances_text.contains(
+            "dev.audio.clip.with.an.extremely.long.identifier.that.should.be.shortened.for.phone.portrait"
+        ));
+        assert!(diagnostics_text.contains("missing_asset_with_a_long_file_name.wav"));
+        assert!(instances_text.contains("..."));
     }
 
     #[test]
