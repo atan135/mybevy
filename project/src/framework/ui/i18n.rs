@@ -431,6 +431,8 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
         ("audio_monitor.instances.section", "实例明细"),
         ("sample_scene.hud.title", "样板场景"),
         ("sample_scene.hud.status", "场景运行中"),
+        ("robot_sync_scene.hud.hide", "隐藏 HUD"),
+        ("robot_sync_scene.hud.show", "显示 HUD"),
         ("ui_gallery.title", "UI 示例"),
         ("ui_gallery.typography.section", "文字排版"),
         ("ui_gallery.typography.large_title", "大标题"),

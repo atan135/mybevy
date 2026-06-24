@@ -36,6 +36,7 @@ impl Plugin for GameplayScreensPlugin {
             (
                 robot_sync_scene::update_robot_sync_scene_hud_status,
                 robot_sync_scene::handle_robot_sync_scene_hud_buttons,
+                robot_sync_scene::sync_robot_sync_hud_visibility,
                 robot_sync_scene::route_to_lobby_on_robot_sync_scene_exit,
             )
                 .chain()

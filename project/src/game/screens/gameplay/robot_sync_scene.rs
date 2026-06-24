@@ -34,8 +34,22 @@ use crate::game::{
 #[derive(Component)]
 pub(super) struct RobotSyncSceneLobbyButton;
 
+#[derive(Clone, Copy, Debug, Default, Resource, PartialEq, Eq)]
+pub(super) struct RobotSyncHudVisibility {
+    show_details: bool,
+}
+
+#[derive(Component)]
+pub(super) struct RobotSyncHudDetailsPanel;
+
 #[derive(Component)]
 pub(super) struct RobotSyncHudStatusText;
+
+#[derive(Component)]
+pub(super) struct RobotSyncHudHideButton;
+
+#[derive(Component)]
+pub(super) struct RobotSyncHudShowButton;
 
 pub(super) fn setup_robot_sync_scene_hud(
     mut commands: Commands,
@@ -50,6 +64,7 @@ pub(super) fn setup_robot_sync_scene_hud(
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
 
+    commands.insert_resource(RobotSyncHudVisibility { show_details: true });
     commands.spawn((
         DespawnOnExit(AppUiMode::RobotSyncScene),
         game_panel_root(
@@ -86,6 +101,7 @@ pub(super) fn setup_robot_sync_scene_hud(
                 BorderColor::all(theme.colors.panel_border),
                 UiThemeBackgroundRole::Panel,
                 UiThemeBorderRole::Panel,
+                RobotSyncHudDetailsPanel,
                 children![
                     screen_title_key(
                         theme,
@@ -108,9 +124,43 @@ pub(super) fn setup_robot_sync_scene_hud(
                 ],
             ),
             (
-                secondary_action_button_key(theme, metrics, fonts, i18n, "nav.lobby", "Lobby",),
-                robot_sync_scene_lobby_button_audio_override(),
-                RobotSyncSceneLobbyButton,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(theme.layout.row_gap),
+                    align_items: AlignItems::Stretch,
+                    ..default()
+                },
+                children![
+                    (
+                        secondary_action_button_key(
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            "robot_sync_scene.hud.hide",
+                            "Hide HUD",
+                        ),
+                        RobotSyncHudHideButton,
+                        Visibility::Visible,
+                    ),
+                    (
+                        secondary_action_button_key(
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            "robot_sync_scene.hud.show",
+                            "Show HUD",
+                        ),
+                        RobotSyncHudShowButton,
+                        Visibility::Hidden,
+                    ),
+                    (
+                        secondary_action_button_key(theme, metrics, fonts, i18n, "nav.lobby", "Lobby",),
+                        robot_sync_scene_lobby_button_audio_override(),
+                        RobotSyncSceneLobbyButton,
+                    ),
+                ],
             ),
         ],
     ));
@@ -145,17 +195,75 @@ pub(super) fn update_robot_sync_scene_hud_status(
 pub(super) fn handle_robot_sync_scene_hud_buttons(
     mut scene_commands: MessageWriter<SceneCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
+    mut hud_visibility: ResMut<RobotSyncHudVisibility>,
     lobby_buttons: Query<(), With<RobotSyncSceneLobbyButton>>,
+    hide_buttons: Query<(), With<RobotSyncHudHideButton>>,
+    show_buttons: Query<(), With<RobotSyncHudShowButton>>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
     for event in button_events.read() {
-        if event.kind != UiButtonEventKind::Click || !lobby_buttons.contains(event.entity) {
+        if event.kind != UiButtonEventKind::Click {
             continue;
         }
 
-        scene_commands.write(SceneCommand::Exit(SceneExitRequest::default()));
-        route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+        if lobby_buttons.contains(event.entity) {
+            scene_commands.write(SceneCommand::Exit(SceneExitRequest::default()));
+            route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+        } else if hide_buttons.contains(event.entity) {
+            hud_visibility.show_details = false;
+        } else if show_buttons.contains(event.entity) {
+            hud_visibility.show_details = true;
+        }
     }
+}
+
+pub(super) fn sync_robot_sync_hud_visibility(
+    hud_visibility: Res<RobotSyncHudVisibility>,
+    mut detail_panels: Query<&mut Node, With<RobotSyncHudDetailsPanel>>,
+    mut hide_buttons: Query<
+        &mut Visibility,
+        (
+            With<RobotSyncHudHideButton>,
+            Without<RobotSyncHudShowButton>,
+        ),
+    >,
+    mut show_buttons: Query<
+        &mut Visibility,
+        (
+            With<RobotSyncHudShowButton>,
+            Without<RobotSyncHudHideButton>,
+        ),
+    >,
+) {
+    if !hud_visibility.is_changed() {
+        return;
+    }
+
+    for mut node in &mut detail_panels {
+        set_node_display(&mut node, hud_visibility.show_details);
+    }
+    for mut visibility in &mut hide_buttons {
+        set_visibility(&mut visibility, hud_visibility.show_details);
+    }
+    for mut visibility in &mut show_buttons {
+        set_visibility(&mut visibility, !hud_visibility.show_details);
+    }
+}
+
+fn set_node_display(node: &mut Node, visible: bool) {
+    node.display = if visible {
+        Display::Flex
+    } else {
+        Display::None
+    };
+}
+
+fn set_visibility(visibility: &mut Visibility, visible: bool) {
+    *visibility = if visible {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
 }
 
 pub(super) fn route_to_lobby_on_robot_sync_scene_exit(
@@ -212,6 +320,7 @@ mod tests {
         app.add_message::<SceneCommand>()
             .add_message::<GameRouteCommand>()
             .add_message::<UiButtonEvent>()
+            .insert_resource(RobotSyncHudVisibility { show_details: true })
             .add_systems(Update, handle_robot_sync_scene_hud_buttons);
 
         let lobby_button = app.world_mut().spawn(RobotSyncSceneLobbyButton).id();
@@ -247,6 +356,86 @@ mod tests {
             route_commands[0],
             GameRouteCommand::ChangeMode(AppUiMode::Lobby)
         ));
+    }
+
+    #[test]
+    fn hud_toggle_buttons_switch_details_visibility() {
+        let mut app = App::new();
+        app.add_message::<SceneCommand>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<UiButtonEvent>()
+            .insert_resource(RobotSyncHudVisibility { show_details: true })
+            .add_systems(
+                Update,
+                (
+                    handle_robot_sync_scene_hud_buttons,
+                    sync_robot_sync_hud_visibility,
+                )
+                    .chain(),
+            );
+
+        let detail_panel = app
+            .world_mut()
+            .spawn((RobotSyncHudDetailsPanel, Node::default()))
+            .id();
+        let hide_button = app
+            .world_mut()
+            .spawn((RobotSyncHudHideButton, Visibility::Visible))
+            .id();
+        let show_button = app
+            .world_mut()
+            .spawn((RobotSyncHudShowButton, Visibility::Hidden))
+            .id();
+
+        app.world_mut().write_message(UiButtonEvent {
+            entity: hide_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+
+        assert!(
+            !app.world()
+                .resource::<RobotSyncHudVisibility>()
+                .show_details
+        );
+        assert_eq!(
+            app.world().get::<Node>(detail_panel).unwrap().display,
+            Display::None
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(hide_button).unwrap(),
+            Visibility::Hidden
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(show_button).unwrap(),
+            Visibility::Visible
+        );
+
+        app.world_mut().write_message(UiButtonEvent {
+            entity: show_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<RobotSyncHudVisibility>()
+                .show_details
+        );
+        assert_eq!(
+            app.world().get::<Node>(detail_panel).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(hide_button).unwrap(),
+            Visibility::Visible
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(show_button).unwrap(),
+            Visibility::Hidden
+        );
     }
 
     #[test]

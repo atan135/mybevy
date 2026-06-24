@@ -45,6 +45,8 @@
         "audio_monitor.instances.section": "Instances",
         "sample_scene.hud.title": "Sample Scene",
         "sample_scene.hud.status": "Scene running",
+        "robot_sync_scene.hud.hide": "Hide HUD",
+        "robot_sync_scene.hud.show": "Show HUD",
         "ui_gallery.title": "UI Gallery",
         "ui_gallery.typography.section": "Typography",
         "ui_gallery.typography.large_title": "Large Title",
