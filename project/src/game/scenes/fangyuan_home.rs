@@ -1,4 +1,7 @@
-use bevy::prelude::*;
+use bevy::{
+    mesh::{MeshBuilder, SphereKind, SphereMeshBuilder},
+    prelude::*,
+};
 use serde::{Deserialize, Deserializer, de};
 use std::{
     fs, io,
@@ -11,6 +14,12 @@ pub(in crate::game) const FANGYUAN_HOME_SCENE_ID: &str = "dev.fangyuan_home";
 const FANGYUAN_HOME_LAYOUT_PATH: &str = "scenes/fangyuan_home/layout.ron";
 #[cfg(test)]
 const FANGYUAN_HOME_SCENE_MANIFEST_PATH: &str = "scenes/fangyuan_home/scene.ron";
+const FANGYUAN_HOME_BLUEPRINT_VERSION: &str = "1";
+const FANGYUAN_HOME_BLUEPRINT_HARD_PRIMITIVE_LIMIT: usize = 1000;
+const FANGYUAN_HOME_BLUEPRINT_MIN_SIZE: f32 = 0.1;
+const FANGYUAN_HOME_BLUEPRINT_MAX_SIZE: f32 = 5.0;
+const FANGYUAN_HOME_BLUEPRINT_SPHERE_SECTORS: u32 = 24;
+const FANGYUAN_HOME_BLUEPRINT_SPHERE_STACKS: u32 = 12;
 
 pub(super) struct FangyuanHomePlugin;
 
@@ -219,9 +228,226 @@ impl<'de> Deserialize<'de> for FangyuanHomeLightKind {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+struct FangyuanHomeBlueprint {
+    version: String,
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    name: Option<String>,
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    description: Option<String>,
+    max_primitives: usize,
+    bounds: FangyuanHomeBlueprintBounds,
+    primitives: Vec<FangyuanHomeBlueprintPrimitive>,
+}
+
+impl FangyuanHomeBlueprint {
+    fn load_first_package_ron(
+        blueprint_path: impl AsRef<str>,
+    ) -> Result<Self, FangyuanBlueprintLoadError> {
+        let blueprint_path = blueprint_path.as_ref();
+        let fs_path = first_package_asset_fs_path(blueprint_path).ok_or_else(|| {
+            FangyuanBlueprintLoadError::BlueprintNotFound(blueprint_path.to_string())
+        })?;
+
+        let blueprint_source = fs::read_to_string(&fs_path).map_err(|source| {
+            FangyuanBlueprintLoadError::ReadFailed {
+                path: fs_path.clone(),
+                source,
+            }
+        })?;
+
+        ron::from_str::<Self>(&blueprint_source).map_err(|source| {
+            FangyuanBlueprintLoadError::ParseFailed {
+                path: fs_path,
+                source,
+            }
+        })
+    }
+
+    fn validate(&self) -> FangyuanHomeBlueprintValidation {
+        let mut warnings = Vec::new();
+
+        if self.version != FANGYUAN_HOME_BLUEPRINT_VERSION {
+            warnings.push(format!(
+                "fangyuan home blueprint version `{}` is unsupported; expected `{}`",
+                self.version, FANGYUAN_HOME_BLUEPRINT_VERSION
+            ));
+            return FangyuanHomeBlueprintValidation::invalid(warnings);
+        }
+
+        let primitive_limit = self
+            .max_primitives
+            .min(FANGYUAN_HOME_BLUEPRINT_HARD_PRIMITIVE_LIMIT);
+        if self.primitives.len() > primitive_limit {
+            warnings.push(format!(
+                "fangyuan home blueprint contains {} primitives, exceeding limit {}",
+                self.primitives.len(),
+                primitive_limit
+            ));
+            return FangyuanHomeBlueprintValidation::invalid(warnings);
+        }
+
+        let mut primitives = Vec::with_capacity(self.primitives.len());
+        for (index, primitive) in self.primitives.iter().enumerate() {
+            match primitive.validate(index, &self.bounds) {
+                Ok(primitive) => primitives.push(primitive),
+                Err(warning) => warnings.push(warning),
+            }
+        }
+
+        FangyuanHomeBlueprintValidation {
+            primitives,
+            warnings,
+            top_level_valid: true,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(default)]
+struct FangyuanHomeBlueprintBounds {
+    width: f32,
+    depth: f32,
+    height: f32,
+}
+
+impl Default for FangyuanHomeBlueprintBounds {
+    fn default() -> Self {
+        Self {
+            width: 0.0,
+            depth: 0.0,
+            height: 0.0,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+struct FangyuanHomeBlueprintPrimitive {
+    kind: String,
+    position: Vec<f32>,
+    size: Vec<f32>,
+    color: Vec<f32>,
+}
+
+impl FangyuanHomeBlueprintPrimitive {
+    fn validate(
+        &self,
+        index: usize,
+        bounds: &FangyuanHomeBlueprintBounds,
+    ) -> Result<ValidatedFangyuanHomeBlueprintPrimitive, String> {
+        let kind = FangyuanHomeBlueprintPrimitiveKind::parse(&self.kind).ok_or_else(|| {
+            format!(
+                "skipping fangyuan home blueprint primitive #{index}: unsupported kind `{}`",
+                self.kind
+            )
+        })?;
+        let position = validate_f32_vec3(
+            "position",
+            index,
+            &self.position,
+            |axis, value| match axis {
+                0 => value >= -bounds.width * 0.5 && value <= bounds.width * 0.5,
+                1 => value >= 0.0 && value <= bounds.height,
+                2 => value >= -bounds.depth * 0.5 && value <= bounds.depth * 0.5,
+                _ => unreachable!("vec3 axis should be 0..=2"),
+            },
+            "inside blueprint bounds",
+        )?;
+        let size = validate_f32_vec3(
+            "size",
+            index,
+            &self.size,
+            |_, value| {
+                (FANGYUAN_HOME_BLUEPRINT_MIN_SIZE..=FANGYUAN_HOME_BLUEPRINT_MAX_SIZE)
+                    .contains(&value)
+            },
+            "between 0.1 and 5.0",
+        )?;
+        let color = validate_f32_vec4(
+            "color",
+            index,
+            &self.color,
+            |value| (0.0..=1.0).contains(&value),
+            "between 0.0 and 1.0",
+        )?;
+
+        Ok(ValidatedFangyuanHomeBlueprintPrimitive {
+            kind,
+            position,
+            size,
+            color,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FangyuanHomeBlueprintPrimitiveKind {
+    Cube,
+    Sphere,
+}
+
+impl FangyuanHomeBlueprintPrimitiveKind {
+    fn parse(kind: &str) -> Option<Self> {
+        match kind.trim() {
+            "cube" => Some(Self::Cube),
+            "sphere" => Some(Self::Sphere),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Cube => "cube",
+            Self::Sphere => "sphere",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ValidatedFangyuanHomeBlueprintPrimitive {
+    kind: FangyuanHomeBlueprintPrimitiveKind,
+    position: [f32; 3],
+    size: [f32; 3],
+    color: [f32; 4],
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FangyuanHomeBlueprintValidation {
+    primitives: Vec<ValidatedFangyuanHomeBlueprintPrimitive>,
+    warnings: Vec<String>,
+    top_level_valid: bool,
+}
+
+impl FangyuanHomeBlueprintValidation {
+    fn invalid(warnings: Vec<String>) -> Self {
+        Self {
+            primitives: Vec::new(),
+            warnings,
+            top_level_valid: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Component, PartialEq, Eq)]
 struct FangyuanHomeContent {
     session_id: SceneSessionId,
+}
+
+#[derive(Clone, Debug, Component, PartialEq, Eq)]
+struct FangyuanHomeBlueprintContent {
+    session_id: SceneSessionId,
+}
+
+#[derive(Clone, Debug, Component, PartialEq, Eq)]
+struct FangyuanHomeBlueprintPrimitiveVisual {
+    session_id: SceneSessionId,
+    kind: FangyuanHomeBlueprintPrimitiveKind,
+    index: usize,
 }
 
 #[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
@@ -279,6 +505,56 @@ impl std::error::Error for FangyuanLayoutLoadError {
             Self::ReadFailed { source, .. } => Some(source),
             Self::ParseFailed { source, .. } => Some(source),
             Self::LayoutNotFound(_) => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum FangyuanBlueprintLoadError {
+    BlueprintNotFound(String),
+    ReadFailed {
+        path: PathBuf,
+        source: io::Error,
+    },
+    ParseFailed {
+        path: PathBuf,
+        source: ron::error::SpannedError,
+    },
+}
+
+impl std::fmt::Display for FangyuanBlueprintLoadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BlueprintNotFound(path) => {
+                write!(
+                    formatter,
+                    "fangyuan home blueprint was not found under assets: {path}"
+                )
+            }
+            Self::ReadFailed { path, source } => {
+                write!(
+                    formatter,
+                    "failed to read fangyuan home blueprint at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::ParseFailed { path, source } => {
+                write!(
+                    formatter,
+                    "failed to parse fangyuan home blueprint RON at {}: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for FangyuanBlueprintLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ReadFailed { source, .. } => Some(source),
+            Self::ParseFailed { source, .. } => Some(source),
+            Self::BlueprintNotFound(_) => None,
         }
     }
 }
@@ -372,6 +648,78 @@ fn spawn_fangyuan_home_content(
     spawn_fangyuan_home_grid(commands, content, session_id, layout, meshes, materials);
     spawn_fangyuan_home_boundary(commands, content, session_id, layout, meshes, materials);
     spawn_fangyuan_home_lights(commands, content, session_id, layout);
+    spawn_fangyuan_home_blueprint_from_layout(
+        commands, content, session_id, layout, meshes, materials,
+    );
+
+    content
+}
+
+fn spawn_fangyuan_home_blueprint_from_layout(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    layout: &FangyuanHomeLayout,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> Option<Entity> {
+    if layout.default_blueprint_path.trim().is_empty() {
+        warn!("skipping fangyuan home blueprint because default_blueprint_path is empty");
+        return None;
+    }
+
+    let blueprint =
+        match FangyuanHomeBlueprint::load_first_package_ron(&layout.default_blueprint_path) {
+            Ok(blueprint) => blueprint,
+            Err(error) => {
+                warn!("{error}");
+                return None;
+            }
+        };
+    let validation = blueprint.validate();
+    for warning in &validation.warnings {
+        warn!("{warning}");
+    }
+
+    if !validation.top_level_valid {
+        return None;
+    }
+
+    Some(spawn_fangyuan_home_blueprint_content(
+        commands,
+        parent,
+        session_id,
+        &validation.primitives,
+        meshes,
+        materials,
+    ))
+}
+
+fn spawn_fangyuan_home_blueprint_content(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    primitives: &[ValidatedFangyuanHomeBlueprintPrimitive],
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> Entity {
+    let content = commands
+        .spawn((
+            SceneOwned::new(session_id.clone()),
+            FangyuanHomeBlueprintContent {
+                session_id: session_id.clone(),
+            },
+            Transform::default(),
+            Name::new(format!("FangyuanHomeBlueprintContent({session_id})")),
+        ))
+        .id();
+    commands.entity(parent).add_child(content);
+
+    for (index, primitive) in primitives.iter().enumerate() {
+        spawn_fangyuan_home_blueprint_primitive(
+            commands, content, session_id, index, primitive, meshes, materials,
+        );
+    }
 
     content
 }
@@ -572,6 +920,81 @@ fn spawn_fangyuan_home_box(
     entity
 }
 
+fn spawn_fangyuan_home_blueprint_primitive(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    index: usize,
+    primitive: &ValidatedFangyuanHomeBlueprintPrimitive,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> Entity {
+    let mesh = match primitive.kind {
+        FangyuanHomeBlueprintPrimitiveKind::Cube => meshes.add(Cuboid::new(
+            primitive.size[0],
+            primitive.size[1],
+            primitive.size[2],
+        )),
+        FangyuanHomeBlueprintPrimitiveKind::Sphere => meshes.add(
+            SphereMeshBuilder::new(
+                0.5,
+                SphereKind::Uv {
+                    sectors: FANGYUAN_HOME_BLUEPRINT_SPHERE_SECTORS,
+                    stacks: FANGYUAN_HOME_BLUEPRINT_SPHERE_STACKS,
+                },
+            )
+            .build(),
+        ),
+    };
+    let transform = match primitive.kind {
+        FangyuanHomeBlueprintPrimitiveKind::Cube => {
+            Transform::from_translation(Vec3::from_array(primitive.position))
+        }
+        FangyuanHomeBlueprintPrimitiveKind::Sphere => {
+            Transform::from_translation(Vec3::from_array(primitive.position))
+                .with_scale(Vec3::from_array(primitive.size))
+        }
+    };
+    let entity = commands
+        .spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(materials.add(standard_material_from_color(color_from_rgba(
+                primitive.color,
+            )))),
+            transform,
+            SceneOwned::new(session_id.clone()),
+            FangyuanHomeBlueprintPrimitiveVisual {
+                session_id: session_id.clone(),
+                kind: primitive.kind,
+                index,
+            },
+            Name::new(format!(
+                "FangyuanHomeBlueprintPrimitive({}:{})",
+                primitive.kind.as_str(),
+                index
+            )),
+        ))
+        .id();
+    commands.entity(parent).add_child(entity);
+    entity
+}
+
+#[allow(dead_code)]
+fn clear_fangyuan_home_blueprint_content<'world>(
+    commands: &mut Commands,
+    session_id: &SceneSessionId,
+    blueprint_content: impl IntoIterator<Item = (Entity, &'world FangyuanHomeBlueprintContent)>,
+) -> usize {
+    let mut cleared = 0;
+    for (entity, content) in blueprint_content {
+        if content.session_id == *session_id {
+            commands.entity(entity).try_despawn();
+            cleared += 1;
+        }
+    }
+    cleared
+}
+
 fn centered_grid_line_positions(half_extent: f32, spacing: f32) -> Vec<f32> {
     if half_extent < 0.0 || spacing <= 0.0 {
         return Vec::new();
@@ -610,6 +1033,10 @@ fn color_from_rgb_alpha(rgb: [f32; 3], alpha: f32) -> Color {
     Color::srgba(rgb[0], rgb[1], rgb[2], alpha)
 }
 
+fn color_from_rgba(rgba: [f32; 4]) -> Color {
+    Color::srgba(rgba[0], rgba[1], rgba[2], rgba[3])
+}
+
 fn standard_material_from_color(color: Color) -> StandardMaterial {
     let alpha = color.to_srgba().alpha;
     StandardMaterial {
@@ -631,6 +1058,58 @@ fn rotation_from_degrees(rotation: [f32; 3]) -> Quat {
         rotation[1].to_radians(),
         rotation[2].to_radians(),
     )
+}
+
+fn validate_f32_vec3(
+    field: &str,
+    primitive_index: usize,
+    values: &[f32],
+    in_range: impl Fn(usize, f32) -> bool,
+    range_description: &str,
+) -> Result<[f32; 3], String> {
+    if values.len() != 3 {
+        return Err(format!(
+            "skipping fangyuan home blueprint primitive #{primitive_index}: {field} must contain exactly 3 values, got {}",
+            values.len()
+        ));
+    }
+
+    let result = [values[0], values[1], values[2]];
+    for (axis, value) in result.into_iter().enumerate() {
+        if !value.is_finite() || !in_range(axis, value) {
+            return Err(format!(
+                "skipping fangyuan home blueprint primitive #{primitive_index}: {field}[{axis}]={value} must be {range_description}"
+            ));
+        }
+    }
+
+    Ok(result)
+}
+
+fn validate_f32_vec4(
+    field: &str,
+    primitive_index: usize,
+    values: &[f32],
+    in_range: impl Fn(f32) -> bool,
+    range_description: &str,
+) -> Result<[f32; 4], String> {
+    if values.len() != 4 {
+        return Err(format!(
+            "skipping fangyuan home blueprint primitive #{primitive_index}: {field} must contain exactly 4 values, got {}",
+            values.len()
+        ));
+    }
+
+    let result = [values[0], values[1], values[2], values[3]];
+    for (channel, value) in result.into_iter().enumerate() {
+        if !value.is_finite() || !in_range(value) {
+            return Err(format!(
+                "skipping fangyuan home blueprint primitive #{primitive_index}: {field}[{channel}]={value} must be {range_description}"
+            ));
+        }
+    }
+
+    Ok(result)
 }
 
 fn find_runtime_root_entity<'runtime>(
@@ -657,10 +1136,34 @@ where
     }
 }
 
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = ron::Value::deserialize(deserializer)?;
+    match value {
+        ron::Value::String(value) => Ok(Some(value)),
+        ron::Value::Option(Some(value)) => match *value {
+            ron::Value::String(value) => Ok(Some(value)),
+            other => Err(de::Error::custom(format!(
+                "expected optional string, got {other:?}"
+            ))),
+        },
+        ron::Value::Option(None) => Ok(None),
+        other => Err(de::Error::custom(format!(
+            "expected optional string, got {other:?}"
+        ))),
+    }
+}
+
 fn first_package_layout_fs_path(layout_path: &str) -> Option<PathBuf> {
+    first_package_asset_fs_path(layout_path)
+}
+
+fn first_package_asset_fs_path(asset_path: &str) -> Option<PathBuf> {
     first_package_asset_root_candidates()
         .into_iter()
-        .map(|root| root.join(Path::new(layout_path)))
+        .map(|root| root.join(Path::new(asset_path)))
         .find(|candidate| candidate.is_file())
 }
 
@@ -688,6 +1191,7 @@ mod tests {
     const EXPECTED_GRID_VISUALS: usize = 50;
     const EXPECTED_BOUNDARY_VISUALS: usize = 4;
     const EXPECTED_LIGHT_VISUALS: usize = 2;
+    const EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES: usize = 98;
     const EXPECTED_TOTAL_VISUALS: usize =
         1 + EXPECTED_GRID_VISUALS + EXPECTED_BOUNDARY_VISUALS + EXPECTED_LIGHT_VISUALS;
 
@@ -797,6 +1301,132 @@ mod tests {
     }
 
     #[test]
+    fn load_default_blueprint_from_first_package_assets() {
+        let layout = FangyuanHomeLayout::load_first_package_ron(FANGYUAN_HOME_LAYOUT_PATH).unwrap();
+        let blueprint =
+            FangyuanHomeBlueprint::load_first_package_ron(&layout.default_blueprint_path).unwrap();
+        let validation = blueprint.validate();
+
+        assert_eq!(blueprint.version, "1");
+        assert_eq!(blueprint.name.as_deref(), Some("home_preview"));
+        assert_eq!(blueprint.max_primitives, 1000);
+        assert_eq!(
+            blueprint.bounds,
+            FangyuanHomeBlueprintBounds {
+                width: 40.0,
+                depth: 40.0,
+                height: 20.0,
+            }
+        );
+        assert_eq!(
+            blueprint.primitives.len(),
+            EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES
+        );
+        assert!(validation.top_level_valid);
+        assert!(validation.warnings.is_empty());
+        assert_eq!(
+            validation.primitives.len(),
+            EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES
+        );
+        assert!(
+            validation
+                .primitives
+                .iter()
+                .any(|primitive| { primitive.kind == FangyuanHomeBlueprintPrimitiveKind::Cube })
+        );
+        assert!(
+            validation
+                .primitives
+                .iter()
+                .any(|primitive| { primitive.kind == FangyuanHomeBlueprintPrimitiveKind::Sphere })
+        );
+    }
+
+    #[test]
+    fn invalid_blueprint_version_or_count_does_not_validate_primitives() {
+        let invalid_version = blueprint_with_primitives(vec![valid_cube_primitive()]);
+        let invalid_version = FangyuanHomeBlueprint {
+            version: "2".to_string(),
+            ..invalid_version
+        };
+        let invalid_version_result = invalid_version.validate();
+
+        assert!(!invalid_version_result.top_level_valid);
+        assert!(invalid_version_result.primitives.is_empty());
+        assert!(
+            invalid_version_result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unsupported"))
+        );
+
+        let overflow = FangyuanHomeBlueprint {
+            max_primitives: 1,
+            primitives: vec![valid_cube_primitive(), valid_sphere_primitive()],
+            ..blueprint_with_primitives(Vec::new())
+        };
+        let overflow_result = overflow.validate();
+
+        assert!(!overflow_result.top_level_valid);
+        assert!(overflow_result.primitives.is_empty());
+        assert!(
+            overflow_result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("exceeding limit 1"))
+        );
+    }
+
+    #[test]
+    fn invalid_blueprint_primitives_are_skipped_and_valid_primitives_remain() {
+        let blueprint = blueprint_with_primitives(vec![
+            invalid_kind_primitive(),
+            invalid_position_primitive(),
+            invalid_size_primitive(),
+            invalid_color_primitive(),
+            valid_cube_primitive(),
+            valid_sphere_primitive(),
+        ]);
+        let validation = blueprint.validate();
+
+        assert!(validation.top_level_valid);
+        assert_eq!(validation.primitives.len(), 2);
+        assert_eq!(validation.warnings.len(), 4);
+        assert_eq!(
+            validation.primitives[0].kind,
+            FangyuanHomeBlueprintPrimitiveKind::Cube
+        );
+        assert_eq!(
+            validation.primitives[1].kind,
+            FangyuanHomeBlueprintPrimitiveKind::Sphere
+        );
+        assert!(
+            validation
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unsupported kind"))
+        );
+        assert!(
+            validation
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("position"))
+        );
+        assert!(
+            validation
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("size"))
+        );
+        assert!(
+            validation
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("color"))
+        );
+    }
+
+    #[test]
     fn grid_line_positions_cover_layout_bounds() {
         let layout = FangyuanHomeLayout::load_first_package_ron(FANGYUAN_HOME_LAYOUT_PATH).unwrap();
         let positions = centered_grid_line_positions(layout.plane.width * 0.5, layout.grid.spacing);
@@ -810,7 +1440,7 @@ mod tests {
     }
 
     #[test]
-    fn entered_fangyuan_home_spawns_base_space_under_runtime_root() {
+    fn entered_fangyuan_home_spawns_base_space_and_blueprint_under_runtime_root() {
         let mut app = app_with_fangyuan_home_system();
 
         let session_id = SceneSessionId::from("fangyuan-session");
@@ -839,7 +1469,10 @@ mod tests {
             &FangyuanHomeContent,
             &Transform,
             &Name,
-        ), Without<FangyuanHomeVisual>>();
+        ), (
+            Without<FangyuanHomeVisual>,
+            Without<FangyuanHomeBlueprintContent>,
+        )>();
         let content_entities = content.iter(app.world()).collect::<Vec<_>>();
         assert_eq!(content_entities.len(), 1);
 
@@ -849,6 +1482,28 @@ mod tests {
         assert_eq!(content.session_id, session_id);
         assert_eq!(transform, &Transform::default());
         assert_eq!(name.as_str(), "FangyuanHomeContent(fangyuan-session)");
+
+        let mut blueprint_content = app.world_mut().query::<(
+            Entity,
+            &ChildOf,
+            &SceneOwned,
+            &FangyuanHomeBlueprintContent,
+            &Transform,
+            &Name,
+        )>();
+        let blueprint_content_entities = blueprint_content.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(blueprint_content_entities.len(), 1);
+
+        let (blueprint_entity, parent, owned, blueprint_content, transform, name) =
+            blueprint_content_entities[0];
+        assert_eq!(parent.parent(), content_entity);
+        assert_eq!(owned.session_id, session_id);
+        assert_eq!(blueprint_content.session_id, session_id);
+        assert_eq!(transform, &Transform::default());
+        assert_eq!(
+            name.as_str(),
+            "FangyuanHomeBlueprintContent(fangyuan-session)"
+        );
 
         let mut visuals = app.world_mut().query::<(
             &ChildOf,
@@ -883,6 +1538,49 @@ mod tests {
         assert_eq!(boundary_count, EXPECTED_BOUNDARY_VISUALS);
         assert_eq!(directional_light_count, 1);
         assert_eq!(point_light_count, 1);
+
+        let mut blueprint_primitives = app.world_mut().query::<(
+            &ChildOf,
+            &SceneOwned,
+            &FangyuanHomeBlueprintPrimitiveVisual,
+            &Transform,
+            &Mesh3d,
+            &Name,
+        )>();
+        let blueprint_primitive_entities =
+            blueprint_primitives.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(
+            blueprint_primitive_entities.len(),
+            EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES
+        );
+        let mut cube_count = 0;
+        let mut sphere_count = 0;
+        for (parent, owned, primitive, transform, mesh, name) in blueprint_primitive_entities {
+            assert_eq!(parent.parent(), blueprint_entity);
+            assert_eq!(owned.session_id, session_id);
+            assert_eq!(primitive.session_id, session_id);
+            assert!(primitive.index < EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES);
+            assert!(name.as_str().starts_with("FangyuanHomeBlueprintPrimitive("));
+            assert!(
+                app.world()
+                    .resource::<Assets<Mesh>>()
+                    .get(&mesh.0)
+                    .is_some(),
+                "blueprint primitive mesh should be inserted"
+            );
+            match primitive.kind {
+                FangyuanHomeBlueprintPrimitiveKind::Cube => {
+                    cube_count += 1;
+                    assert_eq!(transform.scale, Vec3::ONE);
+                }
+                FangyuanHomeBlueprintPrimitiveKind::Sphere => {
+                    sphere_count += 1;
+                    assert_ne!(transform.scale, Vec3::ONE);
+                }
+            }
+        }
+        assert!(cube_count > 0);
+        assert!(sphere_count > 0);
 
         let (plane_translation, plane_mesh) = {
             let mut planes = app
@@ -978,9 +1676,10 @@ mod tests {
         }
         app.update();
 
-        let mut content = app
-            .world_mut()
-            .query_filtered::<&FangyuanHomeContent, Without<FangyuanHomeVisual>>();
+        let mut content = app.world_mut().query_filtered::<&FangyuanHomeContent, (
+            Without<FangyuanHomeVisual>,
+            Without<FangyuanHomeBlueprintContent>,
+        )>();
         let content_sessions = content
             .iter(app.world())
             .filter(|content| content.session_id == session_id)
@@ -995,6 +1694,11 @@ mod tests {
             .filter(|content| content.session_id == session_id)
             .count();
         assert_eq!(visual_sessions, EXPECTED_TOTAL_VISUALS);
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_blueprint_primitive_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES
+        );
     }
 
     #[test]
@@ -1024,6 +1728,11 @@ mod tests {
             fangyuan_visual_count(&mut app, &session_id),
             EXPECTED_TOTAL_VISUALS
         );
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_blueprint_primitive_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES
+        );
 
         app.world_mut()
             .write_message(SceneCommand::Exit(SceneExitRequest::default()));
@@ -1034,16 +1743,101 @@ mod tests {
         assert!(counts.is_empty());
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 0);
         assert_eq!(fangyuan_visual_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<SceneRuntime>().active_session_id(),
             None
         );
     }
 
-    fn fangyuan_content_count(app: &mut App, session_id: &SceneSessionId) -> usize {
-        let mut content = app
+    #[test]
+    fn clearing_blueprint_content_does_not_remove_base_space() {
+        let mut app = app_with_fangyuan_home_system();
+
+        let session_id = SceneSessionId::from("fangyuan-clear-session");
+        let scene_root = spawn_scene_root(
+            &mut app.world_mut().commands(),
+            &FANGYUAN_HOME_SCENE_ID.into(),
+            &session_id,
+        );
+        spawn_scene_runtime_root(&mut app.world_mut().commands(), scene_root, &session_id);
+        app.update();
+
+        app.world_mut().write_message(SceneEvent::Entered(
+            crate::framework::scene::prelude::SceneEntered {
+                scene_id: FANGYUAN_HOME_SCENE_ID.into(),
+                session_id: session_id.clone(),
+                content_version: None,
+            },
+        ));
+        app.update();
+
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_visual_count(&mut app, &session_id),
+            EXPECTED_TOTAL_VISUALS
+        );
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_blueprint_primitive_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES
+        );
+
+        let clear_session_id = session_id.clone();
+        app.add_systems(
+            Update,
+            move |mut commands: Commands,
+                  blueprint_content: Query<(Entity, &FangyuanHomeBlueprintContent)>| {
+                clear_fangyuan_home_blueprint_content(
+                    &mut commands,
+                    &clear_session_id,
+                    blueprint_content.iter(),
+                );
+            },
+        );
+        app.update();
+        app.update();
+
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_visual_count(&mut app, &session_id),
+            EXPECTED_TOTAL_VISUALS
+        );
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+
+        let mut visual_counts = app
             .world_mut()
-            .query_filtered::<&FangyuanHomeContent, Without<FangyuanHomeVisual>>();
+            .query::<(&FangyuanHomeVisual, &FangyuanHomeContent)>();
+        let mut plane_count = 0;
+        let mut grid_count = 0;
+        let mut boundary_count = 0;
+        let mut light_count = 0;
+        for (visual, content) in visual_counts.iter(app.world()) {
+            if content.session_id != session_id {
+                continue;
+            }
+            match visual {
+                FangyuanHomeVisual::Plane => plane_count += 1,
+                FangyuanHomeVisual::Grid => grid_count += 1,
+                FangyuanHomeVisual::Boundary => boundary_count += 1,
+                FangyuanHomeVisual::DirectionalLight | FangyuanHomeVisual::PointLight => {
+                    light_count += 1
+                }
+            }
+        }
+        assert_eq!(plane_count, 1);
+        assert_eq!(grid_count, EXPECTED_GRID_VISUALS);
+        assert_eq!(boundary_count, EXPECTED_BOUNDARY_VISUALS);
+        assert_eq!(light_count, EXPECTED_LIGHT_VISUALS);
+    }
+
+    fn fangyuan_content_count(app: &mut App, session_id: &SceneSessionId) -> usize {
+        let mut content = app.world_mut().query_filtered::<&FangyuanHomeContent, (
+            Without<FangyuanHomeVisual>,
+            Without<FangyuanHomeBlueprintContent>,
+        )>();
         content
             .iter(app.world())
             .filter(|content| content.session_id == *session_id)
@@ -1057,6 +1851,24 @@ mod tests {
         visuals
             .iter(app.world())
             .filter(|content| content.session_id == *session_id)
+            .count()
+    }
+
+    fn fangyuan_blueprint_content_count(app: &mut App, session_id: &SceneSessionId) -> usize {
+        let mut blueprint_content = app.world_mut().query::<&FangyuanHomeBlueprintContent>();
+        blueprint_content
+            .iter(app.world())
+            .filter(|content| content.session_id == *session_id)
+            .count()
+    }
+
+    fn fangyuan_blueprint_primitive_count(app: &mut App, session_id: &SceneSessionId) -> usize {
+        let mut primitives = app
+            .world_mut()
+            .query::<&FangyuanHomeBlueprintPrimitiveVisual>();
+        primitives
+            .iter(app.world())
+            .filter(|primitive| primitive.session_id == *session_id)
             .count()
     }
 
@@ -1089,6 +1901,69 @@ mod tests {
                 .iter(world)
                 .filter(|root| root.is_session(session_id))
                 .count(),
+        }
+    }
+
+    fn blueprint_with_primitives(
+        primitives: Vec<FangyuanHomeBlueprintPrimitive>,
+    ) -> FangyuanHomeBlueprint {
+        FangyuanHomeBlueprint {
+            version: "1".to_string(),
+            name: Some("test_blueprint".to_string()),
+            description: None,
+            max_primitives: 1000,
+            bounds: FangyuanHomeBlueprintBounds {
+                width: 40.0,
+                depth: 40.0,
+                height: 20.0,
+            },
+            primitives,
+        }
+    }
+
+    fn valid_cube_primitive() -> FangyuanHomeBlueprintPrimitive {
+        FangyuanHomeBlueprintPrimitive {
+            kind: "cube".to_string(),
+            position: vec![0.0, 0.5, 0.0],
+            size: vec![1.0, 1.0, 1.0],
+            color: vec![0.25, 0.35, 0.45, 1.0],
+        }
+    }
+
+    fn valid_sphere_primitive() -> FangyuanHomeBlueprintPrimitive {
+        FangyuanHomeBlueprintPrimitive {
+            kind: "sphere".to_string(),
+            position: vec![1.0, 1.0, -1.0],
+            size: vec![1.2, 1.4, 1.6],
+            color: vec![0.85, 0.55, 0.25, 1.0],
+        }
+    }
+
+    fn invalid_kind_primitive() -> FangyuanHomeBlueprintPrimitive {
+        FangyuanHomeBlueprintPrimitive {
+            kind: "cylinder".to_string(),
+            ..valid_cube_primitive()
+        }
+    }
+
+    fn invalid_position_primitive() -> FangyuanHomeBlueprintPrimitive {
+        FangyuanHomeBlueprintPrimitive {
+            position: vec![21.0, 0.5, 0.0],
+            ..valid_cube_primitive()
+        }
+    }
+
+    fn invalid_size_primitive() -> FangyuanHomeBlueprintPrimitive {
+        FangyuanHomeBlueprintPrimitive {
+            size: vec![1.0, 0.05, 1.0],
+            ..valid_cube_primitive()
+        }
+    }
+
+    fn invalid_color_primitive() -> FangyuanHomeBlueprintPrimitive {
+        FangyuanHomeBlueprintPrimitive {
+            color: vec![0.4, 0.4, 1.2, 1.0],
+            ..valid_cube_primitive()
         }
     }
 
