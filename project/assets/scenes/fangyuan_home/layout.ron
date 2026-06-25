@@ -1,0 +1,45 @@
+(
+  version: "1",
+  scene_id: "dev.fangyuan_home",
+  plane: (
+    width: 24.0,
+    depth: 24.0,
+    thickness: 0.2,
+    color: [0.18, 0.20, 0.19],
+  ),
+  grid: (
+    spacing: 1.0,
+    major_every: 4,
+    line_height: 0.03,
+    minor_width: 0.025,
+    major_width: 0.06,
+    color_minor: [0.36, 0.42, 0.40],
+    color_major: [0.58, 0.68, 0.63],
+  ),
+  boundary: (
+    thickness: 0.28,
+    height: 0.85,
+    color: [0.48, 0.55, 0.50],
+  ),
+  lights: [
+    (
+      id: "sun",
+      kind: "directional",
+      translation: [0.0, 8.0, 0.0],
+      rotation: [-52.0, -35.0, 0.0],
+      color: [0.98, 0.96, 0.90],
+      intensity: 5200.0,
+      range: None,
+    ),
+    (
+      id: "center_fill",
+      kind: "point",
+      translation: [0.0, 3.2, 0.0],
+      rotation: [0.0, 0.0, 0.0],
+      color: [0.76, 0.90, 1.0],
+      intensity: 380.0,
+      range: Some(18.0),
+    ),
+  ],
+  default_blueprint_path: "fangyuan/home_preview.ron",
+)

@@ -1,0 +1,66 @@
+(
+  version: "1",
+  scene_id: SceneId("dev.fangyuan_home"),
+  kind: "world",
+  entry: (
+    default_spawn: Some(SceneSpawnPointId("spawn.default")),
+    camera: Some((
+      id: Some("camera.fangyuan_home_overview"),
+      mode: "fixed3d",
+      position: Some((0.0, 18.0, 24.0)),
+      rotation: Some((-42.0, 0.0, 0.0)),
+      projection: Some((kind: "perspective3d", fov_y: 0.82, near: 0.1, far: 160.0)),
+      target: Some("anchor.center"),
+    )),
+    loading_policy: "blocking_required_assets",
+  ),
+  layers: [
+    (
+      id: SceneLayerId("base_space"),
+      required: false,
+      assets: [],
+    ),
+  ],
+  spawn_points: [
+    (
+      id: SceneSpawnPointId("spawn.default"),
+      position: (0.0, 0.0, 8.0),
+      rotation: (0.0, 180.0, 0.0),
+      tags: ["default", "player"],
+    ),
+  ],
+  anchors: [
+    (
+      id: SceneAnchorId("anchor.center"),
+      position: (0.0, 0.0, 0.0),
+      rotation: (0.0, 0.0, 0.0),
+      tags: ["center", "camera", "target"],
+    ),
+    (
+      id: SceneAnchorId("anchor.north"),
+      position: (0.0, 0.0, -12.0),
+      rotation: (0.0, 0.0, 0.0),
+      tags: ["boundary", "north"],
+    ),
+    (
+      id: SceneAnchorId("anchor.east"),
+      position: (12.0, 0.0, 0.0),
+      rotation: (0.0, 90.0, 0.0),
+      tags: ["boundary", "east"],
+    ),
+    (
+      id: SceneAnchorId("anchor.south"),
+      position: (0.0, 0.0, 12.0),
+      rotation: (0.0, 180.0, 0.0),
+      tags: ["boundary", "south"],
+    ),
+    (
+      id: SceneAnchorId("anchor.west"),
+      position: (-12.0, 0.0, 0.0),
+      rotation: (0.0, 270.0, 0.0),
+      tags: ["boundary", "west"],
+    ),
+  ],
+  triggers: [],
+  chunks: [],
+)

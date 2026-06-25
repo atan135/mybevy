@@ -5,6 +5,7 @@
 //! here as the project grows.
 
 mod catalog;
+mod fangyuan_home;
 mod robot_sync_arena;
 mod sample_dungeon_room;
 
@@ -17,6 +18,8 @@ use crate::framework::scene::prelude::SceneId;
 use bevy::prelude::*;
 use catalog::GameSceneCatalog;
 
+#[cfg(test)]
+pub(in crate::game) use fangyuan_home::FANGYUAN_HOME_SCENE_ID;
 pub(in crate::game) use robot_sync_arena::ROBOT_SYNC_ARENA_SCENE_ID;
 pub(in crate::game) use sample_dungeon_room::SAMPLE_DUNGEON_ROOM_SCENE_ID;
 
@@ -30,6 +33,7 @@ impl Plugin for GameScenesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             catalog::GameSceneCatalogPlugin,
+            fangyuan_home::FangyuanHomePlugin,
             robot_sync_arena::RobotSyncArenaPlugin,
             sample_dungeon_room::SampleDungeonRoomPlugin,
         ))
@@ -226,6 +230,31 @@ mod tests {
         );
 
         assert!(registry.contains(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID)));
+    }
+
+    #[test]
+    fn scene_plugins_register_fangyuan_home_from_first_package_catalog() {
+        let mut app = app_with_scene_registration_plugins();
+
+        app.update();
+
+        let registry = app.world().resource::<SceneRegistry>();
+        let scene_id = SceneId::from(FANGYUAN_HOME_SCENE_ID);
+        let definition = registry.get(&scene_id).unwrap();
+
+        assert_eq!(definition.scene_id, scene_id);
+        assert_eq!(definition.kind, SceneKind::World);
+        assert!(definition.has_world_root);
+        assert_eq!(
+            definition.manifest_path.as_deref(),
+            Some("scenes/fangyuan_home/scene.ron")
+        );
+        assert_eq!(
+            definition.content_source,
+            SceneContentSource::FirstPackage {
+                manifest_path: "scenes/fangyuan_home/scene.ron".to_string()
+            }
+        );
     }
 
     #[test]
