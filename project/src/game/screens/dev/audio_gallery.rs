@@ -28,8 +28,9 @@ use crate::framework::{
         },
         widgets::{
             UiAlign, UiButtonEvent, UiButtonEventKind, UiJustify, UiResponsiveGridColumns,
-            screen_label, screen_label_key, screen_title_key, secondary_action_button_key,
-            toggle_key, toggle_on_key, ui_responsive_grid, ui_scroll_column,
+            controls::UiTextInputValue, screen_label, screen_label_key, screen_title_key,
+            secondary_action_button_key, text_input, toggle_key, toggle_on_key, ui_responsive_grid,
+            ui_scroll_column,
         },
     },
 };
@@ -54,6 +55,7 @@ const DEFAULT_MUSIC_CROSSFADE_SECONDS: f32 = 1.5;
 const AUDIO_GALLERY_STATUS_VALUE_LIMIT: usize = 96;
 const AUDIO_GALLERY_RECORD_LABEL_LIMIT: usize = 40;
 const AUDIO_GALLERY_ASSET_LABEL_LIMIT: usize = 48;
+const AUDIO_GALLERY_PARAMETER_TEST_DEFAULT_ID: &str = AUDIO_GALLERY_VOICE_CLIP_ID;
 const AUDIO_GALLERY_BUSES: [AudioBus; 5] = [
     AudioBus::Master,
     AudioBus::Music,
@@ -119,7 +121,12 @@ pub(super) enum AudioGalleryButton {
     ToggleLooped,
     FadeIn(AudioGalleryFadePreset),
     FadeOut(AudioGalleryFadePreset),
+    PlayParameterClip,
+    PlayParameterCue,
 }
+
+#[derive(Component)]
+pub(super) struct AudioGalleryParameterTestInput;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AudioGallerySfxCue {
@@ -298,6 +305,7 @@ pub(super) struct AudioGalleryState {
     spatial_details: Option<AudioGallerySpatialDetails>,
     pending_launches: Vec<AudioGalleryLaunchKind>,
     recent_standard_slot: Option<AudioGalleryInstanceSlot>,
+    parameter_test_id: String,
     last_sfx: AudioGalleryInstanceRecord,
     loop_instance: AudioGalleryInstanceRecord,
     clip_instance: AudioGalleryInstanceRecord,
@@ -322,6 +330,7 @@ impl AudioGalleryState {
             spatial_details: None,
             pending_launches: Vec::new(),
             recent_standard_slot: None,
+            parameter_test_id: AUDIO_GALLERY_PARAMETER_TEST_DEFAULT_ID.to_string(),
             last_sfx: AudioGalleryInstanceRecord::default(),
             loop_instance: AudioGalleryInstanceRecord::default(),
             clip_instance: AudioGalleryInstanceRecord::default(),
@@ -645,6 +654,14 @@ pub(super) fn setup_audio_gallery(
                                     "audio_gallery.params.volume.loud",
                                     "Volume 140%",
                                 );
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_parameter_columns(),
+                            ))
+                            .with_children(|buttons| {
                                 spawn_gallery_button(
                                     buttons,
                                     theme,
@@ -675,7 +692,23 @@ pub(super) fn setup_audio_gallery(
                                     "audio_gallery.params.pitch.high",
                                     "Pitch 120%",
                                 );
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_single_button_columns(),
+                            ))
+                            .with_children(|buttons| {
                                 spawn_looped_toggle(buttons, theme, fonts, i18n, false);
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_five_button_columns(),
+                            ))
+                            .with_children(|buttons| {
                                 spawn_gallery_button(
                                     buttons,
                                     theme,
@@ -727,6 +760,50 @@ pub(super) fn setup_audio_gallery(
                                     "Fade Out 2s",
                                 );
                             });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_single_button_columns(),
+                            ))
+                            .with_children(|inputs| {
+                                let mut input = inputs.spawn(text_input(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    "clip_id or cue_id",
+                                    AUDIO_GALLERY_PARAMETER_TEST_DEFAULT_ID,
+                                ));
+                                input.insert(AudioGalleryParameterTestInput);
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_two_button_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayParameterClip,
+                                    "audio_gallery.params.play_clip",
+                                    "Play Clip ID",
+                                );
+                                spawn_gallery_button(
+                                    buttons,
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    AudioGalleryButton::PlayParameterCue,
+                                    "audio_gallery.params.play_cue",
+                                    "Play Cue ID",
+                                );
+                            });
                     });
 
                 body.spawn(audio_gallery_panel(theme))
@@ -758,7 +835,30 @@ pub(super) fn setup_audio_gallery(
                             .spawn(audio_gallery_grid(
                                 metrics,
                                 viewport.width_class,
-                                audio_gallery_button_columns(),
+                                audio_gallery_bus_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                for bus in AUDIO_GALLERY_BUSES {
+                                    spawn_gallery_button(
+                                        buttons,
+                                        theme,
+                                        metrics,
+                                        fonts,
+                                        i18n,
+                                        AudioGalleryButton::BusVolume(
+                                            bus,
+                                            AudioGalleryBusVolumePreset::Full,
+                                        ),
+                                        bus_action_i18n_key(bus, AudioGalleryBusAction::VolumeFull),
+                                        bus_action_fallback(bus, AudioGalleryBusAction::VolumeFull),
+                                    );
+                                }
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_bus_columns(),
                             ))
                             .with_children(|buttons| {
                                 for bus in AUDIO_GALLERY_BUSES {
@@ -775,46 +875,41 @@ pub(super) fn setup_audio_gallery(
                                         bus_action_i18n_key(bus, AudioGalleryBusAction::VolumeLow),
                                         bus_action_fallback(bus, AudioGalleryBusAction::VolumeLow),
                                     );
-                                    spawn_gallery_button(
-                                        buttons,
-                                        theme,
-                                        metrics,
-                                        fonts,
-                                        i18n,
-                                        AudioGalleryButton::BusVolume(
-                                            bus,
-                                            AudioGalleryBusVolumePreset::Full,
-                                        ),
-                                        bus_action_i18n_key(bus, AudioGalleryBusAction::VolumeFull),
-                                        bus_action_fallback(bus, AudioGalleryBusAction::VolumeFull),
-                                    );
                                 }
-                                spawn_gallery_button(
-                                    buttons,
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    AudioGalleryButton::ToggleMasterMute,
-                                    "audio_gallery.bus.master_mute",
-                                    "Master Mute",
-                                );
-                                for bus in [
-                                    AudioBus::Music,
-                                    AudioBus::Sfx,
-                                    AudioBus::Ui,
-                                    AudioBus::Battle,
-                                ] {
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_bus_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                for bus in AUDIO_GALLERY_BUSES {
+                                    let button = if bus == AudioBus::Master {
+                                        AudioGalleryButton::ToggleMasterMute
+                                    } else {
+                                        AudioGalleryButton::ToggleBusMute(bus)
+                                    };
                                     spawn_gallery_button(
                                         buttons,
                                         theme,
                                         metrics,
                                         fonts,
                                         i18n,
-                                        AudioGalleryButton::ToggleBusMute(bus),
+                                        button,
                                         bus_action_i18n_key(bus, AudioGalleryBusAction::Mute),
                                         bus_action_fallback(bus, AudioGalleryBusAction::Mute),
                                     );
+                                }
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_bus_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                for bus in AUDIO_GALLERY_BUSES {
                                     spawn_gallery_button(
                                         buttons,
                                         theme,
@@ -825,6 +920,16 @@ pub(super) fn setup_audio_gallery(
                                         bus_action_i18n_key(bus, AudioGalleryBusAction::Pause),
                                         bus_action_fallback(bus, AudioGalleryBusAction::Pause),
                                     );
+                                }
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_bus_columns(),
+                            ))
+                            .with_children(|buttons| {
+                                for bus in AUDIO_GALLERY_BUSES {
                                     spawn_gallery_button(
                                         buttons,
                                         theme,
@@ -836,6 +941,14 @@ pub(super) fn setup_audio_gallery(
                                         bus_action_fallback(bus, AudioGalleryBusAction::Resume),
                                     );
                                 }
+                            });
+                        panel
+                            .spawn(audio_gallery_grid(
+                                metrics,
+                                viewport.width_class,
+                                audio_gallery_two_button_columns(),
+                            ))
+                            .with_children(|buttons| {
                                 spawn_gallery_button(
                                     buttons,
                                     theme,
@@ -1470,6 +1583,7 @@ pub(super) fn setup_audio_gallery(
 
 pub(super) fn handle_audio_gallery_buttons(
     buttons: Query<&AudioGalleryButton>,
+    parameter_inputs: Query<&UiTextInputValue, With<AudioGalleryParameterTestInput>>,
     mut button_events: MessageReader<UiButtonEvent>,
     mut state: ResMut<AudioGalleryState>,
     mut audio_commands: MessageWriter<AudioCommand>,
@@ -1488,6 +1602,7 @@ pub(super) fn handle_audio_gallery_buttons(
             continue;
         };
 
+        sync_parameter_test_id_from_input(&mut state, &parameter_inputs);
         let outcome = apply_audio_gallery_button(&mut state, *button);
         state.status = outcome.status;
         for launch in outcome.launches {
@@ -1656,6 +1771,17 @@ fn apply_audio_gallery_spatial_helper_transforms(
             *global_transform = GlobalTransform::from_translation(position);
         }
     }
+}
+
+fn sync_parameter_test_id_from_input(
+    state: &mut AudioGalleryState,
+    parameter_inputs: &Query<&UiTextInputValue, With<AudioGalleryParameterTestInput>>,
+) {
+    let Some(input) = parameter_inputs.iter().next() else {
+        return;
+    };
+
+    state.parameter_test_id = input.0.trim().to_string();
 }
 
 fn apply_audio_gallery_button(
@@ -2283,6 +2409,55 @@ fn apply_audio_gallery_button(
             state.params.fade_out_seconds = preset.seconds();
             outcome.status = format!("Fade-out set to {}.", format_seconds(preset.seconds()));
         }
+        AudioGalleryButton::PlayParameterClip => match parameter_test_id(state) {
+            Ok(value) => match AudioClipId::try_from(value) {
+                Ok(clip_id) => {
+                    outcome.launches.push(AudioGalleryLaunchKind::Clip {
+                        clip_id: clip_id.clone(),
+                        slot: AudioGalleryInstanceSlot::Clip,
+                    });
+                    outcome
+                        .commands
+                        .push(AudioCommand::PlayClip(gallery_clip_request(
+                            clip_id.clone(),
+                            state.params,
+                            state.params.looped,
+                            AudioBus::Sfx,
+                            None,
+                        )));
+                    outcome.status =
+                        format!("Requested clip {clip_id} with current playback parameters.");
+                }
+                Err(error) => {
+                    outcome.status = format!("Invalid clip id: {}.", error.value());
+                }
+            },
+            Err(message) => outcome.status = message,
+        },
+        AudioGalleryButton::PlayParameterCue => match parameter_test_id(state) {
+            Ok(value) => match AudioCueId::try_from(value) {
+                Ok(cue_id) => {
+                    outcome.launches.push(AudioGalleryLaunchKind::Cue {
+                        cue_id: cue_id.clone(),
+                        slot: AudioGalleryInstanceSlot::Clip,
+                    });
+                    outcome
+                        .commands
+                        .push(AudioCommand::PlayCue(gallery_cue_request(
+                            cue_id.clone(),
+                            state.params,
+                            state.params.looped,
+                            Some(AudioBus::Sfx),
+                        )));
+                    outcome.status =
+                        format!("Requested cue {cue_id} with current playback parameters.");
+                }
+                Err(error) => {
+                    outcome.status = format!("Invalid cue id: {}.", error.value());
+                }
+            },
+            Err(message) => outcome.status = message,
+        },
     }
 
     outcome
@@ -3104,6 +3279,15 @@ impl AudioGalleryFadePreset {
     }
 }
 
+fn parameter_test_id(state: &AudioGalleryState) -> Result<&str, String> {
+    let value = state.parameter_test_id.trim();
+    if value.is_empty() {
+        Err("Enter a dev clip_id or cue_id before playing with current parameters.".to_string())
+    } else {
+        Ok(value)
+    }
+}
+
 impl AudioGalleryBusVolumePreset {
     fn value(self) -> f32 {
         match self {
@@ -3250,8 +3434,24 @@ fn audio_gallery_button_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(1, 2, 4)
 }
 
+fn audio_gallery_single_button_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 1, 1)
+}
+
+fn audio_gallery_two_button_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 2, 2)
+}
+
 fn audio_gallery_parameter_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(1, 3, 4)
+}
+
+fn audio_gallery_five_button_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 3, 5)
+}
+
+fn audio_gallery_bus_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 5, 5)
 }
 
 fn section_label(
@@ -3552,11 +3752,16 @@ mod tests {
 
         for key in [
             "audio_gallery.title",
+            "audio_gallery.parameters.section",
+            "audio_gallery.params.play_clip",
+            "audio_gallery.params.play_cue",
             "audio_gallery.sfx.section",
             "audio_gallery.loop.section",
             "audio_gallery.music.section",
             "audio_gallery.spatial.section",
             "audio_gallery.mixer_loading.section",
+            "audio_gallery.bus.master_pause",
+            "audio_gallery.bus.master_resume",
             "audio_gallery.rules.section",
             "audio_gallery.status.section",
             "nav.audio_settings",
@@ -3585,7 +3790,18 @@ mod tests {
                 .any(|button| matches!(button, AudioGalleryButton::PlaySpatialFixed(_)))
         );
         assert!(buttons.contains(&AudioGalleryButton::PreloadGalleryBank));
+        assert!(buttons.contains(&AudioGalleryButton::PlayParameterClip));
+        assert!(buttons.contains(&AudioGalleryButton::PlayParameterCue));
+        assert!(buttons.contains(&AudioGalleryButton::PauseBus(AudioBus::Master)));
+        assert!(buttons.contains(&AudioGalleryButton::ResumeBus(AudioBus::Master)));
         assert!(buttons.contains(&AudioGalleryButton::PlayCooldownRuleCue));
+
+        let mut parameter_inputs = app
+            .world_mut()
+            .query_filtered::<&UiTextInputValue, With<AudioGalleryParameterTestInput>>();
+        let values = parameter_inputs.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].0, AUDIO_GALLERY_PARAMETER_TEST_DEFAULT_ID);
     }
 
     #[test]
@@ -3597,6 +3813,14 @@ mod tests {
         assert_eq!(
             audio_gallery_parameter_columns().for_width_class(UiWidthClass::Compact),
             1
+        );
+        assert_eq!(
+            audio_gallery_bus_columns().for_width_class(UiWidthClass::Medium),
+            5
+        );
+        assert_eq!(
+            audio_gallery_five_button_columns().for_width_class(UiWidthClass::Expanded),
+            5
         );
         assert_eq!(phone_portrait_viewport().width_class, UiWidthClass::Compact);
     }
@@ -4222,6 +4446,125 @@ mod tests {
                 fade_in_seconds: Some(0.5),
                 start_seconds: None,
             })]
+        );
+    }
+
+    #[test]
+    fn parameter_test_buttons_play_input_id_with_current_params() {
+        let mut state = AudioGalleryState::new();
+        state.params.volume = 1.4;
+        state.params.pitch = 0.8;
+        state.params.looped = true;
+        state.params.fade_in_seconds = Some(0.5);
+        state.parameter_test_id = AUDIO_GALLERY_VOICE_CLIP_ID.to_string();
+
+        let clip = apply_audio_gallery_button(&mut state, AudioGalleryButton::PlayParameterClip);
+
+        assert_eq!(
+            clip.commands,
+            vec![AudioCommand::PlayClip(AudioClipRequest {
+                clip_id: clip_id(AUDIO_GALLERY_VOICE_CLIP_ID),
+                scope: audio_gallery_scope(),
+                bus: AudioBus::Sfx,
+                volume: 1.4,
+                pitch: 0.8,
+                looped: true,
+                fade_in_seconds: Some(0.5),
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            clip.launches,
+            vec![AudioGalleryLaunchKind::Clip {
+                clip_id: clip_id(AUDIO_GALLERY_VOICE_CLIP_ID),
+                slot: AudioGalleryInstanceSlot::Clip,
+            }]
+        );
+
+        state.parameter_test_id = AUDIO_GALLERY_UI_NOTIFY_CUE_ID.to_string();
+        let cue = apply_audio_gallery_button(&mut state, AudioGalleryButton::PlayParameterCue);
+
+        assert_eq!(
+            cue.commands,
+            vec![AudioCommand::PlayCue(AudioCueRequest {
+                cue_id: cue_id(AUDIO_GALLERY_UI_NOTIFY_CUE_ID),
+                scope: audio_gallery_scope(),
+                bus: Some(AudioBus::Sfx),
+                volume: 1.4,
+                pitch: 0.8,
+                looped: true,
+                fade_in_seconds: Some(0.5),
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            cue.launches,
+            vec![AudioGalleryLaunchKind::Cue {
+                cue_id: cue_id(AUDIO_GALLERY_UI_NOTIFY_CUE_ID),
+                slot: AudioGalleryInstanceSlot::Clip,
+            }]
+        );
+    }
+
+    #[test]
+    fn parameter_test_buttons_reject_empty_or_invalid_ids() {
+        let mut state = AudioGalleryState::new();
+
+        state.parameter_test_id = "   ".to_string();
+        let empty = apply_audio_gallery_button(&mut state, AudioGalleryButton::PlayParameterClip);
+        assert!(empty.commands.is_empty());
+        assert!(empty.launches.is_empty());
+        assert!(empty.status.contains("Enter a dev clip_id or cue_id"));
+
+        state.parameter_test_id = "Dev Audio Invalid".to_string();
+        let invalid = apply_audio_gallery_button(&mut state, AudioGalleryButton::PlayParameterCue);
+        assert!(invalid.commands.is_empty());
+        assert!(invalid.launches.is_empty());
+        assert!(invalid.status.contains("Invalid cue id"));
+    }
+
+    #[test]
+    fn button_event_system_syncs_parameter_test_input_before_playing() {
+        let mut app = App::new();
+        app.add_message::<UiButtonEvent>()
+            .add_message::<AudioCommand>()
+            .insert_resource(AudioGalleryState::new())
+            .add_systems(Update, handle_audio_gallery_buttons);
+
+        app.world_mut().spawn((
+            UiTextInputValue(AUDIO_GALLERY_UI_NOTIFY_CUE_ID.to_string()),
+            AudioGalleryParameterTestInput,
+        ));
+        let button = app
+            .world_mut()
+            .spawn(AudioGalleryButton::PlayParameterCue)
+            .id();
+        app.world_mut().write_message(UiButtonEvent {
+            entity: button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+
+        app.update();
+
+        assert_eq!(
+            read_audio_commands(&app),
+            vec![AudioCommand::PlayCue(AudioCueRequest {
+                cue_id: cue_id(AUDIO_GALLERY_UI_NOTIFY_CUE_ID),
+                scope: audio_gallery_scope(),
+                bus: Some(AudioBus::Sfx),
+                volume: 1.0,
+                pitch: 1.0,
+                looped: false,
+                fade_in_seconds: None,
+                start_seconds: None,
+            })]
+        );
+        assert_eq!(
+            app.world()
+                .resource::<AudioGalleryState>()
+                .parameter_test_id,
+            AUDIO_GALLERY_UI_NOTIFY_CUE_ID
         );
     }
 
