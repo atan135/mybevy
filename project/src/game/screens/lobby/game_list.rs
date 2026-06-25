@@ -28,7 +28,7 @@ use crate::framework::{
 use crate::game::{
     features::touch_ripple::TouchLaunchMode,
     navigation::{AppUiMode, GameRouteCommand, game_panel_root, secondary_route_button_key},
-    scenes::{ROBOT_SYNC_ARENA_SCENE_ID, SAMPLE_DUNGEON_ROOM_SCENE_ID},
+    scenes::{FANGYUAN_HOME_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID, SAMPLE_DUNGEON_ROOM_SCENE_ID},
     ui_ids::{
         ACTION_CANCEL, ACTION_CONFIRM, ACTION_TOUCH_RIPPLE_NETWORKED,
         ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY, PANEL_GAME_LIST,
@@ -43,6 +43,9 @@ pub(super) struct SampleDungeonRoomPlayButton;
 
 #[derive(Component)]
 pub(super) struct RobotSyncArenaPlayButton;
+
+#[derive(Component)]
+pub(super) struct FangyuanHomePlayButton;
 
 #[derive(Resource, Default)]
 pub(super) struct SampleDungeonRoomEntryState {
@@ -61,6 +64,27 @@ pub(super) struct RobotSyncArenaEntryState {
 }
 
 impl RobotSyncArenaEntryState {
+    #[cfg(test)]
+    pub(super) fn is_pending(&self) -> bool {
+        self.pending
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_pending_for_test(&mut self, pending: bool) {
+        self.pending = pending;
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.pending = false;
+    }
+}
+
+#[derive(Resource, Default)]
+pub(super) struct FangyuanHomeEntryState {
+    pending: bool,
+}
+
+impl FangyuanHomeEntryState {
     #[cfg(test)]
     pub(super) fn is_pending(&self) -> bool {
         self.pending
@@ -368,6 +392,57 @@ pub(super) fn setup_game_list_screen(
                             ),
                         ],
                     ),
+                    (
+                        Node {
+                            width: percent(100),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::SpaceBetween,
+                            column_gap: px(theme.layout.row_column_gap),
+                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
+                            ..default()
+                        },
+                        children![
+                            (
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: px(theme.layout.row_gap),
+                                    flex_grow: 1.0,
+                                    ..default()
+                                },
+                                children![
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.fangyuan_home.title",
+                                        "方圆灵构家园原型",
+                                        UiThemeTextStyleRole::Body,
+                                        UiThemeTextColorRole::Primary,
+                                    ),
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.fangyuan_home.description",
+                                        "蓝图家园场景预览",
+                                        UiThemeTextStyleRole::Caption,
+                                        UiThemeTextColorRole::Muted,
+                                    ),
+                                ],
+                            ),
+                            (
+                                primary_action_button_key(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    "lobby.enter",
+                                    "Enter",
+                                ),
+                                FangyuanHomePlayButton,
+                            ),
+                        ],
+                    ),
                 ],
             ),
         ],
@@ -378,6 +453,7 @@ pub(super) fn handle_game_list_buttons(
     mut launch_mode: ResMut<TouchLaunchMode>,
     mut sample_scene_entry: ResMut<SampleDungeonRoomEntryState>,
     mut robot_sync_entry: ResMut<RobotSyncArenaEntryState>,
+    mut fangyuan_home_entry: ResMut<FangyuanHomeEntryState>,
     i18n: Res<UiI18n>,
     mut scene_commands: MessageWriter<SceneCommand>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
@@ -387,6 +463,7 @@ pub(super) fn handle_game_list_buttons(
     play_buttons: Query<(), With<TouchRipplePlayButton>>,
     sample_scene_buttons: Query<(), With<SampleDungeonRoomPlayButton>>,
     robot_sync_buttons: Query<(), With<RobotSyncArenaPlayButton>>,
+    fangyuan_home_buttons: Query<(), With<FangyuanHomePlayButton>>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
     for event in button_events.read() {
@@ -415,6 +492,15 @@ pub(super) fn handle_game_list_buttons(
             robot_sync_entry.pending = true;
             scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
                 ROBOT_SYNC_ARENA_SCENE_ID,
+            )));
+        } else if fangyuan_home_buttons.contains(event.entity) {
+            if fangyuan_home_entry.pending {
+                continue;
+            }
+
+            fangyuan_home_entry.pending = true;
+            scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
+                FANGYUAN_HOME_SCENE_ID,
             )));
         }
     }

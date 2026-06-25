@@ -8,8 +8,9 @@ use crate::framework::ui::{
     widgets::{UiButtonEvent, UiButtonEventKind},
 };
 use crate::game::ui_ids::{
-    OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_LOBBY, OWNER_LOGIN,
-    OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
+    OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_FANGYUAN_HOME,
+    OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
+    OWNER_UI_GALLERY,
 };
 
 pub(in crate::game) use widgets::{
@@ -48,6 +49,7 @@ pub(super) enum AppUiMode {
     UiGallery,
     SampleScene,
     RobotSyncScene,
+    FangyuanHome,
 }
 
 impl AppUiMode {
@@ -62,6 +64,7 @@ impl AppUiMode {
             Self::UiGallery => OWNER_UI_GALLERY,
             Self::SampleScene => OWNER_SAMPLE_SCENE,
             Self::RobotSyncScene => OWNER_ROBOT_SYNC_SCENE,
+            Self::FangyuanHome => OWNER_FANGYUAN_HOME,
         }
     }
 }
@@ -146,6 +149,7 @@ fn parse_start_screen_mode(value: &str) -> Option<AppUiMode> {
         "audio_gallery" | "audio-gallery" => Some(AppUiMode::AudioGallery),
         "ui_gallery" | "ui-gallery" | "gallery" => Some(AppUiMode::UiGallery),
         "sample_scene" | "sample-scene" | "sample" => Some(AppUiMode::SampleScene),
+        "fangyuan_home" | "fangyuan-home" | "fangyuan" => Some(AppUiMode::FangyuanHome),
         "login" => Some(AppUiMode::Login),
         _ => None,
     }
@@ -154,7 +158,9 @@ fn parse_start_screen_mode(value: &str) -> Option<AppUiMode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ui_ids::{OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_ROBOT_SYNC_SCENE};
+    use crate::game::ui_ids::{
+        OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_FANGYUAN_HOME, OWNER_ROBOT_SYNC_SCENE,
+    };
 
     #[test]
     fn audio_settings_mode_uses_dedicated_owner() {
@@ -177,6 +183,11 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_home_mode_uses_dedicated_owner() {
+        assert_eq!(AppUiMode::FangyuanHome.ui_owner(), OWNER_FANGYUAN_HOME);
+    }
+
+    #[test]
     fn start_screen_aliases_include_audio_gallery() {
         assert_eq!(
             parse_start_screen_mode("audio_gallery"),
@@ -185,6 +196,22 @@ mod tests {
         assert_eq!(
             parse_start_screen_mode("audio-gallery"),
             Some(AppUiMode::AudioGallery)
+        );
+    }
+
+    #[test]
+    fn start_screen_aliases_include_fangyuan_home() {
+        assert_eq!(
+            parse_start_screen_mode("fangyuan_home"),
+            Some(AppUiMode::FangyuanHome)
+        );
+        assert_eq!(
+            parse_start_screen_mode("fangyuan-home"),
+            Some(AppUiMode::FangyuanHome)
+        );
+        assert_eq!(
+            parse_start_screen_mode("fangyuan"),
+            Some(AppUiMode::FangyuanHome)
         );
     }
 }
