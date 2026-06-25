@@ -297,6 +297,7 @@ pub(super) struct AudioGalleryState {
     spatial_attenuation: AudioGallerySpatialAttenuationPreset,
     spatial_details: Option<AudioGallerySpatialDetails>,
     pending_launches: Vec<AudioGalleryLaunchKind>,
+    recent_standard_slot: Option<AudioGalleryInstanceSlot>,
     last_sfx: AudioGalleryInstanceRecord,
     loop_instance: AudioGalleryInstanceRecord,
     clip_instance: AudioGalleryInstanceRecord,
@@ -320,6 +321,7 @@ impl AudioGalleryState {
             spatial_attenuation: AudioGallerySpatialAttenuationPreset::Wide,
             spatial_details: None,
             pending_launches: Vec::new(),
+            recent_standard_slot: None,
             last_sfx: AudioGalleryInstanceRecord::default(),
             loop_instance: AudioGalleryInstanceRecord::default(),
             clip_instance: AudioGalleryInstanceRecord::default(),
@@ -348,6 +350,9 @@ impl AudioGalleryState {
         record.paused = false;
         record.position_seconds = None;
         record.spatial = slot == AudioGalleryInstanceSlot::Spatial;
+        if slot.is_standard_instance() {
+            self.recent_standard_slot = Some(slot);
+        }
     }
 
     fn mark_instance_paused(&mut self, instance_id: AudioInstanceId, paused: bool) {
@@ -368,6 +373,13 @@ impl AudioGalleryState {
                 record.spatial = false;
                 cleared = true;
             }
+        }
+        if self
+            .recent_standard_slot
+            .and_then(|slot| self.slot_record(slot).instance_id)
+            .is_none()
+        {
+            self.recent_standard_slot = self.fallback_recent_standard_slot();
         }
         cleared
     }
@@ -412,10 +424,12 @@ impl AudioGalleryState {
     }
 
     fn recent_standard_instance(&self) -> Option<AudioInstanceId> {
-        self.clip_instance
-            .instance_id
-            .or(self.last_sfx.instance_id)
-            .or(self.loop_instance.instance_id)
+        self.recent_standard_slot
+            .and_then(|slot| self.slot_record(slot).instance_id)
+            .or_else(|| {
+                self.fallback_recent_standard_slot()
+                    .and_then(|slot| self.slot_record(slot).instance_id)
+            })
     }
 
     fn long_instance_id(&self) -> Option<AudioInstanceId> {
@@ -436,6 +450,28 @@ impl AudioGalleryState {
             AudioGalleryInstanceSlot::Music => &mut self.music_instance,
             AudioGalleryInstanceSlot::Spatial => &mut self.spatial_instance,
         }
+    }
+
+    fn slot_record(&self, slot: AudioGalleryInstanceSlot) -> &AudioGalleryInstanceRecord {
+        match slot {
+            AudioGalleryInstanceSlot::Sfx => &self.last_sfx,
+            AudioGalleryInstanceSlot::Loop => &self.loop_instance,
+            AudioGalleryInstanceSlot::Clip => &self.clip_instance,
+            AudioGalleryInstanceSlot::Long => &self.long_instance,
+            AudioGalleryInstanceSlot::Music => &self.music_instance,
+            AudioGalleryInstanceSlot::Spatial => &self.spatial_instance,
+        }
+    }
+
+    fn fallback_recent_standard_slot(&self) -> Option<AudioGalleryInstanceSlot> {
+        [
+            AudioGalleryInstanceSlot::Long,
+            AudioGalleryInstanceSlot::Clip,
+            AudioGalleryInstanceSlot::Sfx,
+            AudioGalleryInstanceSlot::Loop,
+        ]
+        .into_iter()
+        .find(|slot| self.slot_record(*slot).instance_id.is_some())
     }
 
     fn records_mut(&mut self) -> [&mut AudioGalleryInstanceRecord; 6] {
@@ -2926,10 +2962,10 @@ impl AudioGalleryMusicFadePreset {
 impl AudioGallerySpatialFixedPosition {
     fn position(self) -> Vec3 {
         match self {
-            Self::Left => Vec3::new(-18.0, 0.0, 0.0),
-            Self::Right => Vec3::new(18.0, 0.0, 0.0),
-            Self::Near => Vec3::new(0.0, 0.0, 6.0),
-            Self::Far => Vec3::new(0.0, 0.0, 48.0),
+            Self::Left => Vec3::new(-4.0, 0.0, 0.0),
+            Self::Right => Vec3::new(4.0, 0.0, 0.0),
+            Self::Near => Vec3::new(0.0, 0.0, 2.0),
+            Self::Far => Vec3::new(0.0, 0.0, 16.0),
         }
     }
 
@@ -2947,7 +2983,7 @@ impl AudioGallerySpatialAttenuationPreset {
     fn value(self) -> AudioSpatialAttenuation {
         match self {
             Self::Close => AudioSpatialAttenuation::new(18.0, 1.0),
-            Self::Wide => AudioSpatialAttenuation::new(64.0, 1.0),
+            Self::Wide => AudioSpatialAttenuation::new(128.0, 0.25),
             Self::Steep => AudioSpatialAttenuation::new(64.0, 2.5),
         }
     }
@@ -2965,8 +3001,8 @@ impl AudioGallerySpatialListenerPosition {
     fn position(self) -> Vec3 {
         match self {
             Self::Center => Vec3::ZERO,
-            Self::Left => Vec3::new(-12.0, 0.0, 0.0),
-            Self::Right => Vec3::new(12.0, 0.0, 0.0),
+            Self::Left => Vec3::new(-4.0, 0.0, 0.0),
+            Self::Right => Vec3::new(4.0, 0.0, 0.0),
         }
     }
 
@@ -2990,9 +3026,9 @@ impl AudioGallerySpatialListenerPosition {
 impl AudioGallerySpatialEmitterPosition {
     fn position(self) -> Vec3 {
         match self {
-            Self::Left => Vec3::new(-20.0, 0.0, 8.0),
-            Self::Right => Vec3::new(20.0, 0.0, 8.0),
-            Self::Near => Vec3::new(0.0, 0.0, 4.0),
+            Self::Left => Vec3::new(-4.0, 0.0, 2.0),
+            Self::Right => Vec3::new(4.0, 0.0, 2.0),
+            Self::Near => Vec3::new(0.0, 0.0, 2.0),
         }
     }
 
@@ -3103,6 +3139,12 @@ impl fmt::Display for AudioGalleryInstanceSlot {
             Self::Music => "music",
             Self::Spatial => "spatial",
         })
+    }
+}
+
+impl AudioGalleryInstanceSlot {
+    fn is_standard_instance(self) -> bool {
+        matches!(self, Self::Sfx | Self::Loop | Self::Clip | Self::Long)
     }
 }
 
@@ -3867,6 +3909,18 @@ mod tests {
         let mut state = AudioGalleryState::new();
         state.params.volume = 0.5;
         state.params.pitch = 1.2;
+        assert_eq!(
+            AudioGallerySpatialFixedPosition::Left
+                .position()
+                .distance(Vec3::ZERO),
+            4.0
+        );
+        assert_eq!(
+            AudioGallerySpatialFixedPosition::Far
+                .position()
+                .distance(Vec3::ZERO),
+            16.0
+        );
         apply_audio_gallery_button(
             &mut state,
             AudioGalleryButton::SpatialAttenuation(AudioGallerySpatialAttenuationPreset::Close),
@@ -3991,7 +4045,7 @@ mod tests {
                 fade_in_seconds: None,
                 start_seconds: None,
                 source: AudioSpatialSource::follow_entity(emitter_target),
-                attenuation: AudioSpatialAttenuation::new(64.0, 1.0),
+                attenuation: AudioSpatialAttenuation::new(128.0, 0.25),
             })]
         );
         assert_eq!(
@@ -4078,6 +4132,53 @@ mod tests {
                 slot: AudioGalleryInstanceSlot::Long,
             }]
         );
+    }
+
+    #[test]
+    fn recent_controls_target_play_long_after_it_starts() {
+        let mut state = AudioGalleryState::new();
+        state.params.fade_out_seconds = Some(2.0);
+        let clip_instance = AudioInstanceId::from_raw(17);
+        let long_instance = AudioInstanceId::from_raw(18);
+
+        state.record_started(
+            AudioGalleryInstanceSlot::Clip,
+            clip_instance,
+            AUDIO_GALLERY_VOICE_CLIP_ID.to_string(),
+        );
+        state.record_started(
+            AudioGalleryInstanceSlot::Long,
+            long_instance,
+            AUDIO_GALLERY_MENU_MUSIC_CLIP_ID.to_string(),
+        );
+
+        let pause = apply_audio_gallery_button(&mut state, AudioGalleryButton::PauseRecent);
+        let resume = apply_audio_gallery_button(&mut state, AudioGalleryButton::ResumeRecent);
+        let stop = apply_audio_gallery_button(&mut state, AudioGalleryButton::StopRecent);
+
+        assert_eq!(
+            pause.commands,
+            vec![AudioCommand::PauseInstance(AudioInstanceCommand::new(
+                long_instance
+            ))]
+        );
+        assert_eq!(
+            resume.commands,
+            vec![AudioCommand::ResumeInstance(AudioInstanceCommand::new(
+                long_instance
+            ))]
+        );
+        assert_eq!(
+            stop.commands,
+            vec![AudioCommand::StopInstance(AudioStopInstanceCommand {
+                instance_id: long_instance,
+                fade_out_seconds: Some(2.0),
+            })]
+        );
+        assert_eq!(state.clip_instance.instance_id, Some(clip_instance));
+
+        assert!(state.clear_instance(long_instance));
+        assert_eq!(state.recent_standard_instance(), Some(clip_instance));
     }
 
     #[test]
