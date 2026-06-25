@@ -1,6 +1,7 @@
 use bevy::{
     mesh::{MeshBuilder, SphereKind, SphereMeshBuilder},
     prelude::*,
+    render::batching::NoAutomaticBatching,
 };
 use serde::{Deserialize, Deserializer, de};
 use std::{
@@ -1074,6 +1075,7 @@ fn spawn_fangyuan_home_box(
         .spawn((
             Mesh3d(meshes.add(Cuboid::new(size.x, size.y, size.z))),
             MeshMaterial3d(materials.add(standard_material_from_color(color))),
+            NoAutomaticBatching,
             Transform::from_translation(translation),
             SceneOwned::new(session_id.clone()),
             FangyuanHomeContent {
@@ -1105,6 +1107,7 @@ fn spawn_fangyuan_home_blueprint_primitive(
         .spawn((
             Mesh3d(mesh),
             MeshMaterial3d(material),
+            NoAutomaticBatching,
             transform,
             SceneOwned::new(session_id.clone()),
             FangyuanHomeBlueprintPrimitiveVisual {
@@ -1787,6 +1790,7 @@ mod tests {
         );
 
         let mut visuals = app.world_mut().query::<(
+            Entity,
             &ChildOf,
             &SceneOwned,
             &FangyuanHomeContent,
@@ -1801,15 +1805,24 @@ mod tests {
         let mut boundary_count = 0;
         let mut directional_light_count = 0;
         let mut point_light_count = 0;
-        for (parent, owned, content, visual, name) in visual_entities {
+        for (entity, parent, owned, content, visual, name) in visual_entities {
             assert_eq!(parent.parent(), content_entity);
             assert_eq!(owned.session_id, session_id);
             assert_eq!(content.session_id, session_id);
             assert!(name.as_str().starts_with("FangyuanHome"));
             match visual {
-                FangyuanHomeVisual::Plane => plane_count += 1,
-                FangyuanHomeVisual::Grid => grid_count += 1,
-                FangyuanHomeVisual::Boundary => boundary_count += 1,
+                FangyuanHomeVisual::Plane => {
+                    plane_count += 1;
+                    assert!(app.world().entity(entity).contains::<NoAutomaticBatching>());
+                }
+                FangyuanHomeVisual::Grid => {
+                    grid_count += 1;
+                    assert!(app.world().entity(entity).contains::<NoAutomaticBatching>());
+                }
+                FangyuanHomeVisual::Boundary => {
+                    boundary_count += 1;
+                    assert!(app.world().entity(entity).contains::<NoAutomaticBatching>());
+                }
                 FangyuanHomeVisual::DirectionalLight => directional_light_count += 1,
                 FangyuanHomeVisual::PointLight => point_light_count += 1,
             }
@@ -1827,6 +1840,7 @@ mod tests {
             &Transform,
             &Mesh3d,
             &MeshMaterial3d<StandardMaterial>,
+            &NoAutomaticBatching,
             &Name,
         )>();
         let blueprint_primitive_entities =
@@ -1843,7 +1857,7 @@ mod tests {
             FangyuanHomeBlueprintColorKey,
             Handle<StandardMaterial>,
         > = HashMap::new();
-        for (parent, owned, primitive, transform, mesh, material, name) in
+        for (parent, owned, primitive, transform, mesh, material, _, name) in
             blueprint_primitive_entities
         {
             assert_eq!(parent.parent(), blueprint_entity);
@@ -2126,6 +2140,7 @@ mod tests {
             let entity_ref = app.world().entity(entity);
             assert!(entity_ref.contains::<Mesh3d>());
             assert!(entity_ref.contains::<MeshMaterial3d<StandardMaterial>>());
+            assert!(entity_ref.contains::<NoAutomaticBatching>());
             assert!(entity_ref.contains::<Transform>());
             assert!(entity_ref.contains::<SceneOwned>());
             assert!(
@@ -2423,6 +2438,67 @@ mod tests {
                 generated: 0,
                 skipped: 0,
                 materials: material_count,
+                top_level_valid: true,
+            }
+        );
+    }
+
+    #[test]
+    fn reload_blueprint_command_regenerates_preview_after_clear() {
+        let mut app = app_with_fangyuan_home_system();
+        let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-clear-reload-session");
+        let expected_materials = unique_material_count(&default_blueprint_validation().primitives);
+
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_blueprint_primitive_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES
+        );
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Clear);
+        app.update();
+
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_visual_count(&mut app, &session_id),
+            EXPECTED_TOTAL_VISUALS
+        );
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            app.world().resource::<FangyuanHomeBlueprintStats>(),
+            &FangyuanHomeBlueprintStats {
+                session_id: Some(session_id.clone()),
+                generated: 0,
+                skipped: 0,
+                materials: expected_materials,
+                top_level_valid: true,
+            }
+        );
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_visual_count(&mut app, &session_id),
+            EXPECTED_TOTAL_VISUALS
+        );
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_blueprint_primitive_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES
+        );
+        assert_eq!(
+            app.world().resource::<FangyuanHomeBlueprintStats>(),
+            &FangyuanHomeBlueprintStats {
+                session_id: Some(session_id),
+                generated: EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES,
+                skipped: 0,
+                materials: expected_materials,
                 top_level_valid: true,
             }
         );
