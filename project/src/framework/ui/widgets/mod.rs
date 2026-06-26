@@ -29,6 +29,8 @@ pub(crate) use layout::{
 };
 #[allow(unused_imports)]
 pub(crate) use scroll::{
-    UiScrollView, UiScrollViewConfig, ui_scroll_column, ui_scroll_column_bundle,
+    UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition, UiScrollAuditSetError,
+    UiScrollView, UiScrollViewConfig, scroll_audit_metrics, scroll_audit_position_reached,
+    set_scroll_audit_position, target_scroll_offset, ui_scroll_column, ui_scroll_column_bundle,
     ui_scroll_column_node, ui_scroll_column_with_max_height, ui_scroll_pickable,
 };

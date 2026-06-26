@@ -4,14 +4,17 @@ use bevy::prelude::*;
 use std::env;
 
 use crate::framework::ui::{
-    audit::{UiAuditRouteCommand, UiAuditScreen, UiAuditScreenRegistry},
+    audit::{
+        UiAuditCaptureRecipe, UiAuditCaptureState, UiAuditRecipe, UiAuditRouteCommand,
+        UiAuditScreen, UiAuditScreenRecipe, UiAuditScreenRegistry,
+    },
     core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
-    widgets::{UiButtonEvent, UiButtonEventKind},
+    widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
 };
 use crate::game::ui_ids::{
     OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_FANGYUAN_HOME,
     OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
-    OWNER_UI_GALLERY,
+    OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
 };
 
 pub(in crate::game) use widgets::{
@@ -214,14 +217,39 @@ pub(crate) fn parse_start_screen_mode(value: &str) -> Option<AppUiMode> {
 }
 
 fn register_ui_audit_screens(mut registry: ResMut<UiAuditScreenRegistry>) {
+    register_ui_audit_screen_entries(&mut registry);
+}
+
+fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
     for mode in all_app_ui_modes() {
-        registry.register(UiAuditScreen::new(
-            mode.canonical_screen(),
-            mode.aliases(),
-            mode.ui_owner(),
-        ));
+        let screen = UiAuditScreen::new(mode.canonical_screen(), mode.aliases(), mode.ui_owner());
+        if mode == AppUiMode::UiGallery {
+            registry.register_recipe(UiAuditScreenRecipe::new(
+                screen.with_recipe(UiAuditRecipe::new(UI_GALLERY_AUDIT_CAPTURES)),
+            ));
+        } else {
+            registry.register(screen);
+        }
     }
 }
+
+const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
+    UiAuditCaptureRecipe::scroll(
+        UiAuditCaptureState::Top,
+        SCROLL_UI_GALLERY_MAIN,
+        UiScrollAuditPosition::Top,
+    ),
+    UiAuditCaptureRecipe::scroll(
+        UiAuditCaptureState::Middle,
+        SCROLL_UI_GALLERY_MAIN,
+        UiScrollAuditPosition::Middle,
+    ),
+    UiAuditCaptureRecipe::scroll(
+        UiAuditCaptureState::Bottom,
+        SCROLL_UI_GALLERY_MAIN,
+        UiScrollAuditPosition::Bottom,
+    ),
+];
 
 fn all_app_ui_modes() -> [AppUiMode; 10] {
     [
@@ -243,6 +271,7 @@ mod tests {
     use super::*;
     use crate::game::ui_ids::{
         OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_FANGYUAN_HOME, OWNER_ROBOT_SYNC_SCENE,
+        SCROLL_UI_GALLERY_MAIN,
     };
 
     #[test]
@@ -311,6 +340,26 @@ mod tests {
         assert_eq!(
             parse_start_screen_mode("robot"),
             Some(AppUiMode::RobotSyncScene)
+        );
+    }
+
+    #[test]
+    fn ui_gallery_audit_recipe_registers_scroll_capture_states() {
+        let mut registry = UiAuditScreenRegistry::default();
+        register_ui_audit_screen_entries(&mut registry);
+
+        let screen = registry
+            .resolve("ui-gallery")
+            .expect("ui gallery should be registered for audit");
+        let recipe = screen.recipe.expect("ui gallery should have audit recipe");
+
+        assert_eq!(recipe.captures.len(), 3);
+        assert_eq!(recipe.captures[0].state, UiAuditCaptureState::Top);
+        assert_eq!(recipe.captures[1].state, UiAuditCaptureState::Middle);
+        assert_eq!(recipe.captures[2].state, UiAuditCaptureState::Bottom);
+        assert_eq!(
+            recipe.captures[0].scroll.map(|scroll| scroll.target_id),
+            Some(SCROLL_UI_GALLERY_MAIN)
         );
     }
 }

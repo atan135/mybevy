@@ -39,7 +39,7 @@ use crate::game::{
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{
         ACTION_CANCEL, ACTION_CONFIRM, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
-        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY,
+        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
 
@@ -196,7 +196,9 @@ pub(super) fn setup_ui_gallery(
                     ));
                 });
 
-            root.spawn(ui_scroll_column(theme)).with_children(|body| {
+            let mut scroll_body = root.spawn(ui_scroll_column(theme));
+            scroll_body.insert(SCROLL_UI_GALLERY_MAIN);
+            scroll_body.with_children(|body| {
                 body.spawn(gallery_panel(theme))
                     .with_children(|typography_panel| {
                         typography_panel.spawn(section_label_key(

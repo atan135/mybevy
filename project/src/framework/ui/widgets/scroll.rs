@@ -1,3 +1,5 @@
+use std::fmt;
+
 use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
     picking::hover::HoverMap,
@@ -21,6 +23,56 @@ impl Plugin for UiScrollPlugin {
 
 #[derive(Component)]
 pub(crate) struct UiScrollView;
+
+#[derive(Clone, Copy, Component, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct UiScrollAuditId(&'static str);
+
+impl UiScrollAuditId {
+    pub(crate) const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for UiScrollAuditId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(crate) enum UiScrollAuditPosition {
+    Top,
+    Middle,
+    Bottom,
+}
+
+impl UiScrollAuditPosition {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Middle => "middle",
+            Self::Bottom => "bottom",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiScrollAuditMetrics {
+    pub offset: f32,
+    pub max_offset: f32,
+    pub viewport_height: f32,
+    pub content_height: f32,
+    pub position: UiScrollAuditPosition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UiScrollAuditSetError {
+    Unreachable,
+}
 
 #[derive(Component, Default)]
 struct UiScrollDragStart(Vec2);
@@ -182,7 +234,69 @@ fn on_scroll_drag(
     scroll_position.0 = next.clamp(Vec2::ZERO, max_offset);
 }
 
-fn max_scroll_offset(computed: &ComputedNode) -> Vec2 {
+pub(crate) fn set_scroll_audit_position(
+    scroll_position: &mut ScrollPosition,
+    computed: &ComputedNode,
+    position: UiScrollAuditPosition,
+) -> Result<UiScrollAuditMetrics, UiScrollAuditSetError> {
+    let metrics = scroll_audit_metrics(scroll_position, computed, position);
+    let target = target_scroll_offset(position, metrics.max_offset)?;
+    scroll_position.y = target;
+    scroll_position.x = scroll_position.x.clamp(0.0, max_scroll_offset(computed).x);
+
+    Ok(UiScrollAuditMetrics {
+        offset: target,
+        ..metrics
+    })
+}
+
+pub(crate) fn scroll_audit_metrics(
+    scroll_position: &ScrollPosition,
+    computed: &ComputedNode,
+    position: UiScrollAuditPosition,
+) -> UiScrollAuditMetrics {
+    let max_offset = max_scroll_offset(computed);
+    let scale = computed.inverse_scale_factor();
+    UiScrollAuditMetrics {
+        offset: scroll_position.y.clamp(0.0, max_offset.y),
+        max_offset: max_offset.y,
+        viewport_height: computed.size().y * scale,
+        content_height: computed.content_size().y * scale,
+        position,
+    }
+}
+
+pub(crate) fn target_scroll_offset(
+    position: UiScrollAuditPosition,
+    max_offset: f32,
+) -> Result<f32, UiScrollAuditSetError> {
+    if !max_offset.is_finite() || max_offset < 0.0 {
+        return Err(UiScrollAuditSetError::Unreachable);
+    }
+
+    match position {
+        UiScrollAuditPosition::Top => Ok(0.0),
+        UiScrollAuditPosition::Middle if max_offset > f32::EPSILON => Ok(max_offset * 0.5),
+        UiScrollAuditPosition::Bottom if max_offset > f32::EPSILON => Ok(max_offset),
+        UiScrollAuditPosition::Middle | UiScrollAuditPosition::Bottom => {
+            Err(UiScrollAuditSetError::Unreachable)
+        }
+    }
+}
+
+pub(crate) fn scroll_audit_position_reached(
+    scroll_position: &ScrollPosition,
+    computed: &ComputedNode,
+    position: UiScrollAuditPosition,
+) -> bool {
+    let max_offset = max_scroll_offset(computed).y;
+    let Ok(target) = target_scroll_offset(position, max_offset) else {
+        return false;
+    };
+    (scroll_position.y.clamp(0.0, max_offset) - target).abs() <= 0.5
+}
+
+pub(crate) fn max_scroll_offset(computed: &ComputedNode) -> Vec2 {
     ((computed.content_size() - computed.size()) * computed.inverse_scale_factor()).max(Vec2::ZERO)
 }
 
@@ -235,5 +349,78 @@ mod tests {
                 .map(|position| position.0),
             Some(Vec2::ZERO)
         );
+    }
+
+    fn computed_node(size: Vec2, content_size: Vec2) -> ComputedNode {
+        ComputedNode {
+            size,
+            content_size,
+            inverse_scale_factor: 1.0,
+            ..default()
+        }
+    }
+
+    #[test]
+    fn scroll_audit_id_exposes_stable_string() {
+        let id = UiScrollAuditId::new("ui_gallery.main");
+
+        assert_eq!(id.as_str(), "ui_gallery.main");
+        assert_eq!(id.to_string(), "ui_gallery.main");
+    }
+
+    #[test]
+    fn target_scroll_offsets_cover_top_middle_and_bottom() {
+        assert_eq!(
+            target_scroll_offset(UiScrollAuditPosition::Top, 120.0),
+            Ok(0.0)
+        );
+        assert_eq!(
+            target_scroll_offset(UiScrollAuditPosition::Middle, 120.0),
+            Ok(60.0)
+        );
+        assert_eq!(
+            target_scroll_offset(UiScrollAuditPosition::Bottom, 120.0),
+            Ok(120.0)
+        );
+    }
+
+    #[test]
+    fn middle_and_bottom_are_unreachable_without_scroll_space() {
+        assert_eq!(
+            target_scroll_offset(UiScrollAuditPosition::Middle, 0.0),
+            Err(UiScrollAuditSetError::Unreachable)
+        );
+        assert_eq!(
+            target_scroll_offset(UiScrollAuditPosition::Bottom, 0.0),
+            Err(UiScrollAuditSetError::Unreachable)
+        );
+        assert_eq!(
+            target_scroll_offset(UiScrollAuditPosition::Top, 0.0),
+            Ok(0.0)
+        );
+    }
+
+    #[test]
+    fn set_scroll_audit_position_updates_scroll_position_from_computed_node() {
+        let computed = computed_node(Vec2::new(320.0, 200.0), Vec2::new(320.0, 500.0));
+        let mut scroll_position = ScrollPosition(Vec2::ZERO);
+
+        let metrics = set_scroll_audit_position(
+            &mut scroll_position,
+            &computed,
+            UiScrollAuditPosition::Bottom,
+        )
+        .expect("bottom should be reachable when content is taller than viewport");
+
+        assert_eq!(scroll_position.y, 300.0);
+        assert_eq!(metrics.offset, 300.0);
+        assert_eq!(metrics.max_offset, 300.0);
+        assert_eq!(metrics.viewport_height, 200.0);
+        assert_eq!(metrics.content_height, 500.0);
+        assert!(scroll_audit_position_reached(
+            &scroll_position,
+            &computed,
+            UiScrollAuditPosition::Bottom
+        ));
     }
 }

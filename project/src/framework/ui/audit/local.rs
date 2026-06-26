@@ -15,6 +15,10 @@ use crate::framework::ui::{
         UiCurrentOwner, UiHeightClass, UiInputMode, UiOrientation, UiOwnerId, UiPanelKind,
         UiPanelRoot, UiViewport, UiWidthClass, stats::UiStats,
     },
+    widgets::{
+        UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition, UiScrollView,
+        scroll_audit_metrics, scroll_audit_position_reached, set_scroll_audit_position,
+    },
 };
 
 const ENV_UI_AUDIT: &str = "MYBEVY_UI_AUDIT";
@@ -26,6 +30,9 @@ const DEFAULT_AUDIT_OUTPUT_ROOT: &str = "../summary/ui-audit";
 
 // These MYBEVY_UI_AUDIT_* variables belong only to the first-stage local one-shot mode.
 const INITIAL_CAPTURE_STATE: &str = "initial";
+const SCROLL_TOP_CAPTURE_STATE: &str = "top";
+const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
+const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
 const STABLE_WAIT_FRAMES: u32 = 5;
 const PANEL_READY_TIMEOUT_FRAMES: u32 = 300;
 const STABLE_TIMEOUT_FRAMES: u32 = 120;
@@ -76,7 +83,11 @@ impl UiAuditScreenRegistry {
         }
     }
 
-    fn resolve(&self, value: &str) -> Option<&UiAuditScreen> {
+    pub(crate) fn register_recipe(&mut self, recipe: UiAuditScreenRecipe) {
+        self.register(recipe.screen);
+    }
+
+    pub(crate) fn resolve(&self, value: &str) -> Option<&UiAuditScreen> {
         let normalized = normalize_screen_alias(value);
         self.screens.iter().find(|screen| {
             screen.canonical == normalized
@@ -93,6 +104,7 @@ pub(crate) struct UiAuditScreen {
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
     pub owner: UiOwnerId,
+    pub recipe: Option<UiAuditRecipe>,
 }
 
 impl UiAuditScreen {
@@ -105,8 +117,87 @@ impl UiAuditScreen {
             canonical,
             aliases,
             owner,
+            recipe: None,
         }
     }
+
+    pub(crate) const fn with_recipe(mut self, recipe: UiAuditRecipe) -> Self {
+        self.recipe = Some(recipe);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UiAuditScreenRecipe {
+    pub screen: UiAuditScreen,
+}
+
+impl UiAuditScreenRecipe {
+    pub(crate) const fn new(screen: UiAuditScreen) -> Self {
+        Self { screen }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UiAuditRecipe {
+    pub captures: &'static [UiAuditCaptureRecipe],
+    pub ready: Option<UiAuditReadyCondition>,
+}
+
+impl UiAuditRecipe {
+    pub(crate) const fn new(captures: &'static [UiAuditCaptureRecipe]) -> Self {
+        Self {
+            captures,
+            ready: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) const fn with_ready(mut self, ready: UiAuditReadyCondition) -> Self {
+        self.ready = Some(ready);
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UiAuditCaptureRecipe {
+    pub state: UiAuditCaptureState,
+    pub scroll: Option<UiAuditScrollRecipe>,
+}
+
+impl UiAuditCaptureRecipe {
+    pub(crate) const fn initial() -> Self {
+        Self {
+            state: UiAuditCaptureState::Initial,
+            scroll: None,
+        }
+    }
+
+    pub(crate) const fn scroll(
+        state: UiAuditCaptureState,
+        target_id: UiScrollAuditId,
+        position: UiScrollAuditPosition,
+    ) -> Self {
+        Self {
+            state,
+            scroll: Some(UiAuditScrollRecipe {
+                target_id,
+                position,
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UiAuditScrollRecipe {
+    pub target_id: UiScrollAuditId,
+    pub position: UiScrollAuditPosition,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UiAuditReadyCondition {
+    OwnerPanel,
 }
 
 #[derive(Clone, Debug, Resource)]
@@ -115,6 +206,7 @@ struct UiAuditConfig {
     screen: Option<String>,
     output_root: PathBuf,
     states: Vec<UiAuditCaptureState>,
+    states_from_env: bool,
     exit_on_finish: bool,
     config_error: Option<UiAuditFailureKind>,
 }
@@ -126,6 +218,7 @@ impl Default for UiAuditConfig {
             screen: None,
             output_root: PathBuf::from(DEFAULT_AUDIT_OUTPUT_ROOT),
             states: vec![UiAuditCaptureState::Initial],
+            states_from_env: false,
             exit_on_finish: false,
             config_error: None,
         }
@@ -149,9 +242,12 @@ impl UiAuditConfig {
             .unwrap_or_else(|| PathBuf::from(DEFAULT_AUDIT_OUTPUT_ROOT).join(run_id.to_string()));
         let exit_on_finish = read_bool(&mut read, ENV_UI_AUDIT_EXIT_ON_FINISH).unwrap_or(false);
 
-        let (states, state_error) = match read(ENV_UI_AUDIT_STATES) {
-            Some(value) => parse_capture_states(&value),
-            None => (vec![UiAuditCaptureState::Initial], None),
+        let (states, states_from_env, state_error) = match read(ENV_UI_AUDIT_STATES) {
+            Some(value) => {
+                let (states, error) = parse_capture_states(&value);
+                (states, true, error)
+            }
+            None => (vec![UiAuditCaptureState::Initial], false, None),
         };
         let config_error = if enabled {
             state_error.or_else(|| {
@@ -168,6 +264,7 @@ impl UiAuditConfig {
             screen,
             output_root,
             states,
+            states_from_env,
             exit_on_finish,
             config_error,
         }
@@ -175,14 +272,20 @@ impl UiAuditConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum UiAuditCaptureState {
+pub(crate) enum UiAuditCaptureState {
     Initial,
+    Top,
+    Middle,
+    Bottom,
 }
 
 impl UiAuditCaptureState {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Initial => INITIAL_CAPTURE_STATE,
+            Self::Top => SCROLL_TOP_CAPTURE_STATE,
+            Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
+            Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
         }
     }
 }
@@ -191,6 +294,8 @@ impl UiAuditCaptureState {
 struct UiAuditRuntime {
     phase: UiAuditPhase,
     plan: Option<UiAuditRunPlan>,
+    capture_index: usize,
+    manifest_entries: Vec<UiAuditManifestEntry>,
     result: Option<UiAuditCaptureResult>,
     exit_requested: bool,
 }
@@ -203,6 +308,7 @@ enum UiAuditPhase {
     WaitForScreen {
         waited_frames: u32,
     },
+    ApplyCaptureState,
     WaitForStable {
         waited_frames: u32,
     },
@@ -210,21 +316,29 @@ enum UiAuditPhase {
     WaitForScreenshot {
         waited_frames: u32,
     },
-    WriteSummary,
+    WriteCapture,
     Finish,
     Failed(UiAuditFailureKind),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct UiAuditRunPlan {
     screen: UiAuditResolvedScreen,
     output_root: PathBuf,
-    screenshot_path: PathBuf,
-    metadata_path: PathBuf,
     manifest_path: PathBuf,
     report_path: PathBuf,
     device: String,
+    ready_condition: Option<UiAuditReadyCondition>,
+    captures: Vec<UiAuditCapturePlan>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct UiAuditCapturePlan {
+    index: usize,
     state: UiAuditCaptureState,
+    screenshot_path: PathBuf,
+    metadata_path: PathBuf,
+    scroll: Option<UiAuditScrollRecipe>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -255,6 +369,8 @@ enum UiAuditFailureKind {
     PanelNotReady,
     UnstableUi,
     ScreenshotFailed,
+    ScrollTargetMissing,
+    ScrollTargetUnreachable,
     ConfigInvalid,
     OutputWriteFailed,
 }
@@ -266,6 +382,8 @@ impl UiAuditFailureKind {
             Self::PanelNotReady => "panel_not_ready",
             Self::UnstableUi => "unstable_ui",
             Self::ScreenshotFailed => "screenshot_failed",
+            Self::ScrollTargetMissing => "scroll_target_missing",
+            Self::ScrollTargetUnreachable => "scroll_target_unreachable",
             Self::ConfigInvalid => "config_invalid",
             Self::OutputWriteFailed => "output_write_failed",
         }
@@ -281,8 +399,9 @@ impl fmt::Display for UiAuditFailureKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum UiAuditPureAction {
     RouteToScreen,
+    ApplyCaptureState,
     RequestScreenshot,
-    WriteSummary,
+    WriteCapture,
     Finish,
     Fail(UiAuditFailureKind),
 }
@@ -313,6 +432,10 @@ fn drive_local_ui_audit(
     stats: Res<UiStats>,
     panels: Query<&UiPanelRoot>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
+    mut scroll_targets: Query<
+        (&UiScrollAuditId, &mut ScrollPosition, &ComputedNode),
+        With<UiScrollView>,
+    >,
     mut route_writer: MessageWriter<UiAuditRouteCommand>,
     mut screenshot_writer: MessageWriter<crate::framework::ui::audit::UiScreenshotCommand>,
     mut screenshot_events: MessageReader<UiScreenshotEvent>,
@@ -324,37 +447,34 @@ fn drive_local_ui_audit(
     }
 
     if runtime.plan.is_none() {
-        let Some(plan) = prepare_runtime_plan(&config, &registry, &primary_window) else {
-            let failure = config
-                .config_error
-                .unwrap_or(UiAuditFailureKind::ScreenNotFound);
-            let detail = if config.config_error.is_some() {
-                Some("invalid local audit configuration".to_owned())
-            } else {
-                config
-                    .screen
-                    .as_ref()
-                    .map(|screen| format!("screen alias '{screen}' was not registered"))
-            };
-            if let Err(error) =
-                write_planless_failure_outputs(&config, &primary_window, failure, detail.as_deref())
-            {
-                error!("ui audit failure output write failed: {error}");
+        let plan = match prepare_runtime_plan(&config, &registry, &primary_window) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let failure = error.failure;
+                let detail = Some(error.detail);
+                if let Err(error) = write_planless_failure_outputs(
+                    &config,
+                    &primary_window,
+                    failure,
+                    detail.as_deref(),
+                ) {
+                    error!("ui audit failure output write failed: {error}");
+                }
+                runtime.phase = UiAuditPhase::Failed(failure);
+                runtime.result = Some(UiAuditCaptureResult {
+                    status: UiAuditRunStatus::Failed,
+                    failure: Some(failure),
+                    detail,
+                });
+                request_exit_if_needed(&mut runtime, &config, &mut app_exit);
+                return;
             }
-            runtime.phase = UiAuditPhase::Failed(failure);
-            runtime.result = Some(UiAuditCaptureResult {
-                status: UiAuditRunStatus::Failed,
-                failure: Some(failure),
-                detail,
-            });
-            request_exit_if_needed(&mut runtime, &config, &mut app_exit);
-            return;
         };
         runtime.plan = Some(plan);
     }
 
     let screenshot_status =
-        consume_screenshot_status(&mut screenshot_events, runtime.plan.as_ref());
+        consume_screenshot_status(&mut screenshot_events, current_capture_plan(&runtime));
     let target_panel_ready = runtime
         .plan
         .as_ref()
@@ -378,33 +498,99 @@ fn drive_local_ui_audit(
                 });
             }
         }
+        Some(UiAuditPureAction::ApplyCaptureState) => {
+            let Some(capture) = current_capture_plan(&runtime).cloned() else {
+                let failure = UiAuditFailureKind::ConfigInvalid;
+                runtime.phase = UiAuditPhase::Failed(failure);
+                runtime.result = Some(UiAuditCaptureResult {
+                    status: UiAuditRunStatus::Failed,
+                    failure: Some(failure),
+                    detail: Some("no capture plan is available".to_owned()),
+                });
+                request_exit_if_needed(&mut runtime, &config, &mut app_exit);
+                return;
+            };
+
+            match apply_capture_state(&capture, &mut scroll_targets) {
+                Ok(()) => {}
+                Err((failure, detail)) => {
+                    runtime.phase = UiAuditPhase::Failed(failure);
+                    runtime.result = Some(UiAuditCaptureResult {
+                        status: UiAuditRunStatus::Failed,
+                        failure: Some(failure),
+                        detail: Some(detail.clone()),
+                    });
+                    if let Some(plan) = runtime.plan.as_ref() {
+                        if let Err(error) = write_failure_outputs(
+                            plan,
+                            &runtime.manifest_entries,
+                            &capture,
+                            failure,
+                            Some(&detail),
+                        ) {
+                            error!("ui audit failure output write failed: {error}");
+                        }
+                    }
+                    request_exit_if_needed(&mut runtime, &config, &mut app_exit);
+                }
+            }
+        }
         Some(UiAuditPureAction::RequestScreenshot) => {
-            if let Some(plan) = runtime.plan.as_ref() {
+            if let (Some(plan), Some(capture)) =
+                (runtime.plan.as_ref(), current_capture_plan(&runtime))
+            {
                 screenshot_writer.write(
                     crate::framework::ui::audit::UiScreenshotCommand::Capture {
-                        path: plan.screenshot_path.clone(),
-                        label: format!("{}_{}", plan.screen.canonical, plan.state.as_str()),
+                        path: capture.screenshot_path.clone(),
+                        label: format!("{}_{}", plan.screen.canonical, capture.state.as_str()),
                     },
                 );
             }
         }
-        Some(UiAuditPureAction::WriteSummary) => {
-            if let Some(plan) = runtime.plan.as_ref() {
+        Some(UiAuditPureAction::WriteCapture) => {
+            if let (Some(plan), Some(capture)) = (
+                runtime.plan.as_ref().cloned(),
+                current_capture_plan(&runtime).cloned(),
+            ) {
+                let scroll = capture_scroll_metadata(&capture, &mut scroll_targets);
                 let metadata = build_capture_metadata(
-                    plan,
+                    &plan,
+                    &capture,
+                    scroll.as_ref(),
                     &viewport,
                     &stats,
                     &current_owner,
                     &panels,
                     primary_window.single().ok(),
                 );
-                match write_success_outputs(plan, &metadata) {
+                match write_capture_metadata(&capture, &metadata) {
                     Ok(()) => {
-                        runtime.result = Some(UiAuditCaptureResult {
-                            status: UiAuditRunStatus::Passed,
-                            failure: None,
-                            detail: None,
-                        });
+                        runtime
+                            .manifest_entries
+                            .push(UiAuditManifestEntry::success(&plan, &capture));
+                        runtime.capture_index = runtime.capture_index.saturating_add(1);
+                        if runtime.capture_index >= plan.captures.len() {
+                            let manifest = UiAuditManifest::new(runtime.manifest_entries.clone());
+                            if let Err(error) = write_run_outputs(&plan, &manifest) {
+                                error!("ui audit output write failed: {error}");
+                                let failure = UiAuditFailureKind::OutputWriteFailed;
+                                runtime.phase = UiAuditPhase::Failed(failure);
+                                runtime.result = Some(UiAuditCaptureResult {
+                                    status: UiAuditRunStatus::Failed,
+                                    failure: Some(failure),
+                                    detail: Some(error),
+                                });
+                                request_exit_if_needed(&mut runtime, &config, &mut app_exit);
+                            } else {
+                                runtime.result = Some(UiAuditCaptureResult {
+                                    status: UiAuditRunStatus::Passed,
+                                    failure: None,
+                                    detail: None,
+                                });
+                            }
+                        } else {
+                            runtime.phase = UiAuditPhase::ApplyCaptureState;
+                        }
                     }
                     Err(error) => {
                         error!("ui audit output write failed: {error}");
@@ -425,14 +611,27 @@ fn drive_local_ui_audit(
             request_exit_if_needed(&mut runtime, &config, &mut app_exit);
         }
         Some(UiAuditPureAction::Fail(failure)) => {
-            let detail = failure_detail(failure, runtime.plan.as_ref(), screenshot_status);
+            let detail = failure_detail(
+                failure,
+                runtime.plan.as_ref(),
+                current_capture_plan(&runtime),
+                screenshot_status,
+            );
             runtime.result = Some(UiAuditCaptureResult {
                 status: UiAuditRunStatus::Failed,
                 failure: Some(failure),
                 detail: detail.clone(),
             });
-            if let Some(plan) = runtime.plan.as_ref() {
-                if let Err(error) = write_failure_outputs(plan, failure, detail.as_deref()) {
+            if let (Some(plan), Some(capture)) =
+                (runtime.plan.as_ref(), current_capture_plan(&runtime))
+            {
+                if let Err(error) = write_failure_outputs(
+                    plan,
+                    &runtime.manifest_entries,
+                    capture,
+                    failure,
+                    detail.as_deref(),
+                ) {
                     error!("ui audit failure output write failed: {error}");
                 }
             }
@@ -440,6 +639,13 @@ fn drive_local_ui_audit(
         }
         None => {}
     }
+}
+
+fn current_capture_plan(runtime: &UiAuditRuntime) -> Option<&UiAuditCapturePlan> {
+    runtime
+        .plan
+        .as_ref()
+        .and_then(|plan| plan.captures.get(runtime.capture_index))
 }
 
 fn request_exit_if_needed(
@@ -453,33 +659,56 @@ fn request_exit_if_needed(
     }
 }
 
+struct UiAuditPlanError {
+    failure: UiAuditFailureKind,
+    detail: String,
+}
+
 fn prepare_runtime_plan(
     config: &UiAuditConfig,
     registry: &UiAuditScreenRegistry,
     primary_window: &Query<&Window, With<PrimaryWindow>>,
-) -> Option<UiAuditRunPlan> {
-    if config.config_error.is_some() {
-        return None;
+) -> Result<UiAuditRunPlan, UiAuditPlanError> {
+    if let Some(failure) = config.config_error {
+        return Err(UiAuditPlanError {
+            failure,
+            detail: "invalid local audit configuration".to_owned(),
+        });
     }
 
-    let requested = config.screen.as_ref()?;
-    let screen = registry.resolve(requested)?;
-    let state = *config.states.first()?;
+    let requested = config.screen.as_ref().ok_or_else(|| UiAuditPlanError {
+        failure: UiAuditFailureKind::ConfigInvalid,
+        detail: "screen alias is required when local UI audit is enabled".to_owned(),
+    })?;
+    let screen = registry
+        .resolve(requested)
+        .ok_or_else(|| UiAuditPlanError {
+            failure: UiAuditFailureKind::ScreenNotFound,
+            detail: format!("screen alias '{requested}' was not registered"),
+        })?;
     let device = primary_window
         .single()
         .ok()
         .map(device_label_from_window)
         .unwrap_or_else(|| "local".to_owned());
-
-    Some(plan_audit_paths(
-        &config.output_root,
-        UiAuditResolvedScreen {
-            requested: requested.clone(),
-            canonical: screen.canonical.to_owned(),
-            owner: screen.owner,
+    let resolved = UiAuditResolvedScreen {
+        requested: requested.clone(),
+        canonical: screen.canonical.to_owned(),
+        owner: screen.owner,
+    };
+    let captures = resolve_capture_plans(&config.states, config.states_from_env, screen).map_err(
+        |detail| UiAuditPlanError {
+            failure: UiAuditFailureKind::ConfigInvalid,
+            detail,
         },
+    )?;
+
+    Ok(plan_audit_paths(
+        &config.output_root,
+        resolved,
         &device,
-        state,
+        screen.recipe.and_then(|recipe| recipe.ready),
+        &captures,
     ))
 }
 
@@ -487,31 +716,123 @@ fn plan_audit_paths(
     output_root: &Path,
     screen: UiAuditResolvedScreen,
     device: &str,
-    state: UiAuditCaptureState,
+    ready_condition: Option<UiAuditReadyCondition>,
+    captures: &[UiAuditCaptureRecipe],
 ) -> UiAuditRunPlan {
     let screen_segment = sanitize_filename_segment(&screen.canonical);
     let device_segment = sanitize_filename_segment(device);
-    let state_segment = sanitize_filename_segment(state.as_str());
-    let file_stem = format!("00-{state_segment}");
+    let capture_plans = captures
+        .iter()
+        .enumerate()
+        .map(|(index, capture)| {
+            plan_capture_paths(
+                output_root,
+                &screen_segment,
+                &device_segment,
+                index,
+                *capture,
+            )
+        })
+        .collect();
 
     UiAuditRunPlan {
         screen,
         output_root: output_root.to_path_buf(),
-        screenshot_path: output_root
-            .join("screenshots")
-            .join(&screen_segment)
-            .join(&device_segment)
-            .join(format!("{file_stem}.png")),
-        metadata_path: output_root
-            .join("metadata")
-            .join(&screen_segment)
-            .join(&device_segment)
-            .join(format!("{file_stem}.json")),
         manifest_path: output_root.join("manifest.json"),
         report_path: output_root.join("report.md"),
         device: device_segment,
-        state,
+        ready_condition,
+        captures: capture_plans,
     }
+}
+
+fn plan_capture_paths(
+    output_root: &Path,
+    screen_segment: &str,
+    device_segment: &str,
+    index: usize,
+    capture: UiAuditCaptureRecipe,
+) -> UiAuditCapturePlan {
+    let state_segment = sanitize_filename_segment(capture.state.as_str());
+    let file_stem = format!("{index:02}-{state_segment}");
+
+    UiAuditCapturePlan {
+        index,
+        state: capture.state,
+        screenshot_path: output_root
+            .join("screenshots")
+            .join(screen_segment)
+            .join(device_segment)
+            .join(format!("{file_stem}.png")),
+        metadata_path: output_root
+            .join("metadata")
+            .join(screen_segment)
+            .join(device_segment)
+            .join(format!("{file_stem}.json")),
+        scroll: capture.scroll,
+    }
+}
+
+fn resolve_capture_plans(
+    requested_states: &[UiAuditCaptureState],
+    states_from_env: bool,
+    screen: &UiAuditScreen,
+) -> Result<Vec<UiAuditCaptureRecipe>, String> {
+    let Some(recipe) = screen.recipe else {
+        if states_from_env
+            && requested_states
+                .iter()
+                .any(|state| *state != UiAuditCaptureState::Initial)
+        {
+            return Err(format!(
+                "screen '{}' has no recipe for requested capture states: {}",
+                screen.canonical,
+                join_capture_state_names(requested_states)
+            ));
+        }
+        return Ok(vec![UiAuditCaptureRecipe::initial()]);
+    };
+
+    if !states_from_env {
+        if recipe.captures.is_empty() {
+            return Err(format!(
+                "screen '{}' recipe does not declare any capture states",
+                screen.canonical
+            ));
+        }
+        return Ok(recipe.captures.to_vec());
+    }
+
+    let mut captures = Vec::with_capacity(requested_states.len());
+    for state in requested_states {
+        if *state == UiAuditCaptureState::Initial {
+            captures.push(UiAuditCaptureRecipe::initial());
+            continue;
+        }
+        let Some(capture) = recipe
+            .captures
+            .iter()
+            .find(|capture| capture.state == *state)
+            .copied()
+        else {
+            return Err(format!(
+                "screen '{}' recipe does not declare capture state '{}'",
+                screen.canonical,
+                state.as_str()
+            ));
+        };
+        captures.push(capture);
+    }
+
+    Ok(captures)
+}
+
+fn join_capture_state_names(states: &[UiAuditCaptureState]) -> String {
+    states
+        .iter()
+        .map(|state| state.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn advance_audit_phase(
@@ -526,7 +847,7 @@ fn advance_audit_phase(
         UiAuditPhase::EnterScreen => (UiAuditPhase::WaitForScreen { waited_frames: 0 }, None),
         UiAuditPhase::WaitForScreen { waited_frames } => {
             if input.target_panel_ready {
-                (UiAuditPhase::WaitForStable { waited_frames: 0 }, None)
+                (UiAuditPhase::ApplyCaptureState, None)
             } else if waited_frames >= PANEL_READY_TIMEOUT_FRAMES {
                 (
                     UiAuditPhase::Failed(UiAuditFailureKind::PanelNotReady),
@@ -541,6 +862,10 @@ fn advance_audit_phase(
                 )
             }
         }
+        UiAuditPhase::ApplyCaptureState => (
+            UiAuditPhase::WaitForStable { waited_frames: 0 },
+            Some(UiAuditPureAction::ApplyCaptureState),
+        ),
         UiAuditPhase::WaitForStable { waited_frames } => {
             if !input.target_panel_ready {
                 (
@@ -568,8 +893,8 @@ fn advance_audit_phase(
         }
         UiAuditPhase::RequestScreenshot => match input.screenshot_status {
             UiAuditScreenshotStatus::Saved => (
-                UiAuditPhase::WriteSummary,
-                Some(UiAuditPureAction::WriteSummary),
+                UiAuditPhase::WriteCapture,
+                Some(UiAuditPureAction::WriteCapture),
             ),
             UiAuditScreenshotStatus::Failed => (
                 UiAuditPhase::Failed(UiAuditFailureKind::ScreenshotFailed),
@@ -583,8 +908,8 @@ fn advance_audit_phase(
         },
         UiAuditPhase::WaitForScreenshot { waited_frames } => match input.screenshot_status {
             UiAuditScreenshotStatus::Saved => (
-                UiAuditPhase::WriteSummary,
-                Some(UiAuditPureAction::WriteSummary),
+                UiAuditPhase::WriteCapture,
+                Some(UiAuditPureAction::WriteCapture),
             ),
             UiAuditScreenshotStatus::Failed => (
                 UiAuditPhase::Failed(UiAuditFailureKind::ScreenshotFailed),
@@ -610,7 +935,7 @@ fn advance_audit_phase(
                 }
             }
         },
-        UiAuditPhase::WriteSummary => (UiAuditPhase::Finish, Some(UiAuditPureAction::Finish)),
+        UiAuditPhase::WriteCapture => (UiAuditPhase::Finish, Some(UiAuditPureAction::Finish)),
         UiAuditPhase::Finish => (UiAuditPhase::Finish, None),
         UiAuditPhase::Failed(failure) => (UiAuditPhase::Failed(failure), None),
     }
@@ -618,18 +943,18 @@ fn advance_audit_phase(
 
 fn consume_screenshot_status(
     screenshot_events: &mut MessageReader<UiScreenshotEvent>,
-    plan: Option<&UiAuditRunPlan>,
+    capture: Option<&UiAuditCapturePlan>,
 ) -> UiAuditScreenshotStatus {
-    let Some(plan) = plan else {
+    let Some(capture) = capture else {
         return UiAuditScreenshotStatus::Pending;
     };
     let mut status = UiAuditScreenshotStatus::Pending;
     for event in screenshot_events.read() {
         match event {
-            UiScreenshotEvent::Saved(saved) if saved.request.path == plan.screenshot_path => {
+            UiScreenshotEvent::Saved(saved) if saved.request.path == capture.screenshot_path => {
                 status = UiAuditScreenshotStatus::Saved;
             }
-            UiScreenshotEvent::Failed(failed) if failed.request.path == plan.screenshot_path => {
+            UiScreenshotEvent::Failed(failed) if failed.request.path == capture.screenshot_path => {
                 status = UiAuditScreenshotStatus::Failed;
             }
             _ => {}
@@ -642,9 +967,73 @@ fn target_owner_panel_ready(owner: UiOwnerId, panels: &Query<&UiPanelRoot>) -> b
     panels.iter().any(|panel| panel.owner == Some(owner))
 }
 
+fn apply_capture_state(
+    capture: &UiAuditCapturePlan,
+    scroll_targets: &mut Query<
+        (&UiScrollAuditId, &mut ScrollPosition, &ComputedNode),
+        With<UiScrollView>,
+    >,
+) -> Result<(), (UiAuditFailureKind, String)> {
+    let Some(scroll) = capture.scroll else {
+        return Ok(());
+    };
+
+    for (id, mut position, computed) in scroll_targets.iter_mut() {
+        if *id != scroll.target_id {
+            continue;
+        }
+        return set_scroll_audit_position(&mut position, computed, scroll.position)
+            .and_then(|_| {
+                scroll_audit_position_reached(&position, computed, scroll.position)
+                    .then_some(())
+                    .ok_or(crate::framework::ui::widgets::UiScrollAuditSetError::Unreachable)
+            })
+            .map_err(|_| {
+                (
+                    UiAuditFailureKind::ScrollTargetUnreachable,
+                    format!(
+                        "scroll target '{}' cannot reach '{}' for capture state '{}'",
+                        scroll.target_id,
+                        scroll.position.as_str(),
+                        capture.state.as_str()
+                    ),
+                )
+            });
+    }
+
+    Err((
+        UiAuditFailureKind::ScrollTargetMissing,
+        format!(
+            "scroll target '{}' was not found for capture state '{}'",
+            scroll.target_id,
+            capture.state.as_str()
+        ),
+    ))
+}
+
+fn capture_scroll_metadata(
+    capture: &UiAuditCapturePlan,
+    scroll_targets: &mut Query<
+        (&UiScrollAuditId, &mut ScrollPosition, &ComputedNode),
+        With<UiScrollView>,
+    >,
+) -> Option<UiAuditScrollMetadata> {
+    let scroll = capture.scroll?;
+    scroll_targets
+        .iter_mut()
+        .find(|(id, _, _)| **id == scroll.target_id)
+        .map(|(id, position, computed)| {
+            UiAuditScrollMetadata::from_metrics(
+                *id,
+                scroll_audit_metrics(&position, computed, scroll.position),
+            )
+        })
+}
+
 fn failure_detail(
     failure: UiAuditFailureKind,
     plan: Option<&UiAuditRunPlan>,
+    capture: Option<&UiAuditCapturePlan>,
     screenshot_status: UiAuditScreenshotStatus,
 ) -> Option<String> {
     match failure {
@@ -663,6 +1052,25 @@ fn failure_detail(
         UiAuditFailureKind::ScreenshotFailed => {
             Some(format!("screenshot status ended as {screenshot_status:?}"))
         }
+        UiAuditFailureKind::ScrollTargetMissing => capture.and_then(|capture| {
+            capture.scroll.map(|scroll| {
+                format!(
+                    "scroll target '{}' was not found for capture state '{}'",
+                    scroll.target_id,
+                    capture.state.as_str()
+                )
+            })
+        }),
+        UiAuditFailureKind::ScrollTargetUnreachable => capture.and_then(|capture| {
+            capture.scroll.map(|scroll| {
+                format!(
+                    "scroll target '{}' cannot reach '{}' for capture state '{}'",
+                    scroll.target_id,
+                    scroll.position.as_str(),
+                    capture.state.as_str()
+                )
+            })
+        }),
         UiAuditFailureKind::ScreenNotFound
         | UiAuditFailureKind::ConfigInvalid
         | UiAuditFailureKind::OutputWriteFailed => None,
@@ -670,27 +1078,42 @@ fn failure_detail(
 }
 
 fn parse_capture_states(value: &str) -> (Vec<UiAuditCaptureState>, Option<UiAuditFailureKind>) {
-    let states: Vec<_> = value
+    let raw_states: Vec<_> = value
         .split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .collect();
-    if states.is_empty() {
+    if raw_states.is_empty() {
         return (
             vec![UiAuditCaptureState::Initial],
             Some(UiAuditFailureKind::ConfigInvalid),
         );
     }
-    if states
-        .iter()
-        .all(|state| state.eq_ignore_ascii_case(INITIAL_CAPTURE_STATE))
-    {
-        (vec![UiAuditCaptureState::Initial], None)
+
+    let mut states = Vec::with_capacity(raw_states.len());
+    for state in raw_states {
+        let Some(parsed) = parse_capture_state(state) else {
+            return (
+                vec![UiAuditCaptureState::Initial],
+                Some(UiAuditFailureKind::ConfigInvalid),
+            );
+        };
+        states.push(parsed);
+    }
+    (states, None)
+}
+
+fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
+    if value.eq_ignore_ascii_case(INITIAL_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Initial)
+    } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Top)
+    } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Middle)
+    } else if value.eq_ignore_ascii_case(SCROLL_BOTTOM_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Bottom)
     } else {
-        (
-            vec![UiAuditCaptureState::Initial],
-            Some(UiAuditFailureKind::ConfigInvalid),
-        )
+        None
     }
 }
 
@@ -712,21 +1135,31 @@ fn rounded_dimension(value: f32) -> u32 {
     value.round().max(0.0) as u32
 }
 
-fn write_success_outputs(plan: &UiAuditRunPlan, metadata: &UiAuditMetadata) -> Result<(), String> {
-    write_json_file(&plan.metadata_path, metadata)?;
-    let manifest = UiAuditManifest::success(plan);
+fn write_capture_metadata(
+    capture: &UiAuditCapturePlan,
+    metadata: &UiAuditMetadata,
+) -> Result<(), String> {
+    write_json_file(&capture.metadata_path, metadata)
+}
+
+fn write_run_outputs(plan: &UiAuditRunPlan, manifest: &UiAuditManifest) -> Result<(), String> {
     write_json_file(&plan.manifest_path, &manifest)?;
     write_report(plan, &manifest)
 }
 
 fn write_failure_outputs(
     plan: &UiAuditRunPlan,
+    completed_entries: &[UiAuditManifestEntry],
+    capture: &UiAuditCapturePlan,
     failure: UiAuditFailureKind,
     detail: Option<&str>,
 ) -> Result<(), String> {
-    let manifest = UiAuditManifest::failure(plan, failure, detail);
-    write_json_file(&plan.manifest_path, &manifest)?;
-    write_report(plan, &manifest)
+    let mut entries = completed_entries.to_vec();
+    entries.push(UiAuditManifestEntry::failure(
+        plan, capture, failure, detail,
+    ));
+    let manifest = UiAuditManifest::new(entries);
+    write_run_outputs(plan, &manifest)
 }
 
 fn write_planless_failure_outputs(
@@ -745,6 +1178,7 @@ fn write_planless_failure_outputs(
         .ok()
         .map(device_label_from_window)
         .unwrap_or_else(|| "local".to_owned());
+    let captures = [UiAuditCaptureRecipe::initial()];
     let plan = plan_audit_paths(
         &config.output_root,
         UiAuditResolvedScreen {
@@ -753,10 +1187,15 @@ fn write_planless_failure_outputs(
             owner: UiOwnerId::new("unknown"),
         },
         &device,
-        UiAuditCaptureState::Initial,
+        None,
+        &captures,
     );
 
-    write_failure_outputs(&plan, failure, detail)
+    let capture = plan
+        .captures
+        .first()
+        .ok_or_else(|| "planless failure capture plan missing".to_owned())?;
+    write_failure_outputs(&plan, &[], capture, failure, detail)
 }
 
 fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
@@ -785,14 +1224,12 @@ fn write_report(plan: &UiAuditRunPlan, manifest: &UiAuditManifest) -> Result<(),
 
 fn build_report_markdown(plan: &UiAuditRunPlan, manifest: &UiAuditManifest) -> String {
     let entry = &manifest.entries[0];
-    let screenshot_link = markdown_relative_path(&plan.output_root, &plan.screenshot_path);
-    let metadata_link = markdown_relative_path(&plan.output_root, &plan.metadata_path);
+    let display_root = absolute_display_path(&plan.output_root);
     let mut report = String::new();
     report.push_str("# UI Audit Report\n\n");
     report.push_str(&format!("- Screen: `{}`\n", entry.screen));
     report.push_str(&format!("- Device: `{}`\n", entry.device));
-    report.push_str(&format!("- State: `{}`\n", entry.state));
-    report.push_str(&format!("- Status: `{}`\n", entry.status_string()));
+    report.push_str(&format!("- Status: `{}`\n", manifest.status_string()));
     if let Some(failure) = &entry.failure {
         report.push_str(&format!("- Failure: `{failure}`\n"));
     }
@@ -802,13 +1239,18 @@ fn build_report_markdown(plan: &UiAuditRunPlan, manifest: &UiAuditManifest) -> S
     report.push('\n');
     report.push_str("| State | Status | Screenshot | Metadata |\n");
     report.push_str("| --- | --- | --- | --- |\n");
-    report.push_str(&format!(
-        "| `{}` | `{}` | [screenshot]({}) | [metadata]({}) |\n",
-        entry.state,
-        entry.status_string(),
-        screenshot_link,
-        metadata_link
-    ));
+    for entry in &manifest.entries {
+        let screenshot_link =
+            markdown_relative_path(&display_root, Path::new(&entry.screenshot_path));
+        let metadata_link = markdown_relative_path(&display_root, Path::new(&entry.metadata_path));
+        report.push_str(&format!(
+            "| `{}` | `{}` | [screenshot]({}) | [metadata]({}) |\n",
+            entry.state,
+            entry.status_string(),
+            screenshot_link,
+            metadata_link
+        ));
+    }
     report
 }
 
@@ -821,6 +1263,8 @@ fn markdown_relative_path(root: &Path, path: &Path) -> String {
 
 fn build_capture_metadata(
     plan: &UiAuditRunPlan,
+    capture: &UiAuditCapturePlan,
+    scroll: Option<&UiAuditScrollMetadata>,
     viewport: &UiViewport,
     stats: &UiStats,
     current_owner: &UiCurrentOwner,
@@ -830,11 +1274,12 @@ fn build_capture_metadata(
     UiAuditMetadata {
         screen: plan.screen.canonical.clone(),
         requested_screen: plan.screen.requested.clone(),
-        state: plan.state.as_str().to_owned(),
+        state: capture.state.as_str().to_owned(),
         device: plan.device.clone(),
-        screenshot_path: absolute_display_path(&plan.screenshot_path)
+        screenshot_path: absolute_display_path(&capture.screenshot_path)
             .to_string_lossy()
             .into_owned(),
+        scroll: scroll.cloned(),
         viewport: UiAuditViewportMetadata::from(*viewport),
         current_page: current_owner.owner.map(|owner| owner.as_str().to_owned()),
         panels: panels.iter().map(UiAuditPanelMetadata::from).collect(),
@@ -850,11 +1295,35 @@ struct UiAuditMetadata {
     state: String,
     device: String,
     screenshot_path: String,
+    scroll: Option<UiAuditScrollMetadata>,
     viewport: UiAuditViewportMetadata,
     current_page: Option<String>,
     panels: Vec<UiAuditPanelMetadata>,
     window: Option<UiAuditWindowMetadata>,
     stats: UiAuditStatsMetadata,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+struct UiAuditScrollMetadata {
+    target_id: String,
+    offset: f32,
+    max_offset: f32,
+    viewport_height: f32,
+    content_height: f32,
+    position: String,
+}
+
+impl UiAuditScrollMetadata {
+    fn from_metrics(target_id: UiScrollAuditId, metrics: UiScrollAuditMetrics) -> Self {
+        Self {
+            target_id: target_id.as_str().to_owned(),
+            offset: metrics.offset,
+            max_offset: metrics.max_offset,
+            viewport_height: metrics.viewport_height,
+            content_height: metrics.content_height,
+            position: metrics.position.as_str().to_owned(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq)]
@@ -971,45 +1440,22 @@ struct UiAuditManifest {
 }
 
 impl UiAuditManifest {
-    fn success(plan: &UiAuditRunPlan) -> Self {
+    fn new(entries: Vec<UiAuditManifestEntry>) -> Self {
         Self {
             mode: "local_once",
-            entries: vec![UiAuditManifestEntry {
-                screen: plan.screen.canonical.clone(),
-                requested_screen: plan.screen.requested.clone(),
-                device: plan.device.clone(),
-                state: plan.state.as_str().to_owned(),
-                screenshot_path: absolute_display_path(&plan.screenshot_path)
-                    .to_string_lossy()
-                    .into_owned(),
-                metadata_path: absolute_display_path(&plan.metadata_path)
-                    .to_string_lossy()
-                    .into_owned(),
-                status: UiAuditRunStatus::Passed,
-                failure: None,
-                detail: None,
-            }],
+            entries,
         }
     }
 
-    fn failure(plan: &UiAuditRunPlan, failure: UiAuditFailureKind, detail: Option<&str>) -> Self {
-        Self {
-            mode: "local_once",
-            entries: vec![UiAuditManifestEntry {
-                screen: plan.screen.canonical.clone(),
-                requested_screen: plan.screen.requested.clone(),
-                device: plan.device.clone(),
-                state: plan.state.as_str().to_owned(),
-                screenshot_path: absolute_display_path(&plan.screenshot_path)
-                    .to_string_lossy()
-                    .into_owned(),
-                metadata_path: absolute_display_path(&plan.metadata_path)
-                    .to_string_lossy()
-                    .into_owned(),
-                status: UiAuditRunStatus::Failed,
-                failure: Some(failure.as_str().to_owned()),
-                detail: detail.map(str::to_owned),
-            }],
+    fn status_string(&self) -> &'static str {
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.status == UiAuditRunStatus::Failed)
+        {
+            "failed"
+        } else {
+            "passed"
         }
     }
 }
@@ -1022,12 +1468,63 @@ struct UiAuditManifestEntry {
     state: String,
     screenshot_path: String,
     metadata_path: String,
+    scroll_target_id: Option<String>,
+    scroll_position: Option<String>,
     status: UiAuditRunStatus,
     failure: Option<String>,
     detail: Option<String>,
 }
 
 impl UiAuditManifestEntry {
+    fn success(plan: &UiAuditRunPlan, capture: &UiAuditCapturePlan) -> Self {
+        Self::new(plan, capture, UiAuditRunStatus::Passed, None, None)
+    }
+
+    fn failure(
+        plan: &UiAuditRunPlan,
+        capture: &UiAuditCapturePlan,
+        failure: UiAuditFailureKind,
+        detail: Option<&str>,
+    ) -> Self {
+        Self::new(
+            plan,
+            capture,
+            UiAuditRunStatus::Failed,
+            Some(failure.as_str()),
+            detail,
+        )
+    }
+
+    fn new(
+        plan: &UiAuditRunPlan,
+        capture: &UiAuditCapturePlan,
+        status: UiAuditRunStatus,
+        failure: Option<&str>,
+        detail: Option<&str>,
+    ) -> Self {
+        Self {
+            screen: plan.screen.canonical.clone(),
+            requested_screen: plan.screen.requested.clone(),
+            device: plan.device.clone(),
+            state: capture.state.as_str().to_owned(),
+            screenshot_path: absolute_display_path(&capture.screenshot_path)
+                .to_string_lossy()
+                .into_owned(),
+            metadata_path: absolute_display_path(&capture.metadata_path)
+                .to_string_lossy()
+                .into_owned(),
+            scroll_target_id: capture
+                .scroll
+                .map(|scroll| scroll.target_id.as_str().to_owned()),
+            scroll_position: capture
+                .scroll
+                .map(|scroll| scroll.position.as_str().to_owned()),
+            status,
+            failure: failure.map(str::to_owned),
+            detail: detail.map(str::to_owned),
+        }
+    }
+
     const fn status_string(&self) -> &'static str {
         match self.status {
             UiAuditRunStatus::Passed => "passed",
@@ -1109,6 +1606,38 @@ mod tests {
         )
     }
 
+    const TEST_SCROLL_ID: UiScrollAuditId = UiScrollAuditId::new("test.scroll");
+    const TEST_SCROLL_CAPTURES: &[UiAuditCaptureRecipe] = &[
+        UiAuditCaptureRecipe::scroll(
+            UiAuditCaptureState::Top,
+            TEST_SCROLL_ID,
+            UiScrollAuditPosition::Top,
+        ),
+        UiAuditCaptureRecipe::scroll(
+            UiAuditCaptureState::Middle,
+            TEST_SCROLL_ID,
+            UiScrollAuditPosition::Middle,
+        ),
+        UiAuditCaptureRecipe::scroll(
+            UiAuditCaptureState::Bottom,
+            TEST_SCROLL_ID,
+            UiScrollAuditPosition::Bottom,
+        ),
+    ];
+    const TEST_TOP_ONLY_CAPTURES: &[UiAuditCaptureRecipe] = &[UiAuditCaptureRecipe::scroll(
+        UiAuditCaptureState::Top,
+        TEST_SCROLL_ID,
+        UiScrollAuditPosition::Top,
+    )];
+
+    fn resolved_test_screen() -> UiAuditResolvedScreen {
+        UiAuditResolvedScreen {
+            requested: "ui-gallery".to_owned(),
+            canonical: "ui_gallery".to_owned(),
+            owner: UiOwnerId::new("ui_gallery"),
+        }
+    }
+
     #[test]
     fn config_defaults_to_disabled_local_once_mode() {
         let config = UiAuditConfig::from_env_reader(env_reader(&[]), 100);
@@ -1143,17 +1672,41 @@ mod tests {
             PathBuf::from("../summary/ui-audit/custom")
         );
         assert_eq!(config.states, vec![UiAuditCaptureState::Initial]);
+        assert!(config.states_from_env);
         assert!(config.exit_on_finish);
         assert!(config.config_error.is_none());
     }
 
     #[test]
-    fn config_rejects_unsupported_capture_states_for_stage_three() {
+    fn config_accepts_scroll_capture_states() {
         let config = UiAuditConfig::from_env_reader(
             env_reader(&[
                 (ENV_UI_AUDIT, "1"),
                 (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
-                (ENV_UI_AUDIT_STATES, "initial,bottom"),
+                (ENV_UI_AUDIT_STATES, "top,middle,bottom"),
+            ]),
+            100,
+        );
+
+        assert_eq!(
+            config.states,
+            vec![
+                UiAuditCaptureState::Top,
+                UiAuditCaptureState::Middle,
+                UiAuditCaptureState::Bottom
+            ]
+        );
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn config_rejects_unknown_capture_states() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "top,unknown"),
             ]),
             100,
         );
@@ -1183,6 +1736,14 @@ mod tests {
             UiAuditFailureKind::ScreenshotFailed.as_str(),
             "screenshot_failed"
         );
+        assert_eq!(
+            UiAuditFailureKind::ScrollTargetMissing.as_str(),
+            "scroll_target_missing"
+        );
+        assert_eq!(
+            UiAuditFailureKind::ScrollTargetUnreachable.as_str(),
+            "scroll_target_unreachable"
+        );
     }
 
     #[test]
@@ -1210,28 +1771,48 @@ mod tests {
     }
 
     #[test]
-    fn path_plan_uses_stage_three_layout() {
+    fn path_plan_uses_multi_capture_layout() {
+        let captures = [
+            UiAuditCaptureRecipe::scroll(
+                UiAuditCaptureState::Top,
+                TEST_SCROLL_ID,
+                UiScrollAuditPosition::Top,
+            ),
+            UiAuditCaptureRecipe::scroll(
+                UiAuditCaptureState::Middle,
+                TEST_SCROLL_ID,
+                UiScrollAuditPosition::Middle,
+            ),
+            UiAuditCaptureRecipe::scroll(
+                UiAuditCaptureState::Bottom,
+                TEST_SCROLL_ID,
+                UiScrollAuditPosition::Bottom,
+            ),
+        ];
         let plan = plan_audit_paths(
             Path::new("../summary/ui-audit/run-1"),
-            UiAuditResolvedScreen {
-                requested: "ui-gallery".to_owned(),
-                canonical: "ui_gallery".to_owned(),
-                owner: UiOwnerId::new("ui_gallery"),
-            },
+            resolved_test_screen(),
             "phone-small",
-            UiAuditCaptureState::Initial,
+            None,
+            &captures,
         );
 
         assert_eq!(
-            plan.screenshot_path,
+            plan.captures[0].screenshot_path,
             PathBuf::from(
-                "../summary/ui-audit/run-1/screenshots/ui_gallery/phone-small/00-initial.png"
+                "../summary/ui-audit/run-1/screenshots/ui_gallery/phone-small/00-top.png"
             )
         );
         assert_eq!(
-            plan.metadata_path,
+            plan.captures[1].metadata_path,
             PathBuf::from(
-                "../summary/ui-audit/run-1/metadata/ui_gallery/phone-small/00-initial.json"
+                "../summary/ui-audit/run-1/metadata/ui_gallery/phone-small/01-middle.json"
+            )
+        );
+        assert_eq!(
+            plan.captures[2].screenshot_path,
+            PathBuf::from(
+                "../summary/ui-audit/run-1/screenshots/ui_gallery/phone-small/02-bottom.png"
             )
         );
         assert_eq!(
@@ -1281,6 +1862,29 @@ mod tests {
     }
 
     #[test]
+    fn state_machine_applies_capture_state_after_panel_is_ready() {
+        assert_eq!(
+            step(
+                UiAuditPhase::WaitForScreen { waited_frames: 2 },
+                true,
+                UiAuditScreenshotStatus::Pending
+            ),
+            (UiAuditPhase::ApplyCaptureState, None)
+        );
+        assert_eq!(
+            step(
+                UiAuditPhase::ApplyCaptureState,
+                true,
+                UiAuditScreenshotStatus::Pending
+            ),
+            (
+                UiAuditPhase::WaitForStable { waited_frames: 0 },
+                Some(UiAuditPureAction::ApplyCaptureState)
+            )
+        );
+    }
+
+    #[test]
     fn state_machine_waits_fixed_stable_frames_before_screenshot() {
         assert_eq!(
             step(
@@ -1321,7 +1925,7 @@ mod tests {
     }
 
     #[test]
-    fn state_machine_writes_summary_after_saved_screenshot() {
+    fn state_machine_writes_capture_after_saved_screenshot() {
         assert_eq!(
             step(
                 UiAuditPhase::WaitForScreenshot { waited_frames: 2 },
@@ -1329,8 +1933,8 @@ mod tests {
                 UiAuditScreenshotStatus::Saved
             ),
             (
-                UiAuditPhase::WriteSummary,
-                Some(UiAuditPureAction::WriteSummary)
+                UiAuditPhase::WriteCapture,
+                Some(UiAuditPureAction::WriteCapture)
             )
         );
     }
@@ -1354,20 +1958,112 @@ mod tests {
 
     #[test]
     fn report_links_screenshot_and_metadata() {
+        let captures = [UiAuditCaptureRecipe::initial()];
         let plan = plan_audit_paths(
             Path::new("../summary/ui-audit/run-1"),
-            UiAuditResolvedScreen {
-                requested: "ui-gallery".to_owned(),
-                canonical: "ui_gallery".to_owned(),
-                owner: UiOwnerId::new("ui_gallery"),
-            },
+            resolved_test_screen(),
             "phone-small",
-            UiAuditCaptureState::Initial,
+            None,
+            &captures,
         );
-        let manifest = UiAuditManifest::success(&plan);
+        let manifest = UiAuditManifest::new(vec![UiAuditManifestEntry::success(
+            &plan,
+            &plan.captures[0],
+        )]);
         let report = build_report_markdown(&plan, &manifest);
 
         assert!(report.contains("[screenshot](screenshots/ui_gallery/phone-small/00-initial.png)"));
         assert!(report.contains("[metadata](metadata/ui_gallery/phone-small/00-initial.json)"));
+    }
+
+    #[test]
+    fn report_lists_multiple_capture_entries() {
+        let plan = plan_audit_paths(
+            Path::new("../summary/ui-audit/run-1"),
+            resolved_test_screen(),
+            "phone-small",
+            None,
+            TEST_SCROLL_CAPTURES,
+        );
+        let manifest = UiAuditManifest::new(
+            plan.captures
+                .iter()
+                .map(|capture| UiAuditManifestEntry::success(&plan, capture))
+                .collect(),
+        );
+        let report = build_report_markdown(&plan, &manifest);
+
+        assert!(report.contains("00-top.png"));
+        assert!(report.contains("01-middle.png"));
+        assert!(report.contains("02-bottom.png"));
+    }
+
+    #[test]
+    fn recipe_defaults_to_declared_captures_when_states_are_not_from_env() {
+        let screen =
+            UiAuditScreen::new("ui_gallery", &["ui-gallery"], UiOwnerId::new("ui_gallery"))
+                .with_recipe(UiAuditRecipe::new(TEST_SCROLL_CAPTURES));
+
+        let captures =
+            resolve_capture_plans(&[UiAuditCaptureState::Initial], false, &screen).unwrap();
+
+        assert_eq!(captures, TEST_SCROLL_CAPTURES);
+    }
+
+    #[test]
+    fn recipe_filters_explicit_capture_states() {
+        let screen =
+            UiAuditScreen::new("ui_gallery", &["ui-gallery"], UiOwnerId::new("ui_gallery"))
+                .with_recipe(UiAuditRecipe::new(TEST_SCROLL_CAPTURES));
+
+        let captures = resolve_capture_plans(
+            &[UiAuditCaptureState::Bottom, UiAuditCaptureState::Top],
+            true,
+            &screen,
+        )
+        .unwrap();
+
+        assert_eq!(captures.len(), 2);
+        assert_eq!(captures[0].state, UiAuditCaptureState::Bottom);
+        assert_eq!(captures[1].state, UiAuditCaptureState::Top);
+    }
+
+    #[test]
+    fn recipe_rejects_scroll_state_when_screen_has_no_recipe() {
+        let screen = UiAuditScreen::new("login", &["login"], UiOwnerId::new("login"));
+
+        let error = resolve_capture_plans(&[UiAuditCaptureState::Bottom], true, &screen)
+            .expect_err("scroll capture requires a recipe");
+
+        assert!(error.contains("has no recipe"));
+    }
+
+    #[test]
+    fn recipe_rejects_missing_declared_state() {
+        let screen =
+            UiAuditScreen::new("ui_gallery", &["ui-gallery"], UiOwnerId::new("ui_gallery"))
+                .with_recipe(UiAuditRecipe::new(TEST_TOP_ONLY_CAPTURES));
+
+        let error = resolve_capture_plans(&[UiAuditCaptureState::Bottom], true, &screen)
+            .expect_err("missing recipe state should fail");
+
+        assert!(error.contains("does not declare capture state 'bottom'"));
+    }
+
+    #[test]
+    fn manifest_entry_records_scroll_target_and_position() {
+        let plan = plan_audit_paths(
+            Path::new("../summary/ui-audit/run-1"),
+            resolved_test_screen(),
+            "phone-small",
+            None,
+            TEST_SCROLL_CAPTURES,
+        );
+
+        let entry = UiAuditManifestEntry::success(&plan, &plan.captures[1]);
+
+        assert_eq!(entry.scroll_target_id.as_deref(), Some("test.scroll"));
+        assert_eq!(entry.scroll_position.as_deref(), Some("middle"));
+        assert_eq!(entry.status, UiAuditRunStatus::Passed);
     }
 }

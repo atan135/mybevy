@@ -1,6 +1,7 @@
 use crate::framework::ui::{
     core::{UiOwnerId, UiPanelId},
     overlays::{UiModalActionId, UiModalId},
+    widgets::UiScrollAuditId,
 };
 
 pub(in crate::game) const OWNER_LOGIN: UiOwnerId = UiOwnerId::new("login");
@@ -20,6 +21,8 @@ pub(in crate::game) const PANEL_AUDIO_SETTINGS: UiPanelId = UiPanelId::new("audi
 pub(in crate::game) const PANEL_AUDIO_MONITOR: UiPanelId = UiPanelId::new("audio_monitor_page");
 pub(in crate::game) const PANEL_AUDIO_GALLERY: UiPanelId = UiPanelId::new("audio_gallery_page");
 pub(in crate::game) const PANEL_UI_GALLERY: UiPanelId = UiPanelId::new("ui_gallery_page");
+pub(in crate::game) const SCROLL_UI_GALLERY_MAIN: UiScrollAuditId =
+    UiScrollAuditId::new("ui_gallery.main");
 pub(in crate::game) const PANEL_GALLERY_FLOATING: UiPanelId = UiPanelId::new("gallery_floating");
 pub(in crate::game) const PANEL_TOUCH_RIPPLE_HUD: UiPanelId = UiPanelId::new("touch_ripple_hud");
 #[allow(dead_code)]
