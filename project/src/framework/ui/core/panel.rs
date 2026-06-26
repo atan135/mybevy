@@ -66,6 +66,10 @@ impl UiOwnerId {
     pub(crate) const fn new(value: &'static str) -> Self {
         Self(value)
     }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        self.0
+    }
 }
 
 impl fmt::Display for UiOwnerId {

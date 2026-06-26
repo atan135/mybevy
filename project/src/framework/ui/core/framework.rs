@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::framework::ui::{
+    audit::UiAuditPlugin,
     core::{
         animation::UiAnimationPlugin, binding::UiBindingPlugin, focus::UiFocusPlugin,
         input::UiInputPlugin, layer::UiLayerPlugin, panel::UiPanelPlugin, stats::UiStatsPlugin,
@@ -32,6 +33,7 @@ impl Plugin for UiFrameworkPlugin {
             UiAnimationPlugin,
             UiStatsPlugin,
             UiDebugPlugin,
+            UiAuditPlugin,
         ));
     }
 }

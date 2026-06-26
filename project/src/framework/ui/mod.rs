@@ -1,3 +1,4 @@
+pub(crate) mod audit;
 pub(crate) mod core;
 pub(crate) mod debug;
 pub(crate) mod i18n;
