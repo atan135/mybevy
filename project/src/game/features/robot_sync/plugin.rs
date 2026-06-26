@@ -1238,12 +1238,12 @@ mod tests {
             event: "ready_changed".to_string(),
             snapshot: Some(pb::RoomSnapshot {
                 room_id: room_id.to_string(),
-                owner_player_id: owner_player_id.to_string(),
+                owner_character_id: owner_player_id.to_string(),
                 state: "ready".to_string(),
                 members: members
                     .iter()
                     .map(|(player_id, ready)| pb::RoomMember {
-                        player_id: (*player_id).to_string(),
+                        character_id: (*player_id).to_string(),
                         ready: *ready,
                         is_owner: *player_id == owner_player_id,
                         offline: false,

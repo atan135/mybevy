@@ -1261,7 +1261,7 @@ fn handle_robot_sync_myserver_event(
             info!(
                 room_id = %snapshot.room_id,
                 policy_id = %config.myserver_policy_id,
-                owner_player_id = %snapshot.owner_player_id,
+                owner_player_id = %snapshot.owner_character_id,
                 member_count = snapshot.members.len(),
                 "robot sync MyServer starting room after all players ready"
             );
@@ -1359,7 +1359,7 @@ fn should_start_robot_sync_room(
     let Some(player_id) = state.authenticated_player_id.as_deref() else {
         return false;
     };
-    if snapshot.owner_player_id != player_id || snapshot.state == "in_game" {
+    if snapshot.owner_character_id != player_id || snapshot.state == "in_game" {
         return false;
     }
 

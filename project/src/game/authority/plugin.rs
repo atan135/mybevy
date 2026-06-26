@@ -919,11 +919,11 @@ fn handle_myserver_authority_events(
                         snapshot: AuthoritySnapshot {
                             authority_epoch: session.authority_epoch,
                             frame_id: snapshot.current_frame_id,
-                            authority_player_id: snapshot.owner_player_id.clone(),
+                            authority_player_id: snapshot.owner_character_id.clone(),
                             players: snapshot
                                 .members
                                 .iter()
-                                .map(|member| member.player_id.clone())
+                                .map(|member| member.character_id.clone())
                                 .collect(),
                             game_state_json: snapshot.game_state.clone(),
                         },
@@ -935,7 +935,7 @@ fn handle_myserver_authority_events(
                     .inputs
                     .iter()
                     .map(|input| PlayerInput {
-                        player_id: input.player_id.clone(),
+                        player_id: input.character_id.clone(),
                         frame_id: input.frame_id,
                         action: input.action.clone(),
                         payload_json: input.payload_json.clone(),
@@ -955,11 +955,11 @@ fn handle_myserver_authority_events(
                     |snapshot| AuthoritySnapshot {
                         authority_epoch: session.authority_epoch,
                         frame_id: snapshot.current_frame_id,
-                        authority_player_id: snapshot.owner_player_id.clone(),
+                        authority_player_id: snapshot.owner_character_id.clone(),
                         players: snapshot
                             .members
                             .iter()
-                            .map(|member| member.player_id.clone())
+                            .map(|member| member.character_id.clone())
                             .collect(),
                         game_state_json: snapshot.game_state.clone(),
                     },
@@ -1038,13 +1038,13 @@ fn migration_from_myserver_payload(
     Some(AuthorityMigration {
         authority_epoch: payload.authority_epoch,
         frozen_frame_id: payload.frozen_frame_id,
-        new_authority_player_id: new_authority.player_id.clone(),
+        new_authority_player_id: new_authority.character_id.clone(),
         snapshot: snapshot_from_myserver_authority(snapshot),
         pending_inputs: payload
             .pending_inputs
             .iter()
             .map(|input| PlayerInput {
-                player_id: input.player_id.clone(),
+                player_id: input.character_id.clone(),
                 frame_id: input.frame_id,
                 action: input.action.clone(),
                 payload_json: input.payload_json.clone(),
@@ -1060,8 +1060,8 @@ fn snapshot_from_myserver_authority(
     AuthoritySnapshot {
         authority_epoch: snapshot.authority_epoch,
         frame_id: snapshot.frame_id,
-        authority_player_id: snapshot.authority_player_id.clone(),
-        players: snapshot.player_ids.clone(),
+        authority_player_id: snapshot.authority_character_id.clone(),
+        players: snapshot.character_ids.clone(),
         game_state_json: snapshot.game_state_json.clone(),
     }
 }
