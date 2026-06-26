@@ -31,6 +31,8 @@ pub struct SceneCameraConfig {
     pub transform: Transform,
     pub projection: SceneCameraProjection,
     pub target: Option<SceneAnchorId>,
+    pub follow: Option<SceneCameraFollowConfig>,
+    pub animation: SceneCameraAnimationConfig,
 }
 
 impl Default for SceneCameraConfig {
@@ -46,6 +48,7 @@ impl SceneCameraConfig {
             SceneCameraMode::Gameplay2d => Self::gameplay_2d(),
             SceneCameraMode::Gameplay3d => Self::gameplay_3d(),
             SceneCameraMode::Fixed3d => Self::fixed_3d(),
+            SceneCameraMode::FollowTarget => Self::follow_target(),
             SceneCameraMode::DebugFree => Self::debug_free(),
         };
         config.mode = mode;
@@ -58,6 +61,8 @@ impl SceneCameraConfig {
             transform: Transform::default(),
             projection: SceneCameraProjection::Default2d,
             target: None,
+            follow: None,
+            animation: SceneCameraAnimationConfig::default(),
         }
     }
 
@@ -67,6 +72,8 @@ impl SceneCameraConfig {
             transform: Transform::default(),
             projection: SceneCameraProjection::Default2d,
             target: None,
+            follow: None,
+            animation: SceneCameraAnimationConfig::default(),
         }
     }
 
@@ -76,6 +83,8 @@ impl SceneCameraConfig {
             transform: default_scene_camera_3d_transform(),
             projection: SceneCameraProjection::Default3d,
             target: None,
+            follow: None,
+            animation: SceneCameraAnimationConfig::default(),
         }
     }
 
@@ -85,6 +94,19 @@ impl SceneCameraConfig {
             transform: default_scene_camera_3d_transform(),
             projection: SceneCameraProjection::Default3d,
             target: None,
+            follow: None,
+            animation: SceneCameraAnimationConfig::default(),
+        }
+    }
+
+    pub fn follow_target() -> Self {
+        Self {
+            mode: SceneCameraMode::FollowTarget,
+            transform: default_scene_camera_3d_transform(),
+            projection: SceneCameraProjection::Default3d,
+            target: None,
+            follow: Some(SceneCameraFollowConfig::default()),
+            animation: SceneCameraAnimationConfig::default(),
         }
     }
 
@@ -94,6 +116,8 @@ impl SceneCameraConfig {
             transform: default_scene_camera_3d_transform(),
             projection: SceneCameraProjection::Default3d,
             target: None,
+            follow: None,
+            animation: SceneCameraAnimationConfig::default(),
         }
     }
 
@@ -109,6 +133,21 @@ impl SceneCameraConfig {
 
     pub fn with_target(mut self, target: impl Into<SceneAnchorId>) -> Self {
         self.target = Some(target.into());
+        self
+    }
+
+    pub fn with_follow(mut self, follow: SceneCameraFollowConfig) -> Self {
+        self.follow = Some(follow);
+        self
+    }
+
+    pub fn without_follow(mut self) -> Self {
+        self.follow = None;
+        self
+    }
+
+    pub fn with_animation(mut self, animation: SceneCameraAnimationConfig) -> Self {
+        self.animation = animation;
         self
     }
 
@@ -133,6 +172,7 @@ pub enum SceneCameraMode {
     Gameplay2d,
     Gameplay3d,
     Fixed3d,
+    FollowTarget,
     DebugFree,
 }
 
@@ -146,8 +186,70 @@ impl SceneCameraMode {
     }
 
     pub fn is_3d(self) -> bool {
-        matches!(self, Self::Gameplay3d | Self::Fixed3d | Self::DebugFree)
+        matches!(
+            self,
+            Self::Gameplay3d | Self::Fixed3d | Self::FollowTarget | Self::DebugFree
+        )
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneCameraFollowConfig {
+    pub target_source: SceneCameraFollowTargetSource,
+    pub offset: Vec3,
+    pub look_at_offset: Vec3,
+    pub position_lerp: f32,
+    pub rotation_lerp: f32,
+    pub min_visible_targets: usize,
+    pub visible_target_padding: f32,
+}
+
+impl Default for SceneCameraFollowConfig {
+    fn default() -> Self {
+        Self {
+            target_source: SceneCameraFollowTargetSource::SceneTarget,
+            offset: Vec3::new(0.0, 6.0, 12.0),
+            look_at_offset: Vec3::ZERO,
+            position_lerp: 1.0,
+            rotation_lerp: 1.0,
+            min_visible_targets: 1,
+            visible_target_padding: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SceneCameraFollowTargetSource {
+    #[default]
+    SceneTarget,
+    Anchor(SceneAnchorId),
+    PrimaryActor,
+    AllParticipants,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneCameraAnimationConfig {
+    pub enabled: bool,
+    pub duration_seconds: f32,
+    pub easing: SceneCameraEasing,
+}
+
+impl Default for SceneCameraAnimationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            duration_seconds: 0.0,
+            easing: SceneCameraEasing::SmoothStep,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SceneCameraEasing {
+    Linear,
+    #[default]
+    SmoothStep,
+    EaseInOut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

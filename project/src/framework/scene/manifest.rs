@@ -8,7 +8,8 @@ use std::{
 
 use super::{
     camera::{
-        SceneCameraConfig, SceneCameraMode, SceneCameraProjection,
+        SceneCameraAnimationConfig, SceneCameraConfig, SceneCameraEasing, SceneCameraFollowConfig,
+        SceneCameraFollowTargetSource, SceneCameraMode, SceneCameraProjection,
         default_scene_camera_3d_transform,
     },
     id::{
@@ -407,6 +408,8 @@ pub struct SceneCameraManifest {
     pub rotation_degrees: Option<[f32; 3]>,
     pub projection: Option<SceneCameraProjectionManifest>,
     pub target: Option<super::id::SceneAnchorId>,
+    pub follow: Option<SceneCameraFollowManifest>,
+    pub animation: Option<SceneCameraAnimationManifest>,
 }
 
 impl Default for SceneCameraManifest {
@@ -418,6 +421,8 @@ impl Default for SceneCameraManifest {
             rotation_degrees: None,
             projection: None,
             target: None,
+            follow: None,
+            animation: None,
         }
     }
 }
@@ -436,6 +441,15 @@ impl SceneCameraManifest {
             .map(SceneCameraProjectionManifest::projection)
             .unwrap_or_else(|| SceneCameraProjection::for_mode(self.mode));
         config.target = self.target.clone();
+        config.follow = self
+            .follow
+            .as_ref()
+            .map(SceneCameraFollowManifest::follow_config)
+            .or(config.follow);
+        config.animation = self
+            .animation
+            .map(SceneCameraAnimationManifest::animation_config)
+            .unwrap_or(config.animation);
         config
     }
 
@@ -447,6 +461,135 @@ impl SceneCameraManifest {
         SceneCameraRef {
             id,
             config: self.config(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SceneCameraFollowManifest {
+    pub target_source: SceneCameraFollowTargetSourceManifest,
+    pub target: Option<super::id::SceneAnchorId>,
+    pub offset: Option<[f32; 3]>,
+    pub look_at_offset: Option<[f32; 3]>,
+    pub position_lerp: Option<f32>,
+    pub rotation_lerp: Option<f32>,
+    pub min_visible_targets: Option<usize>,
+    pub visible_target_padding: Option<f32>,
+}
+
+impl Default for SceneCameraFollowManifest {
+    fn default() -> Self {
+        Self {
+            target_source: SceneCameraFollowTargetSourceManifest::SceneTarget,
+            target: None,
+            offset: None,
+            look_at_offset: None,
+            position_lerp: None,
+            rotation_lerp: None,
+            min_visible_targets: None,
+            visible_target_padding: None,
+        }
+    }
+}
+
+impl SceneCameraFollowManifest {
+    fn follow_config(&self) -> SceneCameraFollowConfig {
+        let default_config = SceneCameraFollowConfig::default();
+
+        SceneCameraFollowConfig {
+            target_source: self
+                .target_source
+                .target_source(self.target.clone())
+                .unwrap_or(default_config.target_source),
+            offset: self
+                .offset
+                .map(Vec3::from_array)
+                .unwrap_or(default_config.offset),
+            look_at_offset: self
+                .look_at_offset
+                .map(Vec3::from_array)
+                .unwrap_or(default_config.look_at_offset),
+            position_lerp: self.position_lerp.unwrap_or(default_config.position_lerp),
+            rotation_lerp: self.rotation_lerp.unwrap_or(default_config.rotation_lerp),
+            min_visible_targets: self
+                .min_visible_targets
+                .unwrap_or(default_config.min_visible_targets),
+            visible_target_padding: self
+                .visible_target_padding
+                .unwrap_or(default_config.visible_target_padding),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SceneCameraFollowTargetSourceManifest {
+    #[default]
+    SceneTarget,
+    Anchor,
+    PrimaryActor,
+    AllParticipants,
+}
+
+impl SceneCameraFollowTargetSourceManifest {
+    fn target_source(
+        self,
+        target: Option<super::id::SceneAnchorId>,
+    ) -> Option<SceneCameraFollowTargetSource> {
+        match self {
+            Self::SceneTarget => Some(SceneCameraFollowTargetSource::SceneTarget),
+            Self::Anchor => target.map(SceneCameraFollowTargetSource::Anchor),
+            Self::PrimaryActor => Some(SceneCameraFollowTargetSource::PrimaryActor),
+            Self::AllParticipants => Some(SceneCameraFollowTargetSource::AllParticipants),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SceneCameraFollowTargetSourceManifest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match normalize_manifest_token(&value).as_str() {
+            "scenetarget" | "scene" | "target" => Self::SceneTarget,
+            "anchor" | "sceneanchor" => Self::Anchor,
+            "primaryactor" | "player" | "localplayer" => Self::PrimaryActor,
+            "allparticipants" | "participants" | "players" => Self::AllParticipants,
+            _ => Self::SceneTarget,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SceneCameraAnimationManifest {
+    pub enabled: Option<bool>,
+    #[serde(alias = "duration")]
+    pub duration_seconds: Option<f32>,
+    pub easing: SceneCameraEasing,
+}
+
+impl Default for SceneCameraAnimationManifest {
+    fn default() -> Self {
+        Self {
+            enabled: None,
+            duration_seconds: None,
+            easing: SceneCameraEasing::SmoothStep,
+        }
+    }
+}
+
+impl SceneCameraAnimationManifest {
+    fn animation_config(self) -> SceneCameraAnimationConfig {
+        let default_config = SceneCameraAnimationConfig::default();
+
+        SceneCameraAnimationConfig {
+            enabled: self.enabled.unwrap_or(default_config.enabled),
+            duration_seconds: self
+                .duration_seconds
+                .unwrap_or(default_config.duration_seconds),
+            easing: self.easing,
         }
     }
 }
@@ -497,8 +640,24 @@ impl<'de> Deserialize<'de> for SceneCameraMode {
             "gameplay2d" | "world2d" | "2d" => Self::Gameplay2d,
             "gameplay3d" | "world3d" | "3d" => Self::Gameplay3d,
             "fixed3d" => Self::Fixed3d,
+            "followtarget" | "follow" | "targetfollow" => Self::FollowTarget,
             "debugfree" | "free" | "freecamera" => Self::DebugFree,
             _ => Self::Gameplay2d,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for SceneCameraEasing {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match normalize_manifest_token(&value).as_str() {
+            "linear" => Self::Linear,
+            "smoothstep" | "smooth" => Self::SmoothStep,
+            "easeinout" | "easeinoutquad" => Self::EaseInOut,
+            _ => Self::SmoothStep,
         })
     }
 }
@@ -512,6 +671,7 @@ fn scene_camera_mode_from_ref_id(id: &str) -> SceneCameraMode {
         "uionly2d" | "ui2d" | "ui" => SceneCameraMode::UiOnly2d,
         "gameplay3d" | "world3d" | "3d" => SceneCameraMode::Gameplay3d,
         "fixed3d" => SceneCameraMode::Fixed3d,
+        "followtarget" | "follow" | "targetfollow" => SceneCameraMode::FollowTarget,
         "debugfree" | "free" | "freecamera" => SceneCameraMode::DebugFree,
         _ => SceneCameraMode::Gameplay2d,
     }
@@ -523,6 +683,7 @@ fn scene_camera_ref_id_for_mode(mode: SceneCameraMode) -> &'static str {
         SceneCameraMode::Gameplay2d => "gameplay_2d",
         SceneCameraMode::Gameplay3d => "gameplay_3d",
         SceneCameraMode::Fixed3d => "fixed_3d",
+        SceneCameraMode::FollowTarget => "follow_target",
         SceneCameraMode::DebugFree => "debug_free",
     }
 }
@@ -1046,7 +1207,7 @@ fn has_windows_drive_prefix(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::scene::id::{SceneChunkId, SceneSpawnPointId};
+    use crate::framework::scene::id::{SceneAnchorId, SceneChunkId, SceneSpawnPointId};
     use crate::framework::scene::spawn::SceneSpawnPointManifest;
     use crate::framework::scene::streaming::{SceneChunkBounds, SceneChunkManifest};
 
@@ -1151,5 +1312,162 @@ mod tests {
                 path: "../outside.glb".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn camera_manifest_keeps_fixed_camera_compatibility() {
+        let manifest = ron::from_str::<SceneManifest>(
+            r#"(
+                version: "1",
+                scene_id: SceneId("scene.camera_fixed"),
+                kind: "world",
+                entry: (
+                    camera: Some((
+                        id: Some("camera.fixed"),
+                        mode: "fixed3d",
+                        position: Some((1.0, 2.0, 3.0)),
+                        rotation: Some((-30.0, 0.0, 0.0)),
+                        projection: Some((kind: "perspective3d", fov_y: 0.8, near: 0.1, far: 100.0)),
+                        target: Some("anchor.camera_target"),
+                    )),
+                ),
+            )"#,
+        )
+        .unwrap();
+
+        let camera = manifest.entry.camera.unwrap();
+        let config = camera.config();
+
+        assert_eq!(camera.as_str(), "camera.fixed");
+        assert_eq!(config.mode, SceneCameraMode::Fixed3d);
+        assert!(config.is_3d());
+        assert_eq!(config.transform.translation, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(
+            config.target.as_ref().map(|target| target.as_str()),
+            Some("anchor.camera_target")
+        );
+        assert_eq!(config.follow, None);
+        assert_eq!(config.animation, SceneCameraAnimationConfig::default());
+    }
+
+    #[test]
+    fn camera_manifest_parses_follow_camera_config() {
+        let manifest = ron::from_str::<SceneManifest>(
+            r#"(
+                version: "1",
+                scene_id: SceneId("scene.camera_follow"),
+                kind: "world",
+                entry: (
+                    camera: Some((
+                        mode: "follow_target",
+                        follow: Some((
+                            target_source: "anchor",
+                            target: Some("anchor.player"),
+                            offset: Some((0.0, 7.0, 14.0)),
+                            look_at_offset: Some((0.0, 1.5, 0.0)),
+                            position_lerp: Some(0.35),
+                            rotation_lerp: Some(0.5),
+                            min_visible_targets: Some(2),
+                            visible_target_padding: Some(3.0),
+                        )),
+                    )),
+                ),
+            )"#,
+        )
+        .unwrap();
+
+        let camera = manifest.entry.camera.unwrap();
+        let config = camera.config();
+        let follow = config.follow.as_ref().unwrap();
+
+        assert_eq!(camera.as_str(), "follow_target");
+        assert_eq!(config.mode, SceneCameraMode::FollowTarget);
+        assert!(config.is_3d());
+        assert_eq!(
+            follow.target_source,
+            SceneCameraFollowTargetSource::Anchor(SceneAnchorId::from("anchor.player"))
+        );
+        assert_eq!(follow.offset, Vec3::new(0.0, 7.0, 14.0));
+        assert_eq!(follow.look_at_offset, Vec3::new(0.0, 1.5, 0.0));
+        assert_eq!(follow.position_lerp, 0.35);
+        assert_eq!(follow.rotation_lerp, 0.5);
+        assert_eq!(follow.min_visible_targets, 2);
+        assert_eq!(follow.visible_target_padding, 3.0);
+    }
+
+    #[test]
+    fn camera_manifest_parses_animation_config() {
+        let manifest = ron::from_str::<SceneManifest>(
+            r#"(
+                version: "1",
+                scene_id: SceneId("scene.camera_animation"),
+                kind: "world",
+                entry: (
+                    camera: Some((
+                        mode: "gameplay3d",
+                        animation: Some((
+                            enabled: Some(true),
+                            duration: Some(0.75),
+                            easing: "ease_in_out",
+                        )),
+                    )),
+                ),
+            )"#,
+        )
+        .unwrap();
+
+        let config = manifest.entry.camera.unwrap().into_config();
+
+        assert_eq!(config.mode, SceneCameraMode::Gameplay3d);
+        assert_eq!(
+            config.animation,
+            SceneCameraAnimationConfig {
+                enabled: true,
+                duration_seconds: 0.75,
+                easing: SceneCameraEasing::EaseInOut,
+            }
+        );
+    }
+
+    #[test]
+    fn camera_manifest_defaults_unknown_and_missing_fields() {
+        let unknown_mode = SceneCameraRef::new("unknown_camera_mode");
+        assert_eq!(unknown_mode.config().mode, SceneCameraMode::Gameplay2d);
+        assert_eq!(
+            SceneCameraRef::new("gameplay3d").config().mode,
+            SceneCameraMode::Gameplay3d
+        );
+        assert_eq!(
+            SceneCameraRef::new("fixed3d").config().mode,
+            SceneCameraMode::Fixed3d
+        );
+
+        let manifest = ron::from_str::<SceneManifest>(
+            r#"(
+                version: "1",
+                scene_id: SceneId("scene.camera_defaults"),
+                kind: "world",
+                entry: (
+                    camera: Some((
+                        mode: "does_not_exist",
+                        follow: Some((target_source: "does_not_exist")),
+                        animation: Some((easing: "does_not_exist")),
+                    )),
+                ),
+            )"#,
+        )
+        .unwrap();
+
+        let config = manifest.entry.camera.unwrap().into_config();
+        let follow = config.follow.as_ref().unwrap();
+
+        assert_eq!(config.mode, SceneCameraMode::Gameplay2d);
+        assert_eq!(
+            follow.target_source,
+            SceneCameraFollowTargetSource::SceneTarget
+        );
+        assert_eq!(follow.offset, SceneCameraFollowConfig::default().offset);
+        assert_eq!(config.animation.easing, SceneCameraEasing::SmoothStep);
+        assert_eq!(config.animation.enabled, false);
     }
 }

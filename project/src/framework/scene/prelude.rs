@@ -4,11 +4,13 @@ pub use super::{
         SceneAuthorityReadyStatus,
     },
     camera::{
-        SCENE_CAMERA_2D_ORDER, SCENE_CAMERA_3D_ORDER, SceneCameraConfig, SceneCameraMode,
-        SceneCameraProjection, SceneCameraRig, default_scene_camera_2d_config,
-        default_scene_camera_3d_config, default_scene_camera_3d_transform,
-        default_scene_camera_config_for_world, ensure_scene_camera, scene_has_camera_for_session,
-        spawn_default_scene_camera_2d, spawn_default_scene_camera_3d, spawn_scene_camera,
+        SCENE_CAMERA_2D_ORDER, SCENE_CAMERA_3D_ORDER, SceneCameraAnimationConfig,
+        SceneCameraConfig, SceneCameraEasing, SceneCameraFollowConfig,
+        SceneCameraFollowTargetSource, SceneCameraMode, SceneCameraProjection, SceneCameraRig,
+        default_scene_camera_2d_config, default_scene_camera_3d_config,
+        default_scene_camera_3d_transform, default_scene_camera_config_for_world,
+        ensure_scene_camera, scene_has_camera_for_session, spawn_default_scene_camera_2d,
+        spawn_default_scene_camera_3d, spawn_scene_camera,
     },
     command::{
         SceneCommand, SceneEnterRequest, SceneExitRequest, SceneLayerCommand, ScenePreloadRequest,
@@ -38,9 +40,10 @@ pub use super::{
         SceneLoadingUiConfig, SceneLoadingUiSession, SceneLoadingUiState,
     },
     manifest::{
-        SCENE_MANIFEST_VERSION, SceneAssetKind, SceneAssetRef, SceneCameraManifest,
-        SceneCameraProjectionManifest, SceneCameraRef, SceneLayerManifest, SceneManifest,
-        SceneManifestEntry, SceneManifestError, SceneManifestLoadError, SceneManifestPathError,
+        SCENE_MANIFEST_VERSION, SceneAssetKind, SceneAssetRef, SceneCameraAnimationManifest,
+        SceneCameraFollowManifest, SceneCameraManifest, SceneCameraProjectionManifest,
+        SceneCameraRef, SceneLayerManifest, SceneManifest, SceneManifestEntry, SceneManifestError,
+        SceneManifestLoadError, SceneManifestPathError,
     },
     plugin::ScenePlugin,
     registry::{
