@@ -26,6 +26,9 @@ param(
     [string]$AdminApiToken = "",
     [int]$RemoteCommandTimeoutMs = 5000,
     [int]$RemotePollIntervalMs = 250,
+    [ValidateSet("Auto", "Fixture", "Off")]
+    [string]$AnalysisMode = "Auto",
+    [string]$AnalysisResultPath = "",
     [switch]$DryRun,
     [switch]$SelfTest,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -93,6 +96,16 @@ $script:RemoteKnownFailureCodes = @(
     "client_rejected",
     "artifact_upload_failed"
 )
+
+$script:AnalysisSeverityLevels = @("severe", "medium", "minor")
+$script:AnalysisBlockingProblemTypes = @(
+    "text_overlap",
+    "critical_clipping",
+    "unclickable",
+    "critical_content_unreachable",
+    "modal_layering_error"
+)
+$script:LastUiAuditAnalysisStatus = $null
 
 function Split-UiAuditList {
     param([object[]]$Values)
@@ -773,6 +786,496 @@ function Convert-RemoteArtifactsToMap {
     }
 
     return [pscustomobject]$map
+}
+
+function Get-UiAuditLikelyFiles {
+    param([Parameter(Mandatory = $true)][string]$Screen)
+
+    $common = @(
+        "project/src/framework/ui/widgets/controls.rs",
+        "project/src/framework/ui/widgets/layout.rs",
+        "project/src/framework/ui/widgets/scroll.rs",
+        "project/src/framework/ui/style/theme.rs",
+        "project/src/framework/ui/audit/local.rs"
+    )
+
+    switch ($Screen) {
+        "ui_gallery" {
+            return @(
+                "project/src/game/screens/dev/ui_gallery.rs",
+                "project/src/game/screens/dev/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "login" {
+            return @(
+                "project/src/game/screens/auth/login.rs",
+                "project/src/game/screens/auth/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "lobby" {
+            return @(
+                "project/src/game/screens/lobby/mod.rs",
+                "project/src/game/screens/lobby/game_list.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "audio_settings" {
+            return @(
+                "project/src/game/screens/settings/audio.rs",
+                "project/src/game/screens/settings/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "audio_monitor" {
+            return @(
+                "project/src/game/screens/dev/audio_monitor.rs",
+                "project/src/game/screens/dev/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "audio_gallery" {
+            return @(
+                "project/src/game/screens/dev/audio_gallery.rs",
+                "project/src/game/screens/dev/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "wanfa_touch_ripple" {
+            return @(
+                "project/src/game/screens/gameplay/touch_ripple.rs",
+                "project/src/game/features/touch_ripple/visual.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "sample_scene" {
+            return @(
+                "project/src/game/screens/gameplay/sample_scene.rs",
+                "project/src/game/scenes/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "robot_sync_scene" {
+            return @(
+                "project/src/game/screens/gameplay/robot_sync_scene.rs",
+                "project/src/game/scenes/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "fangyuan_home" {
+            return @(
+                "project/src/game/screens/gameplay/fangyuan_home.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        default {
+            return @(
+                "project/src/game/screens/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+    }
+}
+
+function New-UiAuditAnalysisInput {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)]$Manifest
+    )
+
+    $captures = New-Object System.Collections.Generic.List[object]
+    foreach ($task in @($Manifest.tasks)) {
+        foreach ($capture in @($task.captures)) {
+            if ($null -eq $capture) {
+                continue
+            }
+
+            $screen = [string]$capture.screen
+            if ([string]::IsNullOrWhiteSpace($screen)) {
+                $screen = [string]$task.screen
+            }
+            $device = [string]$capture.device
+            if ([string]::IsNullOrWhiteSpace($device)) {
+                $device = [string]$task.device
+            }
+            $state = [string]$capture.state
+            $remoteTaskIds = @()
+            if ($null -ne $capture.PSObject.Properties["remote_task_ids"]) {
+                $remoteTaskIds = @($capture.remote_task_ids | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+            }
+
+            $captures.Add([pscustomobject]@{
+                screen = $screen
+                device = $device
+                state = $state
+                status = [string]$capture.status
+                screenshot = if ($null -ne $capture.PSObject.Properties["screenshot"]) { [string]$capture.screenshot } else { $null }
+                metadata = if ($null -ne $capture.PSObject.Properties["metadata"]) { [string]$capture.metadata } else { $null }
+                screenshot_artifact_uri = if ($null -ne $capture.PSObject.Properties["screenshot_artifact_uri"]) { [string]$capture.screenshot_artifact_uri } else { $null }
+                metadata_artifact_uri = if ($null -ne $capture.PSObject.Properties["metadata_artifact_uri"]) { [string]$capture.metadata_artifact_uri } else { $null }
+                screenshot_exists = if ($null -ne $capture.PSObject.Properties["screenshot_exists"]) { [bool]$capture.screenshot_exists } else { $false }
+                metadata_exists = if ($null -ne $capture.PSObject.Properties["metadata_exists"]) { [bool]$capture.metadata_exists } else { $false }
+                manifest = "manifest.json"
+                likely_files = @(Get-UiAuditLikelyFiles -Screen $screen)
+                remote_task_ids = $remoteTaskIds
+                screenshot_task_id = if ($null -ne $capture.PSObject.Properties["screenshot_task_id"]) { [string]$capture.screenshot_task_id } else { $null }
+                metadata_task_id = if ($null -ne $capture.PSObject.Properties["metadata_task_id"]) { [string]$capture.metadata_task_id } else { $null }
+            })
+        }
+    }
+
+    return [pscustomobject]@{
+        schema_version = 1
+        run_id = [string]$Manifest.run_id
+        runner_mode = [string]$Manifest.runner_mode
+        manifest = "manifest.json"
+        created_at = (Get-Date).ToString("o")
+        captures = @($captures.ToArray())
+    }
+}
+
+function Write-UiAuditAnalysisInput {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)]$AnalysisInput
+    )
+
+    $analysisInputPath = Join-FullPath $RunRoot "analysis-input.json"
+    $AnalysisInput | ConvertTo-Json -Depth 20 | Set-Content -Path $analysisInputPath -Encoding UTF8
+    return ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $analysisInputPath
+}
+
+function Test-UiAuditCaptureAnalysisReady {
+    param(
+        [Parameter(Mandatory = $true)][object]$Capture,
+        [Parameter(Mandatory = $true)][bool]$IsRemote
+    )
+
+    if ($IsRemote) {
+        return (
+            -not [string]::IsNullOrWhiteSpace([string]$Capture.screenshot_artifact_uri) -and
+            -not [string]::IsNullOrWhiteSpace([string]$Capture.metadata_artifact_uri)
+        )
+    }
+
+    return (
+        -not [string]::IsNullOrWhiteSpace([string]$Capture.screenshot) -and
+        -not [string]::IsNullOrWhiteSpace([string]$Capture.metadata) -and
+        [bool]$Capture.screenshot_exists -and
+        [bool]$Capture.metadata_exists
+    )
+}
+
+function Get-UiAuditAnalysisInputFailureType {
+    param(
+        [Parameter(Mandatory = $true)]$AnalysisInput,
+        [Parameter(Mandatory = $true)][bool]$IsRemote
+    )
+
+    $captures = @($AnalysisInput.captures)
+    if ($captures.Count -eq 0) {
+        return "ai_missing_capture"
+    }
+
+    foreach ($capture in $captures) {
+        if ($IsRemote) {
+            if ([string]::IsNullOrWhiteSpace([string]$capture.screenshot_artifact_uri) -or [string]::IsNullOrWhiteSpace([string]$capture.metadata_artifact_uri)) {
+                return "ai_remote_artifact_read_failed"
+            }
+        } elseif (-not (Test-UiAuditCaptureAnalysisReady -Capture $capture -IsRemote $false)) {
+            return "ai_missing_capture_metadata"
+        }
+    }
+
+    return $null
+}
+
+function Get-UiAuditIssueKey {
+    param([Parameter(Mandatory = $true)]$Issue)
+
+    return "$($Issue.screen)|$($Issue.device)|$($Issue.state)"
+}
+
+function ConvertTo-UiAuditIssueSeverity {
+    param(
+        [AllowNull()][string]$Severity,
+        [AllowNull()][string]$ProblemType,
+        [AllowNull()][string]$Problem
+    )
+
+    $normalizedSeverity = if ([string]::IsNullOrWhiteSpace($Severity)) { "" } else { $Severity.Trim().ToLowerInvariant() }
+    $type = if ([string]::IsNullOrWhiteSpace($ProblemType)) { "" } else { $ProblemType.Trim().ToLowerInvariant().Replace("-", "_") }
+    $text = if ([string]::IsNullOrWhiteSpace($Problem)) { "" } else { $Problem.Trim().ToLowerInvariant() }
+
+    $inferredSeverity = "minor"
+
+    if ($type -in $script:AnalysisBlockingProblemTypes) {
+        $inferredSeverity = "severe"
+    } elseif ($type -in @("small_text", "crowded_spacing", "unstable_list_item_height", "small_touch_target", "visual_hierarchy_confusing")) {
+        $inferredSeverity = "medium"
+    } elseif ($text -match "文字重叠|重叠|overlap|关键裁切|裁切|clipping|不可点击|unclickable|关键内容不可达|不可达|unreachable|弹窗层级错误|层级错误|modal.*layer|关键内容跑出屏幕|out of screen") {
+        $inferredSeverity = "severe"
+    } elseif ($text -match "文本过小|不可读|too small|unreadable|间距.*拥挤|拥挤|crowded|触控目标.*小|touch target|主次层级混乱|hierarchy|列表项高度") {
+        $inferredSeverity = "medium"
+    }
+
+    if ($normalizedSeverity -notin $script:AnalysisSeverityLevels) {
+        return $inferredSeverity
+    }
+
+    $rank = @{ minor = 1; medium = 2; severe = 3 }
+    if ($rank[$inferredSeverity] -gt $rank[$normalizedSeverity]) {
+        return $inferredSeverity
+    }
+
+    return $normalizedSeverity
+}
+
+function Test-UiAuditIssueBlocking {
+    param(
+        [Parameter(Mandatory = $true)][string]$Severity,
+        [AllowNull()][object]$Blocking,
+        [AllowNull()][string]$ProblemType,
+        [AllowNull()][string]$Problem
+    )
+
+    if ($Severity -in @("severe", "medium")) {
+        return $true
+    }
+
+    if ($null -ne $Blocking -and "$Blocking" -match "^(?i:true|false)$") {
+        return [System.Convert]::ToBoolean([string]$Blocking)
+    }
+
+    $classified = ConvertTo-UiAuditIssueSeverity -Severity "" -ProblemType $ProblemType -Problem $Problem
+    return ($classified -in @("severe", "medium"))
+}
+
+function Assert-UiAuditIssueRequiredFields {
+    param(
+        [Parameter(Mandatory = $true)]$Issue,
+        [Parameter(Mandatory = $true)][int]$Index
+    )
+
+    foreach ($field in @("screen", "device", "state", "problem", "evidence", "likely_cause", "suggested_files")) {
+        if ($null -eq $Issue.PSObject.Properties[$field]) {
+            throw "issue[$Index] is missing required field '$field'"
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Issue.screen) -or
+        [string]::IsNullOrWhiteSpace([string]$Issue.device) -or
+        [string]::IsNullOrWhiteSpace([string]$Issue.state) -or
+        [string]::IsNullOrWhiteSpace([string]$Issue.problem) -or
+        [string]::IsNullOrWhiteSpace([string]$Issue.evidence) -or
+        [string]::IsNullOrWhiteSpace([string]$Issue.likely_cause)) {
+        throw "issue[$Index] has blank required fields"
+    }
+}
+
+function ConvertTo-UiAuditAnalysisIssues {
+    param(
+        [Parameter(Mandatory = $true)]$RawAnalysis,
+        [Parameter(Mandatory = $true)]$AnalysisInput
+    )
+
+    if ($null -eq $RawAnalysis.PSObject.Properties["issues"]) {
+        throw "analysis result is missing required field 'issues'"
+    }
+
+    $validCaptureKeys = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($capture in @($AnalysisInput.captures)) {
+        [void]$validCaptureKeys.Add("$($capture.screen)|$($capture.device)|$($capture.state)")
+    }
+
+    $issues = New-Object System.Collections.Generic.List[object]
+    $index = 0
+    foreach ($issue in @($RawAnalysis.issues)) {
+        Assert-UiAuditIssueRequiredFields -Issue $issue -Index $index
+
+        $severity = ConvertTo-UiAuditIssueSeverity `
+            -Severity $(if ($null -ne $issue.PSObject.Properties["severity"]) { [string]$issue.severity } else { "" }) `
+            -ProblemType $(if ($null -ne $issue.PSObject.Properties["problem_type"]) { [string]$issue.problem_type } else { "" }) `
+            -Problem ([string]$issue.problem)
+        $problemType = if ($null -ne $issue.PSObject.Properties["problem_type"]) { [string]$issue.problem_type } else { $null }
+        $blocking = Test-UiAuditIssueBlocking `
+            -Severity $severity `
+            -Blocking $(if ($null -ne $issue.PSObject.Properties["blocking"]) { $issue.blocking } else { $null }) `
+            -ProblemType $problemType `
+            -Problem ([string]$issue.problem)
+
+        $normalized = [pscustomobject]@{
+            screen = [string]$issue.screen
+            device = [string]$issue.device
+            state = [string]$issue.state
+            severity = $severity
+            problem_type = $problemType
+            problem = [string]$issue.problem
+            evidence = [string]$issue.evidence
+            likely_cause = [string]$issue.likely_cause
+            suggested_files = @($issue.suggested_files | ForEach-Object { [string]$_ })
+            blocking = [bool]$blocking
+        }
+
+        if (-not $validCaptureKeys.Contains((Get-UiAuditIssueKey -Issue $normalized))) {
+            throw "issue[$Index] does not match any analysis input capture: $($normalized.screen)/$($normalized.device)/$($normalized.state)"
+        }
+
+        $issues.Add($normalized)
+        $index += 1
+    }
+
+    return @($issues.ToArray())
+}
+
+function New-UiAuditAnalysisSummary {
+    param([AllowEmptyCollection()][object[]]$Issues)
+
+    $severe = @($Issues | Where-Object { $_.severity -eq "severe" })
+    $medium = @($Issues | Where-Object { $_.severity -eq "medium" })
+    $minor = @($Issues | Where-Object { $_.severity -eq "minor" })
+    $blocking = @($Issues | Where-Object { [bool]$_.blocking })
+
+    return [ordered]@{
+        total = $Issues.Count
+        severe = $severe.Count
+        medium = $medium.Count
+        minor = $minor.Count
+        blocking = $blocking.Count
+    }
+}
+
+function New-UiAuditAnalysisFailure {
+    param(
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$FailureType,
+        [Parameter(Mandatory = $true)][string]$Detail,
+        [Parameter(Mandatory = $true)]$AnalysisInput,
+        [AllowNull()][string]$InputPath,
+        [AllowNull()][string]$ResultPath
+    )
+
+    return [pscustomobject]@{
+        schema_version = 1
+        mode = $Mode
+        status = "failed"
+        pass = $false
+        failure_type = $FailureType
+        detail = $Detail
+        input = [ordered]@{
+            path = $InputPath
+            capture_count = @($AnalysisInput.captures).Count
+            runner_mode = [string]$AnalysisInput.runner_mode
+        }
+        result_path = $ResultPath
+        severity_counts = [ordered]@{ total = 0; severe = 0; medium = 0; minor = 0; blocking = 0 }
+        issues = @()
+    }
+}
+
+function Invoke-UiAuditAnalysis {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)]$AnalysisInput,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$InputPath,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ResultPath
+    )
+
+    $normalizedMode = $Mode.Trim()
+    if ($normalizedMode -eq "Off") {
+        return [pscustomobject]@{
+            schema_version = 1
+            mode = "Off"
+            status = "skipped"
+            pass = $true
+            failure_type = $null
+            detail = "analysis disabled"
+            input = [ordered]@{
+                path = $InputPath
+                capture_count = @($AnalysisInput.captures).Count
+                runner_mode = [string]$AnalysisInput.runner_mode
+            }
+            result_path = $null
+            severity_counts = [ordered]@{ total = 0; severe = 0; medium = 0; minor = 0; blocking = 0 }
+            issues = @()
+        }
+    }
+
+    $shouldReadFixture = $normalizedMode -eq "Fixture" -or -not [string]::IsNullOrWhiteSpace($ResultPath)
+    if (-not $shouldReadFixture) {
+        return [pscustomobject]@{
+            schema_version = 1
+            mode = $normalizedMode
+            status = "skipped"
+            pass = $true
+            failure_type = $null
+            detail = "no analysis result fixture supplied; external AI analysis is not implemented in this phase"
+            input = [ordered]@{
+                path = $InputPath
+                capture_count = @($AnalysisInput.captures).Count
+                runner_mode = [string]$AnalysisInput.runner_mode
+            }
+            result_path = $null
+            severity_counts = [ordered]@{ total = 0; severe = 0; medium = 0; minor = 0; blocking = 0 }
+            issues = @()
+        }
+    }
+
+    $isRemote = ([string]$AnalysisInput.runner_mode) -eq "remote"
+    $inputFailure = Get-UiAuditAnalysisInputFailureType -AnalysisInput $AnalysisInput -IsRemote $isRemote
+    if (-not [string]::IsNullOrWhiteSpace($inputFailure)) {
+        return New-UiAuditAnalysisFailure -Mode $normalizedMode -FailureType $inputFailure -Detail "analysis input is missing required screenshot or metadata references" -AnalysisInput $AnalysisInput -InputPath $InputPath -ResultPath $ResultPath
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ResultPath) -or -not (Test-Path $ResultPath)) {
+        return New-UiAuditAnalysisFailure -Mode $normalizedMode -FailureType "ai_analysis_failed" -Detail "analysis result fixture was not found" -AnalysisInput $AnalysisInput -InputPath $InputPath -ResultPath $ResultPath
+    }
+
+    try {
+        $raw = Read-JsonFile (Get-FullPath $ResultPath)
+    } catch {
+        return New-UiAuditAnalysisFailure -Mode $normalizedMode -FailureType "ai_result_invalid" -Detail $_.Exception.Message -AnalysisInput $AnalysisInput -InputPath $InputPath -ResultPath $ResultPath
+    }
+
+    try {
+        $issues = @(ConvertTo-UiAuditAnalysisIssues -RawAnalysis $raw -AnalysisInput $AnalysisInput)
+    } catch {
+        return New-UiAuditAnalysisFailure -Mode $normalizedMode -FailureType "ai_result_invalid" -Detail $_.Exception.Message -AnalysisInput $AnalysisInput -InputPath $InputPath -ResultPath $ResultPath
+    }
+
+    $counts = New-UiAuditAnalysisSummary -Issues $issues
+    $blockingIssues = @($issues | Where-Object { [bool]$_.blocking -or $_.severity -in @("severe", "medium") })
+    $status = if ($blockingIssues.Count -gt 0) { "failed" } else { "passed" }
+    $failureType = if ($blockingIssues.Count -gt 0) { "ai_blocking_issue" } else { $null }
+
+    return [pscustomobject]@{
+        schema_version = 1
+        mode = $normalizedMode
+        status = $status
+        pass = ($status -eq "passed")
+        failure_type = $failureType
+        detail = if ($failureType) { "severe, medium, or blocking analysis issue found" } else { $null }
+        input = [ordered]@{
+            path = $InputPath
+            capture_count = @($AnalysisInput.captures).Count
+            runner_mode = [string]$AnalysisInput.runner_mode
+        }
+        result_path = if ([string]::IsNullOrWhiteSpace($ResultPath)) { $null } else { $ResultPath }
+        severity_counts = $counts
+        issues = @($issues)
+    }
+}
+
+function Write-UiAuditAnalysisOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)]$Analysis
+    )
+
+    $analysisPath = Join-FullPath $RunRoot "analysis.json"
+    $Analysis | ConvertTo-Json -Depth 20 | Set-Content -Path $analysisPath -Encoding UTF8
+    return ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $analysisPath
 }
 
 function New-RemoteDebugCommandRequest {
@@ -1741,7 +2244,10 @@ function Write-UiAuditRunnerOutputs {
         [string]$RunnerMode = "Local",
         [object[]]$RemoteTargetsValue = @(),
         [AllowEmptyString()][string]$RemoteBackendName = "",
-        [string[]]$LocalDevicesValue = @()
+        [string[]]$LocalDevicesValue = @(),
+        [ValidateSet("Auto", "Fixture", "Off")]
+        [string]$AnalysisModeName = $AnalysisMode,
+        [AllowEmptyString()][string]$AnalysisResultFile = $AnalysisResultPath
     )
 
     New-Item -ItemType Directory -Force -Path $RunRoot | Out-Null
@@ -1793,6 +2299,27 @@ function Write-UiAuditRunnerOutputs {
     $manifestPath = Join-FullPath $RunRoot "manifest.json"
     $reportPath = Join-FullPath $RunRoot "report.md"
     $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $manifestPath -Encoding UTF8
+    $analysisInput = New-UiAuditAnalysisInput -RunRoot $RunRoot -Manifest ([pscustomobject]$manifest)
+    $analysisInputPath = Write-UiAuditAnalysisInput -RunRoot $RunRoot -AnalysisInput $analysisInput
+    $analysisResultFullPath = if ([string]::IsNullOrWhiteSpace($AnalysisResultFile)) { "" } else { Get-FullPath $AnalysisResultFile }
+    $analysis = Invoke-UiAuditAnalysis -RunRoot $RunRoot -AnalysisInput $analysisInput -InputPath $analysisInputPath -Mode $AnalysisModeName -ResultPath $analysisResultFullPath
+    $analysisPath = Write-UiAuditAnalysisOutput -RunRoot $RunRoot -Analysis $analysis
+    $manifest.analysis = [ordered]@{
+        input = $analysisInputPath
+        output = $analysisPath
+        mode = $analysis.mode
+        status = $analysis.status
+        pass = [bool]$analysis.pass
+        failure_type = $analysis.failure_type
+        detail = $analysis.detail
+        severity_counts = $analysis.severity_counts
+        issues = @($analysis.issues)
+    }
+    if ($status -eq "passed" -and $analysis.status -eq "failed") {
+        $manifest.status = "failed"
+    }
+    $script:LastUiAuditAnalysisStatus = $analysis
+    $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $manifestPath -Encoding UTF8
     Build-UiAuditReport -RunRoot $RunRoot -RunIdValue $RunIdValue -Manifest $manifest | Set-Content -Path $reportPath -Encoding UTF8
 }
 
@@ -1817,6 +2344,16 @@ function Format-MarkdownCodeOrDash {
     }
 
     return "``$Value``"
+}
+
+function Format-MarkdownTableText {
+    param([AllowNull()][string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return "-"
+    }
+
+    return (($Value -replace "\r?\n", "<br>") -replace "\|", "\|")
 }
 
 function Format-ArtifactReference {
@@ -1945,6 +2482,61 @@ function Build-UiAuditReport {
         }
     }
 
+    if ($null -ne $Manifest.analysis) {
+        $lines.Add("")
+        $lines.Add("## Analysis")
+        $lines.Add("")
+        $lines.Add("- Mode: ``$($Manifest.analysis.mode)``")
+        $lines.Add("- Status: ``$($Manifest.analysis.status)``")
+        $lines.Add("- Pass: ``$($Manifest.analysis.pass)``")
+        if ($Manifest.analysis.failure_type) {
+            $lines.Add("- Failure: ``$($Manifest.analysis.failure_type)``")
+        }
+        if ($Manifest.analysis.detail) {
+            $lines.Add("- Detail: $(Format-MarkdownTableText $Manifest.analysis.detail)")
+        }
+        $lines.Add("- Input: $(Format-MarkdownLink "analysis-input.json" $Manifest.analysis.input)")
+        $lines.Add("- Output: $(Format-MarkdownLink "analysis.json" $Manifest.analysis.output)")
+        if ($null -ne $Manifest.analysis.severity_counts) {
+            $counts = $Manifest.analysis.severity_counts
+            $lines.Add("- Severity counts: severe=$($counts.severe), medium=$($counts.medium), minor=$($counts.minor), blocking=$($counts.blocking)")
+        }
+
+        $issues = @($Manifest.analysis.issues)
+        if ($issues.Count -gt 0) {
+            $captureByKey = @{}
+            foreach ($capture in $allCaptures) {
+                $key = "$($capture.screen)|$($capture.device)|$($capture.state)"
+                if (-not $captureByKey.ContainsKey($key)) {
+                    $captureByKey[$key] = $capture
+                }
+            }
+
+            $lines.Add("")
+            $lines.Add("| Screen | Device | State | Severity | Blocking | Screenshot | Metadata | Problem | Evidence | Likely cause | Suggested files |")
+            $lines.Add("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+            foreach ($issue in $issues) {
+                $key = "$($issue.screen)|$($issue.device)|$($issue.state)"
+                $capture = if ($captureByKey.ContainsKey($key)) { $captureByKey[$key] } else { $null }
+                $screenshot = if ($null -ne $capture) {
+                    Format-ArtifactReference -Path $capture.screenshot -Uri $capture.screenshot_artifact_uri -Label "screenshot"
+                } else {
+                    "-"
+                }
+                $metadata = if ($null -ne $capture) {
+                    Format-ArtifactReference -Path $capture.metadata -Uri $capture.metadata_artifact_uri -Label "metadata"
+                } else {
+                    "-"
+                }
+                $suggested = @($issue.suggested_files) -join "<br>"
+                $lines.Add("| ``$($issue.screen)`` | ``$($issue.device)`` | ``$($issue.state)`` | ``$($issue.severity)`` | ``$($issue.blocking)`` | $screenshot | $metadata | $(Format-MarkdownTableText $issue.problem) | $(Format-MarkdownTableText $issue.evidence) | $(Format-MarkdownTableText $issue.likely_cause) | $(Format-MarkdownTableText $suggested) |")
+            }
+        } else {
+            $lines.Add("")
+            $lines.Add("No analysis issues.")
+        }
+    }
+
     return ($lines.ToArray() -join [Environment]::NewLine)
 }
 
@@ -2015,6 +2607,45 @@ function New-FakeChildManifestWithoutEntries {
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -Path (Join-FullPath $Task.output_dir "manifest.json") -Encoding UTF8
 }
 
+function Write-FakeAnalysisResult {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [AllowEmptyCollection()][object[]]$Issues
+    )
+
+    $result = [ordered]@{
+        schema_version = 1
+        issues = @($Issues)
+    }
+    $result | ConvertTo-Json -Depth 20 | Set-Content -Path $Path -Encoding UTF8
+}
+
+function New-FakeAnalysisIssue {
+    param(
+        [Parameter(Mandatory = $true)][object]$Capture,
+        [string]$Severity = "minor",
+        [string]$ProblemType = "visual_polish",
+        [string]$Problem = "alignment could be cleaner",
+        [AllowNull()][object]$Blocking = $null
+    )
+
+    $issue = [ordered]@{
+        screen = [string]$Capture.screen
+        device = [string]$Capture.device
+        state = [string]$Capture.state
+        severity = $Severity
+        problem_type = $ProblemType
+        problem = $Problem
+        evidence = "fixture evidence for $($Capture.state)"
+        likely_cause = "fixture likely cause"
+        suggested_files = @("project/src/game/screens/dev/ui_gallery.rs")
+    }
+    if ($null -ne $Blocking) {
+        $issue.blocking = $Blocking
+    }
+    return $issue
+}
+
 function Invoke-UiAuditSelfTest {
     $tempRoot = Join-FullPath ([System.IO.Path]::GetTempPath()) ("mybevy-ui-audit-selftest-" + [Guid]::NewGuid().ToString("N"))
     try {
@@ -2070,7 +2701,74 @@ function Invoke-UiAuditSelfTest {
         Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest" -Results $results -ScreensValue $screens -DevicesValue $devices -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue $devices
         Assert-SelfTest (Test-Path (Join-FullPath $tempRoot "manifest.json")) "root manifest write"
         Assert-SelfTest (Test-Path (Join-FullPath $tempRoot "report.md")) "root report write"
+        Assert-SelfTest (Test-Path (Join-FullPath $tempRoot "analysis-input.json")) "analysis input write"
+        Assert-SelfTest (Test-Path (Join-FullPath $tempRoot "analysis.json")) "analysis output write"
+        $analysisInput = Read-JsonFile (Join-FullPath $tempRoot "analysis-input.json")
+        Assert-SelfTest (@($analysisInput.captures).Count -eq 3) "analysis input captures only resolved captures"
+        Assert-SelfTest ((@($analysisInput.captures[0].likely_files) -contains "project/src/game/screens/dev/ui_gallery.rs")) "analysis input likely files"
+        $autoAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($autoAnalysis.status -eq "skipped" -and [bool]$autoAnalysis.pass) "analysis auto mode skips without fixture"
 
+        $analysisFixtureRoot = Join-FullPath $tempRoot "analysis-fixtures"
+        New-Item -ItemType Directory -Force -Path $analysisFixtureRoot | Out-Null
+        $minorResultPath = Join-FullPath $analysisFixtureRoot "minor.json"
+        Write-FakeAnalysisResult -Path $minorResultPath -Issues @(
+            (New-FakeAnalysisIssue -Capture $passed.captures[0] -Severity "minor" -ProblemType "visual_polish" -Problem "对齐可以更整齐")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-minor" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Fixture" -AnalysisResultFile $minorResultPath
+        $minorAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($minorAnalysis.status -eq "passed" -and [bool]$minorAnalysis.pass -and $minorAnalysis.severity_counts.minor -eq 1 -and $minorAnalysis.severity_counts.blocking -eq 0) "minor analysis does not block"
+        $minorReport = Get-Content -Raw -Path (Join-FullPath $tempRoot "report.md")
+        Assert-SelfTest ($minorReport.Contains("## Analysis") -and $minorReport.Contains("对齐可以更整齐")) "analysis report includes minor issue"
+
+        $blockingResultPath = Join-FullPath $analysisFixtureRoot "blocking.json"
+        Write-FakeAnalysisResult -Path $blockingResultPath -Issues @(
+            (New-FakeAnalysisIssue -Capture $passed.captures[0] -Severity "minor" -ProblemType "text_overlap" -Problem "文字重叠导致主按钮不可读")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-blocking" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Fixture" -AnalysisResultFile $blockingResultPath
+        $blockingAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($blockingAnalysis.status -eq "failed" -and $blockingAnalysis.failure_type -eq "ai_blocking_issue" -and $blockingAnalysis.severity_counts.blocking -eq 1) "blocking analysis fails gate"
+        $blockingManifest = Read-JsonFile (Join-FullPath $tempRoot "manifest.json")
+        Assert-SelfTest ($blockingManifest.status -eq "failed") "blocking analysis updates manifest status"
+
+        $mediumResultPath = Join-FullPath $analysisFixtureRoot "medium.json"
+        Write-FakeAnalysisResult -Path $mediumResultPath -Issues @(
+            (New-FakeAnalysisIssue -Capture $passed.captures[0] -Severity "minor" -ProblemType "small_touch_target" -Problem "触控目标明显过小")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-medium" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Fixture" -AnalysisResultFile $mediumResultPath
+        $mediumAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($mediumAnalysis.status -eq "failed" -and $mediumAnalysis.issues[0].severity -eq "medium") "medium problem type blocks"
+
+        $invalidJsonPath = Join-FullPath $analysisFixtureRoot "invalid.json"
+        Set-Content -Path $invalidJsonPath -Value "{ invalid json" -Encoding UTF8
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-invalid-json" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Fixture" -AnalysisResultFile $invalidJsonPath
+        $invalidJsonAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($invalidJsonAnalysis.status -eq "failed" -and $invalidJsonAnalysis.failure_type -eq "ai_result_invalid") "invalid JSON analysis classification"
+
+        $missingFieldPath = Join-FullPath $analysisFixtureRoot "missing-field.json"
+        Write-FakeAnalysisResult -Path $missingFieldPath -Issues @(
+            [ordered]@{
+                screen = [string]$passed.captures[0].screen
+                device = [string]$passed.captures[0].device
+                state = [string]$passed.captures[0].state
+                problem = "missing likely cause"
+                evidence = "fixture evidence"
+                suggested_files = @("project/src/game/screens/dev/ui_gallery.rs")
+            }
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-missing-field" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Fixture" -AnalysisResultFile $missingFieldPath
+        $missingFieldAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($missingFieldAnalysis.status -eq "failed" -and $missingFieldAnalysis.failure_type -eq "ai_result_invalid") "missing required field analysis classification"
+
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-missing-capture" -Results @($missing) -ScreensValue @("ui_gallery") -DevicesValue @($devices[1]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[1]) -AnalysisModeName "Fixture" -AnalysisResultFile $minorResultPath
+        $missingCaptureAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($missingCaptureAnalysis.status -eq "failed" -and $missingCaptureAnalysis.failure_type -eq "ai_missing_capture_metadata") "missing screenshot metadata analysis classification"
+
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-missing-result" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Fixture" -AnalysisResultFile (Join-FullPath $analysisFixtureRoot "missing-result.json")
+        $missingResultAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($missingResultAnalysis.status -eq "failed" -and $missingResultAnalysis.failure_type -eq "ai_analysis_failed") "missing analysis result classification"
+
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest" -Results $results -ScreensValue $screens -DevicesValue $devices -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue $devices
         $seeds = Get-FailedTaskSeedsFromManifest -ManifestPath (Join-FullPath $tempRoot "manifest.json") -Mode "FailedOnly" -MatrixDevices $script:BasicDevices
         Assert-SelfTest ($seeds.Count -eq 3) "failed-only rerun seed expansion"
         $screenMatrix = Get-FailedTaskSeedsFromManifest -ManifestPath (Join-FullPath $tempRoot "manifest.json") -Mode "ScreenMatrix" -MatrixDevices @("desktop", "phone-small")
@@ -2129,6 +2827,28 @@ function Invoke-UiAuditSelfTest {
         $remoteManifest = Read-JsonFile (Join-FullPath $tempRoot "manifest.json")
         Assert-SelfTest ($remoteManifest.runner_mode -eq "remote" -and @($remoteManifest.remote_targets).Count -eq 1) "remote manifest summary"
         Assert-SelfTest (Test-Path (Join-FullPath $tempRoot "report.md")) "remote report write"
+        $remoteAnalysisInput = Read-JsonFile (Join-FullPath $tempRoot "analysis-input.json")
+        Assert-SelfTest (($remoteAnalysisInput.runner_mode -eq "remote") -and -not [string]::IsNullOrWhiteSpace([string]$remoteAnalysisInput.captures[0].screenshot_artifact_uri) -and @($remoteAnalysisInput.captures[0].remote_task_ids).Count -gt 0) "remote analysis input artifact task mapping"
+
+        $remoteMinorResultPath = Join-FullPath $analysisFixtureRoot "remote-minor.json"
+        Write-FakeAnalysisResult -Path $remoteMinorResultPath -Issues @(
+            (New-FakeAnalysisIssue -Capture $remoteResult.captures[0] -Severity "minor" -ProblemType "visual_polish" -Problem "remote minor polish")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "remote-minor" -Results @($remoteResult) -ScreensValue @("ui_gallery") -DevicesValue @($remoteTargets[0].label) -IsDryRun $false -RerunSource "" -RunnerMode "Remote" -RemoteTargetsValue $remoteTargets -RemoteBackendName "Mock" -LocalDevicesValue @("desktop") -AnalysisModeName "Fixture" -AnalysisResultFile $remoteMinorResultPath
+        $remoteMinorAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($remoteMinorAnalysis.status -eq "passed" -and $remoteMinorAnalysis.severity_counts.minor -eq 1) "remote minor analysis passes"
+
+        $remoteBlockingResultPath = Join-FullPath $analysisFixtureRoot "remote-blocking.json"
+        Write-FakeAnalysisResult -Path $remoteBlockingResultPath -Issues @(
+            (New-FakeAnalysisIssue -Capture $remoteResult.captures[0] -Severity "medium" -ProblemType "critical_content_unreachable" -Problem "关键内容不可达")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "remote-blocking" -Results @($remoteResult) -ScreensValue @("ui_gallery") -DevicesValue @($remoteTargets[0].label) -IsDryRun $false -RerunSource "" -RunnerMode "Remote" -RemoteTargetsValue $remoteTargets -RemoteBackendName "Mock" -LocalDevicesValue @("desktop") -AnalysisModeName "Fixture" -AnalysisResultFile $remoteBlockingResultPath
+        $remoteBlockingAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($remoteBlockingAnalysis.status -eq "failed" -and $remoteBlockingAnalysis.failure_type -eq "ai_blocking_issue") "remote blocking analysis fails"
+
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "remote-missing-artifact" -Results @($remoteMissingMetadataFailure) -ScreensValue @("ui_gallery") -DevicesValue @($remoteMissingMetadataTarget.label) -IsDryRun $false -RerunSource "" -RunnerMode "Remote" -RemoteTargetsValue @($remoteMissingMetadataTarget) -RemoteBackendName "Mock" -LocalDevicesValue @("desktop") -AnalysisModeName "Fixture" -AnalysisResultFile $remoteMinorResultPath
+        $remoteMissingArtifactAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($remoteMissingArtifactAnalysis.status -eq "failed" -and $remoteMissingArtifactAnalysis.failure_type -eq "ai_remote_artifact_read_failed") "remote missing artifact analysis classification"
 
         Write-Host "Self-test passed."
     } finally {
@@ -2203,6 +2923,9 @@ function Invoke-UiAuditRunner {
             Write-Host "Dry run complete. Remote adminapi tasks were not created."
             Write-Host "Manifest: $(Join-FullPath $runRoot "manifest.json")"
             Write-Host "Report: $(Join-FullPath $runRoot "report.md")"
+            if ($script:LastUiAuditAnalysisStatus -and $script:LastUiAuditAnalysisStatus.status -eq "failed") {
+                return 1
+            }
             return 0
         }
 
@@ -2225,6 +2948,9 @@ function Invoke-UiAuditRunner {
 
         $failed = @($results.ToArray() | Where-Object { $_.status -eq "failed" })
         if ($failed.Count -gt 0) {
+            return 1
+        }
+        if ($script:LastUiAuditAnalysisStatus -and $script:LastUiAuditAnalysisStatus.status -eq "failed") {
             return 1
         }
         return 0
@@ -2270,6 +2996,9 @@ function Invoke-UiAuditRunner {
         Write-Host "Dry run complete. No cargo process was started."
         Write-Host "Manifest: $(Join-FullPath $runRoot "manifest.json")"
         Write-Host "Report: $(Join-FullPath $runRoot "report.md")"
+        if ($script:LastUiAuditAnalysisStatus -and $script:LastUiAuditAnalysisStatus.status -eq "failed") {
+            return 1
+        }
         return 0
     }
 
@@ -2293,6 +3022,9 @@ function Invoke-UiAuditRunner {
 
     $failed = @($results.ToArray() | Where-Object { $_.status -eq "failed" })
     if ($failed.Count -gt 0) {
+        return 1
+    }
+    if ($script:LastUiAuditAnalysisStatus -and $script:LastUiAuditAnalysisStatus.status -eq "failed") {
         return 1
     }
     return 0
