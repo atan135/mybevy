@@ -19,9 +19,9 @@ const DEFAULT_MANUAL_SCREENSHOT_DIR: &str = "../summary/ui-audit/manual";
 const DEFAULT_SCREEN_LABEL: &str = "unknown_screen";
 const SCREENSHOT_TIMEOUT_FRAMES: u32 = 300;
 
-pub(crate) struct UiAuditPlugin;
+pub(crate) struct UiScreenshotPlugin;
 
-impl Plugin for UiAuditPlugin {
+impl Plugin for UiScreenshotPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(UiAuditScreenshotConfig::from_env())
             .init_resource::<UiScreenshotFrameClock>()
@@ -61,7 +61,7 @@ impl Plugin for UiAuditPlugin {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
-enum UiScreenshotSystems {
+pub(super) enum UiScreenshotSystems {
     ManualInput,
     Commands,
     Timeout,
@@ -643,7 +643,7 @@ fn save_screenshot_image(
         })
 }
 
-fn absolute_display_path(path: &Path) -> PathBuf {
+pub(super) fn absolute_display_path(path: &Path) -> PathBuf {
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     absolute_display_path_from_base(&base, path)
 }
@@ -677,7 +677,7 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
     normalized
 }
 
-fn sanitize_filename_segment(value: &str) -> String {
+pub(super) fn sanitize_filename_segment(value: &str) -> String {
     let mut sanitized = String::with_capacity(value.len());
     let mut last_was_separator = false;
 
@@ -709,7 +709,7 @@ fn sanitize_filename_segment(value: &str) -> String {
     }
 }
 
-fn current_unix_timestamp_seconds() -> u64 {
+pub(super) fn current_unix_timestamp_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -728,7 +728,7 @@ fn default_manual_screenshot_enabled() -> bool {
     ))
 }
 
-fn read_bool(read: &mut impl FnMut(&str) -> Option<String>, key: &str) -> Option<bool> {
+pub(super) fn read_bool(read: &mut impl FnMut(&str) -> Option<String>, key: &str) -> Option<bool> {
     read(key).and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "on" | "yes" | "enabled" => Some(true),
         "0" | "false" | "off" | "no" | "disabled" => Some(false),

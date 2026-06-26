@@ -1,7 +1,9 @@
+mod local;
 pub(crate) mod screenshot;
 
+pub(crate) use local::{UiAuditPlugin, UiAuditRouteCommand, UiAuditScreen, UiAuditScreenRegistry};
 #[allow(unused_imports)]
 pub(crate) use screenshot::{
-    UiAuditPlugin, UiScreenshotCommand, UiScreenshotEvent, UiScreenshotFailed,
-    UiScreenshotFailureReason, UiScreenshotRequestId, UiScreenshotRequestRecord, UiScreenshotSaved,
+    UiScreenshotCommand, UiScreenshotEvent, UiScreenshotFailed, UiScreenshotFailureReason,
+    UiScreenshotRequestId, UiScreenshotRequestRecord, UiScreenshotSaved,
 };

@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use std::env;
 
 use crate::framework::ui::{
+    audit::{UiAuditRouteCommand, UiAuditScreen, UiAuditScreenRegistry},
     core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
     widgets::{UiButtonEvent, UiButtonEventKind},
 };
@@ -23,14 +24,18 @@ impl Plugin for NavigationPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppUiMode>()
             .add_message::<GameRouteCommand>()
-            .add_systems(Startup, setup_start_mode);
+            .add_systems(Startup, (register_ui_audit_screens, setup_start_mode));
         app.configure_sets(
             Update,
             GameRouteSystems::Commands.before(UiPanelSystems::Commands),
         )
         .add_systems(
             Update,
-            (handle_route_buttons, handle_game_route_commands)
+            (
+                handle_route_buttons,
+                handle_ui_audit_route_commands,
+                handle_game_route_commands,
+            )
                 .chain()
                 .in_set(GameRouteSystems::Commands),
         );
@@ -53,7 +58,7 @@ pub(super) enum AppUiMode {
 }
 
 impl AppUiMode {
-    pub(super) const fn ui_owner(self) -> UiOwnerId {
+    pub(crate) const fn ui_owner(self) -> UiOwnerId {
         match self {
             Self::Login => OWNER_LOGIN,
             Self::Lobby => OWNER_LOBBY,
@@ -65,6 +70,47 @@ impl AppUiMode {
             Self::SampleScene => OWNER_SAMPLE_SCENE,
             Self::RobotSyncScene => OWNER_ROBOT_SYNC_SCENE,
             Self::FangyuanHome => OWNER_FANGYUAN_HOME,
+        }
+    }
+
+    pub(crate) const fn canonical_screen(self) -> &'static str {
+        match self {
+            Self::Login => "login",
+            Self::Lobby => "lobby",
+            Self::AudioSettings => "audio_settings",
+            Self::AudioMonitor => "audio_monitor",
+            Self::AudioGallery => "audio_gallery",
+            Self::WanfaTouchRipple => "wanfa_touch_ripple",
+            Self::UiGallery => "ui_gallery",
+            Self::SampleScene => "sample_scene",
+            Self::RobotSyncScene => "robot_sync_scene",
+            Self::FangyuanHome => "fangyuan_home",
+        }
+    }
+
+    pub(crate) const fn aliases(self) -> &'static [&'static str] {
+        match self {
+            Self::Login => &["login"],
+            Self::Lobby => &["lobby", "game_list", "game-list", "list"],
+            Self::AudioSettings => &["audio_settings", "audio-settings", "audio", "settings"],
+            Self::AudioMonitor => &[
+                "audio_monitor",
+                "audio-monitor",
+                "audio_debug",
+                "audio-debug",
+            ],
+            Self::AudioGallery => &["audio_gallery", "audio-gallery"],
+            Self::WanfaTouchRipple => &[
+                "wanfa_touch_ripple",
+                "wanfa-touch-ripple",
+                "touch",
+                "touch_ripple",
+                "touch-ripple",
+            ],
+            Self::UiGallery => &["ui_gallery", "ui-gallery", "gallery"],
+            Self::SampleScene => &["sample_scene", "sample-scene", "sample"],
+            Self::RobotSyncScene => &["robot_sync_scene", "robot-sync-scene", "robot"],
+            Self::FangyuanHome => &["fangyuan_home", "fangyuan-home", "fangyuan"],
         }
     }
 }
@@ -101,6 +147,31 @@ fn handle_route_buttons(
     }
 }
 
+fn handle_ui_audit_route_commands(
+    mut audit_route_commands: MessageReader<UiAuditRouteCommand>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
+) {
+    for command in audit_route_commands.read() {
+        let Some(mode) = parse_start_screen_mode(&command.screen) else {
+            warn!(
+                "ui audit route ignored unknown screen alias: {}",
+                command.screen
+            );
+            continue;
+        };
+        if mode.ui_owner() != command.owner {
+            warn!(
+                "ui audit route owner mismatch: screen={}, expected={}, actual={}",
+                command.screen,
+                command.owner,
+                mode.ui_owner()
+            );
+            continue;
+        }
+        route_commands.write(GameRouteCommand::ChangeMode(mode));
+    }
+}
+
 fn handle_game_route_commands(
     mut route_commands: MessageReader<GameRouteCommand>,
     mut next_mode: ResMut<NextState<AppUiMode>>,
@@ -134,25 +205,37 @@ fn setup_start_mode(mut next_mode: ResMut<NextState<AppUiMode>>) {
     next_mode.set(mode);
 }
 
-fn parse_start_screen_mode(value: &str) -> Option<AppUiMode> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "wanfa_touch_ripple" | "wanfa-touch-ripple" | "touch" | "touch_ripple" | "touch-ripple" => {
-            Some(AppUiMode::WanfaTouchRipple)
-        }
-        "lobby" | "game_list" | "game-list" | "list" => Some(AppUiMode::Lobby),
-        "audio_settings" | "audio-settings" | "audio" | "settings" => {
-            Some(AppUiMode::AudioSettings)
-        }
-        "audio_monitor" | "audio-monitor" | "audio_debug" | "audio-debug" => {
-            Some(AppUiMode::AudioMonitor)
-        }
-        "audio_gallery" | "audio-gallery" => Some(AppUiMode::AudioGallery),
-        "ui_gallery" | "ui-gallery" | "gallery" => Some(AppUiMode::UiGallery),
-        "sample_scene" | "sample-scene" | "sample" => Some(AppUiMode::SampleScene),
-        "fangyuan_home" | "fangyuan-home" | "fangyuan" => Some(AppUiMode::FangyuanHome),
-        "login" => Some(AppUiMode::Login),
-        _ => None,
+pub(crate) fn parse_start_screen_mode(value: &str) -> Option<AppUiMode> {
+    all_app_ui_modes().into_iter().find(|mode| {
+        mode.aliases()
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(value.trim()))
+    })
+}
+
+fn register_ui_audit_screens(mut registry: ResMut<UiAuditScreenRegistry>) {
+    for mode in all_app_ui_modes() {
+        registry.register(UiAuditScreen::new(
+            mode.canonical_screen(),
+            mode.aliases(),
+            mode.ui_owner(),
+        ));
     }
+}
+
+fn all_app_ui_modes() -> [AppUiMode; 10] {
+    [
+        AppUiMode::Login,
+        AppUiMode::Lobby,
+        AppUiMode::AudioSettings,
+        AppUiMode::AudioMonitor,
+        AppUiMode::AudioGallery,
+        AppUiMode::WanfaTouchRipple,
+        AppUiMode::UiGallery,
+        AppUiMode::SampleScene,
+        AppUiMode::RobotSyncScene,
+        AppUiMode::FangyuanHome,
+    ]
 }
 
 #[cfg(test)]
@@ -212,6 +295,22 @@ mod tests {
         assert_eq!(
             parse_start_screen_mode("fangyuan"),
             Some(AppUiMode::FangyuanHome)
+        );
+    }
+
+    #[test]
+    fn start_screen_aliases_include_robot_sync_scene() {
+        assert_eq!(
+            parse_start_screen_mode("robot_sync_scene"),
+            Some(AppUiMode::RobotSyncScene)
+        );
+        assert_eq!(
+            parse_start_screen_mode("robot-sync-scene"),
+            Some(AppUiMode::RobotSyncScene)
+        );
+        assert_eq!(
+            parse_start_screen_mode("robot"),
+            Some(AppUiMode::RobotSyncScene)
         );
     }
 }
