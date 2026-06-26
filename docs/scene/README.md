@@ -6,6 +6,7 @@
 
 - [场景框架层功能说明](./场景框架层功能说明.md)：说明 `project/src/framework/scene/` 当前已提供的通用 Scene 能力、生命周期、manifest、资源加载、根实体、相机、spawn/anchor、trigger、streaming、authority ready 和调试边界。
 - [游戏层场景使用说明](./游戏层场景使用说明.md)：说明 game layer 如何通过场景表 CSV、framework manifest、layout RON、大厅入口和 HUD 接入具体游戏场景，当前覆盖 `sample.dungeon_room` 样板场景和 `arena.robot_sync` 机器人帧同步场景。
+- [摄像机管理系统设计](./摄像机管理系统设计.md)：说明第一阶段摄像机管理系统的目标、职责边界、固定/跟随/动画能力、镜头特效归属、Robot Sync 接入方案和验收标准。
 
 ## 1. 文档目标
 
