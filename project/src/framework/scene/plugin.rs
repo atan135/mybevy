@@ -4,6 +4,7 @@ use crate::framework::ui::core::UiPanelSystems;
 
 use super::{
     authority::{SceneAuthorityReadyRequest, SceneAuthorityReadyStatus},
+    camera::update_scene_cameras,
     command::SceneCommand,
     debug::SceneDebugConfig,
     event::SceneEvent,
@@ -48,6 +49,7 @@ impl Plugin for ScenePlugin {
                     process_scene_trigger_commands,
                     detect_scene_triggers,
                     update_scene_streaming_driver,
+                    update_scene_cameras,
                     sync_scene_loading_ui.before(UiPanelSystems::Commands),
                 )
                     .chain(),

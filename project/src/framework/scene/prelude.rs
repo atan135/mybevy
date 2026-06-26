@@ -4,13 +4,14 @@ pub use super::{
         SceneAuthorityReadyStatus,
     },
     camera::{
-        SCENE_CAMERA_2D_ORDER, SCENE_CAMERA_3D_ORDER, SceneCameraAnimationConfig,
-        SceneCameraConfig, SceneCameraEasing, SceneCameraFollowConfig,
-        SceneCameraFollowTargetSource, SceneCameraMode, SceneCameraProjection, SceneCameraRig,
+        SCENE_CAMERA_2D_ORDER, SCENE_CAMERA_3D_ORDER, SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG,
+        SCENE_CAMERA_PRIMARY_ACTOR_TARGET_TAG, SceneCameraAnimationConfig, SceneCameraConfig,
+        SceneCameraEasing, SceneCameraFollowConfig, SceneCameraFollowTargetSource, SceneCameraMode,
+        SceneCameraProjection, SceneCameraRig, SceneCameraRuntimeState, SceneCameraTarget,
         default_scene_camera_2d_config, default_scene_camera_3d_config,
         default_scene_camera_3d_transform, default_scene_camera_config_for_world,
         ensure_scene_camera, scene_has_camera_for_session, spawn_default_scene_camera_2d,
-        spawn_default_scene_camera_3d, spawn_scene_camera,
+        spawn_default_scene_camera_3d, spawn_scene_camera, update_scene_cameras,
     },
     command::{
         SceneCommand, SceneEnterRequest, SceneExitRequest, SceneLayerCommand, ScenePreloadRequest,
