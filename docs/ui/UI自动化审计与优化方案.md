@@ -104,6 +104,8 @@ flowchart TD
 
 ## 启动方式
 
+本节描述的是第一阶段的本地审计启动方式：通过环境变量和窗口参数启动一个一次性审计进程。后续远程设备、移动端和多 client 审计应迁移到 `docs/debug/远程调试控制机制.md` 描述的 adminapi / game-server / client 任务模型。届时 UI audit runner 不再直接依赖 `MYBEVY_UI_AUDIT_*` 启动目标设备，而是通过 `adminapi` 下发 `ui.goto_screen`、`ui.wait_stable`、`ui.scroll_to`、`ui.screenshot` 等命令。
+
 审计模式通过环境变量或命令行参数启用。建议优先使用环境变量，避免和现有 Bevy 参数冲突。
 
 示例：
@@ -144,6 +146,15 @@ cargo run -- --window-profile tablet-portrait
 cargo run -- --window-profile tablet-landscape
 cargo run -- --window-size 1366x768 --device-scale 1.0
 ```
+
+## 控制通道演进
+
+UI 自动化审计需要两种控制通道分阶段存在：
+
+1. 本地一次性审计模式：通过 `MYBEVY_UI_AUDIT_*` 环境变量启动游戏进程，client 在启动后自动进入页面、滚动、截图、写入结果并退出。该模式适合第一阶段本地开发、桌面窗口 profile 和 CI 兜底。
+2. 远程调试控制模式：通过 `adminapi` 创建调试任务，server 通过 `game-server` 向指定 client 下发命令，client 在 Bevy 主线程执行命令并回传结果。该模式适合 Android 真机、多设备、多 client、AI 交互式审计和未来其他自动化功能。
+
+长期推荐以远程调试控制模式作为主通道。UI 审计文档只定义“要执行哪些 UI 审计动作和如何分析结果”；跨设备命令下发、任务状态、错误码、超时、重试、artifact 和安全边界以 `docs/debug/远程调试控制机制.md` 为准。
 
 ## 设备矩阵
 
@@ -574,16 +585,15 @@ max_fix_iterations = 5
 
 ## 外部 Runner 的职责
 
-虽然方案 B 把页面控制和截图放进游戏内，但仍需要外部 runner 编排批量任务。
+虽然方案 B 把页面控制和截图放进游戏内，但仍需要外部 runner 编排批量任务。第一阶段 runner 可以通过环境变量启动一次性审计进程；远程调试控制机制完成后，runner 应改为调用 `adminapi` 创建任务并查询结果。
 
 外部 runner 负责：
 
 - 接收界面列表。
 - 展开设备矩阵。
-- 为每个 screen + device 启动一次游戏进程。
-- 设置 `MYBEVY_UI_AUDIT_*` 环境变量。
-- 传入 `--window-profile` 或 `--window-size`。
-- 等待进程完成。
+- 本地模式下，为每个 screen + device 启动一次游戏进程，设置 `MYBEVY_UI_AUDIT_*` 环境变量，并传入 `--window-profile` 或 `--window-size`。
+- 远程模式下，通过 `adminapi` 选择目标 device/client，按任务模型下发 `ui.goto_screen`、`ui.wait_stable`、`ui.scroll_to`、`ui.screenshot`、`ui.read_tree` 等命令。
+- 等待本地进程完成，或轮询远程 debug task 状态。
 - 汇总 manifest。
 - 调用 AI 分析截图。
 - 如果有问题，触发代码修复。
@@ -591,7 +601,7 @@ max_fix_iterations = 5
 - 复跑失败页面或完整相关矩阵。
 - 生成最终总结文档。
 
-游戏内 `UiAuditPlugin` 负责单进程内的可靠状态控制；外部 runner 负责多页面、多分辨率和多轮修复。
+游戏内 `UiAuditPlugin` 负责可靠地执行 UI 状态控制、滚动、截图和 metadata 采集；外部 runner 负责多页面、多分辨率、多设备和多轮修复。远程模式下，命令通道、任务状态和 artifact 回收由 `docs/debug/远程调试控制机制.md` 约定。
 
 ## 通过标准
 
