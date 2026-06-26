@@ -3,7 +3,10 @@ use std::{collections::BTreeMap, time::Duration};
 use bevy::{gltf::GltfAssetLabel, prelude::*, scene::SceneRoot as BevySceneRoot};
 
 use crate::{
-    framework::scene::prelude::{SceneOwned, SceneRuntimeRoot, SceneSessionId},
+    framework::scene::prelude::{
+        SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG, SceneCameraTarget, SceneOwned, SceneRuntimeRoot,
+        SceneSessionId,
+    },
     game::authority::AuthoritySession,
 };
 
@@ -134,6 +137,7 @@ pub(in crate::game::features::robot_sync) fn sync_robot_sync_robot_visuals(
         visual.color_index = robot.color_index;
         visual.is_local_player = is_local_player;
         visual.animation_state = robot_animation_state(robot);
+        update_robot_visual_camera_target(&mut commands, entity, session_id, is_local_player);
         if should_update_model && let Some(asset_server) = asset_server.as_deref() {
             scene_root.0 =
                 robot_model_scene_handle(asset_server, robot.color_index, is_local_player);
@@ -292,8 +296,26 @@ fn spawn_robot_visual(
             Name::new(format!("RobotSyncRobot({})", robot.player_id)),
         ))
         .id();
+    update_robot_visual_camera_target(commands, entity, session_id, is_local_player);
     commands.entity(parent).add_child(entity);
     entity
+}
+
+fn update_robot_visual_camera_target(
+    commands: &mut Commands,
+    entity: Entity,
+    session_id: &SceneSessionId,
+    is_local_player: bool,
+) {
+    if is_local_player {
+        commands.entity(entity).insert(
+            SceneCameraTarget::new(session_id.clone())
+                .with_tag(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG)
+                .with_priority(100),
+        );
+    } else {
+        commands.entity(entity).remove::<SceneCameraTarget>();
+    }
 }
 
 fn apply_robot_visual_state(transform: &mut Transform, robot: &RobotState) {
@@ -453,7 +475,10 @@ fn find_runtime_root_entity<'runtime>(
 mod tests {
     use super::*;
     use crate::{
-        framework::scene::prelude::{SceneId, spawn_scene_root, spawn_scene_runtime_root},
+        framework::scene::prelude::{
+            SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG, SceneCameraTarget, SceneId, spawn_scene_root,
+            spawn_scene_runtime_root,
+        },
         game::{
             authority::AuthoritySession,
             features::robot_sync::{
@@ -693,6 +718,60 @@ mod tests {
         let visual_state = app.world().resource::<RobotSyncVisualState>();
         assert_eq!(visual_state.tracked_robot_entities, 2);
         assert_eq!(visual_state.robot_entities.len(), 2);
+    }
+
+    #[test]
+    fn robot_sync_local_player_visual_gets_scene_camera_target_marker() {
+        let mut app = test_app();
+        let (session_id, _) = activate_scene_with_runtime_root(&mut app);
+        app.world_mut()
+            .resource_mut::<AuthoritySession>()
+            .local_player_id = Some("player-a".to_string());
+        insert_robot(&mut app, "player-a", FixedPosition { x: 0, y: 0 }, 0, 0);
+        insert_robot(&mut app, "player-b", FixedPosition { x: 0, y: 0 }, 1, 1);
+
+        app.update();
+
+        let local_entity = visual_entity_for(&app, "player-a");
+        let local_target = app
+            .world()
+            .get::<SceneCameraTarget>(local_entity)
+            .expect("local visual should be a scene camera target");
+        assert_eq!(local_target.session_id, session_id);
+        assert!(local_target.has_tag(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG));
+        assert_eq!(local_target.priority, 100);
+
+        let remote_entity = visual_entity_for(&app, "player-b");
+        assert!(
+            app.world()
+                .get::<SceneCameraTarget>(remote_entity)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn robot_sync_camera_target_marker_tracks_local_player_changes() {
+        let mut app = test_app();
+        activate_scene_with_runtime_root(&mut app);
+        app.world_mut()
+            .resource_mut::<AuthoritySession>()
+            .local_player_id = Some("player-a".to_string());
+        insert_robot(&mut app, "player-a", FixedPosition { x: 0, y: 0 }, 0, 0);
+        insert_robot(&mut app, "player-b", FixedPosition { x: 0, y: 0 }, 1, 1);
+        app.update();
+
+        let player_a = visual_entity_for(&app, "player-a");
+        let player_b = visual_entity_for(&app, "player-b");
+        assert!(app.world().get::<SceneCameraTarget>(player_a).is_some());
+        assert!(app.world().get::<SceneCameraTarget>(player_b).is_none());
+
+        app.world_mut()
+            .resource_mut::<AuthoritySession>()
+            .local_player_id = Some("player-b".to_string());
+        app.update();
+
+        assert!(app.world().get::<SceneCameraTarget>(player_a).is_none());
+        assert!(app.world().get::<SceneCameraTarget>(player_b).is_some());
     }
 
     #[test]
@@ -1091,6 +1170,8 @@ mod tests {
                     is_local_player: false,
                     animation_state: RobotSyncRobotAnimationState::Idle,
                 },
+                SceneCameraTarget::new("old-session")
+                    .with_tag(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG),
                 Name::new("RobotSyncRobot(stale-player-a)"),
             ))
             .id();
@@ -1122,6 +1203,7 @@ mod tests {
         let visuals = visual_entries(&mut app);
         assert_eq!(visuals.len(), 1);
         assert_eq!(visuals[0].0, current_entity);
+        assert!(app.world().get::<SceneCameraTarget>(stale_entity).is_none());
     }
 
     #[test]
@@ -1165,6 +1247,8 @@ mod tests {
         assert_eq!(query.iter(app.world()).count(), 0);
         let mut scenes = app.world_mut().query::<&BevySceneRoot>();
         assert_eq!(scenes.iter(app.world()).count(), 0);
+        let mut camera_targets = app.world_mut().query::<&SceneCameraTarget>();
+        assert_eq!(camera_targets.iter(app.world()).count(), 0);
         assert_eq!(
             *app.world().resource::<RobotSyncVisualState>(),
             RobotSyncVisualState::default()

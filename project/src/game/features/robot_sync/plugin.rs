@@ -1,7 +1,11 @@
 use bevy::prelude::*;
 
 use crate::{
-    framework::scene::prelude::SceneEvent,
+    framework::scene::prelude::{
+        SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG, SceneCameraAnimationConfig, SceneCameraConfig,
+        SceneCameraEasing, SceneCameraFollowConfig, SceneCameraFollowTargetSource, SceneCameraMode,
+        SceneCameraProjection, SceneCameraRig, SceneEvent,
+    },
     game::{
         authority::{AuthorityCommand, AuthoritySession},
         myserver::MyServerCommand,
@@ -28,6 +32,13 @@ use super::{
 
 pub(in crate::game) struct RobotSyncPlugin;
 
+const ROBOT_SYNC_CAMERA_TOGGLE_KEY: KeyCode = KeyCode::KeyC;
+const ROBOT_SYNC_CAMERA_PROJECTION: SceneCameraProjection = SceneCameraProjection::Perspective3d {
+    fov_y_radians: 0.78,
+    near: 0.1,
+    far: 300.0,
+};
+
 impl Plugin for RobotSyncPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RobotSyncConfig>()
@@ -42,6 +53,7 @@ impl Plugin for RobotSyncPlugin {
                     follow_robot_sync_myserver_events,
                     apply_robot_sync_authority_events,
                     send_local_robot_sync_input,
+                    toggle_robot_sync_camera_mode,
                 ),
             )
             .add_systems(
@@ -54,6 +66,65 @@ impl Plugin for RobotSyncPlugin {
                     .chain(),
             );
     }
+}
+
+fn toggle_robot_sync_camera_mode(
+    scene_state: Res<RobotSyncSceneState>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut scene_cameras: Query<&mut SceneCameraRig>,
+) {
+    if !scene_state.active || !keyboard_input.just_pressed(ROBOT_SYNC_CAMERA_TOGGLE_KEY) {
+        return;
+    }
+
+    let Some(session_id) = scene_state.session_id.as_ref() else {
+        return;
+    };
+
+    for mut rig in &mut scene_cameras {
+        if !rig.is_session(session_id) {
+            continue;
+        }
+
+        rig.config = if rig.config.mode == SceneCameraMode::FollowTarget {
+            robot_sync_overview_camera_config()
+        } else {
+            robot_sync_follow_local_camera_config()
+        };
+    }
+}
+
+fn robot_sync_overview_camera_config() -> SceneCameraConfig {
+    SceneCameraConfig::fixed_3d()
+        .with_transform(robot_sync_overview_camera_transform())
+        .with_projection(ROBOT_SYNC_CAMERA_PROJECTION)
+        .with_target("anchor.camera_target")
+}
+
+fn robot_sync_follow_local_camera_config() -> SceneCameraConfig {
+    SceneCameraConfig::follow_target()
+        .with_transform(robot_sync_overview_camera_transform())
+        .with_projection(ROBOT_SYNC_CAMERA_PROJECTION)
+        .with_target(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG)
+        .with_follow(SceneCameraFollowConfig {
+            target_source: SceneCameraFollowTargetSource::SceneTarget,
+            offset: Vec3::new(0.0, 42.0, 52.0),
+            look_at_offset: Vec3::new(0.0, 0.8, 0.0),
+            position_lerp: 0.18,
+            rotation_lerp: 0.22,
+            min_visible_targets: 1,
+            visible_target_padding: 0.0,
+        })
+        .with_animation(SceneCameraAnimationConfig {
+            enabled: true,
+            duration_seconds: 0.25,
+            easing: SceneCameraEasing::SmoothStep,
+        })
+}
+
+fn robot_sync_overview_camera_transform() -> Transform {
+    Transform::from_xyz(0.0, 110.0, 136.0)
+        .with_rotation(Quat::from_rotation_x(-38.9_f32.to_radians()))
 }
 
 fn send_local_robot_sync_input(
@@ -292,7 +363,10 @@ mod tests {
     use super::*;
     use crate::{
         framework::network::NetworkTransport,
-        framework::scene::prelude::{SceneEntered, SceneExited, SceneId, SceneSessionId},
+        framework::scene::prelude::{
+            SceneCameraConfig, SceneCameraMode, SceneCameraRig, SceneEntered, SceneExited, SceneId,
+            SceneSessionId,
+        },
         game::{
             authority::{AuthorityEndpoint, AuthorityEvent},
             features::robot_sync::{
@@ -1009,6 +1083,115 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyW);
+
+        app.update();
+
+        assert!(read_messages::<AuthorityCommand>(app.world()).is_empty());
+    }
+
+    #[test]
+    fn robot_sync_camera_toggle_switches_current_session_between_overview_and_follow_local() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<RobotSyncSceneState>()
+            .add_systems(Update, toggle_robot_sync_camera_mode);
+        let active_session = SceneSessionId::from("robot-sync-session");
+        let stale_session = SceneSessionId::from("old-session");
+        app.world_mut()
+            .resource_mut::<RobotSyncSceneState>()
+            .activate(
+                SceneId::from(ROBOT_SYNC_ARENA_SCENE_ID),
+                active_session.clone(),
+            );
+        let active_camera = app
+            .world_mut()
+            .spawn(SceneCameraRig::new(
+                active_session.clone(),
+                robot_sync_overview_camera_config(),
+            ))
+            .id();
+        let stale_camera = app
+            .world_mut()
+            .spawn(SceneCameraRig::new(
+                stale_session.clone(),
+                SceneCameraConfig::fixed_3d(),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(ROBOT_SYNC_CAMERA_TOGGLE_KEY);
+        app.update();
+
+        let active_rig = app.world().get::<SceneCameraRig>(active_camera).unwrap();
+        assert_eq!(active_rig.config.mode, SceneCameraMode::FollowTarget);
+        assert_eq!(
+            active_rig
+                .config
+                .target
+                .as_ref()
+                .map(|target| target.as_str()),
+            Some(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG)
+        );
+        let follow = active_rig
+            .config
+            .follow
+            .as_ref()
+            .expect("follow camera config should be present");
+        assert_eq!(
+            follow.target_source,
+            SceneCameraFollowTargetSource::SceneTarget
+        );
+        assert_eq!(follow.offset, Vec3::new(0.0, 42.0, 52.0));
+        assert_eq!(
+            active_rig.config.projection,
+            SceneCameraProjection::Perspective3d {
+                fov_y_radians: 0.78,
+                near: 0.1,
+                far: 300.0
+            }
+        );
+        assert_eq!(
+            app.world()
+                .get::<SceneCameraRig>(stale_camera)
+                .unwrap()
+                .config
+                .mode,
+            SceneCameraMode::Fixed3d
+        );
+
+        *app.world_mut().resource_mut::<ButtonInput<KeyCode>>() = ButtonInput::default();
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(ROBOT_SYNC_CAMERA_TOGGLE_KEY);
+        app.update();
+
+        let active_rig = app.world().get::<SceneCameraRig>(active_camera).unwrap();
+        assert_eq!(active_rig.config.mode, SceneCameraMode::Fixed3d);
+        assert_eq!(
+            active_rig
+                .config
+                .target
+                .as_ref()
+                .map(|target| target.as_str()),
+            Some("anchor.camera_target")
+        );
+    }
+
+    #[test]
+    fn robot_sync_camera_toggle_does_not_emit_authority_input() {
+        let mut app = test_app();
+        app.insert_resource(test_config(RobotSyncAuthorityMode::Off));
+        activate_robot_sync_scene(&mut app);
+        app.world_mut()
+            .resource_mut::<AuthoritySession>()
+            .local_player_id = Some("robot-player-a".to_string());
+        app.world_mut().resource_mut::<RobotSyncConfig>().input_mode = RobotSyncInputMode::Off;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(ROBOT_SYNC_CAMERA_TOGGLE_KEY);
 
         app.update();
 
