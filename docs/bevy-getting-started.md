@@ -409,6 +409,19 @@ cargo run -- --window-size 1280x2772 --window-scale 0.5
 
 如果参数非法，程序会打印 warning 并回退到默认桌面尺寸。该功能只作用于桌面端 primary window 的启动尺寸，不改变 Android 真机默认行为。
 
+### UI 调试和审计入口
+
+桌面 debug 运行时可按 `F3` 打开 UI 调试面板，按 `F9` 保存 primary window 截图。F9 默认写入仓库根目录的 `summary/ui-audit/manual/`，该目录被 Git 忽略。
+
+批量 UI 审计从仓库根目录运行：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -SelfTest
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "top,middle,bottom" -DryRun
+```
+
+`-DryRun` 只验证矩阵和报告，不启动游戏、不生成真实截图。真实审计去掉 `-DryRun`，产物会写入 `summary/ui-audit/<run-id>/`。更多说明见 `docs/ui/UI调试与验收.md` 和 `docs/ui/UI自动化审计与优化方案.md`。
+
 ## 15. 场景框架开发期环境变量
 
 场景框架支持一组开发期环境变量，用于从启动时进入指定场景、指定 spawn、打开诊断或模拟加载异常。所有命令仍在 `project/` 目录执行：

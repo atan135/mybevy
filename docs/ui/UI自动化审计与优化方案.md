@@ -4,15 +4,27 @@
 
 ## 文档状态
 
-本文是设计方案，不表示当前代码已经完整实现。当前项目已经具备可复用基础：
+本文是“已落地能力 + 后续设计”的混合文档。当前已经落地的 UI 审计能力包括：
 
 - `AppUiMode`：游戏层页面模式。
 - `TOUCH_START_SCREEN`：桌面开发时直达目标页面。
 - `--window-profile`、`--window-size`、`--window-scale`：桌面窗口和设备尺寸模拟。
 - `UiViewport`、`UiMetrics`、`UiPanelRoot`、`UiLayerRoot`、`UiInputState`、`UiFocusState`、`UiStats`：UI 框架可观测数据。
 - F3 调试面板：可观察 viewport、panel、input、UI tree 和 layout bounds。
+- F9 手动主窗口截图，默认保存到 `summary/ui-audit/manual/`。
+- `UiScreenshotCommand` / `UiScreenshotEvent` 命令式截图 API。
+- 本地一次性 `MYBEVY_UI_AUDIT_*` 审计模式，支持自动进入页面、等待稳定、滚动 recipe、截图、metadata、manifest 和 report。
+- `scripts/run-ui-audit.ps1` 本地 runner，支持 screen / device 矩阵、dry-run、rerun、fixture 分析和默认关闭的 FixMode。
+- `scripts/run-ui-audit.ps1` 远程 Mock / Http runner，按本文和远程调试文档约定的 adminapi 任务接口创建命令、轮询状态并汇总 artifact。
+- AI 分析 fixture 分级：`severe` / `medium` 作为阻塞，`minor` 只记录。
+- FixMode `Off` / `Plan` / `Mock` / `Command` 修复闭环骨架，包含安全策略、before / after iteration、`cargo fmt` / `cargo check` 检查记录和失败出口。
 
-本方案的目标是在这些基础上新增一套开发期专用的 `UiAudit` 能力。
+仍属于设计或外部依赖的部分：
+
+- 真实远程 server / client 调试命令执行链路尚未在本仓库内接入；Http runner 只按文档接口调用外部 `adminapi`。
+- Android 真机截图、系统 UI 截图、第二窗口截图和 offscreen render target 截图尚未实现。
+- AI 视觉模型调用尚未内置；当前 runner 支持关闭分析、fixture 分析，以及供外部 AI 消费的 `analysis-input.json`。
+- 多语言、字体缩放、软键盘、安全区真机矩阵、视觉 diff 和 CI 夜间全量策略仍是长期扩展。
 
 ## 目标
 
@@ -104,7 +116,7 @@ flowchart TD
 
 ## 启动方式
 
-本节描述的是第一阶段的本地审计启动方式：通过环境变量和窗口参数启动一个一次性审计进程。后续远程设备、移动端和多 client 审计应迁移到 `docs/debug/远程调试控制机制.md` 描述的 adminapi / game-server / client 任务模型。届时 UI audit runner 不再直接依赖 `MYBEVY_UI_AUDIT_*` 启动目标设备，而是通过 `adminapi` 下发 `ui.goto_screen`、`ui.wait_stable`、`ui.scroll_to`、`ui.screenshot` 等命令。
+本地审计通过环境变量和窗口参数启动一个一次性审计进程。远程设备、移动端和多 client 审计通过 `docs/debug/远程调试控制机制.md` 描述的 adminapi 任务模型编排；当前仓库内的远程 runner 已有 Mock 和 Http 两种后端，但真实 server / client 执行能力仍是外部依赖。
 
 审计模式通过环境变量或命令行参数启用。建议优先使用环境变量，避免和现有 Bevy 参数冲突。
 
@@ -147,6 +159,28 @@ cargo run -- --window-profile tablet-landscape
 cargo run -- --window-size 1366x768 --device-scale 1.0
 ```
 
+日常建议优先使用仓库根目录的 runner：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -SelfTest
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States auto
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "top,middle,bottom" -DryRun
+```
+
+`-DryRun` 只验证 screen / device / state 矩阵、输出 `manifest.json`、`analysis-input.json`、`analysis.json` 和 `report.md`，不会启动 `cargo run`，也不会生成真实截图。真实本地运行会为每个 screen + device 创建一次 `cargo run`，设置 `MYBEVY_UI_AUDIT_*` 并把 stdout / stderr 写入本轮 `logs/`。
+
+远程 Mock 演示：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -Remote -RemoteBackend Mock -DeviceId android-test-01 -Screens ui-gallery -States top
+```
+
+远程 Http 模式会调用外部 adminapi：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -Remote -RemoteBackend Http -AdminApiBaseUrl http://127.0.0.1:8080 -AdminApiToken <token> -DeviceId android-test-01 -Screens ui-gallery -States top
+```
+
 ## 控制通道演进
 
 UI 自动化审计需要两种控制通道分阶段存在：
@@ -156,9 +190,15 @@ UI 自动化审计需要两种控制通道分阶段存在：
 
 长期推荐以远程调试控制模式作为主通道。UI 审计文档只定义“要执行哪些 UI 审计动作和如何分析结果”；跨设备命令下发、任务状态、错误码、超时、重试、artifact 和安全边界以 `docs/debug/远程调试控制机制.md` 为准。
 
+当前实际优先级是：
+
+1. 本地 runner：桌面开发和 CI fallback，直接依赖 `MYBEVY_UI_AUDIT_*`。
+2. 远程 Mock runner：验证 adminapi 任务编排、artifact 汇总、失败报告和 AI 输入格式。
+3. 远程 Http runner：对接外部 `adminapi`，但是否能真正控制设备取决于外部 server / client 是否实现了调试通道。
+
 ## 设备矩阵
 
-第一阶段建议使用项目已有 profile 作为基础矩阵：
+当前 runner 支持项目已有 profile 作为基础矩阵；`-Devices all` 会展开为全部基础设备：
 
 | 设备类型 | profile |
 | --- | --- |
@@ -182,13 +222,34 @@ UI 自动化审计需要两种控制通道分阶段存在：
 
 为了避免第一版成本爆炸，基础矩阵先覆盖现有 profile。AI 修复闭环稳定后，再引入扩展矩阵和压力尺寸。
 
+runner 的 `-WindowProfile`、`-WindowSize`、`-DeviceScale`、`-WindowScale` 和 `-BevyArgs` 可追加窗口覆盖参数；常规矩阵仍以 `-Devices` 为主。
+
+## 支持的 Screen Alias
+
+当前 runner 和游戏内审计注册的 screen alias 保持一致：
+
+| canonical | aliases |
+| --- | --- |
+| `login` | `login` |
+| `lobby` | `lobby`, `game_list`, `game-list`, `list` |
+| `audio_settings` | `audio_settings`, `audio-settings`, `audio`, `settings` |
+| `audio_monitor` | `audio_monitor`, `audio-monitor`, `audio_debug`, `audio-debug` |
+| `audio_gallery` | `audio_gallery`, `audio-gallery` |
+| `wanfa_touch_ripple` | `wanfa_touch_ripple`, `wanfa-touch-ripple`, `touch`, `touch_ripple`, `touch-ripple` |
+| `ui_gallery` | `ui_gallery`, `ui-gallery`, `gallery` |
+| `sample_scene` | `sample_scene`, `sample-scene`, `sample` |
+| `robot_sync_scene` | `robot_sync_scene`, `robot-sync-scene`, `robot` |
+| `fangyuan_home` | `fangyuan_home`, `fangyuan-home`, `fangyuan` |
+
+`-Screens all` 或 `-Screens full` 会展开全部 canonical screen。
+
 ## 内置全屏截图能力
 
 全屏截图是整个审计机制的第一块基础设施。它应当支持手动触发和命令触发。
 
 ### 手动截图
 
-建议第一阶段先实现 `F9` 手动截图：
+已实现 `F9` 手动截图。debug 桌面构建默认启用，Android 和 wasm 默认禁用；可通过 `MYBEVY_UI_AUDIT_MANUAL_SCREENSHOT=0/1` 覆盖。
 
 ```text
 运行游戏
@@ -204,6 +265,8 @@ UI 自动化审计需要两种控制通道分阶段存在：
 summary/ui-audit/manual/
 ```
 
+可通过 `MYBEVY_UI_AUDIT_MANUAL_OUTPUT` 覆盖保存目录。文件名包含 Unix 秒级时间戳、当前 UI owner、逻辑尺寸和物理尺寸。
+
 建议文件名包含：
 
 ```text
@@ -214,7 +277,7 @@ summary/ui-audit/manual/
 
 ### 命令式截图
 
-审计模式需要通过 Bevy message 请求截图。建议接口形态如下：
+审计模式通过 Bevy message 请求截图。当前接口形态：
 
 ```rust
 pub enum UiScreenshotCommand {
@@ -229,15 +292,8 @@ pub enum UiScreenshotCommand {
 
 ```rust
 pub enum UiScreenshotEvent {
-    Saved {
-        path: PathBuf,
-        width: u32,
-        height: u32,
-    },
-    Failed {
-        path: PathBuf,
-        reason: String,
-    },
+    Saved(UiScreenshotSaved),
+    Failed(UiScreenshotFailed),
 }
 ```
 
@@ -348,7 +404,7 @@ Failed
 )
 ```
 
-第一阶段 recipe 可以写在 Rust 代码中，避免新增资源加载和错误处理。稳定后可以迁移为 RON：
+当前 recipe 写在 Rust 代码中，避免新增资源加载和错误处理。稳定后可以迁移为 RON：
 
 ```text
 project/assets/ui/audit/screens.ron
@@ -362,6 +418,14 @@ project/assets/ui/audit/screens.ron
 - 每个状态需要滚动到哪个目标和位置。
 - 是否需要打开 Confirm、Loading、Floating 等覆盖层。
 - 是否需要等待特定页面 ready marker。
+
+当前已支持的滚动 recipe：
+
+| screen | scroll target | states |
+| --- | --- | --- |
+| `ui_gallery` | `ui_gallery.main` | `top`, `middle`, `bottom` |
+
+其他 screen 默认只有 `initial`。如果对没有 recipe 的 screen 显式请求 `top`、`middle` 或 `bottom`，本地审计会失败并写出 `config_invalid`。远程 runner 会按约定发送 `<screen>.main` 作为滚动目标，真实能否执行取决于远程 client 是否注册对应稳定 ID。
 
 ## 滚动检查
 
@@ -442,6 +506,7 @@ Bottom = 100%
 summary/ui-audit/<run-id>/
   manifest.json
   report.md
+  analysis-input.json
   analysis.json
   screenshots/
     gallery/
@@ -460,6 +525,27 @@ summary/ui-audit/<run-id>/
         01-middle.json
         02-bottom.json
 ```
+
+runner 输出会额外包含：
+
+```text
+summary/ui-audit/<run-id>/
+  logs/
+    <screen>__<device>.stdout.log
+    <screen>__<device>.stderr.log
+  runs/
+    <screen>/
+      <device>/
+        manifest.json
+        report.md
+  iterations/
+    00-before/
+    01-after-fix/
+```
+
+远程 Mock / Http 模式会在 task/capture 中记录 `task_id`、`request_id`、`remote_task_ids`、`screenshot_artifact_uri`、`metadata_artifact_uri` 和可选 `log_artifact_uri`。Mock 后端还会在 run 目录下写入本地 `artifacts/<task-id>/` 文件，便于演示。
+
+`summary/ui-audit/` 被仓库根目录 `.gitignore` 的 `/summary/*` 规则忽略。常规审计产物不提交 Git；需要分享时应复制必要的 `report.md`、`manifest.json`、`analysis*.json` 和截图到明确的文档附件位置，或在 PR / 任务系统中引用外部 artifact。清理旧产物时删除 `summary/ui-audit/<run-id>/` 或整个 `summary/ui-audit/` 即可，保留 `summary/.gitkeep`。
 
 `manifest.json` 记录本轮任务：
 
@@ -516,6 +602,8 @@ AI 不应只接收截图。每个分析任务应包含：
 - 设备 profile 或窗口尺寸。
 - 滚动状态。
 - 当前代码相关文件提示，可由 screen recipe 提供。
+
+当前 runner 会生成 `analysis-input.json`，每条 capture 至少包含 `screen`、`device`、`state`、截图/metadata 路径或远程 artifact URI、`manifest`、`likely_files`。fixture 分析结果必须引用已有 capture 的 `screen + device + state`，否则 runner 会报告分析结果非法。
 
 示例结构：
 
@@ -583,6 +671,8 @@ max_fix_iterations = 5
 
 超过次数仍未通过时，输出失败报告并保留最后一轮截图和问题列表。
 
+当前 FixMode 默认 `Off`。`Plan` 只生成修复计划，不修改代码；`Mock` 只记录模拟修复并运行检查；`Command` 会执行 `-FixCommand`，但必须通过安全策略。允许优先级为页面局部布局、通用控件、主题 token、UI framework core；禁止修改 `summary/ui-audit/`、构建产物、敏感配置和允许根之外的文件。每轮会记录 `iterations/00-before/` 和 `iterations/NN-after-fix/`，并在报告中链接 before / after snapshot、cargo 日志和 after report。
+
 ## 外部 Runner 的职责
 
 虽然方案 B 把页面控制和截图放进游戏内，但仍需要外部 runner 编排批量任务。第一阶段 runner 可以通过环境变量启动一次性审计进程；远程调试控制机制完成后，runner 应改为调用 `adminapi` 创建任务并查询结果。
@@ -624,17 +714,29 @@ max_fix_iterations = 5
 | 类型 | 含义 |
 | --- | --- |
 | `launch_failed` | 游戏进程启动失败 |
+| `timeout` | 本地 cargo 进程超过 runner 超时 |
+| `manifest_missing` | 子进程未写出 manifest |
+| `manifest_invalid` | 子进程 manifest 不是合法 JSON 或结构不符合预期 |
+| `output_missing` | manifest 存在，但截图或 metadata 文件缺失 |
 | `screen_not_found` | 无法进入目标页面 |
 | `panel_not_ready` | 目标页面根 panel 未出现 |
 | `unstable_ui` | 等待超时后 UI 仍不稳定 |
 | `scroll_target_missing` | recipe 声明的滚动目标不存在 |
 | `scroll_target_unreachable` | 无法滚动到目标位置 |
 | `screenshot_failed` | 截图请求失败或文件未生成 |
+| `artifact_upload_failed` | 远程截图任务成功但缺少 screenshot 或 metadata artifact URI |
+| `remote_error` / `remote_failed` / `remote_status_unknown` | 远程任务返回未知错误、普通失败或未知状态 |
+| `device_offline` / `debug_disabled` / `send_failed` / `client_timeout` / `client_rejected` | 远程 runner 已知错误码 |
 | `ai_blocking_issue` | AI 发现严重或中等问题 |
+| `ai_missing_capture` / `ai_missing_capture_metadata` / `ai_remote_artifact_read_failed` | AI 分析输入不完整 |
+| `ai_result_invalid` | fixture/外部分析结果格式非法或无法对应 capture |
+| `safety_policy_rejected` | 修复候选路径或实际变更不符合安全策略 |
 | `fix_check_failed` | AI 修改后格式化或编译检查失败 |
 | `max_iterations_reached` | 达到最大修复次数仍未通过 |
 
 失败报告应包含失败类型、页面、设备、状态、截图或日志路径。
+
+当前 runner 的 `manifest.json` 和 `report.md` 会在 task 表中记录 `screen`、`device`、`states`、`failure_type`、stdout/stderr 或 remote task id；capture 表中记录 `screen`、`device`、`state`、截图、metadata、artifact URI 和 failure。分析 issue 表也按 `screen + device + state` 反向关联截图和 metadata。
 
 ## 建议落地顺序
 
@@ -742,9 +844,20 @@ project/src/game/screens/lobby/game_list.rs
 - 审计能力默认关闭，普通运行不应产生截图、报告或自动退出。
 - 审计代码不能绕过现有 `AppUiMode` 和 panel 管理机制。
 - 审计截图和报告应写入 `summary/ui-audit/`，不要写入 `project/assets/`。
-- 截图、metadata 和 report 属于审计产物，是否提交 Git 需要按具体用途决定；常规自动运行产物不应默认纳入正式代码提交。
+- 截图、metadata、manifest、analysis、report、logs 和 iterations 属于审计产物，默认被 Git 忽略，不纳入正式代码提交。
+- 清理旧产物时只删除 `summary/ui-audit/<run-id>/` 或 `summary/ui-audit/`，不要删除 `summary/.gitkeep`，也不要把 checklist 归档流程混入 runner 清理。
 - 修复 UI 时优先保持局部变更，避免为单一分辨率破坏通用控件。
 - 自动修复必须保留最大迭代次数和失败出口。
+
+## 当前不支持的场景
+
+- 第二窗口或 F7 专用调试窗口截图；当前截图目标是 primary window。
+- offscreen render target、单独 UI 层或游戏世界层截图；当前保存最终主窗口合成画面。
+- Android 真机截图和系统 UI 截图；safe area 仍需要真机手动观察或未来远程 client 支持。
+- 系统状态栏、导航栏、软键盘、通知弹层等 OS UI 截图。
+- 真实远程 server / client 命令执行；本仓库只有 runner 的 Mock 后端和 Http 调用端。
+- 远程 `adminapi` 未实现 artifact 下载或本地落盘时，runner 只能记录 artifact URI，不能验证实际图片内容。
+- 多窗口、多 client 同屏对比和跨设备视觉 diff。
 
 ## 长期扩展
 
