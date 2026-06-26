@@ -458,6 +458,8 @@ $env:ROBOT_SYNC_INPUT_MODE="manual"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
+Robot Sync 当前还提供开发期摄像机切换按键：按 `C` 在默认 Overview 总览和 FollowLocal 本地跟随之间切换。默认进入仍是 Overview；FollowLocal 使用高俯视 offset、FOV `0.78` 和短过渡，便于验证跟随镜头，同时可随时按 `C` 回退总览。该切换不写入 Robot Sync replay state，不进入 checksum，也不改变 MyServer/LAN authority 语义。
+
 Robot Sync MyServer 模式常用环境变量：
 
 ```powershell
