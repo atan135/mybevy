@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::time::SystemTime;
 
 use bevy::prelude::*;
 
@@ -11,7 +12,7 @@ use super::protocol::{MessageType, Packet, encode_proto_packet, pb};
 use super::types::{
     ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL, LoginResponse, MovementClientState,
     MyServerAutoClientConfig, MyServerAutoClientState, MyServerCommand, MyServerConfig,
-    MyServerEvent, MyServerSession, PendingRequest, TicketResponse, login_session_from_response,
+    MyServerEvent, MyServerOperation, MyServerSession, PendingRequest, TicketResponse,
     parse_character_bound_ticket, ticket_endpoint,
 };
 
@@ -357,6 +358,10 @@ fn handle_network_events(
                 events.write(MyServerEvent::LoginFailed {
                     error: error.clone(),
                 });
+                events.write(MyServerEvent::NetworkFailed {
+                    operation: MyServerOperation::Login,
+                    error: error.clone(),
+                });
             }
             NetworkEvent::HttpResponse(response)
                 if Some(response.request_id) == session.ticket_request =>
@@ -376,6 +381,10 @@ fn handle_network_events(
             {
                 session.ticket_request = None;
                 events.write(MyServerEvent::TicketRefreshFailed {
+                    error: error.clone(),
+                });
+                events.write(MyServerEvent::NetworkFailed {
+                    operation: MyServerOperation::TicketRefresh,
                     error: error.clone(),
                 });
             }
@@ -409,10 +418,14 @@ fn handle_network_events(
                 remote_addr,
                 error,
             } if Some(*connection_id) == session.connection_id => {
-                session.reset_connection_state();
+                session.disconnect_cleanup();
                 events.write(MyServerEvent::ConnectionFailed {
                     transport: *transport,
                     remote_addr: remote_addr.clone(),
+                    error: error.clone(),
+                });
+                events.write(MyServerEvent::NetworkFailed {
+                    operation: MyServerOperation::GameConnect,
                     error: error.clone(),
                 });
             }
@@ -449,7 +462,7 @@ fn handle_network_events(
                 reason,
                 ..
             } if Some(*connection_id) == session.connection_id => {
-                session.reset_connection_state();
+                session.disconnect_cleanup();
                 events.write(MyServerEvent::Disconnected {
                     reason: reason.clone(),
                 });
@@ -599,13 +612,7 @@ fn handle_login_response(
         return;
     }
 
-    let login_session = login_session_from_response(&response);
-    session.access_token = Some(response.access_token.clone());
-    session.ticket = response.ticket.clone();
-    session.ticket_expires_at = response.ticket_expires_at.clone();
-    session.player_id = Some(response.player_id.clone());
-    session.guest_id = response.guest_id;
-    session.login_name = response.login_name;
+    let login_session = session.apply_login_response(&response);
 
     events.write(MyServerEvent::LoginSucceeded(login_session.clone()));
 
@@ -667,13 +674,9 @@ fn handle_ticket_response(
     }
 
     let (host, port, transport) = ticket_endpoint(&response);
-    session.player_id = Some(response.player_id);
-    session.character_id = response.character_id.clone();
-    session.world_id = response.world_id;
-    session.ticket = Some(response.ticket.clone());
-    session.ticket_expires_at = Some(response.ticket_expires_at.clone());
+    session.apply_ticket_response(&response);
     events.write(MyServerEvent::TicketRefreshed {
-        ticket_expires_at: response.ticket_expires_at,
+        ticket_expires_at: response.ticket_expires_at.clone(),
     });
 
     if let Some(mut plan) = session.connect_after_login.take() {
@@ -951,11 +954,7 @@ fn handle_game_packet(
             )
         }
         MessageType::CharacterElementsChangePush => {
-            decode_push::<pb::CharacterElementsChangePush, _>(
-                events,
-                &packet,
-                MyServerEvent::CharacterElementsChanged,
-            )
+            handle_character_elements_push(session, events, packet)
         }
         _ => handle_response_packet(session, events, message_type, packet),
     }
@@ -1043,11 +1042,9 @@ fn handle_response_packet(
         MessageType::MoveInputRes => {
             decode_push::<pb::MoveInputRes, _>(events, &packet, MyServerEvent::MoveInputAccepted)
         }
-        MessageType::GetCharacterElementsRes => decode_push::<pb::GetCharacterElementsRes, _>(
-            events,
-            &packet,
-            MyServerEvent::CharacterElementsLoaded,
-        ),
+        MessageType::GetCharacterElementsRes => {
+            handle_character_elements_response(session, events, packet)
+        }
         _ => {
             events.write(MyServerEvent::ProtocolError {
                 error: format!("unhandled response type {:?}", message_type),
@@ -1064,6 +1061,44 @@ where
     match packet.decode::<M>() {
         Ok(message) => {
             events.write(event_factory(message));
+        }
+        Err(error) => {
+            events.write(MyServerEvent::ProtocolError { error });
+        }
+    }
+}
+
+fn handle_character_elements_response(
+    session: &mut MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    packet: Packet,
+) {
+    match packet.decode::<pb::GetCharacterElementsRes>() {
+        Ok(response) => {
+            if let Some(cache) =
+                session.apply_character_elements_response(&response, SystemTime::now())
+            {
+                events.write(MyServerEvent::CharacterElementsCacheUpdated(cache));
+            }
+            events.write(MyServerEvent::CharacterElementsLoaded(response));
+        }
+        Err(error) => {
+            events.write(MyServerEvent::ProtocolError { error });
+        }
+    }
+}
+
+fn handle_character_elements_push(
+    session: &mut MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    packet: Packet,
+) {
+    match packet.decode::<pb::CharacterElementsChangePush>() {
+        Ok(push) => {
+            if let Some(cache) = session.apply_character_elements_push(&push, SystemTime::now()) {
+                events.write(MyServerEvent::CharacterElementsCacheUpdated(cache));
+            }
+            events.write(MyServerEvent::CharacterElementsChanged(push));
         }
         Err(error) => {
             events.write(MyServerEvent::ProtocolError { error });

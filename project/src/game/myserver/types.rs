@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
-use std::{collections::HashMap, env, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    time::{Duration, SystemTime},
+};
 
 use bevy::prelude::{Message, Resource};
 use serde::Deserialize;
@@ -73,6 +77,9 @@ impl MyServerConfig {
 #[derive(Clone, Debug, Default, Resource)]
 pub struct MyServerSession {
     pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub access_token_expires_at: Option<String>,
+    pub refresh_token_expires_at: Option<String>,
     pub ticket: Option<String>,
     pub ticket_expires_at: Option<String>,
     pub player_id: Option<String>,
@@ -80,6 +87,11 @@ pub struct MyServerSession {
     pub world_id: Option<i64>,
     pub guest_id: Option<String>,
     pub login_name: Option<String>,
+    pub characters: Vec<CharacterSummary>,
+    pub current_character: Option<CharacterSummary>,
+    pub character_profile: Option<CharacterProfile>,
+    pub game_endpoint: Option<GameServiceEndpoint>,
+    pub character_elements: CharacterElementsCache,
     pub connection_id: Option<ConnectionId>,
     pub transport: Option<NetworkTransport>,
     pub connected: bool,
@@ -110,6 +122,281 @@ impl MyServerSession {
         self.room_id = None;
         self.codec.clear();
         self.pending.clear();
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn logout(&mut self) {
+        self.reset_connection_state();
+        self.clear_account_state();
+        self.login_request = None;
+        self.ticket_request = None;
+        self.connect_after_login = None;
+    }
+
+    pub fn switch_account(&mut self) {
+        self.logout();
+    }
+
+    pub fn switch_character(&mut self) {
+        self.reset_connection_state();
+        self.clear_selected_character_state();
+        self.ticket_request = None;
+        self.connect_after_login = None;
+    }
+
+    pub fn disconnect_cleanup(&mut self) {
+        self.reset_connection_state();
+    }
+
+    pub fn clear_character_after_lifecycle_change(&mut self, character_id: &str) {
+        self.characters
+            .retain(|character| character.character_id != character_id);
+        if self.character_id.as_deref() == Some(character_id) {
+            self.switch_character();
+        }
+    }
+
+    pub fn apply_character_lifecycle_response(&mut self, response: &CharacterLifecycleResponse) {
+        let character_id = response.character.character_id.clone();
+        let is_deleted = response.lifecycle.state.as_deref() == Some("deleted")
+            || response.character.deleted_at.is_some()
+            || response.lifecycle.deleted_at.is_some();
+
+        self.characters
+            .retain(|character| character.character_id != character_id);
+
+        if is_deleted {
+            if self.character_id.as_deref() == Some(character_id.as_str()) {
+                self.switch_character();
+            }
+            return;
+        }
+
+        self.characters.push(response.character.clone());
+        if self.character_id.as_deref() == Some(character_id.as_str()) {
+            self.current_character = Some(response.character.clone());
+            self.world_id = response.character.world_id;
+        }
+    }
+
+    pub fn apply_login_response(&mut self, response: &LoginResponse) -> LoginSession {
+        self.reset_connection_state();
+        self.clear_selected_character_state();
+        self.characters.clear();
+        self.access_token = Some(response.access_token.clone());
+        self.refresh_token = response.refresh_token.clone();
+        self.access_token_expires_at = response.access_token_expires_at.clone();
+        self.refresh_token_expires_at = response.refresh_token_expires_at.clone();
+        self.ticket = response.ticket.clone();
+        self.ticket_expires_at = response.ticket_expires_at.clone();
+        self.player_id = Some(response.player_id.clone());
+        self.guest_id = response.guest_id.clone();
+        self.login_name = response.login_name.clone();
+        self.game_endpoint = GameServiceEndpoint::from_auth_parts(
+            response.game_proxy_host.clone(),
+            response.game_proxy_port,
+            response.services.as_ref(),
+        );
+        login_session_from_response(response)
+    }
+
+    pub fn apply_character_list_response(&mut self, response: &CharacterListResponse) -> bool {
+        self.player_id = Some(response.player_id.clone());
+        self.characters = response.characters.clone();
+
+        if let Some(character_id) = self.character_id.clone() {
+            if let Some(character) = self
+                .characters
+                .iter()
+                .find(|character| character.character_id == character_id)
+                .cloned()
+            {
+                self.current_character = Some(character);
+            } else {
+                self.clear_selected_character_state();
+            }
+        }
+
+        self.characters.is_empty()
+    }
+
+    pub fn apply_character_select_response(&mut self, response: &CharacterSelectResponse) {
+        self.reset_connection_state();
+        self.player_id = Some(response.player_id.clone());
+        self.character_id = Some(response.character.character_id.clone());
+        self.world_id = response.character.world_id;
+        self.current_character = Some(response.character.clone());
+        self.character_profile = None;
+        self.ticket = Some(response.ticket.clone());
+        self.ticket_expires_at = Some(response.ticket_expires_at.clone());
+        self.game_endpoint = GameServiceEndpoint::from_auth_parts(
+            response.game_proxy_host.clone(),
+            response.game_proxy_port,
+            response.services.as_ref(),
+        );
+        self.character_elements
+            .clear_for_character(response.character.character_id.clone());
+    }
+
+    pub fn apply_ticket_response(&mut self, response: &TicketResponse) {
+        self.player_id = Some(response.player_id.clone());
+        if let Some(character_id) = response.character_id.clone() {
+            self.character_id = Some(character_id);
+        }
+        self.world_id = response.world_id;
+        self.ticket = Some(response.ticket.clone());
+        self.ticket_expires_at = Some(response.ticket_expires_at.clone());
+        self.game_endpoint = GameServiceEndpoint::from_auth_parts(
+            response.game_proxy_host.clone(),
+            response.game_proxy_port,
+            response.services.as_ref(),
+        );
+    }
+
+    pub fn apply_character_profile_response(&mut self, response: &CharacterProfileResponse) {
+        self.character_id = Some(response.profile.character.character_id.clone());
+        self.world_id = response.profile.character.world_id;
+        self.current_character = Some(response.profile.character.clone());
+        self.character_profile = Some(response.profile.clone());
+        if let Some(attributes) = response.profile.character.attributes.as_ref() {
+            self.apply_character_elements_snapshot(
+                response.profile.character.character_id.clone(),
+                CharacterElements {
+                    affinity: attributes.affinity,
+                    mastery: attributes.mastery,
+                },
+                SystemTime::now(),
+            );
+        }
+    }
+
+    pub fn apply_character_elements_snapshot(
+        &mut self,
+        character_id: String,
+        elements: CharacterElements,
+        refreshed_at: SystemTime,
+    ) {
+        self.character_elements.character_id = Some(character_id);
+        self.character_elements.affinity = elements.affinity;
+        self.character_elements.mastery = elements.mastery;
+        self.character_elements.snapshot_refreshed_at = Some(refreshed_at);
+    }
+
+    pub fn apply_character_elements_response(
+        &mut self,
+        response: &pb::GetCharacterElementsRes,
+        refreshed_at: SystemTime,
+    ) -> Option<CharacterElementsCache> {
+        if !response.ok {
+            return None;
+        }
+        let elements = response.elements.as_ref()?;
+        let character_id = non_empty_string(&response.character_id)
+            .map(ToOwned::to_owned)
+            .or_else(|| self.character_id.clone())?;
+        self.apply_character_elements_snapshot(
+            character_id,
+            CharacterElements::from_proto(elements),
+            refreshed_at,
+        );
+        Some(self.character_elements.clone())
+    }
+
+    pub fn apply_character_elements_push(
+        &mut self,
+        push: &pb::CharacterElementsChangePush,
+        refreshed_at: SystemTime,
+    ) -> Option<CharacterElementsCache> {
+        let meta = push.meta.as_ref()?;
+        let after = push.after.as_ref()?;
+        self.apply_character_elements_snapshot(
+            meta.character_id.clone(),
+            CharacterElements::from_proto(after),
+            refreshed_at,
+        );
+        self.character_elements.last_push_sequence = Some(meta.sequence);
+        self.character_elements.last_push_revision = Some(meta.revision);
+        Some(self.character_elements.clone())
+    }
+
+    fn clear_account_state(&mut self) {
+        self.access_token = None;
+        self.refresh_token = None;
+        self.access_token_expires_at = None;
+        self.refresh_token_expires_at = None;
+        self.player_id = None;
+        self.guest_id = None;
+        self.login_name = None;
+        self.characters.clear();
+        self.clear_selected_character_state();
+    }
+
+    fn clear_selected_character_state(&mut self) {
+        self.ticket = None;
+        self.ticket_expires_at = None;
+        self.character_id = None;
+        self.world_id = None;
+        self.current_character = None;
+        self.character_profile = None;
+        self.game_endpoint = None;
+        self.character_elements = CharacterElementsCache::default();
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameServiceEndpoint {
+    pub host: String,
+    pub port: u16,
+    pub transport: Option<NetworkTransport>,
+}
+
+impl GameServiceEndpoint {
+    fn from_auth_parts(
+        fallback_host: Option<String>,
+        fallback_port: Option<u16>,
+        services: Option<&ClientServices>,
+    ) -> Option<Self> {
+        let (host, port, transport) = game_endpoint(fallback_host, fallback_port, services);
+        Some(Self {
+            host: host?,
+            port: port?,
+            transport,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CharacterElementsCache {
+    pub character_id: Option<String>,
+    pub affinity: ElementValues,
+    pub mastery: ElementValues,
+    pub last_push_sequence: Option<u64>,
+    pub last_push_revision: Option<u64>,
+    pub snapshot_refreshed_at: Option<SystemTime>,
+}
+
+impl Default for CharacterElementsCache {
+    fn default() -> Self {
+        Self {
+            character_id: None,
+            affinity: ElementValues::default(),
+            mastery: ElementValues::default(),
+            last_push_sequence: None,
+            last_push_revision: None,
+            snapshot_refreshed_at: None,
+        }
+    }
+}
+
+impl CharacterElementsCache {
+    fn clear_for_character(&mut self, character_id: String) {
+        *self = Self {
+            character_id: Some(character_id),
+            ..Self::default()
+        };
     }
 }
 
@@ -217,6 +504,45 @@ pub enum MyServerEvent {
     TicketRefreshFailed {
         error: String,
     },
+    CharacterListLoaded {
+        player_id: String,
+        characters: Vec<CharacterSummary>,
+    },
+    CharacterListFailed {
+        error: String,
+    },
+    CharacterCreationRequired {
+        player_id: String,
+    },
+    CharacterSelected {
+        player_id: String,
+        character_id: String,
+        world_id: Option<i64>,
+    },
+    CharacterSelectFailed {
+        error: String,
+    },
+    AccountStatusBlocked {
+        code: String,
+        message: String,
+    },
+    MaintenanceBlocked {
+        message: String,
+        retry_after_seconds: Option<u64>,
+    },
+    AccountBanned {
+        message: String,
+        banned_until: Option<String>,
+    },
+    VersionIncompatible {
+        message: String,
+        required_version: Option<String>,
+        current_version: Option<String>,
+    },
+    NetworkFailed {
+        operation: MyServerOperation,
+        error: String,
+    },
     Connecting {
         connection_id: ConnectionId,
         transport: NetworkTransport,
@@ -257,6 +583,7 @@ pub enum MyServerEvent {
     MovementRejectPush(pb::MovementRejectPush),
     CharacterElementsLoaded(pb::GetCharacterElementsRes),
     CharacterElementsChanged(pb::CharacterElementsChangePush),
+    CharacterElementsCacheUpdated(CharacterElementsCache),
     ServerRedirectPush(pb::ServerRedirectPush),
     SessionKickPush(pb::SessionKickPush),
     AuthorityMigrationStartPush(pb::AuthorityMigrationStartPush),
@@ -276,6 +603,18 @@ pub enum MyServerEvent {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MyServerOperation {
+    Login,
+    CharacterList,
+    CharacterCreate,
+    CharacterSelect,
+    CharacterProfile,
+    TicketRefresh,
+    GameConnect,
+    GameRequest,
+}
+
 #[derive(Clone, Debug)]
 pub struct LoginSession {
     pub player_id: String,
@@ -292,7 +631,7 @@ pub struct LoginSession {
 /// New auth-http builds no longer issue an enter-game ticket here. A client must
 /// list/create/select a character before connecting to game-proxy. `ticket` is
 /// optional to keep older local servers parseable during transition.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginResponse {
     pub ok: bool,
@@ -300,6 +639,12 @@ pub struct LoginResponse {
     pub guest_id: Option<String>,
     pub login_name: Option<String>,
     pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub access_token_expires_at: Option<String>,
+    #[serde(default)]
+    pub refresh_token_expires_at: Option<String>,
     pub ticket: Option<String>,
     pub ticket_expires_at: Option<String>,
     pub game_proxy_host: Option<String>,
@@ -307,7 +652,7 @@ pub struct LoginResponse {
     pub services: Option<ClientServices>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterListResponse {
     pub ok: bool,
@@ -316,26 +661,26 @@ pub struct CharacterListResponse {
     pub characters: Vec<CharacterSummary>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterCreateResponse {
     pub ok: bool,
     pub character: CharacterSummary,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterProfileResponse {
     pub ok: bool,
     pub profile: CharacterProfile,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterLifecycleResponse {
     pub ok: bool,
     pub character: CharacterSummary,
     pub lifecycle: CharacterLifecycle,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterSelectResponse {
     pub ok: bool,
@@ -348,7 +693,7 @@ pub struct CharacterSelectResponse {
     pub services: Option<ClientServices>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TicketResponse {
     pub ok: bool,
@@ -362,7 +707,7 @@ pub struct TicketResponse {
     pub services: Option<ClientServices>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterSummary {
     pub character_id: String,
     #[serde(default)]
@@ -394,7 +739,7 @@ pub struct CharacterSummary {
     pub extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterProfile {
     #[serde(flatten)]
     pub character: CharacterSummary,
@@ -408,7 +753,7 @@ pub struct CharacterProfile {
     pub profile_sources: Option<HashMap<String, Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct SameNameHint {
     #[serde(default)]
     pub r#type: Option<String>,
@@ -418,7 +763,7 @@ pub struct SameNameHint {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct SameNameInfo {
     #[serde(default)]
     pub scope: Option<String>,
@@ -434,7 +779,7 @@ pub struct SameNameInfo {
     pub discriminator: Option<SameNameHint>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterPosition {
     #[serde(default)]
     pub scene_id: Option<i64>,
@@ -468,7 +813,35 @@ pub struct CharacterElements {
     pub mastery: ElementValues,
 }
 
-#[derive(Debug, Deserialize)]
+impl CharacterElements {
+    pub fn from_proto(value: &pb::CharacterElements) -> Self {
+        Self {
+            affinity: value
+                .affinity
+                .as_ref()
+                .map(ElementValues::from_proto)
+                .unwrap_or_default(),
+            mastery: value
+                .mastery
+                .as_ref()
+                .map(ElementValues::from_proto)
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl ElementValues {
+    pub fn from_proto(value: &pb::ElementValues) -> Self {
+        Self {
+            earth: value.earth,
+            fire: value.fire,
+            water: value.water,
+            wind: value.wind,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterAttributes {
     #[serde(default)]
     pub affinity: ElementValues,
@@ -476,7 +849,7 @@ pub struct CharacterAttributes {
     pub mastery: ElementValues,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterLifecycle {
     #[serde(default)]
     pub state: Option<String>,
@@ -492,7 +865,7 @@ pub struct CharacterLifecycle {
     pub hard_delete_eligible_at: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterPushMetaJson {
     pub character_id: String,
     #[serde(default)]
@@ -511,7 +884,7 @@ pub struct CharacterPushMetaJson {
     pub snapshot_compensation: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CharacterElementsChangePayload {
     pub meta: CharacterPushMetaJson,
     #[serde(default)]
@@ -537,7 +910,7 @@ pub struct ApiErrorResponse {
     pub extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ClientServices {
     pub game: Option<ClientServiceEndpoint>,
     #[serde(default)]
@@ -548,11 +921,16 @@ pub struct ClientServices {
     pub announce: Option<ClientServiceEndpoint>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ClientServiceEndpoint {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub protocol: Option<String>,
+}
+
+fn non_empty_string(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
 }
 
 pub fn login_session_from_response(response: &LoginResponse) -> LoginSession {
@@ -759,6 +1137,9 @@ mod tests {
                 "guestId": "guest-a",
                 "loginName": null,
                 "accessToken": "access",
+                "refreshToken": "refresh",
+                "accessTokenExpiresAt": "2026-06-25T12:05:00.000Z",
+                "refreshTokenExpiresAt": "2026-07-25T12:00:00.000Z",
                 "ticket": null,
                 "ticketExpiresAt": null,
                 "gameProxyHost": "127.0.0.1",
@@ -773,6 +1154,55 @@ mod tests {
         assert_eq!(response.access_token, "access");
         assert!(response.ticket.is_none());
         assert!(response.ticket_expires_at.is_none());
+
+        let mut session = MyServerSession::default();
+        let login_session = session.apply_login_response(&response);
+
+        assert_eq!(login_session.player_id, "plr_1");
+        assert_eq!(session.access_token.as_deref(), Some("access"));
+        assert_eq!(session.refresh_token.as_deref(), Some("refresh"));
+        assert_eq!(
+            session.access_token_expires_at.as_deref(),
+            Some("2026-06-25T12:05:00.000Z")
+        );
+        assert_eq!(session.guest_id.as_deref(), Some("guest-a"));
+        assert!(session.character_id.is_none());
+        assert!(session.ticket.is_none());
+        assert_eq!(session.game_endpoint.as_ref().unwrap().port, 14000);
+    }
+
+    #[test]
+    fn writes_account_login_without_guest_or_ticket_to_session() {
+        let response: LoginResponse = serde_json::from_str(
+            r#"{
+                "ok": true,
+                "playerId": "plr_account",
+                "guestId": null,
+                "loginName": "alice",
+                "accessToken": "access-new",
+                "ticket": null,
+                "ticketExpiresAt": null,
+                "services": { "game": { "host": "game.local", "port": 4000, "protocol": "kcp" } }
+            }"#,
+        )
+        .unwrap();
+
+        let mut session = MyServerSession {
+            character_id: Some("old-character".to_string()),
+            ticket: Some("old-ticket".to_string()),
+            ..Default::default()
+        };
+        session.apply_login_response(&response);
+
+        assert_eq!(session.player_id.as_deref(), Some("plr_account"));
+        assert_eq!(session.login_name.as_deref(), Some("alice"));
+        assert!(session.guest_id.is_none());
+        assert!(session.ticket.is_none());
+        assert!(session.character_id.is_none());
+        let endpoint = session.game_endpoint.as_ref().unwrap();
+        assert_eq!(endpoint.host, "game.local");
+        assert_eq!(endpoint.port, 4000);
+        assert_eq!(endpoint.transport, Some(NetworkTransport::Kcp));
     }
 
     #[test]
@@ -823,6 +1253,27 @@ mod tests {
             serde_json::from_str(r#"{ "ok": true, "playerId": "plr_1", "characters": [] }"#)
                 .unwrap();
         assert!(empty.characters.is_empty());
+
+        let mut session = MyServerSession::default();
+        let needs_character = session.apply_character_list_response(&response);
+
+        assert!(!needs_character);
+        assert_eq!(session.player_id.as_deref(), Some("plr_1"));
+        assert_eq!(session.characters.len(), 1);
+        assert_eq!(session.characters[0].world_id, Some(0));
+        assert_eq!(
+            session.characters[0]
+                .attributes
+                .as_ref()
+                .unwrap()
+                .mastery
+                .fire,
+            0
+        );
+
+        let mut empty_session = MyServerSession::default();
+        assert!(empty_session.apply_character_list_response(&empty));
+        assert!(empty_session.characters.is_empty());
     }
 
     #[test]
@@ -871,6 +1322,25 @@ mod tests {
         assert_eq!(response.character.character_id, "chr_0000000000001");
         assert_eq!(response.ticket_expires_at, "2026-06-25T12:15:00.000Z");
         assert_eq!(character_select_endpoint(&response).1, Some(14000));
+
+        let mut session = MyServerSession::default();
+        session.apply_character_select_response(&response);
+
+        assert_eq!(session.player_id.as_deref(), Some("plr_1"));
+        assert_eq!(session.character_id.as_deref(), Some("chr_0000000000001"));
+        assert_eq!(
+            session.current_character.as_ref().unwrap().name,
+            "WindRunner"
+        );
+        assert_eq!(session.ticket.as_deref(), Some("payload.signature"));
+        assert_eq!(
+            session.ticket_expires_at.as_deref(),
+            Some("2026-06-25T12:15:00.000Z")
+        );
+        assert_eq!(
+            session.character_elements.character_id.as_deref(),
+            Some("chr_0000000000001")
+        );
     }
 
     #[test]
@@ -891,6 +1361,247 @@ mod tests {
         assert_eq!(response.character_id.as_deref(), Some("chr_0000000000001"));
         assert_eq!(response.world_id, Some(0));
         assert_eq!(ticket_endpoint(&response).2, Some(NetworkTransport::Kcp));
+
+        let mut session = MyServerSession::default();
+        session.apply_ticket_response(&response);
+
+        assert_eq!(session.player_id.as_deref(), Some("plr_1"));
+        assert_eq!(session.character_id.as_deref(), Some("chr_0000000000001"));
+        assert_eq!(session.world_id, Some(0));
+        assert_eq!(session.ticket.as_deref(), Some("payload.signature"));
+        assert_eq!(
+            session.game_endpoint.as_ref().unwrap().transport,
+            Some(NetworkTransport::Kcp)
+        );
+    }
+
+    #[test]
+    fn writes_character_profile_attributes_to_session_cache() {
+        let response: CharacterProfileResponse = serde_json::from_str(
+            r#"{
+                "ok": true,
+                "profile": {
+                    "character_id": "chr_profile",
+                    "name": "Profiled",
+                    "world_id": 9,
+                    "attributes": {
+                        "affinity": { "earth": 1, "fire": 2, "water": 3, "wind": 4 },
+                        "mastery": { "earth": 5, "fire": 6, "water": 7, "wind": 8 }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let mut session = MyServerSession::default();
+        session.apply_character_profile_response(&response);
+
+        assert_eq!(session.character_id.as_deref(), Some("chr_profile"));
+        assert_eq!(session.world_id, Some(9));
+        assert_eq!(
+            session.character_profile.as_ref().unwrap().character.name,
+            "Profiled"
+        );
+        assert_eq!(session.character_elements.affinity.wind, 4);
+        assert_eq!(session.character_elements.mastery.fire, 6);
+        assert!(session.character_elements.snapshot_refreshed_at.is_some());
+    }
+
+    #[test]
+    fn writes_character_elements_response_and_push_to_session_cache() {
+        let mut session = MyServerSession {
+            character_id: Some("fallback-character".to_string()),
+            ..Default::default()
+        };
+        let refreshed_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+        let response = pb::GetCharacterElementsRes {
+            ok: true,
+            error_code: String::new(),
+            character_id: "chr_elements".to_string(),
+            elements: Some(pb::CharacterElements {
+                affinity: Some(pb::ElementValues {
+                    earth: 10,
+                    fire: 20,
+                    water: 30,
+                    wind: 40,
+                }),
+                mastery: Some(pb::ElementValues {
+                    earth: 1,
+                    fire: 2,
+                    water: 3,
+                    wind: 4,
+                }),
+            }),
+        };
+
+        let cache = session
+            .apply_character_elements_response(&response, refreshed_at)
+            .unwrap();
+
+        assert_eq!(cache.character_id.as_deref(), Some("chr_elements"));
+        assert_eq!(session.character_elements.affinity.water, 30);
+        assert_eq!(session.character_elements.mastery.wind, 4);
+        assert_eq!(
+            session.character_elements.snapshot_refreshed_at,
+            Some(refreshed_at)
+        );
+
+        let pushed_at = SystemTime::UNIX_EPOCH + Duration::from_secs(20);
+        let push = pb::CharacterElementsChangePush {
+            meta: Some(pb::CharacterPushMeta {
+                character_id: "chr_elements".to_string(),
+                sequence: 7,
+                revision: 3,
+                source_type: "item_use".to_string(),
+                source_id: "item:1".to_string(),
+                action: "element_change".to_string(),
+                summary: "debug".to_string(),
+                snapshot_compensation: false,
+            }),
+            before: None,
+            after: Some(pb::CharacterElements {
+                affinity: Some(pb::ElementValues {
+                    earth: 11,
+                    fire: 21,
+                    water: 31,
+                    wind: 41,
+                }),
+                mastery: Some(pb::ElementValues {
+                    earth: 2,
+                    fire: 3,
+                    water: 4,
+                    wind: 5,
+                }),
+            }),
+        };
+
+        let cache = session
+            .apply_character_elements_push(&push, pushed_at)
+            .unwrap();
+
+        assert_eq!(cache.affinity.earth, 11);
+        assert_eq!(cache.mastery.wind, 5);
+        assert_eq!(cache.last_push_sequence, Some(7));
+        assert_eq!(cache.last_push_revision, Some(3));
+        assert_eq!(cache.snapshot_refreshed_at, Some(pushed_at));
+    }
+
+    #[test]
+    fn session_cleanup_methods_keep_account_and_character_boundaries_clear() {
+        let mut session = MyServerSession {
+            access_token: Some("access".to_string()),
+            refresh_token: Some("refresh".to_string()),
+            player_id: Some("plr".to_string()),
+            guest_id: Some("guest".to_string()),
+            login_name: Some("name".to_string()),
+            ticket: Some("ticket".to_string()),
+            ticket_expires_at: Some("exp".to_string()),
+            character_id: Some("chr".to_string()),
+            world_id: Some(1),
+            characters: vec![CharacterSummary {
+                character_id: "chr".to_string(),
+                character_id_short: None,
+                display_discriminator: None,
+                same_name_hint: None,
+                name: "Role".to_string(),
+                world_id: Some(1),
+                status: None,
+                appearance_json: None,
+                created_at: None,
+                last_login_at: None,
+                deleted_at: None,
+                position: None,
+                attributes: None,
+                lifecycle: None,
+                extra: HashMap::new(),
+            }],
+            connected: true,
+            authenticated: true,
+            room_id: Some("room".to_string()),
+            character_elements: CharacterElementsCache {
+                character_id: Some("chr".to_string()),
+                affinity: ElementValues {
+                    fire: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        session.disconnect_cleanup();
+        assert_eq!(session.player_id.as_deref(), Some("plr"));
+        assert_eq!(session.character_id.as_deref(), Some("chr"));
+        assert!(!session.connected);
+        assert!(!session.authenticated);
+        assert!(session.room_id.is_none());
+
+        session.switch_character();
+        assert_eq!(session.player_id.as_deref(), Some("plr"));
+        assert_eq!(session.access_token.as_deref(), Some("access"));
+        assert!(session.ticket.is_none());
+        assert!(session.character_id.is_none());
+        assert_eq!(session.characters.len(), 1);
+        assert!(session.character_elements.character_id.is_none());
+
+        session.switch_account();
+        assert!(session.access_token.is_none());
+        assert!(session.refresh_token.is_none());
+        assert!(session.player_id.is_none());
+        assert!(session.characters.is_empty());
+    }
+
+    #[test]
+    fn character_lifecycle_delete_clears_selected_character_and_restore_updates_list() {
+        let mut session = MyServerSession {
+            access_token: Some("access".to_string()),
+            player_id: Some("plr".to_string()),
+            ticket: Some("ticket".to_string()),
+            character_id: Some("chr".to_string()),
+            current_character: Some(test_character("chr", "OldRole")),
+            characters: vec![test_character("chr", "OldRole")],
+            ..Default::default()
+        };
+
+        let deleted = CharacterLifecycleResponse {
+            ok: true,
+            character: CharacterSummary {
+                deleted_at: Some("2026-06-25T12:00:00.000Z".to_string()),
+                lifecycle: Some(CharacterLifecycle {
+                    state: Some("deleted".to_string()),
+                    ..empty_lifecycle()
+                }),
+                ..test_character("chr", "OldRole")
+            },
+            lifecycle: CharacterLifecycle {
+                state: Some("deleted".to_string()),
+                deleted_at: Some("2026-06-25T12:00:00.000Z".to_string()),
+                ..empty_lifecycle()
+            },
+        };
+
+        session.apply_character_lifecycle_response(&deleted);
+
+        assert_eq!(session.player_id.as_deref(), Some("plr"));
+        assert_eq!(session.access_token.as_deref(), Some("access"));
+        assert!(session.ticket.is_none());
+        assert!(session.character_id.is_none());
+        assert!(session.characters.is_empty());
+
+        let restored = CharacterLifecycleResponse {
+            ok: true,
+            character: test_character("chr", "RestoredRole"),
+            lifecycle: CharacterLifecycle {
+                state: Some("active".to_string()),
+                ..empty_lifecycle()
+            },
+        };
+
+        session.apply_character_lifecycle_response(&restored);
+
+        assert_eq!(session.characters.len(), 1);
+        assert_eq!(session.characters[0].name, "RestoredRole");
+        assert!(session.character_id.is_none());
     }
 
     #[test]
@@ -1024,5 +1735,36 @@ mod tests {
             index += 3;
         }
         output
+    }
+
+    fn test_character(character_id: &str, name: &str) -> CharacterSummary {
+        CharacterSummary {
+            character_id: character_id.to_string(),
+            character_id_short: None,
+            display_discriminator: None,
+            same_name_hint: None,
+            name: name.to_string(),
+            world_id: Some(1),
+            status: Some("active".to_string()),
+            appearance_json: None,
+            created_at: None,
+            last_login_at: None,
+            deleted_at: None,
+            position: None,
+            attributes: None,
+            lifecycle: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    fn empty_lifecycle() -> CharacterLifecycle {
+        CharacterLifecycle {
+            state: None,
+            deleted_at: None,
+            restore_window_seconds: None,
+            restore_expires_at: None,
+            delete_cooldown_seconds: None,
+            hard_delete_eligible_at: None,
+        }
     }
 }
