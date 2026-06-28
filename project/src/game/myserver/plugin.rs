@@ -444,6 +444,7 @@ fn handle_network_events(
                     continue;
                 };
                 clear_legacy_http_slots(&mut session, *request_id);
+                apply_http_failure_state(&mut session, &pending.operation, error);
                 let operation = pending.operation.event_operation();
                 write_http_failure(&mut events, &pending.operation, error.clone());
                 events.write(MyServerEvent::NetworkFailed {
@@ -456,8 +457,7 @@ fn handle_network_events(
                 transport,
                 remote_addr,
             } if Some(*connection_id) == session.connection_id => {
-                session.connected = true;
-                session.transport = Some(*transport);
+                session.game_connected(*transport);
                 events.write(MyServerEvent::Connected {
                     connection_id: *connection_id,
                     transport: *transport,
@@ -465,6 +465,7 @@ fn handle_network_events(
                 });
 
                 let Some(ticket) = session.ticket.clone() else {
+                    session.game_auth_failed();
                     events.write(MyServerEvent::RequestFailed {
                         seq: None,
                         message_type: Some(MessageType::AuthReq),
@@ -481,7 +482,7 @@ fn handle_network_events(
                 remote_addr,
                 error,
             } if Some(*connection_id) == session.connection_id => {
-                session.disconnect_cleanup();
+                session.game_connection_failed();
                 events.write(MyServerEvent::ConnectionFailed {
                     transport: *transport,
                     remote_addr: remote_addr.clone(),
@@ -669,6 +670,7 @@ fn send_character_list(
     events: &mut MessageWriter<MyServerEvent>,
 ) {
     let Some(access_token) = session.access_token.as_deref() else {
+        session.http_operation_failed(&PendingHttpOperation::CharacterList);
         write_http_failure(
             events,
             &PendingHttpOperation::CharacterList,
@@ -702,6 +704,7 @@ fn send_character_create(
     appearance_json: Option<Value>,
 ) {
     let Some(access_token) = session.access_token.as_deref() else {
+        session.http_operation_failed(&PendingHttpOperation::CharacterCreate);
         write_http_failure(
             events,
             &PendingHttpOperation::CharacterCreate,
@@ -739,6 +742,9 @@ fn send_character_profile(
     character_id: &str,
 ) {
     let Some(access_token) = session.access_token.as_deref() else {
+        session.http_operation_failed(&PendingHttpOperation::CharacterProfile {
+            character_id: character_id.to_string(),
+        });
         write_http_failure(
             events,
             &PendingHttpOperation::CharacterProfile {
@@ -774,9 +780,16 @@ fn send_character_select(
     connect_game: bool,
 ) {
     let Some(access_token) = session.access_token.as_deref() else {
+        session.http_operation_failed(&PendingHttpOperation::CharacterSelect {
+            character_id: character_id.to_string(),
+            connect_game,
+        });
         write_http_failure(
             events,
-            &PendingHttpOperation::CharacterSelect { connect_game },
+            &PendingHttpOperation::CharacterSelect {
+                character_id: character_id.to_string(),
+                connect_game,
+            },
             "cannot select character before login".to_string(),
         );
         return;
@@ -793,7 +806,10 @@ fn send_character_select(
         session,
         network_commands,
         events,
-        PendingHttpOperation::CharacterSelect { connect_game },
+        PendingHttpOperation::CharacterSelect {
+            character_id: character_id.to_string(),
+            connect_game,
+        },
         request,
     );
 }
@@ -806,6 +822,7 @@ fn send_character_lifecycle(
     operation: PendingHttpOperation,
 ) {
     let Some(access_token) = session.access_token.as_deref() else {
+        session.http_operation_failed(&operation);
         write_http_failure(
             events,
             &operation,
@@ -847,6 +864,7 @@ fn send_refresh_ticket(
     reconnect_game: bool,
 ) {
     let Some(access_token) = session.access_token.clone() else {
+        session.http_operation_failed(&PendingHttpOperation::TicketIssue { reconnect_game });
         events.write(MyServerEvent::TicketRefreshFailed {
             error: "cannot issue ticket before login".to_string(),
         });
@@ -857,6 +875,7 @@ fn send_refresh_ticket(
         return;
     };
     let Some(character_id) = session.character_id.clone() else {
+        session.http_operation_failed(&PendingHttpOperation::TicketIssue { reconnect_game });
         events.write(MyServerEvent::TicketRefreshFailed {
             error: "cannot issue ticket before selecting a character".to_string(),
         });
@@ -947,7 +966,7 @@ fn send_http_request(
                 port: None,
             });
         }
-        PendingHttpOperation::CharacterSelect { connect_game } => {
+        PendingHttpOperation::CharacterSelect { connect_game, .. } => {
             session.connect_after_login = (*connect_game).then_some(ConnectPlan {
                 transport: config.prefer_transport,
                 host: None,
@@ -964,9 +983,13 @@ fn send_http_request(
         }
         _ => {}
     }
-    session
-        .pending_http
-        .insert(request_id, PendingHttpRequest { operation });
+    session.pending_http.insert(
+        request_id,
+        PendingHttpRequest {
+            operation: operation.clone(),
+        },
+    );
+    session.begin_http_operation(&operation);
     network_commands.write(NetworkCommand::Http(request));
 }
 
@@ -1087,16 +1110,15 @@ fn handle_character_list_response(
     status: u16,
     body: &[u8],
 ) {
-    let Some(response) = parse_http_json::<CharacterListResponse>(events, &operation, status, body)
+    let Some(response) =
+        parse_http_json::<CharacterListResponse>(session, events, &operation, status, body)
     else {
         return;
     };
     if !response.ok {
-        write_http_failure(
-            events,
-            &operation,
-            "character list returned ok=false".to_string(),
-        );
+        let error = "character list returned ok=false".to_string();
+        apply_http_failure_state(session, &operation, &error);
+        write_http_failure(events, &operation, error);
         return;
     }
     let needs_character = session.apply_character_list_response(&response);
@@ -1119,16 +1141,14 @@ fn handle_character_create_response(
     body: &[u8],
 ) {
     let Some(response) =
-        parse_http_json::<CharacterCreateResponse>(events, &operation, status, body)
+        parse_http_json::<CharacterCreateResponse>(session, events, &operation, status, body)
     else {
         return;
     };
     if !response.ok {
-        write_http_failure(
-            events,
-            &operation,
-            "character create returned ok=false".to_string(),
-        );
+        let error = "character create returned ok=false".to_string();
+        apply_http_failure_state(session, &operation, &error);
+        write_http_failure(events, &operation, error);
         return;
     }
     session.apply_character_create_response(&response);
@@ -1145,16 +1165,14 @@ fn handle_character_profile_response(
     body: &[u8],
 ) {
     let Some(response) =
-        parse_http_json::<CharacterProfileResponse>(events, &operation, status, body)
+        parse_http_json::<CharacterProfileResponse>(session, events, &operation, status, body)
     else {
         return;
     };
     if !response.ok {
-        write_http_failure(
-            events,
-            &operation,
-            "character profile returned ok=false".to_string(),
-        );
+        let error = "character profile returned ok=false".to_string();
+        apply_http_failure_state(session, &operation, &error);
+        write_http_failure(events, &operation, error);
         return;
     }
     session.apply_character_profile_response(&response);
@@ -1173,16 +1191,14 @@ fn handle_character_select_response(
     body: &[u8],
 ) {
     let Some(response) =
-        parse_http_json::<CharacterSelectResponse>(events, &operation, status, body)
+        parse_http_json::<CharacterSelectResponse>(session, events, &operation, status, body)
     else {
         return;
     };
     if !response.ok {
-        write_http_failure(
-            events,
-            &operation,
-            "character select returned ok=false".to_string(),
-        );
+        let error = "character select returned ok=false".to_string();
+        apply_http_failure_state(session, &operation, &error);
+        write_http_failure(events, &operation, error);
         return;
     }
     let (host, port, transport) = character_select_endpoint(&response);
@@ -1214,16 +1230,14 @@ fn handle_character_lifecycle_response(
     body: &[u8],
 ) {
     let Some(response) =
-        parse_http_json::<CharacterLifecycleResponse>(events, &operation, status, body)
+        parse_http_json::<CharacterLifecycleResponse>(session, events, &operation, status, body)
     else {
         return;
     };
     if !response.ok {
-        write_http_failure(
-            events,
-            &operation,
-            "character lifecycle returned ok=false".to_string(),
-        );
+        let error = "character lifecycle returned ok=false".to_string();
+        apply_http_failure_state(session, &operation, &error);
+        write_http_failure(events, &operation, error);
         return;
     }
     let character_id = response.character.character_id.clone();
@@ -1259,6 +1273,7 @@ fn handle_logout_response(
 }
 
 fn parse_http_json<T>(
+    session: &mut MyServerSession,
     events: &mut MessageWriter<MyServerEvent>,
     operation: &PendingHttpOperation,
     status: u16,
@@ -1269,6 +1284,7 @@ where
 {
     if !(200..300).contains(&status) {
         let error = http_error_message(operation, status, body);
+        apply_http_failure_state(session, operation, &error);
         write_http_failure(events, operation, error.clone());
         events.write(MyServerEvent::NetworkFailed {
             operation: operation.event_operation(),
@@ -1281,6 +1297,7 @@ where
         Ok(response) => Some(response),
         Err(error) => {
             let error = format!("failed to parse HTTP response JSON: {error}");
+            apply_http_failure_state(session, operation, &error);
             write_http_failure(events, operation, error.clone());
             events.write(MyServerEvent::NetworkFailed {
                 operation: operation.event_operation(),
@@ -1292,6 +1309,7 @@ where
 }
 
 fn parse_http_json_with<T, F>(
+    session: &mut MyServerSession,
     events: &mut MessageWriter<MyServerEvent>,
     operation: &PendingHttpOperation,
     status: u16,
@@ -1303,6 +1321,7 @@ where
 {
     if !(200..300).contains(&status) {
         let error = http_error_message(operation, status, body);
+        apply_http_failure_state(session, operation, &error);
         write_http_failure(events, operation, error.clone());
         events.write(MyServerEvent::NetworkFailed {
             operation: operation.event_operation(),
@@ -1315,6 +1334,7 @@ where
         Ok(response) => Some(response),
         Err(error) => {
             let error = format!("failed to parse HTTP response JSON: {error}");
+            apply_http_failure_state(session, operation, &error);
             write_http_failure(events, operation, error.clone());
             events.write(MyServerEvent::NetworkFailed {
                 operation: operation.event_operation(),
@@ -1417,6 +1437,63 @@ fn write_http_failure(
     }
 }
 
+fn apply_http_failure_state(
+    session: &mut MyServerSession,
+    operation: &PendingHttpOperation,
+    error: &str,
+) {
+    match classify_failure_state(error) {
+        FailureState::AccountBlocked => session.account_blocked(),
+        FailureState::AccountExpired
+            if !matches!(
+                operation,
+                PendingHttpOperation::Login { .. }
+                    | PendingHttpOperation::Register { .. }
+                    | PendingHttpOperation::GuestLogin { .. }
+            ) =>
+        {
+            session.account_expired()
+        }
+        FailureState::AccountExpired => session.http_operation_failed(operation),
+        FailureState::CharacterBlocked => session.character_blocked(),
+        FailureState::Default => session.http_operation_failed(operation),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FailureState {
+    Default,
+    AccountBlocked,
+    AccountExpired,
+    CharacterBlocked,
+}
+
+fn classify_failure_state(error: &str) -> FailureState {
+    let upper = error.to_ascii_uppercase();
+    if upper.contains("EXPIRED")
+        || upper.contains("TOKEN_INVALID")
+        || upper.contains("UNAUTHORIZED")
+        || upper.contains("HTTP 401")
+    {
+        return FailureState::AccountExpired;
+    }
+    if upper.contains("CHARACTER_")
+        && (upper.contains("BLOCKED") || upper.contains("BANNED") || upper.contains("DELETED"))
+    {
+        return FailureState::CharacterBlocked;
+    }
+    if upper.contains("BLOCKED")
+        || upper.contains("BANNED")
+        || upper.contains("PENDING_REVIEW")
+        || upper.contains("SUSPENDED")
+        || upper.contains("MAINTENANCE")
+        || upper.contains("VERSION_INCOMPATIBLE")
+    {
+        return FailureState::AccountBlocked;
+    }
+    FailureState::Default
+}
+
 fn url_path_segment(value: &str) -> String {
     value
         .bytes()
@@ -1438,9 +1515,14 @@ fn handle_register_response(
     status: u16,
     body: &[u8],
 ) {
-    let Some(response) =
-        parse_http_json_with(events, &operation, status, body, parse_register_response)
-    else {
+    let Some(response) = parse_http_json_with(
+        session,
+        events,
+        &operation,
+        status,
+        body,
+        parse_register_response,
+    ) else {
         return;
     };
 
@@ -1449,6 +1531,7 @@ fn handle_register_response(
             handle_login_success(config, session, network_commands, events, response);
         }
         RegisterResponse::PendingReview(response) => {
+            session.account_blocked();
             session.connect_after_login = None;
             let code = register_pending_review_code(&response);
             let message = response
@@ -1516,12 +1599,16 @@ fn handle_login_response(
     status: u16,
     body: &[u8],
 ) {
-    let Some(response) = parse_http_json::<LoginResponse>(events, &operation, status, body) else {
+    let Some(response) =
+        parse_http_json::<LoginResponse>(session, events, &operation, status, body)
+    else {
         return;
     };
 
     if !response.ok {
-        write_http_failure(events, &operation, "login returned ok=false".to_string());
+        let error = "login returned ok=false".to_string();
+        apply_http_failure_state(session, &operation, &error);
+        write_http_failure(events, &operation, error);
         return;
     }
 
@@ -1573,16 +1660,16 @@ fn handle_ticket_response(
     status: u16,
     body: &[u8],
 ) {
-    let Some(response) = parse_http_json::<TicketResponse>(events, &operation, status, body) else {
+    let Some(response) =
+        parse_http_json::<TicketResponse>(session, events, &operation, status, body)
+    else {
         return;
     };
 
     if !response.ok {
-        write_http_failure(
-            events,
-            &operation,
-            "ticket issue returned ok=false".to_string(),
-        );
+        let error = "ticket issue returned ok=false".to_string();
+        apply_http_failure_state(session, &operation, &error);
+        write_http_failure(events, &operation, error);
         return;
     }
 
@@ -1665,12 +1752,7 @@ fn connect_with_ticket(
     session.player_id = Some(ticket_payload.player_id);
     session.character_id = Some(ticket_payload.character_id);
     session.world_id = ticket_payload.world_id;
-    session.connection_id = Some(connection_id);
-    session.transport = Some(plan.transport);
-    session.connected = false;
-    session.authenticated = false;
-    session.codec.clear();
-    session.pending.clear();
+    session.begin_connect_game(connection_id, plan.transport);
 
     events.write(MyServerEvent::Connecting {
         connection_id,
@@ -1701,7 +1783,7 @@ fn disconnect(session: &mut MyServerSession, network_commands: &mut MessageWrite
     if let Some(connection_id) = session.connection_id {
         network_commands.write(NetworkCommand::Disconnect { connection_id });
     }
-    session.reset_connection_state();
+    session.disconnect_cleanup();
 }
 
 fn send_auth_request(
@@ -1710,6 +1792,7 @@ fn send_auth_request(
     events: &mut MessageWriter<MyServerEvent>,
     ticket: String,
 ) {
+    session.begin_game_auth();
     send_request(
         session,
         network_commands,
@@ -1902,14 +1985,13 @@ fn handle_response_packet(
     match message_type {
         MessageType::AuthRes => match packet.decode::<pb::AuthRes>() {
             Ok(response) if response.ok => {
-                session.authenticated = true;
-                session.player_id = Some(response.player_id.clone());
+                session.game_authenticated(response.player_id.clone());
                 events.write(MyServerEvent::Authenticated {
                     player_id: response.player_id,
                 });
             }
             Ok(response) => {
-                session.authenticated = false;
+                session.game_auth_failed();
                 events.write(MyServerEvent::AuthFailed {
                     error_code: response.error_code,
                 });
@@ -2168,6 +2250,7 @@ mod tests {
     fn extracts_json_error_code_before_raw_body_for_non_2xx() {
         let error = http_error_message(
             &PendingHttpOperation::CharacterSelect {
+                character_id: "chr_1".to_string(),
                 connect_game: false,
             },
             409,

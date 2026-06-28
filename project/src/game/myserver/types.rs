@@ -74,8 +74,66 @@ impl MyServerConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccountLoginState {
+    NotLoggedIn,
+    LoggingIn,
+    LoggedIn,
+    LoginFailed,
+    Blocked,
+    Expired,
+    LoggedOut,
+}
+
+impl Default for AccountLoginState {
+    fn default() -> Self {
+        Self::NotLoggedIn
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CharacterSelectionState {
+    NotLoaded,
+    Loading,
+    NoCharacters,
+    Creating,
+    AwaitingSelection,
+    LoadingProfile,
+    Selecting,
+    Selected,
+    Blocked,
+    SelectionFailed,
+}
+
+impl Default for CharacterSelectionState {
+    fn default() -> Self {
+        Self::NotLoaded
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameConnectionState {
+    NotConnected,
+    Connecting,
+    Connected,
+    Authenticating,
+    Authenticated,
+    Disconnected,
+    Reconnecting,
+    ReconnectFailed,
+}
+
+impl Default for GameConnectionState {
+    fn default() -> Self {
+        Self::NotConnected
+    }
+}
+
 #[derive(Clone, Debug, Default, Resource)]
 pub struct MyServerSession {
+    pub account_login_state: AccountLoginState,
+    pub character_selection_state: CharacterSelectionState,
+    pub game_connection_state: GameConnectionState,
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     pub access_token_expires_at: Option<String>,
@@ -84,6 +142,7 @@ pub struct MyServerSession {
     pub ticket_expires_at: Option<String>,
     pub player_id: Option<String>,
     pub character_id: Option<String>,
+    pub pending_character_id: Option<String>,
     pub world_id: Option<i64>,
     pub guest_id: Option<String>,
     pub login_name: Option<String>,
@@ -116,6 +175,7 @@ impl MyServerSession {
     }
 
     pub fn reset_connection_state(&mut self) {
+        self.game_connection_state = GameConnectionState::NotConnected;
         self.connection_id = None;
         self.transport = None;
         self.connected = false;
@@ -133,8 +193,11 @@ impl MyServerSession {
     pub fn logout(&mut self) {
         self.reset_connection_state();
         self.clear_account_state();
+        self.account_login_state = AccountLoginState::LoggedOut;
+        self.character_selection_state = CharacterSelectionState::NotLoaded;
         self.login_request = None;
         self.ticket_request = None;
+        self.pending_character_id = None;
         self.pending_http.clear();
         self.connect_after_login = None;
     }
@@ -146,6 +209,12 @@ impl MyServerSession {
     pub fn switch_character(&mut self) {
         self.reset_connection_state();
         self.clear_selected_character_state();
+        self.character_selection_state = if self.characters.is_empty() {
+            CharacterSelectionState::NoCharacters
+        } else {
+            CharacterSelectionState::AwaitingSelection
+        };
+        self.pending_character_id = None;
         self.ticket_request = None;
         self.pending_http.retain(|_, pending| {
             !matches!(
@@ -159,6 +228,168 @@ impl MyServerSession {
 
     pub fn disconnect_cleanup(&mut self) {
         self.reset_connection_state();
+        self.ticket_request = None;
+        self.connect_after_login = None;
+        self.game_connection_state = GameConnectionState::Disconnected;
+    }
+
+    pub fn begin_login(&mut self) {
+        self.account_login_state = AccountLoginState::LoggingIn;
+    }
+
+    pub fn login_failed(&mut self) {
+        self.account_login_state = AccountLoginState::LoginFailed;
+    }
+
+    pub fn account_blocked(&mut self) {
+        self.reset_connection_state();
+        self.clear_account_state();
+        self.account_login_state = AccountLoginState::Blocked;
+        self.character_selection_state = CharacterSelectionState::NotLoaded;
+        self.login_request = None;
+        self.ticket_request = None;
+        self.connect_after_login = None;
+        self.pending_character_id = None;
+        self.pending_http.clear();
+    }
+
+    pub fn account_expired(&mut self) {
+        self.reset_connection_state();
+        self.clear_account_state();
+        self.account_login_state = AccountLoginState::Expired;
+        self.character_selection_state = CharacterSelectionState::NotLoaded;
+        self.login_request = None;
+        self.ticket_request = None;
+        self.connect_after_login = None;
+        self.pending_character_id = None;
+        self.pending_http.clear();
+    }
+
+    pub fn begin_character_list(&mut self) {
+        self.character_selection_state = CharacterSelectionState::Loading;
+    }
+
+    pub fn character_list_failed(&mut self) {
+        self.character_selection_state = CharacterSelectionState::SelectionFailed;
+    }
+
+    pub fn begin_character_create(&mut self) {
+        self.character_selection_state = CharacterSelectionState::Creating;
+    }
+
+    pub fn character_create_failed(&mut self) {
+        self.character_selection_state = CharacterSelectionState::SelectionFailed;
+    }
+
+    pub fn begin_character_profile(&mut self) {
+        self.character_selection_state = CharacterSelectionState::LoadingProfile;
+    }
+
+    pub fn character_profile_failed(&mut self) {
+        self.character_selection_state = CharacterSelectionState::SelectionFailed;
+    }
+
+    pub fn begin_character_select(&mut self, character_id: String) {
+        self.pending_character_id = Some(character_id);
+        self.character_selection_state = CharacterSelectionState::Selecting;
+    }
+
+    pub fn character_select_failed(&mut self) {
+        self.pending_character_id = None;
+        self.character_selection_state = CharacterSelectionState::SelectionFailed;
+    }
+
+    pub fn character_blocked(&mut self) {
+        self.pending_character_id = None;
+        self.character_selection_state = CharacterSelectionState::Blocked;
+    }
+
+    pub fn begin_ticket_issue(&mut self, reconnect_game: bool) {
+        if reconnect_game {
+            self.game_connection_state = GameConnectionState::Reconnecting;
+        }
+    }
+
+    pub fn ticket_issue_failed(&mut self, reconnect_game: bool) {
+        if reconnect_game {
+            self.game_connection_state = GameConnectionState::ReconnectFailed;
+        }
+    }
+
+    pub fn begin_connect_game(&mut self, connection_id: ConnectionId, transport: NetworkTransport) {
+        self.connection_id = Some(connection_id);
+        self.transport = Some(transport);
+        self.connected = false;
+        self.authenticated = false;
+        self.codec.clear();
+        self.pending.clear();
+        self.game_connection_state = GameConnectionState::Connecting;
+    }
+
+    pub fn game_connected(&mut self, transport: NetworkTransport) {
+        self.connected = true;
+        self.transport = Some(transport);
+        self.game_connection_state = GameConnectionState::Connected;
+    }
+
+    pub fn begin_game_auth(&mut self) {
+        self.game_connection_state = GameConnectionState::Authenticating;
+    }
+
+    pub fn game_authenticated(&mut self, player_id: String) {
+        self.authenticated = true;
+        self.player_id = Some(player_id);
+        self.game_connection_state = GameConnectionState::Authenticated;
+    }
+
+    pub fn game_auth_failed(&mut self) {
+        self.authenticated = false;
+        self.game_connection_state = GameConnectionState::Disconnected;
+    }
+
+    pub fn game_connection_failed(&mut self) {
+        self.reset_connection_state();
+        self.ticket_request = None;
+        self.connect_after_login = None;
+        self.game_connection_state = GameConnectionState::ReconnectFailed;
+    }
+
+    pub fn begin_http_operation(&mut self, operation: &PendingHttpOperation) {
+        match operation {
+            PendingHttpOperation::Login { .. }
+            | PendingHttpOperation::Register { .. }
+            | PendingHttpOperation::GuestLogin { .. } => self.begin_login(),
+            PendingHttpOperation::CharacterList => self.begin_character_list(),
+            PendingHttpOperation::CharacterCreate => self.begin_character_create(),
+            PendingHttpOperation::CharacterProfile { .. } => self.begin_character_profile(),
+            PendingHttpOperation::CharacterSelect { character_id, .. } => {
+                self.begin_character_select(character_id.clone());
+            }
+            PendingHttpOperation::TicketIssue { reconnect_game } => {
+                self.begin_ticket_issue(*reconnect_game);
+            }
+            PendingHttpOperation::Logout
+            | PendingHttpOperation::CharacterDelete { .. }
+            | PendingHttpOperation::CharacterRestore { .. } => {}
+        }
+    }
+
+    pub fn http_operation_failed(&mut self, operation: &PendingHttpOperation) {
+        match operation {
+            PendingHttpOperation::Login { .. }
+            | PendingHttpOperation::Register { .. }
+            | PendingHttpOperation::GuestLogin { .. } => self.login_failed(),
+            PendingHttpOperation::CharacterList => self.character_list_failed(),
+            PendingHttpOperation::CharacterCreate => self.character_create_failed(),
+            PendingHttpOperation::CharacterProfile { .. } => self.character_profile_failed(),
+            PendingHttpOperation::CharacterSelect { .. } => self.character_select_failed(),
+            PendingHttpOperation::TicketIssue { reconnect_game } => {
+                self.ticket_issue_failed(*reconnect_game);
+            }
+            PendingHttpOperation::Logout
+            | PendingHttpOperation::CharacterDelete { .. }
+            | PendingHttpOperation::CharacterRestore { .. } => {}
+        }
     }
 
     pub fn clear_character_after_lifecycle_change(&mut self, character_id: &str) {
@@ -196,6 +427,8 @@ impl MyServerSession {
         self.reset_connection_state();
         self.clear_selected_character_state();
         self.characters.clear();
+        self.account_login_state = AccountLoginState::LoggedIn;
+        self.character_selection_state = CharacterSelectionState::NotLoaded;
         self.access_token = Some(response.access_token.clone());
         self.refresh_token = response.refresh_token.clone();
         self.access_token_expires_at = response.access_token_expires_at.clone();
@@ -216,6 +449,7 @@ impl MyServerSession {
     pub fn apply_character_list_response(&mut self, response: &CharacterListResponse) -> bool {
         self.player_id = Some(response.player_id.clone());
         self.characters = response.characters.clone();
+        let mut has_selected_character = false;
 
         if let Some(character_id) = self.character_id.clone() {
             if let Some(character) = self
@@ -225,24 +459,35 @@ impl MyServerSession {
                 .cloned()
             {
                 self.current_character = Some(character);
+                has_selected_character = true;
             } else {
                 self.clear_selected_character_state();
             }
         }
 
-        self.characters.is_empty()
+        let needs_character = self.characters.is_empty();
+        self.character_selection_state = if needs_character {
+            CharacterSelectionState::NoCharacters
+        } else if has_selected_character {
+            CharacterSelectionState::Selected
+        } else {
+            CharacterSelectionState::AwaitingSelection
+        };
+        needs_character
     }
 
     pub fn apply_character_create_response(&mut self, response: &CharacterCreateResponse) {
         self.characters
             .retain(|character| character.character_id != response.character.character_id);
         self.characters.push(response.character.clone());
+        self.character_selection_state = CharacterSelectionState::AwaitingSelection;
     }
 
     pub fn apply_character_select_response(&mut self, response: &CharacterSelectResponse) {
         self.reset_connection_state();
         self.player_id = Some(response.player_id.clone());
         self.character_id = Some(response.character.character_id.clone());
+        self.pending_character_id = None;
         self.world_id = response.character.world_id;
         self.current_character = Some(response.character.clone());
         self.character_profile = None;
@@ -255,6 +500,7 @@ impl MyServerSession {
         );
         self.character_elements
             .clear_for_character(response.character.character_id.clone());
+        self.character_selection_state = CharacterSelectionState::Selected;
     }
 
     pub fn apply_ticket_response(&mut self, response: &TicketResponse) {
@@ -273,13 +519,25 @@ impl MyServerSession {
     }
 
     pub fn apply_character_profile_response(&mut self, response: &CharacterProfileResponse) {
-        self.character_id = Some(response.profile.character.character_id.clone());
-        self.world_id = response.profile.character.world_id;
-        self.current_character = Some(response.profile.character.clone());
+        let profile_character_id = response.profile.character.character_id.clone();
+        let profile_is_selected = self.character_id.as_deref()
+            == Some(profile_character_id.as_str())
+            && self.ticket.is_some();
+        if profile_is_selected {
+            self.world_id = response.profile.character.world_id;
+            self.current_character = Some(response.profile.character.clone());
+        }
         self.character_profile = Some(response.profile.clone());
+        self.character_selection_state = if profile_is_selected {
+            CharacterSelectionState::Selected
+        } else if self.characters.is_empty() {
+            CharacterSelectionState::NoCharacters
+        } else {
+            CharacterSelectionState::AwaitingSelection
+        };
         if let Some(attributes) = response.profile.character.attributes.as_ref() {
             self.apply_character_elements_snapshot(
-                response.profile.character.character_id.clone(),
+                profile_character_id,
                 CharacterElements {
                     affinity: attributes.affinity,
                     mastery: attributes.mastery,
@@ -354,6 +612,7 @@ impl MyServerSession {
         self.ticket = None;
         self.ticket_expires_at = None;
         self.character_id = None;
+        self.pending_character_id = None;
         self.world_id = None;
         self.current_character = None;
         self.character_profile = None;
@@ -428,16 +687,33 @@ pub struct PendingHttpRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PendingHttpOperation {
-    Login { connect_game: bool },
-    Register { connect_game: bool },
-    GuestLogin { connect_game: bool },
+    Login {
+        connect_game: bool,
+    },
+    Register {
+        connect_game: bool,
+    },
+    GuestLogin {
+        connect_game: bool,
+    },
     CharacterList,
     CharacterCreate,
-    CharacterProfile { character_id: String },
-    CharacterSelect { connect_game: bool },
-    CharacterDelete { character_id: String },
-    CharacterRestore { character_id: String },
-    TicketIssue { reconnect_game: bool },
+    CharacterProfile {
+        character_id: String,
+    },
+    CharacterSelect {
+        character_id: String,
+        connect_game: bool,
+    },
+    CharacterDelete {
+        character_id: String,
+    },
+    CharacterRestore {
+        character_id: String,
+    },
+    TicketIssue {
+        reconnect_game: bool,
+    },
     Logout,
 }
 
@@ -1377,6 +1653,355 @@ mod tests {
     }
 
     #[test]
+    fn state_machine_tracks_successful_login_and_empty_character_create_flow() {
+        let mut session = MyServerSession::default();
+
+        session.begin_http_operation(&PendingHttpOperation::GuestLogin {
+            connect_game: false,
+        });
+        assert_eq!(session.account_login_state, AccountLoginState::LoggingIn);
+
+        session.apply_login_response(&LoginResponse {
+            ok: true,
+            player_id: "plr_1".to_string(),
+            guest_id: Some("guest-a".to_string()),
+            login_name: None,
+            access_token: "access".to_string(),
+            refresh_token: Some("refresh".to_string()),
+            access_token_expires_at: None,
+            refresh_token_expires_at: None,
+            ticket: None,
+            ticket_expires_at: None,
+            game_proxy_host: None,
+            game_proxy_port: None,
+            services: None,
+        });
+        assert_eq!(session.account_login_state, AccountLoginState::LoggedIn);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::NotLoaded
+        );
+
+        session.begin_http_operation(&PendingHttpOperation::CharacterList);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::Loading
+        );
+        let needs_character = session.apply_character_list_response(&CharacterListResponse {
+            ok: true,
+            player_id: "plr_1".to_string(),
+            characters: vec![],
+        });
+        assert!(needs_character);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::NoCharacters
+        );
+
+        session.begin_http_operation(&PendingHttpOperation::CharacterCreate);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::Creating
+        );
+        session.apply_character_create_response(&CharacterCreateResponse {
+            ok: true,
+            character: test_character("chr_new", "NewRole"),
+        });
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::AwaitingSelection
+        );
+    }
+
+    #[test]
+    fn state_machine_tracks_character_select_success_and_switch_character_cleanup() {
+        let mut session = MyServerSession {
+            access_token: Some("access".to_string()),
+            player_id: Some("plr_1".to_string()),
+            characters: vec![
+                test_character("chr_old", "OldRole"),
+                test_character("chr_new", "NewRole"),
+            ],
+            account_login_state: AccountLoginState::LoggedIn,
+            character_id: Some("chr_old".to_string()),
+            ticket: Some("old-ticket".to_string()),
+            current_character: Some(test_character("chr_old", "OldRole")),
+            character_selection_state: CharacterSelectionState::Selected,
+            game_connection_state: GameConnectionState::Authenticated,
+            connected: true,
+            authenticated: true,
+            pending_http: HashMap::from([
+                (
+                    RequestId::from_raw(10),
+                    PendingHttpRequest {
+                        operation: PendingHttpOperation::CharacterSelect {
+                            character_id: "chr_new".to_string(),
+                            connect_game: false,
+                        },
+                    },
+                ),
+                (
+                    RequestId::from_raw(11),
+                    PendingHttpRequest {
+                        operation: PendingHttpOperation::TicketIssue {
+                            reconnect_game: true,
+                        },
+                    },
+                ),
+                (
+                    RequestId::from_raw(12),
+                    PendingHttpRequest {
+                        operation: PendingHttpOperation::CharacterList,
+                    },
+                ),
+            ]),
+            ..Default::default()
+        };
+
+        session.begin_http_operation(&PendingHttpOperation::CharacterSelect {
+            character_id: "chr_new".to_string(),
+            connect_game: false,
+        });
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::Selecting
+        );
+        assert_eq!(session.character_id.as_deref(), Some("chr_old"));
+        assert_eq!(session.pending_character_id.as_deref(), Some("chr_new"));
+        assert_eq!(session.ticket.as_deref(), Some("old-ticket"));
+
+        session.apply_character_select_response(&CharacterSelectResponse {
+            ok: true,
+            player_id: "plr_1".to_string(),
+            character: test_character("chr_new", "NewRole"),
+            ticket: "ticket-new".to_string(),
+            ticket_expires_at: "2026-06-25T12:15:00.000Z".to_string(),
+            game_proxy_host: None,
+            game_proxy_port: None,
+            services: None,
+        });
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::Selected
+        );
+        assert_eq!(session.ticket.as_deref(), Some("ticket-new"));
+        assert!(session.pending_character_id.is_none());
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::NotConnected
+        );
+
+        session.switch_character();
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::AwaitingSelection
+        );
+        assert_eq!(session.account_login_state, AccountLoginState::LoggedIn);
+        assert!(session.ticket.is_none());
+        assert!(session.character_id.is_none());
+        assert!(session.pending_character_id.is_none());
+        assert!(session.pending_http.is_empty());
+    }
+
+    #[test]
+    fn state_machine_tracks_failures_logout_and_switch_account_cleanup() {
+        let mut session = MyServerSession {
+            access_token: Some("access".to_string()),
+            refresh_token: Some("refresh".to_string()),
+            player_id: Some("plr_1".to_string()),
+            character_id: Some("chr_1".to_string()),
+            ticket: Some("ticket".to_string()),
+            characters: vec![test_character("chr_1", "Role")],
+            account_login_state: AccountLoginState::LoggedIn,
+            character_selection_state: CharacterSelectionState::Selected,
+            game_connection_state: GameConnectionState::Authenticated,
+            connected: true,
+            authenticated: true,
+            pending_http: HashMap::from([(
+                RequestId::from_raw(20),
+                PendingHttpRequest {
+                    operation: PendingHttpOperation::CharacterSelect {
+                        character_id: "chr_1".to_string(),
+                        connect_game: true,
+                    },
+                },
+            )]),
+            ..Default::default()
+        };
+
+        session.http_operation_failed(&PendingHttpOperation::Login {
+            connect_game: false,
+        });
+        assert_eq!(session.account_login_state, AccountLoginState::LoginFailed);
+
+        session.account_blocked();
+        assert_eq!(session.account_login_state, AccountLoginState::Blocked);
+        assert!(session.access_token.is_none());
+        assert!(session.character_id.is_none());
+
+        session.account_expired();
+        assert_eq!(session.account_login_state, AccountLoginState::Expired);
+
+        session.logout();
+        assert_eq!(session.account_login_state, AccountLoginState::LoggedOut);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::NotLoaded
+        );
+        assert!(session.pending_http.is_empty());
+
+        session.access_token = Some("access".to_string());
+        session.player_id = Some("plr_1".to_string());
+        session.character_id = Some("chr_1".to_string());
+        session.ticket = Some("ticket".to_string());
+        session.pending_http.insert(
+            RequestId::from_raw(21),
+            PendingHttpRequest {
+                operation: PendingHttpOperation::CharacterList,
+            },
+        );
+        session.switch_account();
+        assert_eq!(session.account_login_state, AccountLoginState::LoggedOut);
+        assert!(session.access_token.is_none());
+        assert!(session.player_id.is_none());
+        assert!(session.pending_http.is_empty());
+    }
+
+    #[test]
+    fn state_machine_tracks_local_precondition_failures() {
+        let mut session = MyServerSession {
+            game_connection_state: GameConnectionState::Authenticated,
+            ..Default::default()
+        };
+
+        session.http_operation_failed(&PendingHttpOperation::CharacterList);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::SelectionFailed
+        );
+
+        session.character_selection_state = CharacterSelectionState::Selecting;
+        session.pending_character_id = Some("chr_pending".to_string());
+        session.http_operation_failed(&PendingHttpOperation::CharacterSelect {
+            character_id: "chr_pending".to_string(),
+            connect_game: false,
+        });
+        assert!(session.character_id.is_none());
+        assert!(session.pending_character_id.is_none());
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::SelectionFailed
+        );
+
+        session.http_operation_failed(&PendingHttpOperation::TicketIssue {
+            reconnect_game: false,
+        });
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Authenticated
+        );
+
+        session.http_operation_failed(&PendingHttpOperation::TicketIssue {
+            reconnect_game: true,
+        });
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::ReconnectFailed
+        );
+    }
+
+    #[test]
+    fn state_machine_keeps_duplicate_command_state_and_tracks_connection_edges() {
+        let mut session = MyServerSession::default();
+        session.begin_http_operation(&PendingHttpOperation::Login {
+            connect_game: false,
+        });
+        session.http_operation_failed(&PendingHttpOperation::CharacterList);
+        assert_eq!(session.account_login_state, AccountLoginState::LoggingIn);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::SelectionFailed
+        );
+
+        session.begin_http_operation(&PendingHttpOperation::CharacterSelect {
+            character_id: "chr_a".to_string(),
+            connect_game: false,
+        });
+        session.begin_http_operation(&PendingHttpOperation::CharacterSelect {
+            character_id: "chr_b".to_string(),
+            connect_game: false,
+        });
+        assert!(session.character_id.is_none());
+        assert_eq!(session.pending_character_id.as_deref(), Some("chr_b"));
+        assert!(session.ticket.is_none());
+        session.http_operation_failed(&PendingHttpOperation::CharacterSelect {
+            character_id: "chr_b".to_string(),
+            connect_game: false,
+        });
+        assert!(session.character_id.is_none());
+        assert!(session.pending_character_id.is_none());
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::SelectionFailed
+        );
+
+        session.begin_ticket_issue(true);
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Reconnecting
+        );
+        session.disconnect_cleanup();
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Disconnected
+        );
+        session.ticket_issue_failed(true);
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::ReconnectFailed
+        );
+        session.game_authenticated("plr_1".to_string());
+        session.begin_ticket_issue(false);
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Authenticated
+        );
+        session.ticket_issue_failed(false);
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Authenticated
+        );
+
+        let connection_id = ConnectionId::new();
+        session.begin_connect_game(connection_id, NetworkTransport::Tcp);
+        assert_eq!(session.connection_id, Some(connection_id));
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Connecting
+        );
+        session.game_connected(NetworkTransport::Tcp);
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Connected
+        );
+        session.begin_game_auth();
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Authenticating
+        );
+        session.game_authenticated("plr_1".to_string());
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Authenticated
+        );
+        session.disconnect_cleanup();
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Disconnected
+        );
+    }
+
+    #[test]
     fn parses_register_pending_review_without_access_token() {
         let response: RegisterPendingReviewResponse = serde_json::from_str(
             r#"{
@@ -1591,11 +2216,19 @@ mod tests {
         )
         .unwrap();
 
-        let mut session = MyServerSession::default();
+        let mut session = MyServerSession {
+            characters: vec![test_character("chr_profile", "Profiled")],
+            character_selection_state: CharacterSelectionState::LoadingProfile,
+            ..Default::default()
+        };
         session.apply_character_profile_response(&response);
 
-        assert_eq!(session.character_id.as_deref(), Some("chr_profile"));
-        assert_eq!(session.world_id, Some(9));
+        assert!(session.character_id.is_none());
+        assert!(session.current_character.is_none());
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::AwaitingSelection
+        );
         assert_eq!(
             session.character_profile.as_ref().unwrap().character.name,
             "Profiled"
@@ -1603,6 +2236,19 @@ mod tests {
         assert_eq!(session.character_elements.affinity.wind, 4);
         assert_eq!(session.character_elements.mastery.fire, 6);
         assert!(session.character_elements.snapshot_refreshed_at.is_some());
+
+        session.character_id = Some("chr_profile".to_string());
+        session.ticket = Some("ticket".to_string());
+        session.character_selection_state = CharacterSelectionState::LoadingProfile;
+        session.apply_character_profile_response(&response);
+
+        assert_eq!(session.character_id.as_deref(), Some("chr_profile"));
+        assert_eq!(session.world_id, Some(9));
+        assert_eq!(session.current_character.as_ref().unwrap().name, "Profiled");
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::Selected
+        );
     }
 
     #[test]
