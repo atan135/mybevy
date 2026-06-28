@@ -100,6 +100,7 @@ pub struct MyServerSession {
     pub next_seq: u32,
     pub codec: PacketCodec,
     pub pending: HashMap<u32, PendingRequest>,
+    pub pending_http: HashMap<RequestId, PendingHttpRequest>,
     pub login_request: Option<RequestId>,
     pub ticket_request: Option<RequestId>,
     pub connect_after_login: Option<ConnectPlan>,
@@ -122,6 +123,7 @@ impl MyServerSession {
         self.room_id = None;
         self.codec.clear();
         self.pending.clear();
+        self.pending_http.clear();
     }
 
     pub fn reset(&mut self) {
@@ -133,6 +135,7 @@ impl MyServerSession {
         self.clear_account_state();
         self.login_request = None;
         self.ticket_request = None;
+        self.pending_http.clear();
         self.connect_after_login = None;
     }
 
@@ -144,6 +147,13 @@ impl MyServerSession {
         self.reset_connection_state();
         self.clear_selected_character_state();
         self.ticket_request = None;
+        self.pending_http.retain(|_, pending| {
+            !matches!(
+                pending.operation,
+                PendingHttpOperation::CharacterSelect { .. }
+                    | PendingHttpOperation::TicketIssue { .. }
+            )
+        });
         self.connect_after_login = None;
     }
 
@@ -221,6 +231,12 @@ impl MyServerSession {
         }
 
         self.characters.is_empty()
+    }
+
+    pub fn apply_character_create_response(&mut self, response: &CharacterCreateResponse) {
+        self.characters
+            .retain(|character| character.character_id != response.character.character_id);
+        self.characters.push(response.character.clone());
     }
 
     pub fn apply_character_select_response(&mut self, response: &CharacterSelectResponse) {
@@ -406,6 +422,73 @@ pub struct PendingRequest {
 }
 
 #[derive(Clone, Debug)]
+pub struct PendingHttpRequest {
+    pub operation: PendingHttpOperation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PendingHttpOperation {
+    Login { connect_game: bool },
+    Register { connect_game: bool },
+    GuestLogin { connect_game: bool },
+    CharacterList,
+    CharacterCreate,
+    CharacterProfile { character_id: String },
+    CharacterSelect { connect_game: bool },
+    CharacterDelete { character_id: String },
+    CharacterRestore { character_id: String },
+    TicketIssue { reconnect_game: bool },
+    Logout,
+}
+
+impl PendingHttpOperation {
+    pub fn event_operation(&self) -> MyServerOperation {
+        match self {
+            Self::Login { .. } => MyServerOperation::Login,
+            Self::Register { .. } => MyServerOperation::Register,
+            Self::GuestLogin { .. } => MyServerOperation::GuestLogin,
+            Self::CharacterList => MyServerOperation::CharacterList,
+            Self::CharacterCreate => MyServerOperation::CharacterCreate,
+            Self::CharacterProfile { .. } => MyServerOperation::CharacterProfile,
+            Self::CharacterSelect { .. } => MyServerOperation::CharacterSelect,
+            Self::CharacterDelete { .. } => MyServerOperation::CharacterDelete,
+            Self::CharacterRestore { .. } => MyServerOperation::CharacterRestore,
+            Self::TicketIssue { .. } => MyServerOperation::TicketRefresh,
+            Self::Logout => MyServerOperation::Logout,
+        }
+    }
+
+    pub fn duplicate_group(&self) -> PendingHttpGroup {
+        match self {
+            Self::Login { .. } | Self::Register { .. } | Self::GuestLogin { .. } => {
+                PendingHttpGroup::Login
+            }
+            Self::CharacterList => PendingHttpGroup::CharacterList,
+            Self::CharacterCreate => PendingHttpGroup::CharacterCreate,
+            Self::CharacterProfile { .. } => PendingHttpGroup::CharacterProfile,
+            Self::CharacterSelect { .. } => PendingHttpGroup::CharacterSelect,
+            Self::CharacterDelete { .. } => PendingHttpGroup::CharacterDelete,
+            Self::CharacterRestore { .. } => PendingHttpGroup::CharacterRestore,
+            Self::TicketIssue { .. } => PendingHttpGroup::TicketIssue,
+            Self::Logout => PendingHttpGroup::Logout,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingHttpGroup {
+    Login,
+    CharacterList,
+    CharacterCreate,
+    CharacterProfile,
+    CharacterSelect,
+    CharacterDelete,
+    CharacterRestore,
+    TicketIssue,
+    Logout,
+}
+
+#[derive(Clone, Debug)]
 pub struct ConnectPlan {
     pub transport: NetworkTransport,
     pub host: Option<String>,
@@ -414,9 +497,40 @@ pub struct ConnectPlan {
 
 #[derive(Clone, Debug, Message)]
 pub enum MyServerCommand {
+    Login {
+        login_name: String,
+        password: String,
+        connect_game: bool,
+    },
+    Register {
+        login_name: String,
+        password: String,
+        connect_game: bool,
+    },
     GuestLogin {
         guest_id: Option<String>,
         connect_game: bool,
+    },
+    LoadCharacterList,
+    CreateCharacter {
+        name: String,
+        appearance_json: Option<Value>,
+    },
+    LoadCharacterProfile {
+        character_id: String,
+    },
+    SelectCharacter {
+        character_id: String,
+        connect_game: bool,
+    },
+    DeleteCharacter {
+        character_id: String,
+    },
+    RestoreCharacter {
+        character_id: String,
+    },
+    IssueTicket {
+        reconnect_game: bool,
     },
     RefreshTicket {
         reconnect_game: bool,
@@ -428,6 +542,7 @@ pub enum MyServerCommand {
         port: Option<u16>,
     },
     Disconnect,
+    Logout,
     Ping {
         client_time_ms: i64,
     },
@@ -514,12 +629,40 @@ pub enum MyServerEvent {
     CharacterCreationRequired {
         player_id: String,
     },
+    CharacterCreated {
+        character: CharacterSummary,
+    },
+    CharacterCreateFailed {
+        error: String,
+    },
+    CharacterProfileLoaded {
+        profile: CharacterProfile,
+    },
+    CharacterProfileFailed {
+        error: String,
+    },
     CharacterSelected {
         player_id: String,
         character_id: String,
         world_id: Option<i64>,
     },
     CharacterSelectFailed {
+        error: String,
+    },
+    CharacterDeleted {
+        character_id: String,
+    },
+    CharacterDeleteFailed {
+        error: String,
+    },
+    CharacterRestored {
+        character: CharacterSummary,
+    },
+    CharacterRestoreFailed {
+        error: String,
+    },
+    LogoutSucceeded,
+    LogoutFailed {
         error: String,
     },
     AccountStatusBlocked {
@@ -606,11 +749,16 @@ pub enum MyServerEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MyServerOperation {
     Login,
+    Register,
+    GuestLogin,
     CharacterList,
     CharacterCreate,
     CharacterSelect,
     CharacterProfile,
+    CharacterDelete,
+    CharacterRestore,
     TicketRefresh,
+    Logout,
     GameConnect,
     GameRequest,
 }
@@ -650,6 +798,29 @@ pub struct LoginResponse {
     pub game_proxy_host: Option<String>,
     pub game_proxy_port: Option<u16>,
     pub services: Option<ClientServices>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterPendingReviewResponse {
+    pub ok: bool,
+    pub player_id: String,
+    #[serde(default)]
+    pub login_name: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub pending_review: bool,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RegisterResponse {
+    Login(LoginResponse),
+    PendingReview(RegisterPendingReviewResponse),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1203,6 +1374,33 @@ mod tests {
         assert_eq!(endpoint.host, "game.local");
         assert_eq!(endpoint.port, 4000);
         assert_eq!(endpoint.transport, Some(NetworkTransport::Kcp));
+    }
+
+    #[test]
+    fn parses_register_pending_review_without_access_token() {
+        let response: RegisterPendingReviewResponse = serde_json::from_str(
+            r#"{
+                "ok": true,
+                "playerId": "plr_pending",
+                "loginName": "alice",
+                "displayName": "Alice",
+                "status": "pending_review",
+                "pendingReview": true,
+                "message": "Registration submitted for review"
+            }"#,
+        )
+        .unwrap();
+
+        assert!(response.ok);
+        assert_eq!(response.player_id, "plr_pending");
+        assert_eq!(response.login_name.as_deref(), Some("alice"));
+        assert_eq!(response.display_name.as_deref(), Some("Alice"));
+        assert_eq!(response.status.as_deref(), Some("pending_review"));
+        assert!(response.pending_review);
+        assert_eq!(
+            response.message.as_deref(),
+            Some("Registration submitted for review")
+        );
     }
 
     #[test]

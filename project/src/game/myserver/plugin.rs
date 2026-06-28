@@ -2,18 +2,23 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use bevy::prelude::*;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
 use crate::framework::network::{
-    ConnectionId, HttpRequest, KcpConnectConfig, KcpSessionOptions, NetworkCommand, NetworkEvent,
-    NetworkTransport, TcpConnectConfig,
+    ConnectionId, HttpMethod, HttpRequest, KcpConnectConfig, KcpSessionOptions, NetworkCommand,
+    NetworkEvent, NetworkTransport, RequestId, TcpConnectConfig,
 };
 
 use super::protocol::{MessageType, Packet, encode_proto_packet, pb};
 use super::types::{
-    ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL, LoginResponse, MovementClientState,
-    MyServerAutoClientConfig, MyServerAutoClientState, MyServerCommand, MyServerConfig,
-    MyServerEvent, MyServerOperation, MyServerSession, PendingRequest, TicketResponse,
-    parse_character_bound_ticket, ticket_endpoint,
+    ApiErrorResponse, CharacterCreateResponse, CharacterLifecycleResponse, CharacterListResponse,
+    CharacterProfileResponse, CharacterSelectResponse, ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL,
+    LoginResponse, MovementClientState, MyServerAutoClientConfig, MyServerAutoClientState,
+    MyServerCommand, MyServerConfig, MyServerEvent, MyServerOperation, MyServerSession,
+    PendingHttpOperation, PendingHttpRequest, PendingRequest, RegisterPendingReviewResponse,
+    RegisterResponse, TicketResponse, character_select_endpoint, parse_character_bound_ticket,
+    ticket_endpoint,
 };
 
 pub struct MyServerPlugin;
@@ -212,6 +217,32 @@ fn handle_myserver_commands(
 ) {
     for command in commands.read() {
         match command {
+            MyServerCommand::Login {
+                login_name,
+                password,
+                connect_game,
+            } => send_login(
+                &config,
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                login_name,
+                password,
+                *connect_game,
+            ),
+            MyServerCommand::Register {
+                login_name,
+                password,
+                connect_game,
+            } => send_register(
+                &config,
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                login_name,
+                password,
+                *connect_game,
+            ),
             MyServerCommand::GuestLogin {
                 guest_id,
                 connect_game,
@@ -219,10 +250,62 @@ fn handle_myserver_commands(
                 &config,
                 &mut session,
                 &mut network_commands,
+                &mut events,
                 guest_id.as_deref(),
                 *connect_game,
             ),
-            MyServerCommand::RefreshTicket { reconnect_game } => send_refresh_ticket(
+            MyServerCommand::LoadCharacterList => {
+                send_character_list(&config, &mut session, &mut network_commands, &mut events)
+            }
+            MyServerCommand::CreateCharacter {
+                name,
+                appearance_json,
+            } => send_character_create(
+                &config,
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                name,
+                appearance_json.clone(),
+            ),
+            MyServerCommand::LoadCharacterProfile { character_id } => send_character_profile(
+                &config,
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                character_id,
+            ),
+            MyServerCommand::SelectCharacter {
+                character_id,
+                connect_game,
+            } => send_character_select(
+                &config,
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                character_id,
+                *connect_game,
+            ),
+            MyServerCommand::DeleteCharacter { character_id } => send_character_lifecycle(
+                &config,
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                PendingHttpOperation::CharacterDelete {
+                    character_id: character_id.clone(),
+                },
+            ),
+            MyServerCommand::RestoreCharacter { character_id } => send_character_lifecycle(
+                &config,
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                PendingHttpOperation::CharacterRestore {
+                    character_id: character_id.clone(),
+                },
+            ),
+            MyServerCommand::IssueTicket { reconnect_game }
+            | MyServerCommand::RefreshTicket { reconnect_game } => send_refresh_ticket(
                 &config,
                 &mut session,
                 &mut network_commands,
@@ -247,6 +330,9 @@ fn handle_myserver_commands(
                 },
             ),
             MyServerCommand::Disconnect => disconnect(&mut session, &mut network_commands),
+            MyServerCommand::Logout => {
+                send_logout(&config, &mut session, &mut network_commands, &mut events);
+            }
             MyServerCommand::Ping { client_time_ms } => send_request(
                 &mut session,
                 &mut network_commands,
@@ -338,53 +424,30 @@ fn handle_network_events(
 ) {
     for event in network_events.read() {
         match event {
-            NetworkEvent::HttpResponse(response)
-                if Some(response.request_id) == session.login_request =>
-            {
-                session.login_request = None;
-                handle_login_response(
+            NetworkEvent::HttpResponse(response) => {
+                let Some(pending) = session.pending_http.remove(&response.request_id) else {
+                    continue;
+                };
+                clear_legacy_http_slots(&mut session, response.request_id);
+                handle_http_response(
                     &config,
                     &mut session,
                     &mut network_commands,
                     &mut events,
+                    pending.operation,
                     response.status,
                     &response.body,
                 );
             }
-            NetworkEvent::HttpError { request_id, error }
-                if Some(*request_id) == session.login_request =>
-            {
-                session.login_request = None;
-                events.write(MyServerEvent::LoginFailed {
-                    error: error.clone(),
-                });
+            NetworkEvent::HttpError { request_id, error } => {
+                let Some(pending) = session.pending_http.remove(request_id) else {
+                    continue;
+                };
+                clear_legacy_http_slots(&mut session, *request_id);
+                let operation = pending.operation.event_operation();
+                write_http_failure(&mut events, &pending.operation, error.clone());
                 events.write(MyServerEvent::NetworkFailed {
-                    operation: MyServerOperation::Login,
-                    error: error.clone(),
-                });
-            }
-            NetworkEvent::HttpResponse(response)
-                if Some(response.request_id) == session.ticket_request =>
-            {
-                session.ticket_request = None;
-                handle_ticket_response(
-                    &config,
-                    &mut session,
-                    &mut network_commands,
-                    &mut events,
-                    response.status,
-                    &response.body,
-                );
-            }
-            NetworkEvent::HttpError { request_id, error }
-                if Some(*request_id) == session.ticket_request =>
-            {
-                session.ticket_request = None;
-                events.write(MyServerEvent::TicketRefreshFailed {
-                    error: error.clone(),
-                });
-                events.write(MyServerEvent::NetworkFailed {
-                    operation: MyServerOperation::TicketRefresh,
+                    operation,
                     error: error.clone(),
                 });
             }
@@ -507,35 +570,273 @@ fn keepalive_myserver_connection(
     );
 }
 
+fn send_login(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    login_name: &str,
+    password: &str,
+    connect_game: bool,
+) {
+    let operation = PendingHttpOperation::Login { connect_game };
+    let body = json!({
+        "loginName": login_name,
+        "password": password,
+    });
+    let request = build_json_request(
+        config,
+        HttpMethod::Post,
+        "/api/v1/auth/login",
+        Some(body),
+        None,
+    );
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        operation,
+        request,
+    );
+}
+
+fn send_register(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    login_name: &str,
+    password: &str,
+    connect_game: bool,
+) {
+    let operation = PendingHttpOperation::Register { connect_game };
+    let body = json!({
+        "loginName": login_name,
+        "password": password,
+    });
+    let request = build_json_request(
+        config,
+        HttpMethod::Post,
+        "/api/v1/auth/register",
+        Some(body),
+        None,
+    );
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        operation,
+        request,
+    );
+}
+
 fn send_guest_login(
     config: &MyServerConfig,
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
     guest_id: Option<&str>,
     connect_game: bool,
 ) {
-    let url = format!(
-        "{}/api/v1/auth/guest-login",
-        config.http_base_url.trim_end_matches('/')
-    );
+    let operation = PendingHttpOperation::GuestLogin { connect_game };
     let body = match guest_id {
-        Some(guest_id) if !guest_id.trim().is_empty() => {
-            serde_json::json!({ "guestId": guest_id }).to_string()
-        }
-        _ => "{}".to_string(),
+        Some(guest_id) if !guest_id.trim().is_empty() => json!({ "guestId": guest_id }),
+        _ => json!({}),
     };
-    let request = HttpRequest::post(url, body)
-        .with_header("Content-Type", "application/json")
-        .with_header("Accept", "application/json")
-        .with_timeout(config.request_timeout);
+    let request = build_json_request(
+        config,
+        HttpMethod::Post,
+        "/api/v1/auth/guest-login",
+        Some(body),
+        None,
+    );
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        operation,
+        request,
+    );
+}
 
-    session.login_request = Some(request.request_id);
-    session.connect_after_login = connect_game.then_some(ConnectPlan {
-        transport: config.prefer_transport,
-        host: None,
-        port: None,
-    });
-    network_commands.write(NetworkCommand::Http(request));
+fn send_character_list(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+) {
+    let Some(access_token) = session.access_token.as_deref() else {
+        write_http_failure(
+            events,
+            &PendingHttpOperation::CharacterList,
+            "cannot load characters before login".to_string(),
+        );
+        return;
+    };
+    let request = build_json_request(
+        config,
+        HttpMethod::Get,
+        "/api/v1/characters",
+        None,
+        Some(access_token),
+    );
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        PendingHttpOperation::CharacterList,
+        request,
+    );
+}
+
+fn send_character_create(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    name: &str,
+    appearance_json: Option<Value>,
+) {
+    let Some(access_token) = session.access_token.as_deref() else {
+        write_http_failure(
+            events,
+            &PendingHttpOperation::CharacterCreate,
+            "cannot create character before login".to_string(),
+        );
+        return;
+    };
+    let mut body = serde_json::Map::new();
+    body.insert("name".to_string(), Value::String(name.to_string()));
+    if let Some(appearance_json) = appearance_json {
+        body.insert("appearance_json".to_string(), appearance_json);
+    }
+    let request = build_json_request(
+        config,
+        HttpMethod::Post,
+        "/api/v1/characters",
+        Some(Value::Object(body)),
+        Some(access_token),
+    );
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        PendingHttpOperation::CharacterCreate,
+        request,
+    );
+}
+
+fn send_character_profile(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    character_id: &str,
+) {
+    let Some(access_token) = session.access_token.as_deref() else {
+        write_http_failure(
+            events,
+            &PendingHttpOperation::CharacterProfile {
+                character_id: character_id.to_string(),
+            },
+            "cannot load character profile before login".to_string(),
+        );
+        return;
+    };
+    let path = format!(
+        "/api/v1/characters/{}/profile",
+        url_path_segment(character_id)
+    );
+    let request = build_json_request(config, HttpMethod::Get, &path, None, Some(access_token));
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        PendingHttpOperation::CharacterProfile {
+            character_id: character_id.to_string(),
+        },
+        request,
+    );
+}
+
+fn send_character_select(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    character_id: &str,
+    connect_game: bool,
+) {
+    let Some(access_token) = session.access_token.as_deref() else {
+        write_http_failure(
+            events,
+            &PendingHttpOperation::CharacterSelect { connect_game },
+            "cannot select character before login".to_string(),
+        );
+        return;
+    };
+    let request = build_json_request(
+        config,
+        HttpMethod::Post,
+        "/api/v1/characters/select",
+        Some(json!({ "character_id": character_id })),
+        Some(access_token),
+    );
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        PendingHttpOperation::CharacterSelect { connect_game },
+        request,
+    );
+}
+
+fn send_character_lifecycle(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+) {
+    let Some(access_token) = session.access_token.as_deref() else {
+        write_http_failure(
+            events,
+            &operation,
+            "cannot change character lifecycle before login".to_string(),
+        );
+        return;
+    };
+    let (path, character_id) = match &operation {
+        PendingHttpOperation::CharacterDelete { character_id } => {
+            ("/api/v1/characters/delete", character_id.as_str())
+        }
+        PendingHttpOperation::CharacterRestore { character_id } => {
+            ("/api/v1/characters/restore", character_id.as_str())
+        }
+        _ => return,
+    };
+    let request = build_json_request(
+        config,
+        HttpMethod::Post,
+        path,
+        Some(json!({ "character_id": character_id })),
+        Some(access_token),
+    );
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        operation,
+        request,
+    );
 }
 
 fn send_refresh_ticket(
@@ -549,35 +850,661 @@ fn send_refresh_ticket(
         events.write(MyServerEvent::TicketRefreshFailed {
             error: "cannot issue ticket before login".to_string(),
         });
+        events.write(MyServerEvent::NetworkFailed {
+            operation: MyServerOperation::TicketRefresh,
+            error: "cannot issue ticket before login".to_string(),
+        });
         return;
     };
     let Some(character_id) = session.character_id.clone() else {
         events.write(MyServerEvent::TicketRefreshFailed {
             error: "cannot issue ticket before selecting a character".to_string(),
         });
+        events.write(MyServerEvent::NetworkFailed {
+            operation: MyServerOperation::TicketRefresh,
+            error: "cannot issue ticket before selecting a character".to_string(),
+        });
         return;
     };
 
-    let url = format!(
-        "{}/api/v1/game-ticket/issue",
-        config.http_base_url.trim_end_matches('/')
+    let request = build_json_request(
+        config,
+        HttpMethod::Post,
+        "/api/v1/game-ticket/issue",
+        Some(json!({ "character_id": character_id })),
+        Some(&access_token),
     );
-    let request = HttpRequest::post(
-        url,
-        serde_json::json!({ "character_id": character_id }).to_string(),
-    )
-    .with_header("Content-Type", "application/json")
-    .with_header("Accept", "application/json")
-    .with_header("Authorization", format!("Bearer {access_token}"))
-    .with_timeout(config.request_timeout);
+    send_http_request(
+        config,
+        session,
+        network_commands,
+        events,
+        PendingHttpOperation::TicketIssue { reconnect_game },
+        request,
+    );
+}
 
-    session.ticket_request = Some(request.request_id);
-    session.connect_after_login = reconnect_game.then_some(ConnectPlan {
-        transport: config.prefer_transport,
-        host: None,
-        port: None,
-    });
+fn send_logout(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+) {
+    disconnect(session, network_commands);
+    let access_token = session.access_token.clone();
+    if let Some(access_token) = access_token.as_deref() {
+        let request = build_json_request(
+            config,
+            HttpMethod::Post,
+            "/api/v1/auth/logout",
+            Some(json!({})),
+            Some(access_token),
+        );
+        send_http_request(
+            config,
+            session,
+            network_commands,
+            events,
+            PendingHttpOperation::Logout,
+            request,
+        );
+    } else {
+        session.logout();
+        events.write(MyServerEvent::LogoutSucceeded);
+    }
+}
+
+fn send_http_request(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    request: HttpRequest,
+) {
+    if has_duplicate_pending_http(session, &operation) {
+        let error = format!(
+            "{:?} request is already pending; refusing duplicate request",
+            operation.duplicate_group()
+        );
+        write_http_failure(events, &operation, error.clone());
+        events.write(MyServerEvent::NetworkFailed {
+            operation: operation.event_operation(),
+            error,
+        });
+        return;
+    }
+
+    let request_id = request.request_id;
+    match &operation {
+        PendingHttpOperation::Login { connect_game }
+        | PendingHttpOperation::Register { connect_game }
+        | PendingHttpOperation::GuestLogin { connect_game } => {
+            session.login_request = Some(request_id);
+            session.connect_after_login = (*connect_game).then_some(ConnectPlan {
+                transport: config.prefer_transport,
+                host: None,
+                port: None,
+            });
+        }
+        PendingHttpOperation::CharacterSelect { connect_game } => {
+            session.connect_after_login = (*connect_game).then_some(ConnectPlan {
+                transport: config.prefer_transport,
+                host: None,
+                port: None,
+            });
+        }
+        PendingHttpOperation::TicketIssue { reconnect_game } => {
+            session.ticket_request = Some(request_id);
+            session.connect_after_login = (*reconnect_game).then_some(ConnectPlan {
+                transport: config.prefer_transport,
+                host: None,
+                port: None,
+            });
+        }
+        _ => {}
+    }
+    session
+        .pending_http
+        .insert(request_id, PendingHttpRequest { operation });
     network_commands.write(NetworkCommand::Http(request));
+}
+
+fn has_duplicate_pending_http(session: &MyServerSession, operation: &PendingHttpOperation) -> bool {
+    let group = operation.duplicate_group();
+    session
+        .pending_http
+        .values()
+        .any(|pending| pending.operation.duplicate_group() == group)
+}
+
+fn clear_legacy_http_slots(session: &mut MyServerSession, request_id: RequestId) {
+    if session.login_request == Some(request_id) {
+        session.login_request = None;
+    }
+    if session.ticket_request == Some(request_id) {
+        session.ticket_request = None;
+    }
+}
+
+fn build_json_request(
+    config: &MyServerConfig,
+    method: HttpMethod,
+    path: &str,
+    body: Option<Value>,
+    access_token: Option<&str>,
+) -> HttpRequest {
+    let url = format!(
+        "{}/{}",
+        config.http_base_url.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    );
+    let mut request = HttpRequest::new(method, url)
+        .with_header("Accept", "application/json")
+        .with_timeout(config.request_timeout);
+    if let Some(access_token) = access_token {
+        request = request.with_header("Authorization", format!("Bearer {access_token}"));
+    }
+    if let Some(body) = body {
+        request = request
+            .with_header("Content-Type", "application/json")
+            .with_body(serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec()));
+    }
+    request
+}
+
+fn handle_http_response(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) {
+    match operation {
+        PendingHttpOperation::Login { .. } | PendingHttpOperation::GuestLogin { .. } => {
+            handle_login_response(
+                config,
+                session,
+                network_commands,
+                events,
+                operation,
+                status,
+                body,
+            )
+        }
+        PendingHttpOperation::Register { .. } => handle_register_response(
+            config,
+            session,
+            network_commands,
+            events,
+            operation,
+            status,
+            body,
+        ),
+        PendingHttpOperation::CharacterList => {
+            handle_character_list_response(session, events, operation, status, body)
+        }
+        PendingHttpOperation::CharacterCreate => {
+            handle_character_create_response(session, events, operation, status, body)
+        }
+        PendingHttpOperation::CharacterProfile { .. } => {
+            handle_character_profile_response(session, events, operation, status, body)
+        }
+        PendingHttpOperation::CharacterSelect { .. } => handle_character_select_response(
+            config,
+            session,
+            network_commands,
+            events,
+            operation,
+            status,
+            body,
+        ),
+        PendingHttpOperation::CharacterDelete { .. }
+        | PendingHttpOperation::CharacterRestore { .. } => {
+            handle_character_lifecycle_response(session, events, operation, status, body)
+        }
+        PendingHttpOperation::TicketIssue { .. } => handle_ticket_response(
+            config,
+            session,
+            network_commands,
+            events,
+            operation,
+            status,
+            body,
+        ),
+        PendingHttpOperation::Logout => {
+            handle_logout_response(session, events, operation, status, body)
+        }
+    }
+}
+
+fn handle_character_list_response(
+    session: &mut MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) {
+    let Some(response) = parse_http_json::<CharacterListResponse>(events, &operation, status, body)
+    else {
+        return;
+    };
+    if !response.ok {
+        write_http_failure(
+            events,
+            &operation,
+            "character list returned ok=false".to_string(),
+        );
+        return;
+    }
+    let needs_character = session.apply_character_list_response(&response);
+    events.write(MyServerEvent::CharacterListLoaded {
+        player_id: response.player_id.clone(),
+        characters: response.characters.clone(),
+    });
+    if needs_character {
+        events.write(MyServerEvent::CharacterCreationRequired {
+            player_id: response.player_id,
+        });
+    }
+}
+
+fn handle_character_create_response(
+    session: &mut MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) {
+    let Some(response) =
+        parse_http_json::<CharacterCreateResponse>(events, &operation, status, body)
+    else {
+        return;
+    };
+    if !response.ok {
+        write_http_failure(
+            events,
+            &operation,
+            "character create returned ok=false".to_string(),
+        );
+        return;
+    }
+    session.apply_character_create_response(&response);
+    events.write(MyServerEvent::CharacterCreated {
+        character: response.character,
+    });
+}
+
+fn handle_character_profile_response(
+    session: &mut MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) {
+    let Some(response) =
+        parse_http_json::<CharacterProfileResponse>(events, &operation, status, body)
+    else {
+        return;
+    };
+    if !response.ok {
+        write_http_failure(
+            events,
+            &operation,
+            "character profile returned ok=false".to_string(),
+        );
+        return;
+    }
+    session.apply_character_profile_response(&response);
+    events.write(MyServerEvent::CharacterProfileLoaded {
+        profile: response.profile,
+    });
+}
+
+fn handle_character_select_response(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) {
+    let Some(response) =
+        parse_http_json::<CharacterSelectResponse>(events, &operation, status, body)
+    else {
+        return;
+    };
+    if !response.ok {
+        write_http_failure(
+            events,
+            &operation,
+            "character select returned ok=false".to_string(),
+        );
+        return;
+    }
+    let (host, port, transport) = character_select_endpoint(&response);
+    session.apply_character_select_response(&response);
+    events.write(MyServerEvent::CharacterSelected {
+        player_id: response.player_id.clone(),
+        character_id: response.character.character_id.clone(),
+        world_id: response.character.world_id,
+    });
+
+    if let Some(mut plan) = session.connect_after_login.take() {
+        apply_discovered_endpoint(&mut plan, host, port, transport, config);
+        connect_with_ticket(
+            config,
+            session,
+            network_commands,
+            events,
+            response.ticket,
+            plan,
+        );
+    }
+}
+
+fn handle_character_lifecycle_response(
+    session: &mut MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) {
+    let Some(response) =
+        parse_http_json::<CharacterLifecycleResponse>(events, &operation, status, body)
+    else {
+        return;
+    };
+    if !response.ok {
+        write_http_failure(
+            events,
+            &operation,
+            "character lifecycle returned ok=false".to_string(),
+        );
+        return;
+    }
+    let character_id = response.character.character_id.clone();
+    let restored_character = response.character.clone();
+    session.apply_character_lifecycle_response(&response);
+    match operation {
+        PendingHttpOperation::CharacterDelete { .. } => {
+            events.write(MyServerEvent::CharacterDeleted { character_id });
+        }
+        PendingHttpOperation::CharacterRestore { .. } => {
+            events.write(MyServerEvent::CharacterRestored {
+                character: restored_character,
+            });
+        }
+        _ => {}
+    }
+}
+
+fn handle_logout_response(
+    session: &mut MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) {
+    if !(200..300).contains(&status) {
+        let error = http_error_message(&operation, status, body);
+        write_http_failure(events, &operation, error);
+        return;
+    }
+    session.logout();
+    events.write(MyServerEvent::LogoutSucceeded);
+}
+
+fn parse_http_json<T>(
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: &PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) -> Option<T>
+where
+    T: DeserializeOwned,
+{
+    if !(200..300).contains(&status) {
+        let error = http_error_message(operation, status, body);
+        write_http_failure(events, operation, error.clone());
+        events.write(MyServerEvent::NetworkFailed {
+            operation: operation.event_operation(),
+            error,
+        });
+        return None;
+    }
+
+    match serde_json::from_slice::<T>(body) {
+        Ok(response) => Some(response),
+        Err(error) => {
+            let error = format!("failed to parse HTTP response JSON: {error}");
+            write_http_failure(events, operation, error.clone());
+            events.write(MyServerEvent::NetworkFailed {
+                operation: operation.event_operation(),
+                error,
+            });
+            None
+        }
+    }
+}
+
+fn parse_http_json_with<T, F>(
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: &PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+    parser: F,
+) -> Option<T>
+where
+    F: FnOnce(&[u8]) -> Result<T, serde_json::Error>,
+{
+    if !(200..300).contains(&status) {
+        let error = http_error_message(operation, status, body);
+        write_http_failure(events, operation, error.clone());
+        events.write(MyServerEvent::NetworkFailed {
+            operation: operation.event_operation(),
+            error,
+        });
+        return None;
+    }
+
+    match parser(body) {
+        Ok(response) => Some(response),
+        Err(error) => {
+            let error = format!("failed to parse HTTP response JSON: {error}");
+            write_http_failure(events, operation, error.clone());
+            events.write(MyServerEvent::NetworkFailed {
+                operation: operation.event_operation(),
+                error,
+            });
+            None
+        }
+    }
+}
+
+fn http_error_message(operation: &PendingHttpOperation, status: u16, body: &[u8]) -> String {
+    if let Some(error) = parse_api_error(body) {
+        return format!(
+            "{:?} returned HTTP {status}: {error}",
+            operation.event_operation()
+        );
+    }
+    let body = body_text(body);
+    if body.trim().is_empty() {
+        format!("{:?} returned HTTP {status}", operation.event_operation())
+    } else {
+        format!(
+            "{:?} returned HTTP {status}: {}",
+            operation.event_operation(),
+            body
+        )
+    }
+}
+
+fn parse_api_error(body: &[u8]) -> Option<String> {
+    let response = serde_json::from_slice::<ApiErrorResponse>(body).ok()?;
+    let code = response
+        .error
+        .or_else(|| {
+            response
+                .extra
+                .get("errorCode")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            response
+                .extra
+                .get("code")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        });
+    let message = response.message.or_else(|| {
+        response
+            .extra
+            .get("message")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    });
+    match (code, message) {
+        (Some(code), Some(message)) if !message.trim().is_empty() => {
+            Some(format!("{code}: {message}"))
+        }
+        (Some(code), _) => Some(code),
+        (None, Some(message)) if !message.trim().is_empty() => Some(message),
+        _ => None,
+    }
+}
+
+fn write_http_failure(
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: &PendingHttpOperation,
+    error: String,
+) {
+    match operation {
+        PendingHttpOperation::Login { .. }
+        | PendingHttpOperation::Register { .. }
+        | PendingHttpOperation::GuestLogin { .. } => {
+            events.write(MyServerEvent::LoginFailed { error });
+        }
+        PendingHttpOperation::CharacterList => {
+            events.write(MyServerEvent::CharacterListFailed { error });
+        }
+        PendingHttpOperation::CharacterCreate => {
+            events.write(MyServerEvent::CharacterCreateFailed { error });
+        }
+        PendingHttpOperation::CharacterProfile { .. } => {
+            events.write(MyServerEvent::CharacterProfileFailed { error });
+        }
+        PendingHttpOperation::CharacterSelect { .. } => {
+            events.write(MyServerEvent::CharacterSelectFailed { error });
+        }
+        PendingHttpOperation::CharacterDelete { .. } => {
+            events.write(MyServerEvent::CharacterDeleteFailed { error });
+        }
+        PendingHttpOperation::CharacterRestore { .. } => {
+            events.write(MyServerEvent::CharacterRestoreFailed { error });
+        }
+        PendingHttpOperation::TicketIssue { .. } => {
+            events.write(MyServerEvent::TicketRefreshFailed { error });
+        }
+        PendingHttpOperation::Logout => {
+            events.write(MyServerEvent::LogoutFailed { error });
+        }
+    }
+}
+
+fn url_path_segment(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
+fn handle_register_response(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
+    status: u16,
+    body: &[u8],
+) {
+    let Some(response) =
+        parse_http_json_with(events, &operation, status, body, parse_register_response)
+    else {
+        return;
+    };
+
+    match response {
+        RegisterResponse::Login(response) => {
+            handle_login_success(config, session, network_commands, events, response);
+        }
+        RegisterResponse::PendingReview(response) => {
+            session.connect_after_login = None;
+            let code = register_pending_review_code(&response);
+            let message = response
+                .message
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or_else(|| "Registration submitted for review".to_string());
+            events.write(MyServerEvent::AccountStatusBlocked { code, message });
+        }
+    }
+}
+
+fn parse_register_response(body: &[u8]) -> Result<RegisterResponse, serde_json::Error> {
+    let value: Value = serde_json::from_slice(body)?;
+    if value
+        .get("pendingReview")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let response = serde_json::from_value::<RegisterPendingReviewResponse>(value)?;
+        Ok(RegisterResponse::PendingReview(response))
+    } else {
+        let response = serde_json::from_value::<LoginResponse>(value)?;
+        Ok(RegisterResponse::Login(response))
+    }
+}
+
+fn register_pending_review_code(response: &RegisterPendingReviewResponse) -> String {
+    response
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|status| !status.is_empty())
+        .map(|status| format!("REGISTER_{}", stable_error_code(status)))
+        .unwrap_or_else(|| "REGISTER_PENDING_REVIEW".to_string())
+}
+
+fn stable_error_code(value: &str) -> String {
+    let mut code = String::new();
+    let mut last_was_underscore = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            code.push(ch.to_ascii_uppercase());
+            last_was_underscore = false;
+        } else if !last_was_underscore && !code.is_empty() {
+            code.push('_');
+            last_was_underscore = true;
+        }
+    }
+    while code.ends_with('_') {
+        code.pop();
+    }
+    if code.is_empty() {
+        "PENDING_REVIEW".to_string()
+    } else {
+        code
+    }
 }
 
 fn handle_login_response(
@@ -585,33 +1512,29 @@ fn handle_login_response(
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
     status: u16,
     body: &[u8],
 ) {
-    if !(200..300).contains(&status) {
-        events.write(MyServerEvent::LoginFailed {
-            error: format!("guest login returned HTTP {status}: {}", body_text(body)),
-        });
+    let Some(response) = parse_http_json::<LoginResponse>(events, &operation, status, body) else {
         return;
-    }
-
-    let response = match serde_json::from_slice::<LoginResponse>(body) {
-        Ok(response) => response,
-        Err(error) => {
-            events.write(MyServerEvent::LoginFailed {
-                error: format!("failed to parse guest login response: {error}"),
-            });
-            return;
-        }
     };
 
     if !response.ok {
-        events.write(MyServerEvent::LoginFailed {
-            error: "guest login returned ok=false".to_string(),
-        });
+        write_http_failure(events, &operation, "login returned ok=false".to_string());
         return;
     }
 
+    handle_login_success(config, session, network_commands, events, response);
+}
+
+fn handle_login_success(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    response: LoginResponse,
+) {
     let login_session = session.apply_login_response(&response);
 
     events.write(MyServerEvent::LoginSucceeded(login_session.clone()));
@@ -646,30 +1569,20 @@ fn handle_ticket_response(
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
+    operation: PendingHttpOperation,
     status: u16,
     body: &[u8],
 ) {
-    if !(200..300).contains(&status) {
-        events.write(MyServerEvent::TicketRefreshFailed {
-            error: format!("ticket issue returned HTTP {status}: {}", body_text(body)),
-        });
+    let Some(response) = parse_http_json::<TicketResponse>(events, &operation, status, body) else {
         return;
-    }
-
-    let response = match serde_json::from_slice::<TicketResponse>(body) {
-        Ok(response) => response,
-        Err(error) => {
-            events.write(MyServerEvent::TicketRefreshFailed {
-                error: format!("failed to parse ticket response: {error}"),
-            });
-            return;
-        }
     };
 
     if !response.ok {
-        events.write(MyServerEvent::TicketRefreshFailed {
-            error: "ticket issue returned ok=false".to_string(),
-        });
+        write_http_failure(
+            events,
+            &operation,
+            "ticket issue returned ok=false".to_string(),
+        );
         return;
     }
 
@@ -1115,4 +2028,257 @@ fn current_unix_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use serde_json::Value;
+
+    use super::*;
+    use crate::framework::network::HttpMethod;
+
+    fn test_config() -> MyServerConfig {
+        MyServerConfig {
+            http_base_url: "http://auth.test/root/".to_string(),
+            request_timeout: Duration::from_millis(1234),
+            ..Default::default()
+        }
+    }
+
+    fn header<'a>(request: &'a HttpRequest, name: &str) -> Option<&'a str> {
+        request
+            .headers
+            .iter()
+            .find(|(header, _)| header == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn body_json(request: &HttpRequest) -> Value {
+        serde_json::from_slice(request.body.as_deref().unwrap_or_default()).unwrap()
+    }
+
+    #[test]
+    fn builds_account_login_request() {
+        let request = build_json_request(
+            &test_config(),
+            HttpMethod::Post,
+            "/api/v1/auth/login",
+            Some(json!({ "loginName": "alice", "password": "secret" })),
+            None,
+        );
+
+        assert!(matches!(request.method, HttpMethod::Post));
+        assert_eq!(request.url, "http://auth.test/root/api/v1/auth/login");
+        assert_eq!(request.timeout, Duration::from_millis(1234));
+        assert!(request.request_id.raw() > 0);
+        assert_eq!(header(&request, "Content-Type"), Some("application/json"));
+        assert_eq!(header(&request, "Accept"), Some("application/json"));
+        assert_eq!(body_json(&request)["loginName"], "alice");
+        assert_eq!(body_json(&request)["password"], "secret");
+    }
+
+    #[test]
+    fn builds_guest_login_request() {
+        let request = build_json_request(
+            &test_config(),
+            HttpMethod::Post,
+            "/api/v1/auth/guest-login",
+            Some(json!({ "guestId": "guest-a" })),
+            None,
+        );
+
+        assert_eq!(request.url, "http://auth.test/root/api/v1/auth/guest-login");
+        assert_eq!(body_json(&request)["guestId"], "guest-a");
+        assert_eq!(header(&request, "Content-Type"), Some("application/json"));
+    }
+
+    #[test]
+    fn builds_bearer_get_character_list_request() {
+        let request = build_json_request(
+            &test_config(),
+            HttpMethod::Get,
+            "/api/v1/characters",
+            None,
+            Some("access-token"),
+        );
+
+        assert!(matches!(request.method, HttpMethod::Get));
+        assert_eq!(request.body, None);
+        assert_eq!(
+            header(&request, "Authorization"),
+            Some("Bearer access-token")
+        );
+        assert_eq!(header(&request, "Accept"), Some("application/json"));
+        assert_eq!(header(&request, "Content-Type"), None);
+    }
+
+    #[test]
+    fn builds_character_create_request() {
+        let request = build_json_request(
+            &test_config(),
+            HttpMethod::Post,
+            "/api/v1/characters",
+            Some(json!({
+                "name": "WindRunner",
+                "appearance_json": { "hair": "black" }
+            })),
+            Some("access-token"),
+        );
+
+        assert_eq!(request.url, "http://auth.test/root/api/v1/characters");
+        assert_eq!(
+            header(&request, "Authorization"),
+            Some("Bearer access-token")
+        );
+        assert_eq!(body_json(&request)["name"], "WindRunner");
+        assert_eq!(body_json(&request)["appearance_json"]["hair"], "black");
+    }
+
+    #[test]
+    fn builds_character_select_and_ticket_issue_requests() {
+        let select = build_json_request(
+            &test_config(),
+            HttpMethod::Post,
+            "/api/v1/characters/select",
+            Some(json!({ "character_id": "chr_1" })),
+            Some("access-token"),
+        );
+        let ticket = build_json_request(
+            &test_config(),
+            HttpMethod::Post,
+            "/api/v1/game-ticket/issue",
+            Some(json!({ "character_id": "chr_1" })),
+            Some("access-token"),
+        );
+
+        assert_eq!(select.url, "http://auth.test/root/api/v1/characters/select");
+        assert_eq!(ticket.url, "http://auth.test/root/api/v1/game-ticket/issue");
+        assert_eq!(body_json(&select)["character_id"], "chr_1");
+        assert_eq!(body_json(&ticket)["character_id"], "chr_1");
+        assert_eq!(
+            header(&select, "Authorization"),
+            Some("Bearer access-token")
+        );
+        assert_eq!(header(&ticket, "Content-Type"), Some("application/json"));
+    }
+
+    #[test]
+    fn extracts_json_error_code_before_raw_body_for_non_2xx() {
+        let error = http_error_message(
+            &PendingHttpOperation::CharacterSelect {
+                connect_game: false,
+            },
+            409,
+            br#"{ "ok": false, "errorCode": "CHARACTER_DELETED", "message": "deleted" }"#,
+        );
+
+        assert!(error.contains("HTTP 409"));
+        assert!(error.contains("CHARACTER_DELETED: deleted"));
+    }
+
+    #[test]
+    fn parses_error_alias_and_falls_back_to_raw_body() {
+        assert_eq!(
+            parse_api_error(br#"{ "error": "PLAYER_BLOCKED", "message": "blocked" }"#).as_deref(),
+            Some("PLAYER_BLOCKED: blocked")
+        );
+
+        let error = http_error_message(
+            &PendingHttpOperation::TicketIssue {
+                reconnect_game: false,
+            },
+            504,
+            b"gateway timeout",
+        );
+        assert!(error.contains("HTTP 504"));
+        assert!(error.contains("gateway timeout"));
+    }
+
+    #[test]
+    fn parses_register_pending_review_without_access_token() {
+        let response = parse_register_response(
+            br#"{
+                "ok": true,
+                "playerId": "plr_pending",
+                "loginName": "alice",
+                "displayName": "Alice",
+                "status": "pending_review",
+                "pendingReview": true,
+                "message": "Registration submitted for review"
+            }"#,
+        )
+        .unwrap();
+
+        match response {
+            RegisterResponse::PendingReview(response) => {
+                assert!(response.ok);
+                assert_eq!(response.player_id, "plr_pending");
+                assert_eq!(response.login_name.as_deref(), Some("alice"));
+                assert_eq!(response.display_name.as_deref(), Some("Alice"));
+                assert!(response.pending_review);
+                assert_eq!(
+                    register_pending_review_code(&response),
+                    "REGISTER_PENDING_REVIEW"
+                );
+                assert_eq!(
+                    response.message.as_deref(),
+                    Some("Registration submitted for review")
+                );
+            }
+            RegisterResponse::Login(_) => panic!("pending review must not parse as login"),
+        }
+    }
+
+    #[test]
+    fn parses_register_success_as_login_response() {
+        let response = parse_register_response(
+            br#"{
+                "ok": true,
+                "playerId": "plr_1",
+                "guestId": null,
+                "loginName": "alice",
+                "accessToken": "access",
+                "ticket": null,
+                "ticketExpiresAt": null
+            }"#,
+        )
+        .unwrap();
+
+        match response {
+            RegisterResponse::Login(response) => {
+                assert_eq!(response.player_id, "plr_1");
+                assert_eq!(response.access_token, "access");
+            }
+            RegisterResponse::PendingReview(_) => {
+                panic!("register success with accessToken must parse as login")
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_pending_policy_rejects_same_operation_group() {
+        let mut session = MyServerSession::default();
+        session.pending_http.insert(
+            RequestId::from_raw(42),
+            PendingHttpRequest {
+                operation: PendingHttpOperation::CharacterList,
+            },
+        );
+
+        assert!(has_duplicate_pending_http(
+            &session,
+            &PendingHttpOperation::CharacterList
+        ));
+        assert!(!has_duplicate_pending_http(
+            &session,
+            &PendingHttpOperation::CharacterCreate
+        ));
+    }
+
+    #[test]
+    fn url_path_segment_escapes_profile_character_id() {
+        assert_eq!(url_path_segment("chr a/b"), "chr%20a%2Fb");
+    }
 }
