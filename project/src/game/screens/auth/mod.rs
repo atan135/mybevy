@@ -11,6 +11,7 @@ impl Plugin for AuthScreensPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<login::LoginUiState>()
             .add_systems(OnEnter(AppUiMode::Login), login::setup_login_screen)
+            .add_systems(OnExit(AppUiMode::Login), login::cleanup_login_screen_state)
             .add_systems(
                 Update,
                 (
