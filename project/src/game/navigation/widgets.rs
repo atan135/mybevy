@@ -37,6 +37,7 @@ pub(in crate::game) fn primary_route_button(
     )
 }
 
+#[allow(dead_code)]
 pub(in crate::game) fn primary_route_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,

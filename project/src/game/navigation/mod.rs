@@ -17,9 +17,7 @@ use crate::game::ui_ids::{
     OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
 };
 
-pub(in crate::game) use widgets::{
-    game_panel_root, primary_route_button_key, secondary_route_button_key,
-};
+pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
 
 pub(super) struct NavigationPlugin;
 
