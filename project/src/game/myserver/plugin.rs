@@ -14,12 +14,13 @@ use super::protocol::{MessageType, Packet, encode_proto_packet, pb};
 use super::types::{
     ApiErrorResponse, CharacterCreateResponse, CharacterLifecycleResponse, CharacterListResponse,
     CharacterProfileResponse, CharacterSelectResponse, ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL,
-    LoginResponse, MovementClientState, MyServerAutoClientConfig, MyServerAutoClientState,
-    MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot, MyServerDisplayError,
-    MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerSession, PendingHttpOperation,
-    PendingHttpRequest, PendingRequest, RegisterPendingReviewResponse, RegisterResponse,
-    TicketResponse, character_select_endpoint, classify_game_auth_failure,
-    parse_character_bound_ticket, redact_secret_fingerprint, ticket_endpoint,
+    GameConnectionState, LoginResponse, MovementClientState, MyServerAutoClientConfig,
+    MyServerAutoClientState, MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot,
+    MyServerDisplayError, MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerSession,
+    PendingHttpOperation, PendingHttpRequest, PendingRequest, ReconnectCause, ReconnectPlan,
+    RegisterPendingReviewResponse, RegisterResponse, SessionKickCategory, TicketResponse,
+    character_select_endpoint, classify_game_auth_failure, parse_character_bound_ticket,
+    redact_secret_fingerprint, ticket_endpoint,
 };
 
 pub struct MyServerPlugin;
@@ -439,18 +440,21 @@ fn handle_myserver_commands(
                 transport,
                 host,
                 port,
-            } => connect_with_ticket(
-                &config,
-                &mut session,
-                &mut network_commands,
-                &mut events,
-                ticket.clone(),
-                ConnectPlan {
-                    transport: *transport,
-                    host: host.clone(),
-                    port: *port,
-                },
-            ),
+            } => {
+                session.clear_reconnect_plan();
+                connect_with_ticket(
+                    &config,
+                    &mut session,
+                    &mut network_commands,
+                    &mut events,
+                    ticket.clone(),
+                    ConnectPlan {
+                        transport: *transport,
+                        host: host.clone(),
+                        port: *port,
+                    },
+                )
+            }
             MyServerCommand::Disconnect => disconnect(&mut session, &mut network_commands),
             MyServerCommand::Logout => {
                 send_logout(&config, &mut session, &mut network_commands, &mut events);
@@ -576,6 +580,14 @@ fn handle_network_events(
                     &session,
                 );
                 apply_http_failure_state(&mut session, &pending.operation, error);
+                if matches!(
+                    pending.operation,
+                    PendingHttpOperation::TicketIssue {
+                        reconnect_game: true
+                    }
+                ) {
+                    session.clear_reconnect_plan();
+                }
                 let operation = pending.operation.event_operation();
                 trace_http_transition(
                     "http_error_applied",
@@ -732,7 +744,13 @@ fn handle_network_events(
                 };
 
                 for packet in packets {
-                    handle_game_packet(&mut session, &mut events, packet);
+                    handle_game_packet(
+                        &config,
+                        &mut session,
+                        &mut network_commands,
+                        &mut events,
+                        packet,
+                    );
                 }
             }
             NetworkEvent::SendFailed {
@@ -1133,8 +1151,37 @@ fn send_refresh_ticket(
     events: &mut MessageWriter<MyServerEvent>,
     reconnect_game: bool,
 ) {
+    if reconnect_game && session.reconnect_blocked {
+        let error = "reconnect is blocked by session kick".to_string();
+        session.ticket_issue_failed(true);
+        session.clear_reconnect_plan();
+        write_display_error(
+            events,
+            MyServerDisplayError::from_error_code(
+                MyServerErrorSource::Client,
+                Some(MyServerOperation::TicketRefresh),
+                None,
+                None,
+                None,
+                "SESSION_KICKED",
+                Some(error.clone()),
+            ),
+        );
+        events.write(MyServerEvent::TicketRefreshFailed {
+            error: error.clone(),
+        });
+        events.write(MyServerEvent::NetworkFailed {
+            operation: MyServerOperation::TicketRefresh,
+            error,
+        });
+        return;
+    }
+
     let Some(access_token) = session.access_token.clone() else {
         session.http_operation_failed(&PendingHttpOperation::TicketIssue { reconnect_game });
+        if reconnect_game {
+            session.clear_reconnect_plan();
+        }
         write_display_error(
             events,
             MyServerDisplayError::from_error_code(
@@ -1158,6 +1205,9 @@ fn send_refresh_ticket(
     };
     let Some(character_id) = session.character_id.clone() else {
         session.http_operation_failed(&PendingHttpOperation::TicketIssue { reconnect_game });
+        if reconnect_game {
+            session.clear_reconnect_plan();
+        }
         write_display_error(
             events,
             MyServerDisplayError::from_error_code(
@@ -1269,11 +1319,15 @@ fn send_http_request(
         }
         PendingHttpOperation::TicketIssue { reconnect_game } => {
             session.ticket_request = Some(request_id);
-            session.connect_after_login = (*reconnect_game).then_some(ConnectPlan {
-                transport: config.prefer_transport,
-                host: None,
-                port: None,
-            });
+            if *reconnect_game && session.connect_after_login.is_none() {
+                session.connect_after_login = Some(ConnectPlan {
+                    transport: config.prefer_transport,
+                    host: None,
+                    port: None,
+                });
+            } else if !*reconnect_game {
+                session.connect_after_login = None;
+            }
         }
         _ => {}
     }
@@ -1920,6 +1974,56 @@ fn display_error_from_game_code(
     )
 }
 
+fn classify_session_kick(reason: &str) -> SessionKickCategory {
+    let code = reason.trim().to_ascii_uppercase();
+    if code.contains("CONCURRENT")
+        || code.contains("LOGIN_ELSEWHERE")
+        || code.contains("OTHER_DEVICE")
+        || code.contains("DUPLICATE_LOGIN")
+    {
+        SessionKickCategory::ConcurrentLogin
+    } else if code.contains("BAN")
+        || code.contains("BLOCK")
+        || code.contains("SUSPEND")
+        || code.contains("FORBIDDEN")
+    {
+        SessionKickCategory::Banned
+    } else if code.contains("MAINTENANCE") {
+        SessionKickCategory::Maintenance
+    } else if code.contains("SERVER")
+        || code.contains("OFFLINE")
+        || code.contains("SHUTDOWN")
+        || code.contains("ADMIN")
+    {
+        SessionKickCategory::ServerOffline
+    } else {
+        SessionKickCategory::Unknown
+    }
+}
+
+fn display_error_from_kick(
+    category: SessionKickCategory,
+    reason: &str,
+    seq: Option<u32>,
+) -> MyServerDisplayError {
+    let error_code = match category {
+        SessionKickCategory::ConcurrentLogin => "SESSION_KICK_CONCURRENT_LOGIN",
+        SessionKickCategory::Banned => "SESSION_KICK_BANNED",
+        SessionKickCategory::Maintenance => "MAINTENANCE",
+        SessionKickCategory::ServerOffline => "SESSION_KICK_SERVER_OFFLINE",
+        SessionKickCategory::Unknown => "SESSION_KICK_UNKNOWN",
+    };
+    MyServerDisplayError::from_error_code(
+        MyServerErrorSource::Game,
+        Some(MyServerOperation::GameRequest),
+        Some(MessageType::SessionKickPush),
+        seq,
+        None,
+        error_code,
+        Some(reason.to_string()),
+    )
+}
+
 fn apply_http_failure_state(
     session: &mut MyServerSession,
     operation: &PendingHttpOperation,
@@ -2170,12 +2274,14 @@ fn handle_ticket_response(
     let Some(response) =
         parse_http_json::<TicketResponse>(session, events, &operation, status, body)
     else {
+        cleanup_reconnect_ticket_failure(session, reconnect_game);
         return;
     };
 
     if !response.ok {
         let error = "ticket issue returned ok=false".to_string();
         apply_http_failure_state(session, &operation, &error);
+        cleanup_reconnect_ticket_failure(session, reconnect_game);
         write_http_failure(events, &operation, error);
         return;
     }
@@ -2184,6 +2290,7 @@ fn handle_ticket_response(
         Ok(payload) => payload,
         Err(error) => {
             apply_http_failure_state(session, &operation, &error);
+            cleanup_reconnect_ticket_failure(session, reconnect_game);
             write_http_failure(
                 events,
                 &operation,
@@ -2199,6 +2306,7 @@ fn handle_ticket_response(
                 ticket_payload.character_id, character_id
             );
             apply_http_failure_state(session, &operation, &error);
+            cleanup_reconnect_ticket_failure(session, reconnect_game);
             write_http_failure(events, &operation, error);
             return;
         }
@@ -2225,7 +2333,7 @@ fn handle_ticket_response(
 
     if let Some(mut plan) = session.connect_after_login.take() {
         apply_discovered_endpoint(&mut plan, host, port, transport, config);
-        disconnect(session, network_commands);
+        disconnect_transport_preserving_reconnect_plan(session, network_commands);
         connect_with_ticket(
             config,
             session,
@@ -2234,6 +2342,12 @@ fn handle_ticket_response(
             response.ticket,
             plan,
         );
+    }
+}
+
+fn cleanup_reconnect_ticket_failure(session: &mut MyServerSession, reconnect_game: bool) {
+    if reconnect_game {
+        session.clear_reconnect_plan();
     }
 }
 
@@ -2261,6 +2375,19 @@ fn apply_discovered_endpoint(
     plan.transport = transport.unwrap_or(plan.transport);
 }
 
+fn redirect_transport(value: &str) -> Option<NetworkTransport> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "tcp" => Some(NetworkTransport::Tcp),
+        "kcp" => Some(NetworkTransport::Kcp),
+        _ => None,
+    }
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
 fn connect_with_ticket(
     config: &MyServerConfig,
     session: &mut MyServerSession,
@@ -2269,10 +2396,35 @@ fn connect_with_ticket(
     ticket: String,
     plan: ConnectPlan,
 ) {
+    if session.reconnect_blocked {
+        let error = "reconnect is blocked by session kick".to_string();
+        fail_game_connection_attempt(session, network_commands);
+        session.clear_reconnect_plan();
+        write_display_error(
+            events,
+            MyServerDisplayError::from_error_code(
+                MyServerErrorSource::Client,
+                Some(MyServerOperation::GameConnect),
+                Some(MessageType::AuthReq),
+                None,
+                None,
+                "SESSION_KICKED",
+                Some(error.clone()),
+            ),
+        );
+        events.write(MyServerEvent::RequestFailed {
+            seq: None,
+            message_type: Some(MessageType::AuthReq),
+            error,
+        });
+        return;
+    }
+
     let ticket_payload = match parse_character_bound_ticket(&ticket) {
         Ok(payload) => payload,
         Err(error) => {
             fail_game_connection_attempt(session, network_commands);
+            session.clear_reconnect_plan();
             warn!(
                 error_code = %error,
                 ticket_fp = %redact_secret_fingerprint(&ticket),
@@ -2312,6 +2464,7 @@ fn connect_with_ticket(
                 ticket_payload.character_id, current_character_id
             );
             fail_game_connection_attempt(session, network_commands);
+            session.clear_reconnect_plan();
             warn!(
                 error_code = "TICKET_CHARACTER_MISMATCH",
                 ticket_fp = %ticket_payload.ticket_fingerprint,
@@ -2344,7 +2497,7 @@ fn connect_with_ticket(
         }
     }
 
-    disconnect(session, network_commands);
+    disconnect_transport_preserving_reconnect_plan(session, network_commands);
 
     let connection_id = ConnectionId::new();
     let host = plan.host.unwrap_or_else(|| config.game_host.clone());
@@ -2431,6 +2584,18 @@ fn disconnect(session: &mut MyServerSession, network_commands: &mut MessageWrite
         network_commands.write(NetworkCommand::Disconnect { connection_id });
     }
     session.disconnect_cleanup();
+}
+
+fn disconnect_transport_preserving_reconnect_plan(
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+) {
+    let reconnect_after_auth = session.reconnect_after_auth.clone();
+    if let Some(connection_id) = session.connection_id {
+        network_commands.write(NetworkCommand::Disconnect { connection_id });
+    }
+    session.disconnect_cleanup();
+    session.reconnect_after_auth = reconnect_after_auth;
 }
 
 fn send_auth_request(
@@ -2524,6 +2689,42 @@ fn send_request<M>(
     );
 }
 
+fn send_room_reconnect_request(
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+) {
+    let last_character_push_sequence = session
+        .character_elements
+        .last_push_sequence
+        .unwrap_or_default();
+    let _ = send_request_with_seq(
+        session,
+        network_commands,
+        events,
+        MessageType::RoomReconnectReq,
+        MessageType::RoomReconnectRes,
+        &pb::RoomReconnectReq {
+            last_character_push_sequence,
+        },
+    );
+}
+
+fn send_character_elements_snapshot_request(
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+) {
+    let _ = send_request_with_seq(
+        session,
+        network_commands,
+        events,
+        MessageType::GetCharacterElementsReq,
+        MessageType::GetCharacterElementsRes,
+        &pb::GetCharacterElementsReq {},
+    );
+}
+
 fn send_request_with_seq<M>(
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
@@ -2573,7 +2774,9 @@ where
 }
 
 fn handle_game_packet(
+    config: &MyServerConfig,
     session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
     packet: Packet,
 ) {
@@ -2656,8 +2859,12 @@ fn handle_game_packet(
             &packet,
             MyServerEvent::MovementRejectPush,
         ),
-        MessageType::ServerRedirectPush => handle_server_redirect_push(session, events, packet),
-        MessageType::SessionKickPush => handle_session_kick_push(session, events, packet),
+        MessageType::ServerRedirectPush => {
+            handle_server_redirect_push(config, session, network_commands, events, packet)
+        }
+        MessageType::SessionKickPush => {
+            handle_session_kick_push(session, network_commands, events, packet)
+        }
         MessageType::AuthorityMigrationStartPush => {
             decode_push::<pb::AuthorityMigrationStartPush, _>(
                 events,
@@ -2675,12 +2882,13 @@ fn handle_game_packet(
         MessageType::CharacterElementsChangePush => {
             handle_character_elements_push(session, events, packet)
         }
-        _ => handle_response_packet(session, events, message_type, packet),
+        _ => handle_response_packet(session, network_commands, events, message_type, packet),
     }
 }
 
 fn handle_response_packet(
     session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
     message_type: MessageType,
     packet: Packet,
@@ -2731,6 +2939,7 @@ fn handle_response_packet(
         MessageType::AuthRes => match packet.decode::<pb::AuthRes>() {
             Ok(response) if response.ok => {
                 session.game_authenticated(response.player_id.clone());
+                let reconnect_plan = session.reconnect_after_auth.clone();
                 trace_game_transition(
                     "game_auth_succeeded",
                     session,
@@ -2748,12 +2957,23 @@ fn handle_response_packet(
                     ticket_fp = diagnostic_snapshot(session).ticket_fingerprint.as_deref().unwrap_or_default(),
                     "MyServer game auth succeeded"
                 );
-                events.write(MyServerEvent::Authenticated {
-                    player_id: response.player_id,
-                });
+                if let Some(plan) = reconnect_plan {
+                    // Reconnect auth is intentionally not the normal Authenticated event:
+                    // room/authority recovery comes from RoomReconnectRes, not a fresh join.
+                    events.write(MyServerEvent::ReauthenticatedForReconnect {
+                        player_id: response.player_id,
+                        cause: plan.cause.clone(),
+                    });
+                    send_room_reconnect_request(session, network_commands, events);
+                } else {
+                    events.write(MyServerEvent::Authenticated {
+                        player_id: response.player_id,
+                    });
+                }
             }
             Ok(response) => {
                 session.game_auth_failed();
+                session.clear_reconnect_plan();
                 let reason = classify_game_auth_failure(&response.error_code);
                 trace_game_transition(
                     "game_auth_failed",
@@ -2791,6 +3011,7 @@ fn handle_response_packet(
             }
             Err(error) => {
                 session.game_auth_failed();
+                session.clear_reconnect_plan();
                 trace_game_transition(
                     "game_auth_decode_failed",
                     session,
@@ -2864,6 +3085,44 @@ fn handle_response_packet(
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
+        MessageType::RoomReconnectRes => match packet.decode::<pb::RoomReconnectRes>() {
+            Ok(response) => {
+                if response.ok {
+                    session.room_id =
+                        (!response.room_id.is_empty()).then_some(response.room_id.clone());
+                    session.reconnect_after_auth = None;
+                    // Room reconnect restores connection and room membership only. The
+                    // character elements snapshot is always refreshed; title/class snapshots
+                    // stay on their existing HTTP/profile refresh boundary.
+                    send_character_elements_snapshot_request(session, network_commands, events);
+                } else {
+                    session.room_id = None;
+                    session.reconnect_failed_cleanup();
+                    write_display_error(
+                        events,
+                        display_error_from_game_code(
+                            Some(MessageType::RoomReconnectRes),
+                            Some(packet.header.seq),
+                            &response.error_code,
+                            Some(response.error_code.clone()),
+                        ),
+                    );
+                }
+                events.write(MyServerEvent::RoomReconnected(response));
+            }
+            Err(error) => {
+                session.reconnect_failed_cleanup();
+                write_display_error(
+                    events,
+                    MyServerDisplayError::protobuf_decode(
+                        Some(MessageType::RoomReconnectRes),
+                        Some(packet.header.seq),
+                        Some(error.clone()),
+                    ),
+                );
+                events.write(MyServerEvent::ProtocolError { error });
+            }
+        },
         MessageType::RoomReadyRes => {
             decode_push::<pb::RoomReadyRes, _>(events, &packet, MyServerEvent::ReadyChanged)
         }
@@ -2922,7 +3181,9 @@ where
 }
 
 fn handle_server_redirect_push(
-    session: &MyServerSession,
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
     packet: Packet,
 ) {
@@ -2956,7 +3217,130 @@ fn handle_server_redirect_push(
                 ticket_fp = diagnostic_snapshot(session).ticket_fingerprint.as_deref().unwrap_or_default(),
                 "MyServer server redirect push"
             );
+            let reconnect_required = push.reconnect_required;
+            let reason = push.reason.clone();
+            let room_id = non_empty(push.room_id.as_str()).map(ToOwned::to_owned);
+            let target_server_id = non_empty(push.target_server_id.as_str()).map(ToOwned::to_owned);
+            let rollout_epoch = non_empty(push.rollout_epoch.as_str()).map(ToOwned::to_owned);
+            let target_host = non_empty(push.target_host.as_str()).map(ToOwned::to_owned);
+            let target_port = u16::try_from(push.target_port)
+                .ok()
+                .filter(|port| *port > 0);
+            let target_transport =
+                redirect_transport(&push.transport).unwrap_or(config.prefer_transport);
+
             events.write(MyServerEvent::ServerRedirectPush(push));
+
+            if !reconnect_required {
+                events.write(MyServerEvent::ServerRedirectIgnored {
+                    reason,
+                    detail: "redirect does not require reconnect".to_string(),
+                });
+                return;
+            }
+
+            let (Some(target_host), Some(target_port)) = (target_host, target_port) else {
+                write_display_error(
+                    events,
+                    MyServerDisplayError::from_error_code(
+                        MyServerErrorSource::Game,
+                        Some(MyServerOperation::GameConnect),
+                        Some(MessageType::ServerRedirectPush),
+                        Some(packet.header.seq),
+                        None,
+                        "REDIRECT_MISSING_ENDPOINT",
+                        Some(
+                            "server redirect requires reconnect but did not include endpoint"
+                                .to_string(),
+                        ),
+                    ),
+                );
+                events.write(MyServerEvent::ServerRedirectIgnored {
+                    reason,
+                    detail: "redirect requires reconnect but endpoint is missing".to_string(),
+                });
+                return;
+            };
+
+            if session.reconnect_blocked {
+                write_display_error(
+                    events,
+                    MyServerDisplayError::from_error_code(
+                        MyServerErrorSource::Client,
+                        Some(MyServerOperation::GameConnect),
+                        Some(MessageType::ServerRedirectPush),
+                        Some(packet.header.seq),
+                        None,
+                        "SESSION_KICKED",
+                        Some("redirect reconnect blocked by session kick".to_string()),
+                    ),
+                );
+                events.write(MyServerEvent::ServerRedirectIgnored {
+                    reason,
+                    detail: "redirect reconnect blocked by session kick".to_string(),
+                });
+                return;
+            }
+
+            let ticket_operation = PendingHttpOperation::TicketIssue {
+                reconnect_game: true,
+            };
+            if has_duplicate_pending_http(session, &ticket_operation) {
+                write_display_error(
+                    events,
+                    MyServerDisplayError::from_error_code(
+                        MyServerErrorSource::Client,
+                        Some(MyServerOperation::TicketRefresh),
+                        Some(MessageType::ServerRedirectPush),
+                        Some(packet.header.seq),
+                        None,
+                        "REDIRECT_TICKET_PENDING",
+                        Some(
+                            "redirect reconnect refused because ticket issue is already pending"
+                                .to_string(),
+                        ),
+                    ),
+                );
+                events.write(MyServerEvent::ServerRedirectIgnored {
+                    reason,
+                    detail: "redirect reconnect refused because ticket issue is already pending"
+                        .to_string(),
+                });
+                return;
+            }
+
+            session.room_id = None;
+            session.reconnect_after_auth = Some(ReconnectPlan {
+                cause: ReconnectCause::ServerRedirect {
+                    reason: reason.clone(),
+                    room_id,
+                    target_server_id,
+                    rollout_epoch,
+                },
+            });
+            session.connect_after_login = Some(ConnectPlan {
+                transport: target_transport,
+                host: Some(target_host.clone()),
+                port: Some(target_port),
+            });
+
+            if let Some(connection_id) = session.connection_id {
+                network_commands.write(NetworkCommand::Disconnect { connection_id });
+            }
+            session.connection_id = None;
+            session.connected = false;
+            session.authenticated = false;
+            session.codec.clear();
+            session.pending.clear();
+            session.game_connection_state = GameConnectionState::Reconnecting;
+
+            events.write(MyServerEvent::ServerRedirectReconnectStarted {
+                reason: reason.clone(),
+                target_host,
+                target_port,
+                transport: target_transport,
+            });
+            send_refresh_ticket(config, session, network_commands, events, true);
         }
         Err(error) => {
             write_display_error(
@@ -2973,7 +3357,8 @@ fn handle_server_redirect_push(
 }
 
 fn handle_session_kick_push(
-    session: &MyServerSession,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
     packet: Packet,
 ) {
@@ -2996,7 +3381,25 @@ fn handle_session_kick_push(
                 ticket_fp = diagnostic_snapshot(session).ticket_fingerprint.as_deref().unwrap_or_default(),
                 "MyServer session kick push"
             );
+            let reason = push.reason.clone();
+            let category = classify_session_kick(reason.as_str());
+            let timestamp = push.timestamp;
             events.write(MyServerEvent::SessionKickPush(push));
+            let old_connection_id = session.connection_id;
+            session.block_reconnect_after_kick();
+            if let Some(connection_id) = old_connection_id {
+                network_commands.write(NetworkCommand::Disconnect { connection_id });
+            }
+            apply_session_kick_state_and_events(session, events, category, reason.as_str());
+            write_display_error(
+                events,
+                display_error_from_kick(category, reason.as_str(), Some(packet.header.seq)),
+            );
+            events.write(MyServerEvent::SessionKicked {
+                reason,
+                category,
+                timestamp,
+            });
         }
         Err(error) => {
             write_display_error(
@@ -3010,6 +3413,40 @@ fn handle_session_kick_push(
             events.write(MyServerEvent::ProtocolError { error });
         }
     }
+}
+
+fn apply_session_kick_state_and_events(
+    session: &mut MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    category: SessionKickCategory,
+    reason: &str,
+) {
+    match category {
+        SessionKickCategory::ConcurrentLogin => {
+            session.account_expired();
+            events.write(MyServerEvent::AccountStatusBlocked {
+                code: "SESSION_KICK_CONCURRENT_LOGIN".to_string(),
+                message: reason.to_string(),
+            });
+        }
+        SessionKickCategory::Banned => {
+            session.account_blocked();
+            events.write(MyServerEvent::AccountBanned {
+                message: reason.to_string(),
+                banned_until: None,
+            });
+        }
+        SessionKickCategory::Maintenance => {
+            session.account_blocked();
+            events.write(MyServerEvent::MaintenanceBlocked {
+                message: reason.to_string(),
+                retry_after_seconds: None,
+            });
+        }
+        SessionKickCategory::ServerOffline | SessionKickCategory::Unknown => {}
+    }
+    session.reconnect_blocked = true;
+    session.game_connection_state = GameConnectionState::Disconnected;
 }
 
 fn handle_character_elements_response(
@@ -3100,7 +3537,8 @@ mod tests {
     use super::*;
     use crate::framework::network::{HttpMethod, HttpResponse};
     use crate::game::myserver::types::{
-        GameAuthFailureReason, GameConnectionState, MyServerErrorKind, MyServerErrorSource,
+        AccountLoginState, GameAuthFailureReason, GameConnectionState, MyServerErrorKind,
+        MyServerErrorSource,
     };
 
     fn test_config() -> MyServerConfig {
@@ -3180,6 +3618,24 @@ mod tests {
             .collect()
     }
 
+    fn decoded_sent_packets(app: &App) -> Vec<(ConnectionId, Packet)> {
+        sent_packets(app)
+            .into_iter()
+            .flat_map(|(connection_id, payload)| {
+                let mut codec = super::super::protocol::PacketCodec::default();
+                codec
+                    .push_bytes(&payload)
+                    .unwrap()
+                    .into_iter()
+                    .map(move |packet| (connection_id, packet))
+            })
+            .collect()
+    }
+
+    fn latest_sent_packet(app: &App) -> Option<(ConnectionId, Packet)> {
+        decoded_sent_packets(app).into_iter().last()
+    }
+
     fn disconnect_commands(app: &App) -> Vec<ConnectionId> {
         read_messages::<NetworkCommand>(app)
             .into_iter()
@@ -3248,6 +3704,91 @@ mod tests {
                 error_code: error_code.to_string(),
             },
         )
+    }
+
+    fn room_reconnect_response_packet(
+        seq: u32,
+        ok: bool,
+        room_id: &str,
+        error_code: &str,
+    ) -> Vec<u8> {
+        encode_proto_packet(
+            MessageType::RoomReconnectRes,
+            seq,
+            &pb::RoomReconnectRes {
+                ok,
+                room_id: room_id.to_string(),
+                error_code: error_code.to_string(),
+                snapshot: None,
+                current_frame_id: 0,
+                recent_inputs: Vec::new(),
+                waiting_frame_id: 0,
+                waiting_inputs: Vec::new(),
+                input_delay_frames: 0,
+                movement_recovery: None,
+            },
+        )
+    }
+
+    fn server_redirect_packet(
+        reason: &str,
+        host: &str,
+        port: u32,
+        transport: &str,
+        reconnect_required: bool,
+    ) -> Vec<u8> {
+        encode_proto_packet(
+            MessageType::ServerRedirectPush,
+            0,
+            &pb::ServerRedirectPush {
+                reason: reason.to_string(),
+                room_id: "room-1".to_string(),
+                rollout_epoch: "epoch-1".to_string(),
+                reconnect_required,
+                retry_after_ms: 0,
+                target_host: host.to_string(),
+                target_port: port,
+                target_server_id: "server-b".to_string(),
+                transport: transport.to_string(),
+            },
+        )
+    }
+
+    fn session_kick_packet(reason: &str) -> Vec<u8> {
+        encode_proto_packet(
+            MessageType::SessionKickPush,
+            0,
+            &pb::SessionKickPush {
+                reason: reason.to_string(),
+                timestamp: 1_782_399_300,
+            },
+        )
+    }
+
+    fn connect_and_authenticate(app: &mut App, ticket: String) -> ConnectionId {
+        app.world_mut()
+            .write_message(MyServerCommand::ConnectWithTicket {
+                ticket,
+                transport: NetworkTransport::Tcp,
+                host: Some("game.test".to_string()),
+                port: Some(14400),
+            });
+        app.update();
+        let (connection_id, _, _) = latest_connect_command(app).unwrap();
+        app.world_mut().write_message(NetworkEvent::Connected {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            remote_addr: "game.test:14400".to_string(),
+        });
+        app.update();
+        let auth_seq = latest_sent_packet(app).unwrap().1.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: auth_response_packet(auth_seq, true, "plr_1", ""),
+        });
+        app.update();
+        connection_id
     }
 
     fn character_elements_response_packet(seq: u32, ok: bool, error_code: &str) -> Vec<u8> {
@@ -3646,6 +4187,502 @@ mod tests {
             app.world().resource::<MyServerSession>().ticket.as_deref(),
             Some(new_ticket.as_str())
         );
+    }
+
+    #[test]
+    fn redirect_push_refreshes_ticket_and_reconnects_to_target_endpoint() {
+        let mut app = test_app();
+        let old_connection_id = ConnectionId::from_raw(188);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.ticket = Some(ticket_for_test("plr_1", "chr_1", "2026-06-25T12:15:00Z"));
+            session.connection_id = Some(old_connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.room_id = Some("room-1".to_string());
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id: old_connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: server_redirect_packet("rollout", "redirect.test", 15500, "tcp", true),
+        });
+        app.update();
+
+        assert!(disconnect_commands(&app).contains(&old_connection_id));
+        let request = latest_http_request(&app).unwrap();
+        assert_eq!(body_json(&request)["character_id"], "chr_1");
+        {
+            let session = app.world().resource::<MyServerSession>();
+            assert_eq!(session.room_id, None);
+            assert!(session.reconnect_after_auth.is_some());
+            assert_eq!(
+                session.game_connection_state,
+                GameConnectionState::Reconnecting
+            );
+        }
+
+        let new_ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 200,
+                headers: Vec::new(),
+                body: format!(
+                    r#"{{
+                        "ok": true,
+                        "playerId": "plr_1",
+                        "characterId": "chr_1",
+                        "worldId": 0,
+                        "ticket": "{new_ticket}",
+                        "ticketExpiresAt": "2026-06-25T12:20:00Z",
+                        "gameProxyHost": "ignored.test",
+                        "gameProxyPort": 14400
+                    }}"#
+                )
+                .into_bytes(),
+            }));
+        app.update();
+
+        let (connection_id, transport, addr) = latest_connect_command(&app).unwrap();
+        assert_ne!(connection_id, old_connection_id);
+        assert_eq!(transport, NetworkTransport::Tcp);
+        assert_eq!(addr, "redirect.test:15500");
+
+        app.world_mut().write_message(NetworkEvent::Connected {
+            connection_id,
+            transport,
+            remote_addr: addr,
+        });
+        app.update();
+        let auth_seq = latest_sent_packet(&app).unwrap().1.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport,
+            payload: auth_response_packet(auth_seq, true, "plr_1", ""),
+        });
+        app.update();
+
+        let events = read_messages::<MyServerEvent>(&app);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::Authenticated { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::ReauthenticatedForReconnect { .. }))
+        );
+        assert!(
+            decoded_sent_packets(&app).iter().any(|(_, packet)| {
+                packet.message_type() == Some(MessageType::RoomReconnectReq)
+            })
+        );
+    }
+
+    #[test]
+    fn redirect_does_not_disconnect_when_ticket_issue_is_already_pending() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(191);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut().write_message(MyServerCommand::IssueTicket {
+            reconnect_game: true,
+        });
+        app.update();
+        assert!(latest_http_request(&app).is_some());
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: server_redirect_packet("rollout", "redirect.test", 15500, "tcp", true),
+        });
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.connection_id, Some(connection_id));
+        assert_eq!(session.room_id, None);
+        assert!(session.reconnect_after_auth.is_none());
+        assert!(!disconnect_commands(&app).contains(&connection_id));
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::ServerRedirectIgnored { .. }))
+        );
+    }
+
+    #[test]
+    fn redirect_ticket_failure_clears_reconnect_plan_before_next_normal_auth() {
+        let mut app = test_app();
+        let old_connection_id = ConnectionId::from_raw(192);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.connection_id = Some(old_connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id: old_connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: server_redirect_packet("rollout", "redirect.test", 15500, "tcp", true),
+        });
+        app.update();
+        let request = latest_http_request(&app).unwrap();
+
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 403,
+                headers: Vec::new(),
+                body: br#"{ "ok": false, "error": "SERVER_BUSY", "message": "try later" }"#
+                    .to_vec(),
+            }));
+        app.update();
+
+        {
+            let session = app.world().resource::<MyServerSession>();
+            assert!(session.reconnect_after_auth.is_none());
+            assert!(session.connect_after_login.is_none());
+        }
+
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        connect_and_authenticate(&mut app, ticket);
+
+        let events = read_messages::<MyServerEvent>(&app);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::Authenticated { .. }))
+        );
+        assert!(
+            !decoded_sent_packets(&app).iter().any(|(_, packet)| {
+                packet.message_type() == Some(MessageType::RoomReconnectReq)
+            })
+        );
+    }
+
+    #[test]
+    fn redirect_auth_rejection_clears_reconnect_plan_before_next_normal_auth() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(193);
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.ticket = Some(ticket.clone());
+            session.player_id = Some("plr_1".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.reconnect_after_auth = Some(ReconnectPlan {
+                cause: ReconnectCause::ServerRedirect {
+                    reason: "rollout".to_string(),
+                    room_id: Some("room-1".to_string()),
+                    target_server_id: Some("server-b".to_string()),
+                    rollout_epoch: Some("epoch-1".to_string()),
+                },
+            });
+            session.begin_connect_game(connection_id, NetworkTransport::Tcp);
+        }
+
+        app.world_mut().write_message(NetworkEvent::Connected {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            remote_addr: "redirect.test:15500".to_string(),
+        });
+        app.update();
+        let auth_seq = latest_sent_packet(&app).unwrap().1.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: auth_response_packet(auth_seq, false, "", "TICKET_EXPIRED"),
+        });
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<MyServerSession>()
+                .reconnect_after_auth
+                .is_none()
+        );
+
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:30:00Z");
+        connect_and_authenticate(&mut app, ticket);
+
+        let reconnect_count = decoded_sent_packets(&app)
+            .iter()
+            .filter(|(_, packet)| packet.message_type() == Some(MessageType::RoomReconnectReq))
+            .count();
+        assert_eq!(reconnect_count, 0);
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::Authenticated { .. }))
+        );
+    }
+
+    #[test]
+    fn reconnect_after_auth_sends_character_push_cursor_and_refreshes_elements() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(189);
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.ticket = Some(ticket.clone());
+            session.player_id = Some("plr_1".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.connection_id = Some(connection_id);
+            session.character_elements.last_push_sequence = Some(42);
+            session.reconnect_after_auth = Some(ReconnectPlan {
+                cause: ReconnectCause::ServerRedirect {
+                    reason: "rollout".to_string(),
+                    room_id: Some("room-1".to_string()),
+                    target_server_id: Some("server-b".to_string()),
+                    rollout_epoch: Some("epoch-1".to_string()),
+                },
+            });
+            session.begin_connect_game(connection_id, NetworkTransport::Tcp);
+        }
+
+        app.world_mut().write_message(NetworkEvent::Connected {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            remote_addr: "redirect.test:15500".to_string(),
+        });
+        app.update();
+        let auth_seq = latest_sent_packet(&app).unwrap().1.header.seq;
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: auth_response_packet(auth_seq, true, "plr_1", ""),
+        });
+        app.update();
+
+        let (_, reconnect_packet) = latest_sent_packet(&app).unwrap();
+        assert_eq!(
+            reconnect_packet.message_type(),
+            Some(MessageType::RoomReconnectReq)
+        );
+        assert_eq!(
+            reconnect_packet
+                .decode::<pb::RoomReconnectReq>()
+                .unwrap()
+                .last_character_push_sequence,
+            42
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::ReauthenticatedForReconnect { .. }))
+        );
+        assert!(
+            !read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::Authenticated { .. }))
+        );
+
+        let reconnect_seq = reconnect_packet.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: room_reconnect_response_packet(reconnect_seq, true, "room-1", ""),
+        });
+        app.update();
+
+        let (_, elements_packet) = latest_sent_packet(&app).unwrap();
+        assert_eq!(
+            elements_packet.message_type(),
+            Some(MessageType::GetCharacterElementsReq)
+        );
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.room_id.as_deref(), Some("room-1"));
+        assert!(session.reconnect_after_auth.is_none());
+    }
+
+    #[test]
+    fn kick_push_blocks_reconnect_and_classifies_unknown_reason() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(190);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.ticket = Some(ticket_for_test("plr_1", "chr_1", "2026-06-25T12:15:00Z"));
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: session_kick_packet("new_reason"),
+        });
+        app.update();
+
+        assert!(disconnect_commands(&app).contains(&connection_id));
+        {
+            let session = app.world().resource::<MyServerSession>();
+            assert!(session.reconnect_blocked);
+            assert_eq!(
+                session.game_connection_state,
+                GameConnectionState::Disconnected
+            );
+        }
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::SessionKicked {
+                        category: SessionKickCategory::Unknown,
+                        reason,
+                        ..
+                    } if reason == "new_reason"
+                ))
+        );
+
+        app.world_mut().write_message(MyServerCommand::IssueTicket {
+            reconnect_game: true,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<MyServerSession>()
+                .game_connection_state,
+            GameConnectionState::ReconnectFailed
+        );
+        assert!(latest_connect_command(&app).is_none());
+        assert!(display_errors(&app).iter().any(|error| {
+            error.kind == MyServerErrorKind::SessionKicked
+                && error.error_code.as_deref() == Some("SESSION_KICKED")
+        }));
+    }
+
+    #[test]
+    fn kick_push_updates_login_state_and_legacy_ui_events_by_category() {
+        for (reason, expected_state, expected_event) in [
+            (
+                "duplicate_login",
+                AccountLoginState::Expired,
+                "account_status_blocked",
+            ),
+            (
+                "account_banned",
+                AccountLoginState::Blocked,
+                "account_banned",
+            ),
+            (
+                "maintenance_window",
+                AccountLoginState::Blocked,
+                "maintenance_blocked",
+            ),
+        ] {
+            let mut app = test_app();
+            let connection_id = ConnectionId::from_raw(194);
+            {
+                let mut session = app.world_mut().resource_mut::<MyServerSession>();
+                session.account_login_state = AccountLoginState::LoggedIn;
+                session.connection_id = Some(connection_id);
+                session.connected = true;
+                session.authenticated = true;
+                session.game_connection_state = GameConnectionState::Authenticated;
+            }
+
+            app.world_mut().write_message(NetworkEvent::Packet {
+                connection_id,
+                transport: NetworkTransport::Tcp,
+                payload: session_kick_packet(reason),
+            });
+            app.update();
+
+            assert_eq!(
+                app.world()
+                    .resource::<MyServerSession>()
+                    .account_login_state,
+                expected_state,
+                "{reason}"
+            );
+            let events = read_messages::<MyServerEvent>(&app);
+            assert!(
+                events.iter().any(|event| match (expected_event, event) {
+                    ("account_status_blocked", MyServerEvent::AccountStatusBlocked { .. }) => true,
+                    ("account_banned", MyServerEvent::AccountBanned { .. }) => true,
+                    ("maintenance_blocked", MyServerEvent::MaintenanceBlocked { .. }) => true,
+                    _ => false,
+                }),
+                "{reason}"
+            );
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, MyServerEvent::SessionKickPush(_))),
+                "{reason}"
+            );
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, MyServerEvent::SessionKicked { .. })),
+                "{reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn login_success_after_kick_unblocks_future_ticket_connection() {
+        let mut app = test_app();
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.reconnect_blocked = true;
+            session.apply_login_response(&LoginResponse {
+                ok: true,
+                player_id: "plr_1".to_string(),
+                guest_id: Some("guest-1".to_string()),
+                login_name: None,
+                access_token: "access-token".to_string(),
+                refresh_token: None,
+                access_token_expires_at: None,
+                refresh_token_expires_at: None,
+                ticket: None,
+                ticket_expires_at: None,
+                game_proxy_host: None,
+                game_proxy_port: None,
+                services: None,
+            });
+        }
+
+        assert!(!app.world().resource::<MyServerSession>().reconnect_blocked);
+
+        app.world_mut()
+            .write_message(MyServerCommand::ConnectWithTicket {
+                ticket: ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z"),
+                transport: NetworkTransport::Tcp,
+                host: Some("game.test".to_string()),
+                port: Some(14400),
+            });
+        app.update();
+
+        assert!(latest_connect_command(&app).is_some());
+        assert!(!display_errors(&app).iter().any(|error| {
+            error.kind == MyServerErrorKind::SessionKicked
+                && error.error_code.as_deref() == Some("SESSION_KICKED")
+        }));
     }
 
     #[test]

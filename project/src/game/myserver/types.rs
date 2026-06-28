@@ -170,6 +170,8 @@ pub struct MyServerSession {
     pub login_request: Option<RequestId>,
     pub ticket_request: Option<RequestId>,
     pub connect_after_login: Option<ConnectPlan>,
+    pub reconnect_after_auth: Option<ReconnectPlan>,
+    pub reconnect_blocked: bool,
 }
 
 impl MyServerSession {
@@ -182,6 +184,11 @@ impl MyServerSession {
     }
 
     pub fn reset_connection_state(&mut self) {
+        self.reset_transport_state();
+        self.pending_http.clear();
+    }
+
+    pub fn reset_transport_state(&mut self) {
         self.game_connection_state = GameConnectionState::NotConnected;
         self.connection_id = None;
         self.transport = None;
@@ -190,7 +197,17 @@ impl MyServerSession {
         self.room_id = None;
         self.codec.clear();
         self.pending.clear();
-        self.pending_http.clear();
+        self.reconnect_after_auth = None;
+    }
+
+    pub fn clear_reconnect_plan(&mut self) {
+        self.connect_after_login = None;
+        self.reconnect_after_auth = None;
+    }
+
+    pub fn reconnect_failed_cleanup(&mut self) {
+        self.clear_reconnect_plan();
+        self.game_connection_state = GameConnectionState::ReconnectFailed;
     }
 
     pub fn reset(&mut self) {
@@ -238,6 +255,8 @@ impl MyServerSession {
         self.pending_character_id = None;
         self.pending_http.clear();
         self.connect_after_login = None;
+        self.reconnect_after_auth = None;
+        self.reconnect_blocked = false;
     }
 
     pub fn switch_account(&mut self) {
@@ -259,15 +278,30 @@ impl MyServerSession {
                 pending.operation,
                 PendingHttpOperation::CharacterSelect { .. }
                     | PendingHttpOperation::TicketIssue { .. }
+                    | PendingHttpOperation::CharacterList
+                    | PendingHttpOperation::CharacterCreate
+                    | PendingHttpOperation::CharacterProfile { .. }
             )
         });
         self.connect_after_login = None;
+        self.reconnect_after_auth = None;
     }
 
     pub fn disconnect_cleanup(&mut self) {
-        self.reset_connection_state();
+        self.reset_transport_state();
         self.ticket_request = None;
         self.connect_after_login = None;
+        self.reconnect_after_auth = None;
+        self.game_connection_state = GameConnectionState::Disconnected;
+    }
+
+    pub fn block_reconnect_after_kick(&mut self) {
+        self.reset_transport_state();
+        self.ticket_request = None;
+        self.connect_after_login = None;
+        self.reconnect_after_auth = None;
+        self.reconnect_blocked = true;
+        self.pending_http.clear();
         self.game_connection_state = GameConnectionState::Disconnected;
     }
 
@@ -287,6 +321,8 @@ impl MyServerSession {
         self.login_request = None;
         self.ticket_request = None;
         self.connect_after_login = None;
+        self.reconnect_after_auth = None;
+        self.reconnect_blocked = true;
         self.pending_character_id = None;
         self.pending_http.clear();
     }
@@ -299,6 +335,8 @@ impl MyServerSession {
         self.login_request = None;
         self.ticket_request = None;
         self.connect_after_login = None;
+        self.reconnect_after_auth = None;
+        self.reconnect_blocked = true;
         self.pending_character_id = None;
         self.pending_http.clear();
     }
@@ -467,6 +505,7 @@ impl MyServerSession {
         self.characters.clear();
         self.account_login_state = AccountLoginState::LoggedIn;
         self.character_selection_state = CharacterSelectionState::NotLoaded;
+        self.reconnect_blocked = false;
         self.access_token = Some(response.access_token.clone());
         self.refresh_token = response.refresh_token.clone();
         self.access_token_expires_at = response.access_token_expires_at.clone();
@@ -656,6 +695,7 @@ impl MyServerSession {
         self.character_profile = None;
         self.game_endpoint = None;
         self.character_elements = CharacterElementsCache::default();
+        self.reconnect_after_auth = None;
     }
 }
 
@@ -839,6 +879,22 @@ pub struct ConnectPlan {
     pub transport: NetworkTransport,
     pub host: Option<String>,
     pub port: Option<u16>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReconnectCause {
+    ServerRedirect {
+        reason: String,
+        room_id: Option<String>,
+        target_server_id: Option<String>,
+        rollout_epoch: Option<String>,
+    },
+    TransportRecovery,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReconnectPlan {
+    pub cause: ReconnectCause,
 }
 
 #[derive(Clone, Debug, Message)]
@@ -1056,6 +1112,10 @@ pub enum MyServerEvent {
     Authenticated {
         player_id: String,
     },
+    ReauthenticatedForReconnect {
+        player_id: String,
+        cause: ReconnectCause,
+    },
     AuthFailed {
         error_code: String,
     },
@@ -1080,8 +1140,24 @@ pub enum MyServerEvent {
     CharacterElementsLoaded(pb::GetCharacterElementsRes),
     CharacterElementsChanged(pb::CharacterElementsChangePush),
     CharacterElementsCacheUpdated(CharacterElementsCache),
+    RoomReconnected(pb::RoomReconnectRes),
     ServerRedirectPush(pb::ServerRedirectPush),
+    ServerRedirectReconnectStarted {
+        reason: String,
+        target_host: String,
+        target_port: u16,
+        transport: NetworkTransport,
+    },
+    ServerRedirectIgnored {
+        reason: String,
+        detail: String,
+    },
     SessionKickPush(pb::SessionKickPush),
+    SessionKicked {
+        reason: String,
+        category: SessionKickCategory,
+        timestamp: i64,
+    },
     AuthorityMigrationStartPush(pb::AuthorityMigrationStartPush),
     AuthorityMigrationCompletePush(pb::AuthorityMigrationCompletePush),
     Error {
@@ -1145,6 +1221,8 @@ pub enum MyServerErrorKind {
     GameAuthRejected,
     RoomJoinFailed,
     CharacterElementsFailed,
+    ServerRedirectFailed,
+    SessionKicked,
     Unauthorized,
     HttpStatus,
     JsonParseFailed,
@@ -1343,6 +1421,8 @@ impl MyServerErrorKind {
             Self::GameAuthRejected => "myserver.error.game_auth_rejected",
             Self::RoomJoinFailed => "myserver.error.room_join_failed",
             Self::CharacterElementsFailed => "myserver.error.character_elements_failed",
+            Self::ServerRedirectFailed => "myserver.error.server_redirect_failed",
+            Self::SessionKicked => "myserver.error.session_kicked",
             Self::Unauthorized => "myserver.error.unauthorized",
             Self::HttpStatus => "myserver.error.http_status",
             Self::JsonParseFailed => "myserver.error.json_parse_failed",
@@ -1364,6 +1444,7 @@ impl MyServerErrorKind {
                 | Self::TransportFailed
                 | Self::MessageRateExceeded
                 | Self::TicketExpired
+                | Self::ServerRedirectFailed
         )
     }
 
@@ -1378,8 +1459,18 @@ impl MyServerErrorKind {
                 | Self::PendingReview
                 | Self::VersionIncompatible
                 | Self::Unauthorized
+                | Self::SessionKicked
         )
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionKickCategory {
+    ConcurrentLogin,
+    Banned,
+    Maintenance,
+    ServerOffline,
+    Unknown,
 }
 
 pub fn classify_display_error_code(
@@ -1405,6 +1496,15 @@ pub fn classify_display_error_code(
     }
     if code.contains("MAINTENANCE") {
         return MyServerErrorKind::Maintenance;
+    }
+    if code.contains("REDIRECT") {
+        return MyServerErrorKind::ServerRedirectFailed;
+    }
+    if code.contains("KICK")
+        || code.contains("CONCURRENT_LOGIN")
+        || code.contains("LOGIN_ELSEWHERE")
+    {
+        return MyServerErrorKind::SessionKicked;
     }
     if code.contains("VERSION_INCOMPATIBLE") || code.contains("CLIENT_VERSION") {
         return MyServerErrorKind::VersionIncompatible;
@@ -1471,6 +1571,9 @@ fn fallback_display_error_kind(
     match (operation, message_type) {
         (_, Some(MessageType::RoomJoinReq | MessageType::RoomJoinRes)) => {
             MyServerErrorKind::RoomJoinFailed
+        }
+        (_, Some(MessageType::RoomReconnectReq | MessageType::RoomReconnectRes)) => {
+            MyServerErrorKind::ServerRedirectFailed
         }
         (_, Some(MessageType::GetCharacterElementsReq | MessageType::GetCharacterElementsRes)) => {
             MyServerErrorKind::CharacterElementsFailed
@@ -2564,6 +2667,51 @@ mod tests {
         assert!(session.access_token.is_none());
         assert!(session.player_id.is_none());
         assert!(session.pending_http.is_empty());
+    }
+
+    #[test]
+    fn reset_connection_state_clears_connection_and_http_pending() {
+        let mut session = MyServerSession {
+            connection_id: Some(ConnectionId::from_raw(30)),
+            connected: true,
+            authenticated: true,
+            room_id: Some("room-1".to_string()),
+            game_connection_state: GameConnectionState::Authenticated,
+            connect_after_login: Some(ConnectPlan {
+                transport: NetworkTransport::Tcp,
+                host: Some("game.test".to_string()),
+                port: Some(14400),
+            }),
+            reconnect_after_auth: Some(ReconnectPlan {
+                cause: ReconnectCause::TransportRecovery,
+            }),
+            pending_http: HashMap::from([(
+                RequestId::from_raw(31),
+                PendingHttpRequest {
+                    operation: PendingHttpOperation::TicketIssue {
+                        reconnect_game: true,
+                    },
+                },
+            )]),
+            ..Default::default()
+        };
+
+        session.reset_connection_state();
+
+        assert!(session.connection_id.is_none());
+        assert!(!session.connected);
+        assert!(!session.authenticated);
+        assert!(session.room_id.is_none());
+        assert!(session.pending_http.is_empty());
+        assert!(session.reconnect_after_auth.is_none());
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::NotConnected
+        );
+        assert!(session.connect_after_login.is_some());
+
+        session.clear_reconnect_plan();
+        assert!(session.connect_after_login.is_none());
     }
 
     #[test]
