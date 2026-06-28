@@ -63,10 +63,13 @@ pub enum MessageType {
     WarehouseAccessRes = 1410,
     GetInventoryReq = 1411,
     GetInventoryRes = 1412,
+    GetCharacterElementsReq = 1413,
+    GetCharacterElementsRes = 1414,
     InventoryUpdatePush = 1501,
     AttrChangePush = 1502,
     VisualChangePush = 1503,
     ItemObtainPush = 1504,
+    CharacterElementsChangePush = 1505,
     ErrorRes = 9000,
 }
 
@@ -122,10 +125,13 @@ impl MessageType {
             1410 => Some(Self::WarehouseAccessRes),
             1411 => Some(Self::GetInventoryReq),
             1412 => Some(Self::GetInventoryRes),
+            1413 => Some(Self::GetCharacterElementsReq),
+            1414 => Some(Self::GetCharacterElementsRes),
             1501 => Some(Self::InventoryUpdatePush),
             1502 => Some(Self::AttrChangePush),
             1503 => Some(Self::VisualChangePush),
             1504 => Some(Self::ItemObtainPush),
+            1505 => Some(Self::CharacterElementsChangePush),
             9000 => Some(Self::ErrorRes),
             _ => None,
         }

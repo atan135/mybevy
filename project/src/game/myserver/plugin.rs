@@ -12,7 +12,7 @@ use super::types::{
     ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL, LoginResponse, MovementClientState,
     MyServerAutoClientConfig, MyServerAutoClientState, MyServerCommand, MyServerConfig,
     MyServerEvent, MyServerSession, PendingRequest, TicketResponse, login_session_from_response,
-    ticket_endpoint,
+    parse_character_bound_ticket, ticket_endpoint,
 };
 
 pub struct MyServerPlugin;
@@ -164,6 +164,17 @@ fn auto_client_follow_events(
                     frame_id = push.frame_id,
                     entity_count = push.entities.len(),
                     "MyServer movement snapshot"
+                );
+            }
+            MyServerEvent::CharacterElementsChanged(push) => {
+                let meta = push.meta.as_ref();
+                info!(
+                    character_id = meta
+                        .map(|value| value.character_id.as_str())
+                        .unwrap_or_default(),
+                    sequence = meta.map(|value| value.sequence).unwrap_or_default(),
+                    revision = meta.map(|value| value.revision).unwrap_or_default(),
+                    "MyServer character elements changed"
                 );
             }
             MyServerEvent::Error {
@@ -527,16 +538,25 @@ fn send_refresh_ticket(
         });
         return;
     };
+    let Some(character_id) = session.character_id.clone() else {
+        events.write(MyServerEvent::TicketRefreshFailed {
+            error: "cannot issue ticket before selecting a character".to_string(),
+        });
+        return;
+    };
 
     let url = format!(
         "{}/api/v1/game-ticket/issue",
         config.http_base_url.trim_end_matches('/')
     );
-    let request = HttpRequest::post(url, "{}")
-        .with_header("Content-Type", "application/json")
-        .with_header("Accept", "application/json")
-        .with_header("Authorization", format!("Bearer {access_token}"))
-        .with_timeout(config.request_timeout);
+    let request = HttpRequest::post(
+        url,
+        serde_json::json!({ "character_id": character_id }).to_string(),
+    )
+    .with_header("Content-Type", "application/json")
+    .with_header("Accept", "application/json")
+    .with_header("Authorization", format!("Bearer {access_token}"))
+    .with_timeout(config.request_timeout);
 
     session.ticket_request = Some(request.request_id);
     session.connect_after_login = reconnect_game.then_some(ConnectPlan {
@@ -580,14 +600,27 @@ fn handle_login_response(
     }
 
     let login_session = login_session_from_response(&response);
-    session.access_token = Some(response.access_token);
-    session.ticket = Some(response.ticket);
-    session.ticket_expires_at = Some(response.ticket_expires_at);
-    session.player_id = Some(response.player_id);
+    session.access_token = Some(response.access_token.clone());
+    session.ticket = response.ticket.clone();
+    session.ticket_expires_at = response.ticket_expires_at.clone();
+    session.player_id = Some(response.player_id.clone());
     session.guest_id = response.guest_id;
     session.login_name = response.login_name;
 
     events.write(MyServerEvent::LoginSucceeded(login_session.clone()));
+
+    let Some(ticket) = login_session.ticket else {
+        if session.connect_after_login.take().is_some() {
+            events.write(MyServerEvent::RequestFailed {
+                seq: None,
+                message_type: Some(MessageType::AuthReq),
+                error:
+                    "login only returned an account session; select a character before connecting"
+                        .to_string(),
+            });
+        }
+        return;
+    };
 
     if let Some(mut plan) = session.connect_after_login.take() {
         apply_discovered_endpoint(
@@ -597,14 +630,7 @@ fn handle_login_response(
             login_session.game_transport,
             config,
         );
-        connect_with_ticket(
-            config,
-            session,
-            network_commands,
-            events,
-            login_session.ticket,
-            plan,
-        );
+        connect_with_ticket(config, session, network_commands, events, ticket, plan);
     }
 }
 
@@ -642,6 +668,8 @@ fn handle_ticket_response(
 
     let (host, port, transport) = ticket_endpoint(&response);
     session.player_id = Some(response.player_id);
+    session.character_id = response.character_id.clone();
+    session.world_id = response.world_id;
     session.ticket = Some(response.ticket.clone());
     session.ticket_expires_at = Some(response.ticket_expires_at.clone());
     events.write(MyServerEvent::TicketRefreshed {
@@ -693,6 +721,20 @@ fn connect_with_ticket(
     ticket: String,
     plan: ConnectPlan,
 ) {
+    let ticket_payload = match parse_character_bound_ticket(&ticket) {
+        Ok(payload) => payload,
+        Err(error) => {
+            events.write(MyServerEvent::RequestFailed {
+                seq: None,
+                message_type: Some(MessageType::AuthReq),
+                error: format!(
+                    "refusing game connection with invalid character-bound ticket: {error}"
+                ),
+            });
+            return;
+        }
+    };
+
     disconnect(session, network_commands);
 
     let connection_id = ConnectionId::new();
@@ -704,6 +746,9 @@ fn connect_with_ticket(
     let remote_addr = format!("{host}:{port}");
 
     session.ticket = Some(ticket);
+    session.player_id = Some(ticket_payload.player_id);
+    session.character_id = Some(ticket_payload.character_id);
+    session.world_id = ticket_payload.world_id;
     session.connection_id = Some(connection_id);
     session.transport = Some(plan.transport);
     session.connected = false;
@@ -905,6 +950,13 @@ fn handle_game_packet(
                 MyServerEvent::AuthorityMigrationCompletePush,
             )
         }
+        MessageType::CharacterElementsChangePush => {
+            decode_push::<pb::CharacterElementsChangePush, _>(
+                events,
+                &packet,
+                MyServerEvent::CharacterElementsChanged,
+            )
+        }
         _ => handle_response_packet(session, events, message_type, packet),
     }
 }
@@ -991,6 +1043,11 @@ fn handle_response_packet(
         MessageType::MoveInputRes => {
             decode_push::<pb::MoveInputRes, _>(events, &packet, MyServerEvent::MoveInputAccepted)
         }
+        MessageType::GetCharacterElementsRes => decode_push::<pb::GetCharacterElementsRes, _>(
+            events,
+            &packet,
+            MyServerEvent::CharacterElementsLoaded,
+        ),
         _ => {
             events.write(MyServerEvent::ProtocolError {
                 error: format!("unhandled response type {:?}", message_type),
