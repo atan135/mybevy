@@ -21,6 +21,7 @@ pub const DEFAULT_GAME_PROXY_TCP_FALLBACK_PORT: u16 = 14000;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 pub const DEFAULT_TICKET_REFRESH_MARGIN: Duration = Duration::from_secs(30);
+pub const DIAGNOSTIC_FINGERPRINT_LEN: usize = 12;
 
 #[derive(Clone, Debug, Resource)]
 pub struct MyServerConfig {
@@ -786,6 +787,38 @@ impl PendingHttpOperation {
             Self::Logout => PendingHttpGroup::Logout,
         }
     }
+
+    pub fn endpoint_path(&self) -> &'static str {
+        match self {
+            Self::Login { .. } => "/api/v1/auth/login",
+            Self::Register { .. } => "/api/v1/auth/register",
+            Self::GuestLogin { .. } => "/api/v1/auth/guest-login",
+            Self::CharacterList => "/api/v1/characters",
+            Self::CharacterCreate => "/api/v1/characters",
+            Self::CharacterProfile { .. } => "/api/v1/characters/{character_id}/profile",
+            Self::CharacterSelect { .. } => "/api/v1/characters/select",
+            Self::CharacterDelete { .. } => "/api/v1/characters/delete",
+            Self::CharacterRestore { .. } => "/api/v1/characters/restore",
+            Self::TicketIssue { .. } => "/api/v1/game-ticket/issue",
+            Self::Logout => "/api/v1/auth/logout",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Login { .. } => "login",
+            Self::Register { .. } => "register",
+            Self::GuestLogin { .. } => "guest_login",
+            Self::CharacterList => "character_list",
+            Self::CharacterCreate => "character_create",
+            Self::CharacterProfile { .. } => "character_profile",
+            Self::CharacterSelect { .. } => "character_select",
+            Self::CharacterDelete { .. } => "character_delete",
+            Self::CharacterRestore { .. } => "character_restore",
+            Self::TicketIssue { .. } => "ticket_issue",
+            Self::Logout => "logout",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1503,6 +1536,75 @@ pub struct GameTicketPayload {
     pub payload_fingerprint: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiagnosticFingerprint(String);
+
+impl DiagnosticFingerprint {
+    pub fn new(secret: &str) -> Self {
+        Self(short_fingerprint(secret.as_bytes()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for DiagnosticFingerprint {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MyServerDiagnosticSnapshot {
+    pub account_login_state: AccountLoginState,
+    pub character_selection_state: CharacterSelectionState,
+    pub game_connection_state: GameConnectionState,
+    pub connection_id: Option<ConnectionId>,
+    pub transport: Option<NetworkTransport>,
+    pub access_token_fingerprint: Option<String>,
+    pub ticket_fingerprint: Option<String>,
+    pub ticket_expires_at: Option<String>,
+    pub ticket_remaining_seconds: Option<u64>,
+    pub player_id: Option<String>,
+    pub character_id: Option<String>,
+    pub world_id: Option<i64>,
+}
+
+impl MyServerDiagnosticSnapshot {
+    pub fn from_session(session: &MyServerSession, now: SystemTime) -> Self {
+        Self {
+            account_login_state: session.account_login_state,
+            character_selection_state: session.character_selection_state,
+            game_connection_state: session.game_connection_state,
+            connection_id: session.connection_id,
+            transport: session.transport,
+            access_token_fingerprint: session
+                .access_token
+                .as_deref()
+                .and_then(non_empty_string)
+                .map(redact_secret_fingerprint),
+            ticket_fingerprint: session
+                .ticket
+                .as_deref()
+                .and_then(non_empty_string)
+                .map(redact_secret_fingerprint),
+            ticket_expires_at: session.ticket_expires_at.clone(),
+            ticket_remaining_seconds: session
+                .ticket_expiration_time()
+                .and_then(|expires_at| expires_at.duration_since(now).ok())
+                .map(|duration| duration.as_secs()),
+            player_id: session.player_id.clone(),
+            character_id: session.character_id.clone(),
+            world_id: session.world_id,
+        }
+    }
+}
+
+pub fn redact_secret_fingerprint(secret: &str) -> String {
+    DiagnosticFingerprint::new(secret).to_string()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawGameTicketPayload {
@@ -1736,7 +1838,7 @@ fn short_fingerprint(bytes: &[u8]) -> String {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    format!("{hash:016x}")[..12].to_string()
+    format!("{hash:016x}")[..DIAGNOSTIC_FINGERPRINT_LEN].to_string()
 }
 
 fn env_string(name: &str, default: &str) -> String {
@@ -2759,6 +2861,55 @@ mod tests {
         assert_eq!(payload.ver, Some(1));
         assert_eq!(payload.ticket_fingerprint.len(), 12);
         assert_eq!(payload.payload_fingerprint.len(), 12);
+    }
+
+    #[test]
+    fn diagnostic_fingerprint_redacts_secret_values_with_stable_length() {
+        let access_token = "access-token-super-secret";
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:15:00.000Z");
+        let password = "correct-horse-password";
+
+        for secret in [access_token, ticket.as_str(), password] {
+            let fingerprint = redact_secret_fingerprint(secret);
+            assert_eq!(fingerprint.len(), DIAGNOSTIC_FINGERPRINT_LEN);
+            assert_eq!(fingerprint, redact_secret_fingerprint(secret));
+            assert!(!fingerprint.contains(secret));
+
+            let wrapper = DiagnosticFingerprint::new(secret);
+            assert_eq!(wrapper.as_str(), fingerprint);
+            assert!(!format!("{wrapper:?}").contains(secret));
+            assert!(!format!("{wrapper}").contains(secret));
+        }
+    }
+
+    #[test]
+    fn diagnostic_snapshot_uses_fingerprints_without_secret_plaintext() {
+        let access_token = "access-token-super-secret";
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:15:00.000Z");
+        let mut session = MyServerSession {
+            access_token: Some(access_token.to_string()),
+            ticket: Some(ticket.clone()),
+            ticket_expires_at: Some("2026-06-25T12:15:00.000Z".to_string()),
+            character_id: Some("chr_1".to_string()),
+            ..Default::default()
+        };
+        session.begin_connect_game(ConnectionId::from_raw(7), NetworkTransport::Tcp);
+
+        let now = parse_ticket_expiration("2026-06-25T12:14:00.000Z").unwrap();
+        let snapshot = MyServerDiagnosticSnapshot::from_session(&session, now);
+        let debug_text = format!("{snapshot:?}");
+
+        assert_eq!(
+            snapshot.access_token_fingerprint.as_deref().unwrap().len(),
+            DIAGNOSTIC_FINGERPRINT_LEN
+        );
+        assert_eq!(
+            snapshot.ticket_fingerprint.as_deref().unwrap().len(),
+            DIAGNOSTIC_FINGERPRINT_LEN
+        );
+        assert_eq!(snapshot.ticket_remaining_seconds, Some(60));
+        assert!(!debug_text.contains(access_token));
+        assert!(!debug_text.contains(ticket.as_str()));
     }
 
     #[test]

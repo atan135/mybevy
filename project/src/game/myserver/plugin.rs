@@ -1,5 +1,5 @@
-use std::time::Duration;
 use std::time::SystemTime;
+use std::{env, time::Duration};
 
 use bevy::prelude::*;
 use serde::de::DeserializeOwned;
@@ -15,10 +15,11 @@ use super::types::{
     ApiErrorResponse, CharacterCreateResponse, CharacterLifecycleResponse, CharacterListResponse,
     CharacterProfileResponse, CharacterSelectResponse, ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL,
     LoginResponse, MovementClientState, MyServerAutoClientConfig, MyServerAutoClientState,
-    MyServerCommand, MyServerConfig, MyServerEvent, MyServerOperation, MyServerSession,
-    PendingHttpOperation, PendingHttpRequest, PendingRequest, RegisterPendingReviewResponse,
-    RegisterResponse, TicketResponse, character_select_endpoint, classify_game_auth_failure,
-    parse_character_bound_ticket, ticket_endpoint,
+    MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot, MyServerEvent, MyServerOperation,
+    MyServerSession, PendingHttpOperation, PendingHttpRequest, PendingRequest,
+    RegisterPendingReviewResponse, RegisterResponse, TicketResponse, character_select_endpoint,
+    classify_game_auth_failure, parse_character_bound_ticket, redact_secret_fingerprint,
+    ticket_endpoint,
 };
 
 pub struct MyServerPlugin;
@@ -58,6 +59,124 @@ impl Default for MyServerKeepaliveState {
             timer: Timer::new(DEFAULT_KEEPALIVE_INTERVAL, TimerMode::Repeating),
             interval: DEFAULT_KEEPALIVE_INTERVAL,
         }
+    }
+}
+
+fn myserver_debug_trace_enabled() -> bool {
+    // Online defaults keep detailed transition diagnostics at trace level; local
+    // debugging can promote the same redacted fields to debug with this switch.
+    env::var("MYSERVER_DIAGNOSTIC_TRACE")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.as_str(),
+                "1" | "true" | "TRUE" | "True" | "yes" | "YES" | "debug" | "trace"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn diagnostic_snapshot(session: &MyServerSession) -> MyServerDiagnosticSnapshot {
+    MyServerDiagnosticSnapshot::from_session(session, SystemTime::now())
+}
+
+fn trace_http_transition(
+    phase: &'static str,
+    request_id: RequestId,
+    operation: &PendingHttpOperation,
+    status: Option<u16>,
+    error_code: Option<&str>,
+    session: &MyServerSession,
+) {
+    let snapshot = diagnostic_snapshot(session);
+    let connection_id = snapshot.connection_id.map(ConnectionId::raw);
+    if myserver_debug_trace_enabled() {
+        debug!(
+            phase,
+            request_id = request_id.raw(),
+            operation = operation.label(),
+            endpoint = operation.endpoint_path(),
+            status,
+            error_code = error_code.unwrap_or_default(),
+            account_state = ?snapshot.account_login_state,
+            character_state = ?snapshot.character_selection_state,
+            game_state = ?snapshot.game_connection_state,
+            connection_id,
+            transport = ?snapshot.transport,
+            player_id = snapshot.player_id.as_deref().unwrap_or_default(),
+            character_id = snapshot.character_id.as_deref().unwrap_or_default(),
+            world_id = snapshot.world_id,
+            access_token_fp = snapshot.access_token_fingerprint.as_deref().unwrap_or_default(),
+            ticket_fp = snapshot.ticket_fingerprint.as_deref().unwrap_or_default(),
+            ticket_expires_at = snapshot.ticket_expires_at.as_deref().unwrap_or_default(),
+            ticket_remaining_seconds = snapshot.ticket_remaining_seconds,
+            "MyServer HTTP diagnostic transition"
+        );
+    } else {
+        trace!(
+            phase,
+            request_id = request_id.raw(),
+            operation = operation.label(),
+            endpoint = operation.endpoint_path(),
+            status,
+            error_code = error_code.unwrap_or_default(),
+            account_state = ?snapshot.account_login_state,
+            character_state = ?snapshot.character_selection_state,
+            game_state = ?snapshot.game_connection_state,
+            connection_id,
+            ticket_fp = snapshot.ticket_fingerprint.as_deref().unwrap_or_default(),
+            ticket_remaining_seconds = snapshot.ticket_remaining_seconds,
+            "MyServer HTTP diagnostic transition"
+        );
+    }
+}
+
+fn trace_game_transition(
+    phase: &'static str,
+    session: &MyServerSession,
+    connection_id: Option<ConnectionId>,
+    endpoint: Option<&str>,
+    seq: Option<u32>,
+    message_type: Option<MessageType>,
+    error_code: Option<&str>,
+) {
+    let snapshot = diagnostic_snapshot(session);
+    let connection_id = connection_id
+        .or(snapshot.connection_id)
+        .map(ConnectionId::raw);
+    if myserver_debug_trace_enabled() {
+        debug!(
+            phase,
+            connection_id,
+            endpoint = endpoint.unwrap_or_default(),
+            seq,
+            message_type = ?message_type,
+            error_code = error_code.unwrap_or_default(),
+            account_state = ?snapshot.account_login_state,
+            character_state = ?snapshot.character_selection_state,
+            game_state = ?snapshot.game_connection_state,
+            transport = ?snapshot.transport,
+            player_id = snapshot.player_id.as_deref().unwrap_or_default(),
+            character_id = snapshot.character_id.as_deref().unwrap_or_default(),
+            world_id = snapshot.world_id,
+            ticket_fp = snapshot.ticket_fingerprint.as_deref().unwrap_or_default(),
+            ticket_expires_at = snapshot.ticket_expires_at.as_deref().unwrap_or_default(),
+            ticket_remaining_seconds = snapshot.ticket_remaining_seconds,
+            "MyServer game diagnostic transition"
+        );
+    } else {
+        trace!(
+            phase,
+            connection_id,
+            endpoint = endpoint.unwrap_or_default(),
+            seq,
+            message_type = ?message_type,
+            error_code = error_code.unwrap_or_default(),
+            game_state = ?snapshot.game_connection_state,
+            ticket_fp = snapshot.ticket_fingerprint.as_deref().unwrap_or_default(),
+            ticket_remaining_seconds = snapshot.ticket_remaining_seconds,
+            "MyServer game diagnostic transition"
+        );
     }
 }
 
@@ -437,6 +556,7 @@ fn handle_network_events(
                     &mut session,
                     &mut network_commands,
                     &mut events,
+                    response.request_id,
                     pending.operation,
                     response.status,
                     &response.body,
@@ -447,8 +567,24 @@ fn handle_network_events(
                     continue;
                 };
                 clear_legacy_http_slots(&mut session, *request_id);
+                trace_http_transition(
+                    "http_error",
+                    *request_id,
+                    &pending.operation,
+                    None,
+                    None,
+                    &session,
+                );
                 apply_http_failure_state(&mut session, &pending.operation, error);
                 let operation = pending.operation.event_operation();
+                trace_http_transition(
+                    "http_error_applied",
+                    *request_id,
+                    &pending.operation,
+                    None,
+                    None,
+                    &session,
+                );
                 write_http_failure(&mut events, &pending.operation, error.clone());
                 events.write(MyServerEvent::NetworkFailed {
                     operation,
@@ -461,6 +597,15 @@ fn handle_network_events(
                 remote_addr,
             } if Some(*connection_id) == session.connection_id => {
                 session.game_connected(*transport);
+                trace_game_transition(
+                    "game_connected",
+                    &session,
+                    Some(*connection_id),
+                    Some(remote_addr),
+                    None,
+                    None,
+                    None,
+                );
                 events.write(MyServerEvent::Connected {
                     connection_id: *connection_id,
                     transport: *transport,
@@ -469,6 +614,15 @@ fn handle_network_events(
 
                 let Some(ticket) = session.ticket.clone() else {
                     session.game_auth_failed();
+                    trace_game_transition(
+                        "game_auth_missing_ticket",
+                        &session,
+                        Some(*connection_id),
+                        Some(remote_addr),
+                        None,
+                        Some(MessageType::AuthReq),
+                        Some("MISSING_TICKET"),
+                    );
                     events.write(MyServerEvent::RequestFailed {
                         seq: None,
                         message_type: Some(MessageType::AuthReq),
@@ -479,6 +633,15 @@ fn handle_network_events(
 
                 if let Err(error) = validate_auth_ticket(&ticket, &session) {
                     session.game_auth_failed();
+                    trace_game_transition(
+                        "game_auth_ticket_rejected",
+                        &session,
+                        Some(*connection_id),
+                        Some(remote_addr),
+                        None,
+                        Some(MessageType::AuthReq),
+                        Some(&error),
+                    );
                     events.write(MyServerEvent::AuthFailed {
                         error_code: error.clone(),
                     });
@@ -503,6 +666,15 @@ fn handle_network_events(
                 error,
             } if Some(*connection_id) == session.connection_id => {
                 session.game_connection_failed();
+                trace_game_transition(
+                    "game_connection_failed",
+                    &session,
+                    Some(*connection_id),
+                    Some(remote_addr),
+                    None,
+                    None,
+                    None,
+                );
                 events.write(MyServerEvent::ConnectionFailed {
                     transport: *transport,
                     remote_addr: remote_addr.clone(),
@@ -540,6 +712,15 @@ fn handle_network_events(
                     message_type: None,
                     error: error.clone(),
                 });
+                trace_game_transition(
+                    "game_send_failed",
+                    &session,
+                    Some(*connection_id),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
             }
             NetworkEvent::Disconnected {
                 connection_id,
@@ -547,6 +728,15 @@ fn handle_network_events(
                 ..
             } if Some(*connection_id) == session.connection_id => {
                 session.disconnect_cleanup();
+                trace_game_transition(
+                    "game_disconnected",
+                    &session,
+                    Some(*connection_id),
+                    None,
+                    None,
+                    None,
+                    reason.as_deref(),
+                );
                 events.write(MyServerEvent::Disconnected {
                     reason: reason.clone(),
                 });
@@ -1030,6 +1220,14 @@ fn send_http_request(
         },
     );
     session.begin_http_operation(&operation);
+    trace_http_transition(
+        "http_request_sent",
+        request_id,
+        &operation,
+        None,
+        None,
+        session,
+    );
     network_commands.write(NetworkCommand::Http(request));
 }
 
@@ -1081,10 +1279,21 @@ fn handle_http_response(
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
+    request_id: RequestId,
     operation: PendingHttpOperation,
     status: u16,
     body: &[u8],
 ) {
+    let response_error_code = parse_api_error_code(body);
+    trace_http_transition(
+        "http_response_received",
+        request_id,
+        &operation,
+        Some(status),
+        response_error_code.as_deref(),
+        session,
+    );
+    let diagnostic_operation = operation.clone();
     match operation {
         PendingHttpOperation::Login { .. } | PendingHttpOperation::GuestLogin { .. } => {
             handle_login_response(
@@ -1141,6 +1350,14 @@ fn handle_http_response(
             handle_logout_response(session, events, operation, status, body)
         }
     }
+    trace_http_transition(
+        "http_response_applied",
+        request_id,
+        &diagnostic_operation,
+        Some(status),
+        response_error_code.as_deref(),
+        session,
+    );
 }
 
 fn handle_character_list_response(
@@ -1409,22 +1626,7 @@ fn http_error_message(operation: &PendingHttpOperation, status: u16, body: &[u8]
 
 fn parse_api_error(body: &[u8]) -> Option<String> {
     let response = serde_json::from_slice::<ApiErrorResponse>(body).ok()?;
-    let code = response
-        .error
-        .or_else(|| {
-            response
-                .extra
-                .get("errorCode")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .or_else(|| {
-            response
-                .extra
-                .get("code")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        });
+    let code = api_error_code(&response);
     let message = response.message.or_else(|| {
         response
             .extra
@@ -1440,6 +1642,32 @@ fn parse_api_error(body: &[u8]) -> Option<String> {
         (None, Some(message)) if !message.trim().is_empty() => Some(message),
         _ => None,
     }
+}
+
+fn parse_api_error_code(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<ApiErrorResponse>(body)
+        .ok()
+        .and_then(|response| api_error_code(&response))
+}
+
+fn api_error_code(response: &ApiErrorResponse) -> Option<String> {
+    response
+        .error
+        .clone()
+        .or_else(|| {
+            response
+                .extra
+                .get("errorCode")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            response
+                .extra
+                .get("code")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
 }
 
 fn write_http_failure(
@@ -1666,6 +1894,16 @@ fn handle_login_success(
     response: LoginResponse,
 ) {
     let login_session = session.apply_login_response(&response);
+    info!(
+        player_id = %login_session.player_id,
+        access_token_fp = %redact_secret_fingerprint(&login_session.access_token),
+        ticket_fp = login_session.ticket.as_deref().map(redact_secret_fingerprint).unwrap_or_default(),
+        ticket_expires_at = login_session.ticket_expires_at.as_deref().unwrap_or_default(),
+        endpoint_host = login_session.game_host.as_deref().unwrap_or_default(),
+        endpoint_port = login_session.game_port,
+        endpoint_transport = ?login_session.game_transport,
+        "MyServer login session accepted"
+    );
 
     events.write(MyServerEvent::LoginSucceeded(login_session.clone()));
 
@@ -1747,6 +1985,19 @@ fn handle_ticket_response(
 
     let (host, port, transport) = ticket_endpoint(&response);
     session.apply_ticket_response(&response);
+    info!(
+        player_id = session.player_id.as_deref().unwrap_or_default(),
+        character_id = session.character_id.as_deref().unwrap_or_default(),
+        world_id = session.world_id,
+        ticket_fp = %ticket_payload.ticket_fingerprint,
+        payload_fp = %ticket_payload.payload_fingerprint,
+        ticket_expires_at = %response.ticket_expires_at,
+        reconnect_game,
+        endpoint_host = host.as_deref().unwrap_or_default(),
+        endpoint_port = port,
+        endpoint_transport = ?transport,
+        "MyServer game ticket issued"
+    );
     events.write(MyServerEvent::TicketRefreshed {
         ticket_expires_at: response.ticket_expires_at.clone(),
     });
@@ -1801,6 +2052,11 @@ fn connect_with_ticket(
         Ok(payload) => payload,
         Err(error) => {
             fail_game_connection_attempt(session, network_commands);
+            warn!(
+                error_code = %error,
+                ticket_fp = %redact_secret_fingerprint(&ticket),
+                "MyServer refused game connection with invalid ticket"
+            );
             events.write(MyServerEvent::RequestFailed {
                 seq: None,
                 message_type: Some(MessageType::AuthReq),
@@ -1819,13 +2075,20 @@ fn connect_with_ticket(
         }
     };
 
-    if let Some(current_character_id) = session.character_id.as_deref() {
+    if let Some(current_character_id) = session.character_id.clone() {
         if current_character_id != ticket_payload.character_id {
             let error = format!(
                 "TICKET_CHARACTER_MISMATCH: refusing ticket for {} while selected character is {}",
                 ticket_payload.character_id, current_character_id
             );
             fail_game_connection_attempt(session, network_commands);
+            warn!(
+                error_code = "TICKET_CHARACTER_MISMATCH",
+                ticket_fp = %ticket_payload.ticket_fingerprint,
+                ticket_character_id = %ticket_payload.character_id,
+                selected_character_id = %current_character_id,
+                "MyServer refused game connection with mismatched ticket"
+            );
             events.write(MyServerEvent::RequestFailed {
                 seq: None,
                 message_type: Some(MessageType::AuthReq),
@@ -1857,6 +2120,26 @@ fn connect_with_ticket(
     session.character_id = Some(ticket_payload.character_id);
     session.world_id = ticket_payload.world_id;
     session.begin_connect_game(connection_id, plan.transport);
+    trace_game_transition(
+        "game_connect_begin",
+        session,
+        Some(connection_id),
+        Some(&remote_addr),
+        None,
+        None,
+        None,
+    );
+    info!(
+        connection_id = connection_id.raw(),
+        ?plan.transport,
+        endpoint = %remote_addr,
+        player_id = session.player_id.as_deref().unwrap_or_default(),
+        character_id = session.character_id.as_deref().unwrap_or_default(),
+        world_id = session.world_id,
+        ticket_fp = %ticket_payload.ticket_fingerprint,
+        ticket_expires_at = %ticket_payload.exp,
+        "MyServer game connection starting"
+    );
 
     events.write(MyServerEvent::Connecting {
         connection_id,
@@ -1918,13 +2201,32 @@ fn send_auth_request(
     ticket: String,
 ) {
     session.begin_game_auth();
-    send_request(
+    let ticket_fp = redact_secret_fingerprint(&ticket);
+    let Some(auth_seq) = send_request_with_seq(
         session,
         network_commands,
         events,
         MessageType::AuthReq,
         MessageType::AuthRes,
         &pb::AuthReq { ticket },
+    ) else {
+        return;
+    };
+    trace_game_transition(
+        "game_auth_request_sent",
+        session,
+        session.connection_id,
+        None,
+        Some(auth_seq),
+        Some(MessageType::AuthReq),
+        None,
+    );
+    info!(
+        connection_id = session.connection_id.map(ConnectionId::raw),
+        seq = auth_seq,
+        ticket_fp = %ticket_fp,
+        ticket_remaining_seconds = diagnostic_snapshot(session).ticket_remaining_seconds,
+        "MyServer game auth request sent"
     );
 }
 
@@ -1973,13 +2275,34 @@ fn send_request<M>(
 ) where
     M: prost::Message,
 {
+    let _ = send_request_with_seq(
+        session,
+        network_commands,
+        events,
+        request_type,
+        response_type,
+        message,
+    );
+}
+
+fn send_request_with_seq<M>(
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    request_type: MessageType,
+    response_type: MessageType,
+    message: &M,
+) -> Option<u32>
+where
+    M: prost::Message,
+{
     let Some(connection_id) = session.connection_id else {
         events.write(MyServerEvent::RequestFailed {
             seq: None,
             message_type: Some(request_type),
             error: "game connection is not open".to_string(),
         });
-        return;
+        return None;
     };
 
     let seq = session.reserve_seq();
@@ -1987,10 +2310,20 @@ fn send_request<M>(
         .pending
         .insert(seq, PendingRequest { response_type });
     let payload = encode_proto_packet(request_type, seq, message);
+    trace_game_transition(
+        "game_request_sent",
+        session,
+        Some(connection_id),
+        None,
+        Some(seq),
+        Some(request_type),
+        None,
+    );
     network_commands.write(NetworkCommand::Send {
         connection_id,
         payload,
     });
+    Some(seq)
 }
 
 fn handle_game_packet(
@@ -2052,14 +2385,8 @@ fn handle_game_packet(
             &packet,
             MyServerEvent::MovementRejectPush,
         ),
-        MessageType::ServerRedirectPush => decode_push::<pb::ServerRedirectPush, _>(
-            events,
-            &packet,
-            MyServerEvent::ServerRedirectPush,
-        ),
-        MessageType::SessionKickPush => {
-            decode_push::<pb::SessionKickPush, _>(events, &packet, MyServerEvent::SessionKickPush)
-        }
+        MessageType::ServerRedirectPush => handle_server_redirect_push(session, events, packet),
+        MessageType::SessionKickPush => handle_session_kick_push(session, events, packet),
         MessageType::AuthorityMigrationStartPush => {
             decode_push::<pb::AuthorityMigrationStartPush, _>(
                 events,
@@ -2111,6 +2438,23 @@ fn handle_response_packet(
         MessageType::AuthRes => match packet.decode::<pb::AuthRes>() {
             Ok(response) if response.ok => {
                 session.game_authenticated(response.player_id.clone());
+                trace_game_transition(
+                    "game_auth_succeeded",
+                    session,
+                    session.connection_id,
+                    None,
+                    Some(packet.header.seq),
+                    Some(MessageType::AuthRes),
+                    None,
+                );
+                info!(
+                    connection_id = session.connection_id.map(ConnectionId::raw),
+                    seq = packet.header.seq,
+                    player_id = %response.player_id,
+                    character_id = session.character_id.as_deref().unwrap_or_default(),
+                    ticket_fp = diagnostic_snapshot(session).ticket_fingerprint.as_deref().unwrap_or_default(),
+                    "MyServer game auth succeeded"
+                );
                 events.write(MyServerEvent::Authenticated {
                     player_id: response.player_id,
                 });
@@ -2118,6 +2462,23 @@ fn handle_response_packet(
             Ok(response) => {
                 session.game_auth_failed();
                 let reason = classify_game_auth_failure(&response.error_code);
+                trace_game_transition(
+                    "game_auth_failed",
+                    session,
+                    session.connection_id,
+                    None,
+                    Some(packet.header.seq),
+                    Some(MessageType::AuthRes),
+                    Some(&response.error_code),
+                );
+                warn!(
+                    connection_id = session.connection_id.map(ConnectionId::raw),
+                    seq = packet.header.seq,
+                    error_code = %response.error_code,
+                    ?reason,
+                    ticket_fp = diagnostic_snapshot(session).ticket_fingerprint.as_deref().unwrap_or_default(),
+                    "MyServer game auth rejected"
+                );
                 events.write(MyServerEvent::AuthFailed {
                     error_code: response.error_code.clone(),
                 });
@@ -2128,6 +2489,15 @@ fn handle_response_packet(
             }
             Err(error) => {
                 session.game_auth_failed();
+                trace_game_transition(
+                    "game_auth_decode_failed",
+                    session,
+                    session.connection_id,
+                    None,
+                    Some(packet.header.seq),
+                    Some(MessageType::AuthRes),
+                    Some("PROTOCOL_ERROR"),
+                );
                 events.write(MyServerEvent::GameAuthRejected {
                     error_code: "PROTOCOL_ERROR".to_string(),
                     reason: classify_game_auth_failure("PROTOCOL_ERROR"),
@@ -2191,6 +2561,81 @@ where
     match packet.decode::<M>() {
         Ok(message) => {
             events.write(event_factory(message));
+        }
+        Err(error) => {
+            events.write(MyServerEvent::ProtocolError { error });
+        }
+    }
+}
+
+fn handle_server_redirect_push(
+    session: &MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    packet: Packet,
+) {
+    match packet.decode::<pb::ServerRedirectPush>() {
+        Ok(push) => {
+            let endpoint = if push.target_host.is_empty() || push.target_port == 0 {
+                String::new()
+            } else {
+                format!("{}:{}", push.target_host, push.target_port)
+            };
+            trace_game_transition(
+                "server_redirect_push",
+                session,
+                session.connection_id,
+                (!endpoint.is_empty()).then_some(endpoint.as_str()),
+                Some(packet.header.seq),
+                Some(MessageType::ServerRedirectPush),
+                Some(push.reason.as_str()),
+            );
+            warn!(
+                connection_id = session.connection_id.map(ConnectionId::raw),
+                seq = packet.header.seq,
+                reason = %push.reason,
+                room_id = %push.room_id,
+                rollout_epoch = %push.rollout_epoch,
+                reconnect_required = push.reconnect_required,
+                retry_after_ms = push.retry_after_ms,
+                endpoint = %endpoint,
+                target_server_id = %push.target_server_id,
+                transport = %push.transport,
+                ticket_fp = diagnostic_snapshot(session).ticket_fingerprint.as_deref().unwrap_or_default(),
+                "MyServer server redirect push"
+            );
+            events.write(MyServerEvent::ServerRedirectPush(push));
+        }
+        Err(error) => {
+            events.write(MyServerEvent::ProtocolError { error });
+        }
+    }
+}
+
+fn handle_session_kick_push(
+    session: &MyServerSession,
+    events: &mut MessageWriter<MyServerEvent>,
+    packet: Packet,
+) {
+    match packet.decode::<pb::SessionKickPush>() {
+        Ok(push) => {
+            trace_game_transition(
+                "session_kick_push",
+                session,
+                session.connection_id,
+                None,
+                Some(packet.header.seq),
+                Some(MessageType::SessionKickPush),
+                Some(push.reason.as_str()),
+            );
+            warn!(
+                connection_id = session.connection_id.map(ConnectionId::raw),
+                seq = packet.header.seq,
+                reason = %push.reason,
+                timestamp = push.timestamp,
+                ticket_fp = diagnostic_snapshot(session).ticket_fingerprint.as_deref().unwrap_or_default(),
+                "MyServer session kick push"
+            );
+            events.write(MyServerEvent::SessionKickPush(push));
         }
         Err(error) => {
             events.write(MyServerEvent::ProtocolError { error });
@@ -2537,6 +2982,44 @@ mod tests {
                 if error == "cannot issue ticket before selecting a character"
         )));
         assert!(latest_http_request(&app).is_none());
+    }
+
+    #[test]
+    fn auth_request_packet_seq_matches_pending_request_seq() {
+        let mut app = test_app();
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        app.world_mut()
+            .write_message(MyServerCommand::ConnectWithTicket {
+                ticket,
+                transport: NetworkTransport::Tcp,
+                host: Some("game.test".to_string()),
+                port: Some(14400),
+            });
+        app.update();
+
+        let (connection_id, _, _) = latest_connect_command(&app).unwrap();
+        app.world_mut().write_message(NetworkEvent::Connected {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            remote_addr: "game.test:14400".to_string(),
+        });
+        app.update();
+
+        let packets = sent_packets(&app);
+        let (_, payload) = packets.last().unwrap();
+        let mut codec = super::super::protocol::PacketCodec::default();
+        let packet = codec.push_bytes(payload).unwrap().remove(0);
+        assert_eq!(packet.message_type(), Some(MessageType::AuthReq));
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.next_seq, packet.header.seq);
+        assert_eq!(
+            session
+                .pending
+                .get(&packet.header.seq)
+                .map(|pending| pending.response_type),
+            Some(MessageType::AuthRes)
+        );
     }
 
     #[test]
