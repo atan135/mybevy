@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     env,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use bevy::prelude::{Message, Resource};
@@ -20,6 +20,7 @@ pub const DEFAULT_GAME_PROXY_KCP_PORT: u16 = 4000;
 pub const DEFAULT_GAME_PROXY_TCP_FALLBACK_PORT: u16 = 14000;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+pub const DEFAULT_TICKET_REFRESH_MARGIN: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Resource)]
 pub struct MyServerConfig {
@@ -30,6 +31,7 @@ pub struct MyServerConfig {
     pub prefer_transport: NetworkTransport,
     pub forced_transport: Option<NetworkTransport>,
     pub request_timeout: Duration,
+    pub ticket_refresh_margin: Duration,
     pub auto_reconnect_with_fresh_ticket: bool,
     pub keepalive_enabled: bool,
     pub keepalive_interval: Duration,
@@ -51,6 +53,10 @@ impl Default for MyServerConfig {
             request_timeout: Duration::from_millis(env_u64(
                 "MYSERVER_REQUEST_TIMEOUT_MS",
                 DEFAULT_REQUEST_TIMEOUT.as_millis() as u64,
+            )),
+            ticket_refresh_margin: Duration::from_millis(env_u64(
+                "MYSERVER_TICKET_REFRESH_MARGIN_MS",
+                DEFAULT_TICKET_REFRESH_MARGIN.as_millis() as u64,
             )),
             auto_reconnect_with_fresh_ticket: env_bool(
                 "MYSERVER_AUTO_RECONNECT_WITH_FRESH_TICKET",
@@ -188,6 +194,37 @@ impl MyServerSession {
 
     pub fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    pub fn ticket_expiration_time(&self) -> Option<SystemTime> {
+        self.ticket_expires_at
+            .as_deref()
+            .and_then(parse_ticket_expiration)
+            .or_else(|| {
+                let payload = parse_character_bound_ticket(self.ticket.as_deref()?).ok()?;
+                parse_ticket_expiration(&payload.exp)
+            })
+    }
+
+    pub fn needs_ticket_refresh(&self, now: SystemTime, refresh_margin: Duration) -> bool {
+        if self.ticket.as_deref().and_then(non_empty_string).is_none()
+            || self
+                .character_id
+                .as_deref()
+                .and_then(non_empty_string)
+                .is_none()
+        {
+            return false;
+        }
+
+        let Some(expires_at) = self.ticket_expiration_time() else {
+            return false;
+        };
+
+        match expires_at.duration_since(now) {
+            Ok(remaining) => remaining <= refresh_margin,
+            Err(_) => true,
+        }
     }
 
     pub fn logout(&mut self) {
@@ -986,6 +1023,10 @@ pub enum MyServerEvent {
     AuthFailed {
         error_code: String,
     },
+    GameAuthRejected {
+        error_code: String,
+        reason: GameAuthFailureReason,
+    },
     Pong(pb::PingRes),
     RoomJoined(pb::RoomJoinRes),
     RoomLeft(pb::RoomLeaveRes),
@@ -1037,6 +1078,16 @@ pub enum MyServerOperation {
     Logout,
     GameConnect,
     GameRequest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameAuthFailureReason {
+    TicketExpired,
+    MissingCharacterId,
+    AccountBlocked,
+    CharacterBlocked,
+    ProtocolError,
+    Unknown,
 }
 
 #[derive(Clone, Debug)]
@@ -1496,6 +1547,159 @@ pub fn parse_character_bound_ticket(ticket: &str) -> Result<GameTicketPayload, S
         ticket_fingerprint: short_fingerprint(ticket.as_bytes()),
         payload_fingerprint: short_fingerprint(&payload_bytes),
     })
+}
+
+pub fn classify_game_auth_failure(error_code: &str) -> GameAuthFailureReason {
+    let code = normalize_error_code(error_code);
+    if code.is_empty() {
+        return GameAuthFailureReason::Unknown;
+    }
+    if code.contains("TICKET") && code.contains("EXPIRED") {
+        return GameAuthFailureReason::TicketExpired;
+    }
+    if code.contains("MISSING_CHARACTER_ID")
+        || code.contains("CHARACTER_ID_REQUIRED")
+        || code.contains("NO_CHARACTER_ID")
+    {
+        return GameAuthFailureReason::MissingCharacterId;
+    }
+    if (code.contains("ACCOUNT") || code.contains("PLAYER"))
+        && (code.contains("BLOCKED")
+            || code.contains("BANNED")
+            || code.contains("SUSPENDED")
+            || code.contains("DISABLED"))
+    {
+        return GameAuthFailureReason::AccountBlocked;
+    }
+    if code.contains("CHARACTER")
+        && (code.contains("BLOCKED")
+            || code.contains("BANNED")
+            || code.contains("SUSPENDED")
+            || code.contains("DELETED")
+            || code.contains("DISABLED"))
+    {
+        return GameAuthFailureReason::CharacterBlocked;
+    }
+    if code.contains("PROTOCOL")
+        || code.contains("MALFORMED")
+        || code.contains("DECODE")
+        || code.contains("INVALID_AUTH")
+        || code.contains("INVALID_TICKET")
+        || code.contains("INVALID_TICKET_FORMAT")
+        || code.contains("INVALID_TICKET_PAYLOAD")
+        || code.contains("TICKET_CHARACTER_MISMATCH")
+        || code.contains("CHARACTER_MISMATCH")
+    {
+        return GameAuthFailureReason::ProtocolError;
+    }
+    GameAuthFailureReason::Unknown
+}
+
+fn normalize_error_code(value: &str) -> String {
+    let mut code = String::new();
+    let mut last_was_underscore = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            code.push(ch.to_ascii_uppercase());
+            last_was_underscore = false;
+        } else if !last_was_underscore && !code.is_empty() {
+            code.push('_');
+            last_was_underscore = true;
+        }
+    }
+    while code.ends_with('_') {
+        code.pop();
+    }
+    code
+}
+
+pub fn parse_ticket_expiration(value: &str) -> Option<SystemTime> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(UNIX_EPOCH + Duration::from_secs(seconds));
+    }
+
+    parse_rfc3339_utc(value)
+}
+
+fn parse_rfc3339_utc(value: &str) -> Option<SystemTime> {
+    let trimmed = value.trim();
+    let date_time = trimmed.strip_suffix('Z').unwrap_or(trimmed);
+    let (date, time) = date_time.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i32>().ok()?;
+    let month = date_parts.next()?.parse::<u32>().ok()?;
+    let day = date_parts.next()?.parse::<u32>().ok()?;
+    if date_parts.next().is_some() {
+        return None;
+    }
+
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<u32>().ok()?;
+    let minute = time_parts.next()?.parse::<u32>().ok()?;
+    let second_part = time_parts.next()?;
+    if time_parts.next().is_some() {
+        return None;
+    }
+    let second_text = second_part
+        .split_once('.')
+        .map_or(second_part, |(second, _)| second);
+    let second = second_text.parse::<u32>().ok()?;
+
+    let unix_seconds = unix_seconds_from_ymdhms(year, month, day, hour, minute, second)?;
+    Some(UNIX_EPOCH + Duration::from_secs(unix_seconds))
+}
+
+fn unix_seconds_from_ymdhms(
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    second: u32,
+) -> Option<u64> {
+    if !(1970..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+
+    let max_day = days_in_month(year, month)?;
+    if day == 0 || day > max_day {
+        return None;
+    }
+
+    let mut days = 0u64;
+    for current_year in 1970..year {
+        days += if is_leap_year(current_year) { 366 } else { 365 };
+    }
+    for current_month in 1..month {
+        days += u64::from(days_in_month(year, current_month)?);
+    }
+    days += u64::from(day - 1);
+
+    Some(days * 86_400 + u64::from(hour) * 3_600 + u64::from(minute) * 60 + u64::from(second))
+}
+
+fn days_in_month(year: i32, month: u32) -> Option<u32> {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => Some(31),
+        4 | 6 | 9 | 11 => Some(30),
+        2 if is_leap_year(year) => Some(29),
+        2 => Some(28),
+        _ => None,
+    }
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 fn decode_base64url(input: &str) -> Result<Vec<u8>, String> {
@@ -2555,6 +2759,89 @@ mod tests {
         assert_eq!(payload.ver, Some(1));
         assert_eq!(payload.ticket_fingerprint.len(), 12);
         assert_eq!(payload.payload_fingerprint.len(), 12);
+    }
+
+    #[test]
+    fn ticket_refresh_expiration_helper_uses_server_time_or_payload_exp() {
+        let now = parse_ticket_expiration("2026-06-25T12:14:31.000Z").unwrap();
+        let soon = parse_ticket_expiration("2026-06-25T12:15:00.000Z").unwrap();
+        assert_eq!(
+            parse_ticket_expiration("2026-06-25T12:15:00.000Z"),
+            Some(soon)
+        );
+        assert_eq!(
+            parse_ticket_expiration("1782399300"),
+            Some(UNIX_EPOCH + Duration::from_secs(1_782_399_300))
+        );
+
+        let mut session = MyServerSession {
+            ticket: Some(ticket_for_test(
+                "plr_1",
+                "chr_1",
+                "2026-06-25T12:20:00.000Z",
+            )),
+            ticket_expires_at: Some("2026-06-25T12:15:00.000Z".to_string()),
+            character_id: Some("chr_1".to_string()),
+            ..Default::default()
+        };
+        assert!(session.needs_ticket_refresh(now, Duration::from_secs(30)));
+
+        session.ticket_expires_at = Some("2026-06-25T12:15:02.000Z".to_string());
+        assert!(!session.needs_ticket_refresh(now, Duration::from_secs(30)));
+
+        session.ticket_expires_at = None;
+        session.ticket = Some(ticket_for_test(
+            "plr_1",
+            "chr_1",
+            "2026-06-25T12:15:00.000Z",
+        ));
+        assert!(session.needs_ticket_refresh(now, Duration::from_secs(30)));
+
+        session.ticket_expires_at = Some("not-a-date".to_string());
+        session.ticket = Some("invalid-ticket".to_string());
+        assert!(!session.needs_ticket_refresh(now, Duration::from_secs(30)));
+
+        session.character_id = None;
+        session.ticket_expires_at = Some("2026-06-25T12:15:00.000Z".to_string());
+        assert!(!session.needs_ticket_refresh(now, Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn classifies_game_auth_failure_codes() {
+        assert_eq!(
+            classify_game_auth_failure("TICKET_EXPIRED"),
+            GameAuthFailureReason::TicketExpired
+        );
+        assert_eq!(
+            classify_game_auth_failure("MISSING_CHARACTER_ID"),
+            GameAuthFailureReason::MissingCharacterId
+        );
+        assert_eq!(
+            classify_game_auth_failure("ACCOUNT_BLOCKED"),
+            GameAuthFailureReason::AccountBlocked
+        );
+        assert_eq!(
+            classify_game_auth_failure("CHARACTER_BANNED"),
+            GameAuthFailureReason::CharacterBlocked
+        );
+        assert_eq!(
+            classify_game_auth_failure("INVALID_TICKET_PAYLOAD"),
+            GameAuthFailureReason::ProtocolError
+        );
+        assert_eq!(
+            classify_game_auth_failure("SOMETHING_ELSE"),
+            GameAuthFailureReason::Unknown
+        );
+    }
+
+    fn ticket_for_test(player_id: &str, character_id: &str, exp: &str) -> String {
+        let payload = format!(
+            r#"{{"playerId":"{player_id}","characterId":"{character_id}","worldId":0,"exp":"{exp}","ver":1}}"#
+        );
+        format!(
+            "{}.signature",
+            encode_base64url_for_test(payload.as_bytes())
+        )
     }
 
     fn encode_base64url_for_test(input: &[u8]) -> String {

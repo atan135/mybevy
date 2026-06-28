@@ -17,8 +17,8 @@ use super::types::{
     LoginResponse, MovementClientState, MyServerAutoClientConfig, MyServerAutoClientState,
     MyServerCommand, MyServerConfig, MyServerEvent, MyServerOperation, MyServerSession,
     PendingHttpOperation, PendingHttpRequest, PendingRequest, RegisterPendingReviewResponse,
-    RegisterResponse, TicketResponse, character_select_endpoint, parse_character_bound_ticket,
-    ticket_endpoint,
+    RegisterResponse, TicketResponse, character_select_endpoint, classify_game_auth_failure,
+    parse_character_bound_ticket, ticket_endpoint,
 };
 
 pub struct MyServerPlugin;
@@ -143,6 +143,9 @@ fn auto_client_follow_events(
             }
             MyServerEvent::AuthFailed { error_code } => {
                 error!(%error_code, "MyServer game auth failed");
+            }
+            MyServerEvent::GameAuthRejected { error_code, reason } => {
+                error!(%error_code, ?reason, "MyServer game auth rejected");
             }
             MyServerEvent::Pong(response) => {
                 info!(server_time = response.server_time, "MyServer ping response");
@@ -474,6 +477,23 @@ fn handle_network_events(
                     continue;
                 };
 
+                if let Err(error) = validate_auth_ticket(&ticket, &session) {
+                    session.game_auth_failed();
+                    events.write(MyServerEvent::AuthFailed {
+                        error_code: error.clone(),
+                    });
+                    events.write(MyServerEvent::GameAuthRejected {
+                        error_code: error.clone(),
+                        reason: classify_game_auth_failure(&error),
+                    });
+                    events.write(MyServerEvent::RequestFailed {
+                        seq: None,
+                        message_type: Some(MessageType::AuthReq),
+                        error,
+                    });
+                    continue;
+                }
+
                 send_auth_request(&mut session, &mut network_commands, &mut events, ticket);
             }
             NetworkEvent::ConnectionFailed {
@@ -549,13 +569,33 @@ fn keepalive_myserver_connection(
         state.timer = Timer::new(config.keepalive_interval, TimerMode::Repeating);
     }
 
-    if !config.keepalive_enabled || !session.connected || !session.authenticated {
+    if !session.connected || !session.authenticated {
         state.timer.reset();
         return;
     }
 
     state.timer.tick(time.delta());
     if !state.timer.just_finished() {
+        return;
+    }
+
+    let ticket_refresh_operation = PendingHttpOperation::TicketIssue {
+        reconnect_game: false,
+    };
+    if session.needs_ticket_refresh(SystemTime::now(), config.ticket_refresh_margin)
+        && !has_duplicate_pending_http(&session, &ticket_refresh_operation)
+    {
+        send_refresh_ticket(
+            &config,
+            &mut session,
+            &mut network_commands,
+            &mut events,
+            false,
+        );
+        return;
+    }
+
+    if !config.keepalive_enabled {
         return;
     }
 
@@ -1202,6 +1242,9 @@ fn handle_character_select_response(
         return;
     }
     let (host, port, transport) = character_select_endpoint(&response);
+    if session.connection_id.is_some() {
+        disconnect(session, network_commands);
+    }
     session.apply_character_select_response(&response);
     events.write(MyServerEvent::CharacterSelected {
         player_id: response.player_id.clone(),
@@ -1660,6 +1703,11 @@ fn handle_ticket_response(
     status: u16,
     body: &[u8],
 ) {
+    let PendingHttpOperation::TicketIssue { reconnect_game } = operation else {
+        return;
+    };
+    let operation = PendingHttpOperation::TicketIssue { reconnect_game };
+
     let Some(response) =
         parse_http_json::<TicketResponse>(session, events, &operation, status, body)
     else {
@@ -1673,6 +1721,30 @@ fn handle_ticket_response(
         return;
     }
 
+    let ticket_payload = match parse_character_bound_ticket(&response.ticket) {
+        Ok(payload) => payload,
+        Err(error) => {
+            apply_http_failure_state(session, &operation, &error);
+            write_http_failure(
+                events,
+                &operation,
+                format!("ticket issue returned invalid character-bound ticket: {error}"),
+            );
+            return;
+        }
+    };
+    if let Some(character_id) = session.character_id.as_deref() {
+        if ticket_payload.character_id != character_id {
+            let error = format!(
+                "ticket issue returned ticket for {}, expected {}",
+                ticket_payload.character_id, character_id
+            );
+            apply_http_failure_state(session, &operation, &error);
+            write_http_failure(events, &operation, error);
+            return;
+        }
+    }
+
     let (host, port, transport) = ticket_endpoint(&response);
     session.apply_ticket_response(&response);
     events.write(MyServerEvent::TicketRefreshed {
@@ -1681,6 +1753,7 @@ fn handle_ticket_response(
 
     if let Some(mut plan) = session.connect_after_login.take() {
         apply_discovered_endpoint(&mut plan, host, port, transport, config);
+        disconnect(session, network_commands);
         connect_with_ticket(
             config,
             session,
@@ -1727,6 +1800,7 @@ fn connect_with_ticket(
     let ticket_payload = match parse_character_bound_ticket(&ticket) {
         Ok(payload) => payload,
         Err(error) => {
+            fail_game_connection_attempt(session, network_commands);
             events.write(MyServerEvent::RequestFailed {
                 seq: None,
                 message_type: Some(MessageType::AuthReq),
@@ -1734,9 +1808,39 @@ fn connect_with_ticket(
                     "refusing game connection with invalid character-bound ticket: {error}"
                 ),
             });
+            events.write(MyServerEvent::AuthFailed {
+                error_code: error.clone(),
+            });
+            events.write(MyServerEvent::GameAuthRejected {
+                error_code: error.clone(),
+                reason: classify_game_auth_failure(&error),
+            });
             return;
         }
     };
+
+    if let Some(current_character_id) = session.character_id.as_deref() {
+        if current_character_id != ticket_payload.character_id {
+            let error = format!(
+                "TICKET_CHARACTER_MISMATCH: refusing ticket for {} while selected character is {}",
+                ticket_payload.character_id, current_character_id
+            );
+            fail_game_connection_attempt(session, network_commands);
+            events.write(MyServerEvent::RequestFailed {
+                seq: None,
+                message_type: Some(MessageType::AuthReq),
+                error: error.clone(),
+            });
+            events.write(MyServerEvent::AuthFailed {
+                error_code: "TICKET_CHARACTER_MISMATCH".to_string(),
+            });
+            events.write(MyServerEvent::GameAuthRejected {
+                error_code: "TICKET_CHARACTER_MISMATCH".to_string(),
+                reason: classify_game_auth_failure("TICKET_CHARACTER_MISMATCH"),
+            });
+            return;
+        }
+    }
 
     disconnect(session, network_commands);
 
@@ -1777,6 +1881,27 @@ fn connect_with_ticket(
             ));
         }
     }
+}
+
+fn validate_auth_ticket(ticket: &str, session: &MyServerSession) -> Result<(), String> {
+    let payload = parse_character_bound_ticket(ticket)?;
+    let Some(character_id) = session.character_id.as_deref() else {
+        return Err("MISSING_CHARACTER_ID".to_string());
+    };
+    if payload.character_id != character_id {
+        return Err("TICKET_CHARACTER_MISMATCH".to_string());
+    }
+    Ok(())
+}
+
+fn fail_game_connection_attempt(
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+) {
+    if let Some(connection_id) = session.connection_id {
+        network_commands.write(NetworkCommand::Disconnect { connection_id });
+    }
+    session.game_connection_failed();
 }
 
 fn disconnect(session: &mut MyServerSession, network_commands: &mut MessageWriter<NetworkCommand>) {
@@ -1992,11 +2117,21 @@ fn handle_response_packet(
             }
             Ok(response) => {
                 session.game_auth_failed();
+                let reason = classify_game_auth_failure(&response.error_code);
                 events.write(MyServerEvent::AuthFailed {
+                    error_code: response.error_code.clone(),
+                });
+                events.write(MyServerEvent::GameAuthRejected {
                     error_code: response.error_code,
+                    reason,
                 });
             }
             Err(error) => {
+                session.game_auth_failed();
+                events.write(MyServerEvent::GameAuthRejected {
+                    error_code: "PROTOCOL_ERROR".to_string(),
+                    reason: classify_game_auth_failure("PROTOCOL_ERROR"),
+                });
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
@@ -2116,10 +2251,13 @@ fn current_unix_ms() -> i64 {
 mod tests {
     use std::time::Duration;
 
+    use bevy::ecs::message::MessageCursor;
+    use bevy::prelude::{App, Messages, MinimalPlugins};
     use serde_json::Value;
 
     use super::*;
-    use crate::framework::network::HttpMethod;
+    use crate::framework::network::{HttpMethod, HttpResponse};
+    use crate::game::myserver::types::{GameAuthFailureReason, GameConnectionState};
 
     fn test_config() -> MyServerConfig {
         MyServerConfig {
@@ -2139,6 +2277,128 @@ mod tests {
 
     fn body_json(request: &HttpRequest) -> Value {
         serde_json::from_slice(request.body.as_deref().unwrap_or_default()).unwrap()
+    }
+
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_message::<NetworkCommand>()
+            .add_message::<NetworkEvent>()
+            .add_plugins(MyServerPlugin)
+            .insert_resource(test_config());
+        app
+    }
+
+    fn read_messages<M>(app: &App) -> Vec<M>
+    where
+        M: Message + Clone,
+    {
+        let messages = app.world().resource::<Messages<M>>();
+        let mut cursor = MessageCursor::default();
+        cursor.read(messages).cloned().collect()
+    }
+
+    fn latest_http_request(app: &App) -> Option<HttpRequest> {
+        read_messages::<NetworkCommand>(app)
+            .into_iter()
+            .filter_map(|command| match command {
+                NetworkCommand::Http(request) => Some(request),
+                _ => None,
+            })
+            .last()
+    }
+
+    fn latest_connect_command(app: &App) -> Option<(ConnectionId, NetworkTransport, String)> {
+        read_messages::<NetworkCommand>(app)
+            .into_iter()
+            .filter_map(|command| match command {
+                NetworkCommand::ConnectTcp(config) => {
+                    Some((config.connection_id, NetworkTransport::Tcp, config.addr))
+                }
+                NetworkCommand::ConnectKcp(config) => {
+                    Some((config.connection_id, NetworkTransport::Kcp, config.addr))
+                }
+                _ => None,
+            })
+            .last()
+    }
+
+    fn sent_packets(app: &App) -> Vec<(ConnectionId, Vec<u8>)> {
+        read_messages::<NetworkCommand>(app)
+            .into_iter()
+            .filter_map(|command| match command {
+                NetworkCommand::Send {
+                    connection_id,
+                    payload,
+                } => Some((connection_id, payload)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn disconnect_commands(app: &App) -> Vec<ConnectionId> {
+        read_messages::<NetworkCommand>(app)
+            .into_iter()
+            .filter_map(|command| match command {
+                NetworkCommand::Disconnect { connection_id } => Some(connection_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn ticket_for_test(player_id: &str, character_id: &str, exp: &str) -> String {
+        let payload = format!(
+            r#"{{"playerId":"{player_id}","characterId":"{character_id}","worldId":0,"exp":"{exp}","ver":1}}"#
+        );
+        format!(
+            "{}.signature",
+            encode_base64url_for_test(payload.as_bytes())
+        )
+    }
+
+    fn encode_base64url_for_test(input: &[u8]) -> String {
+        const TABLE: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut output = String::new();
+        let mut index = 0;
+        while index < input.len() {
+            let b0 = input[index];
+            let b1 = input.get(index + 1).copied();
+            let b2 = input.get(index + 2).copied();
+
+            output.push(TABLE[(b0 >> 2) as usize] as char);
+            output.push(TABLE[(((b0 & 0b0000_0011) << 4) | b1.unwrap_or(0) >> 4) as usize] as char);
+            if let Some(b1) = b1 {
+                output.push(
+                    TABLE[(((b1 & 0b0000_1111) << 2) | b2.unwrap_or(0) >> 6) as usize] as char,
+                );
+            }
+            if let Some(b2) = b2 {
+                output.push(TABLE[(b2 & 0b0011_1111) as usize] as char);
+            }
+
+            index += 3;
+        }
+        output
+    }
+
+    fn auth_response_packet(seq: u32, ok: bool, player_id: &str, error_code: &str) -> Vec<u8> {
+        encode_proto_packet(
+            MessageType::AuthRes,
+            seq,
+            &pb::AuthRes {
+                ok,
+                player_id: player_id.to_string(),
+                error_code: error_code.to_string(),
+            },
+        )
+    }
+
+    fn prime_keepalive_timer(app: &mut App, interval: Duration) {
+        let mut state = app.world_mut().resource_mut::<MyServerKeepaliveState>();
+        state.interval = interval;
+        state.timer = Timer::new(interval, TimerMode::Repeating);
+        state.timer.set_elapsed(interval);
     }
 
     #[test]
@@ -2244,6 +2504,370 @@ mod tests {
             Some("Bearer access-token")
         );
         assert_eq!(header(&ticket, "Content-Type"), Some("application/json"));
+    }
+
+    #[test]
+    fn issue_ticket_requires_login_and_selected_character() {
+        let mut app = test_app();
+        app.world_mut().write_message(MyServerCommand::IssueTicket {
+            reconnect_game: false,
+        });
+        app.update();
+
+        let events = read_messages::<MyServerEvent>(&app);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            MyServerEvent::TicketRefreshFailed { error }
+                if error == "cannot issue ticket before login"
+        )));
+        assert!(latest_http_request(&app).is_none());
+
+        app.world_mut()
+            .resource_mut::<MyServerSession>()
+            .access_token = Some("access-token".to_string());
+        app.world_mut().write_message(MyServerCommand::IssueTicket {
+            reconnect_game: false,
+        });
+        app.update();
+
+        let events = read_messages::<MyServerEvent>(&app);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            MyServerEvent::TicketRefreshFailed { error }
+                if error == "cannot issue ticket before selecting a character"
+        )));
+        assert!(latest_http_request(&app).is_none());
+    }
+
+    #[test]
+    fn issue_ticket_sends_selected_character_and_preserves_connection_without_reconnect() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(77);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.ticket = Some(ticket_for_test("plr_1", "chr_1", "2026-06-25T12:15:00Z"));
+            session.connected = true;
+            session.authenticated = true;
+            session.connection_id = Some(connection_id);
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut().write_message(MyServerCommand::IssueTicket {
+            reconnect_game: false,
+        });
+        app.update();
+
+        let request = latest_http_request(&app).unwrap();
+        assert_eq!(
+            request.url,
+            "http://auth.test/root/api/v1/game-ticket/issue"
+        );
+        assert_eq!(body_json(&request)["character_id"], "chr_1");
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 200,
+                headers: Vec::new(),
+                body: format!(
+                    r#"{{
+                        "ok": true,
+                        "playerId": "plr_1",
+                        "characterId": "chr_1",
+                        "worldId": 0,
+                        "ticket": "{}",
+                        "ticketExpiresAt": "2026-06-25T12:20:00Z",
+                        "gameProxyHost": "game.test",
+                        "gameProxyPort": 14400
+                    }}"#,
+                    ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z")
+                )
+                .into_bytes(),
+            }));
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(
+            session.ticket_expires_at.as_deref(),
+            Some("2026-06-25T12:20:00Z")
+        );
+        assert_eq!(session.connection_id, Some(connection_id));
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Authenticated
+        );
+        assert!(disconnect_commands(&app).is_empty());
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::TicketRefreshed { ticket_expires_at }
+                        if ticket_expires_at == "2026-06-25T12:20:00Z"
+                ))
+        );
+    }
+
+    #[test]
+    fn disabled_keepalive_still_refreshes_expiring_ticket_without_sending_ping() {
+        let mut app = test_app();
+        {
+            let mut config = app.world_mut().resource_mut::<MyServerConfig>();
+            config.keepalive_enabled = false;
+            config.keepalive_interval = Duration::from_secs(1);
+            config.ticket_refresh_margin = Duration::from_secs(60);
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.ticket = Some(ticket_for_test("plr_1", "chr_1", "1"));
+            session.ticket_expires_at = Some("1".to_string());
+            session.connected = true;
+            session.authenticated = true;
+            session.connection_id = Some(ConnectionId::from_raw(91));
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+        prime_keepalive_timer(&mut app, Duration::from_secs(1));
+        app.update();
+
+        let request = latest_http_request(&app).unwrap();
+        assert_eq!(
+            request.url,
+            "http://auth.test/root/api/v1/game-ticket/issue"
+        );
+        assert_eq!(body_json(&request)["character_id"], "chr_1");
+        assert!(sent_packets(&app).is_empty());
+
+        let mut app = test_app();
+        {
+            let mut config = app.world_mut().resource_mut::<MyServerConfig>();
+            config.keepalive_enabled = false;
+            config.keepalive_interval = Duration::from_secs(1);
+            config.ticket_refresh_margin = Duration::from_secs(1);
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.ticket = Some(ticket_for_test("plr_1", "chr_1", "4102444800"));
+            session.ticket_expires_at = Some("4102444800".to_string());
+            session.connected = true;
+            session.authenticated = true;
+            session.connection_id = Some(ConnectionId::from_raw(92));
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+        prime_keepalive_timer(&mut app, Duration::from_secs(1));
+        app.update();
+
+        assert!(latest_http_request(&app).is_none());
+        assert!(sent_packets(&app).is_empty());
+    }
+
+    #[test]
+    fn issue_ticket_reconnect_uses_response_ticket_and_disconnects_old_connection() {
+        let mut app = test_app();
+        let old_connection_id = ConnectionId::from_raw(88);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.connection_id = Some(old_connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut().write_message(MyServerCommand::IssueTicket {
+            reconnect_game: true,
+        });
+        app.update();
+        let request = latest_http_request(&app).unwrap();
+
+        let new_ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 200,
+                headers: Vec::new(),
+                body: format!(
+                    r#"{{
+                        "ok": true,
+                        "playerId": "plr_1",
+                        "characterId": "chr_1",
+                        "worldId": 0,
+                        "ticket": "{new_ticket}",
+                        "ticketExpiresAt": "2026-06-25T12:20:00Z",
+                        "gameProxyHost": "game.test",
+                        "gameProxyPort": 14400
+                    }}"#
+                )
+                .into_bytes(),
+            }));
+        app.update();
+
+        assert!(disconnect_commands(&app).contains(&old_connection_id));
+        let (_, transport, addr) = latest_connect_command(&app).unwrap();
+        assert_eq!(transport, NetworkTransport::Tcp);
+        assert_eq!(addr, "game.test:14400");
+        assert_eq!(
+            app.world().resource::<MyServerSession>().ticket.as_deref(),
+            Some(new_ticket.as_str())
+        );
+    }
+
+    #[test]
+    fn connect_rejects_legacy_ticket_without_character_id() {
+        let mut app = test_app();
+        let legacy_ticket = format!(
+            "{}.signature",
+            encode_base64url_for_test(
+                br#"{"playerId":"plr_1","worldId":0,"exp":"2026-06-25T12:15:00Z","ver":1}"#
+            )
+        );
+        app.world_mut()
+            .write_message(MyServerCommand::ConnectWithTicket {
+                ticket: legacy_ticket,
+                transport: NetworkTransport::Tcp,
+                host: Some("game.test".to_string()),
+                port: Some(14400),
+            });
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::ReconnectFailed
+        );
+        assert!(latest_connect_command(&app).is_none());
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::GameAuthRejected {
+                        error_code,
+                        reason: GameAuthFailureReason::MissingCharacterId,
+                    } if error_code == "MISSING_CHARACTER_ID"
+                ))
+        );
+    }
+
+    #[test]
+    fn connect_then_auth_uses_current_ticket_and_accepts_success() {
+        let mut app = test_app();
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        app.world_mut()
+            .write_message(MyServerCommand::ConnectWithTicket {
+                ticket: ticket.clone(),
+                transport: NetworkTransport::Tcp,
+                host: Some("game.test".to_string()),
+                port: Some(14400),
+            });
+        app.update();
+
+        let (connection_id, _, _) = latest_connect_command(&app).unwrap();
+        app.world_mut().write_message(NetworkEvent::Connected {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            remote_addr: "game.test:14400".to_string(),
+        });
+        app.update();
+
+        let packets = sent_packets(&app);
+        let (_, payload) = packets.last().unwrap();
+        let mut codec = super::super::protocol::PacketCodec::default();
+        let packet = codec.push_bytes(payload).unwrap().remove(0);
+        assert_eq!(packet.message_type(), Some(MessageType::AuthReq));
+        assert_eq!(packet.decode::<pb::AuthReq>().unwrap().ticket, ticket);
+        let seq = packet.header.seq;
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: auth_response_packet(seq, true, "plr_1", ""),
+        });
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>();
+        assert!(session.authenticated);
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Authenticated
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::Authenticated { player_id } if player_id == "plr_1"
+                ))
+        );
+    }
+
+    #[test]
+    fn auth_failure_codes_are_classified() {
+        for (error_code, expected_reason) in [
+            ("TICKET_EXPIRED", GameAuthFailureReason::TicketExpired),
+            (
+                "MISSING_CHARACTER_ID",
+                GameAuthFailureReason::MissingCharacterId,
+            ),
+            ("ACCOUNT_BLOCKED", GameAuthFailureReason::AccountBlocked),
+            ("CHARACTER_BLOCKED", GameAuthFailureReason::CharacterBlocked),
+            ("SOMETHING_NEW", GameAuthFailureReason::Unknown),
+        ] {
+            let mut app = test_app();
+            let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+            app.world_mut()
+                .write_message(MyServerCommand::ConnectWithTicket {
+                    ticket,
+                    transport: NetworkTransport::Tcp,
+                    host: Some("game.test".to_string()),
+                    port: Some(14400),
+                });
+            app.update();
+
+            let (connection_id, _, _) = latest_connect_command(&app).unwrap();
+            app.world_mut().write_message(NetworkEvent::Connected {
+                connection_id,
+                transport: NetworkTransport::Tcp,
+                remote_addr: "game.test:14400".to_string(),
+            });
+            app.update();
+            let seq = {
+                let packets = sent_packets(&app);
+                let (_, payload) = packets.last().unwrap();
+                let mut codec = super::super::protocol::PacketCodec::default();
+                codec.push_bytes(payload).unwrap().remove(0).header.seq
+            };
+
+            app.world_mut().write_message(NetworkEvent::Packet {
+                connection_id,
+                transport: NetworkTransport::Tcp,
+                payload: auth_response_packet(seq, false, "", error_code),
+            });
+            app.update();
+
+            assert_eq!(
+                app.world()
+                    .resource::<MyServerSession>()
+                    .game_connection_state,
+                GameConnectionState::Disconnected
+            );
+            assert!(
+                read_messages::<MyServerEvent>(&app)
+                    .iter()
+                    .any(|event| matches!(
+                        event,
+                        MyServerEvent::GameAuthRejected {
+                            error_code: code,
+                            reason,
+                        } if code == error_code && *reason == expected_reason
+                    ))
+            );
+        }
     }
 
     #[test]
