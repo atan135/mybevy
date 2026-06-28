@@ -15,11 +15,11 @@ use super::types::{
     ApiErrorResponse, CharacterCreateResponse, CharacterLifecycleResponse, CharacterListResponse,
     CharacterProfileResponse, CharacterSelectResponse, ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL,
     LoginResponse, MovementClientState, MyServerAutoClientConfig, MyServerAutoClientState,
-    MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot, MyServerEvent, MyServerOperation,
-    MyServerSession, PendingHttpOperation, PendingHttpRequest, PendingRequest,
-    RegisterPendingReviewResponse, RegisterResponse, TicketResponse, character_select_endpoint,
-    classify_game_auth_failure, parse_character_bound_ticket, redact_secret_fingerprint,
-    ticket_endpoint,
+    MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot, MyServerDisplayError,
+    MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerSession, PendingHttpOperation,
+    PendingHttpRequest, PendingRequest, RegisterPendingReviewResponse, RegisterResponse,
+    TicketResponse, character_select_endpoint, classify_game_auth_failure,
+    parse_character_bound_ticket, redact_secret_fingerprint, ticket_endpoint,
 };
 
 pub struct MyServerPlugin;
@@ -585,7 +585,11 @@ fn handle_network_events(
                     None,
                     &session,
                 );
-                write_http_failure(&mut events, &pending.operation, error.clone());
+                write_display_error(
+                    &mut events,
+                    MyServerDisplayError::transport(operation, Some(error.clone())),
+                );
+                write_legacy_http_failure(&mut events, &pending.operation, error.clone());
                 events.write(MyServerEvent::NetworkFailed {
                     operation,
                     error: error.clone(),
@@ -623,6 +627,15 @@ fn handle_network_events(
                         Some(MessageType::AuthReq),
                         Some("MISSING_TICKET"),
                     );
+                    write_display_error(
+                        &mut events,
+                        display_error_from_game_code(
+                            Some(MessageType::AuthReq),
+                            None,
+                            "MISSING_TICKET",
+                            Some("connected without a ticket".to_string()),
+                        ),
+                    );
                     events.write(MyServerEvent::RequestFailed {
                         seq: None,
                         message_type: Some(MessageType::AuthReq),
@@ -649,6 +662,15 @@ fn handle_network_events(
                         error_code: error.clone(),
                         reason: classify_game_auth_failure(&error),
                     });
+                    write_display_error(
+                        &mut events,
+                        display_error_from_game_code(
+                            Some(MessageType::AuthReq),
+                            None,
+                            &error,
+                            Some(error.clone()),
+                        ),
+                    );
                     events.write(MyServerEvent::RequestFailed {
                         seq: None,
                         message_type: Some(MessageType::AuthReq),
@@ -680,6 +702,13 @@ fn handle_network_events(
                     remote_addr: remote_addr.clone(),
                     error: error.clone(),
                 });
+                write_display_error(
+                    &mut events,
+                    MyServerDisplayError::transport(
+                        MyServerOperation::GameConnect,
+                        Some(error.clone()),
+                    ),
+                );
                 events.write(MyServerEvent::NetworkFailed {
                     operation: MyServerOperation::GameConnect,
                     error: error.clone(),
@@ -693,6 +722,10 @@ fn handle_network_events(
                 let packets = match session.codec.push_bytes(payload) {
                     Ok(packets) => packets,
                     Err(error) => {
+                        write_display_error(
+                            &mut events,
+                            MyServerDisplayError::protocol(None, None, Some(error.clone())),
+                        );
                         events.write(MyServerEvent::ProtocolError { error });
                         continue;
                     }
@@ -707,6 +740,13 @@ fn handle_network_events(
                 error,
                 ..
             } if Some(*connection_id) == session.connection_id => {
+                write_display_error(
+                    &mut events,
+                    MyServerDisplayError::transport(
+                        MyServerOperation::GameRequest,
+                        Some(error.clone()),
+                    ),
+                );
                 events.write(MyServerEvent::RequestFailed {
                     seq: None,
                     message_type: None,
@@ -1095,6 +1135,18 @@ fn send_refresh_ticket(
 ) {
     let Some(access_token) = session.access_token.clone() else {
         session.http_operation_failed(&PendingHttpOperation::TicketIssue { reconnect_game });
+        write_display_error(
+            events,
+            MyServerDisplayError::from_error_code(
+                MyServerErrorSource::Client,
+                Some(MyServerOperation::TicketRefresh),
+                None,
+                None,
+                None,
+                "UNAUTHORIZED",
+                Some("cannot issue ticket before login".to_string()),
+            ),
+        );
         events.write(MyServerEvent::TicketRefreshFailed {
             error: "cannot issue ticket before login".to_string(),
         });
@@ -1106,6 +1158,18 @@ fn send_refresh_ticket(
     };
     let Some(character_id) = session.character_id.clone() else {
         session.http_operation_failed(&PendingHttpOperation::TicketIssue { reconnect_game });
+        write_display_error(
+            events,
+            MyServerDisplayError::from_error_code(
+                MyServerErrorSource::Client,
+                Some(MyServerOperation::TicketRefresh),
+                None,
+                None,
+                None,
+                "MISSING_CHARACTER_ID",
+                Some("cannot issue ticket before selecting a character".to_string()),
+            ),
+        );
         events.write(MyServerEvent::TicketRefreshFailed {
             error: "cannot issue ticket before selecting a character".to_string(),
         });
@@ -1545,7 +1609,13 @@ where
     if !(200..300).contains(&status) {
         let error = http_error_message(operation, status, body);
         apply_http_failure_state(session, operation, &error);
-        write_http_failure(events, operation, error.clone());
+        write_http_failure_with_context(
+            events,
+            operation,
+            error.clone(),
+            Some(status),
+            parse_api_error_code(body),
+        );
         events.write(MyServerEvent::NetworkFailed {
             operation: operation.event_operation(),
             error,
@@ -1553,12 +1623,32 @@ where
         return None;
     }
 
+    if let Some(api_error) = parse_api_error_detail(body) {
+        if api_error.ok == Some(false) {
+            let error = api_error
+                .display
+                .clone()
+                .unwrap_or_else(|| format!("{:?} returned ok=false", operation.event_operation()));
+            apply_http_failure_state(session, operation, &error);
+            write_http_failure_with_context(events, operation, error.clone(), None, api_error.code);
+            events.write(MyServerEvent::NetworkFailed {
+                operation: operation.event_operation(),
+                error,
+            });
+            return None;
+        }
+    }
+
     match serde_json::from_slice::<T>(body) {
         Ok(response) => Some(response),
         Err(error) => {
             let error = format!("failed to parse HTTP response JSON: {error}");
             apply_http_failure_state(session, operation, &error);
-            write_http_failure(events, operation, error.clone());
+            write_display_error(
+                events,
+                MyServerDisplayError::json_parse(operation.event_operation(), Some(error.clone())),
+            );
+            write_legacy_http_failure(events, operation, error.clone());
             events.write(MyServerEvent::NetworkFailed {
                 operation: operation.event_operation(),
                 error,
@@ -1582,7 +1672,13 @@ where
     if !(200..300).contains(&status) {
         let error = http_error_message(operation, status, body);
         apply_http_failure_state(session, operation, &error);
-        write_http_failure(events, operation, error.clone());
+        write_http_failure_with_context(
+            events,
+            operation,
+            error.clone(),
+            Some(status),
+            parse_api_error_code(body),
+        );
         events.write(MyServerEvent::NetworkFailed {
             operation: operation.event_operation(),
             error,
@@ -1590,12 +1686,32 @@ where
         return None;
     }
 
+    if let Some(api_error) = parse_api_error_detail(body) {
+        if api_error.ok == Some(false) {
+            let error = api_error
+                .display
+                .clone()
+                .unwrap_or_else(|| format!("{:?} returned ok=false", operation.event_operation()));
+            apply_http_failure_state(session, operation, &error);
+            write_http_failure_with_context(events, operation, error.clone(), None, api_error.code);
+            events.write(MyServerEvent::NetworkFailed {
+                operation: operation.event_operation(),
+                error,
+            });
+            return None;
+        }
+    }
+
     match parser(body) {
         Ok(response) => Some(response),
         Err(error) => {
             let error = format!("failed to parse HTTP response JSON: {error}");
             apply_http_failure_state(session, operation, &error);
-            write_http_failure(events, operation, error.clone());
+            write_display_error(
+                events,
+                MyServerDisplayError::json_parse(operation.event_operation(), Some(error.clone())),
+            );
+            write_legacy_http_failure(events, operation, error.clone());
             events.write(MyServerEvent::NetworkFailed {
                 operation: operation.event_operation(),
                 error,
@@ -1625,23 +1741,40 @@ fn http_error_message(operation: &PendingHttpOperation, status: u16, body: &[u8]
 }
 
 fn parse_api_error(body: &[u8]) -> Option<String> {
+    parse_api_error_detail(body).and_then(|detail| detail.display)
+}
+
+#[derive(Clone, Debug)]
+struct ParsedApiError {
+    ok: Option<bool>,
+    code: Option<String>,
+    display: Option<String>,
+}
+
+fn parse_api_error_detail(body: &[u8]) -> Option<ParsedApiError> {
     let response = serde_json::from_slice::<ApiErrorResponse>(body).ok()?;
+    let ok = response.ok;
     let code = api_error_code(&response);
-    let message = response.message.or_else(|| {
-        response
-            .extra
-            .get("message")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-    });
-    match (code, message) {
+    let message = api_error_message(response);
+    let display = match (code.clone(), message) {
         (Some(code), Some(message)) if !message.trim().is_empty() => {
             Some(format!("{code}: {message}"))
         }
         (Some(code), _) => Some(code),
         (None, Some(message)) if !message.trim().is_empty() => Some(message),
         _ => None,
-    }
+    };
+    Some(ParsedApiError { ok, code, display })
+}
+
+fn api_error_message(response: ApiErrorResponse) -> Option<String> {
+    response.message.or_else(|| {
+        response
+            .extra
+            .get("message")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn parse_api_error_code(body: &[u8]) -> Option<String> {
@@ -1671,6 +1804,32 @@ fn api_error_code(response: &ApiErrorResponse) -> Option<String> {
 }
 
 fn write_http_failure(
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: &PendingHttpOperation,
+    error: String,
+) {
+    write_http_failure_with_context(events, operation, error, None, None);
+}
+
+fn write_http_failure_with_context(
+    events: &mut MessageWriter<MyServerEvent>,
+    operation: &PendingHttpOperation,
+    error: String,
+    status: Option<u16>,
+    error_code: Option<String>,
+) {
+    events.write(MyServerEvent::DisplayError {
+        error: display_error_from_http_operation(
+            operation,
+            status,
+            error_code,
+            Some(error.clone()),
+        ),
+    });
+    write_legacy_http_failure(events, operation, error);
+}
+
+fn write_legacy_http_failure(
     events: &mut MessageWriter<MyServerEvent>,
     operation: &PendingHttpOperation,
     error: String,
@@ -1706,6 +1865,59 @@ fn write_http_failure(
             events.write(MyServerEvent::LogoutFailed { error });
         }
     }
+}
+
+fn write_display_error(events: &mut MessageWriter<MyServerEvent>, error: MyServerDisplayError) {
+    events.write(MyServerEvent::DisplayError { error });
+}
+
+fn display_error_from_http_operation(
+    operation: &PendingHttpOperation,
+    status: Option<u16>,
+    error_code: Option<String>,
+    detail: Option<String>,
+) -> MyServerDisplayError {
+    let operation_kind = operation.event_operation();
+    if let Some(status) = status {
+        return MyServerDisplayError::http_status(operation_kind, status, error_code, detail);
+    }
+    if let Some(error_code) = error_code {
+        return MyServerDisplayError::from_error_code(
+            MyServerErrorSource::Http,
+            Some(operation_kind),
+            None,
+            None,
+            None,
+            error_code,
+            detail,
+        );
+    }
+    MyServerDisplayError::from_error_code(
+        MyServerErrorSource::Client,
+        Some(operation_kind),
+        None,
+        None,
+        None,
+        detail.clone().unwrap_or_default(),
+        detail,
+    )
+}
+
+fn display_error_from_game_code(
+    message_type: Option<MessageType>,
+    seq: Option<u32>,
+    error_code: &str,
+    detail: Option<String>,
+) -> MyServerDisplayError {
+    MyServerDisplayError::from_error_code(
+        MyServerErrorSource::Game,
+        Some(MyServerOperation::GameRequest),
+        message_type,
+        seq,
+        None,
+        error_code,
+        detail,
+    )
 }
 
 fn apply_http_failure_state(
@@ -1809,6 +2021,15 @@ fn handle_register_response(
                 .message
                 .filter(|message| !message.trim().is_empty())
                 .unwrap_or_else(|| "Registration submitted for review".to_string());
+            write_display_error(
+                events,
+                display_error_from_http_operation(
+                    &operation,
+                    None,
+                    Some(code.clone()),
+                    Some(message.clone()),
+                ),
+            );
             events.write(MyServerEvent::AccountStatusBlocked { code, message });
         }
     }
@@ -2057,6 +2278,15 @@ fn connect_with_ticket(
                 ticket_fp = %redact_secret_fingerprint(&ticket),
                 "MyServer refused game connection with invalid ticket"
             );
+            write_display_error(
+                events,
+                display_error_from_game_code(
+                    Some(MessageType::AuthReq),
+                    None,
+                    &error,
+                    Some(error.clone()),
+                ),
+            );
             events.write(MyServerEvent::RequestFailed {
                 seq: None,
                 message_type: Some(MessageType::AuthReq),
@@ -2088,6 +2318,15 @@ fn connect_with_ticket(
                 ticket_character_id = %ticket_payload.character_id,
                 selected_character_id = %current_character_id,
                 "MyServer refused game connection with mismatched ticket"
+            );
+            write_display_error(
+                events,
+                display_error_from_game_code(
+                    Some(MessageType::AuthReq),
+                    None,
+                    "TICKET_CHARACTER_MISMATCH",
+                    Some("TICKET_CHARACTER_MISMATCH".to_string()),
+                ),
             );
             events.write(MyServerEvent::RequestFailed {
                 seq: None,
@@ -2297,6 +2536,13 @@ where
     M: prost::Message,
 {
     let Some(connection_id) = session.connection_id else {
+        write_display_error(
+            events,
+            MyServerDisplayError::transport(
+                MyServerOperation::GameRequest,
+                Some("game connection is not open".to_string()),
+            ),
+        );
         events.write(MyServerEvent::RequestFailed {
             seq: None,
             message_type: Some(request_type),
@@ -2332,6 +2578,14 @@ fn handle_game_packet(
     packet: Packet,
 ) {
     let Some(message_type) = packet.message_type() else {
+        write_display_error(
+            events,
+            MyServerDisplayError::protocol(
+                None,
+                Some(packet.header.seq),
+                Some(format!("unknown msgType {}", packet.header.msg_type)),
+            ),
+        );
         events.write(MyServerEvent::ProtocolError {
             error: format!("unknown msgType {}", packet.header.msg_type),
         });
@@ -2342,6 +2596,15 @@ fn handle_game_packet(
         match packet.decode::<pb::ErrorRes>() {
             Ok(error) => {
                 session.pending.remove(&packet.header.seq);
+                write_display_error(
+                    events,
+                    display_error_from_game_code(
+                        Some(MessageType::ErrorRes),
+                        Some(packet.header.seq),
+                        &error.error_code,
+                        Some(error.message.clone()),
+                    ),
+                );
                 events.write(MyServerEvent::Error {
                     seq: packet.header.seq,
                     error_code: error.error_code,
@@ -2349,6 +2612,14 @@ fn handle_game_packet(
                 });
             }
             Err(error) => {
+                write_display_error(
+                    events,
+                    MyServerDisplayError::protobuf_decode(
+                        Some(MessageType::ErrorRes),
+                        Some(packet.header.seq),
+                        Some(error.clone()),
+                    ),
+                );
                 events.write(MyServerEvent::ProtocolError { error });
             }
         }
@@ -2415,6 +2686,17 @@ fn handle_response_packet(
     packet: Packet,
 ) {
     let Some(pending) = session.pending.remove(&packet.header.seq) else {
+        write_display_error(
+            events,
+            MyServerDisplayError::protocol(
+                Some(message_type),
+                Some(packet.header.seq),
+                Some(format!(
+                    "received response {:?} for unknown seq {}",
+                    message_type, packet.header.seq
+                )),
+            ),
+        );
         events.write(MyServerEvent::ProtocolError {
             error: format!(
                 "received response {:?} for unknown seq {}",
@@ -2425,6 +2707,17 @@ fn handle_response_packet(
     };
 
     if pending.response_type != message_type {
+        write_display_error(
+            events,
+            MyServerDisplayError::protocol(
+                Some(message_type),
+                Some(packet.header.seq),
+                Some(format!(
+                    "unexpected response type for seq {}: expected {:?}, got {:?}",
+                    packet.header.seq, pending.response_type, message_type
+                )),
+            ),
+        );
         events.write(MyServerEvent::ProtocolError {
             error: format!(
                 "unexpected response type for seq {}: expected {:?}, got {:?}",
@@ -2483,9 +2776,18 @@ fn handle_response_packet(
                     error_code: response.error_code.clone(),
                 });
                 events.write(MyServerEvent::GameAuthRejected {
-                    error_code: response.error_code,
+                    error_code: response.error_code.clone(),
                     reason,
                 });
+                write_display_error(
+                    events,
+                    display_error_from_game_code(
+                        Some(MessageType::AuthRes),
+                        Some(packet.header.seq),
+                        &response.error_code,
+                        Some(response.error_code.clone()),
+                    ),
+                );
             }
             Err(error) => {
                 session.game_auth_failed();
@@ -2502,6 +2804,14 @@ fn handle_response_packet(
                     error_code: "PROTOCOL_ERROR".to_string(),
                     reason: classify_game_auth_failure("PROTOCOL_ERROR"),
                 });
+                write_display_error(
+                    events,
+                    MyServerDisplayError::protobuf_decode(
+                        Some(MessageType::AuthRes),
+                        Some(packet.header.seq),
+                        Some(error.clone()),
+                    ),
+                );
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
@@ -2510,10 +2820,28 @@ fn handle_response_packet(
             Ok(response) => {
                 if response.ok {
                     session.room_id = Some(response.room_id.clone());
+                } else {
+                    write_display_error(
+                        events,
+                        display_error_from_game_code(
+                            Some(MessageType::RoomJoinRes),
+                            Some(packet.header.seq),
+                            &response.error_code,
+                            Some(response.error_code.clone()),
+                        ),
+                    );
                 }
                 events.write(MyServerEvent::RoomJoined(response));
             }
             Err(error) => {
+                write_display_error(
+                    events,
+                    MyServerDisplayError::protobuf_decode(
+                        Some(MessageType::RoomJoinRes),
+                        Some(packet.header.seq),
+                        Some(error.clone()),
+                    ),
+                );
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
@@ -2525,6 +2853,14 @@ fn handle_response_packet(
                 events.write(MyServerEvent::RoomLeft(response));
             }
             Err(error) => {
+                write_display_error(
+                    events,
+                    MyServerDisplayError::protobuf_decode(
+                        Some(MessageType::RoomLeaveRes),
+                        Some(packet.header.seq),
+                        Some(error.clone()),
+                    ),
+                );
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
@@ -2546,6 +2882,14 @@ fn handle_response_packet(
             handle_character_elements_response(session, events, packet)
         }
         _ => {
+            write_display_error(
+                events,
+                MyServerDisplayError::protocol(
+                    Some(message_type),
+                    Some(packet.header.seq),
+                    Some(format!("unhandled response type {:?}", message_type)),
+                ),
+            );
             events.write(MyServerEvent::ProtocolError {
                 error: format!("unhandled response type {:?}", message_type),
             });
@@ -2558,11 +2902,20 @@ where
     M: prost::Message + Default,
     F: FnOnce(M) -> MyServerEvent,
 {
+    let message_type = packet.message_type();
     match packet.decode::<M>() {
         Ok(message) => {
             events.write(event_factory(message));
         }
         Err(error) => {
+            write_display_error(
+                events,
+                MyServerDisplayError::protobuf_decode(
+                    message_type,
+                    Some(packet.header.seq),
+                    Some(error.clone()),
+                ),
+            );
             events.write(MyServerEvent::ProtocolError { error });
         }
     }
@@ -2606,6 +2959,14 @@ fn handle_server_redirect_push(
             events.write(MyServerEvent::ServerRedirectPush(push));
         }
         Err(error) => {
+            write_display_error(
+                events,
+                MyServerDisplayError::protobuf_decode(
+                    Some(MessageType::ServerRedirectPush),
+                    Some(packet.header.seq),
+                    Some(error.clone()),
+                ),
+            );
             events.write(MyServerEvent::ProtocolError { error });
         }
     }
@@ -2638,6 +2999,14 @@ fn handle_session_kick_push(
             events.write(MyServerEvent::SessionKickPush(push));
         }
         Err(error) => {
+            write_display_error(
+                events,
+                MyServerDisplayError::protobuf_decode(
+                    Some(MessageType::SessionKickPush),
+                    Some(packet.header.seq),
+                    Some(error.clone()),
+                ),
+            );
             events.write(MyServerEvent::ProtocolError { error });
         }
     }
@@ -2650,6 +3019,17 @@ fn handle_character_elements_response(
 ) {
     match packet.decode::<pb::GetCharacterElementsRes>() {
         Ok(response) => {
+            if !response.ok {
+                write_display_error(
+                    events,
+                    display_error_from_game_code(
+                        Some(MessageType::GetCharacterElementsRes),
+                        Some(packet.header.seq),
+                        &response.error_code,
+                        Some(response.error_code.clone()),
+                    ),
+                );
+            }
             if let Some(cache) =
                 session.apply_character_elements_response(&response, SystemTime::now())
             {
@@ -2658,6 +3038,14 @@ fn handle_character_elements_response(
             events.write(MyServerEvent::CharacterElementsLoaded(response));
         }
         Err(error) => {
+            write_display_error(
+                events,
+                MyServerDisplayError::protobuf_decode(
+                    Some(MessageType::GetCharacterElementsRes),
+                    Some(packet.header.seq),
+                    Some(error.clone()),
+                ),
+            );
             events.write(MyServerEvent::ProtocolError { error });
         }
     }
@@ -2676,6 +3064,14 @@ fn handle_character_elements_push(
             events.write(MyServerEvent::CharacterElementsChanged(push));
         }
         Err(error) => {
+            write_display_error(
+                events,
+                MyServerDisplayError::protobuf_decode(
+                    Some(MessageType::CharacterElementsChangePush),
+                    Some(packet.header.seq),
+                    Some(error.clone()),
+                ),
+            );
             events.write(MyServerEvent::ProtocolError { error });
         }
     }
@@ -2700,9 +3096,12 @@ mod tests {
     use bevy::prelude::{App, Messages, MinimalPlugins};
     use serde_json::Value;
 
+    use super::super::protocol::encode_raw_packet;
     use super::*;
     use crate::framework::network::{HttpMethod, HttpResponse};
-    use crate::game::myserver::types::{GameAuthFailureReason, GameConnectionState};
+    use crate::game::myserver::types::{
+        GameAuthFailureReason, GameConnectionState, MyServerErrorKind, MyServerErrorSource,
+    };
 
     fn test_config() -> MyServerConfig {
         MyServerConfig {
@@ -2839,6 +3238,41 @@ mod tests {
         )
     }
 
+    fn room_join_response_packet(seq: u32, ok: bool, error_code: &str) -> Vec<u8> {
+        encode_proto_packet(
+            MessageType::RoomJoinRes,
+            seq,
+            &pb::RoomJoinRes {
+                ok,
+                room_id: "room-1".to_string(),
+                error_code: error_code.to_string(),
+            },
+        )
+    }
+
+    fn character_elements_response_packet(seq: u32, ok: bool, error_code: &str) -> Vec<u8> {
+        encode_proto_packet(
+            MessageType::GetCharacterElementsRes,
+            seq,
+            &pb::GetCharacterElementsRes {
+                ok,
+                error_code: error_code.to_string(),
+                character_id: "chr_1".to_string(),
+                elements: None,
+            },
+        )
+    }
+
+    fn display_errors(app: &App) -> Vec<MyServerDisplayError> {
+        read_messages::<MyServerEvent>(app)
+            .into_iter()
+            .filter_map(|event| match event {
+                MyServerEvent::DisplayError { error } => Some(error),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn prime_keepalive_timer(app: &mut App, interval: Duration) {
         let mut state = app.world_mut().resource_mut::<MyServerKeepaliveState>();
         state.interval = interval;
@@ -2965,6 +3399,13 @@ mod tests {
             MyServerEvent::TicketRefreshFailed { error }
                 if error == "cannot issue ticket before login"
         )));
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::Unauthorized
+                && error.source == MyServerErrorSource::Client
+                && error.operation == Some(MyServerOperation::TicketRefresh)
+                && error.error_code.as_deref() == Some("UNAUTHORIZED")
+        }));
         assert!(latest_http_request(&app).is_none());
 
         app.world_mut()
@@ -2981,6 +3422,13 @@ mod tests {
             MyServerEvent::TicketRefreshFailed { error }
                 if error == "cannot issue ticket before selecting a character"
         )));
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::MissingCharacterId
+                && error.source == MyServerErrorSource::Client
+                && error.operation == Some(MyServerOperation::TicketRefresh)
+                && error.error_code.as_deref() == Some("MISSING_CHARACTER_ID")
+        }));
         assert!(latest_http_request(&app).is_none());
     }
 
@@ -3351,6 +3799,272 @@ mod tests {
                     ))
             );
         }
+    }
+
+    #[test]
+    fn http_failures_emit_stable_display_error() {
+        let mut app = test_app();
+        app.world_mut().write_message(MyServerCommand::GuestLogin {
+            guest_id: Some("guest-1".to_string()),
+            connect_game: false,
+        });
+        app.update();
+
+        let request = latest_http_request(&app).unwrap();
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 403,
+                headers: Vec::new(),
+                body: br#"{ "ok": false, "error": "IP_BLOCKED", "message": "blocked" }"#.to_vec(),
+            }));
+        app.update();
+
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::IpBlocked
+                && error.source == MyServerErrorSource::Http
+                && error.operation == Some(MyServerOperation::GuestLogin)
+                && error.http_status == Some(403)
+                && error.error_code.as_deref() == Some("IP_BLOCKED")
+                && error.message_key == "myserver.error.ip_blocked"
+                && error.blocking
+        }));
+    }
+
+    #[test]
+    fn http_ok_false_preserves_server_error_code_for_display_error() {
+        let mut app = test_app();
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.access_token = Some("access-token".to_string());
+            session.character_id = Some("chr_1".to_string());
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::SelectCharacter {
+                character_id: "chr_1".to_string(),
+                connect_game: false,
+            });
+        app.update();
+
+        let request = latest_http_request(&app).unwrap();
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 200,
+                headers: Vec::new(),
+                body: br#"{ "ok": false, "errorCode": "CHARACTER_BANNED", "message": "banned" }"#
+                    .to_vec(),
+            }));
+        app.update();
+
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::CharacterUnavailable
+                && error.source == MyServerErrorSource::Http
+                && error.operation == Some(MyServerOperation::CharacterSelect)
+                && error.error_code.as_deref() == Some("CHARACTER_BANNED")
+                && error.message_key == "myserver.error.character_unavailable"
+                && !error.blocking
+        }));
+    }
+
+    #[test]
+    fn json_parse_failures_emit_stable_display_error() {
+        let mut app = test_app();
+        app.world_mut().write_message(MyServerCommand::GuestLogin {
+            guest_id: Some("guest-1".to_string()),
+            connect_game: false,
+        });
+        app.update();
+
+        let request = latest_http_request(&app).unwrap();
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 200,
+                headers: Vec::new(),
+                body: b"{".to_vec(),
+            }));
+        app.update();
+
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::JsonParseFailed
+                && error.source == MyServerErrorSource::Protocol
+                && error.operation == Some(MyServerOperation::GuestLogin)
+                && error.message_key == "myserver.error.json_parse_failed"
+        }));
+    }
+
+    #[test]
+    fn transport_failures_emit_stable_display_error() {
+        let mut app = test_app();
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        app.world_mut()
+            .write_message(MyServerCommand::ConnectWithTicket {
+                ticket,
+                transport: NetworkTransport::Tcp,
+                host: Some("game.test".to_string()),
+                port: Some(14400),
+            });
+        app.update();
+
+        let (connection_id, _, _) = latest_connect_command(&app).unwrap();
+        app.world_mut()
+            .write_message(NetworkEvent::ConnectionFailed {
+                connection_id,
+                transport: NetworkTransport::Tcp,
+                remote_addr: "game.test:14400".to_string(),
+                error: "connect timeout after 10s".to_string(),
+            });
+        app.update();
+
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::ConnectionTimeout
+                && error.source == MyServerErrorSource::Transport
+                && error.operation == Some(MyServerOperation::GameConnect)
+                && error.retryable
+        }));
+    }
+
+    #[test]
+    fn game_auth_and_domain_failures_emit_stable_display_errors() {
+        let mut app = test_app();
+        let ticket = ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z");
+        app.world_mut()
+            .write_message(MyServerCommand::ConnectWithTicket {
+                ticket,
+                transport: NetworkTransport::Tcp,
+                host: Some("game.test".to_string()),
+                port: Some(14400),
+            });
+        app.update();
+
+        let (connection_id, _, _) = latest_connect_command(&app).unwrap();
+        app.world_mut().write_message(NetworkEvent::Connected {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            remote_addr: "game.test:14400".to_string(),
+        });
+        app.update();
+        let auth_seq = {
+            let packets = sent_packets(&app);
+            let (_, payload) = packets.last().unwrap();
+            let mut codec = super::super::protocol::PacketCodec::default();
+            codec.push_bytes(payload).unwrap().remove(0).header.seq
+        };
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: auth_response_packet(auth_seq, false, "", "MISSING_CHARACTER_ID"),
+        });
+        app.update();
+
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::MissingCharacterId
+                && error.message_type == Some(MessageType::AuthRes)
+                && error.seq == Some(auth_seq)
+                && error.error_code.as_deref() == Some("MISSING_CHARACTER_ID")
+        }));
+
+        let mut app = test_app();
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(ConnectionId::from_raw(55));
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+        app.world_mut().write_message(MyServerCommand::JoinRoom {
+            room_id: "room-1".to_string(),
+            policy_id: "movement_demo".to_string(),
+        });
+        app.update();
+        let join_seq = {
+            let packets = sent_packets(&app);
+            let (_, payload) = packets.last().unwrap();
+            let mut codec = super::super::protocol::PacketCodec::default();
+            codec.push_bytes(payload).unwrap().remove(0).header.seq
+        };
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id: ConnectionId::from_raw(55),
+            transport: NetworkTransport::Tcp,
+            payload: room_join_response_packet(join_seq, false, "ROOM_FULL"),
+        });
+        app.update();
+
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::RoomJoinFailed
+                && error.message_type == Some(MessageType::RoomJoinRes)
+                && error.seq == Some(join_seq)
+                && error.error_code.as_deref() == Some("ROOM_FULL")
+        }));
+    }
+
+    #[test]
+    fn protocol_decode_and_character_elements_failures_emit_display_errors() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(66);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut()
+            .resource_mut::<MyServerSession>()
+            .pending
+            .insert(
+                9,
+                PendingRequest {
+                    response_type: MessageType::AuthRes,
+                },
+            );
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: encode_raw_packet(MessageType::AuthRes, 9, &[0x0a, 0xff]),
+        });
+        app.update();
+
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::ProtobufDecodeFailed
+                && error.message_type == Some(MessageType::AuthRes)
+                && error.seq == Some(9)
+        }));
+
+        app.world_mut()
+            .resource_mut::<MyServerSession>()
+            .pending
+            .insert(
+                10,
+                PendingRequest {
+                    response_type: MessageType::GetCharacterElementsRes,
+                },
+            );
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: character_elements_response_packet(10, false, "ELEMENTS_UNAVAILABLE"),
+        });
+        app.update();
+
+        let errors = display_errors(&app);
+        assert!(errors.iter().any(|error| {
+            error.kind == MyServerErrorKind::CharacterElementsFailed
+                && error.message_type == Some(MessageType::GetCharacterElementsRes)
+                && error.seq == Some(10)
+                && error.error_code.as_deref() == Some("ELEMENTS_UNAVAILABLE")
+        }));
     }
 
     #[test]

@@ -955,6 +955,9 @@ pub struct MyServerAutoClientState {
 
 #[derive(Clone, Debug, Message)]
 pub enum MyServerEvent {
+    DisplayError {
+        error: MyServerDisplayError,
+    },
     LoginSucceeded(LoginSession),
     LoginFailed {
         error: String,
@@ -1111,6 +1114,396 @@ pub enum MyServerOperation {
     Logout,
     GameConnect,
     GameRequest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MyServerErrorSource {
+    Client,
+    Http,
+    Transport,
+    Protocol,
+    Game,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MyServerErrorKind {
+    AccountBlocked,
+    IpBlocked,
+    PlayerBlocked,
+    BlocklistUnavailable,
+    Maintenance,
+    AccountBanned,
+    PendingReview,
+    VersionIncompatible,
+    CharacterUnavailable,
+    CharacterLimitReached,
+    CharacterLifecycleFailed,
+    TicketExpired,
+    MissingCharacterId,
+    PreauthMessageNotAllowed,
+    MessageRateExceeded,
+    GameAuthRejected,
+    RoomJoinFailed,
+    CharacterElementsFailed,
+    Unauthorized,
+    HttpStatus,
+    JsonParseFailed,
+    ProtobufDecodeFailed,
+    ConnectionTimeout,
+    TransportFailed,
+    ProtocolError,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MyServerDisplayError {
+    pub kind: MyServerErrorKind,
+    pub source: MyServerErrorSource,
+    pub operation: Option<MyServerOperation>,
+    pub message_type: Option<MessageType>,
+    pub seq: Option<u32>,
+    pub http_status: Option<u16>,
+    pub error_code: Option<String>,
+    pub message_key: &'static str,
+    pub retryable: bool,
+    pub blocking: bool,
+    pub detail: Option<String>,
+}
+
+impl MyServerDisplayError {
+    pub fn from_error_code(
+        source: MyServerErrorSource,
+        operation: Option<MyServerOperation>,
+        message_type: Option<MessageType>,
+        seq: Option<u32>,
+        http_status: Option<u16>,
+        error_code: impl AsRef<str>,
+        detail: Option<String>,
+    ) -> Self {
+        let code = normalize_error_code(error_code.as_ref());
+        let kind = classify_display_error_code(&code, operation, message_type);
+        Self::new(
+            kind,
+            source,
+            operation,
+            message_type,
+            seq,
+            http_status,
+            (!code.is_empty()).then_some(code),
+            detail,
+        )
+    }
+
+    pub fn http_status(
+        operation: MyServerOperation,
+        http_status: u16,
+        error_code: Option<String>,
+        detail: Option<String>,
+    ) -> Self {
+        if let Some(error_code) = error_code {
+            return Self::from_error_code(
+                MyServerErrorSource::Http,
+                Some(operation),
+                None,
+                None,
+                Some(http_status),
+                error_code,
+                detail,
+            );
+        }
+
+        Self::new(
+            if http_status == 401 {
+                MyServerErrorKind::Unauthorized
+            } else {
+                MyServerErrorKind::HttpStatus
+            },
+            MyServerErrorSource::Http,
+            Some(operation),
+            None,
+            None,
+            Some(http_status),
+            None,
+            detail,
+        )
+    }
+
+    pub fn json_parse(operation: MyServerOperation, detail: Option<String>) -> Self {
+        Self::new(
+            MyServerErrorKind::JsonParseFailed,
+            MyServerErrorSource::Protocol,
+            Some(operation),
+            None,
+            None,
+            None,
+            None,
+            detail,
+        )
+    }
+
+    pub fn protobuf_decode(
+        message_type: Option<MessageType>,
+        seq: Option<u32>,
+        detail: Option<String>,
+    ) -> Self {
+        Self::new(
+            MyServerErrorKind::ProtobufDecodeFailed,
+            MyServerErrorSource::Protocol,
+            Some(MyServerOperation::GameRequest),
+            message_type,
+            seq,
+            None,
+            None,
+            detail,
+        )
+    }
+
+    pub fn protocol(
+        message_type: Option<MessageType>,
+        seq: Option<u32>,
+        detail: Option<String>,
+    ) -> Self {
+        Self::new(
+            MyServerErrorKind::ProtocolError,
+            MyServerErrorSource::Protocol,
+            Some(MyServerOperation::GameRequest),
+            message_type,
+            seq,
+            None,
+            None,
+            detail,
+        )
+    }
+
+    pub fn transport(operation: MyServerOperation, detail: Option<String>) -> Self {
+        let is_timeout = detail
+            .as_deref()
+            .map(|value| normalize_error_code(value).contains("TIMEOUT"))
+            .unwrap_or(false);
+        Self::new(
+            if is_timeout {
+                MyServerErrorKind::ConnectionTimeout
+            } else {
+                MyServerErrorKind::TransportFailed
+            },
+            MyServerErrorSource::Transport,
+            Some(operation),
+            None,
+            None,
+            None,
+            None,
+            detail,
+        )
+    }
+
+    fn new(
+        kind: MyServerErrorKind,
+        source: MyServerErrorSource,
+        operation: Option<MyServerOperation>,
+        message_type: Option<MessageType>,
+        seq: Option<u32>,
+        http_status: Option<u16>,
+        error_code: Option<String>,
+        detail: Option<String>,
+    ) -> Self {
+        Self {
+            kind,
+            source,
+            operation,
+            message_type,
+            seq,
+            http_status,
+            error_code,
+            message_key: kind.message_key(),
+            retryable: kind.retryable(),
+            blocking: kind.blocking(),
+            detail: sanitize_error_detail(detail),
+        }
+    }
+}
+
+impl MyServerErrorKind {
+    pub const fn message_key(self) -> &'static str {
+        match self {
+            Self::AccountBlocked => "myserver.error.account_blocked",
+            Self::IpBlocked => "myserver.error.ip_blocked",
+            Self::PlayerBlocked => "myserver.error.player_blocked",
+            Self::BlocklistUnavailable => "myserver.error.blocklist_unavailable",
+            Self::Maintenance => "myserver.error.maintenance",
+            Self::AccountBanned => "myserver.error.account_banned",
+            Self::PendingReview => "myserver.error.pending_review",
+            Self::VersionIncompatible => "myserver.error.version_incompatible",
+            Self::CharacterUnavailable => "myserver.error.character_unavailable",
+            Self::CharacterLimitReached => "myserver.error.character_limit_reached",
+            Self::CharacterLifecycleFailed => "myserver.error.character_lifecycle_failed",
+            Self::TicketExpired => "myserver.error.ticket_expired",
+            Self::MissingCharacterId => "myserver.error.missing_character_id",
+            Self::PreauthMessageNotAllowed => "myserver.error.preauth_message_not_allowed",
+            Self::MessageRateExceeded => "myserver.error.message_rate_exceeded",
+            Self::GameAuthRejected => "myserver.error.game_auth_rejected",
+            Self::RoomJoinFailed => "myserver.error.room_join_failed",
+            Self::CharacterElementsFailed => "myserver.error.character_elements_failed",
+            Self::Unauthorized => "myserver.error.unauthorized",
+            Self::HttpStatus => "myserver.error.http_status",
+            Self::JsonParseFailed => "myserver.error.json_parse_failed",
+            Self::ProtobufDecodeFailed => "myserver.error.protobuf_decode_failed",
+            Self::ConnectionTimeout => "myserver.error.connection_timeout",
+            Self::TransportFailed => "myserver.error.transport_failed",
+            Self::ProtocolError => "myserver.error.protocol_error",
+            Self::Unknown => "myserver.error.unknown",
+        }
+    }
+
+    pub const fn retryable(self) -> bool {
+        matches!(
+            self,
+            Self::BlocklistUnavailable
+                | Self::Maintenance
+                | Self::HttpStatus
+                | Self::ConnectionTimeout
+                | Self::TransportFailed
+                | Self::MessageRateExceeded
+                | Self::TicketExpired
+        )
+    }
+
+    pub const fn blocking(self) -> bool {
+        matches!(
+            self,
+            Self::AccountBlocked
+                | Self::IpBlocked
+                | Self::PlayerBlocked
+                | Self::Maintenance
+                | Self::AccountBanned
+                | Self::PendingReview
+                | Self::VersionIncompatible
+                | Self::Unauthorized
+        )
+    }
+}
+
+pub fn classify_display_error_code(
+    normalized_code: &str,
+    operation: Option<MyServerOperation>,
+    message_type: Option<MessageType>,
+) -> MyServerErrorKind {
+    let code = normalized_code;
+    if code.is_empty() {
+        return fallback_display_error_kind(operation, message_type);
+    }
+    if code.contains("IP_BLOCKED") || code.contains("IP_BANNED") {
+        return MyServerErrorKind::IpBlocked;
+    }
+    if code.contains("ACCOUNT_BLOCKED") {
+        return MyServerErrorKind::AccountBlocked;
+    }
+    if code.contains("PLAYER_BLOCKED") {
+        return MyServerErrorKind::PlayerBlocked;
+    }
+    if code.contains("BLOCKLIST_UNAVAILABLE") || code.contains("DYNAMIC_BLACKLIST_UNAVAILABLE") {
+        return MyServerErrorKind::BlocklistUnavailable;
+    }
+    if code.contains("MAINTENANCE") {
+        return MyServerErrorKind::Maintenance;
+    }
+    if code.contains("VERSION_INCOMPATIBLE") || code.contains("CLIENT_VERSION") {
+        return MyServerErrorKind::VersionIncompatible;
+    }
+    if code.contains("PENDING_REVIEW")
+        || code.contains("UNDER_REVIEW")
+        || code.contains("REVIEWING")
+    {
+        return MyServerErrorKind::PendingReview;
+    }
+    if code.contains("CHARACTER_LIMIT")
+        || code.contains("CHARACTER_COUNT_LIMIT")
+        || code.contains("CHARACTER_QUOTA")
+        || code.contains("TOO_MANY_CHARACTERS")
+    {
+        return MyServerErrorKind::CharacterLimitReached;
+    }
+    if code.contains("CHARACTER_NOT_FOUND")
+        || code.contains("CHARACTER_NOT_SELECTABLE")
+        || code.contains("CHARACTER_UNAVAILABLE")
+        || code.contains("CHARACTER_DELETED")
+        || code.contains("CHARACTER_BLOCKED")
+        || code.contains("CHARACTER_BANNED")
+    {
+        return MyServerErrorKind::CharacterUnavailable;
+    }
+    if code.contains("LIFECYCLE") || code.contains("RESTORE") || code.contains("DELETE_COOLDOWN") {
+        return MyServerErrorKind::CharacterLifecycleFailed;
+    }
+    if code.contains("BANNED") || code.contains("SUSPENDED") || code.contains("FORBIDDEN") {
+        return MyServerErrorKind::AccountBanned;
+    }
+    if code.contains("UNAUTHORIZED")
+        || code.contains("TOKEN_INVALID")
+        || code.contains("TOKEN_EXPIRED")
+    {
+        return MyServerErrorKind::Unauthorized;
+    }
+    if code.contains("MISSING_CHARACTER_ID")
+        || code.contains("CHARACTER_ID_REQUIRED")
+        || code.contains("NO_CHARACTER_ID")
+    {
+        return MyServerErrorKind::MissingCharacterId;
+    }
+    if code.contains("TICKET") && code.contains("EXPIRED") {
+        return MyServerErrorKind::TicketExpired;
+    }
+    if code.contains("PREAUTH_MESSAGE_NOT_ALLOWED") {
+        return MyServerErrorKind::PreauthMessageNotAllowed;
+    }
+    if code.contains("MSG_RATE_EXCEEDED") || code.contains("RATE_LIMIT") {
+        return MyServerErrorKind::MessageRateExceeded;
+    }
+    if code.contains("AUTH") {
+        return MyServerErrorKind::GameAuthRejected;
+    }
+    fallback_display_error_kind(operation, message_type)
+}
+
+fn fallback_display_error_kind(
+    operation: Option<MyServerOperation>,
+    message_type: Option<MessageType>,
+) -> MyServerErrorKind {
+    match (operation, message_type) {
+        (_, Some(MessageType::RoomJoinReq | MessageType::RoomJoinRes)) => {
+            MyServerErrorKind::RoomJoinFailed
+        }
+        (_, Some(MessageType::GetCharacterElementsReq | MessageType::GetCharacterElementsRes)) => {
+            MyServerErrorKind::CharacterElementsFailed
+        }
+        (Some(MyServerOperation::CharacterDelete | MyServerOperation::CharacterRestore), _) => {
+            MyServerErrorKind::CharacterLifecycleFailed
+        }
+        (Some(MyServerOperation::CharacterSelect), _) => MyServerErrorKind::CharacterUnavailable,
+        (Some(MyServerOperation::TicketRefresh), _) => MyServerErrorKind::TicketExpired,
+        (Some(MyServerOperation::GameConnect), _) => MyServerErrorKind::TransportFailed,
+        _ => MyServerErrorKind::Unknown,
+    }
+}
+
+fn sanitize_error_detail(detail: Option<String>) -> Option<String> {
+    detail.and_then(|value| {
+        let value = value.trim();
+        if value.is_empty() {
+            None
+        } else if detail_contains_secret_marker(value) {
+            Some("[redacted sensitive detail]".to_string())
+        } else {
+            Some(value.chars().take(512).collect())
+        }
+    })
+}
+
+fn detail_contains_secret_marker(value: &str) -> bool {
+    let code = normalize_error_code(value);
+    code.contains("ACCESS_TOKEN")
+        || code.contains("REFRESH_TOKEN")
+        || code.contains("PASSWORD")
+        || code.contains("TICKET")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2983,6 +3376,201 @@ mod tests {
             classify_game_auth_failure("SOMETHING_ELSE"),
             GameAuthFailureReason::Unknown
         );
+    }
+
+    #[test]
+    fn maps_display_error_codes_to_stable_kinds_and_keys() {
+        for (code, expected_kind, expected_key, retryable, blocking) in [
+            (
+                "ACCOUNT_BLOCKED",
+                MyServerErrorKind::AccountBlocked,
+                "myserver.error.account_blocked",
+                false,
+                true,
+            ),
+            (
+                "IP_BLOCKED",
+                MyServerErrorKind::IpBlocked,
+                "myserver.error.ip_blocked",
+                false,
+                true,
+            ),
+            (
+                "PLAYER_BLOCKED",
+                MyServerErrorKind::PlayerBlocked,
+                "myserver.error.player_blocked",
+                false,
+                true,
+            ),
+            (
+                "BLOCKLIST_UNAVAILABLE",
+                MyServerErrorKind::BlocklistUnavailable,
+                "myserver.error.blocklist_unavailable",
+                true,
+                false,
+            ),
+            (
+                "MISSING_CHARACTER_ID",
+                MyServerErrorKind::MissingCharacterId,
+                "myserver.error.missing_character_id",
+                false,
+                false,
+            ),
+            (
+                "PREAUTH_MESSAGE_NOT_ALLOWED",
+                MyServerErrorKind::PreauthMessageNotAllowed,
+                "myserver.error.preauth_message_not_allowed",
+                false,
+                false,
+            ),
+            (
+                "MSG_RATE_EXCEEDED",
+                MyServerErrorKind::MessageRateExceeded,
+                "myserver.error.message_rate_exceeded",
+                true,
+                false,
+            ),
+            (
+                "CHARACTER_DELETE_COOLDOWN",
+                MyServerErrorKind::CharacterLifecycleFailed,
+                "myserver.error.character_lifecycle_failed",
+                false,
+                false,
+            ),
+            (
+                "CHARACTER_LIMIT_REACHED",
+                MyServerErrorKind::CharacterLimitReached,
+                "myserver.error.character_limit_reached",
+                false,
+                false,
+            ),
+            (
+                "CHARACTER_BANNED",
+                MyServerErrorKind::CharacterUnavailable,
+                "myserver.error.character_unavailable",
+                false,
+                false,
+            ),
+            (
+                "CHARACTER_BLOCKED",
+                MyServerErrorKind::CharacterUnavailable,
+                "myserver.error.character_unavailable",
+                false,
+                false,
+            ),
+            (
+                "CHARACTER_DELETED",
+                MyServerErrorKind::CharacterUnavailable,
+                "myserver.error.character_unavailable",
+                false,
+                false,
+            ),
+            (
+                "TICKET_EXPIRED",
+                MyServerErrorKind::TicketExpired,
+                "myserver.error.ticket_expired",
+                true,
+                false,
+            ),
+            (
+                "SOMETHING_NEW",
+                MyServerErrorKind::Unknown,
+                "myserver.error.unknown",
+                false,
+                false,
+            ),
+        ] {
+            let error = MyServerDisplayError::from_error_code(
+                MyServerErrorSource::Game,
+                Some(MyServerOperation::GameRequest),
+                None,
+                None,
+                None,
+                code,
+                Some("diagnostic".to_string()),
+            );
+
+            assert_eq!(error.kind, expected_kind, "{code}");
+            assert_eq!(error.message_key, expected_key, "{code}");
+            assert_eq!(error.retryable, retryable, "{code}");
+            assert_eq!(error.blocking, blocking, "{code}");
+            assert_eq!(error.error_code.as_deref(), Some(code));
+        }
+    }
+
+    #[test]
+    fn character_banned_display_error_does_not_block_account() {
+        let error = MyServerDisplayError::from_error_code(
+            MyServerErrorSource::Http,
+            Some(MyServerOperation::CharacterSelect),
+            None,
+            None,
+            None,
+            "CHARACTER_BANNED",
+            Some("character is banned".to_string()),
+        );
+
+        assert_eq!(error.kind, MyServerErrorKind::CharacterUnavailable);
+        assert_eq!(error.message_key, "myserver.error.character_unavailable");
+        assert!(!error.blocking);
+    }
+
+    #[test]
+    fn display_error_detail_redacts_secret_markers() {
+        let error = MyServerDisplayError::from_error_code(
+            MyServerErrorSource::Http,
+            Some(MyServerOperation::Login),
+            None,
+            None,
+            None,
+            "PLAYER_BLOCKED",
+            Some("ticket=secret password=secret access_token=secret".to_string()),
+        );
+
+        assert_eq!(error.detail.as_deref(), Some("[redacted sensitive detail]"));
+    }
+
+    #[test]
+    fn maps_network_and_protocol_display_errors() {
+        let http = MyServerDisplayError::http_status(
+            MyServerOperation::Login,
+            503,
+            None,
+            Some("service unavailable".to_string()),
+        );
+        assert_eq!(http.kind, MyServerErrorKind::HttpStatus);
+        assert_eq!(http.source, MyServerErrorSource::Http);
+        assert_eq!(http.http_status, Some(503));
+        assert!(http.retryable);
+
+        let json = MyServerDisplayError::json_parse(
+            MyServerOperation::Login,
+            Some("expected value".to_string()),
+        );
+        assert_eq!(json.kind, MyServerErrorKind::JsonParseFailed);
+        assert_eq!(json.message_key, "myserver.error.json_parse_failed");
+
+        let proto = MyServerDisplayError::protobuf_decode(
+            Some(MessageType::AuthRes),
+            Some(7),
+            Some("decode failed".to_string()),
+        );
+        assert_eq!(proto.kind, MyServerErrorKind::ProtobufDecodeFailed);
+        assert_eq!(proto.message_type, Some(MessageType::AuthRes));
+        assert_eq!(proto.seq, Some(7));
+
+        let timeout = MyServerDisplayError::transport(
+            MyServerOperation::GameConnect,
+            Some("connect timeout after 10s".to_string()),
+        );
+        assert_eq!(timeout.kind, MyServerErrorKind::ConnectionTimeout);
+        assert!(timeout.retryable);
+
+        let transport = MyServerDisplayError::transport(
+            MyServerOperation::GameRequest,
+            Some("connection reset".to_string()),
+        );
+        assert_eq!(transport.kind, MyServerErrorKind::TransportFailed);
     }
 
     fn ticket_for_test(player_id: &str, character_id: &str, exp: &str) -> String {
