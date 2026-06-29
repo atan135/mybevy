@@ -5,6 +5,7 @@ use crate::framework::ui::{
 };
 
 pub(in crate::game) const OWNER_LOGIN: UiOwnerId = UiOwnerId::new("login");
+pub(in crate::game) const OWNER_CHARACTER_SELECT: UiOwnerId = UiOwnerId::new("character_select");
 pub(in crate::game) const OWNER_LOBBY: UiOwnerId = UiOwnerId::new("lobby");
 pub(in crate::game) const OWNER_AUDIO_SETTINGS: UiOwnerId = UiOwnerId::new("audio_settings");
 pub(in crate::game) const OWNER_AUDIO_MONITOR: UiOwnerId = UiOwnerId::new("audio_monitor");
@@ -16,6 +17,8 @@ pub(in crate::game) const OWNER_ROBOT_SYNC_SCENE: UiOwnerId = UiOwnerId::new("ro
 pub(in crate::game) const OWNER_FANGYUAN_HOME: UiOwnerId = UiOwnerId::new("fangyuan_home");
 
 pub(in crate::game) const PANEL_LOGIN: UiPanelId = UiPanelId::new("login_page");
+pub(in crate::game) const PANEL_CHARACTER_SELECT: UiPanelId =
+    UiPanelId::new("character_select_page");
 pub(in crate::game) const PANEL_GAME_LIST: UiPanelId = UiPanelId::new("game_list_page");
 pub(in crate::game) const PANEL_AUDIO_SETTINGS: UiPanelId = UiPanelId::new("audio_settings_page");
 pub(in crate::game) const PANEL_AUDIO_MONITOR: UiPanelId = UiPanelId::new("audio_monitor_page");

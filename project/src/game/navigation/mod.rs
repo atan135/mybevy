@@ -12,9 +12,9 @@ use crate::framework::ui::{
     widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
 };
 use crate::game::ui_ids::{
-    OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_FANGYUAN_HOME,
-    OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
-    OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+    OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT,
+    OWNER_FANGYUAN_HOME, OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE,
+    OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
 };
 
 pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
@@ -47,6 +47,7 @@ impl Plugin for NavigationPlugin {
 pub(super) enum AppUiMode {
     #[default]
     Login,
+    CharacterSelect,
     Lobby,
     AudioSettings,
     AudioMonitor,
@@ -62,6 +63,7 @@ impl AppUiMode {
     pub(crate) const fn ui_owner(self) -> UiOwnerId {
         match self {
             Self::Login => OWNER_LOGIN,
+            Self::CharacterSelect => OWNER_CHARACTER_SELECT,
             Self::Lobby => OWNER_LOBBY,
             Self::AudioSettings => OWNER_AUDIO_SETTINGS,
             Self::AudioMonitor => OWNER_AUDIO_MONITOR,
@@ -77,6 +79,7 @@ impl AppUiMode {
     pub(crate) const fn canonical_screen(self) -> &'static str {
         match self {
             Self::Login => "login",
+            Self::CharacterSelect => "character_select",
             Self::Lobby => "lobby",
             Self::AudioSettings => "audio_settings",
             Self::AudioMonitor => "audio_monitor",
@@ -92,6 +95,13 @@ impl AppUiMode {
     pub(crate) const fn aliases(self) -> &'static [&'static str] {
         match self {
             Self::Login => &["login"],
+            Self::CharacterSelect => &[
+                "character_select",
+                "character-select",
+                "characters",
+                "select_character",
+                "select-character",
+            ],
             Self::Lobby => &["lobby", "game_list", "game-list", "list"],
             Self::AudioSettings => &["audio_settings", "audio-settings", "audio", "settings"],
             Self::AudioMonitor => &[
@@ -249,9 +259,10 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     ),
 ];
 
-fn all_app_ui_modes() -> [AppUiMode; 10] {
+fn all_app_ui_modes() -> [AppUiMode; 11] {
     [
         AppUiMode::Login,
+        AppUiMode::CharacterSelect,
         AppUiMode::Lobby,
         AppUiMode::AudioSettings,
         AppUiMode::AudioMonitor,
@@ -268,8 +279,8 @@ fn all_app_ui_modes() -> [AppUiMode; 10] {
 mod tests {
     use super::*;
     use crate::game::ui_ids::{
-        OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_FANGYUAN_HOME, OWNER_ROBOT_SYNC_SCENE,
-        SCROLL_UI_GALLERY_MAIN,
+        OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
+        OWNER_ROBOT_SYNC_SCENE, SCROLL_UI_GALLERY_MAIN,
     };
 
     #[test]
@@ -285,6 +296,14 @@ mod tests {
     #[test]
     fn audio_gallery_mode_uses_dedicated_owner() {
         assert_eq!(AppUiMode::AudioGallery.ui_owner(), OWNER_AUDIO_GALLERY);
+    }
+
+    #[test]
+    fn character_select_mode_uses_dedicated_owner() {
+        assert_eq!(
+            AppUiMode::CharacterSelect.ui_owner(),
+            OWNER_CHARACTER_SELECT
+        );
     }
 
     #[test]
@@ -306,6 +325,18 @@ mod tests {
         assert_eq!(
             parse_start_screen_mode("audio-gallery"),
             Some(AppUiMode::AudioGallery)
+        );
+    }
+
+    #[test]
+    fn start_screen_aliases_include_character_select() {
+        assert_eq!(
+            parse_start_screen_mode("character_select"),
+            Some(AppUiMode::CharacterSelect)
+        );
+        assert_eq!(
+            parse_start_screen_mode("select-character"),
+            Some(AppUiMode::CharacterSelect)
         );
     }
 

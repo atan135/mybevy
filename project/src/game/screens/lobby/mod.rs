@@ -248,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn lobby_change_character_routes_to_login_and_keeps_account_session() {
+    fn lobby_change_character_routes_to_character_select_and_keeps_account_session() {
         let mut app = game_list_button_test_app();
         let button = app
             .world_mut()
@@ -266,7 +266,10 @@ mod tests {
         assert!(
             read_messages::<GameRouteCommand>(app.world())
                 .iter()
-                .any(|command| matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Login)))
+                .any(|command| matches!(
+                    command,
+                    GameRouteCommand::ChangeMode(AppUiMode::CharacterSelect)
+                ))
         );
     }
 

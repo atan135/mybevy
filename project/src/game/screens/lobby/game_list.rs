@@ -537,7 +537,7 @@ pub(super) fn handle_game_list_buttons(
             )));
         } else if is_change_character {
             myserver_commands.write(MyServerCommand::SwitchCharacter);
-            game_route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
+            game_route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::CharacterSelect));
         } else if is_logout {
             myserver_commands.write(MyServerCommand::Logout);
             game_route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));

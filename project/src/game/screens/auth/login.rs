@@ -28,11 +28,13 @@ use crate::game::{
         MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerSession,
     },
     navigation::{AppUiMode, GameRouteCommand, game_panel_root, secondary_route_button_key},
-    ui_ids::{OWNER_LOGIN, PANEL_LOGIN},
+    ui_ids::{OWNER_CHARACTER_SELECT, OWNER_LOGIN, PANEL_CHARACTER_SELECT, PANEL_LOGIN},
 };
 
 const LOGIN_SUBTITLE_BINDING_PATH: &str = "auth.login.subtitle";
-const LOGIN_SUBTITLE_FALLBACK: &str = "Account and Character";
+const LOGIN_SUBTITLE_FALLBACK: &str = "Account Login";
+const CHARACTER_SUBTITLE_BINDING_PATH: &str = "auth.character.subtitle";
+const CHARACTER_SUBTITLE_FALLBACK: &str = "Character Select";
 const DEFAULT_CHARACTER_NAME: &str = "";
 
 #[derive(Component)]
@@ -208,7 +210,7 @@ pub(super) fn setup_login_screen(
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     mut binding_values: ResMut<UiBindingValues>,
-    myserver_session: Res<MyServerSession>,
+    session: Res<MyServerSession>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
@@ -279,7 +281,110 @@ pub(super) fn setup_login_screen(
                     )
                     .unwrap(),
                 ));
-                spawn_auth_form_section(panel, theme, metrics, fonts, i18n, &myserver_session);
+                spawn_auth_form_section(panel, theme, metrics, fonts, i18n, &session);
+                panel.spawn((
+                    AuthDynamicRoot,
+                    Node {
+                        width: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(theme.layout.panel_gap),
+                        ..default()
+                    },
+                ));
+            });
+        });
+}
+
+pub(super) fn setup_character_select_screen(
+    mut commands: Commands,
+    theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
+    viewport: Res<UiViewport>,
+    fonts: Res<UiFontAssets>,
+    i18n: Res<UiI18n>,
+    mut binding_values: ResMut<UiBindingValues>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
+    session: Res<MyServerSession>,
+    mut clear_color: ResMut<ClearColor>,
+) {
+    if session.account_login_state != AccountLoginState::LoggedIn {
+        route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
+        return;
+    }
+
+    let theme = theme.into_inner();
+    let metrics = metrics.into_inner();
+    let fonts = fonts.into_inner();
+    let i18n = i18n.into_inner();
+    clear_color.0 = theme.colors.screen_background;
+    let subtitle = i18n.tr(CHARACTER_SUBTITLE_BINDING_PATH, CHARACTER_SUBTITLE_FALLBACK);
+    binding_values.set_text(CHARACTER_SUBTITLE_BINDING_PATH, subtitle.clone());
+
+    commands
+        .spawn((
+            DespawnOnExit(AppUiMode::CharacterSelect),
+            game_panel_root(
+                PANEL_CHARACTER_SELECT,
+                UiPanelKind::Page,
+                OWNER_CHARACTER_SELECT,
+            ),
+            UiLayerRoot {
+                layer: UiLayer::Page,
+            },
+            Node {
+                width: percent(100),
+                height: percent(100),
+                justify_content: JustifyContent::Center,
+                padding: viewport.safe_area_padding(metrics.page_padding),
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+            BackgroundColor(theme.colors.screen_background),
+            UiThemeBackgroundRole::Screen,
+            UiThemeRootNodeRole::Screen,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                UiThemePanelNodeRole::Standard,
+                Node {
+                    width: percent(100),
+                    max_width: px(theme.layout.auth_panel_width),
+                    align_self: AlignSelf::FlexStart,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(theme.layout.panel_gap),
+                    padding: UiRect::all(px(theme.panel.padding)),
+                    border: UiRect::all(px(theme.panel.border)),
+                    border_radius: BorderRadius::all(px(theme.panel.radius)),
+                    ..default()
+                },
+                BackgroundColor(theme.colors.panel_background),
+                BorderColor::all(theme.colors.panel_border),
+                UiThemeBackgroundRole::Panel,
+                UiThemeBorderRole::Panel,
+            ))
+            .with_children(|panel| {
+                panel.spawn(screen_title_key(
+                    theme,
+                    fonts,
+                    i18n,
+                    "auth.character.title",
+                    "Choose Character",
+                    UiThemeTextStyleRole::TitleLarge,
+                ));
+                panel.spawn((
+                    screen_label(
+                        theme,
+                        fonts,
+                        subtitle,
+                        UiThemeTextStyleRole::Subtitle,
+                        UiThemeTextColorRole::Muted,
+                    ),
+                    UiBoundText::with_fallback(
+                        CHARACTER_SUBTITLE_BINDING_PATH,
+                        CHARACTER_SUBTITLE_FALLBACK,
+                    )
+                    .unwrap(),
+                ));
                 panel.spawn((
                     AuthDynamicRoot,
                     Node {
@@ -385,6 +490,18 @@ fn spawn_auth_form_section(
 }
 
 fn spawn_dynamic_auth_children(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    snapshot: &LoginUiSnapshot,
+) {
+    spawn_status_notice(parent, theme, fonts, snapshot);
+    spawn_development_section(parent, theme, metrics, fonts, i18n);
+}
+
+fn spawn_dynamic_character_select_children(
     parent: &mut ChildSpawnerCommands,
     theme: &UiTheme,
     metrics: &UiMetrics,
@@ -1057,6 +1174,7 @@ pub(super) fn follow_myserver_login_events(
                 ui_state.last_error = None;
                 ui_state.notice = None;
                 commands.write(MyServerCommand::LoadCharacterList);
+                route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::CharacterSelect));
             }
             MyServerEvent::LoginFailed { error } => {
                 ui_state.notice = Some(AuthStatusNotice::generic_failure(
@@ -1086,6 +1204,12 @@ pub(super) fn follow_myserver_login_events(
                 focus_state.focused_entity = None;
                 ui_state.clear_runtime_state();
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+            }
+            MyServerEvent::LogoutSucceeded => {
+                clear_all_text_input_values(&mut input_values);
+                focus_state.focused_entity = None;
+                ui_state.clear_runtime_state();
+                route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
             }
             MyServerEvent::MaintenanceBlocked {
                 message,
@@ -1182,6 +1306,41 @@ pub(super) fn sync_login_screen_state(
     }
 }
 
+pub(super) fn sync_character_select_screen_state(
+    mut commands: Commands,
+    theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
+    fonts: Res<UiFontAssets>,
+    i18n: Res<UiI18n>,
+    session: Res<MyServerSession>,
+    mut ui_state: ResMut<LoginUiState>,
+    dynamic_roots: Query<Entity, With<AuthDynamicRoot>>,
+) {
+    let next_snapshot = LoginUiSnapshot::from_session(&session, &ui_state);
+    if ui_state.rendered.as_ref() == Some(&next_snapshot) && !i18n.is_changed() {
+        return;
+    }
+    ui_state.rendered = Some(next_snapshot.clone());
+
+    let theme = theme.into_inner();
+    let metrics = metrics.into_inner();
+    let fonts = fonts.into_inner();
+    let i18n = i18n.into_inner();
+    for root in &dynamic_roots {
+        commands.entity(root).despawn_related::<Children>();
+        commands.entity(root).with_children(|parent| {
+            spawn_dynamic_character_select_children(
+                parent,
+                theme,
+                metrics,
+                fonts,
+                i18n,
+                &next_snapshot,
+            );
+        });
+    }
+}
+
 pub(super) fn sync_login_button_flags(
     mut commands: Commands,
     session: Res<MyServerSession>,
@@ -1269,6 +1428,10 @@ pub(super) fn sync_login_binding_values(
     binding_values.set_text(
         LOGIN_SUBTITLE_BINDING_PATH,
         i18n.tr(LOGIN_SUBTITLE_BINDING_PATH, LOGIN_SUBTITLE_FALLBACK),
+    );
+    binding_values.set_text(
+        CHARACTER_SUBTITLE_BINDING_PATH,
+        i18n.tr(CHARACTER_SUBTITLE_BINDING_PATH, CHARACTER_SUBTITLE_FALLBACK),
     );
 }
 
@@ -2053,6 +2216,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn auth_login_success_routes_to_character_select_and_loads_characters() {
+        let mut app = auth_event_test_app();
+
+        app.world_mut()
+            .write_message(MyServerEvent::LoginSucceeded(test_login_session()));
+        app.update();
+
+        assert!(
+            read_messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::LoadCharacterList))
+        );
+        assert!(
+            read_messages::<GameRouteCommand>(&app)
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    GameRouteCommand::ChangeMode(AppUiMode::CharacterSelect)
+                ))
+        );
+    }
+
+    #[test]
+    fn auth_character_selected_routes_to_lobby() {
+        let mut app = auth_event_test_app();
+
+        app.world_mut()
+            .write_message(MyServerEvent::CharacterSelected {
+                player_id: "plr_1".to_string(),
+                character_id: "chr_1".to_string(),
+                world_id: Some(1),
+            });
+        app.update();
+
+        assert!(
+            read_messages::<GameRouteCommand>(&app)
+                .iter()
+                .any(|command| matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Lobby)))
+        );
+    }
+
+    #[test]
+    fn auth_logout_success_routes_to_login() {
+        let mut app = auth_event_test_app();
+
+        app.world_mut()
+            .write_message(MyServerEvent::LogoutSucceeded);
+        app.update();
+
+        assert!(
+            read_messages::<GameRouteCommand>(&app)
+                .iter()
+                .any(|command| matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Login)))
+        );
+    }
+
     trait CharacterTestExt {
         fn with_discriminator(self, value: &str) -> Self;
         fn with_short(self, value: &str) -> Self;
@@ -2081,11 +2301,36 @@ mod tests {
         app
     }
 
+    fn auth_event_test_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_message::<MyServerEvent>()
+            .add_message::<MyServerCommand>()
+            .add_message::<GameRouteCommand>()
+            .insert_resource(MyServerSession::default())
+            .init_resource::<LoginUiState>()
+            .init_resource::<UiFocusState>()
+            .add_systems(Update, follow_myserver_login_events);
+        app
+    }
+
     fn logged_in_session() -> MyServerSession {
         MyServerSession {
             account_login_state: AccountLoginState::LoggedIn,
             access_token: Some("access-token".to_string()),
             ..Default::default()
+        }
+    }
+
+    fn test_login_session() -> crate::game::myserver::LoginSession {
+        crate::game::myserver::LoginSession {
+            player_id: "plr_1".to_string(),
+            access_token: "access-token".to_string(),
+            ticket: None,
+            ticket_expires_at: None,
+            game_host: None,
+            game_port: None,
+            game_transport: None,
         }
     }
 
