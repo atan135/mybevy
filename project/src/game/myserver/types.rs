@@ -1007,6 +1007,21 @@ impl Default for MyServerAutoClientConfig {
 pub struct MyServerAutoClientState {
     pub ping_sent: bool,
     pub join_sent: bool,
+    pub character_list_sent: bool,
+    pub character_create_sent: bool,
+    pub character_select_sent: bool,
+    pub character_flow_player_id: Option<String>,
+    pub pending_created_character_id: Option<String>,
+}
+
+impl MyServerAutoClientState {
+    pub fn reset_character_flow(&mut self) {
+        self.character_list_sent = false;
+        self.character_create_sent = false;
+        self.character_select_sent = false;
+        self.character_flow_player_id = None;
+        self.pending_created_character_id = None;
+    }
 }
 
 #[derive(Clone, Debug, Message)]

@@ -12,6 +12,7 @@
 - 当前玩法是单界面触控/鼠标互动，并通过 authority 帧同步回放 `ui_touch` 输入：按下显示硬边圆形反馈，拖动生成水波纹拖尾，松开后在原地淡出
 - 当前内置 `project/src/framework/network/` 网络框架模块，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
 - 当前内置 `project/src/game/authority/` 控制机会话模块，提供本地控制机、局域网控制机和远端 MyServer 控制机的统一命令/事件接口
+- MyServer 登录链路采用账号 `player_id` 和玩法 `character_id` 分离：账号 ID 只用于登录、安全和审计；房间、匹配、输入、移动、战斗、背包、transfer 和 authority MyServer endpoint 都以当前 character-bound ticket 绑定的 `character_id` 作为玩法主体
 - `android/` 是 Android Gradle 壳工程，用于加载 Rust 产出的 `libproject.so` 并打包 APK
 
 ## 目录约定
@@ -34,7 +35,7 @@
 - `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
 - `project/src/game/scenes/`：具体游戏场景 ID、场景注册适配和场景专属组合逻辑
 - `project/src/game/navigation/`：游戏层页面模式、路由命令和路由按钮适配
-- `project/src/game/myserver/`：当前游戏的 MyServer 登录、房间和协议适配模块
+- `project/src/game/myserver/`：当前游戏的 MyServer 登录、角色列表、选角、character-bound ticket、game proxy 鉴权、房间、四属性和协议适配模块
 - `project/assets/`：贴图、音频、字体和其他资源
 - `project/Cargo.toml`：Rust 项目配置
 - `android/`：Android 打包工程

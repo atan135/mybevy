@@ -1445,3 +1445,57 @@ fn env_transport(name: &str) -> Option<NetworkTransport> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::{
+        ecs::message::{MessageCursor, Messages},
+        prelude::*,
+    };
+
+    use super::*;
+
+    fn read_messages<M>(world: &World) -> Vec<M>
+    where
+        M: Message + Clone,
+    {
+        let messages = world.resource::<Messages<M>>();
+        let mut cursor = MessageCursor::default();
+        cursor.read(messages).cloned().collect()
+    }
+
+    #[test]
+    fn myserver_authenticated_value_becomes_local_gameplay_subject() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<AuthoritySession>()
+            .add_message::<MyServerEvent>()
+            .add_message::<AuthorityEvent>()
+            .add_systems(Update, handle_myserver_authority_events);
+
+        app.world_mut().resource_mut::<AuthoritySession>().endpoint =
+            Some(AuthorityEndpoint::MyServer {
+                host: None,
+                port: None,
+                transport: NetworkTransport::Tcp,
+            });
+        app.world_mut().write_message(MyServerEvent::Authenticated {
+            player_id: "chr_1".to_string(),
+        });
+
+        app.update();
+
+        let session = app.world().resource::<AuthoritySession>();
+        assert_eq!(session.role, Some(AuthorityRole::Client));
+        assert_eq!(session.local_player_id.as_deref(), Some("chr_1"));
+        assert_eq!(session.authority_player_id.as_deref(), Some("myserver"));
+        assert!(
+            read_messages::<AuthorityEvent>(app.world())
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    AuthorityEvent::Connected { player_id, .. } if player_id == "chr_1"
+                ))
+        );
+    }
+}

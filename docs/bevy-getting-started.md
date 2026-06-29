@@ -840,6 +840,41 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-stack.ps1 -WithMatch
 
 当前本地完整栈需要 `-WithMatch`，否则 `game-server` 可能因为缺少 `match-service.grpc` 发现而无法正常启动。Robot Sync 使用的 TCP fallback 端口由 `game-proxy` 配置决定；脚本的 `-Port` 会写入 `MYSERVER_TCP_FALLBACK_PORT`，KCP transport 时写入 `MYSERVER_KCP_PORT`。
 
+MyServer 最新登录链路是账号身份和游戏角色身份分离的流程：
+
+1. 账号登录或游客登录先访问 `auth-http`，获得账号级 access token。
+2. 客户端拉取角色列表；没有角色时先创建角色，有角色时可读取 profile。
+3. 客户端选择角色后获得 character-bound game ticket。
+4. 客户端用 ticket 连接 `game-proxy` 并发送 `AuthReq`。
+5. `AuthRes.player_id` 是账号级 ID，仅保存到 `MyServerSession.player_id`；玩法、房间、输入、authority 本地主体、Touch Ripple 和 Robot Sync replay 都使用当前 ticket 绑定的 `character_id`。
+6. ticket 缺少 `character_id`、ticket 与当前选角不一致，或鉴权成功返回时本地没有选中角色，都按可诊断失败处理，不回退到账号 `player_id`。
+
+常用客户端环境变量：
+
+```powershell
+Set-Location project
+$env:MYSERVER_HTTP_BASE_URL="http://127.0.0.1:3000"
+$env:MYSERVER_GAME_HOST="127.0.0.1"
+$env:MYSERVER_TRANSPORT="tcp"
+$env:MYSERVER_TCP_FALLBACK_PORT="14000"
+$env:MYSERVER_TICKET_REFRESH_MARGIN_MS="30000"
+$env:MYSERVER_AUTO_RECONNECT_WITH_FRESH_TICKET="true"
+$env:MYSERVER_DIAGNOSTIC_TRACE="true"
+```
+
+最小手工验收顺序：
+
+1. 启动 MyServer 完整本地栈，并确认 `auth-http`、`game-server`、`game-proxy`、Redis、NATS 和 PostgreSQL 均可达。
+2. 用登录页执行正式账号登录，或点击游客登录。
+3. 拉取角色列表；如为空，创建角色。
+4. 选择当前角色，确认 ticket 签发请求体使用 `character_id`。
+5. 连接 game proxy，确认 `AuthReq` 后进入 `Authenticated`，authority local subject 显示为 `chr_*`。
+6. 加入 `ui-touch-room`、`robot-sync-room` 或当前测试房间，验证 ready、start、输入和服务端帧推送。
+7. 验证 ticket 提前补发、断开重连、redirect、kick 和维护模式的错误展示与日志字段。
+8. 进入游戏后发送 `GetCharacterElementsReq(1413)`，并能消费 `CharacterElementsChangePush(1505)` 或断线后重拉快照。
+
+详细验收、四属性、日志脱敏和暂缓项见 `docs/myserver/服务端最新登录流程客户端验收.md`。
+
 示例用法：
 
 ```rust

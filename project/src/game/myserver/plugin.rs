@@ -201,11 +201,13 @@ fn auto_client_startup(
 
 fn auto_client_follow_events(
     config: Res<MyServerAutoClientConfig>,
+    myserver_session: Res<MyServerSession>,
     mut state: ResMut<MyServerAutoClientState>,
     mut events: MessageReader<MyServerEvent>,
     mut commands: MessageWriter<MyServerCommand>,
 ) {
-    if !config.enabled {
+    let should_prepare_character = myserver_session.connect_after_login.is_some();
+    if !config.enabled && !should_prepare_character {
         return;
     }
 
@@ -218,9 +220,65 @@ fn auto_client_follow_events(
                     game_port = session.game_port.unwrap_or_default(),
                     "MyServer login succeeded"
                 );
+                if state.character_flow_player_id.as_deref() != Some(session.player_id.as_str()) {
+                    state.reset_character_flow();
+                    state.character_flow_player_id = Some(session.player_id.clone());
+                }
+                if should_prepare_character
+                    && session.ticket.is_none()
+                    && !state.character_list_sent
+                {
+                    state.character_list_sent = true;
+                    commands.write(MyServerCommand::LoadCharacterList);
+                }
             }
             MyServerEvent::LoginFailed { error } => {
+                state.reset_character_flow();
                 error!(%error, "MyServer login failed");
+            }
+            MyServerEvent::CharacterListLoaded { characters, .. } if should_prepare_character => {
+                if let Some(character) = characters.first() {
+                    auto_client_select_character(
+                        &mut state,
+                        &mut commands,
+                        character.character_id.clone(),
+                    );
+                } else if !state.character_create_sent {
+                    state.character_create_sent = true;
+                    let name = auto_client_character_name(
+                        myserver_session
+                            .guest_id
+                            .as_deref()
+                            .or(config.guest_id.as_deref()),
+                    );
+                    commands.write(MyServerCommand::CreateCharacter {
+                        name,
+                        appearance_json: None,
+                    });
+                }
+            }
+            MyServerEvent::CharacterCreationRequired { .. } if should_prepare_character => {
+                if !state.character_create_sent {
+                    state.character_create_sent = true;
+                    let name = auto_client_character_name(
+                        myserver_session
+                            .guest_id
+                            .as_deref()
+                            .or(config.guest_id.as_deref()),
+                    );
+                    commands.write(MyServerCommand::CreateCharacter {
+                        name,
+                        appearance_json: None,
+                    });
+                }
+            }
+            MyServerEvent::CharacterCreated { character } if should_prepare_character => {
+                state.pending_created_character_id = Some(character.character_id.clone());
+                auto_client_select_character(
+                    &mut state,
+                    &mut commands,
+                    character.character_id.clone(),
+                );
             }
             MyServerEvent::Connecting {
                 transport,
@@ -246,14 +304,14 @@ fn auto_client_follow_events(
             MyServerEvent::Authenticated { player_id } => {
                 info!(%player_id, "MyServer game auth succeeded");
 
-                if config.ping_after_auth && !state.ping_sent {
+                if config.enabled && config.ping_after_auth && !state.ping_sent {
                     state.ping_sent = true;
                     commands.write(MyServerCommand::Ping {
                         client_time_ms: current_unix_ms(),
                     });
                 }
 
-                if config.join_after_auth && !state.join_sent {
+                if config.enabled && config.join_after_auth && !state.join_sent {
                     state.join_sent = true;
                     commands.write(MyServerCommand::JoinRoom {
                         room_id: config.room_id.clone(),
@@ -326,8 +384,59 @@ fn auto_client_follow_events(
             MyServerEvent::Disconnected { reason } => {
                 warn!(?reason, "MyServer disconnected");
             }
+            MyServerEvent::LogoutSucceeded => {
+                state.reset_character_flow();
+            }
             _ => {}
         }
+    }
+}
+
+fn auto_client_select_character(
+    state: &mut MyServerAutoClientState,
+    commands: &mut MessageWriter<MyServerCommand>,
+    character_id: String,
+) {
+    if state.character_select_sent {
+        return;
+    }
+    state.character_select_sent = true;
+    commands.write(MyServerCommand::SelectCharacter {
+        character_id,
+        connect_game: true,
+    });
+}
+
+fn auto_client_character_name(guest_id: Option<&str>) -> String {
+    let suffix = guest_id
+        .and_then(|guest_id| {
+            let filtered = guest_id
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric())
+                .collect::<String>();
+            if filtered.is_empty() {
+                None
+            } else {
+                Some(filtered)
+            }
+        })
+        .unwrap_or_else(|| "Dev".to_string());
+    let suffix = suffix
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    let mut name = format!("Bevy{suffix}");
+    if name.len() > 16 {
+        name.truncate(16);
+    }
+    if name.len() < 2 {
+        "BevyDev".to_string()
+    } else {
+        name
     }
 }
 
@@ -2233,15 +2342,6 @@ fn handle_login_success(
     events.write(MyServerEvent::LoginSucceeded(login_session.clone()));
 
     let Some(ticket) = login_session.ticket else {
-        if session.connect_after_login.take().is_some() {
-            events.write(MyServerEvent::RequestFailed {
-                seq: None,
-                message_type: Some(MessageType::AuthReq),
-                error:
-                    "login only returned an account session; select a character before connecting"
-                        .to_string(),
-            });
-        }
         return;
     };
 
@@ -2938,6 +3038,42 @@ fn handle_response_packet(
     match message_type {
         MessageType::AuthRes => match packet.decode::<pb::AuthRes>() {
             Ok(response) if response.ok => {
+                let Some(gameplay_character_id) = session.character_id.clone() else {
+                    session.game_auth_failed();
+                    session.clear_reconnect_plan();
+                    trace_game_transition(
+                        "game_auth_missing_character_id",
+                        session,
+                        session.connection_id,
+                        None,
+                        Some(packet.header.seq),
+                        Some(MessageType::AuthRes),
+                        Some("MISSING_CHARACTER_ID"),
+                    );
+                    warn!(
+                        connection_id = session.connection_id.map(ConnectionId::raw),
+                        seq = packet.header.seq,
+                        account_player_id = %response.player_id,
+                        "MyServer game auth succeeded without selected character"
+                    );
+                    events.write(MyServerEvent::AuthFailed {
+                        error_code: "MISSING_CHARACTER_ID".to_string(),
+                    });
+                    events.write(MyServerEvent::GameAuthRejected {
+                        error_code: "MISSING_CHARACTER_ID".to_string(),
+                        reason: classify_game_auth_failure("MISSING_CHARACTER_ID"),
+                    });
+                    write_display_error(
+                        events,
+                        display_error_from_game_code(
+                            Some(MessageType::AuthRes),
+                            Some(packet.header.seq),
+                            "MISSING_CHARACTER_ID",
+                            Some("MISSING_CHARACTER_ID".to_string()),
+                        ),
+                    );
+                    return;
+                };
                 session.game_authenticated(response.player_id.clone());
                 let reconnect_plan = session.reconnect_after_auth.clone();
                 trace_game_transition(
@@ -2952,8 +3088,8 @@ fn handle_response_packet(
                 info!(
                     connection_id = session.connection_id.map(ConnectionId::raw),
                     seq = packet.header.seq,
-                    player_id = %response.player_id,
-                    character_id = session.character_id.as_deref().unwrap_or_default(),
+                    account_player_id = %response.player_id,
+                    character_id = %gameplay_character_id,
                     ticket_fp = diagnostic_snapshot(session).ticket_fingerprint.as_deref().unwrap_or_default(),
                     "MyServer game auth succeeded"
                 );
@@ -2961,13 +3097,13 @@ fn handle_response_packet(
                     // Reconnect auth is intentionally not the normal Authenticated event:
                     // room/authority recovery comes from RoomReconnectRes, not a fresh join.
                     events.write(MyServerEvent::ReauthenticatedForReconnect {
-                        player_id: response.player_id,
+                        player_id: gameplay_character_id,
                         cause: plan.cause.clone(),
                     });
                     send_room_reconnect_request(session, network_commands, events);
                 } else {
                     events.write(MyServerEvent::Authenticated {
-                        player_id: response.player_id,
+                        player_id: gameplay_character_id,
                     });
                 }
             }
@@ -3537,8 +3673,8 @@ mod tests {
     use super::*;
     use crate::framework::network::{HttpMethod, HttpResponse};
     use crate::game::myserver::types::{
-        AccountLoginState, GameAuthFailureReason, GameConnectionState, MyServerErrorKind,
-        MyServerErrorSource,
+        AccountLoginState, CharacterSummary, GameAuthFailureReason, GameConnectionState,
+        MyServerErrorKind, MyServerErrorSource,
     };
 
     fn test_config() -> MyServerConfig {
@@ -3588,6 +3724,97 @@ mod tests {
                 _ => None,
             })
             .last()
+    }
+
+    fn respond_http_ok(app: &mut App, request: &HttpRequest, body: &str) {
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 200,
+                headers: Vec::new(),
+                body: body.as_bytes().to_vec(),
+            }));
+        app.update();
+    }
+
+    fn login_without_ticket_response(player_id: &str, guest_id: &str) -> String {
+        format!(
+            r#"{{
+                "ok": true,
+                "playerId": "{player_id}",
+                "guestId": "{guest_id}",
+                "accessToken": "access-token",
+                "ticket": null,
+                "ticketExpiresAt": null,
+                "gameProxyHost": "game.test",
+                "gameProxyPort": 14400
+            }}"#
+        )
+    }
+
+    fn start_guest_auto_login(app: &mut App, guest_id: &str) -> HttpRequest {
+        app.world_mut().write_message(MyServerCommand::GuestLogin {
+            guest_id: Some(guest_id.to_string()),
+            connect_game: true,
+        });
+        app.update();
+        latest_http_request(app).unwrap()
+    }
+
+    fn complete_guest_auto_account_login(app: &mut App, guest_id: &str) {
+        let request = start_guest_auto_login(app, guest_id);
+        respond_http_ok(
+            app,
+            &request,
+            &login_without_ticket_response("plr_1", guest_id),
+        );
+    }
+
+    fn drive_latest_http_request(app: &mut App) -> HttpRequest {
+        app.update();
+        latest_http_request(app).unwrap()
+    }
+
+    fn count_load_character_list_commands(app: &App) -> usize {
+        read_messages::<MyServerCommand>(app)
+            .iter()
+            .filter(|command| matches!(command, MyServerCommand::LoadCharacterList))
+            .count()
+    }
+
+    fn create_character_commands(app: &App) -> Vec<(String, Option<Value>)> {
+        read_messages::<MyServerCommand>(app)
+            .into_iter()
+            .filter_map(|command| match command {
+                MyServerCommand::CreateCharacter {
+                    name,
+                    appearance_json,
+                } => Some((name, appearance_json)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn select_character_commands(app: &App) -> Vec<(String, bool)> {
+        read_messages::<MyServerCommand>(app)
+            .into_iter()
+            .filter_map(|command| match command {
+                MyServerCommand::SelectCharacter {
+                    character_id,
+                    connect_game,
+                } => Some((character_id, connect_game)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn character_summary(character_id: &str) -> CharacterSummary {
+        serde_json::from_value(json!({
+            "character_id": character_id,
+            "name": "BevyDev",
+            "world_id": 0
+        }))
+        .unwrap()
     }
 
     fn latest_connect_command(app: &App) -> Option<(ConnectionId, NetworkTransport, String)> {
@@ -3819,6 +4046,165 @@ mod tests {
         state.interval = interval;
         state.timer = Timer::new(interval, TimerMode::Repeating);
         state.timer.set_elapsed(interval);
+    }
+
+    #[test]
+    fn auto_guest_login_loads_character_list_after_account_session() {
+        let mut app = test_app();
+        let login_request = start_guest_auto_login(&mut app, "guest-auto-1");
+
+        respond_http_ok(
+            &mut app,
+            &login_request,
+            &login_without_ticket_response("plr_1", "guest-auto-1"),
+        );
+
+        assert_eq!(count_load_character_list_commands(&app), 1);
+        assert!(
+            app.world()
+                .resource::<MyServerSession>()
+                .connect_after_login
+                .is_some()
+        );
+        assert!(!read_messages::<MyServerEvent>(&app).iter().any(|event| {
+            matches!(
+                event,
+                MyServerEvent::RequestFailed { error, .. }
+                    if error.contains("select a character before connecting")
+            )
+        }));
+    }
+
+    #[test]
+    fn auto_guest_login_creates_character_after_empty_list_once() {
+        let mut app = test_app();
+        complete_guest_auto_account_login(&mut app, "guest-auto-empty-123456789");
+        let list_request = drive_latest_http_request(&mut app);
+        assert_eq!(list_request.url, "http://auth.test/root/api/v1/characters");
+
+        respond_http_ok(
+            &mut app,
+            &list_request,
+            r#"{
+                "ok": true,
+                "playerId": "plr_1",
+                "characters": []
+            }"#,
+        );
+
+        let create_commands = create_character_commands(&app);
+        assert_eq!(create_commands.len(), 1);
+        let (name, appearance_json) = &create_commands[0];
+        assert!(name.starts_with("Bevy"));
+        assert!((2..=16).contains(&name.len()));
+        assert!(name.chars().all(|ch| ch.is_ascii_alphanumeric()));
+        assert!(appearance_json.is_none());
+
+        app.world_mut()
+            .write_message(MyServerEvent::CharacterListLoaded {
+                player_id: "plr_1".to_string(),
+                characters: Vec::new(),
+            });
+        app.world_mut()
+            .write_message(MyServerEvent::CharacterCreationRequired {
+                player_id: "plr_1".to_string(),
+            });
+        app.update();
+
+        assert_eq!(create_character_commands(&app).len(), 1);
+    }
+
+    #[test]
+    fn auto_guest_login_selects_existing_character_once() {
+        let mut app = test_app();
+        complete_guest_auto_account_login(&mut app, "guest-auto-existing");
+        let list_request = drive_latest_http_request(&mut app);
+
+        respond_http_ok(
+            &mut app,
+            &list_request,
+            r#"{
+                "ok": true,
+                "playerId": "plr_1",
+                "characters": [
+                    {
+                        "character_id": "chr_auto_existing",
+                        "name": "BevyDev",
+                        "world_id": 0
+                    }
+                ]
+            }"#,
+        );
+
+        assert!(create_character_commands(&app).is_empty());
+        let select_commands = select_character_commands(&app);
+        assert_eq!(
+            select_commands,
+            vec![("chr_auto_existing".to_string(), true)]
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::CharacterListLoaded {
+                player_id: "plr_1".to_string(),
+                characters: vec![character_summary("chr_auto_existing")],
+            });
+        app.update();
+
+        assert_eq!(
+            select_character_commands(&app),
+            vec![("chr_auto_existing".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn auto_guest_login_selects_created_character_once() {
+        let mut app = test_app();
+        complete_guest_auto_account_login(&mut app, "guest-auto-create");
+        let list_request = drive_latest_http_request(&mut app);
+        respond_http_ok(
+            &mut app,
+            &list_request,
+            r#"{
+                "ok": true,
+                "playerId": "plr_1",
+                "characters": []
+            }"#,
+        );
+
+        let create_request = drive_latest_http_request(&mut app);
+        assert_eq!(
+            create_request.url,
+            "http://auth.test/root/api/v1/characters"
+        );
+        respond_http_ok(
+            &mut app,
+            &create_request,
+            r#"{
+                "ok": true,
+                "character": {
+                    "character_id": "chr_auto_created",
+                    "name": "BevyDev",
+                    "world_id": 0
+                }
+            }"#,
+        );
+
+        let select_commands = select_character_commands(&app);
+        assert_eq!(
+            select_commands,
+            vec![("chr_auto_created".to_string(), true)]
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::CharacterCreated {
+                character: character_summary("chr_auto_created"),
+            });
+        app.update();
+
+        assert_eq!(
+            select_character_commands(&app),
+            vec![("chr_auto_created".to_string(), true)]
+        );
     }
 
     #[test]
@@ -4272,11 +4658,11 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, MyServerEvent::Authenticated { .. }))
         );
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, MyServerEvent::ReauthenticatedForReconnect { .. }))
-        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            MyServerEvent::ReauthenticatedForReconnect { player_id, .. }
+                if player_id == "chr_1"
+        )));
         assert!(
             decoded_sent_packets(&app).iter().any(|(_, packet)| {
                 packet.message_type() == Some(MessageType::RoomReconnectReq)
@@ -4487,7 +4873,11 @@ mod tests {
         assert!(
             read_messages::<MyServerEvent>(&app)
                 .iter()
-                .any(|event| matches!(event, MyServerEvent::ReauthenticatedForReconnect { .. }))
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::ReauthenticatedForReconnect { player_id, .. }
+                        if player_id == "chr_1"
+                ))
         );
         assert!(
             !read_messages::<MyServerEvent>(&app)
@@ -4760,6 +5150,8 @@ mod tests {
 
         let session = app.world().resource::<MyServerSession>();
         assert!(session.authenticated);
+        assert_eq!(session.player_id.as_deref(), Some("plr_1"));
+        assert_eq!(session.character_id.as_deref(), Some("chr_1"));
         assert_eq!(
             session.game_connection_state,
             GameConnectionState::Authenticated
@@ -4769,9 +5161,56 @@ mod tests {
                 .iter()
                 .any(|event| matches!(
                     event,
-                    MyServerEvent::Authenticated { player_id } if player_id == "plr_1"
+                    MyServerEvent::Authenticated { player_id } if player_id == "chr_1"
                 ))
         );
+    }
+
+    #[test]
+    fn auth_success_without_selected_character_is_rejected() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(241);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.ticket = Some(ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z"));
+            session.begin_connect_game(connection_id, NetworkTransport::Tcp);
+            session.game_connected(NetworkTransport::Tcp);
+            session.begin_game_auth();
+            session.pending.insert(
+                7,
+                PendingRequest {
+                    response_type: MessageType::AuthRes,
+                },
+            );
+        }
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: auth_response_packet(7, true, "plr_1", ""),
+        });
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>();
+        assert!(!session.authenticated);
+        assert_eq!(
+            session.game_connection_state,
+            GameConnectionState::Disconnected
+        );
+        let events = read_messages::<MyServerEvent>(&app);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::Authenticated { .. }))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            MyServerEvent::GameAuthRejected {
+                error_code,
+                reason: GameAuthFailureReason::MissingCharacterId,
+            } if error_code == "MISSING_CHARACTER_ID"
+        )));
     }
 
     #[test]
