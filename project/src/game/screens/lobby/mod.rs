@@ -178,25 +178,12 @@ mod tests {
                 widgets::{UiButtonEvent, UiButtonEventKind},
             },
         },
-        game::features::touch_ripple::TouchLaunchMode,
+        game::{features::touch_ripple::TouchLaunchMode, myserver::MyServerCommand},
     };
 
     #[test]
     fn robot_sync_lobby_button_writes_switch_once_while_pending() {
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, UiI18nPlugin))
-            .init_resource::<TouchLaunchMode>()
-            .init_resource::<game_list::SampleDungeonRoomEntryState>()
-            .init_resource::<game_list::RobotSyncArenaEntryState>()
-            .init_resource::<game_list::FangyuanHomeEntryState>()
-            .add_message::<SceneCommand>()
-            .add_message::<UiPanelCommand>()
-            .add_message::<UiOverlayCommand>()
-            .add_message::<GameRouteCommand>()
-            .add_message::<UiModalResult>()
-            .add_message::<UiButtonEvent>()
-            .add_systems(Update, game_list::handle_game_list_buttons);
-
+        let mut app = game_list_button_test_app();
         let robot_sync_button = app
             .world_mut()
             .spawn(game_list::RobotSyncArenaPlayButton)
@@ -229,20 +216,7 @@ mod tests {
 
     #[test]
     fn fangyuan_home_lobby_button_writes_switch_once_while_pending() {
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, UiI18nPlugin))
-            .init_resource::<TouchLaunchMode>()
-            .init_resource::<game_list::SampleDungeonRoomEntryState>()
-            .init_resource::<game_list::RobotSyncArenaEntryState>()
-            .init_resource::<game_list::FangyuanHomeEntryState>()
-            .add_message::<SceneCommand>()
-            .add_message::<UiPanelCommand>()
-            .add_message::<UiOverlayCommand>()
-            .add_message::<GameRouteCommand>()
-            .add_message::<UiModalResult>()
-            .add_message::<UiButtonEvent>()
-            .add_systems(Update, game_list::handle_game_list_buttons);
-
+        let mut app = game_list_button_test_app();
         let fangyuan_button = app
             .world_mut()
             .spawn(game_list::FangyuanHomePlayButton)
@@ -270,6 +244,49 @@ mod tests {
             app.world()
                 .resource::<game_list::FangyuanHomeEntryState>()
                 .is_pending()
+        );
+    }
+
+    #[test]
+    fn lobby_change_character_routes_to_login_and_keeps_account_session() {
+        let mut app = game_list_button_test_app();
+        let button = app
+            .world_mut()
+            .spawn(game_list::LobbyChangeCharacterButton)
+            .id();
+
+        click(&mut app, button);
+        app.update();
+
+        assert!(
+            read_messages::<MyServerCommand>(app.world())
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::SwitchCharacter))
+        );
+        assert!(
+            read_messages::<GameRouteCommand>(app.world())
+                .iter()
+                .any(|command| matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Login)))
+        );
+    }
+
+    #[test]
+    fn lobby_logout_routes_to_login_and_logs_out_account() {
+        let mut app = game_list_button_test_app();
+        let button = app.world_mut().spawn(game_list::LobbyLogoutButton).id();
+
+        click(&mut app, button);
+        app.update();
+
+        assert!(
+            read_messages::<MyServerCommand>(app.world())
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::Logout))
+        );
+        assert!(
+            read_messages::<GameRouteCommand>(app.world())
+                .iter()
+                .any(|command| matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Login)))
         );
     }
 
@@ -451,6 +468,32 @@ mod tests {
             .add_message::<GameRouteCommand>()
             .add_systems(Update, handle_lobby_scene_entry_events);
         app
+    }
+
+    fn game_list_button_test_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, UiI18nPlugin))
+            .init_resource::<TouchLaunchMode>()
+            .init_resource::<game_list::SampleDungeonRoomEntryState>()
+            .init_resource::<game_list::RobotSyncArenaEntryState>()
+            .init_resource::<game_list::FangyuanHomeEntryState>()
+            .add_message::<SceneCommand>()
+            .add_message::<UiPanelCommand>()
+            .add_message::<UiOverlayCommand>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<MyServerCommand>()
+            .add_message::<UiModalResult>()
+            .add_message::<UiButtonEvent>()
+            .add_systems(Update, game_list::handle_game_list_buttons);
+        app
+    }
+
+    fn click(app: &mut App, entity: Entity) {
+        app.world_mut().write_message(UiButtonEvent {
+            entity,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
     }
 
     fn read_messages<M>(world: &World) -> Vec<M>

@@ -944,6 +944,7 @@ pub enum MyServerCommand {
         port: Option<u16>,
     },
     Disconnect,
+    SwitchCharacter,
     Logout,
     Ping {
         client_time_ms: i64,
@@ -2614,6 +2615,21 @@ mod tests {
             CharacterSelectionState::AwaitingSelection
         );
         assert_eq!(session.account_login_state, AccountLoginState::LoggedIn);
+        assert_eq!(session.access_token.as_deref(), Some("access"));
+        assert_eq!(session.player_id.as_deref(), Some("plr_1"));
+        assert_eq!(session.characters.len(), 2);
+        assert!(
+            session
+                .characters
+                .iter()
+                .any(|character| character.character_id == "chr_new")
+        );
+        assert!(
+            session
+                .characters
+                .iter()
+                .any(|character| character.character_id == "chr_old")
+        );
         assert!(session.ticket.is_none());
         assert!(session.character_id.is_none());
         assert!(session.pending_character_id.is_none());

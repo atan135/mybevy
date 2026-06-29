@@ -565,6 +565,10 @@ fn handle_myserver_commands(
                 )
             }
             MyServerCommand::Disconnect => disconnect(&mut session, &mut network_commands),
+            MyServerCommand::SwitchCharacter => {
+                disconnect(&mut session, &mut network_commands);
+                session.switch_character();
+            }
             MyServerCommand::Logout => {
                 send_logout(&config, &mut session, &mut network_commands, &mut events);
             }
@@ -1362,8 +1366,11 @@ fn send_logout(
     network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
 ) {
-    disconnect(session, network_commands);
     let access_token = session.access_token.clone();
+    disconnect(session, network_commands);
+    session.logout();
+    events.write(MyServerEvent::LogoutSucceeded);
+
     if let Some(access_token) = access_token.as_deref() {
         let request = build_json_request(
             config,
@@ -1380,9 +1387,6 @@ fn send_logout(
             PendingHttpOperation::Logout,
             request,
         );
-    } else {
-        session.logout();
-        events.write(MyServerEvent::LogoutSucceeded);
     }
 }
 
@@ -3673,8 +3677,8 @@ mod tests {
     use super::*;
     use crate::framework::network::{HttpMethod, HttpResponse};
     use crate::game::myserver::types::{
-        AccountLoginState, CharacterSummary, GameAuthFailureReason, GameConnectionState,
-        MyServerErrorKind, MyServerErrorSource,
+        AccountLoginState, CharacterSelectionState, CharacterSummary, GameAuthFailureReason,
+        GameConnectionState, MyServerErrorKind, MyServerErrorSource,
     };
 
     fn test_config() -> MyServerConfig {
@@ -4204,6 +4208,78 @@ mod tests {
         assert_eq!(
             select_character_commands(&app),
             vec![("chr_auto_created".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn switch_character_command_keeps_account_and_character_list() {
+        let mut app = test_app();
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.account_login_state = AccountLoginState::LoggedIn;
+            session.access_token = Some("access-token".to_string());
+            session.player_id = Some("plr_1".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.ticket = Some(ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z"));
+            session.characters = vec![character_summary("chr_1")];
+            session.character_selection_state = CharacterSelectionState::Selected;
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::SwitchCharacter);
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.account_login_state, AccountLoginState::LoggedIn);
+        assert_eq!(session.access_token.as_deref(), Some("access-token"));
+        assert_eq!(session.player_id.as_deref(), Some("plr_1"));
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::AwaitingSelection
+        );
+        assert_eq!(session.characters.len(), 1);
+        assert!(session.character_id.is_none());
+        assert!(session.ticket.is_none());
+    }
+
+    #[test]
+    fn logout_command_clears_account_immediately_and_notifies_server() {
+        let mut app = test_app();
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.account_login_state = AccountLoginState::LoggedIn;
+            session.access_token = Some("access-token".to_string());
+            session.player_id = Some("plr_1".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.ticket = Some(ticket_for_test("plr_1", "chr_1", "2026-06-25T12:20:00Z"));
+            session.characters = vec![character_summary("chr_1")];
+            session.character_selection_state = CharacterSelectionState::Selected;
+        }
+
+        app.world_mut().write_message(MyServerCommand::Logout);
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.account_login_state, AccountLoginState::LoggedOut);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::NotLoaded
+        );
+        assert!(session.access_token.is_none());
+        assert!(session.player_id.is_none());
+        assert!(session.character_id.is_none());
+        assert!(session.characters.is_empty());
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::LogoutSucceeded))
+        );
+
+        let request = latest_http_request(&app).expect("logout should notify auth-http");
+        assert_eq!(request.url, "http://auth.test/root/api/v1/auth/logout");
+        assert_eq!(
+            header(&request, "Authorization"),
+            Some("Bearer access-token")
         );
     }
 

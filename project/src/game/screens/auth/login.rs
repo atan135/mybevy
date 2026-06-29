@@ -59,6 +59,9 @@ pub(super) struct CreateCharacterButton;
 #[derive(Component)]
 pub(super) struct SwitchAccountButton;
 
+#[derive(Component)]
+pub(super) struct ChangeCharacterButton;
+
 #[derive(Clone, Debug, Component)]
 pub(super) struct SelectCharacterButton {
     character_id: String,
@@ -410,6 +413,8 @@ fn spawn_session_summary_row(
     let can_switch_account = snapshot.account_state == AccountLoginState::LoggedIn
         || snapshot.account_state == AccountLoginState::LoginFailed
         || snapshot.account_state == AccountLoginState::LoggedOut;
+    let can_change_character = snapshot.account_state == AccountLoginState::LoggedIn
+        && snapshot.character_state == CharacterSelectionState::Selected;
 
     parent
         .spawn((
@@ -467,6 +472,19 @@ fn spawn_session_summary_row(
                 !can_switch_account || login_request_pending_snapshot(snapshot),
                 SwitchAccountButton,
             );
+            if can_change_character {
+                spawn_secondary_button(
+                    row,
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "auth.login.change_character",
+                    "Change Character",
+                    character_request_pending_snapshot(snapshot),
+                    ChangeCharacterButton,
+                );
+            }
         });
 }
 
@@ -921,6 +939,7 @@ pub(super) fn handle_login_buttons(
     load_buttons: Query<(), With<LoadCharactersButton>>,
     create_buttons: Query<(), With<CreateCharacterButton>>,
     switch_account_buttons: Query<(), With<SwitchAccountButton>>,
+    change_character_buttons: Query<(), With<ChangeCharacterButton>>,
     select_buttons: Query<&SelectCharacterButton>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
@@ -992,6 +1011,15 @@ pub(super) fn handle_login_buttons(
             clear_text_input_values(&mut input_values.p2());
             ui_state.clear_runtime_state();
             myserver_commands.write(MyServerCommand::Logout);
+        } else if change_character_buttons.contains(event.entity) {
+            if character_request_sent || !can_change_character(&session) {
+                continue;
+            }
+            character_request_sent = true;
+            clear_text_input_values(&mut input_values.p2());
+            ui_state.last_error = None;
+            ui_state.notice = None;
+            myserver_commands.write(MyServerCommand::SwitchCharacter);
         } else if let Ok(button) = select_buttons.get(event.entity) {
             if character_request_sent || !can_send_character_request(&session) {
                 continue;
@@ -1163,6 +1191,7 @@ pub(super) fn sync_login_button_flags(
     create_buttons: Query<Entity, With<CreateCharacterButton>>,
     select_buttons: Query<(Entity, &SelectCharacterButton)>,
     switch_account_buttons: Query<Entity, With<SwitchAccountButton>>,
+    change_character_buttons: Query<Entity, With<ChangeCharacterButton>>,
 ) {
     let login_disabled = login_request_pending(&session)
         || session.account_login_state == AccountLoginState::LoggedIn;
@@ -1221,6 +1250,10 @@ pub(super) fn sync_login_button_flags(
     }
     for entity in &switch_account_buttons {
         set_button_disabled(&mut commands, entity, switch_disabled);
+        set_button_loading(&mut commands, entity, false);
+    }
+    for entity in &change_character_buttons {
+        set_button_disabled(&mut commands, entity, !can_change_character(&session));
         set_button_loading(&mut commands, entity, false);
     }
 }
@@ -1315,6 +1348,12 @@ fn can_send_character_request(session: &MyServerSession) -> bool {
         && !character_request_pending(session)
 }
 
+fn can_change_character(session: &MyServerSession) -> bool {
+    session.account_login_state == AccountLoginState::LoggedIn
+        && session.character_selection_state == CharacterSelectionState::Selected
+        && !character_request_pending(session)
+}
+
 fn login_status_text(snapshot: &LoginUiSnapshot) -> String {
     match snapshot.account_state {
         AccountLoginState::NotLoggedIn => "Not logged in".to_string(),
@@ -1362,7 +1401,7 @@ fn connection_status_text(snapshot: &LoginUiSnapshot) -> String {
         GameConnectionState::Connecting => "Connecting to game server...".to_string(),
         GameConnectionState::Connected => "Game server connected".to_string(),
         GameConnectionState::Authenticating => "Signing in to game server...".to_string(),
-        GameConnectionState::Authenticated => "Entering Lobby...".to_string(),
+        GameConnectionState::Authenticated => "Game server authenticated".to_string(),
         GameConnectionState::Disconnected => "Game server disconnected".to_string(),
         GameConnectionState::Reconnecting => "Refreshing ticket...".to_string(),
         GameConnectionState::ReconnectFailed => "Network or ticket request failed".to_string(),
@@ -1971,6 +2010,40 @@ mod tests {
         );
         assert_eq!(app.world().get::<UiTextInputValue>(login).unwrap().0, "");
         assert_eq!(app.world().get::<UiTextInputValue>(password).unwrap().0, "");
+        assert_eq!(
+            app.world()
+                .get::<UiTextInputValue>(character_name)
+                .unwrap()
+                .0,
+            ""
+        );
+    }
+
+    #[test]
+    fn auth_change_character_keeps_account_and_sends_switch_character() {
+        let mut session = logged_in_session();
+        session.character_selection_state = CharacterSelectionState::Selected;
+        session.character_id = Some("chr_selected".to_string());
+        session.characters = vec![test_character("chr_selected", "WindRunner")];
+        let mut app = login_button_test_app(session);
+        let button = app.world_mut().spawn(ChangeCharacterButton).id();
+        let character_name = app
+            .world_mut()
+            .spawn((
+                CharacterNameInput,
+                UiTextInputValue("WindRunner".to_string()),
+            ))
+            .id();
+
+        click(&mut app, button);
+        app.update();
+
+        let commands = read_messages::<MyServerCommand>(&app);
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::SwitchCharacter))
+        );
         assert_eq!(
             app.world()
                 .get::<UiTextInputValue>(character_name)

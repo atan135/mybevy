@@ -21,12 +21,13 @@ use crate::framework::{
         },
         widgets::{
             UiButtonEvent, UiButtonEventKind, primary_action_button_key, screen_label_key,
-            screen_title_key,
+            screen_title_key, secondary_action_button_key,
         },
     },
 };
 use crate::game::{
     features::touch_ripple::TouchLaunchMode,
+    myserver::MyServerCommand,
     navigation::{AppUiMode, GameRouteCommand, game_panel_root, secondary_route_button_key},
     scenes::{FANGYUAN_HOME_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID, SAMPLE_DUNGEON_ROOM_SCENE_ID},
     ui_ids::{
@@ -46,6 +47,12 @@ pub(super) struct RobotSyncArenaPlayButton;
 
 #[derive(Component)]
 pub(super) struct FangyuanHomePlayButton;
+
+#[derive(Component)]
+pub(super) struct LobbyChangeCharacterButton;
+
+#[derive(Component)]
+pub(super) struct LobbyLogoutButton;
 
 #[derive(Resource, Default)]
 pub(super) struct SampleDungeonRoomEntryState {
@@ -199,14 +206,27 @@ pub(super) fn setup_game_list_screen(
                                 "UI Gallery",
                                 AppUiMode::UiGallery,
                             ),
-                            secondary_route_button_key(
-                                theme,
-                                metrics,
-                                fonts,
-                                i18n,
-                                "nav.logout",
-                                "Logout",
-                                AppUiMode::Login,
+                            (
+                                secondary_action_button_key(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    "nav.change_character",
+                                    "Change Character",
+                                ),
+                                LobbyChangeCharacterButton,
+                            ),
+                            (
+                                secondary_action_button_key(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    "nav.logout",
+                                    "Logout",
+                                ),
+                                LobbyLogoutButton,
                             ),
                         ],
                     ),
@@ -459,11 +479,16 @@ pub(super) fn handle_game_list_buttons(
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut overlay_commands: MessageWriter<UiOverlayCommand>,
     mut game_route_commands: MessageWriter<GameRouteCommand>,
+    mut myserver_commands: MessageWriter<MyServerCommand>,
     mut modal_results: MessageReader<UiModalResult>,
-    play_buttons: Query<(), With<TouchRipplePlayButton>>,
-    sample_scene_buttons: Query<(), With<SampleDungeonRoomPlayButton>>,
-    robot_sync_buttons: Query<(), With<RobotSyncArenaPlayButton>>,
-    fangyuan_home_buttons: Query<(), With<FangyuanHomePlayButton>>,
+    mut button_queries: ParamSet<(
+        Query<(), With<TouchRipplePlayButton>>,
+        Query<(), With<SampleDungeonRoomPlayButton>>,
+        Query<(), With<RobotSyncArenaPlayButton>>,
+        Query<(), With<FangyuanHomePlayButton>>,
+        Query<(), With<LobbyChangeCharacterButton>>,
+        Query<(), With<LobbyLogoutButton>>,
+    )>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
     for event in button_events.read() {
@@ -471,11 +496,19 @@ pub(super) fn handle_game_list_buttons(
             continue;
         }
 
-        if play_buttons.contains(event.entity) {
+        let entity = event.entity;
+        let is_play = button_queries.p0().contains(entity);
+        let is_sample_scene = button_queries.p1().contains(entity);
+        let is_robot_sync = button_queries.p2().contains(entity);
+        let is_fangyuan_home = button_queries.p3().contains(entity);
+        let is_change_character = button_queries.p4().contains(entity);
+        let is_logout = button_queries.p5().contains(entity);
+
+        if is_play {
             panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
                 touch_ripple_confirm_modal(&i18n),
             )));
-        } else if sample_scene_buttons.contains(event.entity) {
+        } else if is_sample_scene {
             if sample_scene_entry.pending {
                 continue;
             }
@@ -484,7 +517,7 @@ pub(super) fn handle_game_list_buttons(
             scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
                 SAMPLE_DUNGEON_ROOM_SCENE_ID,
             )));
-        } else if robot_sync_buttons.contains(event.entity) {
+        } else if is_robot_sync {
             if robot_sync_entry.pending {
                 continue;
             }
@@ -493,7 +526,7 @@ pub(super) fn handle_game_list_buttons(
             scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
                 ROBOT_SYNC_ARENA_SCENE_ID,
             )));
-        } else if fangyuan_home_buttons.contains(event.entity) {
+        } else if is_fangyuan_home {
             if fangyuan_home_entry.pending {
                 continue;
             }
@@ -502,6 +535,12 @@ pub(super) fn handle_game_list_buttons(
             scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
                 FANGYUAN_HOME_SCENE_ID,
             )));
+        } else if is_change_character {
+            myserver_commands.write(MyServerCommand::SwitchCharacter);
+            game_route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
+        } else if is_logout {
+            myserver_commands.write(MyServerCommand::Logout);
+            game_route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
         }
     }
 
