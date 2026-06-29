@@ -167,14 +167,14 @@ fn sync_focused_button_markers(
 
     for entity in &focused_buttons {
         if Some(entity) != active_focus {
-            commands.entity(entity).remove::<FocusedButton>();
+            commands.entity(entity).try_remove::<FocusedButton>();
         }
     }
 
     if let Some(entity) = active_focus
         && !focused_buttons.contains(entity)
     {
-        commands.entity(entity).insert(FocusedButton);
+        commands.entity(entity).try_insert(FocusedButton);
     }
 }
 

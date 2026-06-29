@@ -1241,17 +1241,17 @@ pub(super) fn sync_login_binding_values(
 
 fn set_button_disabled(commands: &mut Commands, entity: Entity, disabled: bool) {
     if disabled {
-        commands.entity(entity).insert(DisabledButton);
+        commands.entity(entity).try_insert(DisabledButton);
     } else {
-        commands.entity(entity).remove::<DisabledButton>();
+        commands.entity(entity).try_remove::<DisabledButton>();
     }
 }
 
 fn set_button_loading(commands: &mut Commands, entity: Entity, loading: bool) {
     if loading {
-        commands.entity(entity).insert(LoadingButton);
+        commands.entity(entity).try_insert(LoadingButton);
     } else {
-        commands.entity(entity).remove::<LoadingButton>();
+        commands.entity(entity).try_remove::<LoadingButton>();
     }
 }
 
