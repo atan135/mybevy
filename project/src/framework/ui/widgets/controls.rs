@@ -209,7 +209,7 @@ mod tests {
         };
 
         assert_eq!(
-            text_input_display_parts("abcd", &cursor),
+            text_input_segments("abcd", &cursor).display,
             UiTextInputDisplay {
                 plain: "a".to_string(),
                 selected: "bc".to_string(),
@@ -227,6 +227,34 @@ mod tests {
             selection: Some(UiTextInputSelection { start: 1, end: 3 }),
         };
         assert_eq!(text_input_caret_prefix("abcd", &selected_cursor), "abc");
+    }
+
+    #[test]
+    fn text_input_segments_share_display_and_caret_boundaries() {
+        let selection_start_cursor = UiTextInputCursor {
+            position: 1,
+            selection: Some(UiTextInputSelection { start: 1, end: 3 }),
+        };
+        assert_eq!(
+            text_input_segments("abcd", &selection_start_cursor),
+            UiTextInputSegments {
+                display: UiTextInputDisplay {
+                    plain: "a".to_string(),
+                    selected: "bc".to_string(),
+                    tail: "d".to_string(),
+                },
+                caret_prefix: "a".to_string(),
+            }
+        );
+
+        let selection_end_cursor = UiTextInputCursor {
+            position: 3,
+            selection: Some(UiTextInputSelection { start: 1, end: 3 }),
+        };
+        assert_eq!(
+            text_input_segments("abcd", &selection_end_cursor).caret_prefix,
+            "abc"
+        );
     }
 
     #[test]

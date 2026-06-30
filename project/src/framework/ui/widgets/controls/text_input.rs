@@ -718,12 +718,13 @@ pub(crate) fn sync_text_input_display(
         };
 
         let is_focused = focus_state.focused_entity == Some(input_entity);
-        let display = if value.0.is_empty() && !is_focused {
-            UiTextInputDisplay::placeholder(placeholder.0.clone())
-        } else if is_focused && !is_disabled {
-            text_input_display_parts(&value.0, cursor)
+        let (display, focused_caret_prefix) = if is_focused && !is_disabled {
+            let segments = text_input_segments(&value.0, cursor);
+            (segments.display, Some(segments.caret_prefix))
+        } else if value.0.is_empty() && !is_focused {
+            (UiTextInputDisplay::placeholder(placeholder.0.clone()), None)
         } else {
-            UiTextInputDisplay::plain(value.0.clone())
+            (UiTextInputDisplay::plain(value.0.clone()), None)
         };
         let color = if is_disabled || value.0.is_empty() && !is_focused {
             theme.colors.text_muted
@@ -744,7 +745,9 @@ pub(crate) fn sync_text_input_display(
             let Ok(mut measure_text) = measures.get_mut(child) else {
                 continue;
             };
-            let next_measure = text_input_caret_prefix(&value.0, cursor);
+            let next_measure = focused_caret_prefix
+                .clone()
+                .unwrap_or_else(|| text_input_caret_prefix(&value.0, cursor));
             if measure_text.0 != next_measure {
                 measure_text.0 = next_measure;
             }
@@ -1481,41 +1484,42 @@ impl UiTextInputDisplay {
     }
 }
 
-pub(crate) fn text_input_display_parts(
-    value: &str,
-    cursor: &UiTextInputCursor,
-) -> UiTextInputDisplay {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UiTextInputSegments {
+    pub(crate) display: UiTextInputDisplay,
+    pub(crate) caret_prefix: String,
+}
+
+pub(crate) fn text_input_segments(value: &str, cursor: &UiTextInputCursor) -> UiTextInputSegments {
     let cursor_position = nearest_char_boundary(value, cursor.position.min(value.len()));
+
     if let Some(selection) = selection_range(cursor) {
         let start = nearest_char_boundary(value, selection.start.min(value.len()));
         let end = nearest_char_boundary(value, selection.end.min(value.len()));
-        return UiTextInputDisplay {
-            plain: value[..start].to_string(),
-            selected: value[start..end].to_string(),
-            tail: value[end..].to_string(),
+        let caret_end = if cursor_position <= start { start } else { end };
+
+        return UiTextInputSegments {
+            display: UiTextInputDisplay {
+                plain: value[..start].to_string(),
+                selected: value[start..end].to_string(),
+                tail: value[end..].to_string(),
+            },
+            caret_prefix: value[..caret_end].to_string(),
         };
     }
 
-    UiTextInputDisplay {
-        plain: value[..cursor_position].to_string(),
-        selected: String::new(),
-        tail: value[cursor_position..].to_string(),
+    UiTextInputSegments {
+        display: UiTextInputDisplay {
+            plain: value[..cursor_position].to_string(),
+            selected: String::new(),
+            tail: value[cursor_position..].to_string(),
+        },
+        caret_prefix: value[..cursor_position].to_string(),
     }
 }
 
 pub(crate) fn text_input_caret_prefix(value: &str, cursor: &UiTextInputCursor) -> String {
-    let cursor_position = nearest_char_boundary(value, cursor.position.min(value.len()));
-    if let Some(selection) = selection_range(cursor) {
-        let start = nearest_char_boundary(value, selection.start.min(value.len()));
-        let end = nearest_char_boundary(value, selection.end.min(value.len()));
-        return if cursor_position <= start {
-            value[..start].to_string()
-        } else {
-            value[..end].to_string()
-        };
-    }
-
-    value[..cursor_position].to_string()
+    text_input_segments(value, cursor).caret_prefix
 }
 
 pub(crate) fn is_printable_char(chr: char) -> bool {
