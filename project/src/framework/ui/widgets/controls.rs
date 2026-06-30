@@ -8,7 +8,8 @@ use bevy::{
         pointer::PointerButton,
     },
     prelude::*,
-    ui::{FocusPolicy, RelativeCursorPosition},
+    text::TextLayoutInfo,
+    ui::{FocusPolicy, RelativeCursorPosition, UiSystems},
 };
 
 use crate::framework::ui::{
@@ -26,6 +27,7 @@ use crate::framework::ui::{
 
 const NUMERIC_CONTROL_LABEL_WIDTH: f32 = 132.0;
 const TEXT_INPUT_FOCUS_SWITCH_LOG_TICKS: u64 = 12;
+const TEXT_INPUT_CARET_WIDTH: f32 = 1.5;
 pub(crate) struct UiWidgetsPlugin;
 
 impl Plugin for UiWidgetsPlugin {
@@ -65,6 +67,10 @@ impl Plugin for UiWidgetsPlugin {
                     update_text_input_visuals,
                 )
                     .in_set(UiFocusSystems::Visuals),
+            )
+            .add_systems(
+                PostUpdate,
+                sync_text_input_caret.after(UiSystems::PostLayout),
             );
     }
 }
@@ -308,6 +314,12 @@ enum UiTextInputTextPart {
     Selected,
     Tail,
 }
+
+#[derive(Component)]
+struct UiTextInputCaret;
+
+#[derive(Component)]
+struct UiTextInputCaretMeasure;
 
 #[derive(Clone, Copy, Debug, Component)]
 pub(crate) struct UiTextInputFormMessage {
@@ -1213,56 +1225,90 @@ pub(crate) fn text_input(
             false,
             false,
         )),
-        children![(
-            Text::new(""),
-            TextFont {
-                font: fonts.regular.clone(),
-                font_size: theme.text.button,
-                ..default()
-            },
-            TextColor(display_color),
-            UiTextInputText,
-            UiTextInputTextPart::Plain,
-            UiThemeTextStyleRole::Button,
-            children![
-                (
-                    TextSpan::new(display_text),
-                    TextFont {
-                        font: fonts.regular.clone(),
-                        font_size: theme.text.button,
-                        ..default()
-                    },
-                    TextColor(display_color),
-                    TextBackgroundColor(Color::NONE),
-                    UiTextInputTextPart::Plain,
-                    UiThemeTextStyleRole::Button,
-                ),
-                (
-                    TextSpan::new(""),
-                    TextFont {
-                        font: fonts.regular.clone(),
-                        font_size: theme.text.button,
-                        ..default()
-                    },
-                    TextColor(theme.colors.text_primary),
-                    TextBackgroundColor(Color::NONE),
-                    UiTextInputTextPart::Selected,
-                    UiThemeTextStyleRole::Button,
-                ),
-                (
-                    TextSpan::new(""),
-                    TextFont {
-                        font: fonts.regular.clone(),
-                        font_size: theme.text.button,
-                        ..default()
-                    },
-                    TextColor(display_color),
-                    TextBackgroundColor(Color::NONE),
-                    UiTextInputTextPart::Tail,
-                    UiThemeTextStyleRole::Button,
-                ),
-            ],
-        )],
+        children![
+            (
+                Text::new(""),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.button,
+                    ..default()
+                },
+                TextColor(display_color),
+                TextLayout::new_with_no_wrap(),
+                UiTextInputText,
+                UiTextInputTextPart::Plain,
+                UiThemeTextStyleRole::Button,
+                children![
+                    (
+                        TextSpan::new(display_text),
+                        TextFont {
+                            font: fonts.regular.clone(),
+                            font_size: theme.text.button,
+                            ..default()
+                        },
+                        TextColor(display_color),
+                        TextBackgroundColor(Color::NONE),
+                        UiTextInputTextPart::Plain,
+                        UiThemeTextStyleRole::Button,
+                    ),
+                    (
+                        TextSpan::new(""),
+                        TextFont {
+                            font: fonts.regular.clone(),
+                            font_size: theme.text.button,
+                            ..default()
+                        },
+                        TextColor(theme.colors.text_primary),
+                        TextBackgroundColor(Color::NONE),
+                        UiTextInputTextPart::Selected,
+                        UiThemeTextStyleRole::Button,
+                    ),
+                    (
+                        TextSpan::new(""),
+                        TextFont {
+                            font: fonts.regular.clone(),
+                            font_size: theme.text.button,
+                            ..default()
+                        },
+                        TextColor(display_color),
+                        TextBackgroundColor(Color::NONE),
+                        UiTextInputTextPart::Tail,
+                        UiThemeTextStyleRole::Button,
+                    ),
+                ],
+            ),
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(control_padding_x(metrics)),
+                    top: px((metrics.input_height - theme.text.button) * 0.5),
+                    width: px(TEXT_INPUT_CARET_WIDTH),
+                    height: px(theme.text.button),
+                    ..default()
+                },
+                BackgroundColor(theme.colors.text_primary),
+                Visibility::Hidden,
+                UiTextInputCaret,
+            ),
+            (
+                Text::new(""),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.button,
+                    ..default()
+                },
+                TextColor(Color::NONE),
+                TextLayout::new_with_no_wrap(),
+                UiTextInputCaretMeasure,
+                UiThemeTextStyleRole::Button,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(-10000),
+                    top: px(-10000),
+                    ..default()
+                },
+            ),
+        ],
     )
 }
 
@@ -2738,9 +2784,12 @@ fn handle_text_input_keyboard(
 
                 clipboard.text =
                     selected_text(&value.0, &cursor).unwrap_or_else(|| value.0.clone());
+                write_system_clipboard_text(&clipboard.text);
             }
             UiTextInputEditEvent::Paste => {
-                let clipboard_text = clipboard.text.clone();
+                let clipboard_text = read_system_clipboard_text()
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| clipboard.text.clone());
                 apply_text_input_edit(
                     &mut value.0,
                     &mut cursor,
@@ -2798,6 +2847,7 @@ fn sync_text_input_display(
         With<UiTextInput>,
     >,
     mut roots: Query<(Entity, &mut Text, &mut TextColor), With<UiTextInputText>>,
+    mut measures: Query<&mut Text, (With<UiTextInputCaretMeasure>, Without<UiTextInputText>)>,
     mut spans: Query<
         (
             &mut TextSpan,
@@ -2843,6 +2893,16 @@ fn sync_text_input_display(
             root_text_color.0 = color;
         }
 
+        for child in children.iter_descendants(input_entity) {
+            let Ok(mut measure_text) = measures.get_mut(child) else {
+                continue;
+            };
+            let next_measure = text_input_caret_prefix(&value.0, cursor);
+            if measure_text.0 != next_measure {
+                measure_text.0 = next_measure;
+            }
+        }
+
         let Ok(children) = children.get(root_entity) else {
             continue;
         };
@@ -2881,6 +2941,62 @@ fn sync_text_input_display(
                 if background.0 != next_background {
                     background.0 = next_background;
                 }
+            }
+        }
+    }
+}
+
+fn sync_text_input_caret(
+    theme: Res<UiTheme>,
+    metrics: Res<UiMetrics>,
+    focus_state: Res<UiFocusState>,
+    children: Query<&Children>,
+    text_inputs: Query<
+        (
+            Entity,
+            &UiTextInputValue,
+            &UiTextInputCursor,
+            Has<DisabledTextInput>,
+        ),
+        With<UiTextInput>,
+    >,
+    measures: Query<&TextLayoutInfo, With<UiTextInputCaretMeasure>>,
+    mut carets: Query<(&mut Node, &mut BackgroundColor, &mut Visibility), With<UiTextInputCaret>>,
+) {
+    for (input_entity, _value, cursor, is_disabled) in &text_inputs {
+        let is_focused = focus_state.focused_entity == Some(input_entity);
+        let caret_visible = is_focused && !is_disabled && cursor.selection.is_none();
+        let caret_x = children
+            .iter_descendants(input_entity)
+            .find_map(|child| {
+                measures
+                    .get(child)
+                    .ok()
+                    .map(|layout| control_padding_x(&metrics) + layout.size.x)
+            })
+            .unwrap_or_else(|| control_padding_x(&metrics));
+
+        for child in children.iter_descendants(input_entity) {
+            let Ok((mut node, mut background, mut visibility)) = carets.get_mut(child) else {
+                continue;
+            };
+
+            let next_visibility = if caret_visible {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            if *visibility != next_visibility {
+                *visibility = next_visibility;
+            }
+            if node.left != px(caret_x) {
+                node.left = px(caret_x);
+            }
+            if background.0 != theme.colors.text_primary {
+                background.0 = theme.colors.text_primary;
+            }
+            if node.width != px(TEXT_INPUT_CARET_WIDTH) {
+                node.width = px(TEXT_INPUT_CARET_WIDTH);
             }
         }
     }
@@ -3516,6 +3632,28 @@ fn selected_text(value: &str, cursor: &UiTextInputCursor) -> Option<String> {
     Some(value[selection.start..selection.end].to_string())
 }
 
+#[cfg(not(target_os = "android"))]
+fn read_system_clipboard_text() -> Option<String> {
+    arboard::Clipboard::new()
+        .ok()
+        .and_then(|mut clipboard| clipboard.get_text().ok())
+}
+
+#[cfg(target_os = "android")]
+fn read_system_clipboard_text() -> Option<String> {
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+fn write_system_clipboard_text(text: &str) {
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        let _ = clipboard.set_text(text.to_string());
+    }
+}
+
+#[cfg(target_os = "android")]
+fn write_system_clipboard_text(_text: &str) {}
+
 fn selection_range(cursor: &UiTextInputCursor) -> Option<UiTextInputSelection> {
     cursor
         .selection
@@ -3605,27 +3743,33 @@ fn text_input_display_parts(value: &str, cursor: &UiTextInputCursor) -> UiTextIn
     if let Some(selection) = selection_range(cursor) {
         let start = nearest_char_boundary(value, selection.start.min(value.len()));
         let end = nearest_char_boundary(value, selection.end.min(value.len()));
-        let cursor_at_start = cursor_position <= start;
         return UiTextInputDisplay {
-            plain: if cursor_at_start {
-                format!("{}|", &value[..start])
-            } else {
-                value[..start].to_string()
-            },
+            plain: value[..start].to_string(),
             selected: value[start..end].to_string(),
-            tail: if cursor_at_start {
-                value[end..].to_string()
-            } else {
-                format!("|{}", &value[end..])
-            },
+            tail: value[end..].to_string(),
         };
     }
 
     UiTextInputDisplay {
-        plain: format!("{}|", &value[..cursor_position]),
+        plain: value[..cursor_position].to_string(),
         selected: String::new(),
         tail: value[cursor_position..].to_string(),
     }
+}
+
+fn text_input_caret_prefix(value: &str, cursor: &UiTextInputCursor) -> String {
+    let cursor_position = nearest_char_boundary(value, cursor.position.min(value.len()));
+    if let Some(selection) = selection_range(cursor) {
+        let start = nearest_char_boundary(value, selection.start.min(value.len()));
+        let end = nearest_char_boundary(value, selection.end.min(value.len()));
+        return if cursor_position <= start {
+            value[..start].to_string()
+        } else {
+            value[..end].to_string()
+        };
+    }
+
+    value[..cursor_position].to_string()
 }
 
 fn is_printable_char(chr: char) -> bool {
@@ -3808,9 +3952,20 @@ mod tests {
             UiTextInputDisplay {
                 plain: "a".to_string(),
                 selected: "bc".to_string(),
-                tail: "|d".to_string(),
+                tail: "d".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn text_input_caret_prefix_tracks_cursor_without_display_character() {
+        assert_eq!(text_input_caret_prefix("abcd", &cursor(2)), "ab");
+
+        let selected_cursor = UiTextInputCursor {
+            position: 3,
+            selection: Some(UiTextInputSelection { start: 1, end: 3 }),
+        };
+        assert_eq!(text_input_caret_prefix("abcd", &selected_cursor), "abc");
     }
 
     #[test]
