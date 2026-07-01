@@ -20,6 +20,7 @@
 - `docs/`：项目文档
 - `docs/bevy-getting-started.md`：当前 Bevy 入门说明
 - `docs/assets-workflow.md`：项目资源使用方式，覆盖首包、APK 包内和后续下载资源
+- `docs/fangyuan/`：方圆灵构基础技术文档，覆盖对象资源构建、渲染、Bake、加载、预算和 LOD 等工程路线
 - `docs/scene/`：场景框架相关文档，当前总文档规划场景生命周期、资源、切换、流式加载、相机和联机同步
 - `docs/ui/`：UI 框架相关文档，描述整体架构、输入实现、组件使用、布局、主题和限制，不记录开发期任务流程
 - `scripts/`：仓库级开发辅助脚本
