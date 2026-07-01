@@ -26,14 +26,15 @@
 - `scripts/`：仓库级开发辅助脚本
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
-- `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene 和 fight 边界
+- `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene、fight 和 fangyuan 边界
+- `project/src/framework/fangyuan/`：方圆灵构数据模型入口，包含 blueprint、runtime primitive、对象状态和 primitive set 统计
 - `project/src/framework/network/`：网络通信框架插件和 HTTP/TCP/KCP 接口
 - `project/src/framework/scene/`：场景框架插件、命令、事件、生命周期、注册表、首包 RON manifest、Loading、根实体、相机、spawn/anchor、trigger、streaming 元数据和 debug 配置
 - `project/src/framework/ui/`：UI 框架能力，包含核心系统、通用控件、覆盖层、主题和国际化
 - `project/src/game/`：游戏层插件、页面、玩法和框架适配模块
 - `project/src/game/authority/`：本地联机/远端联机的控制机会话接口和轻量 authority 协议
 - `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体页面
-- `project/src/game/features/`：Touch Ripple 等具体玩法功能模块
+- `project/src/game/features/`：Touch Ripple、Fangyuan Player Preview 等具体玩法功能模块
 - `project/src/game/scenes/`：具体游戏场景 ID、场景注册适配和场景专属组合逻辑
 - `project/src/game/navigation/`：游戏层页面模式、路由命令和路由按钮适配
 - `project/src/game/myserver/`：当前游戏的 MyServer 登录、角色列表、选角、character-bound ticket、game proxy 鉴权、房间、四属性和协议适配模块

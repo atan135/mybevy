@@ -228,14 +228,15 @@ mybevy/
 可以按下面的职责划分：
 
 - `project/src/main.rs`：程序入口、顶层插件注册
-- `project/src/framework/`：框架层横向能力，当前包含 audio、UI、network、scene 和 fight 边界
+- `project/src/framework/`：框架层横向能力，当前包含 audio、UI、network、scene、fight 和 fangyuan 边界
 - `project/src/framework/audio/`：音频框架能力入口，提供音频命令、事件、catalog、loading、playback、mixer、music、UI/scene/battle adapter、基础空间音频、生命周期暂停和 debug 配置
+- `project/src/framework/fangyuan/`：方圆灵构数据模型入口，提供 blueprint、runtime primitive、对象状态和 primitive set 统计
 - `project/src/framework/network/`：网络框架能力入口，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
 - `project/src/framework/scene/`：场景框架能力入口，提供场景命令、事件、生命周期、注册表、首包 RON manifest、根实体、Loading、相机、spawn/anchor、trigger、streaming 元数据和 debug 配置
 - `project/src/framework/ui/`：UI 框架能力入口
 - `project/src/game/plugin.rs`：游戏主插件
 - `project/src/game/authority/`：游戏层控制机会话接口和轻量 authority 协议
-- `project/src/game/features/`：Touch Ripple、Robot Sync 等具体玩法功能模块
+- `project/src/game/features/`：Touch Ripple、Robot Sync、Fangyuan Player Preview 等具体玩法功能模块
 - `project/src/game/myserver/`：当前游戏的 MyServer 登录、房间和协议适配模块
 - `project/src/game/navigation/`：主流程 `AppUiMode` 和路由按钮数据
 - `project/src/game/scenes/`：具体游戏场景 ID、场景目录 CSV 注册适配和场景专属组合逻辑，当前包含 `sample.dungeon_room` 和 `arena.robot_sync`
