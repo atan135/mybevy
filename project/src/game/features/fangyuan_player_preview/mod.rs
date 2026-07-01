@@ -10,6 +10,7 @@ use crate::framework::fangyuan::{
     FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanAvatar, FangyuanPrimitiveKind,
     FangyuanPrimitiveSet, load_fangyuan_minimal_player_primitive_set_or_log,
 };
+use crate::game::navigation::AppUiMode;
 
 const FANGYUAN_PREVIEW_SPHERE_SECTORS: u32 = 24;
 const FANGYUAN_PREVIEW_SPHERE_STACKS: u32 = 12;
@@ -21,7 +22,10 @@ impl Plugin for FangyuanPlayerPreviewPlugin {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<FangyuanPlayerPreviewRenderAssets>()
-            .add_systems(Startup, spawn_fangyuan_preview_player)
+            .add_systems(
+                OnEnter(AppUiMode::FangyuanPlayerPreview),
+                spawn_fangyuan_preview_player,
+            )
             .add_systems(
                 PostUpdate,
                 (
@@ -146,6 +150,7 @@ fn spawn_fangyuan_preview_player(mut commands: Commands, players: Query<(), With
 
     let position = FangyuanPlayerPosition::default();
     commands.spawn((
+        DespawnOnExit(AppUiMode::FangyuanPlayerPreview),
         FangyuanPlayer,
         FangyuanPlayerState::default(),
         position,
@@ -232,15 +237,27 @@ mod tests {
 
     fn test_app() -> App {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, TransformPlugin))
-            .add_plugins(FangyuanPlayerPreviewPlugin);
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::state::app::StatesPlugin,
+            TransformPlugin,
+        ))
+        .init_state::<AppUiMode>()
+        .add_plugins(FangyuanPlayerPreviewPlugin);
         app
+    }
+
+    fn enter_preview_mode(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::FangyuanPlayerPreview);
+        app.update();
     }
 
     #[test]
     fn fangyuan_preview_plugin_spawns_one_player_entity() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
 
         let players = fangyuan_player_entities(&mut app);
         assert_eq!(players.len(), 1);
@@ -249,7 +266,7 @@ mod tests {
     #[test]
     fn fangyuan_preview_player_spawn_is_idempotent() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
         app.update();
 
         let players = fangyuan_player_entities(&mut app);
@@ -257,9 +274,21 @@ mod tests {
     }
 
     #[test]
-    fn fangyuan_preview_player_has_required_components() {
+    fn fangyuan_preview_player_only_spawns_after_entering_preview_mode() {
         let mut app = test_app();
         app.update();
+
+        assert!(fangyuan_player_entities(&mut app).is_empty());
+
+        enter_preview_mode(&mut app);
+
+        assert_eq!(fangyuan_player_entities(&mut app).len(), 1);
+    }
+
+    #[test]
+    fn fangyuan_preview_player_has_required_components() {
+        let mut app = test_app();
+        enter_preview_mode(&mut app);
 
         let mut players = app.world_mut().query::<(
             &FangyuanPlayer,
@@ -297,7 +326,7 @@ mod tests {
     #[test]
     fn moving_player_position_updates_root_transform_without_rotation() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
         let player = fangyuan_player_entities(&mut app)[0];
 
         app.world_mut()
@@ -319,7 +348,7 @@ mod tests {
     #[test]
     fn primitives_remain_data_on_player_entity() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
 
         let players = fangyuan_player_entities(&mut app);
         let mut primitive_sets = app.world_mut().query::<&FangyuanPrimitiveSet>();
@@ -335,7 +364,7 @@ mod tests {
     #[test]
     fn fangyuan_preview_player_spawns_render_only_visual_children() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
 
         let player = fangyuan_player_entities(&mut app)[0];
         let records = primitive_visual_records(&mut app);
@@ -352,7 +381,7 @@ mod tests {
     #[test]
     fn fangyuan_preview_visual_spawn_is_idempotent() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
         app.update();
 
         assert_eq!(
@@ -364,7 +393,7 @@ mod tests {
     #[test]
     fn fangyuan_preview_visuals_use_cached_unit_meshes_by_kind() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
 
         let records = primitive_visual_records(&mut app);
         let render_assets = app.world().resource::<FangyuanPlayerPreviewRenderAssets>();
@@ -425,7 +454,7 @@ mod tests {
     #[test]
     fn fangyuan_preview_visual_transform_and_material_follow_primitive_data() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
 
         let primitive_set = {
             let mut primitive_sets = app
@@ -454,7 +483,7 @@ mod tests {
     #[test]
     fn fangyuan_preview_visual_children_do_not_get_gameplay_components() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
 
         for record in primitive_visual_records(&mut app) {
             let entity = app.world().entity(record.entity);
@@ -474,7 +503,7 @@ mod tests {
     #[test]
     fn moving_player_root_preserves_visual_local_transforms_and_parenting() {
         let mut app = test_app();
-        app.update();
+        enter_preview_mode(&mut app);
         let player = fangyuan_player_entities(&mut app)[0];
         let before = primitive_visual_records(&mut app);
 

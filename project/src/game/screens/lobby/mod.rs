@@ -248,6 +248,28 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_player_preview_lobby_button_routes_to_preview_mode_without_scene_switch() {
+        let mut app = game_list_button_test_app();
+        let button = app
+            .world_mut()
+            .spawn(game_list::FangyuanPlayerPreviewPlayButton)
+            .id();
+
+        click(&mut app, button);
+        app.update();
+
+        assert!(read_messages::<SceneCommand>(app.world()).is_empty());
+        assert!(
+            read_messages::<GameRouteCommand>(app.world())
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    GameRouteCommand::ChangeMode(AppUiMode::FangyuanPlayerPreview)
+                ))
+        );
+    }
+
+    #[test]
     fn lobby_change_character_routes_to_character_select_and_keeps_account_session() {
         let mut app = game_list_button_test_app();
         let button = app

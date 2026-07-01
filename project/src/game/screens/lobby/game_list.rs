@@ -49,6 +49,9 @@ pub(super) struct RobotSyncArenaPlayButton;
 pub(super) struct FangyuanHomePlayButton;
 
 #[derive(Component)]
+pub(super) struct FangyuanPlayerPreviewPlayButton;
+
+#[derive(Component)]
 pub(super) struct LobbyChangeCharacterButton;
 
 #[derive(Component)]
@@ -463,6 +466,57 @@ pub(super) fn setup_game_list_screen(
                             ),
                         ],
                     ),
+                    (
+                        Node {
+                            width: percent(100),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::SpaceBetween,
+                            column_gap: px(theme.layout.row_column_gap),
+                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
+                            ..default()
+                        },
+                        children![
+                            (
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: px(theme.layout.row_gap),
+                                    flex_grow: 1.0,
+                                    ..default()
+                                },
+                                children![
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.fangyuan_player_preview.title",
+                                        "方圆玩家预览",
+                                        UiThemeTextStyleRole::Body,
+                                        UiThemeTextColorRole::Primary,
+                                    ),
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.fangyuan_player_preview.description",
+                                        "最小玩家 Entity 外观闭环",
+                                        UiThemeTextStyleRole::Caption,
+                                        UiThemeTextColorRole::Muted,
+                                    ),
+                                ],
+                            ),
+                            (
+                                primary_action_button_key(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    "lobby.enter",
+                                    "Enter",
+                                ),
+                                FangyuanPlayerPreviewPlayButton,
+                            ),
+                        ],
+                    ),
                 ],
             ),
         ],
@@ -486,6 +540,7 @@ pub(super) fn handle_game_list_buttons(
         Query<(), With<SampleDungeonRoomPlayButton>>,
         Query<(), With<RobotSyncArenaPlayButton>>,
         Query<(), With<FangyuanHomePlayButton>>,
+        Query<(), With<FangyuanPlayerPreviewPlayButton>>,
         Query<(), With<LobbyChangeCharacterButton>>,
         Query<(), With<LobbyLogoutButton>>,
     )>,
@@ -501,8 +556,9 @@ pub(super) fn handle_game_list_buttons(
         let is_sample_scene = button_queries.p1().contains(entity);
         let is_robot_sync = button_queries.p2().contains(entity);
         let is_fangyuan_home = button_queries.p3().contains(entity);
-        let is_change_character = button_queries.p4().contains(entity);
-        let is_logout = button_queries.p5().contains(entity);
+        let is_fangyuan_player_preview = button_queries.p4().contains(entity);
+        let is_change_character = button_queries.p5().contains(entity);
+        let is_logout = button_queries.p6().contains(entity);
 
         if is_play {
             panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
@@ -535,6 +591,10 @@ pub(super) fn handle_game_list_buttons(
             scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
                 FANGYUAN_HOME_SCENE_ID,
             )));
+        } else if is_fangyuan_player_preview {
+            game_route_commands.write(GameRouteCommand::ChangeMode(
+                AppUiMode::FangyuanPlayerPreview,
+            ));
         } else if is_change_character {
             myserver_commands.write(MyServerCommand::SwitchCharacter);
             game_route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::CharacterSelect));

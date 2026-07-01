@@ -1,4 +1,5 @@
 mod fangyuan_home;
+mod fangyuan_player_preview;
 mod robot_sync_scene;
 mod sample_scene;
 mod touch_ripple;
@@ -26,6 +27,10 @@ impl Plugin for GameplayScreensPlugin {
         .add_systems(
             OnEnter(AppUiMode::FangyuanHome),
             fangyuan_home::setup_fangyuan_home_hud,
+        )
+        .add_systems(
+            OnEnter(AppUiMode::FangyuanPlayerPreview),
+            fangyuan_player_preview::setup_fangyuan_player_preview,
         )
         .add_systems(
             Update,
@@ -56,6 +61,11 @@ impl Plugin for GameplayScreensPlugin {
             )
                 .chain()
                 .run_if(in_state(AppUiMode::FangyuanHome)),
+        )
+        .add_systems(
+            Update,
+            fangyuan_player_preview::handle_fangyuan_player_preview_buttons
+                .run_if(in_state(AppUiMode::FangyuanPlayerPreview)),
         );
     }
 }
