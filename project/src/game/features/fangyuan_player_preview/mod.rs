@@ -6,8 +6,8 @@ use bevy::{
 use std::collections::HashMap;
 
 use crate::framework::fangyuan::{
-    FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanAvatar, FangyuanPrimitiveKind,
-    FangyuanPrimitiveSet, load_fangyuan_minimal_player_primitive_set_or_log,
+    FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanAvatar, FangyuanObjectState,
+    FangyuanPrimitiveKind, FangyuanPrimitiveSet, load_fangyuan_minimal_player_primitive_set_or_log,
 };
 use crate::game::navigation::AppUiMode;
 
@@ -143,12 +143,15 @@ fn spawn_fangyuan_preview_player(mut commands: Commands, players: Query<(), With
     };
 
     let position = FangyuanPlayerPosition::default();
+    let object_state = FangyuanObjectState::from_translation(position.translation);
     commands.spawn((
         DespawnOnExit(AppUiMode::FangyuanPlayerPreview),
         FangyuanPlayer,
         FangyuanPlayerState::default(),
         position,
-        Transform::from_translation(position.translation),
+        object_state,
+        Transform::from_translation(object_state.root_translation)
+            .with_scale(object_state.root_scale),
         GlobalTransform::default(),
         FangyuanAvatar::new(
             FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH,
@@ -198,10 +201,19 @@ fn spawn_fangyuan_player_primitive_visuals(
 }
 
 fn sync_fangyuan_player_transform(
-    mut players: Query<(&FangyuanPlayerPosition, &mut Transform), With<FangyuanPlayer>>,
+    mut players: Query<
+        (
+            &FangyuanPlayerPosition,
+            &mut FangyuanObjectState,
+            &mut Transform,
+        ),
+        With<FangyuanPlayer>,
+    >,
 ) {
-    for (position, mut transform) in &mut players {
-        transform.translation = position.translation;
+    for (position, mut object_state, mut transform) in &mut players {
+        object_state.root_translation = position.translation;
+        transform.translation = object_state.root_translation;
+        transform.scale = object_state.root_scale;
         transform.rotation = Quat::IDENTITY;
     }
 }
@@ -291,16 +303,22 @@ mod tests {
             &FangyuanPlayer,
             &FangyuanPlayerState,
             &FangyuanPlayerPosition,
+            &FangyuanObjectState,
             &FangyuanAvatar,
             &FangyuanPrimitiveSet,
             &Transform,
         )>();
-        let (_, state, position, avatar, primitive_set, transform) =
+        let (_, state, position, object_state, avatar, primitive_set, transform) =
             players.single(app.world()).unwrap();
 
         assert!(state.active);
+        assert!(object_state.active);
+        assert!(object_state.visible);
         assert_eq!(position.translation, Vec3::ZERO);
+        assert_eq!(object_state.root_translation, position.translation);
+        assert_eq!(object_state.root_scale, Vec3::ONE);
         assert_eq!(transform.translation, position.translation);
+        assert_eq!(transform.scale, object_state.root_scale);
         assert_eq!(transform.rotation, Quat::IDENTITY);
         assert_eq!(avatar.blueprint_id, FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH);
         assert_eq!(
@@ -321,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn moving_player_position_updates_root_transform_without_rotation() {
+    fn moving_player_position_updates_root_state_and_transform_without_rotation() {
         let mut app = test_app();
         enter_preview_mode(&mut app);
         let player = fangyuan_player_entities(&mut app)[0];
@@ -331,14 +349,22 @@ mod tests {
             .unwrap()
             .translation = Vec3::new(4.0, 0.0, -2.0);
         app.world_mut()
+            .get_mut::<FangyuanObjectState>(player)
+            .unwrap()
+            .root_scale = Vec3::new(1.25, 1.5, 0.75);
+        app.world_mut()
             .get_mut::<Transform>(player)
             .unwrap()
             .rotation = Quat::from_rotation_y(1.0);
 
         app.update();
 
+        let object_state = app.world().get::<FangyuanObjectState>(player).unwrap();
         let transform = app.world().get::<Transform>(player).unwrap();
+        assert_eq!(object_state.root_translation, Vec3::new(4.0, 0.0, -2.0));
+        assert_eq!(object_state.root_scale, Vec3::new(1.25, 1.5, 0.75));
         assert_eq!(transform.translation, Vec3::new(4.0, 0.0, -2.0));
+        assert_eq!(transform.scale, Vec3::new(1.25, 1.5, 0.75));
         assert_eq!(transform.rotation, Quat::IDENTITY);
     }
 
@@ -529,6 +555,7 @@ mod tests {
             assert!(!entity.contains::<FangyuanPlayer>());
             assert!(!entity.contains::<FangyuanPlayerState>());
             assert!(!entity.contains::<FangyuanPlayerPosition>());
+            assert!(!entity.contains::<FangyuanObjectState>());
             assert!(!entity.contains::<FangyuanAvatar>());
             assert!(!entity.contains::<FangyuanPrimitiveSet>());
             assert!(entity.contains::<FangyuanPlayerPrimitiveVisual>());
@@ -579,6 +606,7 @@ mod tests {
                 FangyuanPlayer,
                 FangyuanPlayerState::default(),
                 FangyuanPlayerPosition::default(),
+                FangyuanObjectState::default(),
                 Transform::default(),
                 GlobalTransform::default(),
                 FangyuanAvatar::new("test", "Test Fangyuan Player", primitive_set.clone()),

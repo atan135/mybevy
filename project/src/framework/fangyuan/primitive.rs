@@ -308,7 +308,11 @@ impl Default for FangyuanPrimitive {
     }
 }
 
-/// Runtime primitive collection stored on the gameplay entity.
+/// Runtime primitive collection stored on a logical Fangyuan object root entity.
+///
+/// This is an internal data container for one logical Entity. It can be attached
+/// to player, home object, equipment, skill, NPC, or Tiandao-generated roots;
+/// render-only child entities should build from it without owning it.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct FangyuanPrimitiveSet {
     primitives: Vec<FangyuanPrimitive>,
