@@ -7,7 +7,8 @@ use std::{
 };
 
 use super::{
-    FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveRole, FangyuanPrimitiveSet,
+    FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanPrimitive,
+    FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanPrimitiveSet,
 };
 
 pub const FANGYUAN_AVATAR_BLUEPRINT_VERSION: &str = "1";
@@ -95,17 +96,22 @@ impl FangyuanAvatarBlueprint {
             self.primitives
                 .iter()
                 .map(|primitive| {
-                    FangyuanPrimitive::with_role(
+                    let color = Color::srgba(
+                        primitive.color[0],
+                        primitive.color[1],
+                        primitive.color[2],
+                        primitive.color[3],
+                    );
+                    FangyuanPrimitive::with_runtime_metadata(
                         primitive.kind,
                         Vec3::from_array(primitive.position),
                         Vec3::from_array(primitive.size),
-                        Color::srgba(
-                            primitive.color[0],
-                            primitive.color[1],
-                            primitive.color[2],
-                            primitive.color[3],
-                        ),
+                        color,
                         primitive.role(),
+                        primitive.alpha(),
+                        primitive.emissive(),
+                        primitive.material_profile_id.clone(),
+                        primitive.lifecycle(),
                     )
                 })
                 .collect(),
@@ -160,6 +166,14 @@ pub struct FangyuanPrimitiveBlueprint {
     pub size: [f32; 3],
     #[serde(deserialize_with = "deserialize_f32_array_4")]
     pub color: [f32; 4],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emissive: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<FangyuanPrimitiveLifecycle>,
 }
 
 impl FangyuanPrimitiveBlueprint {
@@ -175,6 +189,10 @@ impl FangyuanPrimitiveBlueprint {
             position,
             size,
             color,
+            alpha: None,
+            emissive: None,
+            material_profile_id: None,
+            lifecycle: None,
         }
     }
 
@@ -183,6 +201,18 @@ impl FangyuanPrimitiveBlueprint {
             Some(role) => role,
             None => FangyuanPrimitiveRole::default_for_kind(self.kind),
         }
+    }
+
+    pub fn alpha(&self) -> f32 {
+        self.alpha.unwrap_or(self.color[3])
+    }
+
+    pub fn emissive(&self) -> f32 {
+        self.emissive.unwrap_or(FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE)
+    }
+
+    pub fn lifecycle(&self) -> FangyuanPrimitiveLifecycle {
+        self.lifecycle.unwrap_or_default()
     }
 }
 
@@ -256,6 +286,15 @@ pub enum FangyuanAvatarBlueprintValidationError {
         channel: usize,
         value: f32,
     },
+    InvalidPrimitiveAlpha {
+        index: usize,
+        value: f32,
+    },
+    InvalidPrimitiveEmissive {
+        index: usize,
+        value: f32,
+        max: f32,
+    },
 }
 
 impl fmt::Display for FangyuanAvatarBlueprintValidationError {
@@ -303,6 +342,14 @@ impl fmt::Display for FangyuanAvatarBlueprintValidationError {
             } => write!(
                 formatter,
                 "fangyuan avatar blueprint primitive #{index} color[{channel}]={value} must be in 0.0..=1.0"
+            ),
+            Self::InvalidPrimitiveAlpha { index, value } => write!(
+                formatter,
+                "fangyuan avatar blueprint primitive #{index} alpha={value} must be in 0.0..=1.0"
+            ),
+            Self::InvalidPrimitiveEmissive { index, value, max } => write!(
+                formatter,
+                "fangyuan avatar blueprint primitive #{index} emissive={value} must be finite and in 0.0..={max}"
             ),
         }
     }
@@ -410,6 +457,8 @@ fn validate_avatar_primitive(
     validate_primitive_size(index, primitive.size)?;
     validate_primitive_above_ground(index, primitive.position, primitive.size)?;
     validate_primitive_color(index, primitive.color)?;
+    validate_primitive_alpha(index, primitive.alpha())?;
+    validate_primitive_emissive(index, primitive.emissive())?;
     validate_primitive_role(index, primitive.role())?;
     Ok(())
 }
@@ -527,6 +576,39 @@ fn validate_primitive_color(
     Ok(())
 }
 
+fn validate_primitive_alpha(
+    index: usize,
+    alpha: f32,
+) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+    if alpha.is_finite() && (0.0..=1.0).contains(&alpha) {
+        Ok(())
+    } else {
+        Err(
+            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveAlpha {
+                index,
+                value: alpha,
+            },
+        )
+    }
+}
+
+fn validate_primitive_emissive(
+    index: usize,
+    emissive: f32,
+) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+    if emissive.is_finite() && (0.0..=FANGYUAN_PRIMITIVE_MAX_EMISSIVE).contains(&emissive) {
+        Ok(())
+    } else {
+        Err(
+            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveEmissive {
+                index,
+                value: emissive,
+                max: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
+            },
+        )
+    }
+}
+
 fn validate_avatar_blueprint_asset_path(
     path: &str,
 ) -> Result<(), FangyuanAvatarBlueprintPathError> {
@@ -629,6 +711,10 @@ mod tests {
         assert_eq!(blueprint.position, [0.0, 0.5, 0.0]);
         assert_eq!(blueprint.size, [1.0, 1.0, 1.0]);
         assert_eq!(blueprint.color, [0.8, 0.6, 0.4, 1.0]);
+        assert_eq!(blueprint.alpha(), 1.0);
+        assert_eq!(blueprint.emissive(), FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
+        assert_eq!(blueprint.material_profile_id, None);
+        assert_eq!(blueprint.lifecycle(), FangyuanPrimitiveLifecycle::empty());
     }
 
     #[test]
@@ -824,6 +910,46 @@ mod tests {
     }
 
     #[test]
+    fn compile_defaults_reserved_material_fields_and_empty_lifecycle() {
+        let mut primitive = valid_primitive();
+        primitive.color = [0.2, 0.4, 0.6, 0.35];
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        let primitive_set = blueprint.compile().unwrap();
+        let primitive = &primitive_set.primitives()[0];
+
+        assert_eq!(primitive.alpha, 0.35);
+        assert_eq!(primitive.emissive, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
+        assert_eq!(primitive.material_profile_id, None);
+        assert_eq!(primitive.lifecycle, FangyuanPrimitiveLifecycle::empty());
+        assert!(primitive.lifecycle.is_empty());
+    }
+
+    #[test]
+    fn compile_stores_explicit_reserved_material_fields_and_lifecycle() {
+        let mut primitive = valid_primitive();
+        primitive.alpha = Some(0.25);
+        primitive.emissive = Some(3.5);
+        primitive.material_profile_id = Some("avatar_glow".to_string());
+        primitive.lifecycle = Some(FangyuanPrimitiveLifecycle::new(Some(30), Some(4), Some(34)));
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        let primitive_set = blueprint.compile().unwrap();
+        let primitive = &primitive_set.primitives()[0];
+
+        assert_eq!(primitive.alpha, 0.25);
+        assert_eq!(primitive.emissive, 3.5);
+        assert_eq!(
+            primitive.material_profile_id.as_deref(),
+            Some("avatar_glow")
+        );
+        assert_eq!(
+            primitive.lifecycle,
+            FangyuanPrimitiveLifecycle::new(Some(30), Some(4), Some(34))
+        );
+    }
+
+    #[test]
     fn compile_rejects_unsupported_version() {
         let mut blueprint = valid_avatar_blueprint(vec![valid_primitive()]);
         blueprint.version = "2".to_string();
@@ -935,6 +1061,37 @@ mod tests {
                 index: 0,
                 channel: 2,
                 value: 1.2,
+            }
+        );
+    }
+
+    #[test]
+    fn compile_rejects_explicit_alpha_outside_unit_range() {
+        let mut primitive = valid_primitive();
+        primitive.alpha = Some(1.2);
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        assert_eq!(
+            blueprint.compile().unwrap_err(),
+            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveAlpha {
+                index: 0,
+                value: 1.2,
+            }
+        );
+    }
+
+    #[test]
+    fn compile_rejects_emissive_outside_allowed_range() {
+        let mut primitive = valid_primitive();
+        primitive.emissive = Some(FANGYUAN_PRIMITIVE_MAX_EMISSIVE + 0.5);
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        assert_eq!(
+            blueprint.compile().unwrap_err(),
+            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveEmissive {
+                index: 0,
+                value: FANGYUAN_PRIMITIVE_MAX_EMISSIVE + 0.5,
+                max: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
             }
         );
     }

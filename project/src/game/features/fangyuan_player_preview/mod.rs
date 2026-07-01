@@ -227,7 +227,10 @@ fn standard_material_from_color(color: Color) -> StandardMaterial {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::fangyuan::{FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT, FangyuanPrimitive};
+    use crate::framework::fangyuan::{
+        FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT, FangyuanPrimitive, FangyuanPrimitiveLifecycle,
+        FangyuanPrimitiveRole,
+    };
 
     fn test_app() -> App {
         let mut app = App::new();
@@ -431,6 +434,48 @@ mod tests {
                     Vec3::new(1.0, 0.5, 0.0),
                     Vec3::splat(0.5),
                     color,
+                ),
+            ]),
+        );
+
+        app.update();
+
+        let records = primitive_visual_records(&mut app);
+        let render_assets = app.world().resource::<FangyuanPlayerPreviewRenderAssets>();
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(render_assets.material_count(), 1);
+        assert_eq!(records[0].material, records[1].material);
+    }
+
+    #[test]
+    fn fangyuan_preview_material_cache_ignores_reserved_runtime_metadata() {
+        let mut app = test_app();
+        let color = Color::srgb(0.2, 0.4, 0.6);
+        spawn_custom_player_for_test(
+            &mut app,
+            FangyuanPrimitiveSet::from_primitives(vec![
+                FangyuanPrimitive::with_runtime_metadata(
+                    FangyuanPrimitiveKind::Cube,
+                    Vec3::new(-1.0, 0.5, 0.0),
+                    Vec3::splat(1.0),
+                    color,
+                    FangyuanPrimitiveRole::Structure,
+                    0.25,
+                    0.0,
+                    None,
+                    FangyuanPrimitiveLifecycle::empty(),
+                ),
+                FangyuanPrimitive::with_runtime_metadata(
+                    FangyuanPrimitiveKind::Sphere,
+                    Vec3::new(1.0, 0.5, 0.0),
+                    Vec3::splat(0.5),
+                    color,
+                    FangyuanPrimitiveRole::Decoration,
+                    0.75,
+                    4.0,
+                    Some("preview_reserved_profile".to_string()),
+                    FangyuanPrimitiveLifecycle::new(Some(20), Some(2), Some(22)),
                 ),
             ]),
         );

@@ -126,6 +126,50 @@ impl<'de> Deserialize<'de> for FangyuanPrimitiveRole {
     }
 }
 
+pub const FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE: f32 = 0.0;
+pub const FANGYUAN_PRIMITIVE_MAX_EMISSIVE: f32 = 16.0;
+
+/// Reserved primitive lifecycle metadata.
+///
+/// The runtime model owns the data shape here, but no playback, ticking, or VFX
+/// lifecycle system consumes it yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FangyuanPrimitiveLifecycle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifetime: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn_tick: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub despawn_tick: Option<u64>,
+}
+
+impl FangyuanPrimitiveLifecycle {
+    pub const fn empty() -> Self {
+        Self {
+            lifetime: None,
+            spawn_tick: None,
+            despawn_tick: None,
+        }
+    }
+
+    pub const fn new(
+        lifetime: Option<u64>,
+        spawn_tick: Option<u64>,
+        despawn_tick: Option<u64>,
+    ) -> Self {
+        Self {
+            lifetime,
+            spawn_tick,
+            despawn_tick,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lifetime.is_none() && self.spawn_tick.is_none() && self.despawn_tick.is_none()
+    }
+}
+
 /// Runtime primitive data compiled from a blueprint primitive.
 ///
 /// Rendering features should translate this data into their own render instance
@@ -144,10 +188,20 @@ pub struct FangyuanPrimitive {
     /// Primitive semantic role. This is metadata only and does not change the
     /// gameplay entity boundary.
     pub role: FangyuanPrimitiveRole,
+    /// Reserved opacity scalar. Defaults to the primitive color alpha.
+    pub alpha: f32,
+    /// Reserved emissive intensity scalar. Current preview rendering does not
+    /// consume this value.
+    pub emissive: f32,
+    /// Reserved material profile identifier. `None` means the default material
+    /// profile.
+    pub material_profile_id: Option<String>,
+    /// Reserved lifecycle metadata for future VFX/runtime playback layers.
+    pub lifecycle: FangyuanPrimitiveLifecycle,
 }
 
 impl FangyuanPrimitive {
-    pub const fn new(
+    pub fn new(
         kind: FangyuanPrimitiveKind,
         local_position: Vec3,
         scale: Vec3,
@@ -162,12 +216,36 @@ impl FangyuanPrimitive {
         )
     }
 
-    pub const fn with_role(
+    pub fn with_role(
         kind: FangyuanPrimitiveKind,
         local_position: Vec3,
         scale: Vec3,
         color: Color,
         role: FangyuanPrimitiveRole,
+    ) -> Self {
+        Self::with_runtime_metadata(
+            kind,
+            local_position,
+            scale,
+            color,
+            role,
+            color.to_srgba().alpha,
+            FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
+            None,
+            FangyuanPrimitiveLifecycle::empty(),
+        )
+    }
+
+    pub fn with_runtime_metadata(
+        kind: FangyuanPrimitiveKind,
+        local_position: Vec3,
+        scale: Vec3,
+        color: Color,
+        role: FangyuanPrimitiveRole,
+        alpha: f32,
+        emissive: f32,
+        material_profile_id: Option<String>,
+        lifecycle: FangyuanPrimitiveLifecycle,
     ) -> Self {
         Self {
             kind,
@@ -175,6 +253,10 @@ impl FangyuanPrimitive {
             scale,
             color,
             role,
+            alpha,
+            emissive,
+            material_profile_id,
+            lifecycle,
         }
     }
 
@@ -196,6 +278,22 @@ impl FangyuanPrimitive {
 
     pub const fn role(&self) -> FangyuanPrimitiveRole {
         self.role
+    }
+
+    pub const fn alpha(&self) -> f32 {
+        self.alpha
+    }
+
+    pub const fn emissive(&self) -> f32 {
+        self.emissive
+    }
+
+    pub fn material_profile_id(&self) -> Option<&str> {
+        self.material_profile_id.as_deref()
+    }
+
+    pub const fn lifecycle(&self) -> FangyuanPrimitiveLifecycle {
+        self.lifecycle
     }
 }
 
@@ -346,6 +444,10 @@ mod tests {
         assert_eq!(primitive.scale(), scale);
         assert_eq!(primitive.color(), color);
         assert_eq!(primitive.role(), FangyuanPrimitiveRole::Core);
+        assert_eq!(primitive.alpha(), 0.8);
+        assert_eq!(primitive.emissive(), FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
+        assert_eq!(primitive.material_profile_id(), None);
+        assert_eq!(primitive.lifecycle(), FangyuanPrimitiveLifecycle::empty());
     }
 
     #[test]
@@ -362,6 +464,27 @@ mod tests {
     }
 
     #[test]
+    fn primitive_constructor_can_store_reserved_runtime_metadata() {
+        let lifecycle = FangyuanPrimitiveLifecycle::new(Some(12), Some(3), Some(15));
+        let primitive = FangyuanPrimitive::with_runtime_metadata(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::ZERO,
+            Vec3::ONE,
+            Color::srgba(0.1, 0.2, 0.3, 1.0),
+            FangyuanPrimitiveRole::Trail,
+            0.5,
+            2.25,
+            Some("glow_edge".to_string()),
+            lifecycle,
+        );
+
+        assert_eq!(primitive.alpha(), 0.5);
+        assert_eq!(primitive.emissive(), 2.25);
+        assert_eq!(primitive.material_profile_id(), Some("glow_edge"));
+        assert_eq!(primitive.lifecycle(), lifecycle);
+    }
+
+    #[test]
     fn primitive_default_is_legal_identity_cube() {
         let primitive = FangyuanPrimitive::default();
 
@@ -370,6 +493,10 @@ mod tests {
         assert_eq!(primitive.scale(), Vec3::ONE);
         assert_eq!(primitive.color().to_srgba(), Color::WHITE.to_srgba());
         assert_eq!(primitive.role(), FangyuanPrimitiveRole::Structure);
+        assert_eq!(primitive.alpha(), 1.0);
+        assert_eq!(primitive.emissive(), FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
+        assert_eq!(primitive.material_profile_id(), None);
+        assert!(primitive.lifecycle().is_empty());
     }
 
     #[test]
