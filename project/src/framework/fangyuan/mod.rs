@@ -14,8 +14,10 @@ mod avatar;
 mod blueprint;
 mod object;
 mod primitive;
+mod stats;
 
 pub use avatar::*;
 pub use blueprint::*;
 pub use object::*;
 pub use primitive::*;
+pub use stats::*;
