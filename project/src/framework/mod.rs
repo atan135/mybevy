@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod fangyuan;
 pub mod fight;
 pub mod network;
 pub mod prelude;
