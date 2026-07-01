@@ -1,11 +1,38 @@
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FangyuanPrimitiveKind {
     Cube,
     Sphere,
+}
+
+impl FangyuanPrimitiveKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cube => "cube",
+            Self::Sphere => "sphere",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "cube" => Some(Self::Cube),
+            "sphere" => Some(Self::Sphere),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FangyuanPrimitiveKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).ok_or_else(|| de::Error::unknown_variant(&value, &["cube", "sphere"]))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
