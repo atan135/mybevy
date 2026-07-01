@@ -1,0 +1,25 @@
+(
+  version: "1",
+  name: "minimal_player",
+  description: "最小方圆玩家外观",
+  max_primitives: 2,
+  bounds: (
+    width: 2.0,
+    depth: 2.0,
+    height: 3.0,
+  ),
+  primitives: [
+    (
+      kind: "cube",
+      position: [0.0, 0.75, 0.0],
+      size: [0.9, 1.5, 0.6],
+      color: [0.25, 0.45, 0.95, 1.0],
+    ),
+    (
+      kind: "sphere",
+      position: [0.0, 1.75, 0.0],
+      size: [0.7, 0.7, 0.7],
+      color: [0.95, 0.78, 0.55, 1.0],
+    ),
+  ],
+)
