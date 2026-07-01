@@ -777,6 +777,13 @@ mod tests {
             primitive_set.primitives()[1].role,
             FangyuanPrimitiveRole::Core
         );
+        for primitive in primitive_set.primitives() {
+            let color = primitive.color.to_srgba();
+            assert_eq!(primitive.alpha, color.alpha);
+            assert_eq!(primitive.emissive, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
+            assert_eq!(primitive.material_profile_id, None);
+            assert_eq!(primitive.lifecycle, FangyuanPrimitiveLifecycle::empty());
+        }
         assert_eq!(
             primitive_set.primitives()[0].local_position,
             Vec3::new(0.0, 0.75, 0.0)
@@ -866,12 +873,12 @@ mod tests {
     }
 
     #[test]
-    fn compile_defaults_legacy_v1_missing_role_by_kind() {
+    fn compile_defaults_legacy_v1_required_primitive_fields_to_runtime_defaults() {
         let blueprint = FangyuanAvatarBlueprint::from_ron_str(
             r#"
 (
     version: "1",
-    name: "legacy_roles",
+    name: "legacy_v1_required_fields",
     description: "",
     max_primitives: 2,
     bounds: (width: 4.0, depth: 4.0, height: 4.0),
@@ -880,13 +887,13 @@ mod tests {
             kind: "cube",
             position: [0.0, 1.0, 0.0],
             size: [1.0, 1.0, 1.0],
-            color: [1.0, 1.0, 1.0, 1.0],
+            color: [1.0, 0.8, 0.6, 0.35],
         ),
         (
             kind: "sphere",
             position: [0.0, 1.0, 0.0],
             size: [1.0, 1.0, 1.0],
-            color: [1.0, 1.0, 1.0, 1.0],
+            color: [0.6, 0.8, 1.0, 0.6],
         ),
     ],
 )
@@ -896,17 +903,28 @@ mod tests {
 
         assert_eq!(blueprint.primitives[0].role, None);
         assert_eq!(blueprint.primitives[1].role, None);
+        assert_eq!(blueprint.primitives[0].alpha, None);
+        assert_eq!(blueprint.primitives[1].alpha, None);
+        assert_eq!(blueprint.primitives[0].emissive, None);
+        assert_eq!(blueprint.primitives[1].emissive, None);
+        assert_eq!(blueprint.primitives[0].material_profile_id, None);
+        assert_eq!(blueprint.primitives[1].material_profile_id, None);
+        assert_eq!(blueprint.primitives[0].lifecycle, None);
+        assert_eq!(blueprint.primitives[1].lifecycle, None);
 
         let primitive_set = blueprint.compile().unwrap();
+        let primitives = primitive_set.primitives();
 
-        assert_eq!(
-            primitive_set.primitives()[0].role,
-            FangyuanPrimitiveRole::Structure
-        );
-        assert_eq!(
-            primitive_set.primitives()[1].role,
-            FangyuanPrimitiveRole::Core
-        );
+        assert_eq!(primitives[0].role, FangyuanPrimitiveRole::Structure);
+        assert_eq!(primitives[0].alpha, 0.35);
+        assert_eq!(primitives[0].emissive, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
+        assert_eq!(primitives[0].material_profile_id, None);
+        assert_eq!(primitives[0].lifecycle, FangyuanPrimitiveLifecycle::empty());
+        assert_eq!(primitives[1].role, FangyuanPrimitiveRole::Core);
+        assert_eq!(primitives[1].alpha, 0.6);
+        assert_eq!(primitives[1].emissive, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
+        assert_eq!(primitives[1].material_profile_id, None);
+        assert_eq!(primitives[1].lifecycle, FangyuanPrimitiveLifecycle::empty());
     }
 
     #[test]
