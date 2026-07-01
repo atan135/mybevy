@@ -240,8 +240,8 @@ fn standard_material_from_color(color: Color) -> StandardMaterial {
 mod tests {
     use super::*;
     use crate::framework::fangyuan::{
-        FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT, FangyuanPrimitive, FangyuanPrimitiveLifecycle,
-        FangyuanPrimitiveRole,
+        FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
+        FangyuanPrimitive, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
     };
 
     fn test_app() -> App {
@@ -321,12 +321,50 @@ mod tests {
         assert_eq!(transform.scale, object_state.root_scale);
         assert_eq!(transform.rotation, Quat::IDENTITY);
         assert_eq!(avatar.blueprint_id, FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH);
+        assert_eq!(avatar.display_name, "Minimal Fangyuan Player");
         assert_eq!(
             avatar.primitives.len(),
             FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT
         );
         assert_eq!(primitive_set.len(), FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT);
         assert_eq!(&avatar.primitives, primitive_set);
+    }
+
+    #[test]
+    fn fangyuan_preview_player_uses_minimal_runtime_primitive_defaults() {
+        let mut app = test_app();
+        enter_preview_mode(&mut app);
+
+        let player = fangyuan_player_entities(&mut app)[0];
+        let primitive_set = app.world().get::<FangyuanPrimitiveSet>(player).unwrap();
+        let primitives = primitive_set.primitives();
+
+        assert_eq!(primitives.len(), FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT);
+        assert_eq!(primitives[0].kind, FangyuanPrimitiveKind::Cube);
+        assert_eq!(primitives[0].role, FangyuanPrimitiveRole::Structure);
+        assert_eq!(primitives[0].local_position, Vec3::new(0.0, 0.75, 0.0));
+        assert_eq!(primitives[0].scale, Vec3::new(0.9, 1.5, 0.6));
+        assert_eq!(
+            primitives[0].color.to_srgba(),
+            Color::srgba(0.25, 0.45, 0.95, 1.0).to_srgba()
+        );
+
+        assert_eq!(primitives[1].kind, FangyuanPrimitiveKind::Sphere);
+        assert_eq!(primitives[1].role, FangyuanPrimitiveRole::Core);
+        assert_eq!(primitives[1].local_position, Vec3::new(0.0, 1.75, 0.0));
+        assert_eq!(primitives[1].scale, Vec3::splat(0.7));
+        assert_eq!(
+            primitives[1].color.to_srgba(),
+            Color::srgba(0.95, 0.78, 0.55, 1.0).to_srgba()
+        );
+
+        for primitive in primitives {
+            let color = primitive.color.to_srgba();
+            assert_eq!(primitive.alpha, color.alpha);
+            assert_eq!(primitive.emissive, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
+            assert_eq!(primitive.material_profile_id, None);
+            assert_eq!(primitive.lifecycle, FangyuanPrimitiveLifecycle::empty());
+        }
     }
 
     #[test]
