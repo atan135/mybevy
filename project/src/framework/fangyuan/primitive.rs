@@ -9,6 +9,12 @@ pub enum FangyuanPrimitiveKind {
     Sphere,
 }
 
+impl Default for FangyuanPrimitiveKind {
+    fn default() -> Self {
+        Self::Cube
+    }
+}
+
 impl FangyuanPrimitiveKind {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -42,9 +48,14 @@ impl<'de> Deserialize<'de> for FangyuanPrimitiveKind {
 /// entities instead of treating blueprint records as renderable objects.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FangyuanPrimitive {
+    /// Primitive geometry kind. Runtime primitives currently support only cube
+    /// and sphere.
     pub kind: FangyuanPrimitiveKind,
+    /// Primitive-local offset under the logical Entity root node.
     pub local_position: Vec3,
+    /// Primitive-local scale. This does not encode rotation or facing.
     pub scale: Vec3,
+    /// Primitive display color.
     pub color: Color,
 }
 
@@ -61,6 +72,33 @@ impl FangyuanPrimitive {
             scale,
             color,
         }
+    }
+
+    pub const fn kind(&self) -> FangyuanPrimitiveKind {
+        self.kind
+    }
+
+    pub const fn local_position(&self) -> Vec3 {
+        self.local_position
+    }
+
+    pub const fn scale(&self) -> Vec3 {
+        self.scale
+    }
+
+    pub const fn color(&self) -> Color {
+        self.color
+    }
+}
+
+impl Default for FangyuanPrimitive {
+    fn default() -> Self {
+        Self::new(
+            FangyuanPrimitiveKind::default(),
+            Vec3::ZERO,
+            Vec3::ONE,
+            Color::WHITE,
+        )
     }
 }
 
@@ -124,6 +162,39 @@ mod tests {
             serde_json::from_str::<FangyuanPrimitiveKind>(r#""sphere""#).unwrap(),
             FangyuanPrimitiveKind::Sphere
         );
+    }
+
+    #[test]
+    fn primitive_kind_default_is_cube() {
+        assert_eq!(
+            FangyuanPrimitiveKind::default(),
+            FangyuanPrimitiveKind::Cube
+        );
+    }
+
+    #[test]
+    fn primitive_constructor_stores_runtime_fields() {
+        let local_position = Vec3::new(0.25, 1.5, -0.75);
+        let scale = Vec3::new(0.5, 1.25, 2.0);
+        let color = Color::srgba(0.2, 0.4, 0.6, 0.8);
+
+        let primitive =
+            FangyuanPrimitive::new(FangyuanPrimitiveKind::Sphere, local_position, scale, color);
+
+        assert_eq!(primitive.kind(), FangyuanPrimitiveKind::Sphere);
+        assert_eq!(primitive.local_position(), local_position);
+        assert_eq!(primitive.scale(), scale);
+        assert_eq!(primitive.color(), color);
+    }
+
+    #[test]
+    fn primitive_default_is_legal_identity_cube() {
+        let primitive = FangyuanPrimitive::default();
+
+        assert_eq!(primitive.kind(), FangyuanPrimitiveKind::Cube);
+        assert_eq!(primitive.local_position(), Vec3::ZERO);
+        assert_eq!(primitive.scale(), Vec3::ONE);
+        assert_eq!(primitive.color().to_srgba(), Color::WHITE.to_srgba());
     }
 
     #[test]
