@@ -5,7 +5,7 @@ use crate::framework::{audio::AudioPlugin, scene::ScenePlugin};
 use super::{
     audio::GameAudioPlugin,
     authority::AuthorityPlugin,
-    features::{RobotSyncPlugin, TouchRipplePlugin},
+    features::{FangyuanPlayerPreviewPlugin, RobotSyncPlugin, TouchRipplePlugin},
     myserver::MyServerPlugin,
     scenes::GameScenesPlugin,
     screens::ScreensPlugin,
@@ -27,6 +27,7 @@ impl Plugin for GamePlugin {
             ScreensPlugin,
             TouchRipplePlugin,
             RobotSyncPlugin,
+            FangyuanPlayerPreviewPlugin,
         ))
         .add_systems(Startup, setup_camera);
     }
