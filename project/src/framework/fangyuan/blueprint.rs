@@ -6,7 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet};
+use super::{
+    FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveRole, FangyuanPrimitiveSet,
+};
 
 pub const FANGYUAN_AVATAR_BLUEPRINT_VERSION: &str = "1";
 pub const FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT: usize = 1000;
@@ -93,7 +95,7 @@ impl FangyuanAvatarBlueprint {
             self.primitives
                 .iter()
                 .map(|primitive| {
-                    FangyuanPrimitive::new(
+                    FangyuanPrimitive::with_role(
                         primitive.kind,
                         Vec3::from_array(primitive.position),
                         Vec3::from_array(primitive.size),
@@ -103,6 +105,7 @@ impl FangyuanAvatarBlueprint {
                             primitive.color[2],
                             primitive.color[3],
                         ),
+                        primitive.role(),
                     )
                 })
                 .collect(),
@@ -149,6 +152,8 @@ impl FangyuanAvatarBlueprintBounds {
 #[serde(deny_unknown_fields)]
 pub struct FangyuanPrimitiveBlueprint {
     pub kind: FangyuanPrimitiveKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<FangyuanPrimitiveRole>,
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     pub position: [f32; 3],
     #[serde(deserialize_with = "deserialize_f32_array_3")]
@@ -166,9 +171,17 @@ impl FangyuanPrimitiveBlueprint {
     ) -> Self {
         Self {
             kind,
+            role: None,
             position,
             size,
             color,
+        }
+    }
+
+    pub const fn role(&self) -> FangyuanPrimitiveRole {
+        match self.role {
+            Some(role) => role,
+            None => FangyuanPrimitiveRole::default_for_kind(self.kind),
         }
     }
 }
@@ -397,6 +410,7 @@ fn validate_avatar_primitive(
     validate_primitive_size(index, primitive.size)?;
     validate_primitive_above_ground(index, primitive.position, primitive.size)?;
     validate_primitive_color(index, primitive.color)?;
+    validate_primitive_role(index, primitive.role())?;
     Ok(())
 }
 
@@ -406,6 +420,23 @@ fn validate_primitive_kind(
 ) -> Result<(), FangyuanAvatarBlueprintValidationError> {
     match kind {
         FangyuanPrimitiveKind::Cube | FangyuanPrimitiveKind::Sphere => Ok(()),
+    }
+}
+
+fn validate_primitive_role(
+    _index: usize,
+    role: FangyuanPrimitiveRole,
+) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+    match role {
+        FangyuanPrimitiveRole::Structure
+        | FangyuanPrimitiveRole::Core
+        | FangyuanPrimitiveRole::Boundary
+        | FangyuanPrimitiveRole::Warning
+        | FangyuanPrimitiveRole::Trail
+        | FangyuanPrimitiveRole::Impact
+        | FangyuanPrimitiveRole::Decoration
+        | FangyuanPrimitiveRole::Socket
+        | FangyuanPrimitiveRole::Archive => Ok(()),
     }
 }
 
@@ -594,9 +625,27 @@ mod tests {
         .unwrap();
 
         assert_eq!(blueprint.kind, FangyuanPrimitiveKind::Cube);
+        assert_eq!(blueprint.role(), FangyuanPrimitiveRole::Structure);
         assert_eq!(blueprint.position, [0.0, 0.5, 0.0]);
         assert_eq!(blueprint.size, [1.0, 1.0, 1.0]);
         assert_eq!(blueprint.color, [0.8, 0.6, 0.4, 1.0]);
+    }
+
+    #[test]
+    fn blueprint_primitive_accepts_explicit_role() {
+        let blueprint: FangyuanPrimitiveBlueprint = serde_json::from_str(
+            r#"{
+                "kind": "sphere",
+                "role": "decoration",
+                "position": [0.0, 0.5, 0.0],
+                "size": [1.0, 1.0, 1.0],
+                "color": [0.8, 0.6, 0.4, 1.0]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(blueprint.role, Some(FangyuanPrimitiveRole::Decoration));
+        assert_eq!(blueprint.role(), FangyuanPrimitiveRole::Decoration);
     }
 
     #[test]
@@ -633,6 +682,14 @@ mod tests {
         assert_eq!(
             primitive_set.primitives()[1].kind,
             FangyuanPrimitiveKind::Sphere
+        );
+        assert_eq!(
+            primitive_set.primitives()[0].role,
+            FangyuanPrimitiveRole::Structure
+        );
+        assert_eq!(
+            primitive_set.primitives()[1].role,
+            FangyuanPrimitiveRole::Core
         );
         assert_eq!(
             primitive_set.primitives()[0].local_position,
@@ -679,6 +736,91 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn unknown_primitive_role_is_rejected_by_blueprint_parse() {
+        let result = FangyuanAvatarBlueprint::from_ron_str(
+            r#"
+(
+    version: "1",
+    name: "invalid_role",
+    description: "",
+    max_primitives: 1,
+    bounds: (width: 2.0, depth: 2.0, height: 2.0),
+    primitives: [
+        (
+            kind: "cube",
+            role: "weapon_socket",
+            position: [0.0, 1.0, 0.0],
+            size: [1.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+        ),
+    ],
+)
+"#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compile_uses_explicit_primitive_role_without_changing_entity_boundary() {
+        let mut primitive = valid_primitive();
+        primitive.role = Some(FangyuanPrimitiveRole::Warning);
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        let primitive_set = blueprint.compile().unwrap();
+
+        assert_eq!(primitive_set.len(), 1);
+        assert_eq!(
+            primitive_set.primitives()[0].role,
+            FangyuanPrimitiveRole::Warning
+        );
+    }
+
+    #[test]
+    fn compile_defaults_legacy_v1_missing_role_by_kind() {
+        let blueprint = FangyuanAvatarBlueprint::from_ron_str(
+            r#"
+(
+    version: "1",
+    name: "legacy_roles",
+    description: "",
+    max_primitives: 2,
+    bounds: (width: 4.0, depth: 4.0, height: 4.0),
+    primitives: [
+        (
+            kind: "cube",
+            position: [0.0, 1.0, 0.0],
+            size: [1.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+        ),
+        (
+            kind: "sphere",
+            position: [0.0, 1.0, 0.0],
+            size: [1.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+        ),
+    ],
+)
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(blueprint.primitives[0].role, None);
+        assert_eq!(blueprint.primitives[1].role, None);
+
+        let primitive_set = blueprint.compile().unwrap();
+
+        assert_eq!(
+            primitive_set.primitives()[0].role,
+            FangyuanPrimitiveRole::Structure
+        );
+        assert_eq!(
+            primitive_set.primitives()[1].role,
+            FangyuanPrimitiveRole::Core
+        );
     }
 
     #[test]

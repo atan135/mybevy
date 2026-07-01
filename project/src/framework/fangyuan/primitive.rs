@@ -42,6 +42,90 @@ impl<'de> Deserialize<'de> for FangyuanPrimitiveKind {
     }
 }
 
+/// Semantic role of a Fangyuan primitive.
+///
+/// Roles are metadata for review, budgets, and later LOD decisions. They do not
+/// define gameplay entity boundaries or rendering behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FangyuanPrimitiveRole {
+    Structure,
+    Core,
+    Boundary,
+    Warning,
+    Trail,
+    Impact,
+    Decoration,
+    Socket,
+    Archive,
+}
+
+impl Default for FangyuanPrimitiveRole {
+    fn default() -> Self {
+        Self::Structure
+    }
+}
+
+impl FangyuanPrimitiveRole {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Structure => "structure",
+            Self::Core => "core",
+            Self::Boundary => "boundary",
+            Self::Warning => "warning",
+            Self::Trail => "trail",
+            Self::Impact => "impact",
+            Self::Decoration => "decoration",
+            Self::Socket => "socket",
+            Self::Archive => "archive",
+        }
+    }
+
+    pub const fn default_for_kind(kind: FangyuanPrimitiveKind) -> Self {
+        match kind {
+            FangyuanPrimitiveKind::Cube => Self::Structure,
+            FangyuanPrimitiveKind::Sphere => Self::Core,
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "structure" => Some(Self::Structure),
+            "core" => Some(Self::Core),
+            "boundary" => Some(Self::Boundary),
+            "warning" => Some(Self::Warning),
+            "trail" => Some(Self::Trail),
+            "impact" => Some(Self::Impact),
+            "decoration" => Some(Self::Decoration),
+            "socket" => Some(Self::Socket),
+            "archive" => Some(Self::Archive),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FangyuanPrimitiveRole {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        const EXPECTED: &[&str] = &[
+            "structure",
+            "core",
+            "boundary",
+            "warning",
+            "trail",
+            "impact",
+            "decoration",
+            "socket",
+            "archive",
+        ];
+
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).ok_or_else(|| de::Error::unknown_variant(&value, EXPECTED))
+    }
+}
+
 /// Runtime primitive data compiled from a blueprint primitive.
 ///
 /// Rendering features should translate this data into their own render instance
@@ -57,6 +141,9 @@ pub struct FangyuanPrimitive {
     pub scale: Vec3,
     /// Primitive display color.
     pub color: Color,
+    /// Primitive semantic role. This is metadata only and does not change the
+    /// gameplay entity boundary.
+    pub role: FangyuanPrimitiveRole,
 }
 
 impl FangyuanPrimitive {
@@ -66,11 +153,28 @@ impl FangyuanPrimitive {
         scale: Vec3,
         color: Color,
     ) -> Self {
+        Self::with_role(
+            kind,
+            local_position,
+            scale,
+            color,
+            FangyuanPrimitiveRole::default_for_kind(kind),
+        )
+    }
+
+    pub const fn with_role(
+        kind: FangyuanPrimitiveKind,
+        local_position: Vec3,
+        scale: Vec3,
+        color: Color,
+        role: FangyuanPrimitiveRole,
+    ) -> Self {
         Self {
             kind,
             local_position,
             scale,
             color,
+            role,
         }
     }
 
@@ -88,6 +192,10 @@ impl FangyuanPrimitive {
 
     pub const fn color(&self) -> Color {
         self.color
+    }
+
+    pub const fn role(&self) -> FangyuanPrimitiveRole {
+        self.role
     }
 }
 
@@ -165,10 +273,62 @@ mod tests {
     }
 
     #[test]
+    fn primitive_role_covers_expected_lowercase_serde_names() {
+        let cases = [
+            (FangyuanPrimitiveRole::Structure, "structure"),
+            (FangyuanPrimitiveRole::Core, "core"),
+            (FangyuanPrimitiveRole::Boundary, "boundary"),
+            (FangyuanPrimitiveRole::Warning, "warning"),
+            (FangyuanPrimitiveRole::Trail, "trail"),
+            (FangyuanPrimitiveRole::Impact, "impact"),
+            (FangyuanPrimitiveRole::Decoration, "decoration"),
+            (FangyuanPrimitiveRole::Socket, "socket"),
+            (FangyuanPrimitiveRole::Archive, "archive"),
+        ];
+
+        for (role, name) in cases {
+            assert_eq!(role.as_str(), name);
+            assert_eq!(
+                serde_json::to_string(&role).unwrap(),
+                format!(r#""{name}""#)
+            );
+            assert_eq!(
+                serde_json::from_str::<FangyuanPrimitiveRole>(&format!(r#""{name}""#)).unwrap(),
+                role
+            );
+        }
+    }
+
+    #[test]
+    fn primitive_role_rejects_unknown_serde_name() {
+        assert!(serde_json::from_str::<FangyuanPrimitiveRole>(r#""equipment""#).is_err());
+    }
+
+    #[test]
     fn primitive_kind_default_is_cube() {
         assert_eq!(
             FangyuanPrimitiveKind::default(),
             FangyuanPrimitiveKind::Cube
+        );
+    }
+
+    #[test]
+    fn primitive_role_default_is_structure() {
+        assert_eq!(
+            FangyuanPrimitiveRole::default(),
+            FangyuanPrimitiveRole::Structure
+        );
+    }
+
+    #[test]
+    fn primitive_role_default_for_kind_marks_sphere_as_core() {
+        assert_eq!(
+            FangyuanPrimitiveRole::default_for_kind(FangyuanPrimitiveKind::Cube),
+            FangyuanPrimitiveRole::Structure
+        );
+        assert_eq!(
+            FangyuanPrimitiveRole::default_for_kind(FangyuanPrimitiveKind::Sphere),
+            FangyuanPrimitiveRole::Core
         );
     }
 
@@ -185,6 +345,20 @@ mod tests {
         assert_eq!(primitive.local_position(), local_position);
         assert_eq!(primitive.scale(), scale);
         assert_eq!(primitive.color(), color);
+        assert_eq!(primitive.role(), FangyuanPrimitiveRole::Core);
+    }
+
+    #[test]
+    fn primitive_constructor_can_store_explicit_role() {
+        let primitive = FangyuanPrimitive::with_role(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::ZERO,
+            Vec3::ONE,
+            Color::WHITE,
+            FangyuanPrimitiveRole::Warning,
+        );
+
+        assert_eq!(primitive.role(), FangyuanPrimitiveRole::Warning);
     }
 
     #[test]
@@ -195,6 +369,7 @@ mod tests {
         assert_eq!(primitive.local_position(), Vec3::ZERO);
         assert_eq!(primitive.scale(), Vec3::ONE);
         assert_eq!(primitive.color().to_srgba(), Color::WHITE.to_srgba());
+        assert_eq!(primitive.role(), FangyuanPrimitiveRole::Structure);
     }
 
     #[test]
