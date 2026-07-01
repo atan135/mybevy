@@ -1,7 +1,14 @@
-//! Fangyuan primitive data model boundary.
+//! Fangyuan unified data model boundary.
 //!
-//! Fangyuan player appearance is stored as primitive data on the gameplay
-//! entity. Individual primitives are not gameplay entities.
+//! `blueprint` owns first-package RON loading, validation, and compilation from
+//! authoring records into runtime data. `primitive` owns the compiled runtime
+//! primitive model stored on gameplay entities. `avatar` owns the gameplay
+//! component that binds a blueprint identity and display name to that runtime
+//! primitive set.
+//!
+//! Rendering features should create their own render instance entities from
+//! `FangyuanPrimitiveSet`; blueprint records are authoring input and do not
+//! carry rendering responsibility.
 
 mod avatar;
 mod blueprint;

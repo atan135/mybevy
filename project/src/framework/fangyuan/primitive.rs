@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
+/// Runtime primitive kind compiled from blueprint data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FangyuanPrimitiveKind {
@@ -35,6 +36,10 @@ impl<'de> Deserialize<'de> for FangyuanPrimitiveKind {
     }
 }
 
+/// Runtime primitive data compiled from a blueprint primitive.
+///
+/// Rendering features should translate this data into their own render instance
+/// entities instead of treating blueprint records as renderable objects.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FangyuanPrimitive {
     pub kind: FangyuanPrimitiveKind,
@@ -59,7 +64,8 @@ impl FangyuanPrimitive {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Runtime primitive collection stored on the gameplay entity.
+#[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct FangyuanPrimitiveSet {
     primitives: Vec<FangyuanPrimitive>,
 }
@@ -133,5 +139,20 @@ mod tests {
 
         assert_eq!(set.len(), 1);
         assert_eq!(set.primitives(), &[primitive]);
+    }
+
+    #[test]
+    fn primitive_set_is_framework_component_api() {
+        let mut app = App::new();
+        let entity = app.world_mut().spawn(FangyuanPrimitiveSet::new()).id();
+
+        assert!(
+            app.world()
+                .entity(entity)
+                .contains::<FangyuanPrimitiveSet>()
+        );
+
+        let mut primitive_sets = app.world_mut().query::<&FangyuanPrimitiveSet>();
+        assert!(primitive_sets.single(app.world()).unwrap().is_empty());
     }
 }

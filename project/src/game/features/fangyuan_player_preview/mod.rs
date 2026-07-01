@@ -1,5 +1,4 @@
 use bevy::{
-    ecs::component::{Mutable, StorageType},
     mesh::{MeshBuilder, SphereKind, SphereMeshBuilder},
     prelude::*,
     transform::TransformSystems,
@@ -55,11 +54,6 @@ impl Default for FangyuanPlayerState {
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub(in crate::game) struct FangyuanPlayerPosition {
     pub translation: Vec3,
-}
-
-impl Component for FangyuanPrimitiveSet {
-    const STORAGE_TYPE: StorageType = StorageType::Table;
-    type Mutability = Mutable;
 }
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
