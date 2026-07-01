@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
+    borrow::Cow,
     error::Error,
     fmt, fs, io,
     path::{Path, PathBuf},
@@ -157,8 +158,13 @@ impl FangyuanAvatarBlueprintBounds {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FangyuanPrimitiveBlueprint {
+    #[serde(deserialize_with = "deserialize_primitive_kind")]
     pub kind: FangyuanPrimitiveKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_primitive_role",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub role: Option<FangyuanPrimitiveRole>,
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     pub position: [f32; 3],
@@ -297,61 +303,110 @@ pub enum FangyuanAvatarBlueprintValidationError {
     },
 }
 
-impl fmt::Display for FangyuanAvatarBlueprintValidationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl FangyuanAvatarBlueprintValidationError {
+    pub fn code(&self) -> &'static str {
         match self {
-            Self::UnsupportedVersion { found, expected } => write!(
-                formatter,
-                "fangyuan avatar blueprint version `{found}` is unsupported; expected `{expected}`"
-            ),
+            Self::UnsupportedVersion { .. } => "unsupported_version",
+            Self::PrimitiveCountExceeded { .. } => "primitive_count_exceeded",
+            Self::InvalidBoundsDimension { .. } => "invalid_bounds_dimension",
+            Self::InvalidPrimitivePosition { .. } => "invalid_primitive_position",
+            Self::PrimitiveBelowGround { .. } => "primitive_below_ground",
+            Self::InvalidPrimitiveSize { .. } => "invalid_primitive_size",
+            Self::InvalidPrimitiveColor { .. } => "invalid_primitive_color",
+            Self::InvalidPrimitiveAlpha { .. } => "invalid_primitive_alpha",
+            Self::InvalidPrimitiveEmissive { .. } => "invalid_primitive_emissive",
+        }
+    }
+
+    pub fn primitive_index(&self) -> Option<usize> {
+        match self {
+            Self::InvalidPrimitivePosition { index, .. }
+            | Self::PrimitiveBelowGround { index, .. }
+            | Self::InvalidPrimitiveSize { index, .. }
+            | Self::InvalidPrimitiveColor { index, .. }
+            | Self::InvalidPrimitiveAlpha { index, .. }
+            | Self::InvalidPrimitiveEmissive { index, .. } => Some(*index),
+            Self::UnsupportedVersion { .. }
+            | Self::PrimitiveCountExceeded { .. }
+            | Self::InvalidBoundsDimension { .. } => None,
+        }
+    }
+
+    pub fn field_path(&self) -> Cow<'static, str> {
+        match self {
+            Self::UnsupportedVersion { .. } => Cow::Borrowed("version"),
+            Self::PrimitiveCountExceeded { .. } => Cow::Borrowed("primitives"),
+            Self::InvalidBoundsDimension { field, .. } => Cow::Owned(format!("bounds.{field}")),
+            Self::InvalidPrimitivePosition { index, axis, .. } => {
+                Cow::Owned(format!("primitives[{index}].position[{axis}]"))
+            }
+            Self::PrimitiveBelowGround { index, .. } => {
+                Cow::Owned(format!("primitives[{index}].position[1]"))
+            }
+            Self::InvalidPrimitiveSize { index, axis, .. } => {
+                Cow::Owned(format!("primitives[{index}].size[{axis}]"))
+            }
+            Self::InvalidPrimitiveColor { index, channel, .. } => {
+                Cow::Owned(format!("primitives[{index}].color[{channel}]"))
+            }
+            Self::InvalidPrimitiveAlpha { index, .. } => {
+                Cow::Owned(format!("primitives[{index}].alpha"))
+            }
+            Self::InvalidPrimitiveEmissive { index, .. } => {
+                Cow::Owned(format!("primitives[{index}].emissive"))
+            }
+        }
+    }
+
+    pub fn reason(&self) -> String {
+        match self {
+            Self::UnsupportedVersion { found, expected } => {
+                format!("version `{found}` is unsupported; expected `{expected}`")
+            }
             Self::PrimitiveCountExceeded {
                 count,
                 limit,
                 max_primitives,
                 hard_limit,
-            } => write!(
-                formatter,
-                "fangyuan avatar blueprint contains {count} primitives, exceeding limit {limit} from min(max_primitives={max_primitives}, hard_limit={hard_limit})"
+            } => format!(
+                "contains {count} primitives, exceeding limit {limit} from min(max_primitives={max_primitives}, hard_limit={hard_limit})"
             ),
-            Self::InvalidBoundsDimension { field, value } => write!(
-                formatter,
-                "fangyuan avatar blueprint bounds.{field} must be finite and greater than 0, got {value}"
-            ),
+            Self::InvalidBoundsDimension { value, .. } => {
+                format!("value {value} must be finite and greater than 0")
+            }
             Self::InvalidPrimitivePosition {
-                index,
-                axis,
-                value,
-                min,
-                max,
-            } => write!(
-                formatter,
-                "fangyuan avatar blueprint primitive #{index} position[{axis}]={value} must be inside {min}..={max}"
-            ),
-            Self::PrimitiveBelowGround { index, bottom_y } => write!(
-                formatter,
-                "fangyuan avatar blueprint primitive #{index} extends below ground, bottom_y={bottom_y}"
-            ),
-            Self::InvalidPrimitiveSize { index, axis, value } => write!(
-                formatter,
-                "fangyuan avatar blueprint primitive #{index} size[{axis}]={value} must be finite and greater than 0"
-            ),
-            Self::InvalidPrimitiveColor {
-                index,
-                channel,
-                value,
-            } => write!(
-                formatter,
-                "fangyuan avatar blueprint primitive #{index} color[{channel}]={value} must be in 0.0..=1.0"
-            ),
-            Self::InvalidPrimitiveAlpha { index, value } => write!(
-                formatter,
-                "fangyuan avatar blueprint primitive #{index} alpha={value} must be in 0.0..=1.0"
-            ),
-            Self::InvalidPrimitiveEmissive { index, value, max } => write!(
-                formatter,
-                "fangyuan avatar blueprint primitive #{index} emissive={value} must be finite and in 0.0..={max}"
-            ),
+                value, min, max, ..
+            } => {
+                format!("value {value} must be finite and inside {min}..={max}")
+            }
+            Self::PrimitiveBelowGround { bottom_y, .. } => {
+                format!("bottom_y {bottom_y} must be greater than or equal to 0")
+            }
+            Self::InvalidPrimitiveSize { value, .. } => {
+                format!("value {value} must be finite and greater than 0")
+            }
+            Self::InvalidPrimitiveColor { value, .. } => {
+                format!("value {value} must be finite and in 0.0..=1.0")
+            }
+            Self::InvalidPrimitiveAlpha { value, .. } => {
+                format!("value {value} must be finite and in 0.0..=1.0")
+            }
+            Self::InvalidPrimitiveEmissive { value, max, .. } => {
+                format!("value {value} must be finite and in 0.0..={max}")
+            }
         }
+    }
+}
+
+impl fmt::Display for FangyuanAvatarBlueprintValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "fangyuan avatar blueprint validation error [{}] at {}: {}",
+            self.code(),
+            self.field_path(),
+            self.reason()
+        )
     }
 }
 
@@ -666,6 +721,32 @@ fn first_package_asset_root_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+fn deserialize_primitive_kind<'de, D>(deserializer: D) -> Result<FangyuanPrimitiveKind, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    FangyuanPrimitiveKind::parse(&value).ok_or_else(|| {
+        de::Error::custom(format!(
+            "unknown fangyuan primitive kind at field `kind`: `{value}`; expected `cube` or `sphere`"
+        ))
+    })
+}
+
+fn deserialize_optional_primitive_role<'de, D>(
+    deserializer: D,
+) -> Result<Option<FangyuanPrimitiveRole>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    FangyuanPrimitiveRole::parse(&value).map(Some).ok_or_else(|| {
+        de::Error::custom(format!(
+            "unknown fangyuan primitive role at field `role`: `{value}`; expected one of `structure`, `core`, `boundary`, `warning`, `trail`, `impact`, `decoration`, `socket`, `archive`"
+        ))
+    })
+}
+
 fn deserialize_f32_array_3<'de, D>(deserializer: D) -> Result<[f32; 3], D::Error>
 where
     D: Deserializer<'de>,
@@ -735,18 +816,32 @@ mod tests {
     }
 
     #[test]
-    fn blueprint_primitive_rejects_rotation_field() {
-        let result = serde_json::from_str::<FangyuanPrimitiveBlueprint>(
-            r#"{
+    fn blueprint_primitive_rejects_reserved_transform_fields() {
+        for field in [
+            "rotation",
+            "quaternion",
+            "euler",
+            "angular_velocity",
+            "rotate",
+            "spin",
+        ] {
+            let mut value = serde_json::json!({
                 "kind": "sphere",
                 "position": [0.0, 1.2, 0.0],
                 "size": [0.8, 0.8, 0.8],
-                "color": [0.9, 0.8, 0.7, 1.0],
-                "rotation": [0.0, 0.0, 0.0]
-            }"#,
-        );
+                "color": [0.9, 0.8, 0.7, 1.0]
+            });
+            value
+                .as_object_mut()
+                .unwrap()
+                .insert(field.to_string(), serde_json::json!([0.0, 0.0, 0.0]));
 
-        assert!(result.is_err());
+            assert_parse_error_contains(
+                serde_json::from_value::<FangyuanPrimitiveBlueprint>(value),
+                field,
+                "unknown field",
+            );
+        }
     }
 
     #[test]
@@ -828,7 +923,7 @@ mod tests {
 "#,
         );
 
-        assert!(result.is_err());
+        assert_parse_error_contains(result, "kind", "cylinder");
     }
 
     #[test]
@@ -854,7 +949,7 @@ mod tests {
 "#,
         );
 
-        assert!(result.is_err());
+        assert_parse_error_contains(result, "role", "weapon_socket");
     }
 
     #[test]
@@ -972,12 +1067,42 @@ mod tests {
         let mut blueprint = valid_avatar_blueprint(vec![valid_primitive()]);
         blueprint.version = "2".to_string();
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::UnsupportedVersion {
                 found: "2".to_string(),
                 expected: FANGYUAN_AVATAR_BLUEPRINT_VERSION,
             }
+        );
+        assert_validation_report(
+            &error,
+            "unsupported_version",
+            None,
+            "version",
+            &["unsupported", FANGYUAN_AVATAR_BLUEPRINT_VERSION],
+        );
+    }
+
+    #[test]
+    fn compile_rejects_invalid_bounds_dimension() {
+        let mut blueprint = valid_avatar_blueprint(vec![valid_primitive()]);
+        blueprint.bounds.width = f32::INFINITY;
+
+        let error = blueprint.compile().unwrap_err();
+        assert_eq!(
+            error,
+            FangyuanAvatarBlueprintValidationError::InvalidBoundsDimension {
+                field: "width",
+                value: f32::INFINITY,
+            }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_bounds_dimension",
+            None,
+            "bounds.width",
+            &["finite", "greater than 0"],
         );
     }
 
@@ -986,14 +1111,22 @@ mod tests {
         let mut blueprint = valid_avatar_blueprint(vec![valid_primitive(), valid_primitive()]);
         blueprint.max_primitives = 1;
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::PrimitiveCountExceeded {
                 count: 2,
                 limit: 1,
                 max_primitives: 1,
                 hard_limit: FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
             }
+        );
+        assert_validation_report(
+            &error,
+            "primitive_count_exceeded",
+            None,
+            "primitives",
+            &["contains 2 primitives", "limit 1"],
         );
     }
 
@@ -1006,14 +1139,25 @@ mod tests {
         ]);
         blueprint.max_primitives = FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT + 500;
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::PrimitiveCountExceeded {
                 count: FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT + 1,
                 limit: FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
                 max_primitives: FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT + 500,
                 hard_limit: FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
             }
+        );
+        assert_validation_report(
+            &error,
+            "primitive_count_exceeded",
+            None,
+            "primitives",
+            &[
+                "exceeding limit 1000",
+                "min(max_primitives=1500, hard_limit=1000)",
+            ],
         );
     }
 
@@ -1023,8 +1167,9 @@ mod tests {
         primitive.position = [2.1, 1.0, 0.0];
         let blueprint = valid_avatar_blueprint(vec![primitive]);
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::InvalidPrimitivePosition {
                 index: 0,
                 axis: 0,
@@ -1032,6 +1177,39 @@ mod tests {
                 min: -2.0,
                 max: 2.0,
             }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_position",
+            Some(0),
+            "primitives[0].position[0]",
+            &["inside -2..=2"],
+        );
+    }
+
+    #[test]
+    fn compile_rejects_non_finite_position_axis() {
+        let mut primitive = valid_primitive();
+        primitive.position = [0.0, f32::INFINITY, 0.0];
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        let error = blueprint.compile().unwrap_err();
+        assert_eq!(
+            error,
+            FangyuanAvatarBlueprintValidationError::InvalidPrimitivePosition {
+                index: 0,
+                axis: 1,
+                value: f32::INFINITY,
+                min: 0.0,
+                max: 4.0,
+            }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_position",
+            Some(0),
+            "primitives[0].position[1]",
+            &["finite", "inside 0..=4"],
         );
     }
 
@@ -1042,12 +1220,20 @@ mod tests {
         primitive.size = [1.0, 1.0, 1.0];
         let blueprint = valid_avatar_blueprint(vec![primitive]);
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::PrimitiveBelowGround {
                 index: 0,
                 bottom_y: -0.3,
             }
+        );
+        assert_validation_report(
+            &error,
+            "primitive_below_ground",
+            Some(0),
+            "primitives[0].position[1]",
+            &["bottom_y -0.3", "greater than or equal to 0"],
         );
     }
 
@@ -1057,13 +1243,45 @@ mod tests {
         primitive.size = [1.0, 0.0, 1.0];
         let blueprint = valid_avatar_blueprint(vec![primitive]);
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::InvalidPrimitiveSize {
                 index: 0,
                 axis: 1,
                 value: 0.0,
             }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_size",
+            Some(0),
+            "primitives[0].size[1]",
+            &["finite", "greater than 0"],
+        );
+    }
+
+    #[test]
+    fn compile_rejects_non_finite_size_axis() {
+        let mut primitive = valid_primitive();
+        primitive.size = [1.0, f32::INFINITY, 1.0];
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        let error = blueprint.compile().unwrap_err();
+        assert_eq!(
+            error,
+            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveSize {
+                index: 0,
+                axis: 1,
+                value: f32::INFINITY,
+            }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_size",
+            Some(0),
+            "primitives[0].size[1]",
+            &["finite", "greater than 0"],
         );
     }
 
@@ -1073,13 +1291,21 @@ mod tests {
         primitive.color = [0.2, 0.4, 1.2, 1.0];
         let blueprint = valid_avatar_blueprint(vec![primitive]);
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::InvalidPrimitiveColor {
                 index: 0,
                 channel: 2,
                 value: 1.2,
             }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_color",
+            Some(0),
+            "primitives[0].color[2]",
+            &["0.0..=1.0"],
         );
     }
 
@@ -1089,12 +1315,20 @@ mod tests {
         primitive.alpha = Some(1.2);
         let blueprint = valid_avatar_blueprint(vec![primitive]);
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::InvalidPrimitiveAlpha {
                 index: 0,
                 value: 1.2,
             }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_alpha",
+            Some(0),
+            "primitives[0].alpha",
+            &["0.0..=1.0"],
         );
     }
 
@@ -1104,13 +1338,100 @@ mod tests {
         primitive.emissive = Some(FANGYUAN_PRIMITIVE_MAX_EMISSIVE + 0.5);
         let blueprint = valid_avatar_blueprint(vec![primitive]);
 
+        let error = blueprint.compile().unwrap_err();
         assert_eq!(
-            blueprint.compile().unwrap_err(),
+            error,
             FangyuanAvatarBlueprintValidationError::InvalidPrimitiveEmissive {
                 index: 0,
                 value: FANGYUAN_PRIMITIVE_MAX_EMISSIVE + 0.5,
                 max: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
             }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_emissive",
+            Some(0),
+            "primitives[0].emissive",
+            &["0.0..=16"],
+        );
+    }
+
+    #[test]
+    fn compile_rejects_negative_emissive() {
+        let mut primitive = valid_primitive();
+        primitive.emissive = Some(-0.1);
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        let error = blueprint.compile().unwrap_err();
+        assert_eq!(
+            error,
+            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveEmissive {
+                index: 0,
+                value: -0.1,
+                max: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
+            }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_emissive",
+            Some(0),
+            "primitives[0].emissive",
+            &["0.0..=16"],
+        );
+    }
+
+    fn assert_validation_report(
+        error: &FangyuanAvatarBlueprintValidationError,
+        code: &'static str,
+        primitive_index: Option<usize>,
+        field_path: &str,
+        reason_parts: &[&str],
+    ) {
+        assert_eq!(error.code(), code);
+        assert_eq!(error.primitive_index(), primitive_index);
+        assert_eq!(error.field_path().as_ref(), field_path);
+
+        let reason = error.reason();
+        for part in reason_parts {
+            assert!(
+                reason.contains(part),
+                "reason `{reason}` should contain `{part}`"
+            );
+        }
+
+        let message = error.to_string();
+        assert!(
+            message.contains(code),
+            "message `{message}` should contain code `{code}`"
+        );
+        assert!(
+            message.contains(field_path),
+            "message `{message}` should contain field path `{field_path}`"
+        );
+        for part in reason_parts {
+            assert!(
+                message.contains(part),
+                "message `{message}` should contain `{part}`"
+            );
+        }
+    }
+
+    fn assert_parse_error_contains<T, E>(result: Result<T, E>, field: &str, expected: &str)
+    where
+        E: fmt::Display,
+    {
+        let error = match result {
+            Ok(_) => panic!("expected parse error for field `{field}`"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains(field),
+            "parse error `{message}` should contain field `{field}`"
+        );
+        assert!(
+            message.contains(expected),
+            "parse error `{message}` should contain `{expected}`"
         );
     }
 
