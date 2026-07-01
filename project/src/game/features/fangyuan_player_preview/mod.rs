@@ -59,10 +59,11 @@ pub(in crate::game) struct FangyuanPlayerPosition {
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct FangyuanPlayerVisualsSpawned;
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
 struct FangyuanPlayerPrimitiveVisual {
     kind: FangyuanPrimitiveKind,
     index: usize,
+    alpha: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -183,6 +184,7 @@ fn spawn_fangyuan_player_primitive_visuals(
                     FangyuanPlayerPrimitiveVisual {
                         kind: primitive.kind,
                         index,
+                        alpha: primitive.alpha,
                     },
                     Mesh3d(mesh),
                     MeshMaterial3d(material),
@@ -454,30 +456,67 @@ mod tests {
     #[test]
     fn fangyuan_preview_visuals_use_cached_unit_meshes_by_kind() {
         let mut app = test_app();
-        enter_preview_mode(&mut app);
+        let color = Color::srgb(0.2, 0.4, 0.6);
+        spawn_custom_player_for_test(
+            &mut app,
+            FangyuanPrimitiveSet::from_primitives(vec![
+                FangyuanPrimitive::new(
+                    FangyuanPrimitiveKind::Cube,
+                    Vec3::new(-1.0, 0.5, 0.0),
+                    Vec3::splat(1.0),
+                    color,
+                ),
+                FangyuanPrimitive::new(
+                    FangyuanPrimitiveKind::Cube,
+                    Vec3::new(0.0, 0.5, 0.0),
+                    Vec3::splat(0.75),
+                    color,
+                ),
+                FangyuanPrimitive::new(
+                    FangyuanPrimitiveKind::Sphere,
+                    Vec3::new(1.0, 0.5, 0.0),
+                    Vec3::splat(0.5),
+                    color,
+                ),
+                FangyuanPrimitive::new(
+                    FangyuanPrimitiveKind::Sphere,
+                    Vec3::new(2.0, 0.5, 0.0),
+                    Vec3::splat(0.25),
+                    color,
+                ),
+            ]),
+        );
 
-        let records = primitive_visual_records(&mut app);
+        app.update();
+
+        let mut records = primitive_visual_records(&mut app);
+        records.sort_by_key(|record| record.index);
         let render_assets = app.world().resource::<FangyuanPlayerPreviewRenderAssets>();
-        let cube = records
+        let cubes: Vec<_> = records
             .iter()
-            .find(|record| record.kind == FangyuanPrimitiveKind::Cube)
-            .unwrap();
-        let sphere = records
+            .filter(|record| record.kind == FangyuanPrimitiveKind::Cube)
+            .collect();
+        let spheres: Vec<_> = records
             .iter()
-            .find(|record| record.kind == FangyuanPrimitiveKind::Sphere)
-            .unwrap();
+            .filter(|record| record.kind == FangyuanPrimitiveKind::Sphere)
+            .collect();
 
+        assert_eq!(records.len(), 4);
+        assert_eq!(cubes.len(), 2);
+        assert_eq!(spheres.len(), 2);
         assert_eq!(
-            Some(&cube.mesh),
+            Some(&cubes[0].mesh),
             render_assets.unit_cube_mesh.as_ref(),
             "cube visual should reuse the cached unit cube mesh handle"
         );
+        assert_eq!(cubes[0].mesh, cubes[1].mesh);
         assert_eq!(
-            Some(&sphere.mesh),
+            Some(&spheres[0].mesh),
             render_assets.unit_sphere_mesh.as_ref(),
             "sphere visual should reuse the cached unit sphere mesh handle"
         );
-        assert_ne!(cube.mesh, sphere.mesh);
+        assert_eq!(spheres[0].mesh, spheres[1].mesh);
+        assert_ne!(cubes[0].mesh, spheres[0].mesh);
     }
 
     #[test]
@@ -504,12 +543,42 @@ mod tests {
 
         app.update();
 
-        let records = primitive_visual_records(&mut app);
+        let mut records = primitive_visual_records(&mut app);
+        records.sort_by_key(|record| record.index);
         let render_assets = app.world().resource::<FangyuanPlayerPreviewRenderAssets>();
 
         assert_eq!(records.len(), 2);
         assert_eq!(render_assets.material_count(), 1);
         assert_eq!(records[0].material, records[1].material);
+    }
+
+    #[test]
+    fn fangyuan_preview_visual_material_uses_color_alpha_default() {
+        let mut app = test_app();
+        let color = Color::srgba(0.2, 0.4, 0.6, 0.35);
+        spawn_custom_player_for_test(
+            &mut app,
+            FangyuanPrimitiveSet::from_primitives(vec![FangyuanPrimitive::new(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::new(0.0, 0.5, 0.0),
+                Vec3::splat(1.0),
+                color,
+            )]),
+        );
+
+        app.update();
+
+        let records = primitive_visual_records(&mut app);
+        let material = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&records[0].material)
+            .unwrap();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].alpha, color.to_srgba().alpha);
+        assert_eq!(material.base_color, color);
+        assert!(matches!(material.alpha_mode.clone(), AlphaMode::Blend));
     }
 
     #[test]
@@ -546,12 +615,23 @@ mod tests {
 
         app.update();
 
-        let records = primitive_visual_records(&mut app);
+        let mut records = primitive_visual_records(&mut app);
+        records.sort_by_key(|record| record.index);
         let render_assets = app.world().resource::<FangyuanPlayerPreviewRenderAssets>();
 
         assert_eq!(records.len(), 2);
         assert_eq!(render_assets.material_count(), 1);
+        assert_eq!(records[0].alpha, 0.25);
+        assert_eq!(records[1].alpha, 0.75);
         assert_eq!(records[0].material, records[1].material);
+
+        let material = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&records[0].material)
+            .unwrap();
+        assert_eq!(material.base_color, color);
+        assert!(matches!(material.alpha_mode.clone(), AlphaMode::Opaque));
     }
 
     #[test]
@@ -579,6 +659,7 @@ mod tests {
             assert_eq!(record.translation, primitive.local_position);
             assert_eq!(record.scale, primitive.scale);
             assert_eq!(record.rotation, Quat::IDENTITY);
+            assert_eq!(record.alpha, primitive.alpha);
             assert_eq!(material.base_color, primitive.color);
         }
     }
@@ -596,6 +677,7 @@ mod tests {
             assert!(!entity.contains::<FangyuanObjectState>());
             assert!(!entity.contains::<FangyuanAvatar>());
             assert!(!entity.contains::<FangyuanPrimitiveSet>());
+            assert!(!entity.contains::<FangyuanPlayerVisualsSpawned>());
             assert!(entity.contains::<FangyuanPlayerPrimitiveVisual>());
             assert!(entity.contains::<Mesh3d>());
             assert!(entity.contains::<MeshMaterial3d<StandardMaterial>>());
@@ -659,6 +741,7 @@ mod tests {
         parent: Entity,
         kind: FangyuanPrimitiveKind,
         index: usize,
+        alpha: f32,
         mesh: Handle<Mesh>,
         material: Handle<StandardMaterial>,
         translation: Vec3,
@@ -683,6 +766,7 @@ mod tests {
                     parent: parent.parent(),
                     kind: visual.kind,
                     index: visual.index,
+                    alpha: visual.alpha,
                     mesh: mesh.0.clone(),
                     material: material.0.clone(),
                     translation: transform.translation,
