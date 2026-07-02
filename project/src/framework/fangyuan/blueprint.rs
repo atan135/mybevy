@@ -20,6 +20,9 @@ pub const FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT: usize = 2;
 pub const FANGYUAN_BLUEPRINT_VERSION: &str = FANGYUAN_AVATAR_BLUEPRINT_VERSION;
 pub const FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT: usize =
     FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT;
+pub const FANGYUAN_BLUEPRINT_MIN_PRIMITIVE_SIZE: f32 = 0.1;
+pub const FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE: f32 = 5.0;
+pub const FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN: usize = 64;
 
 /// Shared Fangyuan RON v1 blueprint.
 ///
@@ -76,6 +79,16 @@ impl FangyuanBlueprint {
     }
 
     pub fn validate(&self) -> Result<(), FangyuanBlueprintValidationError> {
+        self.validate_top_level()?;
+
+        for (index, primitive) in self.primitives.iter().enumerate() {
+            validate_blueprint_primitive(index, primitive, &self.bounds)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_top_level(&self) -> Result<(), FangyuanBlueprintValidationError> {
         if self.version != FANGYUAN_BLUEPRINT_VERSION {
             return Err(FangyuanBlueprintValidationError::UnsupportedVersion {
                 found: self.version.clone(),
@@ -97,10 +110,6 @@ impl FangyuanBlueprint {
             });
         }
 
-        for (index, primitive) in self.primitives.iter().enumerate() {
-            validate_blueprint_primitive(index, primitive, &self.bounds)?;
-        }
-
         Ok(())
     }
 
@@ -110,27 +119,30 @@ impl FangyuanBlueprint {
         Ok(FangyuanPrimitiveSet::from_primitives(
             self.primitives
                 .iter()
-                .map(|primitive| {
-                    let color = Color::srgba(
-                        primitive.color[0],
-                        primitive.color[1],
-                        primitive.color[2],
-                        primitive.color[3],
-                    );
-                    FangyuanPrimitive::with_runtime_metadata(
-                        primitive.kind,
-                        Vec3::from_array(primitive.position),
-                        Vec3::from_array(primitive.size),
-                        color,
-                        primitive.role(),
-                        primitive.alpha(),
-                        primitive.emissive(),
-                        primitive.material_profile_id.clone(),
-                        primitive.lifecycle(),
-                    )
-                })
+                .map(compile_blueprint_primitive_to_runtime)
                 .collect(),
         ))
+    }
+
+    pub fn compile_skipping_invalid_primitives(
+        &self,
+    ) -> Result<FangyuanBlueprintCompileReport, FangyuanBlueprintValidationError> {
+        self.validate_top_level()?;
+
+        let mut primitives = Vec::with_capacity(self.primitives.len());
+        let mut warnings = Vec::new();
+        for (index, primitive) in self.primitives.iter().enumerate() {
+            match validate_blueprint_primitive(index, primitive, &self.bounds) {
+                Ok(()) => primitives.push(compile_blueprint_primitive_to_runtime(primitive)),
+                Err(error) => warnings.push(error),
+            }
+        }
+
+        Ok(FangyuanBlueprintCompileReport {
+            primitive_set: FangyuanPrimitiveSet::from_primitives(primitives),
+            skipped_primitives: warnings.len(),
+            warnings,
+        })
     }
 
     pub fn load_compiled_first_package_ron(
@@ -142,6 +154,13 @@ impl FangyuanBlueprint {
             .compile()
             .map_err(FangyuanBlueprintLoadError::ValidationFailed)
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanBlueprintCompileReport {
+    pub primitive_set: FangyuanPrimitiveSet,
+    pub skipped_primitives: usize,
+    pub warnings: Vec<FangyuanBlueprintValidationError>,
 }
 
 /// Local authoring bounds for a shared Fangyuan blueprint.
@@ -328,6 +347,8 @@ pub enum FangyuanBlueprintValidationError {
         index: usize,
         axis: usize,
         value: f32,
+        min: f32,
+        max: f32,
     },
     InvalidPrimitiveColor {
         index: usize,
@@ -343,9 +364,34 @@ pub enum FangyuanBlueprintValidationError {
         value: f32,
         max: f32,
     },
+    InvalidPrimitiveMaterialProfile {
+        index: usize,
+        value: String,
+        reason: FangyuanPrimitiveMaterialProfileInvalidReason,
+    },
+    InvalidPrimitiveLifecycle {
+        index: usize,
+        field: &'static str,
+        value: u64,
+        reason: FangyuanPrimitiveLifecycleInvalidReason,
+    },
 }
 
 pub type FangyuanAvatarBlueprintValidationError = FangyuanBlueprintValidationError;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FangyuanPrimitiveMaterialProfileInvalidReason {
+    Empty,
+    TooLong { max_len: usize },
+    InvalidCharacter,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FangyuanPrimitiveLifecycleInvalidReason {
+    ZeroLifetime,
+    DespawnBeforeSpawn,
+    LifetimeExceedsDespawnTick,
+}
 
 impl FangyuanBlueprintValidationError {
     pub fn code(&self) -> &'static str {
@@ -359,6 +405,8 @@ impl FangyuanBlueprintValidationError {
             Self::InvalidPrimitiveColor { .. } => "invalid_primitive_color",
             Self::InvalidPrimitiveAlpha { .. } => "invalid_primitive_alpha",
             Self::InvalidPrimitiveEmissive { .. } => "invalid_primitive_emissive",
+            Self::InvalidPrimitiveMaterialProfile { .. } => "invalid_primitive_material_profile",
+            Self::InvalidPrimitiveLifecycle { .. } => "invalid_primitive_lifecycle",
         }
     }
 
@@ -369,7 +417,9 @@ impl FangyuanBlueprintValidationError {
             | Self::InvalidPrimitiveSize { index, .. }
             | Self::InvalidPrimitiveColor { index, .. }
             | Self::InvalidPrimitiveAlpha { index, .. }
-            | Self::InvalidPrimitiveEmissive { index, .. } => Some(*index),
+            | Self::InvalidPrimitiveEmissive { index, .. }
+            | Self::InvalidPrimitiveMaterialProfile { index, .. }
+            | Self::InvalidPrimitiveLifecycle { index, .. } => Some(*index),
             Self::UnsupportedVersion { .. }
             | Self::PrimitiveCountExceeded { .. }
             | Self::InvalidBoundsDimension { .. } => None,
@@ -399,6 +449,12 @@ impl FangyuanBlueprintValidationError {
             Self::InvalidPrimitiveEmissive { index, .. } => {
                 Cow::Owned(format!("primitives[{index}].emissive"))
             }
+            Self::InvalidPrimitiveMaterialProfile { index, .. } => {
+                Cow::Owned(format!("primitives[{index}].material_profile_id"))
+            }
+            Self::InvalidPrimitiveLifecycle { index, field, .. } => {
+                Cow::Owned(format!("primitives[{index}].lifecycle.{field}"))
+            }
         }
     }
 
@@ -426,8 +482,10 @@ impl FangyuanBlueprintValidationError {
             Self::PrimitiveBelowGround { bottom_y, .. } => {
                 format!("bottom_y {bottom_y} must be greater than or equal to 0")
             }
-            Self::InvalidPrimitiveSize { value, .. } => {
-                format!("value {value} must be finite and greater than 0")
+            Self::InvalidPrimitiveSize {
+                value, min, max, ..
+            } => {
+                format!("value {value} must be finite and in {min}..={max}")
             }
             Self::InvalidPrimitiveColor { value, .. } => {
                 format!("value {value} must be finite and in 0.0..=1.0")
@@ -438,6 +496,35 @@ impl FangyuanBlueprintValidationError {
             Self::InvalidPrimitiveEmissive { value, max, .. } => {
                 format!("value {value} must be finite and in 0.0..={max}")
             }
+            Self::InvalidPrimitiveMaterialProfile { value, reason, .. } => match reason {
+                FangyuanPrimitiveMaterialProfileInvalidReason::Empty => {
+                    "value must not be empty".to_string()
+                }
+                FangyuanPrimitiveMaterialProfileInvalidReason::TooLong { max_len } => {
+                    format!(
+                        "value `{value}` must contain at most {max_len} ASCII identifier characters"
+                    )
+                }
+                FangyuanPrimitiveMaterialProfileInvalidReason::InvalidCharacter => format!(
+                    "value `{value}` may only contain ASCII letters, digits, `_`, `-`, `.`, `/`, and `:`"
+                ),
+            },
+            Self::InvalidPrimitiveLifecycle {
+                field,
+                value,
+                reason,
+                ..
+            } => match reason {
+                FangyuanPrimitiveLifecycleInvalidReason::ZeroLifetime => {
+                    "lifetime must be greater than 0".to_string()
+                }
+                FangyuanPrimitiveLifecycleInvalidReason::DespawnBeforeSpawn => {
+                    format!("despawn_tick {value} must be greater than or equal to spawn_tick")
+                }
+                FangyuanPrimitiveLifecycleInvalidReason::LifetimeExceedsDespawnTick => {
+                    format!("{field} {value} must not extend beyond explicit despawn_tick")
+                }
+            },
         }
     }
 }
@@ -565,7 +652,31 @@ fn validate_blueprint_primitive(
     validate_primitive_alpha(index, primitive.alpha())?;
     validate_primitive_emissive(index, primitive.emissive())?;
     validate_primitive_role(index, primitive.role())?;
+    validate_primitive_material_profile(index, primitive.material_profile_id.as_deref())?;
+    validate_primitive_lifecycle(index, primitive.lifecycle())?;
     Ok(())
+}
+
+fn compile_blueprint_primitive_to_runtime(
+    primitive: &FangyuanPrimitiveBlueprint,
+) -> FangyuanPrimitive {
+    let color = Color::srgba(
+        primitive.color[0],
+        primitive.color[1],
+        primitive.color[2],
+        primitive.color[3],
+    );
+    FangyuanPrimitive::with_runtime_metadata(
+        primitive.kind,
+        Vec3::from_array(primitive.position),
+        Vec3::from_array(primitive.size),
+        color,
+        primitive.role(),
+        primitive.alpha(),
+        primitive.emissive(),
+        primitive.material_profile_id.clone(),
+        primitive.lifecycle(),
+    )
 }
 
 fn validate_primitive_kind(
@@ -637,11 +748,16 @@ fn validate_primitive_size(
     size: [f32; 3],
 ) -> Result<(), FangyuanBlueprintValidationError> {
     for (axis, value) in size.into_iter().enumerate() {
-        if !value.is_finite() || value <= 0.0 {
+        if !value.is_finite()
+            || !(FANGYUAN_BLUEPRINT_MIN_PRIMITIVE_SIZE..=FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE)
+                .contains(&value)
+        {
             return Err(FangyuanBlueprintValidationError::InvalidPrimitiveSize {
                 index,
                 axis,
                 value,
+                min: FANGYUAN_BLUEPRINT_MIN_PRIMITIVE_SIZE,
+                max: FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE,
             });
         }
     }
@@ -706,6 +822,97 @@ fn validate_primitive_emissive(
             max: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
         })
     }
+}
+
+fn validate_primitive_material_profile(
+    index: usize,
+    material_profile_id: Option<&str>,
+) -> Result<(), FangyuanBlueprintValidationError> {
+    let Some(material_profile_id) = material_profile_id else {
+        return Ok(());
+    };
+    if material_profile_id.is_empty() {
+        return Err(
+            FangyuanBlueprintValidationError::InvalidPrimitiveMaterialProfile {
+                index,
+                value: material_profile_id.to_string(),
+                reason: FangyuanPrimitiveMaterialProfileInvalidReason::Empty,
+            },
+        );
+    }
+    if material_profile_id.len() > FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN {
+        return Err(
+            FangyuanBlueprintValidationError::InvalidPrimitiveMaterialProfile {
+                index,
+                value: material_profile_id.to_string(),
+                reason: FangyuanPrimitiveMaterialProfileInvalidReason::TooLong {
+                    max_len: FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN,
+                },
+            },
+        );
+    }
+    if !material_profile_id.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':')
+    }) {
+        return Err(
+            FangyuanBlueprintValidationError::InvalidPrimitiveMaterialProfile {
+                index,
+                value: material_profile_id.to_string(),
+                reason: FangyuanPrimitiveMaterialProfileInvalidReason::InvalidCharacter,
+            },
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_primitive_lifecycle(
+    index: usize,
+    lifecycle: FangyuanPrimitiveLifecycle,
+) -> Result<(), FangyuanBlueprintValidationError> {
+    if lifecycle.lifetime == Some(0) {
+        return Err(
+            FangyuanBlueprintValidationError::InvalidPrimitiveLifecycle {
+                index,
+                field: "lifetime",
+                value: 0,
+                reason: FangyuanPrimitiveLifecycleInvalidReason::ZeroLifetime,
+            },
+        );
+    }
+
+    if let (Some(spawn_tick), Some(despawn_tick)) = (lifecycle.spawn_tick, lifecycle.despawn_tick) {
+        if despawn_tick < spawn_tick {
+            return Err(
+                FangyuanBlueprintValidationError::InvalidPrimitiveLifecycle {
+                    index,
+                    field: "despawn_tick",
+                    value: despawn_tick,
+                    reason: FangyuanPrimitiveLifecycleInvalidReason::DespawnBeforeSpawn,
+                },
+            );
+        }
+    }
+
+    if let (Some(lifetime), Some(despawn_tick)) = (lifecycle.lifetime, lifecycle.despawn_tick) {
+        let spawn_tick = lifecycle.spawn_tick.unwrap_or(0);
+        let exceeds_despawn_tick = match spawn_tick.checked_add(lifetime) {
+            Some(end_tick) => end_tick > despawn_tick,
+            None => true,
+        };
+        if exceeds_despawn_tick {
+            return Err(
+                FangyuanBlueprintValidationError::InvalidPrimitiveLifecycle {
+                    index,
+                    field: "lifetime",
+                    value: lifetime,
+                    reason: FangyuanPrimitiveLifecycleInvalidReason::LifetimeExceedsDespawnTick,
+                },
+            );
+        }
+    }
+
+    Ok(())
 }
 
 pub fn validate_fangyuan_blueprint_asset_path(
@@ -988,6 +1195,35 @@ mod tests {
                 .primitives()
                 .iter()
                 .any(|primitive| primitive.kind == FangyuanPrimitiveKind::Sphere)
+        );
+    }
+
+    #[test]
+    fn home_preview_blueprint_compiles_to_primitive_set_with_skipped_invalid_primitives() {
+        let home =
+            load_fangyuan_blueprint_from_first_package_ron(FANGYUAN_HOME_PREVIEW_BLUEPRINT_PATH)
+                .unwrap();
+        let compile_report = home.compile_skipping_invalid_primitives().unwrap();
+
+        assert_eq!(home.version, FANGYUAN_BLUEPRINT_VERSION);
+        assert_eq!(home.name, "home_preview");
+        assert!(home.primitives.len() <= FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT);
+        assert_eq!(compile_report.primitive_set.len(), 493);
+        assert_eq!(compile_report.skipped_primitives, 12);
+        assert_eq!(compile_report.warnings.len(), 12);
+        assert!(
+            compile_report
+                .warnings
+                .iter()
+                .all(|warning| warning.code() == "primitive_below_ground")
+        );
+        assert!(compile_report.primitive_set.len() <= FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT);
+        assert!(
+            compile_report
+                .primitive_set
+                .primitives()
+                .iter()
+                .all(|primitive| primitive.local_position.y - primitive.scale.y * 0.5 >= 0.0)
         );
     }
 
@@ -1291,6 +1527,51 @@ mod tests {
     }
 
     #[test]
+    fn tolerant_compile_rejects_invalid_top_level_without_primitive_set() {
+        let mut blueprint = valid_avatar_blueprint(vec![valid_primitive()]);
+        blueprint.version = "2".to_string();
+
+        let error = blueprint.compile_skipping_invalid_primitives().unwrap_err();
+
+        assert_eq!(
+            error,
+            FangyuanAvatarBlueprintValidationError::UnsupportedVersion {
+                found: "2".to_string(),
+                expected: FANGYUAN_AVATAR_BLUEPRINT_VERSION,
+            }
+        );
+    }
+
+    #[test]
+    fn tolerant_compile_skips_invalid_primitives_and_keeps_valid_primitives() {
+        let mut below_ground = valid_primitive();
+        below_ground.position = [0.0, 0.2, 0.0];
+        below_ground.size = [1.0, 1.0, 1.0];
+        let mut invalid_emissive = valid_primitive();
+        invalid_emissive.emissive = Some(FANGYUAN_PRIMITIVE_MAX_EMISSIVE + 1.0);
+        let valid = valid_primitive();
+        let blueprint = valid_avatar_blueprint(vec![below_ground, invalid_emissive, valid]);
+
+        let compile_report = blueprint.compile_skipping_invalid_primitives().unwrap();
+
+        assert_eq!(compile_report.primitive_set.len(), 1);
+        assert_eq!(compile_report.skipped_primitives, 2);
+        assert_eq!(compile_report.warnings.len(), 2);
+        assert!(
+            compile_report
+                .warnings
+                .iter()
+                .any(|warning| warning.code() == "primitive_below_ground")
+        );
+        assert!(
+            compile_report
+                .warnings
+                .iter()
+                .any(|warning| warning.code() == "invalid_primitive_emissive")
+        );
+    }
+
+    #[test]
     fn compile_rejects_invalid_bounds_dimension() {
         let mut blueprint = valid_avatar_blueprint(vec![valid_primitive()]);
         blueprint.bounds.width = f32::INFINITY;
@@ -1456,6 +1737,8 @@ mod tests {
                 index: 0,
                 axis: 1,
                 value: 0.0,
+                min: FANGYUAN_BLUEPRINT_MIN_PRIMITIVE_SIZE,
+                max: FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE,
             }
         );
         assert_validation_report(
@@ -1463,7 +1746,7 @@ mod tests {
             "invalid_primitive_size",
             Some(0),
             "primitives[0].size[1]",
-            &["finite", "greater than 0"],
+            &["finite", "0.1..=5"],
         );
     }
 
@@ -1480,6 +1763,8 @@ mod tests {
                 index: 0,
                 axis: 1,
                 value: f32::INFINITY,
+                min: FANGYUAN_BLUEPRINT_MIN_PRIMITIVE_SIZE,
+                max: FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE,
             }
         );
         assert_validation_report(
@@ -1487,7 +1772,33 @@ mod tests {
             "invalid_primitive_size",
             Some(0),
             "primitives[0].size[1]",
-            &["finite", "greater than 0"],
+            &["finite", "0.1..=5"],
+        );
+    }
+
+    #[test]
+    fn compile_rejects_oversized_size_axis() {
+        let mut primitive = valid_primitive();
+        primitive.size = [1.0, FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE + 0.1, 1.0];
+        let blueprint = valid_avatar_blueprint(vec![primitive]);
+
+        let error = blueprint.compile().unwrap_err();
+        assert_eq!(
+            error,
+            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveSize {
+                index: 0,
+                axis: 1,
+                value: FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE + 0.1,
+                min: FANGYUAN_BLUEPRINT_MIN_PRIMITIVE_SIZE,
+                max: FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE,
+            }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_primitive_size",
+            Some(0),
+            "primitives[0].size[1]",
+            &["0.1..=5"],
         );
     }
 
