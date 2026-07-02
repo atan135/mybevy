@@ -19,9 +19,7 @@ use bevy::prelude::*;
 use catalog::GameSceneCatalog;
 
 pub(in crate::game) use fangyuan_home::FANGYUAN_HOME_SCENE_ID;
-pub(in crate::game) use fangyuan_home::{
-    FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH, FangyuanHomeBlueprintCommand, FangyuanHomeBlueprintStats,
-};
+pub(in crate::game) use fangyuan_home::{FangyuanHomeBlueprintCommand, FangyuanHomeBlueprintStats};
 pub(in crate::game) use robot_sync_arena::ROBOT_SYNC_ARENA_SCENE_ID;
 pub(in crate::game) use sample_dungeon_room::SAMPLE_DUNGEON_ROOM_SCENE_ID;
 

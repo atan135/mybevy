@@ -740,20 +740,24 @@ fn spawn_fangyuan_home_blueprint_from_layout(
         || {
             let scene_layout = load_fangyuan_home_scene_layout().map_err(|error| {
                 format!(
-                    "failed to load fangyuan home scene layout `{}`: {error}",
-                    FANGYUAN_HOME_SCENE_LAYOUT_PATH
+                    "failed to load fangyuan home scene layout: layout_path={}, palette_path={}, error={error}",
+                    FANGYUAN_HOME_SCENE_LAYOUT_PATH, FANGYUAN_HOME_PREFAB_PALETTE_PATH
                 )
             })?;
             let prefab_palette = load_fangyuan_home_prefab_palette().map_err(|error| {
                 format!(
-                    "failed to load fangyuan home prefab palette `{}`: {error}",
-                    FANGYUAN_HOME_PREFAB_PALETTE_PATH
+                    "failed to load fangyuan home prefab palette: layout_path={}, palette_path={}, error={error}",
+                    FANGYUAN_HOME_SCENE_LAYOUT_PATH, FANGYUAN_HOME_PREFAB_PALETTE_PATH
                 )
             })?;
             scene_layout.compile_with_palette(&prefab_palette).map_err(|error| {
                 format!(
-                    "failed to compile fangyuan home scene layout `{}` with palette `{}`: {error}",
-                    FANGYUAN_HOME_SCENE_LAYOUT_PATH, FANGYUAN_HOME_PREFAB_PALETTE_PATH
+                    "failed to compile fangyuan home scene layout: layout_path={}, palette_path={}, code={}, field_path={}, reason={}",
+                    FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+                    FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+                    error.code(),
+                    error.field_path(),
+                    error.reason()
                 )
             })
         },
@@ -1345,15 +1349,21 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
         .map(SceneSessionId::as_str)
         .unwrap_or("<none>");
     info!(
-        "fangyuan home blueprint stats: session={session}, state={}, path={}, primitives={}, cubes={}, spheres={}, skipped={}, materials={}, top_level_valid={}",
+        "fangyuan home layout stats: session={session}, state={}, layout_path={}, palette_path={}, generated={}, primitives={}, skipped={}, palettes={}, prefabs={}, used_prefabs={}, instances={}, materials={}, top_level_valid={}, layout_valid={}, palette_valid={}",
         stats.state_label(),
-        stats.blueprint_path(),
+        stats.layout_path(),
+        stats.palette_path(),
+        stats.generated_primitives,
         stats.primitive_total(),
-        stats.primitive_stats.cube_count,
-        stats.primitive_stats.sphere_count,
         stats.skipped,
+        stats.palette_count,
+        stats.prefab_count,
+        stats.used_prefab_count,
+        stats.instance_count,
         stats.materials,
-        stats.top_level_valid
+        stats.top_level_valid,
+        stats.layout_valid,
+        stats.palette_valid
     );
 }
 

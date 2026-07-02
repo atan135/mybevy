@@ -5,6 +5,7 @@ use bevy::{
 
 use crate::framework::{
     audio::prelude::UiAudioCueOverride,
+    fangyuan::{FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH},
     scene::prelude::{SceneCommand, SceneEvent, SceneExitRequest},
     ui::{
         core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport, UiWidthClass},
@@ -25,10 +26,7 @@ use crate::framework::{
 use crate::game::{
     audio::UI_CONFIRM_CUE_ID,
     navigation::{AppUiMode, GameRouteCommand, game_panel_root},
-    scenes::{
-        FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH, FANGYUAN_HOME_SCENE_ID, FangyuanHomeBlueprintCommand,
-        FangyuanHomeBlueprintStats,
-    },
+    scenes::{FANGYUAN_HOME_SCENE_ID, FangyuanHomeBlueprintCommand, FangyuanHomeBlueprintStats},
     ui_ids::{OWNER_FANGYUAN_HOME, PANEL_FANGYUAN_HOME_HUD},
 };
 
@@ -236,33 +234,30 @@ pub(super) fn update_fangyuan_home_hud_status(
 fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> String {
     let default_stats = FangyuanHomeBlueprintStats::default();
     let stats = stats.unwrap_or(&default_stats);
-    let primitive_stats = &stats.primitive_stats;
     let state = stats.state_label();
-    let top_level = if stats.top_level_valid {
-        "ok"
-    } else {
-        "invalid"
-    };
-    let path = compact_fangyuan_home_blueprint_path(stats.blueprint_path());
+    let layout_path =
+        compact_fangyuan_home_layout_path(stats.layout_path(), FANGYUAN_HOME_SCENE_LAYOUT_PATH);
+    let palette_path =
+        compact_fangyuan_home_layout_path(stats.palette_path(), FANGYUAN_HOME_PREFAB_PALETTE_PATH);
 
     format!(
-        "primitive {}/{}  {state}\ncube {}  sphere {}  skipped {}\nmat {}  alpha {}  glow {}  top {top_level}\npath {path}",
-        stats.primitive_total(),
+        "layout {state} gen {}/{} skip {}\npal {} pf {} used {} inst {} mat {}\nl {layout_path}\np {palette_path}",
+        stats.generated_primitives,
         FANGYUAN_HOME_PRIMITIVE_LIMIT,
-        primitive_stats.cube_count,
-        primitive_stats.sphere_count,
         stats.skipped,
+        stats.palette_count,
+        stats.prefab_count,
+        stats.used_prefab_count,
+        stats.instance_count,
         stats.materials,
-        primitive_stats.alpha_count,
-        primitive_stats.emissive_count,
     )
 }
 
-fn compact_fangyuan_home_blueprint_path(path: &str) -> String {
-    const MAX_PATH_CHARS: usize = 32;
+fn compact_fangyuan_home_layout_path(path: &str, fallback: &str) -> String {
+    const MAX_PATH_CHARS: usize = 30;
 
     let path = if path.trim().is_empty() {
-        FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH
+        fallback
     } else {
         path.trim()
     };
@@ -356,7 +351,7 @@ mod tests {
         framework::{
             fangyuan::{
                 FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveRole,
-                FangyuanPrimitiveSet,
+                FangyuanPrimitiveSet, FangyuanSceneLayoutCompileReport,
             },
             scene::prelude::{SceneExited, SceneId, SceneSessionId},
             ui::widgets::UiButtonEvent,
@@ -423,9 +418,14 @@ mod tests {
     fn hud_status_text_updates_from_blueprint_stats() {
         let mut app = App::new();
         let session_id = SceneSessionId::from("fangyuan-session");
-        let primitive_set = hud_test_primitive_set();
+        let compile_report = hud_test_layout_compile_report();
         let mut stats = FangyuanHomeBlueprintStats::default();
-        stats.record_loaded(&session_id, "fangyuan/home_preview.ron", &primitive_set, 2);
+        stats.record_layout_loaded(
+            &session_id,
+            "fangyuan/home_scene.layout.ron",
+            "fangyuan/home_prefabs.palette.ron",
+            &compile_report,
+        );
         app.insert_resource(stats)
             .add_systems(Update, update_fangyuan_home_hud_status);
         let status_text = app
@@ -438,43 +438,53 @@ mod tests {
         let text = app.world().get::<Text>(status_text).unwrap();
         assert_eq!(
             text.0,
-            "primitive 3/1000  loaded\ncube 1  sphere 2  skipped 2\nmat 3  alpha 2  glow 1  top ok\npath fangyuan/home_preview.ron"
+            "layout loaded gen 3/1000 skip 2\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
     }
 
     #[test]
     fn hud_status_text_reports_clear_reload_and_failure_states() {
         let session_id = SceneSessionId::from("fangyuan-session");
-        let primitive_set = hud_test_primitive_set();
+        let compile_report = hud_test_layout_compile_report();
         let mut stats = FangyuanHomeBlueprintStats::default();
 
-        stats.record_loaded(&session_id, "fangyuan/home_preview.ron", &primitive_set, 4);
+        stats.record_layout_loaded(
+            &session_id,
+            "fangyuan/home_scene.layout.ron",
+            "fangyuan/home_prefabs.palette.ron",
+            &compile_report,
+        );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "primitive 3/1000  loaded\ncube 1  sphere 2  skipped 4\nmat 3  alpha 2  glow 1  top ok\npath fangyuan/home_preview.ron"
+            "layout loaded gen 3/1000 skip 2\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_cleared(&session_id);
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "primitive 0/1000  cleared\ncube 0  sphere 0  skipped 4\nmat 3  alpha 0  glow 0  top ok\npath fangyuan/home_preview.ron"
+            "layout cleared gen 0/1000 skip 2\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
-        stats.record_loaded(&session_id, "fangyuan/home_preview.ron", &primitive_set, 4);
+        stats.record_layout_loaded(
+            &session_id,
+            "fangyuan/home_scene.layout.ron",
+            "fangyuan/home_prefabs.palette.ron",
+            &compile_report,
+        );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "primitive 3/1000  loaded\ncube 1  sphere 2  skipped 4\nmat 3  alpha 2  glow 1  top ok\npath fangyuan/home_preview.ron"
+            "layout loaded gen 3/1000 skip 2\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
-        stats.record_failed(
+        stats.record_layout_failed(
             &session_id,
-            "fangyuan/very/deep/generated/debug/home_preview_failure_case.ron",
-            9,
+            "fangyuan/very/deep/generated/debug/home_scene_failure_case.layout.ron",
+            "fangyuan/very/deep/generated/debug/home_prefabs_failure_case.palette.ron",
             3,
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "primitive 0/1000  failed\ncube 0  sphere 0  skipped 9\nmat 3  alpha 0  glow 0  top invalid\npath ...home_preview_failure_case.ron"
+            "layout failed gen 0/1000 skip 0\npal 0 pf 0 used 0 inst 0 mat 3\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
         );
     }
 
@@ -482,7 +492,7 @@ mod tests {
     fn hud_status_text_defaults_to_non_successful_empty_state() {
         assert_eq!(
             fangyuan_home_hud_status_text(None),
-            "primitive 0/1000  pending\ncube 0  sphere 0  skipped 0\nmat 0  alpha 0  glow 0  top invalid\npath fangyuan/home_preview.ron"
+            "layout pending gen 0/1000 skip 0\npal 0 pf 0 used 0 inst 0 mat 0\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
         );
     }
 
@@ -595,5 +605,24 @@ mod tests {
                 Default::default(),
             ),
         ])
+    }
+
+    fn hud_test_layout_compile_report() -> FangyuanSceneLayoutCompileReport {
+        let primitive_set = hud_test_primitive_set();
+        FangyuanSceneLayoutCompileReport {
+            primitive_stats: primitive_set.stats(),
+            primitive_set,
+            palette_count: 2,
+            prefab_count: 5,
+            authored_prefab_primitives: 7,
+            instance_count: 8,
+            generated_primitives: 3,
+            skipped_primitives: 2,
+            used_prefab_count: 4,
+            top_level_validated: true,
+            layout_validated: true,
+            palette_validated: true,
+            warnings: Vec::new(),
+        }
     }
 }
