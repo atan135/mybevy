@@ -27,7 +27,7 @@
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
 - `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene、fight 和 fangyuan 边界
-- `project/src/framework/fangyuan/`：方圆灵构数据模型入口，包含 blueprint、runtime primitive、对象状态和 primitive set 统计
+- `project/src/framework/fangyuan/`：方圆灵构数据模型入口，包含 blueprint、prefab/palette、scene layout、runtime primitive、对象状态和 primitive set 统计
 - `project/src/framework/network/`：网络通信框架插件和 HTTP/TCP/KCP 接口
 - `project/src/framework/scene/`：场景框架插件、命令、事件、生命周期、注册表、首包 RON manifest、Loading、根实体、相机、spawn/anchor、trigger、streaming 元数据和 debug 配置
 - `project/src/framework/ui/`：UI 框架能力，包含核心系统、通用控件、覆盖层、主题和国际化
@@ -39,6 +39,8 @@
 - `project/src/game/navigation/`：游戏层页面模式、路由命令和路由按钮适配
 - `project/src/game/myserver/`：当前游戏的 MyServer 登录、角色列表、选角、character-bound ticket、game proxy 鉴权、房间、四属性和协议适配模块
 - `project/assets/`：贴图、音频、字体和其他资源
+- `project/assets/fangyuan/palettes/home_prefabs.ron`：方圆家园默认 Prefab / Palette 首包样例
+- `project/assets/fangyuan/layouts/home_layout.ron`：方圆家园默认 Scene Layout 首包样例
 - `project/Cargo.toml`：Rust 项目配置
 - `android/`：Android 打包工程
 

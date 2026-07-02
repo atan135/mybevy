@@ -230,7 +230,7 @@ mybevy/
 - `project/src/main.rs`：程序入口、顶层插件注册
 - `project/src/framework/`：框架层横向能力，当前包含 audio、UI、network、scene、fight 和 fangyuan 边界
 - `project/src/framework/audio/`：音频框架能力入口，提供音频命令、事件、catalog、loading、playback、mixer、music、UI/scene/battle adapter、基础空间音频、生命周期暂停和 debug 配置
-- `project/src/framework/fangyuan/`：方圆灵构数据模型入口，提供 blueprint、runtime primitive、对象状态和 primitive set 统计
+- `project/src/framework/fangyuan/`：方圆灵构数据模型入口，提供 blueprint、prefab/palette、scene layout、runtime primitive、对象状态和 primitive set 统计
 - `project/src/framework/network/`：网络框架能力入口，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
 - `project/src/framework/scene/`：场景框架能力入口，提供场景命令、事件、生命周期、注册表、首包 RON manifest、根实体、Loading、相机、spawn/anchor、trigger、streaming 元数据和 debug 配置
 - `project/src/framework/ui/`：UI 框架能力入口
@@ -247,6 +247,8 @@ mybevy/
 - `project/src/framework/ui/widgets/`：按钮、文本等通用控件
 - `project/assets/`：贴图、音频、字体、场景文件和首包配置数据
 - `project/assets/audio/`：首包音频资源，当前样例以 `.wav` 为主，公开发布前需替换占位资源并确认授权
+- `project/assets/fangyuan/palettes/home_prefabs.ron`：方圆家园默认 Prefab / Palette 首包样例
+- `project/assets/fangyuan/layouts/home_layout.ron`：方圆家园默认 Scene Layout 首包样例
 - `project/assets/game/scenes.csv`：游戏层场景目录表，当前注册 `sample.dungeon_room` 和 `arena.robot_sync`
 - `project/assets/scenes/sample_dungeon_room/scene.ron`：样板场景 framework manifest
 - `project/assets/scenes/sample_dungeon_room/layout.ron`：样板场景 game layer prefab/light 摆放数据
