@@ -639,7 +639,7 @@ impl fmt::Display for FangyuanBlueprintPathError {
 
 impl Error for FangyuanBlueprintPathError {}
 
-fn validate_blueprint_primitive(
+pub(super) fn validate_blueprint_primitive(
     index: usize,
     primitive: &FangyuanPrimitiveBlueprint,
     bounds: &FangyuanBlueprintBounds,

@@ -13,6 +13,7 @@
 mod avatar;
 mod blueprint;
 mod object;
+mod prefab;
 mod primitive;
 mod render_assets;
 mod stats;
@@ -20,6 +21,7 @@ mod stats;
 pub use avatar::*;
 pub use blueprint::*;
 pub use object::*;
+pub use prefab::*;
 pub use primitive::*;
 pub use render_assets::*;
 pub use stats::*;
