@@ -12,7 +12,8 @@ use crate::framework::{
         FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
         FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
         fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
-        load_fangyuan_home_prefab_palette, load_fangyuan_home_scene_layout,
+        format_fangyuan_audit_debug_lines, load_fangyuan_home_prefab_palette,
+        load_fangyuan_home_scene_layout,
     },
     scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId},
 };
@@ -305,6 +306,8 @@ const FANGYUAN_HOME_AUDIT_STATUS_PASSED: &str = "passed";
 const FANGYUAN_HOME_AUDIT_STATUS_WARNING: &str = "warning";
 const FANGYUAN_HOME_AUDIT_STATUS_FAILED: &str = "failed";
 const FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE: &str = "-";
+const FANGYUAN_HOME_AUDIT_DEBUG_MAX_FINDINGS: usize = 4;
+const FANGYUAN_HOME_AUDIT_DEBUG_MAX_SUGGESTIONS: usize = 4;
 
 #[derive(Clone, Debug, Resource, PartialEq, Eq)]
 pub(in crate::game) struct FangyuanHomeBlueprintStats {
@@ -1571,25 +1574,16 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
 }
 
 fn log_fangyuan_home_audit_result(report: &FangyuanAuditReport) {
-    let primary = primary_audit_finding(report);
-    let code = primary
-        .map(|finding| finding.code.as_str())
-        .unwrap_or(FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE);
-    let field_path = primary
-        .and_then(|finding| finding.field_path.as_deref())
-        .unwrap_or("");
-    let reason = primary.map(|finding| finding.reason.as_str()).unwrap_or("");
-    info!(
-        "fangyuan home layout audit: status={}, errors={}, warnings={}, code={}, field_path={}, reason={}, layout_path={}, palette_path={}",
-        audit_status_label(report.status),
-        report.summary.error_count,
-        report.summary.warning_count,
-        code,
-        field_path,
-        reason,
-        FANGYUAN_HOME_SCENE_LAYOUT_PATH,
-        FANGYUAN_HOME_PREFAB_PALETTE_PATH
-    );
+    for line in format_fangyuan_audit_debug_lines(
+        report,
+        FANGYUAN_HOME_AUDIT_DEBUG_MAX_FINDINGS,
+        FANGYUAN_HOME_AUDIT_DEBUG_MAX_SUGGESTIONS,
+    ) {
+        info!(
+            "fangyuan home layout audit: layout_path={}, palette_path={}, {line}",
+            FANGYUAN_HOME_SCENE_LAYOUT_PATH, FANGYUAN_HOME_PREFAB_PALETTE_PATH
+        );
+    }
 }
 
 fn rotation_from_degrees(rotation: [f32; 3]) -> Quat {

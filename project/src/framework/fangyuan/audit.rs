@@ -39,13 +39,27 @@ impl FangyuanAuditReport {
     }
 
     pub fn add_suggestion(&mut self, suggestion: FangyuanAuditSuggestion) {
-        if !self.suggestions.contains(&suggestion) {
-            self.suggestions.push(suggestion);
+        if let Some(existing) = self
+            .suggestions
+            .iter_mut()
+            .find(|existing| existing.has_same_identity(&suggestion))
+        {
+            if existing.estimated_effect.is_none() && suggestion.estimated_effect.is_some() {
+                existing.estimated_effect = suggestion.estimated_effect;
+            }
+            return;
         }
+
+        self.suggestions.push(suggestion);
+        self.sort_suggestions();
     }
 
     pub fn sort_findings(&mut self) {
         self.findings.sort();
+    }
+
+    pub fn sort_suggestions(&mut self) {
+        self.suggestions.sort();
     }
 
     pub fn apply_primitive_budget_stats(&mut self, stats: &FangyuanPrimitiveBudgetStats) {
@@ -516,7 +530,123 @@ fn add_finding_with_suggestion(
     );
     finding.field_path = field_path.clone();
     report.add_finding(finding);
-    report.add_suggestion(FangyuanAuditSuggestion::new(suggestion, field_path, reason));
+    report.add_suggestion(
+        FangyuanAuditSuggestion::new(suggestion, field_path, reason)
+            .with_default_estimated_effect(),
+    );
+}
+
+pub fn format_fangyuan_audit_debug_lines(
+    report: &FangyuanAuditReport,
+    max_findings: usize,
+    max_suggestions: usize,
+) -> Vec<String> {
+    let mut lines = Vec::with_capacity(
+        1 + report.findings.len().min(max_findings)
+            + usize::from(report.findings.len() > max_findings)
+            + report.suggestions.len().min(max_suggestions)
+            + usize::from(report.suggestions.len() > max_suggestions),
+    );
+    lines.push(format_fangyuan_audit_debug_summary(report));
+    lines.extend(format_fangyuan_audit_debug_findings(
+        &report.findings,
+        max_findings,
+    ));
+    lines.extend(format_fangyuan_audit_debug_suggestions(
+        &report.suggestions,
+        max_suggestions,
+    ));
+    lines
+}
+
+fn format_fangyuan_audit_debug_summary(report: &FangyuanAuditReport) -> String {
+    format!(
+        "summary: source_kind={:?}, source_path={}, status={:?}, errors={}, warnings={}, infos={}, findings={}, suggestions={}, authored={}, generated={}, skipped={}, cubes={}, spheres={}, colors={}, materials={}, alpha={}, emissive={}, lifecycle={}, top_level_valid={}, layout_valid={}, palette_valid={}",
+        report.source_kind,
+        audit_debug_optional_str(report.source_path.as_deref()),
+        report.status,
+        report.summary.error_count,
+        report.summary.warning_count,
+        report.summary.info_count,
+        report.findings.len(),
+        report.suggestions.len(),
+        report.summary.authored_primitives,
+        report.summary.generated_primitives,
+        report.summary.skipped_primitives,
+        report.summary.cube_count,
+        report.summary.sphere_count,
+        report.summary.color_count,
+        report.summary.material_count,
+        report.summary.alpha_count,
+        report.summary.emissive_count,
+        report.summary.lifecycle_count,
+        report.summary.top_level_validated,
+        report.summary.layout_validated,
+        report.summary.palette_validated
+    )
+}
+
+fn format_fangyuan_audit_debug_findings(
+    findings: &[FangyuanAuditFinding],
+    max_findings: usize,
+) -> Vec<String> {
+    let mut lines = Vec::with_capacity(
+        findings.len().min(max_findings) + usize::from(findings.len() > max_findings),
+    );
+
+    for (index, finding) in findings.iter().take(max_findings).enumerate() {
+        lines.push(format!(
+            "finding[{index}]: severity={:?}, code={}, field_path={}, source_kind={:?}, reason={}",
+            finding.severity,
+            finding.code,
+            audit_debug_optional_str(finding.field_path.as_deref()),
+            finding.source_kind,
+            finding.reason
+        ));
+    }
+
+    if findings.len() > max_findings {
+        lines.push(format!(
+            "findings_omitted: count={}",
+            findings.len() - max_findings
+        ));
+    }
+
+    lines
+}
+
+fn format_fangyuan_audit_debug_suggestions(
+    suggestions: &[FangyuanAuditSuggestion],
+    max_suggestions: usize,
+) -> Vec<String> {
+    let mut lines = Vec::with_capacity(
+        suggestions.len().min(max_suggestions) + usize::from(suggestions.len() > max_suggestions),
+    );
+
+    for (index, suggestion) in suggestions.iter().take(max_suggestions).enumerate() {
+        lines.push(format!(
+            "suggestion[{index}]: action={:?}, field_path={}, reason={}, estimated_effect={}",
+            suggestion.action,
+            audit_debug_optional_str(suggestion.field_path.as_deref()),
+            suggestion.reason,
+            audit_debug_optional_str(suggestion.estimated_effect.as_deref())
+        ));
+    }
+
+    if suggestions.len() > max_suggestions {
+        lines.push(format!(
+            "suggestions_omitted: count={}",
+            suggestions.len() - max_suggestions
+        ));
+    }
+
+    lines
+}
+
+fn audit_debug_optional_str(value: Option<&str>) -> &str {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("<none>")
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -666,7 +796,7 @@ impl PartialOrd for FangyuanAuditFinding {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FangyuanAuditSuggestion {
     pub action: FangyuanAuditSuggestionAction,
     pub field_path: Option<String>,
@@ -687,15 +817,54 @@ impl FangyuanAuditSuggestion {
             estimated_effect: None,
         }
     }
+
+    pub fn new_with_effect(
+        action: FangyuanAuditSuggestionAction,
+        field_path: impl Into<Option<String>>,
+        reason: impl Into<String>,
+        estimated_effect: impl Into<String>,
+    ) -> Self {
+        Self::new(action, field_path, reason).with_estimated_effect(estimated_effect)
+    }
+
+    pub fn with_estimated_effect(mut self, estimated_effect: impl Into<String>) -> Self {
+        self.estimated_effect = Some(estimated_effect.into());
+        self
+    }
+
+    pub fn with_default_estimated_effect(mut self) -> Self {
+        self.estimated_effect = Some(self.action.default_estimated_effect().to_string());
+        self
+    }
+
+    fn has_same_identity(&self, other: &Self) -> bool {
+        self.action == other.action
+            && self.field_path == other.field_path
+            && self.reason == other.reason
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FangyuanAuditSuggestionAction {
     ReducePrimitives,
     ShrinkBounds,
-    LowerEmissive,
     RemoveAlpha,
+    LowerEmissive,
     ReplaceMaterialProfile,
+    ReduceWarningRole,
+}
+
+impl FangyuanAuditSuggestionAction {
+    pub const fn default_estimated_effect(self) -> &'static str {
+        match self {
+            Self::ReducePrimitives => "reduces primitive, generated, and expanded primitive counts",
+            Self::ShrinkBounds => "reduces bounds, volume, and size risk",
+            Self::RemoveAlpha => "reduces transparent sorting and blending cost",
+            Self::LowerEmissive => "reduces emissive intensity and emissive primitive risk",
+            Self::ReplaceMaterialProfile => "reduces material profile branching",
+            Self::ReduceWarningRole => "reduces warning role content pressure",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -841,6 +1010,155 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_audit_suggestions_are_sorted_stably_after_insert() {
+        let mut report = FangyuanAuditReport::default();
+        report.add_suggestion(FangyuanAuditSuggestion::new(
+            FangyuanAuditSuggestionAction::ReplaceMaterialProfile,
+            Some("primitives[].material_profile_id".to_string()),
+            "material profile count exceeds the recommended budget",
+        ));
+        report.add_suggestion(FangyuanAuditSuggestion::new(
+            FangyuanAuditSuggestionAction::ReducePrimitives,
+            Some("primitives".to_string()),
+            "primitive count exceeds the recommended budget",
+        ));
+        report.add_suggestion(FangyuanAuditSuggestion::new(
+            FangyuanAuditSuggestionAction::ReducePrimitives,
+            Some("instances[].prefab".to_string()),
+            "primitive count exceeds the recommended budget",
+        ));
+
+        assert_eq!(report.suggestions.len(), 3);
+        assert_eq!(
+            report.suggestions[0].action,
+            FangyuanAuditSuggestionAction::ReducePrimitives
+        );
+        assert_eq!(
+            report.suggestions[0].field_path.as_deref(),
+            Some("instances[].prefab")
+        );
+        assert_eq!(
+            report.suggestions[1].field_path.as_deref(),
+            Some("primitives")
+        );
+        assert_eq!(
+            report.suggestions[2].action,
+            FangyuanAuditSuggestionAction::ReplaceMaterialProfile
+        );
+    }
+
+    #[test]
+    fn fangyuan_audit_suggestion_dedup_preserves_estimated_effect() {
+        let mut report = FangyuanAuditReport::default();
+        report.add_suggestion(FangyuanAuditSuggestion::new_with_effect(
+            FangyuanAuditSuggestionAction::ReducePrimitives,
+            Some("primitives".to_string()),
+            "primitive count exceeds the recommended budget",
+            "reduces primitive, generated, and expanded primitive counts",
+        ));
+        report.add_suggestion(FangyuanAuditSuggestion::new(
+            FangyuanAuditSuggestionAction::ReducePrimitives,
+            Some("primitives".to_string()),
+            "primitive count exceeds the recommended budget",
+        ));
+
+        assert_eq!(report.suggestions.len(), 1);
+        assert_eq!(
+            report.suggestions[0].estimated_effect.as_deref(),
+            Some("reduces primitive, generated, and expanded primitive counts")
+        );
+    }
+
+    #[test]
+    fn fangyuan_audit_common_suggestion_actions_have_stable_estimated_effects() {
+        let cases = [
+            (
+                FangyuanAuditSuggestionAction::ReducePrimitives,
+                "reduces primitive, generated, and expanded primitive counts",
+            ),
+            (
+                FangyuanAuditSuggestionAction::ShrinkBounds,
+                "reduces bounds, volume, and size risk",
+            ),
+            (
+                FangyuanAuditSuggestionAction::RemoveAlpha,
+                "reduces transparent sorting and blending cost",
+            ),
+            (
+                FangyuanAuditSuggestionAction::LowerEmissive,
+                "reduces emissive intensity and emissive primitive risk",
+            ),
+            (
+                FangyuanAuditSuggestionAction::ReplaceMaterialProfile,
+                "reduces material profile branching",
+            ),
+            (
+                FangyuanAuditSuggestionAction::ReduceWarningRole,
+                "reduces warning role content pressure",
+            ),
+        ];
+
+        for (action, expected) in cases {
+            let suggestion =
+                FangyuanAuditSuggestion::new(action, Some("field".to_string()), "reason")
+                    .with_default_estimated_effect();
+            assert_eq!(suggestion.estimated_effect.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn fangyuan_audit_debug_lines_include_summary_and_truncate_details() {
+        let mut report = FangyuanAuditReport::default();
+        for index in 0..3 {
+            let mut finding = FangyuanAuditFinding::new(
+                FangyuanAuditSeverity::Warning,
+                format!("warning_{index}"),
+                format!("warning reason {index}"),
+                FangyuanAuditSourceKind::SceneLayout,
+            );
+            finding.field_path = Some(format!("instances[{index}]"));
+            report.add_finding(finding);
+            report.add_suggestion(FangyuanAuditSuggestion::new_with_effect(
+                FangyuanAuditSuggestionAction::ShrinkBounds,
+                Some(format!("instances[{index}].scale")),
+                format!("shrink reason {index}"),
+                "reduces bounds, volume, and size risk",
+            ));
+        }
+
+        let lines = format_fangyuan_audit_debug_lines(&report, 1, 2);
+
+        assert_eq!(lines.len(), 1 + 1 + 1 + 2 + 1);
+        assert!(lines[0].starts_with("summary:"));
+        assert!(lines[0].contains("status=PassedWithWarnings"));
+        assert!(lines[0].contains("findings=3"));
+        assert!(lines[0].contains("suggestions=3"));
+        assert!(lines[1].starts_with("finding[0]:"));
+        assert_eq!(lines[2], "findings_omitted: count=2");
+        assert!(lines[3].starts_with("suggestion[0]:"));
+        assert!(lines[4].starts_with("suggestion[1]:"));
+        assert_eq!(lines[5], "suggestions_omitted: count=1");
+    }
+
+    #[test]
+    fn fangyuan_audit_debug_lines_render_empty_suggestion_path() {
+        let mut report = FangyuanAuditReport::default();
+        report.add_suggestion(FangyuanAuditSuggestion::new_with_effect(
+            FangyuanAuditSuggestionAction::ReduceWarningRole,
+            None,
+            "warning role content exceeds reserved budget",
+            "reduces warning role content pressure",
+        ));
+
+        let lines = format_fangyuan_audit_debug_lines(&report, 8, 8);
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("action=ReduceWarningRole"));
+        assert!(lines[1].contains("field_path=<none>"));
+        assert!(lines[1].contains("estimated_effect=reduces warning role content pressure"));
+    }
+
+    #[test]
     fn fangyuan_budget_default_profile_uses_shared_hard_limit() {
         let profile = FangyuanAuditBudgetProfile::default();
 
@@ -925,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn fangyuan_budget_recommended_thresholds_create_warnings() {
+    fn fangyuan_audit_budget_recommended_thresholds_create_warnings() {
         let profile = FangyuanAuditBudgetProfile {
             recommended_primitive_limit: 1,
             hard_primitive_limit: 10,
@@ -974,10 +1292,17 @@ mod tests {
             &report,
             FangyuanAuditSuggestionAction::ReplaceMaterialProfile
         ));
+        for suggestion in &report.suggestions {
+            assert!(
+                suggestion.estimated_effect.is_some(),
+                "missing estimated_effect for {:?}",
+                suggestion.action
+            );
+        }
     }
 
     #[test]
-    fn fangyuan_budget_hard_limits_create_errors() {
+    fn fangyuan_audit_budget_hard_limits_create_errors() {
         let profile = FangyuanAuditBudgetProfile {
             recommended_primitive_limit: 1,
             hard_primitive_limit: 2,
@@ -1032,10 +1357,17 @@ mod tests {
             &report,
             FangyuanAuditSuggestionAction::ShrinkBounds
         ));
+        assert!(report.suggestions.iter().any(|suggestion| {
+            suggestion.action == FangyuanAuditSuggestionAction::ShrinkBounds
+                && suggestion
+                    .estimated_effect
+                    .as_deref()
+                    .is_some_and(|effect| effect.contains("bounds"))
+        }));
     }
 
     #[test]
-    fn fangyuan_budget_empty_primitive_set_passes() {
+    fn fangyuan_audit_budget_empty_primitive_set_passes() {
         let primitive_set = FangyuanPrimitiveSet::new();
         let report = audit_fangyuan_primitive_set_budget(
             &primitive_set,
