@@ -11,6 +11,7 @@
 //! carry rendering responsibility.
 
 mod asset_path;
+mod audit;
 mod avatar;
 mod blueprint;
 mod layout;
@@ -21,6 +22,7 @@ mod render_assets;
 mod stats;
 
 pub use asset_path::*;
+pub use audit::*;
 pub use avatar::*;
 pub use blueprint::*;
 pub use layout::*;
