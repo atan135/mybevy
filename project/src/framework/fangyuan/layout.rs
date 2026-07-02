@@ -9,10 +9,12 @@ use std::{
 
 use super::{
     FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_BLUEPRINT_VERSION, FangyuanAssetPathError,
-    FangyuanBlueprintBounds, FangyuanBlueprintValidationError, FangyuanPrefabDefinition,
-    FangyuanPrefabIdInvalidReason, FangyuanPrefabPalette, FangyuanPrefabTagInvalidReason,
-    FangyuanPrefabValidationError, FangyuanPrimitiveBlueprint, FangyuanPrimitiveSet,
-    FangyuanPrimitiveSetStats, compile_blueprint_primitive_to_runtime,
+    FangyuanAuditBudgetProfile, FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity,
+    FangyuanAuditSourceKind, FangyuanBlueprintBounds, FangyuanBlueprintValidationError,
+    FangyuanPrefabDefinition, FangyuanPrefabIdInvalidReason, FangyuanPrefabPalette,
+    FangyuanPrefabTagInvalidReason, FangyuanPrefabValidationError, FangyuanPrimitiveBlueprint,
+    FangyuanPrimitiveBudgetStats, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
+    audit_fangyuan_primitive_budget, compile_blueprint_primitive_to_runtime,
     first_package_fangyuan_asset_fs_path, validate_blueprint_primitive,
     validate_fangyuan_asset_path, validate_prefab_id, validate_prefab_tag,
 };
@@ -219,6 +221,273 @@ impl FangyuanSceneLayout {
             palette_validated: true,
             warnings,
         })
+    }
+
+    pub fn audit(
+        &self,
+        palette: &FangyuanPrefabPalette,
+        profile: &FangyuanAuditBudgetProfile,
+    ) -> FangyuanAuditReport {
+        let mut report = FangyuanAuditReport::new(FangyuanAuditSourceKind::SceneLayout, None);
+        let palette_validation_error = palette.validate().err();
+        let mut layout_audit = self.audit_layout_fields(palette);
+        let compile_report = if palette_validation_error.is_none()
+            && layout_audit.findings.is_empty()
+        {
+            match self.compile_with_palette(palette) {
+                Ok(compile_report) => {
+                    for warning in &compile_report.warnings {
+                        report.add_finding(scene_layout_compile_warning_to_audit_finding(warning));
+                    }
+                    Some(compile_report)
+                }
+                Err(error) => {
+                    report.add_finding(scene_layout_compile_error_to_audit_finding(&error));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(error) = &palette_validation_error {
+            report.add_finding(prefab_validation_error_to_scene_layout_audit_finding(error));
+        }
+        for finding in layout_audit.findings.drain(..) {
+            report.add_finding(finding);
+        }
+
+        let mut stats = if let Some(compile_report) = &compile_report {
+            FangyuanPrimitiveBudgetStats::from_primitive_set(&compile_report.primitive_set)
+        } else {
+            self.audit_expanded_runtime_stats(palette)
+        };
+        apply_scene_layout_accounting(
+            &mut stats,
+            self,
+            palette,
+            compile_report.as_ref(),
+            &layout_audit,
+        );
+
+        let budget_report = audit_fangyuan_primitive_budget(&stats, profile);
+        for mut finding in budget_report.findings {
+            finding.source_kind = FangyuanAuditSourceKind::SceneLayout;
+            finding.field_path = finding.field_path.map(scene_layout_budget_field_path);
+            report.add_finding(finding);
+        }
+        for mut suggestion in budget_report.suggestions {
+            suggestion.field_path = suggestion.field_path.map(scene_layout_budget_field_path);
+            report.add_suggestion(suggestion);
+        }
+
+        report.refresh_summary_and_status();
+        report.apply_primitive_budget_stats(&stats);
+        apply_scene_layout_summary(&mut report, self, palette, compile_report.as_ref());
+        report.sort_findings();
+        report
+    }
+
+    pub fn audit_with_default_budget(
+        &self,
+        palette: &FangyuanPrefabPalette,
+    ) -> FangyuanAuditReport {
+        self.audit(palette, &FangyuanAuditBudgetProfile::default())
+    }
+
+    fn audit_layout_fields(
+        &self,
+        palette: &FangyuanPrefabPalette,
+    ) -> FangyuanSceneLayoutAuditState {
+        let prefab_by_id = palette
+            .prefabs
+            .iter()
+            .map(|prefab| (prefab.id.as_str(), prefab.primitives.len()))
+            .collect::<HashMap<_, _>>();
+        let mut state = FangyuanSceneLayoutAuditState::default();
+
+        if self.version != FANGYUAN_SCENE_LAYOUT_VERSION {
+            state.add_validation_error(FangyuanSceneLayoutValidationError::UnsupportedVersion {
+                found: self.version.clone(),
+                expected: FANGYUAN_SCENE_LAYOUT_VERSION,
+            });
+        }
+
+        if let Err(source) = self.bounds.validate() {
+            state.add_validation_error(FangyuanSceneLayoutValidationError::InvalidLayoutBounds {
+                source,
+            });
+        }
+
+        if self.max_primitives > FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT {
+            state.add_validation_error(
+                FangyuanSceneLayoutValidationError::LayoutPrimitiveBudgetExceeded {
+                    max_primitives: self.max_primitives,
+                    hard_limit: FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT,
+                },
+            );
+        }
+
+        let palette_count = self.palette_paths().count();
+        if palette_count == 0 {
+            state.add_validation_error(FangyuanSceneLayoutValidationError::MissingPalettePath);
+        }
+
+        let mut paths = HashSet::with_capacity(palette_count);
+        for (palette_index, path) in self.palette_paths().enumerate() {
+            match validate_palette_path(path) {
+                Ok(()) => {}
+                Err(reason) => {
+                    state.add_validation_error(
+                        FangyuanSceneLayoutValidationError::InvalidPalettePath {
+                            palette_index,
+                            path: path.to_string(),
+                            reason,
+                        },
+                    );
+                }
+            }
+
+            if !paths.insert(path) {
+                state.add_validation_error(
+                    FangyuanSceneLayoutValidationError::DuplicatePalettePath {
+                        palette_index,
+                        path: path.to_string(),
+                    },
+                );
+            }
+        }
+
+        let mut instance_ids = HashSet::with_capacity(self.instances.len());
+        for (instance_index, instance) in self.instances.iter().enumerate() {
+            match validate_prefab_id(&instance.prefab) {
+                Ok(()) => {}
+                Err(reason) => state.add_instance_validation_error(
+                    FangyuanSceneLayoutValidationError::InvalidInstancePrefabId {
+                        instance_index,
+                        prefab: instance.prefab.clone(),
+                        reason,
+                    },
+                    instance.id.as_deref(),
+                ),
+            }
+
+            if let Some(prefab_primitive_count) = prefab_by_id.get(instance.prefab.as_str()) {
+                state.expanded_primitives = state
+                    .expanded_primitives
+                    .saturating_add(*prefab_primitive_count);
+            } else {
+                state.add_instance_validation_error(
+                    FangyuanSceneLayoutValidationError::MissingPrefab {
+                        instance_index,
+                        prefab: instance.prefab.clone(),
+                    },
+                    instance.id.as_deref(),
+                );
+            }
+
+            if let Some(id) = instance.id.as_deref() {
+                match validate_instance_id(id) {
+                    Ok(()) => {}
+                    Err(reason) => {
+                        state.add_validation_error(
+                            FangyuanSceneLayoutValidationError::InvalidInstanceId {
+                                instance_index,
+                                id: id.to_string(),
+                                reason,
+                            },
+                        );
+                    }
+                }
+
+                if !instance_ids.insert(id) {
+                    state.add_validation_error(
+                        FangyuanSceneLayoutValidationError::DuplicateInstanceId {
+                            instance_index,
+                            id: id.to_string(),
+                        },
+                    );
+                }
+            }
+
+            if let Err(error) = validate_instance_tags(instance_index, &instance.tags) {
+                state.add_instance_validation_error(error, instance.id.as_deref());
+            }
+            if let Err(error) =
+                validate_instance_position(instance_index, instance.position, &self.bounds)
+            {
+                state.add_instance_validation_error(error, instance.id.as_deref());
+            }
+            if let Err(error) = validate_instance_scale(instance_index, instance.scale) {
+                state.add_instance_validation_error(error, instance.id.as_deref());
+            }
+        }
+
+        let effective_limit = self
+            .max_primitives
+            .min(FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT);
+        if state.expanded_primitives > effective_limit {
+            state.add_validation_error(
+                FangyuanSceneLayoutValidationError::ExpandedPrimitiveBudgetExceeded {
+                    count: state.expanded_primitives,
+                    limit: effective_limit,
+                },
+            );
+        }
+
+        state
+    }
+
+    fn audit_expanded_runtime_stats(
+        &self,
+        palette: &FangyuanPrefabPalette,
+    ) -> FangyuanPrimitiveBudgetStats {
+        let prefab_by_id = palette
+            .prefabs
+            .iter()
+            .map(|prefab| (prefab.id.as_str(), prefab))
+            .collect::<HashMap<_, _>>();
+        let mut runtime_primitives = Vec::new();
+        let mut skipped_primitives = 0usize;
+
+        for (instance_index, instance) in self.instances.iter().enumerate() {
+            if validate_prefab_id(&instance.prefab).is_err()
+                || validate_instance_position(instance_index, instance.position, &self.bounds)
+                    .is_err()
+                || validate_instance_scale(instance_index, instance.scale).is_err()
+            {
+                if let Some(prefab) = prefab_by_id.get(instance.prefab.as_str()) {
+                    skipped_primitives = skipped_primitives.saturating_add(prefab.primitives.len());
+                }
+                continue;
+            }
+
+            let Some(prefab) = prefab_by_id.get(instance.prefab.as_str()) else {
+                continue;
+            };
+
+            for (prefab_primitive_index, primitive) in prefab.primitives.iter().enumerate() {
+                let transformed = transform_prefab_primitive(instance, prefab, primitive);
+                match validate_blueprint_primitive(
+                    prefab_primitive_index,
+                    &transformed,
+                    &self.bounds,
+                ) {
+                    Ok(()) => {
+                        runtime_primitives
+                            .push(compile_blueprint_primitive_to_runtime(&transformed));
+                    }
+                    Err(_) => {
+                        skipped_primitives += 1;
+                    }
+                }
+            }
+        }
+
+        let mut stats = FangyuanPrimitiveBudgetStats::from_runtime_primitives(&runtime_primitives);
+        stats.generated_primitives = runtime_primitives.len();
+        stats.skipped_primitives = skipped_primitives;
+        stats
     }
 
     fn validate_top_level(&self) -> Result<(), FangyuanSceneLayoutValidationError> {
@@ -457,6 +726,284 @@ impl Error for FangyuanSceneLayoutCompileError {
             Self::ExpandedPrimitiveBudgetExceeded { .. } => None,
         }
     }
+}
+
+#[derive(Default)]
+struct FangyuanSceneLayoutAuditState {
+    findings: Vec<FangyuanAuditFinding>,
+    expanded_primitives: usize,
+}
+
+impl FangyuanSceneLayoutAuditState {
+    fn add_validation_error(&mut self, error: FangyuanSceneLayoutValidationError) {
+        self.findings
+            .push(scene_layout_validation_error_to_audit_finding(
+                &error,
+                FangyuanAuditSeverity::Error,
+            ));
+    }
+
+    fn add_instance_validation_error(
+        &mut self,
+        error: FangyuanSceneLayoutValidationError,
+        instance_id: Option<&str>,
+    ) {
+        let mut finding =
+            scene_layout_validation_error_to_audit_finding(&error, FangyuanAuditSeverity::Error);
+        if finding.instance_id.is_none() {
+            finding.instance_id = instance_id.map(str::to_string);
+        }
+        self.findings.push(finding);
+    }
+}
+
+fn scene_layout_validation_error_to_audit_finding(
+    error: &FangyuanSceneLayoutValidationError,
+    severity: FangyuanAuditSeverity,
+) -> FangyuanAuditFinding {
+    let mut finding = FangyuanAuditFinding::new(
+        severity,
+        error.code(),
+        error.reason(),
+        FangyuanAuditSourceKind::SceneLayout,
+    );
+    finding.field_path = Some(error.field_path().into_owned());
+    finding.prefab_id = match error {
+        FangyuanSceneLayoutValidationError::InvalidInstancePrefabId { prefab, .. }
+        | FangyuanSceneLayoutValidationError::MissingPrefab { prefab, .. } => Some(prefab.clone()),
+        _ => None,
+    };
+    finding.instance_id = match error {
+        FangyuanSceneLayoutValidationError::InvalidInstanceId { id, .. }
+        | FangyuanSceneLayoutValidationError::DuplicateInstanceId { id, .. } => Some(id.clone()),
+        _ => None,
+    };
+    finding.instance_index = match error {
+        FangyuanSceneLayoutValidationError::InvalidInstancePrefabId { instance_index, .. }
+        | FangyuanSceneLayoutValidationError::MissingPrefab { instance_index, .. }
+        | FangyuanSceneLayoutValidationError::InvalidInstanceId { instance_index, .. }
+        | FangyuanSceneLayoutValidationError::DuplicateInstanceId { instance_index, .. }
+        | FangyuanSceneLayoutValidationError::TooManyInstanceTags { instance_index, .. }
+        | FangyuanSceneLayoutValidationError::InvalidInstanceTag { instance_index, .. }
+        | FangyuanSceneLayoutValidationError::InvalidInstancePosition { instance_index, .. }
+        | FangyuanSceneLayoutValidationError::InvalidInstanceScale { instance_index, .. } => {
+            Some(*instance_index)
+        }
+        _ => None,
+    };
+    finding
+}
+
+fn scene_layout_compile_error_to_audit_finding(
+    error: &FangyuanSceneLayoutCompileError,
+) -> FangyuanAuditFinding {
+    match error {
+        FangyuanSceneLayoutCompileError::LayoutValidationFailed(error) => {
+            scene_layout_validation_error_to_audit_finding(error, FangyuanAuditSeverity::Error)
+        }
+        FangyuanSceneLayoutCompileError::PaletteValidationFailed(error) => {
+            prefab_validation_error_to_scene_layout_audit_finding(error)
+        }
+        FangyuanSceneLayoutCompileError::ExpandedPrimitiveBudgetExceeded { .. } => {
+            let mut finding = FangyuanAuditFinding::new(
+                FangyuanAuditSeverity::Error,
+                error.code(),
+                error.reason(),
+                FangyuanAuditSourceKind::SceneLayout,
+            );
+            finding.field_path = Some(error.field_path().into_owned());
+            finding
+        }
+    }
+}
+
+fn prefab_validation_error_to_scene_layout_audit_finding(
+    error: &FangyuanPrefabValidationError,
+) -> FangyuanAuditFinding {
+    let mut finding = FangyuanAuditFinding::new(
+        FangyuanAuditSeverity::Error,
+        error.code(),
+        error.reason(),
+        FangyuanAuditSourceKind::SceneLayout,
+    );
+    finding.field_path = Some(scene_layout_palette_field_path(
+        error.field_path().into_owned(),
+    ));
+    finding.prefab_id = match error {
+        FangyuanPrefabValidationError::InvalidPrefabId { id, .. }
+        | FangyuanPrefabValidationError::DuplicatePrefabId { id, .. }
+        | FangyuanPrefabValidationError::InvalidPrefabBounds { id, .. }
+        | FangyuanPrefabValidationError::InvalidPrefabPivot { id, .. }
+        | FangyuanPrefabValidationError::TooManyPrefabTags { id, .. }
+        | FangyuanPrefabValidationError::InvalidPrefabTag { id, .. }
+        | FangyuanPrefabValidationError::PrefabPrimitiveBudgetExceeded { id, .. } => {
+            Some(id.clone())
+        }
+        FangyuanPrefabValidationError::InvalidPrefabPrimitive { prefab_id, .. } => {
+            Some(prefab_id.clone())
+        }
+        _ => None,
+    };
+    finding.prefab_primitive_index = match error {
+        FangyuanPrefabValidationError::InvalidPrefabPrimitive {
+            primitive_index, ..
+        } => Some(*primitive_index),
+        _ => None,
+    };
+    finding
+}
+
+fn scene_layout_compile_warning_to_audit_finding(
+    warning: &FangyuanSceneLayoutCompileWarning,
+) -> FangyuanAuditFinding {
+    let mut finding = FangyuanAuditFinding::new(
+        FangyuanAuditSeverity::Warning,
+        warning.source.code(),
+        format!(
+            "expanded prefab `{}` primitive {} failed blueprint primitive validation: {}",
+            warning.prefab_id,
+            warning.prefab_primitive_index,
+            warning.source.reason()
+        ),
+        FangyuanAuditSourceKind::SceneLayout,
+    );
+    finding.field_path = Some(expanded_primitive_warning_field_path(warning));
+    finding.prefab_id = Some(warning.prefab_id.clone());
+    finding.instance_id = warning.instance_id.clone();
+    finding.instance_index = Some(warning.instance_index);
+    finding.prefab_primitive_index = Some(warning.prefab_primitive_index);
+    finding
+}
+
+fn expanded_primitive_warning_field_path(warning: &FangyuanSceneLayoutCompileWarning) -> String {
+    let source_path = warning.source.field_path().into_owned();
+    let primitive_prefix = format!("primitives[{}]", warning.prefab_primitive_index);
+    let suffix = source_path
+        .strip_prefix(&primitive_prefix)
+        .unwrap_or(source_path.as_str());
+    format!(
+        "instances[{}].prefab.primitives[{}]{suffix}",
+        warning.instance_index, warning.prefab_primitive_index
+    )
+}
+
+fn scene_layout_palette_field_path(field_path: String) -> String {
+    format!("palette.{field_path}")
+}
+
+fn scene_layout_budget_field_path(field_path: String) -> String {
+    if field_path == "primitives" {
+        "instances[].prefab.primitives".to_string()
+    } else if let Some(suffix) = field_path.strip_prefix("primitives[]") {
+        format!("instances[].prefab.primitives[]{suffix}")
+    } else if field_path == "bounds" {
+        "instances[].prefab.primitives".to_string()
+    } else {
+        field_path
+    }
+}
+
+fn apply_scene_layout_accounting(
+    stats: &mut FangyuanPrimitiveBudgetStats,
+    layout: &FangyuanSceneLayout,
+    palette: &FangyuanPrefabPalette,
+    compile_report: Option<&FangyuanSceneLayoutCompileReport>,
+    layout_audit: &FangyuanSceneLayoutAuditState,
+) {
+    stats.authored_primitives = palette
+        .prefabs
+        .iter()
+        .map(|prefab| prefab.primitives.len())
+        .sum();
+
+    if let Some(compile_report) = compile_report {
+        stats.authored_primitives = compile_report.authored_prefab_primitives;
+        stats.generated_primitives = compile_report.generated_primitives;
+        stats.skipped_primitives = compile_report.skipped_primitives;
+        stats.expanded_primitives = compile_report
+            .generated_primitives
+            .saturating_add(compile_report.skipped_primitives);
+    } else {
+        stats.expanded_primitives = layout_audit.expanded_primitives;
+        stats.generated_primitives = stats.runtime_primitives;
+    }
+
+    if stats.expanded_primitives == 0 {
+        stats.expanded_primitives = estimate_layout_expanded_primitives(layout, palette);
+    }
+}
+
+fn apply_scene_layout_summary(
+    report: &mut FangyuanAuditReport,
+    layout: &FangyuanSceneLayout,
+    palette: &FangyuanPrefabPalette,
+    compile_report: Option<&FangyuanSceneLayoutCompileReport>,
+) {
+    report.summary.palette_count = compile_report
+        .map(|compile_report| compile_report.palette_count)
+        .unwrap_or_else(|| layout.palette_paths().count());
+    report.summary.prefab_count = compile_report
+        .map(|compile_report| compile_report.prefab_count)
+        .unwrap_or(palette.prefabs.len());
+    report.summary.reusable_prefab_count = palette
+        .prefabs
+        .iter()
+        .filter(|prefab| prefab.primitives.len() > 1)
+        .count();
+    report.summary.instance_count = compile_report
+        .map(|compile_report| compile_report.instance_count)
+        .unwrap_or(layout.instances.len());
+    report.summary.used_prefab_count = compile_report
+        .map(|compile_report| compile_report.used_prefab_count)
+        .unwrap_or_else(|| estimate_layout_used_prefabs(layout, palette));
+    report.summary.top_level_validated = compile_report
+        .map(|compile_report| compile_report.top_level_validated)
+        .unwrap_or_else(|| layout.validate_top_level().is_ok());
+    report.summary.layout_validated = compile_report
+        .map(|compile_report| compile_report.layout_validated)
+        .unwrap_or_else(|| layout.validate_against_palette(palette).is_ok());
+    report.summary.palette_validated = compile_report
+        .map(|compile_report| compile_report.palette_validated)
+        .unwrap_or_else(|| palette.validate().is_ok());
+}
+
+fn estimate_layout_expanded_primitives(
+    layout: &FangyuanSceneLayout,
+    palette: &FangyuanPrefabPalette,
+) -> usize {
+    layout
+        .instances
+        .iter()
+        .map(|instance| {
+            palette
+                .prefabs
+                .iter()
+                .find(|prefab| prefab.id == instance.prefab)
+                .map(|prefab| prefab.primitives.len())
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+fn estimate_layout_used_prefabs(
+    layout: &FangyuanSceneLayout,
+    palette: &FangyuanPrefabPalette,
+) -> usize {
+    let palette_ids = palette
+        .prefabs
+        .iter()
+        .map(|prefab| prefab.id.as_str())
+        .collect::<HashSet<_>>();
+    layout
+        .instances
+        .iter()
+        .filter_map(|instance| {
+            palette_ids
+                .contains(instance.prefab.as_str())
+                .then_some(instance.prefab.as_str())
+        })
+        .collect::<HashSet<_>>()
+        .len()
 }
 
 pub fn load_fangyuan_home_scene_layout() -> Result<FangyuanSceneLayout, FangyuanSceneLayoutLoadError>
@@ -1020,8 +1567,8 @@ where
 mod tests {
     use super::*;
     use crate::framework::fangyuan::{
-        FangyuanPrefabDefinition, FangyuanPrimitiveBlueprint, FangyuanPrimitiveKind,
-        FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
+        FangyuanAuditStatus, FangyuanPrefabDefinition, FangyuanPrimitiveBlueprint,
+        FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
     };
     use bevy::prelude::Vec3;
 
@@ -1686,6 +2233,194 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_layout_audit_passes_default_home_layout_with_expected_summary() {
+        let layout =
+            FangyuanSceneLayout::load_first_package_ron(FANGYUAN_HOME_SCENE_LAYOUT_PATH).unwrap();
+        let palette = FangyuanPrefabPalette::load_validated_first_package_ron(
+            crate::framework::fangyuan::FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+        )
+        .unwrap();
+
+        let report = layout.audit_with_default_budget(&palette);
+
+        assert_eq!(report.source_kind, FangyuanAuditSourceKind::SceneLayout);
+        assert_eq!(report.status, FangyuanAuditStatus::Passed);
+        assert!(report.findings.is_empty());
+        assert_eq!(report.summary.generated_primitives, 138);
+        assert_eq!(report.summary.skipped_primitives, 0);
+        assert_eq!(report.summary.instance_count, 40);
+        assert_eq!(report.summary.prefab_count, 5);
+        assert_eq!(report.summary.used_prefab_count, 5);
+        assert_eq!(report.summary.palette_count, 1);
+        assert!(report.summary.top_level_validated);
+        assert!(report.summary.layout_validated);
+        assert!(report.summary.palette_validated);
+    }
+
+    #[test]
+    fn fangyuan_layout_audit_reports_missing_prefab_without_runtime_generation() {
+        let layout = valid_layout(vec![valid_instance("missing_prefab")]);
+        let palette = valid_palette(vec![valid_prefab("stone_block", vec![valid_primitive()])]);
+
+        let report = layout.audit_with_default_budget(&palette);
+
+        assert_eq!(report.status, FangyuanAuditStatus::Failed);
+        assert_eq!(report.summary.generated_primitives, 0);
+        assert_eq!(report.summary.skipped_primitives, 0);
+        assert_eq!(report.summary.instance_count, 1);
+        assert_eq!(report.summary.used_prefab_count, 0);
+        assert_audit_finding(
+            &report,
+            "missing_prefab",
+            Some("instances[0].prefab"),
+            Some(0),
+            Some("missing_prefab"),
+            None,
+        );
+    }
+
+    #[test]
+    fn fangyuan_layout_audit_reports_invalid_scale() {
+        let mut instance = valid_instance("stone_block");
+        instance.id = Some("stone_a".to_string());
+        instance.scale = [1.0, 0.0, 1.0];
+        let layout = valid_layout(vec![instance]);
+        let palette = valid_palette(vec![valid_prefab("stone_block", vec![valid_primitive()])]);
+
+        let report = layout.audit_with_default_budget(&palette);
+
+        assert_eq!(report.status, FangyuanAuditStatus::Failed);
+        assert_eq!(report.summary.generated_primitives, 0);
+        assert_eq!(report.summary.skipped_primitives, 1);
+        assert_audit_finding(
+            &report,
+            "invalid_instance_scale",
+            Some("instances[0].scale[1]"),
+            Some(0),
+            None,
+            Some("stone_a"),
+        );
+    }
+
+    #[test]
+    fn fangyuan_layout_audit_reports_out_of_bounds_position() {
+        let mut instance = valid_instance("stone_block");
+        instance.position = [5.1, 0.0, 0.0];
+        let layout = valid_layout(vec![instance]);
+        let palette = valid_palette(vec![valid_prefab("stone_block", vec![valid_primitive()])]);
+
+        let report = layout.audit_with_default_budget(&palette);
+
+        assert_eq!(report.status, FangyuanAuditStatus::Failed);
+        assert_audit_finding(
+            &report,
+            "invalid_instance_position",
+            Some("instances[0].position[0]"),
+            Some(0),
+            None,
+            None,
+        );
+    }
+
+    #[test]
+    fn fangyuan_layout_audit_reports_expanded_budget_exceeded() {
+        let mut layout = valid_layout(vec![
+            valid_instance("stone_block"),
+            valid_instance("stone_block"),
+        ]);
+        layout.max_primitives = 3;
+        let palette = valid_palette(vec![valid_prefab(
+            "stone_block",
+            vec![valid_primitive(), valid_primitive()],
+        )]);
+
+        let report = layout.audit_with_default_budget(&palette);
+
+        assert_eq!(report.status, FangyuanAuditStatus::Failed);
+        assert_eq!(report.summary.authored_primitives, 2);
+        assert_eq!(report.summary.generated_primitives, 4);
+        assert_eq!(report.summary.instance_count, 2);
+        assert_audit_finding(
+            &report,
+            "expanded_primitive_budget_exceeded",
+            Some("instances"),
+            None,
+            None,
+            None,
+        );
+    }
+
+    #[test]
+    fn fangyuan_layout_audit_reports_expanded_primitive_warning() {
+        let invalid_after_instance_transform = FangyuanPrimitiveBlueprint::new(
+            FangyuanPrimitiveKind::Cube,
+            [2.1, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.2, 0.4, 0.6, 1.0],
+        );
+        let palette = valid_palette(vec![valid_prefab(
+            "stone_block",
+            vec![valid_primitive(), invalid_after_instance_transform],
+        )]);
+        let mut instance = valid_instance("stone_block");
+        instance.id = Some("stone_a".to_string());
+        instance.position = [4.0, 0.0, 0.0];
+        let layout = valid_layout(vec![instance]);
+
+        let report = layout.audit_with_default_budget(&palette);
+
+        assert_eq!(report.status, FangyuanAuditStatus::PassedWithWarnings);
+        assert_eq!(report.summary.generated_primitives, 1);
+        assert_eq!(report.summary.skipped_primitives, 1);
+        assert_eq!(report.summary.warning_count, 1);
+        assert_audit_finding(
+            &report,
+            "invalid_primitive_position",
+            Some("instances[0].prefab.primitives[1].position[0]"),
+            Some(0),
+            Some("stone_block"),
+            Some("stone_a"),
+        );
+        assert_eq!(report.findings[0].prefab_primitive_index, Some(1));
+    }
+
+    #[test]
+    fn fangyuan_layout_audit_reports_palette_validation_error() {
+        let layout = valid_layout(vec![valid_instance("stone_block")]);
+        let mut palette = valid_palette(vec![valid_prefab("stone_block", vec![valid_primitive()])]);
+        palette.version = "2".to_string();
+
+        let report = layout.audit_with_default_budget(&palette);
+
+        assert_eq!(report.status, FangyuanAuditStatus::Failed);
+        assert_audit_finding(
+            &report,
+            "unsupported_version",
+            Some("palette.version"),
+            None,
+            None,
+            None,
+        );
+    }
+
+    #[test]
+    fn fangyuan_layout_audit_rejects_forbidden_fields_by_parse() {
+        let top_level = valid_layout_ron_with_extra_top_level_field("rotation");
+        assert_parse_error_contains(
+            FangyuanSceneLayout::from_ron_str(&top_level),
+            "rotation",
+            "Unexpected field",
+        );
+
+        let instance = valid_layout_ron_with_extra_instance_field("spin");
+        assert_parse_error_contains(
+            FangyuanSceneLayout::from_ron_str(&instance),
+            "spin",
+            "Unexpected field",
+        );
+    }
+
+    #[test]
     fn scene_layout_path_policy_reuses_fangyuan_first_package_rules() {
         assert_eq!(
             validate_fangyuan_scene_layout_asset_path(FANGYUAN_HOME_SCENE_LAYOUT_PATH),
@@ -1839,6 +2574,34 @@ mod tests {
                 "reason `{reason}` should contain `{part}`"
             );
         }
+    }
+
+    fn assert_audit_finding(
+        report: &FangyuanAuditReport,
+        code: &str,
+        field_path: Option<&str>,
+        instance_index: Option<usize>,
+        prefab_id: Option<&str>,
+        instance_id: Option<&str>,
+    ) {
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.code == code
+                    && finding.field_path.as_deref() == field_path
+                    && finding.instance_index == instance_index
+                    && finding.prefab_id.as_deref() == prefab_id
+                    && finding.instance_id.as_deref() == instance_id
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing audit finding code `{code}` field `{:?}` in {:#?}",
+                    field_path, report.findings
+                )
+            });
+
+        assert_eq!(finding.source_kind, FangyuanAuditSourceKind::SceneLayout);
     }
 
     fn assert_parse_error_contains<T, E>(result: Result<T, E>, field: &str, expected: &str)

@@ -524,8 +524,11 @@ pub struct FangyuanAuditSummary {
     pub error_count: usize,
     pub warning_count: usize,
     pub info_count: usize,
+    pub palette_count: usize,
     pub prefab_count: usize,
     pub reusable_prefab_count: usize,
+    pub instance_count: usize,
+    pub used_prefab_count: usize,
     pub authored_primitives: usize,
     pub generated_primitives: usize,
     pub skipped_primitives: usize,
@@ -537,6 +540,9 @@ pub struct FangyuanAuditSummary {
     pub emissive_count: usize,
     pub lifecycle_count: usize,
     pub role_distribution: FangyuanPrimitiveRoleDistribution,
+    pub top_level_validated: bool,
+    pub layout_validated: bool,
+    pub palette_validated: bool,
 }
 
 impl FangyuanAuditSummary {
