@@ -454,8 +454,9 @@ cargo run
 
 - `sample.dungeon_room`：来自 `project/assets/scenes/sample_dungeon_room/scene.ron` 和同目录 `layout.ron`，用于验证基础世界内容流程。
 - `arena.robot_sync`：来自 `project/assets/scenes/robot_sync_arena/scene.ron` 和同目录 `layout.ron`，用于验证 500x500 机器人帧同步场景。
+- `dev.fangyuan_home`：方圆家园开发预览场景，默认读取 `fangyuan/layouts/home_layout.ron` 和 `fangyuan/palettes/home_prefabs.ron`，用于验收 layout/palette 展开、审核 HUD 和审核日志。
 
-也可以从正常 UI 流程进入：启动游戏、登录到大厅，在 `game_list` 点击 `Sample Scene` 或 `Robot Sync` 的 `Enter` 按钮；进入成功后会显示对应 HUD，点击 `Lobby` 返回大厅。
+也可以从正常 UI 流程进入：启动游戏、登录到大厅，在 `game_list` 点击 `Sample Scene`、`Robot Sync` 或 `Fangyuan Home` 的 `Enter` 按钮；进入成功后会显示对应 HUD，点击 `Lobby` 返回大厅。
 
 Robot Sync 单客户端本地验收：
 
@@ -475,6 +476,24 @@ cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
 Robot Sync 当前还提供开发期摄像机切换按键：按 `C` 在默认 Overview 总览和 FollowLocal 本地跟随之间切换。默认进入仍是 Overview；FollowLocal 使用高俯视 offset、FOV `0.78` 和短过渡，便于验证跟随镜头，同时可随时按 `C` 回退总览。该切换不写入 Robot Sync replay state，不进入 checksum，也不改变 MyServer/LAN authority 语义。
+
+方圆家园审核和预算 HUD 验收：
+
+```powershell
+Set-Location project
+$env:MYBEVY_START_SCENE="dev.fangyuan_home"
+$env:MYBEVY_SCENE_DEBUG="true"
+cargo run -- --window-profile phone-small --window-scale 50%
+```
+
+HUD 会显示 layout 展开数量、palette / prefab / instance / material 统计，以及 audit 状态、error / warning 数和主 code。Windows 下如果默认图形后端初始化或可视验收不稳定，可以在同一终端临时指定 DX12：
+
+```powershell
+$env:WGPU_BACKEND="dx12"
+cargo run -- --window-profile phone-small --window-scale 50%
+```
+
+该入口只用于开发期可视验收；第五阶段只覆盖审核和预算，不包含 Chunk、Bake、mesh merge、GPU Instancing、LOD、AOI、联网同步、正式家园编辑器、蓝图持久化、装备挂点或技能规则层。
 
 Robot Sync MyServer 模式常用环境变量：
 

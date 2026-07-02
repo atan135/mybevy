@@ -27,7 +27,7 @@
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
 - `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene、fight 和 fangyuan 边界
-- `project/src/framework/fangyuan/`：方圆灵构数据模型入口，包含 blueprint、prefab/palette、scene layout、runtime primitive、对象状态和 primitive set 统计
+- `project/src/framework/fangyuan/`：方圆灵构数据模型入口，包含 blueprint、prefab/palette、scene layout、runtime primitive、对象状态、primitive set 统计，以及审核 report / budget profile / finding / suggestion
 - `project/src/framework/network/`：网络通信框架插件和 HTTP/TCP/KCP 接口
 - `project/src/framework/scene/`：场景框架插件、命令、事件、生命周期、注册表、首包 RON manifest、Loading、根实体、相机、spawn/anchor、trigger、streaming 元数据和 debug 配置
 - `project/src/framework/ui/`：UI 框架能力，包含核心系统、通用控件、覆盖层、主题和国际化
