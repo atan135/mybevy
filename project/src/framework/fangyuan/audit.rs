@@ -524,6 +524,8 @@ pub struct FangyuanAuditSummary {
     pub error_count: usize,
     pub warning_count: usize,
     pub info_count: usize,
+    pub prefab_count: usize,
+    pub reusable_prefab_count: usize,
     pub authored_primitives: usize,
     pub generated_primitives: usize,
     pub skipped_primitives: usize,
