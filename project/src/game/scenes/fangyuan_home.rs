@@ -7,12 +7,17 @@ use std::{
 
 use crate::framework::{
     fangyuan::{
-        FangyuanBlueprint, FangyuanObjectState, FangyuanPrimitive, FangyuanPrimitiveKind,
-        FangyuanPrimitiveSet, FangyuanPrimitiveSetStats, FangyuanRenderAssetCache,
+        FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanObjectState,
+        FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
+        FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
         fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
+        load_fangyuan_home_prefab_palette, load_fangyuan_home_scene_layout,
     },
     scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId},
 };
+
+#[cfg(test)]
+use crate::framework::fangyuan::FangyuanBlueprint;
 
 pub(in crate::game) const FANGYUAN_HOME_SCENE_ID: &str = "dev.fangyuan_home";
 pub(in crate::game) const FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH: &str = "fangyuan/home_preview.ron";
@@ -302,7 +307,16 @@ pub(in crate::game) struct FangyuanHomeBlueprintStats {
     pub(in crate::game) skipped: usize,
     pub(in crate::game) materials: usize,
     pub(in crate::game) blueprint_path: String,
+    pub(in crate::game) layout_path: String,
+    pub(in crate::game) palette_path: String,
+    pub(in crate::game) palette_count: usize,
+    pub(in crate::game) prefab_count: usize,
+    pub(in crate::game) instance_count: usize,
+    pub(in crate::game) generated_primitives: usize,
+    pub(in crate::game) used_prefab_count: usize,
     pub(in crate::game) top_level_valid: bool,
+    pub(in crate::game) layout_valid: bool,
+    pub(in crate::game) palette_valid: bool,
     state: String,
 }
 
@@ -314,13 +328,73 @@ impl Default for FangyuanHomeBlueprintStats {
             skipped: 0,
             materials: 0,
             blueprint_path: FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH.to_string(),
+            layout_path: FANGYUAN_HOME_SCENE_LAYOUT_PATH.to_string(),
+            palette_path: FANGYUAN_HOME_PREFAB_PALETTE_PATH.to_string(),
+            palette_count: 0,
+            prefab_count: 0,
+            instance_count: 0,
+            generated_primitives: 0,
+            used_prefab_count: 0,
             top_level_valid: false,
+            layout_valid: false,
+            palette_valid: false,
             state: FANGYUAN_HOME_BLUEPRINT_STATE_PENDING.to_string(),
         }
     }
 }
 
 impl FangyuanHomeBlueprintStats {
+    pub(in crate::game) fn record_layout_loaded(
+        &mut self,
+        session_id: &SceneSessionId,
+        layout_path: &str,
+        palette_path: &str,
+        compile_report: &FangyuanSceneLayoutCompileReport,
+    ) {
+        self.session_id = Some(session_id.clone());
+        self.primitive_stats = compile_report.primitive_stats.clone();
+        self.skipped = compile_report.skipped_primitives;
+        self.materials = compile_report.primitive_stats.color_count;
+        self.blueprint_path = FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH.to_string();
+        self.layout_path = layout_path.to_string();
+        self.palette_path = palette_path.to_string();
+        self.palette_count = compile_report.palette_count;
+        self.prefab_count = compile_report.prefab_count;
+        self.instance_count = compile_report.instance_count;
+        self.generated_primitives = compile_report.generated_primitives;
+        self.used_prefab_count = compile_report.used_prefab_count;
+        self.top_level_valid = compile_report.top_level_validated;
+        self.layout_valid = compile_report.layout_validated;
+        self.palette_valid = compile_report.palette_validated;
+        self.state = FANGYUAN_HOME_BLUEPRINT_STATE_LOADED.to_string();
+    }
+
+    pub(in crate::game) fn record_layout_failed(
+        &mut self,
+        session_id: &SceneSessionId,
+        layout_path: &str,
+        palette_path: &str,
+        materials: usize,
+    ) {
+        self.session_id = Some(session_id.clone());
+        self.primitive_stats = FangyuanPrimitiveSetStats::default();
+        self.skipped = 0;
+        self.materials = materials;
+        self.blueprint_path = FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH.to_string();
+        self.layout_path = layout_path.to_string();
+        self.palette_path = palette_path.to_string();
+        self.palette_count = 0;
+        self.prefab_count = 0;
+        self.instance_count = 0;
+        self.generated_primitives = 0;
+        self.used_prefab_count = 0;
+        self.top_level_valid = false;
+        self.layout_valid = false;
+        self.palette_valid = false;
+        self.state = FANGYUAN_HOME_BLUEPRINT_STATE_FAILED.to_string();
+    }
+
+    #[cfg(test)]
     pub(in crate::game) fn record_loaded(
         &mut self,
         session_id: &SceneSessionId,
@@ -334,10 +408,20 @@ impl FangyuanHomeBlueprintStats {
         self.skipped = skipped;
         self.materials = primitive_stats.color_count;
         self.blueprint_path = blueprint_path.to_string();
+        self.layout_path = String::new();
+        self.palette_path = String::new();
+        self.palette_count = 0;
+        self.prefab_count = 0;
+        self.instance_count = 0;
+        self.generated_primitives = primitive_set.len();
+        self.used_prefab_count = 0;
         self.top_level_valid = true;
+        self.layout_valid = false;
+        self.palette_valid = false;
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_LOADED.to_string();
     }
 
+    #[cfg(test)]
     pub(in crate::game) fn record_failed(
         &mut self,
         session_id: &SceneSessionId,
@@ -350,7 +434,16 @@ impl FangyuanHomeBlueprintStats {
         self.skipped = skipped;
         self.materials = materials;
         self.blueprint_path = blueprint_path.to_string();
+        self.layout_path = String::new();
+        self.palette_path = String::new();
+        self.palette_count = 0;
+        self.prefab_count = 0;
+        self.instance_count = 0;
+        self.generated_primitives = 0;
+        self.used_prefab_count = 0;
         self.top_level_valid = false;
+        self.layout_valid = false;
+        self.palette_valid = false;
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_FAILED.to_string();
     }
 
@@ -358,13 +451,30 @@ impl FangyuanHomeBlueprintStats {
         let skipped = self.skipped;
         let materials = self.materials;
         let blueprint_path = self.blueprint_path().to_string();
+        let layout_path = self.layout_path().to_string();
+        let palette_path = self.palette_path().to_string();
+        let palette_count = self.palette_count;
+        let prefab_count = self.prefab_count;
+        let instance_count = self.instance_count;
+        let used_prefab_count = self.used_prefab_count;
         let top_level_valid = self.top_level_valid;
+        let layout_valid = self.layout_valid;
+        let palette_valid = self.palette_valid;
         self.session_id = Some(session_id.clone());
         self.primitive_stats = FangyuanPrimitiveSetStats::default();
         self.skipped = skipped;
         self.materials = materials;
         self.blueprint_path = blueprint_path;
+        self.layout_path = layout_path;
+        self.palette_path = palette_path;
+        self.palette_count = palette_count;
+        self.prefab_count = prefab_count;
+        self.instance_count = instance_count;
+        self.generated_primitives = 0;
+        self.used_prefab_count = used_prefab_count;
         self.top_level_valid = top_level_valid;
+        self.layout_valid = layout_valid;
+        self.palette_valid = palette_valid;
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_CLEARED.to_string();
     }
 
@@ -385,6 +495,22 @@ impl FangyuanHomeBlueprintStats {
             FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH
         } else {
             self.blueprint_path.as_str()
+        }
+    }
+
+    pub(in crate::game) fn layout_path(&self) -> &str {
+        if self.layout_path.trim().is_empty() {
+            FANGYUAN_HOME_SCENE_LAYOUT_PATH
+        } else {
+            self.layout_path.as_str()
+        }
+    }
+
+    pub(in crate::game) fn palette_path(&self) -> &str {
+        if self.palette_path.trim().is_empty() {
+            FANGYUAN_HOME_PREFAB_PALETTE_PATH
+        } else {
+            self.palette_path.as_str()
         }
     }
 
@@ -597,7 +723,7 @@ fn spawn_fangyuan_home_blueprint_from_layout(
     commands: &mut Commands,
     parent: Entity,
     session_id: &SceneSessionId,
-    layout: &FangyuanHomeLayout,
+    _layout: &FangyuanHomeLayout,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
@@ -607,20 +733,84 @@ fn spawn_fangyuan_home_blueprint_from_layout(
         commands,
         parent,
         session_id,
-        layout,
         meshes,
         materials,
         blueprint_assets,
         blueprint_stats,
-        |blueprint_path| {
-            FangyuanBlueprint::load_first_package_ron(blueprint_path)
-                .map_err(|error| error.to_string())
+        || {
+            let scene_layout = load_fangyuan_home_scene_layout().map_err(|error| {
+                format!(
+                    "failed to load fangyuan home scene layout `{}`: {error}",
+                    FANGYUAN_HOME_SCENE_LAYOUT_PATH
+                )
+            })?;
+            let prefab_palette = load_fangyuan_home_prefab_palette().map_err(|error| {
+                format!(
+                    "failed to load fangyuan home prefab palette `{}`: {error}",
+                    FANGYUAN_HOME_PREFAB_PALETTE_PATH
+                )
+            })?;
+            scene_layout.compile_with_palette(&prefab_palette).map_err(|error| {
+                format!(
+                    "failed to compile fangyuan home scene layout `{}` with palette `{}`: {error}",
+                    FANGYUAN_HOME_SCENE_LAYOUT_PATH, FANGYUAN_HOME_PREFAB_PALETTE_PATH
+                )
+            })
         },
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
+    blueprint_stats: &mut FangyuanHomeBlueprintStats,
+    load_scene_layout: impl FnOnce() -> Result<FangyuanSceneLayoutCompileReport, String>,
+) -> Option<Entity> {
+    let compile_report = match load_scene_layout() {
+        Ok(compile_report) => compile_report,
+        Err(error) => {
+            warn!("{error}");
+            blueprint_stats.record_layout_failed(
+                session_id,
+                FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+                FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+                blueprint_assets.material_count(),
+            );
+            log_fangyuan_home_blueprint_stats(blueprint_stats);
+            return None;
+        }
+    };
+    for warning in &compile_report.warnings {
+        warn!("skipping fangyuan home scene layout primitive: {warning}");
+    }
+
+    let content = spawn_fangyuan_home_blueprint_content(
+        commands,
+        parent,
+        session_id,
+        &compile_report.primitive_set,
+        meshes,
+        materials,
+        blueprint_assets,
+    );
+    blueprint_stats.record_layout_loaded(
+        session_id,
+        FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+        FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+        &compile_report,
+    );
+    log_fangyuan_home_blueprint_stats(blueprint_stats);
+    Some(content)
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn spawn_fangyuan_home_simple_blueprint_from_layout_with_loader(
     commands: &mut Commands,
     parent: Entity,
     session_id: &SceneSessionId,
@@ -632,18 +822,6 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
     load_blueprint: impl FnOnce(&str) -> Result<FangyuanBlueprint, String>,
 ) -> Option<Entity> {
     let blueprint_path = layout.default_blueprint_path();
-    if blueprint_path.trim().is_empty() {
-        warn!("skipping fangyuan home blueprint because default_blueprint_path is empty");
-        blueprint_stats.record_failed(
-            session_id,
-            blueprint_path,
-            0,
-            blueprint_assets.material_count(),
-        );
-        log_fangyuan_home_blueprint_stats(blueprint_stats);
-        return None;
-    }
-
     let blueprint = match load_blueprint(blueprint_path) {
         Ok(blueprint) => blueprint,
         Err(error) => {
@@ -673,7 +851,7 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
         }
     };
     for warning in &compile_report.warnings {
-        warn!("skipping fangyuan home blueprint primitive: {warning}");
+        warn!("skipping fangyuan home simple blueprint primitive: {warning}");
     }
 
     let content = spawn_fangyuan_home_blueprint_content(
@@ -1041,11 +1219,10 @@ fn handle_fangyuan_home_blueprint_commands(
                 Ok(layout) => layout,
                 Err(error) => {
                     warn!("{error}");
-                    let blueprint_path = blueprint_stats.blueprint_path().to_string();
-                    blueprint_stats.record_failed(
+                    blueprint_stats.record_layout_failed(
                         &session_id,
-                        &blueprint_path,
-                        0,
+                        FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+                        FANGYUAN_HOME_PREFAB_PALETTE_PATH,
                         blueprint_assets.material_count(),
                     );
                     return;
@@ -1058,10 +1235,13 @@ fn handle_fangyuan_home_blueprint_commands(
                     layout.scene_id, FANGYUAN_HOME_SCENE_ID
                 );
                 let blueprint_path = layout.default_blueprint_path();
-                blueprint_stats.record_failed(
+                warn!(
+                    "fangyuan home simple blueprint fallback is disabled for reload; keeping layout/palette failure state instead of loading `{blueprint_path}`"
+                );
+                blueprint_stats.record_layout_failed(
                     &session_id,
-                    blueprint_path,
-                    0,
+                    FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+                    FANGYUAN_HOME_PREFAB_PALETTE_PATH,
                     blueprint_assets.material_count(),
                 );
                 return;
@@ -1075,11 +1255,10 @@ fn handle_fangyuan_home_blueprint_commands(
                     "skipping fangyuan home blueprint reload because session `{}` has no content root",
                     session_id
                 );
-                let blueprint_path = layout.default_blueprint_path();
-                blueprint_stats.record_failed(
+                blueprint_stats.record_layout_failed(
                     &session_id,
-                    blueprint_path,
-                    0,
+                    FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+                    FANGYUAN_HOME_PREFAB_PALETTE_PATH,
                     blueprint_assets.material_count(),
                 );
                 return;
@@ -1238,8 +1417,10 @@ mod tests {
     use super::*;
     use crate::framework::fangyuan::{
         FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_BLUEPRINT_VERSION,
-        FangyuanBlueprintCompileReport, FangyuanPrimitiveBlueprint, FangyuanPrimitiveLifecycle,
-        FangyuanPrimitiveRole, FangyuanRenderColorKey,
+        FANGYUAN_SCENE_LAYOUT_VERSION, FangyuanBlueprint, FangyuanBlueprintBounds,
+        FangyuanPrefabDefinition, FangyuanPrefabPalette, FangyuanPrimitiveBlueprint,
+        FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanRenderColorKey,
+        FangyuanSceneLayout, FangyuanSceneLayoutInstance,
     };
     use crate::framework::scene::prelude::{
         SceneCameraMode, SceneCameraProjection, SceneCommand, SceneEnterRequest, SceneExitRequest,
@@ -1254,6 +1435,8 @@ mod tests {
     const EXPECTED_DEFAULT_BLUEPRINT_PRIMITIVES: usize = 505;
     const EXPECTED_DEFAULT_BLUEPRINT_GENERATED: usize = 493;
     const EXPECTED_DEFAULT_BLUEPRINT_SKIPPED: usize = 12;
+    const EXPECTED_DEFAULT_LAYOUT_GENERATED: usize = 138;
+    const EXPECTED_DEFAULT_LAYOUT_SKIPPED: usize = 0;
     const EXPECTED_TOTAL_VISUALS: usize =
         1 + EXPECTED_GRID_VISUALS + EXPECTED_BOUNDARY_VISUALS + EXPECTED_LIGHT_VISUALS;
 
@@ -1550,9 +1733,9 @@ mod tests {
     }
 
     #[test]
-    fn entered_fangyuan_home_spawns_base_space_and_blueprint_under_runtime_root() {
+    fn entered_fangyuan_home_spawns_base_space_and_layout_under_runtime_root() {
         let mut app = app_with_fangyuan_home_system();
-        let default_compile_report = default_blueprint_compile_report();
+        let default_compile_report = default_layout_compile_report();
 
         let session_id = SceneSessionId::from("fangyuan-session");
         let scene_root = spawn_scene_root(
@@ -1686,7 +1869,7 @@ mod tests {
             blueprint_primitives.iter(app.world()).collect::<Vec<_>>();
         assert_eq!(
             blueprint_primitive_entities.len(),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
         let mut cube_count = 0;
         let mut sphere_count = 0;
@@ -1702,7 +1885,7 @@ mod tests {
             assert_eq!(parent.parent(), blueprint_entity);
             assert_eq!(owned.session_id, session_id);
             assert_eq!(primitive.session_id, session_id);
-            assert!(primitive.index < EXPECTED_DEFAULT_BLUEPRINT_GENERATED);
+            assert!(primitive.index < EXPECTED_DEFAULT_LAYOUT_GENERATED);
             assert!(name.as_str().starts_with("FangyuanHomeBlueprintPrimitive("));
             let expected_primitive =
                 &default_compile_report.primitive_set.primitives()[primitive.index];
@@ -1779,7 +1962,7 @@ mod tests {
         );
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_loaded_blueprint_stats(&session_id, &default_compile_report)
+            &expected_loaded_layout_stats(&session_id, &default_compile_report)
         );
         assert_eq!(
             app.world()
@@ -1904,7 +2087,7 @@ mod tests {
         assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
     }
 
@@ -2112,27 +2295,37 @@ mod tests {
     }
 
     #[test]
-    fn generated_blueprint_stats_record_default_counts() {
+    fn generated_layout_stats_record_default_counts() {
         let mut app = app_with_fangyuan_home_system();
         let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-stats-session");
 
-        let compile_report = default_blueprint_compile_report();
+        let compile_report = default_layout_compile_report();
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_loaded_blueprint_stats(&session_id, &compile_report)
+            &expected_loaded_layout_stats(&session_id, &compile_report)
         );
         let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
-        assert_eq!(
-            stats.primitive_total(),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
-        );
+        assert_eq!(stats.primitive_total(), EXPECTED_DEFAULT_LAYOUT_GENERATED);
         assert_eq!(stats.primitive_stats, compile_report.primitive_set.stats());
         assert_eq!(
             stats.materials,
             unique_material_count(&compile_report.primitive_set)
         );
-        assert_eq!(stats.skipped, EXPECTED_DEFAULT_BLUEPRINT_SKIPPED);
+        assert_eq!(stats.skipped, EXPECTED_DEFAULT_LAYOUT_SKIPPED);
+        assert_eq!(stats.layout_path(), FANGYUAN_HOME_SCENE_LAYOUT_PATH);
+        assert_eq!(stats.palette_path(), FANGYUAN_HOME_PREFAB_PALETTE_PATH);
         assert_eq!(stats.blueprint_path(), FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH);
+        assert_eq!(stats.palette_count, compile_report.palette_count);
+        assert_eq!(stats.prefab_count, compile_report.prefab_count);
+        assert_eq!(stats.instance_count, compile_report.instance_count);
+        assert_eq!(
+            stats.generated_primitives,
+            compile_report.generated_primitives
+        );
+        assert_eq!(stats.used_prefab_count, compile_report.used_prefab_count);
+        assert!(stats.top_level_valid);
+        assert!(stats.layout_valid);
+        assert!(stats.palette_valid);
         assert_eq!(stats.state_label(), FANGYUAN_HOME_BLUEPRINT_STATE_LOADED);
     }
 
@@ -2271,7 +2464,7 @@ mod tests {
         assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
 
         app.world_mut()
@@ -2327,7 +2520,7 @@ mod tests {
         assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
         let stats_before_clear = app.world().resource::<FangyuanHomeBlueprintStats>().clone();
 
@@ -2386,10 +2579,10 @@ mod tests {
     }
 
     #[test]
-    fn reload_blueprint_command_replaces_content_without_duplicate_primitives() {
+    fn reload_layout_command_replaces_content_without_duplicate_primitives() {
         let mut app = app_with_fangyuan_home_system();
         let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-reload-session");
-        let compile_report = default_blueprint_compile_report();
+        let compile_report = default_layout_compile_report();
 
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
         assert_eq!(
@@ -2400,7 +2593,7 @@ mod tests {
         assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
         let previous_home_object = fangyuan_home_object_entity(&mut app, &session_id)
             .expect("initial home object should exist before reload");
@@ -2418,7 +2611,7 @@ mod tests {
         assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
         let reloaded_home_object = fangyuan_home_object_entity(&mut app, &session_id)
             .expect("reloaded home object should exist after reload");
@@ -2429,7 +2622,7 @@ mod tests {
                 .get::<FangyuanPrimitiveSet>()
                 .unwrap()
                 .len(),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
         assert_eq!(
             reloaded_home_object_ref
@@ -2439,15 +2632,15 @@ mod tests {
         );
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_loaded_blueprint_stats(&session_id, &compile_report)
+            &expected_loaded_layout_stats(&session_id, &compile_report)
         );
     }
 
     #[test]
-    fn clear_blueprint_command_removes_only_blueprint_content() {
+    fn clear_blueprint_command_removes_only_layout_content() {
         let mut app = app_with_fangyuan_home_system();
         let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-command-clear-session");
-        let compile_report = default_blueprint_compile_report();
+        let compile_report = default_layout_compile_report();
 
         app.world_mut()
             .write_message(FangyuanHomeBlueprintCommand::Clear);
@@ -2464,22 +2657,22 @@ mod tests {
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_cleared_blueprint_stats(&session_id, &compile_report)
+            &expected_cleared_layout_stats(&session_id, &compile_report)
         );
     }
 
     #[test]
-    fn reload_blueprint_command_regenerates_preview_after_clear() {
+    fn reload_layout_command_regenerates_preview_after_clear() {
         let mut app = app_with_fangyuan_home_system();
         let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-clear-reload-session");
-        let compile_report = default_blueprint_compile_report();
+        let compile_report = default_layout_compile_report();
 
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
         assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
 
         app.world_mut()
@@ -2497,7 +2690,7 @@ mod tests {
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_cleared_blueprint_stats(&session_id, &compile_report)
+            &expected_cleared_layout_stats(&session_id, &compile_report)
         );
 
         app.world_mut()
@@ -2513,25 +2706,28 @@ mod tests {
         assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
-            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
         );
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_loaded_blueprint_stats(&session_id, &compile_report)
+            &expected_loaded_layout_stats(&session_id, &compile_report)
         );
     }
 
     #[test]
-    fn reload_failure_clears_old_blueprint_but_keeps_base_space() {
+    fn reload_failure_clears_old_layout_content_but_keeps_base_space() {
         let mut app = app_with_fangyuan_home_system();
         let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-reload-fails-session");
         let content_root = fangyuan_content_entity(&mut app, &session_id)
             .expect("content root should exist before failed reload");
-        let layout = FangyuanHomeLayout::load_first_package_ron(FANGYUAN_HOME_LAYOUT_PATH).unwrap();
+        let cached_materials = app
+            .world()
+            .resource::<FangyuanHomeBlueprintRenderAssets>()
+            .material_count();
 
         clear_blueprint_content_once(&mut app, &session_id);
-        spawn_blueprint_from_layout_for_test(&mut app, content_root, &session_id, &layout, |_| {
-            Err("test injected blueprint load failure".to_string())
+        spawn_layout_from_loader_for_test(&mut app, content_root, &session_id, || {
+            Err("test injected scene layout load failure".to_string())
         });
 
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
@@ -2544,17 +2740,45 @@ mod tests {
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_failed_blueprint_stats(
-                &session_id,
-                FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH,
-                0,
-                unique_material_count(&default_blueprint_compile_report().primitive_set),
-            )
+            &expected_failed_layout_stats(&session_id, cached_materials)
         );
     }
 
     #[test]
-    fn invalid_or_malformed_blueprint_sources_do_not_spawn_preview_content() {
+    fn missing_prefab_layout_compile_failure_does_not_spawn_content() {
+        let mut app = app_with_fangyuan_home_system();
+        let session_id = SceneSessionId::from("fangyuan-missing-prefab-session");
+        let parent = app.world_mut().spawn_empty().id();
+        let layout = test_scene_layout(vec![FangyuanSceneLayoutInstance {
+            id: Some("missing_prefab_instance".to_string()),
+            name: None,
+            prefab: "missing_prefab".to_string(),
+            position: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+            tags: Vec::new(),
+        }]);
+        let palette = test_prefab_palette(vec![test_prefab(
+            "available_prefab",
+            vec![valid_cube_primitive()],
+        )]);
+
+        spawn_layout_from_loader_for_test(&mut app, parent, &session_id, || {
+            layout
+                .compile_with_palette(&palette)
+                .map_err(|error| error.to_string())
+        });
+
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            app.world().resource::<FangyuanHomeBlueprintStats>(),
+            &expected_failed_layout_stats(&session_id, 0)
+        );
+    }
+
+    #[test]
+    fn invalid_or_malformed_simple_blueprint_sources_do_not_spawn_preview_content() {
         let mut app = app_with_fangyuan_home_system();
         let session_id = SceneSessionId::from("fangyuan-invalid-blueprint-session");
         let parent = app.world_mut().spawn_empty().id();
@@ -2563,7 +2787,7 @@ mod tests {
             ..FangyuanHomeLayout::default()
         };
 
-        spawn_blueprint_from_layout_for_test(&mut app, parent, &session_id, &layout, |_| {
+        spawn_simple_blueprint_from_layout_for_test(&mut app, parent, &session_id, &layout, |_| {
             FangyuanBlueprint::from_ron_str("this is not valid RON")
                 .map_err(|error| error.to_string())
         });
@@ -2581,7 +2805,7 @@ mod tests {
             version: "2".to_string(),
             ..invalid_top_level
         };
-        spawn_blueprint_from_layout_for_test(&mut app, parent, &session_id, &layout, |_| {
+        spawn_simple_blueprint_from_layout_for_test(&mut app, parent, &session_id, &layout, |_| {
             Ok(invalid_top_level)
         });
 
@@ -2761,7 +2985,44 @@ mod tests {
         content
     }
 
-    fn spawn_blueprint_from_layout_for_test(
+    fn spawn_layout_from_loader_for_test(
+        app: &mut App,
+        parent: Entity,
+        session_id: &SceneSessionId,
+        load_scene_layout: impl FnOnce() -> Result<FangyuanSceneLayoutCompileReport, String>,
+    ) -> Option<Entity> {
+        let mut state: SystemState<(
+            Commands,
+            ResMut<Assets<Mesh>>,
+            ResMut<Assets<StandardMaterial>>,
+            ResMut<FangyuanHomeBlueprintRenderAssets>,
+            ResMut<FangyuanHomeBlueprintStats>,
+        )> = SystemState::new(app.world_mut());
+        let content = {
+            let (
+                mut commands,
+                mut meshes,
+                mut materials,
+                mut blueprint_assets,
+                mut blueprint_stats,
+            ) = state.get_mut(app.world_mut());
+            spawn_fangyuan_home_blueprint_from_layout_with_loader(
+                &mut commands,
+                parent,
+                session_id,
+                &mut meshes,
+                &mut materials,
+                &mut blueprint_assets,
+                &mut blueprint_stats,
+                load_scene_layout,
+            )
+        };
+        state.apply(app.world_mut());
+        app.update();
+        content
+    }
+
+    fn spawn_simple_blueprint_from_layout_for_test(
         app: &mut App,
         parent: Entity,
         session_id: &SceneSessionId,
@@ -2783,7 +3044,7 @@ mod tests {
                 mut blueprint_assets,
                 mut blueprint_stats,
             ) = state.get_mut(app.world_mut());
-            spawn_fangyuan_home_blueprint_from_layout_with_loader(
+            spawn_fangyuan_home_simple_blueprint_from_layout_with_loader(
                 &mut commands,
                 parent,
                 session_id,
@@ -2827,34 +3088,46 @@ mod tests {
             .collect()
     }
 
-    fn default_blueprint_compile_report() -> FangyuanBlueprintCompileReport {
-        let layout = FangyuanHomeLayout::load_first_package_ron(FANGYUAN_HOME_LAYOUT_PATH).unwrap();
-        FangyuanBlueprint::load_first_package_ron(&layout.default_blueprint_path)
-            .unwrap()
-            .compile_skipping_invalid_primitives()
-            .unwrap()
+    fn default_layout_compile_report() -> FangyuanSceneLayoutCompileReport {
+        let layout = load_fangyuan_home_scene_layout().unwrap();
+        let palette = load_fangyuan_home_prefab_palette().unwrap();
+        layout.compile_with_palette(&palette).unwrap()
     }
 
-    fn expected_loaded_blueprint_stats(
+    fn expected_loaded_layout_stats(
         session_id: &SceneSessionId,
-        compile_report: &FangyuanBlueprintCompileReport,
+        compile_report: &FangyuanSceneLayoutCompileReport,
     ) -> FangyuanHomeBlueprintStats {
         let mut stats = FangyuanHomeBlueprintStats::default();
-        stats.record_loaded(
+        stats.record_layout_loaded(
             session_id,
-            FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH,
-            &compile_report.primitive_set,
-            compile_report.skipped_primitives,
+            FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+            FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+            compile_report,
         );
         stats
     }
 
-    fn expected_cleared_blueprint_stats(
+    fn expected_cleared_layout_stats(
         session_id: &SceneSessionId,
-        compile_report: &FangyuanBlueprintCompileReport,
+        compile_report: &FangyuanSceneLayoutCompileReport,
     ) -> FangyuanHomeBlueprintStats {
-        let mut stats = expected_loaded_blueprint_stats(session_id, compile_report);
+        let mut stats = expected_loaded_layout_stats(session_id, compile_report);
         stats.record_cleared(session_id);
+        stats
+    }
+
+    fn expected_failed_layout_stats(
+        session_id: &SceneSessionId,
+        materials: usize,
+    ) -> FangyuanHomeBlueprintStats {
+        let mut stats = FangyuanHomeBlueprintStats::default();
+        stats.record_layout_failed(
+            session_id,
+            FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+            FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+            materials,
+        );
         stats
     }
 
@@ -2867,6 +3140,46 @@ mod tests {
         let mut stats = FangyuanHomeBlueprintStats::default();
         stats.record_failed(session_id, blueprint_path, skipped, materials);
         stats
+    }
+
+    fn test_scene_layout(instances: Vec<FangyuanSceneLayoutInstance>) -> FangyuanSceneLayout {
+        FangyuanSceneLayout {
+            version: FANGYUAN_SCENE_LAYOUT_VERSION.to_string(),
+            name: "test_home_layout".to_string(),
+            description: String::new(),
+            bounds: FangyuanBlueprintBounds::new(40.0, 40.0, 20.0),
+            palette: Some(FANGYUAN_HOME_PREFAB_PALETTE_PATH.to_string()),
+            palettes: Vec::new(),
+            max_primitives: FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
+            instances,
+        }
+    }
+
+    fn test_prefab_palette(prefabs: Vec<FangyuanPrefabDefinition>) -> FangyuanPrefabPalette {
+        FangyuanPrefabPalette {
+            version: FANGYUAN_SCENE_LAYOUT_VERSION.to_string(),
+            name: "test_home_prefabs".to_string(),
+            description: String::new(),
+            max_primitives: FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
+            bounds: FangyuanBlueprintBounds::new(40.0, 40.0, 20.0),
+            prefabs,
+        }
+    }
+
+    fn test_prefab(
+        id: &str,
+        primitives: Vec<FangyuanPrimitiveBlueprint>,
+    ) -> FangyuanPrefabDefinition {
+        FangyuanPrefabDefinition {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            bounds: None,
+            pivot: None,
+            tags: Vec::new(),
+            max_primitives: None,
+            primitives,
+        }
     }
 
     fn unique_material_count(primitive_set: &FangyuanPrimitiveSet) -> usize {
