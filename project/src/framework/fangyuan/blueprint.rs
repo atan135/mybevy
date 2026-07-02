@@ -1,15 +1,11 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, de};
-use std::{
-    borrow::Cow,
-    error::Error,
-    fmt, fs, io,
-    path::{Path, PathBuf},
-};
+use std::{borrow::Cow, error::Error, fmt, fs, io, path::PathBuf};
 
 use super::{
-    FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanPrimitive,
-    FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanPrimitiveSet,
+    FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanAssetPathError,
+    FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
+    FangyuanPrimitiveSet, first_package_fangyuan_asset_fs_path, validate_fangyuan_asset_path,
 };
 
 pub const FANGYUAN_AVATAR_BLUEPRINT_VERSION: &str = "1";
@@ -597,47 +593,9 @@ impl Error for FangyuanBlueprintLoadError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FangyuanBlueprintPathError {
-    Empty,
-    Absolute(String),
-    Backslash(String),
-    WindowsDrive(String),
-    ParentOrEmptySegment(String),
-    OutsideFangyuanRoot(String),
-}
+pub type FangyuanBlueprintPathError = FangyuanAssetPathError;
 
 pub type FangyuanAvatarBlueprintPathError = FangyuanBlueprintPathError;
-
-impl fmt::Display for FangyuanBlueprintPathError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => formatter.write_str("fangyuan blueprint path must not be empty"),
-            Self::Absolute(path) => write!(
-                formatter,
-                "fangyuan blueprint path must be relative to assets: {path}"
-            ),
-            Self::Backslash(path) => write!(
-                formatter,
-                "fangyuan blueprint path must use forward slashes: {path}"
-            ),
-            Self::WindowsDrive(path) => write!(
-                formatter,
-                "fangyuan blueprint path must not include a Windows drive prefix: {path}"
-            ),
-            Self::ParentOrEmptySegment(path) => write!(
-                formatter,
-                "fangyuan blueprint path must stay inside assets: {path}"
-            ),
-            Self::OutsideFangyuanRoot(path) => write!(
-                formatter,
-                "fangyuan blueprint path must stay inside assets/fangyuan: {path}"
-            ),
-        }
-    }
-}
-
-impl Error for FangyuanBlueprintPathError {}
 
 pub(super) fn validate_blueprint_primitive(
     index: usize,
@@ -918,59 +876,11 @@ fn validate_primitive_lifecycle(
 pub fn validate_fangyuan_blueprint_asset_path(
     path: &str,
 ) -> Result<(), FangyuanBlueprintPathError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err(FangyuanBlueprintPathError::Empty);
-    }
-    if trimmed.contains('\\') {
-        return Err(FangyuanBlueprintPathError::Backslash(trimmed.to_string()));
-    }
-    if has_windows_drive_prefix(trimmed) {
-        return Err(FangyuanBlueprintPathError::WindowsDrive(
-            trimmed.to_string(),
-        ));
-    }
-    if Path::new(trimmed).is_absolute() || trimmed.starts_with('/') {
-        return Err(FangyuanBlueprintPathError::Absolute(trimmed.to_string()));
-    }
-    if trimmed
-        .split('/')
-        .any(|segment| segment.is_empty() || segment == "..")
-    {
-        return Err(FangyuanBlueprintPathError::ParentOrEmptySegment(
-            trimmed.to_string(),
-        ));
-    }
-    if trimmed != "fangyuan" && !trimmed.starts_with("fangyuan/") {
-        return Err(FangyuanBlueprintPathError::OutsideFangyuanRoot(
-            trimmed.to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
-fn has_windows_drive_prefix(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+    validate_fangyuan_asset_path(path)
 }
 
 fn first_package_fangyuan_blueprint_fs_path(blueprint_path: &str) -> Option<PathBuf> {
-    first_package_asset_root_candidates()
-        .into_iter()
-        .map(|root| root.join(Path::new(blueprint_path)))
-        .find(|candidate| candidate.is_file())
-}
-
-fn first_package_asset_root_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(current_dir.join("assets"));
-        candidates.push(current_dir.join("project").join("assets"));
-    }
-    candidates.push(PathBuf::from("assets"));
-    candidates.push(PathBuf::from("project").join("assets"));
-    candidates
+    first_package_fangyuan_asset_fs_path(blueprint_path)
 }
 
 fn deserialize_primitive_kind<'de, D>(deserializer: D) -> Result<FangyuanPrimitiveKind, D::Error>
@@ -1239,6 +1149,17 @@ mod tests {
 
         assert_eq!(blueprint.name, "minimal_player");
         assert_eq!(primitive_set.len(), FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT);
+    }
+
+    #[test]
+    fn legacy_home_preview_blueprint_path_still_loads() {
+        let blueprint =
+            FangyuanBlueprint::load_first_package_ron(FANGYUAN_HOME_PREVIEW_BLUEPRINT_PATH)
+                .unwrap();
+        let compile_report = blueprint.compile_skipping_invalid_primitives().unwrap();
+
+        assert_eq!(blueprint.name, "home_preview");
+        assert!(compile_report.primitive_set.len() <= FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT);
     }
 
     #[test]

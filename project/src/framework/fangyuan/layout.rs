@@ -1,15 +1,17 @@
 use serde::{Deserialize, Deserializer, Serialize};
-use std::{borrow::Cow, collections::HashSet, error::Error, fmt, path::Path};
+use std::{borrow::Cow, collections::HashSet, error::Error, fmt, fs, io, path::PathBuf};
 
 use super::{
-    FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_BLUEPRINT_VERSION, FangyuanBlueprintBounds,
-    FangyuanBlueprintValidationError, FangyuanPrefabIdInvalidReason, FangyuanPrefabPalette,
-    FangyuanPrefabTagInvalidReason, validate_prefab_id, validate_prefab_tag,
+    FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_BLUEPRINT_VERSION, FangyuanAssetPathError,
+    FangyuanBlueprintBounds, FangyuanBlueprintValidationError, FangyuanPrefabIdInvalidReason,
+    FangyuanPrefabPalette, FangyuanPrefabTagInvalidReason, first_package_fangyuan_asset_fs_path,
+    validate_fangyuan_asset_path, validate_prefab_id, validate_prefab_tag,
 };
 
 pub const FANGYUAN_SCENE_LAYOUT_VERSION: &str = FANGYUAN_BLUEPRINT_VERSION;
 pub const FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT: usize =
     FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT;
+pub const FANGYUAN_HOME_SCENE_LAYOUT_PATH: &str = "fangyuan/layouts/home_layout.ron";
 pub const FANGYUAN_SCENE_LAYOUT_INSTANCE_ID_MAX_LEN: usize = 64;
 pub const FANGYUAN_SCENE_LAYOUT_MAX_INSTANCE_TAGS: usize = 16;
 
@@ -35,6 +37,40 @@ pub struct FangyuanSceneLayout {
 impl FangyuanSceneLayout {
     pub fn from_ron_str(source: &str) -> Result<Self, ron::error::SpannedError> {
         ron::from_str::<Self>(source)
+    }
+
+    pub fn load_first_package_ron(
+        layout_path: impl AsRef<str>,
+    ) -> Result<Self, FangyuanSceneLayoutLoadError> {
+        let layout_path = layout_path.as_ref().trim();
+        validate_fangyuan_scene_layout_asset_path(layout_path)
+            .map_err(FangyuanSceneLayoutLoadError::InvalidPath)?;
+
+        let fs_path = first_package_fangyuan_asset_fs_path(layout_path).ok_or_else(|| {
+            FangyuanSceneLayoutLoadError::SceneLayoutNotFound(layout_path.to_string())
+        })?;
+
+        let source = fs::read_to_string(&fs_path).map_err(|source| {
+            FangyuanSceneLayoutLoadError::ReadFailed {
+                path: fs_path.clone(),
+                source,
+            }
+        })?;
+
+        Self::from_ron_str(&source).map_err(|source| FangyuanSceneLayoutLoadError::ParseFailed {
+            path: fs_path,
+            source,
+        })
+    }
+
+    pub fn load_validated_first_package_ron(
+        layout_path: impl AsRef<str>,
+    ) -> Result<Self, FangyuanSceneLayoutLoadError> {
+        let layout = Self::load_first_package_ron(layout_path)?;
+        layout
+            .validate()
+            .map_err(FangyuanSceneLayoutLoadError::ValidationFailed)?;
+        Ok(layout)
     }
 
     pub fn validate(&self) -> Result<(), FangyuanSceneLayoutValidationError> {
@@ -185,6 +221,11 @@ impl FangyuanSceneLayout {
     }
 }
 
+pub fn load_fangyuan_home_scene_layout() -> Result<FangyuanSceneLayout, FangyuanSceneLayoutLoadError>
+{
+    FangyuanSceneLayout::load_validated_first_package_ron(FANGYUAN_HOME_SCENE_LAYOUT_PATH)
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FangyuanSceneLayoutInstance {
@@ -286,6 +327,7 @@ pub enum FangyuanSceneLayoutPathInvalidReason {
     Absolute,
     WindowsDrive,
     ParentOrEmptySegment,
+    OutsideFangyuanRoot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -390,6 +432,9 @@ impl FangyuanSceneLayoutValidationError {
                 FangyuanSceneLayoutPathInvalidReason::ParentOrEmptySegment => {
                     format!("palette path `{path}` must not contain empty or parent segments")
                 }
+                FangyuanSceneLayoutPathInvalidReason::OutsideFangyuanRoot => {
+                    format!("palette path `{path}` must stay inside assets/fangyuan")
+                }
             },
             Self::DuplicatePalettePath { path, .. } => {
                 format!("palette path `{path}` is already listed")
@@ -473,33 +518,90 @@ impl fmt::Display for FangyuanSceneLayoutValidationError {
 
 impl Error for FangyuanSceneLayoutValidationError {}
 
-fn validate_palette_path(path: &str) -> Result<(), FangyuanSceneLayoutPathInvalidReason> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err(FangyuanSceneLayoutPathInvalidReason::Empty);
-    }
-    if trimmed.contains('\\') {
-        return Err(FangyuanSceneLayoutPathInvalidReason::Backslash);
-    }
-    if has_windows_drive_prefix(trimmed) {
-        return Err(FangyuanSceneLayoutPathInvalidReason::WindowsDrive);
-    }
-    if Path::new(trimmed).is_absolute() || trimmed.starts_with('/') {
-        return Err(FangyuanSceneLayoutPathInvalidReason::Absolute);
-    }
-    if trimmed
-        .split('/')
-        .any(|segment| segment.is_empty() || segment == "..")
-    {
-        return Err(FangyuanSceneLayoutPathInvalidReason::ParentOrEmptySegment);
-    }
-
-    Ok(())
+#[derive(Debug)]
+pub enum FangyuanSceneLayoutLoadError {
+    InvalidPath(FangyuanSceneLayoutPathError),
+    SceneLayoutNotFound(String),
+    ReadFailed {
+        path: PathBuf,
+        source: io::Error,
+    },
+    ParseFailed {
+        path: PathBuf,
+        source: ron::error::SpannedError,
+    },
+    ValidationFailed(FangyuanSceneLayoutValidationError),
 }
 
-fn has_windows_drive_prefix(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+pub type FangyuanSceneLayoutPathError = FangyuanAssetPathError;
+
+impl fmt::Display for FangyuanSceneLayoutLoadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPath(error) => write!(formatter, "{error}"),
+            Self::SceneLayoutNotFound(path) => write!(
+                formatter,
+                "fangyuan scene layout was not found under first package assets: {path}"
+            ),
+            Self::ReadFailed { path, source } => write!(
+                formatter,
+                "failed to read fangyuan scene layout at {}: {source}",
+                path.display()
+            ),
+            Self::ParseFailed { path, source } => write!(
+                formatter,
+                "failed to parse fangyuan scene layout RON at {}: {source}",
+                path.display()
+            ),
+            Self::ValidationFailed(error) => {
+                write!(
+                    formatter,
+                    "fangyuan scene layout validation failed: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for FangyuanSceneLayoutLoadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidPath(error) => Some(error),
+            Self::ReadFailed { source, .. } => Some(source),
+            Self::ParseFailed { source, .. } => Some(source),
+            Self::ValidationFailed(error) => Some(error),
+            Self::SceneLayoutNotFound(_) => None,
+        }
+    }
+}
+
+fn validate_palette_path(path: &str) -> Result<(), FangyuanSceneLayoutPathInvalidReason> {
+    validate_fangyuan_asset_path(path).map_err(scene_layout_path_invalid_reason)
+}
+
+pub fn validate_fangyuan_scene_layout_asset_path(
+    path: &str,
+) -> Result<(), FangyuanSceneLayoutPathError> {
+    validate_fangyuan_asset_path(path)
+}
+
+fn scene_layout_path_invalid_reason(
+    error: FangyuanAssetPathError,
+) -> FangyuanSceneLayoutPathInvalidReason {
+    match error {
+        FangyuanAssetPathError::Empty => FangyuanSceneLayoutPathInvalidReason::Empty,
+        FangyuanAssetPathError::Absolute(_) => FangyuanSceneLayoutPathInvalidReason::Absolute,
+        FangyuanAssetPathError::Backslash(_) => FangyuanSceneLayoutPathInvalidReason::Backslash,
+        FangyuanAssetPathError::WindowsDrive(_) => {
+            FangyuanSceneLayoutPathInvalidReason::WindowsDrive
+        }
+        FangyuanAssetPathError::ParentOrEmptySegment(_) => {
+            FangyuanSceneLayoutPathInvalidReason::ParentOrEmptySegment
+        }
+        FangyuanAssetPathError::OutsideFangyuanRoot(_) => {
+            FangyuanSceneLayoutPathInvalidReason::OutsideFangyuanRoot
+        }
+    }
 }
 
 fn validate_instance_id(id: &str) -> Result<(), FangyuanSceneLayoutInstanceIdInvalidReason> {
@@ -992,6 +1094,104 @@ mod tests {
     }
 
     #[test]
+    fn layout_rejects_palette_path_outside_fangyuan_root() {
+        let mut layout = valid_layout(Vec::new());
+        layout.palette = Some("scenes/fangyuan_home/layout.ron".to_string());
+
+        let error = layout.validate().unwrap_err();
+
+        assert_eq!(
+            error,
+            FangyuanSceneLayoutValidationError::InvalidPalettePath {
+                palette_index: 0,
+                path: "scenes/fangyuan_home/layout.ron".to_string(),
+                reason: FangyuanSceneLayoutPathInvalidReason::OutsideFangyuanRoot,
+            }
+        );
+        assert_validation_report(
+            &error,
+            "invalid_palette_path",
+            "palette",
+            &["assets/fangyuan"],
+        );
+    }
+
+    #[test]
+    fn home_scene_layout_asset_loads_and_validates_against_home_palette() {
+        let layout =
+            FangyuanSceneLayout::load_first_package_ron(FANGYUAN_HOME_SCENE_LAYOUT_PATH).unwrap();
+        let palette = FangyuanPrefabPalette::load_validated_first_package_ron(
+            crate::framework::fangyuan::FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+        )
+        .unwrap();
+
+        layout.validate_against_palette(&palette).unwrap();
+
+        assert_eq!(layout.name, "home_layout");
+        assert_eq!(
+            layout.palette_paths().collect::<Vec<_>>(),
+            vec![crate::framework::fangyuan::FANGYUAN_HOME_PREFAB_PALETTE_PATH]
+        );
+        assert!(
+            layout
+                .instances
+                .iter()
+                .filter(|instance| instance.prefab == "fence_segment")
+                .count()
+                >= 2
+        );
+        assert!(
+            layout
+                .instances
+                .iter()
+                .filter(|instance| instance.prefab == "dragon_body_segment")
+                .count()
+                >= 2
+        );
+
+        let generated_primitives = estimate_generated_primitives(&layout, &palette);
+        assert!(generated_primitives <= 1000);
+        assert!(generated_primitives <= layout.max_primitives);
+    }
+
+    #[test]
+    fn scene_layout_path_policy_reuses_fangyuan_first_package_rules() {
+        assert_eq!(
+            validate_fangyuan_scene_layout_asset_path(FANGYUAN_HOME_SCENE_LAYOUT_PATH),
+            Ok(())
+        );
+
+        assert_eq!(
+            validate_fangyuan_scene_layout_asset_path("scenes/fangyuan_home/layout.ron"),
+            Err(FangyuanSceneLayoutPathError::OutsideFangyuanRoot(
+                "scenes/fangyuan_home/layout.ron".to_string()
+            ))
+        );
+        assert_eq!(
+            validate_fangyuan_scene_layout_asset_path("../fangyuan/layouts/home_layout.ron"),
+            Err(FangyuanSceneLayoutPathError::ParentOrEmptySegment(
+                "../fangyuan/layouts/home_layout.ron".to_string()
+            ))
+        );
+        assert_eq!(
+            validate_fangyuan_scene_layout_asset_path("fangyuan\\layouts\\home_layout.ron"),
+            Err(FangyuanSceneLayoutPathError::Backslash(
+                "fangyuan\\layouts\\home_layout.ron".to_string()
+            ))
+        );
+        assert!(matches!(
+            validate_fangyuan_scene_layout_asset_path(
+                "C:/project/assets/fangyuan/layouts/home_layout.ron"
+            ),
+            Err(FangyuanSceneLayoutPathError::WindowsDrive(_))
+        ));
+        assert!(matches!(
+            validate_fangyuan_scene_layout_asset_path("/fangyuan/layouts/home_layout.ron"),
+            Err(FangyuanSceneLayoutPathError::Absolute(_))
+        ));
+    }
+
+    #[test]
     fn layout_rejects_forbidden_top_level_fields_by_parse() {
         for field in [
             "rotation",
@@ -1143,6 +1343,24 @@ mod tests {
             [1.0, 1.0, 1.0],
             [0.2, 0.4, 0.6, 1.0],
         )
+    }
+
+    fn estimate_generated_primitives(
+        layout: &FangyuanSceneLayout,
+        palette: &FangyuanPrefabPalette,
+    ) -> usize {
+        layout
+            .instances
+            .iter()
+            .map(|instance| {
+                palette
+                    .prefabs
+                    .iter()
+                    .find(|prefab| prefab.id == instance.prefab)
+                    .map(|prefab| prefab.primitives.len())
+                    .unwrap_or(0)
+            })
+            .sum()
     }
 
     fn valid_layout_ron_with_extra_top_level_field(field: &str) -> String {

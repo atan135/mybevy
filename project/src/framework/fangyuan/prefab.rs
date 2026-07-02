@@ -1,14 +1,17 @@
 use serde::{Deserialize, Deserializer, Serialize};
-use std::{borrow::Cow, collections::HashSet, error::Error, fmt};
+use std::{borrow::Cow, collections::HashSet, error::Error, fmt, fs, io, path::PathBuf};
 
 use super::{
-    FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_BLUEPRINT_VERSION, FangyuanBlueprintBounds,
-    FangyuanBlueprintValidationError, FangyuanPrimitiveBlueprint, validate_blueprint_primitive,
+    FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_BLUEPRINT_VERSION, FangyuanAssetPathError,
+    FangyuanBlueprintBounds, FangyuanBlueprintValidationError, FangyuanPrimitiveBlueprint,
+    first_package_fangyuan_asset_fs_path, validate_blueprint_primitive,
+    validate_fangyuan_asset_path,
 };
 
 pub const FANGYUAN_PREFAB_PALETTE_VERSION: &str = FANGYUAN_BLUEPRINT_VERSION;
 pub const FANGYUAN_PREFAB_PALETTE_HARD_PRIMITIVE_LIMIT: usize =
     FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT;
+pub const FANGYUAN_HOME_PREFAB_PALETTE_PATH: &str = "fangyuan/palettes/home_prefabs.ron";
 pub const FANGYUAN_PREFAB_ID_MAX_LEN: usize = 64;
 pub const FANGYUAN_PREFAB_TAG_MAX_LEN: usize = 48;
 pub const FANGYUAN_PREFAB_MAX_TAGS: usize = 16;
@@ -27,6 +30,40 @@ pub struct FangyuanPrefabPalette {
 impl FangyuanPrefabPalette {
     pub fn from_ron_str(source: &str) -> Result<Self, ron::error::SpannedError> {
         ron::from_str::<Self>(source)
+    }
+
+    pub fn load_first_package_ron(
+        palette_path: impl AsRef<str>,
+    ) -> Result<Self, FangyuanPrefabPaletteLoadError> {
+        let palette_path = palette_path.as_ref().trim();
+        validate_fangyuan_prefab_palette_asset_path(palette_path)
+            .map_err(FangyuanPrefabPaletteLoadError::InvalidPath)?;
+
+        let fs_path = first_package_fangyuan_asset_fs_path(palette_path).ok_or_else(|| {
+            FangyuanPrefabPaletteLoadError::PrefabPaletteNotFound(palette_path.to_string())
+        })?;
+
+        let source = fs::read_to_string(&fs_path).map_err(|source| {
+            FangyuanPrefabPaletteLoadError::ReadFailed {
+                path: fs_path.clone(),
+                source,
+            }
+        })?;
+
+        Self::from_ron_str(&source).map_err(|source| FangyuanPrefabPaletteLoadError::ParseFailed {
+            path: fs_path,
+            source,
+        })
+    }
+
+    pub fn load_validated_first_package_ron(
+        palette_path: impl AsRef<str>,
+    ) -> Result<Self, FangyuanPrefabPaletteLoadError> {
+        let palette = Self::load_first_package_ron(palette_path)?;
+        palette
+            .validate()
+            .map_err(FangyuanPrefabPaletteLoadError::ValidationFailed)?;
+        Ok(palette)
     }
 
     pub fn validate(&self) -> Result<(), FangyuanPrefabValidationError> {
@@ -111,6 +148,11 @@ impl FangyuanPrefabPalette {
 
         Ok(())
     }
+}
+
+pub fn load_fangyuan_home_prefab_palette()
+-> Result<FangyuanPrefabPalette, FangyuanPrefabPaletteLoadError> {
+    FangyuanPrefabPalette::load_validated_first_package_ron(FANGYUAN_HOME_PREFAB_PALETTE_PATH)
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -363,6 +405,69 @@ impl fmt::Display for FangyuanPrefabValidationError {
 }
 
 impl Error for FangyuanPrefabValidationError {}
+
+#[derive(Debug)]
+pub enum FangyuanPrefabPaletteLoadError {
+    InvalidPath(FangyuanPrefabPalettePathError),
+    PrefabPaletteNotFound(String),
+    ReadFailed {
+        path: PathBuf,
+        source: io::Error,
+    },
+    ParseFailed {
+        path: PathBuf,
+        source: ron::error::SpannedError,
+    },
+    ValidationFailed(FangyuanPrefabValidationError),
+}
+
+pub type FangyuanPrefabPalettePathError = FangyuanAssetPathError;
+
+impl fmt::Display for FangyuanPrefabPaletteLoadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPath(error) => write!(formatter, "{error}"),
+            Self::PrefabPaletteNotFound(path) => write!(
+                formatter,
+                "fangyuan prefab palette was not found under first package assets: {path}"
+            ),
+            Self::ReadFailed { path, source } => write!(
+                formatter,
+                "failed to read fangyuan prefab palette at {}: {source}",
+                path.display()
+            ),
+            Self::ParseFailed { path, source } => write!(
+                formatter,
+                "failed to parse fangyuan prefab palette RON at {}: {source}",
+                path.display()
+            ),
+            Self::ValidationFailed(error) => {
+                write!(
+                    formatter,
+                    "fangyuan prefab palette validation failed: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for FangyuanPrefabPaletteLoadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidPath(error) => Some(error),
+            Self::ReadFailed { source, .. } => Some(source),
+            Self::ParseFailed { source, .. } => Some(source),
+            Self::ValidationFailed(error) => Some(error),
+            Self::PrefabPaletteNotFound(_) => None,
+        }
+    }
+}
+
+pub fn validate_fangyuan_prefab_palette_asset_path(
+    path: &str,
+) -> Result<(), FangyuanPrefabPalettePathError> {
+    validate_fangyuan_asset_path(path)
+}
 
 pub(super) fn validate_prefab_id(id: &str) -> Result<(), FangyuanPrefabIdInvalidReason> {
     if id.is_empty() {
@@ -863,6 +968,78 @@ mod tests {
                 "Unexpected field",
             );
         }
+    }
+
+    #[test]
+    fn home_prefab_palette_asset_loads_and_validates() {
+        let palette =
+            FangyuanPrefabPalette::load_first_package_ron(FANGYUAN_HOME_PREFAB_PALETTE_PATH)
+                .unwrap();
+
+        palette.validate().unwrap();
+
+        assert_eq!(palette.name, "home_prefabs");
+        assert_eq!(
+            palette
+                .prefabs
+                .iter()
+                .map(|prefab| prefab.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "fence_segment",
+                "gate_piece",
+                "dragon_body_segment",
+                "cloud_puff",
+                "stone_marker",
+            ]
+        );
+        assert!(palette.prefabs.len() >= 3);
+        assert!(palette.prefabs.len() <= 5);
+        assert!(
+            palette
+                .prefabs
+                .iter()
+                .map(|prefab| prefab.primitives.len())
+                .sum::<usize>()
+                <= 64
+        );
+    }
+
+    #[test]
+    fn prefab_palette_path_policy_reuses_fangyuan_first_package_rules() {
+        assert_eq!(
+            validate_fangyuan_prefab_palette_asset_path(FANGYUAN_HOME_PREFAB_PALETTE_PATH),
+            Ok(())
+        );
+
+        assert_eq!(
+            validate_fangyuan_prefab_palette_asset_path("scenes/fangyuan_home/layout.ron"),
+            Err(FangyuanPrefabPalettePathError::OutsideFangyuanRoot(
+                "scenes/fangyuan_home/layout.ron".to_string()
+            ))
+        );
+        assert_eq!(
+            validate_fangyuan_prefab_palette_asset_path("../fangyuan/palettes/home_prefabs.ron"),
+            Err(FangyuanPrefabPalettePathError::ParentOrEmptySegment(
+                "../fangyuan/palettes/home_prefabs.ron".to_string()
+            ))
+        );
+        assert_eq!(
+            validate_fangyuan_prefab_palette_asset_path("fangyuan\\palettes\\home_prefabs.ron"),
+            Err(FangyuanPrefabPalettePathError::Backslash(
+                "fangyuan\\palettes\\home_prefabs.ron".to_string()
+            ))
+        );
+        assert!(matches!(
+            validate_fangyuan_prefab_palette_asset_path(
+                "C:/project/assets/fangyuan/palettes/home_prefabs.ron"
+            ),
+            Err(FangyuanPrefabPalettePathError::WindowsDrive(_))
+        ));
+        assert!(matches!(
+            validate_fangyuan_prefab_palette_asset_path("/fangyuan/palettes/home_prefabs.ron"),
+            Err(FangyuanPrefabPalettePathError::Absolute(_))
+        ));
     }
 
     fn assert_validation_report(
