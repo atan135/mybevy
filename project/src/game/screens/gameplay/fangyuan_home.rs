@@ -186,6 +186,7 @@ fn fangyuan_home_status_panel_node(viewport: &UiViewport, theme: &UiTheme) -> No
         width: if compact { percent(100) } else { auto() },
         max_width: px(if compact { 360.0 } else { 420.0 }),
         flex_direction: FlexDirection::Column,
+        overflow: Overflow::clip(),
         row_gap: px(theme.layout.row_gap),
         padding: UiRect::all(px(theme.layout.panel_gap)),
         border: UiRect::all(px(theme.panel.border)),
@@ -233,13 +234,52 @@ pub(super) fn update_fangyuan_home_hud_status(
 }
 
 fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> String {
-    let (generated, skipped, materials) = stats
-        .map(|stats| (stats.generated, stats.skipped, stats.materials))
-        .unwrap_or((0, 0, 0));
+    let default_stats = FangyuanHomeBlueprintStats::default();
+    let stats = stats.unwrap_or(&default_stats);
+    let primitive_stats = &stats.primitive_stats;
+    let state = stats.state_label();
+    let top_level = if stats.top_level_valid {
+        "ok"
+    } else {
+        "invalid"
+    };
+    let path = compact_fangyuan_home_blueprint_path(stats.blueprint_path());
 
     format!(
-        "primitive {generated}/{FANGYUAN_HOME_PRIMITIVE_LIMIT}\nskipped {skipped}  materials {materials}\npath {FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH}"
+        "primitive {}/{}  {state}\ncube {}  sphere {}  skipped {}\nmat {}  alpha {}  glow {}  top {top_level}\npath {path}",
+        stats.primitive_total(),
+        FANGYUAN_HOME_PRIMITIVE_LIMIT,
+        primitive_stats.cube_count,
+        primitive_stats.sphere_count,
+        stats.skipped,
+        stats.materials,
+        primitive_stats.alpha_count,
+        primitive_stats.emissive_count,
     )
+}
+
+fn compact_fangyuan_home_blueprint_path(path: &str) -> String {
+    const MAX_PATH_CHARS: usize = 32;
+
+    let path = if path.trim().is_empty() {
+        FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH
+    } else {
+        path.trim()
+    };
+    let char_count = path.chars().count();
+    if char_count <= MAX_PATH_CHARS {
+        return path.to_string();
+    }
+
+    let tail = path
+        .chars()
+        .rev()
+        .take(MAX_PATH_CHARS - 3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("...{tail}")
 }
 
 pub(super) fn handle_fangyuan_home_hud_buttons(
@@ -314,6 +354,10 @@ mod tests {
     use super::*;
     use crate::{
         framework::{
+            fangyuan::{
+                FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveRole,
+                FangyuanPrimitiveSet,
+            },
             scene::prelude::{SceneExited, SceneId, SceneSessionId},
             ui::widgets::UiButtonEvent,
         },
@@ -378,14 +422,12 @@ mod tests {
     #[test]
     fn hud_status_text_updates_from_blueprint_stats() {
         let mut app = App::new();
-        app.insert_resource(FangyuanHomeBlueprintStats {
-            session_id: Some(SceneSessionId::from("fangyuan-session")),
-            generated: 98,
-            skipped: 2,
-            materials: 12,
-            top_level_valid: true,
-        })
-        .add_systems(Update, update_fangyuan_home_hud_status);
+        let session_id = SceneSessionId::from("fangyuan-session");
+        let primitive_set = hud_test_primitive_set();
+        let mut stats = FangyuanHomeBlueprintStats::default();
+        stats.record_loaded(&session_id, "fangyuan/home_preview.ron", &primitive_set, 2);
+        app.insert_resource(stats)
+            .add_systems(Update, update_fangyuan_home_hud_status);
         let status_text = app
             .world_mut()
             .spawn((Text::new("pending"), FangyuanHomeHudStatusText))
@@ -396,7 +438,51 @@ mod tests {
         let text = app.world().get::<Text>(status_text).unwrap();
         assert_eq!(
             text.0,
-            "primitive 98/1000\nskipped 2  materials 12\npath fangyuan/home_preview.ron"
+            "primitive 3/1000  loaded\ncube 1  sphere 2  skipped 2\nmat 3  alpha 2  glow 1  top ok\npath fangyuan/home_preview.ron"
+        );
+    }
+
+    #[test]
+    fn hud_status_text_reports_clear_reload_and_failure_states() {
+        let session_id = SceneSessionId::from("fangyuan-session");
+        let primitive_set = hud_test_primitive_set();
+        let mut stats = FangyuanHomeBlueprintStats::default();
+
+        stats.record_loaded(&session_id, "fangyuan/home_preview.ron", &primitive_set, 4);
+        assert_eq!(
+            fangyuan_home_hud_status_text(Some(&stats)),
+            "primitive 3/1000  loaded\ncube 1  sphere 2  skipped 4\nmat 3  alpha 2  glow 1  top ok\npath fangyuan/home_preview.ron"
+        );
+
+        stats.record_cleared(&session_id);
+        assert_eq!(
+            fangyuan_home_hud_status_text(Some(&stats)),
+            "primitive 0/1000  cleared\ncube 0  sphere 0  skipped 4\nmat 3  alpha 0  glow 0  top ok\npath fangyuan/home_preview.ron"
+        );
+
+        stats.record_loaded(&session_id, "fangyuan/home_preview.ron", &primitive_set, 4);
+        assert_eq!(
+            fangyuan_home_hud_status_text(Some(&stats)),
+            "primitive 3/1000  loaded\ncube 1  sphere 2  skipped 4\nmat 3  alpha 2  glow 1  top ok\npath fangyuan/home_preview.ron"
+        );
+
+        stats.record_failed(
+            &session_id,
+            "fangyuan/very/deep/generated/debug/home_preview_failure_case.ron",
+            9,
+            3,
+        );
+        assert_eq!(
+            fangyuan_home_hud_status_text(Some(&stats)),
+            "primitive 0/1000  failed\ncube 0  sphere 0  skipped 9\nmat 3  alpha 0  glow 0  top invalid\npath ...home_preview_failure_case.ron"
+        );
+    }
+
+    #[test]
+    fn hud_status_text_defaults_to_non_successful_empty_state() {
+        assert_eq!(
+            fangyuan_home_hud_status_text(None),
+            "primitive 0/1000  pending\ncube 0  sphere 0  skipped 0\nmat 0  alpha 0  glow 0  top invalid\npath fangyuan/home_preview.ron"
         );
     }
 
@@ -471,5 +557,43 @@ mod tests {
         let messages = world.resource::<Messages<M>>();
         let mut cursor = MessageCursor::default();
         cursor.read(messages).cloned().collect()
+    }
+
+    fn hud_test_primitive_set() -> FangyuanPrimitiveSet {
+        FangyuanPrimitiveSet::from_primitives(vec![
+            FangyuanPrimitive::with_runtime_metadata(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::ZERO,
+                Vec3::ONE,
+                Color::srgba(0.1, 0.2, 0.3, 1.0),
+                FangyuanPrimitiveRole::Structure,
+                1.0,
+                0.0,
+                None,
+                Default::default(),
+            ),
+            FangyuanPrimitive::with_runtime_metadata(
+                FangyuanPrimitiveKind::Sphere,
+                Vec3::Y,
+                Vec3::ONE,
+                Color::srgba(0.4, 0.5, 0.6, 0.5),
+                FangyuanPrimitiveRole::Core,
+                0.5,
+                0.0,
+                None,
+                Default::default(),
+            ),
+            FangyuanPrimitive::with_runtime_metadata(
+                FangyuanPrimitiveKind::Sphere,
+                Vec3::NEG_Y,
+                Vec3::ONE,
+                Color::srgba(0.7, 0.8, 0.9, 0.25),
+                FangyuanPrimitiveRole::Decoration,
+                0.25,
+                2.0,
+                Some("glow".to_string()),
+                Default::default(),
+            ),
+        ])
     }
 }
