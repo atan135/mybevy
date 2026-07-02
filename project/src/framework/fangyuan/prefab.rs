@@ -364,7 +364,7 @@ impl fmt::Display for FangyuanPrefabValidationError {
 
 impl Error for FangyuanPrefabValidationError {}
 
-fn validate_prefab_id(id: &str) -> Result<(), FangyuanPrefabIdInvalidReason> {
+pub(super) fn validate_prefab_id(id: &str) -> Result<(), FangyuanPrefabIdInvalidReason> {
     if id.is_empty() {
         return Err(FangyuanPrefabIdInvalidReason::Empty);
     }
@@ -451,7 +451,7 @@ fn validate_prefab_tags(
     Ok(())
 }
 
-fn validate_prefab_tag(tag: &str) -> Result<(), FangyuanPrefabTagInvalidReason> {
+pub(super) fn validate_prefab_tag(tag: &str) -> Result<(), FangyuanPrefabTagInvalidReason> {
     if tag.is_empty() {
         return Err(FangyuanPrefabTagInvalidReason::Empty);
     }
