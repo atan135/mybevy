@@ -7,7 +7,8 @@ use std::{
 
 use crate::framework::{
     fangyuan::{
-        FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanObjectState,
+        FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanAuditFinding,
+        FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditStatus, FangyuanObjectState,
         FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
         FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
         fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
@@ -299,6 +300,11 @@ const FANGYUAN_HOME_BLUEPRINT_STATE_PENDING: &str = "pending";
 const FANGYUAN_HOME_BLUEPRINT_STATE_LOADED: &str = "loaded";
 const FANGYUAN_HOME_BLUEPRINT_STATE_CLEARED: &str = "cleared";
 const FANGYUAN_HOME_BLUEPRINT_STATE_FAILED: &str = "failed";
+const FANGYUAN_HOME_AUDIT_STATUS_PENDING: &str = "pending";
+const FANGYUAN_HOME_AUDIT_STATUS_PASSED: &str = "passed";
+const FANGYUAN_HOME_AUDIT_STATUS_WARNING: &str = "warning";
+const FANGYUAN_HOME_AUDIT_STATUS_FAILED: &str = "failed";
+const FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE: &str = "-";
 
 #[derive(Clone, Debug, Resource, PartialEq, Eq)]
 pub(in crate::game) struct FangyuanHomeBlueprintStats {
@@ -317,6 +323,12 @@ pub(in crate::game) struct FangyuanHomeBlueprintStats {
     pub(in crate::game) top_level_valid: bool,
     pub(in crate::game) layout_valid: bool,
     pub(in crate::game) palette_valid: bool,
+    pub(in crate::game) audit_status: String,
+    pub(in crate::game) audit_error_count: usize,
+    pub(in crate::game) audit_warning_count: usize,
+    pub(in crate::game) audit_primary_code: String,
+    pub(in crate::game) audit_primary_field_path: String,
+    pub(in crate::game) audit_primary_reason: String,
     state: String,
 }
 
@@ -338,6 +350,12 @@ impl Default for FangyuanHomeBlueprintStats {
             top_level_valid: false,
             layout_valid: false,
             palette_valid: false,
+            audit_status: FANGYUAN_HOME_AUDIT_STATUS_PENDING.to_string(),
+            audit_error_count: 0,
+            audit_warning_count: 0,
+            audit_primary_code: FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE.to_string(),
+            audit_primary_field_path: String::new(),
+            audit_primary_reason: String::new(),
             state: FANGYUAN_HOME_BLUEPRINT_STATE_PENDING.to_string(),
         }
     }
@@ -349,6 +367,7 @@ impl FangyuanHomeBlueprintStats {
         session_id: &SceneSessionId,
         layout_path: &str,
         palette_path: &str,
+        audit_report: &FangyuanAuditReport,
         compile_report: &FangyuanSceneLayoutCompileReport,
     ) {
         self.session_id = Some(session_id.clone());
@@ -366,6 +385,7 @@ impl FangyuanHomeBlueprintStats {
         self.top_level_valid = compile_report.top_level_validated;
         self.layout_valid = compile_report.layout_validated;
         self.palette_valid = compile_report.palette_validated;
+        self.record_audit_report(audit_report);
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_LOADED.to_string();
     }
 
@@ -375,6 +395,7 @@ impl FangyuanHomeBlueprintStats {
         layout_path: &str,
         palette_path: &str,
         materials: usize,
+        audit_report: Option<&FangyuanAuditReport>,
     ) {
         self.session_id = Some(session_id.clone());
         self.primitive_stats = FangyuanPrimitiveSetStats::default();
@@ -391,6 +412,16 @@ impl FangyuanHomeBlueprintStats {
         self.top_level_valid = false;
         self.layout_valid = false;
         self.palette_valid = false;
+        if let Some(audit_report) = audit_report {
+            self.record_audit_report(audit_report);
+        } else {
+            self.audit_status = FANGYUAN_HOME_AUDIT_STATUS_FAILED.to_string();
+            self.audit_error_count = 1;
+            self.audit_warning_count = 0;
+            self.audit_primary_code = "load_or_compile_failed".to_string();
+            self.audit_primary_field_path.clear();
+            self.audit_primary_reason.clear();
+        }
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_FAILED.to_string();
     }
 
@@ -418,6 +449,12 @@ impl FangyuanHomeBlueprintStats {
         self.top_level_valid = true;
         self.layout_valid = false;
         self.palette_valid = false;
+        self.audit_status = FANGYUAN_HOME_AUDIT_STATUS_PENDING.to_string();
+        self.audit_error_count = 0;
+        self.audit_warning_count = 0;
+        self.audit_primary_code = FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE.to_string();
+        self.audit_primary_field_path.clear();
+        self.audit_primary_reason.clear();
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_LOADED.to_string();
     }
 
@@ -444,6 +481,12 @@ impl FangyuanHomeBlueprintStats {
         self.top_level_valid = false;
         self.layout_valid = false;
         self.palette_valid = false;
+        self.audit_status = FANGYUAN_HOME_AUDIT_STATUS_FAILED.to_string();
+        self.audit_error_count = 1;
+        self.audit_warning_count = 0;
+        self.audit_primary_code = "load_or_compile_failed".to_string();
+        self.audit_primary_field_path.clear();
+        self.audit_primary_reason.clear();
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_FAILED.to_string();
     }
 
@@ -460,6 +503,12 @@ impl FangyuanHomeBlueprintStats {
         let top_level_valid = self.top_level_valid;
         let layout_valid = self.layout_valid;
         let palette_valid = self.palette_valid;
+        let audit_status = self.audit_status_label().to_string();
+        let audit_error_count = self.audit_error_count;
+        let audit_warning_count = self.audit_warning_count;
+        let audit_primary_code = self.audit_primary_code().to_string();
+        let audit_primary_field_path = self.audit_primary_field_path.clone();
+        let audit_primary_reason = self.audit_primary_reason.clone();
         self.session_id = Some(session_id.clone());
         self.primitive_stats = FangyuanPrimitiveSetStats::default();
         self.skipped = skipped;
@@ -475,6 +524,12 @@ impl FangyuanHomeBlueprintStats {
         self.top_level_valid = top_level_valid;
         self.layout_valid = layout_valid;
         self.palette_valid = palette_valid;
+        self.audit_status = audit_status;
+        self.audit_error_count = audit_error_count;
+        self.audit_warning_count = audit_warning_count;
+        self.audit_primary_code = audit_primary_code;
+        self.audit_primary_field_path = audit_primary_field_path;
+        self.audit_primary_reason = audit_primary_reason;
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_CLEARED.to_string();
     }
 
@@ -487,6 +542,22 @@ impl FangyuanHomeBlueprintStats {
             FANGYUAN_HOME_BLUEPRINT_STATE_PENDING
         } else {
             self.state.as_str()
+        }
+    }
+
+    pub(in crate::game) fn audit_status_label(&self) -> &str {
+        if self.audit_status.trim().is_empty() {
+            FANGYUAN_HOME_AUDIT_STATUS_PENDING
+        } else {
+            self.audit_status.as_str()
+        }
+    }
+
+    pub(in crate::game) fn audit_primary_code(&self) -> &str {
+        if self.audit_primary_code.trim().is_empty() {
+            FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE
+        } else {
+            self.audit_primary_code.as_str()
         }
     }
 
@@ -514,6 +585,21 @@ impl FangyuanHomeBlueprintStats {
         }
     }
 
+    fn record_audit_report(&mut self, audit_report: &FangyuanAuditReport) {
+        self.audit_status = audit_status_label(audit_report.status).to_string();
+        self.audit_error_count = audit_report.summary.error_count;
+        self.audit_warning_count = audit_report.summary.warning_count;
+        if let Some(primary) = primary_audit_finding(audit_report) {
+            self.audit_primary_code = primary.code.clone();
+            self.audit_primary_field_path = primary.field_path.clone().unwrap_or_default();
+            self.audit_primary_reason = primary.reason.clone();
+        } else {
+            self.audit_primary_code = FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE.to_string();
+            self.audit_primary_field_path.clear();
+            self.audit_primary_reason.clear();
+        }
+    }
+
     fn reset_if_session(&mut self, session_id: &SceneSessionId) -> bool {
         if self
             .session_id
@@ -526,6 +612,81 @@ impl FangyuanHomeBlueprintStats {
             false
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FangyuanHomeLayoutLoadResult {
+    audit_report: FangyuanAuditReport,
+    compile_report: Option<FangyuanSceneLayoutCompileReport>,
+    failure: Option<String>,
+}
+
+impl FangyuanHomeLayoutLoadResult {
+    fn loaded(
+        audit_report: FangyuanAuditReport,
+        compile_report: FangyuanSceneLayoutCompileReport,
+    ) -> Self {
+        Self {
+            audit_report,
+            compile_report: Some(compile_report),
+            failure: None,
+        }
+    }
+
+    fn audit_failed(audit_report: FangyuanAuditReport) -> Self {
+        let (code, field_path, reason) = primary_audit_finding(&audit_report)
+            .map(|finding| {
+                (
+                    finding.code.clone(),
+                    finding.field_path.clone().unwrap_or_default(),
+                    finding.reason.clone(),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE.to_string(),
+                    String::new(),
+                    String::new(),
+                )
+            });
+        Self {
+            audit_report,
+            compile_report: None,
+            failure: Some(format!(
+                "fangyuan home scene layout audit failed: code={code}, field_path={field_path}, reason={reason}"
+            )),
+        }
+    }
+
+    fn compile_failed(audit_report: FangyuanAuditReport, failure: String) -> Self {
+        Self {
+            audit_report,
+            compile_report: None,
+            failure: Some(failure),
+        }
+    }
+}
+
+fn audit_status_label(status: FangyuanAuditStatus) -> &'static str {
+    match status {
+        FangyuanAuditStatus::Passed => FANGYUAN_HOME_AUDIT_STATUS_PASSED,
+        FangyuanAuditStatus::PassedWithWarnings => FANGYUAN_HOME_AUDIT_STATUS_WARNING,
+        FangyuanAuditStatus::Failed => FANGYUAN_HOME_AUDIT_STATUS_FAILED,
+    }
+}
+
+fn primary_audit_finding(report: &FangyuanAuditReport) -> Option<&FangyuanAuditFinding> {
+    report
+        .findings
+        .iter()
+        .find(|finding| finding.severity == FangyuanAuditSeverity::Error)
+        .or_else(|| {
+            report
+                .findings
+                .iter()
+                .find(|finding| finding.severity == FangyuanAuditSeverity::Warning)
+        })
+        .or_else(|| report.findings.first())
 }
 
 #[derive(Clone, Debug, Component, PartialEq, Eq)]
@@ -750,16 +911,30 @@ fn spawn_fangyuan_home_blueprint_from_layout(
                     FANGYUAN_HOME_SCENE_LAYOUT_PATH, FANGYUAN_HOME_PREFAB_PALETTE_PATH
                 )
             })?;
-            scene_layout.compile_with_palette(&prefab_palette).map_err(|error| {
-                format!(
-                    "failed to compile fangyuan home scene layout: layout_path={}, palette_path={}, code={}, field_path={}, reason={}",
-                    FANGYUAN_HOME_SCENE_LAYOUT_PATH,
-                    FANGYUAN_HOME_PREFAB_PALETTE_PATH,
-                    error.code(),
-                    error.field_path(),
-                    error.reason()
-                )
-            })
+            let audit_report = scene_layout.audit_with_default_budget(&prefab_palette);
+            if audit_report.status == FangyuanAuditStatus::Failed {
+                return Ok(FangyuanHomeLayoutLoadResult::audit_failed(audit_report));
+            }
+            match scene_layout.compile_with_palette(&prefab_palette) {
+                Ok(compile_report) => Ok(FangyuanHomeLayoutLoadResult::loaded(
+                    audit_report,
+                    compile_report,
+                )),
+                Err(error) => {
+                    let failure = format!(
+                        "failed to compile fangyuan home scene layout: layout_path={}, palette_path={}, code={}, field_path={}, reason={}",
+                        FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+                        FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+                        error.code(),
+                        error.field_path(),
+                        error.reason()
+                    );
+                    Ok(FangyuanHomeLayoutLoadResult::compile_failed(
+                        audit_report,
+                        failure,
+                    ))
+                }
+            }
         },
     )
 }
@@ -773,10 +948,10 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
     materials: &mut Assets<StandardMaterial>,
     blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
     blueprint_stats: &mut FangyuanHomeBlueprintStats,
-    load_scene_layout: impl FnOnce() -> Result<FangyuanSceneLayoutCompileReport, String>,
+    load_scene_layout: impl FnOnce() -> Result<FangyuanHomeLayoutLoadResult, String>,
 ) -> Option<Entity> {
-    let compile_report = match load_scene_layout() {
-        Ok(compile_report) => compile_report,
+    let load_result = match load_scene_layout() {
+        Ok(load_result) => load_result,
         Err(error) => {
             warn!("{error}");
             blueprint_stats.record_layout_failed(
@@ -784,11 +959,29 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
                 FANGYUAN_HOME_SCENE_LAYOUT_PATH,
                 FANGYUAN_HOME_PREFAB_PALETTE_PATH,
                 blueprint_assets.material_count(),
+                None,
             );
             log_fangyuan_home_blueprint_stats(blueprint_stats);
             return None;
         }
     };
+
+    log_fangyuan_home_audit_result(&load_result.audit_report);
+    let Some(compile_report) = load_result.compile_report else {
+        if let Some(error) = load_result.failure.as_deref() {
+            warn!("{error}");
+        }
+        blueprint_stats.record_layout_failed(
+            session_id,
+            FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+            FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+            blueprint_assets.material_count(),
+            Some(&load_result.audit_report),
+        );
+        log_fangyuan_home_blueprint_stats(blueprint_stats);
+        return None;
+    };
+
     for warning in &compile_report.warnings {
         warn!("skipping fangyuan home scene layout primitive: {warning}");
     }
@@ -806,6 +999,7 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
         session_id,
         FANGYUAN_HOME_SCENE_LAYOUT_PATH,
         FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+        &load_result.audit_report,
         &compile_report,
     );
     log_fangyuan_home_blueprint_stats(blueprint_stats);
@@ -1228,6 +1422,7 @@ fn handle_fangyuan_home_blueprint_commands(
                         FANGYUAN_HOME_SCENE_LAYOUT_PATH,
                         FANGYUAN_HOME_PREFAB_PALETTE_PATH,
                         blueprint_assets.material_count(),
+                        None,
                     );
                     return;
                 }
@@ -1247,6 +1442,7 @@ fn handle_fangyuan_home_blueprint_commands(
                     FANGYUAN_HOME_SCENE_LAYOUT_PATH,
                     FANGYUAN_HOME_PREFAB_PALETTE_PATH,
                     blueprint_assets.material_count(),
+                    None,
                 );
                 return;
             }
@@ -1264,6 +1460,7 @@ fn handle_fangyuan_home_blueprint_commands(
                     FANGYUAN_HOME_SCENE_LAYOUT_PATH,
                     FANGYUAN_HOME_PREFAB_PALETTE_PATH,
                     blueprint_assets.material_count(),
+                    None,
                 );
                 return;
             };
@@ -1349,10 +1546,16 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
         .map(SceneSessionId::as_str)
         .unwrap_or("<none>");
     info!(
-        "fangyuan home layout stats: session={session}, state={}, layout_path={}, palette_path={}, generated={}, primitives={}, skipped={}, palettes={}, prefabs={}, used_prefabs={}, instances={}, materials={}, top_level_valid={}, layout_valid={}, palette_valid={}",
+        "fangyuan home layout stats: session={session}, state={}, layout_path={}, palette_path={}, audit_status={}, audit_errors={}, audit_warnings={}, audit_code={}, audit_field_path={}, audit_reason={}, generated={}, primitives={}, skipped={}, palettes={}, prefabs={}, used_prefabs={}, instances={}, materials={}, top_level_valid={}, layout_valid={}, palette_valid={}",
         stats.state_label(),
         stats.layout_path(),
         stats.palette_path(),
+        stats.audit_status_label(),
+        stats.audit_error_count,
+        stats.audit_warning_count,
+        stats.audit_primary_code(),
+        stats.audit_primary_field_path,
+        stats.audit_primary_reason,
         stats.generated_primitives,
         stats.primitive_total(),
         stats.skipped,
@@ -1364,6 +1567,28 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
         stats.top_level_valid,
         stats.layout_valid,
         stats.palette_valid
+    );
+}
+
+fn log_fangyuan_home_audit_result(report: &FangyuanAuditReport) {
+    let primary = primary_audit_finding(report);
+    let code = primary
+        .map(|finding| finding.code.as_str())
+        .unwrap_or(FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE);
+    let field_path = primary
+        .and_then(|finding| finding.field_path.as_deref())
+        .unwrap_or("");
+    let reason = primary.map(|finding| finding.reason.as_str()).unwrap_or("");
+    info!(
+        "fangyuan home layout audit: status={}, errors={}, warnings={}, code={}, field_path={}, reason={}, layout_path={}, palette_path={}",
+        audit_status_label(report.status),
+        report.summary.error_count,
+        report.summary.warning_count,
+        code,
+        field_path,
+        reason,
+        FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+        FANGYUAN_HOME_PREFAB_PALETTE_PATH
     );
 }
 
@@ -2310,6 +2535,7 @@ mod tests {
         let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-stats-session");
 
         let compile_report = default_layout_compile_report();
+        let audit_report = default_layout_audit_report();
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
             &expected_loaded_layout_stats(&session_id, &compile_report)
@@ -2337,6 +2563,19 @@ mod tests {
         assert!(stats.layout_valid);
         assert!(stats.palette_valid);
         assert_eq!(stats.state_label(), FANGYUAN_HOME_BLUEPRINT_STATE_LOADED);
+        assert_eq!(
+            stats.audit_status_label(),
+            FANGYUAN_HOME_AUDIT_STATUS_PASSED
+        );
+        assert_eq!(stats.audit_error_count, audit_report.summary.error_count);
+        assert_eq!(
+            stats.audit_warning_count,
+            audit_report.summary.warning_count
+        );
+        assert_eq!(
+            stats.audit_primary_code(),
+            FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE
+        );
     }
 
     #[test]
@@ -2669,6 +2908,15 @@ mod tests {
             app.world().resource::<FangyuanHomeBlueprintStats>(),
             &expected_cleared_layout_stats(&session_id, &compile_report)
         );
+        let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+        assert_eq!(
+            stats.audit_status_label(),
+            FANGYUAN_HOME_AUDIT_STATUS_PASSED
+        );
+        assert_eq!(
+            stats.audit_primary_code(),
+            FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE
+        );
     }
 
     #[test]
@@ -2722,6 +2970,13 @@ mod tests {
             app.world().resource::<FangyuanHomeBlueprintStats>(),
             &expected_loaded_layout_stats(&session_id, &compile_report)
         );
+        let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+        assert_eq!(
+            stats.audit_status_label(),
+            FANGYUAN_HOME_AUDIT_STATUS_PASSED
+        );
+        assert_eq!(stats.audit_error_count, 0);
+        assert_eq!(stats.audit_warning_count, 0);
     }
 
     #[test]
@@ -2750,7 +3005,7 @@ mod tests {
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_failed_layout_stats(&session_id, cached_materials)
+            &expected_failed_layout_stats(&session_id, cached_materials, None)
         );
     }
 
@@ -2771,11 +3026,10 @@ mod tests {
             "available_prefab",
             vec![valid_cube_primitive()],
         )]);
+        let audit_report = layout.audit_with_default_budget(&palette);
 
         spawn_layout_from_loader_for_test(&mut app, parent, &session_id, || {
-            layout
-                .compile_with_palette(&palette)
-                .map_err(|error| error.to_string())
+            Ok(FangyuanHomeLayoutLoadResult::audit_failed(audit_report))
         });
 
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
@@ -2783,8 +3037,107 @@ mod tests {
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_failed_layout_stats(&session_id, 0)
+            &expected_failed_layout_stats(
+                &session_id,
+                0,
+                Some(&layout.audit_with_default_budget(&palette))
+            )
         );
+        let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+        assert_eq!(
+            stats.audit_status_label(),
+            FANGYUAN_HOME_AUDIT_STATUS_FAILED
+        );
+        assert_eq!(stats.audit_error_count, 1);
+        assert_eq!(stats.audit_warning_count, 0);
+        assert_eq!(stats.audit_primary_code(), "missing_prefab");
+        assert_eq!(stats.audit_primary_field_path, "instances[0].prefab");
+    }
+
+    #[test]
+    fn warning_audit_status_spawns_content_and_records_primary_code() {
+        let mut app = app_with_fangyuan_home_system();
+        let session_id = SceneSessionId::from("fangyuan-warning-audit-session");
+        let parent = app.world_mut().spawn_empty().id();
+        let layout = test_scene_layout(vec![FangyuanSceneLayoutInstance {
+            id: Some("warning_instance".to_string()),
+            name: None,
+            prefab: "warning_prefab".to_string(),
+            position: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+            tags: Vec::new(),
+        }]);
+        let palette = test_prefab_palette(vec![test_prefab(
+            "warning_prefab",
+            vec![
+                valid_cube_primitive(),
+                cube_primitive_at(19.8, [1.0, 1.0, 1.0], [0.25, 0.35, 0.45, 1.0]),
+            ],
+        )]);
+        let mut layout = layout;
+        layout.instances[0].position = [2.0, 0.0, 0.0];
+        let audit_report = layout.audit_with_default_budget(&palette);
+        let compile_report = layout.compile_with_palette(&palette).unwrap();
+
+        spawn_layout_from_loader_for_test(&mut app, parent, &session_id, || {
+            Ok(FangyuanHomeLayoutLoadResult::loaded(
+                audit_report,
+                compile_report,
+            ))
+        });
+
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 1);
+        let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+        assert_eq!(
+            stats.audit_status_label(),
+            FANGYUAN_HOME_AUDIT_STATUS_WARNING
+        );
+        assert_eq!(stats.audit_error_count, 0);
+        assert_eq!(stats.audit_warning_count, 1);
+        assert_eq!(stats.audit_primary_code(), "invalid_primitive_position");
+        assert_eq!(
+            stats.audit_primary_field_path,
+            "instances[0].prefab.primitives[1].position[0]"
+        );
+        assert_eq!(stats.state_label(), FANGYUAN_HOME_BLUEPRINT_STATE_LOADED);
+    }
+
+    #[test]
+    fn failed_audit_status_does_not_spawn_misleading_success_stats() {
+        let mut app = app_with_fangyuan_home_system();
+        let session_id = SceneSessionId::from("fangyuan-failed-audit-session");
+        let parent = app.world_mut().spawn_empty().id();
+        let layout = test_scene_layout(Vec::new());
+        let palette = test_prefab_palette(vec![test_prefab(
+            "available_prefab",
+            vec![valid_cube_primitive()],
+        )]);
+        let invalid_layout = FangyuanSceneLayout {
+            version: "2".to_string(),
+            ..layout
+        };
+        let audit_report = invalid_layout.audit_with_default_budget(&palette);
+
+        spawn_layout_from_loader_for_test(&mut app, parent, &session_id, || {
+            Ok(FangyuanHomeLayoutLoadResult::audit_failed(audit_report))
+        });
+
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+        assert_eq!(stats.state_label(), FANGYUAN_HOME_BLUEPRINT_STATE_FAILED);
+        assert_eq!(
+            stats.audit_status_label(),
+            FANGYUAN_HOME_AUDIT_STATUS_FAILED
+        );
+        assert_eq!(stats.audit_error_count, 1);
+        assert_eq!(stats.generated_primitives, 0);
+        assert_eq!(stats.primitive_total(), 0);
+        assert_eq!(stats.audit_primary_code(), "unsupported_version");
+        assert_eq!(stats.audit_primary_field_path, "version");
     }
 
     #[test]
@@ -2999,7 +3352,7 @@ mod tests {
         app: &mut App,
         parent: Entity,
         session_id: &SceneSessionId,
-        load_scene_layout: impl FnOnce() -> Result<FangyuanSceneLayoutCompileReport, String>,
+        load_scene_layout: impl FnOnce() -> Result<FangyuanHomeLayoutLoadResult, String>,
     ) -> Option<Entity> {
         let mut state: SystemState<(
             Commands,
@@ -3104,15 +3457,23 @@ mod tests {
         layout.compile_with_palette(&palette).unwrap()
     }
 
+    fn default_layout_audit_report() -> FangyuanAuditReport {
+        let layout = load_fangyuan_home_scene_layout().unwrap();
+        let palette = load_fangyuan_home_prefab_palette().unwrap();
+        layout.audit_with_default_budget(&palette)
+    }
+
     fn expected_loaded_layout_stats(
         session_id: &SceneSessionId,
         compile_report: &FangyuanSceneLayoutCompileReport,
     ) -> FangyuanHomeBlueprintStats {
         let mut stats = FangyuanHomeBlueprintStats::default();
+        let audit_report = default_layout_audit_report();
         stats.record_layout_loaded(
             session_id,
             FANGYUAN_HOME_SCENE_LAYOUT_PATH,
             FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+            &audit_report,
             compile_report,
         );
         stats
@@ -3130,6 +3491,7 @@ mod tests {
     fn expected_failed_layout_stats(
         session_id: &SceneSessionId,
         materials: usize,
+        audit_report: Option<&FangyuanAuditReport>,
     ) -> FangyuanHomeBlueprintStats {
         let mut stats = FangyuanHomeBlueprintStats::default();
         stats.record_layout_failed(
@@ -3137,6 +3499,7 @@ mod tests {
             FANGYUAN_HOME_SCENE_LAYOUT_PATH,
             FANGYUAN_HOME_PREFAB_PALETTE_PATH,
             materials,
+            audit_report,
         );
         stats
     }

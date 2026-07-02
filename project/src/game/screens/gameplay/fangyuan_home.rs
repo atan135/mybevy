@@ -241,10 +241,14 @@ fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> 
         compact_fangyuan_home_layout_path(stats.palette_path(), FANGYUAN_HOME_PREFAB_PALETTE_PATH);
 
     format!(
-        "layout {state} gen {}/{} skip {}\npal {} pf {} used {} inst {} mat {}\nl {layout_path}\np {palette_path}",
+        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nl {layout_path}\np {palette_path}",
         stats.generated_primitives,
         FANGYUAN_HOME_PRIMITIVE_LIMIT,
         stats.skipped,
+        stats.audit_status_label(),
+        stats.audit_error_count,
+        stats.audit_warning_count,
+        stats.audit_primary_code(),
         stats.palette_count,
         stats.prefab_count,
         stats.used_prefab_count,
@@ -350,8 +354,9 @@ mod tests {
     use crate::{
         framework::{
             fangyuan::{
-                FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveRole,
-                FangyuanPrimitiveSet, FangyuanSceneLayoutCompileReport,
+                FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity,
+                FangyuanAuditSourceKind, FangyuanPrimitive, FangyuanPrimitiveKind,
+                FangyuanPrimitiveRole, FangyuanPrimitiveSet, FangyuanSceneLayoutCompileReport,
             },
             scene::prelude::{SceneExited, SceneId, SceneSessionId},
             ui::widgets::UiButtonEvent,
@@ -424,6 +429,7 @@ mod tests {
             &session_id,
             "fangyuan/home_scene.layout.ron",
             "fangyuan/home_prefabs.palette.ron",
+            &hud_test_audit_report(Vec::new()),
             &compile_report,
         );
         app.insert_resource(stats)
@@ -438,7 +444,7 @@ mod tests {
         let text = app.world().get::<Text>(status_text).unwrap();
         assert_eq!(
             text.0,
-            "layout loaded gen 3/1000 skip 2\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
     }
 
@@ -452,28 +458,33 @@ mod tests {
             &session_id,
             "fangyuan/home_scene.layout.ron",
             "fangyuan/home_prefabs.palette.ron",
+            &hud_test_audit_report(Vec::new()),
             &compile_report,
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout loaded gen 3/1000 skip 2\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_cleared(&session_id);
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout cleared gen 0/1000 skip 2\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_loaded(
             &session_id,
             "fangyuan/home_scene.layout.ron",
             "fangyuan/home_prefabs.palette.ron",
+            &hud_test_audit_report(vec![hud_test_finding(
+                FangyuanAuditSeverity::Warning,
+                "invalid_primitive_color",
+            )]),
             &compile_report,
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout loaded gen 3/1000 skip 2\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_failed(
@@ -481,10 +492,14 @@ mod tests {
             "fangyuan/very/deep/generated/debug/home_scene_failure_case.layout.ron",
             "fangyuan/very/deep/generated/debug/home_prefabs_failure_case.palette.ron",
             3,
+            Some(&hud_test_audit_report(vec![hud_test_finding(
+                FangyuanAuditSeverity::Error,
+                "missing_prefab",
+            )])),
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout failed gen 0/1000 skip 0\npal 0 pf 0 used 0 inst 0 mat 3\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
+            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
         );
     }
 
@@ -492,7 +507,7 @@ mod tests {
     fn hud_status_text_defaults_to_non_successful_empty_state() {
         assert_eq!(
             fangyuan_home_hud_status_text(None),
-            "layout pending gen 0/1000 skip 0\npal 0 pf 0 used 0 inst 0 mat 0\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
+            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
         );
     }
 
@@ -624,5 +639,24 @@ mod tests {
             palette_validated: true,
             warnings: Vec::new(),
         }
+    }
+
+    fn hud_test_audit_report(findings: Vec<FangyuanAuditFinding>) -> FangyuanAuditReport {
+        let mut report = FangyuanAuditReport::new(FangyuanAuditSourceKind::SceneLayout, None);
+        for finding in findings {
+            report.add_finding(finding);
+        }
+        report
+    }
+
+    fn hud_test_finding(severity: FangyuanAuditSeverity, code: &str) -> FangyuanAuditFinding {
+        let mut finding = FangyuanAuditFinding::new(
+            severity,
+            code,
+            "hud test audit finding",
+            FangyuanAuditSourceKind::SceneLayout,
+        );
+        finding.field_path = Some("instances[0].prefab".to_string());
+        finding
     }
 }
