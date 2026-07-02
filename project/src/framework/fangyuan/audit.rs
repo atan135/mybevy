@@ -1,3 +1,11 @@
+use bevy::prelude::Vec3;
+
+use super::{
+    FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
+    FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanPrimitive, FangyuanPrimitiveRoleDistribution,
+    FangyuanPrimitiveSet,
+};
+
 /// Unified Fangyuan audit report shared by later blueprint, prefab, layout, and
 /// runtime primitive-set checks.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +58,421 @@ impl Default for FangyuanAuditReport {
     fn default() -> Self {
         Self::new(FangyuanAuditSourceKind::Unknown, None)
     }
+}
+
+pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_PRIMITIVE_LIMIT: usize = 800;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_BOUNDS_WIDTH: f32 = 64.0;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_BOUNDS_DEPTH: f32 = 64.0;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_BOUNDS_HEIGHT: f32 = 64.0;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_PRIMITIVE_EXTENT: f32 = 16.0;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_PRIMITIVE_VOLUME: f32 = 4096.0;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_TOTAL_VOLUME: f32 = 32768.0;
+pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_ALPHA_COUNT: usize = 32;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_ALPHA_COUNT: usize = 128;
+pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_EMISSIVE_COUNT: usize = 24;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_EMISSIVE_COUNT: usize = 96;
+pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_MATERIAL_PROFILE_COUNT: usize = 8;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_MATERIAL_PROFILE_COUNT: usize = 24;
+
+/// Default primitive budget profile for Fangyuan audit checks.
+///
+/// Role, element, profession, and world-layer fields are reserved budget entry
+/// points. The default profile intentionally does not depend on gameplay data.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanAuditBudgetProfile {
+    pub hard_primitive_limit: usize,
+    pub recommended_primitive_limit: usize,
+    pub max_bounds: Vec3,
+    pub max_primitive_extent: f32,
+    pub max_primitive_volume: f32,
+    pub max_total_volume: f32,
+    pub recommended_alpha_count: usize,
+    pub max_alpha_count: usize,
+    pub recommended_emissive_count: usize,
+    pub max_emissive_count: usize,
+    pub max_emissive_intensity: f32,
+    pub recommended_material_profile_count: usize,
+    pub max_material_profile_count: usize,
+    pub role_budget: FangyuanAuditRoleBudget,
+    pub element_budget_tier: FangyuanAuditReservedBudgetTier,
+    pub profession_budget_tier: FangyuanAuditReservedBudgetTier,
+    pub world_layer_budget_tier: FangyuanAuditReservedBudgetTier,
+}
+
+impl Default for FangyuanAuditBudgetProfile {
+    fn default() -> Self {
+        Self {
+            hard_primitive_limit: FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
+            recommended_primitive_limit: FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_PRIMITIVE_LIMIT,
+            max_bounds: Vec3::new(
+                FANGYUAN_AUDIT_DEFAULT_MAX_BOUNDS_WIDTH,
+                FANGYUAN_AUDIT_DEFAULT_MAX_BOUNDS_HEIGHT,
+                FANGYUAN_AUDIT_DEFAULT_MAX_BOUNDS_DEPTH,
+            ),
+            max_primitive_extent: FANGYUAN_AUDIT_DEFAULT_MAX_PRIMITIVE_EXTENT,
+            max_primitive_volume: FANGYUAN_AUDIT_DEFAULT_MAX_PRIMITIVE_VOLUME,
+            max_total_volume: FANGYUAN_AUDIT_DEFAULT_MAX_TOTAL_VOLUME,
+            recommended_alpha_count: FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_ALPHA_COUNT,
+            max_alpha_count: FANGYUAN_AUDIT_DEFAULT_MAX_ALPHA_COUNT,
+            recommended_emissive_count: FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_EMISSIVE_COUNT,
+            max_emissive_count: FANGYUAN_AUDIT_DEFAULT_MAX_EMISSIVE_COUNT,
+            max_emissive_intensity: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
+            recommended_material_profile_count:
+                FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_MATERIAL_PROFILE_COUNT,
+            max_material_profile_count: FANGYUAN_AUDIT_DEFAULT_MAX_MATERIAL_PROFILE_COUNT,
+            role_budget: FangyuanAuditRoleBudget::default(),
+            element_budget_tier: FangyuanAuditReservedBudgetTier::Default,
+            profession_budget_tier: FangyuanAuditReservedBudgetTier::Default,
+            world_layer_budget_tier: FangyuanAuditReservedBudgetTier::Default,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FangyuanAuditRoleBudget {
+    pub reserved: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FangyuanAuditReservedBudgetTier {
+    #[default]
+    Default,
+    Reserved,
+}
+
+/// Primitive budget statistics with explicit accounting buckets.
+///
+/// `authored`, `generated`, `skipped`, and `expanded` are separate because
+/// prefab/layout audit must not hide primitive cost inside container records.
+/// Runtime primitive-set checks use already-expanded primitives as the budget
+/// surface and fill `runtime_primitives` directly.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FangyuanPrimitiveBudgetStats {
+    pub authored_primitives: usize,
+    pub generated_primitives: usize,
+    pub skipped_primitives: usize,
+    pub expanded_primitives: usize,
+    pub runtime_primitives: usize,
+    pub total_volume: f32,
+    pub max_primitive_extent: f32,
+    pub max_primitive_volume: f32,
+    pub bounds_size: Vec3,
+    pub alpha_count: usize,
+    pub emissive_count: usize,
+    pub max_emissive: f32,
+    pub material_profile_count: usize,
+    pub role_distribution: FangyuanPrimitiveRoleDistribution,
+    pub lifecycle_count: FangyuanPrimitiveLifecycleCount,
+}
+
+impl FangyuanPrimitiveBudgetStats {
+    pub fn from_primitive_set(primitive_set: &FangyuanPrimitiveSet) -> Self {
+        Self::from_runtime_primitives(primitive_set.primitives())
+    }
+
+    pub fn from_runtime_primitives(primitives: &[FangyuanPrimitive]) -> Self {
+        use std::collections::BTreeSet;
+
+        let mut stats = Self {
+            runtime_primitives: primitives.len(),
+            expanded_primitives: primitives.len(),
+            ..Default::default()
+        };
+        let mut material_profiles = BTreeSet::new();
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+
+        for primitive in primitives {
+            let scale = primitive.scale().abs();
+            let extent = scale.max_element();
+            let volume = scale.x * scale.y * scale.z;
+            let center = primitive.local_position();
+            let half = scale * 0.5;
+
+            stats.total_volume += volume;
+            stats.max_primitive_extent = stats.max_primitive_extent.max(extent);
+            stats.max_primitive_volume = stats.max_primitive_volume.max(volume);
+            stats.role_distribution.increment(primitive.role());
+            min = min.min(center - half);
+            max = max.max(center + half);
+
+            if primitive.alpha() < 1.0 {
+                stats.alpha_count += 1;
+            }
+            if primitive.emissive() > FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE {
+                stats.emissive_count += 1;
+            }
+            stats.max_emissive = stats.max_emissive.max(primitive.emissive());
+            if let Some(material_profile_id) = primitive.material_profile_id() {
+                material_profiles.insert(material_profile_id);
+            }
+
+            stats.lifecycle_count.record(primitive.lifecycle());
+        }
+
+        if !primitives.is_empty() {
+            stats.bounds_size = max - min;
+        }
+        stats.material_profile_count = material_profiles.len();
+        stats
+    }
+
+    pub fn counted_primitives(&self) -> usize {
+        self.runtime_primitives.max(self.expanded_primitives)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FangyuanPrimitiveLifecycleCount {
+    pub total_with_lifecycle: usize,
+    pub lifetime: usize,
+    pub spawn_tick: usize,
+    pub despawn_tick: usize,
+}
+
+impl FangyuanPrimitiveLifecycleCount {
+    fn record(&mut self, lifecycle: super::FangyuanPrimitiveLifecycle) {
+        if lifecycle.is_empty() {
+            return;
+        }
+
+        self.total_with_lifecycle += 1;
+        if lifecycle.lifetime.is_some() {
+            self.lifetime += 1;
+        }
+        if lifecycle.spawn_tick.is_some() {
+            self.spawn_tick += 1;
+        }
+        if lifecycle.despawn_tick.is_some() {
+            self.despawn_tick += 1;
+        }
+    }
+}
+
+pub fn audit_fangyuan_primitive_budget(
+    stats: &FangyuanPrimitiveBudgetStats,
+    profile: &FangyuanAuditBudgetProfile,
+) -> FangyuanAuditReport {
+    let mut report = FangyuanAuditReport::new(FangyuanAuditSourceKind::RuntimePrimitiveSet, None);
+
+    report.summary.authored_primitives = stats.authored_primitives;
+    report.summary.generated_primitives = stats.generated_primitives;
+    report.summary.skipped_primitives = stats.skipped_primitives;
+    report.summary.material_count = stats.material_profile_count;
+
+    add_primitive_count_findings(&mut report, stats, profile);
+    add_bounds_findings(&mut report, stats, profile);
+    add_scalar_limit_finding(
+        &mut report,
+        "primitive_volume_above_limit",
+        stats.max_primitive_volume,
+        profile.max_primitive_volume,
+        "primitives[].scale",
+        "largest primitive volume exceeds the hard budget",
+        FangyuanAuditSuggestionAction::ShrinkBounds,
+    );
+    add_scalar_limit_finding(
+        &mut report,
+        "primitive_extent_above_limit",
+        stats.max_primitive_extent,
+        profile.max_primitive_extent,
+        "primitives[].scale",
+        "largest primitive extent exceeds the hard budget",
+        FangyuanAuditSuggestionAction::ShrinkBounds,
+    );
+    add_scalar_limit_finding(
+        &mut report,
+        "total_volume_above_limit",
+        stats.total_volume,
+        profile.max_total_volume,
+        "primitives",
+        "total primitive volume exceeds the hard budget",
+        FangyuanAuditSuggestionAction::ShrinkBounds,
+    );
+    add_count_budget_findings(
+        &mut report,
+        stats.alpha_count,
+        profile.recommended_alpha_count,
+        profile.max_alpha_count,
+        "alpha_count_above_recommended",
+        "alpha_count_above_hard_limit",
+        "primitives[].alpha",
+        "transparent primitive count exceeds the recommended budget",
+        "transparent primitive count exceeds the hard budget",
+        FangyuanAuditSuggestionAction::RemoveAlpha,
+    );
+    add_count_budget_findings(
+        &mut report,
+        stats.emissive_count,
+        profile.recommended_emissive_count,
+        profile.max_emissive_count,
+        "emissive_count_above_recommended",
+        "emissive_count_above_hard_limit",
+        "primitives[].emissive",
+        "emissive primitive count exceeds the recommended budget",
+        "emissive primitive count exceeds the hard budget",
+        FangyuanAuditSuggestionAction::LowerEmissive,
+    );
+    add_scalar_limit_finding(
+        &mut report,
+        "emissive_intensity_above_limit",
+        stats.max_emissive,
+        profile.max_emissive_intensity,
+        "primitives[].emissive",
+        "emissive intensity exceeds the hard budget",
+        FangyuanAuditSuggestionAction::LowerEmissive,
+    );
+    add_count_budget_findings(
+        &mut report,
+        stats.material_profile_count,
+        profile.recommended_material_profile_count,
+        profile.max_material_profile_count,
+        "material_profile_count_above_recommended",
+        "material_profile_count_above_hard_limit",
+        "primitives[].material_profile_id",
+        "material profile count exceeds the recommended budget",
+        "material profile count exceeds the hard budget",
+        FangyuanAuditSuggestionAction::ReplaceMaterialProfile,
+    );
+
+    report.refresh_summary_and_status();
+    report.summary.authored_primitives = stats.authored_primitives;
+    report.summary.generated_primitives = stats.generated_primitives;
+    report.summary.skipped_primitives = stats.skipped_primitives;
+    report.summary.material_count = stats.material_profile_count;
+    report.sort_findings();
+    report
+}
+
+pub fn audit_fangyuan_primitive_set_budget(
+    primitive_set: &FangyuanPrimitiveSet,
+    profile: &FangyuanAuditBudgetProfile,
+) -> FangyuanAuditReport {
+    audit_fangyuan_primitive_budget(
+        &FangyuanPrimitiveBudgetStats::from_primitive_set(primitive_set),
+        profile,
+    )
+}
+
+fn add_primitive_count_findings(
+    report: &mut FangyuanAuditReport,
+    stats: &FangyuanPrimitiveBudgetStats,
+    profile: &FangyuanAuditBudgetProfile,
+) {
+    add_count_budget_findings(
+        report,
+        stats.counted_primitives(),
+        profile.recommended_primitive_limit,
+        profile.hard_primitive_limit,
+        "primitive_count_above_recommended",
+        "primitive_count_above_hard_limit",
+        "primitives",
+        "primitive count exceeds the recommended budget",
+        "primitive count exceeds the hard budget",
+        FangyuanAuditSuggestionAction::ReducePrimitives,
+    );
+}
+
+fn add_bounds_findings(
+    report: &mut FangyuanAuditReport,
+    stats: &FangyuanPrimitiveBudgetStats,
+    profile: &FangyuanAuditBudgetProfile,
+) {
+    let axes = [
+        ("width", stats.bounds_size.x, profile.max_bounds.x),
+        ("height", stats.bounds_size.y, profile.max_bounds.y),
+        ("depth", stats.bounds_size.z, profile.max_bounds.z),
+    ];
+
+    for (axis, value, limit) in axes {
+        if value <= limit {
+            continue;
+        }
+
+        add_finding_with_suggestion(
+            report,
+            FangyuanAuditSeverity::Error,
+            "bounds_above_limit",
+            Some("bounds".to_string()),
+            format!("bounds {axis} {value:.2} exceeds hard limit {limit:.2}"),
+            FangyuanAuditSuggestionAction::ShrinkBounds,
+        );
+    }
+}
+
+fn add_count_budget_findings(
+    report: &mut FangyuanAuditReport,
+    count: usize,
+    recommended_limit: usize,
+    hard_limit: usize,
+    warning_code: &'static str,
+    error_code: &'static str,
+    field_path: &'static str,
+    warning_reason: &'static str,
+    error_reason: &'static str,
+    suggestion: FangyuanAuditSuggestionAction,
+) {
+    if count > hard_limit {
+        add_finding_with_suggestion(
+            report,
+            FangyuanAuditSeverity::Error,
+            error_code,
+            Some(field_path.to_string()),
+            format!("{error_reason}: {count} > {hard_limit}"),
+            suggestion,
+        );
+    } else if count > recommended_limit {
+        add_finding_with_suggestion(
+            report,
+            FangyuanAuditSeverity::Warning,
+            warning_code,
+            Some(field_path.to_string()),
+            format!("{warning_reason}: {count} > {recommended_limit}"),
+            suggestion,
+        );
+    }
+}
+
+fn add_scalar_limit_finding(
+    report: &mut FangyuanAuditReport,
+    code: &'static str,
+    value: f32,
+    hard_limit: f32,
+    field_path: &'static str,
+    reason: &'static str,
+    suggestion: FangyuanAuditSuggestionAction,
+) {
+    if value <= hard_limit {
+        return;
+    }
+
+    add_finding_with_suggestion(
+        report,
+        FangyuanAuditSeverity::Error,
+        code,
+        Some(field_path.to_string()),
+        format!("{reason}: {value:.2} > {hard_limit:.2}"),
+        suggestion,
+    );
+}
+
+fn add_finding_with_suggestion(
+    report: &mut FangyuanAuditReport,
+    severity: FangyuanAuditSeverity,
+    code: &'static str,
+    field_path: Option<String>,
+    reason: String,
+    suggestion: FangyuanAuditSuggestionAction,
+) {
+    let mut finding = FangyuanAuditFinding::new(
+        severity,
+        code,
+        reason.clone(),
+        FangyuanAuditSourceKind::RuntimePrimitiveSet,
+    );
+    finding.field_path = field_path.clone();
+    report.add_finding(finding);
+    report.add_suggestion(FangyuanAuditSuggestion::new(suggestion, field_path, reason));
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -218,6 +641,8 @@ pub enum FangyuanAuditSuggestionAction {
 
 #[cfg(test)]
 mod tests {
+    use bevy::prelude::*;
+
     use super::*;
 
     #[test]
@@ -354,5 +779,225 @@ mod tests {
             report.suggestions[1].action,
             FangyuanAuditSuggestionAction::LowerEmissive
         );
+    }
+
+    #[test]
+    fn fangyuan_budget_default_profile_uses_shared_hard_limit() {
+        let profile = FangyuanAuditBudgetProfile::default();
+
+        assert_eq!(
+            profile.hard_primitive_limit,
+            FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT
+        );
+        assert_eq!(profile.hard_primitive_limit, 1000);
+        assert!(profile.recommended_primitive_limit < profile.hard_primitive_limit);
+        assert!(profile.max_bounds.x > 0.0);
+        assert!(profile.max_bounds.y > 0.0);
+        assert!(profile.max_bounds.z > 0.0);
+        assert_eq!(
+            profile.element_budget_tier,
+            FangyuanAuditReservedBudgetTier::Default
+        );
+        assert_eq!(
+            profile.profession_budget_tier,
+            FangyuanAuditReservedBudgetTier::Default
+        );
+        assert_eq!(
+            profile.world_layer_budget_tier,
+            FangyuanAuditReservedBudgetTier::Default
+        );
+    }
+
+    #[test]
+    fn fangyuan_budget_stats_summarize_runtime_primitives() {
+        let primitive_set = FangyuanPrimitiveSet::from_primitives(vec![
+            FangyuanPrimitive::with_runtime_metadata(
+                super::super::FangyuanPrimitiveKind::Cube,
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(2.0, 3.0, 4.0),
+                Color::srgba(1.0, 0.0, 0.0, 0.25),
+                super::super::FangyuanPrimitiveRole::Decoration,
+                0.25,
+                4.0,
+                Some("glow".to_string()),
+                super::super::FangyuanPrimitiveLifecycle::new(Some(10), Some(1), Some(11)),
+            ),
+            FangyuanPrimitive::with_runtime_metadata(
+                super::super::FangyuanPrimitiveKind::Sphere,
+                Vec3::new(10.0, 0.0, 0.0),
+                Vec3::splat(2.0),
+                Color::WHITE,
+                super::super::FangyuanPrimitiveRole::Core,
+                1.0,
+                0.0,
+                Some("stone".to_string()),
+                super::super::FangyuanPrimitiveLifecycle::empty(),
+            ),
+        ]);
+
+        let stats = FangyuanPrimitiveBudgetStats::from_primitive_set(&primitive_set);
+
+        assert_eq!(stats.runtime_primitives, 2);
+        assert_eq!(stats.expanded_primitives, 2);
+        assert_eq!(stats.total_volume, 32.0);
+        assert_eq!(stats.max_primitive_extent, 4.0);
+        assert_eq!(stats.max_primitive_volume, 24.0);
+        assert_eq!(stats.alpha_count, 1);
+        assert_eq!(stats.emissive_count, 1);
+        assert_eq!(stats.max_emissive, 4.0);
+        assert_eq!(stats.material_profile_count, 2);
+        assert_eq!(
+            stats
+                .role_distribution
+                .count(super::super::FangyuanPrimitiveRole::Decoration),
+            1
+        );
+        assert_eq!(
+            stats
+                .role_distribution
+                .count(super::super::FangyuanPrimitiveRole::Core),
+            1
+        );
+        assert_eq!(stats.lifecycle_count.total_with_lifecycle, 1);
+        assert_eq!(stats.lifecycle_count.lifetime, 1);
+        assert_eq!(stats.lifecycle_count.spawn_tick, 1);
+        assert_eq!(stats.lifecycle_count.despawn_tick, 1);
+        assert_eq!(stats.bounds_size, Vec3::new(12.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn fangyuan_budget_recommended_thresholds_create_warnings() {
+        let profile = FangyuanAuditBudgetProfile {
+            recommended_primitive_limit: 1,
+            hard_primitive_limit: 10,
+            recommended_alpha_count: 0,
+            max_alpha_count: 10,
+            recommended_emissive_count: 0,
+            max_emissive_count: 10,
+            recommended_material_profile_count: 0,
+            max_material_profile_count: 10,
+            ..Default::default()
+        };
+        let stats = FangyuanPrimitiveBudgetStats {
+            runtime_primitives: 2,
+            expanded_primitives: 2,
+            alpha_count: 1,
+            emissive_count: 1,
+            material_profile_count: 1,
+            ..Default::default()
+        };
+
+        let report = audit_fangyuan_primitive_budget(&stats, &profile);
+
+        assert_eq!(report.status, FangyuanAuditStatus::PassedWithWarnings);
+        assert_eq!(report.summary.warning_count, 4);
+        assert_eq!(report.summary.error_count, 0);
+        assert!(has_finding(&report, "primitive_count_above_recommended"));
+        assert!(has_finding(&report, "alpha_count_above_recommended"));
+        assert!(has_finding(&report, "emissive_count_above_recommended"));
+        assert!(has_finding(
+            &report,
+            "material_profile_count_above_recommended"
+        ));
+        assert!(has_suggestion(
+            &report,
+            FangyuanAuditSuggestionAction::ReducePrimitives
+        ));
+        assert!(has_suggestion(
+            &report,
+            FangyuanAuditSuggestionAction::RemoveAlpha
+        ));
+        assert!(has_suggestion(
+            &report,
+            FangyuanAuditSuggestionAction::LowerEmissive
+        ));
+        assert!(has_suggestion(
+            &report,
+            FangyuanAuditSuggestionAction::ReplaceMaterialProfile
+        ));
+    }
+
+    #[test]
+    fn fangyuan_budget_hard_limits_create_errors() {
+        let profile = FangyuanAuditBudgetProfile {
+            recommended_primitive_limit: 1,
+            hard_primitive_limit: 2,
+            max_bounds: Vec3::splat(4.0),
+            max_primitive_extent: 4.0,
+            max_primitive_volume: 16.0,
+            max_total_volume: 20.0,
+            recommended_alpha_count: 1,
+            max_alpha_count: 2,
+            recommended_emissive_count: 1,
+            max_emissive_count: 2,
+            max_emissive_intensity: 3.0,
+            recommended_material_profile_count: 1,
+            max_material_profile_count: 2,
+            ..Default::default()
+        };
+        let stats = FangyuanPrimitiveBudgetStats {
+            runtime_primitives: 3,
+            expanded_primitives: 3,
+            bounds_size: Vec3::new(5.0, 3.0, 6.0),
+            max_primitive_extent: 5.0,
+            max_primitive_volume: 25.0,
+            total_volume: 30.0,
+            alpha_count: 3,
+            emissive_count: 3,
+            max_emissive: 4.0,
+            material_profile_count: 3,
+            ..Default::default()
+        };
+
+        let report = audit_fangyuan_primitive_budget(&stats, &profile);
+
+        assert_eq!(report.status, FangyuanAuditStatus::Failed);
+        assert!(report.summary.error_count >= 9);
+        assert!(has_finding(&report, "primitive_count_above_hard_limit"));
+        assert!(has_finding(&report, "bounds_above_limit"));
+        assert!(has_finding(&report, "primitive_extent_above_limit"));
+        assert!(has_finding(&report, "primitive_volume_above_limit"));
+        assert!(has_finding(&report, "total_volume_above_limit"));
+        assert!(has_finding(&report, "alpha_count_above_hard_limit"));
+        assert!(has_finding(&report, "emissive_count_above_hard_limit"));
+        assert!(has_finding(&report, "emissive_intensity_above_limit"));
+        assert!(has_finding(
+            &report,
+            "material_profile_count_above_hard_limit"
+        ));
+        assert!(has_suggestion(
+            &report,
+            FangyuanAuditSuggestionAction::ReducePrimitives
+        ));
+        assert!(has_suggestion(
+            &report,
+            FangyuanAuditSuggestionAction::ShrinkBounds
+        ));
+    }
+
+    #[test]
+    fn fangyuan_budget_empty_primitive_set_passes() {
+        let primitive_set = FangyuanPrimitiveSet::new();
+        let report = audit_fangyuan_primitive_set_budget(
+            &primitive_set,
+            &FangyuanAuditBudgetProfile::default(),
+        );
+
+        assert_eq!(report.status, FangyuanAuditStatus::Passed);
+        assert_eq!(report.summary.error_count, 0);
+        assert_eq!(report.summary.warning_count, 0);
+        assert!(report.findings.is_empty());
+        assert!(report.suggestions.is_empty());
+    }
+
+    fn has_finding(report: &FangyuanAuditReport, code: &str) -> bool {
+        report.findings.iter().any(|finding| finding.code == code)
+    }
+
+    fn has_suggestion(report: &FangyuanAuditReport, action: FangyuanAuditSuggestionAction) -> bool {
+        report
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion.action == action)
     }
 }

@@ -109,7 +109,7 @@ impl FangyuanPrimitiveRoleDistribution {
             + self.archive
     }
 
-    fn increment(&mut self, role: FangyuanPrimitiveRole) {
+    pub(crate) fn increment(&mut self, role: FangyuanPrimitiveRole) {
         match role {
             FangyuanPrimitiveRole::Structure => self.structure += 1,
             FangyuanPrimitiveRole::Core => self.core += 1,
