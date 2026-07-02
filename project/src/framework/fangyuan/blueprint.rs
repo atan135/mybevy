@@ -615,7 +615,7 @@ pub(super) fn validate_blueprint_primitive(
     Ok(())
 }
 
-fn compile_blueprint_primitive_to_runtime(
+pub(super) fn compile_blueprint_primitive_to_runtime(
     primitive: &FangyuanPrimitiveBlueprint,
 ) -> FangyuanPrimitive {
     let color = Color::srgba(

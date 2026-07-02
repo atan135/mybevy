@@ -1,11 +1,20 @@
 use serde::{Deserialize, Deserializer, Serialize};
-use std::{borrow::Cow, collections::HashSet, error::Error, fmt, fs, io, path::PathBuf};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt, fs, io,
+    path::PathBuf,
+};
 
 use super::{
     FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_BLUEPRINT_VERSION, FangyuanAssetPathError,
-    FangyuanBlueprintBounds, FangyuanBlueprintValidationError, FangyuanPrefabIdInvalidReason,
-    FangyuanPrefabPalette, FangyuanPrefabTagInvalidReason, first_package_fangyuan_asset_fs_path,
-    validate_fangyuan_asset_path, validate_prefab_id, validate_prefab_tag,
+    FangyuanBlueprintBounds, FangyuanBlueprintValidationError, FangyuanPrefabDefinition,
+    FangyuanPrefabIdInvalidReason, FangyuanPrefabPalette, FangyuanPrefabTagInvalidReason,
+    FangyuanPrefabValidationError, FangyuanPrimitiveBlueprint, FangyuanPrimitiveSet,
+    compile_blueprint_primitive_to_runtime, first_package_fangyuan_asset_fs_path,
+    validate_blueprint_primitive, validate_fangyuan_asset_path, validate_prefab_id,
+    validate_prefab_tag,
 };
 
 pub const FANGYUAN_SCENE_LAYOUT_VERSION: &str = FANGYUAN_BLUEPRINT_VERSION;
@@ -108,6 +117,99 @@ impl FangyuanSceneLayout {
             .iter()
             .map(String::as_str)
             .chain(self.palettes.iter().map(String::as_str))
+    }
+
+    pub fn compile_with_palette(
+        &self,
+        palette: &FangyuanPrefabPalette,
+    ) -> Result<FangyuanSceneLayoutCompileReport, FangyuanSceneLayoutCompileError> {
+        palette
+            .validate()
+            .map_err(FangyuanSceneLayoutCompileError::PaletteValidationFailed)?;
+        self.validate_against_palette(palette)
+            .map_err(FangyuanSceneLayoutCompileError::LayoutValidationFailed)?;
+
+        let prefab_by_id = palette
+            .prefabs
+            .iter()
+            .map(|prefab| (prefab.id.as_str(), prefab))
+            .collect::<HashMap<_, _>>();
+        let authored_prefab_primitives = palette
+            .prefabs
+            .iter()
+            .map(|prefab| prefab.primitives.len())
+            .sum();
+        let expanded_primitive_count =
+            self.instances.iter().try_fold(0usize, |count, instance| {
+                prefab_by_id
+                    .get(instance.prefab.as_str())
+                    .map(|prefab| count.saturating_add(prefab.primitives.len()))
+                    .ok_or_else(|| {
+                        FangyuanSceneLayoutCompileError::LayoutValidationFailed(
+                            FangyuanSceneLayoutValidationError::MissingPrefab {
+                                instance_index: 0,
+                                prefab: instance.prefab.clone(),
+                            },
+                        )
+                    })
+            })?;
+        let effective_limit = self
+            .max_primitives
+            .min(FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT);
+        if expanded_primitive_count > effective_limit {
+            return Err(
+                FangyuanSceneLayoutCompileError::ExpandedPrimitiveBudgetExceeded {
+                    count: expanded_primitive_count,
+                    limit: effective_limit,
+                    layout_limit: self.max_primitives,
+                    hard_limit: FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT,
+                },
+            );
+        }
+
+        let mut used_prefabs = HashSet::with_capacity(self.instances.len());
+        let mut primitives = Vec::new();
+        let mut warnings = Vec::new();
+
+        for (instance_index, instance) in self.instances.iter().enumerate() {
+            let prefab = prefab_by_id.get(instance.prefab.as_str()).ok_or_else(|| {
+                FangyuanSceneLayoutCompileError::LayoutValidationFailed(
+                    FangyuanSceneLayoutValidationError::MissingPrefab {
+                        instance_index,
+                        prefab: instance.prefab.clone(),
+                    },
+                )
+            })?;
+            used_prefabs.insert(prefab.id.as_str());
+
+            for (prefab_primitive_index, primitive) in prefab.primitives.iter().enumerate() {
+                let transformed = transform_prefab_primitive(instance, prefab, primitive);
+                match validate_blueprint_primitive(
+                    prefab_primitive_index,
+                    &transformed,
+                    &self.bounds,
+                ) {
+                    Ok(()) => primitives.push(compile_blueprint_primitive_to_runtime(&transformed)),
+                    Err(source) => warnings.push(FangyuanSceneLayoutCompileWarning {
+                        instance_index,
+                        instance_id: instance.id.clone(),
+                        prefab_id: prefab.id.clone(),
+                        prefab_primitive_index,
+                        source,
+                    }),
+                }
+            }
+        }
+
+        Ok(FangyuanSceneLayoutCompileReport {
+            primitive_set: FangyuanPrimitiveSet::from_primitives(primitives),
+            authored_prefab_primitives,
+            instance_count: self.instances.len(),
+            generated_primitives: expanded_primitive_count - warnings.len(),
+            skipped_primitives: warnings.len(),
+            used_prefab_count: used_prefabs.len(),
+            warnings,
+        })
     }
 
     fn validate_top_level(&self) -> Result<(), FangyuanSceneLayoutValidationError> {
@@ -221,6 +323,94 @@ impl FangyuanSceneLayout {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanSceneLayoutCompileReport {
+    pub primitive_set: FangyuanPrimitiveSet,
+    pub authored_prefab_primitives: usize,
+    pub instance_count: usize,
+    pub generated_primitives: usize,
+    pub skipped_primitives: usize,
+    pub used_prefab_count: usize,
+    pub warnings: Vec<FangyuanSceneLayoutCompileWarning>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanSceneLayoutCompileWarning {
+    pub instance_index: usize,
+    pub instance_id: Option<String>,
+    pub prefab_id: String,
+    pub prefab_primitive_index: usize,
+    pub source: FangyuanBlueprintValidationError,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum FangyuanSceneLayoutCompileError {
+    LayoutValidationFailed(FangyuanSceneLayoutValidationError),
+    PaletteValidationFailed(FangyuanPrefabValidationError),
+    ExpandedPrimitiveBudgetExceeded {
+        count: usize,
+        limit: usize,
+        layout_limit: usize,
+        hard_limit: usize,
+    },
+}
+
+impl fmt::Display for FangyuanSceneLayoutCompileWarning {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.instance_id.as_deref() {
+            Some(instance_id) => write!(
+                formatter,
+                "fangyuan scene layout compile warning at instance {}/`{}` prefab `{}` primitive {}: {}",
+                self.instance_index,
+                instance_id,
+                self.prefab_id,
+                self.prefab_primitive_index,
+                self.source
+            ),
+            None => write!(
+                formatter,
+                "fangyuan scene layout compile warning at instance {} prefab `{}` primitive {}: {}",
+                self.instance_index, self.prefab_id, self.prefab_primitive_index, self.source
+            ),
+        }
+    }
+}
+
+impl fmt::Display for FangyuanSceneLayoutCompileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LayoutValidationFailed(error) => {
+                write!(formatter, "fangyuan scene layout compile failed: {error}")
+            }
+            Self::PaletteValidationFailed(error) => {
+                write!(
+                    formatter,
+                    "fangyuan prefab palette validation failed: {error}"
+                )
+            }
+            Self::ExpandedPrimitiveBudgetExceeded {
+                count,
+                limit,
+                layout_limit,
+                hard_limit,
+            } => write!(
+                formatter,
+                "fangyuan scene layout compile failed: expanded primitive count {count} exceeds effective limit {limit} (layout {layout_limit}, hard {hard_limit})"
+            ),
+        }
+    }
+}
+
+impl Error for FangyuanSceneLayoutCompileError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::LayoutValidationFailed(error) => Some(error),
+            Self::PaletteValidationFailed(error) => Some(error),
+            Self::ExpandedPrimitiveBudgetExceeded { .. } => None,
+        }
+    }
+}
+
 pub fn load_fangyuan_home_scene_layout() -> Result<FangyuanSceneLayout, FangyuanSceneLayoutLoadError>
 {
     FangyuanSceneLayout::load_validated_first_package_ron(FANGYUAN_HOME_SCENE_LAYOUT_PATH)
@@ -248,6 +438,28 @@ pub struct FangyuanSceneLayoutInstance {
     pub scale: [f32; 3],
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+}
+
+fn transform_prefab_primitive(
+    instance: &FangyuanSceneLayoutInstance,
+    prefab: &FangyuanPrefabDefinition,
+    primitive: &FangyuanPrimitiveBlueprint,
+) -> FangyuanPrimitiveBlueprint {
+    let pivot = prefab.pivot.unwrap_or([0.0, 0.0, 0.0]);
+    let mut transformed = primitive.clone();
+
+    transformed.position = [
+        instance.position[0] + (primitive.position[0] - pivot[0]) * instance.scale[0],
+        instance.position[1] + (primitive.position[1] - pivot[1]) * instance.scale[1],
+        instance.position[2] + (primitive.position[2] - pivot[2]) * instance.scale[2],
+    ];
+    transformed.size = [
+        primitive.size[0] * instance.scale[0],
+        primitive.size[1] * instance.scale[1],
+        primitive.size[2] * instance.scale[2],
+    ];
+
+    transformed
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -761,7 +973,9 @@ mod tests {
     use super::*;
     use crate::framework::fangyuan::{
         FangyuanPrefabDefinition, FangyuanPrimitiveBlueprint, FangyuanPrimitiveKind,
+        FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
     };
+    use bevy::prelude::Vec3;
 
     #[test]
     fn valid_layout_accepts_palette_paths_and_instances() {
@@ -1155,6 +1369,207 @@ mod tests {
     }
 
     #[test]
+    fn layout_compile_expands_multiple_instances_with_position_scale_and_pivot() {
+        let mut primitive = valid_primitive();
+        primitive.position = [1.0, 0.5, 2.0];
+        primitive.size = [0.5, 0.5, 1.0];
+        primitive.color = [0.1, 0.2, 0.3, 0.4];
+        let mut prefab = valid_prefab("stone_block", vec![primitive]);
+        prefab.pivot = Some([0.5, 0.0, 1.0]);
+        let palette = valid_palette(vec![prefab]);
+        let mut first = valid_instance("stone_block");
+        first.id = Some("stone_a".to_string());
+        first.position = [2.0, 0.0, -1.0];
+        first.scale = [2.0, 3.0, 0.5];
+        let mut second = valid_instance("stone_block");
+        second.id = Some("stone_b".to_string());
+        second.position = [-2.0, 0.0, 1.0];
+        second.scale = [1.0, 1.0, 1.0];
+        let layout = valid_layout(vec![first, second]);
+
+        let report = layout.compile_with_palette(&palette).unwrap();
+
+        assert_eq!(report.authored_prefab_primitives, 1);
+        assert_eq!(report.instance_count, 2);
+        assert_eq!(report.generated_primitives, 2);
+        assert_eq!(report.skipped_primitives, 0);
+        assert_eq!(report.used_prefab_count, 1);
+        assert!(report.warnings.is_empty());
+        assert_eq!(report.primitive_set.len(), 2);
+        assert_eq!(
+            report.primitive_set.primitives()[0].local_position,
+            Vec3::new(3.0, 1.5, -0.5)
+        );
+        assert_eq!(
+            report.primitive_set.primitives()[0].scale,
+            Vec3::new(1.0, 1.5, 0.5)
+        );
+        assert_eq!(
+            report.primitive_set.primitives()[1].local_position,
+            Vec3::new(-1.5, 0.5, 2.0)
+        );
+    }
+
+    #[test]
+    fn layout_compile_preserves_runtime_primitive_fields() {
+        let mut primitive = valid_primitive();
+        primitive.kind = FangyuanPrimitiveKind::Sphere;
+        primitive.role = Some(FangyuanPrimitiveRole::Trail);
+        primitive.color = [0.2, 0.3, 0.4, 0.5];
+        primitive.alpha = Some(0.6);
+        primitive.emissive = Some(2.5);
+        primitive.material_profile_id = Some("fx/trail:soft".to_string());
+        primitive.lifecycle = Some(FangyuanPrimitiveLifecycle::new(Some(10), Some(2), Some(20)));
+        let palette = valid_palette(vec![valid_prefab("glow_orb", vec![primitive])]);
+        let layout = valid_layout(vec![valid_instance("glow_orb")]);
+
+        let report = layout.compile_with_palette(&palette).unwrap();
+        let generated = &report.primitive_set.primitives()[0];
+        let color = generated.color.to_srgba();
+
+        assert_eq!(generated.kind, FangyuanPrimitiveKind::Sphere);
+        assert_eq!(generated.role, FangyuanPrimitiveRole::Trail);
+        assert_eq!(
+            (color.red, color.green, color.blue, color.alpha),
+            (0.2, 0.3, 0.4, 0.5)
+        );
+        assert_eq!(generated.alpha, 0.6);
+        assert_eq!(generated.emissive, 2.5);
+        assert_eq!(
+            generated.material_profile_id.as_deref(),
+            Some("fx/trail:soft")
+        );
+        assert_eq!(
+            generated.lifecycle,
+            FangyuanPrimitiveLifecycle::new(Some(10), Some(2), Some(20))
+        );
+    }
+
+    #[test]
+    fn layout_compile_skips_expanded_primitives_rejected_by_unified_validator() {
+        let primitive = FangyuanPrimitiveBlueprint::new(
+            FangyuanPrimitiveKind::Cube,
+            [2.1, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.2, 0.4, 0.6, 1.0],
+        );
+        let palette = valid_palette(vec![valid_prefab("stone_block", vec![primitive])]);
+        let mut instance = valid_instance("stone_block");
+        instance.id = Some("stone_a".to_string());
+        instance.position = [4.0, 0.0, 0.0];
+        let layout = valid_layout(vec![instance]);
+
+        let report = layout.compile_with_palette(&palette).unwrap();
+
+        assert_eq!(report.primitive_set.len(), 0);
+        assert_eq!(report.generated_primitives, 0);
+        assert_eq!(report.skipped_primitives, 1);
+        assert_eq!(report.warnings.len(), 1);
+        assert_eq!(report.warnings[0].instance_index, 0);
+        assert_eq!(report.warnings[0].instance_id.as_deref(), Some("stone_a"));
+        assert_eq!(report.warnings[0].prefab_id, "stone_block");
+        assert_eq!(report.warnings[0].prefab_primitive_index, 0);
+        assert!(matches!(
+            report.warnings[0].source,
+            FangyuanBlueprintValidationError::InvalidPrimitivePosition { .. }
+        ));
+    }
+
+    #[test]
+    fn layout_compile_rejects_missing_prefab_as_structured_error() {
+        let layout = valid_layout(vec![valid_instance("missing_prefab")]);
+        let palette = valid_palette(vec![valid_prefab("stone_block", vec![valid_primitive()])]);
+
+        let error = layout.compile_with_palette(&palette).unwrap_err();
+
+        assert_eq!(
+            error,
+            FangyuanSceneLayoutCompileError::LayoutValidationFailed(
+                FangyuanSceneLayoutValidationError::MissingPrefab {
+                    instance_index: 0,
+                    prefab: "missing_prefab".to_string(),
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn layout_compile_rejects_illegal_instance_as_structured_error() {
+        let layout = valid_layout(vec![valid_instance("Stone/Block")]);
+        let palette = valid_palette(vec![valid_prefab("stone_block", vec![valid_primitive()])]);
+
+        let error = layout.compile_with_palette(&palette).unwrap_err();
+
+        assert!(matches!(
+            error,
+            FangyuanSceneLayoutCompileError::LayoutValidationFailed(
+                FangyuanSceneLayoutValidationError::InvalidInstancePrefabId { .. }
+            )
+        ));
+    }
+
+    #[test]
+    fn layout_compile_rejects_invalid_palette_as_structured_error() {
+        let layout = valid_layout(vec![valid_instance("stone_block")]);
+        let mut palette = valid_palette(vec![valid_prefab("stone_block", vec![valid_primitive()])]);
+        palette.version = "2".to_string();
+
+        let error = layout.compile_with_palette(&palette).unwrap_err();
+
+        assert!(matches!(
+            error,
+            FangyuanSceneLayoutCompileError::PaletteValidationFailed(
+                FangyuanPrefabValidationError::UnsupportedVersion { .. }
+            )
+        ));
+    }
+
+    #[test]
+    fn layout_compile_rejects_budget_above_layout_limit() {
+        let mut layout = valid_layout(vec![
+            valid_instance("stone_block"),
+            valid_instance("stone_block"),
+        ]);
+        layout.max_primitives = 3;
+        let palette = valid_palette(vec![valid_prefab(
+            "stone_block",
+            vec![valid_primitive(), valid_primitive()],
+        )]);
+
+        let error = layout.compile_with_palette(&palette).unwrap_err();
+
+        assert_eq!(
+            error,
+            FangyuanSceneLayoutCompileError::LayoutValidationFailed(
+                FangyuanSceneLayoutValidationError::ExpandedPrimitiveBudgetExceeded {
+                    count: 4,
+                    limit: 3,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn home_scene_layout_asset_compiles_with_home_palette() {
+        let layout =
+            FangyuanSceneLayout::load_first_package_ron(FANGYUAN_HOME_SCENE_LAYOUT_PATH).unwrap();
+        let palette = FangyuanPrefabPalette::load_validated_first_package_ron(
+            crate::framework::fangyuan::FANGYUAN_HOME_PREFAB_PALETTE_PATH,
+        )
+        .unwrap();
+
+        let report = layout.compile_with_palette(&palette).unwrap();
+
+        assert_eq!(report.instance_count, layout.instances.len());
+        assert_eq!(report.skipped_primitives, 0);
+        assert!(report.generated_primitives > 0);
+        assert_eq!(report.generated_primitives, report.primitive_set.len());
+        assert!(report.used_prefab_count >= 4);
+        assert!(report.authored_prefab_primitives <= palette.max_primitives);
+        assert!(report.generated_primitives <= layout.max_primitives);
+    }
+
+    #[test]
     fn scene_layout_path_policy_reuses_fangyuan_first_package_rules() {
         assert_eq!(
             validate_fangyuan_scene_layout_asset_path(FANGYUAN_HOME_SCENE_LAYOUT_PATH),
@@ -1226,6 +1641,32 @@ mod tests {
 
             assert_parse_error_contains(
                 FangyuanSceneLayout::from_ron_str(&source),
+                field,
+                "Unexpected field",
+            );
+        }
+    }
+
+    #[test]
+    fn layout_rejects_nested_prefab_or_layout_fields_by_parse() {
+        for field in ["prefabs", "children", "prefab", "layouts", "layout"] {
+            let source = valid_layout_ron_with_extra_top_level_field(field);
+
+            assert_parse_error_contains(
+                FangyuanSceneLayout::from_ron_str(&source),
+                field,
+                "Unexpected field",
+            );
+        }
+    }
+
+    #[test]
+    fn palette_rejects_nested_prefab_fields_by_parse() {
+        for field in ["prefabs", "children", "prefab", "instances"] {
+            let source = valid_palette_ron_with_extra_prefab_field(field);
+
+            assert_parse_error_contains(
+                FangyuanPrefabPalette::from_ron_str(&source),
                 field,
                 "Unexpected field",
             );
@@ -1396,6 +1837,36 @@ mod tests {
             position: [0.0, 0.0, 0.0],
             scale: [1.0, 1.0, 1.0],
             {field}: "forbidden",
+        ),
+    ],
+)
+"#
+        )
+    }
+
+    fn valid_palette_ron_with_extra_prefab_field(field: &str) -> String {
+        format!(
+            r#"
+(
+    version: "1",
+    name: "starter_palette",
+    description: "",
+    max_primitives: 8,
+    bounds: (width: 8.0, depth: 8.0, height: 8.0),
+    prefabs: [
+        (
+            id: "stone_block",
+            name: "Stone Block",
+            description: "",
+            primitives: [
+                (
+                    kind: "cube",
+                    position: [0.0, 1.0, 0.0],
+                    size: [1.0, 1.0, 1.0],
+                    color: [0.2, 0.4, 0.6, 1.0],
+                ),
+            ],
+            {field}: [],
         ),
     ],
 )
