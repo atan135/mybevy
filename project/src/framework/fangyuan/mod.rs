@@ -14,10 +14,12 @@ mod avatar;
 mod blueprint;
 mod object;
 mod primitive;
+mod render_assets;
 mod stats;
 
 pub use avatar::*;
 pub use blueprint::*;
 pub use object::*;
 pub use primitive::*;
+pub use render_assets::*;
 pub use stats::*;

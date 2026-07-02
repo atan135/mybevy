@@ -1,11 +1,6 @@
-use bevy::{
-    mesh::{MeshBuilder, SphereKind, SphereMeshBuilder},
-    prelude::*,
-    render::batching::NoAutomaticBatching,
-};
+use bevy::{prelude::*, render::batching::NoAutomaticBatching};
 use serde::{Deserialize, Deserializer, de};
 use std::{
-    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -13,7 +8,8 @@ use std::{
 use crate::framework::{
     fangyuan::{
         FangyuanBlueprint, FangyuanObjectState, FangyuanPrimitive, FangyuanPrimitiveKind,
-        FangyuanPrimitiveSet,
+        FangyuanPrimitiveSet, FangyuanRenderAssetCache, fangyuan_render_transform_from_primitive,
+        fangyuan_standard_material_from_color,
     },
     scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId},
 };
@@ -23,8 +19,6 @@ pub(in crate::game) const FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH: &str = "fangyuan
 const FANGYUAN_HOME_LAYOUT_PATH: &str = "scenes/fangyuan_home/layout.ron";
 #[cfg(test)]
 const FANGYUAN_HOME_SCENE_MANIFEST_PATH: &str = "scenes/fangyuan_home/scene.ron";
-const FANGYUAN_HOME_BLUEPRINT_SPHERE_SECTORS: u32 = 24;
-const FANGYUAN_HOME_BLUEPRINT_SPHERE_STACKS: u32 = 12;
 
 pub(super) struct FangyuanHomePlugin;
 
@@ -252,32 +246,9 @@ impl<'de> Deserialize<'de> for FangyuanHomeLightKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct FangyuanHomeBlueprintColorKey([u8; 4]);
-
-impl FangyuanHomeBlueprintColorKey {
-    fn from_color(color: Color) -> Self {
-        let color = color.to_srgba();
-        Self([
-            quantize_color_channel(color.red),
-            quantize_color_channel(color.green),
-            quantize_color_channel(color.blue),
-            quantize_color_channel(color.alpha),
-        ])
-    }
-}
-
-impl std::hash::Hash for FangyuanHomeBlueprintColorKey {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-    }
-}
-
 #[derive(Clone, Debug, Resource, Default)]
 struct FangyuanHomeBlueprintRenderAssets {
-    unit_cube_mesh: Option<Handle<Mesh>>,
-    unit_sphere_mesh: Option<Handle<Mesh>>,
-    materials_by_color: HashMap<FangyuanHomeBlueprintColorKey, Handle<StandardMaterial>>,
+    cache: FangyuanRenderAssetCache,
 }
 
 impl FangyuanHomeBlueprintRenderAssets {
@@ -286,27 +257,7 @@ impl FangyuanHomeBlueprintRenderAssets {
         kind: FangyuanPrimitiveKind,
         meshes: &mut Assets<Mesh>,
     ) -> Handle<Mesh> {
-        match kind {
-            FangyuanPrimitiveKind::Cube => self
-                .unit_cube_mesh
-                .get_or_insert_with(|| meshes.add(Cuboid::from_size(Vec3::ONE)))
-                .clone(),
-            FangyuanPrimitiveKind::Sphere => self
-                .unit_sphere_mesh
-                .get_or_insert_with(|| {
-                    meshes.add(
-                        SphereMeshBuilder::new(
-                            0.5,
-                            SphereKind::Uv {
-                                sectors: FANGYUAN_HOME_BLUEPRINT_SPHERE_SECTORS,
-                                stacks: FANGYUAN_HOME_BLUEPRINT_SPHERE_STACKS,
-                            },
-                        )
-                        .build(),
-                    )
-                })
-                .clone(),
-        }
+        self.cache.unit_mesh(kind, meshes)
     }
 
     fn material(
@@ -314,15 +265,21 @@ impl FangyuanHomeBlueprintRenderAssets {
         color: Color,
         materials: &mut Assets<StandardMaterial>,
     ) -> Handle<StandardMaterial> {
-        let key = FangyuanHomeBlueprintColorKey::from_color(color);
-        self.materials_by_color
-            .entry(key)
-            .or_insert_with(|| materials.add(standard_material_from_color(color)))
-            .clone()
+        self.cache.material(color, materials)
     }
 
     fn material_count(&self) -> usize {
-        self.materials_by_color.len()
+        self.cache.material_count()
+    }
+
+    #[cfg(test)]
+    fn unit_cube_mesh(&self) -> Option<&Handle<Mesh>> {
+        self.cache.unit_cube_mesh()
+    }
+
+    #[cfg(test)]
+    fn unit_sphere_mesh(&self) -> Option<&Handle<Mesh>> {
+        self.cache.unit_sphere_mesh()
     }
 }
 
@@ -367,11 +324,12 @@ struct FangyuanHomeObject {
     session_id: SceneSessionId,
 }
 
-#[derive(Clone, Debug, Component, PartialEq, Eq)]
+#[derive(Clone, Debug, Component, PartialEq)]
 struct FangyuanHomeBlueprintPrimitiveVisual {
     session_id: SceneSessionId,
     kind: FangyuanPrimitiveKind,
     index: usize,
+    alpha: f32,
 }
 
 #[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
@@ -832,7 +790,7 @@ fn spawn_fangyuan_home_box(
     let entity = commands
         .spawn((
             Mesh3d(meshes.add(Cuboid::new(size.x, size.y, size.z))),
-            MeshMaterial3d(materials.add(standard_material_from_color(color))),
+            MeshMaterial3d(materials.add(fangyuan_standard_material_from_color(color))),
             NoAutomaticBatching,
             Transform::from_translation(translation),
             SceneOwned::new(session_id.clone()),
@@ -859,8 +817,7 @@ fn spawn_fangyuan_home_blueprint_primitive(
 ) -> Entity {
     let mesh = blueprint_assets.unit_mesh(primitive.kind, meshes);
     let material = blueprint_assets.material(primitive.color, materials);
-    let transform =
-        Transform::from_translation(primitive.local_position).with_scale(primitive.scale);
+    let transform = fangyuan_render_transform_from_primitive(primitive);
     let entity = commands
         .spawn((
             Mesh3d(mesh),
@@ -872,6 +829,7 @@ fn spawn_fangyuan_home_blueprint_primitive(
                 session_id: session_id.clone(),
                 kind: primitive.kind,
                 index,
+                alpha: primitive.alpha,
             },
             Name::new(format!(
                 "FangyuanHomeBlueprintPrimitive({}:{})",
@@ -1044,24 +1002,6 @@ fn color_from_rgb_alpha(rgb: [f32; 3], alpha: f32) -> Color {
     Color::srgba(rgb[0], rgb[1], rgb[2], alpha)
 }
 
-fn quantize_color_channel(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-fn standard_material_from_color(color: Color) -> StandardMaterial {
-    let alpha = color.to_srgba().alpha;
-    StandardMaterial {
-        base_color: color,
-        perceptual_roughness: 0.92,
-        alpha_mode: if alpha < 1.0 {
-            AlphaMode::Blend
-        } else {
-            AlphaMode::Opaque
-        },
-        ..default()
-    }
-}
-
 fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
     let session = stats
         .session_id
@@ -1134,7 +1074,8 @@ mod tests {
     use super::*;
     use crate::framework::fangyuan::{
         FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_BLUEPRINT_VERSION,
-        FangyuanBlueprintCompileReport, FangyuanPrimitiveBlueprint,
+        FangyuanBlueprintCompileReport, FangyuanPrimitiveBlueprint, FangyuanPrimitiveLifecycle,
+        FangyuanPrimitiveRole, FangyuanRenderColorKey,
     };
     use crate::framework::scene::prelude::{
         SceneCameraMode, SceneCameraProjection, SceneCommand, SceneEnterRequest, SceneExitRequest,
@@ -1586,10 +1527,10 @@ mod tests {
         let mut sphere_count = 0;
         let mut cube_mesh: Option<Handle<Mesh>> = None;
         let mut sphere_mesh: Option<Handle<Mesh>> = None;
-        let mut materials_by_color: HashMap<
-            FangyuanHomeBlueprintColorKey,
+        let mut materials_by_color: std::collections::HashMap<
+            FangyuanRenderColorKey,
             Handle<StandardMaterial>,
-        > = HashMap::new();
+        > = std::collections::HashMap::new();
         for (parent, owned, primitive, transform, mesh, material, _, name) in
             blueprint_primitive_entities
         {
@@ -1601,8 +1542,10 @@ mod tests {
             let expected_primitive =
                 &default_compile_report.primitive_set.primitives()[primitive.index];
             assert_eq!(primitive.kind, expected_primitive.kind);
+            assert_eq!(primitive.alpha, expected_primitive.alpha);
             assert_eq!(transform.translation, expected_primitive.local_position);
             assert_eq!(transform.scale, expected_primitive.scale);
+            assert_eq!(transform.rotation, Quat::IDENTITY);
             assert!(
                 app.world()
                     .resource::<Assets<Mesh>>()
@@ -1610,7 +1553,7 @@ mod tests {
                     .is_some(),
                 "blueprint primitive mesh should be inserted"
             );
-            let material_key = FangyuanHomeBlueprintColorKey::from_color(expected_primitive.color);
+            let material_key = FangyuanRenderColorKey::from_color(expected_primitive.color);
             match materials_by_color.get(&material_key) {
                 Some(existing_material) => assert_eq!(&material.0, existing_material),
                 None => {
@@ -1641,6 +1584,9 @@ mod tests {
         let cube_mesh = cube_mesh.expect("default blueprint should include cubes");
         let sphere_mesh = sphere_mesh.expect("default blueprint should include spheres");
         assert_ne!(cube_mesh, sphere_mesh);
+        let render_assets = app.world().resource::<FangyuanHomeBlueprintRenderAssets>();
+        assert_eq!(render_assets.unit_cube_mesh(), Some(&cube_mesh));
+        assert_eq!(render_assets.unit_sphere_mesh(), Some(&sphere_mesh));
         assert_eq!(
             mesh_position_size(
                 app.world()
@@ -1917,6 +1863,87 @@ mod tests {
                 "primitive entities must not carry Fangyuan object state"
             );
         }
+    }
+
+    #[test]
+    fn blueprint_primitives_map_runtime_fields_and_ignore_reserved_metadata_for_material_cache() {
+        let mut app = app_with_fangyuan_home_system();
+        let session_id = SceneSessionId::from("fangyuan-runtime-field-session");
+        let parent = app.world_mut().spawn_empty().id();
+        let color = Color::srgba(0.2, 0.4, 0.6, 0.35);
+        let primitive_set = FangyuanPrimitiveSet::from_primitives(vec![
+            FangyuanPrimitive::with_runtime_metadata(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::new(-1.0, 0.5, 0.25),
+                Vec3::new(1.0, 2.0, 3.0),
+                color,
+                FangyuanPrimitiveRole::Structure,
+                0.25,
+                0.0,
+                None,
+                FangyuanPrimitiveLifecycle::empty(),
+            ),
+            FangyuanPrimitive::with_runtime_metadata(
+                FangyuanPrimitiveKind::Sphere,
+                Vec3::new(1.0, 1.5, -0.25),
+                Vec3::splat(0.75),
+                color,
+                FangyuanPrimitiveRole::Decoration,
+                0.75,
+                4.0,
+                Some("home_reserved_profile".to_string()),
+                FangyuanPrimitiveLifecycle::new(Some(20), Some(2), Some(22)),
+            ),
+        ]);
+
+        spawn_blueprint_content_for_test(&mut app, parent, &session_id, &primitive_set);
+
+        let mut primitives = app.world_mut().query::<(
+            &FangyuanHomeBlueprintPrimitiveVisual,
+            &Transform,
+            &MeshMaterial3d<StandardMaterial>,
+        )>();
+        let mut records = primitives
+            .iter(app.world())
+            .filter(|(visual, _, _)| visual.session_id == session_id)
+            .map(|(visual, transform, material)| {
+                (
+                    visual.index,
+                    visual.alpha,
+                    transform.translation,
+                    transform.rotation,
+                    transform.scale,
+                    material.0.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| record.0);
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeBlueprintRenderAssets>()
+                .material_count(),
+            1
+        );
+        for (expected_index, ((index, alpha, translation, rotation, scale, _), primitive)) in
+            records.iter().zip(primitive_set.primitives()).enumerate()
+        {
+            assert_eq!(*index, expected_index);
+            assert_eq!(*alpha, primitive.alpha);
+            assert_eq!(*translation, primitive.local_position);
+            assert_eq!(*rotation, Quat::IDENTITY);
+            assert_eq!(*scale, primitive.scale);
+        }
+        assert_eq!(records[0].5, records[1].5);
+
+        let material = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&records[0].5)
+            .unwrap();
+        assert_eq!(material.base_color, color);
+        assert!(matches!(material.alpha_mode.clone(), AlphaMode::Blend));
     }
 
     #[test]
@@ -2512,7 +2539,7 @@ mod tests {
         primitive_set
             .primitives()
             .iter()
-            .map(|primitive| FangyuanHomeBlueprintColorKey::from_color(primitive.color))
+            .map(|primitive| FangyuanRenderColorKey::from_color(primitive.color))
             .collect::<std::collections::HashSet<_>>()
             .len()
     }

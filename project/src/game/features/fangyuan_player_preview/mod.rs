@@ -1,18 +1,11 @@
-use bevy::{
-    mesh::{MeshBuilder, SphereKind, SphereMeshBuilder},
-    prelude::*,
-    transform::TransformSystems,
-};
-use std::collections::HashMap;
+use bevy::{prelude::*, transform::TransformSystems};
 
 use crate::framework::fangyuan::{
     FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanAvatar, FangyuanObjectState,
-    FangyuanPrimitiveKind, FangyuanPrimitiveSet, load_fangyuan_minimal_player_primitive_set_or_log,
+    FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanRenderAssetCache,
+    fangyuan_render_transform_from_primitive, load_fangyuan_minimal_player_primitive_set_or_log,
 };
 use crate::game::navigation::AppUiMode;
-
-const FANGYUAN_PREVIEW_SPHERE_SECTORS: u32 = 24;
-const FANGYUAN_PREVIEW_SPHERE_STACKS: u32 = 12;
 
 pub(in crate::game) struct FangyuanPlayerPreviewPlugin;
 
@@ -66,26 +59,9 @@ struct FangyuanPlayerPrimitiveVisual {
     alpha: f32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-struct FangyuanPlayerPreviewColorKey([u8; 4]);
-
-impl FangyuanPlayerPreviewColorKey {
-    fn from_color(color: Color) -> Self {
-        let color = color.to_srgba();
-        Self([
-            quantize_color_channel(color.red),
-            quantize_color_channel(color.green),
-            quantize_color_channel(color.blue),
-            quantize_color_channel(color.alpha),
-        ])
-    }
-}
-
 #[derive(Clone, Debug, Resource, Default)]
 struct FangyuanPlayerPreviewRenderAssets {
-    unit_cube_mesh: Option<Handle<Mesh>>,
-    unit_sphere_mesh: Option<Handle<Mesh>>,
-    materials_by_color: HashMap<FangyuanPlayerPreviewColorKey, Handle<StandardMaterial>>,
+    cache: FangyuanRenderAssetCache,
 }
 
 impl FangyuanPlayerPreviewRenderAssets {
@@ -94,27 +70,7 @@ impl FangyuanPlayerPreviewRenderAssets {
         kind: FangyuanPrimitiveKind,
         meshes: &mut Assets<Mesh>,
     ) -> Handle<Mesh> {
-        match kind {
-            FangyuanPrimitiveKind::Cube => self
-                .unit_cube_mesh
-                .get_or_insert_with(|| meshes.add(Cuboid::from_size(Vec3::ONE)))
-                .clone(),
-            FangyuanPrimitiveKind::Sphere => self
-                .unit_sphere_mesh
-                .get_or_insert_with(|| {
-                    meshes.add(
-                        SphereMeshBuilder::new(
-                            0.5,
-                            SphereKind::Uv {
-                                sectors: FANGYUAN_PREVIEW_SPHERE_SECTORS,
-                                stacks: FANGYUAN_PREVIEW_SPHERE_STACKS,
-                            },
-                        )
-                        .build(),
-                    )
-                })
-                .clone(),
-        }
+        self.cache.unit_mesh(kind, meshes)
     }
 
     fn material(
@@ -122,15 +78,22 @@ impl FangyuanPlayerPreviewRenderAssets {
         color: Color,
         materials: &mut Assets<StandardMaterial>,
     ) -> Handle<StandardMaterial> {
-        self.materials_by_color
-            .entry(FangyuanPlayerPreviewColorKey::from_color(color))
-            .or_insert_with(|| materials.add(standard_material_from_color(color)))
-            .clone()
+        self.cache.material(color, materials)
     }
 
     #[cfg(test)]
     fn material_count(&self) -> usize {
-        self.materials_by_color.len()
+        self.cache.material_count()
+    }
+
+    #[cfg(test)]
+    fn unit_cube_mesh(&self) -> Option<&Handle<Mesh>> {
+        self.cache.unit_cube_mesh()
+    }
+
+    #[cfg(test)]
+    fn unit_sphere_mesh(&self) -> Option<&Handle<Mesh>> {
+        self.cache.unit_sphere_mesh()
     }
 }
 
@@ -177,8 +140,7 @@ fn spawn_fangyuan_player_primitive_visuals(
         for (index, primitive) in primitive_set.primitives().iter().enumerate() {
             let mesh = render_assets.unit_mesh(primitive.kind, &mut meshes);
             let material = render_assets.material(primitive.color, &mut materials);
-            let transform =
-                Transform::from_translation(primitive.local_position).with_scale(primitive.scale);
+            let transform = fangyuan_render_transform_from_primitive(primitive);
             let visual = commands
                 .spawn((
                     FangyuanPlayerPrimitiveVisual {
@@ -217,24 +179,6 @@ fn sync_fangyuan_player_transform(
         transform.translation = object_state.root_translation;
         transform.scale = object_state.root_scale;
         transform.rotation = Quat::IDENTITY;
-    }
-}
-
-fn quantize_color_channel(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-fn standard_material_from_color(color: Color) -> StandardMaterial {
-    let alpha = color.to_srgba().alpha;
-    StandardMaterial {
-        base_color: color,
-        perceptual_roughness: 0.92,
-        alpha_mode: if alpha < 1.0 {
-            AlphaMode::Blend
-        } else {
-            AlphaMode::Opaque
-        },
-        ..default()
     }
 }
 
@@ -506,13 +450,13 @@ mod tests {
         assert_eq!(spheres.len(), 2);
         assert_eq!(
             Some(&cubes[0].mesh),
-            render_assets.unit_cube_mesh.as_ref(),
+            render_assets.unit_cube_mesh(),
             "cube visual should reuse the cached unit cube mesh handle"
         );
         assert_eq!(cubes[0].mesh, cubes[1].mesh);
         assert_eq!(
             Some(&spheres[0].mesh),
-            render_assets.unit_sphere_mesh.as_ref(),
+            render_assets.unit_sphere_mesh(),
             "sphere visual should reuse the cached unit sphere mesh handle"
         );
         assert_eq!(spheres[0].mesh, spheres[1].mesh);
