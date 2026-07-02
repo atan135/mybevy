@@ -15,55 +15,71 @@ use super::{
 pub const FANGYUAN_AVATAR_BLUEPRINT_VERSION: &str = "1";
 pub const FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT: usize = 1000;
 pub const FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH: &str = "fangyuan/avatars/minimal_player.ron";
+pub const FANGYUAN_HOME_PREVIEW_BLUEPRINT_PATH: &str = "fangyuan/home_preview.ron";
 pub const FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT: usize = 2;
+pub const FANGYUAN_BLUEPRINT_VERSION: &str = FANGYUAN_AVATAR_BLUEPRINT_VERSION;
+pub const FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT: usize =
+    FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT;
 
+/// Shared Fangyuan RON v1 blueprint.
+///
+/// Player, home, and static-object previews should vary by caller semantics,
+/// default path, and logical root components. They share this top-level data
+/// shape and compile into `FangyuanPrimitiveSet`.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct FangyuanAvatarBlueprint {
+pub struct FangyuanBlueprint {
+    /// RON schema version. The current first-package format is `"1"`.
     pub version: String,
+    /// Human-readable blueprint identifier, not a gameplay entity identity.
     pub name: String,
+    /// Authoring note for inspectors and documentation.
     pub description: String,
+    /// Asset-authored primitive limit, capped by the framework hard limit.
     pub max_primitives: usize,
-    pub bounds: FangyuanAvatarBlueprintBounds,
+    /// Local authoring bounds used to reject primitives outside the object.
+    pub bounds: FangyuanBlueprintBounds,
+    /// Shared primitive authoring records compiled into runtime primitives.
     pub primitives: Vec<FangyuanPrimitiveBlueprint>,
 }
 
-impl FangyuanAvatarBlueprint {
+pub type FangyuanAvatarBlueprint = FangyuanBlueprint;
+
+impl FangyuanBlueprint {
     pub fn from_ron_str(source: &str) -> Result<Self, ron::error::SpannedError> {
         ron::from_str::<Self>(source)
     }
 
     pub fn load_first_package_ron(
         blueprint_path: impl AsRef<str>,
-    ) -> Result<Self, FangyuanAvatarBlueprintLoadError> {
+    ) -> Result<Self, FangyuanBlueprintLoadError> {
         let blueprint_path = blueprint_path.as_ref().trim();
-        validate_avatar_blueprint_asset_path(blueprint_path)
-            .map_err(FangyuanAvatarBlueprintLoadError::InvalidPath)?;
+        validate_fangyuan_blueprint_asset_path(blueprint_path)
+            .map_err(FangyuanBlueprintLoadError::InvalidPath)?;
 
-        let fs_path = first_package_avatar_blueprint_fs_path(blueprint_path).ok_or_else(|| {
-            FangyuanAvatarBlueprintLoadError::BlueprintNotFound(blueprint_path.to_string())
-        })?;
+        let fs_path =
+            first_package_fangyuan_blueprint_fs_path(blueprint_path).ok_or_else(|| {
+                FangyuanBlueprintLoadError::BlueprintNotFound(blueprint_path.to_string())
+            })?;
 
         let source = fs::read_to_string(&fs_path).map_err(|source| {
-            FangyuanAvatarBlueprintLoadError::ReadFailed {
+            FangyuanBlueprintLoadError::ReadFailed {
                 path: fs_path.clone(),
                 source,
             }
         })?;
 
-        Self::from_ron_str(&source).map_err(|source| {
-            FangyuanAvatarBlueprintLoadError::ParseFailed {
-                path: fs_path,
-                source,
-            }
+        Self::from_ron_str(&source).map_err(|source| FangyuanBlueprintLoadError::ParseFailed {
+            path: fs_path,
+            source,
         })
     }
 
-    pub fn validate(&self) -> Result<(), FangyuanAvatarBlueprintValidationError> {
-        if self.version != FANGYUAN_AVATAR_BLUEPRINT_VERSION {
-            return Err(FangyuanAvatarBlueprintValidationError::UnsupportedVersion {
+    pub fn validate(&self) -> Result<(), FangyuanBlueprintValidationError> {
+        if self.version != FANGYUAN_BLUEPRINT_VERSION {
+            return Err(FangyuanBlueprintValidationError::UnsupportedVersion {
                 found: self.version.clone(),
-                expected: FANGYUAN_AVATAR_BLUEPRINT_VERSION,
+                expected: FANGYUAN_BLUEPRINT_VERSION,
             });
         }
 
@@ -71,26 +87,24 @@ impl FangyuanAvatarBlueprint {
 
         let primitive_limit = self
             .max_primitives
-            .min(FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT);
+            .min(FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT);
         if self.primitives.len() > primitive_limit {
-            return Err(
-                FangyuanAvatarBlueprintValidationError::PrimitiveCountExceeded {
-                    count: self.primitives.len(),
-                    limit: primitive_limit,
-                    max_primitives: self.max_primitives,
-                    hard_limit: FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
-                },
-            );
+            return Err(FangyuanBlueprintValidationError::PrimitiveCountExceeded {
+                count: self.primitives.len(),
+                limit: primitive_limit,
+                max_primitives: self.max_primitives,
+                hard_limit: FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
+            });
         }
 
         for (index, primitive) in self.primitives.iter().enumerate() {
-            validate_avatar_primitive(index, primitive, &self.bounds)?;
+            validate_blueprint_primitive(index, primitive, &self.bounds)?;
         }
 
         Ok(())
     }
 
-    pub fn compile(&self) -> Result<FangyuanPrimitiveSet, FangyuanAvatarBlueprintValidationError> {
+    pub fn compile(&self) -> Result<FangyuanPrimitiveSet, FangyuanBlueprintValidationError> {
         self.validate()?;
 
         Ok(FangyuanPrimitiveSet::from_primitives(
@@ -121,24 +135,27 @@ impl FangyuanAvatarBlueprint {
 
     pub fn load_compiled_first_package_ron(
         blueprint_path: impl AsRef<str>,
-    ) -> Result<FangyuanPrimitiveSet, FangyuanAvatarBlueprintLoadError> {
+    ) -> Result<FangyuanPrimitiveSet, FangyuanBlueprintLoadError> {
         let blueprint_path = blueprint_path.as_ref();
         let blueprint = Self::load_first_package_ron(blueprint_path)?;
         blueprint
             .compile()
-            .map_err(FangyuanAvatarBlueprintLoadError::ValidationFailed)
+            .map_err(FangyuanBlueprintLoadError::ValidationFailed)
     }
 }
 
+/// Local authoring bounds for a shared Fangyuan blueprint.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct FangyuanAvatarBlueprintBounds {
+pub struct FangyuanBlueprintBounds {
     pub width: f32,
     pub depth: f32,
     pub height: f32,
 }
 
-impl FangyuanAvatarBlueprintBounds {
+pub type FangyuanAvatarBlueprintBounds = FangyuanBlueprintBounds;
+
+impl FangyuanBlueprintBounds {
     pub const fn new(width: f32, depth: f32, height: f32) -> Self {
         Self {
             width,
@@ -147,7 +164,7 @@ impl FangyuanAvatarBlueprintBounds {
         }
     }
 
-    pub fn validate(&self) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+    pub fn validate(&self) -> Result<(), FangyuanBlueprintValidationError> {
         validate_bounds_dimension("width", self.width)?;
         validate_bounds_dimension("depth", self.depth)?;
         validate_bounds_dimension("height", self.height)?;
@@ -155,29 +172,42 @@ impl FangyuanAvatarBlueprintBounds {
     }
 }
 
+/// Shared Fangyuan primitive authoring record.
+///
+/// These fields are intentionally shared by player and home/static-object
+/// blueprints; callers should not fork a second primitive data model.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FangyuanPrimitiveBlueprint {
+    /// Geometry kind. RON v1 accepts `cube` and `sphere`.
     #[serde(deserialize_with = "deserialize_primitive_kind")]
     pub kind: FangyuanPrimitiveKind,
+    /// Optional semantic role. Defaults from `kind` when omitted by legacy v1.
     #[serde(
         default,
         deserialize_with = "deserialize_optional_primitive_role",
         skip_serializing_if = "Option::is_none"
     )]
     pub role: Option<FangyuanPrimitiveRole>,
+    /// Local primitive center inside `bounds`.
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     pub position: [f32; 3],
+    /// Local primitive scale. Rotation is deliberately not part of RON v1.
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     pub size: [f32; 3],
+    /// SRGBA color. Alpha is also used as the legacy opacity default.
     #[serde(deserialize_with = "deserialize_f32_array_4")]
     pub color: [f32; 4],
+    /// Optional opacity override. Defaults to `color[3]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha: Option<f32>,
+    /// Optional emissive intensity reserved by the runtime model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive: Option<f32>,
+    /// Optional material profile id reserved by the runtime model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material_profile_id: Option<String>,
+    /// Optional lifecycle metadata reserved by the runtime model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<FangyuanPrimitiveLifecycle>,
 }
@@ -224,12 +254,24 @@ impl FangyuanPrimitiveBlueprint {
 
 pub fn load_fangyuan_minimal_player_blueprint()
 -> Result<FangyuanAvatarBlueprint, FangyuanAvatarBlueprintLoadError> {
-    FangyuanAvatarBlueprint::load_first_package_ron(FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH)
+    FangyuanBlueprint::load_first_package_ron(FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH)
 }
 
 pub fn load_fangyuan_minimal_player_primitive_set()
 -> Result<FangyuanPrimitiveSet, FangyuanAvatarBlueprintLoadError> {
-    FangyuanAvatarBlueprint::load_compiled_first_package_ron(FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH)
+    FangyuanBlueprint::load_compiled_first_package_ron(FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH)
+}
+
+pub fn load_fangyuan_blueprint_from_first_package_ron(
+    blueprint_path: impl AsRef<str>,
+) -> Result<FangyuanBlueprint, FangyuanBlueprintLoadError> {
+    FangyuanBlueprint::load_first_package_ron(blueprint_path)
+}
+
+pub fn load_fangyuan_primitive_set_from_first_package_ron(
+    blueprint_path: impl AsRef<str>,
+) -> Result<FangyuanPrimitiveSet, FangyuanBlueprintLoadError> {
+    FangyuanBlueprint::load_compiled_first_package_ron(blueprint_path)
 }
 
 pub fn load_fangyuan_minimal_player_primitive_set_or_log() -> Option<FangyuanPrimitiveSet> {
@@ -246,7 +288,7 @@ pub fn load_fangyuan_avatar_primitive_set_from_first_package_ron_or_log(
     blueprint_path: impl AsRef<str>,
 ) -> Option<FangyuanPrimitiveSet> {
     let blueprint_path = blueprint_path.as_ref();
-    match FangyuanAvatarBlueprint::load_compiled_first_package_ron(blueprint_path) {
+    match FangyuanBlueprint::load_compiled_first_package_ron(blueprint_path) {
         Ok(primitives) => Some(primitives),
         Err(error) => {
             error!("{error}");
@@ -256,7 +298,7 @@ pub fn load_fangyuan_avatar_primitive_set_from_first_package_ron_or_log(
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum FangyuanAvatarBlueprintValidationError {
+pub enum FangyuanBlueprintValidationError {
     UnsupportedVersion {
         found: String,
         expected: &'static str,
@@ -303,7 +345,9 @@ pub enum FangyuanAvatarBlueprintValidationError {
     },
 }
 
-impl FangyuanAvatarBlueprintValidationError {
+pub type FangyuanAvatarBlueprintValidationError = FangyuanBlueprintValidationError;
+
+impl FangyuanBlueprintValidationError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnsupportedVersion { .. } => "unsupported_version",
@@ -398,11 +442,11 @@ impl FangyuanAvatarBlueprintValidationError {
     }
 }
 
-impl fmt::Display for FangyuanAvatarBlueprintValidationError {
+impl fmt::Display for FangyuanBlueprintValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "fangyuan avatar blueprint validation error [{}] at {}: {}",
+            "fangyuan blueprint validation error [{}] at {}: {}",
             self.code(),
             self.field_path(),
             self.reason()
@@ -410,11 +454,11 @@ impl fmt::Display for FangyuanAvatarBlueprintValidationError {
     }
 }
 
-impl Error for FangyuanAvatarBlueprintValidationError {}
+impl Error for FangyuanBlueprintValidationError {}
 
 #[derive(Debug)]
-pub enum FangyuanAvatarBlueprintLoadError {
-    InvalidPath(FangyuanAvatarBlueprintPathError),
+pub enum FangyuanBlueprintLoadError {
+    InvalidPath(FangyuanBlueprintPathError),
     BlueprintNotFound(String),
     ReadFailed {
         path: PathBuf,
@@ -424,38 +468,37 @@ pub enum FangyuanAvatarBlueprintLoadError {
         path: PathBuf,
         source: ron::error::SpannedError,
     },
-    ValidationFailed(FangyuanAvatarBlueprintValidationError),
+    ValidationFailed(FangyuanBlueprintValidationError),
 }
 
-impl fmt::Display for FangyuanAvatarBlueprintLoadError {
+pub type FangyuanAvatarBlueprintLoadError = FangyuanBlueprintLoadError;
+
+impl fmt::Display for FangyuanBlueprintLoadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidPath(error) => write!(formatter, "{error}"),
             Self::BlueprintNotFound(path) => write!(
                 formatter,
-                "fangyuan avatar blueprint was not found under first package assets: {path}"
+                "fangyuan blueprint was not found under first package assets: {path}"
             ),
             Self::ReadFailed { path, source } => write!(
                 formatter,
-                "failed to read fangyuan avatar blueprint at {}: {source}",
+                "failed to read fangyuan blueprint at {}: {source}",
                 path.display()
             ),
             Self::ParseFailed { path, source } => write!(
                 formatter,
-                "failed to parse fangyuan avatar blueprint RON at {}: {source}",
+                "failed to parse fangyuan blueprint RON at {}: {source}",
                 path.display()
             ),
             Self::ValidationFailed(error) => {
-                write!(
-                    formatter,
-                    "fangyuan avatar blueprint validation failed: {error}"
-                )
+                write!(formatter, "fangyuan blueprint validation failed: {error}")
             }
         }
     }
 }
 
-impl Error for FangyuanAvatarBlueprintLoadError {
+impl Error for FangyuanBlueprintLoadError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::InvalidPath(error) => Some(error),
@@ -468,45 +511,52 @@ impl Error for FangyuanAvatarBlueprintLoadError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FangyuanAvatarBlueprintPathError {
+pub enum FangyuanBlueprintPathError {
     Empty,
     Absolute(String),
     Backslash(String),
     WindowsDrive(String),
     ParentOrEmptySegment(String),
+    OutsideFangyuanRoot(String),
 }
 
-impl fmt::Display for FangyuanAvatarBlueprintPathError {
+pub type FangyuanAvatarBlueprintPathError = FangyuanBlueprintPathError;
+
+impl fmt::Display for FangyuanBlueprintPathError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Empty => formatter.write_str("fangyuan avatar blueprint path must not be empty"),
+            Self::Empty => formatter.write_str("fangyuan blueprint path must not be empty"),
             Self::Absolute(path) => write!(
                 formatter,
-                "fangyuan avatar blueprint path must be relative to assets: {path}"
+                "fangyuan blueprint path must be relative to assets: {path}"
             ),
             Self::Backslash(path) => write!(
                 formatter,
-                "fangyuan avatar blueprint path must use forward slashes: {path}"
+                "fangyuan blueprint path must use forward slashes: {path}"
             ),
             Self::WindowsDrive(path) => write!(
                 formatter,
-                "fangyuan avatar blueprint path must not include a Windows drive prefix: {path}"
+                "fangyuan blueprint path must not include a Windows drive prefix: {path}"
             ),
             Self::ParentOrEmptySegment(path) => write!(
                 formatter,
-                "fangyuan avatar blueprint path must stay inside assets: {path}"
+                "fangyuan blueprint path must stay inside assets: {path}"
+            ),
+            Self::OutsideFangyuanRoot(path) => write!(
+                formatter,
+                "fangyuan blueprint path must stay inside assets/fangyuan: {path}"
             ),
         }
     }
 }
 
-impl Error for FangyuanAvatarBlueprintPathError {}
+impl Error for FangyuanBlueprintPathError {}
 
-fn validate_avatar_primitive(
+fn validate_blueprint_primitive(
     index: usize,
     primitive: &FangyuanPrimitiveBlueprint,
-    bounds: &FangyuanAvatarBlueprintBounds,
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+    bounds: &FangyuanBlueprintBounds,
+) -> Result<(), FangyuanBlueprintValidationError> {
     validate_primitive_kind(index, primitive.kind)?;
     validate_primitive_position(index, primitive.position, bounds)?;
     validate_primitive_size(index, primitive.size)?;
@@ -521,7 +571,7 @@ fn validate_avatar_primitive(
 fn validate_primitive_kind(
     _index: usize,
     kind: FangyuanPrimitiveKind,
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+) -> Result<(), FangyuanBlueprintValidationError> {
     match kind {
         FangyuanPrimitiveKind::Cube | FangyuanPrimitiveKind::Sphere => Ok(()),
     }
@@ -530,7 +580,7 @@ fn validate_primitive_kind(
 fn validate_primitive_role(
     _index: usize,
     role: FangyuanPrimitiveRole,
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+) -> Result<(), FangyuanBlueprintValidationError> {
     match role {
         FangyuanPrimitiveRole::Structure
         | FangyuanPrimitiveRole::Core
@@ -547,19 +597,19 @@ fn validate_primitive_role(
 fn validate_bounds_dimension(
     field: &'static str,
     value: f32,
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+) -> Result<(), FangyuanBlueprintValidationError> {
     if value.is_finite() && value > 0.0 {
         Ok(())
     } else {
-        Err(FangyuanAvatarBlueprintValidationError::InvalidBoundsDimension { field, value })
+        Err(FangyuanBlueprintValidationError::InvalidBoundsDimension { field, value })
     }
 }
 
 fn validate_primitive_position(
     index: usize,
     position: [f32; 3],
-    bounds: &FangyuanAvatarBlueprintBounds,
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+    bounds: &FangyuanBlueprintBounds,
+) -> Result<(), FangyuanBlueprintValidationError> {
     let ranges = [
         (-bounds.width * 0.5, bounds.width * 0.5),
         (0.0, bounds.height),
@@ -569,15 +619,13 @@ fn validate_primitive_position(
     for (axis, value) in position.into_iter().enumerate() {
         let (min, max) = ranges[axis];
         if !value.is_finite() || value < min || value > max {
-            return Err(
-                FangyuanAvatarBlueprintValidationError::InvalidPrimitivePosition {
-                    index,
-                    axis,
-                    value,
-                    min,
-                    max,
-                },
-            );
+            return Err(FangyuanBlueprintValidationError::InvalidPrimitivePosition {
+                index,
+                axis,
+                value,
+                min,
+                max,
+            });
         }
     }
 
@@ -587,12 +635,14 @@ fn validate_primitive_position(
 fn validate_primitive_size(
     index: usize,
     size: [f32; 3],
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+) -> Result<(), FangyuanBlueprintValidationError> {
     for (axis, value) in size.into_iter().enumerate() {
         if !value.is_finite() || value <= 0.0 {
-            return Err(
-                FangyuanAvatarBlueprintValidationError::InvalidPrimitiveSize { index, axis, value },
-            );
+            return Err(FangyuanBlueprintValidationError::InvalidPrimitiveSize {
+                index,
+                axis,
+                value,
+            });
         }
     }
 
@@ -603,28 +653,26 @@ fn validate_primitive_above_ground(
     index: usize,
     position: [f32; 3],
     size: [f32; 3],
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+) -> Result<(), FangyuanBlueprintValidationError> {
     let bottom_y = position[1] - size[1] * 0.5;
     if bottom_y >= 0.0 {
         Ok(())
     } else {
-        Err(FangyuanAvatarBlueprintValidationError::PrimitiveBelowGround { index, bottom_y })
+        Err(FangyuanBlueprintValidationError::PrimitiveBelowGround { index, bottom_y })
     }
 }
 
 fn validate_primitive_color(
     index: usize,
     color: [f32; 4],
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+) -> Result<(), FangyuanBlueprintValidationError> {
     for (channel, value) in color.into_iter().enumerate() {
         if !(0.0..=1.0).contains(&value) {
-            return Err(
-                FangyuanAvatarBlueprintValidationError::InvalidPrimitiveColor {
-                    index,
-                    channel,
-                    value,
-                },
-            );
+            return Err(FangyuanBlueprintValidationError::InvalidPrimitiveColor {
+                index,
+                channel,
+                value,
+            });
         }
     }
 
@@ -634,63 +682,60 @@ fn validate_primitive_color(
 fn validate_primitive_alpha(
     index: usize,
     alpha: f32,
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+) -> Result<(), FangyuanBlueprintValidationError> {
     if alpha.is_finite() && (0.0..=1.0).contains(&alpha) {
         Ok(())
     } else {
-        Err(
-            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveAlpha {
-                index,
-                value: alpha,
-            },
-        )
+        Err(FangyuanBlueprintValidationError::InvalidPrimitiveAlpha {
+            index,
+            value: alpha,
+        })
     }
 }
 
 fn validate_primitive_emissive(
     index: usize,
     emissive: f32,
-) -> Result<(), FangyuanAvatarBlueprintValidationError> {
+) -> Result<(), FangyuanBlueprintValidationError> {
     if emissive.is_finite() && (0.0..=FANGYUAN_PRIMITIVE_MAX_EMISSIVE).contains(&emissive) {
         Ok(())
     } else {
-        Err(
-            FangyuanAvatarBlueprintValidationError::InvalidPrimitiveEmissive {
-                index,
-                value: emissive,
-                max: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
-            },
-        )
+        Err(FangyuanBlueprintValidationError::InvalidPrimitiveEmissive {
+            index,
+            value: emissive,
+            max: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
+        })
     }
 }
 
-fn validate_avatar_blueprint_asset_path(
+pub fn validate_fangyuan_blueprint_asset_path(
     path: &str,
-) -> Result<(), FangyuanAvatarBlueprintPathError> {
+) -> Result<(), FangyuanBlueprintPathError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Err(FangyuanAvatarBlueprintPathError::Empty);
+        return Err(FangyuanBlueprintPathError::Empty);
     }
     if trimmed.contains('\\') {
-        return Err(FangyuanAvatarBlueprintPathError::Backslash(
-            trimmed.to_string(),
-        ));
+        return Err(FangyuanBlueprintPathError::Backslash(trimmed.to_string()));
     }
     if has_windows_drive_prefix(trimmed) {
-        return Err(FangyuanAvatarBlueprintPathError::WindowsDrive(
+        return Err(FangyuanBlueprintPathError::WindowsDrive(
             trimmed.to_string(),
         ));
     }
     if Path::new(trimmed).is_absolute() || trimmed.starts_with('/') {
-        return Err(FangyuanAvatarBlueprintPathError::Absolute(
-            trimmed.to_string(),
-        ));
+        return Err(FangyuanBlueprintPathError::Absolute(trimmed.to_string()));
     }
     if trimmed
         .split('/')
         .any(|segment| segment.is_empty() || segment == "..")
     {
-        return Err(FangyuanAvatarBlueprintPathError::ParentOrEmptySegment(
+        return Err(FangyuanBlueprintPathError::ParentOrEmptySegment(
+            trimmed.to_string(),
+        ));
+    }
+    if trimmed != "fangyuan" && !trimmed.starts_with("fangyuan/") {
+        return Err(FangyuanBlueprintPathError::OutsideFangyuanRoot(
             trimmed.to_string(),
         ));
     }
@@ -703,7 +748,7 @@ fn has_windows_drive_prefix(path: &str) -> bool {
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
-fn first_package_avatar_blueprint_fs_path(blueprint_path: &str) -> Option<PathBuf> {
+fn first_package_fangyuan_blueprint_fs_path(blueprint_path: &str) -> Option<PathBuf> {
     first_package_asset_root_candidates()
         .into_iter()
         .map(|root| root.join(Path::new(blueprint_path)))
@@ -849,7 +894,7 @@ mod tests {
         let blueprint = load_fangyuan_minimal_player_blueprint().unwrap();
         let primitive_set = blueprint.compile().unwrap();
 
-        assert_eq!(blueprint.version, FANGYUAN_AVATAR_BLUEPRINT_VERSION);
+        assert_eq!(blueprint.version, FANGYUAN_BLUEPRINT_VERSION);
         assert_eq!(blueprint.name, "minimal_player");
         assert_eq!(
             blueprint.primitives.len(),
@@ -891,6 +936,167 @@ mod tests {
         assert_eq!(
             (color.red, color.green, color.blue, color.alpha),
             (0.25, 0.45, 0.95, 1.0)
+        );
+    }
+
+    #[test]
+    fn shared_blueprint_entry_loads_minimal_player_and_home_preview_paths() {
+        let player =
+            load_fangyuan_blueprint_from_first_package_ron(FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH)
+                .unwrap();
+        let home =
+            load_fangyuan_blueprint_from_first_package_ron(FANGYUAN_HOME_PREVIEW_BLUEPRINT_PATH)
+                .unwrap();
+
+        assert_eq!(player.version, FANGYUAN_BLUEPRINT_VERSION);
+        assert_eq!(player.name, "minimal_player");
+        assert_eq!(player.description, "最小方圆玩家外观");
+        assert_eq!(
+            player.max_primitives,
+            FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT
+        );
+        assert_eq!(player.bounds, FangyuanBlueprintBounds::new(2.0, 2.0, 3.0));
+        assert_eq!(
+            player.primitives.len(),
+            FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT
+        );
+
+        assert_eq!(home.version, FANGYUAN_BLUEPRINT_VERSION);
+        assert_eq!(home.name, "home_preview");
+        assert_eq!(home.max_primitives, FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT);
+        assert_eq!(home.bounds, FangyuanBlueprintBounds::new(40.0, 40.0, 20.0));
+        assert!(!home.description.is_empty());
+        assert!(!home.primitives.is_empty());
+    }
+
+    #[test]
+    fn shared_blueprint_entry_compiles_minimal_player_to_primitive_set() {
+        let player = load_fangyuan_primitive_set_from_first_package_ron(
+            FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH,
+        )
+        .unwrap();
+
+        assert_eq!(player.len(), FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT);
+        assert!(
+            player
+                .primitives()
+                .iter()
+                .any(|primitive| primitive.kind == FangyuanPrimitiveKind::Cube)
+        );
+        assert!(
+            player
+                .primitives()
+                .iter()
+                .any(|primitive| primitive.kind == FangyuanPrimitiveKind::Sphere)
+        );
+    }
+
+    #[test]
+    fn avatar_blueprint_name_remains_compatible_alias_for_shared_entry() {
+        let blueprint: FangyuanAvatarBlueprint =
+            FangyuanBlueprint::load_first_package_ron(FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH)
+                .unwrap();
+        let primitive_set = FangyuanAvatarBlueprint::load_compiled_first_package_ron(
+            FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH,
+        )
+        .unwrap();
+
+        assert_eq!(blueprint.name, "minimal_player");
+        assert_eq!(primitive_set.len(), FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT);
+    }
+
+    #[test]
+    fn fangyuan_blueprint_path_policy_allows_only_fangyuan_first_package_paths() {
+        for path in [
+            FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH,
+            FANGYUAN_HOME_PREVIEW_BLUEPRINT_PATH,
+        ] {
+            assert_eq!(validate_fangyuan_blueprint_asset_path(path), Ok(()));
+        }
+
+        assert_eq!(
+            validate_fangyuan_blueprint_asset_path("scenes/fangyuan_home/layout.ron"),
+            Err(FangyuanBlueprintPathError::OutsideFangyuanRoot(
+                "scenes/fangyuan_home/layout.ron".to_string()
+            ))
+        );
+        assert_eq!(
+            validate_fangyuan_blueprint_asset_path("../fangyuan/home_preview.ron"),
+            Err(FangyuanBlueprintPathError::ParentOrEmptySegment(
+                "../fangyuan/home_preview.ron".to_string()
+            ))
+        );
+        assert_eq!(
+            validate_fangyuan_blueprint_asset_path("fangyuan\\home_preview.ron"),
+            Err(FangyuanBlueprintPathError::Backslash(
+                "fangyuan\\home_preview.ron".to_string()
+            ))
+        );
+        assert!(matches!(
+            validate_fangyuan_blueprint_asset_path("C:/project/assets/fangyuan/home_preview.ron"),
+            Err(FangyuanBlueprintPathError::WindowsDrive(_))
+        ));
+        assert!(matches!(
+            validate_fangyuan_blueprint_asset_path("/fangyuan/home_preview.ron"),
+            Err(FangyuanBlueprintPathError::Absolute(_))
+        ));
+    }
+
+    #[test]
+    fn shared_blueprint_shape_documents_top_level_and_primitive_semantics() {
+        let mut primitive = FangyuanPrimitiveBlueprint::new(
+            FangyuanPrimitiveKind::Sphere,
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.2, 0.3, 0.4, 0.5],
+        );
+        primitive.role = Some(FangyuanPrimitiveRole::Decoration);
+        primitive.alpha = Some(0.4);
+        primitive.emissive = Some(1.5);
+        primitive.material_profile_id = Some("shared_preview".to_string());
+        primitive.lifecycle = Some(FangyuanPrimitiveLifecycle::new(Some(8), Some(2), Some(10)));
+        let blueprint = FangyuanBlueprint {
+            version: FANGYUAN_BLUEPRINT_VERSION.to_string(),
+            name: "shared_entry".to_string(),
+            description: "shared player/home/static object primitive schema".to_string(),
+            max_primitives: FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT,
+            bounds: FangyuanBlueprintBounds::new(4.0, 4.0, 4.0),
+            primitives: vec![primitive],
+        };
+
+        let primitive_set = blueprint.compile().unwrap();
+        let primitive = &primitive_set.primitives()[0];
+
+        assert_eq!(blueprint.version, FANGYUAN_BLUEPRINT_VERSION);
+        assert_eq!(blueprint.name, "shared_entry");
+        assert!(!blueprint.description.is_empty());
+        assert_eq!(
+            blueprint.max_primitives,
+            FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT
+        );
+        assert_eq!(
+            blueprint.bounds,
+            FangyuanBlueprintBounds::new(4.0, 4.0, 4.0)
+        );
+        assert_eq!(blueprint.primitives.len(), 1);
+
+        assert_eq!(primitive.kind, FangyuanPrimitiveKind::Sphere);
+        assert_eq!(primitive.role, FangyuanPrimitiveRole::Decoration);
+        assert_eq!(primitive.local_position, Vec3::new(0.0, 1.0, 0.0));
+        assert_eq!(primitive.scale, Vec3::ONE);
+        assert_eq!(
+            primitive.color.to_srgba(),
+            Color::srgba(0.2, 0.3, 0.4, 0.5).to_srgba()
+        );
+        assert_eq!(primitive.alpha, 0.4);
+        assert_eq!(primitive.emissive, 1.5);
+        assert_eq!(
+            primitive.material_profile_id.as_deref(),
+            Some("shared_preview")
+        );
+        assert_eq!(
+            primitive.lifecycle,
+            FangyuanPrimitiveLifecycle::new(Some(8), Some(2), Some(10))
         );
     }
 
