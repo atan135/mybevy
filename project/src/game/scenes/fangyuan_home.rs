@@ -11,7 +11,10 @@ use std::{
 };
 
 use crate::framework::{
-    fangyuan::{FangyuanBlueprint, FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet},
+    fangyuan::{
+        FangyuanBlueprint, FangyuanObjectState, FangyuanPrimitive, FangyuanPrimitiveKind,
+        FangyuanPrimitiveSet,
+    },
     scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId},
 };
 
@@ -360,6 +363,11 @@ struct FangyuanHomeBlueprintContent {
 }
 
 #[derive(Clone, Debug, Component, PartialEq, Eq)]
+struct FangyuanHomeObject {
+    session_id: SceneSessionId,
+}
+
+#[derive(Clone, Debug, Component, PartialEq, Eq)]
 struct FangyuanHomeBlueprintPrimitiveVisual {
     session_id: SceneSessionId,
     kind: FangyuanPrimitiveKind,
@@ -615,8 +623,13 @@ fn spawn_fangyuan_home_blueprint_content(
             FangyuanHomeBlueprintContent {
                 session_id: session_id.clone(),
             },
+            FangyuanHomeObject {
+                session_id: session_id.clone(),
+            },
+            primitive_set.clone(),
+            FangyuanObjectState::default(),
             Transform::default(),
-            Name::new(format!("FangyuanHomeBlueprintContent({session_id})")),
+            Name::new(format!("FangyuanHomeObject({session_id})")),
         ))
         .id();
     commands.entity(parent).add_child(content);
@@ -1480,22 +1493,34 @@ mod tests {
             &ChildOf,
             &SceneOwned,
             &FangyuanHomeBlueprintContent,
+            &FangyuanHomeObject,
+            &FangyuanPrimitiveSet,
+            &FangyuanObjectState,
             &Transform,
             &Name,
         )>();
         let blueprint_content_entities = blueprint_content.iter(app.world()).collect::<Vec<_>>();
         assert_eq!(blueprint_content_entities.len(), 1);
 
-        let (blueprint_entity, parent, owned, blueprint_content, transform, name) =
-            blueprint_content_entities[0];
+        let (
+            blueprint_entity,
+            parent,
+            owned,
+            blueprint_content,
+            home_object,
+            primitive_set,
+            object_state,
+            transform,
+            name,
+        ) = blueprint_content_entities[0];
         assert_eq!(parent.parent(), content_entity);
         assert_eq!(owned.session_id, session_id);
         assert_eq!(blueprint_content.session_id, session_id);
+        assert_eq!(home_object.session_id, session_id);
+        assert_eq!(primitive_set, &default_compile_report.primitive_set);
+        assert_eq!(object_state, &FangyuanObjectState::default());
         assert_eq!(transform, &Transform::default());
-        assert_eq!(
-            name.as_str(),
-            "FangyuanHomeBlueprintContent(fangyuan-session)"
-        );
+        assert_eq!(name.as_str(), "FangyuanHomeObject(fangyuan-session)");
 
         let mut visuals = app.world_mut().query::<(
             Entity,
@@ -1765,6 +1790,7 @@ mod tests {
             .count();
         assert_eq!(visual_sessions, EXPECTED_TOTAL_VISUALS);
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
             EXPECTED_DEFAULT_BLUEPRINT_GENERATED
@@ -1841,8 +1867,22 @@ mod tests {
             &FangyuanHomeBlueprintPrimitiveVisual,
             Option<&FangyuanHomeVisual>,
             Option<&FangyuanHomeContent>,
+            Option<&FangyuanHomeBlueprintContent>,
+            Option<&FangyuanHomeObject>,
+            Option<&FangyuanPrimitiveSet>,
+            Option<&FangyuanObjectState>,
         )>();
-        for (entity, primitive, visual, content) in entity_query.iter(app.world()) {
+        for (
+            entity,
+            primitive,
+            visual,
+            content,
+            blueprint_content,
+            home_object,
+            primitive_set,
+            object_state,
+        ) in entity_query.iter(app.world())
+        {
             if primitive.session_id != session_id {
                 continue;
             }
@@ -1859,6 +1899,22 @@ mod tests {
             assert!(
                 content.is_none(),
                 "primitive entities must not carry base content markers"
+            );
+            assert!(
+                blueprint_content.is_none(),
+                "primitive entities must not carry blueprint content markers"
+            );
+            assert!(
+                home_object.is_none(),
+                "primitive entities must not carry home object markers"
+            );
+            assert!(
+                primitive_set.is_none(),
+                "primitive entities must not own the logical primitive set"
+            );
+            assert!(
+                object_state.is_none(),
+                "primitive entities must not carry Fangyuan object state"
             );
         }
     }
@@ -1893,6 +1949,7 @@ mod tests {
         app.world_mut().write_message(SceneCommand::Enter(request));
         app.update();
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
 
         let blueprint = pressure_blueprint(PRESSURE_PRIMITIVES);
         let compile_report = blueprint.compile_skipping_invalid_primitives().unwrap();
@@ -1902,6 +1959,7 @@ mod tests {
         let base_content = fangyuan_content_entity(&mut app, &session_id)
             .expect("fangyuan content root should exist before pressure preview");
         clear_blueprint_content_once(&mut app, &session_id);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
 
         spawn_blueprint_content_for_test(
@@ -1911,6 +1969,7 @@ mod tests {
             &compile_report.primitive_set,
         );
 
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
             PRESSURE_PRIMITIVES
@@ -1926,6 +1985,7 @@ mod tests {
         );
         clear_blueprint_content_once(&mut app, &session_id);
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
 
         app.world_mut()
@@ -1937,6 +1997,7 @@ mod tests {
         assert!(counts.is_empty());
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 0);
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
     }
 
     #[test]
@@ -1967,6 +2028,7 @@ mod tests {
             EXPECTED_TOTAL_VISUALS
         );
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
             EXPECTED_DEFAULT_BLUEPRINT_GENERATED
@@ -1982,6 +2044,7 @@ mod tests {
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 0);
         assert_eq!(fangyuan_visual_count(&mut app, &session_id), 0);
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<SceneRuntime>().active_session_id(),
@@ -2017,6 +2080,7 @@ mod tests {
             EXPECTED_TOTAL_VISUALS
         );
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
             EXPECTED_DEFAULT_BLUEPRINT_GENERATED
@@ -2044,6 +2108,7 @@ mod tests {
             EXPECTED_TOTAL_VISUALS
         );
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
@@ -2089,10 +2154,13 @@ mod tests {
             EXPECTED_TOTAL_VISUALS
         );
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
             EXPECTED_DEFAULT_BLUEPRINT_GENERATED
         );
+        let previous_home_object = fangyuan_home_object_entity(&mut app, &session_id)
+            .expect("initial home object should exist before reload");
 
         app.world_mut()
             .write_message(FangyuanHomeBlueprintCommand::Reload);
@@ -2104,9 +2172,27 @@ mod tests {
             EXPECTED_TOTAL_VISUALS
         );
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
             EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+        );
+        let reloaded_home_object = fangyuan_home_object_entity(&mut app, &session_id)
+            .expect("reloaded home object should exist after reload");
+        assert_ne!(reloaded_home_object, previous_home_object);
+        let reloaded_home_object_ref = app.world().entity(reloaded_home_object);
+        assert_eq!(
+            reloaded_home_object_ref
+                .get::<FangyuanPrimitiveSet>()
+                .unwrap()
+                .len(),
+            EXPECTED_DEFAULT_BLUEPRINT_GENERATED
+        );
+        assert_eq!(
+            reloaded_home_object_ref
+                .get::<FangyuanObjectState>()
+                .unwrap(),
+            &FangyuanObjectState::default()
         );
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
@@ -2139,6 +2225,8 @@ mod tests {
             EXPECTED_TOTAL_VISUALS
         );
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_entity(&mut app, &session_id), None);
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
@@ -2161,6 +2249,7 @@ mod tests {
 
         assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
             EXPECTED_DEFAULT_BLUEPRINT_GENERATED
@@ -2176,6 +2265,8 @@ mod tests {
             EXPECTED_TOTAL_VISUALS
         );
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_entity(&mut app, &session_id), None);
         assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
@@ -2198,6 +2289,7 @@ mod tests {
             EXPECTED_TOTAL_VISUALS
         );
         assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
         assert_eq!(
             fangyuan_blueprint_primitive_count(&mut app, &session_id),
             EXPECTED_DEFAULT_BLUEPRINT_GENERATED
@@ -2241,6 +2333,22 @@ mod tests {
             .iter(app.world())
             .filter(|content| content.session_id == *session_id)
             .count()
+    }
+
+    fn fangyuan_home_object_count(app: &mut App, session_id: &SceneSessionId) -> usize {
+        let mut objects = app.world_mut().query::<&FangyuanHomeObject>();
+        objects
+            .iter(app.world())
+            .filter(|object| object.session_id == *session_id)
+            .count()
+    }
+
+    fn fangyuan_home_object_entity(app: &mut App, session_id: &SceneSessionId) -> Option<Entity> {
+        let mut objects = app.world_mut().query::<(Entity, &FangyuanHomeObject)>();
+        objects
+            .iter(app.world())
+            .find(|(_, object)| object.session_id == *session_id)
+            .map(|(entity, _)| entity)
     }
 
     fn fangyuan_blueprint_primitive_count(app: &mut App, session_id: &SceneSessionId) -> usize {
