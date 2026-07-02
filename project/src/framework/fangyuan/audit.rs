@@ -1,9 +1,9 @@
-use bevy::prelude::Vec3;
+use bevy::prelude::{Color, Vec3};
 
 use super::{
     FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
-    FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanPrimitive, FangyuanPrimitiveRoleDistribution,
-    FangyuanPrimitiveSet,
+    FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanPrimitive, FangyuanPrimitiveKind,
+    FangyuanPrimitiveRoleDistribution, FangyuanPrimitiveSet,
 };
 
 /// Unified Fangyuan audit report shared by later blueprint, prefab, layout, and
@@ -46,6 +46,20 @@ impl FangyuanAuditReport {
 
     pub fn sort_findings(&mut self) {
         self.findings.sort();
+    }
+
+    pub fn apply_primitive_budget_stats(&mut self, stats: &FangyuanPrimitiveBudgetStats) {
+        self.summary.authored_primitives = stats.authored_primitives;
+        self.summary.generated_primitives = stats.generated_primitives;
+        self.summary.skipped_primitives = stats.skipped_primitives;
+        self.summary.cube_count = stats.cube_count;
+        self.summary.sphere_count = stats.sphere_count;
+        self.summary.color_count = stats.color_count;
+        self.summary.material_count = stats.material_profile_count;
+        self.summary.alpha_count = stats.alpha_count;
+        self.summary.emissive_count = stats.emissive_count;
+        self.summary.lifecycle_count = stats.lifecycle_count.total_with_lifecycle;
+        self.summary.role_distribution = stats.role_distribution;
     }
 
     pub fn refresh_summary_and_status(&mut self) {
@@ -153,6 +167,9 @@ pub struct FangyuanPrimitiveBudgetStats {
     pub skipped_primitives: usize,
     pub expanded_primitives: usize,
     pub runtime_primitives: usize,
+    pub cube_count: usize,
+    pub sphere_count: usize,
+    pub color_count: usize,
     pub total_volume: f32,
     pub max_primitive_extent: f32,
     pub max_primitive_volume: f32,
@@ -178,11 +195,17 @@ impl FangyuanPrimitiveBudgetStats {
             expanded_primitives: primitives.len(),
             ..Default::default()
         };
+        let mut colors = BTreeSet::new();
         let mut material_profiles = BTreeSet::new();
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
 
         for primitive in primitives {
+            match primitive.kind() {
+                FangyuanPrimitiveKind::Cube => stats.cube_count += 1,
+                FangyuanPrimitiveKind::Sphere => stats.sphere_count += 1,
+            }
+
             let scale = primitive.scale().abs();
             let extent = scale.max_element();
             let volume = scale.x * scale.y * scale.z;
@@ -193,6 +216,9 @@ impl FangyuanPrimitiveBudgetStats {
             stats.max_primitive_extent = stats.max_primitive_extent.max(extent);
             stats.max_primitive_volume = stats.max_primitive_volume.max(volume);
             stats.role_distribution.increment(primitive.role());
+            colors.insert(FangyuanAuditPrimitiveColorKey::from_color(
+                primitive.color(),
+            ));
             min = min.min(center - half);
             max = max.max(center + half);
 
@@ -213,6 +239,7 @@ impl FangyuanPrimitiveBudgetStats {
         if !primitives.is_empty() {
             stats.bounds_size = max - min;
         }
+        stats.color_count = colors.len();
         stats.material_profile_count = material_profiles.len();
         stats
     }
@@ -249,16 +276,36 @@ impl FangyuanPrimitiveLifecycleCount {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct FangyuanAuditPrimitiveColorKey([u32; 4]);
+
+impl FangyuanAuditPrimitiveColorKey {
+    fn from_color(color: Color) -> Self {
+        let color = color.to_srgba();
+        Self([
+            canonical_f32_bits(color.red),
+            canonical_f32_bits(color.green),
+            canonical_f32_bits(color.blue),
+            canonical_f32_bits(color.alpha),
+        ])
+    }
+}
+
+fn canonical_f32_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0f32.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
+
 pub fn audit_fangyuan_primitive_budget(
     stats: &FangyuanPrimitiveBudgetStats,
     profile: &FangyuanAuditBudgetProfile,
 ) -> FangyuanAuditReport {
     let mut report = FangyuanAuditReport::new(FangyuanAuditSourceKind::RuntimePrimitiveSet, None);
 
-    report.summary.authored_primitives = stats.authored_primitives;
-    report.summary.generated_primitives = stats.generated_primitives;
-    report.summary.skipped_primitives = stats.skipped_primitives;
-    report.summary.material_count = stats.material_profile_count;
+    report.apply_primitive_budget_stats(stats);
 
     add_primitive_count_findings(&mut report, stats, profile);
     add_bounds_findings(&mut report, stats, profile);
@@ -336,10 +383,7 @@ pub fn audit_fangyuan_primitive_budget(
     );
 
     report.refresh_summary_and_status();
-    report.summary.authored_primitives = stats.authored_primitives;
-    report.summary.generated_primitives = stats.generated_primitives;
-    report.summary.skipped_primitives = stats.skipped_primitives;
-    report.summary.material_count = stats.material_profile_count;
+    report.apply_primitive_budget_stats(stats);
     report.sort_findings();
     report
 }
@@ -483,7 +527,14 @@ pub struct FangyuanAuditSummary {
     pub authored_primitives: usize,
     pub generated_primitives: usize,
     pub skipped_primitives: usize,
+    pub cube_count: usize,
+    pub sphere_count: usize,
+    pub color_count: usize,
     pub material_count: usize,
+    pub alpha_count: usize,
+    pub emissive_count: usize,
+    pub lifecycle_count: usize,
+    pub role_distribution: FangyuanPrimitiveRoleDistribution,
 }
 
 impl FangyuanAuditSummary {

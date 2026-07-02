@@ -4,8 +4,11 @@ use std::{borrow::Cow, error::Error, fmt, fs, io, path::PathBuf};
 
 use super::{
     FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanAssetPathError,
-    FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
-    FangyuanPrimitiveSet, first_package_fangyuan_asset_fs_path, validate_fangyuan_asset_path,
+    FangyuanAuditBudgetProfile, FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity,
+    FangyuanAuditSourceKind, FangyuanPrimitive, FangyuanPrimitiveBudgetStats,
+    FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanPrimitiveSet,
+    audit_fangyuan_primitive_budget, first_package_fangyuan_asset_fs_path,
+    validate_fangyuan_asset_path,
 };
 
 pub const FANGYUAN_AVATAR_BLUEPRINT_VERSION: &str = "1";
@@ -139,6 +142,61 @@ impl FangyuanBlueprint {
             skipped_primitives: warnings.len(),
             warnings,
         })
+    }
+
+    pub fn audit(&self, profile: &FangyuanAuditBudgetProfile) -> FangyuanAuditReport {
+        let mut report = FangyuanAuditReport::new(FangyuanAuditSourceKind::Blueprint, None);
+
+        if let Err(error) = self.validate_top_level() {
+            report.add_finding(blueprint_validation_error_to_audit_finding(
+                &error,
+                FangyuanAuditSeverity::Error,
+            ));
+            report.summary.authored_primitives = self.primitives.len();
+            report.summary.generated_primitives = 0;
+            report.summary.skipped_primitives = 0;
+            report.sort_findings();
+            return report;
+        }
+
+        let mut primitives = Vec::with_capacity(self.primitives.len());
+        let mut skipped_primitives = 0usize;
+        for (index, primitive) in self.primitives.iter().enumerate() {
+            match validate_blueprint_primitive(index, primitive, &self.bounds) {
+                Ok(()) => primitives.push(compile_blueprint_primitive_to_runtime(primitive)),
+                Err(error) => {
+                    skipped_primitives += 1;
+                    report.add_finding(blueprint_validation_error_to_audit_finding(
+                        &error,
+                        FangyuanAuditSeverity::Warning,
+                    ));
+                }
+            }
+        }
+
+        let primitive_set = FangyuanPrimitiveSet::from_primitives(primitives);
+        let mut stats = FangyuanPrimitiveBudgetStats::from_primitive_set(&primitive_set);
+        stats.authored_primitives = self.primitives.len();
+        stats.generated_primitives = primitive_set.len();
+        stats.skipped_primitives = skipped_primitives;
+
+        let budget_report = audit_fangyuan_primitive_budget(&stats, profile);
+        for mut finding in budget_report.findings {
+            finding.source_kind = FangyuanAuditSourceKind::Blueprint;
+            report.add_finding(finding);
+        }
+        for suggestion in budget_report.suggestions {
+            report.add_suggestion(suggestion);
+        }
+
+        report.refresh_summary_and_status();
+        report.apply_primitive_budget_stats(&stats);
+        report.sort_findings();
+        report
+    }
+
+    pub fn audit_with_default_budget(&self) -> FangyuanAuditReport {
+        self.audit(&FangyuanAuditBudgetProfile::default())
     }
 
     pub fn load_compiled_first_package_ron(
@@ -637,6 +695,21 @@ pub(super) fn compile_blueprint_primitive_to_runtime(
     )
 }
 
+fn blueprint_validation_error_to_audit_finding(
+    error: &FangyuanBlueprintValidationError,
+    severity: FangyuanAuditSeverity,
+) -> FangyuanAuditFinding {
+    let mut finding = FangyuanAuditFinding::new(
+        severity,
+        error.code(),
+        error.reason(),
+        FangyuanAuditSourceKind::Blueprint,
+    );
+    finding.field_path = Some(error.field_path().into_owned());
+    finding.primitive_index = error.primitive_index();
+    finding
+}
+
 fn validate_primitive_kind(
     _index: usize,
     kind: FangyuanPrimitiveKind,
@@ -935,6 +1008,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::framework::fangyuan::{FangyuanAuditStatus, FangyuanAuditSuggestionAction};
+
     use super::*;
 
     #[test]
@@ -1493,6 +1568,270 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_blueprint_audit_passes_legal_minimal_player_with_summary() {
+        let blueprint = load_fangyuan_minimal_player_blueprint().unwrap();
+
+        let report = blueprint.audit_with_default_budget();
+
+        assert_eq!(report.source_kind, FangyuanAuditSourceKind::Blueprint);
+        assert_eq!(report.status, FangyuanAuditStatus::Passed);
+        assert!(report.findings.is_empty());
+        assert!(report.suggestions.is_empty());
+        assert_eq!(
+            report.summary.authored_primitives,
+            FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT
+        );
+        assert_eq!(
+            report.summary.generated_primitives,
+            FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT
+        );
+        assert_eq!(report.summary.skipped_primitives, 0);
+        assert_eq!(report.summary.cube_count, 1);
+        assert_eq!(report.summary.sphere_count, 1);
+        assert_eq!(report.summary.color_count, 2);
+        assert_eq!(report.summary.material_count, 0);
+        assert_eq!(report.summary.alpha_count, 0);
+        assert_eq!(report.summary.emissive_count, 0);
+        assert_eq!(report.summary.lifecycle_count, 0);
+        assert_eq!(
+            report
+                .summary
+                .role_distribution
+                .count(FangyuanPrimitiveRole::Structure),
+            1
+        );
+        assert_eq!(
+            report
+                .summary
+                .role_distribution
+                .count(FangyuanPrimitiveRole::Core),
+            1
+        );
+    }
+
+    #[test]
+    fn fangyuan_blueprint_audit_keeps_legacy_home_preview_warning_compatibility() {
+        let blueprint =
+            load_fangyuan_blueprint_from_first_package_ron(FANGYUAN_HOME_PREVIEW_BLUEPRINT_PATH)
+                .unwrap();
+
+        let report = blueprint.audit_with_default_budget();
+
+        assert_eq!(report.source_kind, FangyuanAuditSourceKind::Blueprint);
+        assert_eq!(report.status, FangyuanAuditStatus::PassedWithWarnings);
+        assert_eq!(report.summary.error_count, 0);
+        assert_eq!(report.summary.warning_count, 12);
+        assert_eq!(
+            report.summary.authored_primitives,
+            blueprint.primitives.len()
+        );
+        assert_eq!(report.summary.generated_primitives, 493);
+        assert_eq!(report.summary.skipped_primitives, 12);
+        assert!(report.summary.cube_count > 0);
+        assert!(report.summary.sphere_count > 0);
+        assert_eq!(report.summary.alpha_count, 0);
+        assert_eq!(report.summary.emissive_count, 0);
+        assert_eq!(report.summary.material_count, 0);
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.code == "primitive_below_ground")
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.severity == FangyuanAuditSeverity::Warning)
+        );
+    }
+
+    #[test]
+    fn fangyuan_blueprint_audit_reports_invalid_primitives_and_skips_them() {
+        let mut invalid_size = valid_primitive();
+        invalid_size.size = [1.0, 0.0, 1.0];
+
+        let mut invalid_color = valid_primitive();
+        invalid_color.color = [0.2, 0.4, 1.2, 1.0];
+
+        let mut invalid_alpha = valid_primitive();
+        invalid_alpha.alpha = Some(f32::NAN);
+
+        let mut invalid_emissive = valid_primitive();
+        invalid_emissive.emissive = Some(FANGYUAN_PRIMITIVE_MAX_EMISSIVE + 1.0);
+
+        let mut invalid_material = valid_primitive();
+        invalid_material.material_profile_id = Some("bad material".to_string());
+
+        let mut invalid_lifecycle = valid_primitive();
+        invalid_lifecycle.lifecycle = Some(FangyuanPrimitiveLifecycle::new(Some(0), None, None));
+
+        let mut valid = valid_primitive();
+        valid.kind = FangyuanPrimitiveKind::Sphere;
+        valid.role = Some(FangyuanPrimitiveRole::Decoration);
+        valid.color = [0.7, 0.8, 0.9, 0.5];
+        valid.alpha = Some(0.5);
+        valid.emissive = Some(1.5);
+        valid.material_profile_id = Some("valid/glow".to_string());
+        valid.lifecycle = Some(FangyuanPrimitiveLifecycle::new(Some(4), Some(2), Some(6)));
+
+        let blueprint = valid_avatar_blueprint(vec![
+            invalid_size,
+            invalid_color,
+            invalid_alpha,
+            invalid_emissive,
+            invalid_material,
+            invalid_lifecycle,
+            valid,
+        ]);
+
+        let report = blueprint.audit_with_default_budget();
+
+        assert_eq!(report.status, FangyuanAuditStatus::PassedWithWarnings);
+        assert_eq!(report.summary.error_count, 0);
+        assert_eq!(report.summary.warning_count, 6);
+        assert_eq!(report.summary.authored_primitives, 7);
+        assert_eq!(report.summary.generated_primitives, 1);
+        assert_eq!(report.summary.skipped_primitives, 6);
+        assert_eq!(report.summary.sphere_count, 1);
+        assert_eq!(report.summary.alpha_count, 1);
+        assert_eq!(report.summary.emissive_count, 1);
+        assert_eq!(report.summary.material_count, 1);
+        assert_eq!(report.summary.lifecycle_count, 1);
+        assert_audit_finding(
+            &report,
+            "invalid_primitive_size",
+            FangyuanAuditSeverity::Warning,
+            Some(0),
+            "primitives[0].size[1]",
+        );
+        assert_audit_finding(
+            &report,
+            "invalid_primitive_color",
+            FangyuanAuditSeverity::Warning,
+            Some(1),
+            "primitives[1].color[2]",
+        );
+        assert_audit_finding(
+            &report,
+            "invalid_primitive_alpha",
+            FangyuanAuditSeverity::Warning,
+            Some(2),
+            "primitives[2].alpha",
+        );
+        assert_audit_finding(
+            &report,
+            "invalid_primitive_emissive",
+            FangyuanAuditSeverity::Warning,
+            Some(3),
+            "primitives[3].emissive",
+        );
+        assert_audit_finding(
+            &report,
+            "invalid_primitive_material_profile",
+            FangyuanAuditSeverity::Warning,
+            Some(4),
+            "primitives[4].material_profile_id",
+        );
+        assert_audit_finding(
+            &report,
+            "invalid_primitive_lifecycle",
+            FangyuanAuditSeverity::Warning,
+            Some(5),
+            "primitives[5].lifecycle.lifetime",
+        );
+    }
+
+    #[test]
+    fn fangyuan_blueprint_audit_fails_invalid_top_level_without_generation() {
+        let mut blueprint = valid_avatar_blueprint(vec![valid_primitive()]);
+        blueprint.version = "2".to_string();
+
+        let report = blueprint.audit_with_default_budget();
+
+        assert_eq!(report.status, FangyuanAuditStatus::Failed);
+        assert_eq!(report.summary.error_count, 1);
+        assert_eq!(report.summary.warning_count, 0);
+        assert_eq!(report.summary.authored_primitives, 1);
+        assert_eq!(report.summary.generated_primitives, 0);
+        assert_eq!(report.summary.skipped_primitives, 0);
+        assert_audit_finding(
+            &report,
+            "unsupported_version",
+            FangyuanAuditSeverity::Error,
+            None,
+            "version",
+        );
+    }
+
+    #[test]
+    fn fangyuan_blueprint_audit_fails_when_runtime_budget_is_exceeded() {
+        let mut profile = FangyuanAuditBudgetProfile {
+            hard_primitive_limit: 2,
+            recommended_primitive_limit: 1,
+            max_bounds: Vec3::splat(0.5),
+            ..Default::default()
+        };
+        profile.max_total_volume = 2.0;
+
+        let blueprint = valid_avatar_blueprint(vec![
+            valid_primitive(),
+            valid_primitive(),
+            valid_primitive(),
+        ]);
+
+        let report = blueprint.audit(&profile);
+
+        assert_eq!(report.status, FangyuanAuditStatus::Failed);
+        assert_eq!(report.summary.authored_primitives, 3);
+        assert_eq!(report.summary.generated_primitives, 3);
+        assert_eq!(report.summary.skipped_primitives, 0);
+        assert!(has_audit_finding(
+            &report,
+            "primitive_count_above_hard_limit"
+        ));
+        assert!(has_audit_finding(&report, "bounds_above_limit"));
+        assert!(has_audit_finding(&report, "total_volume_above_limit"));
+        assert!(has_audit_suggestion(
+            &report,
+            FangyuanAuditSuggestionAction::ReducePrimitives
+        ));
+        assert!(has_audit_suggestion(
+            &report,
+            FangyuanAuditSuggestionAction::ShrinkBounds
+        ));
+    }
+
+    #[test]
+    fn fangyuan_blueprint_audit_rejects_forbidden_transform_fields() {
+        for field in [
+            "rotation",
+            "quaternion",
+            "euler",
+            "angular_velocity",
+            "rotate",
+            "spin",
+        ] {
+            let mut value = serde_json::json!({
+                "kind": "cube",
+                "position": [0.0, 1.0, 0.0],
+                "size": [1.0, 1.0, 1.0],
+                "color": [0.2, 0.4, 0.6, 1.0]
+            });
+            value
+                .as_object_mut()
+                .unwrap()
+                .insert(field.to_string(), serde_json::json!([0.0, 0.0, 0.0]));
+
+            assert_parse_error_contains(
+                serde_json::from_value::<FangyuanPrimitiveBlueprint>(value),
+                field,
+                "unknown field",
+            );
+        }
+    }
+
+    #[test]
     fn compile_rejects_invalid_bounds_dimension() {
         let mut blueprint = valid_avatar_blueprint(vec![valid_primitive()]);
         blueprint.bounds.width = f32::INFINITY;
@@ -1871,6 +2210,40 @@ mod tests {
             message.contains(expected),
             "parse error `{message}` should contain `{expected}`"
         );
+    }
+
+    fn assert_audit_finding(
+        report: &FangyuanAuditReport,
+        code: &str,
+        severity: FangyuanAuditSeverity,
+        primitive_index: Option<usize>,
+        field_path: &str,
+    ) {
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.code == code)
+            .unwrap_or_else(|| panic!("expected audit finding `{code}`"));
+
+        assert_eq!(finding.severity, severity);
+        assert_eq!(finding.source_kind, FangyuanAuditSourceKind::Blueprint);
+        assert_eq!(finding.primitive_index, primitive_index);
+        assert_eq!(finding.field_path.as_deref(), Some(field_path));
+        assert!(!finding.reason.is_empty());
+    }
+
+    fn has_audit_finding(report: &FangyuanAuditReport, code: &str) -> bool {
+        report.findings.iter().any(|finding| finding.code == code)
+    }
+
+    fn has_audit_suggestion(
+        report: &FangyuanAuditReport,
+        action: FangyuanAuditSuggestionAction,
+    ) -> bool {
+        report
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion.action == action)
     }
 
     fn valid_avatar_blueprint(
