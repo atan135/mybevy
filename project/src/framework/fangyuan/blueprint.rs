@@ -5,10 +5,11 @@ use std::{borrow::Cow, error::Error, fmt, fs, io, path::PathBuf};
 use super::{
     FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanAssetPathError,
     FangyuanAuditBudgetProfile, FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity,
-    FangyuanAuditSourceKind, FangyuanPrimitive, FangyuanPrimitiveBudgetStats,
-    FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanPrimitiveSet,
-    audit_fangyuan_primitive_budget, first_package_fangyuan_asset_fs_path,
-    validate_fangyuan_asset_path,
+    FangyuanAuditSourceKind, FangyuanMaterialProfileIdInvalidReason, FangyuanPrimitive,
+    FangyuanPrimitiveBudgetStats, FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle,
+    FangyuanPrimitiveRole, FangyuanPrimitiveSet, audit_fangyuan_primitive_budget,
+    first_package_fangyuan_asset_fs_path, validate_fangyuan_asset_path,
+    validate_fangyuan_material_profile_id,
 };
 
 pub const FANGYUAN_AVATAR_BLUEPRINT_VERSION: &str = "1";
@@ -21,7 +22,8 @@ pub const FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT: usize =
     FANGYUAN_AVATAR_BLUEPRINT_HARD_PRIMITIVE_LIMIT;
 pub const FANGYUAN_BLUEPRINT_MIN_PRIMITIVE_SIZE: f32 = 0.1;
 pub const FANGYUAN_BLUEPRINT_MAX_PRIMITIVE_SIZE: f32 = 5.0;
-pub const FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN: usize = 64;
+pub const FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN: usize =
+    super::FANGYUAN_MATERIAL_PROFILE_ID_MAX_LEN;
 
 /// Shared Fangyuan RON v1 blueprint.
 ///
@@ -862,39 +864,23 @@ fn validate_primitive_material_profile(
     let Some(material_profile_id) = material_profile_id else {
         return Ok(());
     };
-    if material_profile_id.is_empty() {
-        return Err(
-            FangyuanBlueprintValidationError::InvalidPrimitiveMaterialProfile {
-                index,
-                value: material_profile_id.to_string(),
-                reason: FangyuanPrimitiveMaterialProfileInvalidReason::Empty,
+    validate_fangyuan_material_profile_id(material_profile_id).map_err(|reason| {
+        FangyuanBlueprintValidationError::InvalidPrimitiveMaterialProfile {
+            index,
+            value: material_profile_id.to_string(),
+            reason: match reason {
+                FangyuanMaterialProfileIdInvalidReason::Empty => {
+                    FangyuanPrimitiveMaterialProfileInvalidReason::Empty
+                }
+                FangyuanMaterialProfileIdInvalidReason::TooLong { max_len } => {
+                    FangyuanPrimitiveMaterialProfileInvalidReason::TooLong { max_len }
+                }
+                FangyuanMaterialProfileIdInvalidReason::InvalidCharacter => {
+                    FangyuanPrimitiveMaterialProfileInvalidReason::InvalidCharacter
+                }
             },
-        );
-    }
-    if material_profile_id.len() > FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN {
-        return Err(
-            FangyuanBlueprintValidationError::InvalidPrimitiveMaterialProfile {
-                index,
-                value: material_profile_id.to_string(),
-                reason: FangyuanPrimitiveMaterialProfileInvalidReason::TooLong {
-                    max_len: FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN,
-                },
-            },
-        );
-    }
-    if !material_profile_id.bytes().all(|byte| {
-        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':')
-    }) {
-        return Err(
-            FangyuanBlueprintValidationError::InvalidPrimitiveMaterialProfile {
-                index,
-                value: material_profile_id.to_string(),
-                reason: FangyuanPrimitiveMaterialProfileInvalidReason::InvalidCharacter,
-            },
-        );
-    }
-
-    Ok(())
+        }
+    })
 }
 
 fn validate_primitive_lifecycle(

@@ -2,16 +2,17 @@ use bevy::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{
-    FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
+    FANGYUAN_MATERIAL_PROFILE_DEFAULT_ID, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
     FangyuanAuditSourceKind, FangyuanBlueprintValidationError, FangyuanPrefabPalette,
     FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveRole, FangyuanPrimitiveSet,
     FangyuanSceneLayout, FangyuanSceneLayoutCompileError, FangyuanSceneLayoutValidationError,
-    compile_blueprint_primitive_to_runtime, transform_prefab_primitive,
-    validate_blueprint_primitive,
+    compile_blueprint_primitive_to_runtime, is_valid_fangyuan_material_profile_id,
+    transform_prefab_primitive, validate_blueprint_primitive,
 };
 
 pub const FANGYUAN_STATIC_MERGE_DEFAULT_REGION_PLACEHOLDER: &str = "region:unassigned";
-pub const FANGYUAN_STATIC_MERGE_DEFAULT_MATERIAL_PROFILE: &str = "material:default";
+pub const FANGYUAN_STATIC_MERGE_DEFAULT_MATERIAL_PROFILE: &str =
+    FANGYUAN_MATERIAL_PROFILE_DEFAULT_ID;
 pub const FANGYUAN_STATIC_MERGE_DEFAULT_DEBUG_LABEL: &str = "fangyuan_static";
 
 pub const FANGYUAN_STATIC_MERGE_CUBE_VERTEX_COUNT: usize = 24;
@@ -558,11 +559,7 @@ fn estimated_index_count_for_kind(kind: FangyuanPrimitiveKind) -> usize {
 }
 
 fn is_valid_static_merge_material_profile(material_profile_id: &str) -> bool {
-    !material_profile_id.is_empty()
-        && material_profile_id.len() <= FANGYUAN_BLUEPRINT_MAX_MATERIAL_PROFILE_ID_LEN
-        && material_profile_id.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':')
-        })
+    is_valid_fangyuan_material_profile_id(material_profile_id)
 }
 
 fn is_valid_static_merge_color_channel(value: f32) -> bool {
