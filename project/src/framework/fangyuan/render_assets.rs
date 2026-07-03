@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use super::{FangyuanPrimitive, FangyuanPrimitiveKind};
 
-const FANGYUAN_RENDER_UNIT_SPHERE_SECTORS: u32 = 24;
-const FANGYUAN_RENDER_UNIT_SPHERE_STACKS: u32 = 12;
+pub const FANGYUAN_RENDER_UNIT_SPHERE_SECTORS: u32 = 24;
+pub const FANGYUAN_RENDER_UNIT_SPHERE_STACKS: u32 = 12;
 
 /// Quantized RGBA key for the simple preview material cache.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

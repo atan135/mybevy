@@ -10,11 +10,15 @@ use crate::framework::{
         FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanAuditFinding,
         FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditStatus, FangyuanObjectState,
         FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
-        FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport, FangyuanStaticMeshBounds,
-        FangyuanStaticMeshBuildError, FangyuanStaticMeshBuildOptions,
-        FangyuanStaticMeshBuildReport, FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial,
-        FangyuanStaticMeshMetadata, fangyuan_render_transform_from_primitive,
-        fangyuan_standard_material_from_color,
+        FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
+        FangyuanStaticInstanceBufferSource, FangyuanStaticInstanceRenderBatch,
+        FangyuanStaticInstanceRenderError, FangyuanStaticInstanceRenderOptions,
+        FangyuanStaticInstanceRenderReport, FangyuanStaticInstanceRenderStats,
+        FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds, FangyuanStaticMeshBuildError,
+        FangyuanStaticMeshBuildOptions, FangyuanStaticMeshBuildReport,
+        FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial, FangyuanStaticMeshMetadata,
+        fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
+        fangyuan_static_instance_render_report_from_primitive_set_with_source,
         fangyuan_static_meshes_from_primitive_set_with_source, format_fangyuan_audit_debug_lines,
         load_fangyuan_home_prefab_palette, load_fangyuan_home_scene_layout,
     },
@@ -39,13 +43,14 @@ impl Plugin for FangyuanHomePlugin {
             .init_resource::<FangyuanHomeBlueprintRenderAssets>()
             .init_resource::<FangyuanHomeBlueprintRenderConfig>()
             .init_resource::<FangyuanHomeStaticMergeRuntime>()
+            .init_resource::<FangyuanHomeStaticInstanceRuntime>()
             .init_resource::<FangyuanHomeBlueprintStats>()
             .add_message::<FangyuanHomeBlueprintCommand>()
             .add_systems(
                 Update,
                 (
                     reset_fangyuan_home_blueprint_stats_on_exit,
-                    clear_fangyuan_home_static_merge_assets_on_exit,
+                    clear_fangyuan_home_render_runtime_on_exit,
                     handle_fangyuan_home_blueprint_commands,
                 )
                     .chain(),
@@ -303,18 +308,22 @@ impl FangyuanHomeBlueprintRenderAssets {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::game) enum FangyuanHomeBlueprintRenderMode {
     #[default]
     Standard,
     CpuMerge,
+    StaticInstance,
 }
 
 #[derive(Clone, Debug, Resource, PartialEq)]
 pub(in crate::game) struct FangyuanHomeBlueprintRenderConfig {
     pub(in crate::game) mode: FangyuanHomeBlueprintRenderMode,
     pub(in crate::game) fallback_to_standard_on_merge_failure: bool,
+    pub(in crate::game) fallback_to_standard_on_instance_failure: bool,
     pub(in crate::game) mesh_options: FangyuanStaticMeshBuildOptions,
+    pub(in crate::game) instance_options: FangyuanStaticInstanceRenderOptions,
 }
 
 impl Default for FangyuanHomeBlueprintRenderConfig {
@@ -322,7 +331,9 @@ impl Default for FangyuanHomeBlueprintRenderConfig {
         Self {
             mode: FangyuanHomeBlueprintRenderMode::Standard,
             fallback_to_standard_on_merge_failure: true,
+            fallback_to_standard_on_instance_failure: true,
             mesh_options: FangyuanStaticMeshBuildOptions::default(),
+            instance_options: FangyuanStaticInstanceRenderOptions::default(),
         }
     }
 }
@@ -376,6 +387,103 @@ impl FangyuanHomeStaticMergeRuntime {
     }
 }
 
+#[derive(Clone, Debug, Default, Resource)]
+struct FangyuanHomeStaticInstanceRuntime {
+    stats: FangyuanStaticInstanceRenderStats,
+    last_failure: Option<String>,
+    fallback_count: usize,
+}
+
+impl FangyuanHomeStaticInstanceRuntime {
+    fn clear(&mut self) {
+        self.stats = FangyuanStaticInstanceRenderStats::default();
+        self.last_failure = None;
+        self.fallback_count = 0;
+    }
+
+    fn record_success(&mut self, stats: FangyuanStaticInstanceRenderStats) {
+        self.stats = stats;
+        self.last_failure = None;
+        self.fallback_count = 0;
+    }
+
+    fn record_failure(&mut self, error: &FangyuanStaticInstanceRenderError, fallback_used: bool) {
+        self.last_failure = Some(error.to_string());
+        self.stats = FangyuanStaticInstanceRenderStats::default();
+        self.fallback_count = usize::from(fallback_used);
+    }
+
+    fn fallback_reason(&self) -> &str {
+        self.last_failure.as_deref().unwrap_or("-")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::game) struct FangyuanHomeBlueprintRenderSummary {
+    pub(in crate::game) mode: String,
+    pub(in crate::game) static_instance_batch_count: usize,
+    pub(in crate::game) static_instance_count: usize,
+    pub(in crate::game) static_instance_buffer_bytes: usize,
+    pub(in crate::game) static_instance_fallback_reason: String,
+}
+
+impl Default for FangyuanHomeBlueprintRenderSummary {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
+impl FangyuanHomeBlueprintRenderSummary {
+    fn standard() -> Self {
+        Self {
+            mode: "standard".to_string(),
+            static_instance_batch_count: 0,
+            static_instance_count: 0,
+            static_instance_buffer_bytes: 0,
+            static_instance_fallback_reason: "-".to_string(),
+        }
+    }
+
+    fn cpu_merge() -> Self {
+        Self {
+            mode: "cpu_merge".to_string(),
+            ..Self::standard()
+        }
+    }
+
+    fn static_instance(stats: &FangyuanStaticInstanceRenderStats) -> Self {
+        Self {
+            mode: "static_instance".to_string(),
+            static_instance_batch_count: stats.batch_count,
+            static_instance_count: stats.instance_count,
+            static_instance_buffer_bytes: stats.buffer_bytes,
+            static_instance_fallback_reason: "-".to_string(),
+        }
+    }
+
+    fn static_instance_fallback(reason: &str) -> Self {
+        Self {
+            mode: "static_instance->standard".to_string(),
+            static_instance_fallback_reason: reason.to_string(),
+            ..Self::standard()
+        }
+    }
+
+    fn static_instance_failed(reason: &str) -> Self {
+        Self {
+            mode: "static_instance_failed".to_string(),
+            static_instance_fallback_reason: reason.to_string(),
+            ..Self::standard()
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FangyuanHomeBlueprintSpawnedContent {
+    entity: Entity,
+    render_summary: FangyuanHomeBlueprintRenderSummary,
+}
+
 const FANGYUAN_HOME_BLUEPRINT_STATE_PENDING: &str = "pending";
 const FANGYUAN_HOME_BLUEPRINT_STATE_LOADED: &str = "loaded";
 const FANGYUAN_HOME_BLUEPRINT_STATE_CLEARED: &str = "cleared";
@@ -411,6 +519,11 @@ pub(in crate::game) struct FangyuanHomeBlueprintStats {
     pub(in crate::game) audit_primary_code: String,
     pub(in crate::game) audit_primary_field_path: String,
     pub(in crate::game) audit_primary_reason: String,
+    pub(in crate::game) render_mode: String,
+    pub(in crate::game) static_instance_batch_count: usize,
+    pub(in crate::game) static_instance_count: usize,
+    pub(in crate::game) static_instance_buffer_bytes: usize,
+    pub(in crate::game) static_instance_fallback_reason: String,
     state: String,
 }
 
@@ -438,6 +551,11 @@ impl Default for FangyuanHomeBlueprintStats {
             audit_primary_code: FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE.to_string(),
             audit_primary_field_path: String::new(),
             audit_primary_reason: String::new(),
+            render_mode: "standard".to_string(),
+            static_instance_batch_count: 0,
+            static_instance_count: 0,
+            static_instance_buffer_bytes: 0,
+            static_instance_fallback_reason: "-".to_string(),
             state: FANGYUAN_HOME_BLUEPRINT_STATE_PENDING.to_string(),
         }
     }
@@ -451,6 +569,7 @@ impl FangyuanHomeBlueprintStats {
         palette_path: &str,
         audit_report: &FangyuanAuditReport,
         compile_report: &FangyuanSceneLayoutCompileReport,
+        render_summary: FangyuanHomeBlueprintRenderSummary,
     ) {
         self.session_id = Some(session_id.clone());
         self.primitive_stats = compile_report.primitive_stats.clone();
@@ -468,6 +587,7 @@ impl FangyuanHomeBlueprintStats {
         self.layout_valid = compile_report.layout_validated;
         self.palette_valid = compile_report.palette_validated;
         self.record_audit_report(audit_report);
+        self.record_render_summary(render_summary);
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_LOADED.to_string();
     }
 
@@ -504,6 +624,7 @@ impl FangyuanHomeBlueprintStats {
             self.audit_primary_field_path.clear();
             self.audit_primary_reason.clear();
         }
+        self.record_render_summary(FangyuanHomeBlueprintRenderSummary::standard());
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_FAILED.to_string();
     }
 
@@ -537,6 +658,7 @@ impl FangyuanHomeBlueprintStats {
         self.audit_primary_code = FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE.to_string();
         self.audit_primary_field_path.clear();
         self.audit_primary_reason.clear();
+        self.record_render_summary(FangyuanHomeBlueprintRenderSummary::standard());
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_LOADED.to_string();
     }
 
@@ -569,6 +691,7 @@ impl FangyuanHomeBlueprintStats {
         self.audit_primary_code = "load_or_compile_failed".to_string();
         self.audit_primary_field_path.clear();
         self.audit_primary_reason.clear();
+        self.record_render_summary(FangyuanHomeBlueprintRenderSummary::standard());
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_FAILED.to_string();
     }
 
@@ -591,6 +714,11 @@ impl FangyuanHomeBlueprintStats {
         let audit_primary_code = self.audit_primary_code().to_string();
         let audit_primary_field_path = self.audit_primary_field_path.clone();
         let audit_primary_reason = self.audit_primary_reason.clone();
+        let render_mode = self.render_mode.clone();
+        let static_instance_batch_count = self.static_instance_batch_count;
+        let static_instance_count = self.static_instance_count;
+        let static_instance_buffer_bytes = self.static_instance_buffer_bytes;
+        let static_instance_fallback_reason = self.static_instance_fallback_reason.clone();
         self.session_id = Some(session_id.clone());
         self.primitive_stats = FangyuanPrimitiveSetStats::default();
         self.skipped = skipped;
@@ -612,6 +740,11 @@ impl FangyuanHomeBlueprintStats {
         self.audit_primary_code = audit_primary_code;
         self.audit_primary_field_path = audit_primary_field_path;
         self.audit_primary_reason = audit_primary_reason;
+        self.render_mode = render_mode;
+        self.static_instance_batch_count = static_instance_batch_count;
+        self.static_instance_count = static_instance_count;
+        self.static_instance_buffer_bytes = static_instance_buffer_bytes;
+        self.static_instance_fallback_reason = static_instance_fallback_reason;
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_CLEARED.to_string();
     }
 
@@ -680,6 +813,14 @@ impl FangyuanHomeBlueprintStats {
             self.audit_primary_field_path.clear();
             self.audit_primary_reason.clear();
         }
+    }
+
+    fn record_render_summary(&mut self, render_summary: FangyuanHomeBlueprintRenderSummary) {
+        self.render_mode = render_summary.mode;
+        self.static_instance_batch_count = render_summary.static_instance_batch_count;
+        self.static_instance_count = render_summary.static_instance_count;
+        self.static_instance_buffer_bytes = render_summary.static_instance_buffer_bytes;
+        self.static_instance_fallback_reason = render_summary.static_instance_fallback_reason;
     }
 
     fn reset_if_session(&mut self, session_id: &SceneSessionId) -> bool {
@@ -805,6 +946,19 @@ struct FangyuanHomeBlueprintMergedMeshVisual {
     debug_name: String,
 }
 
+#[derive(Clone, Debug, Component, PartialEq)]
+struct FangyuanHomeBlueprintStaticInstanceVisual {
+    session_id: SceneSessionId,
+    batch_index: usize,
+    instance_index: usize,
+    kind: FangyuanPrimitiveKind,
+    color: Color,
+    source: FangyuanStaticMergeSourceRef,
+    buffer_source: FangyuanStaticInstanceBufferSource,
+    buffer_bytes: usize,
+    debug_name: String,
+}
+
 #[derive(Clone, Copy, Debug, Component, PartialEq, Eq)]
 enum FangyuanHomeVisual {
     Plane,
@@ -874,6 +1028,7 @@ fn instantiate_fangyuan_home_content(
     mut blueprint_assets: ResMut<FangyuanHomeBlueprintRenderAssets>,
     render_config: Res<FangyuanHomeBlueprintRenderConfig>,
     mut static_merge_runtime: ResMut<FangyuanHomeStaticMergeRuntime>,
+    mut static_instance_runtime: ResMut<FangyuanHomeStaticInstanceRuntime>,
     mut blueprint_stats: ResMut<FangyuanHomeBlueprintStats>,
 ) {
     let mut instantiated_sessions = Vec::new();
@@ -931,6 +1086,7 @@ fn instantiate_fangyuan_home_content(
             &mut blueprint_assets,
             &render_config,
             &mut static_merge_runtime,
+            &mut static_instance_runtime,
             &mut blueprint_stats,
         );
         instantiated_sessions.push(entered.session_id.clone());
@@ -947,6 +1103,7 @@ fn spawn_fangyuan_home_content(
     blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
     render_config: &FangyuanHomeBlueprintRenderConfig,
     static_merge_runtime: &mut FangyuanHomeStaticMergeRuntime,
+    static_instance_runtime: &mut FangyuanHomeStaticInstanceRuntime,
     blueprint_stats: &mut FangyuanHomeBlueprintStats,
 ) -> Entity {
     let content = commands
@@ -975,6 +1132,7 @@ fn spawn_fangyuan_home_content(
         blueprint_assets,
         render_config,
         static_merge_runtime,
+        static_instance_runtime,
         blueprint_stats,
     );
 
@@ -991,6 +1149,7 @@ fn spawn_fangyuan_home_blueprint_from_layout(
     blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
     render_config: &FangyuanHomeBlueprintRenderConfig,
     static_merge_runtime: &mut FangyuanHomeStaticMergeRuntime,
+    static_instance_runtime: &mut FangyuanHomeStaticInstanceRuntime,
     blueprint_stats: &mut FangyuanHomeBlueprintStats,
 ) -> Option<Entity> {
     spawn_fangyuan_home_blueprint_from_layout_with_loader(
@@ -1002,6 +1161,7 @@ fn spawn_fangyuan_home_blueprint_from_layout(
         blueprint_assets,
         render_config,
         static_merge_runtime,
+        static_instance_runtime,
         blueprint_stats,
         || {
             let scene_layout = load_fangyuan_home_scene_layout().map_err(|error| {
@@ -1054,6 +1214,7 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
     blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
     render_config: &FangyuanHomeBlueprintRenderConfig,
     static_merge_runtime: &mut FangyuanHomeStaticMergeRuntime,
+    static_instance_runtime: &mut FangyuanHomeStaticInstanceRuntime,
     blueprint_stats: &mut FangyuanHomeBlueprintStats,
     load_scene_layout: impl FnOnce() -> Result<FangyuanHomeLayoutLoadResult, String>,
 ) -> Option<Entity> {
@@ -1103,6 +1264,7 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
         blueprint_assets,
         render_config,
         static_merge_runtime,
+        static_instance_runtime,
     );
     blueprint_stats.record_layout_loaded(
         session_id,
@@ -1110,9 +1272,10 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
         FANGYUAN_HOME_PREFAB_PALETTE_PATH,
         &load_result.audit_report,
         &compile_report,
+        content.render_summary,
     );
     log_fangyuan_home_blueprint_stats(blueprint_stats);
-    Some(content)
+    Some(content.entity)
 }
 
 #[cfg(test)]
@@ -1171,6 +1334,7 @@ fn spawn_fangyuan_home_simple_blueprint_from_layout_with_loader(
         blueprint_assets,
         &FangyuanHomeBlueprintRenderConfig::default(),
         &mut FangyuanHomeStaticMergeRuntime::default(),
+        &mut FangyuanHomeStaticInstanceRuntime::default(),
     );
     blueprint_stats.record_loaded(
         session_id,
@@ -1179,7 +1343,7 @@ fn spawn_fangyuan_home_simple_blueprint_from_layout_with_loader(
         compile_report.skipped_primitives,
     );
     log_fangyuan_home_blueprint_stats(blueprint_stats);
-    Some(content)
+    Some(content.entity)
 }
 
 fn spawn_fangyuan_home_blueprint_content(
@@ -1192,56 +1356,269 @@ fn spawn_fangyuan_home_blueprint_content(
     blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
     render_config: &FangyuanHomeBlueprintRenderConfig,
     static_merge_runtime: &mut FangyuanHomeStaticMergeRuntime,
-) -> Entity {
+    static_instance_runtime: &mut FangyuanHomeStaticInstanceRuntime,
+) -> FangyuanHomeBlueprintSpawnedContent {
     static_merge_runtime.clear_assets(meshes, materials);
+    static_instance_runtime.clear();
 
-    if render_config.mode == FangyuanHomeBlueprintRenderMode::CpuMerge {
-        match fangyuan_static_meshes_from_primitive_set_with_source(
-            primitive_set,
-            Some(FANGYUAN_HOME_SCENE_LAYOUT_PATH.to_string()),
-            &render_config.mesh_options,
-        ) {
-            Ok(report) => {
-                return spawn_fangyuan_home_blueprint_cpu_merge_content(
-                    commands,
-                    parent,
-                    session_id,
-                    primitive_set,
-                    meshes,
-                    materials,
-                    static_merge_runtime,
-                    report,
-                );
+    match render_config.mode {
+        FangyuanHomeBlueprintRenderMode::Standard => {
+            let entity = spawn_fangyuan_home_blueprint_standard_content(
+                commands,
+                parent,
+                session_id,
+                primitive_set,
+                meshes,
+                materials,
+                blueprint_assets,
+            );
+            FangyuanHomeBlueprintSpawnedContent {
+                entity,
+                render_summary: FangyuanHomeBlueprintRenderSummary::standard(),
             }
-            Err(error) => {
-                warn!(
-                    "fangyuan home CPU merge failed; fallback_to_standard={}, error={error}",
-                    render_config.fallback_to_standard_on_merge_failure
-                );
-                static_merge_runtime
-                    .record_failure(&error, render_config.fallback_to_standard_on_merge_failure);
-                if !render_config.fallback_to_standard_on_merge_failure {
-                    return spawn_fangyuan_home_empty_blueprint_content(
+        }
+        FangyuanHomeBlueprintRenderMode::CpuMerge => {
+            match fangyuan_static_meshes_from_primitive_set_with_source(
+                primitive_set,
+                Some(FANGYUAN_HOME_SCENE_LAYOUT_PATH.to_string()),
+                &render_config.mesh_options,
+            ) {
+                Ok(report) => {
+                    let entity = spawn_fangyuan_home_blueprint_cpu_merge_content(
                         commands,
                         parent,
                         session_id,
                         primitive_set,
-                        "FangyuanHomeObjectMergeFailed",
+                        meshes,
+                        materials,
+                        static_merge_runtime,
+                        report,
                     );
+                    FangyuanHomeBlueprintSpawnedContent {
+                        entity,
+                        render_summary: FangyuanHomeBlueprintRenderSummary::cpu_merge(),
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        "fangyuan home CPU merge failed; fallback_to_standard={}, error={error}",
+                        render_config.fallback_to_standard_on_merge_failure
+                    );
+                    static_merge_runtime.record_failure(
+                        &error,
+                        render_config.fallback_to_standard_on_merge_failure,
+                    );
+                    if !render_config.fallback_to_standard_on_merge_failure {
+                        let entity = spawn_fangyuan_home_empty_blueprint_content(
+                            commands,
+                            parent,
+                            session_id,
+                            primitive_set,
+                            "FangyuanHomeObjectMergeFailed",
+                        );
+                        return FangyuanHomeBlueprintSpawnedContent {
+                            entity,
+                            render_summary: FangyuanHomeBlueprintRenderSummary::cpu_merge(),
+                        };
+                    }
+                    let entity = spawn_fangyuan_home_blueprint_standard_content(
+                        commands,
+                        parent,
+                        session_id,
+                        primitive_set,
+                        meshes,
+                        materials,
+                        blueprint_assets,
+                    );
+                    FangyuanHomeBlueprintSpawnedContent {
+                        entity,
+                        render_summary: FangyuanHomeBlueprintRenderSummary::standard(),
+                    }
+                }
+            }
+        }
+        FangyuanHomeBlueprintRenderMode::StaticInstance => {
+            match fangyuan_static_instance_render_report_from_primitive_set_with_source(
+                primitive_set,
+                Some(FANGYUAN_HOME_SCENE_LAYOUT_PATH.to_string()),
+                &render_config.instance_options,
+            ) {
+                Ok(report) => {
+                    let stats = report.stats.clone();
+                    let entity = spawn_fangyuan_home_blueprint_static_instance_content(
+                        commands,
+                        parent,
+                        session_id,
+                        primitive_set,
+                        meshes,
+                        materials,
+                        blueprint_assets,
+                        static_instance_runtime,
+                        report,
+                    );
+                    FangyuanHomeBlueprintSpawnedContent {
+                        entity,
+                        render_summary: FangyuanHomeBlueprintRenderSummary::static_instance(&stats),
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        "fangyuan home static instance prototype failed; fallback_to_standard={}, error={error}",
+                        render_config.fallback_to_standard_on_instance_failure
+                    );
+                    static_instance_runtime.record_failure(
+                        &error,
+                        render_config.fallback_to_standard_on_instance_failure,
+                    );
+                    if !render_config.fallback_to_standard_on_instance_failure {
+                        let entity = spawn_fangyuan_home_empty_blueprint_content(
+                            commands,
+                            parent,
+                            session_id,
+                            primitive_set,
+                            "FangyuanHomeObjectStaticInstanceFailed",
+                        );
+                        return FangyuanHomeBlueprintSpawnedContent {
+                            entity,
+                            render_summary:
+                                FangyuanHomeBlueprintRenderSummary::static_instance_failed(
+                                    static_instance_runtime.fallback_reason(),
+                                ),
+                        };
+                    }
+                    let entity = spawn_fangyuan_home_blueprint_standard_content(
+                        commands,
+                        parent,
+                        session_id,
+                        primitive_set,
+                        meshes,
+                        materials,
+                        blueprint_assets,
+                    );
+                    FangyuanHomeBlueprintSpawnedContent {
+                        entity,
+                        render_summary:
+                            FangyuanHomeBlueprintRenderSummary::static_instance_fallback(
+                                static_instance_runtime.fallback_reason(),
+                            ),
+                    }
                 }
             }
         }
     }
+}
 
-    spawn_fangyuan_home_blueprint_standard_content(
+fn spawn_fangyuan_home_blueprint_static_instance_content(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    primitive_set: &FangyuanPrimitiveSet,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
+    static_instance_runtime: &mut FangyuanHomeStaticInstanceRuntime,
+    report: FangyuanStaticInstanceRenderReport,
+) -> Entity {
+    let content = spawn_fangyuan_home_empty_blueprint_content(
         commands,
         parent,
         session_id,
         primitive_set,
-        meshes,
-        materials,
-        blueprint_assets,
-    )
+        "FangyuanHomeObject",
+    );
+    let stats = report.stats.clone();
+
+    for batch in report.batches {
+        spawn_fangyuan_home_blueprint_static_instance_batch(
+            commands,
+            content,
+            session_id,
+            batch,
+            meshes,
+            materials,
+            blueprint_assets,
+        );
+    }
+
+    static_instance_runtime.record_success(stats);
+    content
+}
+
+fn spawn_fangyuan_home_blueprint_static_instance_batch(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    batch: FangyuanStaticInstanceRenderBatch,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
+) {
+    let mesh = blueprint_assets.unit_mesh(batch.key.primitive_kind, meshes);
+    for (instance_index, instance) in batch.instances.into_iter().enumerate() {
+        let material = blueprint_assets.material(instance.color, materials);
+        spawn_fangyuan_home_blueprint_static_instance_visual(
+            commands,
+            parent,
+            session_id,
+            batch.batch_index,
+            instance_index,
+            mesh.clone(),
+            material,
+            instance.position,
+            instance.scale,
+            instance.color,
+            batch.key.primitive_kind,
+            batch.buffer_source.clone(),
+            batch.buffer_bytes,
+            batch.debug_name.clone(),
+            instance.source,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_fangyuan_home_blueprint_static_instance_visual(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    batch_index: usize,
+    instance_index: usize,
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    position: Vec3,
+    scale: Vec3,
+    color: Color,
+    kind: FangyuanPrimitiveKind,
+    buffer_source: FangyuanStaticInstanceBufferSource,
+    buffer_bytes: usize,
+    debug_name: String,
+    source: FangyuanStaticMergeSourceRef,
+) -> Entity {
+    let entity = commands
+        .spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            NoAutomaticBatching,
+            Transform::from_translation(position).with_scale(scale),
+            SceneOwned::new(session_id.clone()),
+            FangyuanHomeBlueprintStaticInstanceVisual {
+                session_id: session_id.clone(),
+                batch_index,
+                instance_index,
+                kind,
+                color,
+                source,
+                buffer_source,
+                buffer_bytes,
+                debug_name: debug_name.clone(),
+            },
+            Name::new(format!(
+                "FangyuanHomeBlueprintStaticInstance({batch_index}:{instance_index}:{debug_name})"
+            )),
+        ))
+        .id();
+    commands.entity(parent).add_child(entity);
+    entity
 }
 
 fn spawn_fangyuan_home_empty_blueprint_content(
@@ -1647,6 +2024,7 @@ fn handle_fangyuan_home_blueprint_commands(
     mut blueprint_assets: ResMut<FangyuanHomeBlueprintRenderAssets>,
     render_config: Res<FangyuanHomeBlueprintRenderConfig>,
     mut static_merge_runtime: ResMut<FangyuanHomeStaticMergeRuntime>,
+    mut static_instance_runtime: ResMut<FangyuanHomeStaticInstanceRuntime>,
     mut blueprint_stats: ResMut<FangyuanHomeBlueprintStats>,
 ) {
     let mut requested_command = None;
@@ -1672,6 +2050,7 @@ fn handle_fangyuan_home_blueprint_commands(
                 blueprint_content.iter(),
             );
             static_merge_runtime.clear_assets(&mut meshes, &mut materials);
+            static_instance_runtime.clear();
             blueprint_stats.materials = blueprint_assets.material_count();
             blueprint_stats.record_cleared(&session_id);
         }
@@ -1682,6 +2061,7 @@ fn handle_fangyuan_home_blueprint_commands(
                 blueprint_content.iter(),
             );
             static_merge_runtime.clear_assets(&mut meshes, &mut materials);
+            static_instance_runtime.clear();
 
             let layout = match FangyuanHomeLayout::load_first_package_ron(FANGYUAN_HOME_LAYOUT_PATH)
             {
@@ -1746,6 +2126,7 @@ fn handle_fangyuan_home_blueprint_commands(
                 &mut blueprint_assets,
                 &render_config,
                 &mut static_merge_runtime,
+                &mut static_instance_runtime,
                 &mut blueprint_stats,
             );
         }
@@ -1774,11 +2155,12 @@ fn reset_fangyuan_home_blueprint_stats_on_exit(
     }
 }
 
-fn clear_fangyuan_home_static_merge_assets_on_exit(
+fn clear_fangyuan_home_render_runtime_on_exit(
     mut scene_events: MessageReader<SceneEvent>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut static_merge_runtime: ResMut<FangyuanHomeStaticMergeRuntime>,
+    mut static_instance_runtime: ResMut<FangyuanHomeStaticInstanceRuntime>,
 ) {
     for event in scene_events.read() {
         let SceneEvent::Exited(exited) = event else {
@@ -1790,6 +2172,7 @@ fn clear_fangyuan_home_static_merge_assets_on_exit(
         }
 
         static_merge_runtime.clear_assets(&mut meshes, &mut materials);
+        static_instance_runtime.clear();
     }
 }
 
@@ -1978,6 +2361,7 @@ mod tests {
             .init_resource::<FangyuanHomeBlueprintRenderAssets>()
             .init_resource::<FangyuanHomeBlueprintRenderConfig>()
             .init_resource::<FangyuanHomeStaticMergeRuntime>()
+            .init_resource::<FangyuanHomeStaticInstanceRuntime>()
             .init_resource::<FangyuanHomeBlueprintStats>()
             .add_message::<SceneEvent>()
             .add_message::<FangyuanHomeBlueprintCommand>()
@@ -1985,7 +2369,7 @@ mod tests {
                 Update,
                 (
                     reset_fangyuan_home_blueprint_stats_on_exit,
-                    clear_fangyuan_home_static_merge_assets_on_exit,
+                    clear_fangyuan_home_render_runtime_on_exit,
                     instantiate_fangyuan_home_content,
                     handle_fangyuan_home_blueprint_commands,
                 )
@@ -3310,7 +3694,11 @@ mod tests {
         }));
         assert_eq!(
             app.world().resource::<FangyuanHomeBlueprintStats>(),
-            &expected_loaded_layout_stats(&session_id, &compile_report)
+            &expected_loaded_layout_stats_with_render_summary(
+                &session_id,
+                &compile_report,
+                FangyuanHomeBlueprintRenderSummary::cpu_merge(),
+            )
         );
         let runtime = app.world().resource::<FangyuanHomeStaticMergeRuntime>();
         assert_eq!(
@@ -3458,6 +3846,319 @@ mod tests {
                 .resource::<FangyuanHomeStaticMergeRuntime>()
                 .last_failure,
             None
+        );
+    }
+
+    #[test]
+    fn static_instance_mode_spawns_shared_mesh_prototype_from_default_home_layout() {
+        let mut app = app_with_fangyuan_home_system();
+        enable_static_instance_mode(&mut app);
+
+        let session_id =
+            spawn_and_enter_fangyuan_home(&mut app, "fangyuan-static-instance-session");
+        let compile_report = default_layout_compile_report();
+
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            fangyuan_blueprint_merged_mesh_count(&mut app, &session_id),
+            0
+        );
+        let records = fangyuan_blueprint_static_instance_records(&mut app, &session_id);
+        assert_eq!(records.len(), EXPECTED_DEFAULT_LAYOUT_GENERATED);
+        assert!(
+            records
+                .iter()
+                .any(|record| record.kind == FangyuanPrimitiveKind::Cube)
+        );
+        assert!(
+            records
+                .iter()
+                .any(|record| record.kind == FangyuanPrimitiveKind::Sphere)
+        );
+        assert!(records.iter().all(|record| {
+            record.buffer_source.instance_count > 0
+                && record.buffer_bytes > 0
+                && record.debug_name.contains("fangyuan_static_instance")
+        }));
+
+        let mut static_instances = app.world_mut().query::<(
+            &FangyuanHomeBlueprintStaticInstanceVisual,
+            &Transform,
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+        )>();
+        let mut cube_mesh: Option<Handle<Mesh>> = None;
+        let mut sphere_mesh: Option<Handle<Mesh>> = None;
+        for (visual, transform, mesh, material) in static_instances.iter(app.world()) {
+            if visual.session_id != session_id {
+                continue;
+            }
+            let expected_primitive = compile_report
+                .primitive_set
+                .primitives()
+                .iter()
+                .find(|primitive| {
+                    primitive.local_position == transform.translation
+                        && primitive.scale == transform.scale
+                        && primitive.kind == visual.kind
+                        && primitive.color.with_alpha(primitive.alpha) == visual.color
+                })
+                .expect("static instance visual should consume primitive position scale and color");
+            assert_eq!(transform.rotation, Quat::IDENTITY);
+            assert!(matches!(
+                visual.source.source_kind,
+                crate::framework::fangyuan::FangyuanStaticMergeSourceKind::RuntimePrimitiveSet
+            ));
+            assert_eq!(
+                material_color(&app, &material.0),
+                expected_primitive
+                    .color
+                    .with_alpha(expected_primitive.alpha)
+            );
+            match visual.kind {
+                FangyuanPrimitiveKind::Cube => {
+                    if let Some(cube_mesh) = &cube_mesh {
+                        assert_eq!(&mesh.0, cube_mesh);
+                    } else {
+                        cube_mesh = Some(mesh.0.clone());
+                    }
+                }
+                FangyuanPrimitiveKind::Sphere => {
+                    if let Some(sphere_mesh) = &sphere_mesh {
+                        assert_eq!(&mesh.0, sphere_mesh);
+                    } else {
+                        sphere_mesh = Some(mesh.0.clone());
+                    }
+                }
+            }
+        }
+        let cube_mesh = cube_mesh.expect("static instance layout should include cubes");
+        let sphere_mesh = sphere_mesh.expect("static instance layout should include spheres");
+        assert_ne!(cube_mesh, sphere_mesh);
+        let render_assets = app.world().resource::<FangyuanHomeBlueprintRenderAssets>();
+        assert_eq!(render_assets.unit_cube_mesh(), Some(&cube_mesh));
+        assert_eq!(render_assets.unit_sphere_mesh(), Some(&sphere_mesh));
+
+        let runtime = app.world().resource::<FangyuanHomeStaticInstanceRuntime>();
+        assert_eq!(
+            runtime.stats.instance_count,
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert_eq!(
+            runtime.stats.batch_count,
+            unique_static_instance_batch_count(&records)
+        );
+        assert_eq!(runtime.last_failure, None);
+        let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+        assert_eq!(stats.render_mode, "static_instance");
+        assert_eq!(
+            stats.static_instance_count,
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert_eq!(stats.static_instance_batch_count, runtime.stats.batch_count);
+        assert_eq!(
+            stats.static_instance_buffer_bytes,
+            runtime.stats.buffer_bytes
+        );
+        assert_eq!(stats.static_instance_fallback_reason, "-");
+    }
+
+    #[test]
+    fn static_instance_reload_clear_exit_and_mode_switch_clear_runtime_state() {
+        let mut app = app_with_fangyuan_home_system();
+        enable_static_instance_mode(&mut app);
+        let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-static-lifecycle");
+        let initial_records = fangyuan_blueprint_static_instance_count(&mut app, &session_id);
+        assert_eq!(initial_records, EXPECTED_DEFAULT_LAYOUT_GENERATED);
+        assert!(
+            app.world()
+                .resource::<FangyuanHomeStaticInstanceRuntime>()
+                .stats
+                .instance_count
+                > 0
+        );
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            initial_records
+        );
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Clear);
+        app.update();
+
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeStaticInstanceRuntime>()
+                .stats
+                .instance_count,
+            0
+        );
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            initial_records
+        );
+
+        app.world_mut()
+            .resource_mut::<FangyuanHomeBlueprintRenderConfig>()
+            .mode = FangyuanHomeBlueprintRenderMode::CpuMerge;
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            0
+        );
+        assert!(fangyuan_blueprint_merged_mesh_count(&mut app, &session_id) > 0);
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeStaticInstanceRuntime>()
+                .stats
+                .instance_count,
+            0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeBlueprintStats>()
+                .render_mode,
+            "cpu_merge"
+        );
+
+        app.world_mut().write_message(SceneEvent::Exited(
+            crate::framework::scene::prelude::SceneExited {
+                scene_id: FANGYUAN_HOME_SCENE_ID.into(),
+                session_id: session_id.clone(),
+            },
+        ));
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeStaticInstanceRuntime>()
+                .stats
+                .instance_count,
+            0
+        );
+        assert_eq!(static_merge_runtime_asset_counts(&app), (0, 0));
+    }
+
+    #[test]
+    fn static_instance_budget_or_initialization_failure_falls_back_to_standard() {
+        let mut app = app_with_fangyuan_home_system();
+        set_static_instance_buffer_budget(&mut app, 1);
+        let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-static-budget");
+
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(
+            fangyuan_blueprint_primitive_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        let runtime = app.world().resource::<FangyuanHomeStaticInstanceRuntime>();
+        assert_eq!(runtime.fallback_count, 1);
+        assert!(
+            runtime
+                .last_failure
+                .as_deref()
+                .is_some_and(|reason| reason.contains("buffer_bytes"))
+        );
+        let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+        assert_eq!(stats.render_mode, "static_instance->standard");
+        assert!(
+            stats
+                .static_instance_fallback_reason
+                .contains("buffer_bytes")
+        );
+
+        app.world_mut()
+            .resource_mut::<FangyuanHomeBlueprintRenderConfig>()
+            .instance_options = FangyuanStaticInstanceRenderOptions {
+            allow_cube: false,
+            allow_sphere: false,
+            ..Default::default()
+        };
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(
+            fangyuan_blueprint_primitive_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert!(
+            app.world()
+                .resource::<FangyuanHomeStaticInstanceRuntime>()
+                .last_failure
+                .as_deref()
+                .is_some_and(|reason| reason.contains("at least one primitive kind"))
+        );
+    }
+
+    #[test]
+    fn static_instance_unsupported_kind_can_fail_without_leaving_half_old_content() {
+        let mut app = app_with_fangyuan_home_system();
+        enable_static_instance_mode(&mut app);
+        let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-static-unsupported");
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+
+        {
+            let mut config = app
+                .world_mut()
+                .resource_mut::<FangyuanHomeBlueprintRenderConfig>();
+            config.instance_options.allow_sphere = false;
+            config.fallback_to_standard_on_instance_failure = false;
+        }
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            fangyuan_blueprint_merged_mesh_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
+        let runtime = app.world().resource::<FangyuanHomeStaticInstanceRuntime>();
+        assert_eq!(runtime.fallback_count, 0);
+        assert!(
+            runtime
+                .last_failure
+                .as_deref()
+                .is_some_and(|reason| reason.contains("unsupported kind: sphere"))
+        );
+        let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+        assert_eq!(stats.render_mode, "static_instance_failed");
+        assert!(
+            stats
+                .static_instance_fallback_reason
+                .contains("unsupported kind: sphere")
         );
     }
 
@@ -3742,6 +4443,43 @@ mod tests {
             .collect()
     }
 
+    fn fangyuan_blueprint_static_instance_count(
+        app: &mut App,
+        session_id: &SceneSessionId,
+    ) -> usize {
+        let mut instances = app
+            .world_mut()
+            .query::<&FangyuanHomeBlueprintStaticInstanceVisual>();
+        instances
+            .iter(app.world())
+            .filter(|instance| instance.session_id == *session_id)
+            .count()
+    }
+
+    fn fangyuan_blueprint_static_instance_records(
+        app: &mut App,
+        session_id: &SceneSessionId,
+    ) -> Vec<FangyuanHomeBlueprintStaticInstanceVisual> {
+        let mut instances = app
+            .world_mut()
+            .query::<&FangyuanHomeBlueprintStaticInstanceVisual>();
+        instances
+            .iter(app.world())
+            .filter(|instance| instance.session_id == *session_id)
+            .cloned()
+            .collect()
+    }
+
+    fn unique_static_instance_batch_count(
+        records: &[FangyuanHomeBlueprintStaticInstanceVisual],
+    ) -> usize {
+        records
+            .iter()
+            .map(|record| record.batch_index)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+
     fn scene_entity_counts_for_session_from_world(
         app: &mut App,
         session_id: &SceneSessionId,
@@ -3814,6 +4552,12 @@ mod tests {
             .mode = FangyuanHomeBlueprintRenderMode::CpuMerge;
     }
 
+    fn enable_static_instance_mode(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<FangyuanHomeBlueprintRenderConfig>()
+            .mode = FangyuanHomeBlueprintRenderMode::StaticInstance;
+    }
+
     fn set_cpu_merge_budget(app: &mut App, max_vertices: usize, max_indices: usize) {
         let mut config = app
             .world_mut()
@@ -3821,6 +4565,22 @@ mod tests {
         config.mode = FangyuanHomeBlueprintRenderMode::CpuMerge;
         config.mesh_options.max_vertices_per_mesh = max_vertices;
         config.mesh_options.max_indices_per_mesh = max_indices;
+    }
+
+    fn set_static_instance_buffer_budget(app: &mut App, max_buffer_bytes: usize) {
+        let mut config = app
+            .world_mut()
+            .resource_mut::<FangyuanHomeBlueprintRenderConfig>();
+        config.mode = FangyuanHomeBlueprintRenderMode::StaticInstance;
+        config.instance_options.max_buffer_bytes = max_buffer_bytes;
+    }
+
+    fn material_color(app: &App, material: &Handle<StandardMaterial>) -> Color {
+        app.world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(material)
+            .expect("material should exist")
+            .base_color
     }
 
     fn static_merge_runtime_asset_counts(app: &App) -> (usize, usize) {
@@ -3870,6 +4630,7 @@ mod tests {
             ResMut<FangyuanHomeBlueprintRenderAssets>,
             Res<FangyuanHomeBlueprintRenderConfig>,
             ResMut<FangyuanHomeStaticMergeRuntime>,
+            ResMut<FangyuanHomeStaticInstanceRuntime>,
         )> = SystemState::new(app.world_mut());
         let content = {
             let (
@@ -3879,6 +4640,7 @@ mod tests {
                 mut blueprint_assets,
                 render_config,
                 mut static_merge_runtime,
+                mut static_instance_runtime,
             ) = state.get_mut(app.world_mut());
             spawn_fangyuan_home_blueprint_content(
                 &mut commands,
@@ -3890,11 +4652,12 @@ mod tests {
                 &mut blueprint_assets,
                 &render_config,
                 &mut static_merge_runtime,
+                &mut static_instance_runtime,
             )
         };
         state.apply(app.world_mut());
         app.update();
-        content
+        content.entity
     }
 
     fn spawn_layout_from_loader_for_test(
@@ -3910,6 +4673,7 @@ mod tests {
             ResMut<FangyuanHomeBlueprintRenderAssets>,
             Res<FangyuanHomeBlueprintRenderConfig>,
             ResMut<FangyuanHomeStaticMergeRuntime>,
+            ResMut<FangyuanHomeStaticInstanceRuntime>,
             ResMut<FangyuanHomeBlueprintStats>,
         )> = SystemState::new(app.world_mut());
         let content = {
@@ -3920,6 +4684,7 @@ mod tests {
                 mut blueprint_assets,
                 render_config,
                 mut static_merge_runtime,
+                mut static_instance_runtime,
                 mut blueprint_stats,
             ) = state.get_mut(app.world_mut());
             spawn_fangyuan_home_blueprint_from_layout_with_loader(
@@ -3931,6 +4696,7 @@ mod tests {
                 &mut blueprint_assets,
                 &render_config,
                 &mut static_merge_runtime,
+                &mut static_instance_runtime,
                 &mut blueprint_stats,
                 load_scene_layout,
             )
@@ -4022,6 +4788,18 @@ mod tests {
         session_id: &SceneSessionId,
         compile_report: &FangyuanSceneLayoutCompileReport,
     ) -> FangyuanHomeBlueprintStats {
+        expected_loaded_layout_stats_with_render_summary(
+            session_id,
+            compile_report,
+            FangyuanHomeBlueprintRenderSummary::default(),
+        )
+    }
+
+    fn expected_loaded_layout_stats_with_render_summary(
+        session_id: &SceneSessionId,
+        compile_report: &FangyuanSceneLayoutCompileReport,
+        render_summary: FangyuanHomeBlueprintRenderSummary,
+    ) -> FangyuanHomeBlueprintStats {
         let mut stats = FangyuanHomeBlueprintStats::default();
         let audit_report = default_layout_audit_report();
         stats.record_layout_loaded(
@@ -4030,6 +4808,7 @@ mod tests {
             FANGYUAN_HOME_PREFAB_PALETTE_PATH,
             &audit_report,
             compile_report,
+            render_summary,
         );
         stats
     }

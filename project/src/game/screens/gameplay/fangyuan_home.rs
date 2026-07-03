@@ -241,7 +241,7 @@ fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> 
         compact_fangyuan_home_layout_path(stats.palette_path(), FANGYUAN_HOME_PREFAB_PALETTE_PATH);
 
     format!(
-        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nl {layout_path}\np {palette_path}",
+        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nrender {} ib {} ii {} bytes {} fb {}\nl {layout_path}\np {palette_path}",
         stats.generated_primitives,
         FANGYUAN_HOME_PRIMITIVE_LIMIT,
         stats.skipped,
@@ -254,7 +254,35 @@ fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> 
         stats.used_prefab_count,
         stats.instance_count,
         stats.materials,
+        stats.render_mode,
+        stats.static_instance_batch_count,
+        stats.static_instance_count,
+        stats.static_instance_buffer_bytes,
+        compact_fangyuan_home_fallback_reason(&stats.static_instance_fallback_reason),
     )
+}
+
+fn compact_fangyuan_home_fallback_reason(reason: &str) -> String {
+    const MAX_REASON_CHARS: usize = 22;
+
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return "-".to_string();
+    }
+    let char_count = reason.chars().count();
+    if char_count <= MAX_REASON_CHARS {
+        return reason.to_string();
+    }
+
+    let tail = reason
+        .chars()
+        .rev()
+        .take(MAX_REASON_CHARS - 3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("...{tail}")
 }
 
 fn compact_fangyuan_home_layout_path(path: &str, fallback: &str) -> String {
@@ -431,6 +459,7 @@ mod tests {
             "fangyuan/home_prefabs.palette.ron",
             &hud_test_audit_report(Vec::new()),
             &compile_report,
+            Default::default(),
         );
         app.insert_resource(stats)
             .add_systems(Update, update_fangyuan_home_hud_status);
@@ -444,7 +473,7 @@ mod tests {
         let text = app.world().get::<Text>(status_text).unwrap();
         assert_eq!(
             text.0,
-            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nrender standard ib 0 ii 0 bytes 0 fb -\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
     }
 
@@ -460,16 +489,17 @@ mod tests {
             "fangyuan/home_prefabs.palette.ron",
             &hud_test_audit_report(Vec::new()),
             &compile_report,
+            Default::default(),
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nrender standard ib 0 ii 0 bytes 0 fb -\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_cleared(&session_id);
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nrender standard ib 0 ii 0 bytes 0 fb -\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_loaded(
@@ -481,10 +511,19 @@ mod tests {
                 "invalid_primitive_color",
             )]),
             &compile_report,
+            crate::game::scenes::FangyuanHomeBlueprintRenderSummary {
+                mode: "static_instance->standard".to_string(),
+                static_instance_batch_count: 0,
+                static_instance_count: 0,
+                static_instance_buffer_bytes: 0,
+                static_instance_fallback_reason:
+                    "fangyuan static instance render budget exceeded: buffer_bytes=5000/1"
+                        .to_string(),
+            },
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nrender static_instance->standard ib 0 ii 0 bytes 0 fb ...buffer_bytes=5000/1\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_failed(
@@ -499,7 +538,7 @@ mod tests {
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
+            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nrender standard ib 0 ii 0 bytes 0 fb -\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
         );
     }
 
@@ -507,7 +546,7 @@ mod tests {
     fn hud_status_text_defaults_to_non_successful_empty_state() {
         assert_eq!(
             fangyuan_home_hud_status_text(None),
-            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
+            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nrender standard ib 0 ii 0 bytes 0 fb -\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
         );
     }
 
