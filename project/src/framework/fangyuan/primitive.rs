@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 /// Runtime primitive kind compiled from blueprint data.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FangyuanPrimitiveKind {
     Cube,

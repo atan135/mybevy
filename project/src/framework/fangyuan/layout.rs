@@ -1035,7 +1035,7 @@ pub struct FangyuanSceneLayoutInstance {
     pub tags: Vec<String>,
 }
 
-fn transform_prefab_primitive(
+pub(super) fn transform_prefab_primitive(
     instance: &FangyuanSceneLayoutInstance,
     prefab: &FangyuanPrefabDefinition,
     primitive: &FangyuanPrimitiveBlueprint,

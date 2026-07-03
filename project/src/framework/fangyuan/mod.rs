@@ -19,6 +19,7 @@ mod object;
 mod prefab;
 mod primitive;
 mod render_assets;
+mod static_merge;
 mod stats;
 
 pub use asset_path::*;
@@ -30,4 +31,5 @@ pub use object::*;
 pub use prefab::*;
 pub use primitive::*;
 pub use render_assets::*;
+pub use static_merge::*;
 pub use stats::*;
