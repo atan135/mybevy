@@ -20,6 +20,7 @@ mod prefab;
 mod primitive;
 mod render_assets;
 mod static_merge;
+mod static_mesh_builder;
 mod stats;
 
 pub use asset_path::*;
@@ -32,4 +33,5 @@ pub use prefab::*;
 pub use primitive::*;
 pub use render_assets::*;
 pub use static_merge::*;
+pub use static_mesh_builder::*;
 pub use stats::*;

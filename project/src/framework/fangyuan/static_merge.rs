@@ -14,13 +14,13 @@ pub const FANGYUAN_STATIC_MERGE_DEFAULT_REGION_PLACEHOLDER: &str = "region:unass
 pub const FANGYUAN_STATIC_MERGE_DEFAULT_MATERIAL_PROFILE: &str = "material:default";
 pub const FANGYUAN_STATIC_MERGE_DEFAULT_DEBUG_LABEL: &str = "fangyuan_static";
 
-const FANGYUAN_STATIC_MERGE_CUBE_VERTEX_COUNT: usize = 24;
-const FANGYUAN_STATIC_MERGE_CUBE_INDEX_COUNT: usize = 36;
-const FANGYUAN_STATIC_MERGE_SPHERE_SECTORS: usize = 24;
-const FANGYUAN_STATIC_MERGE_SPHERE_STACKS: usize = 12;
-const FANGYUAN_STATIC_MERGE_SPHERE_VERTEX_COUNT: usize =
+pub const FANGYUAN_STATIC_MERGE_CUBE_VERTEX_COUNT: usize = 24;
+pub const FANGYUAN_STATIC_MERGE_CUBE_INDEX_COUNT: usize = 36;
+pub const FANGYUAN_STATIC_MERGE_SPHERE_SECTORS: usize = 24;
+pub const FANGYUAN_STATIC_MERGE_SPHERE_STACKS: usize = 12;
+pub const FANGYUAN_STATIC_MERGE_SPHERE_VERTEX_COUNT: usize =
     (FANGYUAN_STATIC_MERGE_SPHERE_SECTORS + 1) * (FANGYUAN_STATIC_MERGE_SPHERE_STACKS + 1);
-const FANGYUAN_STATIC_MERGE_SPHERE_INDEX_COUNT: usize =
+pub const FANGYUAN_STATIC_MERGE_SPHERE_INDEX_COUNT: usize =
     FANGYUAN_STATIC_MERGE_SPHERE_SECTORS * FANGYUAN_STATIC_MERGE_SPHERE_STACKS * 6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -218,6 +218,15 @@ impl FangyuanStaticMergeColorKey {
             canonical_f32_bits(alpha),
         ])
     }
+
+    pub fn channels(self) -> [f32; 4] {
+        [
+            f32::from_bits(self.0[0]),
+            f32::from_bits(self.0[1]),
+            f32::from_bits(self.0[2]),
+            f32::from_bits(self.0[3]),
+        ]
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -226,6 +235,10 @@ pub struct FangyuanStaticMergeF32Key(u32);
 impl FangyuanStaticMergeF32Key {
     pub fn from_f32(value: f32) -> Self {
         Self(canonical_f32_bits(value))
+    }
+
+    pub fn to_f32(self) -> f32 {
+        f32::from_bits(self.0)
     }
 }
 
