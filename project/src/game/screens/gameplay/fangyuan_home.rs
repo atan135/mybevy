@@ -241,7 +241,7 @@ fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> 
         compact_fangyuan_home_layout_path(stats.palette_path(), FANGYUAN_HOME_PREFAB_PALETTE_PATH);
 
     format!(
-        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nmatprof {} opaque {} trans {} emi {:.1} uniq {}\nrender {} ib {} ii {} bytes {} fb {}\nl {layout_path}\np {palette_path}",
+        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nmatprof {} opaque {} trans {} emi {:.1} uniq {}\nrender {} ib {} ii {} bytes {} fb {}\ntrial {} vfx {} tpl {} vis {}\neq {} npc {} td {} cost {} find {}\nl {layout_path}\np {palette_path}",
         stats.generated_primitives,
         FANGYUAN_HOME_PRIMITIVE_LIMIT,
         stats.skipped,
@@ -264,25 +264,45 @@ fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> 
         stats.static_instance_count,
         stats.static_instance_buffer_bytes,
         compact_fangyuan_home_fallback_reason(&stats.static_instance_fallback_reason),
+        stats.trial_route_id,
+        stats.active_vfx_count,
+        compact_fangyuan_home_trial_id(&stats.trial_template_id),
+        compact_fangyuan_home_trial_id(&stats.trial_visual_id),
+        stats.trial_equipment_count,
+        stats.trial_npc_count,
+        stats.trial_tiandao_count,
+        stats.trial_budget_cost,
+        compact_fangyuan_home_finding_summary(&stats.trial_finding_summary),
     )
 }
 
+fn compact_fangyuan_home_trial_id(id: &str) -> String {
+    const MAX_ID_CHARS: usize = 22;
+    compact_fangyuan_home_text(id, "-", MAX_ID_CHARS)
+}
+
 fn compact_fangyuan_home_fallback_reason(reason: &str) -> String {
-    const MAX_REASON_CHARS: usize = 22;
+    compact_fangyuan_home_text(reason, "-", 22)
+}
 
-    let reason = reason.trim();
-    if reason.is_empty() {
-        return "-".to_string();
+fn compact_fangyuan_home_finding_summary(summary: &str) -> String {
+    compact_fangyuan_home_text(summary, "ok", 32)
+}
+
+fn compact_fangyuan_home_text(value: &str, fallback: &str, max_chars: usize) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return fallback.to_string();
     }
-    let char_count = reason.chars().count();
-    if char_count <= MAX_REASON_CHARS {
-        return reason.to_string();
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
     }
 
-    let tail = reason
+    let tail = value
         .chars()
         .rev()
-        .take(MAX_REASON_CHARS - 3)
+        .take(max_chars - 3)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -478,7 +498,7 @@ mod tests {
         let text = app.world().get::<Text>(status_text).unwrap();
         assert_eq!(
             text.0,
-            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
     }
 
@@ -498,13 +518,13 @@ mod tests {
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_cleared(&session_id);
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_loaded(
@@ -529,7 +549,7 @@ mod tests {
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender static_instance->standard ib 0 ii 0 bytes 0 fb ...buffer_bytes=5000/1\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender static_instance->standard ib 0 ii 0 bytes 0 fb ...buffer_bytes=5000/1\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_failed(
@@ -544,7 +564,7 @@ mod tests {
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats)),
-            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
+            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
         );
     }
 
@@ -552,7 +572,7 @@ mod tests {
     fn hud_status_text_defaults_to_non_successful_empty_state() {
         assert_eq!(
             fangyuan_home_hud_status_text(None),
-            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
+            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
         );
     }
 

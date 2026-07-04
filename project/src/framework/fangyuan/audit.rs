@@ -800,6 +800,7 @@ pub enum FangyuanAuditSourceKind {
     PrefabPalette,
     SceneLayout,
     RuntimePrimitiveSet,
+    ObjectBudget,
     #[default]
     Unknown,
 }
