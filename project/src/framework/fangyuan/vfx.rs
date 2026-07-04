@@ -3,11 +3,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use super::{
-    FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
+    FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditSourceKind,
+    FangyuanAuditSuggestion, FangyuanAuditSuggestionAction, FangyuanPrimitive,
+    FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const FANGYUAN_VFX_RECOMMENDED_DURATION_TICKS: u64 = 120;
+const FANGYUAN_VFX_RECOMMENDED_PEAK_PRIMITIVES: usize = 24;
+const FANGYUAN_VFX_RECOMMENDED_TRAIL_SEGMENTS: usize = 12;
+const FANGYUAN_VFX_RECOMMENDED_ALPHA_PRIMITIVES: usize = 12;
+const FANGYUAN_VFX_RECOMMENDED_EMISSIVE_PRIMITIVES: usize = 8;
+const FANGYUAN_VFX_RECOMMENDED_MATERIAL_PROFILES: usize = 4;
+const FANGYUAN_VFX_MAX_EMISSIVE_INTENSITY: f32 = 4.0;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -363,6 +372,46 @@ impl FangyuanVfxReplayContext {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FangyuanVfxPredictionBoundary {
+    #[default]
+    AuthorityConfirmed,
+    LocalPredicted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FangyuanVfxReplayEvent {
+    pub authority_epoch: u64,
+    pub start_tick: u64,
+    pub frame_id: u32,
+    pub fps: u16,
+    pub action: String,
+    pub caster_id: String,
+    pub player_id: String,
+    pub event_id: String,
+    pub recipe_id: String,
+    #[serde(default)]
+    pub external_seed: Option<u64>,
+    #[serde(default)]
+    pub prediction_boundary: FangyuanVfxPredictionBoundary,
+}
+
+impl FangyuanVfxReplayEvent {
+    pub fn replay_context(&self) -> FangyuanVfxReplayContext {
+        FangyuanVfxReplayContext {
+            caster_id: self.caster_id.clone(),
+            event_id: self.event_id.clone(),
+            external_seed: self.external_seed,
+        }
+    }
+
+    pub fn clock_at(&self, current_tick: u64) -> FangyuanVfxClock {
+        FangyuanVfxClock::new(self.start_tick, current_tick, u32::from(self.fps))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FangyuanVfxDynamicPrimitiveState {
     pub recipe_id: String,
@@ -408,6 +457,69 @@ impl FangyuanVfxDynamicPrimitiveState {
             self.material_profile_id.clone(),
             self.lifecycle,
         )
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FangyuanVfxBudgetEstimate {
+    pub duration_ticks: u64,
+    pub emitter_count: usize,
+    pub peak_primitives: usize,
+    pub trail_segments: usize,
+    pub alpha_primitives: usize,
+    pub transparent_primitives: usize,
+    pub emissive_primitives: usize,
+    pub material_profile_count: usize,
+    pub roles: Vec<FangyuanPrimitiveRole>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FangyuanVfxBudgetProfile {
+    pub recommended_duration_ticks: u64,
+    pub recommended_peak_primitives: usize,
+    pub recommended_trail_segments: usize,
+    pub recommended_alpha_primitives: usize,
+    pub recommended_emissive_primitives: usize,
+    pub recommended_material_profiles: usize,
+    pub max_emissive_intensity: f32,
+}
+
+impl Default for FangyuanVfxBudgetProfile {
+    fn default() -> Self {
+        Self {
+            recommended_duration_ticks: FANGYUAN_VFX_RECOMMENDED_DURATION_TICKS,
+            recommended_peak_primitives: FANGYUAN_VFX_RECOMMENDED_PEAK_PRIMITIVES,
+            recommended_trail_segments: FANGYUAN_VFX_RECOMMENDED_TRAIL_SEGMENTS,
+            recommended_alpha_primitives: FANGYUAN_VFX_RECOMMENDED_ALPHA_PRIMITIVES,
+            recommended_emissive_primitives: FANGYUAN_VFX_RECOMMENDED_EMISSIVE_PRIMITIVES,
+            recommended_material_profiles: FANGYUAN_VFX_RECOMMENDED_MATERIAL_PROFILES,
+            max_emissive_intensity: FANGYUAN_VFX_MAX_EMISSIVE_INTENSITY,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FangyuanVfxBudgetPressure {
+    pub max_primitives: Option<usize>,
+    pub max_trail_segments: Option<u16>,
+    pub skip_decoration: bool,
+}
+
+impl FangyuanVfxBudgetPressure {
+    pub const fn none() -> Self {
+        Self {
+            max_primitives: None,
+            max_trail_segments: None,
+            skip_decoration: false,
+        }
+    }
+
+    pub const fn constrained(max_primitives: usize, max_trail_segments: u16) -> Self {
+        Self {
+            max_primitives: Some(max_primitives),
+            max_trail_segments: Some(max_trail_segments),
+            skip_decoration: true,
+        }
     }
 }
 
@@ -517,13 +629,19 @@ impl FangyuanVfxInstance {
         }
     }
 
-    fn evaluate(
+    fn evaluate_with_budget_pressure(
         &self,
         current_tick: u64,
         ticks_per_second: u32,
+        pressure: FangyuanVfxBudgetPressure,
     ) -> Result<Vec<FangyuanVfxDynamicPrimitiveState>, FangyuanVfxDiagnostic> {
         let clock = FangyuanVfxClock::new(self.start_tick, current_tick, ticks_per_second);
-        let mut states = evaluate_fangyuan_vfx_recipe(&self.recipe, clock, &self.context)?;
+        let mut states = evaluate_fangyuan_vfx_recipe_with_budget_pressure(
+            &self.recipe,
+            clock,
+            &self.context,
+            pressure,
+        )?;
         for state in &mut states {
             state.source = state.source.clone().with_instance_id(self.id.clone());
         }
@@ -579,6 +697,19 @@ impl FangyuanVfxRuntime {
         current_tick: u64,
         ticks_per_second: u32,
     ) -> Result<&[FangyuanVfxDynamicPrimitiveState], FangyuanVfxDiagnostic> {
+        self.tick_with_budget_pressure(
+            current_tick,
+            ticks_per_second,
+            FangyuanVfxBudgetPressure::none(),
+        )
+    }
+
+    pub fn tick_with_budget_pressure(
+        &mut self,
+        current_tick: u64,
+        ticks_per_second: u32,
+        pressure: FangyuanVfxBudgetPressure,
+    ) -> Result<&[FangyuanVfxDynamicPrimitiveState], FangyuanVfxDiagnostic> {
         let mut finished = Vec::new();
         let mut active_states = Vec::new();
 
@@ -587,7 +718,11 @@ impl FangyuanVfxRuntime {
                 finished.push(id.clone());
                 continue;
             }
-            active_states.extend(instance.evaluate(current_tick, ticks_per_second)?);
+            active_states.extend(instance.evaluate_with_budget_pressure(
+                current_tick,
+                ticks_per_second,
+                pressure,
+            )?);
         }
 
         for id in finished {
@@ -639,6 +774,206 @@ pub fn evaluate_fangyuan_vfx_recipe(
     clock: FangyuanVfxClock,
     context: &FangyuanVfxReplayContext,
 ) -> Result<Vec<FangyuanVfxDynamicPrimitiveState>, FangyuanVfxDiagnostic> {
+    evaluate_fangyuan_vfx_recipe_with_budget_pressure(
+        recipe,
+        clock,
+        context,
+        FangyuanVfxBudgetPressure::none(),
+    )
+}
+
+pub fn estimate_fangyuan_vfx_recipe_budget(
+    recipe: &FangyuanVfxRecipe,
+) -> FangyuanVfxBudgetEstimate {
+    let mut estimate = FangyuanVfxBudgetEstimate {
+        duration_ticks: recipe.duration_ticks,
+        emitter_count: recipe.emitters.len(),
+        ..Default::default()
+    };
+    let mut material_profiles = Vec::<&str>::new();
+
+    for emitter in &recipe.emitters {
+        if !estimate.roles.contains(&emitter.role) {
+            estimate.roles.push(emitter.role);
+        }
+        if emitter.color[3] < 1.0 || emitter.operators.iter().any(operator_may_use_alpha) {
+            estimate.alpha_primitives += 1;
+            estimate.transparent_primitives += 1;
+        }
+        if emitter.emissive > 0.0 || emitter.operators.iter().any(operator_may_use_emissive) {
+            estimate.emissive_primitives += 1;
+        }
+        if let Some(material_profile_id) = emitter.material_profile_id.as_deref()
+            && !material_profiles.contains(&material_profile_id)
+        {
+            material_profiles.push(material_profile_id);
+        }
+
+        for operator in &emitter.operators {
+            if let FangyuanVfxOperator::Trail { segments, .. } = operator {
+                let segments = usize::from(*segments);
+                estimate.trail_segments += segments;
+                estimate.peak_primitives += segments;
+                estimate.alpha_primitives += segments;
+                estimate.transparent_primitives += segments;
+                if !estimate.roles.contains(&FangyuanPrimitiveRole::Trail) {
+                    estimate.roles.push(FangyuanPrimitiveRole::Trail);
+                }
+            }
+        }
+    }
+
+    estimate.peak_primitives += estimate.emitter_count;
+    estimate.material_profile_count = material_profiles.len();
+    estimate.roles.sort_by_key(|role| role.as_str());
+    estimate
+}
+
+pub fn audit_fangyuan_vfx_recipe(recipe: &FangyuanVfxRecipe) -> FangyuanAuditReport {
+    audit_fangyuan_vfx_recipe_with_profile(recipe, &FangyuanVfxBudgetProfile::default())
+}
+
+pub fn audit_fangyuan_vfx_recipe_with_profile(
+    recipe: &FangyuanVfxRecipe,
+    profile: &FangyuanVfxBudgetProfile,
+) -> FangyuanAuditReport {
+    let estimate = estimate_fangyuan_vfx_recipe_budget(recipe);
+    let mut report =
+        FangyuanAuditReport::new(FangyuanAuditSourceKind::Unknown, Some(recipe.id.clone()));
+
+    if estimate.duration_ticks > profile.recommended_duration_ticks {
+        add_vfx_finding_with_suggestion(
+            &mut report,
+            "vfx_duration_above_recommended",
+            "duration_ticks",
+            "VFX duration exceeds the recommended budget",
+            FangyuanAuditSuggestionAction::ShrinkBounds,
+            "shorten duration or residue ticks to reduce long-lived VFX pressure",
+        );
+    }
+    if estimate.peak_primitives > profile.recommended_peak_primitives {
+        add_vfx_finding_with_suggestion(
+            &mut report,
+            "vfx_peak_primitives_above_recommended",
+            "emitters[].operators",
+            "peak VFX primitive count exceeds the recommended budget",
+            FangyuanAuditSuggestionAction::ReducePrimitives,
+            "reduce decoration emitters or trail segments before removing readable core states",
+        );
+    }
+    if estimate.trail_segments > profile.recommended_trail_segments {
+        add_vfx_finding_with_suggestion(
+            &mut report,
+            "vfx_trail_segments_above_recommended",
+            "emitters[].operators[type=trail].segments",
+            "trail segment count exceeds the recommended budget",
+            FangyuanAuditSuggestionAction::ReducePrimitives,
+            "reduce trail segments or increase spacing_ticks",
+        );
+    }
+    if estimate.alpha_primitives > profile.recommended_alpha_primitives {
+        add_vfx_finding_with_suggestion(
+            &mut report,
+            "vfx_alpha_above_recommended",
+            "emitters[].color[3]",
+            "alpha and transparent VFX count exceeds the recommended budget",
+            FangyuanAuditSuggestionAction::RemoveAlpha,
+            "lower alpha usage or make decorative residue opaque",
+        );
+    }
+    if estimate.emissive_primitives > profile.recommended_emissive_primitives {
+        add_vfx_finding_with_suggestion(
+            &mut report,
+            "vfx_emissive_count_above_recommended",
+            "emitters[].emissive",
+            "emissive VFX count exceeds the recommended budget",
+            FangyuanAuditSuggestionAction::LowerEmissive,
+            "lower emissive amplitude or limit it to core impact states",
+        );
+    }
+    if estimate.material_profile_count > profile.recommended_material_profiles {
+        add_vfx_finding_with_suggestion(
+            &mut report,
+            "vfx_material_profile_count_above_recommended",
+            "emitters[].material_profile_id",
+            "material profile count exceeds the recommended VFX budget",
+            FangyuanAuditSuggestionAction::ReplaceMaterialProfile,
+            "reuse fewer VFX material profiles",
+        );
+    }
+    for (index, emitter) in recipe.emitters.iter().enumerate() {
+        if emitter.emissive > profile.max_emissive_intensity {
+            add_vfx_finding_with_suggestion(
+                &mut report,
+                "vfx_emissive_intensity_above_recommended",
+                format!("emitters[{index}].emissive"),
+                "emissive intensity exceeds the recommended VFX range",
+                FangyuanAuditSuggestionAction::LowerEmissive,
+                "lower emissive intensity to keep bloom and material cost predictable",
+            );
+        }
+    }
+    if !estimate.roles.iter().any(|role| {
+        matches!(
+            role,
+            FangyuanPrimitiveRole::Core
+                | FangyuanPrimitiveRole::Boundary
+                | FangyuanPrimitiveRole::Warning
+                | FangyuanPrimitiveRole::Impact
+        )
+    }) {
+        add_vfx_finding_with_suggestion(
+            &mut report,
+            "vfx_role_missing_readable_anchor",
+            "emitters[].role",
+            "recipe has no readable core, boundary, warning, or impact role",
+            FangyuanAuditSuggestionAction::ReduceWarningRole,
+            "assign at least one primary gameplay-readable role before decoration",
+        );
+    }
+
+    report.refresh_summary_and_status();
+    report.sort_findings();
+    report.sort_suggestions();
+    report
+}
+
+pub fn fangyuan_vfx_primitive_state_hash(states: &[FangyuanVfxDynamicPrimitiveState]) -> u64 {
+    let mut hash = FNV_OFFSET;
+    for state in states {
+        mix_str(&mut hash, &state.recipe_id);
+        mix_str(&mut hash, &state.emitter_id);
+        mix_u64(&mut hash, state.emitter_index as u64);
+        mix_u64(&mut hash, u64::from(state.primitive_index));
+        mix_u64(&mut hash, state.source_tick);
+        mix_str(&mut hash, state.primitive_kind.as_str());
+        mix_str(&mut hash, state.role.as_str());
+        mix_f32(&mut hash, state.local_position.x);
+        mix_f32(&mut hash, state.local_position.y);
+        mix_f32(&mut hash, state.local_position.z);
+        mix_f32(&mut hash, state.scale.x);
+        mix_f32(&mut hash, state.scale.y);
+        mix_f32(&mut hash, state.scale.z);
+        let color = state.color.to_srgba();
+        mix_f32(&mut hash, color.red);
+        mix_f32(&mut hash, color.green);
+        mix_f32(&mut hash, color.blue);
+        mix_f32(&mut hash, state.alpha);
+        mix_f32(&mut hash, state.emissive);
+        if let Some(profile) = state.material_profile_id.as_deref() {
+            mix_str(&mut hash, profile);
+        }
+        mix_u64(&mut hash, state.seed);
+    }
+    avalanche(hash)
+}
+
+pub fn evaluate_fangyuan_vfx_recipe_with_budget_pressure(
+    recipe: &FangyuanVfxRecipe,
+    clock: FangyuanVfxClock,
+    context: &FangyuanVfxReplayContext,
+    pressure: FangyuanVfxBudgetPressure,
+) -> Result<Vec<FangyuanVfxDynamicPrimitiveState>, FangyuanVfxDiagnostic> {
     recipe.validate()?;
 
     if clock.ticks_per_second == 0 {
@@ -685,8 +1020,14 @@ pub fn evaluate_fangyuan_vfx_recipe(
             seed,
             0,
         );
-        states.push(base.clone());
+        if !(pressure.skip_decoration && base.role == FangyuanPrimitiveRole::Decoration) {
+            states.push(base.clone());
+        }
 
+        let mut emitted_trails = states
+            .iter()
+            .filter(|state| state.role == FangyuanPrimitiveRole::Trail)
+            .count();
         for operator in &emitter.operators {
             if let FangyuanVfxOperator::Trail {
                 segments,
@@ -694,8 +1035,18 @@ pub fn evaluate_fangyuan_vfx_recipe(
                 fade,
             } = operator
             {
-                let segment_count = (*segments).min(recipe.budget_hints.max_trail_segments);
+                let segment_budget = pressure
+                    .max_trail_segments
+                    .unwrap_or(recipe.budget_hints.max_trail_segments)
+                    .min(recipe.budget_hints.max_trail_segments);
+                let segment_count = (*segments).min(segment_budget);
                 for segment in 1..=segment_count {
+                    if pressure
+                        .max_trail_segments
+                        .is_some_and(|max| emitted_trails >= usize::from(max))
+                    {
+                        break;
+                    }
                     let segment_offset = u64::from(segment).saturating_mul(*spacing_ticks);
                     if local_elapsed < segment_offset {
                         continue;
@@ -717,12 +1068,17 @@ pub fn evaluate_fangyuan_vfx_recipe(
                     trail.role = FangyuanPrimitiveRole::Trail;
                     trail.alpha *= fade.clamp(0.0, 1.0).powi(i32::from(segment));
                     states.push(trail);
+                    emitted_trails += 1;
                 }
             }
         }
     }
 
-    states.truncate(recipe.budget_hints.max_primitives as usize);
+    let max_primitives = pressure
+        .max_primitives
+        .unwrap_or(recipe.budget_hints.max_primitives as usize)
+        .min(recipe.budget_hints.max_primitives as usize);
+    apply_fangyuan_vfx_budget_pressure(&mut states, max_primitives);
     Ok(states)
 }
 
@@ -848,6 +1204,79 @@ pub fn compose_fangyuan_vfx_seed(
             mix_u64(&mut hash, emitter_index as u64);
             avalanche(hash)
         }
+    }
+}
+
+fn add_vfx_finding_with_suggestion(
+    report: &mut FangyuanAuditReport,
+    code: impl Into<String>,
+    field_path: impl Into<String>,
+    reason: impl Into<String>,
+    action: FangyuanAuditSuggestionAction,
+    estimated_effect: impl Into<String>,
+) {
+    let field_path = field_path.into();
+    let reason = reason.into();
+    let mut finding = FangyuanAuditFinding::new(
+        FangyuanAuditSeverity::Warning,
+        code,
+        reason.clone(),
+        FangyuanAuditSourceKind::Unknown,
+    );
+    finding.field_path = Some(field_path.clone());
+    report.add_finding(finding);
+    report.add_suggestion(FangyuanAuditSuggestion::new_with_effect(
+        action,
+        Some(field_path),
+        reason,
+        estimated_effect,
+    ));
+}
+
+fn operator_may_use_alpha(operator: &FangyuanVfxOperator) -> bool {
+    matches!(
+        operator,
+        FangyuanVfxOperator::Fade { .. }
+            | FangyuanVfxOperator::ColorShift { .. }
+            | FangyuanVfxOperator::Trail { .. }
+            | FangyuanVfxOperator::Spawn { .. }
+    )
+}
+
+fn operator_may_use_emissive(operator: &FangyuanVfxOperator) -> bool {
+    matches!(operator, FangyuanVfxOperator::EmissivePulse { .. })
+}
+
+fn apply_fangyuan_vfx_budget_pressure(
+    states: &mut Vec<FangyuanVfxDynamicPrimitiveState>,
+    max_primitives: usize,
+) {
+    if states.len() <= max_primitives {
+        return;
+    }
+
+    states.sort_by_key(|state| fangyuan_vfx_role_keep_priority(state.role));
+    states.truncate(max_primitives);
+    states.sort_by_key(|state| {
+        (
+            state.emitter_index,
+            state.primitive_index,
+            state.source_tick,
+            state.role.as_str(),
+        )
+    });
+}
+
+fn fangyuan_vfx_role_keep_priority(role: FangyuanPrimitiveRole) -> u8 {
+    match role {
+        FangyuanPrimitiveRole::Core
+        | FangyuanPrimitiveRole::Boundary
+        | FangyuanPrimitiveRole::Warning
+        | FangyuanPrimitiveRole::Impact => 0,
+        FangyuanPrimitiveRole::Trail => 1,
+        FangyuanPrimitiveRole::Structure => 2,
+        FangyuanPrimitiveRole::Decoration => 3,
+        FangyuanPrimitiveRole::Socket | FangyuanPrimitiveRole::Archive => 4,
     }
 }
 
@@ -1099,6 +1528,11 @@ fn mix_u64(hash: &mut u64, value: u64) {
         *hash ^= u64::from(byte);
         *hash = hash.wrapping_mul(FNV_PRIME);
     }
+}
+
+fn mix_f32(hash: &mut u64, value: f32) {
+    let canonical = if value == 0.0 { 0.0 } else { value };
+    mix_u64(hash, u64::from(canonical.to_bits()));
 }
 
 fn avalanche(mut value: u64) -> u64 {
@@ -1588,5 +2022,283 @@ mod tests {
 
         assert!(first.is_empty());
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn fangyuan_vfx_audit_recipe_reports_budget_warnings_and_suggestions() {
+        let mut recipe = sample_recipe();
+        recipe.duration_ticks = 240;
+        recipe.emitters[0].emissive = 6.0;
+        recipe.emitters[0]
+            .operators
+            .push(FangyuanVfxOperator::Trail {
+                segments: 20,
+                spacing_ticks: 1,
+                fade: 0.7,
+            });
+        recipe.emitters.push(FangyuanVfxEmitter {
+            id: "residue".to_string(),
+            primitive_kind: FangyuanPrimitiveKind::Cube,
+            role: FangyuanPrimitiveRole::Decoration,
+            delay_ticks: 0,
+            duration_ticks: Some(240),
+            position: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0, 0.35],
+            emissive: 0.0,
+            material_profile_id: Some("vfx/residue".to_string()),
+            jitter: FangyuanVfxEmitterJitter::default(),
+            operators: vec![FangyuanVfxOperator::Fade {
+                from: 1.0,
+                to: 0.0,
+                curve: FangyuanVfxCurve::Linear,
+            }],
+        });
+        let profile = FangyuanVfxBudgetProfile {
+            recommended_duration_ticks: 60,
+            recommended_peak_primitives: 4,
+            recommended_trail_segments: 4,
+            recommended_alpha_primitives: 2,
+            recommended_emissive_primitives: 0,
+            recommended_material_profiles: 1,
+            max_emissive_intensity: 4.0,
+        };
+
+        let estimate = estimate_fangyuan_vfx_recipe_budget(&recipe);
+        let report = audit_fangyuan_vfx_recipe_with_profile(&recipe, &profile);
+
+        assert!(estimate.peak_primitives > profile.recommended_peak_primitives);
+        assert!(estimate.trail_segments > profile.recommended_trail_segments);
+        assert!(has_vfx_finding(&report, "vfx_duration_above_recommended"));
+        assert!(has_vfx_finding(
+            &report,
+            "vfx_peak_primitives_above_recommended"
+        ));
+        assert!(has_vfx_finding(
+            &report,
+            "vfx_trail_segments_above_recommended"
+        ));
+        assert!(has_vfx_finding(&report, "vfx_alpha_above_recommended"));
+        assert!(has_vfx_finding(
+            &report,
+            "vfx_emissive_count_above_recommended"
+        ));
+        assert!(has_vfx_finding(
+            &report,
+            "vfx_material_profile_count_above_recommended"
+        ));
+        assert!(has_vfx_finding(
+            &report,
+            "vfx_emissive_intensity_above_recommended"
+        ));
+        assert!(has_vfx_suggestion_effect(&report, "reduce trail segments"));
+        assert!(has_vfx_suggestion_effect(&report, "lower alpha"));
+        assert!(has_vfx_suggestion_effect(&report, "shorten duration"));
+        assert!(has_vfx_suggestion_effect(&report, "lower emissive"));
+    }
+
+    #[test]
+    fn fangyuan_vfx_audit_recipe_warns_when_role_has_no_readable_anchor() {
+        let recipe = fangyuan_vfx_fade_recipe();
+
+        let report = audit_fangyuan_vfx_recipe(&recipe);
+
+        assert!(has_vfx_finding(&report, "vfx_role_missing_readable_anchor"));
+    }
+
+    #[test]
+    fn fangyuan_vfx_replay_runtime_degrade_preserves_readable_states() {
+        let mut recipe = sample_recipe();
+        recipe.emitters.push(FangyuanVfxEmitter {
+            id: "sparkle".to_string(),
+            primitive_kind: FangyuanPrimitiveKind::Cube,
+            role: FangyuanPrimitiveRole::Decoration,
+            delay_ticks: 0,
+            duration_ticks: Some(30),
+            position: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0, 0.5],
+            emissive: 0.0,
+            material_profile_id: Some("vfx/sparkle".to_string()),
+            jitter: FangyuanVfxEmitterJitter::default(),
+            operators: vec![FangyuanVfxOperator::Spawn {
+                curve: FangyuanVfxCurve::Linear,
+            }],
+        });
+        let clock = FangyuanVfxClock::new(0, 18, 30);
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+
+        let full = evaluate_fangyuan_vfx_recipe(&recipe, clock, &context).unwrap();
+        let degraded = evaluate_fangyuan_vfx_recipe_with_budget_pressure(
+            &recipe,
+            clock,
+            &context,
+            FangyuanVfxBudgetPressure::constrained(2, 1),
+        )
+        .unwrap();
+
+        assert!(full.len() > degraded.len());
+        assert!(degraded.iter().any(|state| {
+            matches!(
+                state.role,
+                FangyuanPrimitiveRole::Core | FangyuanPrimitiveRole::Impact
+            )
+        }));
+        assert!(
+            !degraded
+                .iter()
+                .any(|state| state.role == FangyuanPrimitiveRole::Decoration)
+        );
+        assert!(
+            degraded
+                .iter()
+                .filter(|state| state.role == FangyuanPrimitiveRole::Trail)
+                .count()
+                <= 1
+        );
+    }
+
+    #[test]
+    fn fangyuan_vfx_replay_tick_jump_matches_direct_hash() {
+        let recipe = sample_recipe();
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+        let mut runtime = FangyuanVfxRuntime::default();
+        runtime
+            .start_instance(FangyuanVfxInstance::new(
+                "event-a",
+                recipe.clone(),
+                context.clone(),
+                40,
+            ))
+            .unwrap();
+
+        let jumped = runtime.tick(65, 30).unwrap().to_vec();
+        let direct =
+            evaluate_fangyuan_vfx_recipe(&recipe, FangyuanVfxClock::new(40, 65, 30), &context)
+                .unwrap();
+
+        assert_eq!(
+            fangyuan_vfx_primitive_state_hash(&jumped),
+            fangyuan_vfx_primitive_state_hash(&direct)
+        );
+    }
+
+    #[test]
+    fn fangyuan_vfx_replay_pause_resume_keeps_hash_stable() {
+        let recipe = sample_recipe();
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+        let mut runtime = FangyuanVfxRuntime::default();
+        runtime
+            .start_instance(FangyuanVfxInstance::new("event-a", recipe, context, 10))
+            .unwrap();
+
+        let paused = runtime.tick(18, 30).unwrap().to_vec();
+        let paused_hash = fangyuan_vfx_primitive_state_hash(&paused);
+        let same_tick_after_pause = runtime.tick(18, 30).unwrap().to_vec();
+        let resumed = runtime.tick(22, 30).unwrap().to_vec();
+
+        assert_eq!(
+            paused_hash,
+            fangyuan_vfx_primitive_state_hash(&same_tick_after_pause)
+        );
+        assert_ne!(paused_hash, fangyuan_vfx_primitive_state_hash(&resumed));
+    }
+
+    #[test]
+    fn fangyuan_vfx_replay_delayed_event_fields_drive_clock_and_context() {
+        let recipe = sample_recipe();
+        let event = FangyuanVfxReplayEvent {
+            authority_epoch: 7,
+            start_tick: 120,
+            frame_id: 120,
+            fps: 30,
+            action: "cast_vfx".to_string(),
+            caster_id: "caster-a".to_string(),
+            player_id: "player-a".to_string(),
+            event_id: "event-delay".to_string(),
+            recipe_id: recipe.id.clone(),
+            external_seed: Some(42),
+            prediction_boundary: FangyuanVfxPredictionBoundary::AuthorityConfirmed,
+        };
+
+        let before =
+            evaluate_fangyuan_vfx_recipe(&recipe, event.clock_at(119), &event.replay_context())
+                .unwrap();
+        let active =
+            evaluate_fangyuan_vfx_recipe(&recipe, event.clock_at(130), &event.replay_context())
+                .unwrap();
+
+        assert!(before.is_empty());
+        assert!(!active.is_empty());
+        assert_eq!(event.authority_epoch, 7);
+        assert_eq!(event.frame_id, 120);
+        assert_eq!(
+            event.prediction_boundary,
+            FangyuanVfxPredictionBoundary::AuthorityConfirmed
+        );
+    }
+
+    #[test]
+    fn fangyuan_vfx_replay_hash_is_stable_and_seed_conflicts_are_visible() {
+        let mut recipe = sample_recipe();
+        recipe.seed_policy = FangyuanVfxSeedPolicy::External;
+        let event_a = FangyuanVfxReplayEvent {
+            authority_epoch: 1,
+            start_tick: 5,
+            frame_id: 5,
+            fps: 30,
+            action: "cast_vfx".to_string(),
+            caster_id: "caster-a".to_string(),
+            player_id: "player-a".to_string(),
+            event_id: "event-a".to_string(),
+            recipe_id: recipe.id.clone(),
+            external_seed: Some(99),
+            prediction_boundary: FangyuanVfxPredictionBoundary::LocalPredicted,
+        };
+        let mut event_b = event_a.clone();
+        event_b.event_id = "event-b".to_string();
+        event_b.external_seed = Some(100);
+        let mut event_conflict = event_a.clone();
+        event_conflict.event_id = "event-conflict".to_string();
+
+        let first =
+            evaluate_fangyuan_vfx_recipe(&recipe, event_a.clock_at(16), &event_a.replay_context())
+                .unwrap();
+        let second =
+            evaluate_fangyuan_vfx_recipe(&recipe, event_a.clock_at(16), &event_a.replay_context())
+                .unwrap();
+        let different_seed =
+            evaluate_fangyuan_vfx_recipe(&recipe, event_b.clock_at(16), &event_b.replay_context())
+                .unwrap();
+        let seed_conflict = evaluate_fangyuan_vfx_recipe(
+            &recipe,
+            event_conflict.clock_at(16),
+            &event_conflict.replay_context(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            fangyuan_vfx_primitive_state_hash(&first),
+            fangyuan_vfx_primitive_state_hash(&second)
+        );
+        assert_ne!(
+            fangyuan_vfx_primitive_state_hash(&first),
+            fangyuan_vfx_primitive_state_hash(&different_seed)
+        );
+        assert_eq!(first[0].seed, seed_conflict[0].seed);
+        assert_ne!(event_a.event_id, event_conflict.event_id);
+    }
+
+    fn has_vfx_finding(report: &FangyuanAuditReport, code: &str) -> bool {
+        report.findings.iter().any(|finding| finding.code == code)
+    }
+
+    fn has_vfx_suggestion_effect(report: &FangyuanAuditReport, needle: &str) -> bool {
+        report.suggestions.iter().any(|suggestion| {
+            suggestion
+                .estimated_effect
+                .as_deref()
+                .is_some_and(|effect| effect.contains(needle))
+        })
     }
 }

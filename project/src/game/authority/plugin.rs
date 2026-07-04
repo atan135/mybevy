@@ -1453,6 +1453,10 @@ mod tests {
         prelude::*,
     };
 
+    use crate::framework::fangyuan::{
+        FangyuanVfxPredictionBoundary, FangyuanVfxReplayEvent, fangyuan_vfx_projectile_recipe,
+    };
+
     use super::*;
 
     fn read_messages<M>(world: &World) -> Vec<M>
@@ -1496,6 +1500,57 @@ mod tests {
                     event,
                     AuthorityEvent::Connected { player_id, .. } if player_id == "chr_1"
                 ))
+        );
+    }
+
+    #[test]
+    fn authority_vfx_replay_event_payload_aligns_with_frame_tick_fields() {
+        let recipe = fangyuan_vfx_projectile_recipe();
+        let replay_event = FangyuanVfxReplayEvent {
+            authority_epoch: 3,
+            start_tick: 42,
+            frame_id: 42,
+            fps: DEFAULT_AUTHORITY_FPS,
+            action: "cast_vfx".to_string(),
+            caster_id: "chr_1".to_string(),
+            player_id: "chr_1".to_string(),
+            event_id: "evt_42".to_string(),
+            recipe_id: recipe.id,
+            external_seed: Some(1234),
+            prediction_boundary: FangyuanVfxPredictionBoundary::AuthorityConfirmed,
+        };
+        let input = PlayerInput {
+            player_id: replay_event.player_id.clone(),
+            frame_id: replay_event.frame_id,
+            action: replay_event.action.clone(),
+            payload_json: serde_json::to_string(&replay_event).unwrap(),
+        };
+        let frame = AuthorityFrame {
+            authority_epoch: replay_event.authority_epoch,
+            frame_id: replay_event.frame_id,
+            fps: replay_event.fps,
+            inputs: vec![input],
+            snapshot: AuthoritySnapshot {
+                authority_epoch: replay_event.authority_epoch,
+                frame_id: replay_event.frame_id,
+                authority_player_id: "host".to_string(),
+                players: vec!["chr_1".to_string()],
+                game_state_json: "{}".to_string(),
+            },
+        };
+
+        let decoded =
+            serde_json::from_str::<FangyuanVfxReplayEvent>(&frame.inputs[0].payload_json).unwrap();
+
+        assert_eq!(decoded.authority_epoch, frame.authority_epoch);
+        assert_eq!(decoded.start_tick, u64::from(frame.frame_id));
+        assert_eq!(decoded.frame_id, frame.inputs[0].frame_id);
+        assert_eq!(decoded.fps, frame.fps);
+        assert_eq!(decoded.player_id, frame.inputs[0].player_id);
+        assert_eq!(decoded.action, frame.inputs[0].action);
+        assert_eq!(
+            decoded.prediction_boundary,
+            FangyuanVfxPredictionBoundary::AuthorityConfirmed
         );
     }
 }
