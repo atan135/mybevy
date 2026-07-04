@@ -1,7 +1,7 @@
 use bevy::{prelude::*, render::batching::NoAutomaticBatching};
 use serde::{Deserialize, Deserializer, de};
 use std::{
-    fs, io,
+    env, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -32,6 +32,7 @@ use crate::framework::fangyuan::FangyuanBlueprint;
 pub(in crate::game) const FANGYUAN_HOME_SCENE_ID: &str = "dev.fangyuan_home";
 pub(in crate::game) const FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH: &str = "fangyuan/home_preview.ron";
 const FANGYUAN_HOME_LAYOUT_PATH: &str = "scenes/fangyuan_home/layout.ron";
+const FANGYUAN_HOME_RENDER_MODE_ENV: &str = "MYBEVY_FANGYUAN_HOME_RENDER_MODE";
 #[cfg(test)]
 const FANGYUAN_HOME_SCENE_MANIFEST_PATH: &str = "scenes/fangyuan_home/scene.ron";
 
@@ -373,12 +374,38 @@ pub(in crate::game) struct FangyuanHomeBlueprintRenderConfig {
 impl Default for FangyuanHomeBlueprintRenderConfig {
     fn default() -> Self {
         Self {
-            mode: FangyuanHomeBlueprintRenderMode::Standard,
+            mode: fangyuan_home_blueprint_render_mode_from_env(),
             fallback_to_standard_on_merge_failure: true,
             fallback_to_standard_on_instance_failure: true,
             mesh_options: FangyuanStaticMeshBuildOptions::default(),
             instance_options: FangyuanStaticInstanceRenderOptions::default(),
         }
+    }
+}
+
+fn fangyuan_home_blueprint_render_mode_from_env() -> FangyuanHomeBlueprintRenderMode {
+    let Ok(value) = env::var(FANGYUAN_HOME_RENDER_MODE_ENV) else {
+        return FangyuanHomeBlueprintRenderMode::Standard;
+    };
+    parse_fangyuan_home_blueprint_render_mode(&value).unwrap_or_else(|| {
+        warn!(
+            "{}={} is not a supported Fangyuan home render mode; using standard",
+            FANGYUAN_HOME_RENDER_MODE_ENV, value
+        );
+        FangyuanHomeBlueprintRenderMode::Standard
+    })
+}
+
+fn parse_fangyuan_home_blueprint_render_mode(
+    value: &str,
+) -> Option<FangyuanHomeBlueprintRenderMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "standard" => Some(FangyuanHomeBlueprintRenderMode::Standard),
+        "cpu_merge" | "cpu-merge" | "merge" => Some(FangyuanHomeBlueprintRenderMode::CpuMerge),
+        "static_instance" | "static-instance" | "staticinstance" | "instancing" | "instance" => {
+            Some(FangyuanHomeBlueprintRenderMode::StaticInstance)
+        }
+        _ => None,
     }
 }
 
@@ -3291,9 +3318,9 @@ mod tests {
                 Vec3::splat(0.75),
                 color,
                 FangyuanPrimitiveRole::Decoration,
-                0.75,
-                4.0,
-                Some("home_reserved_profile".to_string()),
+                0.25,
+                0.0,
+                None,
                 FangyuanPrimitiveLifecycle::new(Some(20), Some(2), Some(22)),
             ),
         ]);
@@ -3344,7 +3371,12 @@ mod tests {
             .resource::<Assets<StandardMaterial>>()
             .get(&records[0].5)
             .unwrap();
-        assert_eq!(material.base_color, color);
+        let actual_color = material.base_color.to_srgba();
+        let expected_color = color.with_alpha(0.25).to_srgba();
+        assert!((actual_color.red - expected_color.red).abs() <= 0.00001);
+        assert!((actual_color.green - expected_color.green).abs() <= 0.00001);
+        assert!((actual_color.blue - expected_color.blue).abs() <= 0.00001);
+        assert!((actual_color.alpha - expected_color.alpha).abs() <= 0.00001);
         assert!(matches!(material.alpha_mode.clone(), AlphaMode::Blend));
     }
 
@@ -4184,6 +4216,248 @@ mod tests {
     }
 
     #[test]
+    fn stage9_reload_clear_lobby_return_mode_switch_and_reenter_do_not_leave_residual_content() {
+        let mut app = app_with_scene_lifecycle();
+        enable_static_instance_mode(&mut app);
+
+        let session_id = SceneSessionId::from("fangyuan-stage9-session-a");
+        let mut request = SceneEnterRequest::new(FANGYUAN_HOME_SCENE_ID);
+        request.session_id = Some(session_id.clone());
+        app.world_mut().write_message(SceneCommand::Enter(request));
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<SceneRuntime>()
+                .active_session_id()
+                .map(|session| session.as_str()),
+            Some("fangyuan-stage9-session-a")
+        );
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_visual_count(&mut app, &session_id),
+            EXPECTED_TOTAL_VISUALS
+        );
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            fangyuan_blueprint_merged_mesh_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeBlueprintStats>()
+                .render_mode,
+            "static_instance"
+        );
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            fangyuan_blueprint_merged_mesh_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Clear);
+        app.update();
+
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_visual_count(&mut app, &session_id),
+            EXPECTED_TOTAL_VISUALS
+        );
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            fangyuan_blueprint_merged_mesh_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeStaticInstanceRuntime>()
+                .stats
+                .instance_count,
+            0
+        );
+        assert_eq!(static_merge_runtime_asset_counts(&app), (0, 0));
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+
+        enable_cpu_merge_mode(&mut app);
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Reload);
+        app.update();
+
+        let merged_meshes = fangyuan_blueprint_merged_mesh_count(&mut app, &session_id);
+        assert!(merged_meshes > 0);
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 1);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(static_merge_runtime_asset_counts(&app), (merged_meshes, 1));
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeStaticInstanceRuntime>()
+                .stats
+                .instance_count,
+            0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeBlueprintStats>()
+                .render_mode,
+            "cpu_merge"
+        );
+
+        app.world_mut()
+            .write_message(SceneCommand::Exit(SceneExitRequest::default()));
+        app.update();
+        app.update();
+
+        let counts = scene_entity_counts_for_session_from_world(&mut app, &session_id);
+        assert!(counts.is_empty());
+        assert_eq!(fangyuan_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_visual_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_content_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_home_object_count(&mut app, &session_id), 0);
+        assert_eq!(fangyuan_blueprint_primitive_count(&mut app, &session_id), 0);
+        assert_eq!(
+            fangyuan_blueprint_merged_mesh_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &session_id),
+            0
+        );
+        assert_eq!(static_merge_runtime_asset_counts(&app), (0, 0));
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeStaticInstanceRuntime>()
+                .stats
+                .instance_count,
+            0
+        );
+        assert_eq!(
+            app.world().resource::<FangyuanHomeBlueprintStats>(),
+            &FangyuanHomeBlueprintStats::default()
+        );
+        assert_eq!(
+            app.world().resource::<SceneRuntime>().active_session_id(),
+            None
+        );
+
+        let reentered_session_id = SceneSessionId::from("fangyuan-stage9-session-b");
+        let mut request = SceneEnterRequest::new(FANGYUAN_HOME_SCENE_ID);
+        request.session_id = Some(reentered_session_id.clone());
+        app.world_mut().write_message(SceneCommand::Enter(request));
+        app.update();
+
+        let reentered_merged_meshes =
+            fangyuan_blueprint_merged_mesh_count(&mut app, &reentered_session_id);
+        assert!(reentered_merged_meshes > 0);
+        assert_eq!(fangyuan_content_count(&mut app, &reentered_session_id), 1);
+        assert_eq!(
+            fangyuan_visual_count(&mut app, &reentered_session_id),
+            EXPECTED_TOTAL_VISUALS
+        );
+        assert_eq!(
+            fangyuan_blueprint_content_count(&mut app, &reentered_session_id),
+            1
+        );
+        assert_eq!(
+            fangyuan_home_object_count(&mut app, &reentered_session_id),
+            1
+        );
+        assert_eq!(
+            fangyuan_blueprint_primitive_count(&mut app, &reentered_session_id),
+            0
+        );
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &reentered_session_id),
+            0
+        );
+        assert_eq!(
+            static_merge_runtime_asset_counts(&app),
+            (reentered_merged_meshes, 1)
+        );
+        assert_eq!(
+            app.world()
+                .resource::<FangyuanHomeBlueprintStats>()
+                .render_mode,
+            "cpu_merge"
+        );
+
+        app.world_mut().write_message(SceneEvent::Entered(
+            crate::framework::scene::prelude::SceneEntered {
+                scene_id: FANGYUAN_HOME_SCENE_ID.into(),
+                session_id: reentered_session_id.clone(),
+                content_version: None,
+            },
+        ));
+        app.update();
+
+        assert_eq!(fangyuan_content_count(&mut app, &reentered_session_id), 1);
+        assert_eq!(
+            fangyuan_visual_count(&mut app, &reentered_session_id),
+            EXPECTED_TOTAL_VISUALS
+        );
+        assert_eq!(
+            fangyuan_blueprint_content_count(&mut app, &reentered_session_id),
+            1
+        );
+        assert_eq!(
+            fangyuan_home_object_count(&mut app, &reentered_session_id),
+            1
+        );
+        assert_eq!(
+            fangyuan_blueprint_merged_mesh_count(&mut app, &reentered_session_id),
+            reentered_merged_meshes
+        );
+        assert_eq!(
+            fangyuan_blueprint_static_instance_count(&mut app, &reentered_session_id),
+            0
+        );
+        assert_eq!(
+            static_merge_runtime_asset_counts(&app),
+            (reentered_merged_meshes, 1)
+        );
+    }
+
+    #[test]
     fn static_instance_budget_or_initialization_failure_falls_back_to_standard() {
         let mut app = app_with_fangyuan_home_system();
         set_static_instance_buffer_budget(&mut app, 1);
@@ -4779,6 +5053,23 @@ mod tests {
         app.world_mut()
             .resource_mut::<FangyuanHomeBlueprintRenderConfig>()
             .mode = FangyuanHomeBlueprintRenderMode::StaticInstance;
+    }
+
+    #[test]
+    fn fangyuan_home_render_mode_env_parser_accepts_manual_validation_modes() {
+        assert_eq!(
+            parse_fangyuan_home_blueprint_render_mode("standard"),
+            Some(FangyuanHomeBlueprintRenderMode::Standard)
+        );
+        assert_eq!(
+            parse_fangyuan_home_blueprint_render_mode("cpu-merge"),
+            Some(FangyuanHomeBlueprintRenderMode::CpuMerge)
+        );
+        assert_eq!(
+            parse_fangyuan_home_blueprint_render_mode("instancing"),
+            Some(FangyuanHomeBlueprintRenderMode::StaticInstance)
+        );
+        assert_eq!(parse_fangyuan_home_blueprint_render_mode(""), None);
     }
 
     fn set_cpu_merge_budget(app: &mut App, max_vertices: usize, max_indices: usize) {
