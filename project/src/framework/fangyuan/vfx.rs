@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-use super::{FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole};
+use super::{
+    FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
+};
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -327,6 +330,10 @@ impl FangyuanVfxClock {
         self.current_tick.saturating_sub(self.start_tick)
     }
 
+    pub const fn is_before_start(self) -> bool {
+        self.current_tick < self.start_tick
+    }
+
     pub fn elapsed_seconds(self) -> f32 {
         if self.ticks_per_second == 0 {
             return 0.0;
@@ -363,6 +370,7 @@ pub struct FangyuanVfxDynamicPrimitiveState {
     pub emitter_index: usize,
     pub primitive_index: u16,
     pub source_tick: u64,
+    pub source: FangyuanVfxPrimitiveSource,
     pub local_position: Vec3,
     pub scale: Vec3,
     pub color: Color,
@@ -373,6 +381,257 @@ pub struct FangyuanVfxDynamicPrimitiveState {
     pub material_profile_id: Option<String>,
     pub lifecycle: FangyuanPrimitiveLifecycle,
     pub seed: u64,
+}
+
+impl FangyuanVfxDynamicPrimitiveState {
+    pub fn position(&self) -> Vec3 {
+        self.local_position
+    }
+
+    pub fn profile(&self) -> Option<&str> {
+        self.material_profile_id.as_deref()
+    }
+
+    pub const fn lifetime(&self) -> FangyuanPrimitiveLifecycle {
+        self.lifecycle
+    }
+
+    pub fn to_runtime_primitive(&self) -> FangyuanPrimitive {
+        FangyuanPrimitive::with_runtime_metadata(
+            self.primitive_kind,
+            self.local_position,
+            self.scale,
+            self.color,
+            self.role,
+            self.alpha,
+            self.emissive,
+            self.material_profile_id.clone(),
+            self.lifecycle,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FangyuanVfxInstanceId(String);
+
+impl FangyuanVfxInstanceId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FangyuanVfxPrimitiveSource {
+    pub instance_id: Option<FangyuanVfxInstanceId>,
+    pub recipe_id: String,
+    pub emitter_id: String,
+    pub emitter_index: usize,
+    pub primitive_index: u16,
+    pub source_tick: u64,
+}
+
+impl FangyuanVfxPrimitiveSource {
+    fn from_state_parts(
+        recipe_id: String,
+        emitter_id: String,
+        emitter_index: usize,
+        primitive_index: u16,
+        source_tick: u64,
+    ) -> Self {
+        Self {
+            instance_id: None,
+            recipe_id,
+            emitter_id,
+            emitter_index,
+            primitive_index,
+            source_tick,
+        }
+    }
+
+    fn with_instance_id(mut self, instance_id: FangyuanVfxInstanceId) -> Self {
+        self.instance_id = Some(instance_id);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanVfxStandardMeshFallbackPrimitive {
+    pub source: FangyuanVfxPrimitiveSource,
+    pub primitive_kind: FangyuanPrimitiveKind,
+    pub transform: Transform,
+    pub color: Color,
+    pub alpha: f32,
+    pub emissive: f32,
+    pub material_profile_id: Option<String>,
+    pub lifecycle: FangyuanPrimitiveLifecycle,
+}
+
+pub fn fangyuan_vfx_standard_mesh_fallback_primitives(
+    states: &[FangyuanVfxDynamicPrimitiveState],
+) -> Vec<FangyuanVfxStandardMeshFallbackPrimitive> {
+    states
+        .iter()
+        .map(|state| FangyuanVfxStandardMeshFallbackPrimitive {
+            source: state.source.clone(),
+            primitive_kind: state.primitive_kind,
+            transform: Transform::from_translation(state.local_position).with_scale(state.scale),
+            color: state.color,
+            alpha: state.alpha,
+            emissive: state.emissive,
+            material_profile_id: state.material_profile_id.clone(),
+            lifecycle: state.lifecycle,
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FangyuanVfxInstanceStartError {
+    DuplicateInstance(FangyuanVfxInstanceId),
+    InvalidRecipe(FangyuanVfxDiagnostic),
+}
+
+#[derive(Clone, Debug)]
+pub struct FangyuanVfxInstance {
+    pub id: FangyuanVfxInstanceId,
+    pub recipe: FangyuanVfxRecipe,
+    pub context: FangyuanVfxReplayContext,
+    pub start_tick: u64,
+}
+
+impl FangyuanVfxInstance {
+    pub fn new(
+        id: impl Into<String>,
+        recipe: FangyuanVfxRecipe,
+        context: FangyuanVfxReplayContext,
+        start_tick: u64,
+    ) -> Self {
+        Self {
+            id: FangyuanVfxInstanceId::new(id),
+            recipe,
+            context,
+            start_tick,
+        }
+    }
+
+    fn evaluate(
+        &self,
+        current_tick: u64,
+        ticks_per_second: u32,
+    ) -> Result<Vec<FangyuanVfxDynamicPrimitiveState>, FangyuanVfxDiagnostic> {
+        let clock = FangyuanVfxClock::new(self.start_tick, current_tick, ticks_per_second);
+        let mut states = evaluate_fangyuan_vfx_recipe(&self.recipe, clock, &self.context)?;
+        for state in &mut states {
+            state.source = state.source.clone().with_instance_id(self.id.clone());
+        }
+        Ok(states)
+    }
+
+    fn is_finished(&self, current_tick: u64) -> bool {
+        current_tick.saturating_sub(self.start_tick) > self.recipe.duration_ticks
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FangyuanVfxRuntimeStats {
+    pub active_instance_count: usize,
+    pub active_state_count: usize,
+    pub total_started: u64,
+    pub total_finished: u64,
+    pub total_cleared: u64,
+    pub fallback_primitive_count: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FangyuanVfxRuntime {
+    instances: BTreeMap<FangyuanVfxInstanceId, FangyuanVfxInstance>,
+    active_states: Vec<FangyuanVfxDynamicPrimitiveState>,
+    fallback_primitives: Vec<FangyuanVfxStandardMeshFallbackPrimitive>,
+    stats: FangyuanVfxRuntimeStats,
+}
+
+impl FangyuanVfxRuntime {
+    pub fn start_instance(
+        &mut self,
+        instance: FangyuanVfxInstance,
+    ) -> Result<(), FangyuanVfxInstanceStartError> {
+        instance
+            .recipe
+            .validate()
+            .map_err(FangyuanVfxInstanceStartError::InvalidRecipe)?;
+        if self.instances.contains_key(&instance.id) {
+            return Err(FangyuanVfxInstanceStartError::DuplicateInstance(
+                instance.id,
+            ));
+        }
+
+        self.instances.insert(instance.id.clone(), instance);
+        self.stats.total_started += 1;
+        self.refresh_counts();
+        Ok(())
+    }
+
+    pub fn tick(
+        &mut self,
+        current_tick: u64,
+        ticks_per_second: u32,
+    ) -> Result<&[FangyuanVfxDynamicPrimitiveState], FangyuanVfxDiagnostic> {
+        let mut finished = Vec::new();
+        let mut active_states = Vec::new();
+
+        for (id, instance) in &self.instances {
+            if instance.is_finished(current_tick) {
+                finished.push(id.clone());
+                continue;
+            }
+            active_states.extend(instance.evaluate(current_tick, ticks_per_second)?);
+        }
+
+        for id in finished {
+            self.instances.remove(&id);
+            self.stats.total_finished += 1;
+        }
+
+        self.active_states = active_states;
+        self.fallback_primitives =
+            fangyuan_vfx_standard_mesh_fallback_primitives(&self.active_states);
+        self.refresh_counts();
+        Ok(&self.active_states)
+    }
+
+    pub fn clear_scene(&mut self) {
+        let cleared = self.instances.len() as u64;
+        self.instances.clear();
+        self.active_states.clear();
+        self.fallback_primitives.clear();
+        self.stats.total_cleared += cleared;
+        self.refresh_counts();
+    }
+
+    pub fn reload_scene(&mut self) {
+        self.clear_scene();
+    }
+
+    pub fn active_states(&self) -> &[FangyuanVfxDynamicPrimitiveState] {
+        &self.active_states
+    }
+
+    pub fn fallback_primitives(&self) -> &[FangyuanVfxStandardMeshFallbackPrimitive] {
+        &self.fallback_primitives
+    }
+
+    pub fn stats(&self) -> FangyuanVfxRuntimeStats {
+        self.stats
+    }
+
+    fn refresh_counts(&mut self) {
+        self.stats.active_instance_count = self.instances.len();
+        self.stats.active_state_count = self.active_states.len();
+        self.stats.fallback_primitive_count = self.fallback_primitives.len();
+    }
 }
 
 pub fn evaluate_fangyuan_vfx_recipe(
@@ -387,6 +646,10 @@ pub fn evaluate_fangyuan_vfx_recipe(
             FangyuanVfxDiagnosticCode::InvalidClock,
             "ticks_per_second must be greater than zero",
         ));
+    }
+
+    if clock.is_before_start() {
+        return Ok(Vec::new());
     }
 
     if clock.is_past_duration(recipe.duration_ticks) {
@@ -461,6 +724,106 @@ pub fn evaluate_fangyuan_vfx_recipe(
 
     states.truncate(recipe.budget_hints.max_primitives as usize);
     Ok(states)
+}
+
+pub fn fangyuan_vfx_projectile_recipe() -> FangyuanVfxRecipe {
+    recipe_with_single_emitter(
+        "vfx.projectile",
+        "projectile",
+        FangyuanPrimitiveKind::Sphere,
+        FangyuanPrimitiveRole::Core,
+        [0.2, 0.2, 0.2],
+        [0.9, 0.25, 0.15, 1.0],
+        vec![
+            FangyuanVfxOperator::Spawn {
+                curve: FangyuanVfxCurve::EaseOut,
+            },
+            FangyuanVfxOperator::Move {
+                from: [0.0, 0.8, 0.0],
+                to: [6.0, 0.8, 0.0],
+                curve: FangyuanVfxCurve::Linear,
+            },
+            FangyuanVfxOperator::Trail {
+                segments: 3,
+                spacing_ticks: 2,
+                fade: 0.55,
+            },
+        ],
+    )
+}
+
+pub fn fangyuan_vfx_range_marker_recipe() -> FangyuanVfxRecipe {
+    recipe_with_single_emitter(
+        "vfx.range_marker",
+        "range_marker",
+        FangyuanPrimitiveKind::Cube,
+        FangyuanPrimitiveRole::Warning,
+        [1.0, 0.04, 1.0],
+        [0.2, 0.8, 1.0, 0.45],
+        vec![
+            FangyuanVfxOperator::Spawn {
+                curve: FangyuanVfxCurve::Step,
+            },
+            FangyuanVfxOperator::Scale {
+                from: [1.0, 1.0, 1.0],
+                to: [4.0, 1.0, 4.0],
+                curve: FangyuanVfxCurve::EaseOut,
+            },
+        ],
+    )
+}
+
+pub fn fangyuan_vfx_shield_recipe() -> FangyuanVfxRecipe {
+    recipe_with_single_emitter(
+        "vfx.shield",
+        "shield",
+        FangyuanPrimitiveKind::Sphere,
+        FangyuanPrimitiveRole::Boundary,
+        [2.0, 2.0, 2.0],
+        [0.25, 0.65, 1.0, 0.35],
+        vec![
+            FangyuanVfxOperator::Spawn {
+                curve: FangyuanVfxCurve::EaseOut,
+            },
+            FangyuanVfxOperator::EmissivePulse {
+                amplitude: 1.5,
+                frequency_hz: 3.0,
+                curve: FangyuanVfxCurve::Linear,
+            },
+        ],
+    )
+}
+
+pub fn fangyuan_vfx_impact_expand_recipe() -> FangyuanVfxRecipe {
+    recipe_with_single_emitter(
+        "vfx.impact_expand",
+        "impact_expand",
+        FangyuanPrimitiveKind::Sphere,
+        FangyuanPrimitiveRole::Impact,
+        [1.0, 1.0, 1.0],
+        [1.0, 0.55, 0.15, 0.8],
+        vec![FangyuanVfxOperator::ImpactExpand {
+            radius_from: 0.1,
+            radius_to: 2.5,
+            curve: FangyuanVfxCurve::EaseOut,
+        }],
+    )
+}
+
+pub fn fangyuan_vfx_fade_recipe() -> FangyuanVfxRecipe {
+    recipe_with_single_emitter(
+        "vfx.fade",
+        "fade",
+        FangyuanPrimitiveKind::Cube,
+        FangyuanPrimitiveRole::Decoration,
+        [1.0, 1.0, 1.0],
+        [0.8, 0.8, 0.8, 1.0],
+        vec![FangyuanVfxOperator::Fade {
+            from: 1.0,
+            to: 0.0,
+            curve: FangyuanVfxCurve::Linear,
+        }],
+    )
 }
 
 pub fn compose_fangyuan_vfx_seed(
@@ -616,6 +979,13 @@ fn evaluate_emitter_state(
         emitter_index,
         primitive_index,
         source_tick: clock.current_tick,
+        source: FangyuanVfxPrimitiveSource::from_state_parts(
+            recipe.id.clone(),
+            emitter.id.clone(),
+            emitter_index,
+            primitive_index,
+            clock.current_tick,
+        ),
         local_position: position,
         scale,
         color,
@@ -747,6 +1117,43 @@ fn white_color_array() -> [f32; 4] {
     [1.0, 1.0, 1.0, 1.0]
 }
 
+fn recipe_with_single_emitter(
+    recipe_id: &str,
+    emitter_id: &str,
+    primitive_kind: FangyuanPrimitiveKind,
+    role: FangyuanPrimitiveRole,
+    scale: [f32; 3],
+    color: [f32; 4],
+    operators: Vec<FangyuanVfxOperator>,
+) -> FangyuanVfxRecipe {
+    FangyuanVfxRecipe {
+        id: recipe_id.to_string(),
+        version: 1,
+        duration_ticks: 20,
+        seed_policy: FangyuanVfxSeedPolicy::Deterministic,
+        emitters: vec![FangyuanVfxEmitter {
+            id: emitter_id.to_string(),
+            primitive_kind,
+            role,
+            delay_ticks: 0,
+            duration_ticks: Some(20),
+            position: [0.0, 0.0, 0.0],
+            scale,
+            color,
+            emissive: 0.0,
+            material_profile_id: Some("vfx/default".to_string()),
+            jitter: FangyuanVfxEmitterJitter::default(),
+            operators,
+        }],
+        curves: Vec::new(),
+        budget_hints: FangyuanVfxBudgetHints {
+            max_primitives: 16,
+            max_trail_segments: 8,
+            max_emitters: 1,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -842,12 +1249,247 @@ mod tests {
         assert_eq!(state.primitive_kind, FangyuanPrimitiveKind::Sphere);
         assert_eq!(state.role, FangyuanPrimitiveRole::Impact);
         assert_eq!(state.material_profile_id.as_deref(), Some("vfx_glow"));
+        assert_eq!(state.profile(), Some("vfx_glow"));
         assert_eq!(state.lifecycle.spawn_tick, Some(100));
         assert_eq!(state.lifecycle.despawn_tick, Some(130));
+        assert_eq!(state.lifetime().lifetime, Some(30));
+        assert_eq!(state.position(), state.local_position);
+        assert_eq!(state.source.recipe_id, "skill.impact.arc");
+        assert_eq!(state.source.emitter_id, "core");
         assert!(state.local_position.x > 1.4 && state.local_position.x < 1.7);
         assert!(state.scale.x > 1.6);
         assert!(state.alpha > 0.0 && state.alpha < 1.0);
         assert!(state.emissive >= 0.25);
+
+        let primitive = state.to_runtime_primitive();
+        assert_eq!(primitive.local_position(), state.local_position);
+        assert_eq!(primitive.scale(), state.scale);
+        assert_eq!(primitive.material_profile_id(), Some("vfx_glow"));
+    }
+
+    #[test]
+    fn fangyuan_vfx_eval_projectile_range_marker_shield_impact_trail_and_fade_states() {
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+        let clock = FangyuanVfxClock::new(0, 10, 20);
+
+        let projectile =
+            evaluate_fangyuan_vfx_recipe(&fangyuan_vfx_projectile_recipe(), clock, &context)
+                .unwrap();
+        assert!(projectile[0].local_position.x > 2.9);
+        assert!(projectile.iter().any(|state| {
+            state.role == FangyuanPrimitiveRole::Trail && state.primitive_index > 0
+        }));
+
+        let range_marker =
+            evaluate_fangyuan_vfx_recipe(&fangyuan_vfx_range_marker_recipe(), clock, &context)
+                .unwrap();
+        assert_eq!(range_marker[0].role, FangyuanPrimitiveRole::Warning);
+        assert!(range_marker[0].scale.x > 2.0);
+        assert!(range_marker[0].scale.z > 2.0);
+
+        let shield =
+            evaluate_fangyuan_vfx_recipe(&fangyuan_vfx_shield_recipe(), clock, &context).unwrap();
+        assert_eq!(shield[0].role, FangyuanPrimitiveRole::Boundary);
+        assert!(shield[0].emissive >= 0.0);
+
+        let impact =
+            evaluate_fangyuan_vfx_recipe(&fangyuan_vfx_impact_expand_recipe(), clock, &context)
+                .unwrap();
+        assert_eq!(impact[0].role, FangyuanPrimitiveRole::Impact);
+        assert!(impact[0].scale.x > 1.0);
+
+        let fade =
+            evaluate_fangyuan_vfx_recipe(&fangyuan_vfx_fade_recipe(), clock, &context).unwrap();
+        assert_eq!(fade[0].role, FangyuanPrimitiveRole::Decoration);
+        assert!(fade[0].alpha > 0.0 && fade[0].alpha < 1.0);
+    }
+
+    #[test]
+    fn fangyuan_vfx_eval_empty_recipe_and_invalid_clock_return_diagnostics() {
+        let mut recipe = sample_recipe();
+        recipe.emitters.clear();
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+
+        let diagnostic =
+            evaluate_fangyuan_vfx_recipe(&recipe, FangyuanVfxClock::new(0, 0, 30), &context)
+                .unwrap_err();
+        assert_eq!(diagnostic.code, FangyuanVfxDiagnosticCode::MissingEmitter);
+
+        let diagnostic = evaluate_fangyuan_vfx_recipe(
+            &sample_recipe(),
+            FangyuanVfxClock::new(0, 0, 0),
+            &context,
+        )
+        .unwrap_err();
+        assert_eq!(diagnostic.code, FangyuanVfxDiagnosticCode::InvalidClock);
+    }
+
+    #[test]
+    fn fangyuan_vfx_eval_negative_time_equivalent_before_start_is_empty() {
+        let recipe = sample_recipe();
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+
+        let states =
+            evaluate_fangyuan_vfx_recipe(&recipe, FangyuanVfxClock::new(100, 90, 30), &context)
+                .unwrap();
+
+        assert!(states.is_empty());
+    }
+
+    #[test]
+    fn fangyuan_vfx_eval_standard_mesh_fallback_maps_dynamic_state() {
+        let recipe = sample_recipe();
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+        let states =
+            evaluate_fangyuan_vfx_recipe(&recipe, FangyuanVfxClock::new(10, 20, 30), &context)
+                .unwrap();
+
+        let fallback = fangyuan_vfx_standard_mesh_fallback_primitives(&states);
+
+        assert_eq!(fallback.len(), states.len());
+        assert_eq!(fallback[0].primitive_kind, states[0].primitive_kind);
+        assert_eq!(fallback[0].transform.translation, states[0].local_position);
+        assert_eq!(fallback[0].transform.scale, states[0].scale);
+        assert_eq!(
+            fallback[0].material_profile_id.as_deref(),
+            states[0].material_profile_id.as_deref()
+        );
+    }
+
+    #[test]
+    fn fangyuan_vfx_runtime_multi_vfx_tick_cleanup_clear_reload_and_fallback() {
+        let mut runtime = FangyuanVfxRuntime::default();
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+        runtime
+            .start_instance(FangyuanVfxInstance::new(
+                "projectile-a",
+                fangyuan_vfx_projectile_recipe(),
+                context.clone(),
+                10,
+            ))
+            .unwrap();
+        runtime
+            .start_instance(FangyuanVfxInstance::new(
+                "shield-a",
+                fangyuan_vfx_shield_recipe(),
+                context,
+                12,
+            ))
+            .unwrap();
+
+        let states = runtime.tick(16, 20).unwrap().to_vec();
+        assert_eq!(runtime.stats().active_instance_count, 2);
+        assert!(states.len() >= 2);
+        assert_eq!(runtime.stats().active_state_count, states.len());
+        assert_eq!(runtime.fallback_primitives().len(), states.len());
+        assert!(states.iter().any(|state| {
+            state
+                .source
+                .instance_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == "projectile-a")
+        }));
+        assert!(states.iter().any(|state| {
+            state
+                .source
+                .instance_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == "shield-a")
+        }));
+
+        let states = runtime.tick(40, 20).unwrap().to_vec();
+        assert!(states.is_empty());
+        assert_eq!(runtime.stats().active_instance_count, 0);
+        assert_eq!(runtime.stats().active_state_count, 0);
+        assert_eq!(runtime.stats().fallback_primitive_count, 0);
+        assert_eq!(runtime.stats().total_finished, 2);
+
+        runtime
+            .start_instance(FangyuanVfxInstance::new(
+                "fade-a",
+                fangyuan_vfx_fade_recipe(),
+                FangyuanVfxReplayContext::local("caster-a", "event-b"),
+                100,
+            ))
+            .unwrap();
+        runtime.tick(105, 20).unwrap();
+        runtime.clear_scene();
+        assert_eq!(runtime.stats().active_instance_count, 0);
+        assert_eq!(runtime.stats().active_state_count, 0);
+        assert_eq!(runtime.stats().fallback_primitive_count, 0);
+        assert_eq!(runtime.stats().total_cleared, 1);
+
+        runtime
+            .start_instance(FangyuanVfxInstance::new(
+                "fade-b",
+                fangyuan_vfx_fade_recipe(),
+                FangyuanVfxReplayContext::local("caster-a", "event-c"),
+                200,
+            ))
+            .unwrap();
+        runtime.tick(205, 20).unwrap();
+        runtime.reload_scene();
+        assert_eq!(runtime.stats().active_instance_count, 0);
+        assert!(runtime.active_states().is_empty());
+        assert!(runtime.fallback_primitives().is_empty());
+    }
+
+    #[test]
+    fn fangyuan_vfx_runtime_future_start_keeps_instance_without_states_until_start() {
+        let mut runtime = FangyuanVfxRuntime::default();
+        runtime
+            .start_instance(FangyuanVfxInstance::new(
+                "future-projectile",
+                fangyuan_vfx_projectile_recipe(),
+                FangyuanVfxReplayContext::local("caster-a", "event-future"),
+                100,
+            ))
+            .unwrap();
+
+        let states_before_start = runtime.tick(90, 20).unwrap().to_vec();
+        assert!(states_before_start.is_empty());
+        assert_eq!(runtime.stats().active_instance_count, 1);
+        assert_eq!(runtime.stats().active_state_count, 0);
+        assert_eq!(runtime.stats().fallback_primitive_count, 0);
+        assert!(runtime.fallback_primitives().is_empty());
+
+        let states_at_start = runtime.tick(100, 20).unwrap().to_vec();
+        assert!(!states_at_start.is_empty());
+        assert_eq!(runtime.stats().active_instance_count, 1);
+        assert_eq!(runtime.stats().active_state_count, states_at_start.len());
+        assert_eq!(
+            runtime.stats().fallback_primitive_count,
+            states_at_start.len()
+        );
+        assert_eq!(runtime.fallback_primitives().len(), states_at_start.len());
+    }
+
+    #[test]
+    fn fangyuan_vfx_runtime_rejects_duplicate_instance() {
+        let mut runtime = FangyuanVfxRuntime::default();
+        let context = FangyuanVfxReplayContext::local("caster-a", "event-a");
+        runtime
+            .start_instance(FangyuanVfxInstance::new(
+                "same",
+                fangyuan_vfx_fade_recipe(),
+                context.clone(),
+                0,
+            ))
+            .unwrap();
+
+        let error = runtime
+            .start_instance(FangyuanVfxInstance::new(
+                "same",
+                fangyuan_vfx_fade_recipe(),
+                context,
+                1,
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            FangyuanVfxInstanceStartError::DuplicateInstance(FangyuanVfxInstanceId::new("same"))
+        );
     }
 
     #[test]
