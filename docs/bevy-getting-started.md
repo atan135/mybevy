@@ -454,7 +454,7 @@ cargo run
 
 - `sample.dungeon_room`：来自 `project/assets/scenes/sample_dungeon_room/scene.ron` 和同目录 `layout.ron`，用于验证基础世界内容流程。
 - `arena.robot_sync`：来自 `project/assets/scenes/robot_sync_arena/scene.ron` 和同目录 `layout.ron`，用于验证 500x500 机器人帧同步场景。
-- `dev.fangyuan_home`：方圆家园开发预览场景，默认读取 `fangyuan/layouts/home_layout.ron` 和 `fangyuan/palettes/home_prefabs.ron`，用于验收 layout/palette 展开、审核 HUD 和审核日志。
+- `dev.fangyuan_home`：方圆家园开发预览场景，默认读取 `fangyuan/layouts/home_layout.ron` 和 `fangyuan/palettes/home_prefabs.ron`，用于验收 layout/palette 展开、审核 HUD、审核日志和方圆静态渲染模式。
 
 也可以从正常 UI 流程进入：启动游戏、登录到大厅，在 `game_list` 点击 `Sample Scene`、`Robot Sync` 或 `Fangyuan Home` 的 `Enter` 按钮；进入成功后会显示对应 HUD，点击 `Lobby` 返回大厅。
 
@@ -493,7 +493,31 @@ $env:WGPU_BACKEND="dx12"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
-该入口只用于开发期可视验收；第五阶段只覆盖审核和预算，不包含 Chunk、Bake、mesh merge、GPU Instancing、LOD、AOI、联网同步、正式家园编辑器、蓝图持久化、装备挂点或技能规则层。
+方圆家园还支持开发期渲染模式环境变量，用于对比 standard、CPU merge 和 static instance shared-mesh prototype。未设置或填入非法值时默认使用 `standard`：
+
+```powershell
+Set-Location project
+$env:MYBEVY_START_SCENE="dev.fangyuan_home"
+$env:MYBEVY_SCENE_DEBUG="true"
+$env:MYBEVY_FANGYUAN_HOME_RENDER_MODE="standard"
+cargo run -- --window-profile phone-small --window-scale 50%
+
+$env:MYBEVY_FANGYUAN_HOME_RENDER_MODE="cpu_merge"
+cargo run -- --window-profile phone-small --window-scale 50%
+
+$env:MYBEVY_FANGYUAN_HOME_RENDER_MODE="static_instance"
+cargo run -- --window-profile phone-small --window-scale 50%
+```
+
+`MYBEVY_FANGYUAN_HOME_RENDER_MODE` 当前支持 `standard`、`cpu_merge` 和 `static_instance`；`cpu-merge`、`merge`、`static-instance`、`staticinstance`、`instancing`、`instance` 也会解析到对应模式。HUD / 日志会显示 `render_mode`、material profile、opaque / transparent、emissive、material resource、static instance batch / count / buffer bytes 和 fallback reason。CPU merge 或 static instance 构建失败时默认回退到 `standard`。
+
+如需在 Windows 下用 DX12 复验三种模式，可以在同一终端先设置：
+
+```powershell
+$env:WGPU_BACKEND="dx12"
+```
+
+该入口只用于开发期可视验收；第六至第八阶段覆盖静态 CPU merge、static instance shared-mesh prototype、统一材质 profile、fallback 和压力统计，不包含动态 VFX、技能规则层、正式 Chunk / LOD / AOI、发布期 Bake、蓝图缓存继承、正式 GPU instance buffer / custom render pipeline、联网同步、正式家园编辑器、蓝图持久化、装备挂点或任意 shader。
 
 Robot Sync MyServer 模式常用环境变量：
 
