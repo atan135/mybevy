@@ -3,8 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    FangyuanPrimitiveKind, FangyuanPrimitiveRole, FangyuanVfxBudgetPressure, FangyuanVfxClock,
-    FangyuanVfxCurve, FangyuanVfxDiagnostic, FangyuanVfxDynamicPrimitiveState, FangyuanVfxEmitter,
+    FangyuanEquipmentSocketFallback, FangyuanEquipmentSocketFallbackDiagnostic,
+    FangyuanEquipmentSocketReferenceKind, FangyuanEquipmentSocketResolution,
+    FangyuanEquipmentSocketSemantic, FangyuanEquipmentSocketSet, FangyuanPrimitiveKind,
+    FangyuanPrimitiveRole, FangyuanVfxBudgetPressure, FangyuanVfxClock, FangyuanVfxCurve,
+    FangyuanVfxDiagnostic, FangyuanVfxDynamicPrimitiveState, FangyuanVfxEmitter,
     FangyuanVfxEmitterJitter, FangyuanVfxOperator, FangyuanVfxRecipe, FangyuanVfxReplayContext,
     evaluate_fangyuan_vfx_recipe_with_budget_pressure, fangyuan_vfx_impact_expand_recipe,
     fangyuan_vfx_primitive_state_hash, fangyuan_vfx_projectile_recipe,
@@ -325,6 +328,8 @@ pub struct FangyuanSkillVisualBlueprint {
     #[serde(default)]
     pub emissive: FangyuanSkillEmissiveVisual,
     #[serde(default)]
+    pub equipment_socket_bindings: Vec<FangyuanSkillEquipmentSocketBinding>,
+    #[serde(default)]
     pub attempted_rule_overrides: Vec<FangyuanSkillTemplateField>,
 }
 
@@ -365,6 +370,9 @@ impl FangyuanSkillVisualBlueprint {
         self.decor.validate(&template.field_policy)?;
         self.impact_residue.validate(&template.field_policy)?;
         self.emissive.validate(&template.field_policy)?;
+        for (index, binding) in self.equipment_socket_bindings.iter().enumerate() {
+            binding.validate(index)?;
+        }
         if let Some(recipe) = &self.vfx_recipe {
             recipe.validate().map_err(|error| {
                 FangyuanSkillVisualDiagnostic::with_field(
@@ -375,6 +383,102 @@ impl FangyuanSkillVisualBlueprint {
             })?;
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FangyuanSkillEquipmentSocketBinding {
+    pub emitter_id: String,
+    pub target: FangyuanSkillEquipmentSocketBindingTarget,
+    pub socket: FangyuanEquipmentSocketSemantic,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<FangyuanEquipmentSocketFallback>,
+}
+
+impl FangyuanSkillEquipmentSocketBinding {
+    pub fn emitter_origin(
+        emitter_id: impl Into<String>,
+        socket: FangyuanEquipmentSocketSemantic,
+    ) -> Self {
+        Self {
+            emitter_id: emitter_id.into(),
+            target: FangyuanSkillEquipmentSocketBindingTarget::EmitterOrigin,
+            socket,
+            fallback: Some(socket.default_fallback()),
+        }
+    }
+
+    pub fn move_from(
+        emitter_id: impl Into<String>,
+        socket: FangyuanEquipmentSocketSemantic,
+    ) -> Self {
+        Self {
+            emitter_id: emitter_id.into(),
+            target: FangyuanSkillEquipmentSocketBindingTarget::MoveFrom,
+            socket,
+            fallback: Some(socket.default_fallback()),
+        }
+    }
+
+    pub fn move_to(emitter_id: impl Into<String>, socket: FangyuanEquipmentSocketSemantic) -> Self {
+        Self {
+            emitter_id: emitter_id.into(),
+            target: FangyuanSkillEquipmentSocketBindingTarget::MoveTo,
+            socket,
+            fallback: Some(socket.default_fallback()),
+        }
+    }
+
+    pub fn decor_anchor(
+        emitter_id: impl Into<String>,
+        socket: FangyuanEquipmentSocketSemantic,
+    ) -> Self {
+        Self {
+            emitter_id: emitter_id.into(),
+            target: FangyuanSkillEquipmentSocketBindingTarget::DecorAnchor,
+            socket,
+            fallback: Some(socket.default_fallback()),
+        }
+    }
+
+    pub fn with_fallback(mut self, fallback: FangyuanEquipmentSocketFallback) -> Self {
+        self.fallback = Some(fallback);
+        self
+    }
+
+    fn validate(&self, index: usize) -> Result<(), FangyuanSkillVisualDiagnostic> {
+        if self.emitter_id.trim().is_empty() {
+            return Err(FangyuanSkillVisualDiagnostic::with_field(
+                FangyuanSkillVisualDiagnosticCode::InvalidEquipmentSocketBinding,
+                "equipment socket binding emitter_id must not be empty",
+                format!("equipment_socket_bindings[{index}].emitter_id"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reference_kind(&self) -> FangyuanEquipmentSocketReferenceKind {
+        self.target.reference_kind()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FangyuanSkillEquipmentSocketBindingTarget {
+    EmitterOrigin,
+    MoveFrom,
+    MoveTo,
+    DecorAnchor,
+}
+
+impl FangyuanSkillEquipmentSocketBindingTarget {
+    pub const fn reference_kind(self) -> FangyuanEquipmentSocketReferenceKind {
+        match self {
+            Self::EmitterOrigin => FangyuanEquipmentSocketReferenceKind::Emit,
+            Self::MoveFrom | Self::MoveTo => FangyuanEquipmentSocketReferenceKind::Trajectory,
+            Self::DecorAnchor => FangyuanEquipmentSocketReferenceKind::Decor,
+        }
     }
 }
 
@@ -666,6 +770,7 @@ pub struct FangyuanSkillRuntimeContext {
     pub event_id: String,
     pub external_seed: Option<u64>,
     pub degrade_level: FangyuanSkillDegradeLevel,
+    pub equipment_sockets: Option<FangyuanEquipmentSocketSet>,
 }
 
 impl FangyuanSkillRuntimeContext {
@@ -684,11 +789,17 @@ impl FangyuanSkillRuntimeContext {
             event_id: event_id.into(),
             external_seed: None,
             degrade_level: FangyuanSkillDegradeLevel::None,
+            equipment_sockets: None,
         }
     }
 
     pub fn with_degrade_level(mut self, degrade_level: FangyuanSkillDegradeLevel) -> Self {
         self.degrade_level = degrade_level;
+        self
+    }
+
+    pub fn with_equipment_sockets(mut self, sockets: FangyuanEquipmentSocketSet) -> Self {
+        self.equipment_sockets = Some(sockets);
         self
     }
 }
@@ -698,6 +809,7 @@ pub struct FangyuanSkillRuntimePresentation {
     pub rule_layer_states: Vec<FangyuanVfxDynamicPrimitiveState>,
     pub personality_layer_states: Vec<FangyuanVfxDynamicPrimitiveState>,
     pub degrade_level: FangyuanSkillDegradeLevel,
+    pub equipment_socket_bindings: Vec<FangyuanSkillEquipmentSocketRuntimeBinding>,
 }
 
 impl FangyuanSkillRuntimePresentation {
@@ -712,6 +824,17 @@ impl FangyuanSkillRuntimePresentation {
     pub fn rule_layer_hash(&self) -> u64 {
         fangyuan_vfx_primitive_state_hash(&self.rule_layer_states)
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanSkillEquipmentSocketRuntimeBinding {
+    pub emitter_id: String,
+    pub target: FangyuanSkillEquipmentSocketBindingTarget,
+    pub requested_socket: FangyuanEquipmentSocketSemantic,
+    pub reference_kind: FangyuanEquipmentSocketReferenceKind,
+    pub position: Vec3,
+    pub fallback: Option<FangyuanEquipmentSocketFallbackDiagnostic>,
+    pub applied_to_emitter: bool,
 }
 
 pub fn audit_fangyuan_skill_visual_readability(
@@ -807,8 +930,13 @@ pub fn compile_fangyuan_skill_runtime_presentation(
         FangyuanVfxBudgetPressure::none(),
     )?;
 
-    let personality_recipe =
+    let mut personality_recipe =
         compile_fangyuan_skill_personality_layer_recipe(blueprint, context.degrade_level);
+    let equipment_socket_bindings = apply_skill_equipment_socket_bindings(
+        &mut personality_recipe,
+        &blueprint.equipment_socket_bindings,
+        context.equipment_sockets.as_ref(),
+    );
     let personality_layer_states = evaluate_fangyuan_vfx_recipe_with_budget_pressure(
         &personality_recipe,
         clock,
@@ -820,6 +948,7 @@ pub fn compile_fangyuan_skill_runtime_presentation(
         rule_layer_states: sort_skill_rule_layer_states(rule_layer_states),
         personality_layer_states,
         degrade_level: context.degrade_level,
+        equipment_socket_bindings,
     })
 }
 
@@ -1003,6 +1132,7 @@ pub enum FangyuanSkillVisualDiagnosticCode {
     InvalidVisualValue,
     AuditDegradeOnlyFieldExceeded,
     InvalidVfxRecipe,
+    InvalidEquipmentSocketBinding,
 }
 
 pub fn fangyuan_default_skill_templates() -> Vec<FangyuanSkillTemplate> {
@@ -1180,6 +1310,7 @@ fn default_visual_blueprint(
         decor: FangyuanSkillDecorVisual::default(),
         impact_residue: FangyuanSkillImpactResidueVisual::default(),
         emissive: FangyuanSkillEmissiveVisual::default(),
+        equipment_socket_bindings: Vec::new(),
         attempted_rule_overrides: Vec::new(),
     }
 }
@@ -1618,6 +1749,90 @@ fn compile_fangyuan_skill_personality_layer_recipe(
     recipe
 }
 
+fn apply_skill_equipment_socket_bindings(
+    recipe: &mut FangyuanVfxRecipe,
+    bindings: &[FangyuanSkillEquipmentSocketBinding],
+    equipment_sockets: Option<&FangyuanEquipmentSocketSet>,
+) -> Vec<FangyuanSkillEquipmentSocketRuntimeBinding> {
+    bindings
+        .iter()
+        .map(|binding| {
+            let resolution = resolve_skill_equipment_socket_binding(binding, equipment_sockets);
+            let applied_to_emitter =
+                apply_skill_equipment_socket_resolution(recipe, binding, resolution.position);
+            FangyuanSkillEquipmentSocketRuntimeBinding {
+                emitter_id: binding.emitter_id.clone(),
+                target: binding.target,
+                requested_socket: binding.socket,
+                reference_kind: binding.reference_kind(),
+                position: resolution.position,
+                fallback: resolution.fallback,
+                applied_to_emitter,
+            }
+        })
+        .collect()
+}
+
+fn resolve_skill_equipment_socket_binding(
+    binding: &FangyuanSkillEquipmentSocketBinding,
+    equipment_sockets: Option<&FangyuanEquipmentSocketSet>,
+) -> FangyuanEquipmentSocketResolution {
+    match equipment_sockets {
+        Some(sockets) => sockets.resolve_with_fallback(
+            binding.socket,
+            binding.reference_kind(),
+            binding.fallback.as_ref(),
+        ),
+        None => {
+            let empty = FangyuanEquipmentSocketSet::new();
+            empty.resolve_with_fallback(
+                binding.socket,
+                binding.reference_kind(),
+                binding.fallback.as_ref(),
+            )
+        }
+    }
+}
+
+fn apply_skill_equipment_socket_resolution(
+    recipe: &mut FangyuanVfxRecipe,
+    binding: &FangyuanSkillEquipmentSocketBinding,
+    position: Vec3,
+) -> bool {
+    let Some(emitter) = recipe
+        .emitters
+        .iter_mut()
+        .find(|emitter| emitter.id == binding.emitter_id)
+    else {
+        return false;
+    };
+
+    let position = position.to_array();
+    match binding.target {
+        FangyuanSkillEquipmentSocketBindingTarget::EmitterOrigin
+        | FangyuanSkillEquipmentSocketBindingTarget::DecorAnchor => {
+            emitter.position = position;
+            true
+        }
+        FangyuanSkillEquipmentSocketBindingTarget::MoveFrom
+        | FangyuanSkillEquipmentSocketBindingTarget::MoveTo => {
+            let mut applied = false;
+            for operator in &mut emitter.operators {
+                if let FangyuanVfxOperator::Move { from, to, .. } = operator {
+                    match binding.target {
+                        FangyuanSkillEquipmentSocketBindingTarget::MoveFrom => *from = position,
+                        FangyuanSkillEquipmentSocketBindingTarget::MoveTo => *to = position,
+                        FangyuanSkillEquipmentSocketBindingTarget::EmitterOrigin
+                        | FangyuanSkillEquipmentSocketBindingTarget::DecorAnchor => {}
+                    }
+                    applied = true;
+                }
+            }
+            applied
+        }
+    }
+}
+
 fn rule_emitter(
     id: &str,
     primitive_kind: FangyuanPrimitiveKind,
@@ -1743,6 +1958,10 @@ fn warning_color(rule_layer: FangyuanSkillRuleLayer) -> [f32; 4] {
 
 #[cfg(test)]
 mod tests {
+    use crate::framework::fangyuan::{
+        FangyuanEquipmentSocketFallbackReason, fangyuan_default_equipment_blueprint,
+    };
+
     use super::*;
 
     fn valid_projectile_template() -> FangyuanSkillTemplate {
@@ -2078,5 +2297,121 @@ mod tests {
                 .iter()
                 .any(|state| state.role == FangyuanPrimitiveRole::Impact)
         );
+    }
+
+    #[test]
+    fn fangyuan_skill_projectile_uses_equipment_tip_as_trajectory_start() {
+        let template = valid_projectile_template();
+        let mut blueprint = default_projectile_visual_blueprint();
+        blueprint
+            .equipment_socket_bindings
+            .push(FangyuanSkillEquipmentSocketBinding::move_from(
+                "projectile",
+                FangyuanEquipmentSocketSemantic::Tip,
+            ));
+        let sockets = fangyuan_default_equipment_blueprint()
+            .compile_sockets()
+            .unwrap();
+        let context = FangyuanSkillRuntimeContext::local(0, 0, 30, "caster-a", "event-tip")
+            .with_equipment_sockets(sockets);
+
+        let presentation =
+            compile_fangyuan_skill_runtime_presentation(&template, &blueprint, &context).unwrap();
+        let projectile = presentation
+            .personality_layer_states
+            .iter()
+            .find(|state| state.emitter_id == "projectile")
+            .unwrap();
+
+        assert_eq!(
+            projectile.local_position,
+            Vec3::new(0.95, 0.45, 0.0),
+            "projectile should start from the equipment tip socket at spawn"
+        );
+        assert_eq!(presentation.equipment_socket_bindings.len(), 1);
+        assert_eq!(
+            presentation.equipment_socket_bindings[0].fallback, None,
+            "existing tip socket should not report fallback"
+        );
+        assert!(presentation.equipment_socket_bindings[0].applied_to_emitter);
+    }
+
+    #[test]
+    fn fangyuan_skill_shield_uses_equipment_core_as_emitter_origin() {
+        let template = fangyuan_default_skill_templates()
+            .into_iter()
+            .find(|template| template.id == FANGYUAN_SKILL_SHIELD_TEMPLATE_ID)
+            .unwrap();
+        let mut blueprint = default_shield_visual_blueprint();
+        blueprint.equipment_socket_bindings.push(
+            FangyuanSkillEquipmentSocketBinding::emitter_origin(
+                "shield",
+                FangyuanEquipmentSocketSemantic::Core,
+            ),
+        );
+        let sockets = fangyuan_default_equipment_blueprint()
+            .compile_sockets()
+            .unwrap();
+        let context = FangyuanSkillRuntimeContext::local(0, 0, 30, "caster-a", "event-core")
+            .with_equipment_sockets(sockets);
+
+        let presentation =
+            compile_fangyuan_skill_runtime_presentation(&template, &blueprint, &context).unwrap();
+        let shield = presentation
+            .personality_layer_states
+            .iter()
+            .find(|state| state.emitter_id == "shield")
+            .unwrap();
+
+        assert_eq!(shield.local_position, Vec3::new(0.0, 0.45, 0.0));
+        assert_eq!(
+            presentation.equipment_socket_bindings[0].requested_socket,
+            FangyuanEquipmentSocketSemantic::Core
+        );
+        assert!(presentation.equipment_socket_bindings[0].fallback.is_none());
+    }
+
+    #[test]
+    fn fangyuan_skill_missing_socket_uses_explicit_fallback_and_reports_it() {
+        let template = valid_projectile_template();
+        let mut blueprint = default_projectile_visual_blueprint();
+        blueprint.equipment_socket_bindings.push(
+            FangyuanSkillEquipmentSocketBinding::move_from(
+                "projectile",
+                FangyuanEquipmentSocketSemantic::Tip,
+            )
+            .with_fallback(FangyuanEquipmentSocketFallback::Socket {
+                semantic: FangyuanEquipmentSocketSemantic::Core,
+            }),
+        );
+        let mut equipment = fangyuan_default_equipment_blueprint();
+        equipment
+            .sockets
+            .retain(|socket| socket.semantic != FangyuanEquipmentSocketSemantic::Tip);
+        let context = FangyuanSkillRuntimeContext::local(0, 0, 30, "caster-a", "event-fallback")
+            .with_equipment_sockets(equipment.compile_sockets().unwrap());
+
+        let presentation =
+            compile_fangyuan_skill_runtime_presentation(&template, &blueprint, &context).unwrap();
+        let projectile = presentation
+            .personality_layer_states
+            .iter()
+            .find(|state| state.emitter_id == "projectile")
+            .unwrap();
+        let binding = &presentation.equipment_socket_bindings[0];
+        let fallback = binding.fallback.unwrap();
+
+        assert_eq!(projectile.local_position, Vec3::new(0.0, 0.45, 0.0));
+        assert_eq!(
+            fallback.reason,
+            FangyuanEquipmentSocketFallbackReason::MissingSocket
+        );
+        assert_eq!(
+            fallback.applied_fallback,
+            FangyuanEquipmentSocketFallback::Socket {
+                semantic: FangyuanEquipmentSocketSemantic::Core
+            }
+        );
+        assert!(binding.applied_to_emitter);
     }
 }
