@@ -1,16 +1,19 @@
 use bevy::prelude::Color;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
-use super::primitive::{
-    FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FangyuanPrimitive, FangyuanPrimitiveKind,
-    FangyuanPrimitiveRole, FangyuanPrimitiveSet,
+use super::{
+    FangyuanMaterialProfileRegistry, FangyuanRenderMaterialKey,
+    primitive::{
+        FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FangyuanPrimitive, FangyuanPrimitiveKind,
+        FangyuanPrimitiveRole, FangyuanPrimitiveSet,
+    },
 };
 
 /// Primitive-set debug statistics computed from runtime primitive data.
 ///
 /// This is a data-model entry point for later budget, LOD, and review reports.
 /// It intentionally does not inspect render-only visual entities.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FangyuanPrimitiveSetStats {
     pub total: usize,
     pub cube_count: usize,
@@ -20,10 +23,18 @@ pub struct FangyuanPrimitiveSetStats {
     pub color_count: usize,
     /// Number of primitives whose runtime alpha is below fully opaque.
     pub alpha_count: usize,
+    /// Number of primitives routed to the transparent render path after material composition.
+    pub transparent_count: usize,
+    /// Number of primitives routed to the default opaque render path after material composition.
+    pub opaque_count: usize,
     /// Number of primitives whose runtime emissive intensity is above default.
     pub emissive_count: usize,
+    /// Sum of composed emissive intensity across runtime primitives.
+    pub emissive_total: f32,
     /// Number of distinct non-default material profile identifiers.
     pub material_profile_count: usize,
+    /// Number of unique StandardMaterial cache keys implied by composed material params.
+    pub unique_material_resource_count: usize,
 }
 
 impl FangyuanPrimitiveSetStats {
@@ -32,9 +43,27 @@ impl FangyuanPrimitiveSetStats {
     }
 
     pub fn from_primitives(primitives: &[FangyuanPrimitive]) -> Self {
+        Self::from_primitives_with_material_registry(
+            primitives,
+            &FangyuanMaterialProfileRegistry::default(),
+        )
+    }
+
+    pub fn from_primitive_set_with_material_registry(
+        primitive_set: &FangyuanPrimitiveSet,
+        registry: &FangyuanMaterialProfileRegistry,
+    ) -> Self {
+        Self::from_primitives_with_material_registry(primitive_set.primitives(), registry)
+    }
+
+    pub fn from_primitives_with_material_registry(
+        primitives: &[FangyuanPrimitive],
+        registry: &FangyuanMaterialProfileRegistry,
+    ) -> Self {
         let mut stats = Self::default();
         let mut colors = BTreeSet::new();
         let mut material_profiles = BTreeSet::new();
+        let mut material_resources = HashSet::new();
 
         for primitive in primitives {
             stats.total += 1;
@@ -46,12 +75,18 @@ impl FangyuanPrimitiveSetStats {
             stats.role_distribution.increment(primitive.role());
             colors.insert(FangyuanPrimitiveColorKey::from_color(primitive.color()));
 
-            if primitive.alpha() < 1.0 {
+            let material = registry.compose_primitive(primitive);
+            if material.alpha < 1.0 {
                 stats.alpha_count += 1;
+                stats.transparent_count += 1;
+            } else {
+                stats.opaque_count += 1;
             }
-            if primitive.emissive() > FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE {
+            if material.emissive > FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE {
                 stats.emissive_count += 1;
             }
+            stats.emissive_total += material.emissive;
+            material_resources.insert(FangyuanRenderMaterialKey::from_material_params(&material));
             if let Some(material_profile_id) = primitive.material_profile_id() {
                 material_profiles.insert(material_profile_id);
             }
@@ -59,6 +94,7 @@ impl FangyuanPrimitiveSetStats {
 
         stats.color_count = colors.len();
         stats.material_profile_count = material_profiles.len();
+        stats.unique_material_resource_count = material_resources.len();
         stats
     }
 }
@@ -176,8 +212,12 @@ mod tests {
         );
         assert_eq!(stats.color_count, 2);
         assert_eq!(stats.alpha_count, 0);
+        assert_eq!(stats.opaque_count, 2);
+        assert_eq!(stats.transparent_count, 0);
         assert_eq!(stats.emissive_count, 0);
+        assert_eq!(stats.emissive_total, 0.0);
         assert_eq!(stats.material_profile_count, 0);
+        assert_eq!(stats.unique_material_resource_count, 2);
     }
 
     #[test]
@@ -225,8 +265,12 @@ mod tests {
         assert_eq!(stats.sphere_count, 2);
         assert_eq!(stats.color_count, 2);
         assert_eq!(stats.alpha_count, 2);
+        assert_eq!(stats.opaque_count, 1);
+        assert_eq!(stats.transparent_count, 2);
         assert_eq!(stats.emissive_count, 2);
+        assert_eq!(stats.emissive_total, 3.0);
         assert_eq!(stats.material_profile_count, 2);
+        assert_eq!(stats.unique_material_resource_count, 3);
         assert_eq!(
             stats
                 .role_distribution

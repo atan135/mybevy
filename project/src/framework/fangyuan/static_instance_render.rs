@@ -68,6 +68,9 @@ pub struct FangyuanStaticInstanceRenderInstance {
     pub position: Vec3,
     pub scale: Vec3,
     pub color: Color,
+    pub alpha: f32,
+    pub emissive: f32,
+    pub material_profile_id: Option<String>,
     pub source: FangyuanStaticMergeSourceRef,
 }
 
@@ -266,6 +269,9 @@ fn render_batch_from_static_batch(
             position: instance.position,
             scale: instance.scale,
             color: instance.color.with_alpha(instance.alpha),
+            alpha: instance.alpha,
+            emissive: instance.emissive,
+            material_profile_id: instance.material_profile_id,
             source: instance.source,
         })
         .collect();
@@ -302,7 +308,8 @@ pub fn fangyuan_static_instance_bounds_are_empty(bounds: FangyuanStaticInstanceB
 mod tests {
     use super::*;
     use crate::framework::fangyuan::{
-        FangyuanPrimitive, FangyuanPrimitiveRole, FangyuanStaticMergeTransparentPath,
+        FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FangyuanPrimitive, FangyuanPrimitiveRole,
+        FangyuanStaticMergeTransparentPath,
     };
 
     #[test]
@@ -356,6 +363,12 @@ mod tests {
             transparent_batch.instances[0].color,
             Color::srgba(0.1, 0.2, 0.3, 0.6)
         );
+        assert_eq!(transparent_batch.instances[0].alpha, 0.6);
+        assert_eq!(
+            transparent_batch.instances[0].emissive,
+            FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE
+        );
+        assert_eq!(transparent_batch.instances[0].material_profile_id, None);
         assert_eq!(
             transparent_batch.buffer_bytes,
             FANGYUAN_STATIC_INSTANCE_RENDER_STRIDE_BYTES

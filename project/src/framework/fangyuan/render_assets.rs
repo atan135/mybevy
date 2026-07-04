@@ -4,7 +4,10 @@ use bevy::{
 };
 use std::collections::HashMap;
 
-use super::{FangyuanPrimitive, FangyuanPrimitiveKind};
+use super::{
+    FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FangyuanMaterialInstanceParams, FangyuanPrimitive,
+    FangyuanPrimitiveKind,
+};
 
 pub const FANGYUAN_RENDER_UNIT_SPHERE_SECTORS: u32 = 24;
 pub const FANGYUAN_RENDER_UNIT_SPHERE_STACKS: u32 = 12;
@@ -25,6 +28,30 @@ impl FangyuanRenderColorKey {
     }
 }
 
+/// Quantized material key for StandardMaterial cache entries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct FangyuanRenderMaterialKey {
+    color: FangyuanRenderColorKey,
+    emissive: u16,
+}
+
+impl FangyuanRenderMaterialKey {
+    pub fn from_color_and_emissive(color: Color, emissive: f32) -> Self {
+        Self {
+            color: FangyuanRenderColorKey::from_color(color),
+            emissive: quantize_emissive(emissive),
+        }
+    }
+
+    pub fn from_material_params(params: &FangyuanMaterialInstanceParams) -> Self {
+        Self::from_color_and_emissive(params.color, params.emissive)
+    }
+
+    pub fn from_color(color: Color) -> Self {
+        Self::from_color_and_emissive(color, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE)
+    }
+}
+
 /// Small render-only asset cache shared by Fangyuan preview features.
 ///
 /// This cache deliberately covers only unit primitive meshes and base color
@@ -34,7 +61,7 @@ impl FangyuanRenderColorKey {
 pub struct FangyuanRenderAssetCache {
     unit_cube_mesh: Option<Handle<Mesh>>,
     unit_sphere_mesh: Option<Handle<Mesh>>,
-    materials_by_color: HashMap<FangyuanRenderColorKey, Handle<StandardMaterial>>,
+    materials_by_key: HashMap<FangyuanRenderMaterialKey, Handle<StandardMaterial>>,
 }
 
 impl FangyuanRenderAssetCache {
@@ -71,14 +98,40 @@ impl FangyuanRenderAssetCache {
         color: Color,
         materials: &mut Assets<StandardMaterial>,
     ) -> Handle<StandardMaterial> {
-        self.materials_by_color
-            .entry(FangyuanRenderColorKey::from_color(color))
-            .or_insert_with(|| materials.add(fangyuan_standard_material_from_color(color)))
+        self.material_from_color_and_emissive(color, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, materials)
+    }
+
+    pub fn material_from_params(
+        &mut self,
+        params: &FangyuanMaterialInstanceParams,
+        materials: &mut Assets<StandardMaterial>,
+    ) -> Handle<StandardMaterial> {
+        self.materials_by_key
+            .entry(FangyuanRenderMaterialKey::from_material_params(params))
+            .or_insert_with(|| materials.add(fangyuan_standard_material_from_params(params)))
+            .clone()
+    }
+
+    pub fn material_from_color_and_emissive(
+        &mut self,
+        color: Color,
+        emissive: f32,
+        materials: &mut Assets<StandardMaterial>,
+    ) -> Handle<StandardMaterial> {
+        self.materials_by_key
+            .entry(FangyuanRenderMaterialKey::from_color_and_emissive(
+                color, emissive,
+            ))
+            .or_insert_with(|| {
+                materials.add(fangyuan_standard_material_from_color_and_emissive(
+                    color, emissive,
+                ))
+            })
             .clone()
     }
 
     pub fn material_count(&self) -> usize {
-        self.materials_by_color.len()
+        self.materials_by_key.len()
     }
 
     #[cfg(test)]
@@ -97,9 +150,36 @@ pub fn fangyuan_render_transform_from_primitive(primitive: &FangyuanPrimitive) -
 }
 
 pub fn fangyuan_standard_material_from_color(color: Color) -> StandardMaterial {
+    fangyuan_standard_material_from_color_and_emissive(color, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE)
+}
+
+pub fn fangyuan_standard_material_from_params(
+    params: &FangyuanMaterialInstanceParams,
+) -> StandardMaterial {
+    fangyuan_standard_material_from_color_and_emissive(params.color, params.emissive)
+}
+
+pub fn fangyuan_standard_material_from_color_and_emissive(
+    color: Color,
+    emissive: f32,
+) -> StandardMaterial {
     let alpha = color.to_srgba().alpha;
+    let emissive = sanitize_emissive(emissive);
+    let emissive_color = if emissive > FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE {
+        let linear = color.to_linear();
+        LinearRgba::new(
+            linear.red * emissive,
+            linear.green * emissive,
+            linear.blue * emissive,
+            1.0,
+        )
+    } else {
+        LinearRgba::BLACK
+    };
+
     StandardMaterial {
         base_color: color,
+        emissive: emissive_color,
         perceptual_roughness: 0.92,
         alpha_mode: if alpha < 1.0 {
             AlphaMode::Blend
@@ -114,11 +194,25 @@ fn quantize_color_channel(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
+fn quantize_emissive(value: f32) -> u16 {
+    (sanitize_emissive(value) * 256.0).round() as u16
+}
+
+fn sanitize_emissive(value: f32) -> f32 {
+    if value.is_finite() {
+        value.max(FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE)
+    } else {
+        FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::framework::fangyuan::{
-        FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
+        FANGYUAN_MATERIAL_PROFILE_VERSION, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
+        FangyuanMaterialAlphaPolicy, FangyuanMaterialBaseParams, FangyuanMaterialEmissivePolicy,
+        FangyuanMaterialProfile, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
     };
 
     #[test]
@@ -152,6 +246,48 @@ mod tests {
         assert_eq!(cache.material_count(), 1);
         assert_eq!(material.base_color, color);
         assert!(matches!(material.alpha_mode.clone(), AlphaMode::Blend));
+        assert_eq!(material.emissive, LinearRgba::BLACK);
+    }
+
+    #[test]
+    fn fangyuan_material_standard_cache_keys_profile_composed_alpha_and_emissive() {
+        let mut cache = FangyuanRenderAssetCache::default();
+        let mut materials = Assets::<StandardMaterial>::default();
+        let profile = FangyuanMaterialProfile {
+            stable_id: "fx/warm".to_string(),
+            version: FANGYUAN_MATERIAL_PROFILE_VERSION.to_string(),
+            base: FangyuanMaterialBaseParams {
+                color: Color::srgba(0.5, 1.0, 0.25, 1.0),
+                alpha: 0.5,
+                emissive: 1.0,
+            },
+            alpha_policy: FangyuanMaterialAlphaPolicy::MultiplyClamp { min: 0.0, max: 1.0 },
+            emissive_policy: FangyuanMaterialEmissivePolicy::AdditiveClamp { max: 4.0 },
+            debug_label: "Warm".to_string(),
+        };
+        let primitive = FangyuanPrimitive::with_runtime_metadata(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::ZERO,
+            Vec3::ONE,
+            Color::srgba(0.2, 0.4, 0.6, 1.0),
+            FangyuanPrimitiveRole::Decoration,
+            0.5,
+            2.0,
+            Some("fx/warm".to_string()),
+            FangyuanPrimitiveLifecycle::empty(),
+        );
+        let params = profile.compose_primitive(&primitive);
+
+        let material_a = cache.material_from_params(&params, &mut materials);
+        let material_b = cache.material_from_params(&params, &mut materials);
+        let material = materials.get(&material_a).unwrap();
+
+        assert_eq!(material_a, material_b);
+        assert_eq!(cache.material_count(), 1);
+        assert_eq!(material.base_color, Color::srgba(0.1, 0.4, 0.15, 0.25));
+        assert!(matches!(material.alpha_mode.clone(), AlphaMode::Blend));
+        assert!(material.emissive.red > 0.0);
+        assert!(material.emissive.green > material.emissive.red);
     }
 
     #[test]

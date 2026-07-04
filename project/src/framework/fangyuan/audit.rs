@@ -2,13 +2,13 @@ use bevy::prelude::{Color, Vec3};
 
 use super::{
     FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
-    FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanPrimitive, FangyuanPrimitiveKind,
-    FangyuanPrimitiveRoleDistribution, FangyuanPrimitiveSet,
+    FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanMaterialProfileRegistry, FangyuanPrimitive,
+    FangyuanPrimitiveKind, FangyuanPrimitiveRoleDistribution, FangyuanPrimitiveSet,
 };
 
 /// Unified Fangyuan audit report shared by later blueprint, prefab, layout, and
 /// runtime primitive-set checks.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FangyuanAuditReport {
     pub source_kind: FangyuanAuditSourceKind,
     pub source_path: Option<String>,
@@ -71,7 +71,11 @@ impl FangyuanAuditReport {
         self.summary.color_count = stats.color_count;
         self.summary.material_count = stats.material_profile_count;
         self.summary.alpha_count = stats.alpha_count;
+        self.summary.transparent_count = stats.transparent_count;
+        self.summary.opaque_count = stats.opaque_count;
         self.summary.emissive_count = stats.emissive_count;
+        self.summary.emissive_total = stats.emissive_total;
+        self.summary.unique_material_resource_count = stats.unique_material_resource_count;
         self.summary.lifecycle_count = stats.lifecycle_count.total_with_lifecycle;
         self.summary.role_distribution = stats.role_distribution;
     }
@@ -97,6 +101,10 @@ pub const FANGYUAN_AUDIT_DEFAULT_MAX_PRIMITIVE_VOLUME: f32 = 4096.0;
 pub const FANGYUAN_AUDIT_DEFAULT_MAX_TOTAL_VOLUME: f32 = 32768.0;
 pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_ALPHA_COUNT: usize = 32;
 pub const FANGYUAN_AUDIT_DEFAULT_MAX_ALPHA_COUNT: usize = 128;
+pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_TRANSPARENT_COUNT: usize =
+    FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_ALPHA_COUNT;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_TRANSPARENT_COUNT: usize =
+    FANGYUAN_AUDIT_DEFAULT_MAX_ALPHA_COUNT;
 pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_EMISSIVE_COUNT: usize = 24;
 pub const FANGYUAN_AUDIT_DEFAULT_MAX_EMISSIVE_COUNT: usize = 96;
 pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_MATERIAL_PROFILE_COUNT: usize = 8;
@@ -116,6 +124,8 @@ pub struct FangyuanAuditBudgetProfile {
     pub max_total_volume: f32,
     pub recommended_alpha_count: usize,
     pub max_alpha_count: usize,
+    pub recommended_transparent_count: usize,
+    pub max_transparent_count: usize,
     pub recommended_emissive_count: usize,
     pub max_emissive_count: usize,
     pub max_emissive_intensity: f32,
@@ -142,6 +152,8 @@ impl Default for FangyuanAuditBudgetProfile {
             max_total_volume: FANGYUAN_AUDIT_DEFAULT_MAX_TOTAL_VOLUME,
             recommended_alpha_count: FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_ALPHA_COUNT,
             max_alpha_count: FANGYUAN_AUDIT_DEFAULT_MAX_ALPHA_COUNT,
+            recommended_transparent_count: FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_TRANSPARENT_COUNT,
+            max_transparent_count: FANGYUAN_AUDIT_DEFAULT_MAX_TRANSPARENT_COUNT,
             recommended_emissive_count: FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_EMISSIVE_COUNT,
             max_emissive_count: FANGYUAN_AUDIT_DEFAULT_MAX_EMISSIVE_COUNT,
             max_emissive_intensity: FANGYUAN_PRIMITIVE_MAX_EMISSIVE,
@@ -189,9 +201,13 @@ pub struct FangyuanPrimitiveBudgetStats {
     pub max_primitive_volume: f32,
     pub bounds_size: Vec3,
     pub alpha_count: usize,
+    pub transparent_count: usize,
+    pub opaque_count: usize,
     pub emissive_count: usize,
+    pub emissive_total: f32,
     pub max_emissive: f32,
     pub material_profile_count: usize,
+    pub unique_material_resource_count: usize,
     pub role_distribution: FangyuanPrimitiveRoleDistribution,
     pub lifecycle_count: FangyuanPrimitiveLifecycleCount,
 }
@@ -202,6 +218,23 @@ impl FangyuanPrimitiveBudgetStats {
     }
 
     pub fn from_runtime_primitives(primitives: &[FangyuanPrimitive]) -> Self {
+        Self::from_runtime_primitives_with_material_registry(
+            primitives,
+            &FangyuanMaterialProfileRegistry::default(),
+        )
+    }
+
+    pub fn from_primitive_set_with_material_registry(
+        primitive_set: &FangyuanPrimitiveSet,
+        registry: &FangyuanMaterialProfileRegistry,
+    ) -> Self {
+        Self::from_runtime_primitives_with_material_registry(primitive_set.primitives(), registry)
+    }
+
+    pub fn from_runtime_primitives_with_material_registry(
+        primitives: &[FangyuanPrimitive],
+        registry: &FangyuanMaterialProfileRegistry,
+    ) -> Self {
         use std::collections::BTreeSet;
 
         let mut stats = Self {
@@ -211,6 +244,7 @@ impl FangyuanPrimitiveBudgetStats {
         };
         let mut colors = BTreeSet::new();
         let mut material_profiles = BTreeSet::new();
+        let mut material_resources = std::collections::HashSet::new();
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
 
@@ -236,13 +270,21 @@ impl FangyuanPrimitiveBudgetStats {
             min = min.min(center - half);
             max = max.max(center + half);
 
-            if primitive.alpha() < 1.0 {
+            let material = registry.compose_primitive(primitive);
+            if material.alpha < 1.0 {
                 stats.alpha_count += 1;
+                stats.transparent_count += 1;
+            } else {
+                stats.opaque_count += 1;
             }
-            if primitive.emissive() > FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE {
+            if material.emissive > FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE {
                 stats.emissive_count += 1;
             }
-            stats.max_emissive = stats.max_emissive.max(primitive.emissive());
+            stats.emissive_total += material.emissive;
+            stats.max_emissive = stats.max_emissive.max(material.emissive);
+            material_resources.insert(super::FangyuanRenderMaterialKey::from_material_params(
+                &material,
+            ));
             if let Some(material_profile_id) = primitive.material_profile_id() {
                 material_profiles.insert(material_profile_id);
             }
@@ -255,6 +297,7 @@ impl FangyuanPrimitiveBudgetStats {
         }
         stats.color_count = colors.len();
         stats.material_profile_count = material_profiles.len();
+        stats.unique_material_resource_count = material_resources.len();
         stats
     }
 
@@ -364,6 +407,18 @@ pub fn audit_fangyuan_primitive_budget(
     );
     add_count_budget_findings(
         &mut report,
+        stats.transparent_count,
+        profile.recommended_transparent_count,
+        profile.max_transparent_count,
+        "transparent_count_above_recommended",
+        "transparent_count_above_hard_limit",
+        "primitives[].material.alpha",
+        "transparent render path count exceeds the recommended budget",
+        "transparent render path count exceeds the hard budget",
+        FangyuanAuditSuggestionAction::RemoveAlpha,
+    );
+    add_count_budget_findings(
+        &mut report,
         stats.emissive_count,
         profile.recommended_emissive_count,
         profile.max_emissive_count,
@@ -408,6 +463,20 @@ pub fn audit_fangyuan_primitive_set_budget(
 ) -> FangyuanAuditReport {
     audit_fangyuan_primitive_budget(
         &FangyuanPrimitiveBudgetStats::from_primitive_set(primitive_set),
+        profile,
+    )
+}
+
+pub fn audit_fangyuan_primitive_set_budget_with_material_registry(
+    primitive_set: &FangyuanPrimitiveSet,
+    profile: &FangyuanAuditBudgetProfile,
+    registry: &FangyuanMaterialProfileRegistry,
+) -> FangyuanAuditReport {
+    audit_fangyuan_primitive_budget(
+        &FangyuanPrimitiveBudgetStats::from_primitive_set_with_material_registry(
+            primitive_set,
+            registry,
+        ),
         profile,
     )
 }
@@ -561,7 +630,7 @@ pub fn format_fangyuan_audit_debug_lines(
 
 fn format_fangyuan_audit_debug_summary(report: &FangyuanAuditReport) -> String {
     format!(
-        "summary: source_kind={:?}, source_path={}, status={:?}, errors={}, warnings={}, infos={}, findings={}, suggestions={}, authored={}, generated={}, skipped={}, cubes={}, spheres={}, colors={}, materials={}, alpha={}, emissive={}, lifecycle={}, top_level_valid={}, layout_valid={}, palette_valid={}",
+        "summary: source_kind={:?}, source_path={}, status={:?}, errors={}, warnings={}, infos={}, findings={}, suggestions={}, authored={}, generated={}, skipped={}, cubes={}, spheres={}, colors={}, materials={}, opaque={}, transparent={}, alpha={}, emissive={}, emissive_total={:.2}, material_resources={}, lifecycle={}, top_level_valid={}, layout_valid={}, palette_valid={}",
         report.source_kind,
         audit_debug_optional_str(report.source_path.as_deref()),
         report.status,
@@ -577,8 +646,12 @@ fn format_fangyuan_audit_debug_summary(report: &FangyuanAuditReport) -> String {
         report.summary.sphere_count,
         report.summary.color_count,
         report.summary.material_count,
+        report.summary.opaque_count,
+        report.summary.transparent_count,
         report.summary.alpha_count,
         report.summary.emissive_count,
+        report.summary.emissive_total,
+        report.summary.unique_material_resource_count,
         report.summary.lifecycle_count,
         report.summary.top_level_validated,
         report.summary.layout_validated,
@@ -649,7 +722,7 @@ fn audit_debug_optional_str(value: Option<&str>) -> &str {
         .unwrap_or("<none>")
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FangyuanAuditSummary {
     pub error_count: usize,
     pub warning_count: usize,
@@ -667,7 +740,11 @@ pub struct FangyuanAuditSummary {
     pub color_count: usize,
     pub material_count: usize,
     pub alpha_count: usize,
+    pub transparent_count: usize,
+    pub opaque_count: usize,
     pub emissive_count: usize,
+    pub emissive_total: f32,
+    pub unique_material_resource_count: usize,
     pub lifecycle_count: usize,
     pub role_distribution: FangyuanPrimitiveRoleDistribution,
     pub top_level_validated: bool,
@@ -1249,6 +1326,8 @@ mod tests {
             hard_primitive_limit: 10,
             recommended_alpha_count: 0,
             max_alpha_count: 10,
+            recommended_transparent_count: 0,
+            max_transparent_count: 10,
             recommended_emissive_count: 0,
             max_emissive_count: 10,
             recommended_material_profile_count: 0,
@@ -1259,6 +1338,7 @@ mod tests {
             runtime_primitives: 2,
             expanded_primitives: 2,
             alpha_count: 1,
+            transparent_count: 1,
             emissive_count: 1,
             material_profile_count: 1,
             ..Default::default()
@@ -1267,10 +1347,11 @@ mod tests {
         let report = audit_fangyuan_primitive_budget(&stats, &profile);
 
         assert_eq!(report.status, FangyuanAuditStatus::PassedWithWarnings);
-        assert_eq!(report.summary.warning_count, 4);
+        assert_eq!(report.summary.warning_count, 5);
         assert_eq!(report.summary.error_count, 0);
         assert!(has_finding(&report, "primitive_count_above_recommended"));
         assert!(has_finding(&report, "alpha_count_above_recommended"));
+        assert!(has_finding(&report, "transparent_count_above_recommended"));
         assert!(has_finding(&report, "emissive_count_above_recommended"));
         assert!(has_finding(
             &report,
@@ -1312,6 +1393,8 @@ mod tests {
             max_total_volume: 20.0,
             recommended_alpha_count: 1,
             max_alpha_count: 2,
+            recommended_transparent_count: 1,
+            max_transparent_count: 2,
             recommended_emissive_count: 1,
             max_emissive_count: 2,
             max_emissive_intensity: 3.0,
@@ -1327,6 +1410,7 @@ mod tests {
             max_primitive_volume: 25.0,
             total_volume: 30.0,
             alpha_count: 3,
+            transparent_count: 3,
             emissive_count: 3,
             max_emissive: 4.0,
             material_profile_count: 3,
@@ -1343,6 +1427,7 @@ mod tests {
         assert!(has_finding(&report, "primitive_volume_above_limit"));
         assert!(has_finding(&report, "total_volume_above_limit"));
         assert!(has_finding(&report, "alpha_count_above_hard_limit"));
+        assert!(has_finding(&report, "transparent_count_above_hard_limit"));
         assert!(has_finding(&report, "emissive_count_above_hard_limit"));
         assert!(has_finding(&report, "emissive_intensity_above_limit"));
         assert!(has_finding(

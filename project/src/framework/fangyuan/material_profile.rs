@@ -395,11 +395,41 @@ impl FangyuanMaterialProfileRegistry {
         &self,
         primitive: &FangyuanPrimitive,
     ) -> FangyuanMaterialInstanceParams {
-        let resolution = self.resolve(primitive.material_profile_id());
-        let mut params = resolution.profile.compose_primitive(primitive);
-        params.requested_profile_id = resolution.requested_profile_id;
-        params.fallback_reason = resolution.fallback_reason;
-        params
+        self.compose_runtime_fields(
+            primitive.color(),
+            primitive.alpha(),
+            primitive.emissive(),
+            primitive.material_profile_id(),
+        )
+    }
+
+    pub fn compose_runtime_fields(
+        &self,
+        color: Color,
+        alpha: f32,
+        emissive: f32,
+        material_profile_id: Option<&str>,
+    ) -> FangyuanMaterialInstanceParams {
+        let resolution = self.resolve(material_profile_id);
+        let composed_alpha = resolution
+            .profile
+            .alpha_policy
+            .compose(resolution.profile.base.alpha, alpha);
+        let composed_emissive = resolution
+            .profile
+            .emissive_policy
+            .compose(resolution.profile.base.emissive, emissive);
+        let composed_color = compose_color(resolution.profile.base.color, color, composed_alpha);
+
+        FangyuanMaterialInstanceParams {
+            profile_id: resolution.profile.stable_id.clone(),
+            requested_profile_id: resolution.requested_profile_id,
+            color: composed_color,
+            alpha: composed_alpha,
+            emissive: composed_emissive,
+            debug_label: resolution.profile.debug_label.clone(),
+            fallback_reason: resolution.fallback_reason,
+        }
     }
 }
 
