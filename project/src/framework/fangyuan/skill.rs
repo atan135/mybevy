@@ -1,8 +1,13 @@
+use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    FangyuanVfxRecipe, fangyuan_vfx_impact_expand_recipe, fangyuan_vfx_projectile_recipe,
+    FangyuanPrimitiveKind, FangyuanPrimitiveRole, FangyuanVfxBudgetPressure, FangyuanVfxClock,
+    FangyuanVfxCurve, FangyuanVfxDiagnostic, FangyuanVfxDynamicPrimitiveState, FangyuanVfxEmitter,
+    FangyuanVfxEmitterJitter, FangyuanVfxOperator, FangyuanVfxRecipe, FangyuanVfxReplayContext,
+    evaluate_fangyuan_vfx_recipe_with_budget_pressure, fangyuan_vfx_impact_expand_recipe,
+    fangyuan_vfx_primitive_state_hash, fangyuan_vfx_projectile_recipe,
     fangyuan_vfx_range_marker_recipe, fangyuan_vfx_shield_recipe,
 };
 
@@ -12,6 +17,12 @@ pub const FANGYUAN_SKILL_PROJECTILE_TEMPLATE_ID: &str = "skill.template.projecti
 pub const FANGYUAN_SKILL_CIRCLE_AREA_TEMPLATE_ID: &str = "skill.template.circle_area";
 pub const FANGYUAN_SKILL_CONE_TEMPLATE_ID: &str = "skill.template.cone";
 pub const FANGYUAN_SKILL_SHIELD_TEMPLATE_ID: &str = "skill.template.shield";
+const FANGYUAN_SKILL_RULE_ALPHA_MIN: f32 = 0.35;
+const FANGYUAN_SKILL_RULE_RANGE_TOLERANCE: f32 = 0.05;
+const FANGYUAN_SKILL_DECOR_BOUNDS_TOLERANCE: f32 = 0.15;
+const FANGYUAN_SKILL_MAX_RULE_OCCLUSION: f32 = 0.25;
+const FANGYUAN_SKILL_MAX_TRANSPARENT_PRIMITIVES: u16 = 12;
+const FANGYUAN_SKILL_MAX_EMISSIVE_INTENSITY: f32 = 4.0;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -298,6 +309,10 @@ pub struct FangyuanSkillVisualBlueprint {
     pub template_version: u32,
     pub color: [f32; 4],
     #[serde(default)]
+    pub readability: FangyuanSkillReadabilityMetadata,
+    #[serde(default)]
+    pub visual_range_hint: Option<FangyuanSkillVisualRangeHint>,
+    #[serde(default)]
     pub profile_ref: Option<String>,
     #[serde(default)]
     pub vfx_recipe: Option<FangyuanVfxRecipe>,
@@ -342,6 +357,10 @@ impl FangyuanSkillVisualBlueprint {
             }
         }
         validate_color(self.color, FangyuanSkillVisualField::Color)?;
+        self.readability.validate()?;
+        if let Some(range_hint) = &self.visual_range_hint {
+            range_hint.validate()?;
+        }
         self.trail.validate(&template.field_policy)?;
         self.decor.validate(&template.field_policy)?;
         self.impact_residue.validate(&template.field_policy)?;
@@ -356,6 +375,83 @@ impl FangyuanSkillVisualBlueprint {
             })?;
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FangyuanSkillReadabilityMetadata {
+    pub rule_alpha: f32,
+    pub rule_edge_width: f32,
+    pub personality_occlusion: f32,
+    pub decor_bounds_radius: f32,
+    pub transparent_primitive_budget: u16,
+}
+
+impl FangyuanSkillReadabilityMetadata {
+    fn validate(&self) -> Result<(), FangyuanSkillVisualDiagnostic> {
+        validate_normalized(
+            self.rule_alpha,
+            "readability.rule_alpha",
+            FangyuanSkillVisualDiagnosticCode::InvalidVisualValue,
+        )?;
+        validate_positive_visual(self.rule_edge_width, "readability.rule_edge_width")?;
+        validate_normalized(
+            self.personality_occlusion,
+            "readability.personality_occlusion",
+            FangyuanSkillVisualDiagnosticCode::InvalidVisualValue,
+        )?;
+        validate_positive_visual(self.decor_bounds_radius, "readability.decor_bounds_radius")?;
+        Ok(())
+    }
+}
+
+impl Default for FangyuanSkillReadabilityMetadata {
+    fn default() -> Self {
+        Self {
+            rule_alpha: 0.75,
+            rule_edge_width: 0.08,
+            personality_occlusion: 0.1,
+            decor_bounds_radius: 4.0,
+            transparent_primitive_budget: 8,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FangyuanSkillVisualRangeHint {
+    Projectile { length: f32, radius: f32 },
+    CircleArea { radius: f32 },
+    Cone { radius: f32, angle_degrees: f32 },
+    Shield { radius: f32, arc_degrees: f32 },
+}
+
+impl FangyuanSkillVisualRangeHint {
+    fn validate(&self) -> Result<(), FangyuanSkillVisualDiagnostic> {
+        match self {
+            Self::Projectile { length, radius } => {
+                validate_positive_visual(*length, "visual_range_hint.length")?;
+                validate_positive_visual(*radius, "visual_range_hint.radius")
+            }
+            Self::CircleArea { radius } => {
+                validate_positive_visual(*radius, "visual_range_hint.radius")
+            }
+            Self::Cone {
+                radius,
+                angle_degrees,
+            } => {
+                validate_positive_visual(*radius, "visual_range_hint.radius")?;
+                validate_visual_angle(*angle_degrees, "visual_range_hint.angle_degrees")
+            }
+            Self::Shield {
+                radius,
+                arc_degrees,
+            } => {
+                validate_positive_visual(*radius, "visual_range_hint.radius")?;
+                validate_visual_angle(*arc_degrees, "visual_range_hint.arc_degrees")
+            }
+        }
     }
 }
 
@@ -470,6 +566,261 @@ impl Default for FangyuanSkillEmissiveVisual {
     fn default() -> Self {
         Self { intensity: 1.0 }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FangyuanSkillDegradeLevel {
+    #[default]
+    None,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl FangyuanSkillDegradeLevel {
+    fn personality_pressure(self) -> FangyuanVfxBudgetPressure {
+        match self {
+            Self::None => FangyuanVfxBudgetPressure::none(),
+            Self::Low => FangyuanVfxBudgetPressure {
+                max_primitives: Some(16),
+                max_trail_segments: Some(8),
+                skip_decoration: false,
+            },
+            Self::Medium => FangyuanVfxBudgetPressure::constrained(10, 4),
+            Self::High => FangyuanVfxBudgetPressure::constrained(6, 1),
+            Self::Critical => FangyuanVfxBudgetPressure::constrained(2, 0),
+        }
+    }
+
+    const fn removes_residue(self) -> bool {
+        matches!(self, Self::High | Self::Critical)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FangyuanSkillAuditReport {
+    pub diagnostics: Vec<FangyuanSkillAuditDiagnostic>,
+}
+
+impl FangyuanSkillAuditReport {
+    pub fn passed(&self) -> bool {
+        self.diagnostics.is_empty()
+    }
+
+    pub fn has_code(&self, code: FangyuanSkillAuditDiagnosticCode) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == code)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FangyuanSkillAuditDiagnostic {
+    pub code: FangyuanSkillAuditDiagnosticCode,
+    pub message: String,
+    pub field_path: Option<String>,
+}
+
+impl FangyuanSkillAuditDiagnostic {
+    fn new(code: FangyuanSkillAuditDiagnosticCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            field_path: None,
+        }
+    }
+
+    fn with_field(
+        code: FangyuanSkillAuditDiagnosticCode,
+        message: impl Into<String>,
+        field_path: impl Into<String>,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            field_path: Some(field_path.into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FangyuanSkillAuditDiagnosticCode {
+    VisualRangeMissing,
+    VisualRangeTooSmall,
+    VisualRangeMismatch,
+    DecorBoundsExceeded,
+    RuleLayerOccluded,
+    ColorConflict,
+    TransparentBudgetExceeded,
+    EmissiveBudgetExceeded,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanSkillRuntimeContext {
+    pub start_tick: u64,
+    pub current_tick: u64,
+    pub ticks_per_second: u32,
+    pub caster_id: String,
+    pub event_id: String,
+    pub external_seed: Option<u64>,
+    pub degrade_level: FangyuanSkillDegradeLevel,
+}
+
+impl FangyuanSkillRuntimeContext {
+    pub fn local(
+        start_tick: u64,
+        current_tick: u64,
+        ticks_per_second: u32,
+        caster_id: impl Into<String>,
+        event_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            start_tick,
+            current_tick,
+            ticks_per_second,
+            caster_id: caster_id.into(),
+            event_id: event_id.into(),
+            external_seed: None,
+            degrade_level: FangyuanSkillDegradeLevel::None,
+        }
+    }
+
+    pub fn with_degrade_level(mut self, degrade_level: FangyuanSkillDegradeLevel) -> Self {
+        self.degrade_level = degrade_level;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanSkillRuntimePresentation {
+    pub rule_layer_states: Vec<FangyuanVfxDynamicPrimitiveState>,
+    pub personality_layer_states: Vec<FangyuanVfxDynamicPrimitiveState>,
+    pub degrade_level: FangyuanSkillDegradeLevel,
+}
+
+impl FangyuanSkillRuntimePresentation {
+    pub fn playback_states(&self) -> Vec<FangyuanVfxDynamicPrimitiveState> {
+        let mut states =
+            Vec::with_capacity(self.rule_layer_states.len() + self.personality_layer_states.len());
+        states.extend(self.rule_layer_states.iter().cloned());
+        states.extend(self.personality_layer_states.iter().cloned());
+        states
+    }
+
+    pub fn rule_layer_hash(&self) -> u64 {
+        fangyuan_vfx_primitive_state_hash(&self.rule_layer_states)
+    }
+}
+
+pub fn audit_fangyuan_skill_visual_readability(
+    template: &FangyuanSkillTemplate,
+    blueprint: &FangyuanSkillVisualBlueprint,
+) -> FangyuanSkillAuditReport {
+    let mut diagnostics = Vec::new();
+
+    match &blueprint.visual_range_hint {
+        Some(range_hint) => audit_visual_range_hint(template, range_hint, &mut diagnostics),
+        None => diagnostics.push(FangyuanSkillAuditDiagnostic::new(
+            FangyuanSkillAuditDiagnosticCode::VisualRangeMissing,
+            "visual blueprint must declare a rule range hint for readability audit",
+        )),
+    }
+
+    let rule_extent = skill_rule_extent(&template.range_shape);
+    let decor_limit = rule_extent + FANGYUAN_SKILL_DECOR_BOUNDS_TOLERANCE;
+    if blueprint.decor.enabled && blueprint.readability.decor_bounds_radius > decor_limit {
+        diagnostics.push(FangyuanSkillAuditDiagnostic::with_field(
+            FangyuanSkillAuditDiagnosticCode::DecorBoundsExceeded,
+            "decor bounds exceed the authoritative skill range",
+            "readability.decor_bounds_radius",
+        ));
+    }
+
+    if blueprint.readability.rule_alpha < FANGYUAN_SKILL_RULE_ALPHA_MIN {
+        diagnostics.push(FangyuanSkillAuditDiagnostic::with_field(
+            FangyuanSkillAuditDiagnosticCode::RuleLayerOccluded,
+            "rule layer alpha is too low to remain readable",
+            "readability.rule_alpha",
+        ));
+    }
+
+    if blueprint.readability.personality_occlusion > FANGYUAN_SKILL_MAX_RULE_OCCLUSION {
+        diagnostics.push(FangyuanSkillAuditDiagnostic::with_field(
+            FangyuanSkillAuditDiagnosticCode::RuleLayerOccluded,
+            "personality layer occludes too much of the mandatory rule layer",
+            "readability.personality_occlusion",
+        ));
+    }
+
+    if color_conflicts_with_rule_layer(template.rule_layer, blueprint.color) {
+        diagnostics.push(FangyuanSkillAuditDiagnostic::with_field(
+            FangyuanSkillAuditDiagnosticCode::ColorConflict,
+            "personality color conflicts with the skill danger/readability convention",
+            "color",
+        ));
+    }
+
+    if blueprint.readability.transparent_primitive_budget
+        > FANGYUAN_SKILL_MAX_TRANSPARENT_PRIMITIVES
+    {
+        diagnostics.push(FangyuanSkillAuditDiagnostic::with_field(
+            FangyuanSkillAuditDiagnosticCode::TransparentBudgetExceeded,
+            "transparent primitive budget exceeds the skill readability budget",
+            "readability.transparent_primitive_budget",
+        ));
+    }
+
+    if blueprint.emissive.intensity > FANGYUAN_SKILL_MAX_EMISSIVE_INTENSITY {
+        diagnostics.push(FangyuanSkillAuditDiagnostic::with_field(
+            FangyuanSkillAuditDiagnosticCode::EmissiveBudgetExceeded,
+            "emissive intensity exceeds the skill readability budget",
+            "emissive.intensity",
+        ));
+    }
+
+    FangyuanSkillAuditReport { diagnostics }
+}
+
+pub fn compile_fangyuan_skill_runtime_presentation(
+    template: &FangyuanSkillTemplate,
+    blueprint: &FangyuanSkillVisualBlueprint,
+    context: &FangyuanSkillRuntimeContext,
+) -> Result<FangyuanSkillRuntimePresentation, FangyuanVfxDiagnostic> {
+    let clock = FangyuanVfxClock::new(
+        context.start_tick,
+        context.current_tick,
+        context.ticks_per_second,
+    );
+    let replay_context = FangyuanVfxReplayContext {
+        caster_id: context.caster_id.clone(),
+        event_id: context.event_id.clone(),
+        external_seed: context.external_seed,
+    };
+
+    let rule_recipe = compile_fangyuan_skill_rule_layer_recipe(template, blueprint);
+    let rule_layer_states = evaluate_fangyuan_vfx_recipe_with_budget_pressure(
+        &rule_recipe,
+        clock,
+        &replay_context,
+        FangyuanVfxBudgetPressure::none(),
+    )?;
+
+    let personality_recipe =
+        compile_fangyuan_skill_personality_layer_recipe(blueprint, context.degrade_level);
+    let personality_layer_states = evaluate_fangyuan_vfx_recipe_with_budget_pressure(
+        &personality_recipe,
+        clock,
+        &replay_context,
+        context.degrade_level.personality_pressure(),
+    )?;
+
+    Ok(FangyuanSkillRuntimePresentation {
+        rule_layer_states: sort_skill_rule_layer_states(rule_layer_states),
+        personality_layer_states,
+        degrade_level: context.degrade_level,
+    })
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -815,6 +1166,14 @@ fn default_visual_blueprint(
         template_id: template_id.to_string(),
         template_version: FANGYUAN_SKILL_DEFAULT_TEMPLATE_VERSION,
         color,
+        readability: FangyuanSkillReadabilityMetadata {
+            decor_bounds_radius: default_visual_range_hint(template_id)
+                .as_ref()
+                .map(visual_range_hint_extent)
+                .unwrap_or(4.0),
+            ..Default::default()
+        },
+        visual_range_hint: default_visual_range_hint(template_id),
         profile_ref: Some("vfx/default".to_string()),
         vfx_recipe,
         trail: FangyuanSkillTrailVisual::default(),
@@ -907,6 +1266,479 @@ fn validate_color(
         }
     }
     Ok(())
+}
+
+fn validate_normalized(
+    value: f32,
+    field_path: &'static str,
+    code: FangyuanSkillVisualDiagnosticCode,
+) -> Result<(), FangyuanSkillVisualDiagnostic> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err(FangyuanSkillVisualDiagnostic::with_field(
+            code,
+            "value must be finite and normalized",
+            field_path,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_positive_visual(
+    value: f32,
+    field_path: &'static str,
+) -> Result<(), FangyuanSkillVisualDiagnostic> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(FangyuanSkillVisualDiagnostic::with_field(
+            FangyuanSkillVisualDiagnosticCode::InvalidVisualValue,
+            "visual value must be finite and greater than zero",
+            field_path,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_visual_angle(
+    value: f32,
+    field_path: &'static str,
+) -> Result<(), FangyuanSkillVisualDiagnostic> {
+    if !value.is_finite() || value <= 0.0 || value > 360.0 {
+        return Err(FangyuanSkillVisualDiagnostic::with_field(
+            FangyuanSkillVisualDiagnosticCode::InvalidVisualValue,
+            "visual angle must be finite and in the range (0, 360]",
+            field_path,
+        ));
+    }
+    Ok(())
+}
+
+fn default_visual_range_hint(template_id: &str) -> Option<FangyuanSkillVisualRangeHint> {
+    match template_id {
+        FANGYUAN_SKILL_PROJECTILE_TEMPLATE_ID => Some(FangyuanSkillVisualRangeHint::Projectile {
+            length: 8.0,
+            radius: 0.35,
+        }),
+        FANGYUAN_SKILL_CIRCLE_AREA_TEMPLATE_ID => {
+            Some(FangyuanSkillVisualRangeHint::CircleArea { radius: 3.5 })
+        }
+        FANGYUAN_SKILL_CONE_TEMPLATE_ID => Some(FangyuanSkillVisualRangeHint::Cone {
+            radius: 5.0,
+            angle_degrees: 80.0,
+        }),
+        FANGYUAN_SKILL_SHIELD_TEMPLATE_ID => Some(FangyuanSkillVisualRangeHint::Shield {
+            radius: 2.0,
+            arc_degrees: 180.0,
+        }),
+        _ => None,
+    }
+}
+
+fn audit_visual_range_hint(
+    template: &FangyuanSkillTemplate,
+    range_hint: &FangyuanSkillVisualRangeHint,
+    diagnostics: &mut Vec<FangyuanSkillAuditDiagnostic>,
+) {
+    let mismatch = || {
+        FangyuanSkillAuditDiagnostic::with_field(
+            FangyuanSkillAuditDiagnosticCode::VisualRangeMismatch,
+            "visual range hint shape does not match the authoritative skill rule shape",
+            "visual_range_hint",
+        )
+    };
+
+    match (&template.range_shape, range_hint) {
+        (
+            FangyuanSkillRangeShape::Projectile {
+                length,
+                radius,
+                speed: _,
+            },
+            FangyuanSkillVisualRangeHint::Projectile {
+                length: visual_length,
+                radius: visual_radius,
+            },
+        ) => {
+            audit_range_floor(
+                *visual_length,
+                *length,
+                "visual_range_hint.length",
+                diagnostics,
+            );
+            audit_range_floor(
+                *visual_radius,
+                *radius,
+                "visual_range_hint.radius",
+                diagnostics,
+            );
+        }
+        (
+            FangyuanSkillRangeShape::CircleArea { radius },
+            FangyuanSkillVisualRangeHint::CircleArea {
+                radius: visual_radius,
+            },
+        ) => audit_range_floor(
+            *visual_radius,
+            *radius,
+            "visual_range_hint.radius",
+            diagnostics,
+        ),
+        (
+            FangyuanSkillRangeShape::Cone {
+                radius,
+                angle_degrees,
+            },
+            FangyuanSkillVisualRangeHint::Cone {
+                radius: visual_radius,
+                angle_degrees: visual_angle,
+            },
+        ) => {
+            audit_range_floor(
+                *visual_radius,
+                *radius,
+                "visual_range_hint.radius",
+                diagnostics,
+            );
+            audit_range_floor(
+                *visual_angle,
+                *angle_degrees,
+                "visual_range_hint.angle_degrees",
+                diagnostics,
+            );
+        }
+        (
+            FangyuanSkillRangeShape::Shield {
+                radius,
+                arc_degrees,
+            },
+            FangyuanSkillVisualRangeHint::Shield {
+                radius: visual_radius,
+                arc_degrees: visual_arc,
+            },
+        ) => {
+            audit_range_floor(
+                *visual_radius,
+                *radius,
+                "visual_range_hint.radius",
+                diagnostics,
+            );
+            audit_range_floor(
+                *visual_arc,
+                *arc_degrees,
+                "visual_range_hint.arc_degrees",
+                diagnostics,
+            );
+        }
+        _ => diagnostics.push(mismatch()),
+    }
+}
+
+fn audit_range_floor(
+    visual_value: f32,
+    rule_value: f32,
+    field_path: &'static str,
+    diagnostics: &mut Vec<FangyuanSkillAuditDiagnostic>,
+) {
+    if visual_value + FANGYUAN_SKILL_RULE_RANGE_TOLERANCE < rule_value {
+        diagnostics.push(FangyuanSkillAuditDiagnostic::with_field(
+            FangyuanSkillAuditDiagnosticCode::VisualRangeTooSmall,
+            "visual range hint is smaller than the authoritative rule range",
+            field_path,
+        ));
+    }
+}
+
+fn skill_rule_extent(range_shape: &FangyuanSkillRangeShape) -> f32 {
+    match range_shape {
+        FangyuanSkillRangeShape::Projectile { length, radius, .. } => *length + *radius,
+        FangyuanSkillRangeShape::CircleArea { radius }
+        | FangyuanSkillRangeShape::Cone { radius, .. }
+        | FangyuanSkillRangeShape::Shield { radius, .. } => *radius,
+    }
+}
+
+fn visual_range_hint_extent(range_hint: &FangyuanSkillVisualRangeHint) -> f32 {
+    match range_hint {
+        FangyuanSkillVisualRangeHint::Projectile { length, radius } => *length + *radius,
+        FangyuanSkillVisualRangeHint::CircleArea { radius }
+        | FangyuanSkillVisualRangeHint::Cone { radius, .. }
+        | FangyuanSkillVisualRangeHint::Shield { radius, .. } => *radius,
+    }
+}
+
+fn color_conflicts_with_rule_layer(rule_layer: FangyuanSkillRuleLayer, color: [f32; 4]) -> bool {
+    let [red, green, blue, alpha] = color;
+    match rule_layer {
+        FangyuanSkillRuleLayer::Damage => blue > red && blue > 0.55 && alpha > 0.5,
+        FangyuanSkillRuleLayer::Control => red > 0.8 && green < 0.45 && alpha > 0.5,
+        FangyuanSkillRuleLayer::Defense => red > 0.85 && green < 0.5 && blue < 0.5,
+        FangyuanSkillRuleLayer::Movement => red > 0.85 && blue < 0.45,
+    }
+}
+
+fn compile_fangyuan_skill_rule_layer_recipe(
+    template: &FangyuanSkillTemplate,
+    blueprint: &FangyuanSkillVisualBlueprint,
+) -> FangyuanVfxRecipe {
+    let duration_ticks = template
+        .timing
+        .impact_tick_offset
+        .saturating_add(template.danger_boundary.linger_ticks)
+        .max(1);
+    let mut emitters = Vec::new();
+    emitters.push(rule_emitter(
+        "rule_core",
+        FangyuanPrimitiveKind::Sphere,
+        FangyuanPrimitiveRole::Core,
+        [0.18, 0.18, 0.18],
+        [1.0, 1.0, 1.0, 1.0],
+        0,
+        duration_ticks,
+    ));
+    emitters.push(rule_emitter(
+        "rule_boundary",
+        FangyuanPrimitiveKind::Cube,
+        FangyuanPrimitiveRole::Boundary,
+        boundary_scale(&template.range_shape, blueprint.readability.rule_edge_width),
+        rule_color(template.rule_layer, blueprint.readability.rule_alpha),
+        0,
+        duration_ticks,
+    ));
+    emitters.push(rule_emitter(
+        "rule_warning",
+        FangyuanPrimitiveKind::Cube,
+        FangyuanPrimitiveRole::Warning,
+        warning_scale(&template.range_shape),
+        warning_color(template.rule_layer),
+        0,
+        template.timing.impact_tick_offset,
+    ));
+    emitters.push(rule_emitter(
+        "rule_impact",
+        FangyuanPrimitiveKind::Sphere,
+        FangyuanPrimitiveRole::Impact,
+        impact_scale(&template.range_shape),
+        [1.0, 0.95, 0.55, 0.9],
+        template.timing.impact_tick_offset,
+        template.danger_boundary.linger_ticks.max(1),
+    ));
+
+    FangyuanVfxRecipe {
+        id: format!("{}.rule_layer", template.id),
+        version: template.version,
+        duration_ticks,
+        seed_policy: Default::default(),
+        emitters,
+        curves: Vec::new(),
+        budget_hints: Default::default(),
+    }
+}
+
+fn compile_fangyuan_skill_personality_layer_recipe(
+    blueprint: &FangyuanSkillVisualBlueprint,
+    degrade_level: FangyuanSkillDegradeLevel,
+) -> FangyuanVfxRecipe {
+    let mut recipe = blueprint
+        .vfx_recipe
+        .clone()
+        .unwrap_or_else(fangyuan_vfx_impact_expand_recipe);
+    recipe.id = format!("{}.personality_layer", blueprint.id);
+    for emitter in &mut recipe.emitters {
+        emitter.color = blueprint.color;
+        emitter.emissive = match degrade_level {
+            FangyuanSkillDegradeLevel::None | FangyuanSkillDegradeLevel::Low => {
+                blueprint.emissive.intensity
+            }
+            FangyuanSkillDegradeLevel::Medium => blueprint.emissive.intensity.min(1.0),
+            FangyuanSkillDegradeLevel::High | FangyuanSkillDegradeLevel::Critical => 0.0,
+        };
+        if degrade_level >= FangyuanSkillDegradeLevel::Medium {
+            for operator in &mut emitter.operators {
+                if let FangyuanVfxOperator::Fade { from, to, .. } = operator {
+                    *from = from.max(0.75);
+                    *to = to.max(0.75);
+                }
+            }
+        }
+    }
+
+    if blueprint.decor.enabled && degrade_level < FangyuanSkillDegradeLevel::Medium {
+        recipe.emitters.push(personality_emitter(
+            "decor",
+            FangyuanPrimitiveRole::Decoration,
+            [0.18, 0.18, 0.18],
+            blueprint.color,
+            blueprint.emissive.intensity * 0.5,
+        ));
+    }
+    if blueprint.impact_residue.enabled && !degrade_level.removes_residue() {
+        let mut residue = personality_emitter(
+            "impact_residue",
+            FangyuanPrimitiveRole::Decoration,
+            [0.35, 0.04, 0.35],
+            [
+                blueprint.color[0],
+                blueprint.color[1],
+                blueprint.color[2],
+                blueprint.color[3].min(0.45),
+            ],
+            0.0,
+        );
+        residue.delay_ticks = 1;
+        residue.duration_ticks = Some(blueprint.impact_residue.duration_ticks.max(1));
+        recipe.emitters.push(residue);
+    }
+    if blueprint.trail.enabled && degrade_level < FangyuanSkillDegradeLevel::Critical {
+        let max_segments = match degrade_level {
+            FangyuanSkillDegradeLevel::None | FangyuanSkillDegradeLevel::Low => {
+                blueprint.trail.segment_count
+            }
+            FangyuanSkillDegradeLevel::Medium => blueprint.trail.segment_count.min(4),
+            FangyuanSkillDegradeLevel::High => 1,
+            FangyuanSkillDegradeLevel::Critical => 0,
+        };
+        if max_segments > 0 {
+            for emitter in &mut recipe.emitters {
+                if !emitter
+                    .operators
+                    .iter()
+                    .any(|operator| matches!(operator, FangyuanVfxOperator::Trail { .. }))
+                {
+                    emitter.operators.push(FangyuanVfxOperator::Trail {
+                        segments: max_segments,
+                        spacing_ticks: 2,
+                        fade: 0.55,
+                    });
+                    break;
+                }
+            }
+        }
+    }
+
+    recipe.budget_hints.max_primitives = recipe.budget_hints.max_primitives.max(32);
+    recipe.budget_hints.max_trail_segments = recipe.budget_hints.max_trail_segments.max(16);
+    recipe
+}
+
+fn rule_emitter(
+    id: &str,
+    primitive_kind: FangyuanPrimitiveKind,
+    role: FangyuanPrimitiveRole,
+    scale: [f32; 3],
+    color: [f32; 4],
+    delay_ticks: u64,
+    duration_ticks: u64,
+) -> FangyuanVfxEmitter {
+    FangyuanVfxEmitter {
+        id: id.to_string(),
+        primitive_kind,
+        role,
+        delay_ticks,
+        duration_ticks: Some(duration_ticks),
+        position: [0.0, 0.0, 0.0],
+        scale,
+        color,
+        emissive: if matches!(
+            role,
+            FangyuanPrimitiveRole::Warning | FangyuanPrimitiveRole::Impact
+        ) {
+            0.2
+        } else {
+            0.0
+        },
+        material_profile_id: Some("skill/rule".to_string()),
+        jitter: FangyuanVfxEmitterJitter::default(),
+        operators: vec![FangyuanVfxOperator::Spawn {
+            curve: FangyuanVfxCurve::Linear,
+        }],
+    }
+}
+
+fn personality_emitter(
+    id: &str,
+    role: FangyuanPrimitiveRole,
+    scale: [f32; 3],
+    color: [f32; 4],
+    emissive: f32,
+) -> FangyuanVfxEmitter {
+    FangyuanVfxEmitter {
+        id: id.to_string(),
+        primitive_kind: FangyuanPrimitiveKind::Sphere,
+        role,
+        delay_ticks: 0,
+        duration_ticks: Some(24),
+        position: [0.0, 0.0, 0.0],
+        scale,
+        color,
+        emissive,
+        material_profile_id: Some("skill/personality".to_string()),
+        jitter: FangyuanVfxEmitterJitter::default(),
+        operators: vec![FangyuanVfxOperator::Spawn {
+            curve: FangyuanVfxCurve::EaseOut,
+        }],
+    }
+}
+
+fn sort_skill_rule_layer_states(
+    mut states: Vec<FangyuanVfxDynamicPrimitiveState>,
+) -> Vec<FangyuanVfxDynamicPrimitiveState> {
+    states.sort_by_key(|state| {
+        (
+            skill_rule_role_order(state.role),
+            state.emitter_index,
+            state.primitive_index,
+            state.source_tick,
+        )
+    });
+    states
+}
+
+fn skill_rule_role_order(role: FangyuanPrimitiveRole) -> u8 {
+    match role {
+        FangyuanPrimitiveRole::Core => 0,
+        FangyuanPrimitiveRole::Boundary => 1,
+        FangyuanPrimitiveRole::Warning => 2,
+        FangyuanPrimitiveRole::Impact => 3,
+        _ => 4,
+    }
+}
+
+fn boundary_scale(range_shape: &FangyuanSkillRangeShape, edge_width: f32) -> [f32; 3] {
+    match range_shape {
+        FangyuanSkillRangeShape::Projectile { length, radius, .. } => {
+            [*length, edge_width, (*radius * 2.0).max(edge_width)]
+        }
+        FangyuanSkillRangeShape::CircleArea { radius }
+        | FangyuanSkillRangeShape::Cone { radius, .. }
+        | FangyuanSkillRangeShape::Shield { radius, .. } => {
+            [*radius * 2.0, edge_width, *radius * 2.0]
+        }
+    }
+}
+
+fn warning_scale(range_shape: &FangyuanSkillRangeShape) -> [f32; 3] {
+    let extent = skill_rule_extent(range_shape);
+    [extent.max(0.1), 0.03, extent.max(0.1)]
+}
+
+fn impact_scale(range_shape: &FangyuanSkillRangeShape) -> [f32; 3] {
+    let extent = (skill_rule_extent(range_shape) * 0.2).clamp(0.25, 1.5);
+    [extent, extent, extent]
+}
+
+fn rule_color(rule_layer: FangyuanSkillRuleLayer, alpha: f32) -> [f32; 4] {
+    match rule_layer {
+        FangyuanSkillRuleLayer::Damage => [1.0, 0.18, 0.1, alpha],
+        FangyuanSkillRuleLayer::Control => [0.95, 0.75, 0.15, alpha],
+        FangyuanSkillRuleLayer::Defense => [0.2, 0.75, 1.0, alpha],
+        FangyuanSkillRuleLayer::Movement => [0.35, 1.0, 0.45, alpha],
+    }
+}
+
+fn warning_color(rule_layer: FangyuanSkillRuleLayer) -> [f32; 4] {
+    let mut color = rule_color(rule_layer, 0.55);
+    color[0] = (color[0] + 1.0) * 0.5;
+    color[1] = (color[1] + 1.0) * 0.5;
+    color[2] = (color[2] + 1.0) * 0.5;
+    color
 }
 
 #[cfg(test)]
@@ -1083,6 +1915,168 @@ mod tests {
                 id: "missing".to_string(),
                 version: 7
             })
+        );
+    }
+
+    #[test]
+    fn fangyuan_skill_audit_reports_danger_boundary_that_is_too_small() {
+        let template = valid_projectile_template();
+        let mut blueprint = default_projectile_visual_blueprint();
+        blueprint.visual_range_hint = Some(FangyuanSkillVisualRangeHint::Projectile {
+            length: 4.0,
+            radius: 0.2,
+        });
+
+        let report = audit_fangyuan_skill_visual_readability(&template, &blueprint);
+
+        assert!(report.has_code(FangyuanSkillAuditDiagnosticCode::VisualRangeTooSmall));
+        assert!(!report.passed());
+    }
+
+    #[test]
+    fn fangyuan_skill_audit_reports_misleading_range_shape_and_decor_overflow() {
+        let template = valid_projectile_template();
+        let mut blueprint = default_projectile_visual_blueprint();
+        blueprint.visual_range_hint =
+            Some(FangyuanSkillVisualRangeHint::CircleArea { radius: 2.0 });
+        blueprint.readability.decor_bounds_radius = 12.0;
+
+        let report = audit_fangyuan_skill_visual_readability(&template, &blueprint);
+
+        assert!(report.has_code(FangyuanSkillAuditDiagnosticCode::VisualRangeMismatch));
+        assert!(report.has_code(FangyuanSkillAuditDiagnosticCode::DecorBoundsExceeded));
+    }
+
+    #[test]
+    fn fangyuan_skill_audit_reports_occlusion_color_transparency_and_emissive_conflicts() {
+        let template = valid_projectile_template();
+        let mut blueprint = default_projectile_visual_blueprint();
+        blueprint.color = [0.1, 0.2, 0.95, 0.9];
+        blueprint.readability.rule_alpha = 0.2;
+        blueprint.readability.personality_occlusion = 0.8;
+        blueprint.readability.transparent_primitive_budget = 20;
+        blueprint.emissive.intensity = 8.0;
+
+        let report = audit_fangyuan_skill_visual_readability(&template, &blueprint);
+
+        assert!(report.has_code(FangyuanSkillAuditDiagnosticCode::RuleLayerOccluded));
+        assert!(report.has_code(FangyuanSkillAuditDiagnosticCode::ColorConflict));
+        assert!(report.has_code(FangyuanSkillAuditDiagnosticCode::TransparentBudgetExceeded));
+        assert!(report.has_code(FangyuanSkillAuditDiagnosticCode::EmissiveBudgetExceeded));
+    }
+
+    #[test]
+    fn fangyuan_skill_runtime_compiles_rule_and_personality_layers_in_playback_order() {
+        let template = valid_projectile_template();
+        let blueprint = default_projectile_visual_blueprint();
+        let context = FangyuanSkillRuntimeContext::local(0, 2, 30, "caster-a", "event-a");
+
+        let presentation =
+            compile_fangyuan_skill_runtime_presentation(&template, &blueprint, &context).unwrap();
+        let playback = presentation.playback_states();
+
+        assert!(!presentation.rule_layer_states.is_empty());
+        assert!(!presentation.personality_layer_states.is_empty());
+        assert_eq!(
+            playback.len(),
+            presentation.rule_layer_states.len() + presentation.personality_layer_states.len()
+        );
+        assert!(presentation.rule_layer_states.iter().all(|state| matches!(
+            state.role,
+            FangyuanPrimitiveRole::Core
+                | FangyuanPrimitiveRole::Boundary
+                | FangyuanPrimitiveRole::Warning
+                | FangyuanPrimitiveRole::Impact
+        )));
+        assert_eq!(playback[0].role, FangyuanPrimitiveRole::Core);
+        assert_eq!(
+            playback[presentation.rule_layer_states.len()].recipe_id,
+            "skill.visual.projectile.personality_layer"
+        );
+    }
+
+    #[test]
+    fn fangyuan_skill_runtime_rule_layer_lifecycle_is_not_overridden_by_personality() {
+        let template = valid_projectile_template();
+        let mut blueprint = default_projectile_visual_blueprint();
+        blueprint.impact_residue.duration_ticks = 120;
+        let context = FangyuanSkillRuntimeContext::local(10, 28, 30, "caster-a", "event-a");
+
+        let presentation =
+            compile_fangyuan_skill_runtime_presentation(&template, &blueprint, &context).unwrap();
+        let expected_rule_duration = template
+            .timing
+            .impact_tick_offset
+            .saturating_add(template.danger_boundary.linger_ticks);
+
+        assert!(presentation.rule_layer_states.iter().any(|state| {
+            state.role == FangyuanPrimitiveRole::Impact
+                && state.lifecycle.spawn_tick == Some(context.start_tick)
+                && state.lifecycle.lifetime == Some(expected_rule_duration)
+        }));
+        assert!(
+            presentation
+                .personality_layer_states
+                .iter()
+                .all(|state| state.recipe_id.ends_with(".personality_layer"))
+        );
+    }
+
+    #[test]
+    fn fangyuan_skill_degrade_preserves_rule_layer_hash_and_removes_personality_costs() {
+        let template = valid_projectile_template();
+        let mut blueprint = default_projectile_visual_blueprint();
+        blueprint.trail.segment_count = 12;
+        blueprint.emissive.intensity = 3.5;
+        let base_context = FangyuanSkillRuntimeContext::local(0, 10, 30, "caster-a", "event-a");
+        let critical_context = base_context
+            .clone()
+            .with_degrade_level(FangyuanSkillDegradeLevel::Critical);
+
+        let full =
+            compile_fangyuan_skill_runtime_presentation(&template, &blueprint, &base_context)
+                .unwrap();
+        let degraded =
+            compile_fangyuan_skill_runtime_presentation(&template, &blueprint, &critical_context)
+                .unwrap();
+
+        assert_eq!(full.rule_layer_hash(), degraded.rule_layer_hash());
+        assert!(full.personality_layer_states.len() > degraded.personality_layer_states.len());
+        assert!(
+            !degraded
+                .personality_layer_states
+                .iter()
+                .any(|state| state.role == FangyuanPrimitiveRole::Decoration)
+        );
+        assert!(
+            degraded
+                .personality_layer_states
+                .iter()
+                .all(|state| state.emissive == 0.0)
+        );
+    }
+
+    #[test]
+    fn fangyuan_skill_degrade_keeps_rule_layer_visible_under_high_pressure() {
+        let template = valid_projectile_template();
+        let blueprint = default_projectile_visual_blueprint();
+        let context = FangyuanSkillRuntimeContext::local(0, 18, 30, "caster-a", "event-a")
+            .with_degrade_level(FangyuanSkillDegradeLevel::High);
+
+        let presentation =
+            compile_fangyuan_skill_runtime_presentation(&template, &blueprint, &context).unwrap();
+
+        assert!(
+            presentation
+                .rule_layer_states
+                .iter()
+                .any(|state| state.role == FangyuanPrimitiveRole::Boundary && state.alpha >= 0.35)
+        );
+        assert!(
+            presentation
+                .rule_layer_states
+                .iter()
+                .any(|state| state.role == FangyuanPrimitiveRole::Impact)
         );
     }
 }
