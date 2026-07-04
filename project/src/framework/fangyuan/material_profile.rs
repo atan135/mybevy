@@ -589,12 +589,14 @@ mod tests {
     use super::*;
     use crate::framework::fangyuan::{
         FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT, FANGYUAN_SCENE_LAYOUT_VERSION,
-        FANGYUAN_STATIC_MERGE_DEFAULT_MATERIAL_PROFILE, FangyuanBlueprint, FangyuanBlueprintBounds,
-        FangyuanPrefabDefinition, FangyuanPrefabPalette, FangyuanPrimitiveBlueprint,
-        FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
+        FANGYUAN_STATIC_MERGE_DEFAULT_MATERIAL_PROFILE, FangyuanAuditBudgetProfile,
+        FangyuanAuditStatus, FangyuanBlueprint, FangyuanBlueprintBounds, FangyuanPrefabDefinition,
+        FangyuanPrefabPalette, FangyuanPrimitiveBlueprint, FangyuanPrimitiveKind,
+        FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanPrimitiveSet,
         FangyuanSceneLayout, FangyuanSceneLayoutInstance, FangyuanStaticMergeTransparentPath,
-        fangyuan_static_instance_batches_from_layout, fangyuan_static_merge_groups_from_layout,
-        fangyuan_static_merge_groups_from_primitive_set, fangyuan_static_meshes_from_primitive_set,
+        audit_fangyuan_primitive_set_budget, fangyuan_static_instance_batches_from_layout,
+        fangyuan_static_merge_groups_from_layout, fangyuan_static_merge_groups_from_primitive_set,
+        fangyuan_static_meshes_from_primitive_set,
     };
     use bevy::mesh::VertexAttributeValues;
 
@@ -871,6 +873,86 @@ mod tests {
         assert_nearly_eq(instance.emissive, 2.25);
     }
 
+    #[test]
+    fn fangyuan_material_fallback_and_transparent_budget_are_reported() {
+        let registry = FangyuanMaterialProfileRegistry::default();
+        let primitive_set = FangyuanPrimitiveSet::from_primitives(vec![
+            runtime_material_primitive(0.0, 0.35, 1.0, Some("stage8/unsupported_profile")),
+            runtime_material_primitive(1.0, 0.45, 0.0, Some("stage8/unsupported_profile")),
+            runtime_material_primitive(2.0, 0.55, 0.0, Some("stage8/other_profile")),
+        ]);
+
+        let fallback = registry.compose_primitive(&primitive_set.primitives()[0]);
+        assert_eq!(
+            fallback.profile_id, FANGYUAN_MATERIAL_PROFILE_DEFAULT_ID,
+            "unknown but syntactically supported profile ids must fall back to the default profile"
+        );
+        assert_eq!(
+            fallback.fallback_reason,
+            Some(FangyuanMaterialProfileFallbackReason::UnknownProfileId {
+                profile_id: "stage8/unsupported_profile".to_string(),
+            })
+        );
+
+        let warning_profile = FangyuanAuditBudgetProfile {
+            recommended_transparent_count: 1,
+            max_transparent_count: 10,
+            recommended_alpha_count: 1,
+            max_alpha_count: 10,
+            recommended_emissive_count: 0,
+            max_emissive_count: 10,
+            recommended_material_profile_count: 1,
+            max_material_profile_count: 10,
+            ..Default::default()
+        };
+        let warning_report = audit_fangyuan_primitive_set_budget(&primitive_set, &warning_profile);
+        println!(
+            "fangyuan material warning summary: status={:?}, transparent={}, emissive={}, profiles={}, warnings={}, errors={}",
+            warning_report.status,
+            warning_report.summary.transparent_count,
+            warning_report.summary.emissive_count,
+            warning_report.summary.material_count,
+            warning_report.summary.warning_count,
+            warning_report.summary.error_count,
+        );
+
+        assert_eq!(
+            warning_report.status,
+            FangyuanAuditStatus::PassedWithWarnings
+        );
+        assert_eq!(warning_report.summary.transparent_count, 3);
+        assert_eq!(warning_report.summary.emissive_count, 1);
+        assert!(has_finding(
+            &warning_report,
+            "transparent_count_above_recommended"
+        ));
+        assert!(has_finding(
+            &warning_report,
+            "material_profile_count_above_recommended"
+        ));
+
+        let failed_profile = FangyuanAuditBudgetProfile {
+            max_transparent_count: 2,
+            max_alpha_count: 2,
+            ..warning_profile
+        };
+        let failed_report = audit_fangyuan_primitive_set_budget(&primitive_set, &failed_profile);
+        println!(
+            "fangyuan material failed summary: status={:?}, transparent={}, warnings={}, errors={}",
+            failed_report.status,
+            failed_report.summary.transparent_count,
+            failed_report.summary.warning_count,
+            failed_report.summary.error_count,
+        );
+
+        assert_eq!(failed_report.status, FangyuanAuditStatus::Failed);
+        assert!(has_finding(
+            &failed_report,
+            "transparent_count_above_hard_limit"
+        ));
+        assert!(has_finding(&failed_report, "alpha_count_above_hard_limit"));
+    }
+
     fn test_profile(stable_id: &str, debug_label: &str) -> FangyuanMaterialProfile {
         FangyuanMaterialProfile {
             stable_id: stable_id.to_string(),
@@ -942,6 +1024,29 @@ mod tests {
         );
         primitive.role = Some(FangyuanPrimitiveRole::Structure);
         primitive
+    }
+
+    fn runtime_material_primitive(
+        x: f32,
+        alpha: f32,
+        emissive: f32,
+        material_profile_id: Option<&str>,
+    ) -> FangyuanPrimitive {
+        FangyuanPrimitive::with_runtime_metadata(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::new(x, 1.0, 0.0),
+            Vec3::ONE,
+            Color::srgba(0.2, 0.4, 0.6, alpha),
+            FangyuanPrimitiveRole::Structure,
+            alpha,
+            emissive,
+            material_profile_id.map(str::to_string),
+            FangyuanPrimitiveLifecycle::empty(),
+        )
+    }
+
+    fn has_finding(report: &crate::framework::fangyuan::FangyuanAuditReport, code: &str) -> bool {
+        report.findings.iter().any(|finding| finding.code == code)
     }
 
     fn assert_runtime_material_fields(

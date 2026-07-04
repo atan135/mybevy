@@ -588,7 +588,10 @@ mod tests {
     use crate::framework::fangyuan::{
         FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT, FANGYUAN_SCENE_LAYOUT_VERSION,
         FangyuanBlueprintBounds, FangyuanPrefabDefinition, FangyuanPrimitiveBlueprint,
-        FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanSceneLayoutInstance,
+        FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanRenderScaleReport,
+        FangyuanSceneLayoutInstance, FangyuanStaticInstanceRenderOptions,
+        fangyuan_static_instance_render_report_from_primitive_set_with_source,
+        generate_fangyuan_large_static_primitive_set,
     };
 
     #[test]
@@ -866,6 +869,75 @@ mod tests {
         assert_eq!(report.stats.skipped_primitives, 1);
         assert_eq!(report.stats.estimated_vertex_count, 24);
         assert_eq!(report.stats.estimated_index_count, 36);
+    }
+
+    #[test]
+    fn fangyuan_static_merge_large_static_primitive_report_is_reproducible() {
+        const LARGE_STATIC_PRIMITIVES: usize = 10_000;
+
+        let primitive_set = generate_fangyuan_large_static_primitive_set(LARGE_STATIC_PRIMITIVES);
+        let primitive_stats = primitive_set.stats();
+        let report = fangyuan_static_merge_groups_from_primitive_set_with_source(
+            &primitive_set,
+            Some("generated://fangyuan/stage8/large_static".to_string()),
+            &FangyuanStaticMergeBuildOptions::default(),
+        );
+        let instance_report =
+            fangyuan_static_instance_render_report_from_primitive_set_with_source(
+                &primitive_set,
+                Some("generated://fangyuan/stage8/large_static".to_string()),
+                &FangyuanStaticInstanceRenderOptions::default(),
+            )
+            .unwrap();
+        let scale_report = FangyuanRenderScaleReport::from_reports(
+            &primitive_stats,
+            &report,
+            None,
+            &instance_report.stats,
+        );
+
+        println!(
+            "fangyuan static merge scale summary: {}",
+            scale_report.format_summary()
+        );
+
+        assert_eq!(primitive_stats.total, LARGE_STATIC_PRIMITIVES);
+        assert_eq!(report.stats.authored_primitives, LARGE_STATIC_PRIMITIVES);
+        assert_eq!(report.stats.expanded_primitives, LARGE_STATIC_PRIMITIVES);
+        assert_eq!(report.stats.skipped_primitives, 0);
+        assert_eq!(
+            report.stats.cube_count + report.stats.sphere_count,
+            LARGE_STATIC_PRIMITIVES
+        );
+        assert_eq!(report.stats.sphere_count, LARGE_STATIC_PRIMITIVES / 10);
+        assert_eq!(
+            report.stats.estimated_vertex_count,
+            report.stats.cube_count * FANGYUAN_STATIC_MERGE_CUBE_VERTEX_COUNT
+                + report.stats.sphere_count * FANGYUAN_STATIC_MERGE_SPHERE_VERTEX_COUNT
+        );
+        assert_eq!(
+            report.stats.estimated_index_count,
+            report.stats.cube_count * FANGYUAN_STATIC_MERGE_CUBE_INDEX_COUNT
+                + report.stats.sphere_count * FANGYUAN_STATIC_MERGE_SPHERE_INDEX_COUNT
+        );
+        assert!(
+            report.stats.merged_group_count < LARGE_STATIC_PRIMITIVES,
+            "merge grouping should reduce entity/mesh pressure compared with standard rendering"
+        );
+        assert_eq!(
+            scale_report.pressure.cpu_merge_pressure_units,
+            report.stats.merged_group_count
+        );
+        assert!(
+            scale_report.pressure.standard_to_cpu_merge_reduction > 1,
+            "stable pressure trend should show fewer merged meshes than standard entities"
+        );
+        assert!(report.groups.iter().any(|group| {
+            group.key.transparent_path == FangyuanStaticMergeTransparentPath::Transparent
+        }));
+        assert!(report.groups.iter().any(|group| {
+            group.key.transparent_path == FangyuanStaticMergeTransparentPath::Opaque
+        }));
     }
 
     fn input(primitive: FangyuanPrimitive, primitive_index: usize) -> FangyuanStaticMergeInput {

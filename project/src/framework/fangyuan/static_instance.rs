@@ -555,7 +555,10 @@ mod tests {
         FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FANGYUAN_SCENE_LAYOUT_HARD_PRIMITIVE_LIMIT,
         FANGYUAN_SCENE_LAYOUT_VERSION, FangyuanBlueprintBounds, FangyuanPrefabDefinition,
         FangyuanPrimitiveBlueprint, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
-        FangyuanSceneLayoutInstance,
+        FangyuanRenderScaleReport, FangyuanSceneLayoutInstance,
+        FangyuanStaticInstanceRenderOptions, fangyuan_static_instance_render_report_from_batches,
+        fangyuan_static_merge_groups_from_primitive_set,
+        generate_fangyuan_large_static_primitive_set,
     };
 
     #[test]
@@ -881,6 +884,93 @@ mod tests {
                 .cache_key
                 .is_dirty_against(Some(&first_report.cache_key))
         );
+    }
+
+    #[test]
+    fn fangyuan_static_instance_large_static_report_compares_standard_merge_and_instance() {
+        const LARGE_STATIC_PRIMITIVES: usize = 10_000;
+
+        let primitive_set = generate_fangyuan_large_static_primitive_set(LARGE_STATIC_PRIMITIVES);
+        let primitive_stats = primitive_set.stats();
+        let merge_report = fangyuan_static_merge_groups_from_primitive_set(&primitive_set);
+        let instance_build_report =
+            fangyuan_static_instance_batches_from_primitive_set(&primitive_set);
+        let instance_render_report = fangyuan_static_instance_render_report_from_batches(
+            instance_build_report.batches.clone(),
+            instance_build_report.stats.clone(),
+            instance_build_report.cache_key,
+            &FangyuanStaticInstanceRenderOptions::default(),
+        )
+        .unwrap();
+        let scale_report = FangyuanRenderScaleReport::from_reports(
+            &primitive_stats,
+            &merge_report,
+            None,
+            &instance_render_report.stats,
+        );
+
+        println!(
+            "fangyuan static instance scale summary: {}",
+            scale_report.format_summary()
+        );
+
+        assert_eq!(
+            scale_report.standard.primitive_count,
+            LARGE_STATIC_PRIMITIVES
+        );
+        assert_eq!(scale_report.standard.entity_count, LARGE_STATIC_PRIMITIVES);
+        assert_eq!(
+            scale_report.cpu_merge.primitive_count,
+            LARGE_STATIC_PRIMITIVES
+        );
+        assert_eq!(
+            scale_report.static_instance.instance_count,
+            LARGE_STATIC_PRIMITIVES
+        );
+        assert_eq!(
+            scale_report.static_instance.buffer_bytes,
+            LARGE_STATIC_PRIMITIVES
+                * crate::framework::fangyuan::FANGYUAN_STATIC_INSTANCE_RENDER_STRIDE_BYTES
+        );
+        assert_eq!(
+            scale_report.static_instance.batch_count,
+            instance_build_report.stats.batch_count
+        );
+        assert_eq!(
+            scale_report.static_instance.material_profile_count,
+            instance_build_report.stats.material_profile_count
+        );
+        assert!(
+            scale_report.static_instance.batch_count < scale_report.standard.entity_count,
+            "static instance should reduce batch descriptors relative to standard entities"
+        );
+        assert_eq!(
+            scale_report.pressure.standard_pressure_units,
+            LARGE_STATIC_PRIMITIVES
+        );
+        assert_eq!(
+            scale_report.pressure.static_instance_pressure_units,
+            scale_report.static_instance.batch_count
+        );
+        assert!(
+            scale_report.pressure.standard_to_instance_reduction > 1,
+            "stable pressure trend should show fewer static-instance batches than standard entities"
+        );
+        assert_eq!(
+            scale_report.pressure.static_instance_buffer_kib,
+            scale_report.static_instance.buffer_bytes.div_ceil(1024)
+        );
+        assert!(
+            scale_report.cpu_merge.batch_count >= scale_report.static_instance.batch_count,
+            "CPU merge includes per-color/emissive grouping while instance batches keep color/emissive per instance"
+        );
+        assert!(scale_report.standard.transparent_count > 0);
+        assert!(scale_report.standard.emissive_count > 0);
+        assert!(scale_report.static_instance.content_hash != 0);
+        let summary = scale_report.format_summary();
+        assert!(summary.contains("trend:"));
+        assert!(summary.contains("stride_bytes="));
+        assert!(summary.contains("limiting_path=static_instance_buffer_bytes"));
     }
 
     fn input(primitive: FangyuanPrimitive, primitive_index: usize) -> FangyuanStaticMergeInput {

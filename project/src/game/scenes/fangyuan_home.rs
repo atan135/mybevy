@@ -2358,7 +2358,7 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
         .map(SceneSessionId::as_str)
         .unwrap_or("<none>");
     info!(
-        "fangyuan home layout stats: session={session}, state={}, layout_path={}, palette_path={}, audit_status={}, audit_errors={}, audit_warnings={}, audit_code={}, audit_field_path={}, audit_reason={}, generated={}, primitives={}, skipped={}, palettes={}, prefabs={}, used_prefabs={}, instances={}, materials={}, material_profiles={}, opaque={}, transparent={}, emissive_total={:.2}, material_resources={}, top_level_valid={}, layout_valid={}, palette_valid={}",
+        "fangyuan home layout stats: session={session}, state={}, layout_path={}, palette_path={}, audit_status={}, audit_errors={}, audit_warnings={}, audit_code={}, audit_field_path={}, audit_reason={}, generated={}, primitives={}, skipped={}, palettes={}, prefabs={}, used_prefabs={}, instances={}, materials={}, material_profiles={}, opaque={}, transparent={}, emissive_total={:.2}, material_resources={}, render_mode={}, static_instance_batches={}, static_instance_count={}, static_instance_buffer_bytes={}, static_instance_fallback={}, top_level_valid={}, layout_valid={}, palette_valid={}",
         stats.state_label(),
         stats.layout_path(),
         stats.palette_path(),
@@ -2381,6 +2381,11 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
         stats.transparent_count,
         stats.emissive_total,
         stats.unique_material_resource_count,
+        stats.render_mode,
+        stats.static_instance_batch_count,
+        stats.static_instance_count,
+        stats.static_instance_buffer_bytes,
+        stats.static_instance_fallback_reason,
         stats.top_level_valid,
         stats.layout_valid,
         stats.palette_valid
@@ -2463,7 +2468,9 @@ mod tests {
         FANGYUAN_SCENE_LAYOUT_VERSION, FangyuanBlueprint, FangyuanBlueprintBounds,
         FangyuanPrefabDefinition, FangyuanPrefabPalette, FangyuanPrimitiveBlueprint,
         FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole, FangyuanRenderMaterialKey,
-        FangyuanSceneLayout, FangyuanSceneLayoutInstance,
+        FangyuanRenderScaleReport, FangyuanSceneLayout, FangyuanSceneLayoutInstance,
+        fangyuan_static_instance_render_report_from_primitive_set_with_source,
+        fangyuan_static_merge_groups_from_primitive_set, fangyuan_static_meshes_from_primitive_set,
     };
     use crate::framework::scene::prelude::{
         SceneCameraMode, SceneCameraProjection, SceneCommand, SceneEnterRequest, SceneExitRequest,
@@ -4279,6 +4286,102 @@ mod tests {
             stats
                 .static_instance_fallback_reason
                 .contains("unsupported kind: sphere")
+        );
+    }
+
+    #[test]
+    fn default_home_layout_reports_explainable_standard_merge_and_instance_stats() {
+        let compile_report = default_layout_compile_report();
+        let primitive_stats = compile_report.primitive_set.stats();
+        let merge_report =
+            fangyuan_static_merge_groups_from_primitive_set(&compile_report.primitive_set);
+        let mesh_report =
+            fangyuan_static_meshes_from_primitive_set(&compile_report.primitive_set).unwrap();
+        let instance_report =
+            fangyuan_static_instance_render_report_from_primitive_set_with_source(
+                &compile_report.primitive_set,
+                Some(FANGYUAN_HOME_SCENE_LAYOUT_PATH.to_string()),
+                &FangyuanStaticInstanceRenderOptions::default(),
+            )
+            .unwrap();
+        let scale_report = FangyuanRenderScaleReport::from_reports(
+            &primitive_stats,
+            &merge_report,
+            Some(&mesh_report.stats),
+            &instance_report.stats,
+        );
+
+        println!(
+            "fangyuan default home render scale summary: {}",
+            scale_report.format_summary()
+        );
+
+        assert_eq!(primitive_stats, compile_report.primitive_stats);
+        assert_eq!(primitive_stats.total, EXPECTED_DEFAULT_LAYOUT_GENERATED);
+        assert_eq!(
+            merge_report.stats.cube_count + merge_report.stats.sphere_count,
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert_eq!(
+            mesh_report.stats.merged_primitive_count,
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert_eq!(
+            instance_report.stats.instance_count,
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert_eq!(
+            instance_report.stats.cube_count + instance_report.stats.sphere_count,
+            primitive_stats.cube_count + primitive_stats.sphere_count
+        );
+        assert_eq!(
+            merge_report.stats.material_profile_count,
+            instance_report.stats.material_profile_count
+        );
+        assert_eq!(
+            scale_report.standard.material_count,
+            primitive_stats.unique_material_resource_count
+        );
+        assert_eq!(
+            scale_report.static_instance.material_count,
+            primitive_stats.unique_material_resource_count
+        );
+        assert_eq!(
+            scale_report.cpu_merge.primitive_count,
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert_eq!(
+            scale_report.static_instance.buffer_bytes,
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+                * crate::framework::fangyuan::FANGYUAN_STATIC_INSTANCE_RENDER_STRIDE_BYTES
+        );
+        assert!(
+            scale_report.cpu_merge.batch_count <= scale_report.standard.entity_count,
+            "CPU merge emits one mesh per merge group, not one entity per primitive"
+        );
+        assert!(
+            scale_report.static_instance.batch_count <= scale_report.standard.entity_count,
+            "static instance emits one buffer descriptor per kind/profile/transparency batch"
+        );
+        assert_eq!(
+            scale_report.pressure.standard_pressure_units,
+            EXPECTED_DEFAULT_LAYOUT_GENERATED
+        );
+        assert_eq!(
+            scale_report.pressure.cpu_merge_pressure_units,
+            scale_report.cpu_merge.batch_count
+        );
+        assert_eq!(
+            scale_report.pressure.static_instance_pressure_units,
+            scale_report.static_instance.batch_count
+        );
+        assert!(
+            scale_report.pressure.standard_to_instance_reduction >= 1,
+            "default home pressure trend must be stable even when the scene is small"
+        );
+        assert_eq!(
+            scale_report.pressure.static_instance_buffer_kib,
+            scale_report.static_instance.buffer_bytes.div_ceil(1024)
         );
     }
 
