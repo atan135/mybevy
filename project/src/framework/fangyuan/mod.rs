@@ -25,6 +25,7 @@ mod static_instance_render;
 mod static_merge;
 mod static_mesh_builder;
 mod stats;
+mod vfx;
 
 pub use asset_path::*;
 pub use audit::*;
@@ -41,3 +42,4 @@ pub use static_instance_render::*;
 pub use static_merge::*;
 pub use static_mesh_builder::*;
 pub use stats::*;
+pub use vfx::*;
