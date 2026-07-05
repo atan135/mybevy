@@ -11,20 +11,20 @@ use crate::framework::{
         FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditStatus,
         FangyuanChunkAvailablePrefabs, FangyuanChunkClearReason, FangyuanChunkCommand,
         FangyuanChunkDebugSummary, FangyuanChunkEvent, FangyuanChunkManifestRuntime,
-        FangyuanChunkRuntime, FangyuanChunkSourceLibrary, FangyuanHotspotState,
-        FangyuanHotspotThresholds, FangyuanLodIntegrationSummary, FangyuanLodObjectKind,
-        FangyuanLodRenderDescriptor, FangyuanLodRenderPath, FangyuanMaterialInstanceParams,
-        FangyuanMaterialProfileRegistry, FangyuanObjectClass, FangyuanObjectState,
-        FangyuanObjectTrialRuntime, FangyuanObjectTrialSummary, FangyuanObjectTrialVisualPrimitive,
-        FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
-        FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
-        FangyuanStaticInstanceBufferSource, FangyuanStaticInstanceRenderBatch,
-        FangyuanStaticInstanceRenderError, FangyuanStaticInstanceRenderOptions,
-        FangyuanStaticInstanceRenderReport, FangyuanStaticInstanceRenderStats,
-        FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds, FangyuanStaticMeshBuildError,
-        FangyuanStaticMeshBuildOptions, FangyuanStaticMeshBuildReport,
-        FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial, FangyuanStaticMeshMetadata,
-        FangyuanTrialBudgetProfileKind, evaluate_fangyuan_hotspot,
+        FangyuanChunkRuntime, FangyuanChunkSourceLibrary, FangyuanDebugPanelState,
+        FangyuanHotspotState, FangyuanHotspotThresholds, FangyuanLodIntegrationSummary,
+        FangyuanLodObjectKind, FangyuanLodRenderDescriptor, FangyuanLodRenderPath,
+        FangyuanMaterialInstanceParams, FangyuanMaterialProfileRegistry, FangyuanObjectClass,
+        FangyuanObjectState, FangyuanObjectTrialRuntime, FangyuanObjectTrialSummary,
+        FangyuanObjectTrialVisualPrimitive, FangyuanPrimitive, FangyuanPrimitiveKind,
+        FangyuanPrimitiveSet, FangyuanPrimitiveSetStats, FangyuanRenderAssetCache,
+        FangyuanSceneLayoutCompileReport, FangyuanStaticInstanceBufferSource,
+        FangyuanStaticInstanceRenderBatch, FangyuanStaticInstanceRenderError,
+        FangyuanStaticInstanceRenderOptions, FangyuanStaticInstanceRenderReport,
+        FangyuanStaticInstanceRenderStats, FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds,
+        FangyuanStaticMeshBuildError, FangyuanStaticMeshBuildOptions,
+        FangyuanStaticMeshBuildReport, FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial,
+        FangyuanStaticMeshMetadata, FangyuanTrialBudgetProfileKind, evaluate_fangyuan_hotspot,
         fangyuan_lod_descriptor_from_trial_visual, fangyuan_lod_descriptors_from_primitive_set,
         fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
         fangyuan_standard_material_from_params,
@@ -61,6 +61,7 @@ impl Plugin for FangyuanHomePlugin {
             .init_resource::<FangyuanHomeObjectTrialRenderRuntime>()
             .init_resource::<FangyuanHomeLodIntegrationRuntime>()
             .init_resource::<FangyuanHomeBlueprintStats>()
+            .init_resource::<FangyuanDebugPanelState>()
             .init_resource::<FangyuanChunkRuntime>()
             .init_resource::<FangyuanChunkSourceLibrary>()
             .init_resource::<FangyuanChunkManifestRuntime>()

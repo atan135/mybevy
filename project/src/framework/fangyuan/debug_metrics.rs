@@ -185,10 +185,14 @@ impl Default for FangyuanPrimitiveDebugMetrics {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FangyuanRenderDebugMetrics {
+    pub render_mode: String,
     pub instance_count: usize,
     pub batch_count: usize,
     pub mesh_count: usize,
     pub buffer_bytes: usize,
+    pub buffer_update_bytes: usize,
+    pub draw_estimate: usize,
+    pub material_profile_count: usize,
     pub pressure_units: usize,
     pub limiting_path: String,
 }
@@ -196,10 +200,14 @@ pub struct FangyuanRenderDebugMetrics {
 impl FangyuanRenderDebugMetrics {
     pub fn from_scale_report(report: &FangyuanRenderScaleReport) -> Self {
         Self {
+            render_mode: "static_instance".to_string(),
             instance_count: report.static_instance.instance_count,
             batch_count: report.static_instance.batch_count,
             mesh_count: report.static_instance.mesh_count,
             buffer_bytes: report.static_instance.buffer_bytes,
+            buffer_update_bytes: report.static_instance.buffer_bytes,
+            draw_estimate: report.static_instance.batch_count,
+            material_profile_count: report.static_instance.material_profile_count,
             pressure_units: report.pressure.static_instance_pressure_units,
             limiting_path: report.pressure.limiting_path.to_string(),
         }
@@ -209,10 +217,14 @@ impl FangyuanRenderDebugMetrics {
 impl Default for FangyuanRenderDebugMetrics {
     fn default() -> Self {
         Self {
+            render_mode: "missing".to_string(),
             instance_count: 0,
             batch_count: 0,
             mesh_count: 0,
             buffer_bytes: 0,
+            buffer_update_bytes: 0,
+            draw_estimate: 0,
+            material_profile_count: 0,
             pressure_units: 0,
             limiting_path: "-".to_string(),
         }
@@ -263,13 +275,14 @@ impl Default for FangyuanLodDebugMetrics {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct FangyuanAoiDebugMetrics {
     pub load_chunks: usize,
     pub keep_chunks: usize,
     pub unload_chunks: usize,
     pub marker_chunks: usize,
     pub visible_objects: usize,
+    pub radius: f32,
 }
 
 impl FangyuanAoiDebugMetrics {
@@ -280,6 +293,7 @@ impl FangyuanAoiDebugMetrics {
             unload_chunks: selection.unload_chunks.len(),
             marker_chunks: selection.marker_chunks.len(),
             visible_objects: selection.visible_object_ids().len(),
+            radius: 0.0,
         }
     }
 
@@ -287,6 +301,7 @@ impl FangyuanAoiDebugMetrics {
         Self {
             keep_chunks: summary.loaded_chunks,
             visible_objects: summary.visible_objects,
+            radius: 0.0,
             ..Default::default()
         }
     }
@@ -298,6 +313,7 @@ pub struct FangyuanPressureDebugMetrics {
     pub severity: String,
     pub reason_count: usize,
     pub pressure_units: usize,
+    pub degrade_reason: String,
 }
 
 impl FangyuanPressureDebugMetrics {
@@ -312,6 +328,11 @@ impl FangyuanPressureDebugMetrics {
                 .map(|reason| reason.value as usize)
                 .max()
                 .unwrap_or_default(),
+            degrade_reason: evaluation
+                .degrade_plan
+                .first()
+                .map(|step| step.reason.clone())
+                .unwrap_or_else(|| "-".to_string()),
         }
     }
 }
@@ -323,6 +344,7 @@ impl Default for FangyuanPressureDebugMetrics {
             severity: hotspot_severity_label(FangyuanHotspotSeverity::Normal).to_string(),
             reason_count: 0,
             pressure_units: 0,
+            degrade_reason: "-".to_string(),
         }
     }
 }
@@ -333,6 +355,8 @@ pub struct FangyuanCacheDebugMetrics {
     pub used_bytes: u64,
     pub max_bytes: u64,
     pub pressure_percent: u32,
+    pub hit_count: usize,
+    pub miss_count: usize,
 }
 
 impl FangyuanCacheDebugMetrics {
@@ -342,6 +366,8 @@ impl FangyuanCacheDebugMetrics {
             used_bytes: manifest.used_bytes,
             max_bytes: manifest.max_bytes,
             pressure_percent: percent(manifest.used_bytes, manifest.max_bytes),
+            hit_count: 0,
+            miss_count: 0,
         }
     }
 }
@@ -407,6 +433,41 @@ impl Default for FangyuanAuditDebugMetrics {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FangyuanTrialDebugMetrics {
+    pub route_id: String,
+    pub budget_profile: String,
+    pub audit_status: String,
+    pub active_vfx_count: usize,
+    pub budget_cost: u32,
+    pub budget_recommended: u32,
+    pub budget_hard: u32,
+    pub kept_count: usize,
+    pub degraded_count: usize,
+    pub rejected_count: usize,
+    pub fallback_missing_count: usize,
+    pub reason_summary: String,
+}
+
+impl Default for FangyuanTrialDebugMetrics {
+    fn default() -> Self {
+        Self {
+            route_id: "none".to_string(),
+            budget_profile: "standard".to_string(),
+            audit_status: "pending".to_string(),
+            active_vfx_count: 0,
+            budget_cost: 0,
+            budget_recommended: 0,
+            budget_hard: 0,
+            kept_count: 0,
+            degraded_count: 0,
+            rejected_count: 0,
+            fallback_missing_count: 0,
+            reason_summary: "ok".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct FangyuanDebugMetricsSnapshot {
     pub primitive: FangyuanPrimitiveDebugMetrics,
     pub render: FangyuanRenderDebugMetrics,
@@ -416,6 +477,7 @@ pub struct FangyuanDebugMetricsSnapshot {
     pub cache: FangyuanCacheDebugMetrics,
     pub bake: FangyuanBakeDebugMetrics,
     pub audit: FangyuanAuditDebugMetrics,
+    pub trial: FangyuanTrialDebugMetrics,
     pub module_status: BTreeMap<&'static str, FangyuanDebugModuleStatus>,
 }
 
@@ -460,6 +522,7 @@ impl Default for FangyuanDebugMetricsSnapshot {
             cache: FangyuanCacheDebugMetrics::default(),
             bake: FangyuanBakeDebugMetrics::default(),
             audit: FangyuanAuditDebugMetrics::default(),
+            trial: FangyuanTrialDebugMetrics::default(),
             module_status,
         }
     }
@@ -481,10 +544,11 @@ pub enum FangyuanDebugMetricModule {
     Cache,
     Bake,
     Audit,
+    Trial,
 }
 
 impl FangyuanDebugMetricModule {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Primitive,
         Self::Render,
         Self::Lod,
@@ -493,6 +557,7 @@ impl FangyuanDebugMetricModule {
         Self::Cache,
         Self::Bake,
         Self::Audit,
+        Self::Trial,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -505,11 +570,470 @@ impl FangyuanDebugMetricModule {
             Self::Cache => "cache",
             Self::Bake => "bake",
             Self::Audit => "audit",
+            Self::Trial => "trial",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FangyuanDebugPanelModule {
+    Render,
+    Lod,
+    Cache,
+    Bake,
+    Audit,
+    Trial,
+}
+
+impl FangyuanDebugPanelModule {
+    pub const ALL: [Self; 6] = [
+        Self::Render,
+        Self::Lod,
+        Self::Cache,
+        Self::Bake,
+        Self::Audit,
+        Self::Trial,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Render => "render",
+            Self::Lod => "lod",
+            Self::Cache => "cache",
+            Self::Bake => "bake",
+            Self::Audit => "audit",
+            Self::Trial => "trial",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Render => "render",
+            Self::Lod => "lod",
+            Self::Cache => "cache",
+            Self::Bake => "bake",
+            Self::Audit => "audit",
+            Self::Trial => "trial",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FangyuanDebugPanelToggles {
+    pub render: bool,
+    pub lod: bool,
+    pub cache: bool,
+    pub bake: bool,
+    pub audit: bool,
+    pub trial: bool,
+}
+
+impl FangyuanDebugPanelToggles {
+    pub const fn all_enabled() -> Self {
+        Self {
+            render: true,
+            lod: true,
+            cache: true,
+            bake: true,
+            audit: true,
+            trial: true,
+        }
+    }
+
+    pub const fn is_enabled(self, module: FangyuanDebugPanelModule) -> bool {
+        match module {
+            FangyuanDebugPanelModule::Render => self.render,
+            FangyuanDebugPanelModule::Lod => self.lod,
+            FangyuanDebugPanelModule::Cache => self.cache,
+            FangyuanDebugPanelModule::Bake => self.bake,
+            FangyuanDebugPanelModule::Audit => self.audit,
+            FangyuanDebugPanelModule::Trial => self.trial,
+        }
+    }
+
+    pub fn set_enabled(&mut self, module: FangyuanDebugPanelModule, enabled: bool) {
+        match module {
+            FangyuanDebugPanelModule::Render => self.render = enabled,
+            FangyuanDebugPanelModule::Lod => self.lod = enabled,
+            FangyuanDebugPanelModule::Cache => self.cache = enabled,
+            FangyuanDebugPanelModule::Bake => self.bake = enabled,
+            FangyuanDebugPanelModule::Audit => self.audit = enabled,
+            FangyuanDebugPanelModule::Trial => self.trial = enabled,
+        }
+    }
+
+    pub fn toggle(&mut self, module: FangyuanDebugPanelModule) -> bool {
+        let enabled = !self.is_enabled(module);
+        self.set_enabled(module, enabled);
+        enabled
+    }
+
+    pub fn enabled_modules_label(self) -> String {
+        let labels = FangyuanDebugPanelModule::ALL
+            .into_iter()
+            .filter(|module| self.is_enabled(*module))
+            .map(FangyuanDebugPanelModule::label)
+            .collect::<Vec<_>>();
+
+        if labels.is_empty() {
+            "none".to_string()
+        } else {
+            labels.join(",")
+        }
+    }
+}
+
+impl Default for FangyuanDebugPanelToggles {
+    fn default() -> Self {
+        Self::all_enabled()
+    }
+}
+
+#[derive(Clone, Debug, Resource, PartialEq, Eq)]
+pub struct FangyuanDebugPanelState {
+    pub visible: bool,
+    pub compact: bool,
+    pub toggles: FangyuanDebugPanelToggles,
+}
+
+impl FangyuanDebugPanelState {
+    pub fn toggle_visible(&mut self) -> bool {
+        self.visible = !self.visible;
+        self.visible
+    }
+
+    pub fn set_compact(&mut self, compact: bool) {
+        self.compact = compact;
+    }
+
+    pub fn toggle_module(&mut self, module: FangyuanDebugPanelModule) -> bool {
+        self.toggles.toggle(module)
+    }
+}
+
+impl Default for FangyuanDebugPanelState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            compact: false,
+            toggles: FangyuanDebugPanelToggles::default(),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FangyuanDebugPanelSnapshot {
+    pub title: String,
+    pub lines: Vec<String>,
+    pub enabled_modules: String,
+}
+
+impl FangyuanDebugPanelSnapshot {
+    pub fn text(&self) -> String {
+        if self.lines.is_empty() {
+            return format!("{}\nmodules {}", self.title, self.enabled_modules);
+        }
+
+        format!(
+            "{}\nmodules {}\n{}",
+            self.title,
+            self.enabled_modules,
+            self.lines.join("\n")
+        )
+    }
+}
+
+pub fn fangyuan_debug_panel_snapshot(
+    metrics: &FangyuanDebugMetricsSnapshot,
+    toggles: FangyuanDebugPanelToggles,
+    compact: bool,
+) -> FangyuanDebugPanelSnapshot {
+    let mut lines = Vec::new();
+
+    if toggles.render {
+        lines.extend(fangyuan_debug_panel_render_lines(metrics, compact));
+    }
+    if toggles.lod {
+        lines.extend(fangyuan_debug_panel_lod_lines(metrics, compact));
+    }
+    if toggles.cache {
+        lines.extend(fangyuan_debug_panel_cache_lines(metrics, compact));
+    }
+    if toggles.bake {
+        lines.extend(fangyuan_debug_panel_bake_lines(metrics, compact));
+    }
+    if toggles.audit {
+        lines.extend(fangyuan_debug_panel_audit_lines(metrics, compact));
+    }
+    if toggles.trial {
+        lines.extend(fangyuan_debug_panel_trial_lines(metrics, compact));
+    }
+
+    FangyuanDebugPanelSnapshot {
+        title: if compact {
+            "fangyuan debug compact".to_string()
+        } else {
+            "fangyuan debug panel".to_string()
+        },
+        lines,
+        enabled_modules: toggles.enabled_modules_label(),
+    }
+}
+
+fn fangyuan_debug_panel_render_lines(
+    metrics: &FangyuanDebugMetricsSnapshot,
+    compact: bool,
+) -> Vec<String> {
+    let status = metrics.module_status(FangyuanDebugMetricModule::Render.as_str());
+    if status == FangyuanDebugModuleStatus::Missing {
+        return vec!["render missing".to_string()];
+    }
+
+    let render = &metrics.render;
+    if compact {
+        return vec![format!(
+            "render mode {} mesh {} inst_batch {} buf_upd {} draw {} matprof {}",
+            compact_debug_panel_text(&render.render_mode, 20),
+            render.mesh_count,
+            render.batch_count,
+            render.buffer_update_bytes,
+            render.draw_estimate,
+            render.material_profile_count
+        )];
+    }
+
+    vec![
+        format!(
+            "render mode {} mesh {} instance_batch {}",
+            render.render_mode, render.mesh_count, render.batch_count
+        ),
+        format!(
+            "render buffer_update {} buffer_bytes {} draw_estimate {} material_profile {}",
+            render.buffer_update_bytes,
+            render.buffer_bytes,
+            render.draw_estimate,
+            render.material_profile_count
+        ),
+        format!(
+            "render pressure {} limiting {}",
+            render.pressure_units,
+            compact_debug_panel_text(&render.limiting_path, 44)
+        ),
+    ]
+}
+
+fn fangyuan_debug_panel_lod_lines(
+    metrics: &FangyuanDebugMetricsSnapshot,
+    compact: bool,
+) -> Vec<String> {
+    let lod_status = metrics.module_status(FangyuanDebugMetricModule::Lod.as_str());
+    let aoi_status = metrics.module_status(FangyuanDebugMetricModule::Aoi.as_str());
+    let pressure_status = metrics.module_status(FangyuanDebugMetricModule::Pressure.as_str());
+    if lod_status == FangyuanDebugModuleStatus::Missing
+        && aoi_status == FangyuanDebugModuleStatus::Missing
+        && pressure_status == FangyuanDebugModuleStatus::Missing
+    {
+        return vec!["lod missing".to_string()];
+    }
+
+    let lod = &metrics.lod;
+    let aoi = &metrics.aoi;
+    let pressure = &metrics.pressure;
+    if compact {
+        return vec![format!(
+            "lod f{} r{} s{} m{} h{} chunks {} aoi {:.0} obj {} pressure {}",
+            lod.near_count,
+            lod.mid_count,
+            lod.far_count,
+            lod.marker_count,
+            lod.hidden_count,
+            aoi.keep_chunks + aoi.load_chunks,
+            aoi.radius,
+            aoi.visible_objects,
+            compact_debug_panel_text(&pressure.severity, 16)
+        )];
+    }
+
+    vec![
+        format!(
+            "lod distribution full {} reduced {} silhouette {} marker {} hidden {} dominant {}",
+            lod.near_count,
+            lod.mid_count,
+            lod.far_count,
+            lod.marker_count,
+            lod.hidden_count,
+            lod.dominant_lod
+        ),
+        format!(
+            "lod loaded_chunks {} keep {} load {} unload {} markers {} visible {}",
+            aoi.keep_chunks + aoi.load_chunks,
+            aoi.keep_chunks,
+            aoi.load_chunks,
+            aoi.unload_chunks,
+            aoi.marker_chunks,
+            aoi.visible_objects
+        ),
+        format!(
+            "lod aoi_radius {:.0} hotspot_pressure active {} severity {} units {} reasons {} degrade {}",
+            aoi.radius,
+            pressure.active,
+            pressure.severity,
+            pressure.pressure_units,
+            pressure.reason_count,
+            pressure_degrade_label(pressure)
+        ),
+    ]
+}
+
+fn fangyuan_debug_panel_cache_lines(
+    metrics: &FangyuanDebugMetricsSnapshot,
+    compact: bool,
+) -> Vec<String> {
+    if metrics.module_status(FangyuanDebugMetricModule::Cache.as_str())
+        == FangyuanDebugModuleStatus::Missing
+    {
+        return vec!["cache missing hit/miss pending".to_string()];
+    }
+
+    let cache = &metrics.cache;
+    if compact {
+        return vec![format!(
+            "cache entries {} hit {} miss {} pressure {}%",
+            cache.entry_count, cache.hit_count, cache.miss_count, cache.pressure_percent
+        )];
+    }
+
+    vec![format!(
+        "cache entries {} hit {} miss {} bytes {}/{} pressure {}%",
+        cache.entry_count,
+        cache.hit_count,
+        cache.miss_count,
+        cache.used_bytes,
+        cache.max_bytes,
+        cache.pressure_percent
+    )]
+}
+
+fn fangyuan_debug_panel_bake_lines(
+    metrics: &FangyuanDebugMetricsSnapshot,
+    compact: bool,
+) -> Vec<String> {
+    if metrics.module_status(FangyuanDebugMetricModule::Bake.as_str())
+        == FangyuanDebugModuleStatus::Missing
+    {
+        return vec!["bake missing artifact none".to_string()];
+    }
+
+    let bake = &metrics.bake;
+    if compact {
+        return vec![format!(
+            "bake artifacts {} bytes {} warn {}",
+            bake.artifact_count, bake.artifact_bytes, bake.warning_count
+        )];
+    }
+
+    vec![format!(
+        "bake artifacts {} primitives {} bytes {} warnings {}",
+        bake.artifact_count, bake.primitive_count, bake.artifact_bytes, bake.warning_count
+    )]
+}
+
+fn fangyuan_debug_panel_audit_lines(
+    metrics: &FangyuanDebugMetricsSnapshot,
+    compact: bool,
+) -> Vec<String> {
+    if metrics.module_status(FangyuanDebugMetricModule::Audit.as_str())
+        == FangyuanDebugModuleStatus::Missing
+    {
+        return vec!["audit missing".to_string()];
+    }
+
+    let audit = &metrics.audit;
+    if compact {
+        return vec![format!(
+            "audit {} e{} w{} f{}",
+            audit.status, audit.error_count, audit.warning_count, audit.finding_count
+        )];
+    }
+
+    vec![format!(
+        "audit status {} errors {} warnings {} findings {}",
+        audit.status, audit.error_count, audit.warning_count, audit.finding_count
+    )]
+}
+
+fn fangyuan_debug_panel_trial_lines(
+    metrics: &FangyuanDebugMetricsSnapshot,
+    compact: bool,
+) -> Vec<String> {
+    if metrics.module_status(FangyuanDebugMetricModule::Trial.as_str())
+        == FangyuanDebugModuleStatus::Missing
+    {
+        return vec!["trial missing".to_string()];
+    }
+
+    let trial = &metrics.trial;
+    if compact {
+        return vec![format!(
+            "trial {} profile {} vfx {} cost {}/{}",
+            compact_debug_panel_text(&trial.route_id, 18),
+            compact_debug_panel_text(&trial.budget_profile, 14),
+            trial.active_vfx_count,
+            trial.budget_cost,
+            trial.budget_hard
+        )];
+    }
+
+    vec![
+        format!(
+            "trial route {} profile {} audit {} active_vfx {}",
+            trial.route_id, trial.budget_profile, trial.audit_status, trial.active_vfx_count
+        ),
+        format!(
+            "trial budget {}/{}/{} kept {} degraded {} rejected {} fallback_missing {}",
+            trial.budget_cost,
+            trial.budget_recommended,
+            trial.budget_hard,
+            trial.kept_count,
+            trial.degraded_count,
+            trial.rejected_count,
+            trial.fallback_missing_count
+        ),
+        format!(
+            "trial reason {}",
+            compact_debug_panel_text(&trial.reason_summary, 64)
+        ),
+    ]
+}
+
+fn pressure_degrade_label(pressure: &FangyuanPressureDebugMetrics) -> &str {
+    if !pressure.degrade_reason.trim().is_empty() && pressure.degrade_reason != "-" {
+        pressure.degrade_reason.as_str()
+    } else if pressure.active {
+        pressure.severity.as_str()
+    } else {
+        "-"
+    }
+}
+
+fn compact_debug_panel_text(value: &str, max_chars: usize) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return "-".to_string();
+    }
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+
+    value
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>()
+        + "..."
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum FangyuanDebugMetricsInput {
     Primitive(FangyuanPrimitiveDebugMetrics),
     Render(FangyuanRenderDebugMetrics),
@@ -519,6 +1043,7 @@ pub enum FangyuanDebugMetricsInput {
     Cache(FangyuanCacheDebugMetrics),
     Bake(FangyuanBakeDebugMetrics),
     Audit(FangyuanAuditDebugMetrics),
+    Trial(FangyuanTrialDebugMetrics),
 }
 
 impl FangyuanDebugMetricsInput {
@@ -532,11 +1057,12 @@ impl FangyuanDebugMetricsInput {
             Self::Cache(_) => FangyuanDebugMetricModule::Cache,
             Self::Bake(_) => FangyuanDebugMetricModule::Bake,
             Self::Audit(_) => FangyuanDebugMetricModule::Audit,
+            Self::Trial(_) => FangyuanDebugMetricModule::Trial,
         }
     }
 }
 
-#[derive(Clone, Debug, Message, PartialEq, Eq)]
+#[derive(Clone, Debug, Message, PartialEq)]
 pub struct FangyuanDebugMetricsEvent {
     pub input: FangyuanDebugMetricsInput,
 }
@@ -604,6 +1130,7 @@ impl FangyuanDebugMetricsBus {
             FangyuanDebugMetricsInput::Cache(metrics) => self.snapshot.cache = metrics,
             FangyuanDebugMetricsInput::Bake(metrics) => self.snapshot.bake = metrics,
             FangyuanDebugMetricsInput::Audit(metrics) => self.snapshot.audit = metrics,
+            FangyuanDebugMetricsInput::Trial(metrics) => self.snapshot.trial = metrics,
         }
         self.snapshot
             .module_status
@@ -981,6 +1508,137 @@ mod tests {
         assert_eq!(bus.record(FangyuanDebugMetricKey::Cache).name, "cache");
         assert_eq!(bus.record(FangyuanDebugMetricKey::Bake).name, "bake");
         assert_eq!(bus.record(FangyuanDebugMetricKey::Audit).name, "audit");
+    }
+
+    #[test]
+    fn fangyuan_debug_panel_formats_required_render_lod_cache_bake_fields() {
+        let mut bus = FangyuanDebugMetricsBus::new(FangyuanDebugMetricsSamplingConfig::new(1, 4));
+        bus.submit(FangyuanDebugMetricsInput::Render(
+            FangyuanRenderDebugMetrics {
+                render_mode: "static_instance".to_string(),
+                instance_count: 21,
+                batch_count: 4,
+                mesh_count: 3,
+                buffer_bytes: 2_048,
+                buffer_update_bytes: 512,
+                draw_estimate: 4,
+                material_profile_count: 2,
+                pressure_units: 4,
+                limiting_path: "static_instance_buffer_bytes".to_string(),
+            },
+        ));
+        bus.submit(FangyuanDebugMetricsInput::Lod(FangyuanLodDebugMetrics {
+            near_count: 3,
+            mid_count: 2,
+            far_count: 1,
+            marker_count: 1,
+            hidden_count: 5,
+            dominant_lod: "hidden_rule_only".to_string(),
+        }));
+        bus.submit(FangyuanDebugMetricsInput::Aoi(FangyuanAoiDebugMetrics {
+            load_chunks: 1,
+            keep_chunks: 2,
+            unload_chunks: 1,
+            marker_chunks: 1,
+            visible_objects: 7,
+            radius: 24.0,
+        }));
+        bus.submit(FangyuanDebugMetricsInput::Pressure(
+            FangyuanPressureDebugMetrics {
+                active: true,
+                severity: "hot".to_string(),
+                reason_count: 2,
+                pressure_units: 8,
+                degrade_reason: "transparent".to_string(),
+            },
+        ));
+        bus.submit(FangyuanDebugMetricsInput::Cache(
+            FangyuanCacheDebugMetrics {
+                entry_count: 5,
+                used_bytes: 250,
+                max_bytes: 1_000,
+                pressure_percent: 25,
+                hit_count: 9,
+                miss_count: 2,
+            },
+        ));
+        bus.submit(FangyuanDebugMetricsInput::Bake(FangyuanBakeDebugMetrics {
+            artifact_count: 2,
+            primitive_count: 14,
+            artifact_bytes: 4096,
+            warning_count: 1,
+        }));
+
+        let panel = fangyuan_debug_panel_snapshot(
+            bus.snapshot(),
+            FangyuanDebugPanelToggles::default(),
+            false,
+        );
+        let text = panel.text();
+
+        assert!(text.contains("render mode static_instance mesh 3 instance_batch 4"));
+        assert!(text.contains(
+            "render buffer_update 512 buffer_bytes 2048 draw_estimate 4 material_profile 2"
+        ));
+        assert!(text.contains("lod distribution full 3 reduced 2 silhouette 1 marker 1 hidden 5"));
+        assert!(text.contains("lod loaded_chunks 3 keep 2 load 1 unload 1 markers 1 visible 7"));
+        assert!(text.contains(
+            "lod aoi_radius 24 hotspot_pressure active true severity hot units 8 reasons 2 degrade transparent"
+        ));
+        assert!(text.contains("cache entries 5 hit 9 miss 2 bytes 250/1000 pressure 25%"));
+        assert!(text.contains("bake artifacts 2 primitives 14 bytes 4096 warnings 1"));
+        assert!(text.contains("audit missing"));
+        assert!(text.contains("trial missing"));
+    }
+
+    #[test]
+    fn fangyuan_debug_panel_toggles_hide_modules_and_track_enabled_labels() {
+        let mut toggles = FangyuanDebugPanelToggles::default();
+
+        assert!(!toggles.toggle(FangyuanDebugPanelModule::Cache));
+        assert!(!toggles.is_enabled(FangyuanDebugPanelModule::Cache));
+        assert_eq!(
+            toggles.enabled_modules_label(),
+            "render,lod,bake,audit,trial"
+        );
+
+        let panel =
+            fangyuan_debug_panel_snapshot(&FangyuanDebugMetricsSnapshot::default(), toggles, false);
+        let text = panel.text();
+
+        assert!(text.contains("render missing"));
+        assert!(text.contains("lod missing"));
+        assert!(!text.contains("cache missing"));
+        assert!(text.contains("bake missing artifact none"));
+    }
+
+    #[test]
+    fn fangyuan_debug_panel_missing_modules_and_compact_mode_are_stable() {
+        let mut bus = FangyuanDebugMetricsBus::default();
+        bus.submit(FangyuanDebugMetricsInput::Render(
+            FangyuanRenderDebugMetrics {
+                render_mode: "static_instance_with_very_long_debug_name".to_string(),
+                mesh_count: 8,
+                batch_count: 6,
+                buffer_update_bytes: 120,
+                draw_estimate: 6,
+                material_profile_count: 3,
+                ..Default::default()
+            },
+        ));
+
+        let panel = fangyuan_debug_panel_snapshot(
+            bus.snapshot(),
+            FangyuanDebugPanelToggles::default(),
+            true,
+        );
+        let text = panel.text();
+
+        assert!(text.starts_with("fangyuan debug compact"));
+        assert!(text.contains("render mode static_instance_w... mesh 8"));
+        assert!(text.contains("lod missing"));
+        assert!(text.contains("cache missing hit/miss pending"));
+        assert!(text.contains("bake missing artifact none"));
     }
 
     #[test]

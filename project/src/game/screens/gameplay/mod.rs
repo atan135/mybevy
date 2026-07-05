@@ -6,12 +6,15 @@ mod touch_ripple;
 
 use bevy::prelude::*;
 
+use crate::framework::fangyuan::FangyuanDebugPanelState;
 use crate::game::navigation::AppUiMode;
 
 pub(super) struct GameplayScreensPlugin;
 
 impl Plugin for GameplayScreensPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<FangyuanDebugPanelState>();
+
         app.add_systems(
             OnEnter(AppUiMode::WanfaTouchRipple),
             touch_ripple::setup_touch_ripple_overlay,
@@ -56,6 +59,7 @@ impl Plugin for GameplayScreensPlugin {
             Update,
             (
                 fangyuan_home::update_fangyuan_home_hud_status,
+                fangyuan_home::update_fangyuan_home_debug_panel,
                 fangyuan_home::handle_fangyuan_home_hud_buttons,
                 fangyuan_home::route_to_lobby_on_fangyuan_home_exit,
             )
