@@ -5,7 +5,10 @@ use bevy::{
 
 use crate::framework::{
     audio::prelude::UiAudioCueOverride,
-    fangyuan::{FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH},
+    fangyuan::{
+        FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+        FangyuanChunkDebugSummary, FangyuanChunkRuntime,
+    },
     scene::prelude::{SceneCommand, SceneEvent, SceneExitRequest},
     ui::{
         core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport, UiWidthClass},
@@ -100,7 +103,7 @@ pub(super) fn setup_fangyuan_home_hud(
                         screen_label(
                             theme,
                             fonts,
-                            fangyuan_home_hud_status_text(None),
+                            fangyuan_home_hud_status_text(None, None),
                             UiThemeTextStyleRole::Caption,
                             UiThemeTextColorRole::Muted,
                         ),
@@ -221,9 +224,14 @@ fn fangyuan_home_lobby_button_audio_override() -> UiAudioCueOverride {
 
 pub(super) fn update_fangyuan_home_hud_status(
     stats: Res<FangyuanHomeBlueprintStats>,
+    chunk_runtime: Option<Res<FangyuanChunkRuntime>>,
     mut status_texts: Query<&mut Text, With<FangyuanHomeHudStatusText>>,
 ) {
-    let status = fangyuan_home_hud_status_text(Some(&stats));
+    let chunk_summary = chunk_runtime
+        .as_deref()
+        .map(FangyuanChunkRuntime::debug_summary)
+        .unwrap_or_default();
+    let status = fangyuan_home_hud_status_text(Some(&stats), Some(&chunk_summary));
     for mut text in &mut status_texts {
         if text.0 != status {
             text.0 = status.clone();
@@ -231,9 +239,14 @@ pub(super) fn update_fangyuan_home_hud_status(
     }
 }
 
-fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> String {
+fn fangyuan_home_hud_status_text(
+    stats: Option<&FangyuanHomeBlueprintStats>,
+    chunk_summary: Option<&FangyuanChunkDebugSummary>,
+) -> String {
     let default_stats = FangyuanHomeBlueprintStats::default();
+    let default_chunk_summary = FangyuanChunkDebugSummary::default();
     let stats = stats.unwrap_or(&default_stats);
+    let chunk_summary = chunk_summary.unwrap_or(&default_chunk_summary);
     let state = stats.state_label();
     let layout_path =
         compact_fangyuan_home_layout_path(stats.layout_path(), FANGYUAN_HOME_SCENE_LAYOUT_PATH);
@@ -241,7 +254,7 @@ fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> 
         compact_fangyuan_home_layout_path(stats.palette_path(), FANGYUAN_HOME_PREFAB_PALETTE_PATH);
 
     format!(
-        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nmatprof {} opaque {} trans {} emi {:.1} uniq {}\nrender {} ib {} ii {} bytes {} fb {}\ntrial {} vfx {} tpl {} vis {}\neq {} npc {} td {} cost {} find {}\nl {layout_path}\np {palette_path}",
+        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nmatprof {} opaque {} trans {} emi {:.1} uniq {}\nrender {} ib {} ii {} bytes {} fb {}\nchunk {} obj {} state {} fail {} ids {}\ntrial {} vfx {} tpl {} vis {}\neq {} npc {} td {} cost {} find {}\nl {layout_path}\np {palette_path}",
         stats.generated_primitives,
         FANGYUAN_HOME_PRIMITIVE_LIMIT,
         stats.skipped,
@@ -264,6 +277,11 @@ fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> 
         stats.static_instance_count,
         stats.static_instance_buffer_bytes,
         compact_fangyuan_home_fallback_reason(&stats.static_instance_fallback_reason),
+        chunk_summary.loaded_chunks,
+        chunk_summary.visible_objects,
+        compact_fangyuan_home_chunk_state(&chunk_summary.load_state),
+        chunk_summary.failure_label(26),
+        chunk_summary.loaded_ids_label(32),
         stats.trial_route_id,
         stats.active_vfx_count,
         compact_fangyuan_home_trial_id(&stats.trial_template_id),
@@ -274,6 +292,10 @@ fn fangyuan_home_hud_status_text(stats: Option<&FangyuanHomeBlueprintStats>) -> 
         stats.trial_budget_cost,
         compact_fangyuan_home_finding_summary(&stats.trial_finding_summary),
     )
+}
+
+fn compact_fangyuan_home_chunk_state(state: &str) -> String {
+    compact_fangyuan_home_text(state, "pending", 18)
 }
 
 fn compact_fangyuan_home_trial_id(id: &str) -> String {
@@ -498,7 +520,7 @@ mod tests {
         let text = app.world().get::<Text>(status_text).unwrap();
         assert_eq!(
             text.0,
-            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
     }
 
@@ -517,14 +539,14 @@ mod tests {
             Default::default(),
         );
         assert_eq!(
-            fangyuan_home_hud_status_text(Some(&stats)),
-            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            fangyuan_home_hud_status_text(Some(&stats), None),
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_cleared(&session_id);
         assert_eq!(
-            fangyuan_home_hud_status_text(Some(&stats)),
-            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            fangyuan_home_hud_status_text(Some(&stats), None),
+            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_loaded(
@@ -548,8 +570,8 @@ mod tests {
             },
         );
         assert_eq!(
-            fangyuan_home_hud_status_text(Some(&stats)),
-            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender static_instance->standard ib 0 ii 0 bytes 0 fb ...buffer_bytes=5000/1\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            fangyuan_home_hud_status_text(Some(&stats), None),
+            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender static_instance->standard ib 0 ii 0 bytes 0 fb ...buffer_bytes=5000/1\nchunk 0 obj 0 state pending fail - ids -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_failed(
@@ -563,16 +585,32 @@ mod tests {
             )])),
         );
         assert_eq!(
-            fangyuan_home_hud_status_text(Some(&stats)),
-            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
+            fangyuan_home_hud_status_text(Some(&stats), None),
+            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
         );
     }
 
     #[test]
     fn hud_status_text_defaults_to_non_successful_empty_state() {
         assert_eq!(
-            fangyuan_home_hud_status_text(None),
-            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
+            fangyuan_home_hud_status_text(None, None),
+            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
+        );
+    }
+
+    #[test]
+    fn hud_status_text_reports_chunk_debug_summary() {
+        let chunk_summary = FangyuanChunkDebugSummary {
+            loaded_chunks: 2,
+            loaded_chunk_ids: vec!["home_chunk_a".to_string(), "home_chunk_b".to_string()],
+            visible_objects: 9,
+            load_state: "fallback".to_string(),
+            failure_reason: "home_chunk_b:missing_prefab_ref".to_string(),
+        };
+
+        assert_eq!(
+            fangyuan_home_hud_status_text(None, Some(&chunk_summary)),
+            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 2 obj 9 state fallback fail ...nk_b:missing_prefab_ref ids home_chunk_a,home_chunk_b\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
         );
     }
 

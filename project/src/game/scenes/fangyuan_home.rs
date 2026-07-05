@@ -9,21 +9,25 @@ use crate::framework::{
     fangyuan::{
         FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanAuditFinding,
         FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditStatus,
-        FangyuanMaterialInstanceParams, FangyuanMaterialProfileRegistry, FangyuanObjectClass,
-        FangyuanObjectState, FangyuanObjectTrialRuntime, FangyuanObjectTrialSummary,
-        FangyuanObjectTrialVisualPrimitive, FangyuanPrimitive, FangyuanPrimitiveKind,
-        FangyuanPrimitiveSet, FangyuanPrimitiveSetStats, FangyuanRenderAssetCache,
-        FangyuanSceneLayoutCompileReport, FangyuanStaticInstanceBufferSource,
-        FangyuanStaticInstanceRenderBatch, FangyuanStaticInstanceRenderError,
-        FangyuanStaticInstanceRenderOptions, FangyuanStaticInstanceRenderReport,
-        FangyuanStaticInstanceRenderStats, FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds,
-        FangyuanStaticMeshBuildError, FangyuanStaticMeshBuildOptions,
-        FangyuanStaticMeshBuildReport, FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial,
-        FangyuanStaticMeshMetadata, fangyuan_render_transform_from_primitive,
-        fangyuan_standard_material_from_color, fangyuan_standard_material_from_params,
+        FangyuanChunkAvailablePrefabs, FangyuanChunkClearReason, FangyuanChunkCommand,
+        FangyuanChunkEvent, FangyuanChunkManifestRuntime, FangyuanChunkRuntime,
+        FangyuanChunkSourceLibrary, FangyuanMaterialInstanceParams,
+        FangyuanMaterialProfileRegistry, FangyuanObjectClass, FangyuanObjectState,
+        FangyuanObjectTrialRuntime, FangyuanObjectTrialSummary, FangyuanObjectTrialVisualPrimitive,
+        FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
+        FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
+        FangyuanStaticInstanceBufferSource, FangyuanStaticInstanceRenderBatch,
+        FangyuanStaticInstanceRenderError, FangyuanStaticInstanceRenderOptions,
+        FangyuanStaticInstanceRenderReport, FangyuanStaticInstanceRenderStats,
+        FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds, FangyuanStaticMeshBuildError,
+        FangyuanStaticMeshBuildOptions, FangyuanStaticMeshBuildReport,
+        FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial, FangyuanStaticMeshMetadata,
+        fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
+        fangyuan_standard_material_from_params,
         fangyuan_static_instance_render_report_from_primitive_set_with_source,
         fangyuan_static_meshes_from_primitive_set_with_source, format_fangyuan_audit_debug_lines,
         load_fangyuan_home_prefab_palette, load_fangyuan_home_scene_layout,
+        process_fangyuan_chunk_commands,
     },
     scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId},
 };
@@ -51,13 +55,21 @@ impl Plugin for FangyuanHomePlugin {
             .init_resource::<FangyuanObjectTrialRuntime>()
             .init_resource::<FangyuanHomeObjectTrialRenderRuntime>()
             .init_resource::<FangyuanHomeBlueprintStats>()
+            .init_resource::<FangyuanChunkRuntime>()
+            .init_resource::<FangyuanChunkSourceLibrary>()
+            .init_resource::<FangyuanChunkManifestRuntime>()
+            .init_resource::<FangyuanChunkAvailablePrefabs>()
             .add_message::<FangyuanHomeBlueprintCommand>()
+            .add_message::<FangyuanChunkCommand>()
+            .add_message::<FangyuanChunkEvent>()
             .add_systems(
                 Update,
                 (
                     reset_fangyuan_home_blueprint_stats_on_exit,
+                    clear_fangyuan_home_chunks_on_exit,
                     clear_fangyuan_home_render_runtime_on_exit,
                     handle_fangyuan_home_blueprint_commands,
+                    process_fangyuan_chunk_commands,
                 )
                     .chain(),
             )
@@ -2592,6 +2604,25 @@ fn reset_fangyuan_home_blueprint_stats_on_exit(
                 exited.session_id
             );
         }
+    }
+}
+
+fn clear_fangyuan_home_chunks_on_exit(
+    mut scene_events: MessageReader<SceneEvent>,
+    mut chunk_commands: MessageWriter<FangyuanChunkCommand>,
+) {
+    for event in scene_events.read() {
+        let SceneEvent::Exited(exited) = event else {
+            continue;
+        };
+
+        if exited.scene_id.as_str() != FANGYUAN_HOME_SCENE_ID {
+            continue;
+        }
+
+        chunk_commands.write(FangyuanChunkCommand::clear(
+            FangyuanChunkClearReason::SceneExit,
+        ));
     }
 }
 
