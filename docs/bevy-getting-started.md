@@ -501,6 +501,27 @@ cargo run -- --window-profile phone-small --window-scale 50%
 
 报告默认写入 `artifacts/fangyuan-bake/dry-run/report.txt`。其中 `ron_load_us`、`bin_load_us`、`peak_resource_count` 和 `artifact_size` 是开发机诊断字段，用来对比 RON 路径和当前 `FYBAKE` artifact 路径的解析/校验差异，不代表 Android 真机性能数据。需要清理正式 bake 输出目录时，使用 `fangyuan_bake --clean-output`，不要在 dry-run 中生成或提交 `.fyb`。
 
+方圆调试加载和缓存模型的常用验收命令：
+
+```powershell
+Set-Location project
+cargo test fangyuan_chunk_loading -- --nocapture
+cargo test fangyuan_runtime_load -- --nocapture
+cargo test fangyuan_blueprint_cache -- --nocapture
+cargo test fangyuan_streaming_update -- --nocapture
+cargo test fangyuan_epoch_inheritance -- --nocapture
+cargo test fangyuan_cache_authority -- --nocapture
+```
+
+其中 chunk loading 覆盖 load、unload、reload、失败 fallback 和场景退出 clear；runtime load 覆盖 `.fyb` header/schema/kind/hash/payload 和 RON fallback 边界；blueprint cache 覆盖 version/hash/dependency 校验、LRU/use_count 淘汰和损坏文件；streaming update 覆盖部分更新、依赖缺失、版本回退、预算、签名占位、权限占位和 rollback key；epoch inheritance 覆盖旧蓝图升级、重新审核和预算降级；cache authority 覆盖服务端 manifest 覆盖本地 stale cache。
+
+完整方圆回归可直接运行：
+
+```powershell
+Set-Location project
+cargo test fangyuan -- --nocapture
+```
+
 方圆家园还支持开发期渲染模式环境变量，用于对比 standard、CPU merge 和 static instance shared-mesh prototype。未设置或填入非法值时默认使用 `standard`：
 
 ```powershell
@@ -525,7 +546,7 @@ cargo run -- --window-profile phone-small --window-scale 50%
 $env:WGPU_BACKEND="dx12"
 ```
 
-该入口只用于开发期可视验收；第六至第八阶段覆盖静态 CPU merge、static instance shared-mesh prototype、统一材质 profile、fallback 和压力统计，不包含动态 VFX、技能规则层、正式 Chunk / LOD / AOI、发布期 Bake、蓝图缓存继承、正式 GPU instance buffer / custom render pipeline、联网同步、正式家园编辑器、蓝图持久化、装备挂点或任意 shader。
+该入口只用于开发期可视验收。当前方圆已具备 chunk/loading、LOD、AOI、热点灵压、Bake/runtime loader、blueprint cache、streaming update、epoch inheritance 和 cache authority 的本地模型、工具链与测试；仍不包含完整服务器集群、商业 CDN、运营后台、账号资产交易、最终云压测平台、正式 GPU instance buffer / custom render pipeline、联网同步、正式家园编辑器、蓝图持久化或任意 shader。
 
 Robot Sync MyServer 模式常用环境变量：
 
@@ -986,4 +1007,4 @@ $env:JAVA_HOME="C:\Program Files\Java\jdk-21"
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-方圆 Bake 与 Android 验证边界：`project/assets` 会整体进入 APK assets，因此 `.fyb` 只有在明确作为首包发布资源时才放入 `project/assets`；普通 dry-run 产物留在被忽略的 `artifacts/`。当前最小验证顺序是先跑 `.\scripts\run-fangyuan-bake-dry-run.ps1`，再用 `MYBEVY_START_SCENE="dev.fangyuan_home"` 的手机比例窗口确认 RON 首包路径没有被破坏；完整 Android APK 构建按上面的 `cargo ndk` 和 `gradlew.bat assembleDebug` 命令在需要时单独执行。
+方圆 Bake 与 Android 验证边界：`project/assets` 会整体进入 APK assets，因此 `.fyb` 只有在明确作为首包发布资源时才放入 `project/assets`；普通 dry-run 产物留在被忽略的 `artifacts/`。当前最小验证顺序是先跑 `.\scripts\run-fangyuan-bake-dry-run.ps1`，再用 `MYBEVY_START_SCENE="dev.fangyuan_home"` 的手机比例窗口确认 RON 首包路径没有被破坏；如需覆盖缓存和后续下载边界，再运行 `cargo test fangyuan_blueprint_cache -- --nocapture`、`cargo test fangyuan_streaming_update -- --nocapture` 和 `cargo test fangyuan_cache_authority -- --nocapture`。完整 Android APK 构建按上面的 `cargo ndk` 和 `gradlew.bat assembleDebug` 命令在需要时单独执行。

@@ -166,10 +166,15 @@ project/assets/licenses/kaykit_adventurers_license.txt
 方圆 Bake 产物策略：
 
 - 开发源文件继续使用 RON，放在 `project/assets/fangyuan/` 下时保持普通 Git 提交。
+- 方圆开发期 RON 覆盖 blueprint、prefab palette、scene layout、chunk、material profile 和 skill recipe；这些文本源用于审查、版本升级、validator、audit 和 deterministic bake。
+- 发布期方圆 artifact 当前使用 `.fyb`，格式为 `FYBAKE` 自定义 header + typed payload；它是运行期加载加速格式，不是唯一权威源数据，也不是最终压缩编码性能承诺。
 - 默认 dry-run report 和临时输出写入仓库根目录 `artifacts/fangyuan-bake/`，该目录被 Git 忽略，不提交。
 - 本地或构建流水线生成的 `.fyb`、`*.bake-report.txt` 和 `fangyuan-bake-report.txt` 默认视为构建产物，已通过 `.gitignore` 忽略。
 - 如果后续明确要把某个 `.fyb` 作为首包发布资源放入 `project/assets/`，应进入 Git LFS；当前 `.gitattributes` 已覆盖 `project/assets/**/*.fyb`。
 - bake report 只作为审查和 CI 日志产物，不进 LFS，也不随源码提交；需要长期保存时应归档到构建系统 artifact。
+- 首包内的方圆默认家园仍读取 `project/assets/fangyuan/layouts/home_layout.ron` 和 `project/assets/fangyuan/palettes/home_prefabs.ron`；只有 `.fyb` 明确放进 `project/assets/` 并接入 manifest 后，才视为发布期首包 artifact。
+- 后续下载的方圆 chunk、prefab、blueprint、material profile、skill visual 或 `.fyb` 包不放入 `project/assets/`，应由内容清单、version、hash、dependency、budget summary、签名占位和权限占位驱动，下载到应用私有缓存后再安装。
+- 客户端方圆缓存只作为性能优化和 bytes 存储，读取时必须校验 version、hash、dependency 和文件内容；服务端或 authority manifest 的审核、预算、权限和资产归属结果始终可以覆盖本地缓存。
 
 首次克隆或换新机器开发时，先确认 Git LFS 可用：
 
@@ -701,6 +706,14 @@ artifacts/fangyuan-bake/dry-run/report.txt
 这些字段用于比较两条加载路径的错误处理和数据规模差异，不是手机真机性能数据。当前 RON 路径主要暴露 parse、upgrade、validator 和依赖发现错误；bin 路径额外暴露 magic、schema version、artifact kind、content/source hash、payload version 和依赖缺失错误。
 
 当前仓库没有 `.github` CI workflow，也没有通用本地检查脚本。后续接入 CI 或提交前检查时，应追加 `.\scripts\run-fangyuan-bake-dry-run.ps1`，并把 report 作为构建日志/产物保存。
+
+方圆 chunk、cache 和 streaming update 边界：
+
+- 当前方圆 chunk/loading/LOD/AOI/cache/streaming update 模型位于 `project/src/framework/fangyuan/`，用于方圆资源的本地加载、调试摘要、测试和后续协议边界；它不等同于 `project/src/framework/scene/` 已实现通用场景资源流式加载。
+- Chunk 是方圆内容空间单位，记录 prefab instance、天道引用、静态装饰、region metadata、bounds 和预算摘要；chunk 内容应引用 prefab、blueprint 或 bake artifact，不应复制大体量 primitive 数据。
+- Streaming update 只更新受影响的 chunk、prefab、blueprint、material profile 或 skill visual，并在安装前校验 hash、version、dependency、budget summary、签名占位和权限占位。
+- 纪元继承不直接信任旧缓存；旧世界 blueprint、玩家家园、装备、技能 visual 和天道固化档案进入新世界时需要重新版本升级、审核、预算校准和降级判定。
+- 本文档当前只约定客户端资源边界，不代表已经具备完整服务器集群、商业 CDN、运营后台、账号资产交易或最终云压测平台。
 
 ## 9. 常见问题
 
