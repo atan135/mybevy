@@ -493,6 +493,31 @@ $env:WGPU_BACKEND="dx12"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
+方圆灵构试炼场和第十五阶段调试工具入口：
+
+```powershell
+Set-Location project
+$env:TOUCH_START_SCREEN="fangyuan_home"
+cargo run -- --window-profile phone-small
+```
+
+如果需要同时走完整场景加载、家园 layout / palette 展开和审核 HUD，优先使用 `MYBEVY_START_SCENE="dev.fangyuan_home"`；`TOUCH_START_SCREEN=fangyuan_home` 更适合快速打开 Fangyuan Home UI、试炼场按钮和开发者 debug panel。
+
+第十五阶段调试工具的定向验收命令：
+
+```powershell
+Set-Location project
+cargo test fangyuan_trial -- --nocapture
+cargo test fangyuan_debug_panel -- --nocapture
+cargo test fangyuan_pressure -- --nocapture
+cargo test fangyuan_visual_replay -- --nocapture
+cargo test fangyuan_debug_report -- --nocapture
+```
+
+其中 `fangyuan_trial` 覆盖试炼场审核解释、预算档位、降级前后和 fallback；`fangyuan_debug_panel` 覆盖开发者面板指标和模块开关；`fangyuan_pressure` 覆盖本地 deterministic 100 / 300 / 1000 人压力模拟和报告摘要；`fangyuan_visual_replay` 覆盖 authority replay 视觉摘要 hash 和 mismatch 定位；`fangyuan_debug_report` 覆盖调试报告 schema、`artifacts/fangyuan-debug/` 输出路径约定和 pressure baseline 比较格式。
+
+这些入口只用于本地开发、调试和回归验证。第十五阶段不是运营后台、云压测平台或商业监控系统，也不提供线上告警、商业观测计费或生产级监控数据管线。
+
 方圆 Bake dry-run 从仓库根目录执行，用于检查 `project/assets/fangyuan` 的 RON 源、依赖表、预算统计和报告输出，不生成 `.fyb` 首包产物：
 
 ```powershell
