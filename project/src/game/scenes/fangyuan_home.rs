@@ -6251,13 +6251,18 @@ mod tests {
         assert_eq!(stats.active_vfx_count, 0);
         assert_eq!(stats.trial_budget_cost, 0);
         assert_eq!(stats.trial_audit_run, 0);
+        assert_eq!(stats.trial_audit_status, "pending");
         assert_eq!(stats.trial_fallback_summary, "ok");
+        assert_eq!(stats.trial_plain_reason_summary, "ok");
         assert_eq!(stats.trial_finding_summary, "ok");
 
         let trial_runtime = app.world().resource::<FangyuanObjectTrialRuntime>();
         assert_eq!(trial_runtime.summary().route_id, "none");
         assert_eq!(trial_runtime.summary().active_vfx_count, 0);
         assert_eq!(trial_runtime.summary().budget_cost, 0);
+        assert_eq!(trial_runtime.summary().audit_run, 0);
+        assert_eq!(trial_runtime.summary().audit_status, "pending");
+        assert_eq!(trial_runtime.summary().plain_reason_summary, "ok");
         assert!(trial_runtime.visual_primitives().is_empty());
         assert_eq!(fangyuan_home_trial_visual_count(app, session_id), 0);
         assert_eq!(fangyuan_home_trial_live_material_count(app), 0);

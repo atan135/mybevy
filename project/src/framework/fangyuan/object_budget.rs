@@ -961,9 +961,7 @@ impl FangyuanObjectTrialRuntime {
         self.selections.clear();
         self.static_entries.clear();
         self.active_vfx_recipes.clear();
-        self.refresh_audit();
-        self.audit_run = 0;
-        self.summary.audit_run = 0;
+        self.reset_clear_summary();
     }
 
     pub fn exit_scene(&mut self) {
@@ -1029,6 +1027,13 @@ impl FangyuanObjectTrialRuntime {
             &self.audit.summary,
             presentation,
         );
+    }
+
+    fn reset_clear_summary(&mut self) {
+        let snapshot = FangyuanObjectBudgetSnapshot::default();
+        self.audit = audit_fangyuan_object_budget(&snapshot, &self.profile);
+        self.audit_run = 0;
+        self.summary = FangyuanObjectTrialSummary::default();
     }
 }
 
@@ -1807,6 +1812,10 @@ mod tests {
         assert_eq!(runtime.summary().active_vfx_count, 0);
         assert_eq!(runtime.summary().budget_cost, 0);
         assert_eq!(runtime.summary().audit_run, 0);
+        assert_eq!(runtime.summary().audit_status, "pending");
+        assert_eq!(runtime.summary().plain_reason_summary, "ok");
+        assert_eq!(runtime.summary().fallback_summary, "ok");
+        assert_eq!(runtime.summary().finding_summary, "ok");
         assert_eq!(runtime.audit().summary.total_count, 0);
         assert!(runtime.selections().is_empty());
         assert!(runtime.visual_primitives().is_empty());
@@ -1822,6 +1831,10 @@ mod tests {
         assert_eq!(runtime.summary().active_vfx_count, 0);
         assert_eq!(runtime.summary().budget_cost, 0);
         assert_eq!(runtime.summary().audit_run, 0);
+        assert_eq!(runtime.summary().audit_status, "pending");
+        assert_eq!(runtime.summary().plain_reason_summary, "ok");
+        assert_eq!(runtime.summary().fallback_summary, "ok");
+        assert_eq!(runtime.summary().finding_summary, "ok");
         assert!(runtime.selections().is_empty());
         assert!(runtime.visual_primitives().is_empty());
     }
