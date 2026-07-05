@@ -13,6 +13,7 @@
 mod asset_path;
 mod audit;
 mod avatar;
+mod bake;
 mod blueprint;
 mod chunk;
 mod chunk_loading;
@@ -39,6 +40,7 @@ mod vfx;
 pub use asset_path::*;
 pub use audit::*;
 pub use avatar::*;
+pub use bake::*;
 pub use blueprint::*;
 pub use chunk::*;
 pub use chunk_loading::*;
