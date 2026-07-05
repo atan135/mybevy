@@ -157,6 +157,30 @@ impl FangyuanObjectBudgetProfile {
             FangyuanObjectClass::Tiandao => self.tiandao,
         }
     }
+
+    pub fn relaxed_trial() -> Self {
+        Self {
+            recommended_total_cost: 144,
+            hard_total_cost: 192,
+            vfx: FangyuanObjectClassBudget::new(8, 20, 56, 72),
+            skill: FangyuanObjectClassBudget::new(6, 10, 72, 96),
+            equipment: FangyuanObjectClassBudget::new(3, 6, 24, 36),
+            npc: FangyuanObjectClassBudget::new(6, 10, 36, 48),
+            tiandao: FangyuanObjectClassBudget::new(6, 10, 36, 48),
+        }
+    }
+
+    pub fn strict_trial() -> Self {
+        Self {
+            recommended_total_cost: 32,
+            hard_total_cost: 48,
+            vfx: FangyuanObjectClassBudget::new(2, 4, 12, 18),
+            skill: FangyuanObjectClassBudget::new(1, 2, 12, 18),
+            equipment: FangyuanObjectClassBudget::new(1, 2, 4, 8),
+            npc: FangyuanObjectClassBudget::new(1, 2, 4, 8),
+            tiandao: FangyuanObjectClassBudget::new(1, 2, 4, 8),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -325,6 +349,125 @@ pub struct FangyuanObjectBudgetAudit {
     pub report: FangyuanAuditReport,
     pub summary: FangyuanObjectBudgetSummary,
     pub degrade_suggestions: Vec<FangyuanObjectBudgetDegradeSuggestion>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FangyuanTrialBlueprintDomain {
+    #[default]
+    Home,
+    Equipment,
+    Skill,
+    Appearance,
+}
+
+impl FangyuanTrialBlueprintDomain {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Home => "home",
+            Self::Equipment => "equipment",
+            Self::Skill => "skill",
+            Self::Appearance => "appearance",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FangyuanTrialBlueprintSelection {
+    pub domain: FangyuanTrialBlueprintDomain,
+    pub requested_id: String,
+    pub selected_id: String,
+    pub label: String,
+    pub source: String,
+}
+
+impl FangyuanTrialBlueprintSelection {
+    pub fn new(
+        domain: FangyuanTrialBlueprintDomain,
+        requested_id: impl Into<String>,
+        selected_id: impl Into<String>,
+        label: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            domain,
+            requested_id: requested_id.into(),
+            selected_id: selected_id.into(),
+            label: label.into(),
+            source: source.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FangyuanTrialBudgetProfileKind {
+    Relaxed,
+    #[default]
+    Standard,
+    Strict,
+}
+
+impl FangyuanTrialBudgetProfileKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Relaxed => "relaxed",
+            Self::Standard => "standard",
+            Self::Strict => "strict",
+        }
+    }
+
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Relaxed => Self::Standard,
+            Self::Standard => Self::Strict,
+            Self::Strict => Self::Relaxed,
+        }
+    }
+
+    pub fn profile(self) -> FangyuanObjectBudgetProfile {
+        match self {
+            Self::Relaxed => FangyuanObjectBudgetProfile::relaxed_trial(),
+            Self::Standard => FangyuanObjectBudgetProfile::default(),
+            Self::Strict => FangyuanObjectBudgetProfile::strict_trial(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FangyuanTrialResultCounts {
+    pub kept: usize,
+    pub degraded: usize,
+    pub rejected: usize,
+}
+
+impl FangyuanTrialResultCounts {
+    pub const fn total(self) -> usize {
+        self.kept + self.degraded + self.rejected
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FangyuanTrialFallbackState {
+    pub missing_count: usize,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FangyuanTrialAuditPresentation {
+    pub status: String,
+    pub error_count: usize,
+    pub warning_count: usize,
+    pub suggestion_count: usize,
+    pub budget_label: String,
+    pub budget_cost: u32,
+    pub budget_recommended: u32,
+    pub budget_hard: u32,
+    pub before_label: String,
+    pub after_label: String,
+    pub result_counts: FangyuanTrialResultCounts,
+    pub fallback: FangyuanTrialFallbackState,
+    pub plain_reasons: Vec<String>,
+    pub primary_finding: String,
+    pub primary_suggestion: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -538,9 +681,49 @@ pub fn fangyuan_default_object_trial_static_entries() -> Vec<FangyuanObjectBudge
     entries
 }
 
+pub fn fangyuan_default_trial_blueprint_selections() -> Vec<FangyuanTrialBlueprintSelection> {
+    vec![
+        FangyuanTrialBlueprintSelection::new(
+            FangyuanTrialBlueprintDomain::Home,
+            "fangyuan/layouts/home_layout.ron",
+            "fangyuan/layouts/home_layout.ron",
+            "default home layout",
+            "first_package",
+        ),
+        FangyuanTrialBlueprintSelection::new(
+            FangyuanTrialBlueprintDomain::Equipment,
+            "equipment.default_practice_blade",
+            "equipment.default_practice_blade",
+            "practice blade",
+            "built_in",
+        ),
+        FangyuanTrialBlueprintSelection::new(
+            FangyuanTrialBlueprintDomain::Skill,
+            "skill.visual.projectile",
+            "skill.visual.projectile",
+            "projectile visual",
+            "built_in",
+        ),
+        FangyuanTrialBlueprintSelection::new(
+            FangyuanTrialBlueprintDomain::Appearance,
+            "npc.default_wayfarer",
+            "npc.default_wayfarer",
+            "wayfarer appearance",
+            "built_in",
+        ),
+    ]
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FangyuanObjectTrialSummary {
     pub route_id: String,
+    pub selection_label: String,
+    pub budget_profile: String,
+    pub audit_run: u64,
+    pub audit_status: String,
+    pub audit_error_count: usize,
+    pub audit_warning_count: usize,
+    pub audit_suggestion_count: usize,
     pub active_vfx_count: usize,
     pub template_id: String,
     pub visual_id: String,
@@ -548,6 +731,17 @@ pub struct FangyuanObjectTrialSummary {
     pub npc_count: usize,
     pub tiandao_count: usize,
     pub budget_cost: u32,
+    pub budget_recommended: u32,
+    pub budget_hard: u32,
+    pub before_label: String,
+    pub after_label: String,
+    pub kept_count: usize,
+    pub degraded_count: usize,
+    pub rejected_count: usize,
+    pub fallback_missing_count: usize,
+    pub fallback_summary: String,
+    pub plain_reason_summary: String,
+    pub primary_suggestion: String,
     pub finding_summary: String,
 }
 
@@ -555,6 +749,15 @@ impl Default for FangyuanObjectTrialSummary {
     fn default() -> Self {
         Self {
             route_id: FangyuanObjectTrialRoute::None.as_str().to_string(),
+            selection_label: "-".to_string(),
+            budget_profile: FangyuanTrialBudgetProfileKind::Standard
+                .as_str()
+                .to_string(),
+            audit_run: 0,
+            audit_status: "pending".to_string(),
+            audit_error_count: 0,
+            audit_warning_count: 0,
+            audit_suggestion_count: 0,
             active_vfx_count: 0,
             template_id: "-".to_string(),
             visual_id: "-".to_string(),
@@ -562,15 +765,40 @@ impl Default for FangyuanObjectTrialSummary {
             npc_count: 0,
             tiandao_count: 0,
             budget_cost: 0,
+            budget_recommended: FANGYUAN_OBJECT_BUDGET_DEFAULT_RECOMMENDED_TOTAL_COST,
+            budget_hard: FANGYUAN_OBJECT_BUDGET_DEFAULT_HARD_TOTAL_COST,
+            before_label: "0 objects cost 0".to_string(),
+            after_label: "keep 0 degrade 0 reject 0".to_string(),
+            kept_count: 0,
+            degraded_count: 0,
+            rejected_count: 0,
+            fallback_missing_count: 0,
+            fallback_summary: "ok".to_string(),
+            plain_reason_summary: "ok".to_string(),
+            primary_suggestion: "-".to_string(),
             finding_summary: "ok".to_string(),
         }
     }
 }
 
 impl FangyuanObjectTrialSummary {
-    fn from_budget_summary(route_id: &str, summary: &FangyuanObjectBudgetSummary) -> Self {
+    fn from_budget_summary(
+        route_id: &str,
+        selection_label: String,
+        budget_profile: FangyuanTrialBudgetProfileKind,
+        audit_run: u64,
+        summary: &FangyuanObjectBudgetSummary,
+        presentation: FangyuanTrialAuditPresentation,
+    ) -> Self {
         Self {
             route_id: route_id.to_string(),
+            selection_label,
+            budget_profile: budget_profile.as_str().to_string(),
+            audit_run,
+            audit_status: presentation.status,
+            audit_error_count: presentation.error_count,
+            audit_warning_count: presentation.warning_count,
+            audit_suggestion_count: presentation.suggestion_count,
             active_vfx_count: summary.active_vfx_count,
             template_id: summary.template_id.clone(),
             visual_id: summary.visual_id.clone(),
@@ -578,6 +806,17 @@ impl FangyuanObjectTrialSummary {
             npc_count: summary.npc_count,
             tiandao_count: summary.tiandao_count,
             budget_cost: summary.total_cost,
+            budget_recommended: presentation.budget_recommended,
+            budget_hard: presentation.budget_hard,
+            before_label: presentation.before_label,
+            after_label: presentation.after_label,
+            kept_count: presentation.result_counts.kept,
+            degraded_count: presentation.result_counts.degraded,
+            rejected_count: presentation.result_counts.rejected,
+            fallback_missing_count: presentation.fallback.missing_count,
+            fallback_summary: presentation.fallback.label,
+            plain_reason_summary: join_trial_plain_reasons(&presentation.plain_reasons),
+            primary_suggestion: presentation.primary_suggestion,
             finding_summary: summary.finding_summary.clone(),
         }
     }
@@ -609,11 +848,14 @@ pub enum FangyuanObjectTrialError {
 pub struct FangyuanObjectTrialRuntime {
     route: FangyuanObjectTrialRoute,
     vfx_runtime: FangyuanVfxRuntime,
+    budget_profile: FangyuanTrialBudgetProfileKind,
     profile: FangyuanObjectBudgetProfile,
+    selections: Vec<FangyuanTrialBlueprintSelection>,
     static_entries: Vec<FangyuanObjectBudgetEntry>,
     active_vfx_recipes: Vec<FangyuanVfxRecipe>,
     audit: FangyuanObjectBudgetAudit,
     summary: FangyuanObjectTrialSummary,
+    audit_run: u64,
 }
 
 impl Default for FangyuanObjectTrialRuntime {
@@ -624,11 +866,14 @@ impl Default for FangyuanObjectTrialRuntime {
         Self {
             route: FangyuanObjectTrialRoute::None,
             vfx_runtime: FangyuanVfxRuntime::default(),
+            budget_profile: FangyuanTrialBudgetProfileKind::Standard,
             profile,
+            selections: Vec::new(),
             static_entries: Vec::new(),
             active_vfx_recipes: Vec::new(),
             summary: FangyuanObjectTrialSummary::default(),
             audit,
+            audit_run: 0,
         }
     }
 }
@@ -638,6 +883,7 @@ impl FangyuanObjectTrialRuntime {
         let snapshot = FangyuanObjectBudgetSnapshot::default();
         let audit = audit_fangyuan_object_budget(&snapshot, &profile);
         Self {
+            budget_profile: FangyuanTrialBudgetProfileKind::Standard,
             profile,
             audit,
             ..Default::default()
@@ -650,6 +896,7 @@ impl FangyuanObjectTrialRuntime {
     ) -> Result<FangyuanObjectTrialSummary, FangyuanObjectTrialError> {
         self.clear_scene();
         self.route = FangyuanObjectTrialRoute::HomeDebugTrial;
+        self.selections = fangyuan_default_trial_blueprint_selections();
         self.static_entries = fangyuan_default_object_trial_static_entries();
         self.active_vfx_recipes = fangyuan_object_trial_vfx_recipes();
         for recipe in self.active_vfx_recipes.clone() {
@@ -675,6 +922,28 @@ impl FangyuanObjectTrialRuntime {
         self.enter_default_showcase(start_tick)
     }
 
+    pub fn rerun_audit(&mut self) -> FangyuanObjectTrialSummary {
+        self.refresh_audit();
+        self.summary.clone()
+    }
+
+    pub fn switch_budget_profile(&mut self) -> FangyuanObjectTrialSummary {
+        self.budget_profile = self.budget_profile.next();
+        self.profile = self.budget_profile.profile();
+        self.refresh_audit();
+        self.summary.clone()
+    }
+
+    pub fn set_budget_profile(
+        &mut self,
+        budget_profile: FangyuanTrialBudgetProfileKind,
+    ) -> FangyuanObjectTrialSummary {
+        self.budget_profile = budget_profile;
+        self.profile = budget_profile.profile();
+        self.refresh_audit();
+        self.summary.clone()
+    }
+
     pub fn tick(
         &mut self,
         current_tick: u64,
@@ -689,9 +958,12 @@ impl FangyuanObjectTrialRuntime {
     pub fn clear_scene(&mut self) {
         self.route = FangyuanObjectTrialRoute::None;
         self.vfx_runtime.clear_scene();
+        self.selections.clear();
         self.static_entries.clear();
         self.active_vfx_recipes.clear();
         self.refresh_audit();
+        self.audit_run = 0;
+        self.summary.audit_run = 0;
     }
 
     pub fn exit_scene(&mut self) {
@@ -704,6 +976,23 @@ impl FangyuanObjectTrialRuntime {
 
     pub fn audit(&self) -> &FangyuanObjectBudgetAudit {
         &self.audit
+    }
+
+    pub fn budget_profile(&self) -> FangyuanTrialBudgetProfileKind {
+        self.budget_profile
+    }
+
+    pub fn selections(&self) -> &[FangyuanTrialBlueprintSelection] {
+        &self.selections
+    }
+
+    pub fn audit_presentation(&self) -> FangyuanTrialAuditPresentation {
+        fangyuan_trial_audit_presentation(
+            &self.audit,
+            &self.profile,
+            self.budget_profile,
+            &self.selections,
+        )
     }
 
     pub fn visual_primitives(&self) -> Vec<FangyuanObjectTrialVisualPrimitive> {
@@ -725,10 +1014,283 @@ impl FangyuanObjectTrialRuntime {
         }
         let snapshot = FangyuanObjectBudgetSnapshot::from_entries(entries);
         self.audit = audit_fangyuan_object_budget(&snapshot, &self.profile);
+        self.audit_run += 1;
+        let presentation = fangyuan_trial_audit_presentation(
+            &self.audit,
+            &self.profile,
+            self.budget_profile,
+            &self.selections,
+        );
         self.summary = FangyuanObjectTrialSummary::from_budget_summary(
             self.route.as_str(),
+            fangyuan_trial_selection_label(&self.selections),
+            self.budget_profile,
+            self.audit_run,
             &self.audit.summary,
+            presentation,
         );
+    }
+}
+
+pub fn fangyuan_trial_audit_presentation(
+    audit: &FangyuanObjectBudgetAudit,
+    profile: &FangyuanObjectBudgetProfile,
+    budget_profile: FangyuanTrialBudgetProfileKind,
+    selections: &[FangyuanTrialBlueprintSelection],
+) -> FangyuanTrialAuditPresentation {
+    let result_counts = fangyuan_trial_result_counts(audit);
+    let fallback = fangyuan_trial_fallback_state(selections);
+    let plain_reasons = fangyuan_trial_plain_reasons(audit);
+    let primary_finding = audit
+        .report
+        .findings
+        .iter()
+        .find(|finding| finding.severity == FangyuanAuditSeverity::Error)
+        .or_else(|| {
+            audit
+                .report
+                .findings
+                .iter()
+                .find(|finding| finding.severity == FangyuanAuditSeverity::Warning)
+        })
+        .or_else(|| audit.report.findings.first())
+        .map(|finding| finding.code.clone())
+        .unwrap_or_else(|| "-".to_string());
+    let primary_suggestion = audit
+        .degrade_suggestions
+        .first()
+        .map(|suggestion| suggestion.target.as_str().to_string())
+        .or_else(|| {
+            audit
+                .report
+                .suggestions
+                .first()
+                .map(|suggestion| format!("{:?}", suggestion.action))
+        })
+        .or_else(|| {
+            audit
+                .report
+                .findings
+                .iter()
+                .find_map(|finding| fangyuan_trial_plain_suggestion_for_code(&finding.code))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "-".to_string());
+    let suggestion_count = audit.report.suggestions.len()
+        + audit.degrade_suggestions.len()
+        + usize::from(
+            audit.report.suggestions.is_empty()
+                && audit.degrade_suggestions.is_empty()
+                && !audit.report.findings.is_empty(),
+        );
+
+    FangyuanTrialAuditPresentation {
+        status: object_audit_status_label(audit.report.status).to_string(),
+        error_count: audit.report.summary.error_count,
+        warning_count: audit.report.summary.warning_count,
+        suggestion_count,
+        budget_label: budget_profile.as_str().to_string(),
+        budget_cost: audit.summary.total_cost,
+        budget_recommended: profile.recommended_total_cost,
+        budget_hard: profile.hard_total_cost,
+        before_label: format!(
+            "{} objects cost {}",
+            audit.summary.total_count, audit.summary.total_cost
+        ),
+        after_label: format!(
+            "keep {} degrade {} reject {}",
+            result_counts.kept, result_counts.degraded, result_counts.rejected
+        ),
+        result_counts,
+        fallback,
+        plain_reasons,
+        primary_finding,
+        primary_suggestion,
+    }
+}
+
+pub fn fangyuan_trial_result_counts(
+    audit: &FangyuanObjectBudgetAudit,
+) -> FangyuanTrialResultCounts {
+    let total = audit.summary.total_count;
+    if total == 0 {
+        return FangyuanTrialResultCounts::default();
+    }
+
+    let degraded = audit.degrade_suggestions.len().min(total);
+    let rejected = if audit.report.status == FangyuanAuditStatus::Failed {
+        audit
+            .report
+            .summary
+            .error_count
+            .min(total.saturating_sub(degraded))
+    } else {
+        0
+    };
+    FangyuanTrialResultCounts {
+        kept: total.saturating_sub(degraded + rejected),
+        degraded,
+        rejected,
+    }
+}
+
+pub fn fangyuan_trial_plain_reasons(audit: &FangyuanObjectBudgetAudit) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for finding in &audit.report.findings {
+        if let Some(reason) = fangyuan_trial_plain_reason_for_code(&finding.code) {
+            push_unique_reason(&mut reasons, reason);
+        }
+    }
+    for suggestion in &audit.degrade_suggestions {
+        let reason = match suggestion.target {
+            FangyuanObjectDegradeTarget::NpcDecoration => "NPC 装饰先降级，保留核心玩法对象",
+            FangyuanObjectDegradeTarget::TiandaoTemporaryResidue => {
+                "天道残留可先隐藏，避免临时效果挤占预算"
+            }
+            FangyuanObjectDegradeTarget::EquipmentAura => "装备光环可减弱，优先保留装备主体",
+            FangyuanObjectDegradeTarget::SkillPersonality => {
+                "技能个性化特效可降级，规则层必须保持可读"
+            }
+        };
+        push_unique_reason(&mut reasons, reason);
+    }
+
+    if reasons.is_empty() {
+        reasons.push("预算正常，无需降级".to_string());
+    }
+    reasons
+}
+
+fn fangyuan_trial_plain_reason_for_code(code: &str) -> Option<&'static str> {
+    match code {
+        "primitive_count_above_recommended"
+        | "primitive_count_above_hard_limit"
+        | "object_budget_total_cost_above_recommended"
+        | "object_budget_total_cost_above_hard_limit"
+        | "object_budget_vfx_count_above_recommended"
+        | "object_budget_vfx_count_above_hard_limit"
+        | "object_budget_skill_count_above_recommended"
+        | "object_budget_skill_count_above_hard_limit"
+        | "object_budget_equipment_count_above_recommended"
+        | "object_budget_equipment_count_above_hard_limit"
+        | "object_budget_npc_count_above_recommended"
+        | "object_budget_npc_count_above_hard_limit"
+        | "object_budget_tiandao_count_above_recommended"
+        | "object_budget_tiandao_count_above_hard_limit" => {
+            Some("primitive 过多，低优先级装饰会先降级")
+        }
+        "alpha_count_above_recommended"
+        | "alpha_count_above_hard_limit"
+        | "transparent_count_above_recommended"
+        | "transparent_count_above_hard_limit"
+        | "skill_transparent_budget_exceeded" => Some("透明过量，容易造成排序和混合压力"),
+        "emissive_count_above_recommended"
+        | "emissive_count_above_hard_limit"
+        | "emissive_intensity_above_limit"
+        | "skill_emissive_budget_exceeded" => Some("发光过强，移动端亮度和性能风险较高"),
+        "skill_rule_layer_occluded" => Some("规则层被遮挡，命中范围需要优先可见"),
+        "skill_color_conflict" => Some("技能颜色和规则层冲突，需要提高可读性"),
+        "skill_visual_range_missing"
+        | "skill_visual_range_too_small"
+        | "skill_visual_range_mismatch" => Some("技能视觉范围不清晰，可能误导玩家判断"),
+        "skill_decor_bounds_exceeded" => Some("技能装饰超出规则范围，需收敛到可读区域"),
+        "material_profile_count_above_recommended" | "material_profile_count_above_hard_limit" => {
+            Some("材质种类过多，会增加渲染分支")
+        }
+        _ => None,
+    }
+}
+
+fn fangyuan_trial_plain_suggestion_for_code(code: &str) -> Option<&'static str> {
+    match code {
+        "primitive_count_above_recommended"
+        | "primitive_count_above_hard_limit"
+        | "object_budget_total_cost_above_recommended"
+        | "object_budget_total_cost_above_hard_limit"
+        | "object_budget_vfx_count_above_recommended"
+        | "object_budget_vfx_count_above_hard_limit"
+        | "object_budget_skill_count_above_recommended"
+        | "object_budget_skill_count_above_hard_limit"
+        | "object_budget_equipment_count_above_recommended"
+        | "object_budget_equipment_count_above_hard_limit"
+        | "object_budget_npc_count_above_recommended"
+        | "object_budget_npc_count_above_hard_limit"
+        | "object_budget_tiandao_count_above_recommended"
+        | "object_budget_tiandao_count_above_hard_limit" => {
+            Some("减少低优先级 primitive 或切换宽松预算")
+        }
+        "alpha_count_above_recommended"
+        | "alpha_count_above_hard_limit"
+        | "transparent_count_above_recommended"
+        | "transparent_count_above_hard_limit"
+        | "skill_transparent_budget_exceeded" => Some("减少透明层或改为不透明替代"),
+        "emissive_count_above_recommended"
+        | "emissive_count_above_hard_limit"
+        | "emissive_intensity_above_limit"
+        | "skill_emissive_budget_exceeded" => Some("降低发光数量或强度"),
+        "skill_rule_layer_occluded" => Some("把规则层提到视觉装饰之上"),
+        "skill_color_conflict" => Some("调整技能颜色，提升规则层对比度"),
+        "skill_visual_range_missing"
+        | "skill_visual_range_too_small"
+        | "skill_visual_range_mismatch" => Some("补齐技能范围可视边界"),
+        "skill_decor_bounds_exceeded" => Some("收缩技能装饰范围"),
+        "material_profile_count_above_recommended" | "material_profile_count_above_hard_limit" => {
+            Some("合并相近材质 profile")
+        }
+        _ => None,
+    }
+}
+
+fn fangyuan_trial_fallback_state(
+    selections: &[FangyuanTrialBlueprintSelection],
+) -> FangyuanTrialFallbackState {
+    let mut missing = Vec::new();
+    for selection in selections {
+        if selection.requested_id != selection.selected_id {
+            missing.push(format!(
+                "{}:{}->{}",
+                selection.domain.as_str(),
+                selection.requested_id,
+                selection.selected_id
+            ));
+        }
+    }
+
+    if missing.is_empty() {
+        FangyuanTrialFallbackState {
+            missing_count: 0,
+            label: "ok".to_string(),
+        }
+    } else {
+        FangyuanTrialFallbackState {
+            missing_count: missing.len(),
+            label: missing.join("|"),
+        }
+    }
+}
+
+fn fangyuan_trial_selection_label(selections: &[FangyuanTrialBlueprintSelection]) -> String {
+    if selections.is_empty() {
+        return "-".to_string();
+    }
+
+    selections
+        .iter()
+        .map(|selection| format!("{}:{}", selection.domain.as_str(), selection.selected_id))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn join_trial_plain_reasons(reasons: &[String]) -> String {
+    if reasons.is_empty() {
+        return "ok".to_string();
+    }
+    reasons.join("|")
+}
+
+fn push_unique_reason(reasons: &mut Vec<String>, reason: &str) {
+    if !reasons.iter().any(|existing| existing == reason) {
+        reasons.push(reason.to_string());
     }
 }
 
@@ -1123,6 +1685,13 @@ mod tests {
         let summary = runtime.enter_default_showcase(0).unwrap();
 
         assert_eq!(summary.route_id, FANGYUAN_OBJECT_TRIAL_ROUTE_ID);
+        assert!(summary.selection_label.contains("home:"));
+        assert_eq!(summary.budget_profile, "standard");
+        assert_eq!(summary.audit_run, 1);
+        assert_eq!(summary.audit_status, "warning");
+        assert_eq!(summary.audit_error_count, 0);
+        assert_eq!(summary.audit_warning_count, 1);
+        assert!(summary.audit_suggestion_count > 0);
         assert_eq!(summary.active_vfx_count, 4);
         assert_eq!(summary.template_id, "skill.template.projectile");
         assert_eq!(summary.visual_id, "skill.visual.projectile");
@@ -1137,6 +1706,12 @@ mod tests {
             runtime.audit().report.status,
             FangyuanAuditStatus::PassedWithWarnings
         );
+        assert_eq!(summary.kept_count, runtime.audit().summary.total_count);
+        assert_eq!(summary.degraded_count, 0);
+        assert_eq!(summary.rejected_count, 0);
+        assert_eq!(summary.fallback_missing_count, 0);
+        assert_eq!(summary.fallback_summary, "ok");
+        assert!(summary.plain_reason_summary.contains("技能颜色"));
 
         let visual_primitives = runtime.visual_primitives();
         assert!(
@@ -1162,6 +1737,66 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_trial_selection_audit_display_and_fallback_are_presented_for_players() {
+        let mut runtime = FangyuanObjectTrialRuntime::default();
+
+        let summary = runtime.enter_default_showcase(0).unwrap();
+        let presentation = runtime.audit_presentation();
+
+        assert_eq!(runtime.selections().len(), 4);
+        assert!(
+            runtime
+                .selections()
+                .iter()
+                .any(|selection| selection.domain == FangyuanTrialBlueprintDomain::Home)
+        );
+        assert_eq!(presentation.status, "warning");
+        assert_eq!(presentation.error_count, 0);
+        assert_eq!(presentation.warning_count, 1);
+        assert!(presentation.suggestion_count > 0);
+        assert_eq!(presentation.budget_label, "standard");
+        assert_eq!(presentation.budget_cost, summary.budget_cost);
+        assert_eq!(presentation.budget_recommended, summary.budget_recommended);
+        assert_eq!(presentation.budget_hard, summary.budget_hard);
+        assert_eq!(presentation.fallback.missing_count, 0);
+        assert_eq!(presentation.fallback.label, "ok");
+        assert!(
+            presentation
+                .plain_reasons
+                .iter()
+                .any(|reason| reason.contains("技能颜色"))
+        );
+        assert_eq!(presentation.result_counts.rejected, 0);
+    }
+
+    #[test]
+    fn fangyuan_trial_budget_profile_switch_updates_kept_degraded_rejected_results() {
+        let mut runtime = FangyuanObjectTrialRuntime::default();
+
+        let standard = runtime.enter_default_showcase(0).unwrap();
+        let strict = runtime.set_budget_profile(FangyuanTrialBudgetProfileKind::Strict);
+
+        assert_eq!(standard.budget_profile, "standard");
+        assert_eq!(strict.budget_profile, "strict");
+        assert_eq!(
+            runtime.budget_profile(),
+            FangyuanTrialBudgetProfileKind::Strict
+        );
+        assert_eq!(strict.audit_status, "failed");
+        assert!(strict.audit_error_count > 0);
+        assert!(strict.degraded_count > 0);
+        assert!(strict.rejected_count > 0);
+        assert!(
+            strict.kept_count < strict.kept_count + strict.degraded_count + strict.rejected_count
+        );
+        assert!(strict.plain_reason_summary.contains("primitive 过多"));
+
+        let rerun = runtime.rerun_audit();
+        assert_eq!(rerun.budget_profile, "strict");
+        assert!(rerun.audit_run > strict.audit_run);
+    }
+
+    #[test]
     fn fangyuan_object_budget_trial_route_reload_and_clear_leave_no_budget_residue() {
         let mut runtime = FangyuanObjectTrialRuntime::default();
 
@@ -1171,18 +1806,23 @@ mod tests {
         assert_eq!(runtime.summary().route_id, "none");
         assert_eq!(runtime.summary().active_vfx_count, 0);
         assert_eq!(runtime.summary().budget_cost, 0);
+        assert_eq!(runtime.summary().audit_run, 0);
         assert_eq!(runtime.audit().summary.total_count, 0);
+        assert!(runtime.selections().is_empty());
         assert!(runtime.visual_primitives().is_empty());
 
         let summary = runtime.reload_default_showcase(10).unwrap();
         assert_eq!(summary.route_id, FANGYUAN_OBJECT_TRIAL_ROUTE_ID);
         assert_eq!(summary.active_vfx_count, 4);
+        assert_eq!(summary.audit_run, 1);
         assert!(!runtime.visual_primitives().is_empty());
 
         runtime.exit_scene();
         assert_eq!(runtime.summary().route_id, "none");
         assert_eq!(runtime.summary().active_vfx_count, 0);
         assert_eq!(runtime.summary().budget_cost, 0);
+        assert_eq!(runtime.summary().audit_run, 0);
+        assert!(runtime.selections().is_empty());
         assert!(runtime.visual_primitives().is_empty());
     }
 

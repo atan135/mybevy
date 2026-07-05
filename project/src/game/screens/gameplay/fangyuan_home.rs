@@ -42,6 +42,12 @@ pub(super) struct FangyuanHomeReloadButton;
 pub(super) struct FangyuanHomeClearButton;
 
 #[derive(Component)]
+pub(super) struct FangyuanHomeTrialRerunAuditButton;
+
+#[derive(Component)]
+pub(super) struct FangyuanHomeTrialBudgetButton;
+
+#[derive(Component)]
 pub(super) struct FangyuanHomeLobbyButton;
 
 #[derive(Component)]
@@ -135,6 +141,28 @@ pub(super) fn setup_fangyuan_home_hud(
                             "清空",
                         ),
                         FangyuanHomeClearButton,
+                    ),
+                    (
+                        secondary_action_button_key(
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            "fangyuan_home.hud.trial_rerun",
+                            "重审",
+                        ),
+                        FangyuanHomeTrialRerunAuditButton,
+                    ),
+                    (
+                        secondary_action_button_key(
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            "fangyuan_home.hud.trial_budget",
+                            "预算",
+                        ),
+                        FangyuanHomeTrialBudgetButton,
                     ),
                     (
                         secondary_action_button_key(
@@ -254,7 +282,7 @@ fn fangyuan_home_hud_status_text(
         compact_fangyuan_home_layout_path(stats.palette_path(), FANGYUAN_HOME_PREFAB_PALETTE_PATH);
 
     format!(
-        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nmatprof {} opaque {} trans {} emi {:.1} uniq {}\nrender {} ib {} ii {} bytes {} fb {}\nchunk {} obj {} state {} fail {} ids {}\nlod {} aoi {:.0} pressure {} degrade {}\npath {}\ntrial {} vfx {} tpl {} vis {}\neq {} npc {} td {} cost {} find {}\nl {layout_path}\np {palette_path}",
+        "layout {state} gen {}/{} skip {}\naudit {} e{} w{} {}\npal {} pf {} used {} inst {} mat {}\nmatprof {} opaque {} trans {} emi {:.1} uniq {}\nrender {} ib {} ii {} bytes {} fb {}\nchunk {} obj {} state {} fail {} ids {}\nlod {} aoi {:.0} pressure {} degrade {}\npath {}\ntrial {} sel {} profile {} run {} status {} e{} w{} s{}\ntrial vfx {} tpl {} vis {}\neq {} npc {} td {} cost {}/{}/{}\ntrial before {} after {}\nresult k{} d{} r{} fb{} {} reason {} suggest {} find {}\nl {layout_path}\np {palette_path}",
         stats.generated_primitives,
         FANGYUAN_HOME_PRIMITIVE_LIMIT,
         stats.skipped,
@@ -288,6 +316,13 @@ fn fangyuan_home_hud_status_text(
         compact_fangyuan_home_lod_label(&stats.lod_degrade_reason),
         compact_fangyuan_home_lod_path(&stats.lod_render_paths),
         stats.trial_route_id,
+        compact_fangyuan_home_trial_label(&stats.trial_selection_label),
+        compact_fangyuan_home_trial_id(&stats.trial_budget_profile),
+        stats.trial_audit_run,
+        stats.trial_audit_status,
+        stats.trial_audit_error_count,
+        stats.trial_audit_warning_count,
+        stats.trial_audit_suggestion_count,
         stats.active_vfx_count,
         compact_fangyuan_home_trial_id(&stats.trial_template_id),
         compact_fangyuan_home_trial_id(&stats.trial_visual_id),
@@ -295,6 +330,17 @@ fn fangyuan_home_hud_status_text(
         stats.trial_npc_count,
         stats.trial_tiandao_count,
         stats.trial_budget_cost,
+        stats.trial_budget_recommended,
+        stats.trial_budget_hard,
+        compact_fangyuan_home_trial_label(&stats.trial_before_label),
+        compact_fangyuan_home_trial_label(&stats.trial_after_label),
+        stats.trial_kept_count,
+        stats.trial_degraded_count,
+        stats.trial_rejected_count,
+        stats.trial_fallback_missing_count,
+        compact_fangyuan_home_finding_summary(&stats.trial_fallback_summary),
+        compact_fangyuan_home_trial_label(&stats.trial_plain_reason_summary),
+        compact_fangyuan_home_trial_id(&stats.trial_primary_suggestion),
         compact_fangyuan_home_finding_summary(&stats.trial_finding_summary),
     )
 }
@@ -306,6 +352,11 @@ fn compact_fangyuan_home_chunk_state(state: &str) -> String {
 fn compact_fangyuan_home_trial_id(id: &str) -> String {
     const MAX_ID_CHARS: usize = 22;
     compact_fangyuan_home_text(id, "-", MAX_ID_CHARS)
+}
+
+fn compact_fangyuan_home_trial_label(label: &str) -> String {
+    const MAX_LABEL_CHARS: usize = 46;
+    compact_fangyuan_home_text(label, "-", MAX_LABEL_CHARS)
 }
 
 fn compact_fangyuan_home_fallback_reason(reason: &str) -> String {
@@ -375,6 +426,8 @@ pub(super) fn handle_fangyuan_home_hud_buttons(
     mut route_commands: MessageWriter<GameRouteCommand>,
     reload_buttons: Query<(), With<FangyuanHomeReloadButton>>,
     clear_buttons: Query<(), With<FangyuanHomeClearButton>>,
+    trial_rerun_buttons: Query<(), With<FangyuanHomeTrialRerunAuditButton>>,
+    trial_budget_buttons: Query<(), With<FangyuanHomeTrialBudgetButton>>,
     lobby_buttons: Query<(), With<FangyuanHomeLobbyButton>>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
@@ -387,6 +440,10 @@ pub(super) fn handle_fangyuan_home_hud_buttons(
             blueprint_commands.write(FangyuanHomeBlueprintCommand::Reload);
         } else if clear_buttons.contains(event.entity) {
             blueprint_commands.write(FangyuanHomeBlueprintCommand::Clear);
+        } else if trial_rerun_buttons.contains(event.entity) {
+            blueprint_commands.write(FangyuanHomeBlueprintCommand::RerunTrialAudit);
+        } else if trial_budget_buttons.contains(event.entity) {
+            blueprint_commands.write(FangyuanHomeBlueprintCommand::SwitchTrialBudget);
         } else if lobby_buttons.contains(event.entity) {
             scene_commands.write(SceneCommand::Exit(SceneExitRequest::default()));
             route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
@@ -463,6 +520,11 @@ mod tests {
 
         let reload_button = app.world_mut().spawn(FangyuanHomeReloadButton).id();
         let clear_button = app.world_mut().spawn(FangyuanHomeClearButton).id();
+        let trial_rerun_button = app
+            .world_mut()
+            .spawn(FangyuanHomeTrialRerunAuditButton)
+            .id();
+        let trial_budget_button = app.world_mut().spawn(FangyuanHomeTrialBudgetButton).id();
         let lobby_button = app.world_mut().spawn(FangyuanHomeLobbyButton).id();
         let ignored_button = app.world_mut().spawn_empty().id();
 
@@ -482,6 +544,16 @@ mod tests {
             button: None,
         });
         app.world_mut().write_message(UiButtonEvent {
+            entity: trial_rerun_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.world_mut().write_message(UiButtonEvent {
+            entity: trial_budget_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.world_mut().write_message(UiButtonEvent {
             entity: lobby_button,
             kind: UiButtonEventKind::Click,
             button: None,
@@ -492,7 +564,9 @@ mod tests {
             read_messages::<FangyuanHomeBlueprintCommand>(app.world()),
             vec![
                 FangyuanHomeBlueprintCommand::Reload,
-                FangyuanHomeBlueprintCommand::Clear
+                FangyuanHomeBlueprintCommand::Clear,
+                FangyuanHomeBlueprintCommand::RerunTrialAudit,
+                FangyuanHomeBlueprintCommand::SwitchTrialBudget
             ]
         );
         assert_eq!(
@@ -504,6 +578,48 @@ mod tests {
         assert!(matches!(
             route_commands[0],
             GameRouteCommand::ChangeMode(AppUiMode::Lobby)
+        ));
+    }
+
+    #[test]
+    fn fangyuan_trial_hud_buttons_write_rerun_budget_and_lobby_return_commands() {
+        let mut app = App::new();
+        app.add_message::<FangyuanHomeBlueprintCommand>()
+            .add_message::<SceneCommand>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<UiButtonEvent>()
+            .add_systems(Update, handle_fangyuan_home_hud_buttons);
+
+        let rerun_button = app
+            .world_mut()
+            .spawn(FangyuanHomeTrialRerunAuditButton)
+            .id();
+        let budget_button = app.world_mut().spawn(FangyuanHomeTrialBudgetButton).id();
+        let lobby_button = app.world_mut().spawn(FangyuanHomeLobbyButton).id();
+
+        for entity in [rerun_button, budget_button, lobby_button] {
+            app.world_mut().write_message(UiButtonEvent {
+                entity,
+                kind: UiButtonEventKind::Click,
+                button: None,
+            });
+        }
+        app.update();
+
+        assert_eq!(
+            read_messages::<FangyuanHomeBlueprintCommand>(app.world()),
+            vec![
+                FangyuanHomeBlueprintCommand::RerunTrialAudit,
+                FangyuanHomeBlueprintCommand::SwitchTrialBudget
+            ]
+        );
+        assert_eq!(
+            read_messages::<SceneCommand>(app.world()),
+            vec![SceneCommand::Exit(SceneExitRequest::default())]
+        );
+        assert!(matches!(
+            read_messages::<GameRouteCommand>(app.world()).as_slice(),
+            [GameRouteCommand::ChangeMode(AppUiMode::Lobby)]
         ));
     }
 
@@ -533,7 +649,7 @@ mod tests {
         let text = app.world().get::<Text>(status_text).unwrap();
         assert_eq!(
             text.0,
-            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
     }
 
@@ -553,13 +669,13 @@ mod tests {
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats), None),
-            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_cleared(&session_id);
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats), None),
-            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout cleared gen 0/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_loaded(
@@ -584,7 +700,7 @@ mod tests {
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats), None),
-            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender static_instance->standard ib 0 ii 0 bytes 0 fb ...buffer_bytes=5000/1\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
+            "layout loaded gen 3/1000 skip 2\naudit warning e0 w1 invalid_primitive_color\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender static_instance->standard ib 0 ii 0 bytes 0 fb ...buffer_bytes=5000/1\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
 
         stats.record_layout_failed(
@@ -599,7 +715,7 @@ mod tests {
         );
         assert_eq!(
             fangyuan_home_hud_status_text(Some(&stats), None),
-            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
+            "layout failed gen 0/1000 skip 0\naudit failed e1 w0 missing_prefab\npal 0 pf 0 used 0 inst 0 mat 3\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl ...ene_failure_case.layout.ron\np ...bs_failure_case.palette.ron"
         );
     }
 
@@ -607,7 +723,7 @@ mod tests {
     fn hud_status_text_defaults_to_non_successful_empty_state() {
         assert_eq!(
             fangyuan_home_hud_status_text(None, None),
-            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
+            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
         );
     }
 
@@ -623,7 +739,7 @@ mod tests {
 
         assert_eq!(
             fangyuan_home_hud_status_text(None, Some(&chunk_summary)),
-            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 2 obj 9 state fallback fail ...nk_b:missing_prefab_ref ids home_chunk_a,home_chunk_b\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0 find ok\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
+            "layout pending gen 0/1000 skip 0\naudit pending e0 w0 -\npal 0 pf 0 used 0 inst 0 mat 0\nmatprof 0 opaque 0 trans 0 emi 0.0 uniq 0\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 2 obj 9 state fallback fail ...nk_b:missing_prefab_ref ids home_chunk_a,home_chunk_b\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl ...uan/layouts/home_layout.ron\np ...n/palettes/home_prefabs.ron"
         );
     }
 

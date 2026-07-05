@@ -24,9 +24,10 @@ use crate::framework::{
         FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds, FangyuanStaticMeshBuildError,
         FangyuanStaticMeshBuildOptions, FangyuanStaticMeshBuildReport,
         FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial, FangyuanStaticMeshMetadata,
-        evaluate_fangyuan_hotspot, fangyuan_lod_descriptor_from_trial_visual,
-        fangyuan_lod_descriptors_from_primitive_set, fangyuan_render_transform_from_primitive,
-        fangyuan_standard_material_from_color, fangyuan_standard_material_from_params,
+        FangyuanTrialBudgetProfileKind, evaluate_fangyuan_hotspot,
+        fangyuan_lod_descriptor_from_trial_visual, fangyuan_lod_descriptors_from_primitive_set,
+        fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
+        fangyuan_standard_material_from_params,
         fangyuan_static_instance_render_report_from_primitive_set_with_source,
         fangyuan_static_meshes_from_primitive_set_with_source, format_fangyuan_audit_debug_lines,
         hotspot_metrics_from_descriptors, load_fangyuan_home_prefab_palette,
@@ -86,6 +87,8 @@ impl Plugin for FangyuanHomePlugin {
 pub(in crate::game) enum FangyuanHomeBlueprintCommand {
     Reload,
     Clear,
+    RerunTrialAudit,
+    SwitchTrialBudget,
 }
 
 #[allow(dead_code)]
@@ -691,6 +694,13 @@ pub(in crate::game) struct FangyuanHomeBlueprintStats {
     pub(in crate::game) lod_pressure: String,
     pub(in crate::game) lod_degrade_reason: String,
     pub(in crate::game) trial_route_id: String,
+    pub(in crate::game) trial_selection_label: String,
+    pub(in crate::game) trial_budget_profile: String,
+    pub(in crate::game) trial_audit_run: u64,
+    pub(in crate::game) trial_audit_status: String,
+    pub(in crate::game) trial_audit_error_count: usize,
+    pub(in crate::game) trial_audit_warning_count: usize,
+    pub(in crate::game) trial_audit_suggestion_count: usize,
     pub(in crate::game) active_vfx_count: usize,
     pub(in crate::game) trial_template_id: String,
     pub(in crate::game) trial_visual_id: String,
@@ -698,6 +708,17 @@ pub(in crate::game) struct FangyuanHomeBlueprintStats {
     pub(in crate::game) trial_npc_count: usize,
     pub(in crate::game) trial_tiandao_count: usize,
     pub(in crate::game) trial_budget_cost: u32,
+    pub(in crate::game) trial_budget_recommended: u32,
+    pub(in crate::game) trial_budget_hard: u32,
+    pub(in crate::game) trial_before_label: String,
+    pub(in crate::game) trial_after_label: String,
+    pub(in crate::game) trial_kept_count: usize,
+    pub(in crate::game) trial_degraded_count: usize,
+    pub(in crate::game) trial_rejected_count: usize,
+    pub(in crate::game) trial_fallback_missing_count: usize,
+    pub(in crate::game) trial_fallback_summary: String,
+    pub(in crate::game) trial_plain_reason_summary: String,
+    pub(in crate::game) trial_primary_suggestion: String,
     pub(in crate::game) trial_finding_summary: String,
     state: String,
 }
@@ -742,6 +763,15 @@ impl Default for FangyuanHomeBlueprintStats {
             lod_pressure: "normal".to_string(),
             lod_degrade_reason: "-".to_string(),
             trial_route_id: "none".to_string(),
+            trial_selection_label: "-".to_string(),
+            trial_budget_profile: FangyuanTrialBudgetProfileKind::Standard
+                .as_str()
+                .to_string(),
+            trial_audit_run: 0,
+            trial_audit_status: "pending".to_string(),
+            trial_audit_error_count: 0,
+            trial_audit_warning_count: 0,
+            trial_audit_suggestion_count: 0,
             active_vfx_count: 0,
             trial_template_id: "-".to_string(),
             trial_visual_id: "-".to_string(),
@@ -749,6 +779,17 @@ impl Default for FangyuanHomeBlueprintStats {
             trial_npc_count: 0,
             trial_tiandao_count: 0,
             trial_budget_cost: 0,
+            trial_budget_recommended: 96,
+            trial_budget_hard: 128,
+            trial_before_label: "0 objects cost 0".to_string(),
+            trial_after_label: "keep 0 degrade 0 reject 0".to_string(),
+            trial_kept_count: 0,
+            trial_degraded_count: 0,
+            trial_rejected_count: 0,
+            trial_fallback_missing_count: 0,
+            trial_fallback_summary: "ok".to_string(),
+            trial_plain_reason_summary: "ok".to_string(),
+            trial_primary_suggestion: "-".to_string(),
             trial_finding_summary: "ok".to_string(),
             state: FANGYUAN_HOME_BLUEPRINT_STATE_PENDING.to_string(),
         }
@@ -946,6 +987,13 @@ impl FangyuanHomeBlueprintStats {
         let lod_pressure = self.lod_pressure.clone();
         let lod_degrade_reason = self.lod_degrade_reason.clone();
         let trial_route_id = self.trial_route_id.clone();
+        let trial_selection_label = self.trial_selection_label.clone();
+        let trial_budget_profile = self.trial_budget_profile.clone();
+        let trial_audit_run = self.trial_audit_run;
+        let trial_audit_status = self.trial_audit_status.clone();
+        let trial_audit_error_count = self.trial_audit_error_count;
+        let trial_audit_warning_count = self.trial_audit_warning_count;
+        let trial_audit_suggestion_count = self.trial_audit_suggestion_count;
         let active_vfx_count = self.active_vfx_count;
         let trial_template_id = self.trial_template_id.clone();
         let trial_visual_id = self.trial_visual_id.clone();
@@ -953,6 +1001,17 @@ impl FangyuanHomeBlueprintStats {
         let trial_npc_count = self.trial_npc_count;
         let trial_tiandao_count = self.trial_tiandao_count;
         let trial_budget_cost = self.trial_budget_cost;
+        let trial_budget_recommended = self.trial_budget_recommended;
+        let trial_budget_hard = self.trial_budget_hard;
+        let trial_before_label = self.trial_before_label.clone();
+        let trial_after_label = self.trial_after_label.clone();
+        let trial_kept_count = self.trial_kept_count;
+        let trial_degraded_count = self.trial_degraded_count;
+        let trial_rejected_count = self.trial_rejected_count;
+        let trial_fallback_missing_count = self.trial_fallback_missing_count;
+        let trial_fallback_summary = self.trial_fallback_summary.clone();
+        let trial_plain_reason_summary = self.trial_plain_reason_summary.clone();
+        let trial_primary_suggestion = self.trial_primary_suggestion.clone();
         let trial_finding_summary = self.trial_finding_summary.clone();
         self.session_id = Some(session_id.clone());
         self.primitive_stats = FangyuanPrimitiveSetStats::default();
@@ -991,6 +1050,13 @@ impl FangyuanHomeBlueprintStats {
         self.lod_pressure = lod_pressure;
         self.lod_degrade_reason = lod_degrade_reason;
         self.trial_route_id = trial_route_id;
+        self.trial_selection_label = trial_selection_label;
+        self.trial_budget_profile = trial_budget_profile;
+        self.trial_audit_run = trial_audit_run;
+        self.trial_audit_status = trial_audit_status;
+        self.trial_audit_error_count = trial_audit_error_count;
+        self.trial_audit_warning_count = trial_audit_warning_count;
+        self.trial_audit_suggestion_count = trial_audit_suggestion_count;
         self.active_vfx_count = active_vfx_count;
         self.trial_template_id = trial_template_id;
         self.trial_visual_id = trial_visual_id;
@@ -998,12 +1064,30 @@ impl FangyuanHomeBlueprintStats {
         self.trial_npc_count = trial_npc_count;
         self.trial_tiandao_count = trial_tiandao_count;
         self.trial_budget_cost = trial_budget_cost;
+        self.trial_budget_recommended = trial_budget_recommended;
+        self.trial_budget_hard = trial_budget_hard;
+        self.trial_before_label = trial_before_label;
+        self.trial_after_label = trial_after_label;
+        self.trial_kept_count = trial_kept_count;
+        self.trial_degraded_count = trial_degraded_count;
+        self.trial_rejected_count = trial_rejected_count;
+        self.trial_fallback_missing_count = trial_fallback_missing_count;
+        self.trial_fallback_summary = trial_fallback_summary;
+        self.trial_plain_reason_summary = trial_plain_reason_summary;
+        self.trial_primary_suggestion = trial_primary_suggestion;
         self.trial_finding_summary = trial_finding_summary;
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_CLEARED.to_string();
     }
 
     pub(in crate::game) fn record_trial_summary(&mut self, summary: &FangyuanObjectTrialSummary) {
         self.trial_route_id = summary.route_id.clone();
+        self.trial_selection_label = summary.selection_label.clone();
+        self.trial_budget_profile = summary.budget_profile.clone();
+        self.trial_audit_run = summary.audit_run;
+        self.trial_audit_status = summary.audit_status.clone();
+        self.trial_audit_error_count = summary.audit_error_count;
+        self.trial_audit_warning_count = summary.audit_warning_count;
+        self.trial_audit_suggestion_count = summary.audit_suggestion_count;
         self.active_vfx_count = summary.active_vfx_count;
         self.trial_template_id = summary.template_id.clone();
         self.trial_visual_id = summary.visual_id.clone();
@@ -1011,6 +1095,17 @@ impl FangyuanHomeBlueprintStats {
         self.trial_npc_count = summary.npc_count;
         self.trial_tiandao_count = summary.tiandao_count;
         self.trial_budget_cost = summary.budget_cost;
+        self.trial_budget_recommended = summary.budget_recommended;
+        self.trial_budget_hard = summary.budget_hard;
+        self.trial_before_label = summary.before_label.clone();
+        self.trial_after_label = summary.after_label.clone();
+        self.trial_kept_count = summary.kept_count;
+        self.trial_degraded_count = summary.degraded_count;
+        self.trial_rejected_count = summary.rejected_count;
+        self.trial_fallback_missing_count = summary.fallback_missing_count;
+        self.trial_fallback_summary = summary.fallback_summary.clone();
+        self.trial_plain_reason_summary = summary.plain_reason_summary.clone();
+        self.trial_primary_suggestion = summary.primary_suggestion.clone();
         self.trial_finding_summary = summary.finding_summary.clone();
     }
 
@@ -2527,6 +2622,16 @@ fn handle_fangyuan_home_blueprint_commands(
             blueprint_stats.materials = blueprint_assets.material_count();
             blueprint_stats.record_cleared(&session_id);
         }
+        FangyuanHomeBlueprintCommand::RerunTrialAudit => {
+            let summary = trial_runtime.rerun_audit();
+            blueprint_stats.record_trial_summary(&summary);
+            log_fangyuan_home_blueprint_stats(&blueprint_stats);
+        }
+        FangyuanHomeBlueprintCommand::SwitchTrialBudget => {
+            let summary = trial_runtime.switch_budget_profile();
+            blueprint_stats.record_trial_summary(&summary);
+            log_fangyuan_home_blueprint_stats(&blueprint_stats);
+        }
         FangyuanHomeBlueprintCommand::Reload => {
             clear_fangyuan_home_blueprint_content(
                 &mut commands,
@@ -2873,7 +2978,7 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
         .map(SceneSessionId::as_str)
         .unwrap_or("<none>");
     info!(
-        "fangyuan home layout stats: session={session}, state={}, layout_path={}, palette_path={}, audit_status={}, audit_errors={}, audit_warnings={}, audit_code={}, audit_field_path={}, audit_reason={}, generated={}, primitives={}, skipped={}, palettes={}, prefabs={}, used_prefabs={}, instances={}, materials={}, material_profiles={}, opaque={}, transparent={}, emissive_total={:.2}, material_resources={}, render_mode={}, static_instance_batches={}, static_instance_count={}, static_instance_buffer_bytes={}, static_instance_fallback={}, trial_route={}, active_vfx={}, trial_template={}, trial_visual={}, trial_equipment={}, trial_npc={}, trial_tiandao={}, trial_budget_cost={}, trial_findings={}, top_level_valid={}, layout_valid={}, palette_valid={}",
+        "fangyuan home layout stats: session={session}, state={}, layout_path={}, palette_path={}, audit_status={}, audit_errors={}, audit_warnings={}, audit_code={}, audit_field_path={}, audit_reason={}, generated={}, primitives={}, skipped={}, palettes={}, prefabs={}, used_prefabs={}, instances={}, materials={}, material_profiles={}, opaque={}, transparent={}, emissive_total={:.2}, material_resources={}, render_mode={}, static_instance_batches={}, static_instance_count={}, static_instance_buffer_bytes={}, static_instance_fallback={}, trial_route={}, trial_selection={}, trial_profile={}, trial_audit_run={}, trial_status={}, trial_errors={}, trial_warnings={}, trial_suggestions={}, active_vfx={}, trial_template={}, trial_visual={}, trial_equipment={}, trial_npc={}, trial_tiandao={}, trial_budget_cost={}, trial_budget_limits={}/{}, trial_results=k{} d{} r{}, trial_fallback_missing={}, trial_fallback={}, trial_reasons={}, trial_suggestion={}, trial_findings={}, top_level_valid={}, layout_valid={}, palette_valid={}",
         stats.state_label(),
         stats.layout_path(),
         stats.palette_path(),
@@ -2902,6 +3007,13 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
         stats.static_instance_buffer_bytes,
         stats.static_instance_fallback_reason,
         stats.trial_route_id,
+        stats.trial_selection_label,
+        stats.trial_budget_profile,
+        stats.trial_audit_run,
+        stats.trial_audit_status,
+        stats.trial_audit_error_count,
+        stats.trial_audit_warning_count,
+        stats.trial_audit_suggestion_count,
         stats.active_vfx_count,
         stats.trial_template_id,
         stats.trial_visual_id,
@@ -2909,6 +3021,15 @@ fn log_fangyuan_home_blueprint_stats(stats: &FangyuanHomeBlueprintStats) {
         stats.trial_npc_count,
         stats.trial_tiandao_count,
         stats.trial_budget_cost,
+        stats.trial_budget_recommended,
+        stats.trial_budget_hard,
+        stats.trial_kept_count,
+        stats.trial_degraded_count,
+        stats.trial_rejected_count,
+        stats.trial_fallback_missing_count,
+        stats.trial_fallback_summary,
+        stats.trial_plain_reason_summary,
+        stats.trial_primary_suggestion,
         stats.trial_finding_summary,
         stats.top_level_valid,
         stats.layout_valid,
@@ -4268,6 +4389,55 @@ mod tests {
             stats.audit_primary_code(),
             FANGYUAN_HOME_AUDIT_PRIMARY_CODE_NONE
         );
+    }
+
+    #[test]
+    fn fangyuan_trial_ecs_commands_update_audit_budget_and_return_clear_state() {
+        let mut app = app_with_fangyuan_home_system();
+        let session_id = spawn_and_enter_fangyuan_home(&mut app, "fangyuan-trial-command-session");
+        let initial_visuals = fangyuan_home_trial_visual_count(&mut app, &session_id);
+        assert!(initial_visuals > 0);
+        let initial_run = app
+            .world()
+            .resource::<FangyuanHomeBlueprintStats>()
+            .trial_audit_run;
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::RerunTrialAudit);
+        app.update();
+        {
+            let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+            assert_eq!(stats.trial_route_id, "fangyuan.object_trial");
+            assert_eq!(stats.trial_budget_profile, "standard");
+            assert!(stats.trial_audit_run > initial_run);
+            assert_eq!(stats.trial_audit_status, "warning");
+            assert_eq!(stats.trial_audit_error_count, 0);
+            assert!(stats.trial_audit_warning_count > 0);
+            assert!(stats.trial_plain_reason_summary.contains("技能颜色"));
+            assert_eq!(stats.trial_fallback_missing_count, 0);
+        }
+        assert_eq!(
+            fangyuan_home_trial_visual_count(&mut app, &session_id),
+            initial_visuals
+        );
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::SwitchTrialBudget);
+        app.update();
+        {
+            let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
+            assert_eq!(stats.trial_budget_profile, "strict");
+            assert_eq!(stats.trial_audit_status, "failed");
+            assert!(stats.trial_audit_error_count > 0);
+            assert!(stats.trial_degraded_count > 0);
+            assert!(stats.trial_rejected_count > 0);
+            assert!(stats.trial_plain_reason_summary.contains("primitive 过多"));
+        }
+
+        app.world_mut()
+            .write_message(FangyuanHomeBlueprintCommand::Clear);
+        app.update();
+        assert_fangyuan_home_trial_cleared(&mut app, &session_id);
     }
 
     #[test]
@@ -6015,6 +6185,13 @@ mod tests {
     fn assert_fangyuan_home_trial_active(app: &mut App, session_id: &SceneSessionId) {
         let stats = app.world().resource::<FangyuanHomeBlueprintStats>();
         assert_eq!(stats.trial_route_id, "fangyuan.object_trial");
+        assert!(stats.trial_selection_label.contains("home:"));
+        assert_eq!(stats.trial_budget_profile, "standard");
+        assert!(stats.trial_audit_run > 0);
+        assert_eq!(stats.trial_audit_status, "warning");
+        assert_eq!(stats.trial_audit_error_count, 0);
+        assert!(stats.trial_audit_warning_count > 0);
+        assert!(stats.trial_audit_suggestion_count > 0);
         assert_eq!(stats.active_vfx_count, 4);
         assert_eq!(stats.trial_template_id, "skill.template.projectile");
         assert_eq!(stats.trial_visual_id, "skill.visual.projectile");
@@ -6022,6 +6199,16 @@ mod tests {
         assert_eq!(stats.trial_npc_count, 1);
         assert_eq!(stats.trial_tiandao_count, 1);
         assert!(stats.trial_budget_cost > 0);
+        assert!(stats.trial_budget_recommended > 0);
+        assert!(stats.trial_budget_hard >= stats.trial_budget_recommended);
+        assert!(stats.trial_before_label.contains("objects cost"));
+        assert!(stats.trial_after_label.contains("keep"));
+        assert!(stats.trial_kept_count > 0);
+        assert_eq!(stats.trial_degraded_count, 0);
+        assert_eq!(stats.trial_rejected_count, 0);
+        assert_eq!(stats.trial_fallback_missing_count, 0);
+        assert_eq!(stats.trial_fallback_summary, "ok");
+        assert!(stats.trial_plain_reason_summary.contains("技能颜色"));
         assert!(stats.trial_finding_summary.contains("skill_color_conflict"));
 
         let trial_runtime = app.world().resource::<FangyuanObjectTrialRuntime>();
@@ -6062,6 +6249,8 @@ mod tests {
         assert_eq!(stats.trial_route_id, "none");
         assert_eq!(stats.active_vfx_count, 0);
         assert_eq!(stats.trial_budget_cost, 0);
+        assert_eq!(stats.trial_audit_run, 0);
+        assert_eq!(stats.trial_fallback_summary, "ok");
         assert_eq!(stats.trial_finding_summary, "ok");
 
         let trial_runtime = app.world().resource::<FangyuanObjectTrialRuntime>();
