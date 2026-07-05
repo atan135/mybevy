@@ -1454,7 +1454,9 @@ mod tests {
     };
 
     use crate::framework::fangyuan::{
-        FangyuanVfxPredictionBoundary, FangyuanVfxReplayEvent, fangyuan_vfx_projectile_recipe,
+        FangyuanVfxPredictionBoundary, FangyuanVfxReplayEvent, FangyuanVisualReplay,
+        FangyuanVisualReplayCatalog, FangyuanVisualReplayEvent, FangyuanVisualReplayRunOptions,
+        fangyuan_vfx_projectile_recipe, summarize_fangyuan_visual_replay,
     };
 
     use super::*;
@@ -1552,5 +1554,66 @@ mod tests {
             decoded.prediction_boundary,
             FangyuanVfxPredictionBoundary::AuthorityConfirmed
         );
+    }
+
+    #[test]
+    fn authority_visual_replay_summary_can_be_built_from_frame_payload() {
+        let recipe = fangyuan_vfx_projectile_recipe();
+        let replay_event = FangyuanVfxReplayEvent {
+            authority_epoch: 4,
+            start_tick: 64,
+            frame_id: 64,
+            fps: DEFAULT_AUTHORITY_FPS,
+            action: "cast_vfx".to_string(),
+            caster_id: "chr_1".to_string(),
+            player_id: "chr_1".to_string(),
+            event_id: "evt_authority_visual".to_string(),
+            recipe_id: recipe.id,
+            external_seed: Some(2048),
+            prediction_boundary: FangyuanVfxPredictionBoundary::AuthorityConfirmed,
+        };
+        let frame = AuthorityFrame {
+            authority_epoch: replay_event.authority_epoch,
+            frame_id: replay_event.frame_id,
+            fps: replay_event.fps,
+            inputs: vec![PlayerInput {
+                player_id: replay_event.player_id.clone(),
+                frame_id: replay_event.frame_id,
+                action: replay_event.action.clone(),
+                payload_json: serde_json::to_string(&replay_event).unwrap(),
+            }],
+            snapshot: AuthoritySnapshot {
+                authority_epoch: replay_event.authority_epoch,
+                frame_id: replay_event.frame_id,
+                authority_player_id: "host".to_string(),
+                players: vec!["chr_1".to_string()],
+                game_state_json: "{}".to_string(),
+            },
+        };
+        let decoded =
+            serde_json::from_str::<FangyuanVfxReplayEvent>(&frame.inputs[0].payload_json).unwrap();
+        let replay = FangyuanVisualReplay::new(
+            "authority-frame-64",
+            u64::from(frame.frame_id),
+            vec![FangyuanVisualReplayEvent::new(
+                decoded,
+                "skill.visual.projectile",
+                "skill_object_evt_authority_visual",
+            )],
+        );
+
+        let report = summarize_fangyuan_visual_replay(
+            &replay,
+            &FangyuanVisualReplayCatalog::with_defaults(),
+            &FangyuanVisualReplayRunOptions::new(72, u32::from(frame.fps)),
+        )
+        .unwrap();
+
+        assert_eq!(report.replay_id, "authority-frame-64");
+        assert_eq!(report.start_tick, 64);
+        assert_eq!(report.event_count, 1);
+        assert_ne!(report.visual_hash, 0);
+        assert_eq!(report.mismatch_summary, None);
+        assert!(report.summary_line().contains("replay=authority-frame-64"));
     }
 }

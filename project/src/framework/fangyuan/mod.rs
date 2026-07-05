@@ -44,6 +44,7 @@ mod stats;
 mod streaming_update;
 mod tiandao;
 mod vfx;
+mod visual_replay;
 
 pub use asset_path::*;
 pub use audit::*;
@@ -79,3 +80,4 @@ pub use stats::*;
 pub use streaming_update::*;
 pub use tiandao::*;
 pub use vfx::*;
+pub use visual_replay::*;
