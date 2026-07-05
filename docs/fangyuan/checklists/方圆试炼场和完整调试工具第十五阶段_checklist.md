@@ -19,12 +19,12 @@
 
 ## 基础原则
 
-- [ ] 工具必须服务真实定位，指标名称、采样口径和报告字段要稳定。
-- [ ] 玩家可见解释和开发者底层指标分层展示，避免 UI 过载。
-- [ ] 压力测试必须可复现，输入 seed、人数、技能模板和场景配置可记录。
-- [ ] authority 回放一致性验证优先使用摘要和 hash，不依赖肉眼判断。
-- [ ] 工具本身不能显著改变被测场景的预算结果；必要时记录工具开销。
-- [ ] 每个阶段完成后运行对应验证，并按阶段提交。
+- [x] 工具必须服务真实定位，指标名称、采样口径和报告字段要稳定。（验证：`project/src/framework/fangyuan/debug_metrics.rs:16` 定义稳定 metric key，`:710` 测试字段顺序；`project/src/framework/fangyuan/debug_report.rs:48` 定义报告 schema，`:652` 测试 schema 字段稳定）
+- [x] 玩家可见解释和开发者底层指标分层展示，避免 UI 过载。（验证：`project/src/framework/fangyuan/object_budget.rs:455` 和 `project/src/game/screens/gameplay/fangyuan_home.rs:285` 输出玩家 trial 展示；`project/src/framework/fangyuan/debug_metrics.rs:579` 与 `project/src/game/screens/gameplay/fangyuan_home.rs:59` / `:68` 将开发者 debug panel 默认隐藏并按模块开关；`fangyuan_debug_panel_text_uses_stats_without_overloading_default_hud` 通过）
+- [x] 压力测试必须可复现，输入 seed、人数、技能模板和场景配置可记录。（验证：`project/src/framework/fangyuan/pressure.rs:91` 定义可序列化配置，`:446` 执行 deterministic simulation；`fangyuan_pressure_seed_stability_keeps_summary_hash_reproducible` 和 `fangyuan_pressure_scale_steps_cover_100_300_and_1000_actor_simulations` 通过）
+- [x] authority 回放一致性验证优先使用摘要和 hash，不依赖肉眼判断。（验证：`project/src/framework/fangyuan/visual_replay.rs:221` / `:327` / `:352` 生成关键帧摘要和 VFX state hash；`fangyuan_visual_replay_same_authority_replay_outputs_stable_summary_hash` 与 `cargo test authority -- --nocapture` 通过）
+- [x] 工具本身不能显著改变被测场景的预算结果；必要时记录工具开销。（验证：debug panel 默认隐藏且使用 snapshot 展示，`project/src/framework/fangyuan/debug_metrics.rs:579` 定义模块开关；压测为本地数据模拟，`project/src/framework/fangyuan/pressure.rs:446` 不接入运行场景；报告输出到 ignored artifacts，`project/src/framework/fangyuan/debug_report.rs:16` 定义输出目录；`fangyuan_debug_panel_compact_mobile_layout_keeps_main_actions_clear` 通过）
+- [x] 每个阶段完成后运行对应验证，并按阶段提交。（验证：阶段 1-8 已分别记录 `cargo fmt --check`、相关 `cargo test`、`cargo check` 或运行验收；对应提交为 `0b23cdc`、`c6611f3`、`fd467fb`、`47ed1bb`、`cb033d1`、`4d988ea`、`0846d09`、`9d8dc29`）
 
 ## 阶段 1：指标口径和调试数据总线
 
