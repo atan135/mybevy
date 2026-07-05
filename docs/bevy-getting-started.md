@@ -493,6 +493,14 @@ $env:WGPU_BACKEND="dx12"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
+方圆 Bake dry-run 从仓库根目录执行，用于检查 `project/assets/fangyuan` 的 RON 源、依赖表、预算统计和报告输出，不生成 `.fyb` 首包产物：
+
+```powershell
+.\scripts\run-fangyuan-bake-dry-run.ps1
+```
+
+报告默认写入 `artifacts/fangyuan-bake/dry-run/report.txt`。其中 `ron_load_us`、`bin_load_us`、`peak_resource_count` 和 `artifact_size` 是开发机诊断字段，用来对比 RON 路径和当前 `FYBAKE` artifact 路径的解析/校验差异，不代表 Android 真机性能数据。需要清理正式 bake 输出目录时，使用 `fangyuan_bake --clean-output`，不要在 dry-run 中生成或提交 `.fyb`。
+
 方圆家园还支持开发期渲染模式环境变量，用于对比 standard、CPU merge 和 static instance shared-mesh prototype。未设置或填入非法值时默认使用 `standard`：
 
 ```powershell
@@ -977,3 +985,5 @@ $env:JAVA_HOME="C:\Program Files\Java\jdk-21"
 ```text
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+方圆 Bake 与 Android 验证边界：`project/assets` 会整体进入 APK assets，因此 `.fyb` 只有在明确作为首包发布资源时才放入 `project/assets`；普通 dry-run 产物留在被忽略的 `artifacts/`。当前最小验证顺序是先跑 `.\scripts\run-fangyuan-bake-dry-run.ps1`，再用 `MYBEVY_START_SCENE="dev.fangyuan_home"` 的手机比例窗口确认 RON 首包路径没有被破坏；完整 Android APK 构建按上面的 `cargo ndk` 和 `gradlew.bat assembleDebug` 命令在需要时单独执行。

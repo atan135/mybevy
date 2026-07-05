@@ -960,12 +960,23 @@ fn deserialize_optional_primitive_role<'de, D>(
 where
     D: Deserializer<'de>,
 {
-    let value = String::deserialize(deserializer)?;
-    FangyuanPrimitiveRole::parse(&value).map(Some).ok_or_else(|| {
-        de::Error::custom(format!(
-            "unknown fangyuan primitive role at field `role`: `{value}`; expected one of `structure`, `core`, `boundary`, `warning`, `trail`, `impact`, `decoration`, `socket`, `archive`"
-        ))
-    })
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OptionalPrimitiveRole {
+        Value(String),
+        Optional(Option<FangyuanPrimitiveRole>),
+    }
+
+    match OptionalPrimitiveRole::deserialize(deserializer)? {
+        OptionalPrimitiveRole::Value(value) => {
+            FangyuanPrimitiveRole::parse(&value).map(Some).ok_or_else(|| {
+                de::Error::custom(format!(
+                    "unknown fangyuan primitive role at field `role`: `{value}`; expected one of `structure`, `core`, `boundary`, `warning`, `trail`, `impact`, `decoration`, `socket`, `archive`"
+                ))
+            })
+        }
+        OptionalPrimitiveRole::Optional(value) => Ok(value),
+    }
 }
 
 fn deserialize_f32_array_3<'de, D>(deserializer: D) -> Result<[f32; 3], D::Error>

@@ -21,6 +21,7 @@ project/assets/**/*.aac filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.m4a filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.glb filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.bin filter=lfs diff=lfs merge=lfs -text
+project/assets/**/*.fyb filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.fbx filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.blend filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.psd filter=lfs diff=lfs merge=lfs -text

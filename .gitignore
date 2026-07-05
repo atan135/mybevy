@@ -4,6 +4,12 @@
 /artifacts/
 /local/
 
+# Fangyuan bake generated outputs and reports
+*.fyb
+!/project/assets/**/*.fyb
+*.bake-report.txt
+fangyuan-bake-report.txt
+
 # Android local config and build artifacts
 /android/.gradle/
 /android/.idea/

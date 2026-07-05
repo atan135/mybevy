@@ -3,7 +3,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt, fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
+    time::Instant,
 };
 
 use super::{
@@ -2038,6 +2039,7 @@ pub struct FangyuanBakeCliOptions {
     pub input: PathBuf,
     pub output: PathBuf,
     pub dry_run: bool,
+    pub clean_output: bool,
     pub report: Option<PathBuf>,
 }
 
@@ -2050,6 +2052,7 @@ impl FangyuanBakeCliOptions {
         let mut input = None;
         let mut output = None;
         let mut dry_run = false;
+        let mut clean_output = false;
         let mut report = None;
         let mut args = args.into_iter().map(Into::into);
         while let Some(arg) = args.next() {
@@ -2069,6 +2072,7 @@ impl FangyuanBakeCliOptions {
                     })?));
                 }
                 "--dry-run" => dry_run = true,
+                "--clean-output" => clean_output = true,
                 "--report" => {
                     report = Some(PathBuf::from(args.next().ok_or_else(|| {
                         FangyuanBakeCliError::InvalidArgs("--report requires a path".to_string())
@@ -2093,13 +2097,15 @@ impl FangyuanBakeCliOptions {
                 FangyuanBakeCliError::InvalidArgs("--output <dir> is required".to_string())
             })?,
             dry_run,
+            clean_output,
             report,
         })
     }
 }
 
 pub fn fangyuan_bake_cli_usage() -> String {
-    "usage: fangyuan_bake --input <dir> --output <dir> [--dry-run] [--report <path>]".to_string()
+    "usage: fangyuan_bake --input <dir> --output <dir> [--dry-run] [--clean-output] [--report <path>]"
+        .to_string()
 }
 
 #[derive(Debug)]
@@ -2149,6 +2155,7 @@ impl From<FangyuanBakeFormatError> for FangyuanBakeCliError {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FangyuanBakeRunReport {
     pub dry_run: bool,
+    pub clean_output: bool,
     pub input: PathBuf,
     pub output: PathBuf,
     pub entries: Vec<FangyuanBakeRunEntry>,
@@ -2162,6 +2169,14 @@ impl FangyuanBakeRunReport {
     pub fn passed(&self) -> bool {
         self.failed_count() == 0
     }
+
+    pub fn peak_resource_count(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|entry| entry.peak_resource_count)
+            .max()
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2169,9 +2184,13 @@ pub struct FangyuanBakeRunEntry {
     pub source_path: PathBuf,
     pub output_path: PathBuf,
     pub target_kind: FangyuanBakeArtifactKind,
+    pub source_bytes: usize,
     pub source_hash: u64,
     pub content_hash: u64,
     pub normalized_source_hash: u64,
+    pub ron_load_us: u128,
+    pub bin_load_us: u128,
+    pub peak_resource_count: usize,
     pub upgraded_from: Option<u16>,
     pub passed: bool,
     pub error_count: usize,
@@ -2188,10 +2207,7 @@ pub fn run_fangyuan_bake_cli(
     let mut catalog = FangyuanBakeDependencyCatalog::default();
     let files = collect_ron_files(&options.input)?;
     if !options.dry_run {
-        fs::create_dir_all(&options.output).map_err(|source| FangyuanBakeCliError::Io {
-            path: options.output.clone(),
-            source,
-        })?;
+        prepare_fangyuan_bake_output_dir(options)?;
     }
 
     for source_path in files {
@@ -2200,6 +2216,7 @@ pub fn run_fangyuan_bake_cli(
                 path: source_path.clone(),
                 source,
             })?;
+        let source_bytes = source.len();
         let target_kind =
             infer_fangyuan_bake_artifact_kind(&source_path, &source).ok_or_else(|| {
                 FangyuanBakeCliError::InvalidArgs(format!(
@@ -2207,8 +2224,12 @@ pub fn run_fangyuan_bake_cli(
                     source_path.display()
                 ))
             })?;
+        let ron_load_start = Instant::now();
         let compiled =
             compile_fangyuan_bake_artifact(target_kind, &source, Some(source_path.clone()))?;
+        let ron_load_us = ron_load_start.elapsed().as_micros();
+        let bin_load_us = profile_fangyuan_bake_bin_load_us(&compiled)?;
+        let peak_resource_count = fangyuan_bake_peak_resource_count(&compiled.stats);
         catalog.add_payload(&compiled.payload, &source_path);
         let output_path =
             output_path_for(&options.input, &options.output, &source_path, target_kind);
@@ -2219,14 +2240,7 @@ pub fn run_fangyuan_bake_cli(
                 path: parent.to_path_buf(),
                 source,
             })?;
-            let header = FangyuanBakeArtifactHeader {
-                schema_version: FANGYUAN_BAKE_SCHEMA_VERSION,
-                source_hash: compiled.source_hash,
-                content_hash: compiled.content_hash,
-                created_by: "fangyuan_bake".to_string(),
-                target_kind,
-            };
-            let bytes = encode_fangyuan_bake_artifact(&header, &compiled.payload_bytes)?;
+            let bytes = encode_fangyuan_bake_compiled_artifact(&compiled, "fangyuan_bake")?;
             fs::write(&output_path, bytes).map_err(|source| FangyuanBakeCliError::Io {
                 path: output_path.clone(),
                 source,
@@ -2237,9 +2251,13 @@ pub fn run_fangyuan_bake_cli(
             source_path,
             output_path,
             target_kind,
+            source_bytes,
             source_hash: compiled.source_hash,
             content_hash: compiled.content_hash,
             normalized_source_hash: compiled.normalized_source_hash,
+            ron_load_us,
+            bin_load_us,
+            peak_resource_count,
             upgraded_from: compiled.upgraded_from,
             passed: compiled.audit.summary.error_count == 0,
             error_count: compiled.audit.summary.error_count,
@@ -2254,6 +2272,7 @@ pub fn run_fangyuan_bake_cli(
 
     let report = FangyuanBakeRunReport {
         dry_run: options.dry_run,
+        clean_output: options.clean_output && !options.dry_run,
         input: options.input.clone(),
         output: options.output.clone(),
         entries,
@@ -2264,6 +2283,110 @@ pub fn run_fangyuan_bake_cli(
     }
 
     Ok(report)
+}
+
+pub fn fangyuan_bake_cli_exit_code(report: &FangyuanBakeRunReport) -> i32 {
+    if report.passed() { 0 } else { 1 }
+}
+
+fn prepare_fangyuan_bake_output_dir(
+    options: &FangyuanBakeCliOptions,
+) -> Result<(), FangyuanBakeCliError> {
+    if options.clean_output {
+        validate_fangyuan_bake_clean_output_paths(&options.input, &options.output)?;
+        if options.output.exists() {
+            if !options.output.is_dir() {
+                return Err(FangyuanBakeCliError::InvalidArgs(format!(
+                    "--clean-output requires an output directory, found file {}",
+                    options.output.display()
+                )));
+            }
+            fs::remove_dir_all(&options.output).map_err(|source| FangyuanBakeCliError::Io {
+                path: options.output.clone(),
+                source,
+            })?;
+        }
+    }
+
+    fs::create_dir_all(&options.output).map_err(|source| FangyuanBakeCliError::Io {
+        path: options.output.clone(),
+        source,
+    })
+}
+
+fn validate_fangyuan_bake_clean_output_paths(
+    input: &Path,
+    output: &Path,
+) -> Result<(), FangyuanBakeCliError> {
+    let input = normalize_fangyuan_bake_path(input)?;
+    let output = normalize_fangyuan_bake_path(output)?;
+    if input == output || input.starts_with(&output) || output.starts_with(&input) {
+        return Err(FangyuanBakeCliError::InvalidArgs(format!(
+            "--clean-output requires disjoint input and output directories: input={} output={}",
+            input.display(),
+            output.display()
+        )));
+    }
+    Ok(())
+}
+
+fn normalize_fangyuan_bake_path(path: &Path) -> Result<PathBuf, FangyuanBakeCliError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|source| FangyuanBakeCliError::Io {
+                path: PathBuf::from("."),
+                source,
+            })?
+            .join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    Ok(normalized)
+}
+
+fn profile_fangyuan_bake_bin_load_us(
+    compiled: &FangyuanBakeCompiledArtifact,
+) -> Result<u128, FangyuanBakeCliError> {
+    let bytes = encode_fangyuan_bake_compiled_artifact(compiled, "fangyuan_bake_profile")?;
+    let bin_load_start = Instant::now();
+    let artifact = decode_fangyuan_bake_artifact(&bytes)?;
+    decode_fangyuan_bake_payload(compiled.target_kind, &artifact.payload)?;
+    Ok(bin_load_start.elapsed().as_micros())
+}
+
+fn encode_fangyuan_bake_compiled_artifact(
+    compiled: &FangyuanBakeCompiledArtifact,
+    created_by: &str,
+) -> Result<Vec<u8>, FangyuanBakeCliError> {
+    let header = FangyuanBakeArtifactHeader {
+        schema_version: FANGYUAN_BAKE_SCHEMA_VERSION,
+        source_hash: compiled.source_hash,
+        content_hash: compiled.content_hash,
+        created_by: created_by.to_string(),
+        target_kind: compiled.target_kind,
+    };
+    Ok(encode_fangyuan_bake_artifact(
+        &header,
+        &compiled.payload_bytes,
+    )?)
+}
+
+fn fangyuan_bake_peak_resource_count(stats: &FangyuanBakeArtifactStats) -> usize {
+    stats
+        .primitive_count
+        .saturating_add(stats.prefab_count)
+        .saturating_add(stats.chunk_count)
+        .saturating_add(stats.profile_count)
 }
 
 pub fn infer_fangyuan_bake_artifact_kind(
@@ -2386,16 +2509,18 @@ fn write_fangyuan_bake_report(
 
 pub fn format_fangyuan_bake_run_report(report: &FangyuanBakeRunReport) -> String {
     let mut lines = vec![format!(
-        "dry_run={}; input={}; output={}; entries={}; failed={}",
+        "dry_run={}; clean_output={}; input={}; output={}; entries={}; failed={}; peak_resource_count={}; load_error_model=ron(parse+upgrade+validate),bin(header+schema+kind+hash+payload)",
         report.dry_run,
+        report.clean_output,
         report.input.display(),
         report.output.display(),
         report.entries.len(),
-        report.failed_count()
+        report.failed_count(),
+        report.peak_resource_count()
     )];
     for entry in &report.entries {
         lines.push(format!(
-            "{} kind={} output={} passed={} errors={} warnings={} missing_dependencies={} primitives={} prefabs={} chunks={} profiles={} budget={} artifact_size={} source_hash={:016x} normalized_source_hash={:016x} content_hash={:016x} upgraded_from={}",
+            "{} kind={} output={} passed={} errors={} warnings={} missing_dependencies={} source_bytes={} primitives={} prefabs={} chunks={} profiles={} budget={} artifact_size={} peak_resource_count={} ron_load_us={} bin_load_us={} source_hash={:016x} normalized_source_hash={:016x} content_hash={:016x} upgraded_from={}",
             entry.source_path.display(),
             entry.target_kind,
             entry.output_path.display(),
@@ -2403,12 +2528,16 @@ pub fn format_fangyuan_bake_run_report(report: &FangyuanBakeRunReport) -> String
             entry.error_count,
             entry.warning_count,
             entry.missing_dependency_count,
+            entry.source_bytes,
             entry.stats.primitive_count,
             entry.stats.prefab_count,
             entry.stats.chunk_count,
             entry.stats.profile_count,
             entry.stats.budget,
             entry.stats.artifact_size,
+            entry.peak_resource_count,
+            entry.ron_load_us,
+            entry.bin_load_us,
             entry.source_hash,
             entry.normalized_source_hash,
             entry.content_hash,
@@ -2690,6 +2819,7 @@ mod tests {
             "--output",
             "artifacts/fangyuan",
             "--dry-run",
+            "--clean-output",
             "--report",
             "reports/bake.txt",
         ])
@@ -2698,6 +2828,7 @@ mod tests {
         assert_eq!(options.input, PathBuf::from("assets/fangyuan"));
         assert_eq!(options.output, PathBuf::from("artifacts/fangyuan"));
         assert!(options.dry_run);
+        assert!(options.clean_output);
         assert_eq!(options.report, Some(PathBuf::from("reports/bake.txt")));
     }
 
@@ -2735,6 +2866,7 @@ mod tests {
             input: input.clone(),
             output: output.clone(),
             dry_run: true,
+            clean_output: false,
             report: Some(report_path.clone()),
         };
 
@@ -2742,11 +2874,92 @@ mod tests {
 
         assert!(report.passed());
         assert_eq!(report.entries.len(), 1);
+        assert!(report.entries[0].ron_load_us > 0);
+        assert!(report.entries[0].bin_load_us > 0);
+        assert_eq!(report.entries[0].peak_resource_count, 1);
         assert!(report_path.is_file());
         assert!(
             !output.exists(),
             "dry-run must not create output artifacts or output directory"
         );
+        let report_text = fs::read_to_string(&report_path).unwrap();
+        assert!(report_text.contains(
+            "load_error_model=ron(parse+upgrade+validate),bin(header+schema+kind+hash+payload)"
+        ));
+        assert!(report_text.contains("source_bytes="));
+        assert!(report_text.contains("peak_resource_count="));
+        assert!(report_text.contains("ron_load_us="));
+        assert!(report_text.contains("bin_load_us="));
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn fangyuan_bake_cli_incremental_bake_preserves_unrelated_output_files() {
+        let temp = unique_temp_dir("fangyuan_bake_incremental_test");
+        let input = temp.join("input");
+        let output = temp.join("output");
+        fs::create_dir_all(&input).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        let stale_path = output.join("manual.keep");
+        fs::write(&stale_path, "manual output").unwrap();
+        fs::write(
+            input.join("avatar_blueprint.ron"),
+            sample_blueprint_ron("incremental_avatar", [0.2, 0.4, 0.6, 1.0]),
+        )
+        .unwrap();
+
+        let report = run_fangyuan_bake_cli(&FangyuanBakeCliOptions {
+            input,
+            output,
+            dry_run: false,
+            clean_output: false,
+            report: None,
+        })
+        .unwrap();
+
+        assert!(report.passed());
+        assert!(!report.clean_output);
+        assert!(stale_path.is_file());
+        assert!(report.entries[0].output_path.is_file());
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn fangyuan_bake_cli_clean_output_removes_stale_files_before_writing_artifacts() {
+        let temp = unique_temp_dir("fangyuan_bake_clean_output_test");
+        let input = temp.join("input");
+        let output = temp.join("output");
+        fs::create_dir_all(&input).unwrap();
+        fs::create_dir_all(output.join("nested")).unwrap();
+        let stale_path = output.join("nested").join("stale.fyb");
+        fs::write(&stale_path, "old artifact").unwrap();
+        let source_path = input.join("avatar_blueprint.ron");
+        fs::write(
+            &source_path,
+            sample_blueprint_ron("clean_avatar", [0.2, 0.4, 0.6, 1.0]),
+        )
+        .unwrap();
+
+        let report = run_fangyuan_bake_cli(&FangyuanBakeCliOptions {
+            input: input.clone(),
+            output,
+            dry_run: false,
+            clean_output: true,
+            report: None,
+        })
+        .unwrap();
+
+        assert!(report.passed());
+        assert!(report.clean_output);
+        assert!(source_path.is_file());
+        assert!(!stale_path.exists());
+        assert!(report.entries[0].output_path.is_file());
+        assert!(matches!(
+            decode_fangyuan_bake_artifact(&fs::read(&report.entries[0].output_path).unwrap()),
+            Ok(FangyuanBakeArtifact { .. })
+        ));
 
         let _ = fs::remove_dir_all(&temp);
     }
@@ -2785,6 +2998,7 @@ mod tests {
             input,
             output: output.clone(),
             dry_run: false,
+            clean_output: false,
             report: None,
         };
 
@@ -2835,6 +3049,7 @@ mod tests {
             input,
             output,
             dry_run: false,
+            clean_output: false,
             report: None,
         };
 
@@ -2904,6 +3119,52 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_bake_payload_roundtrips_optional_role_from_prefab_palette() {
+        let source = r#"
+(
+    version: "1",
+    name: "role_prefabs",
+    description: "",
+    max_primitives: 8,
+    bounds: (width: 8.0, depth: 8.0, height: 8.0),
+    prefabs: [
+        (
+            id: "role_block",
+            name: "Role Block",
+            description: "",
+            max_primitives: 2,
+            primitives: [
+                (
+                    kind: "cube",
+                    role: "boundary",
+                    position: [0.0, 1.0, 0.0],
+                    size: [1.0, 1.0, 1.0],
+                    color: [0.2, 0.4, 0.6, 1.0],
+                ),
+            ],
+        ),
+    ],
+)
+"#;
+        let compiled =
+            compile_fangyuan_bake_artifact(FangyuanBakeArtifactKind::PrefabPalette, source, None)
+                .unwrap();
+        let payload = decode_fangyuan_bake_payload(
+            FangyuanBakeArtifactKind::PrefabPalette,
+            &compiled.payload_bytes,
+        )
+        .unwrap();
+
+        let FangyuanBakePayload::PrefabPalette { palette, .. } = payload else {
+            panic!("expected prefab palette payload");
+        };
+        assert_eq!(
+            palette.prefabs[0].primitives[0].role,
+            Some(super::super::FangyuanPrimitiveRole::Boundary)
+        );
+    }
+
+    #[test]
     fn fangyuan_bake_artifact_dependency_table_resolves_layout_to_palette_prefab_and_profile() {
         let temp = unique_temp_dir("fangyuan_bake_dependency_test");
         let input = temp.join("input").join("fangyuan");
@@ -2931,6 +3192,7 @@ mod tests {
             input: input.clone(),
             output,
             dry_run: true,
+            clean_output: false,
             report: None,
         })
         .unwrap();
@@ -2982,11 +3244,13 @@ mod tests {
             input: input.clone(),
             output: temp.join("output"),
             dry_run: true,
+            clean_output: false,
             report: None,
         })
         .unwrap();
 
         assert!(!report.passed());
+        assert_eq!(fangyuan_bake_cli_exit_code(&report), 1);
         let entry = &report.entries[0];
         assert_eq!(entry.target_kind, FangyuanBakeArtifactKind::SceneLayout);
         assert_eq!(entry.missing_dependency_count, 2);

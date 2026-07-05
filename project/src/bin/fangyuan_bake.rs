@@ -1,5 +1,6 @@
 use project::framework::fangyuan::{
-    FangyuanBakeCliError, FangyuanBakeCliOptions, run_fangyuan_bake_cli,
+    FangyuanBakeCliError, FangyuanBakeCliOptions, fangyuan_bake_cli_exit_code,
+    run_fangyuan_bake_cli,
 };
 
 fn main() {
@@ -24,7 +25,7 @@ fn main() {
                 report.dry_run
             );
             if !report.passed() {
-                std::process::exit(1);
+                std::process::exit(fangyuan_bake_cli_exit_code(&report));
             }
         }
         Err(error) => {

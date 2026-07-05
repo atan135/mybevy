@@ -163,6 +163,14 @@ project/assets/licenses/kaykit_adventurers_license.txt
 
 其中 `game/scenes.csv` 是游戏层场景目录表，`scenes/sample_dungeon_room/scene.ron` 是 framework manifest，`scenes/sample_dungeon_room/layout.ron` 是 game layer prefab/light 摆放数据。CSV、manifest 和 layout 都是文本资源，保持普通 Git 提交；`.gltf`、`.bin`、`.glb`、`.png` 等模型和贴图资源走 Git LFS。
 
+方圆 Bake 产物策略：
+
+- 开发源文件继续使用 RON，放在 `project/assets/fangyuan/` 下时保持普通 Git 提交。
+- 默认 dry-run report 和临时输出写入仓库根目录 `artifacts/fangyuan-bake/`，该目录被 Git 忽略，不提交。
+- 本地或构建流水线生成的 `.fyb`、`*.bake-report.txt` 和 `fangyuan-bake-report.txt` 默认视为构建产物，已通过 `.gitignore` 忽略。
+- 如果后续明确要把某个 `.fyb` 作为首包发布资源放入 `project/assets/`，应进入 Git LFS；当前 `.gitattributes` 已覆盖 `project/assets/**/*.fyb`。
+- bake report 只作为审查和 CI 日志产物，不进 LFS，也不随源码提交；需要长期保存时应归档到构建系统 artifact。
+
 首次克隆或换新机器开发时，先确认 Git LFS 可用：
 
 ```powershell
@@ -666,6 +674,34 @@ Bevy 的资产加载是异步的。`asset_server.load(...)` 返回 handle 时，
 5. 加载成功后切换正式内容。
 6. 失败时使用旧缓存或首包 fallback。
 
+### 8.1 方圆 RON 与 Bake Artifact 加载诊断
+
+方圆开发源仍是 RON；当前 bake artifact 使用 `.fyb` 扩展名，格式是 `FYBAKE` 自定义 header + typed payload。运行时 loader 优先尝试 bin，debug 配置允许 RON fallback，release 配置不允许 fallback。
+
+一键 dry-run：
+
+```powershell
+.\scripts\run-fangyuan-bake-dry-run.ps1
+```
+
+报告默认写入：
+
+```text
+artifacts/fangyuan-bake/dry-run/report.txt
+```
+
+报告字段含义：
+
+- `source_bytes`：源 RON 文件字节数。
+- `artifact_size`：当前 `.fyb` artifact 估算字节数。
+- `peak_resource_count`：本条 artifact 统计到的 primitive / prefab / chunk / profile 峰值数量。
+- `ron_load_us`：开发机上 RON parse、版本升级、校验和 payload 编译耗时。
+- `bin_load_us`：开发机内存中 `.fyb` header、schema、kind、hash 和 typed payload decode 耗时。
+
+这些字段用于比较两条加载路径的错误处理和数据规模差异，不是手机真机性能数据。当前 RON 路径主要暴露 parse、upgrade、validator 和依赖发现错误；bin 路径额外暴露 magic、schema version、artifact kind、content/source hash、payload version 和依赖缺失错误。
+
+当前仓库没有 `.github` CI workflow，也没有通用本地检查脚本。后续接入 CI 或提交前检查时，应追加 `.\scripts\run-fangyuan-bake-dry-run.ps1`，并把 report 作为构建日志/产物保存。
+
 ## 9. 常见问题
 
 首包资源找不到：
@@ -711,6 +747,7 @@ cargo check
 - 首包资源确实应该进入 `project/assets`。
 - 二进制首包资源已命中 Git LFS 规则，可用 `git check-attr filter -- <path>` 检查。
 - 后续下载资源没有误放进 `project/assets`。
+- 方圆 `.fyb` 只有在明确作为首包发布资源时才放入 `project/assets`，否则留在 `artifacts/`、`target/` 或构建系统产物目录。
 - Android 首包资源路径能被 APK assets 读取。
 - 后续资源清单里的路径、大小、哈希和实际文件一致。
 - UI 配置 RON 能解析，版本字段正确。
