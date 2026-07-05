@@ -7,11 +7,13 @@ use std::{
 
 use crate::framework::{
     fangyuan::{
-        FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanAuditFinding,
-        FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditStatus,
+        FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanAoiConfig,
+        FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditStatus,
         FangyuanChunkAvailablePrefabs, FangyuanChunkClearReason, FangyuanChunkCommand,
-        FangyuanChunkEvent, FangyuanChunkManifestRuntime, FangyuanChunkRuntime,
-        FangyuanChunkSourceLibrary, FangyuanMaterialInstanceParams,
+        FangyuanChunkDebugSummary, FangyuanChunkEvent, FangyuanChunkManifestRuntime,
+        FangyuanChunkRuntime, FangyuanChunkSourceLibrary, FangyuanHotspotState,
+        FangyuanHotspotThresholds, FangyuanLodIntegrationSummary, FangyuanLodObjectKind,
+        FangyuanLodRenderDescriptor, FangyuanLodRenderPath, FangyuanMaterialInstanceParams,
         FangyuanMaterialProfileRegistry, FangyuanObjectClass, FangyuanObjectState,
         FangyuanObjectTrialRuntime, FangyuanObjectTrialSummary, FangyuanObjectTrialVisualPrimitive,
         FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
@@ -22,12 +24,14 @@ use crate::framework::{
         FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds, FangyuanStaticMeshBuildError,
         FangyuanStaticMeshBuildOptions, FangyuanStaticMeshBuildReport,
         FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial, FangyuanStaticMeshMetadata,
-        fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
-        fangyuan_standard_material_from_params,
+        evaluate_fangyuan_hotspot, fangyuan_lod_descriptor_from_trial_visual,
+        fangyuan_lod_descriptors_from_primitive_set, fangyuan_render_transform_from_primitive,
+        fangyuan_standard_material_from_color, fangyuan_standard_material_from_params,
         fangyuan_static_instance_render_report_from_primitive_set_with_source,
         fangyuan_static_meshes_from_primitive_set_with_source, format_fangyuan_audit_debug_lines,
-        load_fangyuan_home_prefab_palette, load_fangyuan_home_scene_layout,
-        process_fangyuan_chunk_commands,
+        hotspot_metrics_from_descriptors, load_fangyuan_home_prefab_palette,
+        load_fangyuan_home_scene_layout, process_fangyuan_chunk_commands,
+        summarize_fangyuan_lod_integration_from_descriptors,
     },
     scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId},
 };
@@ -54,6 +58,7 @@ impl Plugin for FangyuanHomePlugin {
             .init_resource::<FangyuanHomeStaticInstanceRuntime>()
             .init_resource::<FangyuanObjectTrialRuntime>()
             .init_resource::<FangyuanHomeObjectTrialRenderRuntime>()
+            .init_resource::<FangyuanHomeLodIntegrationRuntime>()
             .init_resource::<FangyuanHomeBlueprintStats>()
             .init_resource::<FangyuanChunkRuntime>()
             .init_resource::<FangyuanChunkSourceLibrary>()
@@ -533,6 +538,21 @@ impl FangyuanHomeObjectTrialRenderRuntime {
     }
 }
 
+#[derive(Clone, Debug, Default, Resource, PartialEq)]
+pub(in crate::game) struct FangyuanHomeLodIntegrationRuntime {
+    pub(in crate::game) summary: FangyuanLodIntegrationSummary,
+}
+
+impl FangyuanHomeLodIntegrationRuntime {
+    fn record(&mut self, summary: FangyuanLodIntegrationSummary) {
+        self.summary = summary;
+    }
+
+    fn clear(&mut self) {
+        self.summary = FangyuanLodIntegrationSummary::default();
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::game) struct FangyuanHomeBlueprintRenderSummary {
     pub(in crate::game) mode: String,
@@ -617,6 +637,7 @@ impl FangyuanHomeBlueprintRenderSummary {
 struct FangyuanHomeBlueprintSpawnedContent {
     entity: Entity,
     render_summary: FangyuanHomeBlueprintRenderSummary,
+    lod_descriptors: Vec<FangyuanLodRenderDescriptor>,
 }
 
 const FANGYUAN_HOME_BLUEPRINT_STATE_PENDING: &str = "pending";
@@ -664,6 +685,11 @@ pub(in crate::game) struct FangyuanHomeBlueprintStats {
     pub(in crate::game) static_instance_count: usize,
     pub(in crate::game) static_instance_buffer_bytes: usize,
     pub(in crate::game) static_instance_fallback_reason: String,
+    pub(in crate::game) lod_distribution: String,
+    pub(in crate::game) lod_render_paths: String,
+    pub(in crate::game) lod_aoi_radius: f32,
+    pub(in crate::game) lod_pressure: String,
+    pub(in crate::game) lod_degrade_reason: String,
     pub(in crate::game) trial_route_id: String,
     pub(in crate::game) active_vfx_count: usize,
     pub(in crate::game) trial_template_id: String,
@@ -710,6 +736,11 @@ impl Default for FangyuanHomeBlueprintStats {
             static_instance_count: 0,
             static_instance_buffer_bytes: 0,
             static_instance_fallback_reason: "-".to_string(),
+            lod_distribution: "f0 r0 s0 m0 h0".to_string(),
+            lod_render_paths: "std0 mg0 inst0 mk0 hid0".to_string(),
+            lod_aoi_radius: 0.0,
+            lod_pressure: "normal".to_string(),
+            lod_degrade_reason: "-".to_string(),
             trial_route_id: "none".to_string(),
             active_vfx_count: 0,
             trial_template_id: "-".to_string(),
@@ -798,6 +829,7 @@ impl FangyuanHomeBlueprintStats {
             self.audit_primary_reason.clear();
         }
         self.record_render_summary(FangyuanHomeBlueprintRenderSummary::standard());
+        self.record_lod_summary(&FangyuanLodIntegrationSummary::default());
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_FAILED.to_string();
     }
 
@@ -875,6 +907,7 @@ impl FangyuanHomeBlueprintStats {
         self.audit_primary_field_path.clear();
         self.audit_primary_reason.clear();
         self.record_render_summary(FangyuanHomeBlueprintRenderSummary::standard());
+        self.record_lod_summary(&FangyuanLodIntegrationSummary::default());
         self.state = FANGYUAN_HOME_BLUEPRINT_STATE_FAILED.to_string();
     }
 
@@ -907,6 +940,11 @@ impl FangyuanHomeBlueprintStats {
         let static_instance_count = self.static_instance_count;
         let static_instance_buffer_bytes = self.static_instance_buffer_bytes;
         let static_instance_fallback_reason = self.static_instance_fallback_reason.clone();
+        let lod_distribution = self.lod_distribution.clone();
+        let lod_render_paths = self.lod_render_paths.clone();
+        let lod_aoi_radius = self.lod_aoi_radius;
+        let lod_pressure = self.lod_pressure.clone();
+        let lod_degrade_reason = self.lod_degrade_reason.clone();
         let trial_route_id = self.trial_route_id.clone();
         let active_vfx_count = self.active_vfx_count;
         let trial_template_id = self.trial_template_id.clone();
@@ -947,6 +985,11 @@ impl FangyuanHomeBlueprintStats {
         self.static_instance_count = static_instance_count;
         self.static_instance_buffer_bytes = static_instance_buffer_bytes;
         self.static_instance_fallback_reason = static_instance_fallback_reason;
+        self.lod_distribution = lod_distribution;
+        self.lod_render_paths = lod_render_paths;
+        self.lod_aoi_radius = lod_aoi_radius;
+        self.lod_pressure = lod_pressure;
+        self.lod_degrade_reason = lod_degrade_reason;
         self.trial_route_id = trial_route_id;
         self.active_vfx_count = active_vfx_count;
         self.trial_template_id = trial_template_id;
@@ -969,6 +1012,14 @@ impl FangyuanHomeBlueprintStats {
         self.trial_tiandao_count = summary.tiandao_count;
         self.trial_budget_cost = summary.budget_cost;
         self.trial_finding_summary = summary.finding_summary.clone();
+    }
+
+    pub(in crate::game) fn record_lod_summary(&mut self, summary: &FangyuanLodIntegrationSummary) {
+        self.lod_distribution = summary.lod_distribution_label();
+        self.lod_render_paths = summary.render_path_label();
+        self.lod_aoi_radius = summary.aoi_radius;
+        self.lod_pressure = summary.pressure_label().to_string();
+        self.lod_degrade_reason = summary.degrade_reason_label().to_string();
     }
 
     pub(in crate::game) fn primitive_total(&self) -> usize {
@@ -1275,6 +1326,7 @@ fn instantiate_fangyuan_home_content(
     mut static_instance_runtime: ResMut<FangyuanHomeStaticInstanceRuntime>,
     mut trial_runtime: ResMut<FangyuanObjectTrialRuntime>,
     mut trial_render_runtime: ResMut<FangyuanHomeObjectTrialRenderRuntime>,
+    mut lod_runtime: ResMut<FangyuanHomeLodIntegrationRuntime>,
     mut blueprint_stats: ResMut<FangyuanHomeBlueprintStats>,
 ) {
     let mut instantiated_sessions = Vec::new();
@@ -1335,6 +1387,7 @@ fn instantiate_fangyuan_home_content(
             &mut static_instance_runtime,
             &mut trial_runtime,
             &mut trial_render_runtime,
+            &mut lod_runtime,
             &mut blueprint_stats,
         );
         instantiated_sessions.push(entered.session_id.clone());
@@ -1354,6 +1407,7 @@ fn spawn_fangyuan_home_content(
     static_instance_runtime: &mut FangyuanHomeStaticInstanceRuntime,
     trial_runtime: &mut FangyuanObjectTrialRuntime,
     trial_render_runtime: &mut FangyuanHomeObjectTrialRenderRuntime,
+    lod_runtime: &mut FangyuanHomeLodIntegrationRuntime,
     blueprint_stats: &mut FangyuanHomeBlueprintStats,
 ) -> Entity {
     let content = commands
@@ -1372,7 +1426,7 @@ fn spawn_fangyuan_home_content(
     spawn_fangyuan_home_grid(commands, content, session_id, layout, meshes, materials);
     spawn_fangyuan_home_boundary(commands, content, session_id, layout, meshes, materials);
     spawn_fangyuan_home_lights(commands, content, session_id, layout);
-    spawn_fangyuan_home_blueprint_from_layout(
+    let blueprint_lod_descriptors = spawn_fangyuan_home_blueprint_from_layout(
         commands,
         content,
         session_id,
@@ -1384,8 +1438,10 @@ fn spawn_fangyuan_home_content(
         static_merge_runtime,
         static_instance_runtime,
         blueprint_stats,
-    );
-    start_fangyuan_home_trial_runtime(
+    )
+    .map(|spawned| spawned.lod_descriptors)
+    .unwrap_or_default();
+    let trial_lod_descriptors = start_fangyuan_home_trial_runtime(
         commands,
         content,
         session_id,
@@ -1396,6 +1452,12 @@ fn spawn_fangyuan_home_content(
         trial_runtime,
         blueprint_stats,
         0,
+    );
+    record_fangyuan_home_lod_integration_summary(
+        lod_runtime,
+        blueprint_stats,
+        blueprint_lod_descriptors,
+        trial_lod_descriptors,
     );
 
     content
@@ -1413,7 +1475,7 @@ fn spawn_fangyuan_home_blueprint_from_layout(
     static_merge_runtime: &mut FangyuanHomeStaticMergeRuntime,
     static_instance_runtime: &mut FangyuanHomeStaticInstanceRuntime,
     blueprint_stats: &mut FangyuanHomeBlueprintStats,
-) -> Option<Entity> {
+) -> Option<FangyuanHomeBlueprintSpawnedContent> {
     spawn_fangyuan_home_blueprint_from_layout_with_loader(
         commands,
         parent,
@@ -1479,7 +1541,7 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
     static_instance_runtime: &mut FangyuanHomeStaticInstanceRuntime,
     blueprint_stats: &mut FangyuanHomeBlueprintStats,
     load_scene_layout: impl FnOnce() -> Result<FangyuanHomeLayoutLoadResult, String>,
-) -> Option<Entity> {
+) -> Option<FangyuanHomeBlueprintSpawnedContent> {
     let load_result = match load_scene_layout() {
         Ok(load_result) => load_result,
         Err(error) => {
@@ -1534,10 +1596,10 @@ fn spawn_fangyuan_home_blueprint_from_layout_with_loader(
         FANGYUAN_HOME_PREFAB_PALETTE_PATH,
         &load_result.audit_report,
         &compile_report,
-        content.render_summary,
+        content.render_summary.clone(),
     );
     log_fangyuan_home_blueprint_stats(blueprint_stats);
-    Some(content.entity)
+    Some(content)
 }
 
 #[cfg(test)]
@@ -1642,6 +1704,10 @@ fn spawn_fangyuan_home_blueprint_content(
                 entity,
                 render_summary: FangyuanHomeBlueprintRenderSummary::standard()
                     .with_material_stats(&primitive_stats),
+                lod_descriptors: fangyuan_home_blueprint_lod_descriptors(
+                    primitive_set,
+                    FangyuanLodRenderPath::Standard,
+                ),
             }
         }
         FangyuanHomeBlueprintRenderMode::CpuMerge => {
@@ -1666,6 +1732,10 @@ fn spawn_fangyuan_home_blueprint_content(
                         entity,
                         render_summary: FangyuanHomeBlueprintRenderSummary::cpu_merge()
                             .with_material_stats(&primitive_stats),
+                        lod_descriptors: fangyuan_home_blueprint_lod_descriptors(
+                            primitive_set,
+                            FangyuanLodRenderPath::StaticMerge,
+                        ),
                     }
                 }
                 Err(error) => {
@@ -1689,6 +1759,10 @@ fn spawn_fangyuan_home_blueprint_content(
                             entity,
                             render_summary: FangyuanHomeBlueprintRenderSummary::cpu_merge()
                                 .with_material_stats(&primitive_stats),
+                            lod_descriptors: fangyuan_home_blueprint_lod_descriptors(
+                                primitive_set,
+                                FangyuanLodRenderPath::Hidden,
+                            ),
                         };
                     }
                     let entity = spawn_fangyuan_home_blueprint_standard_content(
@@ -1704,6 +1778,10 @@ fn spawn_fangyuan_home_blueprint_content(
                         entity,
                         render_summary: FangyuanHomeBlueprintRenderSummary::standard()
                             .with_material_stats(&primitive_stats),
+                        lod_descriptors: fangyuan_home_blueprint_lod_descriptors(
+                            primitive_set,
+                            FangyuanLodRenderPath::Standard,
+                        ),
                     }
                 }
             }
@@ -1731,6 +1809,10 @@ fn spawn_fangyuan_home_blueprint_content(
                         entity,
                         render_summary: FangyuanHomeBlueprintRenderSummary::static_instance(&stats)
                             .with_material_stats(&primitive_stats),
+                        lod_descriptors: fangyuan_home_blueprint_lod_descriptors(
+                            primitive_set,
+                            FangyuanLodRenderPath::StaticInstancing,
+                        ),
                     }
                 }
                 Err(error) => {
@@ -1757,6 +1839,10 @@ fn spawn_fangyuan_home_blueprint_content(
                                     static_instance_runtime.fallback_reason(),
                                 )
                                 .with_material_stats(&primitive_stats),
+                            lod_descriptors: fangyuan_home_blueprint_lod_descriptors(
+                                primitive_set,
+                                FangyuanLodRenderPath::Hidden,
+                            ),
                         };
                     }
                     let entity = spawn_fangyuan_home_blueprint_standard_content(
@@ -1775,6 +1861,10 @@ fn spawn_fangyuan_home_blueprint_content(
                                 static_instance_runtime.fallback_reason(),
                             )
                             .with_material_stats(&primitive_stats),
+                        lod_descriptors: fangyuan_home_blueprint_lod_descriptors(
+                            primitive_set,
+                            FangyuanLodRenderPath::Standard,
+                        ),
                     }
                 }
             }
@@ -1816,6 +1906,24 @@ fn spawn_fangyuan_home_blueprint_static_instance_content(
 
     static_instance_runtime.record_success(stats);
     content
+}
+
+fn fangyuan_home_blueprint_lod_descriptors(
+    primitive_set: &FangyuanPrimitiveSet,
+    preferred_path: FangyuanLodRenderPath,
+) -> Vec<FangyuanLodRenderDescriptor> {
+    let kind = if preferred_path == FangyuanLodRenderPath::Hidden {
+        FangyuanLodObjectKind::StaticObject
+    } else {
+        FangyuanLodObjectKind::HomeDecoration
+    };
+    fangyuan_lod_descriptors_from_primitive_set(
+        "home_chunk_preview",
+        "home.layout",
+        kind,
+        preferred_path,
+        primitive_set,
+    )
 }
 
 fn spawn_fangyuan_home_blueprint_static_instance_batch(
@@ -2378,6 +2486,7 @@ fn handle_fangyuan_home_blueprint_commands(
     mut static_instance_runtime: ResMut<FangyuanHomeStaticInstanceRuntime>,
     mut trial_runtime: ResMut<FangyuanObjectTrialRuntime>,
     mut trial_render_runtime: ResMut<FangyuanHomeObjectTrialRenderRuntime>,
+    mut lod_runtime: ResMut<FangyuanHomeLodIntegrationRuntime>,
     mut blueprint_stats: ResMut<FangyuanHomeBlueprintStats>,
 ) {
     let mut requested_command = None;
@@ -2413,6 +2522,8 @@ fn handle_fangyuan_home_blueprint_commands(
                 &mut materials,
                 &mut blueprint_stats,
             );
+            lod_runtime.clear();
+            blueprint_stats.record_lod_summary(&lod_runtime.summary);
             blueprint_stats.materials = blueprint_assets.material_count();
             blueprint_stats.record_cleared(&session_id);
         }
@@ -2433,6 +2544,8 @@ fn handle_fangyuan_home_blueprint_commands(
                 &mut materials,
                 &mut blueprint_stats,
             );
+            lod_runtime.clear();
+            blueprint_stats.record_lod_summary(&lod_runtime.summary);
 
             let layout = match FangyuanHomeLayout::load_first_package_ron(FANGYUAN_HOME_LAYOUT_PATH)
             {
@@ -2446,6 +2559,7 @@ fn handle_fangyuan_home_blueprint_commands(
                         blueprint_assets.material_count(),
                         None,
                     );
+                    blueprint_stats.record_lod_summary(&lod_runtime.summary);
                     blueprint_stats.record_trial_summary(trial_runtime.summary());
                     return;
                 }
@@ -2467,6 +2581,7 @@ fn handle_fangyuan_home_blueprint_commands(
                     blueprint_assets.material_count(),
                     None,
                 );
+                blueprint_stats.record_lod_summary(&lod_runtime.summary);
                 blueprint_stats.record_trial_summary(trial_runtime.summary());
                 return;
             }
@@ -2486,11 +2601,12 @@ fn handle_fangyuan_home_blueprint_commands(
                     blueprint_assets.material_count(),
                     None,
                 );
+                blueprint_stats.record_lod_summary(&lod_runtime.summary);
                 blueprint_stats.record_trial_summary(trial_runtime.summary());
                 return;
             };
 
-            spawn_fangyuan_home_blueprint_from_layout(
+            let blueprint_lod_descriptors = spawn_fangyuan_home_blueprint_from_layout(
                 &mut commands,
                 content_root,
                 &session_id,
@@ -2502,8 +2618,10 @@ fn handle_fangyuan_home_blueprint_commands(
                 &mut static_merge_runtime,
                 &mut static_instance_runtime,
                 &mut blueprint_stats,
-            );
-            start_fangyuan_home_trial_runtime(
+            )
+            .map(|spawned| spawned.lod_descriptors)
+            .unwrap_or_default();
+            let trial_lod_descriptors = start_fangyuan_home_trial_runtime(
                 &mut commands,
                 content_root,
                 &session_id,
@@ -2514,6 +2632,12 @@ fn handle_fangyuan_home_blueprint_commands(
                 &mut trial_runtime,
                 &mut blueprint_stats,
                 0,
+            );
+            record_fangyuan_home_lod_integration_summary(
+                &mut lod_runtime,
+                &mut blueprint_stats,
+                blueprint_lod_descriptors,
+                trial_lod_descriptors,
             );
         }
     }
@@ -2531,27 +2655,75 @@ fn start_fangyuan_home_trial_runtime(
     trial_runtime: &mut FangyuanObjectTrialRuntime,
     blueprint_stats: &mut FangyuanHomeBlueprintStats,
     start_tick: u64,
-) {
+) -> Vec<FangyuanLodRenderDescriptor> {
     match trial_runtime.enter_default_showcase(start_tick) {
         Ok(summary) => {
+            let visual_primitives = trial_runtime.visual_primitives();
+            let lod_descriptors = visual_primitives
+                .iter()
+                .map(|visual| {
+                    fangyuan_lod_descriptor_from_trial_visual("home_chunk_preview", visual)
+                })
+                .collect::<Vec<_>>();
             spawn_fangyuan_home_trial_visuals(
                 commands,
                 parent,
                 session_id,
-                trial_runtime.visual_primitives(),
+                visual_primitives,
                 meshes,
                 materials,
                 blueprint_assets,
                 trial_render_runtime,
             );
             blueprint_stats.record_trial_summary(&summary);
+            lod_descriptors
         }
         Err(error) => {
             warn!("failed to start fangyuan home object trial runtime: {error:?}");
             trial_runtime.clear_scene();
             blueprint_stats.record_trial_summary(trial_runtime.summary());
+            Vec::new()
         }
     }
+}
+
+fn record_fangyuan_home_lod_integration_summary(
+    lod_runtime: &mut FangyuanHomeLodIntegrationRuntime,
+    blueprint_stats: &mut FangyuanHomeBlueprintStats,
+    mut blueprint_descriptors: Vec<FangyuanLodRenderDescriptor>,
+    trial_descriptors: Vec<FangyuanLodRenderDescriptor>,
+) {
+    blueprint_descriptors.extend(trial_descriptors);
+    let chunk_summary = FangyuanChunkDebugSummary {
+        loaded_chunks: usize::from(!blueprint_descriptors.is_empty()),
+        loaded_chunk_ids: if blueprint_descriptors.is_empty() {
+            Vec::new()
+        } else {
+            vec!["home_chunk_preview".to_string()]
+        },
+        visible_objects: blueprint_descriptors.len(),
+        load_state: if blueprint_descriptors.is_empty() {
+            "pending".to_string()
+        } else {
+            "loaded".to_string()
+        },
+        failure_reason: "-".to_string(),
+    };
+    let metrics = hotspot_metrics_from_descriptors(&blueprint_descriptors, 1);
+    let hotspot = evaluate_fangyuan_hotspot(
+        metrics,
+        FangyuanHotspotThresholds::default(),
+        FangyuanHotspotState::default(),
+    );
+    let summary = summarize_fangyuan_lod_integration_from_descriptors(
+        [0.0, 0.0, 0.0],
+        FangyuanAoiConfig::default(),
+        &chunk_summary,
+        &blueprint_descriptors,
+        &hotspot,
+    );
+    blueprint_stats.record_lod_summary(&summary);
+    lod_runtime.record(summary);
 }
 
 fn clear_fangyuan_home_trial_runtime<'world>(
@@ -2636,6 +2808,7 @@ fn clear_fangyuan_home_render_runtime_on_exit(
     mut static_instance_runtime: ResMut<FangyuanHomeStaticInstanceRuntime>,
     mut trial_runtime: ResMut<FangyuanObjectTrialRuntime>,
     mut trial_render_runtime: ResMut<FangyuanHomeObjectTrialRenderRuntime>,
+    mut lod_runtime: ResMut<FangyuanHomeLodIntegrationRuntime>,
 ) {
     for event in scene_events.read() {
         let SceneEvent::Exited(exited) = event else {
@@ -2651,6 +2824,7 @@ fn clear_fangyuan_home_render_runtime_on_exit(
         clear_fangyuan_home_trial_visuals(&mut commands, &exited.session_id, trial_visuals.iter());
         trial_render_runtime.clear_assets(&mut materials);
         trial_runtime.exit_scene();
+        lod_runtime.clear();
     }
 }
 
@@ -2851,6 +3025,7 @@ mod tests {
             .init_resource::<FangyuanHomeStaticInstanceRuntime>()
             .init_resource::<FangyuanObjectTrialRuntime>()
             .init_resource::<FangyuanHomeObjectTrialRenderRuntime>()
+            .init_resource::<FangyuanHomeLodIntegrationRuntime>()
             .init_resource::<FangyuanHomeBlueprintStats>()
             .add_message::<SceneEvent>()
             .add_message::<FangyuanHomeBlueprintCommand>()
@@ -5628,7 +5803,7 @@ mod tests {
         };
         state.apply(app.world_mut());
         app.update();
-        content
+        content.map(|content| content.entity)
     }
 
     fn spawn_simple_blueprint_from_layout_for_test(
@@ -5733,9 +5908,10 @@ mod tests {
             FANGYUAN_HOME_PREFAB_PALETTE_PATH,
             &audit_report,
             compile_report,
-            render_summary,
+            render_summary.clone(),
         );
         record_expected_trial_summary(&mut stats);
+        record_expected_lod_summary(&mut stats, compile_report, &render_summary);
         stats
     }
 
@@ -5745,6 +5921,7 @@ mod tests {
     ) -> FangyuanHomeBlueprintStats {
         let mut stats = expected_loaded_layout_stats(session_id, compile_report);
         clear_expected_trial_summary(&mut stats);
+        stats.record_lod_summary(&FangyuanLodIntegrationSummary::default());
         stats.record_cleared(session_id);
         stats
     }
@@ -5763,6 +5940,62 @@ mod tests {
             audit_report,
         );
         stats
+    }
+
+    fn record_expected_lod_summary(
+        stats: &mut FangyuanHomeBlueprintStats,
+        compile_report: &FangyuanSceneLayoutCompileReport,
+        render_summary: &FangyuanHomeBlueprintRenderSummary,
+    ) {
+        let render_path = match render_summary.mode.as_str() {
+            "cpu_merge" => FangyuanLodRenderPath::StaticMerge,
+            "static_instance" => FangyuanLodRenderPath::StaticInstancing,
+            mode if mode.contains("->standard") || mode == "standard" => {
+                FangyuanLodRenderPath::Standard
+            }
+            _ => FangyuanLodRenderPath::Hidden,
+        };
+        let mut descriptors =
+            fangyuan_home_blueprint_lod_descriptors(&compile_report.primitive_set, render_path);
+        let mut trial_runtime = FangyuanObjectTrialRuntime::default();
+        trial_runtime
+            .enter_default_showcase(0)
+            .expect("default Fangyuan home trial should start");
+        descriptors.extend(
+            trial_runtime.visual_primitives().iter().map(|visual| {
+                fangyuan_lod_descriptor_from_trial_visual("home_chunk_preview", visual)
+            }),
+        );
+
+        let chunk_summary = FangyuanChunkDebugSummary {
+            loaded_chunks: usize::from(!descriptors.is_empty()),
+            loaded_chunk_ids: if descriptors.is_empty() {
+                Vec::new()
+            } else {
+                vec!["home_chunk_preview".to_string()]
+            },
+            visible_objects: descriptors.len(),
+            load_state: if descriptors.is_empty() {
+                "pending".to_string()
+            } else {
+                "loaded".to_string()
+            },
+            failure_reason: "-".to_string(),
+        };
+        let metrics = hotspot_metrics_from_descriptors(&descriptors, 1);
+        let hotspot = evaluate_fangyuan_hotspot(
+            metrics,
+            FangyuanHotspotThresholds::default(),
+            FangyuanHotspotState::default(),
+        );
+        let summary = summarize_fangyuan_lod_integration_from_descriptors(
+            [0.0, 0.0, 0.0],
+            FangyuanAoiConfig::default(),
+            &chunk_summary,
+            &descriptors,
+            &hotspot,
+        );
+        stats.record_lod_summary(&summary);
     }
 
     fn record_expected_trial_summary(stats: &mut FangyuanHomeBlueprintStats) {
