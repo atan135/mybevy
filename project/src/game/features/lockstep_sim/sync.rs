@@ -7,6 +7,10 @@ use crate::game::{
 
 use super::{
     config::{LockstepSimAuthorityMode, LockstepSimConfig},
+    snapshot::{
+        LockstepSimSnapshotError, SIM_INITIAL_SNAPSHOT_SCHEMA,
+        parse_initial_snapshot_from_game_state,
+    },
     state::LockstepSimSceneState,
 };
 
@@ -105,7 +109,7 @@ pub(in crate::game::features::lockstep_sim) fn cleanup_lockstep_sim_authority(
 
 pub(in crate::game::features::lockstep_sim) fn follow_lockstep_sim_myserver_events(
     config: Res<LockstepSimConfig>,
-    scene_state: Res<LockstepSimSceneState>,
+    mut scene_state: ResMut<LockstepSimSceneState>,
     mut state: ResMut<LockstepSimMyServerJoinState>,
     mut events: MessageReader<MyServerEvent>,
     mut commands: MessageWriter<MyServerCommand>,
@@ -115,12 +119,19 @@ pub(in crate::game::features::lockstep_sim) fn follow_lockstep_sim_myserver_even
     }
 
     for event in events.read() {
-        handle_lockstep_sim_myserver_event(&config, &mut state, event, &mut commands);
+        handle_lockstep_sim_myserver_event(
+            &config,
+            &mut scene_state,
+            &mut state,
+            event,
+            &mut commands,
+        );
     }
 }
 
 fn handle_lockstep_sim_myserver_event(
     config: &LockstepSimConfig,
+    scene_state: &mut LockstepSimSceneState,
     state: &mut LockstepSimMyServerJoinState,
     event: &MyServerEvent,
     commands: &mut MessageWriter<MyServerCommand>,
@@ -182,8 +193,13 @@ fn handle_lockstep_sim_myserver_event(
             );
         }
         MyServerEvent::RoomStatePush(push)
-            if state.ready_sent && !state.start_sent && room_state_says_local_ready(state, push) =>
+            if state.ready_sent
+                && !state.start_sent
+                && room_state_says_local_ready(state, push) =>
         {
+            if let Some(snapshot) = push.snapshot.as_ref() {
+                try_parse_initial_snapshot(scene_state, &snapshot.room_id, &snapshot.game_state);
+            }
             state.start_sent = true;
             info!(
                 room_id = push.snapshot.as_ref().map(|snapshot| snapshot.room_id.as_str()).unwrap_or_default(),
@@ -191,6 +207,11 @@ fn handle_lockstep_sim_myserver_event(
                 "lockstep sim MyServer starting room after ready state push"
             );
             commands.write(MyServerCommand::StartRoom);
+        }
+        MyServerEvent::RoomStatePush(push) => {
+            if let Some(snapshot) = push.snapshot.as_ref() {
+                try_parse_initial_snapshot(scene_state, &snapshot.room_id, &snapshot.game_state);
+            }
         }
         MyServerEvent::RoomStarted(response) if response.ok => {
             state.started = true;
@@ -282,6 +303,68 @@ fn handle_lockstep_sim_myserver_event(
             );
         }
         _ => {}
+    }
+}
+
+fn try_parse_initial_snapshot(
+    scene_state: &mut LockstepSimSceneState,
+    room_id: &str,
+    game_state_json: &str,
+) {
+    if scene_state.initial_snapshot.is_some()
+        || !game_state_json.contains(SIM_INITIAL_SNAPSHOT_SCHEMA)
+    {
+        return;
+    }
+
+    match parse_initial_snapshot_from_game_state(game_state_json) {
+        Ok(snapshot) => {
+            info!(
+                room_id = %snapshot.room_id,
+                start_frame = snapshot.start_frame,
+                tick_rate = snapshot.tick_rate,
+                config_version = snapshot.config_version,
+                config_hash = %snapshot.config_hash,
+                entity_count = snapshot.entities.len(),
+                binding_count = snapshot.control_bindings.len(),
+                state_hash = %snapshot.state_hash.hex,
+                "lockstep sim initial snapshot restored"
+            );
+            scene_state.initial_snapshot_error = None;
+            scene_state.initial_snapshot = Some(snapshot);
+        }
+        Err(error) => {
+            warn!(
+                room_id = %room_id,
+                error_code = %lockstep_snapshot_error_code(&error),
+                reason = %error,
+                "lockstep sim initial snapshot rejected"
+            );
+            scene_state.initial_snapshot_error = Some(error);
+            scene_state.initial_snapshot = None;
+        }
+    }
+}
+
+fn lockstep_snapshot_error_code(error: &LockstepSimSnapshotError) -> &'static str {
+    match error {
+        LockstepSimSnapshotError::JsonDecode(_) => "json_decode",
+        LockstepSimSnapshotError::MissingInitialSnapshot => "missing_initial_snapshot",
+        LockstepSimSnapshotError::UnsupportedSchema { .. } => "unsupported_schema",
+        LockstepSimSnapshotError::UnsupportedSchemaVersion { .. } => "unsupported_schema_version",
+        LockstepSimSnapshotError::InvalidRoomId => "invalid_room_id",
+        LockstepSimSnapshotError::InvalidTickRate => "invalid_tick_rate",
+        LockstepSimSnapshotError::InvalidConfigVersion => "invalid_config_version",
+        LockstepSimSnapshotError::UnsupportedSimSchemaVersion { .. } => {
+            "unsupported_sim_schema_version"
+        }
+        LockstepSimSnapshotError::ConfigHashMismatch { .. } => "config_hash_mismatch",
+        LockstepSimSnapshotError::SnapshotRestore(_) => "snapshot_restore",
+        LockstepSimSnapshotError::FrameMismatch { .. } => "frame_mismatch",
+        LockstepSimSnapshotError::RngSeedMismatch { .. } => "rng_seed_mismatch",
+        LockstepSimSnapshotError::HashEnvelopeMismatch { .. } => "hash_envelope_mismatch",
+        LockstepSimSnapshotError::EntitiesMismatch => "entities_mismatch",
+        LockstepSimSnapshotError::InvalidControlBinding { code } => code,
     }
 }
 

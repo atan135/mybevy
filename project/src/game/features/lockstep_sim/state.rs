@@ -2,11 +2,16 @@ use bevy::prelude::*;
 
 use crate::framework::scene::prelude::{SceneId, SceneSessionId};
 
+use super::snapshot::{LockstepSimSnapshotError, ParsedInitialSnapshot};
+
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
 pub(in crate::game) struct LockstepSimSceneState {
     pub(in crate::game::features::lockstep_sim) active: bool,
     pub(in crate::game::features::lockstep_sim) session_id: Option<SceneSessionId>,
     pub(in crate::game::features::lockstep_sim) scene_id: Option<SceneId>,
+    pub(in crate::game::features::lockstep_sim) initial_snapshot: Option<ParsedInitialSnapshot>,
+    pub(in crate::game::features::lockstep_sim) initial_snapshot_error:
+        Option<LockstepSimSnapshotError>,
 }
 
 impl LockstepSimSceneState {
