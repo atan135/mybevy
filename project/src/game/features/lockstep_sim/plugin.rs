@@ -10,6 +10,7 @@ use crate::{
 
 use super::{
     config::LockstepSimConfig,
+    input::LockstepSimInputSeq,
     state::LockstepSimSceneState,
     sync::{
         LockstepSimMyServerJoinState, cleanup_lockstep_sim_authority,
@@ -23,6 +24,7 @@ impl Plugin for LockstepSimPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LockstepSimConfig>()
             .init_resource::<LockstepSimSceneState>()
+            .init_resource::<LockstepSimInputSeq>()
             .init_resource::<LockstepSimMyServerJoinState>()
             .add_systems(Update, follow_lockstep_sim_myserver_events)
             .add_systems(PostUpdate, update_lockstep_sim_scene_state);

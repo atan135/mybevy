@@ -43,7 +43,30 @@ pub(in crate::game) struct ClientSimInput {
     pub(in crate::game) character_id: String,
     pub(in crate::game) entity_id: u32,
     pub(in crate::game) seq: u32,
-    pub(in crate::game) move_dir: QuantizedDir,
+    pub(in crate::game) source: SimInputSource,
+    pub(in crate::game) command: SimCommand,
+}
+
+impl ClientSimInput {
+    pub(in crate::game) fn move_command(
+        frame: u32,
+        character_id: impl Into<String>,
+        entity_id: u32,
+        seq: u32,
+        move_dir: QuantizedDir,
+    ) -> Self {
+        Self {
+            frame,
+            character_id: character_id.into(),
+            entity_id,
+            seq,
+            source: SimInputSource::Real,
+            command: SimCommand::Move(MoveCommand {
+                dir: move_dir,
+                speed_per_second: None,
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,11 +140,8 @@ fn to_sim_input(input: &ClientSimInput) -> SimInput {
         character_id: input.character_id.clone(),
         entity_id: EntityId::new(input.entity_id),
         seq: input.seq,
-        source: SimInputSource::Real,
-        command: SimCommand::Move(MoveCommand {
-            dir: input.move_dir,
-            speed_per_second: None,
-        }),
+        source: input.source,
+        command: input.command,
     }
 }
 
@@ -143,13 +163,13 @@ mod tests {
             }],
         )
         .unwrap();
-        let inputs = vec![ClientSimInput {
-            frame: 1,
-            character_id: "local_player".to_owned(),
-            entity_id: 100,
-            seq: 1,
-            move_dir: QuantizedDir::RIGHT,
-        }];
+        let inputs = vec![ClientSimInput::move_command(
+            1,
+            "local_player",
+            100,
+            1,
+            QuantizedDir::RIGHT,
+        )];
 
         let summary = step_client_sim(&mut world, 1, &inputs, &config).unwrap();
 
