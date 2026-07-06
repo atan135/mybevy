@@ -4,5 +4,6 @@ pub(in crate::game) mod robot_sync;
 pub(in crate::game) mod touch_ripple;
 
 pub(in crate::game) use fangyuan_player_preview::FangyuanPlayerPreviewPlugin;
+pub(in crate::game) use lockstep_sim::LockstepSimPlugin;
 pub(in crate::game) use robot_sync::RobotSyncPlugin;
 pub(in crate::game) use touch_ripple::TouchRipplePlugin;

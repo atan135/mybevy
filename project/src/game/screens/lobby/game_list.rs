@@ -29,7 +29,10 @@ use crate::game::{
     features::touch_ripple::TouchLaunchMode,
     myserver::MyServerCommand,
     navigation::{AppUiMode, GameRouteCommand, game_panel_root, secondary_route_button_key},
-    scenes::{FANGYUAN_HOME_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID, SAMPLE_DUNGEON_ROOM_SCENE_ID},
+    scenes::{
+        FANGYUAN_HOME_SCENE_ID, LOCKSTEP_SIM_ARENA_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID,
+        SAMPLE_DUNGEON_ROOM_SCENE_ID,
+    },
     ui_ids::{
         ACTION_CANCEL, ACTION_CONFIRM, ACTION_TOUCH_RIPPLE_NETWORKED,
         ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY, PANEL_GAME_LIST,
@@ -44,6 +47,9 @@ pub(super) struct SampleDungeonRoomPlayButton;
 
 #[derive(Component)]
 pub(super) struct RobotSyncArenaPlayButton;
+
+#[derive(Component)]
+pub(super) struct LockstepSimArenaPlayButton;
 
 #[derive(Component)]
 pub(super) struct FangyuanHomePlayButton;
@@ -335,6 +341,57 @@ pub(super) fn setup_game_list_screen(
                                         theme,
                                         fonts,
                                         i18n,
+                                        "lobby.lockstep_sim_scene.title",
+                                        "Lockstep Sim",
+                                        UiThemeTextStyleRole::Body,
+                                        UiThemeTextColorRole::Primary,
+                                    ),
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
+                                        "lobby.lockstep_sim_scene.description",
+                                        "Shared deterministic simulation arena",
+                                        UiThemeTextStyleRole::Caption,
+                                        UiThemeTextColorRole::Muted,
+                                    ),
+                                ],
+                            ),
+                            (
+                                primary_action_button_key(
+                                    theme,
+                                    metrics,
+                                    fonts,
+                                    i18n,
+                                    "lobby.enter",
+                                    "Enter",
+                                ),
+                                LockstepSimArenaPlayButton,
+                            ),
+                        ],
+                    ),
+                    (
+                        Node {
+                            width: percent(100),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::SpaceBetween,
+                            column_gap: px(theme.layout.row_column_gap),
+                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
+                            ..default()
+                        },
+                        children![
+                            (
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: px(theme.layout.row_gap),
+                                    flex_grow: 1.0,
+                                    ..default()
+                                },
+                                children![
+                                    screen_label_key(
+                                        theme,
+                                        fonts,
+                                        i18n,
                                         "lobby.sample_scene.title",
                                         "Sample Scene",
                                         UiThemeTextStyleRole::Body,
@@ -539,6 +596,7 @@ pub(super) fn handle_game_list_buttons(
         Query<(), With<TouchRipplePlayButton>>,
         Query<(), With<SampleDungeonRoomPlayButton>>,
         Query<(), With<RobotSyncArenaPlayButton>>,
+        Query<(), With<LockstepSimArenaPlayButton>>,
         Query<(), With<FangyuanHomePlayButton>>,
         Query<(), With<FangyuanPlayerPreviewPlayButton>>,
         Query<(), With<LobbyChangeCharacterButton>>,
@@ -555,10 +613,11 @@ pub(super) fn handle_game_list_buttons(
         let is_play = button_queries.p0().contains(entity);
         let is_sample_scene = button_queries.p1().contains(entity);
         let is_robot_sync = button_queries.p2().contains(entity);
-        let is_fangyuan_home = button_queries.p3().contains(entity);
-        let is_fangyuan_player_preview = button_queries.p4().contains(entity);
-        let is_change_character = button_queries.p5().contains(entity);
-        let is_logout = button_queries.p6().contains(entity);
+        let is_lockstep_sim = button_queries.p3().contains(entity);
+        let is_fangyuan_home = button_queries.p4().contains(entity);
+        let is_fangyuan_player_preview = button_queries.p5().contains(entity);
+        let is_change_character = button_queries.p6().contains(entity);
+        let is_logout = button_queries.p7().contains(entity);
 
         if is_play {
             panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
@@ -581,6 +640,15 @@ pub(super) fn handle_game_list_buttons(
             robot_sync_entry.pending = true;
             scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
                 ROBOT_SYNC_ARENA_SCENE_ID,
+            )));
+        } else if is_lockstep_sim {
+            if robot_sync_entry.pending {
+                continue;
+            }
+
+            robot_sync_entry.pending = true;
+            scene_commands.write(SceneCommand::Switch(SceneSwitchRequest::new(
+                LOCKSTEP_SIM_ARENA_SCENE_ID,
             )));
         } else if is_fangyuan_home {
             if fangyuan_home_entry.pending {

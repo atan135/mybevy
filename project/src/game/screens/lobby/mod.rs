@@ -12,7 +12,10 @@ use crate::framework::{
 };
 use crate::game::{
     navigation::{AppUiMode, GameRouteCommand},
-    scenes::{FANGYUAN_HOME_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID, SAMPLE_DUNGEON_ROOM_SCENE_ID},
+    scenes::{
+        FANGYUAN_HOME_SCENE_ID, LOCKSTEP_SIM_ARENA_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID,
+        SAMPLE_DUNGEON_ROOM_SCENE_ID,
+    },
 };
 
 pub(super) struct LobbyScreensPlugin;
@@ -93,17 +96,22 @@ fn handle_lobby_scene_entry_events(
                 if failure
                     .scene_id
                     .as_ref()
-                    .is_some_and(|scene_id| scene_id.as_str() == ROBOT_SYNC_ARENA_SCENE_ID) =>
+                    .is_some_and(|scene_id| {
+                        matches!(
+                            scene_id.as_str(),
+                            ROBOT_SYNC_ARENA_SCENE_ID | LOCKSTEP_SIM_ARENA_SCENE_ID
+                        )
+                    }) =>
             {
                 robot_sync_entry.clear();
                 warn!(
-                    "failed to enter robot sync arena scene: {}",
+                    "failed to enter authority arena scene: {}",
                     failure.log_description()
                 );
                 overlay_commands.write(UiOverlayCommand::ShowToast(UiToast::new_key(
                     &i18n,
                     "lobby.robot_sync_scene.toast.failed",
-                    "Failed to enter Robot Sync",
+                    "Failed to enter authority arena",
                 )));
             }
             SceneEvent::Failed(failure)
@@ -123,7 +131,12 @@ fn handle_lobby_scene_entry_events(
                     "Failed to enter Fangyuan Home",
                 )));
             }
-            SceneEvent::Exited(exited) if exited.scene_id.as_str() == ROBOT_SYNC_ARENA_SCENE_ID => {
+            SceneEvent::Exited(exited)
+                if matches!(
+                    exited.scene_id.as_str(),
+                    ROBOT_SYNC_ARENA_SCENE_ID | LOCKSTEP_SIM_ARENA_SCENE_ID
+                ) =>
+            {
                 robot_sync_entry.clear();
             }
             SceneEvent::Exited(exited) if exited.scene_id.as_str() == FANGYUAN_HOME_SCENE_ID => {
@@ -135,7 +148,10 @@ fn handle_lobby_scene_entry_events(
 }
 
 fn should_route_robot_sync_scene_entered(scene_id: &str) -> bool {
-    scene_id == ROBOT_SYNC_ARENA_SCENE_ID
+    matches!(
+        scene_id,
+        ROBOT_SYNC_ARENA_SCENE_ID | LOCKSTEP_SIM_ARENA_SCENE_ID
+    )
 }
 
 fn should_route_fangyuan_home_entered(scene_id: &str) -> bool {
@@ -206,6 +222,31 @@ mod tests {
         assert_eq!(
             scene_commands[0],
             SceneCommand::Switch(SceneSwitchRequest::new(ROBOT_SYNC_ARENA_SCENE_ID))
+        );
+        assert!(
+            app.world()
+                .resource::<game_list::RobotSyncArenaEntryState>()
+                .is_pending()
+        );
+    }
+
+    #[test]
+    fn lockstep_sim_lobby_button_writes_switch_once_while_pending() {
+        let mut app = game_list_button_test_app();
+        let button = app
+            .world_mut()
+            .spawn(game_list::LockstepSimArenaPlayButton)
+            .id();
+
+        click(&mut app, button);
+        click(&mut app, button);
+        app.update();
+
+        let scene_commands = read_messages::<SceneCommand>(app.world());
+        assert_eq!(scene_commands.len(), 1);
+        assert_eq!(
+            scene_commands[0],
+            SceneCommand::Switch(SceneSwitchRequest::new(LOCKSTEP_SIM_ARENA_SCENE_ID))
         );
         assert!(
             app.world()
@@ -344,6 +385,34 @@ mod tests {
     }
 
     #[test]
+    fn lockstep_sim_entered_routes_to_robot_sync_scene_hud() {
+        let mut app = lobby_scene_event_test_app();
+        app.world_mut()
+            .resource_mut::<game_list::RobotSyncArenaEntryState>()
+            .set_pending_for_test(true);
+
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id: LOCKSTEP_SIM_ARENA_SCENE_ID.into(),
+                session_id: "lockstep-session".into(),
+                content_version: None,
+            }));
+        app.update();
+
+        assert!(
+            !app.world()
+                .resource::<game_list::RobotSyncArenaEntryState>()
+                .is_pending()
+        );
+        let route_commands = read_messages::<GameRouteCommand>(app.world());
+        assert_eq!(route_commands.len(), 1);
+        assert!(matches!(
+            route_commands[0],
+            GameRouteCommand::ChangeMode(AppUiMode::RobotSyncScene)
+        ));
+    }
+
+    #[test]
     fn fangyuan_home_entered_routes_to_fangyuan_home_hud() {
         let mut app = lobby_scene_event_test_app();
         app.world_mut()
@@ -375,6 +444,9 @@ mod tests {
     fn non_robot_sync_entered_does_not_route_to_robot_sync_scene_hud() {
         assert!(should_route_robot_sync_scene_entered(
             ROBOT_SYNC_ARENA_SCENE_ID
+        ));
+        assert!(should_route_robot_sync_scene_entered(
+            LOCKSTEP_SIM_ARENA_SCENE_ID
         ));
         assert!(!should_route_robot_sync_scene_entered(
             SAMPLE_DUNGEON_ROOM_SCENE_ID

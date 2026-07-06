@@ -6,6 +6,7 @@
 
 mod catalog;
 mod fangyuan_home;
+mod lockstep_sim_arena;
 mod robot_sync_arena;
 mod sample_dungeon_room;
 
@@ -22,6 +23,7 @@ pub(in crate::game) use fangyuan_home::FANGYUAN_HOME_SCENE_ID;
 #[cfg(test)]
 pub(in crate::game) use fangyuan_home::FangyuanHomeBlueprintRenderSummary;
 pub(in crate::game) use fangyuan_home::{FangyuanHomeBlueprintCommand, FangyuanHomeBlueprintStats};
+pub(in crate::game) use lockstep_sim_arena::LOCKSTEP_SIM_ARENA_SCENE_ID;
 pub(in crate::game) use robot_sync_arena::ROBOT_SYNC_ARENA_SCENE_ID;
 pub(in crate::game) use sample_dungeon_room::SAMPLE_DUNGEON_ROOM_SCENE_ID;
 
@@ -36,6 +38,7 @@ impl Plugin for GameScenesPlugin {
         app.add_plugins((
             catalog::GameSceneCatalogPlugin,
             fangyuan_home::FangyuanHomePlugin,
+            lockstep_sim_arena::LockstepSimArenaPlugin,
             robot_sync_arena::RobotSyncArenaPlugin,
             sample_dungeon_room::SampleDungeonRoomPlugin,
         ))
@@ -232,6 +235,31 @@ mod tests {
         );
 
         assert!(registry.contains(&SceneId::from(SAMPLE_DUNGEON_ROOM_SCENE_ID)));
+    }
+
+    #[test]
+    fn scene_plugins_register_lockstep_sim_arena_from_first_package_catalog() {
+        let mut app = app_with_scene_registration_plugins();
+
+        app.update();
+
+        let registry = app.world().resource::<SceneRegistry>();
+        let scene_id = SceneId::from(LOCKSTEP_SIM_ARENA_SCENE_ID);
+        let definition = registry.get(&scene_id).unwrap();
+
+        assert_eq!(definition.scene_id, scene_id);
+        assert_eq!(definition.kind, SceneKind::Arena);
+        assert!(definition.has_world_root);
+        assert_eq!(
+            definition.manifest_path.as_deref(),
+            Some("scenes/lockstep_sim_arena/scene.ron")
+        );
+        assert_eq!(
+            definition.content_source,
+            SceneContentSource::FirstPackage {
+                manifest_path: "scenes/lockstep_sim_arena/scene.ron".to_string()
+            }
+        );
     }
 
     #[test]
