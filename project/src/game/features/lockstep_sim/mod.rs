@@ -1,6 +1,7 @@
 pub(in crate::game) mod adapter;
 mod config;
 mod input;
+mod payload;
 mod plugin;
 mod snapshot;
 mod state;

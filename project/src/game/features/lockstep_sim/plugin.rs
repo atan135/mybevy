@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use sim_core::SimCommand;
 
 use crate::{
     framework::scene::prelude::SceneEvent,
@@ -10,7 +11,13 @@ use crate::{
 
 use super::{
     config::LockstepSimConfig,
-    input::LockstepSimInputSeq,
+    input::{
+        LockstepSimInputError, LockstepSimInputIntent, LockstepSimInputSeq, quantize_keyboard_axis,
+    },
+    payload::{
+        LockstepSimInputGateError, LockstepSimPayloadError, build_sim_input_envelope,
+        gate_lockstep_sim_input, log_sim_input_send,
+    },
     state::LockstepSimSceneState,
     sync::{
         LockstepSimMyServerJoinState, cleanup_lockstep_sim_authority,
@@ -20,14 +27,149 @@ use super::{
 
 pub(in crate::game) struct LockstepSimPlugin;
 
+#[derive(Clone, Copy, Debug, Default, Resource, PartialEq, Eq)]
+pub(in crate::game::features::lockstep_sim) struct LockstepSimInputSendState {
+    last_sent_target_frame: Option<u32>,
+    last_sent_command: Option<SimCommand>,
+}
+
+impl LockstepSimInputSendState {
+    fn should_send(self, target_frame: u32, command: SimCommand) -> bool {
+        if command == SimCommand::Stop && self.last_sent_command == Some(SimCommand::Stop) {
+            return false;
+        }
+
+        self.last_sent_target_frame != Some(target_frame) || self.last_sent_command != Some(command)
+    }
+
+    fn mark_sent(&mut self, target_frame: u32, command: SimCommand) {
+        self.last_sent_target_frame = Some(target_frame);
+        self.last_sent_command = Some(command);
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 impl Plugin for LockstepSimPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LockstepSimConfig>()
             .init_resource::<LockstepSimSceneState>()
             .init_resource::<LockstepSimInputSeq>()
+            .init_resource::<LockstepSimInputSendState>()
             .init_resource::<LockstepSimMyServerJoinState>()
-            .add_systems(Update, follow_lockstep_sim_myserver_events)
+            .add_systems(
+                Update,
+                (
+                    follow_lockstep_sim_myserver_events,
+                    send_local_lockstep_sim_input,
+                )
+                    .chain(),
+            )
             .add_systems(PostUpdate, update_lockstep_sim_scene_state);
+    }
+}
+
+fn send_local_lockstep_sim_input(
+    scene_state: Res<LockstepSimSceneState>,
+    authority_session: Res<AuthoritySession>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut seq: ResMut<LockstepSimInputSeq>,
+    mut send_state: ResMut<LockstepSimInputSendState>,
+    mut authority_commands: MessageWriter<AuthorityCommand>,
+) {
+    if !scene_state.active {
+        return;
+    }
+
+    let command = match manual_lockstep_sim_command(&keyboard_input) {
+        Ok(command) => command,
+        Err(error) => {
+            warn!(?error, "lockstep sim manual input ignored");
+            return;
+        }
+    };
+    let target_frame = authority_session.frame_id.saturating_add(1);
+    if !send_state.should_send(target_frame, command) {
+        return;
+    }
+
+    let context = match gate_lockstep_sim_input(
+        &scene_state,
+        authority_session.local_player_id.as_deref(),
+        None,
+        None,
+        Some(sim_core::SIM_CORE_SCHEMA_VERSION),
+    ) {
+        Ok(context) => context,
+        Err(
+            LockstepSimInputGateError::InactiveScene
+            | LockstepSimInputGateError::MissingInitialSnapshot,
+        ) => {
+            return;
+        }
+        Err(error) => {
+            warn!(reason = %error, "lockstep sim input blocked");
+            return;
+        }
+    };
+    let seq = seq.next();
+    let envelope = match build_sim_input_envelope(target_frame, seq, &[command]) {
+        Ok(envelope) => envelope,
+        Err(LockstepSimPayloadError::EmptyCommands) => return,
+        Err(error) => {
+            warn!(reason = %error, "lockstep sim input payload rejected");
+            return;
+        }
+    };
+
+    log_sim_input_send(
+        &context.character_id,
+        envelope.frame_id,
+        envelope.seq,
+        &envelope.command_summaries,
+    );
+    authority_commands.write(envelope.into_authority_command());
+    send_state.mark_sent(target_frame, command);
+}
+
+fn manual_lockstep_sim_command(
+    keyboard_input: &ButtonInput<KeyCode>,
+) -> Result<SimCommand, LockstepSimInputError> {
+    let x = pressed_axis(
+        keyboard_input,
+        [KeyCode::KeyA, KeyCode::ArrowLeft],
+        [KeyCode::KeyD, KeyCode::ArrowRight],
+    );
+    let y = pressed_axis(
+        keyboard_input,
+        [KeyCode::KeyW, KeyCode::ArrowUp],
+        [KeyCode::KeyS, KeyCode::ArrowDown],
+    );
+
+    if x == 0 && y == 0 {
+        return Ok(SimCommand::Stop);
+    }
+
+    Ok(LockstepSimInputIntent::Move {
+        dir: quantize_keyboard_axis(x, y)?,
+        speed_per_second: None,
+    }
+    .into_sim_command())
+}
+
+fn pressed_axis(
+    keyboard_input: &ButtonInput<KeyCode>,
+    negative_keys: [KeyCode; 2],
+    positive_keys: [KeyCode; 2],
+) -> i32 {
+    let negative = keyboard_input.any_pressed(negative_keys);
+    let positive = keyboard_input.any_pressed(positive_keys);
+    match (negative, positive) {
+        (true, false) => -1,
+        (false, true) => 1,
+        _ => 0,
     }
 }
 
@@ -35,6 +177,8 @@ fn update_lockstep_sim_scene_state(
     config: Res<LockstepSimConfig>,
     authority_session: Res<AuthoritySession>,
     mut scene_state: ResMut<LockstepSimSceneState>,
+    mut input_seq: ResMut<LockstepSimInputSeq>,
+    mut input_send_state: ResMut<LockstepSimInputSendState>,
     mut join_state: ResMut<LockstepSimMyServerJoinState>,
     mut scene_events: MessageReader<SceneEvent>,
     mut authority_commands: MessageWriter<AuthorityCommand>,
@@ -43,6 +187,8 @@ fn update_lockstep_sim_scene_state(
     for event in scene_events.read() {
         match event {
             SceneEvent::Entered(entered) if config.is_lockstep_sim_scene(&entered.scene_id) => {
+                input_seq.reset();
+                input_send_state.reset();
                 scene_state.activate(entered.scene_id.clone(), entered.session_id.clone());
                 start_lockstep_sim_authority(
                     &config,
@@ -62,6 +208,8 @@ fn update_lockstep_sim_scene_state(
                     &mut authority_commands,
                     &mut myserver_commands,
                 );
+                input_seq.reset();
+                input_send_state.reset();
                 scene_state.reset();
             }
             _ => {}
@@ -100,6 +248,7 @@ mod tests {
             .add_message::<MyServerCommand>()
             .add_message::<MyServerEvent>()
             .init_resource::<AuthoritySession>()
+            .init_resource::<ButtonInput<KeyCode>>()
             .add_plugins(LockstepSimPlugin);
         app
     }
@@ -298,6 +447,66 @@ mod tests {
         assert!(read_messages::<MyServerCommand>(app.world()).is_empty());
     }
 
+    #[test]
+    fn active_lockstep_with_snapshot_sends_sim_input_payload() {
+        let mut app = active_lockstep_app();
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.local_player_id = Some("lockstep-player".to_string());
+            session.frame_id = 12;
+        }
+        app.world_mut()
+            .resource_mut::<LockstepSimSceneState>()
+            .initial_snapshot = Some(parsed_snapshot_for_player("lockstep-player", 1000));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyD);
+
+        app.update();
+
+        let authority_commands = read_messages::<AuthorityCommand>(app.world());
+        assert!(authority_commands.iter().any(|command| {
+            matches!(
+                command,
+                AuthorityCommand::SendInput {
+                    frame_id: 13,
+                    action,
+                    payload_json
+                } if action == "sim_input"
+                    && serde_json::from_str::<serde_json::Value>(payload_json).is_ok_and(|payload| {
+                        payload["version"] == 1
+                            && payload["seq"] == 0
+                            && payload["commands"][0]["type"] == "move"
+                            && payload["commands"][0]["dirX"] == 1000
+                            && payload["commands"][0]["dirY"] == 0
+                            && payload["commands"][0].get("entityId").is_none()
+                    })
+            )
+        }));
+    }
+
+    #[test]
+    fn active_lockstep_without_control_binding_does_not_send_sim_input() {
+        let mut app = active_lockstep_app();
+        app.world_mut()
+            .resource_mut::<AuthoritySession>()
+            .local_player_id = Some("missing-player".to_string());
+        app.world_mut()
+            .resource_mut::<LockstepSimSceneState>()
+            .initial_snapshot = Some(parsed_snapshot_for_player("lockstep-player", 1000));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyD);
+
+        app.update();
+
+        assert!(
+            read_messages::<AuthorityCommand>(app.world())
+                .iter()
+                .all(|command| !matches!(command, AuthorityCommand::SendInput { .. }))
+        );
+    }
+
     fn active_lockstep_app() -> App {
         let mut app = test_app();
         app.insert_resource(test_config(LockstepSimAuthorityMode::MyServer));
@@ -309,6 +518,81 @@ mod tests {
             }));
         app.update();
         app
+    }
+
+    fn parsed_snapshot_for_player(
+        player_id: &str,
+        entity_id: u32,
+    ) -> super::super::snapshot::ParsedInitialSnapshot {
+        use std::collections::HashMap;
+
+        use super::super::snapshot::SimHashEnvelope;
+        use sim_core::{
+            CombatConfig, CombatState, EntityId, EntityKind, Fp, FrameId, MovementConfig,
+            MovementMode, MovementState, QuantizedDir, SceneBounds, SimConfig, SimEntity,
+            SimRngState, SimTransform, SimWorld, TeamId, Vec2Fp,
+        };
+
+        let entity = SimEntity {
+            id: EntityId::new(entity_id),
+            kind: EntityKind::Player,
+            owner_character_id: Some(player_id.to_string()),
+            team_id: TeamId::new(1),
+            transform: SimTransform {
+                pos: Vec2Fp::zero(),
+                facing: QuantizedDir::RIGHT,
+                radius: Fp::from_milli(500),
+            },
+            movement: MovementState {
+                mode: MovementMode::Idle,
+                move_dir: QuantizedDir::ZERO,
+                speed_per_second: Fp::ZERO,
+            },
+            combat: CombatState::default(),
+            alive: true,
+        };
+        let world = SimWorld::with_rng(
+            FrameId::new(0),
+            SimRngState {
+                seed: 1,
+                counter: 0,
+            },
+            vec![entity.clone()],
+        )
+        .unwrap();
+        let mut control_bindings = HashMap::new();
+        control_bindings.insert(player_id.to_string(), EntityId::new(entity_id));
+
+        super::super::snapshot::ParsedInitialSnapshot {
+            room_id: "lockstep-room".to_string(),
+            start_frame: 0,
+            tick_rate: 20,
+            config_version: 1,
+            config_hash: "test-config-hash".to_string(),
+            sim_schema_version: sim_core::SIM_CORE_SCHEMA_VERSION,
+            rng_seed: 1,
+            state_hash: SimHashEnvelope {
+                frame: 0,
+                value: 0,
+                hex: "0000000000000000".to_string(),
+            },
+            world,
+            config: SimConfig {
+                movement: MovementConfig {
+                    tick_rate: 20,
+                    default_speed_per_second: Fp::from_i32(6),
+                    max_speed_per_second: Fp::from_i32(12),
+                    bounds: SceneBounds {
+                        min: Vec2Fp::new(Fp::from_i32(-100), Fp::from_i32(-100)),
+                        max: Vec2Fp::new(Fp::from_i32(100), Fp::from_i32(100)),
+                    },
+                    static_obstacles: Vec::new(),
+                },
+                combat: CombatConfig::default(),
+            },
+            control_bindings,
+            entities: vec![entity],
+        }
     }
 
     fn authenticate(app: &mut App) {
@@ -328,11 +612,7 @@ mod tests {
         app.update();
     }
 
-    fn lockstep_room_state_push(
-        room_id: &str,
-        player_id: &str,
-        ready: bool,
-    ) -> pb::RoomStatePush {
+    fn lockstep_room_state_push(room_id: &str, player_id: &str, ready: bool) -> pb::RoomStatePush {
         pb::RoomStatePush {
             event: "ready_changed".to_string(),
             snapshot: Some(pb::RoomSnapshot {
