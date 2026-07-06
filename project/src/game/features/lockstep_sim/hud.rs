@@ -21,6 +21,7 @@ pub(in crate::game) struct LockstepSimHudSnapshot {
     pub(in crate::game) server_hash: String,
     pub(in crate::game) mismatch: String,
     pub(in crate::game) rollback: String,
+    pub(in crate::game) recovery: String,
     pub(in crate::game) first_mismatch: String,
 }
 
@@ -81,6 +82,7 @@ pub(in crate::game) fn lockstep_sim_hud_snapshot(
             .unwrap_or_else(|| "pending".to_string()),
         mismatch: mismatch_label(diagnostics),
         rollback: format!("rollback={}", diagnostics.rollback_count),
+        recovery: recovery_label(scene_state, replay_state),
         first_mismatch: diagnostics
             .first_mismatch
             .as_ref()
@@ -91,7 +93,7 @@ pub(in crate::game) fn lockstep_sim_hud_snapshot(
 
 pub(in crate::game) fn format_lockstep_sim_hud_status(snapshot: &LockstepSimHudSnapshot) -> String {
     format!(
-        "room={} policy={} player={} authority={} frame={} fps={} entities={} events={}\nlocal_hash={} server_hash={} mismatch={} {}\n{}",
+        "room={} policy={} player={} authority={} frame={} fps={} entities={} events={}\nlocal_hash={} server_hash={} mismatch={} {} {}\n{}",
         snapshot.room,
         snapshot.policy,
         snapshot.player,
@@ -104,6 +106,7 @@ pub(in crate::game) fn format_lockstep_sim_hud_status(snapshot: &LockstepSimHudS
         snapshot.server_hash,
         snapshot.mismatch,
         snapshot.rollback,
+        snapshot.recovery,
         snapshot.first_mismatch
     )
 }
@@ -160,6 +163,32 @@ fn mismatch_label(diagnostics: &LockstepSimDiagnosticsState) -> String {
     }
 }
 
+fn recovery_label(
+    scene_state: &LockstepSimSceneState,
+    replay_state: &LockstepSimReplayState,
+) -> String {
+    if let Some(error) = scene_state.initial_snapshot_error.as_ref() {
+        return format!("recovery=snapshot_error({error})");
+    }
+    if let Some(error) = replay_state.last_error.as_ref() {
+        return format!("recovery=replay_error({error})");
+    }
+    match (
+        scene_state.initial_snapshot.as_ref(),
+        replay_state.snapshot_start_frame,
+    ) {
+        (Some(snapshot), Some(start_frame)) => format!(
+            "recovery=ready(gen={} snapshot_frame={} replay_frame={})",
+            replay_state.snapshot_generation, snapshot.start_frame, start_frame
+        ),
+        (Some(snapshot), None) => format!(
+            "recovery=snapshot_pending(gen={} snapshot_frame={})",
+            scene_state.snapshot_generation, snapshot.start_frame
+        ),
+        (None, _) => format!("recovery=waiting(gen={})", scene_state.snapshot_generation),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +230,7 @@ mod tests {
             server_hash: "7:0000000000000002".to_string(),
             mismatch: mismatch_label(&diagnostics),
             rollback: "rollback=0".to_string(),
+            recovery: "recovery=ready(gen=1 snapshot_frame=0 replay_frame=0)".to_string(),
             first_mismatch: diagnostics.first_mismatch.as_ref().unwrap().summary(),
         };
 
@@ -210,7 +240,7 @@ mod tests {
         assert!(status.contains("entities=2 events=3"));
         assert!(status.contains("local_hash=7:0000000000000001"));
         assert!(status.contains("server_hash=7:0000000000000002"));
-        assert!(status.contains("mismatch=mismatch rollback=0"));
+        assert!(status.contains("mismatch=mismatch rollback=0 recovery=ready"));
         assert!(status.contains("first_mismatch frame=7"));
     }
 
@@ -246,6 +276,41 @@ mod tests {
         assert_eq!(snapshot.server_hash, "pending");
         assert_eq!(snapshot.mismatch, "no-server-hash");
         assert_eq!(snapshot.rollback, "rollback=0");
+    }
+
+    #[test]
+    fn lockstep_hud_reports_snapshot_error_for_recovery_visibility() {
+        let config = test_config();
+        let mut scene_state = LockstepSimSceneState {
+            active: true,
+            initial_snapshot_error: Some(
+                super::super::snapshot::LockstepSimSnapshotError::ConfigHashMismatch {
+                    actual: "server".to_string(),
+                    expected: "client".to_string(),
+                },
+            ),
+            snapshot_generation: 2,
+            ..Default::default()
+        };
+        scene_state.clear_initial_snapshot();
+        scene_state.initial_snapshot_error = Some(
+            super::super::snapshot::LockstepSimSnapshotError::UnsupportedSimSchemaVersion {
+                actual: 2,
+                expected: 1,
+            },
+        );
+        scene_state.snapshot_generation = 3;
+
+        let snapshot = lockstep_sim_hud_snapshot(
+            &config,
+            &scene_state,
+            &AuthoritySession::default(),
+            &LockstepSimReplayState::default(),
+        );
+
+        assert!(snapshot.recovery.contains("snapshot_error"));
+        assert!(snapshot.recovery.contains("schema version"));
+        assert!(format_lockstep_sim_hud_status(&snapshot).contains("recovery=snapshot_error"));
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub(in crate::game) struct LockstepSimSceneState {
     pub(in crate::game::features::lockstep_sim) initial_snapshot: Option<ParsedInitialSnapshot>,
     pub(in crate::game::features::lockstep_sim) initial_snapshot_error:
         Option<LockstepSimSnapshotError>,
+    pub(in crate::game::features::lockstep_sim) snapshot_generation: u64,
 }
 
 impl LockstepSimSceneState {
@@ -38,6 +39,39 @@ impl LockstepSimSceneState {
                 .session_id
                 .as_ref()
                 .is_some_and(|active| active == session_id)
+    }
+
+    pub(in crate::game::features::lockstep_sim) fn replace_initial_snapshot(
+        &mut self,
+        snapshot: ParsedInitialSnapshot,
+    ) -> bool {
+        if self.initial_snapshot.as_ref() == Some(&snapshot)
+            && self.initial_snapshot_error.is_none()
+        {
+            return false;
+        }
+
+        self.initial_snapshot = Some(snapshot);
+        self.initial_snapshot_error = None;
+        self.snapshot_generation = self.snapshot_generation.saturating_add(1).max(1);
+        true
+    }
+
+    pub(in crate::game::features::lockstep_sim) fn reject_initial_snapshot(
+        &mut self,
+        error: LockstepSimSnapshotError,
+    ) {
+        self.initial_snapshot = None;
+        self.initial_snapshot_error = Some(error);
+        self.snapshot_generation = self.snapshot_generation.saturating_add(1).max(1);
+    }
+
+    pub(in crate::game::features::lockstep_sim) fn clear_initial_snapshot(&mut self) {
+        if self.initial_snapshot.is_some() || self.initial_snapshot_error.is_some() {
+            self.initial_snapshot = None;
+            self.initial_snapshot_error = None;
+            self.snapshot_generation = self.snapshot_generation.saturating_add(1).max(1);
+        }
     }
 
     pub(in crate::game::features::lockstep_sim) fn reset(&mut self) {

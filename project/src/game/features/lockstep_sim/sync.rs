@@ -198,7 +198,12 @@ fn handle_lockstep_sim_myserver_event(
                 && room_state_says_local_ready(state, push) =>
         {
             if let Some(snapshot) = push.snapshot.as_ref() {
-                try_parse_initial_snapshot(scene_state, &snapshot.room_id, &snapshot.game_state);
+                try_parse_initial_snapshot(
+                    scene_state,
+                    &snapshot.room_id,
+                    &snapshot.game_state,
+                    "room_state",
+                );
             }
             state.start_sent = true;
             info!(
@@ -210,7 +215,41 @@ fn handle_lockstep_sim_myserver_event(
         }
         MyServerEvent::RoomStatePush(push) => {
             if let Some(snapshot) = push.snapshot.as_ref() {
-                try_parse_initial_snapshot(scene_state, &snapshot.room_id, &snapshot.game_state);
+                try_parse_initial_snapshot(
+                    scene_state,
+                    &snapshot.room_id,
+                    &snapshot.game_state,
+                    "room_state",
+                );
+            }
+        }
+        MyServerEvent::RoomReconnected(response) => {
+            if response.ok {
+                if let Some(snapshot) = response.snapshot.as_ref() {
+                    try_parse_initial_snapshot(
+                        scene_state,
+                        &snapshot.room_id,
+                        &snapshot.game_state,
+                        "room_reconnect",
+                    );
+                } else {
+                    scene_state.clear_initial_snapshot();
+                    warn!(
+                        room_id = %response.room_id,
+                        policy_id = %config.myserver_policy_id,
+                        player_id = %config.local_player_id,
+                        "lockstep sim MyServer reconnect response had no recovery snapshot"
+                    );
+                }
+            } else {
+                scene_state.clear_initial_snapshot();
+                warn!(
+                    room_id = %response.room_id,
+                    policy_id = %config.myserver_policy_id,
+                    player_id = %config.local_player_id,
+                    error_code = %response.error_code,
+                    "lockstep sim MyServer reconnect rejected"
+                );
             }
         }
         MyServerEvent::RoomStarted(response) if response.ok => {
@@ -235,6 +274,7 @@ fn handle_lockstep_sim_myserver_event(
             remote_addr,
             error,
         } => {
+            scene_state.clear_initial_snapshot();
             error!(
                 room_id = %config.myserver_room_id,
                 policy_id = %config.myserver_policy_id,
@@ -246,6 +286,7 @@ fn handle_lockstep_sim_myserver_event(
             );
         }
         MyServerEvent::Disconnected { reason } => {
+            scene_state.clear_initial_snapshot();
             warn!(
                 room_id = %config.myserver_room_id,
                 policy_id = %config.myserver_policy_id,
@@ -310,15 +351,18 @@ fn try_parse_initial_snapshot(
     scene_state: &mut LockstepSimSceneState,
     room_id: &str,
     game_state_json: &str,
+    source: &'static str,
 ) {
-    if scene_state.initial_snapshot.is_some()
-        || !game_state_json.contains(SIM_INITIAL_SNAPSHOT_SCHEMA)
-    {
+    if !game_state_json.contains(SIM_INITIAL_SNAPSHOT_SCHEMA) {
         return;
     }
 
     match parse_initial_snapshot_from_game_state(game_state_json) {
         Ok(snapshot) => {
+            let generation_changed = scene_state.replace_initial_snapshot(snapshot);
+            let Some(snapshot) = scene_state.initial_snapshot.as_ref() else {
+                return;
+            };
             info!(
                 room_id = %snapshot.room_id,
                 start_frame = snapshot.start_frame,
@@ -328,20 +372,21 @@ fn try_parse_initial_snapshot(
                 entity_count = snapshot.entities.len(),
                 binding_count = snapshot.control_bindings.len(),
                 state_hash = %snapshot.state_hash.hex,
+                source,
+                snapshot_generation = scene_state.snapshot_generation,
+                generation_changed,
                 "lockstep sim initial snapshot restored"
             );
-            scene_state.initial_snapshot_error = None;
-            scene_state.initial_snapshot = Some(snapshot);
         }
         Err(error) => {
             warn!(
                 room_id = %room_id,
                 error_code = %lockstep_snapshot_error_code(&error),
                 reason = %error,
+                source,
                 "lockstep sim initial snapshot rejected"
             );
-            scene_state.initial_snapshot_error = Some(error);
-            scene_state.initial_snapshot = None;
+            scene_state.reject_initial_snapshot(error);
         }
     }
 }

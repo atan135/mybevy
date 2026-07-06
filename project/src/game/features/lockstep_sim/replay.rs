@@ -32,6 +32,7 @@ const SIM_INPUT_MAX_SPEED_MILLI: i64 = 12_000;
 pub(in crate::game) struct LockstepSimReplayState {
     pub(in crate::game::features::lockstep_sim) world: Option<SimWorld>,
     pub(in crate::game::features::lockstep_sim) config: Option<SimConfig>,
+    pub(in crate::game::features::lockstep_sim) snapshot_generation: u64,
     pub(in crate::game::features::lockstep_sim) snapshot_start_frame: Option<u32>,
     pub(in crate::game::features::lockstep_sim) last_applied_frame: Option<u32>,
     pub(in crate::game::features::lockstep_sim) input_history: VecDeque<LockstepSimFrameInputs>,
@@ -241,13 +242,31 @@ impl LockstepSimReplayState {
         *self = Self::default();
     }
 
-    fn initialize_from_snapshot_if_needed(&mut self, snapshot: &ParsedInitialSnapshot) {
-        if self.snapshot_start_frame == Some(snapshot.start_frame) && self.world.is_some() {
+    fn clear_for_snapshot_generation(&mut self, snapshot_generation: u64) {
+        let debug_diagnostics = self.debug_diagnostics;
+        *self = Self {
+            snapshot_generation,
+            debug_diagnostics,
+            ..Default::default()
+        };
+    }
+
+    fn initialize_from_snapshot_if_needed(
+        &mut self,
+        snapshot: &ParsedInitialSnapshot,
+        snapshot_generation: u64,
+    ) {
+        if self.snapshot_generation == snapshot_generation
+            && self.snapshot_start_frame == Some(snapshot.start_frame)
+            && self.world.is_some()
+        {
             return;
         }
 
+        let debug_diagnostics = self.debug_diagnostics;
         self.world = Some(snapshot.world.clone());
         self.config = Some(snapshot.config.clone());
+        self.snapshot_generation = snapshot_generation;
         self.snapshot_start_frame = Some(snapshot.start_frame);
         self.last_applied_frame = Some(snapshot.start_frame);
         self.input_history.clear();
@@ -258,6 +277,7 @@ impl LockstepSimReplayState {
         self.diagnostics.clear();
         self.last_error = None;
         self.ignored_duplicate_or_old_frames = 0;
+        self.debug_diagnostics = debug_diagnostics;
     }
 
     fn record_inputs(&mut self, frame: &AuthorityFrame, sim_inputs: Vec<SimInput>) {
@@ -427,6 +447,12 @@ pub(in crate::game::features::lockstep_sim) fn apply_lockstep_sim_authority_even
     }
 
     let Some(snapshot) = scene_state.initial_snapshot.as_ref() else {
+        if replay_state.snapshot_generation != scene_state.snapshot_generation
+            || replay_state.world.is_some()
+        {
+            replay_state.clear_for_snapshot_generation(scene_state.snapshot_generation);
+        }
+
         for event in events.read() {
             if matches!(event, AuthorityEvent::FrameApplied { .. }) {
                 replay_state.last_error = Some(LockstepSimReplayError::MissingInitialSnapshot);
@@ -435,7 +461,7 @@ pub(in crate::game::features::lockstep_sim) fn apply_lockstep_sim_authority_even
         return;
     };
 
-    replay_state.initialize_from_snapshot_if_needed(snapshot);
+    replay_state.initialize_from_snapshot_if_needed(snapshot, scene_state.snapshot_generation);
 
     for event in events.read() {
         let AuthorityEvent::FrameApplied { frame } = event else {
@@ -1088,6 +1114,151 @@ mod tests {
     }
 
     #[test]
+    fn recovery_snapshot_generation_rebuilds_even_when_start_frame_matches() {
+        let snapshot = parsed_snapshot_fixture();
+        let mut replay = LockstepSimReplayState::default();
+        replay.initialize_from_snapshot_if_needed(&snapshot, 1);
+        apply_authority_frame(&mut replay, &snapshot, &authority_frame(1, Vec::new(), "{}"))
+            .unwrap();
+        assert_eq!(replay.last_applied_frame, Some(1));
+
+        let recovered = parsed_snapshot_with_player_x(0, 5);
+        replay.initialize_from_snapshot_if_needed(&recovered, 2);
+
+        assert_eq!(replay.snapshot_generation, 2);
+        assert_eq!(replay.last_applied_frame, Some(0));
+        assert_eq!(replay.world.as_ref(), Some(&recovered.world));
+        assert_eq!(replay.input_history.len(), 0);
+        assert_eq!(
+            replay.world_snapshots.iter().map(|entry| entry.frame).collect::<Vec<_>>(),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn system_rebuilds_from_recovery_snapshot_and_continues_after_snapshot_frame() {
+        let initial = parsed_snapshot_fixture();
+        let recovery = parsed_snapshot_after_empty_steps(&initial, 3);
+        let mut expected_world = recovery.world.clone();
+        let expected_result =
+            step(&mut expected_world, FrameId::new(4), &[], &recovery.config).unwrap();
+        let server_hash = SimHashEnvelope {
+            frame: 4,
+            value: expected_result.state_hash.value,
+            hex: format!("{:016x}", expected_result.state_hash.value),
+        };
+        let mut app = App::new();
+        app.add_message::<AuthorityEvent>()
+            .init_resource::<super::super::config::LockstepSimConfig>()
+            .init_resource::<LockstepSimSceneState>()
+            .init_resource::<LockstepSimReplayState>()
+            .add_systems(Update, apply_lockstep_sim_authority_events);
+        {
+            let mut scene_state = app.world_mut().resource_mut::<LockstepSimSceneState>();
+            scene_state.active = true;
+            scene_state.replace_initial_snapshot(initial.clone());
+        }
+        app.world_mut().write_message(AuthorityEvent::FrameApplied {
+            frame: authority_frame(1, Vec::new(), "{}"),
+        });
+        app.update();
+        {
+            let mut scene_state = app.world_mut().resource_mut::<LockstepSimSceneState>();
+            scene_state.replace_initial_snapshot(recovery.clone());
+        }
+
+        app.world_mut().write_message(AuthorityEvent::FrameApplied {
+            frame: authority_frame(
+                4,
+                Vec::new(),
+                &json!({
+                    "lastStateHash": server_hash
+                })
+                .to_string(),
+            ),
+        });
+        app.update();
+
+        let replay = app.world().resource::<LockstepSimReplayState>();
+        assert_eq!(replay.snapshot_generation, 2);
+        assert_eq!(replay.snapshot_start_frame, Some(3));
+        assert_eq!(replay.last_applied_frame, Some(4));
+        assert_eq!(replay.world.as_ref(), Some(&expected_world));
+        assert_eq!(
+            replay.diagnostics.last_match_status,
+            LockstepSimHashMatchStatus::Matched
+        );
+        assert_eq!(replay.hash_history.back().unwrap().server_hash, Some(server_hash));
+        assert_eq!(
+            replay.input_history.iter().map(|entry| entry.frame).collect::<Vec<_>>(),
+            vec![4]
+        );
+    }
+
+    #[test]
+    fn clearing_scene_snapshot_freezes_old_replay_world_on_next_system_run() {
+        let snapshot = parsed_snapshot_fixture();
+        let mut app = App::new();
+        app.add_message::<AuthorityEvent>()
+            .init_resource::<super::super::config::LockstepSimConfig>()
+            .init_resource::<LockstepSimSceneState>()
+            .init_resource::<LockstepSimReplayState>()
+            .add_systems(Update, apply_lockstep_sim_authority_events);
+        {
+            let mut scene_state = app.world_mut().resource_mut::<LockstepSimSceneState>();
+            scene_state.active = true;
+            scene_state.replace_initial_snapshot(snapshot);
+        }
+        app.world_mut().write_message(AuthorityEvent::FrameApplied {
+            frame: authority_frame(1, Vec::new(), "{}"),
+        });
+        app.update();
+        {
+            let mut scene_state = app.world_mut().resource_mut::<LockstepSimSceneState>();
+            scene_state.clear_initial_snapshot();
+        }
+
+        app.update();
+
+        let replay = app.world().resource::<LockstepSimReplayState>();
+        assert!(replay.world.is_none());
+        assert!(replay.config.is_none());
+        assert!(replay.input_history.is_empty());
+        assert!(replay.hash_history.is_empty());
+        assert_eq!(replay.snapshot_generation, 2);
+    }
+
+    #[test]
+    fn spectator_replay_advances_without_local_control_binding() {
+        let mut snapshot = parsed_snapshot_fixture();
+        snapshot.control_bindings.clear();
+        let frame = authority_frame(
+            1,
+            vec![player_input(
+                1,
+                PLAYER_ID,
+                r#"{"version":1,"seq":7,"commands":[{"type":"move","dirX":1000,"dirY":0}]}"#,
+            )],
+            "{}",
+        );
+        let mut replay = replay_state_from_snapshot(&snapshot);
+        let mut expected_world = snapshot.world.clone();
+        let expected_result =
+            step(&mut expected_world, FrameId::new(1), &[], &snapshot.config).unwrap();
+
+        apply_authority_frame(&mut replay, &snapshot, &frame).unwrap();
+
+        assert_eq!(replay.last_applied_frame, Some(1));
+        assert_eq!(replay.world.as_ref(), Some(&expected_world));
+        let input_record = replay.input_history.back().unwrap();
+        assert_eq!(input_record.raw_input_count, 1);
+        assert_eq!(input_record.sim_action_count, 1);
+        assert_eq!(input_record.sim_command_count, 0);
+        assert_eq!(replay.hash_history.back().unwrap().local_hash, expected_result.state_hash);
+        assert!(replay.last_error.is_none());
+    }
+
+    #[test]
     fn replay_records_first_hash_mismatch_for_hud_and_diagnostics() {
         let snapshot = parsed_snapshot_fixture();
         let frame = authority_frame(
@@ -1313,7 +1484,7 @@ mod tests {
 
     fn replay_state_from_snapshot(snapshot: &ParsedInitialSnapshot) -> LockstepSimReplayState {
         let mut state = LockstepSimReplayState::default();
-        state.initialize_from_snapshot_if_needed(snapshot);
+        state.initialize_from_snapshot_if_needed(snapshot, 1);
         state
     }
 
@@ -1347,8 +1518,12 @@ mod tests {
     }
 
     fn parsed_snapshot_fixture() -> ParsedInitialSnapshot {
+        parsed_snapshot_with_player_x(0, 0)
+    }
+
+    fn parsed_snapshot_with_player_x(start_frame: u32, player_x: i32) -> ParsedInitialSnapshot {
         let config = sim_config_fixture();
-        let world = world_fixture();
+        let world = world_fixture_with_player_x(start_frame, player_x);
         let mut control_bindings = HashMap::new();
         control_bindings.insert(PLAYER_ID.to_string(), EntityId::new(PLAYER_ENTITY_ID));
         let state_hash = hash_world(&world);
@@ -1373,14 +1548,36 @@ mod tests {
         }
     }
 
-    fn world_fixture() -> SimWorld {
+    fn parsed_snapshot_after_empty_steps(
+        snapshot: &ParsedInitialSnapshot,
+        target_frame: u32,
+    ) -> ParsedInitialSnapshot {
+        let mut recovered = snapshot.clone();
+        let mut world = snapshot.world.clone();
+        for frame_id in snapshot.start_frame.saturating_add(1)..=target_frame {
+            step(&mut world, FrameId::new(frame_id), &[], &snapshot.config).unwrap();
+        }
+        let state_hash = hash_world(&world);
+        recovered.start_frame = target_frame;
+        recovered.rng_seed = world.rng.seed;
+        recovered.state_hash = super::super::snapshot::SimHashEnvelope {
+            frame: state_hash.frame.raw(),
+            value: state_hash.value,
+            hex: format!("{:016x}", state_hash.value),
+        };
+        recovered.entities = world.entities_sorted_by_id().to_vec();
+        recovered.world = world;
+        recovered
+    }
+
+    fn world_fixture_with_player_x(start_frame: u32, player_x: i32) -> SimWorld {
         SimWorld::with_rng(
-            FrameId::new(0),
+            FrameId::new(start_frame),
             SimRngState {
                 seed: 11,
                 counter: 22,
             },
-            vec![player_entity(), target_entity()],
+            vec![player_entity_at_x(player_x), target_entity()],
         )
         .unwrap()
     }
@@ -1413,14 +1610,14 @@ mod tests {
         }
     }
 
-    fn player_entity() -> SimEntity {
+    fn player_entity_at_x(x: i32) -> SimEntity {
         SimEntity {
             id: EntityId::new(PLAYER_ENTITY_ID),
             kind: EntityKind::Player,
             owner_character_id: Some(PLAYER_ID.to_string()),
             team_id: TeamId::new(1),
             transform: SimTransform {
-                pos: Vec2Fp::zero(),
+                pos: Vec2Fp::new(Fp::from_i32(x), Fp::ZERO),
                 facing: QuantizedDir::RIGHT,
                 radius: Fp::from_milli(500),
             },

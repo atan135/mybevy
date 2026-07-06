@@ -269,12 +269,13 @@ mod tests {
             scene::prelude::{SceneEntered, SceneExited, SceneId, SceneSessionId},
         },
         game::{
-            authority::{AuthorityEndpoint, AuthorityEvent},
+            authority::{AuthorityEndpoint, AuthorityEvent, AuthorityFrame, AuthoritySnapshot},
             features::lockstep_sim::{
                 config::{
                     DEFAULT_LOCKSTEP_SIM_PLAYER_ID, LOCKSTEP_SIM_MYSERVER_POLICY_ID,
                     LockstepSimAuthorityMode,
                 },
+                diagnostics::LockstepSimHashMatchStatus,
                 sync::LockstepSimMyServerJoinState,
             },
             myserver::{MyServerEvent, protocol::pb},
@@ -282,6 +283,7 @@ mod tests {
         },
     };
     use bevy::ecs::message::{MessageCursor, Messages};
+    use serde_json::json;
 
     fn test_app() -> App {
         let mut app = App::new();
@@ -551,6 +553,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn frame_bundle_snapshot_does_not_reset_live_replay_or_skip_authority_frame() {
+        use sim_core::{FrameId, step};
+
+        let mut app = active_lockstep_app();
+        let snapshot = parsed_snapshot_for_player("lockstep-player", 1000);
+        let mut offline_world = snapshot.world.clone();
+        let frame1_result = step(&mut offline_world, FrameId::new(1), &[], &snapshot.config)
+            .expect("frame 1 offline step should match replay config");
+        let frame2_result = step(&mut offline_world, FrameId::new(2), &[], &snapshot.config)
+            .expect("frame 2 offline step should match replay config");
+        {
+            let mut scene_state = app.world_mut().resource_mut::<LockstepSimSceneState>();
+            scene_state.replace_initial_snapshot(snapshot);
+        }
+
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(lockstep_frame_bundle_push(
+                1,
+                &game_state_with_initial_snapshot_marker(1, frame1_result.state_hash.value),
+            )));
+        app.world_mut().write_message(AuthorityEvent::FrameApplied {
+            frame: lockstep_authority_frame(
+                1,
+                &game_state_with_initial_snapshot_marker(1, frame1_result.state_hash.value),
+            ),
+        });
+        app.update();
+
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(lockstep_frame_bundle_push(
+                2,
+                &game_state_with_initial_snapshot_marker(2, frame2_result.state_hash.value),
+            )));
+        app.world_mut().write_message(AuthorityEvent::FrameApplied {
+            frame: lockstep_authority_frame(
+                2,
+                &game_state_with_initial_snapshot_marker(2, frame2_result.state_hash.value),
+            ),
+        });
+        app.update();
+
+        let scene_state = app.world().resource::<LockstepSimSceneState>();
+        assert_eq!(scene_state.snapshot_generation, 1);
+        assert_eq!(
+            scene_state
+                .initial_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.start_frame),
+            Some(0)
+        );
+        assert!(scene_state.initial_snapshot_error.is_none());
+
+        let replay = app.world().resource::<LockstepSimReplayState>();
+        assert_eq!(replay.snapshot_generation, 1);
+        assert_eq!(replay.snapshot_start_frame, Some(0));
+        assert_eq!(replay.last_applied_frame, Some(2));
+        assert_eq!(replay.hash_history.len(), 2);
+        assert_eq!(replay.hash_history.back().unwrap().frame, 2);
+        assert_eq!(
+            replay.hash_history.back().unwrap().local_hash,
+            frame2_result.state_hash
+        );
+        assert_eq!(replay.event_history.len(), 2);
+        assert_eq!(
+            replay.diagnostics.last_match_status,
+            LockstepSimHashMatchStatus::Matched
+        );
+    }
+
     fn active_lockstep_app() -> App {
         let mut app = test_app();
         app.insert_resource(test_config(LockstepSimAuthorityMode::MyServer));
@@ -654,6 +726,60 @@ mod tests {
                 error_code: String::new(),
             }));
         app.update();
+    }
+
+    fn lockstep_frame_bundle_push(frame_id: u32, game_state: &str) -> pb::FrameBundlePush {
+        pb::FrameBundlePush {
+            room_id: "lockstep-room".to_string(),
+            frame_id,
+            fps: 20,
+            inputs: Vec::new(),
+            is_silent_frame: false,
+            snapshot: Some(pb::RoomSnapshot {
+                room_id: "lockstep-room".to_string(),
+                owner_character_id: "lockstep-player".to_string(),
+                state: "in_game".to_string(),
+                members: vec![pb::RoomMember {
+                    character_id: "lockstep-player".to_string(),
+                    ready: true,
+                    is_owner: true,
+                    offline: false,
+                    role: pb::MemberRole::Player as i32,
+                }],
+                current_frame_id: frame_id,
+                game_state: game_state.to_string(),
+            }),
+        }
+    }
+
+    fn lockstep_authority_frame(frame_id: u32, game_state_json: &str) -> AuthorityFrame {
+        AuthorityFrame {
+            authority_epoch: 1,
+            frame_id,
+            fps: 20,
+            inputs: Vec::new(),
+            snapshot: AuthoritySnapshot {
+                authority_epoch: 1,
+                frame_id,
+                authority_player_id: "lockstep-player".to_string(),
+                players: vec!["lockstep-player".to_string()],
+                game_state_json: game_state_json.to_string(),
+            },
+        }
+    }
+
+    fn game_state_with_initial_snapshot_marker(frame_id: u32, state_hash: u64) -> String {
+        json!({
+            "initialSnapshot": {
+                "schema": super::super::snapshot::SIM_INITIAL_SNAPSHOT_SCHEMA
+            },
+            "lastStateHash": {
+                "frame": frame_id,
+                "value": state_hash,
+                "hex": format!("{state_hash:016x}")
+            }
+        })
+        .to_string()
     }
 
     fn lockstep_room_state_push(room_id: &str, player_id: &str, ready: bool) -> pb::RoomStatePush {

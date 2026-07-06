@@ -1,4 +1,4 @@
-use std::{env, time::Duration};
+use std::{collections::BTreeMap, env, time::Duration};
 
 use bevy::prelude::*;
 
@@ -916,17 +916,7 @@ fn handle_myserver_authority_events(
                 if let Some(snapshot) = push.snapshot.as_ref() {
                     session.frame_id = snapshot.current_frame_id;
                     events.write(AuthorityEvent::Snapshot {
-                        snapshot: AuthoritySnapshot {
-                            authority_epoch: session.authority_epoch,
-                            frame_id: snapshot.current_frame_id,
-                            authority_player_id: snapshot.owner_character_id.clone(),
-                            players: snapshot
-                                .members
-                                .iter()
-                                .map(|member| member.character_id.clone())
-                                .collect(),
-                            game_state_json: snapshot.game_state.clone(),
-                        },
+                        snapshot: authority_snapshot_from_myserver_room(&session, snapshot),
                     });
                 }
             }
@@ -952,17 +942,7 @@ fn handle_myserver_authority_events(
                         players: session.peers.keys().cloned().collect(),
                         game_state_json: "{}".to_string(),
                     },
-                    |snapshot| AuthoritySnapshot {
-                        authority_epoch: session.authority_epoch,
-                        frame_id: snapshot.current_frame_id,
-                        authority_player_id: snapshot.owner_character_id.clone(),
-                        players: snapshot
-                            .members
-                            .iter()
-                            .map(|member| member.character_id.clone())
-                            .collect(),
-                        game_state_json: snapshot.game_state.clone(),
-                    },
+                    |snapshot| authority_snapshot_from_myserver_room(&session, snapshot),
                 );
                 session.frame_id = session.frame_id.max(push.frame_id);
                 events.write(AuthorityEvent::FrameApplied {
@@ -974,6 +954,33 @@ fn handle_myserver_authority_events(
                         snapshot,
                     },
                 });
+            }
+            MyServerEvent::RoomReconnected(response) if is_myserver_endpoint => {
+                if !response.ok {
+                    session.frame_id = 0;
+                    continue;
+                }
+
+                if let Some(snapshot) = response.snapshot.as_ref() {
+                    let authority_snapshot =
+                        authority_snapshot_from_myserver_room(&session, snapshot);
+                    session.frame_id = response.current_frame_id.max(snapshot.current_frame_id);
+                    events.write(AuthorityEvent::Snapshot {
+                        snapshot: authority_snapshot.clone(),
+                    });
+                    emit_recovered_myserver_frames(
+                        &mut session,
+                        &authority_snapshot,
+                        response.current_frame_id.max(snapshot.current_frame_id),
+                        response
+                            .recent_inputs
+                            .iter()
+                            .chain(response.waiting_inputs.iter()),
+                        &mut events,
+                    );
+                } else {
+                    session.frame_id = response.current_frame_id;
+                }
             }
             MyServerEvent::PlayerInputAccepted(response) if is_myserver_endpoint => {
                 if response.ok {
@@ -1052,6 +1059,61 @@ fn migration_from_myserver_payload(
             .collect(),
         checksum: payload.checksum.clone(),
     })
+}
+
+fn authority_snapshot_from_myserver_room(
+    session: &AuthoritySession,
+    snapshot: &crate::game::myserver::protocol::pb::RoomSnapshot,
+) -> AuthoritySnapshot {
+    AuthoritySnapshot {
+        authority_epoch: session.authority_epoch,
+        frame_id: snapshot.current_frame_id,
+        authority_player_id: snapshot.owner_character_id.clone(),
+        players: snapshot
+            .members
+            .iter()
+            .map(|member| member.character_id.clone())
+            .collect(),
+        game_state_json: snapshot.game_state.clone(),
+    }
+}
+
+fn emit_recovered_myserver_frames<'a>(
+    session: &mut AuthoritySession,
+    snapshot: &AuthoritySnapshot,
+    current_frame_id: u32,
+    inputs: impl Iterator<Item = &'a crate::game::myserver::protocol::pb::FrameInput>,
+    events: &mut MessageWriter<AuthorityEvent>,
+) {
+    let mut inputs_by_frame = BTreeMap::<u32, Vec<PlayerInput>>::new();
+    for input in inputs {
+        inputs_by_frame
+            .entry(input.frame_id)
+            .or_default()
+            .push(PlayerInput {
+                player_id: input.character_id.clone(),
+                frame_id: input.frame_id,
+                action: input.action.clone(),
+                payload_json: input.payload_json.clone(),
+            });
+    }
+
+    let mut frame_id = snapshot.frame_id.saturating_add(1);
+    while frame_id <= current_frame_id {
+        let mut frame_inputs = inputs_by_frame.remove(&frame_id).unwrap_or_default();
+        frame_inputs.sort_by(|left, right| left.player_id.cmp(&right.player_id));
+        events.write(AuthorityEvent::FrameApplied {
+            frame: AuthorityFrame {
+                authority_epoch: session.authority_epoch,
+                frame_id,
+                fps: session.fps,
+                inputs: frame_inputs,
+                snapshot: snapshot.clone(),
+            },
+        });
+        session.frame_id = session.frame_id.max(frame_id);
+        frame_id = frame_id.saturating_add(1);
+    }
 }
 
 fn snapshot_from_myserver_authority(
@@ -1503,6 +1565,98 @@ mod tests {
                     AuthorityEvent::Connected { player_id, .. } if player_id == "chr_1"
                 ))
         );
+    }
+
+    #[test]
+    fn myserver_reconnect_emits_recovery_snapshot_and_continuous_frames() {
+        use crate::game::myserver::protocol::pb;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<AuthoritySession>()
+            .add_message::<MyServerEvent>()
+            .add_message::<AuthorityEvent>()
+            .add_systems(Update, handle_myserver_authority_events);
+        {
+            let mut session = app.world_mut().resource_mut::<AuthoritySession>();
+            session.endpoint = Some(AuthorityEndpoint::MyServer {
+                host: None,
+                port: None,
+                transport: NetworkTransport::Tcp,
+            });
+            session.authority_epoch = 7;
+            session.fps = 20;
+        }
+
+        app.world_mut()
+            .write_message(MyServerEvent::RoomReconnected(pb::RoomReconnectRes {
+                ok: true,
+                room_id: "room-a".to_string(),
+                error_code: String::new(),
+                snapshot: Some(pb::RoomSnapshot {
+                    room_id: "room-a".to_string(),
+                    owner_character_id: "owner".to_string(),
+                    state: "in_game".to_string(),
+                    members: vec![pb::RoomMember {
+                        character_id: "player-a".to_string(),
+                        ready: true,
+                        is_owner: false,
+                        offline: false,
+                        role: pb::MemberRole::Player as i32,
+                    }],
+                    current_frame_id: 3,
+                    game_state: r#"{"initialSnapshot":true}"#.to_string(),
+                }),
+                current_frame_id: 5,
+                recent_inputs: vec![
+                    pb::FrameInput {
+                        character_id: "player-a".to_string(),
+                        action: "sim_input".to_string(),
+                        payload_json: r#"{"seq":2}"#.to_string(),
+                        frame_id: 4,
+                    },
+                    pb::FrameInput {
+                        character_id: "player-b".to_string(),
+                        action: "sim_input".to_string(),
+                        payload_json: r#"{"seq":3}"#.to_string(),
+                        frame_id: 5,
+                    },
+                ],
+                waiting_frame_id: 0,
+                waiting_inputs: Vec::new(),
+                input_delay_frames: 0,
+                movement_recovery: None,
+            }));
+
+        app.update();
+
+        let events = read_messages::<AuthorityEvent>(app.world());
+        assert!(matches!(
+            &events[0],
+            AuthorityEvent::Snapshot { snapshot }
+                if snapshot.authority_epoch == 7
+                    && snapshot.frame_id == 3
+                    && snapshot.game_state_json.contains("initialSnapshot")
+        ));
+        assert!(matches!(
+            &events[1],
+            AuthorityEvent::FrameApplied { frame }
+                if frame.authority_epoch == 7
+                    && frame.frame_id == 4
+                    && frame.inputs.len() == 1
+                    && frame.inputs[0].player_id == "player-a"
+                    && frame.snapshot.frame_id == 3
+        ));
+        assert!(matches!(
+            &events[2],
+            AuthorityEvent::FrameApplied { frame }
+                if frame.authority_epoch == 7
+                    && frame.frame_id == 5
+                    && frame.inputs.len() == 1
+                    && frame.inputs[0].player_id == "player-b"
+                    && frame.snapshot.frame_id == 3
+        ));
+        assert_eq!(app.world().resource::<AuthoritySession>().frame_id, 5);
     }
 
     #[test]
