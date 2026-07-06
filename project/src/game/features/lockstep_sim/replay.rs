@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sim_core::{
     CastSkillCommand, EntityId, FaceCommand, Fp, FrameId, MoveCommand, QuantizedDir, SimCommand,
-    SimConfig, SimHash, SimInput, SimInputSource, SimStepResult, SimWorld, SkillId, SkillTarget,
-    StepError, step,
+    SimConfig, SimEvent, SimHash, SimInput, SimInputSource, SimStepResult, SimWorld, SkillId,
+    SkillTarget, StepError, step,
 };
 
 use crate::game::authority::{AuthorityEvent, AuthorityFrame, PlayerInput};
@@ -21,6 +21,7 @@ use super::{
 };
 
 const REPLAY_HASH_HISTORY_LIMIT: usize = 512;
+const REPLAY_EVENT_HISTORY_LIMIT: usize = 512;
 const SIM_INPUT_MAX_SPEED_MILLI: i64 = 12_000;
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
@@ -30,6 +31,7 @@ pub(in crate::game) struct LockstepSimReplayState {
     pub(in crate::game::features::lockstep_sim) snapshot_start_frame: Option<u32>,
     pub(in crate::game::features::lockstep_sim) last_applied_frame: Option<u32>,
     pub(in crate::game::features::lockstep_sim) hash_history: VecDeque<LockstepSimFrameHash>,
+    pub(in crate::game::features::lockstep_sim) event_history: VecDeque<LockstepSimFrameEvents>,
     pub(in crate::game::features::lockstep_sim) last_error: Option<LockstepSimReplayError>,
     pub(in crate::game::features::lockstep_sim) ignored_duplicate_or_old_frames: u64,
 }
@@ -40,6 +42,12 @@ pub(in crate::game::features::lockstep_sim) struct LockstepSimFrameHash {
     pub(in crate::game::features::lockstep_sim) local_hash: SimHash,
     pub(in crate::game::features::lockstep_sim) server_hash: Option<SimHashEnvelope>,
     pub(in crate::game::features::lockstep_sim) event_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::game::features::lockstep_sim) struct LockstepSimFrameEvents {
+    pub(in crate::game::features::lockstep_sim) frame: u32,
+    pub(in crate::game::features::lockstep_sim) events: Vec<SimEvent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -168,6 +176,7 @@ impl LockstepSimReplayState {
         self.snapshot_start_frame = Some(snapshot.start_frame);
         self.last_applied_frame = Some(snapshot.start_frame);
         self.hash_history.clear();
+        self.event_history.clear();
         self.last_error = None;
         self.ignored_duplicate_or_old_frames = 0;
     }
@@ -186,6 +195,16 @@ impl LockstepSimReplayState {
         });
         while self.hash_history.len() > REPLAY_HASH_HISTORY_LIMIT {
             self.hash_history.pop_front();
+        }
+    }
+
+    fn record_events(&mut self, frame: u32, events: &[SimEvent]) {
+        self.event_history.push_back(LockstepSimFrameEvents {
+            frame,
+            events: events.to_vec(),
+        });
+        while self.event_history.len() > REPLAY_EVENT_HISTORY_LIMIT {
+            self.event_history.pop_front();
         }
     }
 }
@@ -289,6 +308,7 @@ fn apply_authority_frame(
         .map_err(LockstepSimReplayError::Step)?;
 
     replay_state.record_hash(frame.frame_id, &result, server_hash.clone());
+    replay_state.record_events(frame.frame_id, &result.events);
     replay_state.last_applied_frame = Some(frame.frame_id);
     replay_state.last_error = None;
 
@@ -635,6 +655,8 @@ mod tests {
         let hash = replay.hash_history.back().unwrap();
         assert_eq!(hash.frame, 1);
         assert_eq!(hash.event_count, 2);
+        assert_eq!(replay.event_history.back().unwrap().frame, 1);
+        assert_eq!(replay.event_history.back().unwrap().events.len(), 2);
         assert_ne!(hash.local_hash.value, 0);
 
         let target = replay

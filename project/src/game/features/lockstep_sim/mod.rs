@@ -1,4 +1,5 @@
 pub(in crate::game) mod adapter;
+mod combat_events;
 mod config;
 mod input;
 mod payload;
