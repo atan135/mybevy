@@ -13,6 +13,7 @@ use sim_core::{
 use crate::game::authority::{AuthorityEvent, AuthorityFrame, PlayerInput};
 
 use super::{
+    diagnostics::{LockstepSimDiagnosticsState, LockstepSimHashMatchStatus},
     payload::{
         SIM_INPUT_ACTION, SIM_INPUT_MAX_COMMANDS, SIM_INPUT_PAYLOAD_MAX_BYTES, SIM_INPUT_VERSION,
     },
@@ -34,6 +35,8 @@ pub(in crate::game) struct LockstepSimReplayState {
     pub(in crate::game::features::lockstep_sim) event_history: VecDeque<LockstepSimFrameEvents>,
     pub(in crate::game::features::lockstep_sim) last_error: Option<LockstepSimReplayError>,
     pub(in crate::game::features::lockstep_sim) ignored_duplicate_or_old_frames: u64,
+    pub(in crate::game::features::lockstep_sim) diagnostics: LockstepSimDiagnosticsState,
+    pub(in crate::game::features::lockstep_sim) debug_diagnostics: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -177,6 +180,7 @@ impl LockstepSimReplayState {
         self.last_applied_frame = Some(snapshot.start_frame);
         self.hash_history.clear();
         self.event_history.clear();
+        self.diagnostics.clear();
         self.last_error = None;
         self.ignored_duplicate_or_old_frames = 0;
     }
@@ -216,10 +220,13 @@ pub(in crate::game::features::lockstep_sim) fn reset_lockstep_sim_replay(
 }
 
 pub(in crate::game::features::lockstep_sim) fn apply_lockstep_sim_authority_events(
+    config: Res<super::config::LockstepSimConfig>,
     scene_state: Res<LockstepSimSceneState>,
     mut events: MessageReader<AuthorityEvent>,
     mut replay_state: ResMut<LockstepSimReplayState>,
 ) {
+    replay_state.debug_diagnostics = config.debug_diagnostics;
+
     if !scene_state.active {
         for _ in events.read() {}
         return;
@@ -309,26 +316,50 @@ fn apply_authority_frame(
 
     replay_state.record_hash(frame.frame_id, &result, server_hash.clone());
     replay_state.record_events(frame.frame_id, &result.events);
+    let hash_status = replay_state.diagnostics.record_frame(
+        frame.frame_id,
+        result.state_hash,
+        server_hash.as_ref(),
+        replay_state
+            .world
+            .as_ref()
+            .ok_or(LockstepSimReplayError::MissingReplayWorld)?,
+    );
     replay_state.last_applied_frame = Some(frame.frame_id);
     replay_state.last_error = None;
 
-    if let Some(server_hash) = server_hash.as_ref() {
-        let matched = server_hash.frame == result.state_hash.frame.raw()
-            && server_hash.value == result.state_hash.value;
-        debug!(
+    let local_hash_hex = format!("{:016x}", result.state_hash.value);
+    let server_hash_label = server_hash
+        .as_ref()
+        .map(|hash| hash.hex.as_str())
+        .unwrap_or("none");
+    let diff_summary = replay_state
+        .diagnostics
+        .first_mismatch
+        .as_ref()
+        .filter(|mismatch| mismatch.frame == frame.frame_id)
+        .map(|mismatch| mismatch.summary())
+        .unwrap_or_else(|| "none".to_string());
+
+    if matches!(hash_status, LockstepSimHashMatchStatus::Mismatch) {
+        warn!(
             frame = frame.frame_id,
-            local_hash = %format!("{:016x}", result.state_hash.value),
-            server_hash = %server_hash.hex,
-            matched,
+            local_hash = %local_hash_hex,
+            server_hash = %server_hash_label,
+            hash_status = %hash_status.as_str(),
             event_count = result.events.len(),
-            "lockstep sim replay frame applied"
+            diff_summary = %diff_summary,
+            "lockstep sim replay hash mismatch"
         );
-    } else {
+    } else if replay_state.debug_diagnostics {
         debug!(
             frame = frame.frame_id,
-            local_hash = %format!("{:016x}", result.state_hash.value),
+            local_hash = %local_hash_hex,
+            server_hash = %server_hash_label,
+            hash_status = %hash_status.as_str(),
             event_count = result.events.len(),
-            "lockstep sim replay frame applied without server hash"
+            diff_summary = %diff_summary,
+            "lockstep sim replay frame applied"
         );
     }
 
@@ -838,6 +869,7 @@ mod tests {
     fn system_consumes_authority_frame_after_snapshot() {
         let mut app = App::new();
         app.add_message::<AuthorityEvent>()
+            .init_resource::<super::super::config::LockstepSimConfig>()
             .init_resource::<LockstepSimSceneState>()
             .init_resource::<LockstepSimReplayState>()
             .add_systems(Update, apply_lockstep_sim_authority_events);
@@ -857,6 +889,38 @@ mod tests {
         assert_eq!(replay.last_applied_frame, Some(1));
         assert!(replay.last_error.is_none());
         assert_eq!(replay.hash_history.len(), 1);
+    }
+
+    #[test]
+    fn replay_records_first_hash_mismatch_for_hud_and_diagnostics() {
+        let snapshot = parsed_snapshot_fixture();
+        let frame = authority_frame(
+            1,
+            Vec::new(),
+            &json!({
+                "lastStateHash": {
+                    "frame": 1,
+                    "value": 1,
+                    "hex": "0000000000000001"
+                }
+            })
+            .to_string(),
+        );
+        let mut replay = replay_state_from_snapshot(&snapshot);
+
+        apply_authority_frame(&mut replay, &snapshot, &frame).unwrap();
+
+        assert_eq!(
+            replay.diagnostics.last_match_status,
+            LockstepSimHashMatchStatus::Mismatch
+        );
+        let mismatch = replay.diagnostics.first_mismatch.as_ref().unwrap();
+        assert_eq!(mismatch.frame, 1);
+        assert_eq!(mismatch.server_hash, "1:0000000000000001");
+        assert!(mismatch.local_hash.starts_with("1:"));
+        assert!(mismatch.entity_summary.contains("id=1000"));
+        assert!(mismatch.entity_summary.contains("owner=player-a"));
+        assert!(mismatch.entity_summary.contains("hp=100/100"));
     }
 
     fn replay_state_from_snapshot(snapshot: &ParsedInitialSnapshot) -> LockstepSimReplayState {

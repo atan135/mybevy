@@ -25,7 +25,10 @@ use crate::framework::{
 use crate::game::{
     audio::UI_CONFIRM_CUE_ID,
     authority::AuthoritySession,
-    features::robot_sync::{format_robot_sync_hud_status, robot_sync_hud_snapshot},
+    features::{
+        lockstep_sim::{format_lockstep_sim_hud_status, lockstep_sim_hud_snapshot},
+        robot_sync::{format_robot_sync_hud_status, robot_sync_hud_snapshot},
+    },
     navigation::{AppUiMode, GameRouteCommand, game_panel_root},
     scenes::ROBOT_SYNC_ARENA_SCENE_ID,
     ui_ids::{OWNER_ROBOT_SYNC_SCENE, PANEL_ROBOT_SYNC_SCENE_HUD},
@@ -174,21 +177,53 @@ fn robot_sync_scene_lobby_button_audio_override() -> UiAudioCueOverride {
 pub(super) fn update_robot_sync_scene_hud_status(
     config: Res<crate::game::features::robot_sync::RobotSyncConfig>,
     scene_state: Res<crate::game::features::robot_sync::RobotSyncSceneState>,
+    lockstep_config: Res<crate::game::features::lockstep_sim::LockstepSimConfig>,
+    lockstep_scene_state: Res<crate::game::features::lockstep_sim::LockstepSimSceneState>,
     authority_session: Res<AuthoritySession>,
     replay_state: Res<crate::game::features::robot_sync::RobotSyncReplayState>,
+    lockstep_replay_state: Res<crate::game::features::lockstep_sim::LockstepSimReplayState>,
     mut status_texts: Query<&mut Text, With<RobotSyncHudStatusText>>,
 ) {
-    let status = format_robot_sync_hud_status(&robot_sync_hud_snapshot(
+    let status = robot_sync_scene_hud_status(
         &config,
         &scene_state,
+        &lockstep_config,
+        &lockstep_scene_state,
         &authority_session,
         &replay_state,
-    ));
+        &lockstep_replay_state,
+    );
 
     for mut text in &mut status_texts {
         if text.0 != status {
             text.0 = status.clone();
         }
+    }
+}
+
+fn robot_sync_scene_hud_status(
+    config: &crate::game::features::robot_sync::RobotSyncConfig,
+    scene_state: &crate::game::features::robot_sync::RobotSyncSceneState,
+    lockstep_config: &crate::game::features::lockstep_sim::LockstepSimConfig,
+    lockstep_scene_state: &crate::game::features::lockstep_sim::LockstepSimSceneState,
+    authority_session: &AuthoritySession,
+    replay_state: &crate::game::features::robot_sync::RobotSyncReplayState,
+    lockstep_replay_state: &crate::game::features::lockstep_sim::LockstepSimReplayState,
+) -> String {
+    if lockstep_scene_state.is_active() {
+        format_lockstep_sim_hud_status(&lockstep_sim_hud_snapshot(
+            lockstep_config,
+            lockstep_scene_state,
+            authority_session,
+            lockstep_replay_state,
+        ))
+    } else {
+        format_robot_sync_hud_status(&robot_sync_hud_snapshot(
+            config,
+            scene_state,
+            authority_session,
+            replay_state,
+        ))
     }
 }
 
@@ -311,8 +346,12 @@ fn is_lobby_route_command(command: &GameRouteCommand) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::scene::prelude::{SceneExited, SceneId, SceneSessionId};
+    use crate::framework::scene::prelude::{SceneEntered, SceneExited, SceneId, SceneSessionId};
     use crate::framework::ui::widgets::UiButtonEvent;
+    use crate::game::features::{
+        lockstep_sim::LockstepSimPlugin,
+        robot_sync::{RobotSyncConfig, RobotSyncReplayState, RobotSyncSceneState},
+    };
 
     #[test]
     fn lobby_button_writes_scene_exit_and_lobby_route() {
@@ -439,6 +478,59 @@ mod tests {
     }
 
     #[test]
+    fn hud_status_uses_lockstep_snapshot_when_lockstep_scene_is_active() {
+        let mut app = App::new();
+        app.add_message::<SceneEvent>()
+            .add_message::<crate::game::authority::AuthorityCommand>()
+            .add_message::<crate::game::authority::AuthorityEvent>()
+            .add_message::<crate::game::myserver::MyServerCommand>()
+            .add_message::<crate::game::myserver::MyServerEvent>()
+            .init_resource::<AuthoritySession>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins(LockstepSimPlugin);
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id: SceneId::from(crate::game::scenes::LOCKSTEP_SIM_ARENA_SCENE_ID),
+                session_id: SceneSessionId::from("lockstep-session"),
+                content_version: None,
+            }));
+        app.update();
+
+        let status = robot_sync_scene_hud_status(
+            &test_robot_sync_config(),
+            &RobotSyncSceneState::default(),
+            app.world()
+                .resource::<crate::game::features::lockstep_sim::LockstepSimConfig>(),
+            app.world()
+                .resource::<crate::game::features::lockstep_sim::LockstepSimSceneState>(),
+            app.world().resource::<AuthoritySession>(),
+            &RobotSyncReplayState::default(),
+            app.world()
+                .resource::<crate::game::features::lockstep_sim::LockstepSimReplayState>(),
+        );
+
+        assert!(status.contains("policy=lockstep_sim_demo"));
+        assert!(status.contains("local_hash="));
+        assert!(status.contains("mismatch="));
+    }
+
+    #[test]
+    fn hud_status_keeps_robot_sync_snapshot_when_lockstep_scene_is_inactive() {
+        let status = robot_sync_scene_hud_status(
+            &test_robot_sync_config(),
+            &RobotSyncSceneState::default(),
+            &crate::game::features::lockstep_sim::LockstepSimConfig::default(),
+            &crate::game::features::lockstep_sim::LockstepSimSceneState::default(),
+            &AuthoritySession::default(),
+            &RobotSyncReplayState::default(),
+            &crate::game::features::lockstep_sim::LockstepSimReplayState::default(),
+        );
+
+        assert!(status.contains("robots="));
+        assert!(!status.contains("policy="));
+    }
+
+    #[test]
     fn robot_sync_scene_exit_fallback_only_routes_while_hud_is_active() {
         assert!(should_route_robot_sync_scene_exit_to_lobby(
             AppUiMode::RobotSyncScene,
@@ -515,5 +607,9 @@ mod tests {
         let messages = world.resource::<Messages<M>>();
         let mut cursor = MessageCursor::default();
         cursor.read(messages).cloned().collect()
+    }
+
+    fn test_robot_sync_config() -> RobotSyncConfig {
+        RobotSyncConfig::default()
     }
 }

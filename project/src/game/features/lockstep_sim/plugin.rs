@@ -305,6 +305,7 @@ mod tests {
             myserver_guest_id: Some("lockstep-guest".to_string()),
             myserver_room_id: "lockstep-room".to_string(),
             myserver_policy_id: LOCKSTEP_SIM_MYSERVER_POLICY_ID.to_string(),
+            debug_diagnostics: false,
         }
     }
 

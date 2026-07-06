@@ -15,6 +15,10 @@ pub(in crate::game) struct LockstepSimSceneState {
 }
 
 impl LockstepSimSceneState {
+    pub(in crate::game) fn is_active(&self) -> bool {
+        self.active
+    }
+
     pub(in crate::game::features::lockstep_sim) fn activate(
         &mut self,
         scene_id: SceneId,

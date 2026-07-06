@@ -22,6 +22,7 @@ pub(in crate::game) struct LockstepSimConfig {
     pub(in crate::game::features::lockstep_sim) myserver_guest_id: Option<String>,
     pub(in crate::game::features::lockstep_sim) myserver_room_id: String,
     pub(in crate::game::features::lockstep_sim) myserver_policy_id: String,
+    pub(in crate::game::features::lockstep_sim) debug_diagnostics: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -65,6 +66,7 @@ impl LockstepSimConfig {
                 &["LOCKSTEP_SIM_MYSERVER_POLICY"],
                 LOCKSTEP_SIM_MYSERVER_POLICY_ID,
             ),
+            debug_diagnostics: env_bool(&mut read, &["LOCKSTEP_SIM_DEBUG_DIAGNOSTICS"]),
         }
     }
 
@@ -121,6 +123,17 @@ fn env_transport(
     }
 }
 
+fn env_bool(read: &mut impl FnMut(&str) -> Option<String>, names: &[&str]) -> bool {
+    matches!(
+        env_first(read, names)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 fn env_first(read: &mut impl FnMut(&str) -> Option<String>, names: &[&str]) -> Option<String> {
     names
         .iter()
@@ -146,8 +159,22 @@ mod tests {
         let config = LockstepSimConfig::from_env_reader(env_reader(&[]));
 
         assert_eq!(config.myserver_policy_id, LOCKSTEP_SIM_MYSERVER_POLICY_ID);
-        assert_eq!(config.myserver_room_id, DEFAULT_LOCKSTEP_SIM_MYSERVER_ROOM_ID);
+        assert_eq!(
+            config.myserver_room_id,
+            DEFAULT_LOCKSTEP_SIM_MYSERVER_ROOM_ID
+        );
         assert_eq!(config.authority_mode, LockstepSimAuthorityMode::MyServer);
+        assert!(!config.debug_diagnostics);
+    }
+
+    #[test]
+    fn lockstep_sim_config_reads_debug_diagnostics_switch() {
+        let config = LockstepSimConfig::from_env_reader(env_reader(&[(
+            "LOCKSTEP_SIM_DEBUG_DIAGNOSTICS",
+            "true",
+        )]));
+
+        assert!(config.debug_diagnostics);
     }
 
     #[test]
