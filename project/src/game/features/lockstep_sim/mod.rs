@@ -7,5 +7,6 @@ mod replay;
 mod snapshot;
 mod state;
 mod sync;
+mod visual;
 
 pub(in crate::game) use plugin::LockstepSimPlugin;

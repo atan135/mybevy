@@ -26,6 +26,10 @@ use super::{
         LockstepSimMyServerJoinState, cleanup_lockstep_sim_authority,
         follow_lockstep_sim_myserver_events, start_lockstep_sim_authority,
     },
+    visual::{
+        LockstepSimEntityVisual, LockstepSimVisualState, clear_lockstep_sim_visuals,
+        despawn_lockstep_sim_visual_entities, sync_lockstep_sim_entity_visuals,
+    },
 };
 
 pub(in crate::game) struct LockstepSimPlugin;
@@ -62,12 +66,14 @@ impl Plugin for LockstepSimPlugin {
             .init_resource::<LockstepSimInputSeq>()
             .init_resource::<LockstepSimInputSendState>()
             .init_resource::<LockstepSimReplayState>()
+            .init_resource::<LockstepSimVisualState>()
             .init_resource::<LockstepSimMyServerJoinState>()
             .add_systems(
                 Update,
                 (
                     follow_lockstep_sim_myserver_events,
                     apply_lockstep_sim_authority_events,
+                    sync_lockstep_sim_entity_visuals,
                     send_local_lockstep_sim_input,
                 )
                     .chain(),
@@ -185,7 +191,10 @@ fn update_lockstep_sim_scene_state(
     mut input_seq: ResMut<LockstepSimInputSeq>,
     mut input_send_state: ResMut<LockstepSimInputSendState>,
     mut replay_state: ResMut<LockstepSimReplayState>,
+    mut visual_state: ResMut<LockstepSimVisualState>,
     mut join_state: ResMut<LockstepSimMyServerJoinState>,
+    visual_entities: Query<Entity, With<LockstepSimEntityVisual>>,
+    mut commands: Commands,
     mut scene_events: MessageReader<SceneEvent>,
     mut authority_commands: MessageWriter<AuthorityCommand>,
     mut myserver_commands: MessageWriter<MyServerCommand>,
@@ -196,6 +205,7 @@ fn update_lockstep_sim_scene_state(
                 input_seq.reset();
                 input_send_state.reset();
                 reset_lockstep_sim_replay(&mut replay_state);
+                clear_lockstep_sim_visuals(&mut visual_state);
                 scene_state.activate(entered.scene_id.clone(), entered.session_id.clone());
                 start_lockstep_sim_authority(
                     &config,
@@ -218,6 +228,11 @@ fn update_lockstep_sim_scene_state(
                 input_seq.reset();
                 input_send_state.reset();
                 reset_lockstep_sim_replay(&mut replay_state);
+                despawn_lockstep_sim_visual_entities(
+                    &mut commands,
+                    &mut visual_state,
+                    visual_entities.iter(),
+                );
                 scene_state.reset();
             }
             _ => {}
