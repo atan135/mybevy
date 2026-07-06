@@ -16,6 +16,7 @@ reqwest = { version = "0.12.28", default-features = false, features = ["rustls-t
 ron = "0.12.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sim-core = { path = "../../MyServer/packages/sim-core" }
 tokio = { version = "1.37", features = ["rt-multi-thread", "net", "io-util", "sync", "time"] }
 tokio_kcp = "0.9.8"
 

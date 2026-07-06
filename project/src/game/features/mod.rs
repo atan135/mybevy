@@ -1,4 +1,5 @@
 pub(in crate::game) mod fangyuan_player_preview;
+pub(in crate::game) mod lockstep_sim;
 pub(in crate::game) mod robot_sync;
 pub(in crate::game) mod touch_ripple;
 
