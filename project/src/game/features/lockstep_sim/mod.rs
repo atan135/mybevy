@@ -3,6 +3,7 @@ mod config;
 mod input;
 mod payload;
 mod plugin;
+mod replay;
 mod snapshot;
 mod state;
 mod sync;

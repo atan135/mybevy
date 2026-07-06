@@ -18,6 +18,9 @@ use super::{
         LockstepSimInputGateError, LockstepSimPayloadError, build_sim_input_envelope,
         gate_lockstep_sim_input, log_sim_input_send,
     },
+    replay::{
+        LockstepSimReplayState, apply_lockstep_sim_authority_events, reset_lockstep_sim_replay,
+    },
     state::LockstepSimSceneState,
     sync::{
         LockstepSimMyServerJoinState, cleanup_lockstep_sim_authority,
@@ -58,11 +61,13 @@ impl Plugin for LockstepSimPlugin {
             .init_resource::<LockstepSimSceneState>()
             .init_resource::<LockstepSimInputSeq>()
             .init_resource::<LockstepSimInputSendState>()
+            .init_resource::<LockstepSimReplayState>()
             .init_resource::<LockstepSimMyServerJoinState>()
             .add_systems(
                 Update,
                 (
                     follow_lockstep_sim_myserver_events,
+                    apply_lockstep_sim_authority_events,
                     send_local_lockstep_sim_input,
                 )
                     .chain(),
@@ -179,6 +184,7 @@ fn update_lockstep_sim_scene_state(
     mut scene_state: ResMut<LockstepSimSceneState>,
     mut input_seq: ResMut<LockstepSimInputSeq>,
     mut input_send_state: ResMut<LockstepSimInputSendState>,
+    mut replay_state: ResMut<LockstepSimReplayState>,
     mut join_state: ResMut<LockstepSimMyServerJoinState>,
     mut scene_events: MessageReader<SceneEvent>,
     mut authority_commands: MessageWriter<AuthorityCommand>,
@@ -189,6 +195,7 @@ fn update_lockstep_sim_scene_state(
             SceneEvent::Entered(entered) if config.is_lockstep_sim_scene(&entered.scene_id) => {
                 input_seq.reset();
                 input_send_state.reset();
+                reset_lockstep_sim_replay(&mut replay_state);
                 scene_state.activate(entered.scene_id.clone(), entered.session_id.clone());
                 start_lockstep_sim_authority(
                     &config,
@@ -210,6 +217,7 @@ fn update_lockstep_sim_scene_state(
                 );
                 input_seq.reset();
                 input_send_state.reset();
+                reset_lockstep_sim_replay(&mut replay_state);
                 scene_state.reset();
             }
             _ => {}
