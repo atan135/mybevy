@@ -7,7 +7,7 @@ use serde_json::Value;
 use sim_core::{
     CastSkillCommand, EntityId, FaceCommand, Fp, FrameId, MoveCommand, QuantizedDir, SimCommand,
     SimConfig, SimEvent, SimHash, SimInput, SimInputSource, SimStepResult, SimWorld, SkillId,
-    SkillTarget, StepError, step,
+    SkillTarget, StepError, hash_world, step,
 };
 
 use crate::game::authority::{AuthorityEvent, AuthorityFrame, PlayerInput};
@@ -23,6 +23,9 @@ use super::{
 
 const REPLAY_HASH_HISTORY_LIMIT: usize = 512;
 const REPLAY_EVENT_HISTORY_LIMIT: usize = 512;
+const REPLAY_INPUT_HISTORY_LIMIT: usize = 512;
+const REPLAY_WORLD_SNAPSHOT_INTERVAL: u32 = 10;
+const REPLAY_WORLD_SNAPSHOT_LIMIT: usize = 64;
 const SIM_INPUT_MAX_SPEED_MILLI: i64 = 12_000;
 
 #[derive(Clone, Debug, Default, Resource, PartialEq, Eq)]
@@ -31,12 +34,23 @@ pub(in crate::game) struct LockstepSimReplayState {
     pub(in crate::game::features::lockstep_sim) config: Option<SimConfig>,
     pub(in crate::game::features::lockstep_sim) snapshot_start_frame: Option<u32>,
     pub(in crate::game::features::lockstep_sim) last_applied_frame: Option<u32>,
+    pub(in crate::game::features::lockstep_sim) input_history: VecDeque<LockstepSimFrameInputs>,
     pub(in crate::game::features::lockstep_sim) hash_history: VecDeque<LockstepSimFrameHash>,
     pub(in crate::game::features::lockstep_sim) event_history: VecDeque<LockstepSimFrameEvents>,
+    pub(in crate::game::features::lockstep_sim) world_snapshots: VecDeque<LockstepSimWorldSnapshot>,
     pub(in crate::game::features::lockstep_sim) last_error: Option<LockstepSimReplayError>,
     pub(in crate::game::features::lockstep_sim) ignored_duplicate_or_old_frames: u64,
     pub(in crate::game::features::lockstep_sim) diagnostics: LockstepSimDiagnosticsState,
     pub(in crate::game::features::lockstep_sim) debug_diagnostics: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::game::features::lockstep_sim) struct LockstepSimFrameInputs {
+    pub(in crate::game::features::lockstep_sim) frame: u32,
+    pub(in crate::game::features::lockstep_sim) sim_inputs: Vec<SimInput>,
+    pub(in crate::game::features::lockstep_sim) raw_input_count: usize,
+    pub(in crate::game::features::lockstep_sim) sim_action_count: usize,
+    pub(in crate::game::features::lockstep_sim) sim_command_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +65,34 @@ pub(in crate::game::features::lockstep_sim) struct LockstepSimFrameHash {
 pub(in crate::game::features::lockstep_sim) struct LockstepSimFrameEvents {
     pub(in crate::game::features::lockstep_sim) frame: u32,
     pub(in crate::game::features::lockstep_sim) events: Vec<SimEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::game::features::lockstep_sim) struct LockstepSimWorldSnapshot {
+    pub(in crate::game::features::lockstep_sim) frame: u32,
+    pub(in crate::game::features::lockstep_sim) world: SimWorld,
+    pub(in crate::game::features::lockstep_sim) hash: SimHash,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(in crate::game::features::lockstep_sim) struct LockstepSimReplaySummary {
+    pub(in crate::game::features::lockstep_sim) snapshot_frame: u32,
+    pub(in crate::game::features::lockstep_sim) target_frame: u32,
+    pub(in crate::game::features::lockstep_sim) replayed_frames: u32,
+    pub(in crate::game::features::lockstep_sim) final_hash: SimHash,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(in crate::game::features::lockstep_sim) struct LockstepSimMismatchCoverage {
+    pub(in crate::game::features::lockstep_sim) frame: u32,
+    pub(in crate::game::features::lockstep_sim) has_hash: bool,
+    pub(in crate::game::features::lockstep_sim) has_input: bool,
+    pub(in crate::game::features::lockstep_sim) has_replay_inputs: bool,
+    pub(in crate::game::features::lockstep_sim) missing_input_frame: Option<u32>,
+    pub(in crate::game::features::lockstep_sim) has_snapshot_at_or_before: bool,
+    pub(in crate::game::features::lockstep_sim) snapshot_frame: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -112,6 +154,36 @@ impl fmt::Display for LockstepSimReplayError {
 }
 
 impl std::error::Error for LockstepSimReplayError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(in crate::game::features::lockstep_sim) enum LockstepSimReplayCacheError {
+    MissingReplayConfig,
+    MissingSnapshot { target_frame: u32 },
+    MissingInput { frame: u32 },
+    Step(StepError),
+}
+
+impl fmt::Display for LockstepSimReplayCacheError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingReplayConfig => {
+                formatter.write_str("lockstep sim replay cache config is missing")
+            }
+            Self::MissingSnapshot { target_frame } => write!(
+                formatter,
+                "lockstep sim replay cache has no snapshot at or before frame {target_frame}"
+            ),
+            Self::MissingInput { frame } => write!(
+                formatter,
+                "lockstep sim replay cache is missing authoritative input for frame {frame}"
+            ),
+            Self::Step(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for LockstepSimReplayCacheError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::game::features::lockstep_sim) enum LockstepSimReplayInputError {
@@ -178,11 +250,31 @@ impl LockstepSimReplayState {
         self.config = Some(snapshot.config.clone());
         self.snapshot_start_frame = Some(snapshot.start_frame);
         self.last_applied_frame = Some(snapshot.start_frame);
+        self.input_history.clear();
         self.hash_history.clear();
         self.event_history.clear();
+        self.world_snapshots.clear();
+        self.record_world_snapshot(snapshot.start_frame, &snapshot.world);
         self.diagnostics.clear();
         self.last_error = None;
         self.ignored_duplicate_or_old_frames = 0;
+    }
+
+    fn record_inputs(&mut self, frame: &AuthorityFrame, sim_inputs: Vec<SimInput>) {
+        self.input_history.push_back(LockstepSimFrameInputs {
+            frame: frame.frame_id,
+            raw_input_count: frame.inputs.len(),
+            sim_action_count: frame
+                .inputs
+                .iter()
+                .filter(|input| input.action == SIM_INPUT_ACTION)
+                .count(),
+            sim_command_count: sim_inputs.len(),
+            sim_inputs,
+        });
+        while self.input_history.len() > REPLAY_INPUT_HISTORY_LIMIT {
+            self.input_history.pop_front();
+        }
     }
 
     fn record_hash(
@@ -210,6 +302,108 @@ impl LockstepSimReplayState {
         while self.event_history.len() > REPLAY_EVENT_HISTORY_LIMIT {
             self.event_history.pop_front();
         }
+    }
+
+    fn record_periodic_world_snapshot(&mut self, frame: u32) -> Result<(), LockstepSimReplayError> {
+        if frame % REPLAY_WORLD_SNAPSHOT_INTERVAL != 0 {
+            return Ok(());
+        }
+
+        let world = self
+            .world
+            .as_ref()
+            .ok_or(LockstepSimReplayError::MissingReplayWorld)?
+            .clone();
+        self.record_world_snapshot(frame, &world);
+        Ok(())
+    }
+
+    fn record_world_snapshot(&mut self, frame: u32, world: &SimWorld) {
+        if self
+            .world_snapshots
+            .back()
+            .is_some_and(|last| last.frame == frame)
+        {
+            return;
+        }
+
+        self.world_snapshots.push_back(LockstepSimWorldSnapshot {
+            frame,
+            world: world.clone(),
+            hash: hash_world(world),
+        });
+        while self.world_snapshots.len() > REPLAY_WORLD_SNAPSHOT_LIMIT {
+            self.world_snapshots.pop_front();
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(in crate::game::features::lockstep_sim) fn replay_from_cached_snapshot_to_frame(
+        &self,
+        target_frame: u32,
+    ) -> Result<(SimWorld, LockstepSimReplaySummary), LockstepSimReplayCacheError> {
+        let config = self
+            .config
+            .as_ref()
+            .ok_or(LockstepSimReplayCacheError::MissingReplayConfig)?;
+        let snapshot = self
+            .world_snapshots
+            .iter()
+            .rev()
+            .find(|snapshot| snapshot.frame <= target_frame)
+            .ok_or(LockstepSimReplayCacheError::MissingSnapshot { target_frame })?;
+        let mut world = snapshot.world.clone();
+        let mut replayed_frames = 0_u32;
+
+        for frame in snapshot.frame.saturating_add(1)..=target_frame {
+            let inputs = self
+                .cached_input_for_frame(frame)
+                .ok_or(LockstepSimReplayCacheError::MissingInput { frame })?;
+            step(&mut world, FrameId::new(frame), &inputs.sim_inputs, config)
+                .map_err(LockstepSimReplayCacheError::Step)?;
+            replayed_frames = replayed_frames.saturating_add(1);
+        }
+
+        let final_hash = hash_world(&world);
+        Ok((
+            world,
+            LockstepSimReplaySummary {
+                snapshot_frame: snapshot.frame,
+                target_frame,
+                replayed_frames,
+                final_hash,
+            },
+        ))
+    }
+
+    #[allow(dead_code)]
+    pub(in crate::game::features::lockstep_sim) fn mismatch_coverage(
+        &self,
+        frame: u32,
+    ) -> LockstepSimMismatchCoverage {
+        let snapshot_frame = self
+            .world_snapshots
+            .iter()
+            .rev()
+            .find(|snapshot| snapshot.frame <= frame)
+            .map(|snapshot| snapshot.frame);
+        let missing_input_frame = snapshot_frame.and_then(|snapshot_frame| {
+            (snapshot_frame.saturating_add(1)..=frame)
+                .find(|frame| self.cached_input_for_frame(*frame).is_none())
+        });
+        LockstepSimMismatchCoverage {
+            frame,
+            has_hash: self.hash_history.iter().any(|hash| hash.frame == frame),
+            has_input: self.cached_input_for_frame(frame).is_some(),
+            has_replay_inputs: snapshot_frame.is_some() && missing_input_frame.is_none(),
+            missing_input_frame,
+            has_snapshot_at_or_before: snapshot_frame.is_some(),
+            snapshot_frame,
+        }
+    }
+
+    fn cached_input_for_frame(&self, frame: u32) -> Option<&LockstepSimFrameInputs> {
+        self.input_history.iter().find(|input| input.frame == frame)
     }
 }
 
@@ -314,8 +508,10 @@ fn apply_authority_frame(
     let result = step(world, FrameId::new(frame.frame_id), &sim_inputs, config)
         .map_err(LockstepSimReplayError::Step)?;
 
+    replay_state.record_inputs(frame, sim_inputs);
     replay_state.record_hash(frame.frame_id, &result, server_hash.clone());
     replay_state.record_events(frame.frame_id, &result.events);
+    replay_state.record_periodic_world_snapshot(frame.frame_id)?;
     let hash_status = replay_state.diagnostics.record_frame(
         frame.frame_id,
         result.state_hash,
@@ -921,6 +1117,198 @@ mod tests {
         assert!(mismatch.entity_summary.contains("id=1000"));
         assert!(mismatch.entity_summary.contains("owner=player-a"));
         assert!(mismatch.entity_summary.contains("hp=100/100"));
+    }
+
+    #[test]
+    fn replay_records_authoritative_inputs_hashes_and_periodic_snapshots() {
+        let snapshot = parsed_snapshot_fixture();
+        let mut replay = replay_state_from_snapshot(&snapshot);
+
+        for frame_id in 1..=REPLAY_WORLD_SNAPSHOT_INTERVAL {
+            apply_authority_frame(
+                &mut replay,
+                &snapshot,
+                &authority_frame(frame_id, Vec::new(), "{}"),
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            replay.input_history.len(),
+            REPLAY_WORLD_SNAPSHOT_INTERVAL as usize
+        );
+        let first_input = replay.input_history.front().unwrap();
+        assert_eq!(first_input.frame, 1);
+        assert_eq!(first_input.raw_input_count, 0);
+        assert_eq!(first_input.sim_action_count, 0);
+        assert_eq!(first_input.sim_command_count, 0);
+        assert!(first_input.sim_inputs.is_empty());
+        assert_eq!(
+            replay.hash_history.len(),
+            REPLAY_WORLD_SNAPSHOT_INTERVAL as usize
+        );
+        assert_eq!(
+            replay
+                .hash_history
+                .back()
+                .map(|hash| (hash.frame, hash.local_hash)),
+            Some((
+                REPLAY_WORLD_SNAPSHOT_INTERVAL,
+                hash_world(replay.world.as_ref().unwrap())
+            ))
+        );
+        assert_eq!(
+            replay
+                .world_snapshots
+                .iter()
+                .map(|snapshot| snapshot.frame)
+                .collect::<Vec<_>>(),
+            vec![0, REPLAY_WORLD_SNAPSHOT_INTERVAL]
+        );
+        let latest_snapshot = replay.world_snapshots.back().unwrap();
+        assert_eq!(latest_snapshot.world, *replay.world.as_ref().unwrap());
+        assert_eq!(latest_snapshot.hash, hash_world(&latest_snapshot.world));
+    }
+
+    #[test]
+    fn replay_from_cached_snapshot_matches_continuous_world_and_keeps_live_world() {
+        let snapshot = parsed_snapshot_fixture();
+        let mut replay = replay_state_from_snapshot(&snapshot);
+        for frame_id in 1..=25 {
+            let inputs = if frame_id == 21 {
+                vec![player_input(
+                    frame_id,
+                    PLAYER_ID,
+                    r#"{"version":1,"seq":21,"commands":[{"type":"move","dirX":1000,"dirY":0}]}"#,
+                )]
+            } else if frame_id == 23 {
+                vec![player_input(
+                    frame_id,
+                    PLAYER_ID,
+                    r#"{"version":1,"seq":23,"commands":[{"type":"stop"}]}"#,
+                )]
+            } else {
+                Vec::new()
+            };
+            apply_authority_frame(
+                &mut replay,
+                &snapshot,
+                &authority_frame(frame_id, inputs, "{}"),
+            )
+            .unwrap();
+        }
+        let live_before = replay.world.clone();
+
+        let (replayed_world, summary) = replay.replay_from_cached_snapshot_to_frame(25).unwrap();
+
+        assert_eq!(summary.snapshot_frame, 20);
+        assert_eq!(summary.target_frame, 25);
+        assert_eq!(summary.replayed_frames, 5);
+        assert_eq!(replayed_world, *live_before.as_ref().unwrap());
+        assert_eq!(
+            summary.final_hash,
+            replay.hash_history.back().unwrap().local_hash
+        );
+        assert_eq!(replay.world, live_before);
+    }
+
+    #[test]
+    fn replay_cache_coverage_reports_mismatch_supporting_data() {
+        let snapshot = parsed_snapshot_fixture();
+        let mut replay = replay_state_from_snapshot(&snapshot);
+        for frame_id in 1..=12 {
+            apply_authority_frame(
+                &mut replay,
+                &snapshot,
+                &authority_frame(frame_id, Vec::new(), "{}"),
+            )
+            .unwrap();
+        }
+
+        let coverage = replay.mismatch_coverage(12);
+
+        assert_eq!(
+            coverage,
+            LockstepSimMismatchCoverage {
+                frame: 12,
+                has_hash: true,
+                has_input: true,
+                has_replay_inputs: true,
+                missing_input_frame: None,
+                has_snapshot_at_or_before: true,
+                snapshot_frame: Some(10),
+            }
+        );
+        assert!(replay.replay_from_cached_snapshot_to_frame(12).is_ok());
+    }
+
+    #[test]
+    fn replay_cache_coverage_reports_missing_intermediate_replay_input() {
+        let snapshot = parsed_snapshot_fixture();
+        let mut replay = replay_state_from_snapshot(&snapshot);
+        for frame_id in 1..=12 {
+            apply_authority_frame(
+                &mut replay,
+                &snapshot,
+                &authority_frame(frame_id, Vec::new(), "{}"),
+            )
+            .unwrap();
+        }
+        let missing_index = replay
+            .input_history
+            .iter()
+            .position(|entry| entry.frame == 11)
+            .unwrap();
+        replay.input_history.remove(missing_index);
+
+        let coverage = replay.mismatch_coverage(12);
+
+        assert_eq!(
+            coverage,
+            LockstepSimMismatchCoverage {
+                frame: 12,
+                has_hash: true,
+                has_input: true,
+                has_replay_inputs: false,
+                missing_input_frame: Some(11),
+                has_snapshot_at_or_before: true,
+                snapshot_frame: Some(10),
+            }
+        );
+        assert_eq!(
+            replay.replay_from_cached_snapshot_to_frame(12).unwrap_err(),
+            LockstepSimReplayCacheError::MissingInput { frame: 11 }
+        );
+    }
+
+    #[test]
+    fn replay_cache_enforces_history_limits_and_snapshot_interval() {
+        let snapshot = parsed_snapshot_fixture();
+        let mut replay = replay_state_from_snapshot(&snapshot);
+        for frame_id in 1..=650 {
+            apply_authority_frame(
+                &mut replay,
+                &snapshot,
+                &authority_frame(frame_id, Vec::new(), "{}"),
+            )
+            .unwrap();
+        }
+
+        assert_eq!(replay.input_history.len(), REPLAY_INPUT_HISTORY_LIMIT);
+        assert_eq!(replay.input_history.front().unwrap().frame, 139);
+        assert_eq!(replay.input_history.back().unwrap().frame, 650);
+        assert_eq!(replay.hash_history.len(), REPLAY_HASH_HISTORY_LIMIT);
+        assert_eq!(replay.hash_history.front().unwrap().frame, 139);
+        assert_eq!(replay.hash_history.back().unwrap().frame, 650);
+        assert_eq!(replay.world_snapshots.len(), REPLAY_WORLD_SNAPSHOT_LIMIT);
+        assert_eq!(replay.world_snapshots.front().unwrap().frame, 20);
+        assert_eq!(replay.world_snapshots.back().unwrap().frame, 650);
+        assert!(
+            replay
+                .world_snapshots
+                .iter()
+                .all(|snapshot| snapshot.frame % REPLAY_WORLD_SNAPSHOT_INTERVAL == 0)
+        );
     }
 
     fn replay_state_from_snapshot(snapshot: &ParsedInitialSnapshot) -> LockstepSimReplayState {
