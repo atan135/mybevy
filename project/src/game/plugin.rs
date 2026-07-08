@@ -5,7 +5,9 @@ use crate::framework::{audio::AudioPlugin, scene::ScenePlugin};
 use super::{
     audio::GameAudioPlugin,
     authority::AuthorityPlugin,
-    features::{FangyuanPlayerPreviewPlugin, LockstepSimPlugin, RobotSyncPlugin, TouchRipplePlugin},
+    features::{
+        FangyuanPlayerPreviewPlugin, LockstepSimPlugin, RobotSyncPlugin, TouchRipplePlugin,
+    },
     myserver::MyServerPlugin,
     scenes::GameScenesPlugin,
     screens::ScreensPlugin,

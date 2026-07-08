@@ -178,6 +178,9 @@ mod tests {
         assert_ne!(summary.state_hash, 0);
 
         let entity = world.entity(EntityId::new(100)).unwrap();
-        assert_eq!(entity.transform.pos, Vec2Fp::new(Fp::from_milli(100), Fp::ZERO));
+        assert_eq!(
+            entity.transform.pos,
+            Vec2Fp::new(Fp::from_milli(100), Fp::ZERO)
+        );
     }
 }

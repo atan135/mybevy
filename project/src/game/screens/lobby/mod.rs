@@ -93,15 +93,12 @@ fn handle_lobby_scene_entry_events(
                 )));
             }
             SceneEvent::Failed(failure)
-                if failure
-                    .scene_id
-                    .as_ref()
-                    .is_some_and(|scene_id| {
-                        matches!(
-                            scene_id.as_str(),
-                            ROBOT_SYNC_ARENA_SCENE_ID | LOCKSTEP_SIM_ARENA_SCENE_ID
-                        )
-                    }) =>
+                if failure.scene_id.as_ref().is_some_and(|scene_id| {
+                    matches!(
+                        scene_id.as_str(),
+                        ROBOT_SYNC_ARENA_SCENE_ID | LOCKSTEP_SIM_ARENA_SCENE_ID
+                    )
+                }) =>
             {
                 robot_sync_entry.clear();
                 warn!(

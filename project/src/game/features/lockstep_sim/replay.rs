@@ -1118,8 +1118,12 @@ mod tests {
         let snapshot = parsed_snapshot_fixture();
         let mut replay = LockstepSimReplayState::default();
         replay.initialize_from_snapshot_if_needed(&snapshot, 1);
-        apply_authority_frame(&mut replay, &snapshot, &authority_frame(1, Vec::new(), "{}"))
-            .unwrap();
+        apply_authority_frame(
+            &mut replay,
+            &snapshot,
+            &authority_frame(1, Vec::new(), "{}"),
+        )
+        .unwrap();
         assert_eq!(replay.last_applied_frame, Some(1));
 
         let recovered = parsed_snapshot_with_player_x(0, 5);
@@ -1130,7 +1134,11 @@ mod tests {
         assert_eq!(replay.world.as_ref(), Some(&recovered.world));
         assert_eq!(replay.input_history.len(), 0);
         assert_eq!(
-            replay.world_snapshots.iter().map(|entry| entry.frame).collect::<Vec<_>>(),
+            replay
+                .world_snapshots
+                .iter()
+                .map(|entry| entry.frame)
+                .collect::<Vec<_>>(),
             vec![0]
         );
     }
@@ -1188,9 +1196,16 @@ mod tests {
             replay.diagnostics.last_match_status,
             LockstepSimHashMatchStatus::Matched
         );
-        assert_eq!(replay.hash_history.back().unwrap().server_hash, Some(server_hash));
         assert_eq!(
-            replay.input_history.iter().map(|entry| entry.frame).collect::<Vec<_>>(),
+            replay.hash_history.back().unwrap().server_hash,
+            Some(server_hash)
+        );
+        assert_eq!(
+            replay
+                .input_history
+                .iter()
+                .map(|entry| entry.frame)
+                .collect::<Vec<_>>(),
             vec![4]
         );
     }
@@ -1254,7 +1269,10 @@ mod tests {
         assert_eq!(input_record.raw_input_count, 1);
         assert_eq!(input_record.sim_action_count, 1);
         assert_eq!(input_record.sim_command_count, 0);
-        assert_eq!(replay.hash_history.back().unwrap().local_hash, expected_result.state_hash);
+        assert_eq!(
+            replay.hash_history.back().unwrap().local_hash,
+            expected_result.state_hash
+        );
         assert!(replay.last_error.is_none());
     }
 
