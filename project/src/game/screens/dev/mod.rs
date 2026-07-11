@@ -4,7 +4,13 @@ mod ui_gallery;
 
 use bevy::prelude::*;
 
-use crate::framework::{audio::prelude::AudioSystemSet, ui::core::UiPanelSystems};
+use crate::framework::{
+    audio::prelude::AudioSystemSet,
+    ui::{
+        core::{UiFocusSystems, UiPanelSystems},
+        widgets::controls::update_icon_button_visuals,
+    },
+};
 use crate::game::navigation::AppUiMode;
 
 pub(super) struct DevScreensPlugin;
@@ -27,6 +33,13 @@ impl Plugin for DevScreensPlugin {
                     audio_monitor::setup_audio_monitor,
                 )
                     .chain(),
+            )
+            .add_systems(
+                Update,
+                ui_gallery::apply_gallery_icon_state_previews
+                    .after(UiFocusSystems::SyncFocusedMarkers)
+                    .before(update_icon_button_visuals)
+                    .run_if(in_state(AppUiMode::UiGallery)),
             )
             .add_systems(
                 Update,

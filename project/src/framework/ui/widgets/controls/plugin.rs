@@ -33,9 +33,10 @@ impl Plugin for UiWidgetsPlugin {
                     sync_text_input_display,
                     sync_text_input_form_messages,
                     sync_numeric_control_display,
-                    sync_icon_button_accessible_labels,
+                    sync_icon_button_accessible_labels.after(UiI18nSystems::Refresh),
                     sync_icon_button_nodes,
                     update_button_visuals,
+                    update_icon_button_visuals,
                     update_text_input_visuals,
                 )
                     .in_set(UiFocusSystems::Visuals),
@@ -44,6 +45,7 @@ impl Plugin for UiWidgetsPlugin {
                 PostUpdate,
                 (
                     sync_text_input_caret,
+                    sync_ui_icon_asset_status,
                     crate::framework::ui::widgets::image::update_ui_images,
                 )
                     .after(UiSystems::PostLayout),

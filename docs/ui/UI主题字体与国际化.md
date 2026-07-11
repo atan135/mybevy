@@ -12,7 +12,7 @@ project/assets/ui/themes/default.ron
 
 主题配置版本当前是 `version: 1`。主要 token：
 
-- `colors`：屏幕背景、面板背景、边框、Loading/Modal 遮罩、正文、弱化文本、错误色、主按钮色、次按钮色。
+- `colors`：屏幕背景、面板背景、边框、Loading/Modal 遮罩、正文、弱化文本、错误色、主按钮色、次按钮色，以及 `icon_tint` 七态单色图标着色。
 - `text`：大标题、标题、副标题、章节、正文、说明、按钮字号。
 - `layout`：页面 padding、页面间距、面板间距、行间距、内容宽度等。
 - `button`：按钮最小宽度、高度、横向 padding、圆角。
@@ -40,7 +40,7 @@ project/assets/ui/themes/default.ron
 - `UiThemePanelNodeRole`
 - `UiThemeRootNodeRole`
 
-页面和控件应保留这些 marker，这样主题、视口或 metrics 变化时节点会自动刷新。
+页面和控件应保留这些 marker，这样主题、视口或 metrics 变化时节点会自动刷新。图标按钮的 `icon_tint` 由专用视觉系统读取 `UiTheme`，不需要额外 marker；全彩图标会忽略该 tint 并保持原色。
 
 ## 字体注册表
 

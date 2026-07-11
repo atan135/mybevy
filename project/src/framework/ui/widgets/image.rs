@@ -119,7 +119,7 @@ impl UiImageTextureSource {
         }
     }
 
-    fn validate(&self) -> Result<(), UiImageError> {
+    pub(crate) fn validate(&self) -> Result<(), UiImageError> {
         let path = self.path.as_str();
         if path.is_empty()
             || path.trim() != path

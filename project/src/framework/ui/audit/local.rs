@@ -38,6 +38,8 @@ const IMAGE_TILING_CAPTURE_STATE: &str = "image_tiling";
 const IMAGE_ATLAS_CAPTURE_STATE: &str = "image_atlas";
 const TYPOGRAPHY_CAPTURE_STATE: &str = "typography";
 const TYPOGRAPHY_OVERFLOW_CAPTURE_STATE: &str = "typography_overflow";
+const ICONS_CAPTURE_STATE: &str = "icons";
+const ICON_STATES_CAPTURE_STATE: &str = "icon_states";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
@@ -318,6 +320,8 @@ pub(crate) enum UiAuditCaptureState {
     ImageAtlas,
     Typography,
     TypographyOverflow,
+    Icons,
+    IconStates,
     Top,
     Middle,
     Bottom,
@@ -334,6 +338,8 @@ impl UiAuditCaptureState {
             Self::ImageAtlas => IMAGE_ATLAS_CAPTURE_STATE,
             Self::Typography => TYPOGRAPHY_CAPTURE_STATE,
             Self::TypographyOverflow => TYPOGRAPHY_OVERFLOW_CAPTURE_STATE,
+            Self::Icons => ICONS_CAPTURE_STATE,
+            Self::IconStates => ICON_STATES_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -1220,6 +1226,10 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::Typography)
     } else if value.eq_ignore_ascii_case(TYPOGRAPHY_OVERFLOW_CAPTURE_STATE) {
         Some(UiAuditCaptureState::TypographyOverflow)
+    } else if value.eq_ignore_ascii_case(ICONS_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Icons)
+    } else if value.eq_ignore_ascii_case(ICON_STATES_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::IconStates)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -1890,6 +1900,25 @@ mod tests {
                 UiAuditCaptureState::Typography,
                 UiAuditCaptureState::TypographyOverflow,
             ]
+        );
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn config_accepts_icon_capture_states() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "icons,icon_states"),
+            ]),
+            100,
+        );
+
+        assert_eq!(
+            config.states,
+            vec![UiAuditCaptureState::Icons, UiAuditCaptureState::IconStates]
         );
         assert!(config.states_from_env);
         assert!(config.config_error.is_none());

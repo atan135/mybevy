@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
+use accesskit::{Node as AccessKitNode, Role as AccessKitRole};
 use bevy::{
+    a11y::AccessibilityNode,
     input::keyboard::{Key, KeyCode, KeyboardInput},
     picking::{
         PickingSystems,
@@ -14,7 +16,7 @@ use bevy::{
 
 use crate::framework::ui::{
     core::{UiFocusSystems, UiMetrics, focus::UiFocusState},
-    i18n::{UiI18n, UiI18nText},
+    i18n::{UiI18n, UiI18nSystems, UiI18nText},
     style::{
         UiFontAssets, UiTextStyleToken,
         theme::{
@@ -23,7 +25,7 @@ use crate::framework::ui::{
         },
         try_ui_styled_text,
     },
-    widgets::scroll::UiScrollPlugin,
+    widgets::{icon::*, scroll::UiScrollPlugin},
 };
 
 const NUMERIC_CONTROL_LABEL_WIDTH: f32 = 132.0;
@@ -44,6 +46,9 @@ pub(crate) use text_input::*;
 
 #[cfg(test)]
 mod tests {
+    use accesskit::Role;
+    use bevy::asset::AssetPlugin;
+
     use super::*;
 
     fn editable(max_chars: Option<usize>) -> UiTextInputEditMode {
@@ -730,33 +735,82 @@ mod tests {
     }
 
     #[test]
-    fn icon_button_background_and_text_roles_match_visual_state() {
+    fn icon_button_background_and_tint_match_all_visual_states() {
+        let theme = UiTheme::default();
         let colors = UiTheme::default().colors.secondary_button;
 
+        for (state, expected) in [
+            (UiButtonVisualState::Idle, colors.idle),
+            (UiButtonVisualState::Hovered, colors.hovered),
+            (UiButtonVisualState::Pressed, colors.pressed),
+            (UiButtonVisualState::Focused, colors.focused),
+            (UiButtonVisualState::Selected, colors.selected),
+            (UiButtonVisualState::Disabled, colors.disabled),
+            (UiButtonVisualState::Loading, colors.loading),
+        ] {
+            assert_eq!(icon_button_background_color(colors, state), expected);
+        }
         assert_eq!(
-            icon_button_background_color(colors, IconButtonVisualState::Idle),
-            colors.idle
+            icon_button_state_tint(&theme, UiButtonVisualState::Idle),
+            theme.colors.text_primary
+        );
+        assert_ne!(
+            icon_button_state_tint(&theme, UiButtonVisualState::Selected),
+            theme.colors.text_primary
+        );
+        assert!(icon_button_state_tint(&theme, UiButtonVisualState::Disabled).alpha() < 1.0);
+    }
+
+    #[test]
+    fn icon_button_state_uses_disabled_loading_pointer_selection_focus_priority() {
+        assert_eq!(
+            icon_button_visual_state(Interaction::Pressed, true, true, true, true),
+            UiButtonVisualState::Disabled
         );
         assert_eq!(
-            icon_button_background_color(colors, IconButtonVisualState::Disabled),
-            colors.disabled
+            icon_button_visual_state(Interaction::Pressed, false, true, true, true),
+            UiButtonVisualState::Loading
         );
         assert_eq!(
-            icon_button_background_color(colors, IconButtonVisualState::Loading),
-            colors.loading
+            icon_button_visual_state(Interaction::Pressed, false, true, true, false),
+            UiButtonVisualState::Pressed
         );
-        assert!(matches!(
-            icon_button_text_color_role(IconButtonVisualState::Idle),
-            UiThemeTextColorRole::Primary
-        ));
-        assert!(matches!(
-            icon_button_text_color_role(IconButtonVisualState::Loading),
-            UiThemeTextColorRole::Primary
-        ));
-        assert!(matches!(
-            icon_button_text_color_role(IconButtonVisualState::Disabled),
-            UiThemeTextColorRole::Muted
-        ));
+        assert_eq!(
+            icon_button_visual_state(Interaction::Hovered, false, true, true, false),
+            UiButtonVisualState::Hovered
+        );
+        assert_eq!(
+            icon_button_visual_state(Interaction::None, false, true, true, false),
+            UiButtonVisualState::Selected
+        );
+        assert_eq!(
+            icon_button_visual_state(Interaction::None, false, true, false, false),
+            UiButtonVisualState::Focused
+        );
+    }
+
+    #[test]
+    fn icon_button_state_overrides_can_replace_image_tint_and_background() {
+        let theme = UiTheme::default();
+        let colors = theme.colors.secondary_button;
+        let custom_tint = Color::srgb(0.9, 0.2, 0.3);
+        let custom_background = Color::srgb(0.1, 0.2, 0.7);
+        let mut visuals = UiIconButtonVisuals::new(UiIconId::ADD);
+        visuals.selected = UiIconStateOverride {
+            icon: Some(UiIconId::HELP),
+            tint: Some(custom_tint),
+            background: Some(custom_background),
+        };
+
+        let selected =
+            resolve_icon_button_style(&theme, colors, visuals, UiButtonVisualState::Selected);
+        assert_eq!(selected.icon, UiIconId::HELP);
+        assert_eq!(selected.tint, custom_tint);
+        assert_eq!(selected.background, custom_background);
+
+        let loading =
+            resolve_icon_button_style(&theme, colors, visuals, UiButtonVisualState::Loading);
+        assert_eq!(loading.icon, UiIconId::LOADING);
     }
 
     #[test]
@@ -772,6 +826,367 @@ mod tests {
         assert_eq!(
             node.border_radius,
             BorderRadius::all(px(theme.button.radius))
+        );
+    }
+
+    #[test]
+    fn icon_button_theme_refresh_preserves_caller_owned_layout_fields() {
+        let theme = UiTheme::default();
+        let metrics = UiMetrics::default();
+        let margin = UiRect::new(px(3), px(5), px(7), px(11));
+        let grid_row = GridPlacement::start_span(2, 3);
+        let grid_column = GridPlacement::start_end(4, 6);
+        let mut app = App::new();
+        app.insert_resource(theme)
+            .insert_resource(metrics)
+            .add_systems(Update, sync_icon_button_nodes);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                UiIconButton {
+                    icon: UiIconId::ADD,
+                    accessible_key: "gallery.add".to_string(),
+                    accessible_fallback: "Add".to_string(),
+                    accessible_label: "Add".to_string(),
+                    layout: UiIconButtonLayout::Labeled(UiIconLabelPlacement::Leading),
+                    visuals: UiIconButtonVisuals::new(UiIconId::ADD),
+                    visual_state: UiButtonVisualState::Idle,
+                },
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(13),
+                    right: percent(17),
+                    top: px(19),
+                    bottom: percent(23),
+                    margin,
+                    max_width: px(331),
+                    max_height: px(337),
+                    overflow: Overflow::clip(),
+                    align_self: AlignSelf::FlexEnd,
+                    justify_self: JustifySelf::End,
+                    grid_row,
+                    grid_column,
+                    width: px(1),
+                    height: px(2),
+                    min_width: px(3),
+                    min_height: px(4),
+                    align_items: AlignItems::FlexStart,
+                    justify_content: JustifyContent::FlexEnd,
+                    padding: UiRect::all(px(5)),
+                    border_radius: BorderRadius::all(px(6)),
+                    flex_direction: FlexDirection::Column,
+                    column_gap: px(7),
+                    ..default()
+                },
+            ))
+            .id();
+
+        app.update();
+        let expected = icon_button_layout_node(
+            app.world().resource::<UiTheme>(),
+            app.world().resource::<UiMetrics>(),
+            UiIconButtonLayout::Labeled(UiIconLabelPlacement::Leading),
+        );
+        let node = app.world().get::<Node>(entity).unwrap();
+        assert_eq!(node.width, expected.width);
+        assert_eq!(node.height, expected.height);
+        assert_eq!(node.min_width, expected.min_width);
+        assert_eq!(node.min_height, expected.min_height);
+        assert_eq!(node.align_items, expected.align_items);
+        assert_eq!(node.justify_content, expected.justify_content);
+        assert_eq!(node.padding, expected.padding);
+        assert_eq!(node.border_radius, expected.border_radius);
+        assert_eq!(node.flex_direction, expected.flex_direction);
+        assert_eq!(node.column_gap, expected.column_gap);
+        assert_eq!(node.position_type, PositionType::Absolute);
+        assert_eq!(node.left, px(13));
+        assert_eq!(node.right, percent(17));
+        assert_eq!(node.top, px(19));
+        assert_eq!(node.bottom, percent(23));
+        assert_eq!(node.margin, margin);
+        assert_eq!(node.max_width, px(331));
+        assert_eq!(node.max_height, px(337));
+        assert_eq!(node.overflow, Overflow::clip());
+        assert_eq!(node.align_self, AlignSelf::FlexEnd);
+        assert_eq!(node.justify_self, JustifySelf::End);
+        assert_eq!(node.grid_row, grid_row);
+        assert_eq!(node.grid_column, grid_column);
+
+        app.world_mut().clear_trackers();
+        app.world_mut().resource_mut::<UiTheme>().button.radius += 3.0;
+        let mut refreshed_metrics = *app.world().resource::<UiMetrics>();
+        refreshed_metrics.button_height += 9.0;
+        refreshed_metrics.control_gap += 4.0;
+        app.insert_resource(refreshed_metrics);
+        app.update();
+
+        let expected = icon_button_layout_node(
+            app.world().resource::<UiTheme>(),
+            app.world().resource::<UiMetrics>(),
+            UiIconButtonLayout::Labeled(UiIconLabelPlacement::Leading),
+        );
+        let node = app.world().entity(entity).get_ref::<Node>().unwrap();
+        assert_eq!(node.width, expected.width);
+        assert_eq!(node.height, expected.height);
+        assert_eq!(node.min_width, expected.min_width);
+        assert_eq!(node.min_height, expected.min_height);
+        assert_eq!(node.align_items, expected.align_items);
+        assert_eq!(node.justify_content, expected.justify_content);
+        assert_eq!(node.padding, expected.padding);
+        assert_eq!(node.border_radius, expected.border_radius);
+        assert_eq!(node.flex_direction, expected.flex_direction);
+        assert_eq!(node.column_gap, expected.column_gap);
+        assert_eq!(node.position_type, PositionType::Absolute);
+        assert_eq!(node.left, px(13));
+        assert_eq!(node.right, percent(17));
+        assert_eq!(node.top, px(19));
+        assert_eq!(node.bottom, percent(23));
+        assert_eq!(node.margin, margin);
+        assert_eq!(node.max_width, px(331));
+        assert_eq!(node.max_height, px(337));
+        assert_eq!(node.overflow, Overflow::clip());
+        assert_eq!(node.align_self, AlignSelf::FlexEnd);
+        assert_eq!(node.justify_self, JustifySelf::End);
+        assert_eq!(node.grid_row, grid_row);
+        assert_eq!(node.grid_column, grid_column);
+
+        app.world_mut().clear_trackers();
+        app.update();
+        assert!(
+            !app.world()
+                .entity(entity)
+                .get_ref::<Node>()
+                .unwrap()
+                .is_changed()
+        );
+    }
+
+    #[test]
+    fn icon_button_uses_image_child_and_live_accessibility_label() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            crate::framework::ui::i18n::UiI18nPlugin,
+        ))
+        .init_asset::<Image>()
+        .add_systems(
+            Update,
+            sync_icon_button_accessible_labels.after(UiI18nSystems::Refresh),
+        );
+        app.finish();
+        app.cleanup();
+        app.insert_resource(UiI18n::test_with_texts("en_us", &[("gallery.add", "Add")]));
+
+        let theme = UiTheme::default();
+        let metrics = UiMetrics::default();
+        let fonts = UiFontAssets::test_registry();
+        let bundle = icon_only_button_key_bundle(
+            &theme,
+            &metrics,
+            &fonts,
+            app.world().resource::<AssetServer>(),
+            UiIconId::ADD,
+            "gallery.add",
+            "Add",
+            "Add",
+            theme.colors.secondary_button,
+            SecondaryButton,
+            UiIconButtonLayout::IconOnly,
+            UiButtonVisualState::Idle,
+            UiIconButtonVisuals::new(UiIconId::ADD),
+        );
+        let entity = app.world_mut().spawn(bundle).id();
+        let children = app.world().get::<Children>(entity).unwrap();
+
+        assert_eq!(children.len(), 2);
+        let image_count = children
+            .iter()
+            .filter(|child| app.world().get::<ImageNode>(*child).is_some())
+            .count();
+        assert_eq!(image_count, 1);
+        let accessibility_label = children
+            .iter()
+            .find(|child| {
+                app.world()
+                    .get::<UiIconAccessibilityLabel>(*child)
+                    .is_some()
+            })
+            .unwrap();
+        assert_eq!(
+            app.world().get::<Text>(accessibility_label).unwrap().0,
+            "Add"
+        );
+        assert_eq!(
+            app.world().get::<Visibility>(accessibility_label),
+            Some(&Visibility::Hidden)
+        );
+        assert!(app.world().get::<UiI18nText>(accessibility_label).is_some());
+
+        app.update();
+        let accessibility = app
+            .world()
+            .get::<AccessibilityNode>(entity)
+            .expect("the icon button bundle should attach root accessibility");
+        assert_eq!(accessibility.role(), Role::Button);
+        assert_eq!(accessibility.label(), Some("Add"));
+
+        app.insert_resource(UiI18n::test_with_texts("zh_cn", &[("gallery.add", "添加")]));
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Text>(accessibility_label).unwrap().0,
+            "添加"
+        );
+        let accessibility = app.world().get::<AccessibilityNode>(entity).unwrap();
+        assert_eq!(accessibility.role(), Role::Button);
+        assert_eq!(accessibility.label(), Some("添加"));
+    }
+
+    #[test]
+    fn stable_icon_button_state_does_not_change_layout_hierarchy_or_render_components() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>()
+            .insert_resource(UiTheme::default())
+            .add_systems(Update, update_icon_button_visuals);
+        app.finish();
+        app.cleanup();
+
+        let theme = UiTheme::default();
+        let metrics = UiMetrics::default();
+        let fonts = UiFontAssets::test_registry();
+        let bundle = icon_only_button_key_bundle(
+            &theme,
+            &metrics,
+            &fonts,
+            app.world().resource::<AssetServer>(),
+            UiIconId::HELP,
+            "gallery.help",
+            "Help",
+            "Help",
+            theme.colors.secondary_button,
+            SecondaryButton,
+            UiIconButtonLayout::IconOnly,
+            UiButtonVisualState::Idle,
+            UiIconButtonVisuals::new(UiIconId::HELP),
+        );
+        let entity = app.world_mut().spawn((bundle, SelectedButton)).id();
+        app.update();
+
+        let node_before = app.world().get::<Node>(entity).unwrap().clone();
+        let children_before = app.world().get::<Children>(entity).unwrap().to_vec();
+        let icon = children_before
+            .iter()
+            .copied()
+            .find(|child| app.world().get::<UiIconVisual>(*child).is_some())
+            .unwrap();
+
+        app.world_mut().clear_trackers();
+        app.update();
+
+        assert_eq!(app.world().get::<Node>(entity), Some(&node_before));
+        assert_eq!(
+            app.world().get::<Children>(entity).unwrap().as_ref(),
+            children_before.as_slice()
+        );
+        assert!(
+            !app.world()
+                .entity(entity)
+                .get_ref::<Node>()
+                .unwrap()
+                .is_changed()
+        );
+        assert!(
+            !app.world()
+                .entity(entity)
+                .get_ref::<BackgroundColor>()
+                .unwrap()
+                .is_changed()
+        );
+        assert!(
+            !app.world()
+                .entity(entity)
+                .get_ref::<UiIconButton>()
+                .unwrap()
+                .is_changed()
+        );
+        assert!(
+            !app.world()
+                .entity(icon)
+                .get_ref::<ImageNode>()
+                .unwrap()
+                .is_changed()
+        );
+        assert!(
+            !app.world()
+                .entity(icon)
+                .get_ref::<UiIconResolutionStatus>()
+                .unwrap()
+                .is_changed()
+        );
+        assert!(
+            !app.world()
+                .entity(icon)
+                .get_ref::<UiIconAssetStatus>()
+                .unwrap()
+                .is_changed()
+        );
+    }
+
+    #[test]
+    fn icon_button_layout_variants_keep_explicit_touch_targets() {
+        let theme = UiTheme::default();
+        let metrics = UiMetrics::default();
+        let leading = icon_button_layout_node(
+            &theme,
+            &metrics,
+            UiIconButtonLayout::Labeled(UiIconLabelPlacement::Leading),
+        );
+        let trailing = icon_button_layout_node(
+            &theme,
+            &metrics,
+            UiIconButtonLayout::Labeled(UiIconLabelPlacement::Trailing),
+        );
+        let fixed = icon_button_layout_node(
+            &theme,
+            &metrics,
+            UiIconButtonLayout::FixedImage {
+                width: 72.0,
+                height: 56.0,
+                visual_size: 40.0,
+            },
+        );
+
+        assert_eq!(leading.height, px(metrics.button_height));
+        assert_eq!(leading.flex_direction, FlexDirection::Row);
+        assert_eq!(trailing.flex_direction, FlexDirection::RowReverse);
+        assert_eq!(fixed.width, px(72));
+        assert_eq!(fixed.height, px(56));
+        assert_eq!(fixed.min_width, px(72));
+        assert_eq!(fixed.min_height, px(56));
+    }
+
+    #[test]
+    fn disabled_and_loading_buttons_are_not_pointer_event_targets() {
+        let mut world = World::new();
+        let disabled = world.spawn((Button, DisabledButton)).id();
+        let loading = world.spawn((Button, LoadingButton)).id();
+        let mut buttons = world.query_filtered::<(), (
+            With<Button>,
+            Without<DisabledButton>,
+            Without<LoadingButton>,
+        )>();
+        let mut parents = world.query::<&ChildOf>();
+
+        assert_eq!(
+            ui_button_event_target(disabled, &buttons.query(&world), &parents.query(&world)),
+            None
+        );
+        assert_eq!(
+            ui_button_event_target(loading, &buttons.query(&world), &parents.query(&world)),
+            None
         );
     }
 

@@ -44,8 +44,9 @@
 
 ## 图标与可访问性
 
-- 图标按钮当前使用文本符号，不是 icon atlas、SVG 或专用图标字体。
-- 可访问 label 只保存在组件数据和文本状态中，还没有接入平台 accessibility bridge。
+- 正式 PNG 图标已通过稳定 `UiIconId` 注册；当前不支持运行时 SVG、动态图集打包、任意业务路径或专用图标字体。
+- tint 只支持白色透明底单色图标；全彩图片图标固定保留原色。需要多层独立着色的图标应拆成受控资源或等待专用模型。
+- 纯图标按钮已通过隐藏 i18n 文本接入 Bevy 按钮 accessibility node；实际平台朗读仍受 Bevy/accesskit 与操作系统辅助技术环境影响，需在目标平台验收。
 - Tooltip 系统尚未形成通用能力。
 
 ## 字体和本地化
@@ -64,7 +65,7 @@
 - 高级图片必须来自可验证的首包/AssetServer 相对路径，不接受无路径程序化纹理；基础整图的程序化 handle 仍可使用 `ui_image`。
 - `Failed` 和 `Invalid` 当前使用稳定颜色占位并暴露组件状态，尚无通用重试按钮、错误图标或面向玩家的错误文案协议。
 - 阴影、渐变和复杂描边尚无共享 token、组合校验和移动端降级规则。
-- 通用属性动画、正式图片图标、状态贴图、Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。
+- 通用属性动画、Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。图标按钮已支持状态图片与 tint/background override，但没有自动旋转 loading 图标的动画协议。
 - 允许临时直接使用的 Bevy 原语必须附加 `UiDirectBevyVisual` marker；完整状态和判定规则见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。
 
 ## 测试覆盖

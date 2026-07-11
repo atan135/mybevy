@@ -28,6 +28,15 @@
             disabled: (r: 0.11, g: 0.13, b: 0.15),
             loading: (r: 0.13, g: 0.17, b: 0.19),
         ),
+        icon_tint: (
+            idle: (r: 0.92, g: 0.95, b: 0.95),
+            hovered: (r: 0.42, g: 0.94, b: 0.84),
+            pressed: (r: 0.27, g: 0.78, b: 0.70),
+            focused: (r: 0.62, g: 1.0, b: 0.90),
+            selected: (r: 1.0, g: 0.82, b: 0.30),
+            disabled: (r: 0.62, g: 0.68, b: 0.70, a: 0.62),
+            loading: (r: 0.46, g: 0.80, b: 1.0),
+        ),
     ),
     text: (
         title_large: 44.0,

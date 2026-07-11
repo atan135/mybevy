@@ -61,8 +61,16 @@ disabled > loading > pressed > hovered > selected > focused > normal
 - `icon_button_key`
 - `disabled_icon_button_key`
 - `loading_icon_button_key`
+- `icon_label_button_key`
+- `image_button_key`
 
-当前图标使用文本符号，不是图集或矢量图标系统。`UiIconButton` 会保存可访问标签 key、fallback 和解析后的 label，i18n 更新后同步 accessible label。
+图标由 `widgets/icon.rs` 的 `UiIconId` 解析为正式 PNG，不允许传任意路径或用文本符号替代。`UiIconDescriptor` 记录路径、96 x 96 源尺寸、默认逻辑尺寸和 tint policy；`UiIconResolutionStatus` 与 `UiIconAssetStatus` 分别暴露解析结果和加载状态。未知 ID、非法路径或加载失败会显示 `UiIconId::MISSING`，不会用空图片或字体 tofu 隐藏错误。
+
+`icon_button_key` 是固定触控尺寸的纯图标按钮；`icon_label_button_key` 通过 `UiIconLabelPlacement::Leading/Trailing` 生成左右图标文字；`image_button_key` 显式声明固定按钮宽高和图片尺寸。纯图标与图片按钮保存隐藏的 i18n label，组合按钮使用可见 label，二者都会让 Bevy 按钮 accessibility node 取得可访问名称。
+
+`UiIconButtonVisuals` 可按 idle、hovered、pressed、focused、selected、disabled、loading 覆盖图标 ID、tint 或背景。默认 tint 集中在主题 `colors.icon_tint`，优先级与普通按钮一致；状态系统只修改 `ImageNode`、解析/加载状态和背景，不修改根节点尺寸、点击区域或子层级。单色白色透明图标使用 `MonochromeTintable`；`FullColor` 会忽略 tint 并固定以白色乘色渲染。
+
+正式资源、固定上游版本、许可和 SHA-256 见 `project/assets/ui/icons/manifest.ron`。UI Gallery 使用 `icons` 和 `icon_states` 两个 child-anchor state 验收 API 形态与七态矩阵。
 
 ## 选择控件
 

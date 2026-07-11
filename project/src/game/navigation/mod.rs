@@ -12,9 +12,10 @@ use crate::framework::ui::{
     widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
 };
 use crate::game::ui_ids::{
-    ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING,
-    ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, OWNER_AUDIO_GALLERY,
-    OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
+    ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS,
+    ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_TYPOGRAPHY,
+    ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR,
+    OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
     OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE,
     OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
 };
@@ -290,6 +291,16 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
         SCROLL_UI_GALLERY_MAIN,
         ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW,
     ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::Icons,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_ICONS,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::IconStates,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_ICON_STATES,
+    ),
     UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::Top,
         SCROLL_UI_GALLERY_MAIN,
@@ -451,7 +462,7 @@ mod tests {
             .expect("ui gallery should be registered for audit");
         let recipe = screen.recipe.expect("ui gallery should have audit recipe");
 
-        assert_eq!(recipe.captures.len(), 10);
+        assert_eq!(recipe.captures.len(), 12);
         assert_eq!(
             recipe.captures[0].state,
             UiAuditCaptureState::VisualFoundation
@@ -465,9 +476,11 @@ mod tests {
             recipe.captures[6].state,
             UiAuditCaptureState::TypographyOverflow
         );
-        assert_eq!(recipe.captures[7].state, UiAuditCaptureState::Top);
-        assert_eq!(recipe.captures[8].state, UiAuditCaptureState::Middle);
-        assert_eq!(recipe.captures[9].state, UiAuditCaptureState::Bottom);
+        assert_eq!(recipe.captures[7].state, UiAuditCaptureState::Icons);
+        assert_eq!(recipe.captures[8].state, UiAuditCaptureState::IconStates);
+        assert_eq!(recipe.captures[9].state, UiAuditCaptureState::Top);
+        assert_eq!(recipe.captures[10].state, UiAuditCaptureState::Middle);
+        assert_eq!(recipe.captures[11].state, UiAuditCaptureState::Bottom);
         assert_eq!(
             recipe.captures[0].scroll.map(|scroll| scroll.target_id),
             Some(SCROLL_UI_GALLERY_MAIN)
@@ -501,6 +514,18 @@ mod tests {
                 .scroll
                 .map(|scroll| scroll.target.as_str()),
             Some(ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW.as_str())
+        );
+        assert_eq!(
+            recipe.captures[7]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_ICONS.as_str())
+        );
+        assert_eq!(
+            recipe.captures[8]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_ICON_STATES.as_str())
         );
         assert_eq!(
             recipe.captures[4]

@@ -9,6 +9,7 @@ name = "project"
 crate-type = ["rlib"]
 
 [dependencies]
+accesskit = "0.21.1"
 bevy = { version = "0.18.1", features = ["wav"] }
 authority-core = { path = "../../MyServer/packages/authority-core" }
 csv = "1"

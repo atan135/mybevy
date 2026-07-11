@@ -23,30 +23,32 @@ use crate::framework::ui::{
     widgets::{
         DisabledTextInput, FocusedButton, ReadonlyTextInput, SelectedButton, UiAdvancedImageMode,
         UiAdvancedImageSource, UiAdvancedImageSpec, UiAlign, UiAtlasFrame, UiButtonEvent,
-        UiButtonEventKind, UiImageConstraints, UiImageFit, UiImageFocus, UiImageLength,
-        UiImagePivot, UiImagePixelRect, UiImagePixelSize, UiImageSize, UiImageTextureSource,
-        UiImageTiling, UiJustify, UiNineSlice, UiResponsiveGridColumns, UiTextInputAlphanumeric,
-        UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars, UiTextInputRequired,
-        UiTextInputSubmitted, UiTextInputValidationMessage, UiTileAxis, checkbox_key,
-        checked_checkbox_key, disabled_checkbox_key, disabled_icon_button_key,
-        disabled_primary_action_button_key, disabled_secondary_action_button_key,
-        disabled_segment_option_key, disabled_slider_key, disabled_stepper_key,
-        disabled_toggle_key, icon_button_key, loading_icon_button_key,
-        loading_primary_action_button_key, primary_action_button_key, screen_label,
-        screen_label_key, screen_title_key, secondary_action_button_key, segment_option_key,
-        segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
-        text_input_form_message, toggle_key, toggle_on_key, try_ui_advanced_image, ui_column,
-        ui_image, ui_image_panel_node, ui_image_panel_node_with_radius, ui_responsive_column,
-        ui_responsive_grid, ui_scroll_column, ui_thumbnail_grid,
+        UiButtonEventKind, UiButtonVisualState, UiIconId, UiIconLabelPlacement, UiImageConstraints,
+        UiImageFit, UiImageFocus, UiImageLength, UiImagePivot, UiImagePixelRect, UiImagePixelSize,
+        UiImageSize, UiImageTextureSource, UiImageTiling, UiJustify, UiNineSlice,
+        UiResponsiveGridColumns, UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText,
+        UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted,
+        UiTextInputValidationMessage, UiTileAxis, checkbox_key, checked_checkbox_key,
+        disabled_checkbox_key, disabled_icon_button_key, disabled_primary_action_button_key,
+        disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
+        disabled_stepper_key, disabled_toggle_key, icon_button_key, icon_label_button_key,
+        image_button_key, loading_icon_button_key, loading_primary_action_button_key,
+        primary_action_button_key, screen_label, screen_label_key, screen_title_key,
+        secondary_action_button_key, segment_option_key, segmented_control,
+        selected_segment_option_key, slider_key, stepper_key, text_input, text_input_form_message,
+        toggle_key, toggle_on_key, try_ui_advanced_image, ui_column, ui_image, ui_image_panel_node,
+        ui_image_panel_node_with_radius, ui_responsive_column, ui_responsive_grid,
+        ui_scroll_column, ui_thumbnail_grid,
     },
 };
 use crate::game::{
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{
-        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_IMAGE_ATLAS,
-        ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING,
-        ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM,
-        OWNER_UI_GALLERY, PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS,
+        ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
+        ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_TYPOGRAPHY,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
+        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
 
@@ -189,6 +191,15 @@ struct GalleryTypographyOverflowRegion;
 
 #[derive(Component)]
 struct GalleryTypographyBoundedSamples;
+
+#[derive(Component)]
+struct GalleryIconsRegion;
+
+#[derive(Component)]
+struct GalleryIconStatesRegion;
+
+#[derive(Clone, Copy, Component)]
+struct GalleryIconStatePreview(UiButtonVisualState);
 
 #[derive(Clone, Copy)]
 struct GalleryAtlasFrameSample {
@@ -574,75 +585,31 @@ pub(super) fn setup_ui_gallery(
                             });
                     });
 
-                body.spawn(gallery_panel(theme))
-                    .with_children(|icon_buttons_panel| {
-                        icon_buttons_panel.spawn(section_label_key(
-                            theme,
-                            fonts,
-                            i18n,
-                            "ui_gallery.icon_buttons.section",
-                            "Icon Buttons",
-                        ));
-                        icon_buttons_panel
-                            .spawn(gallery_grid(
-                                metrics,
-                                width_class,
-                                gallery_icon_button_columns(),
-                            ))
-                            .with_children(|buttons| {
-                                buttons.spawn(icon_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "+",
-                                    "ui_gallery.icon_buttons.add",
-                                    "Add",
-                                ));
-                                buttons.spawn((
-                                    icon_button_key(
-                                        theme,
-                                        metrics,
-                                        fonts,
-                                        i18n,
-                                        "-",
-                                        "ui_gallery.icon_buttons.remove",
-                                        "Remove",
-                                    ),
-                                    FocusedButton,
-                                ));
-                                buttons.spawn((
-                                    icon_button_key(
-                                        theme,
-                                        metrics,
-                                        fonts,
-                                        i18n,
-                                        "?",
-                                        "ui_gallery.icon_buttons.help",
-                                        "Help",
-                                    ),
-                                    SelectedButton,
-                                ));
-                                buttons.spawn(disabled_icon_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "x",
-                                    "ui_gallery.icon_buttons.close",
-                                    "Close",
-                                ));
-                                buttons.spawn(loading_icon_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "...",
-                                    "ui_gallery.icon_buttons.loading",
-                                    "Loading",
-                                ));
-                            });
-                    });
+                body.spawn(gallery_icons_panel(theme))
+                .with_children(|icon_buttons_panel| {
+                    spawn_gallery_icon_samples(
+                        icon_buttons_panel,
+                        theme,
+                        metrics,
+                        fonts,
+                        i18n,
+                        width_class,
+                        asset_server,
+                    );
+                });
+
+                body.spawn(gallery_icon_states_panel(theme))
+                .with_children(|icon_states_panel| {
+                    spawn_gallery_icon_state_samples(
+                        icon_states_panel,
+                        theme,
+                        metrics,
+                        fonts,
+                        i18n,
+                        width_class,
+                        asset_server,
+                    );
+                });
 
                 body.spawn(gallery_panel(theme))
                     .with_children(|selection_panel| {
@@ -1339,6 +1306,61 @@ pub(super) fn clear_ui_gallery_loading_preview(mut commands: Commands) {
     commands.remove_resource::<GalleryFloatingI18n>();
 }
 
+pub(super) fn apply_gallery_icon_state_previews(world: &mut World) {
+    let previews = {
+        let mut query = world.query::<(Entity, &GalleryIconStatePreview)>();
+        query
+            .iter(world)
+            .map(|(entity, preview)| (entity, preview.0))
+            .collect::<Vec<_>>()
+    };
+
+    for (entity, state) in previews {
+        let mut entity = world.entity_mut(entity);
+        let desired_interaction = match state {
+            UiButtonVisualState::Hovered => Interaction::Hovered,
+            UiButtonVisualState::Pressed => Interaction::Pressed,
+            _ => Interaction::None,
+        };
+        if entity.get::<Interaction>() != Some(&desired_interaction) {
+            entity.insert(desired_interaction);
+        }
+
+        let focused = state == UiButtonVisualState::Focused;
+        if focused != entity.contains::<FocusedButton>() {
+            if focused {
+                entity.insert(FocusedButton);
+            } else {
+                entity.remove::<FocusedButton>();
+            }
+        }
+        let selected = state == UiButtonVisualState::Selected;
+        if selected != entity.contains::<SelectedButton>() {
+            if selected {
+                entity.insert(SelectedButton);
+            } else {
+                entity.remove::<SelectedButton>();
+            }
+        }
+        let disabled = state == UiButtonVisualState::Disabled;
+        if disabled != entity.contains::<crate::framework::ui::widgets::DisabledButton>() {
+            if disabled {
+                entity.insert(crate::framework::ui::widgets::DisabledButton);
+            } else {
+                entity.remove::<crate::framework::ui::widgets::DisabledButton>();
+            }
+        }
+        let loading = state == UiButtonVisualState::Loading;
+        if loading != entity.contains::<crate::framework::ui::widgets::LoadingButton>() {
+            if loading {
+                entity.insert(crate::framework::ui::widgets::LoadingButton);
+            } else {
+                entity.remove::<crate::framework::ui::widgets::LoadingButton>();
+            }
+        }
+    }
+}
+
 pub(super) fn tag_gallery_floating_i18n_texts(
     mut commands: Commands,
     floating_i18n: Option<Res<GalleryFloatingI18n>>,
@@ -1427,6 +1449,24 @@ fn gallery_panel_node(theme: &UiTheme) -> Node {
     }
 }
 
+fn gallery_icons_panel(theme: &UiTheme) -> impl Bundle {
+    (
+        gallery_panel(theme),
+        GalleryIconsRegion,
+        ANCHOR_UI_GALLERY_ICONS,
+        Name::new("Gallery icon and image button region"),
+    )
+}
+
+fn gallery_icon_states_panel(theme: &UiTheme) -> impl Bundle {
+    (
+        gallery_panel(theme),
+        GalleryIconStatesRegion,
+        ANCHOR_UI_GALLERY_ICON_STATES,
+        Name::new("Gallery icon button state matrix"),
+    )
+}
+
 fn gallery_typography_overflow_panel(theme: &UiTheme, width_class: UiWidthClass) -> impl Bundle {
     (
         UiThemePanelNodeRole::Content,
@@ -1495,6 +1535,10 @@ fn gallery_icon_button_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(3, 4, 5)
 }
 
+fn gallery_icon_state_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(3, 5, 7)
+}
+
 fn gallery_selection_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(1, 2, 3)
 }
@@ -1513,6 +1557,381 @@ fn gallery_atlas_source_columns() -> UiResponsiveGridColumns {
 
 fn gallery_stress_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(1, 2, 3)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_gallery_icon_samples(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    width_class: UiWidthClass,
+    asset_server: &AssetServer,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.icon_buttons.section",
+        "Icon and Image Buttons",
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.icon_buttons.description",
+        "Asset icons, labeled placement, tint policy, and a visible missing placeholder.",
+        UiThemeTextStyleRole::Body,
+        UiThemeTextColorRole::Muted,
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.icon_buttons.icon_only",
+        "Icon only",
+        UiThemeTextStyleRole::Caption,
+        UiThemeTextColorRole::Muted,
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            gallery_icon_button_columns(),
+        ))
+        .with_children(|buttons| {
+            for (icon, key, fallback) in [
+                (UiIconId::ADD, "ui_gallery.icon_buttons.add", "Add"),
+                (UiIconId::REMOVE, "ui_gallery.icon_buttons.remove", "Remove"),
+                (UiIconId::HELP, "ui_gallery.icon_buttons.help", "Help"),
+                (UiIconId::CLOSE, "ui_gallery.icon_buttons.close", "Close"),
+                (
+                    UiIconId::LOADING,
+                    "ui_gallery.icon_buttons.loading",
+                    "Loading",
+                ),
+            ] {
+                buttons.spawn(icon_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    asset_server,
+                    i18n,
+                    icon,
+                    key,
+                    fallback,
+                ));
+            }
+        });
+
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.icon_buttons.labeled",
+        "Icon and label",
+        UiThemeTextStyleRole::Caption,
+        UiThemeTextColorRole::Muted,
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 2, 2),
+        ))
+        .with_children(|buttons| {
+            buttons.spawn(icon_label_button_key(
+                theme,
+                metrics,
+                fonts,
+                asset_server,
+                i18n,
+                UiIconId::ARROW_LEFT,
+                UiIconLabelPlacement::Leading,
+                "ui_gallery.icon_buttons.previous",
+                "Previous",
+            ));
+            buttons.spawn(icon_label_button_key(
+                theme,
+                metrics,
+                fonts,
+                asset_server,
+                i18n,
+                UiIconId::ARROW_RIGHT,
+                UiIconLabelPlacement::Trailing,
+                "ui_gallery.icon_buttons.next",
+                "Next",
+            ));
+        });
+
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(3, 3, 3),
+        ))
+        .with_children(|samples| {
+            spawn_gallery_icon_sample(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                icon_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    asset_server,
+                    i18n,
+                    UiIconId::ADD,
+                    "ui_gallery.icon_buttons.tintable",
+                    "Tintable",
+                ),
+                "ui_gallery.icon_buttons.tintable",
+                "Tintable",
+            );
+            spawn_gallery_icon_sample(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                image_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    asset_server,
+                    i18n,
+                    UiIconId::FULL_COLOR_BADGE,
+                    72.0,
+                    56.0,
+                    40.0,
+                    "ui_gallery.icon_buttons.full_color",
+                    "Full color",
+                ),
+                "ui_gallery.icon_buttons.full_color",
+                "Full color",
+            );
+            spawn_gallery_icon_sample(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                icon_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    asset_server,
+                    i18n,
+                    UiIconId::new("gallery_missing_icon"),
+                    "ui_gallery.icon_buttons.missing",
+                    "Missing",
+                ),
+                "ui_gallery.icon_buttons.missing",
+                "Missing",
+            );
+        });
+}
+
+fn spawn_gallery_icon_sample(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    button: impl Bundle,
+    label_key: &'static str,
+    label_fallback: &'static str,
+) {
+    parent
+        .spawn(gallery_icon_sample_node(theme))
+        .with_children(|sample| {
+            sample.spawn(button);
+            sample.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                label_key,
+                label_fallback,
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Muted,
+            ));
+        });
+}
+
+fn gallery_icon_sample_node(theme: &UiTheme) -> Node {
+    Node {
+        min_width: px(76),
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::Center,
+        row_gap: px(theme.layout.row_gap),
+        ..default()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_gallery_icon_state_samples(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    width_class: UiWidthClass,
+    asset_server: &AssetServer,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.icon_states.section",
+        "Icon Button States",
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.icon_states.description",
+        "Pointer, focus, selection, disabled, and loading use one state priority.",
+        UiThemeTextStyleRole::Body,
+        UiThemeTextColorRole::Muted,
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            gallery_icon_state_columns(),
+        ))
+        .with_children(|states| {
+            let base = || {
+                icon_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    asset_server,
+                    i18n,
+                    UiIconId::HELP,
+                    "ui_gallery.icon_buttons.help",
+                    "Help",
+                )
+            };
+            spawn_gallery_icon_state_sample(
+                states,
+                theme,
+                fonts,
+                i18n,
+                (base(), GalleryIconStatePreview(UiButtonVisualState::Idle)),
+                "ui_gallery.icon_states.idle",
+                "Idle",
+            );
+            spawn_gallery_icon_state_sample(
+                states,
+                theme,
+                fonts,
+                i18n,
+                (
+                    base(),
+                    GalleryIconStatePreview(UiButtonVisualState::Hovered),
+                ),
+                "ui_gallery.icon_states.hovered",
+                "Hovered",
+            );
+            spawn_gallery_icon_state_sample(
+                states,
+                theme,
+                fonts,
+                i18n,
+                (
+                    base(),
+                    GalleryIconStatePreview(UiButtonVisualState::Pressed),
+                ),
+                "ui_gallery.icon_states.pressed",
+                "Pressed",
+            );
+            spawn_gallery_icon_state_sample(
+                states,
+                theme,
+                fonts,
+                i18n,
+                (
+                    base(),
+                    GalleryIconStatePreview(UiButtonVisualState::Focused),
+                ),
+                "ui_gallery.icon_states.focused",
+                "Focused",
+            );
+            spawn_gallery_icon_state_sample(
+                states,
+                theme,
+                fonts,
+                i18n,
+                (
+                    base(),
+                    GalleryIconStatePreview(UiButtonVisualState::Selected),
+                ),
+                "ui_gallery.icon_states.selected",
+                "Selected",
+            );
+            spawn_gallery_icon_state_sample(
+                states,
+                theme,
+                fonts,
+                i18n,
+                (
+                    disabled_icon_button_key(
+                        theme,
+                        metrics,
+                        fonts,
+                        asset_server,
+                        i18n,
+                        UiIconId::HELP,
+                        "ui_gallery.icon_states.disabled",
+                        "Disabled",
+                    ),
+                    GalleryIconStatePreview(UiButtonVisualState::Disabled),
+                ),
+                "ui_gallery.icon_states.disabled",
+                "Disabled",
+            );
+            spawn_gallery_icon_state_sample(
+                states,
+                theme,
+                fonts,
+                i18n,
+                (
+                    loading_icon_button_key(
+                        theme,
+                        metrics,
+                        fonts,
+                        asset_server,
+                        i18n,
+                        UiIconId::HELP,
+                        "ui_gallery.icon_states.loading",
+                        "Loading",
+                    ),
+                    GalleryIconStatePreview(UiButtonVisualState::Loading),
+                ),
+                "ui_gallery.icon_states.loading",
+                "Loading",
+            );
+        });
+}
+
+fn spawn_gallery_icon_state_sample(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    button: impl Bundle,
+    label_key: &'static str,
+    label_fallback: &'static str,
+) {
+    spawn_gallery_icon_sample(
+        parent,
+        theme,
+        fonts,
+        i18n,
+        button,
+        label_key,
+        label_fallback,
+    );
 }
 
 fn spawn_gallery_typography(
@@ -2500,6 +2919,10 @@ mod tests {
             gallery_atlas_source_columns().for_width_class(UiWidthClass::Compact),
             2
         );
+        assert_eq!(
+            gallery_icon_state_columns().for_width_class(UiWidthClass::Compact),
+            3
+        );
     }
 
     #[test]
@@ -2532,6 +2955,78 @@ mod tests {
             gallery_atlas_source_columns().for_width_class(UiWidthClass::Expanded),
             6
         );
+        assert_eq!(
+            gallery_icon_state_columns().for_width_class(UiWidthClass::Expanded),
+            7
+        );
+    }
+
+    #[test]
+    fn icon_gallery_panels_own_stable_child_audit_anchors() {
+        let theme = UiTheme::default();
+        let mut app = App::new();
+        let icons = app.world_mut().spawn(gallery_icons_panel(&theme)).id();
+        let states = app
+            .world_mut()
+            .spawn(gallery_icon_states_panel(&theme))
+            .id();
+
+        assert!(app.world().entity(icons).contains::<GalleryIconsRegion>());
+        assert_eq!(
+            app.world()
+                .entity(icons)
+                .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
+                .copied(),
+            Some(ANCHOR_UI_GALLERY_ICONS)
+        );
+        assert!(
+            app.world()
+                .entity(states)
+                .contains::<GalleryIconStatesRegion>()
+        );
+        assert_eq!(
+            app.world()
+                .entity(states)
+                .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
+                .copied(),
+            Some(ANCHOR_UI_GALLERY_ICON_STATES)
+        );
+    }
+
+    #[test]
+    fn icon_state_preview_writes_existing_interaction_and_marker_sources() {
+        let mut world = World::new();
+        let hovered = world
+            .spawn(GalleryIconStatePreview(UiButtonVisualState::Hovered))
+            .id();
+        let focused = world
+            .spawn(GalleryIconStatePreview(UiButtonVisualState::Focused))
+            .id();
+        let disabled = world
+            .spawn(GalleryIconStatePreview(UiButtonVisualState::Disabled))
+            .id();
+        let loading = world
+            .spawn(GalleryIconStatePreview(UiButtonVisualState::Loading))
+            .id();
+
+        apply_gallery_icon_state_previews(&mut world);
+
+        assert_eq!(
+            world.get::<Interaction>(hovered),
+            Some(&Interaction::Hovered)
+        );
+        assert!(world.get::<FocusedButton>(focused).is_some());
+        assert!(
+            world
+                .get::<crate::framework::ui::widgets::DisabledButton>(disabled)
+                .is_some()
+        );
+        assert!(
+            world
+                .get::<crate::framework::ui::widgets::LoadingButton>(loading)
+                .is_some()
+        );
+        assert!(world.get::<SelectedButton>(focused).is_none());
     }
 
     #[test]

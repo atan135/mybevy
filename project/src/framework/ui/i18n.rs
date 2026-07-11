@@ -122,6 +122,19 @@ impl UiI18n {
             fallback_texts: built_in_zh_cn_texts(),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_with_texts(locale: &str, entries: &[(&str, &str)]) -> Self {
+        let texts = entries
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect::<HashMap<_, _>>();
+        Self {
+            locale: locale.to_string(),
+            fallback_texts: texts.clone(),
+            texts,
+        }
+    }
 }
 
 impl UiI18nText {
@@ -512,12 +525,35 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
         ("ui_gallery.buttons.disabled", "禁用"),
         ("ui_gallery.buttons.unavailable", "不可用"),
         ("ui_gallery.buttons.action", "操作"),
-        ("ui_gallery.icon_buttons.section", "图标按钮"),
+        ("ui_gallery.icon_buttons.section", "图标与图片按钮"),
+        (
+            "ui_gallery.icon_buttons.description",
+            "覆盖资源图标、左右标签、着色边界和可见的缺失占位。",
+        ),
+        ("ui_gallery.icon_buttons.icon_only", "纯图标"),
+        ("ui_gallery.icon_buttons.labeled", "图标与文字"),
         ("ui_gallery.icon_buttons.add", "添加"),
         ("ui_gallery.icon_buttons.remove", "移除"),
         ("ui_gallery.icon_buttons.help", "帮助"),
         ("ui_gallery.icon_buttons.close", "关闭"),
         ("ui_gallery.icon_buttons.loading", "加载中"),
+        ("ui_gallery.icon_buttons.previous", "上一步"),
+        ("ui_gallery.icon_buttons.next", "下一步"),
+        ("ui_gallery.icon_buttons.tintable", "可着色"),
+        ("ui_gallery.icon_buttons.full_color", "全彩"),
+        ("ui_gallery.icon_buttons.missing", "缺失"),
+        ("ui_gallery.icon_states.section", "图标按钮状态"),
+        (
+            "ui_gallery.icon_states.description",
+            "鼠标、焦点、选中、禁用和加载共用一套状态优先级。",
+        ),
+        ("ui_gallery.icon_states.idle", "空闲"),
+        ("ui_gallery.icon_states.hovered", "悬停"),
+        ("ui_gallery.icon_states.pressed", "按下"),
+        ("ui_gallery.icon_states.focused", "聚焦"),
+        ("ui_gallery.icon_states.selected", "选中"),
+        ("ui_gallery.icon_states.disabled", "禁用"),
+        ("ui_gallery.icon_states.loading", "加载中"),
         ("ui_gallery.selection.section", "选择控件"),
         ("ui_gallery.selection.checkbox.unchecked", "未勾选"),
         ("ui_gallery.selection.checkbox.checked", "已勾选"),

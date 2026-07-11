@@ -63,6 +63,7 @@ pub(crate) struct UiColors {
     pub error: Color,
     pub primary_button: ButtonColors,
     pub secondary_button: ButtonColors,
+    pub icon_tint: ButtonColors,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -313,6 +314,15 @@ impl Default for UiTheme {
                     disabled: Color::srgb(0.11, 0.13, 0.15),
                     loading: Color::srgb(0.13, 0.17, 0.19),
                 },
+                icon_tint: ButtonColors {
+                    idle: Color::srgb(0.92, 0.95, 0.95),
+                    hovered: Color::srgb(0.42, 0.94, 0.84),
+                    pressed: Color::srgb(0.27, 0.78, 0.70),
+                    focused: Color::srgb(0.62, 1.0, 0.90),
+                    selected: Color::srgb(1.0, 0.82, 0.30),
+                    disabled: Color::srgba(0.62, 0.68, 0.70, 0.62),
+                    loading: Color::srgb(0.46, 0.80, 1.0),
+                },
             },
             text: UiTextTheme {
                 title_large: 44.0,
@@ -393,6 +403,8 @@ struct UiColorsConfig {
     error: UiColorConfig,
     primary_button: ButtonColorsConfig,
     secondary_button: ButtonColorsConfig,
+    #[serde(default = "default_icon_tint")]
+    icon_tint: ButtonColorsConfig,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -717,6 +729,53 @@ fn default_error() -> UiColorConfig {
     }
 }
 
+fn default_icon_tint() -> ButtonColorsConfig {
+    ButtonColorsConfig {
+        idle: UiColorConfig {
+            r: 0.92,
+            g: 0.95,
+            b: 0.95,
+            a: 1.0,
+        },
+        hovered: UiColorConfig {
+            r: 0.42,
+            g: 0.94,
+            b: 0.84,
+            a: 1.0,
+        },
+        pressed: UiColorConfig {
+            r: 0.27,
+            g: 0.78,
+            b: 0.70,
+            a: 1.0,
+        },
+        focused: UiColorConfig {
+            r: 0.62,
+            g: 1.0,
+            b: 0.90,
+            a: 1.0,
+        },
+        selected: UiColorConfig {
+            r: 1.0,
+            g: 0.82,
+            b: 0.30,
+            a: 1.0,
+        },
+        disabled: UiColorConfig {
+            r: 0.62,
+            g: 0.68,
+            b: 0.70,
+            a: 0.62,
+        },
+        loading: UiColorConfig {
+            r: 0.46,
+            g: 0.80,
+            b: 1.0,
+            a: 1.0,
+        },
+    }
+}
+
 impl UiThemeConfig {
     fn into_theme(self) -> UiTheme {
         UiTheme {
@@ -743,6 +802,7 @@ impl UiColorsConfig {
             error: self.error.into_color(),
             primary_button: self.primary_button.into_button_colors(),
             secondary_button: self.secondary_button.into_button_colors(),
+            icon_tint: self.icon_tint.into_button_colors(),
         }
     }
 }
@@ -964,6 +1024,17 @@ mod tests {
         assert_eq!(theme.layout.content_width, 760.0);
         assert_eq!(theme.button.height, 50.0);
         assert_eq!(theme.panel.radius, 11.0);
+    }
+
+    #[test]
+    fn packaged_default_theme_owns_icon_state_tints() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_THEME_ASSET_PATH);
+        let theme = load_ui_theme_from_path(&path).expect("packaged default theme should parse");
+
+        assert_srgba(theme.colors.icon_tint.idle, (0.92, 0.95, 0.95, 1.0));
+        assert_srgba(theme.colors.icon_tint.hovered, (0.42, 0.94, 0.84, 1.0));
+        assert_srgba(theme.colors.icon_tint.disabled, (0.62, 0.68, 0.70, 0.62));
+        assert_srgba(theme.colors.icon_tint.loading, (0.46, 0.80, 1.0, 1.0));
     }
 
     #[test]

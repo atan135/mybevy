@@ -40,27 +40,141 @@ pub(crate) struct UiButtonEvent {
 #[derive(Clone, Debug, Component)]
 #[allow(dead_code)]
 pub(crate) struct UiIconButton {
-    pub label: String,
+    pub icon: UiIconId,
     pub accessible_key: String,
     pub accessible_fallback: String,
     pub accessible_label: String,
+    pub layout: UiIconButtonLayout,
+    pub visuals: UiIconButtonVisuals,
+    pub visual_state: UiButtonVisualState,
 }
 
 impl UiIconButton {
     fn new(
-        label: impl Into<String>,
+        icon: UiIconId,
         accessible_key: impl Into<String>,
         accessible_fallback: impl Into<String>,
         accessible_label: impl Into<String>,
+        layout: UiIconButtonLayout,
+        visuals: UiIconButtonVisuals,
+        visual_state: UiButtonVisualState,
     ) -> Self {
         Self {
-            label: label.into(),
+            icon,
             accessible_key: accessible_key.into(),
             accessible_fallback: accessible_fallback.into(),
             accessible_label: accessible_label.into(),
+            layout,
+            visuals,
+            visual_state,
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UiIconLabelPlacement {
+    Leading,
+    Trailing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum UiIconButtonLayout {
+    IconOnly,
+    Labeled(UiIconLabelPlacement),
+    FixedImage {
+        width: f32,
+        height: f32,
+        visual_size: f32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UiButtonVisualState {
+    Idle,
+    Hovered,
+    Pressed,
+    Focused,
+    Selected,
+    Disabled,
+    Loading,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct UiIconStateOverride {
+    pub icon: Option<UiIconId>,
+    pub tint: Option<Color>,
+    pub background: Option<Color>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiIconButtonVisuals {
+    pub base_icon: UiIconId,
+    pub idle: UiIconStateOverride,
+    pub hovered: UiIconStateOverride,
+    pub pressed: UiIconStateOverride,
+    pub focused: UiIconStateOverride,
+    pub selected: UiIconStateOverride,
+    pub disabled: UiIconStateOverride,
+    pub loading: UiIconStateOverride,
+}
+
+impl UiIconButtonVisuals {
+    pub(crate) const fn new(base_icon: UiIconId) -> Self {
+        Self {
+            base_icon,
+            idle: UiIconStateOverride {
+                icon: None,
+                tint: None,
+                background: None,
+            },
+            hovered: UiIconStateOverride {
+                icon: None,
+                tint: None,
+                background: None,
+            },
+            pressed: UiIconStateOverride {
+                icon: None,
+                tint: None,
+                background: None,
+            },
+            focused: UiIconStateOverride {
+                icon: None,
+                tint: None,
+                background: None,
+            },
+            selected: UiIconStateOverride {
+                icon: None,
+                tint: None,
+                background: None,
+            },
+            disabled: UiIconStateOverride {
+                icon: None,
+                tint: None,
+                background: None,
+            },
+            loading: UiIconStateOverride {
+                icon: Some(UiIconId::LOADING),
+                tint: None,
+                background: None,
+            },
+        }
+    }
+
+    pub(crate) const fn override_for(self, state: UiButtonVisualState) -> UiIconStateOverride {
+        match state {
+            UiButtonVisualState::Idle => self.idle,
+            UiButtonVisualState::Hovered => self.hovered,
+            UiButtonVisualState::Pressed => self.pressed,
+            UiButtonVisualState::Focused => self.focused,
+            UiButtonVisualState::Selected => self.selected,
+            UiButtonVisualState::Disabled => self.disabled,
+            UiButtonVisualState::Loading => self.loading,
+        }
+    }
+}
+
+#[derive(Component)]
+pub(super) struct UiIconAccessibilityLabel;
 
 pub(crate) fn emit_ui_button_events(
     mut button_events: MessageWriter<UiButtonEvent>,
@@ -428,22 +542,26 @@ pub(crate) fn icon_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
+    asset_server: &AssetServer,
     i18n: &UiI18n,
-    icon: impl Into<String>,
+    icon: UiIconId,
     key: &'static str,
     fallback: &'static str,
 ) -> impl Bundle {
-    icon_button_key_bundle(
+    icon_only_button_key_bundle(
         theme,
         metrics,
         fonts,
+        asset_server,
         icon,
         key,
         fallback,
         i18n.tr(key, fallback),
         theme.colors.secondary_button,
         SecondaryButton,
-        IconButtonVisualState::Idle,
+        UiIconButtonLayout::IconOnly,
+        UiButtonVisualState::Idle,
+        UiIconButtonVisuals::new(icon),
     )
 }
 
@@ -451,22 +569,26 @@ pub(crate) fn disabled_icon_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
+    asset_server: &AssetServer,
     i18n: &UiI18n,
-    icon: impl Into<String>,
+    icon: UiIconId,
     key: &'static str,
     fallback: &'static str,
 ) -> impl Bundle {
-    icon_button_key_bundle(
+    icon_only_button_key_bundle(
         theme,
         metrics,
         fonts,
+        asset_server,
         icon,
         key,
         fallback,
         i18n.tr(key, fallback),
         theme.colors.secondary_button,
         (SecondaryButton, DisabledButton),
-        IconButtonVisualState::Disabled,
+        UiIconButtonLayout::IconOnly,
+        UiButtonVisualState::Disabled,
+        UiIconButtonVisuals::new(icon),
     )
 }
 
@@ -474,22 +596,88 @@ pub(crate) fn loading_icon_button_key(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
+    asset_server: &AssetServer,
     i18n: &UiI18n,
-    icon: impl Into<String>,
+    icon: UiIconId,
     key: &'static str,
     fallback: &'static str,
 ) -> impl Bundle {
-    icon_button_key_bundle(
+    icon_only_button_key_bundle(
         theme,
         metrics,
         fonts,
+        asset_server,
         icon,
         key,
         fallback,
         i18n.tr(key, fallback),
         theme.colors.primary_button,
         (PrimaryButton, LoadingButton),
-        IconButtonVisualState::Loading,
+        UiIconButtonLayout::IconOnly,
+        UiButtonVisualState::Loading,
+        UiIconButtonVisuals::new(icon),
+    )
+}
+
+pub(crate) fn icon_label_button_key(
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    asset_server: &AssetServer,
+    i18n: &UiI18n,
+    icon: UiIconId,
+    placement: UiIconLabelPlacement,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    icon_label_button_key_bundle(
+        theme,
+        metrics,
+        fonts,
+        asset_server,
+        icon,
+        placement,
+        key,
+        fallback,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        SecondaryButton,
+        UiButtonVisualState::Idle,
+        UiIconButtonVisuals::new(icon),
+    )
+}
+
+pub(crate) fn image_button_key(
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    asset_server: &AssetServer,
+    i18n: &UiI18n,
+    image: UiIconId,
+    width: f32,
+    height: f32,
+    visual_size: f32,
+    key: &'static str,
+    fallback: &'static str,
+) -> impl Bundle {
+    icon_only_button_key_bundle(
+        theme,
+        metrics,
+        fonts,
+        asset_server,
+        image,
+        key,
+        fallback,
+        i18n.tr(key, fallback),
+        theme.colors.secondary_button,
+        SecondaryButton,
+        UiIconButtonLayout::FixedImage {
+            width,
+            height,
+            visual_size,
+        },
+        UiButtonVisualState::Idle,
+        UiIconButtonVisuals::new(image),
     )
 }
 
@@ -617,53 +805,160 @@ pub(crate) fn disabled_action_button_key_bundle<T: Component>(
     )
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum IconButtonVisualState {
-    Idle,
-    Disabled,
-    Loading,
-}
-
-pub(crate) fn icon_button_key_bundle<T: Bundle>(
+pub(crate) fn icon_only_button_key_bundle<T: Bundle>(
     theme: &UiTheme,
     metrics: &UiMetrics,
     fonts: &UiFontAssets,
-    icon: impl Into<String>,
+    asset_server: &AssetServer,
+    icon: UiIconId,
     accessible_key: impl Into<String>,
     accessible_fallback: impl Into<String>,
     accessible_label: impl Into<String>,
     colors: ButtonColors,
     marker: T,
-    state: IconButtonVisualState,
+    layout: UiIconButtonLayout,
+    state: UiButtonVisualState,
+    visuals: UiIconButtonVisuals,
 ) -> impl Bundle {
-    let icon = icon.into();
+    let accessible_key = accessible_key.into();
+    let accessible_fallback = accessible_fallback.into();
     let accessible_label = accessible_label.into();
-    let text_color_role = icon_button_text_color_role(state);
+    let style = resolve_icon_button_style(theme, colors, visuals, state);
+    let visual_size = match layout {
+        UiIconButtonLayout::FixedImage { visual_size, .. } => visual_size,
+        UiIconButtonLayout::IconOnly | UiIconButtonLayout::Labeled(_) => ui_icon_default_size(icon),
+    };
 
     (
         Button,
+        icon_button_accessibility_node(&accessible_label),
         FocusableButton,
         UiIconButton::new(
-            icon.clone(),
-            accessible_key,
-            accessible_fallback,
-            accessible_label,
+            icon,
+            accessible_key.clone(),
+            accessible_fallback.clone(),
+            accessible_label.clone(),
+            layout,
+            visuals,
+            state,
         ),
         marker,
-        icon_button_node(theme, metrics),
-        BackgroundColor(icon_button_background_color(colors, state)),
-        children![(
-            Text::new(icon),
-            TextFont {
-                font: fonts.regular.clone(),
-                font_size: theme.text.button,
-                ..default()
-            },
-            TextColor(text_color_role.color(theme)),
-            text_color_role,
-            UiThemeTextStyleRole::Button,
-        )],
+        icon_button_layout_node(theme, metrics, layout),
+        BackgroundColor(style.background),
+        children![
+            ui_icon(asset_server, style.icon, visual_size, style.tint),
+            (
+                Text::new(accessible_label),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: 1.0,
+                    ..default()
+                },
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: px(0),
+                    height: px(0),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                Visibility::Hidden,
+                UiI18nText::new(accessible_key, accessible_fallback),
+                UiIconAccessibilityLabel,
+            )
+        ],
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn icon_label_button_key_bundle<T: Bundle>(
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    asset_server: &AssetServer,
+    icon: UiIconId,
+    placement: UiIconLabelPlacement,
+    accessible_key: impl Into<String>,
+    accessible_fallback: impl Into<String>,
+    accessible_label: impl Into<String>,
+    colors: ButtonColors,
+    marker: T,
+    state: UiButtonVisualState,
+    visuals: UiIconButtonVisuals,
+) -> impl Bundle {
+    let accessible_key = accessible_key.into();
+    let accessible_fallback = accessible_fallback.into();
+    let accessible_label = accessible_label.into();
+    let layout = UiIconButtonLayout::Labeled(placement);
+    let style = resolve_icon_button_style(theme, colors, visuals, state);
+
+    (
+        Button,
+        icon_button_accessibility_node(&accessible_label),
+        FocusableButton,
+        UiIconButton::new(
+            icon,
+            accessible_key.clone(),
+            accessible_fallback.clone(),
+            accessible_label.clone(),
+            layout,
+            visuals,
+            state,
+        ),
+        marker,
+        icon_button_layout_node(theme, metrics, layout),
+        BackgroundColor(style.background),
+        children![
+            ui_icon(
+                asset_server,
+                style.icon,
+                ui_icon_default_size(icon),
+                style.tint,
+            ),
+            (
+                Text::new(accessible_label),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.button,
+                    ..default()
+                },
+                TextColor(theme.colors.text_primary),
+                UiThemeTextColorRole::Primary,
+                UiThemeTextStyleRole::Button,
+                UiI18nText::new(accessible_key, accessible_fallback),
+            )
+        ],
+    )
+}
+
+fn icon_button_accessibility_node(label: &str) -> AccessibilityNode {
+    let mut node = AccessKitNode::new(AccessKitRole::Button);
+    node.set_label(label);
+    AccessibilityNode::from(node)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiResolvedIconButtonStyle {
+    pub icon: UiIconId,
+    pub tint: Color,
+    pub background: Color,
+}
+
+pub(crate) fn resolve_icon_button_style(
+    theme: &UiTheme,
+    colors: ButtonColors,
+    visuals: UiIconButtonVisuals,
+    state: UiButtonVisualState,
+) -> UiResolvedIconButtonStyle {
+    let state_override = visuals.override_for(state);
+    UiResolvedIconButtonStyle {
+        icon: state_override.icon.unwrap_or(visuals.base_icon),
+        tint: state_override
+            .tint
+            .unwrap_or_else(|| icon_button_state_tint(theme, state)),
+        background: state_override
+            .background
+            .unwrap_or_else(|| icon_button_background_color(colors, state)),
+    }
 }
 
 pub(crate) fn button_node(theme: &UiTheme, metrics: &UiMetrics) -> Node {
@@ -699,6 +994,64 @@ pub(crate) fn icon_button_node(theme: &UiTheme, metrics: &UiMetrics) -> Node {
     }
 }
 
+pub(crate) fn icon_label_button_node(
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    placement: UiIconLabelPlacement,
+) -> Node {
+    Node {
+        flex_direction: match placement {
+            UiIconLabelPlacement::Leading => FlexDirection::Row,
+            UiIconLabelPlacement::Trailing => FlexDirection::RowReverse,
+        },
+        column_gap: px(metrics.control_gap),
+        ..button_node(theme, metrics)
+    }
+}
+
+pub(crate) fn fixed_image_button_node(
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    width: f32,
+    height: f32,
+) -> Node {
+    let width = if width.is_finite() && width > 0.0 {
+        width.max(metrics.touch_target_min)
+    } else {
+        square_button_size(metrics)
+    };
+    let height = if height.is_finite() && height > 0.0 {
+        height.max(metrics.touch_target_min)
+    } else {
+        square_button_size(metrics)
+    };
+    Node {
+        min_width: px(width),
+        width: px(width),
+        min_height: px(height),
+        height: px(height),
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::Center,
+        padding: UiRect::ZERO,
+        border_radius: BorderRadius::all(px(theme.button.radius)),
+        ..default()
+    }
+}
+
+pub(crate) fn icon_button_layout_node(
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    layout: UiIconButtonLayout,
+) -> Node {
+    match layout {
+        UiIconButtonLayout::IconOnly => icon_button_node(theme, metrics),
+        UiIconButtonLayout::Labeled(placement) => icon_label_button_node(theme, metrics, placement),
+        UiIconButtonLayout::FixedImage { width, height, .. } => {
+            fixed_image_button_node(theme, metrics, width, height)
+        }
+    }
+}
+
 pub(crate) fn button_min_width(theme: &UiTheme, metrics: &UiMetrics) -> f32 {
     theme.button.min_width.max(metrics.button_height * 2.25)
 }
@@ -712,39 +1065,76 @@ pub(crate) fn control_padding_x(metrics: &UiMetrics) -> f32 {
 }
 pub(crate) fn icon_button_background_color(
     colors: ButtonColors,
-    state: IconButtonVisualState,
+    state: UiButtonVisualState,
 ) -> Color {
     match state {
-        IconButtonVisualState::Idle => colors.idle,
-        IconButtonVisualState::Disabled => colors.disabled,
-        IconButtonVisualState::Loading => colors.loading,
+        UiButtonVisualState::Idle => colors.idle,
+        UiButtonVisualState::Hovered => colors.hovered,
+        UiButtonVisualState::Pressed => colors.pressed,
+        UiButtonVisualState::Focused => colors.focused,
+        UiButtonVisualState::Selected => colors.selected,
+        UiButtonVisualState::Disabled => colors.disabled,
+        UiButtonVisualState::Loading => colors.loading,
     }
 }
 
-pub(crate) fn icon_button_text_color_role(state: IconButtonVisualState) -> UiThemeTextColorRole {
+pub(crate) fn icon_button_state_tint(theme: &UiTheme, state: UiButtonVisualState) -> Color {
+    let colors = theme.colors.icon_tint;
     match state {
-        IconButtonVisualState::Idle | IconButtonVisualState::Loading => {
-            UiThemeTextColorRole::Primary
-        }
-        IconButtonVisualState::Disabled => UiThemeTextColorRole::Muted,
+        UiButtonVisualState::Idle => colors.idle,
+        UiButtonVisualState::Hovered => colors.hovered,
+        UiButtonVisualState::Pressed => colors.pressed,
+        UiButtonVisualState::Focused => colors.focused,
+        UiButtonVisualState::Selected => colors.selected,
+        UiButtonVisualState::Disabled => colors.disabled,
+        UiButtonVisualState::Loading => colors.loading,
+    }
+}
+
+pub(crate) fn icon_button_visual_state(
+    interaction: Interaction,
+    is_disabled: bool,
+    is_focused: bool,
+    is_selected: bool,
+    is_loading: bool,
+) -> UiButtonVisualState {
+    if is_disabled {
+        return UiButtonVisualState::Disabled;
+    }
+    if is_loading {
+        return UiButtonVisualState::Loading;
+    }
+    match interaction {
+        Interaction::Pressed => UiButtonVisualState::Pressed,
+        Interaction::Hovered => UiButtonVisualState::Hovered,
+        Interaction::None if is_selected => UiButtonVisualState::Selected,
+        Interaction::None if is_focused => UiButtonVisualState::Focused,
+        Interaction::None => UiButtonVisualState::Idle,
     }
 }
 
 pub(crate) fn sync_icon_button_accessible_labels(
     i18n: Res<UiI18n>,
-    mut icon_buttons: Query<&mut UiIconButton>,
+    mut icon_buttons: Query<(&mut UiIconButton, &mut Button, &mut AccessibilityNode)>,
 ) {
     if !i18n.is_changed() {
         return;
     }
 
-    for mut icon_button in &mut icon_buttons {
+    for (mut icon_button, mut button, mut accessibility) in &mut icon_buttons {
         let next_label = i18n.tr(
             &icon_button.accessible_key,
             icon_button.accessible_fallback.clone(),
         );
         if icon_button.accessible_label != next_label {
-            icon_button.accessible_label = next_label;
+            icon_button.accessible_label.clone_from(&next_label);
+            button.set_changed();
+        }
+        if accessibility.role() != AccessKitRole::Button {
+            accessibility.set_role(AccessKitRole::Button);
+        }
+        if accessibility.label() != Some(next_label.as_str()) {
+            accessibility.set_label(next_label);
         }
     }
 }
@@ -752,19 +1142,117 @@ pub(crate) fn sync_icon_button_accessible_labels(
 pub(crate) fn sync_icon_button_nodes(
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
-    mut icon_buttons: Query<&mut Node, With<UiIconButton>>,
+    mut icon_buttons: Query<(&UiIconButton, &mut Node)>,
 ) {
     if !theme.is_changed() && !metrics.is_changed() {
         return;
     }
 
-    for mut node in &mut icon_buttons {
-        let size = square_button_size(&metrics);
-        node.min_width = px(size);
-        node.width = px(size);
-        node.height = px(size);
-        node.padding = UiRect::ZERO;
-        node.border_radius = BorderRadius::all(px(theme.button.radius));
+    for (icon_button, mut node) in &mut icon_buttons {
+        let next = icon_button_layout_node(&theme, &metrics, icon_button.layout);
+        if icon_button_layout_owned_fields_differ(&node, &next) {
+            apply_icon_button_layout_owned_fields(&mut node, &next);
+        }
+    }
+}
+
+fn icon_button_layout_owned_fields_differ(current: &Node, next: &Node) -> bool {
+    current.width != next.width
+        || current.height != next.height
+        || current.min_width != next.min_width
+        || current.min_height != next.min_height
+        || current.align_items != next.align_items
+        || current.justify_content != next.justify_content
+        || current.padding != next.padding
+        || current.border_radius != next.border_radius
+        || current.flex_direction != next.flex_direction
+        || current.column_gap != next.column_gap
+}
+
+fn apply_icon_button_layout_owned_fields(node: &mut Node, next: &Node) {
+    node.width = next.width;
+    node.height = next.height;
+    node.min_width = next.min_width;
+    node.min_height = next.min_height;
+    node.align_items = next.align_items;
+    node.justify_content = next.justify_content;
+    node.padding = next.padding;
+    node.border_radius = next.border_radius;
+    node.flex_direction = next.flex_direction;
+    node.column_gap = next.column_gap;
+}
+
+pub(crate) fn update_icon_button_visuals(
+    theme: Res<UiTheme>,
+    asset_server: Res<AssetServer>,
+    mut buttons: Query<(
+        &Interaction,
+        &mut BackgroundColor,
+        &Children,
+        &mut UiIconButton,
+        Has<PrimaryButton>,
+        Has<DisabledButton>,
+        Has<FocusedButton>,
+        Has<SelectedButton>,
+        Has<LoadingButton>,
+    )>,
+    mut icons: Query<(
+        &mut ImageNode,
+        &mut UiIconVisual,
+        &mut UiIconResolutionStatus,
+        &mut UiIconAssetStatus,
+    )>,
+) {
+    for (
+        interaction,
+        mut background,
+        children,
+        mut icon_button,
+        is_primary,
+        is_disabled,
+        is_focused,
+        is_selected,
+        is_loading,
+    ) in &mut buttons
+    {
+        let state = icon_button_visual_state(
+            *interaction,
+            is_disabled,
+            is_focused,
+            is_selected,
+            is_loading,
+        );
+        let colors = if is_primary {
+            theme.colors.primary_button
+        } else {
+            theme.colors.secondary_button
+        };
+        let style = resolve_icon_button_style(&theme, colors, icon_button.visuals, state);
+        let next_background = BackgroundColor(style.background);
+        if *background != next_background {
+            *background = next_background;
+        }
+
+        for child in children.iter() {
+            let Ok((mut image, mut visual, mut resolution, mut asset_status)) =
+                icons.get_mut(child)
+            else {
+                continue;
+            };
+            apply_ui_icon_request(
+                &asset_server,
+                style.icon,
+                style.tint,
+                &mut image,
+                &mut visual,
+                &mut resolution,
+                &mut asset_status,
+            );
+        }
+
+        if icon_button.visual_state != state {
+            icon_button.visual_state = state;
+        }
     }
 }
 pub(crate) fn update_button_visuals(
@@ -782,6 +1270,7 @@ pub(crate) fn update_button_visuals(
         ),
         (
             With<Button>,
+            Without<UiIconButton>,
             Without<UiTextInput>,
             Without<UiSelectionLabel>,
         ),
