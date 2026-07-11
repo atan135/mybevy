@@ -16,8 +16,11 @@ mod visual_smoke;
 
 pub(in crate::game) use config::LockstepSimConfig;
 pub(in crate::game) use hud::{format_lockstep_sim_hud_status, lockstep_sim_hud_snapshot};
+#[cfg(test)]
+pub(crate) use online_headless::OnlineHeadlessFrame;
 pub(crate) use online_headless::{
-    OnlineHeadlessOptions, OnlineHeadlessReport, run_online_headless,
+    OnlineDualHeadlessOptions, OnlineDualHeadlessReport, OnlineHeadlessOptions,
+    OnlineHeadlessReport, run_online_dual_headless, run_online_headless,
 };
 pub(in crate::game) use plugin::LockstepSimPlugin;
 pub(in crate::game) use replay::LockstepSimReplayState;

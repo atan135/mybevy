@@ -24,6 +24,7 @@ pub(in crate::game::features::lockstep_sim) struct LockstepSimMyServerJoinState 
     pub(in crate::game::features::lockstep_sim) ready_sent: bool,
     pub(in crate::game::features::lockstep_sim) start_sent: bool,
     pub(in crate::game::features::lockstep_sim) started: bool,
+    pub(in crate::game::features::lockstep_sim) defer_start_room: bool,
     authenticated_player_id: Option<String>,
 }
 
@@ -221,7 +222,7 @@ fn handle_lockstep_sim_myserver_event(
             );
         }
         MyServerEvent::ReadyChanged(response)
-            if response.ok && state.ready_sent && !state.start_sent =>
+            if response.ok && state.ready_sent && !state.start_sent && !state.defer_start_room =>
         {
             state.start_sent = true;
             info!(
@@ -244,6 +245,7 @@ fn handle_lockstep_sim_myserver_event(
         MyServerEvent::RoomStatePush(push)
             if state.ready_sent
                 && !state.start_sent
+                && !state.defer_start_room
                 && room_state_says_local_ready(state, push) =>
         {
             if let Some(snapshot) = push.snapshot.as_ref() {
@@ -264,6 +266,9 @@ fn handle_lockstep_sim_myserver_event(
         }
         MyServerEvent::RoomStatePush(push) => {
             if let Some(snapshot) = push.snapshot.as_ref() {
+                if snapshot.state == "in_game" {
+                    state.started = true;
+                }
                 try_parse_initial_snapshot(
                     scene_state,
                     &snapshot.room_id,

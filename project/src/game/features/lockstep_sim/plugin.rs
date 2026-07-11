@@ -420,6 +420,57 @@ mod tests {
     }
 
     #[test]
+    fn deferred_ready_does_not_start_room_until_headless_coordinator_requests_it() {
+        let mut app = active_lockstep_app();
+        authenticate(&mut app);
+        join_room(&mut app);
+        app.world_mut()
+            .resource_mut::<LockstepSimMyServerJoinState>()
+            .defer_start_room = true;
+
+        app.world_mut()
+            .write_message(MyServerEvent::ReadyChanged(pb::RoomReadyRes {
+                ok: true,
+                room_id: "lockstep-room".to_string(),
+                ready: true,
+                error_code: String::new(),
+            }));
+        app.update();
+
+        let myserver_commands = read_messages::<MyServerCommand>(app.world());
+        assert!(
+            !myserver_commands
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::StartRoom))
+        );
+        assert!(
+            !app.world()
+                .resource::<LockstepSimMyServerJoinState>()
+                .start_sent
+        );
+    }
+
+    #[test]
+    fn deferred_client_observes_in_game_room_state_without_sending_start() {
+        let mut app = active_lockstep_app();
+        authenticate(&mut app);
+        join_room(&mut app);
+        app.world_mut()
+            .resource_mut::<LockstepSimMyServerJoinState>()
+            .defer_start_room = true;
+        let mut push = lockstep_room_state_push("lockstep-room", "lockstep-player", true);
+        push.snapshot.as_mut().unwrap().state = "in_game".to_string();
+
+        app.world_mut()
+            .write_message(MyServerEvent::RoomStatePush(push));
+        app.update();
+
+        let state = app.world().resource::<LockstepSimMyServerJoinState>();
+        assert!(state.started);
+        assert!(!state.start_sent);
+    }
+
+    #[test]
     fn local_ready_room_state_push_can_start_room() {
         let mut app = active_lockstep_app();
         authenticate(&mut app);

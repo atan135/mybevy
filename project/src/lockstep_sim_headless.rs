@@ -22,7 +22,10 @@ use sim_core::{
     restore, snapshot, step,
 };
 
-use crate::game::{OnlineHeadlessOptions, OnlineHeadlessReport, run_online_headless};
+use crate::game::{
+    OnlineDualHeadlessOptions, OnlineDualHeadlessReport, OnlineHeadlessOptions,
+    OnlineHeadlessReport, run_online_dual_headless, run_online_headless,
+};
 
 pub const HEADLESS_TELEMETRY_SCHEMA: &str = "mybevy.lockstep.telemetry";
 pub const HEADLESS_TELEMETRY_SCHEMA_VERSION: u16 = 1;
@@ -40,6 +43,7 @@ const FIXTURE_SKILL_ID: SkillId = SkillId::new(10);
 const FIXTURE_DOT_BUFF_ID: BuffId = BuffId::new(100);
 const FIXTURE_CHECKPOINT_FRAME: u32 = 2;
 const FIXTURE_FINAL_FRAME: u32 = 6;
+const ONLINE_DUAL_OBSERVATION_FRAMES: u32 = 2;
 
 pub const HEADLESS_HELP: &str = "\
 mybevy lockstep simulation headless telemetry\n\
@@ -48,7 +52,7 @@ Usage:\n\
   lockstep-sim-headless [options]\n\
 \n\
 Options:\n\
-  --scenario <offline-fixture|connect-probe|online-single-client>\n\
+  --scenario <offline-fixture|connect-probe|online-single-client|online-dual-client>\n\
   --run-id <id>\n\
   --room <room>\n\
   --policy <policy>\n\
@@ -56,6 +60,7 @@ Options:\n\
   --inject-mismatch-frame <frame>  Explicit local test fault for diagnostics\n\
   --endpoint <ip:port>             Required by connect-probe\n\
   --ticket-env <name>              Required by online-single-client\n\
+  --observer-ticket-env <name>     Second ticket for online-dual-client\n\
   --connect-timeout-ms <ms>        Defaults to 500\n\
   --help\n\
 \n\
@@ -68,6 +73,7 @@ pub enum HeadlessScenario {
     OfflineFixture,
     ConnectProbe,
     OnlineSingleClient,
+    OnlineDualClient,
 }
 
 impl HeadlessScenario {
@@ -76,6 +82,7 @@ impl HeadlessScenario {
             "offline-fixture" => Some(Self::OfflineFixture),
             "connect-probe" => Some(Self::ConnectProbe),
             "online-single-client" => Some(Self::OnlineSingleClient),
+            "online-dual-client" => Some(Self::OnlineDualClient),
             _ => None,
         }
     }
@@ -91,7 +98,9 @@ pub struct HeadlessOptions {
     pub inject_mismatch_frame: Option<u32>,
     pub endpoint: Option<String>,
     pub ticket_env: Option<String>,
+    pub observer_ticket_env: Option<String>,
     pub connect_timeout: Duration,
+    pub client_role: Option<HeadlessClientRole>,
 }
 
 impl Default for HeadlessOptions {
@@ -105,7 +114,9 @@ impl Default for HeadlessOptions {
             inject_mismatch_frame: None,
             endpoint: None,
             ticket_env: None,
+            observer_ticket_env: None,
             connect_timeout: Duration::from_millis(500),
+            client_role: None,
         }
     }
 }
@@ -142,6 +153,7 @@ pub struct TelemetryRecord {
     pub room: String,
     pub policy: String,
     pub player: String,
+    pub client_role: Option<HeadlessClientRole>,
     pub server_connected: bool,
     pub frame: Option<u32>,
     pub server_hash: Option<HashTelemetry>,
@@ -154,6 +166,13 @@ pub struct TelemetryRecord {
     pub error_code: Option<String>,
     pub failure_stage: Option<String>,
     pub message: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlessClientRole {
+    ActiveInput,
+    PassiveReplay,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -298,7 +317,7 @@ pub fn parse_headless_args(
                 let value = next_value(&mut args, "--scenario")?;
                 options.scenario = HeadlessScenario::parse(&value).ok_or_else(|| {
                     cli_error(format!(
-                        "unsupported scenario {value:?}; expected offline-fixture, connect-probe, or online-single-client"
+                        "unsupported scenario {value:?}; expected offline-fixture, connect-probe, online-single-client, or online-dual-client"
                     ))
                 })?;
             }
@@ -334,6 +353,12 @@ pub fn parse_headless_args(
                 options.ticket_env = Some(non_empty(
                     next_value(&mut args, "--ticket-env")?,
                     "--ticket-env",
+                )?);
+            }
+            "--observer-ticket-env" => {
+                options.observer_ticket_env = Some(non_empty(
+                    next_value(&mut args, "--observer-ticket-env")?,
+                    "--observer-ticket-env",
                 )?);
             }
             "--connect-timeout-ms" => {
@@ -388,6 +413,7 @@ pub fn run_headless(options: &HeadlessOptions) -> HeadlessRun {
             TcpStream::connect_timeout(&address, timeout).map(drop)
         }),
         HeadlessScenario::OnlineSingleClient => run_online_single_client(options),
+        HeadlessScenario::OnlineDualClient => run_online_dual_client(options),
     }
 }
 
@@ -803,7 +829,289 @@ fn run_online_single_client(options: &HeadlessOptions) -> HeadlessRun {
     online_report_to_run(options, report)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OnlineDualMismatch {
+    frame: u32,
+    error_code: &'static str,
+    message: String,
+}
+
+fn run_online_dual_client(options: &HeadlessOptions) -> HeadlessRun {
+    let Some(endpoint) = options.endpoint.as_deref() else {
+        return failure_run(
+            options,
+            "HEADLESS_ENDPOINT_REQUIRED",
+            "configuration",
+            "online-dual-client requires --endpoint <ip:port>",
+            EXIT_CONFIGURATION,
+        );
+    };
+    let address = match endpoint.parse::<SocketAddr>() {
+        Ok(address) => address,
+        Err(_) => {
+            return failure_run(
+                options,
+                "HEADLESS_ENDPOINT_INVALID",
+                "configuration",
+                "online-dual-client endpoint must be a numeric ip:port",
+                EXIT_CONFIGURATION,
+            );
+        }
+    };
+    let Some(primary_ticket_env) = options.ticket_env.as_deref() else {
+        return failure_run(
+            options,
+            "HEADLESS_TICKET_ENV_REQUIRED",
+            "configuration",
+            "online-dual-client requires --ticket-env <name>",
+            EXIT_CONFIGURATION,
+        );
+    };
+    let Some(passive_ticket_env) = options.observer_ticket_env.as_deref() else {
+        return failure_run(
+            options,
+            "HEADLESS_OBSERVER_TICKET_ENV_REQUIRED",
+            "configuration",
+            "online-dual-client requires --observer-ticket-env <name>",
+            EXIT_CONFIGURATION,
+        );
+    };
+
+    let report = match run_online_dual_headless(&OnlineDualHeadlessOptions {
+        endpoint: address,
+        primary_ticket_env: primary_ticket_env.to_string(),
+        passive_ticket_env: passive_ticket_env.to_string(),
+        room: options.room.clone(),
+        policy: options.policy.clone(),
+        primary_player: options.player.clone(),
+        passive_player: format!("{}-passive", options.player),
+        timeout: options.connect_timeout,
+    }) {
+        Ok(report) => report,
+        Err(error) => {
+            return failure_run(
+                options,
+                error.error_code,
+                error.failure_stage,
+                error.message,
+                EXIT_CONNECTION,
+            );
+        }
+    };
+
+    online_dual_report_to_run(options, report)
+}
+
+fn online_dual_report_to_run(
+    options: &HeadlessOptions,
+    report: OnlineDualHeadlessReport,
+) -> HeadlessRun {
+    let reconciliation = reconcile_online_dual_reports(&report.active, &report.passive);
+    let active_player = report.active.player_id.clone();
+    let passive_player = report.passive.player_id.clone();
+
+    let mut active_options = options.clone();
+    active_options.player = active_player.clone();
+    active_options.client_role = Some(HeadlessClientRole::ActiveInput);
+    let mut passive_options = options.clone();
+    passive_options.player = passive_player;
+    passive_options.client_role = Some(HeadlessClientRole::PassiveReplay);
+
+    let active_final_world = report
+        .active
+        .frames
+        .last()
+        .map(|frame| frame.world.clone())
+        .unwrap_or_else(|| report.active.initial_world.clone());
+    let active_run =
+        online_report_to_run_for_role(&active_options, report.active, true, Some(&active_player));
+    let passive_run = online_report_to_run_for_role(
+        &passive_options,
+        report.passive,
+        false,
+        Some(&active_player),
+    );
+    let mut records = active_run.records;
+    records.extend(passive_run.records);
+    if active_run.exit_code != EXIT_SUCCESS || passive_run.exit_code != EXIT_SUCCESS {
+        return HeadlessRun {
+            records,
+            exit_code: active_run.exit_code.max(passive_run.exit_code),
+        };
+    }
+
+    if let Err(mismatch) = reconciliation {
+        records.push(connected_failure_record(
+            &active_options,
+            Some(mismatch.frame),
+            mismatch.error_code,
+            "dual_frame_compare",
+            mismatch.message,
+            ReplayRecoveryTelemetry {
+                status: ReplayRecoveryStatus::Failed,
+                checkpoint_frame: Some(0),
+                target_frame: Some(mismatch.frame),
+                replayed_frames: mismatch.frame,
+            },
+            entities_from_world(&active_final_world),
+        ));
+        return HeadlessRun {
+            records,
+            exit_code: if mismatch.error_code == "HEADLESS_DUAL_HASH_MISMATCH" {
+                EXIT_HASH_MISMATCH
+            } else {
+                EXIT_SIMULATION
+            },
+        };
+    }
+
+    HeadlessRun {
+        records,
+        exit_code: EXIT_SUCCESS,
+    }
+}
+
+fn reconcile_online_dual_reports(
+    active: &OnlineHeadlessReport,
+    passive: &OnlineHeadlessReport,
+) -> Result<Vec<u32>, OnlineDualMismatch> {
+    let initial_frame = active
+        .initial_hash
+        .frame
+        .raw()
+        .max(passive.initial_hash.frame.raw());
+    if active.player_id == passive.player_id {
+        return Err(OnlineDualMismatch {
+            frame: initial_frame,
+            error_code: "HEADLESS_DUAL_PLAYER_NOT_DISTINCT",
+            message: "active and passive telemetry identify the same gameplay character"
+                .to_string(),
+        });
+    }
+    if active.initial_hash != passive.initial_hash || active.initial_world != passive.initial_world
+    {
+        return Err(OnlineDualMismatch {
+            frame: initial_frame,
+            error_code: "HEADLESS_DUAL_INITIAL_STATE_MISMATCH",
+            message: "active and passive clients restored different initial authority state"
+                .to_string(),
+        });
+    }
+
+    let passive_frames = passive
+        .frames
+        .iter()
+        .map(|frame| (frame.frame, frame))
+        .collect::<BTreeMap<_, _>>();
+    let mut common_frames = Vec::new();
+    let mut observed_sequences = Vec::new();
+    for active_frame in &active.frames {
+        let Some(passive_frame) = passive_frames.get(&active_frame.frame) else {
+            continue;
+        };
+        let frame = active_frame.frame;
+        common_frames.push(frame);
+        let active_server_hash = active_frame.server_hash.ok_or_else(|| OnlineDualMismatch {
+            frame,
+            error_code: "HEADLESS_DUAL_SERVER_HASH_MISSING",
+            message: format!("active client has no server hash at frame {frame}"),
+        })?;
+        let passive_server_hash = passive_frame
+            .server_hash
+            .ok_or_else(|| OnlineDualMismatch {
+                frame,
+                error_code: "HEADLESS_DUAL_SERVER_HASH_MISSING",
+                message: format!("passive client has no server hash at frame {frame}"),
+            })?;
+        if active_server_hash != active_frame.local_hash
+            || passive_server_hash != passive_frame.local_hash
+            || active_server_hash != passive_server_hash
+        {
+            return Err(OnlineDualMismatch {
+                frame,
+                error_code: "HEADLESS_DUAL_HASH_MISMATCH",
+                message: format!(
+                    "server, active local, and passive local hashes differ at frame {frame}"
+                ),
+            });
+        }
+        if active_frame.world != passive_frame.world {
+            return Err(OnlineDualMismatch {
+                frame,
+                error_code: "HEADLESS_DUAL_ENTITY_MISMATCH",
+                message: format!("active and passive fixed entity state differs at frame {frame}"),
+            });
+        }
+        if active_frame.events != passive_frame.events {
+            return Err(OnlineDualMismatch {
+                frame,
+                error_code: "HEADLESS_DUAL_EVENT_MISMATCH",
+                message: format!(
+                    "active and passive deterministic event sequence differs at frame {frame}"
+                ),
+            });
+        }
+        if active_frame.inputs != passive_frame.inputs {
+            return Err(OnlineDualMismatch {
+                frame,
+                error_code: "HEADLESS_DUAL_INPUT_MISMATCH",
+                message: format!(
+                    "active and passive authority input sequence differs at frame {frame}"
+                ),
+            });
+        }
+        for input in &active_frame.inputs {
+            if input.character_id != active.player_id {
+                return Err(OnlineDualMismatch {
+                    frame,
+                    error_code: "HEADLESS_DUAL_INPUT_SOURCE_MISMATCH",
+                    message: format!(
+                        "authority input at frame {frame} did not originate from the active client"
+                    ),
+                });
+            }
+            observed_sequences.push(input.seq);
+        }
+    }
+
+    let required_last_frame = active
+        .stop_frame
+        .max(passive.stop_frame)
+        .saturating_add(ONLINE_DUAL_OBSERVATION_FRAMES);
+    if common_frames
+        .first()
+        .is_none_or(|frame| *frame > active.input_frame)
+        || common_frames
+            .last()
+            .is_none_or(|frame| *frame < required_last_frame)
+    {
+        return Err(OnlineDualMismatch {
+            frame: common_frames.last().copied().unwrap_or(initial_frame),
+            error_code: "HEADLESS_DUAL_COMMON_FRAME_RANGE_INCOMPLETE",
+            message: "dual telemetry does not cover the active input through observation frame intersection"
+                .to_string(),
+        });
+    }
+    if !observed_sequences.contains(&1) || !observed_sequences.contains(&2) {
+        return Err(OnlineDualMismatch {
+            frame: common_frames.last().copied().unwrap_or(initial_frame),
+            error_code: "HEADLESS_DUAL_INPUT_SEQUENCE_MISSING",
+            message: "dual telemetry did not observe active input sequences 1 and 2".to_string(),
+        });
+    }
+    Ok(common_frames)
+}
+
 fn online_report_to_run(options: &HeadlessOptions, report: OnlineHeadlessReport) -> HeadlessRun {
+    online_report_to_run_for_role(options, report, true, None)
+}
+
+fn online_report_to_run_for_role(
+    options: &HeadlessOptions,
+    report: OnlineHeadlessReport,
+    expect_controlled_movement: bool,
+    expected_input_player: Option<&str>,
+) -> HeadlessRun {
     let mut online_options = options.clone();
     online_options.player = report.player_id.clone();
     let final_frame = report
@@ -847,6 +1155,7 @@ fn online_report_to_run(options: &HeadlessOptions, report: OnlineHeadlessReport)
     let mut observed_stop = false;
     let mut observed_skill = false;
     let mut observed_damage_or_buff = false;
+    let mut unexpected_input_source = false;
     let initial_player_x = report
         .initial_world
         .entity(report.player_entity_id)
@@ -879,6 +1188,12 @@ fn online_report_to_run(options: &HeadlessOptions, report: OnlineHeadlessReport)
                     | SimEvent::BuffApplied { .. }
                     | SimEvent::BuffTick { .. }
             )
+        });
+        unexpected_input_source |= expected_input_player.is_some_and(|expected| {
+            frame
+                .inputs
+                .iter()
+                .any(|input| input.character_id != expected)
         });
 
         records.push(connected_world_record(
@@ -935,19 +1250,34 @@ fn online_report_to_run(options: &HeadlessOptions, report: OnlineHeadlessReport)
     let final_player_x = final_world
         .entity(report.player_entity_id)
         .map(|entity| entity.transform.pos.x.raw());
+    let controlled_movement_matches_role = initial_player_x.is_some()
+        && if expect_controlled_movement {
+            final_player_x != initial_player_x
+        } else {
+            final_player_x == initial_player_x
+        };
     if first_failure.is_none()
-        && (!observed_move
-            || !observed_cast
-            || !observed_stop
-            || initial_player_x.is_none()
-            || final_player_x == initial_player_x)
+        && (!observed_move || !observed_cast || !observed_stop || !controlled_movement_matches_role)
     {
         first_failure = Some((
             final_frame,
             "HEADLESS_MOVEMENT_NOT_OBSERVED",
             "scenario_assertion",
-            "online input telemetry did not prove move/cast/stop and fixed-position movement"
-                .to_string(),
+            if expect_controlled_movement {
+                "active input telemetry did not prove move/cast/stop and controlled fixed-position movement"
+                    .to_string()
+            } else {
+                "passive replay telemetry did not prove move/cast/stop while keeping its controlled entity unchanged"
+                    .to_string()
+            },
+        ));
+    }
+    if first_failure.is_none() && unexpected_input_source {
+        first_failure = Some((
+            final_frame,
+            "HEADLESS_DUAL_INPUT_SOURCE_MISMATCH",
+            "input_role",
+            "dual-client authority frames contained input from a non-active character".to_string(),
         ));
     }
     if first_failure.is_none() && (!observed_skill || !observed_damage_or_buff) {
@@ -1210,6 +1540,7 @@ fn world_record(
         room: options.room.clone(),
         policy: options.policy.clone(),
         player: options.player.clone(),
+        client_role: options.client_role,
         server_connected: false,
         frame,
         server_hash,
@@ -1273,6 +1604,7 @@ fn failure_record(
         room: options.room.clone(),
         policy: options.policy.clone(),
         player: options.player.clone(),
+        client_role: options.client_role,
         server_connected: false,
         frame,
         server_hash: None,
@@ -1555,6 +1887,79 @@ fn event_telemetry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::OnlineHeadlessFrame;
+
+    fn dual_test_reports() -> (OnlineHeadlessReport, OnlineHeadlessReport) {
+        let options = HeadlessOptions {
+            player: "active-player".to_string(),
+            ..Default::default()
+        };
+        let (mut initial_world, _) = fixture_world_and_config(&options).unwrap();
+        let mut passive_entity = initial_world.entity(FIXTURE_ENTITY_ID).unwrap().clone();
+        passive_entity.id = EntityId::new(FIXTURE_ENTITY_ID.raw() + 1);
+        passive_entity.owner_character_id = Some("passive-player".to_string());
+        initial_world.entities.push(passive_entity);
+        initial_world.sort_entities_by_id();
+        let initial_hash = hash_world(&initial_world);
+        let frames = (4..=6)
+            .map(|frame| {
+                let mut world = initial_world.clone();
+                world.frame = FrameId::new(frame);
+                let local_hash = hash_world(&world);
+                let inputs = match frame {
+                    4 => vec![SimInput {
+                        frame: FrameId::new(frame),
+                        character_id: "active-player".to_string(),
+                        entity_id: FIXTURE_ENTITY_ID,
+                        seq: 1,
+                        source: SimInputSource::Real,
+                        command: SimCommand::Move(MoveCommand {
+                            dir: QuantizedDir::RIGHT,
+                            speed_per_second: Some(Fp::from_i32(6)),
+                        }),
+                    }],
+                    5 => vec![SimInput {
+                        frame: FrameId::new(frame),
+                        character_id: "active-player".to_string(),
+                        entity_id: FIXTURE_ENTITY_ID,
+                        seq: 2,
+                        source: SimInputSource::Real,
+                        command: SimCommand::Stop,
+                    }],
+                    _ => Vec::new(),
+                };
+                OnlineHeadlessFrame {
+                    frame,
+                    server_hash: Some(local_hash),
+                    local_hash,
+                    world,
+                    inputs,
+                    events: Vec::new(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let active = OnlineHeadlessReport {
+            player_id: "active-player".to_string(),
+            player_entity_id: FIXTURE_ENTITY_ID,
+            input_frame: 4,
+            stop_frame: 4,
+            initial_world: initial_world.clone(),
+            initial_hash,
+            frames: frames.clone(),
+            hud_status: String::new(),
+        };
+        let passive = OnlineHeadlessReport {
+            player_id: "passive-player".to_string(),
+            player_entity_id: EntityId::new(FIXTURE_ENTITY_ID.raw() + 1),
+            input_frame: 4,
+            stop_frame: 4,
+            initial_world,
+            initial_hash,
+            frames,
+            hud_status: String::new(),
+        };
+        (active, passive)
+    }
 
     #[test]
     fn lockstep_sim_headless_offline_fixture_is_stable_and_hash_matched() {
@@ -1726,5 +2131,53 @@ mod tests {
         assert_eq!(error.error_code, "HEADLESS_ARGUMENT_INVALID");
         assert_eq!(error.failure_stage, "configuration");
         assert_eq!(error.exit_code, EXIT_CONFIGURATION);
+    }
+
+    #[test]
+    fn lockstep_sim_headless_cli_parses_dual_ticket_environment_names() {
+        let command = parse_headless_args([
+            "--scenario".to_string(),
+            "online-dual-client".to_string(),
+            "--ticket-env".to_string(),
+            "ACTIVE_TICKET".to_string(),
+            "--observer-ticket-env".to_string(),
+            "PASSIVE_TICKET".to_string(),
+        ])
+        .unwrap();
+        let HeadlessCommand::Run(options) = command else {
+            panic!("expected run command");
+        };
+
+        assert_eq!(options.scenario, HeadlessScenario::OnlineDualClient);
+        assert_eq!(options.ticket_env.as_deref(), Some("ACTIVE_TICKET"));
+        assert_eq!(
+            options.observer_ticket_env.as_deref(),
+            Some("PASSIVE_TICKET")
+        );
+    }
+
+    #[test]
+    fn online_dual_reconciliation_matches_common_authority_frames() {
+        let (active, passive) = dual_test_reports();
+
+        assert_eq!(
+            reconcile_online_dual_reports(&active, &passive).unwrap(),
+            vec![4, 5, 6]
+        );
+    }
+
+    #[test]
+    fn online_dual_reconciliation_reports_first_entity_mismatch_frame() {
+        let (active, mut passive) = dual_test_reports();
+        passive.frames[1]
+            .world
+            .entity_mut(FIXTURE_TARGET_ID)
+            .unwrap()
+            .combat
+            .hp -= 1;
+
+        let mismatch = reconcile_online_dual_reports(&active, &passive).unwrap_err();
+        assert_eq!(mismatch.frame, 5);
+        assert_eq!(mismatch.error_code, "HEADLESS_DUAL_ENTITY_MISMATCH");
     }
 }

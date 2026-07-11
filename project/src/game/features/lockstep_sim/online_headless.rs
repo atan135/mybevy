@@ -57,6 +57,18 @@ pub(crate) struct OnlineHeadlessOptions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OnlineDualHeadlessOptions {
+    pub endpoint: SocketAddr,
+    pub primary_ticket_env: String,
+    pub passive_ticket_env: String,
+    pub room: String,
+    pub policy: String,
+    pub primary_player: String,
+    pub passive_player: String,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OnlineHeadlessFrame {
     pub frame: u32,
     pub server_hash: Option<SimHash>,
@@ -76,6 +88,12 @@ pub(crate) struct OnlineHeadlessReport {
     pub initial_hash: SimHash,
     pub frames: Vec<OnlineHeadlessFrame>,
     pub hud_status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OnlineDualHeadlessReport {
+    pub active: OnlineHeadlessReport,
+    pub passive: OnlineHeadlessReport,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,26 +121,7 @@ pub(crate) fn run_online_headless(
     options: &OnlineHeadlessOptions,
 ) -> Result<OnlineHeadlessReport, OnlineHeadlessError> {
     validate_options(options)?;
-    let ticket = env::var(&options.ticket_env).map_err(|_| {
-        OnlineHeadlessError::new(
-            "HEADLESS_TICKET_ENV_MISSING",
-            "configuration",
-            format!(
-                "ticket environment variable {:?} is missing or not valid Unicode",
-                options.ticket_env
-            ),
-        )
-    })?;
-    if ticket.trim().is_empty() {
-        return Err(OnlineHeadlessError::new(
-            "HEADLESS_TICKET_ENV_EMPTY",
-            "configuration",
-            format!(
-                "ticket environment variable {:?} is empty",
-                options.ticket_env
-            ),
-        ));
-    }
+    let ticket = read_ticket(&options.ticket_env)?;
 
     let mut app = build_online_app(options);
     app.update();
@@ -243,6 +242,324 @@ pub(crate) fn run_online_headless(
 
         thread::sleep(UPDATE_SLEEP);
     }
+}
+
+fn read_ticket(environment_name: &str) -> Result<String, OnlineHeadlessError> {
+    let ticket = env::var(environment_name).map_err(|_| {
+        OnlineHeadlessError::new(
+            "HEADLESS_TICKET_ENV_MISSING",
+            "configuration",
+            format!(
+                "ticket environment variable {:?} is missing or not valid Unicode",
+                environment_name
+            ),
+        )
+    })?;
+    if ticket.trim().is_empty() {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_TICKET_ENV_EMPTY",
+            "configuration",
+            format!(
+                "ticket environment variable {:?} is empty",
+                environment_name
+            ),
+        ));
+    }
+    Ok(ticket)
+}
+
+#[derive(Default)]
+struct OnlineDualProgress {
+    connected: bool,
+    authenticated_player_id: Option<String>,
+    ready_confirmed: bool,
+    accepted_inputs: usize,
+}
+
+pub(crate) fn run_online_dual_headless(
+    options: &OnlineDualHeadlessOptions,
+) -> Result<OnlineDualHeadlessReport, OnlineHeadlessError> {
+    let active_options = OnlineHeadlessOptions {
+        endpoint: options.endpoint,
+        ticket_env: options.primary_ticket_env.clone(),
+        room: options.room.clone(),
+        policy: options.policy.clone(),
+        player: options.primary_player.clone(),
+        timeout: options.timeout,
+    };
+    let passive_options = OnlineHeadlessOptions {
+        endpoint: options.endpoint,
+        ticket_env: options.passive_ticket_env.clone(),
+        room: options.room.clone(),
+        policy: options.policy.clone(),
+        player: options.passive_player.clone(),
+        timeout: options.timeout,
+    };
+    validate_options(&active_options)?;
+    validate_options(&passive_options)?;
+    if options.primary_ticket_env == options.passive_ticket_env {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_DUAL_TICKET_ENV_NOT_DISTINCT",
+            "configuration",
+            "online-dual-client requires two distinct ticket environment variables",
+        ));
+    }
+
+    let active_ticket = read_ticket(&options.primary_ticket_env)?;
+    let mut passive_ticket = Some(read_ticket(&options.passive_ticket_env)?);
+    if active_ticket == passive_ticket.as_deref().unwrap_or_default() {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_DUAL_TICKET_NOT_DISTINCT",
+            "configuration",
+            "online-dual-client requires two distinct ticket values",
+        ));
+    }
+
+    let mut active_app = build_online_app(&active_options);
+    let mut passive_app = build_online_app(&passive_options);
+    active_app.update();
+    passive_app.update();
+    activate_online_scene(&mut active_app, &active_options, active_ticket);
+    defer_automatic_room_start(&mut active_app);
+
+    let mut active_cursor = MessageCursor::<MyServerEvent>::default();
+    let mut passive_cursor = MessageCursor::<MyServerEvent>::default();
+    let mut active = OnlineDualProgress::default();
+    let mut passive = OnlineDualProgress::default();
+    let mut passive_activated = false;
+    let mut room_start_sent = false;
+    let mut input_frame = None;
+    let mut stop_frame = None;
+    let deadline = Instant::now() + options.timeout;
+
+    loop {
+        active_app.update();
+        let active_events = read_myserver_events(&active_app, &mut active_cursor);
+        observe_dual_client_events(&active_events, &mut active, true)?;
+        if let Some(error) = replay_error(&active_app) {
+            return Err(error);
+        }
+
+        if active.ready_confirmed && !passive_activated {
+            activate_online_scene(
+                &mut passive_app,
+                &passive_options,
+                passive_ticket
+                    .take()
+                    .expect("passive ticket is activated once"),
+            );
+            defer_automatic_room_start(&mut passive_app);
+            passive_activated = true;
+        }
+
+        if passive_activated {
+            passive_app.update();
+            let passive_events = read_myserver_events(&passive_app, &mut passive_cursor);
+            observe_dual_client_events(&passive_events, &mut passive, false)?;
+            if let Some(error) = replay_error(&passive_app) {
+                return Err(error);
+            }
+        }
+
+        if active.ready_confirmed && passive.ready_confirmed && !room_start_sent {
+            let active_player = active.authenticated_player_id.as_deref().ok_or_else(|| {
+                OnlineHeadlessError::new(
+                    "HEADLESS_AUTH_PLAYER_MISSING",
+                    "authentication",
+                    "active client authenticated without a gameplay character id",
+                )
+            })?;
+            let passive_player = passive.authenticated_player_id.as_deref().ok_or_else(|| {
+                OnlineHeadlessError::new(
+                    "HEADLESS_AUTH_PLAYER_MISSING",
+                    "authentication",
+                    "passive client authenticated without a gameplay character id",
+                )
+            })?;
+            if active_player == passive_player {
+                return Err(OnlineHeadlessError::new(
+                    "HEADLESS_DUAL_PLAYER_NOT_DISTINCT",
+                    "authentication",
+                    "online-dual-client tickets resolved to the same gameplay character",
+                ));
+            }
+            active_app
+                .world_mut()
+                .resource_mut::<LockstepSimMyServerJoinState>()
+                .start_sent = true;
+            active_app
+                .world_mut()
+                .write_message(MyServerCommand::StartRoom);
+            room_start_sent = true;
+        }
+
+        let both_started = room_start_sent
+            && online_room_started(&active_app)
+            && online_room_started(&passive_app);
+        let both_snapshots_ready = both_started
+            && initial_snapshot_ready(&active_app)
+            && initial_snapshot_ready(&passive_app);
+        if input_frame.is_none() && both_snapshots_ready {
+            input_frame = try_send_scripted_input(&mut active_app)?;
+        }
+
+        if let Some(first_input_frame) = input_frame
+            && stop_frame.is_none()
+            && active.accepted_inputs >= 1
+            && last_applied_frame(&active_app).is_some_and(|frame| frame >= first_input_frame)
+        {
+            stop_frame = Some(send_scripted_stop(&mut active_app, first_input_frame)?);
+        }
+
+        if let (Some(input_frame), Some(stop_frame)) = (input_frame, stop_frame) {
+            let observation_frame = stop_frame.saturating_add(ONLINE_OBSERVATION_FRAMES);
+            if active.accepted_inputs >= 2
+                && last_applied_frame(&active_app).is_some_and(|frame| frame >= observation_frame)
+                && last_applied_frame(&passive_app).is_some_and(|frame| frame >= observation_frame)
+            {
+                let active_player = active.authenticated_player_id.take().ok_or_else(|| {
+                    OnlineHeadlessError::new(
+                        "HEADLESS_AUTH_PLAYER_MISSING",
+                        "authentication",
+                        "active client authenticated without a gameplay character id",
+                    )
+                })?;
+                let passive_player = passive.authenticated_player_id.take().ok_or_else(|| {
+                    OnlineHeadlessError::new(
+                        "HEADLESS_AUTH_PLAYER_MISSING",
+                        "authentication",
+                        "passive client authenticated without a gameplay character id",
+                    )
+                })?;
+                let active_report =
+                    collect_report(&active_app, active_player, input_frame, stop_frame)?;
+                let passive_report =
+                    collect_report(&passive_app, passive_player, input_frame, stop_frame)?;
+                cleanup_dual_online_session(
+                    &mut active_app,
+                    &mut active_cursor,
+                    &mut passive_app,
+                    &mut passive_cursor,
+                    options.timeout,
+                )?;
+                return Ok(OnlineDualHeadlessReport {
+                    active: active_report,
+                    passive: passive_report,
+                });
+            }
+        }
+
+        if Instant::now() >= deadline {
+            let (code, stage, detail) = if !active.connected {
+                (
+                    "HEADLESS_DUAL_ACTIVE_CONNECT_TIMEOUT",
+                    "connect",
+                    "timed out waiting for the active MyServer TCP connection",
+                )
+            } else if !active.ready_confirmed {
+                (
+                    "HEADLESS_DUAL_ACTIVE_READY_TIMEOUT",
+                    "room_ready",
+                    "timed out waiting for the active client to join and become ready",
+                )
+            } else if !passive.connected {
+                (
+                    "HEADLESS_DUAL_PASSIVE_CONNECT_TIMEOUT",
+                    "connect",
+                    "timed out waiting for the passive MyServer TCP connection",
+                )
+            } else if !passive.ready_confirmed {
+                (
+                    "HEADLESS_DUAL_PASSIVE_READY_TIMEOUT",
+                    "room_ready",
+                    "timed out waiting for the passive client to join and become ready",
+                )
+            } else if !both_started {
+                (
+                    "HEADLESS_DUAL_ROOM_START_TIMEOUT",
+                    "room_start",
+                    "timed out waiting for both clients to observe the started room",
+                )
+            } else if input_frame.is_none() {
+                (
+                    "HEADLESS_DUAL_INPUT_PREPARE_TIMEOUT",
+                    "input_prepare",
+                    "timed out waiting for both initial snapshots",
+                )
+            } else {
+                (
+                    "HEADLESS_DUAL_FRAME_TIMEOUT",
+                    "frame_wait",
+                    "timed out waiting for both clients to replay the observation frame",
+                )
+            };
+            return Err(OnlineHeadlessError::new(code, stage, detail));
+        }
+
+        thread::sleep(UPDATE_SLEEP);
+    }
+}
+
+fn defer_automatic_room_start(app: &mut App) {
+    app.world_mut()
+        .resource_mut::<LockstepSimMyServerJoinState>()
+        .defer_start_room = true;
+}
+
+fn initial_snapshot_ready(app: &App) -> bool {
+    app.world()
+        .resource::<LockstepSimSceneState>()
+        .initial_snapshot
+        .is_some()
+}
+
+fn last_applied_frame(app: &App) -> Option<u32> {
+    app.world()
+        .resource::<LockstepSimReplayState>()
+        .last_applied_frame
+}
+
+fn observe_dual_client_events(
+    events: &[MyServerEvent],
+    progress: &mut OnlineDualProgress,
+    active_input_client: bool,
+) -> Result<(), OnlineHeadlessError> {
+    for event in events {
+        match event {
+            MyServerEvent::Connected { .. } => progress.connected = true,
+            MyServerEvent::Authenticated { player_id } => {
+                progress.authenticated_player_id = Some(player_id.clone());
+            }
+            MyServerEvent::ReadyChanged(response) if response.ok && response.ready => {
+                progress.ready_confirmed = true;
+            }
+            MyServerEvent::PlayerInputAccepted(response) if active_input_client && response.ok => {
+                progress.accepted_inputs = progress.accepted_inputs.saturating_add(1);
+            }
+            MyServerEvent::PlayerInputAccepted(_) if !active_input_client => {
+                return Err(OnlineHeadlessError::new(
+                    "HEADLESS_DUAL_PASSIVE_INPUT_SENT",
+                    "input_role",
+                    "passive replay client received an input acknowledgement",
+                ));
+            }
+            MyServerEvent::Disconnected { reason } if progress.connected => {
+                return Err(OnlineHeadlessError::new(
+                    "HEADLESS_SERVER_DISCONNECTED",
+                    "frame_wait",
+                    format!(
+                        "MyServer disconnected before dual telemetry completed: {}",
+                        reason.as_deref().unwrap_or("no reason")
+                    ),
+                ));
+            }
+            _ => {}
+        }
+        if let Some(error) = failure_from_event(event) {
+            return Err(error);
+        }
+    }
+    Ok(())
 }
 
 fn validate_options(options: &OnlineHeadlessOptions) -> Result<(), OnlineHeadlessError> {
@@ -664,6 +981,116 @@ fn cleanup_online_session(
     }
 }
 
+fn cleanup_dual_online_session(
+    active_app: &mut App,
+    active_cursor: &mut MessageCursor<MyServerEvent>,
+    passive_app: &mut App,
+    passive_cursor: &mut MessageCursor<MyServerEvent>,
+    timeout: Duration,
+) -> Result<(), OnlineHeadlessError> {
+    active_app
+        .world_mut()
+        .write_message(MyServerCommand::EndRoom {
+            reason: "mybevy-online-dual-client-complete".to_string(),
+        });
+    let deadline = Instant::now() + timeout;
+    let mut end_confirmed = false;
+    let mut leave_sent = false;
+    let mut active_leave_confirmed = false;
+    let mut passive_leave_confirmed = false;
+    let mut active_disconnect_sent = false;
+    let mut passive_disconnect_sent = false;
+
+    loop {
+        active_app.update();
+        passive_app.update();
+        for event in read_myserver_events(active_app, active_cursor) {
+            match event {
+                MyServerEvent::RoomEnded(response) if response.ok => end_confirmed = true,
+                MyServerEvent::RoomEnded(response) => {
+                    return Err(OnlineHeadlessError::new(
+                        "HEADLESS_ROOM_END_REJECTED",
+                        "cleanup_room_end",
+                        format!("room end rejected: {}", response.error_code),
+                    ));
+                }
+                MyServerEvent::RoomLeft(response) if response.ok => {
+                    active_leave_confirmed = true;
+                }
+                MyServerEvent::RoomLeft(response) => {
+                    return Err(OnlineHeadlessError::new(
+                        "HEADLESS_ROOM_LEAVE_REJECTED",
+                        "cleanup_room_leave",
+                        format!("active room leave rejected: {}", response.error_code),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        for event in read_myserver_events(passive_app, passive_cursor) {
+            match event {
+                MyServerEvent::RoomLeft(response) if response.ok => {
+                    passive_leave_confirmed = true;
+                }
+                MyServerEvent::RoomLeft(response) => {
+                    return Err(OnlineHeadlessError::new(
+                        "HEADLESS_ROOM_LEAVE_REJECTED",
+                        "cleanup_room_leave",
+                        format!("passive room leave rejected: {}", response.error_code),
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        if end_confirmed && !leave_sent {
+            active_app
+                .world_mut()
+                .write_message(MyServerCommand::LeaveRoom);
+            passive_app
+                .world_mut()
+                .write_message(MyServerCommand::LeaveRoom);
+            leave_sent = true;
+        }
+        if active_leave_confirmed && !active_disconnect_sent {
+            active_app
+                .world_mut()
+                .write_message(MyServerCommand::Disconnect);
+            active_disconnect_sent = true;
+        }
+        if passive_leave_confirmed && !passive_disconnect_sent {
+            passive_app
+                .world_mut()
+                .write_message(MyServerCommand::Disconnect);
+            passive_disconnect_sent = true;
+        }
+        if active_disconnect_sent
+            && passive_disconnect_sent
+            && myserver_connection_closed(active_app)
+            && myserver_connection_closed(passive_app)
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(OnlineHeadlessError::new(
+                "HEADLESS_DUAL_CLEANUP_TIMEOUT",
+                "cleanup",
+                format!(
+                    "dual cleanup timed out (room_end={end_confirmed}, active_leave={active_leave_confirmed}, passive_leave={passive_leave_confirmed}, active_disconnect={active_disconnect_sent}, passive_disconnect={passive_disconnect_sent})"
+                ),
+            ));
+        }
+        thread::sleep(UPDATE_SLEEP);
+    }
+}
+
+fn myserver_connection_closed(app: &App) -> bool {
+    app.world()
+        .resource::<crate::game::myserver::MyServerSession>()
+        .connection_id
+        .is_none()
+}
+
 fn failure_from_event(event: &MyServerEvent) -> Option<OnlineHeadlessError> {
     match event {
         MyServerEvent::ConnectionFailed { error, .. } => Some(OnlineHeadlessError::new(
@@ -787,5 +1214,48 @@ mod tests {
         assert_eq!(scripted_stop_frame(11, 12), 14);
         assert_eq!(scripted_stop_frame(13, 12), 15);
         assert_eq!(scripted_stop_frame(10, u32::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn online_dual_headless_requires_distinct_ticket_environment_names() {
+        let options = OnlineDualHeadlessOptions {
+            endpoint: "127.0.0.1:7000".parse().unwrap(),
+            primary_ticket_env: "MYSERVER_LOCKSTEP_TICKET".to_string(),
+            passive_ticket_env: "MYSERVER_LOCKSTEP_TICKET".to_string(),
+            room: "lockstep-test-room".to_string(),
+            policy: "lockstep_sim_demo".to_string(),
+            primary_player: "active-placeholder".to_string(),
+            passive_player: "passive-placeholder".to_string(),
+            timeout: Duration::from_secs(5),
+        };
+
+        assert_eq!(
+            run_online_dual_headless(&options).unwrap_err().error_code,
+            "HEADLESS_DUAL_TICKET_ENV_NOT_DISTINCT"
+        );
+    }
+
+    #[test]
+    fn online_dual_passive_client_rejects_any_input_acknowledgement() {
+        let mut progress = OnlineDualProgress::default();
+        let events = vec![MyServerEvent::PlayerInputAccepted(Default::default())];
+
+        assert_eq!(
+            observe_dual_client_events(&events, &mut progress, false)
+                .unwrap_err()
+                .error_code,
+            "HEADLESS_DUAL_PASSIVE_INPUT_SENT"
+        );
+        assert_eq!(progress.accepted_inputs, 0);
+    }
+
+    #[test]
+    fn online_dual_deferred_start_is_explicit_per_client() {
+        let mut app = build_online_app(&options());
+        defer_automatic_room_start(&mut app);
+
+        let state = app.world().resource::<LockstepSimMyServerJoinState>();
+        assert!(state.defer_start_room);
+        assert!(!state.start_sent);
     }
 }
