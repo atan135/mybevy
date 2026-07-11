@@ -20,7 +20,9 @@ pub(in crate::game) use hud::{format_lockstep_sim_hud_status, lockstep_sim_hud_s
 pub(crate) use online_headless::OnlineHeadlessFrame;
 pub(crate) use online_headless::{
     OnlineDualHeadlessOptions, OnlineDualHeadlessReport, OnlineHeadlessOptions,
-    OnlineHeadlessReport, run_online_dual_headless, run_online_headless,
+    OnlineHeadlessReport, OnlineReconnectObserverOptions, OnlineReconnectObserverReport,
+    OnlineRecoveryStreamReport, run_online_dual_headless, run_online_headless,
+    run_online_reconnect_observer_headless,
 };
 pub(in crate::game) use plugin::LockstepSimPlugin;
 pub(in crate::game) use replay::LockstepSimReplayState;

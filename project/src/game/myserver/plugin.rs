@@ -564,6 +564,23 @@ fn handle_myserver_commands(
                     },
                 )
             }
+            MyServerCommand::ReconnectWithTicket {
+                ticket,
+                transport,
+                host,
+                port,
+            } => reconnect_with_ticket(
+                &config,
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                ticket.clone(),
+                ConnectPlan {
+                    transport: *transport,
+                    host: host.clone(),
+                    port: *port,
+                },
+            ),
             MyServerCommand::Disconnect => disconnect(&mut session, &mut network_commands),
             MyServerCommand::SwitchCharacter => {
                 disconnect(&mut session, &mut network_commands);
@@ -591,6 +608,16 @@ fn handle_myserver_commands(
                 &pb::RoomJoinReq {
                     room_id: room_id.clone(),
                     policy_id: policy_id.clone(),
+                },
+            ),
+            MyServerCommand::JoinRoomAsObserver { room_id } => send_request(
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                MessageType::RoomJoinAsObserverReq,
+                MessageType::RoomJoinAsObserverRes,
+                &pb::RoomJoinAsObserverReq {
+                    room_id: room_id.clone(),
                 },
             ),
             MyServerCommand::LeaveRoom => send_request(
@@ -2672,6 +2699,42 @@ fn connect_with_ticket(
     }
 }
 
+fn reconnect_with_ticket(
+    config: &MyServerConfig,
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    ticket: String,
+    plan: ConnectPlan,
+) {
+    if session.connection_id.is_some() {
+        let error_code = "RECONNECT_CONNECTION_STILL_OPEN";
+        write_display_error(
+            events,
+            MyServerDisplayError::from_error_code(
+                MyServerErrorSource::Client,
+                Some(MyServerOperation::GameConnect),
+                Some(MessageType::RoomReconnectReq),
+                None,
+                None,
+                error_code,
+                Some("transport reconnect requires the previous connection to close".to_string()),
+            ),
+        );
+        events.write(MyServerEvent::RequestFailed {
+            seq: None,
+            message_type: Some(MessageType::RoomReconnectReq),
+            error: error_code.to_string(),
+        });
+        return;
+    }
+
+    session.reconnect_after_auth = Some(ReconnectPlan {
+        cause: ReconnectCause::TransportRecovery,
+    });
+    connect_with_ticket(config, session, network_commands, events, ticket, plan);
+}
+
 fn validate_auth_ticket(ticket: &str, session: &MyServerSession) -> Result<(), String> {
     let payload = parse_character_bound_ticket(ticket)?;
     let Some(character_id) = session.character_id.as_deref() else {
@@ -3209,6 +3272,36 @@ fn handle_response_packet(
                     events,
                     MyServerDisplayError::protobuf_decode(
                         Some(MessageType::RoomJoinRes),
+                        Some(packet.header.seq),
+                        Some(error.clone()),
+                    ),
+                );
+                events.write(MyServerEvent::ProtocolError { error });
+            }
+        },
+        MessageType::RoomJoinAsObserverRes => match packet.decode::<pb::RoomJoinAsObserverRes>() {
+            Ok(response) => {
+                if response.ok {
+                    session.room_id =
+                        (!response.room_id.is_empty()).then_some(response.room_id.clone());
+                } else {
+                    write_display_error(
+                        events,
+                        display_error_from_game_code(
+                            Some(MessageType::RoomJoinAsObserverRes),
+                            Some(packet.header.seq),
+                            &response.error_code,
+                            Some(response.error_code.clone()),
+                        ),
+                    );
+                }
+                events.write(MyServerEvent::RoomJoinedAsObserver(response));
+            }
+            Err(error) => {
+                write_display_error(
+                    events,
+                    MyServerDisplayError::protobuf_decode(
+                        Some(MessageType::RoomJoinAsObserverRes),
                         Some(packet.header.seq),
                         Some(error.clone()),
                     ),
@@ -4662,6 +4755,92 @@ mod tests {
             app.world().resource::<MyServerSession>().ticket.as_deref(),
             Some(new_ticket.as_str())
         );
+    }
+
+    #[test]
+    fn explicit_transport_reconnect_requires_the_old_connection_to_be_closed() {
+        let mut app = test_app();
+        let old_connection_id = ConnectionId::from_raw(889);
+        app.world_mut()
+            .resource_mut::<MyServerSession>()
+            .connection_id = Some(old_connection_id);
+        let ticket = ticket_for_test("plr_1", "chr_1", "4102444800");
+
+        app.world_mut()
+            .write_message(MyServerCommand::ReconnectWithTicket {
+                ticket,
+                transport: NetworkTransport::Tcp,
+                host: Some("127.0.0.1".to_string()),
+                port: Some(7000),
+            });
+        app.update();
+
+        assert!(latest_connect_command(&app).is_none());
+        assert_eq!(
+            app.world().resource::<MyServerSession>().connection_id,
+            Some(old_connection_id)
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::RequestFailed { error, .. }
+                        if error == "RECONNECT_CONNECTION_STILL_OPEN"
+                ))
+        );
+    }
+
+    #[test]
+    fn explicit_transport_reconnect_uses_existing_room_reconnect_plan() {
+        let mut app = test_app();
+        let ticket = ticket_for_test("plr_1", "chr_1", "4102444800");
+
+        app.world_mut()
+            .write_message(MyServerCommand::ReconnectWithTicket {
+                ticket,
+                transport: NetworkTransport::Tcp,
+                host: Some("127.0.0.1".to_string()),
+                port: Some(7000),
+            });
+        app.update();
+
+        assert!(latest_connect_command(&app).is_some());
+        assert!(matches!(
+            app.world()
+                .resource::<MyServerSession>()
+                .reconnect_after_auth,
+            Some(ReconnectPlan {
+                cause: ReconnectCause::TransportRecovery
+            })
+        ));
+    }
+
+    #[test]
+    fn observer_join_command_uses_observer_protocol_message() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(890);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::JoinRoomAsObserver {
+                room_id: "room-observer".to_string(),
+            });
+        app.update();
+
+        let (_, packet) = latest_sent_packet(&app).unwrap();
+        assert_eq!(
+            packet.message_type(),
+            Some(MessageType::RoomJoinAsObserverReq)
+        );
+        let request = packet.decode::<pb::RoomJoinAsObserverReq>().unwrap();
+        assert_eq!(request.room_id, "room-observer");
     }
 
     #[test]

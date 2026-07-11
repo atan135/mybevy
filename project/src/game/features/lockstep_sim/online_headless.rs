@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env,
     net::SocketAddr,
     thread,
@@ -16,14 +17,14 @@ use sim_core::{
 
 use crate::{
     framework::{
-        network::{NetworkPlugin, NetworkTransport},
+        network::{NetworkCommand, NetworkPlugin, NetworkTransport},
         scene::prelude::{SceneId, SceneSessionId},
     },
     game::{
         authority::{AuthorityCommand, AuthorityEndpoint, AuthorityPlugin, AuthoritySession},
         myserver::{
             MyServerAutoClientConfig, MyServerCommand, MyServerConfig, MyServerEvent,
-            MyServerPlugin,
+            MyServerPlugin, MyServerSession, ReconnectCause,
         },
         scenes::LOCKSTEP_SIM_ARENA_SCENE_ID,
     },
@@ -34,8 +35,12 @@ use super::{
     hud::{format_lockstep_sim_hud_status, lockstep_sim_hud_snapshot},
     payload::{build_sim_input_envelope, gate_lockstep_sim_input},
     replay::{LockstepSimReplayState, apply_lockstep_sim_authority_events},
+    snapshot::LockstepSimSnapshotError,
     state::LockstepSimSceneState,
-    sync::{LockstepSimMyServerJoinState, follow_lockstep_sim_myserver_events},
+    sync::{
+        LockstepSimMyServerJoinState, follow_lockstep_sim_myserver_events,
+        lockstep_snapshot_error_code,
+    },
 };
 
 const ONLINE_SKILL_ID: SkillId = SkillId::new(1);
@@ -69,6 +74,18 @@ pub(crate) struct OnlineDualHeadlessOptions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OnlineReconnectObserverOptions {
+    pub endpoint: SocketAddr,
+    pub primary_ticket_env: String,
+    pub observer_ticket_env: String,
+    pub room: String,
+    pub policy: String,
+    pub primary_player: String,
+    pub observer_player: String,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OnlineHeadlessFrame {
     pub frame: u32,
     pub server_hash: Option<SimHash>,
@@ -94,6 +111,44 @@ pub(crate) struct OnlineHeadlessReport {
 pub(crate) struct OnlineDualHeadlessReport {
     pub active: OnlineHeadlessReport,
     pub passive: OnlineHeadlessReport,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OnlineRecoveryCheckpoint {
+    pub frame: u32,
+    pub hash: SimHash,
+    pub world: SimWorld,
+    pub snapshot_generation: u64,
+    pub inputs: Vec<SimInput>,
+    pub events: Vec<SimEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OnlineRecoveryStreamReport {
+    pub player_id: String,
+    pub snapshot_frame: u32,
+    pub snapshot_hash: SimHash,
+    pub snapshot_world: SimWorld,
+    pub recovery_generation: u64,
+    pub response_current_frame: u32,
+    pub response_waiting_frame: u32,
+    pub response_recent_input_frames: Vec<u32>,
+    pub response_waiting_input_frames: Vec<u32>,
+    pub frames: Vec<OnlineHeadlessFrame>,
+    pub ignored_duplicate_or_old_frames: u64,
+    pub local_input_acknowledgements: usize,
+    pub has_control_binding: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OnlineReconnectObserverReport {
+    pub pre_disconnect: OnlineRecoveryCheckpoint,
+    pub disconnect_generation: u64,
+    pub primary: OnlineRecoveryStreamReport,
+    pub observer: OnlineRecoveryStreamReport,
+    pub first_input_frame: u32,
+    pub post_reconnect_input_frame: u32,
+    pub common_frames: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -500,6 +555,761 @@ pub(crate) fn run_online_dual_headless(
     }
 }
 
+#[derive(Default)]
+struct OnlineRecoveryProgress {
+    connection_count: u32,
+    authenticated_player_id: Option<String>,
+    ready_confirmed: bool,
+    reauthenticated: bool,
+    local_input_acknowledgements: usize,
+}
+
+#[derive(Clone, Debug)]
+struct OnlineRecoveryResponse {
+    snapshot_frame: u32,
+    current_frame: u32,
+    waiting_frame: u32,
+    recent_input_frames: Vec<u32>,
+    waiting_input_frames: Vec<u32>,
+}
+
+pub(crate) fn run_online_reconnect_observer_headless(
+    options: &OnlineReconnectObserverOptions,
+) -> Result<OnlineReconnectObserverReport, OnlineHeadlessError> {
+    let primary_options = OnlineHeadlessOptions {
+        endpoint: options.endpoint,
+        ticket_env: options.primary_ticket_env.clone(),
+        room: options.room.clone(),
+        policy: options.policy.clone(),
+        player: options.primary_player.clone(),
+        timeout: options.timeout,
+    };
+    let observer_options = OnlineHeadlessOptions {
+        endpoint: options.endpoint,
+        ticket_env: options.observer_ticket_env.clone(),
+        room: options.room.clone(),
+        policy: options.policy.clone(),
+        player: options.observer_player.clone(),
+        timeout: options.timeout,
+    };
+    validate_options(&primary_options)?;
+    validate_options(&observer_options)?;
+    if options.primary_ticket_env == options.observer_ticket_env {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_RECOVERY_TICKET_ENV_NOT_DISTINCT",
+            "configuration",
+            "reconnect-observer recovery requires distinct ticket environment variables",
+        ));
+    }
+
+    let primary_ticket = read_ticket(&options.primary_ticket_env)?;
+    let observer_ticket = read_ticket(&options.observer_ticket_env)?;
+    if primary_ticket == observer_ticket {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_RECOVERY_TICKET_NOT_DISTINCT",
+            "configuration",
+            "reconnect-observer recovery requires distinct ticket values",
+        ));
+    }
+
+    let mut primary_app = build_online_app(&primary_options);
+    let mut observer_app = build_online_app(&observer_options);
+    primary_app.update();
+    observer_app.update();
+    observer_app
+        .world_mut()
+        .resource_mut::<LockstepSimMyServerJoinState>()
+        .configure_observer();
+    activate_online_scene(&mut primary_app, &primary_options, primary_ticket.clone());
+
+    let mut primary_cursor = MessageCursor::<MyServerEvent>::default();
+    let mut observer_cursor = MessageCursor::<MyServerEvent>::default();
+    let mut primary = OnlineRecoveryProgress::default();
+    let mut observer = OnlineRecoveryProgress::default();
+    let mut first_input_frame = None;
+    let mut pre_disconnect = None;
+    let mut disconnect_requested = false;
+    let mut disconnect_observed = false;
+    let mut disconnect_generation = None;
+    let mut reconnect_sent = false;
+    let mut primary_recovery = None;
+    let mut observer_activated = false;
+    let mut observer_recovery = None;
+    let mut post_reconnect_input_frame = None;
+    let deadline = Instant::now() + options.timeout;
+
+    loop {
+        primary_app.update();
+        let primary_events = read_myserver_events(&primary_app, &mut primary_cursor);
+        for event in &primary_events {
+            match event {
+                MyServerEvent::Connected { .. } => {
+                    primary.connection_count = primary.connection_count.saturating_add(1);
+                }
+                MyServerEvent::Authenticated { player_id } => {
+                    primary.authenticated_player_id = Some(player_id.clone());
+                }
+                MyServerEvent::ReadyChanged(response) if response.ok && response.ready => {
+                    primary.ready_confirmed = true;
+                }
+                MyServerEvent::PlayerInputAccepted(response) if response.ok => {
+                    primary.local_input_acknowledgements =
+                        primary.local_input_acknowledgements.saturating_add(1);
+                }
+                MyServerEvent::Disconnected { .. } if disconnect_requested => {
+                    disconnect_observed = true;
+                }
+                MyServerEvent::Disconnected { reason } => {
+                    return Err(OnlineHeadlessError::new(
+                        "HEADLESS_RECOVERY_UNEXPECTED_DISCONNECT",
+                        "pre_reconnect",
+                        format!(
+                            "primary disconnected before the controlled recovery point: {}",
+                            reason.as_deref().unwrap_or("no reason")
+                        ),
+                    ));
+                }
+                MyServerEvent::ReauthenticatedForReconnect { player_id, cause } => {
+                    if !matches!(cause, ReconnectCause::TransportRecovery) {
+                        return Err(OnlineHeadlessError::new(
+                            "HEADLESS_RECOVERY_CAUSE_MISMATCH",
+                            "reconnect_authentication",
+                            "primary reconnect did not use the transport recovery cause",
+                        ));
+                    }
+                    if primary.authenticated_player_id.as_deref() != Some(player_id.as_str()) {
+                        return Err(OnlineHeadlessError::new(
+                            "HEADLESS_RECOVERY_PLAYER_CHANGED",
+                            "reconnect_authentication",
+                            "primary gameplay character changed during reconnect",
+                        ));
+                    }
+                    primary.reauthenticated = true;
+                }
+                MyServerEvent::RoomReconnected(response) => {
+                    if !response.ok {
+                        return Err(OnlineHeadlessError::new(
+                            "HEADLESS_ROOM_RECONNECT_REJECTED",
+                            "room_reconnect",
+                            format!("room reconnect rejected: {}", response.error_code),
+                        ));
+                    }
+                    let snapshot = response.snapshot.as_ref().ok_or_else(|| {
+                        OnlineHeadlessError::new(
+                            "HEADLESS_RECOVERY_SNAPSHOT_MISSING",
+                            "room_reconnect",
+                            "RoomReconnectRes did not include a recovery snapshot",
+                        )
+                    })?;
+                    primary_recovery = Some(OnlineRecoveryResponse {
+                        snapshot_frame: snapshot.current_frame_id,
+                        current_frame: response.current_frame_id.max(snapshot.current_frame_id),
+                        waiting_frame: response.waiting_frame_id,
+                        recent_input_frames: response
+                            .recent_inputs
+                            .iter()
+                            .map(|input| input.frame_id)
+                            .collect(),
+                        waiting_input_frames: response
+                            .waiting_inputs
+                            .iter()
+                            .map(|input| input.frame_id)
+                            .collect(),
+                    });
+                }
+                _ => {}
+            }
+            if let Some(error) = failure_from_event(event) {
+                return Err(recovery_stage_error(error, disconnect_requested));
+            }
+        }
+
+        if let Some(error) = replay_error(&primary_app) {
+            return Err(error);
+        }
+
+        if first_input_frame.is_none() && online_room_started(&primary_app) {
+            first_input_frame = try_send_scripted_input(&mut primary_app)?;
+        }
+
+        if let Some(input_frame) = first_input_frame
+            && pre_disconnect.is_none()
+            && primary.local_input_acknowledgements >= 1
+            && last_applied_frame(&primary_app)
+                .is_some_and(|frame| frame >= input_frame.saturating_add(ONLINE_OBSERVATION_FRAMES))
+        {
+            pre_disconnect = Some(capture_recovery_checkpoint(&primary_app)?);
+        }
+
+        if pre_disconnect.is_some() && !disconnect_requested {
+            let connection_id = primary_app
+                .world()
+                .resource::<MyServerSession>()
+                .connection_id
+                .ok_or_else(|| {
+                    OnlineHeadlessError::new(
+                        "HEADLESS_RECOVERY_CONNECTION_MISSING",
+                        "disconnect",
+                        "primary connection disappeared before controlled disconnect",
+                    )
+                })?;
+            primary_app
+                .world_mut()
+                .write_message(NetworkCommand::Disconnect { connection_id });
+            disconnect_requested = true;
+        }
+
+        if disconnect_observed && disconnect_generation.is_none() {
+            let scene = primary_app.world().resource::<LockstepSimSceneState>();
+            let checkpoint_generation = pre_disconnect
+                .as_ref()
+                .map(|checkpoint| checkpoint.snapshot_generation)
+                .unwrap_or_default();
+            if scene.initial_snapshot.is_none()
+                && scene.snapshot_generation > checkpoint_generation
+                && myserver_connection_closed(&primary_app)
+            {
+                disconnect_generation = Some(scene.snapshot_generation);
+            }
+        }
+
+        if disconnect_generation.is_some() && !reconnect_sent {
+            if !myserver_connection_closed(&primary_app) {
+                return Err(OnlineHeadlessError::new(
+                    "HEADLESS_RECOVERY_CONNECTION_STILL_OPEN",
+                    "reconnect_prepare",
+                    "primary old connection remained open after disconnect confirmation",
+                ));
+            }
+            primary_app
+                .world_mut()
+                .write_message(MyServerCommand::ReconnectWithTicket {
+                    ticket: primary_ticket.clone(),
+                    transport: NetworkTransport::Tcp,
+                    host: Some(options.endpoint.ip().to_string()),
+                    port: Some(options.endpoint.port()),
+                });
+            reconnect_sent = true;
+        }
+
+        let primary_replay_ready = primary_recovery.as_ref().is_some_and(|recovery| {
+            let scene = primary_app.world().resource::<LockstepSimSceneState>();
+            let replay = primary_app.world().resource::<LockstepSimReplayState>();
+            primary.reauthenticated
+                && scene
+                    .initial_snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.start_frame == recovery.snapshot_frame)
+                && replay.snapshot_generation == scene.snapshot_generation
+                && replay
+                    .last_applied_frame
+                    .is_some_and(|frame| frame >= recovery.current_frame)
+                && replay.last_error.is_none()
+        });
+
+        if primary_replay_ready && !observer_activated {
+            activate_online_scene(
+                &mut observer_app,
+                &observer_options,
+                observer_ticket.clone(),
+            );
+            observer_activated = true;
+        }
+
+        if observer_activated {
+            observer_app.update();
+            let observer_events = read_myserver_events(&observer_app, &mut observer_cursor);
+            for event in &observer_events {
+                match event {
+                    MyServerEvent::Connected { .. } => {
+                        observer.connection_count = observer.connection_count.saturating_add(1);
+                    }
+                    MyServerEvent::Authenticated { player_id } => {
+                        observer.authenticated_player_id = Some(player_id.clone());
+                    }
+                    MyServerEvent::PlayerInputAccepted(response) if response.ok => {
+                        observer.local_input_acknowledgements =
+                            observer.local_input_acknowledgements.saturating_add(1);
+                    }
+                    MyServerEvent::RoomJoinedAsObserver(response) => {
+                        if !response.ok {
+                            return Err(OnlineHeadlessError::new(
+                                "HEADLESS_OBSERVER_JOIN_REJECTED",
+                                "observer_recovery",
+                                format!("observer join rejected: {}", response.error_code),
+                            ));
+                        }
+                        let snapshot = response.snapshot.as_ref().ok_or_else(|| {
+                            OnlineHeadlessError::new(
+                                "HEADLESS_OBSERVER_SNAPSHOT_MISSING",
+                                "observer_recovery",
+                                "RoomJoinAsObserverRes did not include a recovery snapshot",
+                            )
+                        })?;
+                        observer_recovery = Some(OnlineRecoveryResponse {
+                            snapshot_frame: snapshot.current_frame_id,
+                            current_frame: response.current_frame_id.max(snapshot.current_frame_id),
+                            waiting_frame: response.waiting_frame_id,
+                            recent_input_frames: response
+                                .recent_inputs
+                                .iter()
+                                .map(|input| input.frame_id)
+                                .collect(),
+                            waiting_input_frames: response
+                                .waiting_inputs
+                                .iter()
+                                .map(|input| input.frame_id)
+                                .collect(),
+                        });
+                    }
+                    MyServerEvent::RoomJoined(_) => {
+                        return Err(OnlineHeadlessError::new(
+                            "HEADLESS_OBSERVER_JOIN_PATH_MISMATCH",
+                            "observer_recovery",
+                            "observer used the normal player room join path",
+                        ));
+                    }
+                    MyServerEvent::Disconnected { reason } => {
+                        return Err(OnlineHeadlessError::new(
+                            "HEADLESS_OBSERVER_DISCONNECTED",
+                            "observer_recovery",
+                            format!(
+                                "observer disconnected before recovery completed: {}",
+                                reason.as_deref().unwrap_or("no reason")
+                            ),
+                        ));
+                    }
+                    _ => {}
+                }
+                if let Some(error) = failure_from_event(event) {
+                    return Err(OnlineHeadlessError::new(
+                        error.error_code,
+                        "observer_recovery",
+                        error.message,
+                    ));
+                }
+            }
+            if let Some(error) = replay_error(&observer_app) {
+                return Err(error);
+            }
+        }
+
+        let observer_replay_ready = observer_recovery.as_ref().is_some_and(|recovery| {
+            let scene = observer_app.world().resource::<LockstepSimSceneState>();
+            let replay = observer_app.world().resource::<LockstepSimReplayState>();
+            scene
+                .initial_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.start_frame == recovery.snapshot_frame)
+                && replay.snapshot_generation == scene.snapshot_generation
+                && replay
+                    .last_applied_frame
+                    .is_some_and(|frame| frame >= recovery.current_frame)
+                && replay.last_error.is_none()
+        });
+
+        if observer_replay_ready && post_reconnect_input_frame.is_none() {
+            post_reconnect_input_frame = Some(send_scripted_stop(
+                &mut primary_app,
+                first_input_frame.expect("pre-disconnect input exists before observer recovery"),
+            )?);
+        }
+
+        if let Some(stop_frame) = post_reconnect_input_frame {
+            let target_frame = stop_frame.saturating_add(ONLINE_OBSERVATION_FRAMES);
+            if primary.local_input_acknowledgements >= 2
+                && last_applied_frame(&primary_app).is_some_and(|frame| frame >= target_frame)
+                && last_applied_frame(&observer_app).is_some_and(|frame| frame >= target_frame)
+            {
+                let primary_player = primary.authenticated_player_id.take().ok_or_else(|| {
+                    OnlineHeadlessError::new(
+                        "HEADLESS_AUTH_PLAYER_MISSING",
+                        "report",
+                        "primary authenticated without a gameplay character id",
+                    )
+                })?;
+                let observer_player = observer.authenticated_player_id.take().ok_or_else(|| {
+                    OnlineHeadlessError::new(
+                        "HEADLESS_AUTH_PLAYER_MISSING",
+                        "report",
+                        "observer authenticated without a gameplay character id",
+                    )
+                })?;
+                if primary_player == observer_player {
+                    return Err(OnlineHeadlessError::new(
+                        "HEADLESS_RECOVERY_PLAYER_NOT_DISTINCT",
+                        "report",
+                        "primary and observer tickets resolved to the same gameplay character",
+                    ));
+                }
+
+                let primary_response = primary_recovery.as_ref().expect("primary recovery ready");
+                let observer_response =
+                    observer_recovery.as_ref().expect("observer recovery ready");
+                let primary_report = collect_recovery_stream(
+                    &primary_app,
+                    primary_player,
+                    primary.local_input_acknowledgements,
+                    primary_response,
+                )?;
+                let observer_report = collect_recovery_stream(
+                    &observer_app,
+                    observer_player,
+                    observer.local_input_acknowledgements,
+                    observer_response,
+                )?;
+                let common_frames = reconcile_recovery_streams(
+                    &primary_report,
+                    &observer_report,
+                    stop_frame,
+                    target_frame,
+                )?;
+
+                cleanup_dual_online_session(
+                    &mut primary_app,
+                    &mut primary_cursor,
+                    &mut observer_app,
+                    &mut observer_cursor,
+                    options.timeout,
+                )?;
+                return Ok(OnlineReconnectObserverReport {
+                    pre_disconnect: pre_disconnect.expect("controlled disconnect captured"),
+                    disconnect_generation: disconnect_generation
+                        .expect("disconnect generation captured"),
+                    primary: primary_report,
+                    observer: observer_report,
+                    first_input_frame: first_input_frame.expect("first input sent"),
+                    post_reconnect_input_frame: stop_frame,
+                    common_frames,
+                });
+            }
+        }
+
+        if Instant::now() >= deadline {
+            let (code, stage, detail) = if primary.connection_count == 0 {
+                (
+                    "HEADLESS_RECOVERY_CONNECT_TIMEOUT",
+                    "connect",
+                    "timed out waiting for the primary connection",
+                )
+            } else if !primary.ready_confirmed {
+                (
+                    "HEADLESS_RECOVERY_ROOM_READY_TIMEOUT",
+                    "room_ready",
+                    "timed out waiting for the primary room to become ready",
+                )
+            } else if pre_disconnect.is_none() {
+                (
+                    "HEADLESS_RECOVERY_PRE_DISCONNECT_TIMEOUT",
+                    "pre_reconnect",
+                    "timed out waiting for the pre-disconnect authority checkpoint",
+                )
+            } else if !disconnect_observed || disconnect_generation.is_none() {
+                (
+                    "HEADLESS_RECOVERY_DISCONNECT_TIMEOUT",
+                    "disconnect",
+                    "timed out waiting for the old primary connection to close",
+                )
+            } else if primary_recovery.is_none() || !primary_replay_ready {
+                (
+                    "HEADLESS_RECOVERY_RECONNECT_TIMEOUT",
+                    "room_reconnect",
+                    "timed out waiting for RoomReconnectRes snapshot replay",
+                )
+            } else if observer.connection_count == 0 {
+                (
+                    "HEADLESS_OBSERVER_CONNECT_TIMEOUT",
+                    "observer_connect",
+                    "timed out waiting for the observer connection",
+                )
+            } else if observer_recovery.is_none() || !observer_replay_ready {
+                (
+                    "HEADLESS_OBSERVER_RECOVERY_TIMEOUT",
+                    "observer_recovery",
+                    "timed out waiting for RoomJoinAsObserverRes snapshot replay",
+                )
+            } else {
+                (
+                    "HEADLESS_RECOVERY_FRAME_TIMEOUT",
+                    "post_reconnect_frames",
+                    "timed out waiting for primary and observer post-recovery frames",
+                )
+            };
+            return Err(OnlineHeadlessError::new(code, stage, detail));
+        }
+
+        thread::sleep(UPDATE_SLEEP);
+    }
+}
+
+fn recovery_stage_error(
+    error: OnlineHeadlessError,
+    reconnect_started: bool,
+) -> OnlineHeadlessError {
+    if reconnect_started {
+        OnlineHeadlessError::new(error.error_code, "room_reconnect", error.message)
+    } else {
+        error
+    }
+}
+
+fn capture_recovery_checkpoint(app: &App) -> Result<OnlineRecoveryCheckpoint, OnlineHeadlessError> {
+    let scene = app.world().resource::<LockstepSimSceneState>();
+    let replay = app.world().resource::<LockstepSimReplayState>();
+    let hash = replay.hash_history.back().ok_or_else(|| {
+        OnlineHeadlessError::new(
+            "HEADLESS_RECOVERY_CHECKPOINT_MISSING",
+            "pre_reconnect",
+            "pre-disconnect replay has no authoritative hash checkpoint",
+        )
+    })?;
+    let (world, _) = replay
+        .replay_from_cached_snapshot_to_frame(hash.frame)
+        .map_err(|error| {
+            OnlineHeadlessError::new(
+                "HEADLESS_RECOVERY_CHECKPOINT_REPLAY_FAILED",
+                "pre_reconnect",
+                error.to_string(),
+            )
+        })?;
+    Ok(OnlineRecoveryCheckpoint {
+        frame: hash.frame,
+        hash: hash.local_hash,
+        world,
+        snapshot_generation: scene.snapshot_generation,
+        inputs: replay
+            .input_history
+            .iter()
+            .flat_map(|entry| entry.sim_inputs.iter().cloned())
+            .collect(),
+        events: replay
+            .event_history
+            .iter()
+            .flat_map(|entry| entry.events.iter().cloned())
+            .collect(),
+    })
+}
+
+fn collect_recovery_stream(
+    app: &App,
+    player_id: String,
+    local_input_acknowledgements: usize,
+    response: &OnlineRecoveryResponse,
+) -> Result<OnlineRecoveryStreamReport, OnlineHeadlessError> {
+    let scene = app.world().resource::<LockstepSimSceneState>();
+    let snapshot = scene.initial_snapshot.as_ref().ok_or_else(|| {
+        OnlineHeadlessError::new(
+            "HEADLESS_RECOVERY_SNAPSHOT_MISSING",
+            "report",
+            "recovery report has no parsed snapshot",
+        )
+    })?;
+    if snapshot.start_frame != response.snapshot_frame {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_RECOVERY_SNAPSHOT_FRAME_MISMATCH",
+            "report",
+            format!(
+                "parsed snapshot frame {} differs from response snapshot frame {}",
+                snapshot.start_frame, response.snapshot_frame
+            ),
+        ));
+    }
+
+    let replay = app.world().resource::<LockstepSimReplayState>();
+    let frames = collect_replay_frames(replay)?;
+    validate_recovery_frame_continuity(snapshot.start_frame, &frames)?;
+    Ok(OnlineRecoveryStreamReport {
+        has_control_binding: snapshot.control_bindings.contains_key(&player_id),
+        player_id,
+        snapshot_frame: snapshot.start_frame,
+        snapshot_hash: snapshot.initial_hash(),
+        snapshot_world: snapshot.world.clone(),
+        recovery_generation: scene.snapshot_generation,
+        response_current_frame: response.current_frame,
+        response_waiting_frame: response.waiting_frame,
+        response_recent_input_frames: response.recent_input_frames.clone(),
+        response_waiting_input_frames: response.waiting_input_frames.clone(),
+        frames,
+        ignored_duplicate_or_old_frames: replay.ignored_duplicate_or_old_frames,
+        local_input_acknowledgements,
+    })
+}
+
+fn collect_replay_frames(
+    replay: &LockstepSimReplayState,
+) -> Result<Vec<OnlineHeadlessFrame>, OnlineHeadlessError> {
+    let mut frames = Vec::with_capacity(replay.hash_history.len());
+    for hash in &replay.hash_history {
+        let (world, _) = replay
+            .replay_from_cached_snapshot_to_frame(hash.frame)
+            .map_err(|error| {
+                OnlineHeadlessError::new(
+                    "HEADLESS_REPORT_REPLAY_FAILED",
+                    "report",
+                    error.to_string(),
+                )
+            })?;
+        let inputs = replay
+            .input_history
+            .iter()
+            .find(|input| input.frame == hash.frame)
+            .map(|input| input.sim_inputs.clone())
+            .unwrap_or_default();
+        let events = replay
+            .event_history
+            .iter()
+            .find(|events| events.frame == hash.frame)
+            .map(|events| events.events.clone())
+            .unwrap_or_default();
+        frames.push(OnlineHeadlessFrame {
+            frame: hash.frame,
+            server_hash: hash.server_hash.as_ref().map(|server| SimHash {
+                frame: sim_core::FrameId::new(server.frame),
+                value: server.value,
+            }),
+            local_hash: hash.local_hash,
+            world,
+            inputs,
+            events,
+        });
+    }
+    Ok(frames)
+}
+
+fn validate_recovery_frame_continuity(
+    snapshot_frame: u32,
+    frames: &[OnlineHeadlessFrame],
+) -> Result<(), OnlineHeadlessError> {
+    let mut expected = snapshot_frame.saturating_add(1);
+    let mut seen = BTreeSet::new();
+    for frame in frames {
+        if !seen.insert(frame.frame) {
+            return Err(OnlineHeadlessError::new(
+                "HEADLESS_RECOVERY_DUPLICATE_APPLIED_FRAME",
+                "frame_continuity",
+                format!("authority frame {} was applied more than once", frame.frame),
+            ));
+        }
+        if frame.frame != expected {
+            return Err(OnlineHeadlessError::new(
+                "HEADLESS_RECOVERY_FRAME_GAP",
+                "frame_continuity",
+                format!(
+                    "post-snapshot replay expected frame {expected}, got {}",
+                    frame.frame
+                ),
+            ));
+        }
+        let server_hash = frame.server_hash.ok_or_else(|| {
+            OnlineHeadlessError::new(
+                "HEADLESS_RECOVERY_SERVER_HASH_MISSING",
+                "frame_compare",
+                format!("recovery frame {} has no server hash", frame.frame),
+            )
+        })?;
+        if server_hash != frame.local_hash {
+            return Err(OnlineHeadlessError::new(
+                "HEADLESS_RECOVERY_HASH_MISMATCH",
+                "frame_compare",
+                format!("recovery frame {} hash did not realign", frame.frame),
+            ));
+        }
+        expected = expected.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn reconcile_recovery_streams(
+    primary: &OnlineRecoveryStreamReport,
+    observer: &OnlineRecoveryStreamReport,
+    input_frame: u32,
+    target_frame: u32,
+) -> Result<Vec<u32>, OnlineHeadlessError> {
+    if observer.local_input_acknowledgements != 0 || observer.has_control_binding {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_OBSERVER_INPUT_ROLE_VIOLATION",
+            "observer_input_role",
+            "observer received a local input acknowledgement or a simulation control binding",
+        ));
+    }
+
+    let observer_by_frame = observer
+        .frames
+        .iter()
+        .map(|frame| (frame.frame, frame))
+        .collect::<BTreeMap<_, _>>();
+    let mut common = Vec::new();
+    let mut post_reconnect_input_count = 0_usize;
+    for primary_frame in &primary.frames {
+        let Some(observer_frame) = observer_by_frame.get(&primary_frame.frame) else {
+            continue;
+        };
+        if primary_frame.server_hash != observer_frame.server_hash
+            || primary_frame.local_hash != observer_frame.local_hash
+            || primary_frame.world != observer_frame.world
+            || primary_frame.inputs != observer_frame.inputs
+            || primary_frame.events != observer_frame.events
+        {
+            return Err(OnlineHeadlessError::new(
+                "HEADLESS_OBSERVER_RECONCILIATION_MISMATCH",
+                "observer_frame_compare",
+                format!(
+                    "primary and observer differ at authority frame {}",
+                    primary_frame.frame
+                ),
+            ));
+        }
+        for input in &primary_frame.inputs {
+            if input.character_id != primary.player_id {
+                return Err(OnlineHeadlessError::new(
+                    "HEADLESS_OBSERVER_INPUT_SOURCE_MISMATCH",
+                    "observer_input_role",
+                    format!(
+                        "authority input at frame {} did not originate from the primary player",
+                        primary_frame.frame
+                    ),
+                ));
+            }
+            if primary_frame.frame == input_frame && input.seq == 2 {
+                post_reconnect_input_count = post_reconnect_input_count.saturating_add(1);
+            }
+        }
+        common.push(primary_frame.frame);
+    }
+
+    let required_start = primary
+        .snapshot_frame
+        .max(observer.snapshot_frame)
+        .saturating_add(1);
+    if common.first().copied() != Some(required_start)
+        || common
+            .last()
+            .copied()
+            .is_none_or(|frame| frame < target_frame)
+        || common
+            .windows(2)
+            .any(|frames| frames[1] != frames[0].saturating_add(1))
+    {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_OBSERVER_COMMON_FRAME_RANGE_INCOMPLETE",
+            "observer_frame_compare",
+            format!(
+                "common recovery frames do not continuously cover {required_start} through {target_frame}"
+            ),
+        ));
+    }
+    if post_reconnect_input_count != 1 {
+        return Err(OnlineHeadlessError::new(
+            "HEADLESS_RECOVERY_INPUT_APPLICATION_COUNT_MISMATCH",
+            "frame_continuity",
+            format!(
+                "post-reconnect input sequence 2 was applied {post_reconnect_input_count} times"
+            ),
+        ));
+    }
+    Ok(common)
+}
+
 fn defer_automatic_room_start(app: &mut App) {
     app.world_mut()
         .resource_mut::<LockstepSimMyServerJoinState>()
@@ -796,11 +1606,7 @@ fn replay_error(app: &App) -> Option<OnlineHeadlessError> {
     let scene = app.world().resource::<LockstepSimSceneState>();
     let replay = app.world().resource::<LockstepSimReplayState>();
     if let Some(error) = scene.initial_snapshot_error.as_ref() {
-        return Some(OnlineHeadlessError::new(
-            "HEADLESS_INITIAL_SNAPSHOT_REJECTED",
-            "snapshot_restore",
-            error.to_string(),
-        ));
+        return Some(snapshot_rejection_error(error));
     }
     if scene.initial_snapshot.is_some()
         && let Some(error) = replay.last_error.as_ref()
@@ -812,6 +1618,29 @@ fn replay_error(app: &App) -> Option<OnlineHeadlessError> {
         ));
     }
     None
+}
+
+fn snapshot_rejection_error(error: &LockstepSimSnapshotError) -> OnlineHeadlessError {
+    let (error_code, failure_stage) = match error {
+        LockstepSimSnapshotError::UnsupportedSchemaVersion { .. } => (
+            "HEADLESS_SNAPSHOT_SCHEMA_VERSION_MISMATCH",
+            "snapshot_schema_validation",
+        ),
+        LockstepSimSnapshotError::ConfigHashMismatch { .. } => (
+            "HEADLESS_SNAPSHOT_CONFIG_HASH_MISMATCH",
+            "snapshot_config_validation",
+        ),
+        LockstepSimSnapshotError::UnsupportedSimSchemaVersion { .. } => (
+            "HEADLESS_SIM_SCHEMA_VERSION_MISMATCH",
+            "sim_schema_validation",
+        ),
+        _ => ("HEADLESS_INITIAL_SNAPSHOT_REJECTED", "snapshot_restore"),
+    };
+    OnlineHeadlessError::new(
+        error_code,
+        failure_stage,
+        format!("{}: {error}", lockstep_snapshot_error_code(error)),
+    )
 }
 
 fn collect_report(
@@ -1157,6 +1986,86 @@ fn failure_from_event(event: &MyServerEvent) -> Option<OnlineHeadlessError> {
 mod tests {
     use super::*;
 
+    fn empty_world(frame: u32) -> SimWorld {
+        SimWorld::new(sim_core::FrameId::new(frame), Vec::new()).unwrap()
+    }
+
+    fn matching_frame(frame: u32, with_stop: bool) -> OnlineHeadlessFrame {
+        let world = empty_world(frame);
+        let hash = sim_core::hash_world(&world);
+        let inputs = with_stop
+            .then(|| SimInput {
+                frame: sim_core::FrameId::new(frame),
+                character_id: "primary-player".to_string(),
+                entity_id: EntityId::new(1),
+                seq: 2,
+                source: sim_core::SimInputSource::Real,
+                command: SimCommand::Stop,
+            })
+            .into_iter()
+            .collect();
+        OnlineHeadlessFrame {
+            frame,
+            server_hash: Some(hash),
+            local_hash: hash,
+            world,
+            inputs,
+            events: Vec::new(),
+        }
+    }
+
+    fn recovery_stream(player_id: &str, observer: bool) -> OnlineRecoveryStreamReport {
+        let snapshot_world = empty_world(3);
+        OnlineRecoveryStreamReport {
+            player_id: player_id.to_string(),
+            snapshot_frame: 3,
+            snapshot_hash: sim_core::hash_world(&snapshot_world),
+            snapshot_world,
+            recovery_generation: 3,
+            response_current_frame: 3,
+            response_waiting_frame: 4,
+            response_recent_input_frames: vec![3],
+            response_waiting_input_frames: vec![4],
+            frames: vec![matching_frame(4, true), matching_frame(5, false)],
+            ignored_duplicate_or_old_frames: 0,
+            local_input_acknowledgements: if observer { 0 } else { 2 },
+            has_control_binding: !observer,
+        }
+    }
+
+    fn assert_snapshot_rejection_stops_replay(
+        error: LockstepSimSnapshotError,
+        expected_code: &str,
+        expected_stage: &str,
+    ) {
+        let mut app = App::new();
+        app.add_message::<crate::game::authority::AuthorityEvent>()
+            .init_resource::<LockstepSimConfig>()
+            .init_resource::<LockstepSimSceneState>()
+            .init_resource::<LockstepSimReplayState>()
+            .add_systems(Update, apply_lockstep_sim_authority_events);
+        {
+            let mut scene = app.world_mut().resource_mut::<LockstepSimSceneState>();
+            scene.active = true;
+            scene.reject_initial_snapshot(error);
+        }
+        {
+            let mut replay = app.world_mut().resource_mut::<LockstepSimReplayState>();
+            replay.world = Some(empty_world(7));
+            replay.last_applied_frame = Some(7);
+        }
+
+        app.update();
+
+        let replay = app.world().resource::<LockstepSimReplayState>();
+        assert!(replay.world.is_none());
+        assert_eq!(replay.last_applied_frame, None);
+        assert!(replay.hash_history.is_empty());
+        let failure = replay_error(&app).unwrap();
+        assert_eq!(failure.error_code, expected_code);
+        assert_eq!(failure.failure_stage, expected_stage);
+    }
+
     fn options() -> OnlineHeadlessOptions {
         OnlineHeadlessOptions {
             endpoint: "127.0.0.1:7000".parse().unwrap(),
@@ -1257,5 +2166,67 @@ mod tests {
         let state = app.world().resource::<LockstepSimMyServerJoinState>();
         assert!(state.defer_start_room);
         assert!(!state.start_sent);
+    }
+
+    #[test]
+    fn reconnect_snapshot_mismatches_have_stable_codes_and_stop_replay() {
+        assert_snapshot_rejection_stops_replay(
+            LockstepSimSnapshotError::UnsupportedSchemaVersion {
+                actual: 2,
+                expected: 1,
+            },
+            "HEADLESS_SNAPSHOT_SCHEMA_VERSION_MISMATCH",
+            "snapshot_schema_validation",
+        );
+        assert_snapshot_rejection_stops_replay(
+            LockstepSimSnapshotError::ConfigHashMismatch {
+                actual: "server-config".to_string(),
+                expected: "client-config".to_string(),
+            },
+            "HEADLESS_SNAPSHOT_CONFIG_HASH_MISMATCH",
+            "snapshot_config_validation",
+        );
+        assert_snapshot_rejection_stops_replay(
+            LockstepSimSnapshotError::UnsupportedSimSchemaVersion {
+                actual: sim_core::SIM_CORE_SCHEMA_VERSION.saturating_add(1),
+                expected: sim_core::SIM_CORE_SCHEMA_VERSION,
+            },
+            "HEADLESS_SIM_SCHEMA_VERSION_MISMATCH",
+            "sim_schema_validation",
+        );
+    }
+
+    #[test]
+    fn recovery_frame_continuity_rejects_gap_without_advancing_assertion() {
+        let frames = vec![matching_frame(5, false)];
+
+        let error = validate_recovery_frame_continuity(3, &frames).unwrap_err();
+
+        assert_eq!(error.error_code, "HEADLESS_RECOVERY_FRAME_GAP");
+        assert_eq!(error.failure_stage, "frame_continuity");
+    }
+
+    #[test]
+    fn observer_recovery_has_no_local_input_and_matches_primary_frames() {
+        let primary = recovery_stream("primary-player", false);
+        let observer = recovery_stream("observer-player", true);
+
+        let common = reconcile_recovery_streams(&primary, &observer, 4, 5).unwrap();
+
+        assert_eq!(common, vec![4, 5]);
+        assert_eq!(observer.local_input_acknowledgements, 0);
+        assert!(!observer.has_control_binding);
+    }
+
+    #[test]
+    fn observer_recovery_rejects_local_input_acknowledgement() {
+        let primary = recovery_stream("primary-player", false);
+        let mut observer = recovery_stream("observer-player", true);
+        observer.local_input_acknowledgements = 1;
+
+        let error = reconcile_recovery_streams(&primary, &observer, 4, 5).unwrap_err();
+
+        assert_eq!(error.error_code, "HEADLESS_OBSERVER_INPUT_ROLE_VIOLATION");
+        assert_eq!(error.failure_stage, "observer_input_role");
     }
 }

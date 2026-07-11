@@ -943,6 +943,12 @@ pub enum MyServerCommand {
         host: Option<String>,
         port: Option<u16>,
     },
+    ReconnectWithTicket {
+        ticket: String,
+        transport: NetworkTransport,
+        host: Option<String>,
+        port: Option<u16>,
+    },
     Disconnect,
     SwitchCharacter,
     Logout,
@@ -952,6 +958,9 @@ pub enum MyServerCommand {
     JoinRoom {
         room_id: String,
         policy_id: String,
+    },
+    JoinRoomAsObserver {
+        room_id: String,
     },
     LeaveRoom,
     SetReady {
@@ -1144,6 +1153,7 @@ pub enum MyServerEvent {
     },
     Pong(pb::PingRes),
     RoomJoined(pb::RoomJoinRes),
+    RoomJoinedAsObserver(pb::RoomJoinAsObserverRes),
     RoomLeft(pb::RoomLeaveRes),
     ReadyChanged(pb::RoomReadyRes),
     RoomStarted(pb::RoomStartRes),

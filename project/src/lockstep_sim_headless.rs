@@ -24,7 +24,9 @@ use sim_core::{
 
 use crate::game::{
     OnlineDualHeadlessOptions, OnlineDualHeadlessReport, OnlineHeadlessOptions,
-    OnlineHeadlessReport, run_online_dual_headless, run_online_headless,
+    OnlineHeadlessReport, OnlineReconnectObserverOptions, OnlineReconnectObserverReport,
+    OnlineRecoveryStreamReport, run_online_dual_headless, run_online_headless,
+    run_online_reconnect_observer_headless,
 };
 
 pub const HEADLESS_TELEMETRY_SCHEMA: &str = "mybevy.lockstep.telemetry";
@@ -52,7 +54,7 @@ Usage:\n\
   lockstep-sim-headless [options]\n\
 \n\
 Options:\n\
-  --scenario <offline-fixture|connect-probe|online-single-client|online-dual-client>\n\
+  --scenario <offline-fixture|connect-probe|online-single-client|online-dual-client|online-reconnect-observer>\n\
   --run-id <id>\n\
   --room <room>\n\
   --policy <policy>\n\
@@ -60,7 +62,7 @@ Options:\n\
   --inject-mismatch-frame <frame>  Explicit local test fault for diagnostics\n\
   --endpoint <ip:port>             Required by connect-probe\n\
   --ticket-env <name>              Required by online-single-client\n\
-  --observer-ticket-env <name>     Second ticket for online-dual-client\n\
+  --observer-ticket-env <name>     Second ticket for dual or reconnect-observer scenarios\n\
   --connect-timeout-ms <ms>        Defaults to 500\n\
   --help\n\
 \n\
@@ -74,6 +76,7 @@ pub enum HeadlessScenario {
     ConnectProbe,
     OnlineSingleClient,
     OnlineDualClient,
+    OnlineReconnectObserver,
 }
 
 impl HeadlessScenario {
@@ -83,6 +86,7 @@ impl HeadlessScenario {
             "connect-probe" => Some(Self::ConnectProbe),
             "online-single-client" => Some(Self::OnlineSingleClient),
             "online-dual-client" => Some(Self::OnlineDualClient),
+            "online-reconnect-observer" => Some(Self::OnlineReconnectObserver),
             _ => None,
         }
     }
@@ -163,6 +167,7 @@ pub struct TelemetryRecord {
     pub entities: Vec<EntityTelemetry>,
     pub events: EventSummaryTelemetry,
     pub replay_recovery: ReplayRecoveryTelemetry,
+    pub recovery_acceptance: Option<RecoveryAcceptanceTelemetry>,
     pub error_code: Option<String>,
     pub failure_stage: Option<String>,
     pub message: Option<String>,
@@ -173,6 +178,8 @@ pub struct TelemetryRecord {
 pub enum HeadlessClientRole {
     ActiveInput,
     PassiveReplay,
+    ReconnectPrimary,
+    Observer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -180,6 +187,8 @@ pub enum HeadlessClientRole {
 pub enum TelemetryEvent {
     RunStarted,
     Frame,
+    TransportDisconnected,
+    SnapshotRecovered,
     ReplayRecovery,
     RunCompleted,
     RunFailed,
@@ -304,6 +313,36 @@ pub enum ReplayRecoveryStatus {
     Failed,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryAcceptanceTelemetry {
+    pub pre_disconnect_frame: Option<u32>,
+    pub pre_disconnect_hash: Option<String>,
+    pub pre_disconnect_input_frame: Option<u32>,
+    pub pre_disconnect_input_commands: Vec<&'static str>,
+    pub pre_disconnect_event_kinds: Vec<&'static str>,
+    pub disconnect_generation: Option<u64>,
+    pub snapshot_frame: u32,
+    pub snapshot_hash: String,
+    pub response_current_frame: u32,
+    pub response_waiting_frame: u32,
+    pub response_recent_input_frames: Vec<u32>,
+    pub response_waiting_input_frames: Vec<u32>,
+    pub recovery_generation: u64,
+    pub continuity_start_frame: Option<u32>,
+    pub continuity_end_frame: Option<u32>,
+    pub continuity_frame_count: usize,
+    pub contiguous_without_duplicate_apply: bool,
+    pub ignored_duplicate_or_old_frames: u64,
+    pub post_reconnect_input_frame: u32,
+    pub post_reconnect_input_application_count: usize,
+    pub local_input_acknowledgements: usize,
+    pub has_control_binding: bool,
+    pub common_frame_start: u32,
+    pub common_frame_end: u32,
+    pub common_frame_count: usize,
+}
+
 pub fn parse_headless_args(
     args: impl IntoIterator<Item = String>,
 ) -> Result<HeadlessCommand, HeadlessCliError> {
@@ -317,7 +356,7 @@ pub fn parse_headless_args(
                 let value = next_value(&mut args, "--scenario")?;
                 options.scenario = HeadlessScenario::parse(&value).ok_or_else(|| {
                     cli_error(format!(
-                        "unsupported scenario {value:?}; expected offline-fixture, connect-probe, online-single-client, or online-dual-client"
+                        "unsupported scenario {value:?}; expected offline-fixture, connect-probe, online-single-client, online-dual-client, or online-reconnect-observer"
                     ))
                 })?;
             }
@@ -414,6 +453,7 @@ pub fn run_headless(options: &HeadlessOptions) -> HeadlessRun {
         }),
         HeadlessScenario::OnlineSingleClient => run_online_single_client(options),
         HeadlessScenario::OnlineDualClient => run_online_dual_client(options),
+        HeadlessScenario::OnlineReconnectObserver => run_online_reconnect_observer(options),
     }
 }
 
@@ -900,6 +940,349 @@ fn run_online_dual_client(options: &HeadlessOptions) -> HeadlessRun {
     };
 
     online_dual_report_to_run(options, report)
+}
+
+fn run_online_reconnect_observer(options: &HeadlessOptions) -> HeadlessRun {
+    let Some(endpoint) = options.endpoint.as_deref() else {
+        return failure_run(
+            options,
+            "HEADLESS_ENDPOINT_REQUIRED",
+            "configuration",
+            "online-reconnect-observer requires --endpoint <ip:port>",
+            EXIT_CONFIGURATION,
+        );
+    };
+    let address = match endpoint.parse::<SocketAddr>() {
+        Ok(address) => address,
+        Err(_) => {
+            return failure_run(
+                options,
+                "HEADLESS_ENDPOINT_INVALID",
+                "configuration",
+                "online-reconnect-observer endpoint must be a numeric ip:port",
+                EXIT_CONFIGURATION,
+            );
+        }
+    };
+    let Some(primary_ticket_env) = options.ticket_env.as_deref() else {
+        return failure_run(
+            options,
+            "HEADLESS_TICKET_ENV_REQUIRED",
+            "configuration",
+            "online-reconnect-observer requires --ticket-env <name>",
+            EXIT_CONFIGURATION,
+        );
+    };
+    let Some(observer_ticket_env) = options.observer_ticket_env.as_deref() else {
+        return failure_run(
+            options,
+            "HEADLESS_OBSERVER_TICKET_ENV_REQUIRED",
+            "configuration",
+            "online-reconnect-observer requires --observer-ticket-env <name>",
+            EXIT_CONFIGURATION,
+        );
+    };
+
+    let report = match run_online_reconnect_observer_headless(&OnlineReconnectObserverOptions {
+        endpoint: address,
+        primary_ticket_env: primary_ticket_env.to_string(),
+        observer_ticket_env: observer_ticket_env.to_string(),
+        room: options.room.clone(),
+        policy: options.policy.clone(),
+        primary_player: options.player.clone(),
+        observer_player: format!("{}-observer", options.player),
+        timeout: options.connect_timeout,
+    }) {
+        Ok(report) => report,
+        Err(error) => {
+            let exit_code = if error.failure_stage == "configuration" {
+                EXIT_CONFIGURATION
+            } else {
+                EXIT_RECOVERY
+            };
+            return failure_run(
+                options,
+                error.error_code,
+                error.failure_stage,
+                error.message,
+                exit_code,
+            );
+        }
+    };
+
+    online_reconnect_observer_report_to_run(options, report)
+}
+
+fn online_reconnect_observer_report_to_run(
+    options: &HeadlessOptions,
+    report: OnlineReconnectObserverReport,
+) -> HeadlessRun {
+    let mut primary_options = options.clone();
+    primary_options.player = report.primary.player_id.clone();
+    primary_options.client_role = Some(HeadlessClientRole::ReconnectPrimary);
+    let mut observer_options = options.clone();
+    observer_options.player = report.observer.player_id.clone();
+    observer_options.client_role = Some(HeadlessClientRole::Observer);
+
+    let primary_acceptance = recovery_acceptance(&report, &report.primary, true);
+    let observer_acceptance = recovery_acceptance(&report, &report.observer, false);
+    let mut records = Vec::new();
+
+    records.push(connected_world_record(
+        &primary_options,
+        TelemetryEvent::RunStarted,
+        Some(report.pre_disconnect.frame),
+        Some(HashTelemetry::new(
+            report.pre_disconnect.hash,
+            HashSource::MyServerAuthority,
+        )),
+        Some(HashTelemetry::new(
+            report.pre_disconnect.hash,
+            HashSource::LocalReplay,
+        )),
+        Some(false),
+        &report.pre_disconnect.world,
+        &report.pre_disconnect.inputs,
+        &report.pre_disconnect.events,
+        ReplayRecoveryTelemetry {
+            status: ReplayRecoveryStatus::CheckpointCaptured,
+            checkpoint_frame: Some(report.pre_disconnect.frame),
+            target_frame: report.primary.frames.last().map(|frame| frame.frame),
+            replayed_frames: 0,
+        },
+    ));
+    let mut disconnected = connected_world_record(
+        &primary_options,
+        TelemetryEvent::TransportDisconnected,
+        Some(report.pre_disconnect.frame),
+        Some(HashTelemetry::new(
+            report.pre_disconnect.hash,
+            HashSource::MyServerAuthority,
+        )),
+        Some(HashTelemetry::new(
+            report.pre_disconnect.hash,
+            HashSource::LocalReplay,
+        )),
+        Some(false),
+        &report.pre_disconnect.world,
+        &report.pre_disconnect.inputs,
+        &report.pre_disconnect.events,
+        ReplayRecoveryTelemetry {
+            status: ReplayRecoveryStatus::Pending,
+            checkpoint_frame: Some(report.pre_disconnect.frame),
+            target_frame: None,
+            replayed_frames: 0,
+        },
+    );
+    disconnected.server_connected = false;
+    records.push(disconnected);
+    records.extend(recovery_stream_records(
+        &primary_options,
+        &report.primary,
+        &primary_acceptance,
+        false,
+    ));
+
+    records.push(connected_world_record(
+        &observer_options,
+        TelemetryEvent::RunStarted,
+        Some(report.observer.snapshot_frame),
+        Some(HashTelemetry::new(
+            report.observer.snapshot_hash,
+            HashSource::MyServerAuthority,
+        )),
+        Some(HashTelemetry::new(
+            report.observer.snapshot_hash,
+            HashSource::SnapshotRecovery,
+        )),
+        Some(false),
+        &report.observer.snapshot_world,
+        &[],
+        &[],
+        ReplayRecoveryTelemetry {
+            status: ReplayRecoveryStatus::CheckpointCaptured,
+            checkpoint_frame: Some(report.observer.snapshot_frame),
+            target_frame: report.observer.frames.last().map(|frame| frame.frame),
+            replayed_frames: 0,
+        },
+    ));
+    records.extend(recovery_stream_records(
+        &observer_options,
+        &report.observer,
+        &observer_acceptance,
+        true,
+    ));
+
+    HeadlessRun {
+        records,
+        exit_code: EXIT_SUCCESS,
+    }
+}
+
+fn recovery_stream_records(
+    options: &HeadlessOptions,
+    stream: &OnlineRecoveryStreamReport,
+    acceptance: &RecoveryAcceptanceTelemetry,
+    observer: bool,
+) -> Vec<TelemetryRecord> {
+    let final_frame = stream
+        .frames
+        .last()
+        .map(|frame| frame.frame)
+        .unwrap_or(stream.snapshot_frame);
+    let final_hash = stream
+        .frames
+        .last()
+        .map(|frame| frame.local_hash)
+        .unwrap_or(stream.snapshot_hash);
+    let final_world = stream
+        .frames
+        .last()
+        .map(|frame| &frame.world)
+        .unwrap_or(&stream.snapshot_world);
+    let recovery = ReplayRecoveryTelemetry {
+        status: ReplayRecoveryStatus::Verified,
+        checkpoint_frame: Some(stream.snapshot_frame),
+        target_frame: Some(final_frame),
+        replayed_frames: stream.frames.len() as u32,
+    };
+    let mut records = Vec::new();
+    let mut snapshot_record = connected_world_record(
+        options,
+        TelemetryEvent::SnapshotRecovered,
+        Some(stream.snapshot_frame),
+        Some(HashTelemetry::new(
+            stream.snapshot_hash,
+            HashSource::MyServerAuthority,
+        )),
+        Some(HashTelemetry::new(
+            stream.snapshot_hash,
+            HashSource::SnapshotRecovery,
+        )),
+        Some(false),
+        &stream.snapshot_world,
+        &[],
+        &[],
+        ReplayRecoveryTelemetry {
+            status: ReplayRecoveryStatus::CheckpointCaptured,
+            checkpoint_frame: Some(stream.snapshot_frame),
+            target_frame: Some(final_frame),
+            replayed_frames: 0,
+        },
+    );
+    snapshot_record.recovery_acceptance = Some(acceptance.clone());
+    records.push(snapshot_record);
+
+    for frame in &stream.frames {
+        let mut record = connected_world_record(
+            options,
+            TelemetryEvent::Frame,
+            Some(frame.frame),
+            frame
+                .server_hash
+                .map(|hash| HashTelemetry::new(hash, HashSource::MyServerAuthority)),
+            Some(HashTelemetry::new(
+                frame.local_hash,
+                HashSource::LocalReplay,
+            )),
+            Some(false),
+            &frame.world,
+            &frame.inputs,
+            &frame.events,
+            ReplayRecoveryTelemetry {
+                status: ReplayRecoveryStatus::Pending,
+                checkpoint_frame: Some(stream.snapshot_frame),
+                target_frame: Some(final_frame),
+                replayed_frames: frame.frame.saturating_sub(stream.snapshot_frame),
+            },
+        );
+        if observer {
+            record.recovery_acceptance = Some(acceptance.clone());
+        }
+        records.push(record);
+    }
+
+    for event in [TelemetryEvent::ReplayRecovery, TelemetryEvent::RunCompleted] {
+        let mut record = connected_world_record(
+            options,
+            event,
+            Some(final_frame),
+            Some(HashTelemetry::new(
+                final_hash,
+                HashSource::MyServerAuthority,
+            )),
+            Some(HashTelemetry::new(final_hash, HashSource::LocalReplay)),
+            Some(false),
+            final_world,
+            &[],
+            &[],
+            recovery.clone(),
+        );
+        record.recovery_acceptance = Some(acceptance.clone());
+        records.push(record);
+    }
+    records
+}
+
+fn recovery_acceptance(
+    report: &OnlineReconnectObserverReport,
+    stream: &OnlineRecoveryStreamReport,
+    primary: bool,
+) -> RecoveryAcceptanceTelemetry {
+    let post_reconnect_input_application_count = stream
+        .frames
+        .iter()
+        .flat_map(|frame| frame.inputs.iter())
+        .filter(|input| input.frame.raw() == report.post_reconnect_input_frame && input.seq == 2)
+        .count();
+    RecoveryAcceptanceTelemetry {
+        pre_disconnect_frame: primary.then_some(report.pre_disconnect.frame),
+        pre_disconnect_hash: primary.then(|| format!("{:016x}", report.pre_disconnect.hash.value)),
+        pre_disconnect_input_frame: primary.then_some(report.first_input_frame),
+        pre_disconnect_input_commands: primary
+            .then(|| {
+                report
+                    .pre_disconnect
+                    .inputs
+                    .iter()
+                    .map(|input| command_name(&input.command))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        pre_disconnect_event_kinds: primary
+            .then(|| {
+                report
+                    .pre_disconnect
+                    .events
+                    .iter()
+                    .map(|event| EventTelemetry::from(event).kind)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        disconnect_generation: primary.then_some(report.disconnect_generation),
+        snapshot_frame: stream.snapshot_frame,
+        snapshot_hash: format!("{:016x}", stream.snapshot_hash.value),
+        response_current_frame: stream.response_current_frame,
+        response_waiting_frame: stream.response_waiting_frame,
+        response_recent_input_frames: stream.response_recent_input_frames.clone(),
+        response_waiting_input_frames: stream.response_waiting_input_frames.clone(),
+        recovery_generation: stream.recovery_generation,
+        continuity_start_frame: stream.frames.first().map(|frame| frame.frame),
+        continuity_end_frame: stream.frames.last().map(|frame| frame.frame),
+        continuity_frame_count: stream.frames.len(),
+        contiguous_without_duplicate_apply: stream
+            .frames
+            .windows(2)
+            .all(|frames| frames[1].frame == frames[0].frame.saturating_add(1)),
+        ignored_duplicate_or_old_frames: stream.ignored_duplicate_or_old_frames,
+        post_reconnect_input_frame: report.post_reconnect_input_frame,
+        post_reconnect_input_application_count,
+        local_input_acknowledgements: stream.local_input_acknowledgements,
+        has_control_binding: stream.has_control_binding,
+        common_frame_start: report.common_frames[0],
+        common_frame_end: *report.common_frames.last().expect("common recovery frames"),
+        common_frame_count: report.common_frames.len(),
+    }
 }
 
 fn online_dual_report_to_run(
@@ -1550,6 +1933,7 @@ fn world_record(
         entities: entities_from_world(world),
         events: EventSummaryTelemetry::from_events(events),
         replay_recovery,
+        recovery_acceptance: None,
         error_code: None,
         failure_stage: None,
         message: None,
@@ -1614,6 +1998,7 @@ fn failure_record(
         entities,
         events: EventSummaryTelemetry::default(),
         replay_recovery,
+        recovery_acceptance: None,
         error_code: Some(error_code.into()),
         failure_stage: Some(failure_stage.into()),
         message: Some(message.into()),
@@ -2153,6 +2538,29 @@ mod tests {
         assert_eq!(
             options.observer_ticket_env.as_deref(),
             Some("PASSIVE_TICKET")
+        );
+    }
+
+    #[test]
+    fn lockstep_sim_headless_cli_parses_reconnect_observer_scenario() {
+        let command = parse_headless_args([
+            "--scenario".to_string(),
+            "online-reconnect-observer".to_string(),
+            "--ticket-env".to_string(),
+            "PRIMARY_TICKET".to_string(),
+            "--observer-ticket-env".to_string(),
+            "OBSERVER_TICKET".to_string(),
+        ])
+        .unwrap();
+        let HeadlessCommand::Run(options) = command else {
+            panic!("expected run command");
+        };
+
+        assert_eq!(options.scenario, HeadlessScenario::OnlineReconnectObserver);
+        assert_eq!(options.ticket_env.as_deref(), Some("PRIMARY_TICKET"));
+        assert_eq!(
+            options.observer_ticket_env.as_deref(),
+            Some("OBSERVER_TICKET")
         );
     }
 

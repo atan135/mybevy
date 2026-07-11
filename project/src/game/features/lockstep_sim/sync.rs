@@ -25,12 +25,18 @@ pub(in crate::game::features::lockstep_sim) struct LockstepSimMyServerJoinState 
     pub(in crate::game::features::lockstep_sim) start_sent: bool,
     pub(in crate::game::features::lockstep_sim) started: bool,
     pub(in crate::game::features::lockstep_sim) defer_start_room: bool,
+    pub(in crate::game::features::lockstep_sim) join_as_observer: bool,
     authenticated_player_id: Option<String>,
 }
 
 impl LockstepSimMyServerJoinState {
     pub(in crate::game::features::lockstep_sim) fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    pub(in crate::game::features::lockstep_sim) fn configure_observer(&mut self) {
+        self.join_as_observer = true;
+        self.defer_start_room = true;
     }
 }
 
@@ -190,16 +196,27 @@ fn handle_lockstep_sim_myserver_event(
         MyServerEvent::Authenticated { player_id } if !state.join_sent => {
             state.authenticated_player_id = Some(player_id.clone());
             state.join_sent = true;
-            info!(
-                player_id = %player_id,
-                room_id = %config.myserver_room_id,
-                policy_id = %config.myserver_policy_id,
-                "lockstep sim joining MyServer room"
-            );
-            commands.write(MyServerCommand::JoinRoom {
-                room_id: config.myserver_room_id.clone(),
-                policy_id: config.myserver_policy_id.clone(),
-            });
+            if state.join_as_observer {
+                info!(
+                    player_id = %player_id,
+                    room_id = %config.myserver_room_id,
+                    "lockstep sim joining MyServer room as observer"
+                );
+                commands.write(MyServerCommand::JoinRoomAsObserver {
+                    room_id: config.myserver_room_id.clone(),
+                });
+            } else {
+                info!(
+                    player_id = %player_id,
+                    room_id = %config.myserver_room_id,
+                    policy_id = %config.myserver_policy_id,
+                    "lockstep sim joining MyServer room"
+                );
+                commands.write(MyServerCommand::JoinRoom {
+                    room_id: config.myserver_room_id.clone(),
+                    policy_id: config.myserver_policy_id.clone(),
+                });
+            }
         }
         MyServerEvent::RoomJoined(response)
             if response.ok && state.join_sent && !state.ready_sent =>
@@ -219,6 +236,40 @@ fn handle_lockstep_sim_myserver_event(
                 player_id = %config.local_player_id,
                 error_code = %response.error_code,
                 "lockstep sim MyServer room join rejected"
+            );
+        }
+        MyServerEvent::RoomJoinedAsObserver(response) if response.ok => {
+            state.started = response
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.state == "in_game");
+            if let Some(snapshot) = response.snapshot.as_ref() {
+                try_parse_initial_snapshot(
+                    scene_state,
+                    &snapshot.room_id,
+                    &snapshot.game_state,
+                    "room_join_as_observer",
+                );
+            } else {
+                scene_state.clear_initial_snapshot();
+            }
+            info!(
+                room_id = %response.room_id,
+                policy_id = %config.myserver_policy_id,
+                player_id = %config.local_player_id,
+                snapshot_frame = response.snapshot.as_ref().map(|snapshot| snapshot.current_frame_id),
+                current_frame = response.current_frame_id,
+                "lockstep sim MyServer observer recovery accepted"
+            );
+        }
+        MyServerEvent::RoomJoinedAsObserver(response) => {
+            scene_state.clear_initial_snapshot();
+            warn!(
+                room_id = %response.room_id,
+                policy_id = %config.myserver_policy_id,
+                player_id = %config.local_player_id,
+                error_code = %response.error_code,
+                "lockstep sim MyServer observer join rejected"
             );
         }
         MyServerEvent::ReadyChanged(response)
@@ -445,7 +496,7 @@ fn try_parse_initial_snapshot(
     }
 }
 
-fn lockstep_snapshot_error_code(error: &LockstepSimSnapshotError) -> &'static str {
+pub(super) fn lockstep_snapshot_error_code(error: &LockstepSimSnapshotError) -> &'static str {
     match error {
         LockstepSimSnapshotError::JsonDecode(_) => "json_decode",
         LockstepSimSnapshotError::MissingInitialSnapshot => "missing_initial_snapshot",
@@ -498,6 +549,8 @@ fn leave_existing_authority_if_needed(
 
 #[cfg(test)]
 mod tests {
+    use bevy::ecs::message::{MessageCursor, Messages};
+
     use super::*;
     use crate::framework::network::NetworkTransport;
 
@@ -551,5 +604,44 @@ mod tests {
         })
         .unwrap_err();
         assert!(invalid.contains("valid environment variable name"));
+    }
+
+    #[test]
+    fn observer_mode_uses_observer_join_without_ready_or_start_commands() {
+        let mut app = App::new();
+        let mut config = LockstepSimConfig::default();
+        config.authority_mode = LockstepSimAuthorityMode::MyServer;
+        config.myserver_room_id = "room-observer".to_string();
+        app.insert_resource(config)
+            .init_resource::<LockstepSimSceneState>()
+            .init_resource::<LockstepSimMyServerJoinState>()
+            .add_message::<MyServerEvent>()
+            .add_message::<MyServerCommand>()
+            .add_systems(Update, follow_lockstep_sim_myserver_events);
+        app.world_mut()
+            .resource_mut::<LockstepSimSceneState>()
+            .active = true;
+        app.world_mut()
+            .resource_mut::<LockstepSimMyServerJoinState>()
+            .configure_observer();
+        app.world_mut().write_message(MyServerEvent::Authenticated {
+            player_id: "observer-a".to_string(),
+        });
+
+        app.update();
+
+        let messages = app.world().resource::<Messages<MyServerCommand>>();
+        let mut cursor = MessageCursor::default();
+        let commands = cursor.read(messages).cloned().collect::<Vec<_>>();
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            MyServerCommand::JoinRoomAsObserver { room_id } if room_id == "room-observer"
+        )));
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            MyServerCommand::JoinRoom { .. }
+                | MyServerCommand::SetReady { .. }
+                | MyServerCommand::StartRoom
+        )));
     }
 }

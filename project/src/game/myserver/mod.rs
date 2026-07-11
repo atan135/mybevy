@@ -11,5 +11,5 @@ pub(crate) use types::{
     AccountLoginState, CharacterSelectionState, CharacterSummary, ElementValues,
     GameConnectionState, MyServerAutoClientConfig, MyServerCommand, MyServerConfig,
     MyServerDisplayError, MyServerErrorKind, MyServerErrorSource, MyServerEvent, MyServerOperation,
-    MyServerSession,
+    MyServerSession, ReconnectCause,
 };
