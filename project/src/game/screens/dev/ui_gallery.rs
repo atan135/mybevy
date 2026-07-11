@@ -20,19 +20,19 @@ use crate::framework::ui::{
     },
     widgets::{
         DisabledTextInput, FocusedButton, ReadonlyTextInput, SelectedButton, UiAlign,
-        UiButtonEvent, UiButtonEventKind, UiImageFit, UiImageSize, UiJustify,
-        UiResponsiveGridColumns, UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText,
-        UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted,
-        UiTextInputValidationMessage, checkbox_key, checked_checkbox_key, disabled_checkbox_key,
-        disabled_icon_button_key, disabled_primary_action_button_key,
+        UiButtonEvent, UiButtonEventKind, UiImageConstraints, UiImageFit, UiImageFocus,
+        UiImageLength, UiImageSize, UiJustify, UiResponsiveGridColumns, UiTextInputAlphanumeric,
+        UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars, UiTextInputRequired,
+        UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key, checked_checkbox_key,
+        disabled_checkbox_key, disabled_icon_button_key, disabled_primary_action_button_key,
         disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
         disabled_stepper_key, disabled_toggle_key, icon_button_key, loading_icon_button_key,
         loading_primary_action_button_key, primary_action_button_key, screen_label,
         screen_label_key, screen_title_key, secondary_action_button_key, segment_option_key,
         segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
         text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_image,
-        ui_image_panel_node, ui_responsive_column, ui_responsive_grid, ui_scroll_column,
-        ui_thumbnail_grid,
+        ui_image_panel_node, ui_image_panel_node_with_radius, ui_responsive_column,
+        ui_responsive_grid, ui_scroll_column, ui_thumbnail_grid,
     },
 };
 use crate::game::{
@@ -50,6 +50,7 @@ const GALLERY_VISUAL_FIXTURE_PATHS: [&str; 4] = [
     "ui/fixtures/visual-foundation/nine-slice-12px.png",
     "ui/fixtures/visual-foundation/atlas-four-frames.png",
 ];
+const GALLERY_IMAGE_FIT_SOURCE_PATH: &str = "ui/fixtures/visual-foundation/non-square-2x1.png";
 #[cfg(test)]
 const GALLERY_VISUAL_FONT_FIXTURE_PATHS: [&str; 3] = [
     "ui/fixtures/fonts/FigtreeFixture-Regular.ttf",
@@ -122,6 +123,39 @@ enum GalleryTextInputState {
 
 #[derive(Component)]
 struct GalleryVisualFoundationRegion;
+
+#[derive(Component)]
+struct GalleryImageFitRegion;
+
+#[derive(Clone, Copy)]
+struct GalleryImageFitSample {
+    label: &'static str,
+    landscape_fit: UiImageFit,
+    portrait_fit: UiImageFit,
+}
+
+const GALLERY_IMAGE_FIT_SAMPLES: [GalleryImageFitSample; 4] = [
+    GalleryImageFitSample {
+        label: "Natural",
+        landscape_fit: UiImageFit::Natural,
+        portrait_fit: UiImageFit::Natural,
+    },
+    GalleryImageFitSample {
+        label: "Stretch",
+        landscape_fit: UiImageFit::Stretch,
+        portrait_fit: UiImageFit::Stretch,
+    },
+    GalleryImageFitSample {
+        label: "Contain",
+        landscape_fit: UiImageFit::Contain,
+        portrait_fit: UiImageFit::Contain,
+    },
+    GalleryImageFitSample {
+        label: "Cover focus 0 / 1",
+        landscape_fit: UiImageFit::cover(UiImageFocus::TOP_LEFT),
+        portrait_fit: UiImageFit::cover(UiImageFocus::BOTTOM_RIGHT),
+    },
+];
 
 impl GalleryLoadingPreview {
     fn new() -> Self {
@@ -236,6 +270,43 @@ pub(super) fn setup_ui_gallery(
                         UiThemeTextStyleRole::Body,
                         UiThemeTextColorRole::Muted,
                     ));
+                    visual_panel.spawn(section_label_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "ui_gallery.image_fit.section",
+                        "Image Fit",
+                    ));
+                    visual_panel.spawn(screen_label_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "ui_gallery.image_fit.description",
+                        "Natural, Stretch, Contain, and focused Cover in landscape and portrait frames.",
+                        UiThemeTextStyleRole::Body,
+                        UiThemeTextColorRole::Muted,
+                    ));
+                    visual_panel
+                        .spawn((
+                            gallery_grid(
+                                metrics,
+                                width_class,
+                                UiResponsiveGridColumns::new(2, 2, 4),
+                            ),
+                            GalleryImageFitRegion,
+                            Name::new("Gallery image fit region"),
+                        ))
+                        .with_children(|samples| {
+                            for sample in GALLERY_IMAGE_FIT_SAMPLES {
+                                spawn_gallery_image_fit_sample(
+                                    samples,
+                                    theme,
+                                    fonts,
+                                    asset_server.load(GALLERY_IMAGE_FIT_SOURCE_PATH),
+                                    sample,
+                                );
+                            }
+                        });
                     visual_panel
                         .spawn(ui_thumbnail_grid(4, metrics.control_gap))
                         .with_children(|fixtures| {
@@ -1374,6 +1445,78 @@ fn spawn_gallery_image_card(
         });
 }
 
+fn spawn_gallery_image_fit_sample(
+    samples: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    image: Handle<Image>,
+    sample: GalleryImageFitSample,
+) {
+    samples
+        .spawn(gallery_image_card_node(theme))
+        .with_children(|card| {
+            card.spawn(Node {
+                width: percent(100),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                column_gap: px(theme.layout.row_gap),
+                ..default()
+            })
+            .with_children(|previews| {
+                spawn_gallery_image_fit_preview(
+                    previews,
+                    image.clone(),
+                    sample.landscape_fit,
+                    UiImageSize::constrained(
+                        UiImageConstraints::new(UiImageLength::Px(72.0), UiImageLength::Auto)
+                            .with_aspect_ratio(72.0 / 44.0)
+                            .with_min_width(UiImageLength::Px(64.0))
+                            .with_max_width(UiImageLength::Px(80.0))
+                            .with_min_height(UiImageLength::Px(40.0))
+                            .with_max_height(UiImageLength::Px(52.0)),
+                    ),
+                );
+                spawn_gallery_image_fit_preview(
+                    previews,
+                    image,
+                    sample.portrait_fit,
+                    UiImageSize::FixedBox {
+                        width: 44.0,
+                        height: 72.0,
+                    },
+                );
+            });
+            card.spawn(screen_label(
+                theme,
+                fonts,
+                sample.label,
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Muted,
+            ));
+        });
+}
+
+fn spawn_gallery_image_fit_preview(
+    previews: &mut ChildSpawnerCommands,
+    image: Handle<Image>,
+    fit: UiImageFit,
+    frame_size: UiImageSize,
+) {
+    previews
+        .spawn(ui_image_panel_node_with_radius(frame_size, 8.0))
+        .with_children(|frame| {
+            frame.spawn(ui_image(
+                image,
+                fit,
+                UiImageSize::PercentBox {
+                    width: 100.0,
+                    height: 100.0,
+                },
+            ));
+        });
+}
+
 fn spawn_gallery_visual_fixture(
     fixtures: &mut ChildSpawnerCommands,
     theme: &UiTheme,
@@ -1690,6 +1833,32 @@ mod tests {
         paths.sort_unstable();
         paths.dedup();
         assert_eq!(paths.len(), GALLERY_VISUAL_FIXTURE_PATHS.len());
+    }
+
+    #[test]
+    fn image_fit_gallery_covers_every_mode_and_both_frame_orientations() {
+        assert_eq!(GALLERY_IMAGE_FIT_SAMPLES.len(), 4);
+        assert!(matches!(
+            GALLERY_IMAGE_FIT_SAMPLES[0].landscape_fit,
+            UiImageFit::Natural
+        ));
+        assert!(matches!(
+            GALLERY_IMAGE_FIT_SAMPLES[1].landscape_fit,
+            UiImageFit::Stretch
+        ));
+        assert!(matches!(
+            GALLERY_IMAGE_FIT_SAMPLES[2].landscape_fit,
+            UiImageFit::Contain
+        ));
+        assert!(matches!(
+            GALLERY_IMAGE_FIT_SAMPLES[3].landscape_fit,
+            UiImageFit::Cover { .. }
+        ));
+        assert!(matches!(
+            GALLERY_IMAGE_FIT_SAMPLES[3].portrait_fit,
+            UiImageFit::Cover { .. }
+        ));
+        assert!(GALLERY_IMAGE_FIT_SOURCE_PATH.ends_with("non-square-2x1.png"));
     }
 
     #[test]

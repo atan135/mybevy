@@ -145,7 +145,7 @@ MYBEVY_UI_AUDIT_EXIT_ON_FINISH=1
 - `MYBEVY_UI_AUDIT`：启用审计模式。
 - `MYBEVY_UI_AUDIT_SCREEN`：目标界面 alias，复用 `TOUCH_START_SCREEN` 的页面命名规则。
 - `MYBEVY_UI_AUDIT_OUTPUT`：本轮审计输出目录。
-- `MYBEVY_UI_AUDIT_STATES`：目标状态列表，当前支持 `visual_foundation`、`top`、`middle`、`bottom`、`initial`。其中 `visual_foundation` 是 UI Gallery 顶部固定 fixture 区域。
+- `MYBEVY_UI_AUDIT_STATES`：目标状态列表，当前支持 `image_fit`、`visual_foundation`、`top`、`middle`、`bottom`、`initial`。其中 `image_fit` 和 `visual_foundation` 是 UI Gallery 顶部固定图片能力与 fixture 区域。
 - `MYBEVY_UI_AUDIT_EXIT_ON_FINISH`：审计完成后自动退出进程，方便外部 runner 批量执行。
 
 窗口尺寸继续复用现有参数：
@@ -423,9 +423,9 @@ project/assets/ui/audit/screens.ron
 
 | screen | scroll target | states |
 | --- | --- | --- |
-| `ui_gallery` | `ui_gallery.main` | `visual_foundation`, `top`, `middle`, `bottom` |
+| `ui_gallery` | `ui_gallery.main` | `image_fit`, `visual_foundation`, `top`, `middle`, `bottom` |
 
-其他 screen 默认只有 `initial`。如果对没有 recipe 的 screen 显式请求 `visual_foundation`、`top`、`middle` 或 `bottom`，本地审计会失败并写出 `config_invalid`。远程 runner 会按约定发送 `<screen>.main` 作为滚动目标，真实能否执行取决于远程 client 是否注册对应稳定 ID。
+其他 screen 默认只有 `initial`。如果对没有 recipe 的 screen 显式请求 `image_fit`、`visual_foundation`、`top`、`middle` 或 `bottom`，本地审计会失败并写出 `config_invalid`。远程 runner 会按约定发送 `<screen>.main` 作为滚动目标，真实能否执行取决于远程 client 是否注册对应稳定 ID。
 
 ## 滚动检查
 

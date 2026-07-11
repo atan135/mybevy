@@ -42,7 +42,11 @@ impl Plugin for UiWidgetsPlugin {
             )
             .add_systems(
                 PostUpdate,
-                sync_text_input_caret.after(UiSystems::PostLayout),
+                (
+                    sync_text_input_caret,
+                    crate::framework::ui::widgets::image::update_ui_images,
+                )
+                    .after(UiSystems::PostLayout),
             );
     }
 }

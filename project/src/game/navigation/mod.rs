@@ -260,6 +260,11 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
         UiScrollAuditPosition::Top,
     ),
     UiAuditCaptureRecipe::scroll(
+        UiAuditCaptureState::ImageFit,
+        SCROLL_UI_GALLERY_MAIN,
+        UiScrollAuditPosition::Top,
+    ),
+    UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::Top,
         SCROLL_UI_GALLERY_MAIN,
         UiScrollAuditPosition::Top,
@@ -420,14 +425,15 @@ mod tests {
             .expect("ui gallery should be registered for audit");
         let recipe = screen.recipe.expect("ui gallery should have audit recipe");
 
-        assert_eq!(recipe.captures.len(), 4);
+        assert_eq!(recipe.captures.len(), 5);
         assert_eq!(
             recipe.captures[0].state,
             UiAuditCaptureState::VisualFoundation
         );
-        assert_eq!(recipe.captures[1].state, UiAuditCaptureState::Top);
-        assert_eq!(recipe.captures[2].state, UiAuditCaptureState::Middle);
-        assert_eq!(recipe.captures[3].state, UiAuditCaptureState::Bottom);
+        assert_eq!(recipe.captures[1].state, UiAuditCaptureState::ImageFit);
+        assert_eq!(recipe.captures[2].state, UiAuditCaptureState::Top);
+        assert_eq!(recipe.captures[3].state, UiAuditCaptureState::Middle);
+        assert_eq!(recipe.captures[4].state, UiAuditCaptureState::Bottom);
         assert_eq!(
             recipe.captures[0].scroll.map(|scroll| scroll.target_id),
             Some(SCROLL_UI_GALLERY_MAIN)

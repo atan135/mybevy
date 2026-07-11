@@ -21,7 +21,11 @@ pub(crate) use controls::{
     toggle_key, toggle_on_key,
 };
 #[allow(unused_imports)]
-pub(crate) use image::{UiImageFit, UiImageSize, ui_image, ui_image_panel_node, ui_thumbnail_grid};
+pub(crate) use image::{
+    UiImageConstraints, UiImageError, UiImageFit, UiImageFocus, UiImageLength, UiImageSize,
+    UiImageStatus, calculate_image_fit, ui_image, ui_image_panel_node,
+    ui_image_panel_node_with_radius, ui_thumbnail_grid,
+};
 #[allow(unused_imports)]
 pub(crate) use layout::{
     UiAlign, UiAlignSelf, UiContentAlign, UiJustify, UiResponsiveGridColumns, ui_action_row,

@@ -66,18 +66,18 @@ Set-Location project
 $env:MYBEVY_UI_AUDIT="1"
 $env:MYBEVY_UI_AUDIT_SCREEN="ui-gallery"
 $env:MYBEVY_UI_AUDIT_OUTPUT="..\summary\ui-audit\manual-local-check"
-$env:MYBEVY_UI_AUDIT_STATES="visual_foundation,middle,bottom"
+$env:MYBEVY_UI_AUDIT_STATES="image_fit,visual_foundation,middle,bottom"
 $env:MYBEVY_UI_AUDIT_EXIT_ON_FINISH="1"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
-输出目录会包含 `manifest.json`、`report.md`、`screenshots/` 和 `metadata/`。`ui_gallery` 的默认 runner 状态为 `visual_foundation`、`middle`、`bottom`；`visual_foundation` 固定指向主滚动容器顶部的 fixture 区域，兼容状态 `top` 仍可显式请求。其他页面默认只覆盖 `initial`。
+输出目录会包含 `manifest.json`、`report.md`、`screenshots/` 和 `metadata/`。`ui_gallery` 的默认 runner 状态为 `image_fit`、`visual_foundation`、`middle`、`bottom`；`image_fit` 和 `visual_foundation` 固定指向主滚动容器顶部的图片能力与 fixture 区域，兼容状态 `top` 仍可显式请求。其他页面默认只覆盖 `initial`。
 
 常规批量验收优先使用仓库根目录 runner：
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -SelfTest
-.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "visual_foundation,middle,bottom" -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "image_fit,visual_foundation,middle,bottom" -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States auto
 ```
 
@@ -153,7 +153,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - `manifest.json` 的 `status` 为 `passed` 或 dry-run 时为 `planned`。
 - `report.md` 中每个 capture 都有对应 screenshot 和 metadata 链接；远程模式至少有 screenshot / metadata artifact URI。
 - `analysis-input.json` 中每条 capture 的 `screen`、`device`、`state` 能对应回 `manifest.json` 和 `report.md`。
-- 有滚动 recipe 的 `ui_gallery` 默认覆盖 `visual_foundation`、`middle`、`bottom`，并记录 `scroll_target_id = ui_gallery.main`；固定高保真基线使用 `visual_foundation`，不要依赖会随页面总高度变化的 `middle`。
+- 有滚动 recipe 的 `ui_gallery` 默认覆盖 `image_fit`、`visual_foundation`、`middle`、`bottom`，并记录 `scroll_target_id = ui_gallery.main`；图片适配固定基线使用 `image_fit`，完整 fixture 固定基线使用 `visual_foundation`，不要依赖会随页面总高度变化的 `middle`。
 
 失败报告需要能定位：
 

@@ -132,9 +132,19 @@ UI 图片 helper 位于 `widgets/image.rs`，示例资源位于：
 - `project/assets/ui/images/`
 - `project/assets/ui/atlas/`
 
-当前 UI Gallery 展示首包图片和图集源图，图集源图只是普通 PNG 展示，不是正式图集帧预览。
+图片使用外层 frame 和内层 image 两层结构：
 
-高保真视觉 fixture 位于 `project/assets/ui/fixtures/`，清单见 `manifest.ron`，来源和许可见 `LICENSES.md`。UI Gallery 的首个固定区域会展示图片 fixture，并可通过审计 state `visual_foundation` 自动进入。fixture 只用于框架验收，不是正式业务资源；当前展示仍使用已有 `Stretch` helper，不代表已支持焦点裁切、九宫格或图集帧。
+- `ui_image_panel_node`：建立尺寸约束和矩形裁切 frame。
+- `ui_image_panel_node_with_radius`：额外建立圆角裁切；圆角和 `Overflow::clip()` 同属 frame。
+- `ui_image`：建立图片节点，并通过 `UiImageFit` 选择 `Natural`、`Stretch`、`Contain` 或 `Cover`。
+
+`Cover` 使用 `UiImageFocus` 控制裁切焦点。坐标基于源图左上角归一化，有限值会 clamp 到 `0..=1`，非有限值会产生 `Invalid` 状态。`UiImageSize::Constrained` 与 `UiImageConstraints` 支持固定/百分比/自动轴、宽高比和 min/max 的组合；调用 `validate` 或 `try_to_node` 可以在生成页面前取得 `UiImageError`。
+
+每个 `ui_image` 实体都有可查询的 `UiImageStatus`：`Loading`、`Ready`、`Failed`、`Invalid`。加载中、加载失败和非法配置使用不同的稳定占位色，frame 尺寸不依赖失败纹理。页面不要自行查询源图尺寸或计算 `ImageNode.rect`。
+
+当前 UI Gallery 展示全部四种适配模式、横竖 frame、Cover 两端焦点、首包图片和图集源图。图集源图仍只是普通 PNG 展示，不是正式图集帧预览。
+
+高保真视觉 fixture 位于 `project/assets/ui/fixtures/`，清单见 `manifest.ron`，来源和许可见 `LICENSES.md`。UI Gallery 的首个固定区域可通过审计 state `image_fit` 验收图片适配，或通过兼容 state `visual_foundation` 验收整个 fixture 区域。fixture 只用于框架验收，不是正式业务资源；九宫格、平铺和正式图集帧仍不属于当前图片适配 API。
 
 视觉能力状态、Direct Bevy 逃生口和非目标见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。
 

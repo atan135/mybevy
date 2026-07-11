@@ -34,8 +34,7 @@ commands.spawn((
 | 布局 `layout` | 页面专属绝对定位或 Transform 组合 | 允许直接使用 Bevy | 仅限局部组合，必须标记；不得复制通用响应式计算 |
 | 文字 `typography` | Regular 字体、主题字号角色、颜色角色、换行和 i18n 刷新 | 框架支持 | `style/fonts.rs`、`style/theme.rs`、`i18n.rs` |
 | 文字 `typography` | Medium/Bold 注册、字体 fallback、字距、截断策略和复杂富文本 | 暂不支持 | 多字重 fixture 已准备，但尚未进入运行时字体注册表 |
-| 图片 `image` | `Natural`、`Stretch` 和固定/百分比/宽高比容器 | 框架支持 | `widgets/image.rs` |
-| 图片 `image` | `Contain`、`Cover`、焦点裁切和统一加载失败占位 | 暂不支持 | 不得在业务页面复制裁切计算 |
+| 图片 `image` | `Natural`、`Stretch`、`Contain`、焦点 `Cover`、组合尺寸约束和加载状态占位 | 框架支持 | `widgets/image.rs`；页面使用 frame + image helper，不复制适配或裁切计算 |
 | 切片 `slice` | `NodeImageMode::Sliced`、`Tiled` 的页面级试验 | 允许直接使用 Bevy | 必须标记；尚无序列化边距、最小尺寸和组合校验 |
 | 图标 `icon` | 使用 `ImageNode` 的页面级正式图片图标 | 允许直接使用 Bevy | 必须保留可访问名称并标记；文本符号只用于当前开发样例 |
 | 图标 `icon` | 稳定图标 ID、着色边界和缺失图标占位 | 暂不支持 | 尚无图标注册表 |
@@ -53,19 +52,32 @@ commands.spawn((
 
 ## 稳定验收区域
 
-UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代码 marker 为 `GalleryVisualFoundationRegion`。该区域只展示阶段 1 fixture，不把未来能力伪装成已实现能力。
+UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代码 marker 为 `GalleryVisualFoundationRegion`。该区域展示已实现的图片适配矩阵和可追溯 fixture，不把未来能力伪装成已实现能力。
 
 - 页面：`ui_gallery`，别名 `ui-gallery`、`gallery`
-- 审计 state：`visual_foundation`
+- 图片适配审计 state：`image_fit`
+- fixture 兼容审计 state：`visual_foundation`
 - 滚动目标：`ui_gallery.main`
 - 位置：主滚动容器顶部
 - fixture 清单：`project/assets/ui/fixtures/manifest.ron`
 
-批量 runner 的 `-States auto` 会为 UI Gallery 选择 `visual_foundation,middle,bottom`。仍可显式请求兼容 state `top`。
+批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,middle,bottom`。`image_fit` 和 `visual_foundation` 都稳定指向顶部固定区域，仍可显式请求兼容 state `top`。
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States visual_foundation -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States image_fit -DryRun
 ```
+
+## 图片适配规则
+
+`ui_image_panel_node` 或 `ui_image_panel_node_with_radius` 负责外层布局约束和 `Overflow::clip()`；`ui_image` 只负责内层图片绘制。运行时只更新内层节点尺寸和 `ImageNode.rect`，不会把图片源尺寸写回父节点布局。
+
+- `Natural`：按源图片像素作为逻辑尺寸绘制；超出 frame 的部分由 frame 裁切。
+- `Stretch`：忽略源宽高比，填满 frame。
+- `Contain`：保持源宽高比，取能完整放入 frame 的最大尺寸，剩余区域透明。
+- `Cover`：填满 frame，并在源图范围内生成保持 frame 宽高比的裁切矩形。焦点使用归一化源图坐标，`(0, 0)` 是左上，`(1, 1)` 是右下；有限的越界值会 clamp，`NaN` 和 infinity 会进入 `Invalid`。
+
+frame 支持固定尺寸、百分比尺寸、单轴自动尺寸、宽高比以及 min/max 组合。非有限值、非正基础尺寸或宽高比、超过 `100%` 的百分比、矛盾 min/max、不同单位的 min/max 对，以及同时指定宽、高和宽高比都会返回稳定错误码。运行时状态为 `Loading`、`Ready`、`Failed` 或 `Invalid`；后三种非就绪路径不会回退到图片纹理的 1x1 尺寸。
 
 后续能力应扩展此固定区域或增加新的命名 state；不要依赖内容总高度计算出的 `middle` 作为唯一高保真基线。
 

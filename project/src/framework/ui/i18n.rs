@@ -470,7 +470,12 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
         ("ui_gallery.visual_foundation.section", "视觉基础"),
         (
             "ui_gallery.visual_foundation.description",
-            "透明边缘、2:1 图片、九宫格与图集测试资源。",
+            "确定性图片适配样例，以及透明边缘、九宫格与图集测试资源。",
+        ),
+        ("ui_gallery.image_fit.section", "图片适配"),
+        (
+            "ui_gallery.image_fit.description",
+            "横竖容器中的原始、拉伸、包含与焦点覆盖模式。",
         ),
         ("ui_gallery.typography.section", "文字排版"),
         ("ui_gallery.typography.large_title", "大标题"),
