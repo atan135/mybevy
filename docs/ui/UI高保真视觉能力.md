@@ -35,7 +35,8 @@ commands.spawn((
 | 文字 `typography` | Regular 字体、主题字号角色、颜色角色、换行和 i18n 刷新 | 框架支持 | `style/fonts.rs`、`style/theme.rs`、`i18n.rs` |
 | 文字 `typography` | Medium/Bold 注册、字体 fallback、字距、截断策略和复杂富文本 | 暂不支持 | 多字重 fixture 已准备，但尚未进入运行时字体注册表 |
 | 图片 `image` | `Natural`、`Stretch`、`Contain`、焦点 `Cover`、组合尺寸约束和加载状态占位 | 框架支持 | `widgets/image.rs`；页面使用 frame + image helper，不复制适配或裁切计算 |
-| 切片 `slice` | `NodeImageMode::Sliced`、`Tiled` 的页面级试验 | 允许直接使用 Bevy | 必须标记；尚无序列化边距、最小尺寸和组合校验 |
+| 切片 `slice` | 九宫格边距、中心/边缘缩放策略、X/Y/双向平铺和重复预算 | 框架支持 | `widgets/image.rs`；由可序列化描述校验后映射到 `NodeImageMode::Sliced` / `Tiled` |
+| 图片 `image` | 图集源纹理、像素帧、原始尺寸和归一化 pivot 描述 | 框架支持 | `UiAtlasFrame` + `try_ui_advanced_image`；越界或不支持的切片组合在生成 bundle 前返回错误 |
 | 图标 `icon` | 使用 `ImageNode` 的页面级正式图片图标 | 允许直接使用 Bevy | 必须保留可访问名称并标记；文本符号只用于当前开发样例 |
 | 图标 `icon` | 稳定图标 ID、着色边界和缺失图标占位 | 暂不支持 | 尚无图标注册表 |
 | 表面 `surface` | 主题色驱动的纯色页面、面板和按钮背景 | 框架支持 | `UiThemeBackgroundRole` 和组件 helper |
@@ -57,15 +58,22 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - 页面：`ui_gallery`，别名 `ui-gallery`、`gallery`
 - 图片适配审计 state：`image_fit`
 - fixture 兼容审计 state：`visual_foundation`
+- 九宫格审计 state：`image_modes`
+- 平铺审计 state：`image_tiling`
+- 图集帧审计 state：`image_atlas`
 - 滚动目标：`ui_gallery.main`
-- 位置：主滚动容器顶部
+- 图片适配位置：主滚动容器顶部
+- 高级图片 anchor：`ui_gallery.image_modes`
+- 平铺/图集 anchor：`ui_gallery.image_tiling`、`ui_gallery.image_atlas`
 - fixture 清单：`project/assets/ui/fixtures/manifest.ron`
 
-批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,middle,bottom`。`image_fit` 和 `visual_foundation` 都稳定指向顶部固定区域，仍可显式请求兼容 state `top`。
+批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,image_modes,image_tiling,image_atlas,middle,bottom`。`image_fit` 和 `visual_foundation` 固定指向顶部区域；三个高级图片 state 根据命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。仍可显式请求兼容 state `top`。
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States visual_foundation -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States image_fit -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States image_modes -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States "image_tiling,image_atlas" -DryRun
 ```
 
 ## 图片适配规则
@@ -78,6 +86,16 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - `Cover`：填满 frame，并在源图范围内生成保持 frame 宽高比的裁切矩形。焦点使用归一化源图坐标，`(0, 0)` 是左上，`(1, 1)` 是右下；有限的越界值会 clamp，`NaN` 和 infinity 会进入 `Invalid`。
 
 frame 支持固定尺寸、百分比尺寸、单轴自动尺寸、宽高比以及 min/max 组合。非有限值、非正基础尺寸或宽高比、超过 `100%` 的百分比、矛盾 min/max、不同单位的 min/max 对，以及同时指定宽、高和宽高比都会返回稳定错误码。运行时状态为 `Loading`、`Ready`、`Failed` 或 `Invalid`；后三种非就绪路径不会回退到图片纹理的 1x1 尺寸。
+
+## 九宫格、平铺与图集帧规则
+
+`UiAdvancedImageSpec` 组合可序列化的源纹理描述与 `Stretch`、`NineSlice` 或 `Tiled` 模式。`try_ui_advanced_image(&AssetServer, spec, size)` 先校验全部静态约束，再且仅按 spec 的 source path 创建实际图片 handle；调用方不能另行注入同尺寸纹理。实际资源加载后仍会比对声明尺寸，并继续复用 `UiImageStatus` 和现有占位状态机。
+
+- 九宫格使用 `UiNineSlice`：insets 必须有限、非负，且对边之和严格小于源图尺寸。中心和边缘分别选择 Stretch 或 Tile；Tile 的 `stretch_value` 限制为 `0.001..=1.0`，避免依赖 Bevy 的静默 clamp。
+- 角块缩放与 Bevy 0.18.1 一致：取目标/源图两轴比例的较小值并受 `max_corner_scale` 限制。小目标会等比缩小四角，不会让对边超过目标；目标每轴至少覆盖一个物理像素，高 DPI 下按 `device_scale` 判断。
+- 九宫格 Tile 在构建运行时模式前估算生成 slice 数，并受 `max_generated_slices` 限制；整图平铺使用 `UiImageTiling` 的 X、Y 或 Both 轴向和 `max_repeats` 总预算。
+- `UiAtlasFrame` 记录权威资源路径、源纹理尺寸、像素 rect、未裁原始尺寸和可选 pivot。pivot 是未裁帧左上原点的 `0..=1` 坐标。空路径、绝对/父级/Windows drive-relative 路径、反斜杠、零尺寸、帧越界、original size 小于帧或非有限 pivot 均返回稳定错误。高级 API 当前不接受无路径的程序化图片；此类整图仍使用基础 `ui_image`，需要高级模式时应先建立显式 source variant。
+- 当前明确拒绝 atlas frame 与 NineSlice/Tiled 组合。即使底层 `ImageNode.rect` 与 slice mode 可以同时赋值，也不把 Bevy 0.18.1 的组合渲染细节当作框架兼容承诺。
 
 后续能力应扩展此固定区域或增加新的命名 state；不要依赖内容总高度计算出的 `middle` 作为唯一高保真基线。
 

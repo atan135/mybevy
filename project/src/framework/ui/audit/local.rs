@@ -16,8 +16,9 @@ use crate::framework::ui::{
         UiPanelRoot, UiViewport, UiWidthClass, stats::UiStats,
     },
     widgets::{
-        UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition, UiScrollView,
-        scroll_audit_metrics, scroll_audit_position_reached, set_scroll_audit_position,
+        UiScrollAuditAnchorId, UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition,
+        UiScrollView, scroll_audit_metrics, scroll_audit_position_reached, set_scroll_audit_anchor,
+        set_scroll_audit_position,
     },
 };
 
@@ -32,6 +33,9 @@ const DEFAULT_AUDIT_OUTPUT_ROOT: &str = "../summary/ui-audit";
 const INITIAL_CAPTURE_STATE: &str = "initial";
 const VISUAL_FOUNDATION_CAPTURE_STATE: &str = "visual_foundation";
 const IMAGE_FIT_CAPTURE_STATE: &str = "image_fit";
+const IMAGE_MODES_CAPTURE_STATE: &str = "image_modes";
+const IMAGE_TILING_CAPTURE_STATE: &str = "image_tiling";
+const IMAGE_ATLAS_CAPTURE_STATE: &str = "image_atlas";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
@@ -184,7 +188,21 @@ impl UiAuditCaptureRecipe {
             state,
             scroll: Some(UiAuditScrollRecipe {
                 target_id,
-                position,
+                target: UiAuditScrollTarget::Position(position),
+            }),
+        }
+    }
+
+    pub(crate) const fn scroll_anchor(
+        state: UiAuditCaptureState,
+        target_id: UiScrollAuditId,
+        anchor_id: UiScrollAuditAnchorId,
+    ) -> Self {
+        Self {
+            state,
+            scroll: Some(UiAuditScrollRecipe {
+                target_id,
+                target: UiAuditScrollTarget::Anchor(anchor_id),
             }),
         }
     }
@@ -193,7 +211,22 @@ impl UiAuditCaptureRecipe {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct UiAuditScrollRecipe {
     pub target_id: UiScrollAuditId,
-    pub position: UiScrollAuditPosition,
+    pub target: UiAuditScrollTarget,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UiAuditScrollTarget {
+    Position(UiScrollAuditPosition),
+    Anchor(UiScrollAuditAnchorId),
+}
+
+impl UiAuditScrollTarget {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Position(position) => position.as_str(),
+            Self::Anchor(anchor) => anchor.as_str(),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -278,6 +311,9 @@ pub(crate) enum UiAuditCaptureState {
     Initial,
     VisualFoundation,
     ImageFit,
+    ImageModes,
+    ImageTiling,
+    ImageAtlas,
     Top,
     Middle,
     Bottom,
@@ -289,6 +325,9 @@ impl UiAuditCaptureState {
             Self::Initial => INITIAL_CAPTURE_STATE,
             Self::VisualFoundation => VISUAL_FOUNDATION_CAPTURE_STATE,
             Self::ImageFit => IMAGE_FIT_CAPTURE_STATE,
+            Self::ImageModes => IMAGE_MODES_CAPTURE_STATE,
+            Self::ImageTiling => IMAGE_TILING_CAPTURE_STATE,
+            Self::ImageAtlas => IMAGE_ATLAS_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -439,8 +478,17 @@ fn drive_local_ui_audit(
     panels: Query<&UiPanelRoot>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
     mut scroll_targets: Query<
-        (&UiScrollAuditId, &mut ScrollPosition, &ComputedNode),
+        (
+            &UiScrollAuditId,
+            &mut ScrollPosition,
+            &ComputedNode,
+            &UiGlobalTransform,
+        ),
         With<UiScrollView>,
+    >,
+    scroll_anchors: Query<
+        (&UiScrollAuditAnchorId, &ComputedNode, &UiGlobalTransform),
+        Without<UiScrollView>,
     >,
     mut route_writer: MessageWriter<UiAuditRouteCommand>,
     mut screenshot_writer: MessageWriter<crate::framework::ui::audit::UiScreenshotCommand>,
@@ -517,7 +565,7 @@ fn drive_local_ui_audit(
                 return;
             };
 
-            match apply_capture_state(&capture, &mut scroll_targets) {
+            match apply_capture_state(&capture, &mut scroll_targets, &scroll_anchors) {
                 Ok(()) => {}
                 Err((failure, detail)) => {
                     runtime.phase = UiAuditPhase::Failed(failure);
@@ -976,35 +1024,69 @@ fn target_owner_panel_ready(owner: UiOwnerId, panels: &Query<&UiPanelRoot>) -> b
 fn apply_capture_state(
     capture: &UiAuditCapturePlan,
     scroll_targets: &mut Query<
-        (&UiScrollAuditId, &mut ScrollPosition, &ComputedNode),
+        (
+            &UiScrollAuditId,
+            &mut ScrollPosition,
+            &ComputedNode,
+            &UiGlobalTransform,
+        ),
         With<UiScrollView>,
+    >,
+    scroll_anchors: &Query<
+        (&UiScrollAuditAnchorId, &ComputedNode, &UiGlobalTransform),
+        Without<UiScrollView>,
     >,
 ) -> Result<(), (UiAuditFailureKind, String)> {
     let Some(scroll) = capture.scroll else {
         return Ok(());
     };
 
-    for (id, mut position, computed) in scroll_targets.iter_mut() {
+    for (id, mut position, computed, transform) in scroll_targets.iter_mut() {
         if *id != scroll.target_id {
             continue;
         }
-        return set_scroll_audit_position(&mut position, computed, scroll.position)
-            .and_then(|_| {
-                scroll_audit_position_reached(&position, computed, scroll.position)
-                    .then_some(())
-                    .ok_or(crate::framework::ui::widgets::UiScrollAuditSetError::Unreachable)
-            })
-            .map_err(|_| {
-                (
-                    UiAuditFailureKind::ScrollTargetUnreachable,
-                    format!(
-                        "scroll target '{}' cannot reach '{}' for capture state '{}'",
-                        scroll.target_id,
-                        scroll.position.as_str(),
-                        capture.state.as_str()
-                    ),
+        let result = match scroll.target {
+            UiAuditScrollTarget::Position(target) => {
+                set_scroll_audit_position(&mut position, computed, target).and_then(|_| {
+                    scroll_audit_position_reached(&position, computed, target)
+                        .then_some(())
+                        .ok_or(crate::framework::ui::widgets::UiScrollAuditSetError::Unreachable)
+                })
+            }
+            UiAuditScrollTarget::Anchor(anchor_id) => {
+                let Some((_, anchor_computed, anchor_transform)) =
+                    scroll_anchors.iter().find(|(id, _, _)| **id == anchor_id)
+                else {
+                    return Err((
+                        UiAuditFailureKind::ScrollTargetMissing,
+                        format!(
+                            "scroll anchor '{}' was not found for capture state '{}'",
+                            anchor_id,
+                            capture.state.as_str()
+                        ),
+                    ));
+                };
+                set_scroll_audit_anchor(
+                    &mut position,
+                    computed,
+                    transform,
+                    anchor_computed,
+                    anchor_transform,
                 )
-            });
+                .map(|_| ())
+            }
+        };
+        return result.map_err(|_| {
+            (
+                UiAuditFailureKind::ScrollTargetUnreachable,
+                format!(
+                    "scroll target '{}' cannot reach '{}' for capture state '{}'",
+                    scroll.target_id,
+                    scroll.target.as_str(),
+                    capture.state.as_str()
+                ),
+            )
+        });
     }
 
     Err((
@@ -1020,18 +1102,24 @@ fn apply_capture_state(
 fn capture_scroll_metadata(
     capture: &UiAuditCapturePlan,
     scroll_targets: &mut Query<
-        (&UiScrollAuditId, &mut ScrollPosition, &ComputedNode),
+        (
+            &UiScrollAuditId,
+            &mut ScrollPosition,
+            &ComputedNode,
+            &UiGlobalTransform,
+        ),
         With<UiScrollView>,
     >,
 ) -> Option<UiAuditScrollMetadata> {
     let scroll = capture.scroll?;
     scroll_targets
         .iter_mut()
-        .find(|(id, _, _)| **id == scroll.target_id)
-        .map(|(id, position, computed)| {
+        .find(|(id, _, _, _)| **id == scroll.target_id)
+        .map(|(id, position, computed, _)| {
             UiAuditScrollMetadata::from_metrics(
                 *id,
-                scroll_audit_metrics(&position, computed, scroll.position),
+                scroll_audit_metrics(&position, computed, UiScrollAuditPosition::Top),
+                scroll.target,
             )
         })
 }
@@ -1072,7 +1160,7 @@ fn failure_detail(
                 format!(
                     "scroll target '{}' cannot reach '{}' for capture state '{}'",
                     scroll.target_id,
-                    scroll.position.as_str(),
+                    scroll.target.as_str(),
                     capture.state.as_str()
                 )
             })
@@ -1116,6 +1204,12 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::VisualFoundation)
     } else if value.eq_ignore_ascii_case(IMAGE_FIT_CAPTURE_STATE) {
         Some(UiAuditCaptureState::ImageFit)
+    } else if value.eq_ignore_ascii_case(IMAGE_MODES_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::ImageModes)
+    } else if value.eq_ignore_ascii_case(IMAGE_TILING_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::ImageTiling)
+    } else if value.eq_ignore_ascii_case(IMAGE_ATLAS_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::ImageAtlas)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -1324,14 +1418,18 @@ struct UiAuditScrollMetadata {
 }
 
 impl UiAuditScrollMetadata {
-    fn from_metrics(target_id: UiScrollAuditId, metrics: UiScrollAuditMetrics) -> Self {
+    fn from_metrics(
+        target_id: UiScrollAuditId,
+        metrics: UiScrollAuditMetrics,
+        target: UiAuditScrollTarget,
+    ) -> Self {
         Self {
             target_id: target_id.as_str().to_owned(),
             offset: metrics.offset,
             max_offset: metrics.max_offset,
             viewport_height: metrics.viewport_height,
             content_height: metrics.content_height,
-            position: metrics.position.as_str().to_owned(),
+            position: target.as_str().to_owned(),
         }
     }
 }
@@ -1528,7 +1626,7 @@ impl UiAuditManifestEntry {
                 .map(|scroll| scroll.target_id.as_str().to_owned()),
             scroll_position: capture
                 .scroll
-                .map(|scroll| scroll.position.as_str().to_owned()),
+                .map(|scroll| scroll.target.as_str().to_owned()),
             status,
             failure: failure.map(str::to_owned),
             detail: detail.map(str::to_owned),
@@ -1738,6 +1836,29 @@ mod tests {
         );
 
         assert_eq!(config.states, vec![UiAuditCaptureState::ImageFit]);
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn config_accepts_image_modes_capture_state() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "image_modes,image_tiling,image_atlas"),
+            ]),
+            100,
+        );
+
+        assert_eq!(
+            config.states,
+            vec![
+                UiAuditCaptureState::ImageModes,
+                UiAuditCaptureState::ImageTiling,
+                UiAuditCaptureState::ImageAtlas,
+            ]
+        );
         assert!(config.states_from_env);
         assert!(config.config_error.is_none());
     }

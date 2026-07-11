@@ -43,6 +43,25 @@ impl fmt::Display for UiScrollAuditId {
     }
 }
 
+#[derive(Clone, Copy, Component, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct UiScrollAuditAnchorId(&'static str);
+
+impl UiScrollAuditAnchorId {
+    pub(crate) const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for UiScrollAuditAnchorId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum UiScrollAuditPosition {
     Top,
@@ -250,6 +269,32 @@ pub(crate) fn set_scroll_audit_position(
     })
 }
 
+pub(crate) fn set_scroll_audit_anchor(
+    scroll_position: &mut ScrollPosition,
+    scroll_computed: &ComputedNode,
+    scroll_transform: &UiGlobalTransform,
+    anchor_computed: &ComputedNode,
+    anchor_transform: &UiGlobalTransform,
+) -> Result<UiScrollAuditMetrics, UiScrollAuditSetError> {
+    let max_offset = max_scroll_offset(scroll_computed);
+    let inverse_scale = scroll_computed.inverse_scale_factor();
+    let scroll_top = scroll_transform.affine().translation.y - scroll_computed.size().y * 0.5;
+    let anchor_top = anchor_transform.affine().translation.y - anchor_computed.size().y * 0.5;
+    let delta = (anchor_top - scroll_top) * inverse_scale;
+    if !delta.is_finite() || !max_offset.is_finite() {
+        return Err(UiScrollAuditSetError::Unreachable);
+    }
+
+    let target = (scroll_position.y + delta).clamp(0.0, max_offset.y);
+    scroll_position.y = target;
+    scroll_position.x = scroll_position.x.clamp(0.0, max_offset.x);
+
+    Ok(UiScrollAuditMetrics {
+        offset: target,
+        ..scroll_audit_metrics(scroll_position, scroll_computed, UiScrollAuditPosition::Top)
+    })
+}
+
 pub(crate) fn scroll_audit_metrics(
     scroll_position: &ScrollPosition,
     computed: &ComputedNode,
@@ -366,6 +411,10 @@ mod tests {
 
         assert_eq!(id.as_str(), "ui_gallery.main");
         assert_eq!(id.to_string(), "ui_gallery.main");
+
+        let anchor = UiScrollAuditAnchorId::new("ui_gallery.image_modes");
+        assert_eq!(anchor.as_str(), "ui_gallery.image_modes");
+        assert_eq!(anchor.to_string(), "ui_gallery.image_modes");
     }
 
     #[test]
@@ -422,5 +471,28 @@ mod tests {
             &computed,
             UiScrollAuditPosition::Bottom
         ));
+    }
+
+    #[test]
+    fn set_scroll_audit_anchor_aligns_child_top_with_scaled_viewport() {
+        let mut scroll = computed_node(Vec2::new(320.0, 200.0), Vec2::new(320.0, 1_000.0));
+        scroll.inverse_scale_factor = 0.5;
+        let anchor = computed_node(Vec2::new(300.0, 100.0), Vec2::new(300.0, 100.0));
+        let scroll_transform = UiGlobalTransform::from_xy(160.0, 100.0);
+        let anchor_transform = UiGlobalTransform::from_xy(160.0, 350.0);
+        let mut position = ScrollPosition(Vec2::new(0.0, 20.0));
+
+        let metrics = set_scroll_audit_anchor(
+            &mut position,
+            &scroll,
+            &scroll_transform,
+            &anchor,
+            &anchor_transform,
+        )
+        .unwrap();
+
+        assert_eq!(position.y, 170.0);
+        assert_eq!(metrics.offset, 170.0);
+        assert_eq!(metrics.max_offset, 400.0);
     }
 }

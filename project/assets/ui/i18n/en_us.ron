@@ -64,6 +64,8 @@
         "ui_gallery.visual_foundation.description": "Deterministic image fit samples plus alpha-edge, nine-slice, and atlas fixtures.",
         "ui_gallery.image_fit.section": "Image Fit",
         "ui_gallery.image_fit.description": "Natural, Stretch, Contain, and focused Cover in landscape and portrait frames.",
+        "ui_gallery.image_modes.section": "Nine-slice, Tiling, and Atlas Frames",
+        "ui_gallery.image_modes.description": "Scalable borders, bounded texture repetition, and exact frame regions.",
         "ui_gallery.typography.section": "Typography",
         "ui_gallery.typography.large_title": "Large Title",
         "ui_gallery.typography.section_title": "Section Title",

@@ -477,6 +477,11 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
             "ui_gallery.image_fit.description",
             "横竖容器中的原始、拉伸、包含与焦点覆盖模式。",
         ),
+        ("ui_gallery.image_modes.section", "九宫格、平铺与图集帧"),
+        (
+            "ui_gallery.image_modes.description",
+            "可缩放边框、受预算约束的纹理重复与精确图集帧区域。",
+        ),
         ("ui_gallery.typography.section", "文字排版"),
         ("ui_gallery.typography.large_title", "大标题"),
         ("ui_gallery.typography.section_title", "章节标题"),

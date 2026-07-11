@@ -12,6 +12,7 @@ use crate::framework::ui::{
     widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
 };
 use crate::game::ui_ids::{
+    ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING,
     OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT,
     OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN,
     OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
@@ -264,6 +265,21 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
         SCROLL_UI_GALLERY_MAIN,
         UiScrollAuditPosition::Top,
     ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::ImageModes,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_IMAGE_MODES,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::ImageTiling,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_IMAGE_TILING,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::ImageAtlas,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_IMAGE_ATLAS,
+    ),
     UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::Top,
         SCROLL_UI_GALLERY_MAIN,
@@ -425,22 +441,45 @@ mod tests {
             .expect("ui gallery should be registered for audit");
         let recipe = screen.recipe.expect("ui gallery should have audit recipe");
 
-        assert_eq!(recipe.captures.len(), 5);
+        assert_eq!(recipe.captures.len(), 8);
         assert_eq!(
             recipe.captures[0].state,
             UiAuditCaptureState::VisualFoundation
         );
         assert_eq!(recipe.captures[1].state, UiAuditCaptureState::ImageFit);
-        assert_eq!(recipe.captures[2].state, UiAuditCaptureState::Top);
-        assert_eq!(recipe.captures[3].state, UiAuditCaptureState::Middle);
-        assert_eq!(recipe.captures[4].state, UiAuditCaptureState::Bottom);
+        assert_eq!(recipe.captures[2].state, UiAuditCaptureState::ImageModes);
+        assert_eq!(recipe.captures[3].state, UiAuditCaptureState::ImageTiling);
+        assert_eq!(recipe.captures[4].state, UiAuditCaptureState::ImageAtlas);
+        assert_eq!(recipe.captures[5].state, UiAuditCaptureState::Top);
+        assert_eq!(recipe.captures[6].state, UiAuditCaptureState::Middle);
+        assert_eq!(recipe.captures[7].state, UiAuditCaptureState::Bottom);
         assert_eq!(
             recipe.captures[0].scroll.map(|scroll| scroll.target_id),
             Some(SCROLL_UI_GALLERY_MAIN)
         );
         assert_eq!(
-            recipe.captures[0].scroll.map(|scroll| scroll.position),
-            Some(UiScrollAuditPosition::Top)
+            recipe.captures[0]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(UiScrollAuditPosition::Top.as_str())
+        );
+        assert_eq!(
+            recipe.captures[2]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_IMAGE_MODES.as_str())
+        );
+        assert_eq!(
+            recipe.captures[3]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_IMAGE_TILING.as_str())
+        );
+        assert_eq!(
+            recipe.captures[4]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_IMAGE_ATLAS.as_str())
         );
     }
 }

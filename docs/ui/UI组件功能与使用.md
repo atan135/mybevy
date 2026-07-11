@@ -137,14 +137,17 @@ UI 图片 helper 位于 `widgets/image.rs`，示例资源位于：
 - `ui_image_panel_node`：建立尺寸约束和矩形裁切 frame。
 - `ui_image_panel_node_with_radius`：额外建立圆角裁切；圆角和 `Overflow::clip()` 同属 frame。
 - `ui_image`：建立图片节点，并通过 `UiImageFit` 选择 `Natural`、`Stretch`、`Contain` 或 `Cover`。
+- `try_ui_advanced_image`：接收 `&AssetServer` 和 `UiAdvancedImageSpec` 建立九宫格、受预算约束的平铺或正式图集帧；先完成所有校验，再由 spec path 加载唯一实际 handle，非法组合不会注册加载或生成 bundle。
 
 `Cover` 使用 `UiImageFocus` 控制裁切焦点。坐标基于源图左上角归一化，有限值会 clamp 到 `0..=1`，非有限值会产生 `Invalid` 状态。`UiImageSize::Constrained` 与 `UiImageConstraints` 支持固定/百分比/自动轴、宽高比和 min/max 的组合；调用 `validate` 或 `try_to_node` 可以在生成页面前取得 `UiImageError`。
 
 每个 `ui_image` 实体都有可查询的 `UiImageStatus`：`Loading`、`Ready`、`Failed`、`Invalid`。加载中、加载失败和非法配置使用不同的稳定占位色，frame 尺寸不依赖失败纹理。页面不要自行查询源图尺寸或计算 `ImageNode.rect`。
 
-当前 UI Gallery 展示全部四种适配模式、横竖 frame、Cover 两端焦点、首包图片和图集源图。图集源图仍只是普通 PNG 展示，不是正式图集帧预览。
+高级描述均可通过 serde/RON 持久化。`UiNineSlice` 分别声明四边 insets、中心/边缘 Stretch 或 Tile、角块最大缩放和生成 slice 预算；`UiImageTiling` 声明 X/Y/Both、重复阈值和总预算；`UiAtlasFrame` 声明权威源纹理路径/尺寸、像素 rect、原始尺寸及可选归一化 pivot。框架拒绝非有限值、资源路径或尺寸不一致、越界帧、超预算和 atlas + slice/tile 组合，不会依赖 Bevy 的静默 clamp 或降级；高级入口当前明确拒绝空路径的程序化图片。
 
-高保真视觉 fixture 位于 `project/assets/ui/fixtures/`，清单见 `manifest.ron`，来源和许可见 `LICENSES.md`。UI Gallery 的首个固定区域可通过审计 state `image_fit` 验收图片适配，或通过兼容 state `visual_foundation` 验收整个 fixture 区域。fixture 只用于框架验收，不是正式业务资源；九宫格、平铺和正式图集帧仍不属于当前图片适配 API。
+当前 UI Gallery 展示全部四种适配模式、横竖 frame、Cover 两端焦点，以及真实九宫格面板/多尺寸按钮边框、X/Y/Both 平铺和四个精确图集帧。
+
+高保真视觉 fixture 位于 `project/assets/ui/fixtures/`，清单见 `manifest.ron`，来源和许可见 `LICENSES.md`。UI Gallery 的首个固定区域可通过 `image_fit` 验收图片适配，或通过兼容 state `visual_foundation` 验收整个 fixture 区域；`image_modes`、`image_tiling`、`image_atlas` 会分别滚动到稳定 child anchor 验收九宫格、平铺和图集帧。fixture 只用于框架验收，不是正式业务资源。
 
 视觉能力状态、Direct Bevy 逃生口和非目标见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。
 

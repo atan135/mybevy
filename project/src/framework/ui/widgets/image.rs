@@ -1,9 +1,17 @@
-use std::fmt;
+use std::{fmt, path::Component};
 
-use bevy::{asset::LoadState, prelude::*};
+use bevy::{
+    asset::LoadState,
+    prelude::*,
+    sprite::{BorderRect, SliceScaleMode, TextureSlicer},
+};
+use serde::{Deserialize, Serialize};
 
 const INVALID_IMAGE_FALLBACK_WIDTH: f32 = 96.0;
 const INVALID_IMAGE_FALLBACK_HEIGHT: f32 = 64.0;
+const MIN_TILE_STRETCH_VALUE: f32 = 0.001;
+const MAX_SLICE_REPEAT_BUDGET: u32 = 4_096;
+const MAX_TILE_REPEAT_BUDGET: u32 = 65_536;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum UiImageFit {
@@ -38,6 +46,435 @@ impl UiImageFit {
             _ => None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiImagePixelSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl UiImagePixelSize {
+    pub(crate) const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+
+    const fn is_zero(self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
+    fn as_vec2(self) -> Vec2 {
+        Vec2::new(self.width as f32, self.height as f32)
+    }
+
+    fn as_uvec2(self) -> UVec2 {
+        UVec2::new(self.width, self.height)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiImagePixelRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl UiImagePixelRect {
+    pub(crate) const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    const fn size(self) -> UiImagePixelSize {
+        UiImagePixelSize::new(self.width, self.height)
+    }
+
+    fn as_rect(self) -> Rect {
+        Rect::from_corners(
+            Vec2::new(self.x as f32, self.y as f32),
+            Vec2::new(
+                self.x.saturating_add(self.width) as f32,
+                self.y.saturating_add(self.height) as f32,
+            ),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiImageTextureSource {
+    pub path: String,
+    pub size: UiImagePixelSize,
+}
+
+impl UiImageTextureSource {
+    pub(crate) fn new(path: impl Into<String>, size: UiImagePixelSize) -> Self {
+        Self {
+            path: path.into(),
+            size,
+        }
+    }
+
+    fn validate(&self) -> Result<(), UiImageError> {
+        let path = self.path.as_str();
+        if path.is_empty()
+            || path.trim() != path
+            || path.contains('\\')
+            || path.contains(':')
+            || path
+                .split('/')
+                .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
+            || std::path::Path::new(path).is_absolute()
+            || std::path::Path::new(path).components().any(|component| {
+                matches!(
+                    component,
+                    Component::Prefix(_)
+                        | Component::RootDir
+                        | Component::CurDir
+                        | Component::ParentDir
+                )
+            })
+        {
+            return Err(UiImageError::InvalidSourcePath);
+        }
+        if self.size.is_zero() {
+            return Err(UiImageError::ZeroDeclaredSourceSize);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiImagePivot {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl UiImagePivot {
+    /// Normalized untrimmed-frame coordinates: (0, 0) is top-left and (1, 1) is bottom-right.
+    pub(crate) const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+
+    fn validate(self) -> Result<(), UiImageError> {
+        if !self.x.is_finite() || !self.y.is_finite() {
+            return Err(UiImageError::NonFinitePivot);
+        }
+        if !(0.0..=1.0).contains(&self.x) || !(0.0..=1.0).contains(&self.y) {
+            return Err(UiImageError::PivotOutOfBounds);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiAtlasFrame {
+    pub source: UiImageTextureSource,
+    pub rect: UiImagePixelRect,
+    pub original_size: UiImagePixelSize,
+    pub pivot: Option<UiImagePivot>,
+}
+
+impl UiAtlasFrame {
+    pub(crate) fn validate(&self) -> Result<(), UiImageError> {
+        self.source.validate()?;
+        if self.rect.size().is_zero() {
+            return Err(UiImageError::ZeroFrameSize);
+        }
+        let Some(max_x) = self.rect.x.checked_add(self.rect.width) else {
+            return Err(UiImageError::FrameOutOfBounds);
+        };
+        let Some(max_y) = self.rect.y.checked_add(self.rect.height) else {
+            return Err(UiImageError::FrameOutOfBounds);
+        };
+        if max_x > self.source.size.width || max_y > self.source.size.height {
+            return Err(UiImageError::FrameOutOfBounds);
+        }
+        if self.original_size.is_zero()
+            || self.original_size.width < self.rect.width
+            || self.original_size.height < self.rect.height
+        {
+            return Err(UiImageError::OriginalSizeSmallerThanFrame);
+        }
+        if let Some(pivot) = self.pivot {
+            pivot.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiNineSliceInsets {
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+impl UiNineSliceInsets {
+    pub(crate) const fn all(value: f32) -> Self {
+        Self {
+            left: value,
+            right: value,
+            top: value,
+            bottom: value,
+        }
+    }
+
+    fn validate(self, source_size: Vec2) -> Result<(), UiImageError> {
+        let values = [self.left, self.right, self.top, self.bottom];
+        if values.iter().any(|value| !value.is_finite()) {
+            return Err(UiImageError::NonFiniteSliceInset);
+        }
+        if values.iter().any(|value| *value < 0.0) {
+            return Err(UiImageError::NegativeSliceInset);
+        }
+        if self.left + self.right >= source_size.x {
+            return Err(UiImageError::SliceInsetsOutOfBounds(
+                UiImageAxis::Horizontal,
+            ));
+        }
+        if self.top + self.bottom >= source_size.y {
+            return Err(UiImageError::SliceInsetsOutOfBounds(UiImageAxis::Vertical));
+        }
+        Ok(())
+    }
+
+    fn to_border_rect(self) -> BorderRect {
+        BorderRect {
+            min_inset: Vec2::new(self.left, self.top),
+            max_inset: Vec2::new(self.right, self.bottom),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum UiSliceScaleMode {
+    Stretch,
+    Tile { stretch_value: f32 },
+}
+
+impl UiSliceScaleMode {
+    fn validate(self) -> Result<(), UiImageError> {
+        let Self::Tile { stretch_value } = self else {
+            return Ok(());
+        };
+        if !stretch_value.is_finite() {
+            return Err(UiImageError::NonFiniteSliceScale);
+        }
+        if !(MIN_TILE_STRETCH_VALUE..=1.0).contains(&stretch_value) {
+            return Err(UiImageError::InvalidSliceScale);
+        }
+        Ok(())
+    }
+
+    fn to_bevy(self) -> SliceScaleMode {
+        match self {
+            Self::Stretch => SliceScaleMode::Stretch,
+            Self::Tile { stretch_value } => SliceScaleMode::Tile { stretch_value },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiNineSlice {
+    pub insets: UiNineSliceInsets,
+    pub center: UiSliceScaleMode,
+    pub sides: UiSliceScaleMode,
+    pub max_corner_scale: f32,
+    pub max_generated_slices: u32,
+}
+
+impl UiNineSlice {
+    pub(crate) const fn uniform(inset: f32) -> Self {
+        Self {
+            insets: UiNineSliceInsets::all(inset),
+            center: UiSliceScaleMode::Stretch,
+            sides: UiSliceScaleMode::Stretch,
+            max_corner_scale: 1.0,
+            max_generated_slices: 256,
+        }
+    }
+
+    fn validate_static(self) -> Result<(), UiImageError> {
+        self.center.validate()?;
+        self.sides.validate()?;
+        if !self.max_corner_scale.is_finite() {
+            return Err(UiImageError::NonFiniteCornerScale);
+        }
+        if !(0.0..=1.0).contains(&self.max_corner_scale) || self.max_corner_scale == 0.0 {
+            return Err(UiImageError::InvalidCornerScale);
+        }
+        if self.max_generated_slices == 0 || self.max_generated_slices > MAX_SLICE_REPEAT_BUDGET {
+            return Err(UiImageError::InvalidRepeatBudget);
+        }
+        Ok(())
+    }
+
+    fn to_texture_slicer(self) -> TextureSlicer {
+        TextureSlicer {
+            border: self.insets.to_border_rect(),
+            center_scale_mode: self.center.to_bevy(),
+            sides_scale_mode: self.sides.to_bevy(),
+            max_corner_scale: self.max_corner_scale,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UiTileAxis {
+    X,
+    Y,
+    Both,
+}
+
+impl UiTileAxis {
+    const fn flags(self) -> (bool, bool) {
+        match self {
+            Self::X => (true, false),
+            Self::Y => (false, true),
+            Self::Both => (true, true),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiImageTiling {
+    pub axis: UiTileAxis,
+    pub stretch_value: f32,
+    pub max_repeats: u32,
+}
+
+impl UiImageTiling {
+    pub(crate) const fn new(axis: UiTileAxis) -> Self {
+        Self {
+            axis,
+            stretch_value: 1.0,
+            max_repeats: 256,
+        }
+    }
+
+    fn validate_static(self) -> Result<(), UiImageError> {
+        if !self.stretch_value.is_finite() {
+            return Err(UiImageError::NonFiniteTileScale);
+        }
+        if !(MIN_TILE_STRETCH_VALUE..=1.0).contains(&self.stretch_value) {
+            return Err(UiImageError::InvalidTileScale);
+        }
+        if self.max_repeats == 0 || self.max_repeats > MAX_TILE_REPEAT_BUDGET {
+            return Err(UiImageError::InvalidRepeatBudget);
+        }
+        Ok(())
+    }
+
+    fn to_node_image_mode(self) -> NodeImageMode {
+        let (tile_x, tile_y) = self.axis.flags();
+        NodeImageMode::Tiled {
+            tile_x,
+            tile_y,
+            stretch_value: self.stretch_value,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub(crate) enum UiAdvancedImageSource {
+    Texture(UiImageTextureSource),
+    AtlasFrame(UiAtlasFrame),
+}
+
+impl UiAdvancedImageSource {
+    fn texture(&self) -> &UiImageTextureSource {
+        match self {
+            Self::Texture(source) => source,
+            Self::AtlasFrame(frame) => &frame.source,
+        }
+    }
+
+    fn validate(&self) -> Result<(), UiImageError> {
+        match self {
+            Self::Texture(source) => source.validate(),
+            Self::AtlasFrame(frame) => frame.validate(),
+        }
+    }
+
+    fn rect(&self) -> Option<Rect> {
+        match self {
+            Self::Texture(_) => None,
+            Self::AtlasFrame(frame) => Some(frame.rect.as_rect()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub(crate) enum UiAdvancedImageMode {
+    Stretch,
+    NineSlice(UiNineSlice),
+    Tiled(UiImageTiling),
+}
+
+impl UiAdvancedImageMode {
+    fn validate_static(self) -> Result<(), UiImageError> {
+        match self {
+            Self::Stretch => Ok(()),
+            Self::NineSlice(slice) => slice.validate_static(),
+            Self::Tiled(tiling) => tiling.validate_static(),
+        }
+    }
+
+    fn initial_node_image_mode(self) -> NodeImageMode {
+        match self {
+            Self::Stretch => NodeImageMode::Stretch,
+            Self::NineSlice(slice) => NodeImageMode::Sliced(slice.to_texture_slicer()),
+            Self::Tiled(tiling) => tiling.to_node_image_mode(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiAdvancedImageSpec {
+    pub source: UiAdvancedImageSource,
+    pub mode: UiAdvancedImageMode,
+}
+
+impl UiAdvancedImageSpec {
+    pub(crate) fn validate(&self) -> Result<(), UiImageError> {
+        self.source.validate()?;
+        self.mode.validate_static()?;
+        if matches!(self.source, UiAdvancedImageSource::AtlasFrame(_))
+            && !matches!(self.mode, UiAdvancedImageMode::Stretch)
+        {
+            return Err(UiImageError::IncompatibleAtlasMode);
+        }
+        if let UiAdvancedImageMode::NineSlice(slice) = self.mode {
+            slice
+                .insets
+                .validate(self.source.texture().size.as_vec2())?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct UiNineSliceLayout {
+    pub effective_corner_scale: f32,
+    pub estimated_slices: u32,
+    pub image_mode: NodeImageMode,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct UiTilingLayout {
+    pub repeats: UVec2,
+    pub total_repeats: u32,
+    pub image_mode: NodeImageMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -294,6 +731,29 @@ pub(crate) enum UiImageError {
     NonFiniteFocus,
     ZeroSourceSize,
     ZeroContainerSize,
+    InvalidSourcePath,
+    ZeroDeclaredSourceSize,
+    SourceSizeMismatch,
+    ZeroFrameSize,
+    FrameOutOfBounds,
+    OriginalSizeSmallerThanFrame,
+    NonFinitePivot,
+    PivotOutOfBounds,
+    NonFiniteSliceInset,
+    NegativeSliceInset,
+    SliceInsetsOutOfBounds(UiImageAxis),
+    NonFiniteSliceScale,
+    InvalidSliceScale,
+    NonFiniteCornerScale,
+    InvalidCornerScale,
+    NonFiniteTileScale,
+    InvalidTileScale,
+    InvalidRepeatBudget,
+    RepeatBudgetExceeded,
+    NonFiniteDeviceScale,
+    NonPositiveDeviceScale,
+    TargetBelowPhysicalPixel(UiImageAxis),
+    IncompatibleAtlasMode,
 }
 
 impl UiImageError {
@@ -309,6 +769,29 @@ impl UiImageError {
             Self::NonFiniteFocus => "non_finite_focus",
             Self::ZeroSourceSize => "zero_source_size",
             Self::ZeroContainerSize => "zero_container_size",
+            Self::InvalidSourcePath => "invalid_source_path",
+            Self::ZeroDeclaredSourceSize => "zero_declared_source_size",
+            Self::SourceSizeMismatch => "source_size_mismatch",
+            Self::ZeroFrameSize => "zero_frame_size",
+            Self::FrameOutOfBounds => "frame_out_of_bounds",
+            Self::OriginalSizeSmallerThanFrame => "original_size_smaller_than_frame",
+            Self::NonFinitePivot => "non_finite_pivot",
+            Self::PivotOutOfBounds => "pivot_out_of_bounds",
+            Self::NonFiniteSliceInset => "non_finite_slice_inset",
+            Self::NegativeSliceInset => "negative_slice_inset",
+            Self::SliceInsetsOutOfBounds(_) => "slice_insets_out_of_bounds",
+            Self::NonFiniteSliceScale => "non_finite_slice_scale",
+            Self::InvalidSliceScale => "invalid_slice_scale",
+            Self::NonFiniteCornerScale => "non_finite_corner_scale",
+            Self::InvalidCornerScale => "invalid_corner_scale",
+            Self::NonFiniteTileScale => "non_finite_tile_scale",
+            Self::InvalidTileScale => "invalid_tile_scale",
+            Self::InvalidRepeatBudget => "invalid_repeat_budget",
+            Self::RepeatBudgetExceeded => "repeat_budget_exceeded",
+            Self::NonFiniteDeviceScale => "non_finite_device_scale",
+            Self::NonPositiveDeviceScale => "non_positive_device_scale",
+            Self::TargetBelowPhysicalPixel(_) => "target_below_physical_pixel",
+            Self::IncompatibleAtlasMode => "incompatible_atlas_mode",
         }
     }
 }
@@ -345,17 +828,40 @@ pub(crate) struct UiImageFrame {
     validation_error: Option<UiImageError>,
 }
 
-#[derive(Clone, Copy, Component, Debug)]
+#[derive(Clone, Component, Debug)]
 pub(crate) struct UiImageWidget {
-    fit: UiImageFit,
+    presentation: UiImagePresentation,
     validation_error: Option<UiImageError>,
     ready_tint: Color,
+}
+
+#[derive(Clone, Debug)]
+enum UiImagePresentation {
+    Fit(UiImageFit),
+    Advanced(UiAdvancedImageSpec),
+}
+
+#[derive(Bundle)]
+pub(crate) struct UiAdvancedImageBundle {
+    node: Node,
+    image: ImageNode,
+    background: BackgroundColor,
+    widget: UiImageWidget,
+    status: UiImageStatus,
+    name: Name,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct UiImageFitLayout {
     pub render_size: Vec2,
     pub source_rect: Option<Rect>,
+}
+
+#[derive(Clone, Debug)]
+struct UiAdvancedImageLayout {
+    render_size: Vec2,
+    source_rect: Option<Rect>,
+    image_mode: NodeImageMode,
 }
 
 pub(crate) fn calculate_image_fit(
@@ -410,6 +916,169 @@ pub(crate) fn calculate_image_fit(
     }
 }
 
+pub(crate) fn calculate_nine_slice_layout(
+    slice: UiNineSlice,
+    source_size: Vec2,
+    target_size: Vec2,
+    device_scale: f32,
+) -> Result<UiNineSliceLayout, UiImageError> {
+    validate_source_and_target(source_size, target_size)?;
+    slice.validate_static()?;
+    slice.insets.validate(source_size)?;
+    validate_device_scale(device_scale)?;
+
+    let physical_target = target_size * device_scale;
+    if physical_target.x < 1.0 {
+        return Err(UiImageError::TargetBelowPhysicalPixel(
+            UiImageAxis::Horizontal,
+        ));
+    }
+    if physical_target.y < 1.0 {
+        return Err(UiImageError::TargetBelowPhysicalPixel(
+            UiImageAxis::Vertical,
+        ));
+    }
+
+    // This matches Bevy 0.18.1's corner rule. Scaling all corners by the smallest
+    // source-to-target ratio keeps opposing borders below the target extent.
+    let effective_corner_scale = (target_size.x / source_size.x)
+        .min(target_size.y / source_size.y)
+        .min(slice.max_corner_scale);
+    let source_center = Vec2::new(
+        source_size.x - slice.insets.left - slice.insets.right,
+        source_size.y - slice.insets.top - slice.insets.bottom,
+    );
+    let target_center = Vec2::new(
+        target_size.x - (slice.insets.left + slice.insets.right) * effective_corner_scale,
+        target_size.y - (slice.insets.top + slice.insets.bottom) * effective_corner_scale,
+    );
+    if !target_center.is_finite() || target_center.x < 0.0 || target_center.y < 0.0 {
+        return Err(UiImageError::ZeroContainerSize);
+    }
+
+    let center_count = match slice.center {
+        UiSliceScaleMode::Stretch => 1,
+        UiSliceScaleMode::Tile { stretch_value } => {
+            repeat_count(target_center.x, source_center.x, stretch_value)?.saturating_mul(
+                repeat_count(target_center.y, source_center.y, stretch_value)?,
+            )
+        }
+    };
+    let side_count = match slice.sides {
+        UiSliceScaleMode::Stretch => 4,
+        UiSliceScaleMode::Tile { stretch_value } => {
+            let horizontal = repeat_count(target_center.x, source_center.x, stretch_value)?;
+            let vertical = repeat_count(target_center.y, source_center.y, stretch_value)?;
+            horizontal
+                .saturating_mul(2)
+                .saturating_add(vertical.saturating_mul(2))
+        }
+    };
+    let estimated_slices = 4_u64
+        .saturating_add(center_count)
+        .saturating_add(side_count);
+    if estimated_slices > u64::from(slice.max_generated_slices) {
+        return Err(UiImageError::RepeatBudgetExceeded);
+    }
+
+    Ok(UiNineSliceLayout {
+        effective_corner_scale,
+        estimated_slices: estimated_slices as u32,
+        image_mode: NodeImageMode::Sliced(slice.to_texture_slicer()),
+    })
+}
+
+pub(crate) fn calculate_tiling_layout(
+    tiling: UiImageTiling,
+    source_size: Vec2,
+    target_size: Vec2,
+) -> Result<UiTilingLayout, UiImageError> {
+    validate_source_and_target(source_size, target_size)?;
+    tiling.validate_static()?;
+    let (tile_x, tile_y) = tiling.axis.flags();
+    let repeat_x = if tile_x {
+        repeat_count(target_size.x, source_size.x, tiling.stretch_value)?
+    } else {
+        1
+    };
+    let repeat_y = if tile_y {
+        repeat_count(target_size.y, source_size.y, tiling.stretch_value)?
+    } else {
+        1
+    };
+    let total_repeats = repeat_x.saturating_mul(repeat_y);
+    if total_repeats > u64::from(tiling.max_repeats) {
+        return Err(UiImageError::RepeatBudgetExceeded);
+    }
+
+    Ok(UiTilingLayout {
+        repeats: UVec2::new(repeat_x as u32, repeat_y as u32),
+        total_repeats: total_repeats as u32,
+        image_mode: tiling.to_node_image_mode(),
+    })
+}
+
+fn validate_source_and_target(source_size: Vec2, target_size: Vec2) -> Result<(), UiImageError> {
+    if !source_size.is_finite() || source_size.x <= 0.0 || source_size.y <= 0.0 {
+        return Err(UiImageError::ZeroSourceSize);
+    }
+    if !target_size.is_finite() || target_size.x <= 0.0 || target_size.y <= 0.0 {
+        return Err(UiImageError::ZeroContainerSize);
+    }
+    Ok(())
+}
+
+fn validate_device_scale(device_scale: f32) -> Result<(), UiImageError> {
+    if !device_scale.is_finite() {
+        return Err(UiImageError::NonFiniteDeviceScale);
+    }
+    if device_scale <= 0.0 {
+        return Err(UiImageError::NonPositiveDeviceScale);
+    }
+    Ok(())
+}
+
+fn repeat_count(
+    target_extent: f32,
+    source_extent: f32,
+    stretch_value: f32,
+) -> Result<u64, UiImageError> {
+    let tile_extent = (source_extent * stretch_value).max(1.0);
+    let repeats = (target_extent / tile_extent).ceil();
+    if !repeats.is_finite() || repeats > u64::MAX as f32 {
+        return Err(UiImageError::RepeatBudgetExceeded);
+    }
+    Ok(repeats.max(1.0) as u64)
+}
+
+fn resolve_advanced_image_layout(
+    spec: &UiAdvancedImageSpec,
+    actual_source_size: UVec2,
+    target_size: Vec2,
+    device_scale: f32,
+) -> Result<UiAdvancedImageLayout, UiImageError> {
+    spec.validate()?;
+    if actual_source_size != spec.source.texture().size.as_uvec2() {
+        return Err(UiImageError::SourceSizeMismatch);
+    }
+    let source_size = actual_source_size.as_vec2();
+    let image_mode = match spec.mode {
+        UiAdvancedImageMode::Stretch => NodeImageMode::Stretch,
+        UiAdvancedImageMode::NineSlice(slice) => {
+            calculate_nine_slice_layout(slice, source_size, target_size, device_scale)?.image_mode
+        }
+        UiAdvancedImageMode::Tiled(tiling) => {
+            calculate_tiling_layout(tiling, source_size, target_size)?.image_mode
+        }
+    };
+
+    Ok(UiAdvancedImageLayout {
+        render_size: target_size,
+        source_rect: spec.source.rect(),
+        image_mode,
+    })
+}
+
 pub(crate) fn ui_image(
     image: Handle<Image>,
     fit: UiImageFit,
@@ -432,13 +1101,43 @@ pub(crate) fn ui_image(
         ImageNode::new(image).with_mode(fit.to_node_image_mode()),
         BackgroundColor(loading_placeholder_color()),
         UiImageWidget {
-            fit,
+            presentation: UiImagePresentation::Fit(fit),
             validation_error,
             ready_tint: Color::WHITE,
         },
         status,
         Name::new("UI image"),
     )
+}
+
+pub(crate) fn try_ui_advanced_image(
+    asset_server: &AssetServer,
+    spec: UiAdvancedImageSpec,
+    size: UiImageSize,
+) -> Result<UiAdvancedImageBundle, UiImageError> {
+    spec.validate()?;
+    let mut node = size.try_to_node()?;
+    node.align_self = AlignSelf::Stretch;
+    let source_rect = spec.source.rect();
+    let image_mode = spec.mode.initial_node_image_mode();
+    let image: Handle<Image> = asset_server.load(spec.source.texture().path.clone());
+    let mut image_node = ImageNode::new(image).with_mode(image_mode);
+    if let Some(source_rect) = source_rect {
+        image_node = image_node.with_rect(source_rect);
+    }
+
+    Ok(UiAdvancedImageBundle {
+        node,
+        image: image_node,
+        background: BackgroundColor(loading_placeholder_color()),
+        widget: UiImageWidget {
+            presentation: UiImagePresentation::Advanced(spec),
+            validation_error: None,
+            ready_tint: Color::WHITE,
+        },
+        status: UiImageStatus::Loading,
+        name: Name::new("UI advanced image"),
+    })
 }
 
 pub(crate) fn ui_image_panel_node(size: UiImageSize) -> (Node, UiImageFrame, Name) {
@@ -510,7 +1209,7 @@ pub(crate) fn update_ui_images(
         let mut next_node = (*node).clone();
         let mut next_image_node = (*image_node).clone();
         let mut next_background = *background;
-        let (container_size, frame_error) = parent
+        let (container_size, frame_error, inverse_scale_factor) = parent
             .and_then(|parent| frames.get(parent.parent()).ok())
             .map(|(frame, computed)| {
                 let logical_size = computed.content_box().size() * computed.inverse_scale_factor;
@@ -519,12 +1218,14 @@ pub(crate) fn update_ui_images(
                     frame
                         .validation_error
                         .or_else(|| frame.size.validate().err()),
+                    computed.inverse_scale_factor,
                 )
             })
             .unwrap_or_else(|| {
                 (
                     computed.size() * computed.inverse_scale_factor,
                     widget.validation_error,
+                    computed.inverse_scale_factor,
                 )
             });
 
@@ -551,17 +1252,38 @@ pub(crate) fn update_ui_images(
             let image_id = next_image_node.image.id();
             if let Some(image) = images.get(image_id) {
                 let source_size = image.size();
-                match calculate_image_fit(widget.fit, source_size.as_vec2(), container_size) {
-                    Ok(layout) => {
-                        apply_ready_image(
+                let resolved = match &widget.presentation {
+                    UiImagePresentation::Fit(fit) => {
+                        calculate_image_fit(*fit, source_size.as_vec2(), container_size).map(
+                            |layout| {
+                                apply_ready_image(
+                                    &mut next_node,
+                                    &mut next_image_node,
+                                    &mut next_background,
+                                    widget.ready_tint,
+                                    layout,
+                                );
+                            },
+                        )
+                    }
+                    UiImagePresentation::Advanced(spec) => resolve_advanced_image_layout(
+                        spec,
+                        source_size,
+                        container_size,
+                        inverse_scale_factor.recip(),
+                    )
+                    .map(|layout| {
+                        apply_ready_advanced_image(
                             &mut next_node,
                             &mut next_image_node,
                             &mut next_background,
                             widget.ready_tint,
                             layout,
                         );
-                        UiImageStatus::Ready { source_size }
-                    }
+                    }),
+                };
+                match resolved {
+                    Ok(()) => UiImageStatus::Ready { source_size },
                     Err(error) => {
                         apply_image_placeholder(
                             &mut next_node,
@@ -650,6 +1372,20 @@ fn apply_ready_image(
     if image_node.color != tint {
         image_node.color = tint;
     }
+    *background = BackgroundColor(Color::NONE);
+}
+
+fn apply_ready_advanced_image(
+    node: &mut Node,
+    image_node: &mut ImageNode,
+    background: &mut BackgroundColor,
+    tint: Color,
+    layout: UiAdvancedImageLayout,
+) {
+    set_child_render_size(node, layout.render_size);
+    image_node.rect = layout.source_rect;
+    image_node.image_mode = layout.image_mode;
+    image_node.color = tint;
     *background = BackgroundColor(Color::NONE);
 }
 
@@ -819,6 +1555,52 @@ mod tests {
                 },
             ))
             .insert(computed_node(Vec2::splat(100.0)))
+            .id();
+        app.world_mut().entity_mut(frame).add_child(image);
+        image
+    }
+
+    fn texture_source(path: &str, width: u32, height: u32) -> UiImageTextureSource {
+        UiImageTextureSource::new(path, UiImagePixelSize::new(width, height))
+    }
+
+    fn nine_slice_spec(path: &str) -> UiAdvancedImageSpec {
+        UiAdvancedImageSpec {
+            source: UiAdvancedImageSource::Texture(texture_source(path, 48, 48)),
+            mode: UiAdvancedImageMode::NineSlice(UiNineSlice::uniform(12.0)),
+        }
+    }
+
+    fn spawn_runtime_advanced_image(
+        app: &mut App,
+        image: Image,
+        spec: UiAdvancedImageSpec,
+    ) -> Entity {
+        let frame = app
+            .world_mut()
+            .spawn(ui_image_panel_node(UiImageSize::FixedBox {
+                width: 120.0,
+                height: 72.0,
+            }))
+            .insert(computed_node(Vec2::new(120.0, 72.0)))
+            .id();
+        let bundle = try_ui_advanced_image(
+            app.world().resource::<AssetServer>(),
+            spec,
+            UiImageSize::PercentBox {
+                width: 100.0,
+                height: 100.0,
+            },
+        )
+        .unwrap();
+        app.world_mut()
+            .resource_mut::<Assets<Image>>()
+            .insert(bundle.image.image.id(), image)
+            .unwrap();
+        let image = app
+            .world_mut()
+            .spawn(bundle)
+            .insert(computed_node(Vec2::new(120.0, 72.0)))
             .id();
         app.world_mut().entity_mut(frame).add_child(image);
         image
@@ -1110,6 +1892,354 @@ mod tests {
         assert_eq!(
             calculate_image_fit(UiImageFit::Contain, Vec2::splat(100.0), Vec2::ZERO),
             Err(UiImageError::ZeroContainerSize)
+        );
+    }
+
+    #[test]
+    fn advanced_image_models_round_trip_through_ron() {
+        let specs = vec![
+            UiAdvancedImageSpec {
+                source: UiAdvancedImageSource::AtlasFrame(UiAtlasFrame {
+                    source: texture_source("ui/fixtures/atlas.png", 128, 32),
+                    rect: UiImagePixelRect::new(32, 0, 32, 32),
+                    original_size: UiImagePixelSize::new(40, 36),
+                    pivot: Some(UiImagePivot::new(0.5, 0.75)),
+                }),
+                mode: UiAdvancedImageMode::Stretch,
+            },
+            nine_slice_spec("ui/fixtures/nine-slice.png"),
+            UiAdvancedImageSpec {
+                source: UiAdvancedImageSource::Texture(texture_source(
+                    "ui/fixtures/tile.png",
+                    32,
+                    24,
+                )),
+                mode: UiAdvancedImageMode::Tiled(UiImageTiling::new(UiTileAxis::Both)),
+            },
+        ];
+
+        let encoded = ron::ser::to_string(&specs).unwrap();
+        let decoded: Vec<UiAdvancedImageSpec> = ron::de::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded, specs);
+        assert!(decoded.iter().all(|spec| spec.validate().is_ok()));
+    }
+
+    #[test]
+    fn nine_slice_maps_to_bevy_and_scales_down_without_flipping() {
+        let slice = UiNineSlice::uniform(12.0);
+        let layout =
+            calculate_nine_slice_layout(slice, Vec2::splat(48.0), Vec2::new(10.5, 7.25), 3.25)
+                .unwrap();
+
+        assert!((layout.effective_corner_scale - (7.25 / 48.0)).abs() < 0.001);
+        assert_eq!(layout.estimated_slices, 9);
+        let NodeImageMode::Sliced(slicer) = layout.image_mode else {
+            panic!("nine-slice should resolve to NodeImageMode::Sliced");
+        };
+        assert_eq!(slicer.border.min_inset, Vec2::splat(12.0));
+        assert_eq!(slicer.border.max_inset, Vec2::splat(12.0));
+        assert_eq!(slicer.center_scale_mode, SliceScaleMode::Stretch);
+        assert_eq!(slicer.sides_scale_mode, SliceScaleMode::Stretch);
+    }
+
+    #[test]
+    fn nine_slice_enforces_physical_pixel_and_source_bounds() {
+        let slice = UiNineSlice::uniform(12.0);
+        assert_eq!(
+            calculate_nine_slice_layout(slice, Vec2::splat(48.0), Vec2::new(0.30, 20.0), 3.25,),
+            Err(UiImageError::TargetBelowPhysicalPixel(
+                UiImageAxis::Horizontal
+            ))
+        );
+
+        let mut out_of_bounds = slice;
+        out_of_bounds.insets.right = 36.0;
+        assert_eq!(
+            calculate_nine_slice_layout(out_of_bounds, Vec2::splat(48.0), Vec2::splat(80.0), 1.0,),
+            Err(UiImageError::SliceInsetsOutOfBounds(
+                UiImageAxis::Horizontal
+            ))
+        );
+
+        let mut non_finite = slice;
+        non_finite.insets.top = f32::NAN;
+        assert_eq!(
+            calculate_nine_slice_layout(non_finite, Vec2::splat(48.0), Vec2::splat(80.0), 1.0,),
+            Err(UiImageError::NonFiniteSliceInset)
+        );
+
+        let mut negative = slice;
+        negative.insets.left = -1.0;
+        assert_eq!(
+            calculate_nine_slice_layout(negative, Vec2::splat(48.0), Vec2::splat(80.0), 1.0,),
+            Err(UiImageError::NegativeSliceInset)
+        );
+    }
+
+    #[test]
+    fn nine_slice_tiling_rejects_excessive_generated_slices() {
+        let mut slice = UiNineSlice::uniform(4.0);
+        slice.center = UiSliceScaleMode::Tile {
+            stretch_value: 0.25,
+        };
+        slice.sides = UiSliceScaleMode::Tile {
+            stretch_value: 0.25,
+        };
+        slice.max_generated_slices = 16;
+
+        assert_eq!(
+            calculate_nine_slice_layout(slice, Vec2::splat(48.0), Vec2::splat(500.0), 1.0,),
+            Err(UiImageError::RepeatBudgetExceeded)
+        );
+    }
+
+    #[test]
+    fn tiled_modes_map_axes_and_enforce_repeat_budget() {
+        let cases = [
+            (UiTileAxis::X, UVec2::new(4, 1)),
+            (UiTileAxis::Y, UVec2::new(1, 3)),
+            (UiTileAxis::Both, UVec2::new(4, 3)),
+        ];
+        for (axis, repeats) in cases {
+            let layout = calculate_tiling_layout(
+                UiImageTiling {
+                    axis,
+                    stretch_value: 1.0,
+                    max_repeats: 16,
+                },
+                Vec2::new(32.0, 24.0),
+                Vec2::new(100.0, 50.0),
+            )
+            .unwrap();
+            assert_eq!(layout.repeats, repeats);
+            let NodeImageMode::Tiled { tile_x, tile_y, .. } = layout.image_mode else {
+                panic!("tiling should resolve to NodeImageMode::Tiled");
+            };
+            assert_eq!((tile_x, tile_y), axis.flags());
+        }
+
+        assert_eq!(
+            calculate_tiling_layout(
+                UiImageTiling {
+                    axis: UiTileAxis::Both,
+                    stretch_value: 0.5,
+                    max_repeats: 8,
+                },
+                Vec2::splat(8.0),
+                Vec2::splat(100.0),
+            ),
+            Err(UiImageError::RepeatBudgetExceeded)
+        );
+    }
+
+    #[test]
+    fn tile_and_slice_scale_validation_rejects_bevy_clamp_inputs() {
+        assert_eq!(
+            UiImageTiling {
+                axis: UiTileAxis::X,
+                stretch_value: 0.0001,
+                max_repeats: 10,
+            }
+            .validate_static(),
+            Err(UiImageError::InvalidTileScale)
+        );
+        assert_eq!(
+            UiSliceScaleMode::Tile {
+                stretch_value: f32::INFINITY,
+            }
+            .validate(),
+            Err(UiImageError::NonFiniteSliceScale)
+        );
+        assert_eq!(
+            UiImageTiling {
+                axis: UiTileAxis::Both,
+                stretch_value: 1.0,
+                max_repeats: 0,
+            }
+            .validate_static(),
+            Err(UiImageError::InvalidRepeatBudget)
+        );
+    }
+
+    #[test]
+    fn atlas_frame_validates_bounds_original_size_pivot_and_path() {
+        let valid = UiAtlasFrame {
+            source: texture_source("ui/fixtures/atlas.png", 128, 32),
+            rect: UiImagePixelRect::new(96, 0, 32, 32),
+            original_size: UiImagePixelSize::new(32, 32),
+            pivot: Some(UiImagePivot::new(0.5, 0.5)),
+        };
+        assert_eq!(valid.validate(), Ok(()));
+
+        let mut frame = valid.clone();
+        frame.rect.x = 97;
+        assert_eq!(frame.validate(), Err(UiImageError::FrameOutOfBounds));
+
+        let mut frame = valid.clone();
+        frame.original_size.width = 31;
+        assert_eq!(
+            frame.validate(),
+            Err(UiImageError::OriginalSizeSmallerThanFrame)
+        );
+
+        let mut frame = valid.clone();
+        frame.pivot = Some(UiImagePivot::new(f32::NAN, 0.5));
+        assert_eq!(frame.validate(), Err(UiImageError::NonFinitePivot));
+
+        let mut frame = valid;
+        frame.source.path = "../atlas.png".to_owned();
+        assert_eq!(frame.validate(), Err(UiImageError::InvalidSourcePath));
+    }
+
+    #[test]
+    fn texture_source_rejects_programmatic_and_unsafe_windows_paths() {
+        for path in [
+            "",
+            "C:foo.png",
+            "C:/foo.png",
+            " ui/foo.png",
+            "/ui/foo.png",
+            "ui/./foo.png",
+            "../ui/foo.png",
+            r"ui\foo.png",
+            r"\\server\share\foo.png",
+        ] {
+            assert_eq!(
+                texture_source(path, 32, 32).validate(),
+                Err(UiImageError::InvalidSourcePath),
+                "path should be rejected: {path:?}"
+            );
+        }
+        assert_eq!(texture_source("ui/foo.png", 32, 32).validate(), Ok(()));
+    }
+
+    #[test]
+    fn advanced_builder_rejects_atlas_slice_before_loading_or_bundle_creation() {
+        let app = image_runtime_test_app();
+        let asset_server = app.world().resource::<AssetServer>();
+        let path = "ui/fixtures/atlas-invalid-combination.png";
+        let spec = UiAdvancedImageSpec {
+            source: UiAdvancedImageSource::AtlasFrame(UiAtlasFrame {
+                source: texture_source(path, 128, 32),
+                rect: UiImagePixelRect::new(0, 0, 32, 32),
+                original_size: UiImagePixelSize::new(32, 32),
+                pivot: None,
+            }),
+            mode: UiAdvancedImageMode::NineSlice(UiNineSlice::uniform(4.0)),
+        };
+
+        assert!(asset_server.get_handle::<Image>(path).is_none());
+        let result = try_ui_advanced_image(
+            asset_server,
+            spec,
+            UiImageSize::FixedBox {
+                width: 64.0,
+                height: 64.0,
+            },
+        );
+        assert!(matches!(result, Err(UiImageError::IncompatibleAtlasMode)));
+        assert!(asset_server.get_handle::<Image>(path).is_none());
+    }
+
+    #[test]
+    fn advanced_builder_uses_spec_path_and_cannot_accept_same_sized_wrong_texture() {
+        let mut app = image_runtime_test_app();
+        let declared_path = "ui/fixtures/atlas-declared.png";
+        let wrong_path = "ui/fixtures/atlas-wrong-same-size.png";
+        let wrong_handle: Handle<Image> = app.world().resource::<AssetServer>().load(wrong_path);
+        let spec = UiAdvancedImageSpec {
+            source: UiAdvancedImageSource::AtlasFrame(UiAtlasFrame {
+                source: texture_source(declared_path, 128, 32),
+                rect: UiImagePixelRect::new(32, 0, 32, 32),
+                original_size: UiImagePixelSize::new(32, 32),
+                pivot: None,
+            }),
+            mode: UiAdvancedImageMode::Stretch,
+        };
+
+        let bundle = try_ui_advanced_image(
+            app.world().resource::<AssetServer>(),
+            spec,
+            UiImageSize::FixedBox {
+                width: 32.0,
+                height: 32.0,
+            },
+        )
+        .unwrap();
+        let selected_handle = bundle.image.image.clone();
+
+        assert_ne!(selected_handle.id(), wrong_handle.id());
+        assert_eq!(
+            app.world()
+                .resource::<AssetServer>()
+                .get_path(selected_handle.id())
+                .unwrap()
+                .to_string(),
+            declared_path
+        );
+
+        let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+        images
+            .insert(wrong_handle.id(), test_image(128, 32))
+            .unwrap();
+        images
+            .insert(selected_handle.id(), test_image(128, 32))
+            .unwrap();
+        assert_eq!(
+            images.get(wrong_handle.id()).unwrap().size(),
+            images.get(selected_handle.id()).unwrap().size()
+        );
+    }
+
+    #[test]
+    fn advanced_runtime_applies_slice_and_stays_change_stable() {
+        let mut app = image_runtime_test_app();
+        let entity = spawn_runtime_advanced_image(
+            &mut app,
+            test_image(48, 48),
+            nine_slice_spec("ui/fixtures/nine-slice.png"),
+        );
+        let mut schedule = Schedule::default();
+        schedule.add_systems(update_ui_images);
+
+        app.world_mut().clear_trackers();
+        schedule.run(app.world_mut());
+        assert_eq!(
+            app.world().entity(entity).get::<UiImageStatus>(),
+            Some(&UiImageStatus::Ready {
+                source_size: UVec2::splat(48)
+            })
+        );
+        assert!(matches!(
+            app.world()
+                .entity(entity)
+                .get::<ImageNode>()
+                .unwrap()
+                .image_mode,
+            NodeImageMode::Sliced(_)
+        ));
+
+        app.world_mut().clear_trackers();
+        schedule.run(app.world_mut());
+        assert_image_component_changes(app.world(), entity, false);
+    }
+
+    #[test]
+    fn advanced_runtime_exposes_declared_source_size_mismatch() {
+        let mut app = image_runtime_test_app();
+        let entity = spawn_runtime_advanced_image(
+            &mut app,
+            test_image(64, 48),
+            nine_slice_spec("ui/fixtures/nine-slice.png"),
+        );
+        let mut schedule = Schedule::default();
+        schedule.add_systems(update_ui_images);
+        schedule.run(app.world_mut());
+
+        assert_eq!(
+            app.world().entity(entity).get::<UiImageStatus>(),
+            Some(&UiImageStatus::Invalid(UiImageError::SourceSizeMismatch))
         );
     }
 

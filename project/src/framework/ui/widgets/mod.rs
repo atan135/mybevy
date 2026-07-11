@@ -22,9 +22,13 @@ pub(crate) use controls::{
 };
 #[allow(unused_imports)]
 pub(crate) use image::{
-    UiImageConstraints, UiImageError, UiImageFit, UiImageFocus, UiImageLength, UiImageSize,
-    UiImageStatus, calculate_image_fit, ui_image, ui_image_panel_node,
-    ui_image_panel_node_with_radius, ui_thumbnail_grid,
+    UiAdvancedImageMode, UiAdvancedImageSource, UiAdvancedImageSpec, UiAtlasFrame,
+    UiImageConstraints, UiImageError, UiImageFit, UiImageFocus, UiImageLength, UiImagePivot,
+    UiImagePixelRect, UiImagePixelSize, UiImageSize, UiImageStatus, UiImageTextureSource,
+    UiImageTiling, UiNineSlice, UiNineSliceInsets, UiSliceScaleMode, UiTileAxis,
+    calculate_image_fit, calculate_nine_slice_layout, calculate_tiling_layout,
+    try_ui_advanced_image, ui_image, ui_image_panel_node, ui_image_panel_node_with_radius,
+    ui_thumbnail_grid,
 };
 #[allow(unused_imports)]
 pub(crate) use layout::{
@@ -34,8 +38,9 @@ pub(crate) use layout::{
 };
 #[allow(unused_imports)]
 pub(crate) use scroll::{
-    UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition, UiScrollAuditSetError,
-    UiScrollView, UiScrollViewConfig, scroll_audit_metrics, scroll_audit_position_reached,
-    set_scroll_audit_position, target_scroll_offset, ui_scroll_column, ui_scroll_column_bundle,
-    ui_scroll_column_node, ui_scroll_column_with_max_height, ui_scroll_pickable,
+    UiScrollAuditAnchorId, UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition,
+    UiScrollAuditSetError, UiScrollView, UiScrollViewConfig, scroll_audit_metrics,
+    scroll_audit_position_reached, set_scroll_audit_anchor, set_scroll_audit_position,
+    target_scroll_offset, ui_scroll_column, ui_scroll_column_bundle, ui_scroll_column_node,
+    ui_scroll_column_with_max_height, ui_scroll_pickable,
 };

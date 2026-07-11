@@ -19,27 +19,31 @@ use crate::framework::ui::{
         },
     },
     widgets::{
-        DisabledTextInput, FocusedButton, ReadonlyTextInput, SelectedButton, UiAlign,
-        UiButtonEvent, UiButtonEventKind, UiImageConstraints, UiImageFit, UiImageFocus,
-        UiImageLength, UiImageSize, UiJustify, UiResponsiveGridColumns, UiTextInputAlphanumeric,
+        DisabledTextInput, FocusedButton, ReadonlyTextInput, SelectedButton, UiAdvancedImageMode,
+        UiAdvancedImageSource, UiAdvancedImageSpec, UiAlign, UiAtlasFrame, UiButtonEvent,
+        UiButtonEventKind, UiImageConstraints, UiImageFit, UiImageFocus, UiImageLength,
+        UiImagePivot, UiImagePixelRect, UiImagePixelSize, UiImageSize, UiImageTextureSource,
+        UiImageTiling, UiJustify, UiNineSlice, UiResponsiveGridColumns, UiTextInputAlphanumeric,
         UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars, UiTextInputRequired,
-        UiTextInputSubmitted, UiTextInputValidationMessage, checkbox_key, checked_checkbox_key,
-        disabled_checkbox_key, disabled_icon_button_key, disabled_primary_action_button_key,
-        disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
-        disabled_stepper_key, disabled_toggle_key, icon_button_key, loading_icon_button_key,
+        UiTextInputSubmitted, UiTextInputValidationMessage, UiTileAxis, checkbox_key,
+        checked_checkbox_key, disabled_checkbox_key, disabled_icon_button_key,
+        disabled_primary_action_button_key, disabled_secondary_action_button_key,
+        disabled_segment_option_key, disabled_slider_key, disabled_stepper_key,
+        disabled_toggle_key, icon_button_key, loading_icon_button_key,
         loading_primary_action_button_key, primary_action_button_key, screen_label,
         screen_label_key, screen_title_key, secondary_action_button_key, segment_option_key,
         segmented_control, selected_segment_option_key, slider_key, stepper_key, text_input,
-        text_input_form_message, toggle_key, toggle_on_key, ui_column, ui_image,
-        ui_image_panel_node, ui_image_panel_node_with_radius, ui_responsive_column,
+        text_input_form_message, toggle_key, toggle_on_key, try_ui_advanced_image, ui_column,
+        ui_image, ui_image_panel_node, ui_image_panel_node_with_radius, ui_responsive_column,
         ui_responsive_grid, ui_scroll_column, ui_thumbnail_grid,
     },
 };
 use crate::game::{
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{
-        ACTION_CANCEL, ACTION_CONFIRM, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
-        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_IMAGE_ATLAS,
+        ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING, MODAL_GALLERY_CONFIRM,
+        OWNER_UI_GALLERY, PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
 
@@ -51,6 +55,9 @@ const GALLERY_VISUAL_FIXTURE_PATHS: [&str; 4] = [
     "ui/fixtures/visual-foundation/atlas-four-frames.png",
 ];
 const GALLERY_IMAGE_FIT_SOURCE_PATH: &str = "ui/fixtures/visual-foundation/non-square-2x1.png";
+const GALLERY_NINE_SLICE_SOURCE_PATH: &str = "ui/fixtures/visual-foundation/nine-slice-12px.png";
+const GALLERY_TILE_SOURCE_PATH: &str = "ui/fixtures/visual-foundation/non-square-2x1.png";
+const GALLERY_FRAME_SOURCE_PATH: &str = "ui/fixtures/visual-foundation/atlas-four-frames.png";
 #[cfg(test)]
 const GALLERY_VISUAL_FONT_FIXTURE_PATHS: [&str; 3] = [
     "ui/fixtures/fonts/FigtreeFixture-Regular.ttf",
@@ -126,6 +133,39 @@ struct GalleryVisualFoundationRegion;
 
 #[derive(Component)]
 struct GalleryImageFitRegion;
+
+#[derive(Component)]
+struct GalleryImageModesRegion;
+
+#[derive(Clone, Copy)]
+struct GalleryAtlasFrameSample {
+    label: &'static str,
+    x: u32,
+    pivot: UiImagePivot,
+}
+
+const GALLERY_ATLAS_FRAME_SAMPLES: [GalleryAtlasFrameSample; 4] = [
+    GalleryAtlasFrameSample {
+        label: "Red circle",
+        x: 0,
+        pivot: UiImagePivot::new(0.5, 0.5),
+    },
+    GalleryAtlasFrameSample {
+        label: "Green square",
+        x: 32,
+        pivot: UiImagePivot::new(0.5, 0.5),
+    },
+    GalleryAtlasFrameSample {
+        label: "Blue diamond",
+        x: 64,
+        pivot: UiImagePivot::new(0.5, 0.5),
+    },
+    GalleryAtlasFrameSample {
+        label: "Yellow cross",
+        x: 96,
+        pivot: UiImagePivot::new(0.5, 0.5),
+    },
+];
 
 #[derive(Clone, Copy)]
 struct GalleryImageFitSample {
@@ -319,6 +359,55 @@ pub(super) fn setup_ui_gallery(
                                 );
                             }
                         });
+                });
+
+                body.spawn((
+                    gallery_panel(theme),
+                    GalleryImageModesRegion,
+                    ANCHOR_UI_GALLERY_IMAGE_MODES,
+                    Name::new("Gallery advanced image modes region"),
+                ))
+                .with_children(|image_modes| {
+                    image_modes.spawn(section_label_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "ui_gallery.image_modes.section",
+                        "Nine-slice, Tiling, and Atlas Frames",
+                    ));
+                    image_modes.spawn(screen_label_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "ui_gallery.image_modes.description",
+                        "Scalable borders, bounded texture repetition, and exact frame regions.",
+                        UiThemeTextStyleRole::Body,
+                        UiThemeTextColorRole::Muted,
+                    ));
+                    spawn_gallery_nine_slice_samples(
+                        image_modes,
+                        theme,
+                        metrics,
+                        fonts,
+                        width_class,
+                        asset_server,
+                    );
+                    spawn_gallery_tiling_samples(
+                        image_modes,
+                        theme,
+                        metrics,
+                        fonts,
+                        width_class,
+                        asset_server,
+                    );
+                    spawn_gallery_atlas_frame_samples(
+                        image_modes,
+                        theme,
+                        metrics,
+                        fonts,
+                        width_class,
+                        asset_server,
+                    );
                 });
 
                 body.spawn(gallery_panel(theme))
@@ -1517,6 +1606,244 @@ fn spawn_gallery_image_fit_preview(
         });
 }
 
+fn spawn_gallery_nine_slice_samples(
+    image_modes: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    width_class: UiWidthClass,
+    asset_server: &AssetServer,
+) {
+    image_modes.spawn(screen_label(
+        theme,
+        fonts,
+        "Nine-slice",
+        UiThemeTextStyleRole::Caption,
+        UiThemeTextColorRole::Muted,
+    ));
+    image_modes
+        .spawn(gallery_image_card_node(theme))
+        .with_children(|card| {
+            spawn_gallery_advanced_preview(
+                card,
+                asset_server,
+                gallery_nine_slice_spec(),
+                UiImageSize::FixedBox {
+                    width: 184.0,
+                    height: 84.0,
+                },
+                "Gallery nine-slice panel",
+            );
+            card.spawn(screen_label(
+                theme,
+                fonts,
+                "Panel border 184 x 84",
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Muted,
+            ));
+        });
+    image_modes
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 3, 3),
+        ))
+        .with_children(|buttons| {
+            for (label, width, height) in [
+                ("Small 72 x 32", 72.0, 32.0),
+                ("Medium 104 x 40", 104.0, 40.0),
+                ("Large 144 x 48", 144.0, 48.0),
+            ] {
+                buttons
+                    .spawn(gallery_image_card_node(theme))
+                    .with_children(|card| {
+                        spawn_gallery_advanced_preview(
+                            card,
+                            asset_server,
+                            gallery_nine_slice_spec(),
+                            UiImageSize::FixedBox { width, height },
+                            "Gallery nine-slice button border",
+                        );
+                        card.spawn(screen_label(
+                            theme,
+                            fonts,
+                            label,
+                            UiThemeTextStyleRole::Caption,
+                            UiThemeTextColorRole::Muted,
+                        ));
+                    });
+            }
+        });
+}
+
+fn spawn_gallery_tiling_samples(
+    image_modes: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    width_class: UiWidthClass,
+    asset_server: &AssetServer,
+) {
+    image_modes.spawn((
+        screen_label(
+            theme,
+            fonts,
+            "Bounded tiling",
+            UiThemeTextStyleRole::Caption,
+            UiThemeTextColorRole::Muted,
+        ),
+        ANCHOR_UI_GALLERY_IMAGE_TILING,
+        Name::new("Gallery tiling audit anchor"),
+    ));
+    image_modes
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 3, 3),
+        ))
+        .with_children(|tiles| {
+            for (label, axis, width, height) in [
+                ("Tile X", UiTileAxis::X, 184.0, 52.0),
+                ("Tile Y", UiTileAxis::Y, 92.0, 116.0),
+                ("Tile Both", UiTileAxis::Both, 184.0, 116.0),
+            ] {
+                tiles
+                    .spawn(gallery_image_card_node(theme))
+                    .with_children(|card| {
+                        spawn_gallery_advanced_preview(
+                            card,
+                            asset_server,
+                            gallery_tiling_spec(axis),
+                            UiImageSize::FixedBox { width, height },
+                            "Gallery bounded tile preview",
+                        );
+                        card.spawn(screen_label(
+                            theme,
+                            fonts,
+                            label,
+                            UiThemeTextStyleRole::Caption,
+                            UiThemeTextColorRole::Muted,
+                        ));
+                    });
+            }
+        });
+}
+
+fn spawn_gallery_atlas_frame_samples(
+    image_modes: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    width_class: UiWidthClass,
+    asset_server: &AssetServer,
+) {
+    image_modes.spawn((
+        screen_label(
+            theme,
+            fonts,
+            "Atlas frames",
+            UiThemeTextStyleRole::Caption,
+            UiThemeTextColorRole::Muted,
+        ),
+        ANCHOR_UI_GALLERY_IMAGE_ATLAS,
+        Name::new("Gallery atlas audit anchor"),
+    ));
+    image_modes
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(2, 4, 4),
+        ))
+        .with_children(|frames| {
+            for sample in GALLERY_ATLAS_FRAME_SAMPLES {
+                frames
+                    .spawn(gallery_image_card_node(theme))
+                    .with_children(|card| {
+                        spawn_gallery_advanced_preview(
+                            card,
+                            asset_server,
+                            gallery_atlas_frame_spec(sample),
+                            UiImageSize::FixedBox {
+                                width: 56.0,
+                                height: 56.0,
+                            },
+                            "Gallery atlas frame preview",
+                        );
+                        card.spawn(screen_label(
+                            theme,
+                            fonts,
+                            sample.label,
+                            UiThemeTextStyleRole::Caption,
+                            UiThemeTextColorRole::Muted,
+                        ));
+                    });
+            }
+        });
+}
+
+fn spawn_gallery_advanced_preview(
+    parent: &mut ChildSpawnerCommands,
+    asset_server: &AssetServer,
+    spec: UiAdvancedImageSpec,
+    size: UiImageSize,
+    name: &'static str,
+) {
+    parent
+        .spawn(ui_image_panel_node(size))
+        .insert(Name::new(name))
+        .with_children(|frame| {
+            frame.spawn(
+                try_ui_advanced_image(
+                    asset_server,
+                    spec,
+                    UiImageSize::PercentBox {
+                        width: 100.0,
+                        height: 100.0,
+                    },
+                )
+                .expect("Gallery advanced image fixture must be valid"),
+            );
+        });
+}
+
+fn gallery_nine_slice_spec() -> UiAdvancedImageSpec {
+    UiAdvancedImageSpec {
+        source: UiAdvancedImageSource::Texture(UiImageTextureSource::new(
+            GALLERY_NINE_SLICE_SOURCE_PATH,
+            UiImagePixelSize::new(48, 48),
+        )),
+        mode: UiAdvancedImageMode::NineSlice(UiNineSlice::uniform(12.0)),
+    }
+}
+
+fn gallery_tiling_spec(axis: UiTileAxis) -> UiAdvancedImageSpec {
+    let mut tiling = UiImageTiling::new(axis);
+    tiling.stretch_value = 0.5;
+    tiling.max_repeats = 32;
+    UiAdvancedImageSpec {
+        source: UiAdvancedImageSource::Texture(UiImageTextureSource::new(
+            GALLERY_TILE_SOURCE_PATH,
+            UiImagePixelSize::new(128, 64),
+        )),
+        mode: UiAdvancedImageMode::Tiled(tiling),
+    }
+}
+
+fn gallery_atlas_frame_spec(sample: GalleryAtlasFrameSample) -> UiAdvancedImageSpec {
+    UiAdvancedImageSpec {
+        source: UiAdvancedImageSource::AtlasFrame(UiAtlasFrame {
+            source: UiImageTextureSource::new(
+                GALLERY_FRAME_SOURCE_PATH,
+                UiImagePixelSize::new(128, 32),
+            ),
+            rect: UiImagePixelRect::new(sample.x, 0, 32, 32),
+            original_size: UiImagePixelSize::new(32, 32),
+            pivot: Some(sample.pivot),
+        }),
+        mode: UiAdvancedImageMode::Stretch,
+    }
+}
+
 fn spawn_gallery_visual_fixture(
     fixtures: &mut ChildSpawnerCommands,
     theme: &UiTheme,
@@ -1859,6 +2186,26 @@ mod tests {
             UiImageFit::Cover { .. }
         ));
         assert!(GALLERY_IMAGE_FIT_SOURCE_PATH.ends_with("non-square-2x1.png"));
+    }
+
+    #[test]
+    fn advanced_image_gallery_specs_cover_slice_all_tile_axes_and_four_frames() {
+        assert_eq!(gallery_nine_slice_spec().validate(), Ok(()));
+        for axis in [UiTileAxis::X, UiTileAxis::Y, UiTileAxis::Both] {
+            assert_eq!(gallery_tiling_spec(axis).validate(), Ok(()));
+        }
+
+        assert_eq!(GALLERY_ATLAS_FRAME_SAMPLES.len(), 4);
+        let mut frame_starts = Vec::new();
+        for sample in GALLERY_ATLAS_FRAME_SAMPLES {
+            let spec = gallery_atlas_frame_spec(sample);
+            assert_eq!(spec.validate(), Ok(()));
+            let UiAdvancedImageSource::AtlasFrame(frame) = spec.source else {
+                panic!("atlas sample should use a formal frame descriptor");
+            };
+            frame_starts.push(frame.rect.x);
+        }
+        assert_eq!(frame_starts, vec![0, 32, 64, 96]);
     }
 
     #[test]

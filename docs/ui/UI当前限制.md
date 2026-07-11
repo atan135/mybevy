@@ -56,7 +56,9 @@
 
 ## 高保真视觉能力
 
-- 图片 frame 已支持 `Natural`、`Stretch`、`Contain`、焦点 `Cover`、组合尺寸约束、圆角裁切和加载状态占位；当前只处理整张图片，正式九宫格、平铺和图集帧描述仍未形成公共能力。
+- 图片 frame 已支持 `Natural`、`Stretch`、`Contain`、焦点 `Cover`、组合尺寸约束、圆角裁切和加载状态占位；高级 API 已支持九宫格、受预算约束的 X/Y/Both 平铺和正式图集帧描述。
+- atlas frame 当前只允许 Stretch，不支持与 NineSlice/Tiled 组合；`original_size` 和 pivot 已进入正式数据描述与校验，但当前静态 UI helper 不负责按 pivot 进行动画定位。
+- 高级图片必须来自可验证的首包/AssetServer 相对路径，不接受无路径程序化纹理；基础整图的程序化 handle 仍可使用 `ui_image`。
 - `Failed` 和 `Invalid` 当前使用稳定颜色占位并暴露组件状态，尚无通用重试按钮、错误图标或面向玩家的错误文案协议。
 - 阴影、渐变和复杂描边尚无共享 token、组合校验和移动端降级规则。
 - 通用属性动画、正式图片图标、状态贴图、Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。

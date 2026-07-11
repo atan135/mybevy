@@ -1,7 +1,7 @@
 use crate::framework::ui::{
     core::{UiOwnerId, UiPanelId},
     overlays::{UiModalActionId, UiModalId},
-    widgets::UiScrollAuditId,
+    widgets::{UiScrollAuditAnchorId, UiScrollAuditId},
 };
 
 pub(in crate::game) const OWNER_LOGIN: UiOwnerId = UiOwnerId::new("login");
@@ -28,6 +28,12 @@ pub(in crate::game) const PANEL_AUDIO_GALLERY: UiPanelId = UiPanelId::new("audio
 pub(in crate::game) const PANEL_UI_GALLERY: UiPanelId = UiPanelId::new("ui_gallery_page");
 pub(in crate::game) const SCROLL_UI_GALLERY_MAIN: UiScrollAuditId =
     UiScrollAuditId::new("ui_gallery.main");
+pub(in crate::game) const ANCHOR_UI_GALLERY_IMAGE_MODES: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.image_modes");
+pub(in crate::game) const ANCHOR_UI_GALLERY_IMAGE_TILING: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.image_tiling");
+pub(in crate::game) const ANCHOR_UI_GALLERY_IMAGE_ATLAS: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.image_atlas");
 pub(in crate::game) const PANEL_GALLERY_FLOATING: UiPanelId = UiPanelId::new("gallery_floating");
 pub(in crate::game) const PANEL_TOUCH_RIPPLE_HUD: UiPanelId = UiPanelId::new("touch_ripple_hud");
 #[allow(dead_code)]
