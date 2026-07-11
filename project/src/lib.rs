@@ -4,6 +4,7 @@ use bevy::{asset::AssetPlugin, prelude::*, window::WindowResolution};
 mod config;
 pub mod framework;
 mod game;
+pub mod lockstep_sim_headless;
 
 #[bevy_main]
 pub fn main() {
