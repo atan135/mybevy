@@ -21,6 +21,7 @@ sha2 = "0.10"
 sim-core = { path = "../../MyServer/packages/sim-core" }
 tokio = { version = "1.37", features = ["rt-multi-thread", "net", "io-util", "sync", "time"] }
 tokio_kcp = "0.9.8"
+unicode-segmentation = "1.13.2"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 arboard = "3.6"

@@ -146,14 +146,10 @@ pub(crate) fn screen_title(
     text: impl Into<String>,
     style_role: UiThemeTextStyleRole,
 ) -> impl Bundle {
+    let style = UiTextStyleToken::for_theme_role(theme, style_role);
     (
-        Text::new(text),
-        TextFont {
-            font: fonts.regular.clone(),
-            font_size: style_role.font_size(theme),
-            ..default()
-        },
-        TextColor(theme.colors.text_primary),
+        try_ui_styled_text(fonts, text, style, theme.colors.text_primary)
+            .expect("built-in title text style must be valid"),
         UiThemeTextColorRole::Primary,
         style_role,
     )
@@ -180,14 +176,10 @@ pub(crate) fn screen_label(
     style_role: UiThemeTextStyleRole,
     color_role: UiThemeTextColorRole,
 ) -> impl Bundle {
+    let style = UiTextStyleToken::for_theme_role(theme, style_role);
     (
-        Text::new(text),
-        TextFont {
-            font: fonts.regular.clone(),
-            font_size: style_role.font_size(theme),
-            ..default()
-        },
-        TextColor(color_role.color(theme)),
+        try_ui_styled_text(fonts, text, style, color_role.color(theme))
+            .expect("built-in label text style must be valid"),
         color_role,
         style_role,
     )

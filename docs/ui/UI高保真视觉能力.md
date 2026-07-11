@@ -32,8 +32,8 @@ commands.spawn((
 | --- | --- | --- | --- |
 | 布局 `layout` | 响应式列、网格、滚动、视口分类和安全区 padding | 框架支持 | `widgets/layout.rs`、`widgets/scroll.rs`、`core/viewport.rs` |
 | 布局 `layout` | 页面专属绝对定位或 Transform 组合 | 允许直接使用 Bevy | 仅限局部组合，必须标记；不得复制通用响应式计算 |
-| 文字 `typography` | Regular 字体、主题字号角色、颜色角色、换行和 i18n 刷新 | 框架支持 | `style/fonts.rs`、`style/theme.rs`、`i18n.rs` |
-| 文字 `typography` | Medium/Bold 注册、字体 fallback、字距、截断策略和复杂富文本 | 暂不支持 | 多字重 fixture 已准备，但尚未进入运行时字体注册表 |
+| 文字 `typography` | family/weight/role/face/coverage 注册、真实 Latin 400/500/700 fixture、整节点 fallback、行高/对齐/换行、clip/grapheme ellipsis 和 i18n 刷新 | 框架支持 | `style/fonts.rs`、`style/theme.rs`、`i18n.rs`；产品 CJK 当前仅 Regular |
+| 文字 `typography` | 自动逐字 fallback、字距、复杂富文本、路径文字和高级排版 | 暂不支持 | 不依赖 tofu 或 `TextBounds` 冒充；受控静态字图必须通过 `UiRasterizedTextSpec` 校验 |
 | 图片 `image` | `Natural`、`Stretch`、`Contain`、焦点 `Cover`、组合尺寸约束和加载状态占位 | 框架支持 | `widgets/image.rs`；页面使用 frame + image helper，不复制适配或裁切计算 |
 | 切片 `slice` | 九宫格边距、中心/边缘缩放策略、X/Y/双向平铺和重复预算 | 框架支持 | `widgets/image.rs`；由可序列化描述校验后映射到 `NodeImageMode::Sliced` / `Tiled` |
 | 图片 `image` | 图集源纹理、像素帧、原始尺寸和归一化 pivot 描述 | 框架支持 | `UiAtlasFrame` + `try_ui_advanced_image`；越界或不支持的切片组合在生成 bundle 前返回错误 |
@@ -61,19 +61,23 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - 九宫格审计 state：`image_modes`
 - 平铺审计 state：`image_tiling`
 - 图集帧审计 state：`image_atlas`
+- 字体角色和字重审计 state：`typography`
+- 混排和溢出审计 state：`typography_overflow`
 - 滚动目标：`ui_gallery.main`
 - 图片适配位置：主滚动容器顶部
 - 高级图片 anchor：`ui_gallery.image_modes`
 - 平铺/图集 anchor：`ui_gallery.image_tiling`、`ui_gallery.image_atlas`
+- 文字 anchor：`ui_gallery.typography`、`ui_gallery.typography_overflow`
 - fixture 清单：`project/assets/ui/fixtures/manifest.ron`
 
-批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,image_modes,image_tiling,image_atlas,middle,bottom`。`image_fit` 和 `visual_foundation` 固定指向顶部区域；三个高级图片 state 根据命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。仍可显式请求兼容 state `top`。
+批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,middle,bottom`。`image_fit` 和 `visual_foundation` 固定指向顶部区域；高级图片和文字 state 根据命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。仍可显式请求兼容 state `top`。
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States visual_foundation -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States image_fit -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States image_modes -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States "image_tiling,image_atlas" -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States "typography,typography_overflow" -DryRun
 ```
 
 ## 图片适配规则

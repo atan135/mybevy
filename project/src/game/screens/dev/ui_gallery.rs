@@ -12,11 +12,13 @@ use crate::framework::ui::{
         UiOverlayCommand, UiToast,
     },
     style::{
-        UiFontAssets, UiTheme,
+        UiFontAssets, UiFontWeight, UiTextAlignment, UiTextStyleToken, UiTextTruncation,
+        UiTextWrap, UiTheme,
         theme::{
             UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
             UiThemeTextColorRole, UiThemeTextStyleRole,
         },
+        try_ui_styled_text, try_ui_text_clip_frame,
     },
     widgets::{
         DisabledTextInput, FocusedButton, ReadonlyTextInput, SelectedButton, UiAdvancedImageMode,
@@ -42,7 +44,8 @@ use crate::game::{
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{
         ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_IMAGE_ATLAS,
-        ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING, MODAL_GALLERY_CONFIRM,
+        ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM,
         OWNER_UI_GALLERY, PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
@@ -80,6 +83,47 @@ const GALLERY_ATLAS_SOURCE_PATHS: [&str; 7] = [
 const GALLERY_BINDING_STATUS_PATH: &str = "gallery.binding.status";
 const GALLERY_BINDING_NOTICE_VISIBLE_PATH: &str = "gallery.binding.notice_visible";
 const GALLERY_BINDING_BUTTON_DISABLED_PATH: &str = "gallery.binding.button_disabled";
+const GALLERY_TYPOGRAPHY_WEIGHTS: [(UiFontWeight, &str); 3] = [
+    (UiFontWeight::Regular, "Regular 400 / Aa Bb 0123 !?,."),
+    (UiFontWeight::Medium, "Medium 500 / Aa Bb 0123 !?,."),
+    (UiFontWeight::Bold, "Bold 700 / Aa Bb 0123 !?,."),
+];
+const GALLERY_TYPOGRAPHY_MIXED_TEXT: &str = "MyBevy 中文混排 2026，标点：！？；ABC-123";
+const GALLERY_TYPOGRAPHY_LONG_WORD: &str =
+    "InteroperabilityWithoutWhitespaceMustStillWrapAtACharacterBoundary";
+const GALLERY_TYPOGRAPHY_LONG_CJK: &str =
+    "这是一段用于验证超长中文在紧凑容器中按字符安全换行且不会覆盖相邻内容的文字。";
+const GALLERY_TYPOGRAPHY_CLIP_FRAME_WIDTH: f32 = 280.0;
+const GALLERY_TYPOGRAPHY_CLIP_FRAME_HEIGHT: f32 = 32.0;
+const GALLERY_TYPOGRAPHY_SECTION_LINE_HEIGHT: f32 = 1.25;
+const GALLERY_TYPOGRAPHY_MIXED_LINE_HEIGHT: f32 = 1.25;
+const GALLERY_TYPOGRAPHY_BODY_LINE_HEIGHT: f32 = 1.35;
+const GALLERY_TYPOGRAPHY_OVERFLOW_CHILD_GAPS: f32 = 5.0;
+// Covers the two border edges when border-box layout rounds fractional text heights.
+const GALLERY_TYPOGRAPHY_BORDER_ROUNDING_ALLOWANCE: f32 = 2.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GalleryTypographyLineBudget {
+    mixed: usize,
+    long_word: usize,
+    long_cjk: usize,
+    ellipsis: usize,
+}
+
+const GALLERY_TYPOGRAPHY_COMPACT_LINE_BUDGET: GalleryTypographyLineBudget =
+    GalleryTypographyLineBudget {
+        mixed: 2,
+        long_word: 3,
+        long_cjk: 4,
+        ellipsis: 1,
+    };
+const GALLERY_TYPOGRAPHY_WIDE_LINE_BUDGET: GalleryTypographyLineBudget =
+    GalleryTypographyLineBudget {
+        mixed: 1,
+        long_word: 2,
+        long_cjk: 2,
+        ellipsis: 1,
+    };
 
 #[derive(Clone, Copy, Component)]
 pub(super) enum GalleryActionButton {
@@ -136,6 +180,15 @@ struct GalleryImageFitRegion;
 
 #[derive(Component)]
 struct GalleryImageModesRegion;
+
+#[derive(Component)]
+struct GalleryTypographyRegion;
+
+#[derive(Component)]
+struct GalleryTypographyOverflowRegion;
+
+#[derive(Component)]
+struct GalleryTypographyBoundedSamples;
 
 #[derive(Clone, Copy)]
 struct GalleryAtlasFrameSample {
@@ -410,63 +463,36 @@ pub(super) fn setup_ui_gallery(
                     );
                 });
 
-                body.spawn(gallery_panel(theme))
-                    .with_children(|typography_panel| {
-                        typography_panel.spawn(section_label_key(
-                            theme,
-                            fonts,
-                            i18n,
-                            "ui_gallery.typography.section",
-                            "Typography",
-                        ));
-                        typography_panel
-                            .spawn(ui_column(theme.layout.row_gap))
-                            .with_children(|samples| {
-                                samples.spawn(screen_title_key(
-                                    theme,
-                                    fonts,
-                                    i18n,
-                                    "ui_gallery.typography.large_title",
-                                    "Large Title",
-                                    UiThemeTextStyleRole::TitleLarge,
-                                ));
-                                samples.spawn(screen_title_key(
-                                    theme,
-                                    fonts,
-                                    i18n,
-                                    "ui_gallery.typography.section_title",
-                                    "Section Title",
-                                    UiThemeTextStyleRole::Title,
-                                ));
-                                samples.spawn(screen_label_key(
-                                    theme,
-                                    fonts,
-                                    i18n,
-                                    "ui_gallery.typography.subtitle",
-                                    "Subtitle text",
-                                    UiThemeTextStyleRole::Subtitle,
-                                    UiThemeTextColorRole::Muted,
-                                ));
-                                samples.spawn(screen_label_key(
-                                    theme,
-                                    fonts,
-                                    i18n,
-                                    "ui_gallery.typography.body",
-                                    "Body text",
-                                    UiThemeTextStyleRole::Body,
-                                    UiThemeTextColorRole::Primary,
-                                ));
-                                samples.spawn(screen_label_key(
-                                    theme,
-                                    fonts,
-                                    i18n,
-                                    "ui_gallery.typography.caption",
-                                    "Caption text",
-                                    UiThemeTextStyleRole::Caption,
-                                    UiThemeTextColorRole::Muted,
-                                ));
-                            });
+                body.spawn((
+                    gallery_panel(theme),
+                    GalleryTypographyRegion,
+                    ANCHOR_UI_GALLERY_TYPOGRAPHY,
+                    Name::new("Gallery typography region"),
+                ))
+                .with_children(|typography_panel| {
+                    spawn_gallery_typography(
+                        typography_panel,
+                        theme,
+                        metrics,
+                        fonts,
+                        i18n,
+                        width_class,
+                    );
+                });
+
+                body.spawn(gallery_typography_overflow_panel(theme, width_class))
+                    .with_children(|overflow_panel| {
+                        spawn_gallery_typography_overflow(overflow_panel, theme, fonts, i18n);
                     });
+
+                body.spawn((
+                    gallery_typography_status_panel(theme),
+                    GalleryTypographyBoundedSamples,
+                    Name::new("Gallery fixed typography status panel"),
+                ))
+                .with_children(|status_panel| {
+                    spawn_gallery_typography_status_samples(status_panel, theme, fonts, i18n);
+                });
 
                 body.spawn(gallery_panel(theme))
                     .with_children(|buttons_panel| {
@@ -1379,22 +1405,78 @@ fn gallery_header(theme: &UiTheme, metrics: &UiMetrics, width_class: UiWidthClas
 fn gallery_panel(theme: &UiTheme) -> impl Bundle {
     (
         UiThemePanelNodeRole::Content,
-        Node {
-            width: percent(100),
-            max_width: px(theme.layout.content_width),
-            align_self: AlignSelf::Center,
-            flex_direction: FlexDirection::Column,
-            row_gap: px(theme.layout.card_gap),
-            padding: UiRect::all(px(theme.layout.panel_gap)),
-            border: UiRect::all(px(theme.panel.border)),
-            border_radius: BorderRadius::all(px(theme.panel.radius)),
-            ..default()
-        },
+        gallery_panel_node(theme),
         BackgroundColor(theme.colors.panel_background),
         BorderColor::all(theme.colors.panel_border),
         UiThemeBackgroundRole::Panel,
         UiThemeBorderRole::Panel,
     )
+}
+
+fn gallery_panel_node(theme: &UiTheme) -> Node {
+    Node {
+        width: percent(100),
+        max_width: px(theme.layout.content_width),
+        align_self: AlignSelf::Center,
+        flex_direction: FlexDirection::Column,
+        row_gap: px(theme.layout.card_gap),
+        padding: UiRect::all(px(theme.layout.panel_gap)),
+        border: UiRect::all(px(theme.panel.border)),
+        border_radius: BorderRadius::all(px(theme.panel.radius)),
+        ..default()
+    }
+}
+
+fn gallery_typography_overflow_panel(theme: &UiTheme, width_class: UiWidthClass) -> impl Bundle {
+    (
+        UiThemePanelNodeRole::Content,
+        gallery_typography_overflow_panel_node(theme, width_class),
+        BackgroundColor(theme.colors.panel_background),
+        BorderColor::all(theme.colors.panel_border),
+        UiThemeBackgroundRole::Panel,
+        UiThemeBorderRole::Panel,
+        GalleryTypographyOverflowRegion,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW,
+        Name::new("Gallery typography overflow panel"),
+    )
+}
+
+fn gallery_typography_overflow_panel_node(theme: &UiTheme, width_class: UiWidthClass) -> Node {
+    let mut node = gallery_panel_node(theme);
+    node.height = px(gallery_typography_overflow_panel_height(theme, width_class));
+    node.flex_shrink = 0.0;
+    node.overflow = Overflow::clip();
+    node
+}
+
+fn gallery_typography_overflow_panel_height(theme: &UiTheme, width_class: UiWidthClass) -> f32 {
+    let budget = gallery_typography_overflow_line_budget(width_class);
+    let wrapped_lines = budget.long_word + budget.long_cjk + budget.ellipsis;
+
+    theme.layout.panel_gap * 2.0
+        + theme.text.section_label * GALLERY_TYPOGRAPHY_SECTION_LINE_HEIGHT
+        + budget.mixed as f32 * theme.text.body * GALLERY_TYPOGRAPHY_MIXED_LINE_HEIGHT
+        + wrapped_lines as f32 * theme.text.body * GALLERY_TYPOGRAPHY_BODY_LINE_HEIGHT
+        + GALLERY_TYPOGRAPHY_CLIP_FRAME_HEIGHT
+        + GALLERY_TYPOGRAPHY_OVERFLOW_CHILD_GAPS * theme.layout.card_gap
+        + GALLERY_TYPOGRAPHY_BORDER_ROUNDING_ALLOWANCE
+}
+
+fn gallery_typography_overflow_line_budget(
+    width_class: UiWidthClass,
+) -> GalleryTypographyLineBudget {
+    match width_class {
+        UiWidthClass::Compact => GALLERY_TYPOGRAPHY_COMPACT_LINE_BUDGET,
+        UiWidthClass::Medium | UiWidthClass::Expanded => GALLERY_TYPOGRAPHY_WIDE_LINE_BUDGET,
+    }
+}
+
+fn gallery_typography_clip_frame() -> impl Bundle {
+    try_ui_text_clip_frame(
+        GALLERY_TYPOGRAPHY_CLIP_FRAME_WIDTH,
+        GALLERY_TYPOGRAPHY_CLIP_FRAME_HEIGHT,
+    )
+    .expect("Gallery clip frame bounds must be valid")
 }
 
 fn gallery_grid(
@@ -1431,6 +1513,310 @@ fn gallery_atlas_source_columns() -> UiResponsiveGridColumns {
 
 fn gallery_stress_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(1, 2, 3)
+}
+
+fn spawn_gallery_typography(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    width_class: UiWidthClass,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.typography.section",
+        "Typography",
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.typography.description",
+        "Theme roles, real Latin fixture weights, mixed text, wrapping, and bounded overflow.",
+        UiThemeTextStyleRole::Body,
+        UiThemeTextColorRole::Muted,
+    ));
+
+    panel
+        .spawn(ui_column(theme.layout.row_gap))
+        .with_children(|samples| {
+            samples.spawn(screen_title_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.typography.large_title",
+                "Large Title",
+                UiThemeTextStyleRole::TitleLarge,
+            ));
+            samples.spawn(screen_title_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.typography.section_title",
+                "Section Title",
+                UiThemeTextStyleRole::Title,
+            ));
+            samples.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.typography.subtitle",
+                "Subtitle text",
+                UiThemeTextStyleRole::Subtitle,
+                UiThemeTextColorRole::Muted,
+            ));
+            samples.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.typography.body",
+                "Body text",
+                UiThemeTextStyleRole::Body,
+                UiThemeTextColorRole::Primary,
+            ));
+            samples.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.typography.caption",
+                "Caption text",
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Muted,
+            ));
+            samples.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.typography.button",
+                "Button label role",
+                UiThemeTextStyleRole::Button,
+                UiThemeTextColorRole::Primary,
+            ));
+        });
+
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.typography.weights",
+        "Latin fixture weights",
+        UiThemeTextStyleRole::SectionLabel,
+        UiThemeTextColorRole::Muted,
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 3, 3),
+        ))
+        .with_children(|weights| {
+            for (weight, text) in GALLERY_TYPOGRAPHY_WEIGHTS {
+                let style = UiTextStyleToken::latin_fixture(weight, theme.text.body);
+                weights.spawn((
+                    try_ui_styled_text(fonts, text, style, theme.colors.text_primary)
+                        .expect("Gallery fixture weight style must be valid"),
+                    Node {
+                        width: percent(100),
+                        min_height: px(36),
+                        ..default()
+                    },
+                    Name::new(format!("Gallery typography {weight:?}")),
+                ));
+            }
+        });
+}
+
+fn spawn_gallery_typography_overflow(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+) {
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.typography.overflow",
+        "Mixed text and overflow states",
+        UiThemeTextStyleRole::SectionLabel,
+        UiThemeTextColorRole::Muted,
+    ));
+
+    let mixed_style = UiTextStyleToken::latin_fixture(UiFontWeight::Bold, theme.text.body);
+    panel.spawn((
+        try_ui_styled_text(
+            fonts,
+            GALLERY_TYPOGRAPHY_MIXED_TEXT,
+            mixed_style,
+            theme.colors.text_primary,
+        )
+        .expect("Gallery mixed text style must be valid"),
+        Node {
+            width: percent(100),
+            ..default()
+        },
+        Name::new("Gallery whole-node CJK fallback sample"),
+    ));
+
+    let mut long_word_style = UiTextStyleToken::for_theme_role(theme, UiThemeTextStyleRole::Body);
+    long_word_style.wrap = UiTextWrap::WordOrCharacter;
+    panel.spawn((
+        try_ui_styled_text(
+            fonts,
+            GALLERY_TYPOGRAPHY_LONG_WORD,
+            long_word_style,
+            theme.colors.text_primary,
+        )
+        .expect("Gallery long word style must be valid"),
+        Node {
+            width: percent(100),
+            max_width: px(420),
+            ..default()
+        },
+        Name::new("Gallery long English word sample"),
+    ));
+
+    panel.spawn((
+        screen_label(
+            theme,
+            fonts,
+            GALLERY_TYPOGRAPHY_LONG_CJK,
+            UiThemeTextStyleRole::Body,
+            UiThemeTextColorRole::Primary,
+        ),
+        Node {
+            width: percent(100),
+            max_width: px(520),
+            ..default()
+        },
+        Name::new("Gallery long Chinese sample"),
+    ));
+
+    let mut clip_style = UiTextStyleToken::for_theme_role(theme, UiThemeTextStyleRole::Body);
+    clip_style.wrap = UiTextWrap::NoWrap;
+    clip_style.truncation = UiTextTruncation::Clip;
+    panel
+                .spawn((
+                    gallery_typography_clip_frame(),
+                    Name::new("Gallery clipped text frame"),
+                ))
+                .with_children(|clip_frame| {
+                    clip_frame.spawn((
+                        try_ui_styled_text(
+                            fonts,
+                            "Clip / 0123456789 / This text stays intact and the constrained parent clips it.",
+                            clip_style,
+                            theme.colors.text_primary,
+                        )
+                        .expect("Gallery clip style must be valid"),
+                        Name::new("Gallery clipped text sample"),
+                    ));
+                });
+
+    let mut ellipsis_style = UiTextStyleToken::for_theme_role(theme, UiThemeTextStyleRole::Body);
+    ellipsis_style.wrap = UiTextWrap::NoWrap;
+    ellipsis_style.truncation = UiTextTruncation::Ellipsis { max_graphemes: 22 };
+    panel.spawn((
+        try_ui_styled_text(
+            fonts,
+            "Ellipsis / 中文和English按字素簇安全截断 / 0123456789",
+            ellipsis_style,
+            theme.colors.text_primary,
+        )
+        .expect("Gallery ellipsis style must be valid"),
+        Node {
+            width: percent(100),
+            ..default()
+        },
+        Name::new("Gallery grapheme ellipsis sample"),
+    ));
+}
+
+fn gallery_typography_status_panel(theme: &UiTheme) -> impl Bundle {
+    (
+        UiThemePanelNodeRole::Content,
+        gallery_typography_status_panel_node(theme),
+        BackgroundColor(theme.colors.panel_background),
+        BorderColor::all(theme.colors.panel_border),
+        UiThemeBackgroundRole::Panel,
+        UiThemeBorderRole::Panel,
+    )
+}
+
+fn gallery_typography_status_panel_node(theme: &UiTheme) -> Node {
+    let height = theme.layout.panel_gap * 2.0
+        + theme.text.section_label * 1.25
+        + theme.layout.card_gap * 2.0
+        + theme.text.caption * 1.4
+        + theme.text.caption * 2.7;
+    Node {
+        width: percent(100),
+        max_width: px(theme.layout.content_width),
+        height: px(height),
+        align_self: AlignSelf::Center,
+        flex_shrink: 0.0,
+        flex_direction: FlexDirection::Column,
+        row_gap: px(theme.layout.card_gap),
+        padding: UiRect::all(px(theme.layout.panel_gap)),
+        border: UiRect::all(px(theme.panel.border)),
+        border_radius: BorderRadius::all(px(theme.panel.radius)),
+        overflow: Overflow::clip(),
+        ..default()
+    }
+}
+
+fn spawn_gallery_typography_status_samples(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.typography.boundary",
+        "Alignment and missing glyph",
+    ));
+
+    let mut centered_style = UiTextStyleToken::for_theme_role(theme, UiThemeTextStyleRole::Caption);
+    centered_style.alignment = UiTextAlignment::Center;
+    panel.spawn((
+        try_ui_styled_text(
+            fonts,
+            "Centered / punctuation ！？，. / 2026",
+            centered_style,
+            theme.colors.text_muted,
+        )
+        .expect("Gallery centered style must be valid"),
+        Node {
+            width: percent(100),
+            max_width: px(420),
+            min_height: px(theme.text.caption * 1.4),
+            ..default()
+        },
+        Name::new("Gallery centered text sample"),
+    ));
+
+    let missing_style = UiTextStyleToken::latin_fixture(UiFontWeight::Regular, theme.text.caption);
+    panel.spawn((
+        try_ui_styled_text(
+            fonts,
+            "Missing glyph sample: 🙂 becomes explicit question mark",
+            missing_style,
+            theme.colors.text_muted,
+        )
+        .expect("Gallery missing glyph style must be valid"),
+        Node {
+            width: percent(100),
+            min_height: px(theme.text.caption * 2.7),
+            ..default()
+        },
+        Name::new("Gallery missing glyph replacement sample"),
+    ));
 }
 
 fn gallery_stress_item(theme: &UiTheme, index: usize) -> impl Bundle {
@@ -2206,6 +2592,136 @@ mod tests {
             frame_starts.push(frame.rect.x);
         }
         assert_eq!(frame_starts, vec![0, 32, 64, 96]);
+    }
+
+    #[test]
+    fn typography_gallery_covers_three_real_weights_and_boundary_strings() {
+        assert_eq!(GALLERY_TYPOGRAPHY_WEIGHTS.len(), 3);
+        assert_eq!(
+            GALLERY_TYPOGRAPHY_WEIGHTS
+                .iter()
+                .map(|(weight, _)| *weight)
+                .collect::<Vec<_>>(),
+            vec![
+                UiFontWeight::Regular,
+                UiFontWeight::Medium,
+                UiFontWeight::Bold,
+            ]
+        );
+        assert!(GALLERY_TYPOGRAPHY_MIXED_TEXT.contains("MyBevy"));
+        assert!(GALLERY_TYPOGRAPHY_MIXED_TEXT.contains("中文"));
+        assert!(GALLERY_TYPOGRAPHY_MIXED_TEXT.contains("2026"));
+        assert!(!GALLERY_TYPOGRAPHY_LONG_WORD.contains(char::is_whitespace));
+        assert!(GALLERY_TYPOGRAPHY_LONG_CJK.chars().count() > 30);
+    }
+
+    #[test]
+    fn typography_status_panel_is_an_explicit_fixed_height_scroll_sibling() {
+        let theme = UiTheme::default();
+        let node = gallery_typography_status_panel_node(&theme);
+        let expected_height = theme.layout.panel_gap * 2.0
+            + theme.text.section_label * 1.25
+            + theme.layout.card_gap * 2.0
+            + theme.text.caption * 1.4
+            + theme.text.caption * 2.7;
+
+        assert_eq!(node.height, px(expected_height));
+        assert_eq!(node.min_height, Val::Auto);
+        assert_eq!(node.flex_shrink, 0.0);
+        assert_eq!(node.flex_direction, FlexDirection::Column);
+        assert_eq!(node.overflow, Overflow::clip());
+    }
+
+    #[test]
+    fn typography_overflow_anchor_is_on_its_own_panel_bundle() {
+        let theme = UiTheme::default();
+        let mut app = App::new();
+        let entity = app
+            .world_mut()
+            .spawn(gallery_typography_overflow_panel(
+                &theme,
+                UiWidthClass::Expanded,
+            ))
+            .id();
+        let entity_ref = app.world().entity(entity);
+
+        assert!(entity_ref.contains::<GalleryTypographyOverflowRegion>());
+        assert_eq!(
+            entity_ref
+                .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
+                .copied(),
+            Some(ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW)
+        );
+        let node = entity_ref.get::<Node>().unwrap();
+        assert_eq!(node.flex_direction, FlexDirection::Column);
+        assert_eq!(node.width, percent(100));
+    }
+
+    #[test]
+    fn typography_overflow_panel_uses_width_specific_explicit_line_budgets() {
+        let theme = UiTheme::default();
+        assert_eq!(
+            gallery_typography_overflow_line_budget(UiWidthClass::Compact),
+            GALLERY_TYPOGRAPHY_COMPACT_LINE_BUDGET
+        );
+        assert_eq!(
+            gallery_typography_overflow_line_budget(UiWidthClass::Medium),
+            GALLERY_TYPOGRAPHY_WIDE_LINE_BUDGET
+        );
+        assert_eq!(
+            gallery_typography_overflow_line_budget(UiWidthClass::Expanded),
+            GALLERY_TYPOGRAPHY_WIDE_LINE_BUDGET
+        );
+
+        let expected_height = |budget: GalleryTypographyLineBudget| {
+            theme.layout.panel_gap * 2.0
+                + theme.text.section_label * GALLERY_TYPOGRAPHY_SECTION_LINE_HEIGHT
+                + budget.mixed as f32 * theme.text.body * GALLERY_TYPOGRAPHY_MIXED_LINE_HEIGHT
+                + (budget.long_word + budget.long_cjk + budget.ellipsis) as f32
+                    * theme.text.body
+                    * GALLERY_TYPOGRAPHY_BODY_LINE_HEIGHT
+                + GALLERY_TYPOGRAPHY_CLIP_FRAME_HEIGHT
+                + GALLERY_TYPOGRAPHY_OVERFLOW_CHILD_GAPS * theme.layout.card_gap
+                + GALLERY_TYPOGRAPHY_BORDER_ROUNDING_ALLOWANCE
+        };
+
+        for (width_class, budget) in [
+            (
+                UiWidthClass::Compact,
+                GALLERY_TYPOGRAPHY_COMPACT_LINE_BUDGET,
+            ),
+            (UiWidthClass::Medium, GALLERY_TYPOGRAPHY_WIDE_LINE_BUDGET),
+            (UiWidthClass::Expanded, GALLERY_TYPOGRAPHY_WIDE_LINE_BUDGET),
+        ] {
+            let node = gallery_typography_overflow_panel_node(&theme, width_class);
+            assert_eq!(node.height, px(expected_height(budget)));
+            assert_eq!(node.flex_shrink, 0.0);
+            assert_eq!(node.overflow, Overflow::clip());
+        }
+
+        let compact_height =
+            gallery_typography_overflow_panel_height(&theme, UiWidthClass::Compact);
+        let expanded_height =
+            gallery_typography_overflow_panel_height(&theme, UiWidthClass::Expanded);
+        assert!((compact_height - 473.2).abs() < 0.001);
+        assert!((expanded_height - 346.0).abs() < 0.001);
+        assert!(compact_height > expanded_height);
+    }
+
+    #[test]
+    fn typography_overflow_budget_and_clip_frame_share_named_height() {
+        let theme = UiTheme::default();
+        let mut app = App::new();
+        let clip_frame = app.world_mut().spawn(gallery_typography_clip_frame()).id();
+        let node = app.world().entity(clip_frame).get::<Node>().unwrap();
+
+        assert_eq!(node.height, px(GALLERY_TYPOGRAPHY_CLIP_FRAME_HEIGHT));
+        assert_eq!(node.width, px(GALLERY_TYPOGRAPHY_CLIP_FRAME_WIDTH));
+        assert_eq!(node.overflow, Overflow::clip());
+        assert_eq!(
+            gallery_typography_overflow_panel_height(&theme, UiWidthClass::Expanded),
+            344.0 + GALLERY_TYPOGRAPHY_BORDER_ROUNDING_ALLOWANCE
+        );
     }
 
     #[test]

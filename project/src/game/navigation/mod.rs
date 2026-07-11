@@ -13,10 +13,10 @@ use crate::framework::ui::{
 };
 use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING,
-    OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT,
-    OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN,
-    OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
-    SCROLL_UI_GALLERY_MAIN,
+    ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, OWNER_AUDIO_GALLERY,
+    OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
+    OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE,
+    OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
 };
 
 pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
@@ -280,6 +280,16 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
         SCROLL_UI_GALLERY_MAIN,
         ANCHOR_UI_GALLERY_IMAGE_ATLAS,
     ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::Typography,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::TypographyOverflow,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW,
+    ),
     UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::Top,
         SCROLL_UI_GALLERY_MAIN,
@@ -441,7 +451,7 @@ mod tests {
             .expect("ui gallery should be registered for audit");
         let recipe = screen.recipe.expect("ui gallery should have audit recipe");
 
-        assert_eq!(recipe.captures.len(), 8);
+        assert_eq!(recipe.captures.len(), 10);
         assert_eq!(
             recipe.captures[0].state,
             UiAuditCaptureState::VisualFoundation
@@ -450,9 +460,14 @@ mod tests {
         assert_eq!(recipe.captures[2].state, UiAuditCaptureState::ImageModes);
         assert_eq!(recipe.captures[3].state, UiAuditCaptureState::ImageTiling);
         assert_eq!(recipe.captures[4].state, UiAuditCaptureState::ImageAtlas);
-        assert_eq!(recipe.captures[5].state, UiAuditCaptureState::Top);
-        assert_eq!(recipe.captures[6].state, UiAuditCaptureState::Middle);
-        assert_eq!(recipe.captures[7].state, UiAuditCaptureState::Bottom);
+        assert_eq!(recipe.captures[5].state, UiAuditCaptureState::Typography);
+        assert_eq!(
+            recipe.captures[6].state,
+            UiAuditCaptureState::TypographyOverflow
+        );
+        assert_eq!(recipe.captures[7].state, UiAuditCaptureState::Top);
+        assert_eq!(recipe.captures[8].state, UiAuditCaptureState::Middle);
+        assert_eq!(recipe.captures[9].state, UiAuditCaptureState::Bottom);
         assert_eq!(
             recipe.captures[0].scroll.map(|scroll| scroll.target_id),
             Some(SCROLL_UI_GALLERY_MAIN)
@@ -474,6 +489,18 @@ mod tests {
                 .scroll
                 .map(|scroll| scroll.target.as_str()),
             Some(ANCHOR_UI_GALLERY_IMAGE_TILING.as_str())
+        );
+        assert_eq!(
+            recipe.captures[5]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_TYPOGRAPHY.as_str())
+        );
+        assert_eq!(
+            recipe.captures[6]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW.as_str())
         );
         assert_eq!(
             recipe.captures[4]

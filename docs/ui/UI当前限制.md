@@ -50,8 +50,11 @@
 
 ## 字体和本地化
 
-- 当前 UI 字体只有 regular 字重。
-- 字体子集不覆盖扩展 CJK、emoji、日文、韩文和繁体专用字形。
+- 产品 UI family 当前只有 CJK Regular。Medium/Bold 的真实静态 face 仅存在于 Figtree Latin 开发 fixture；产品角色请求这些 weight 会明确 fallback 到 Regular，不做合成粗体。
+- 产品字体声明 coverage 不覆盖扩展 CJK、emoji、日文假名、韩文和繁体专用扩展字形。无 coverage grapheme 会替换为 `?` 并暴露状态，而不是依赖 tofu。
+- fallback 当前以整个 Text 节点为单位；框架不会自动把中英文或缺字内容拆成多字体 `TextSpan`。
+- Bevy 0.18.1 的当前公共封装不支持字距 token、自动复杂富文本、文字沿路径或高级排版。`TextBounds` 也不是严格像素裁切保证。
+- `UiRasterizedTextSpec` 只允许有可访问/i18n fallback 和明确来源的 `project/assets/ui/` 静态字图，不是动态文案替代品。
 - i18n fallback 优先中文内置文案，适合当前开发期验证，但正式多语言发布前需要补齐每个 locale 的完整资源。
 
 ## 高保真视觉能力

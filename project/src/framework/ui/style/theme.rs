@@ -6,7 +6,10 @@ use std::{
     time::SystemTime,
 };
 
-use crate::framework::ui::core::{UiMetrics, UiViewport};
+use crate::framework::ui::{
+    core::{UiMetrics, UiViewport},
+    style::fonts::UiTextStyleToken,
+};
 
 const UI_THEME_CONFIG_VERSION: u32 = 1;
 const DEFAULT_THEME_ASSET_PATH: &str = "assets/ui/themes/default.ron";
@@ -15,6 +18,11 @@ const UI_THEME_ENV_VAR: &str = "MYBEVY_UI_THEME";
 const UI_THEME_HOT_RELOAD_INTERVAL_SECS: f32 = 0.8;
 
 pub(crate) struct UiThemePlugin;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub(crate) enum UiThemeSystems {
+    Refresh,
+}
 
 impl Plugin for UiThemePlugin {
     fn build(&self, app: &mut App) {
@@ -26,7 +34,9 @@ impl Plugin for UiThemePlugin {
             .add_systems(Startup, log_ui_theme_source)
             .add_systems(
                 Update,
-                (poll_ui_theme_hot_reload, refresh_ui_theme_visuals).chain(),
+                (poll_ui_theme_hot_reload, refresh_ui_theme_visuals)
+                    .chain()
+                    .in_set(UiThemeSystems::Refresh),
             );
     }
 }
@@ -609,7 +619,11 @@ fn refresh_ui_theme_visuals(
     mut backgrounds: Query<(&UiThemeBackgroundRole, &mut BackgroundColor)>,
     mut borders: Query<(&UiThemeBorderRole, &mut BorderColor)>,
     mut text_colors: Query<(&UiThemeTextColorRole, &mut TextColor)>,
-    mut text_styles: Query<(&UiThemeTextStyleRole, &mut TextFont)>,
+    mut text_styles: Query<(
+        &UiThemeTextStyleRole,
+        &mut TextFont,
+        Option<&mut UiTextStyleToken>,
+    )>,
     mut node_roles: ParamSet<(
         Query<(&UiThemeButtonNodeRole, &mut Node)>,
         Query<(&UiThemePanelNodeRole, &mut Node)>,
@@ -642,8 +656,12 @@ fn refresh_ui_theme_visuals(
         *text_color = TextColor(role.color(&theme));
     }
 
-    for (role, mut font) in &mut text_styles {
-        font.font_size = role.font_size(&theme);
+    for (role, mut font, style) in &mut text_styles {
+        let font_size = role.font_size(&theme);
+        font.font_size = font_size;
+        if let Some(mut style) = style {
+            style.font_size = font_size;
+        }
     }
 
     for (role, mut node) in &mut node_roles.p0() {
@@ -1046,6 +1064,46 @@ mod tests {
                 .font_size,
             19.0
         );
+    }
+
+    #[test]
+    fn refresh_theme_updates_only_theme_owned_text_size_in_style_token() {
+        use crate::framework::ui::style::{
+            UiFontWeight, UiTextAlignment, UiTextLineHeight, UiTextTruncation, UiTextWrap,
+        };
+
+        let theme = load_config(&valid_theme_config_with_version(UI_THEME_CONFIG_VERSION)).unwrap();
+        let mut style = UiTextStyleToken::latin_fixture(UiFontWeight::Bold, 1.0);
+        style.line_height = UiTextLineHeight::Pixels(27.0);
+        style.alignment = UiTextAlignment::Right;
+        style.wrap = UiTextWrap::NoWrap;
+        style.truncation = UiTextTruncation::Ellipsis { max_graphemes: 9 };
+        let expected = style.clone();
+        let mut app = app_with_theme(theme);
+        let entity = app
+            .world_mut()
+            .spawn((
+                TextFont::from_font_size(1.0),
+                UiThemeTextStyleRole::Title,
+                style,
+            ))
+            .id();
+
+        app.update();
+
+        let actual = app
+            .world()
+            .entity(entity)
+            .get::<UiTextStyleToken>()
+            .unwrap();
+        assert_eq!(actual.font_size, 38.0);
+        assert_eq!(actual.font_role, expected.font_role);
+        assert_eq!(actual.font_family, expected.font_family);
+        assert_eq!(actual.font_weight, expected.font_weight);
+        assert_eq!(actual.line_height, expected.line_height);
+        assert_eq!(actual.alignment, expected.alignment);
+        assert_eq!(actual.wrap, expected.wrap);
+        assert_eq!(actual.truncation, expected.truncation);
     }
 
     #[test]

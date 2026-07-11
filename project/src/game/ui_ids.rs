@@ -34,6 +34,10 @@ pub(in crate::game) const ANCHOR_UI_GALLERY_IMAGE_TILING: UiScrollAuditAnchorId 
     UiScrollAuditAnchorId::new("ui_gallery.image_tiling");
 pub(in crate::game) const ANCHOR_UI_GALLERY_IMAGE_ATLAS: UiScrollAuditAnchorId =
     UiScrollAuditAnchorId::new("ui_gallery.image_atlas");
+pub(in crate::game) const ANCHOR_UI_GALLERY_TYPOGRAPHY: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.typography");
+pub(in crate::game) const ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.typography_overflow");
 pub(in crate::game) const PANEL_GALLERY_FLOATING: UiPanelId = UiPanelId::new("gallery_floating");
 pub(in crate::game) const PANEL_TOUCH_RIPPLE_HUD: UiPanelId = UiPanelId::new("touch_ripple_hud");
 #[allow(dead_code)]

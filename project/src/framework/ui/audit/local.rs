@@ -36,6 +36,8 @@ const IMAGE_FIT_CAPTURE_STATE: &str = "image_fit";
 const IMAGE_MODES_CAPTURE_STATE: &str = "image_modes";
 const IMAGE_TILING_CAPTURE_STATE: &str = "image_tiling";
 const IMAGE_ATLAS_CAPTURE_STATE: &str = "image_atlas";
+const TYPOGRAPHY_CAPTURE_STATE: &str = "typography";
+const TYPOGRAPHY_OVERFLOW_CAPTURE_STATE: &str = "typography_overflow";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
@@ -314,6 +316,8 @@ pub(crate) enum UiAuditCaptureState {
     ImageModes,
     ImageTiling,
     ImageAtlas,
+    Typography,
+    TypographyOverflow,
     Top,
     Middle,
     Bottom,
@@ -328,6 +332,8 @@ impl UiAuditCaptureState {
             Self::ImageModes => IMAGE_MODES_CAPTURE_STATE,
             Self::ImageTiling => IMAGE_TILING_CAPTURE_STATE,
             Self::ImageAtlas => IMAGE_ATLAS_CAPTURE_STATE,
+            Self::Typography => TYPOGRAPHY_CAPTURE_STATE,
+            Self::TypographyOverflow => TYPOGRAPHY_OVERFLOW_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -1210,6 +1216,10 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::ImageTiling)
     } else if value.eq_ignore_ascii_case(IMAGE_ATLAS_CAPTURE_STATE) {
         Some(UiAuditCaptureState::ImageAtlas)
+    } else if value.eq_ignore_ascii_case(TYPOGRAPHY_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Typography)
+    } else if value.eq_ignore_ascii_case(TYPOGRAPHY_OVERFLOW_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::TypographyOverflow)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -1857,6 +1867,28 @@ mod tests {
                 UiAuditCaptureState::ImageModes,
                 UiAuditCaptureState::ImageTiling,
                 UiAuditCaptureState::ImageAtlas,
+            ]
+        );
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn config_accepts_typography_capture_states() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "typography,typography_overflow"),
+            ]),
+            100,
+        );
+
+        assert_eq!(
+            config.states,
+            vec![
+                UiAuditCaptureState::Typography,
+                UiAuditCaptureState::TypographyOverflow,
             ]
         );
         assert!(config.states_from_env);

@@ -3720,9 +3720,7 @@ mod tests {
         app.insert_resource(theme)
             .insert_resource(metrics)
             .insert_resource(viewport)
-            .insert_resource(UiFontAssets {
-                regular: Handle::<Font>::default(),
-            })
+            .insert_resource(UiFontAssets::test_registry())
             .insert_resource(ClearColor(Color::srgb(0.0, 0.0, 0.0)))
             .add_message::<AudioCommand>();
     }

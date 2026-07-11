@@ -36,4 +36,4 @@ Upstream variable font SHA-256: `26ad3db9b31ff7dde67a91ff515d022d2f495cd50659069
 
 Instantiation used fontTools 4.62.1 with `--update-name-table --no-recalc-timestamp`; the resulting static fonts have `OS/2.usWeightClass` values 400, 500, and 700 and no `fvar` table. Output hashes are recorded in `manifest.ron`.
 
-These Latin fixtures do not replace `ui/fonts/MyBevyUiCjk-Regular.otf` and are not loaded by the runtime until the framework has a multi-weight font registry.
+These Latin fixtures do not replace `ui/fonts/MyBevyUiCjk-Regular.otf`. The font registry loads them only to exercise explicit 400/500/700 faces in the development UI Gallery; shipping screens must not select the `FigtreeFixture` family.

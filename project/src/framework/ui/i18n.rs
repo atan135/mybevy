@@ -17,6 +17,11 @@ const UI_I18N_HOT_RELOAD_INTERVAL_SECS: f32 = 0.8;
 
 pub(crate) struct UiI18nPlugin;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub(crate) enum UiI18nSystems {
+    Refresh,
+}
+
 impl Plugin for UiI18nPlugin {
     fn build(&self, app: &mut App) {
         let (i18n, source) = load_ui_i18n();
@@ -27,7 +32,9 @@ impl Plugin for UiI18nPlugin {
             .add_systems(Startup, log_ui_i18n_source)
             .add_systems(
                 Update,
-                (poll_ui_i18n_hot_reload, refresh_ui_i18n_texts).chain(),
+                (poll_ui_i18n_hot_reload, refresh_ui_i18n_texts)
+                    .chain()
+                    .in_set(UiI18nSystems::Refresh),
             );
     }
 }
@@ -483,11 +490,19 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
             "可缩放边框、受预算约束的纹理重复与精确图集帧区域。",
         ),
         ("ui_gallery.typography.section", "文字排版"),
+        (
+            "ui_gallery.typography.description",
+            "主题文字角色、真实拉丁字重、混排、换行和受控溢出。",
+        ),
         ("ui_gallery.typography.large_title", "大标题"),
         ("ui_gallery.typography.section_title", "章节标题"),
         ("ui_gallery.typography.subtitle", "副标题文本"),
         ("ui_gallery.typography.body", "正文文本"),
         ("ui_gallery.typography.caption", "说明文本"),
+        ("ui_gallery.typography.button", "按钮文字角色"),
+        ("ui_gallery.typography.weights", "拉丁测试字体字重"),
+        ("ui_gallery.typography.overflow", "混排和溢出状态"),
+        ("ui_gallery.typography.boundary", "对齐和缺字状态"),
         ("ui_gallery.buttons.section", "按钮"),
         ("ui_gallery.buttons.primary", "主按钮"),
         ("ui_gallery.buttons.secondary", "次按钮"),
@@ -770,6 +785,71 @@ mod tests {
 
         let text = app.world().entity(entity).get::<Text>().unwrap();
         assert_eq!(text.0, "Runtime App");
+    }
+
+    #[test]
+    fn i18n_refresh_preserves_font_role_layout_and_node_constraints() {
+        use crate::framework::ui::style::{
+            UiFontWeight, UiTextAlignment, UiTextLineHeight, UiTextStyleToken, UiTextTruncation,
+            UiTextWrap, theme::UiThemeTextStyleRole,
+        };
+
+        let mut texts = HashMap::new();
+        texts.insert(
+            "ui_gallery.typography.body".to_string(),
+            "Runtime body text".to_string(),
+        );
+        let i18n = UiI18n {
+            locale: "en_us".to_string(),
+            texts,
+            fallback_texts: built_in_zh_cn_texts(),
+        };
+        let mut style = UiTextStyleToken::latin_fixture(UiFontWeight::Medium, 18.0);
+        style.line_height = UiTextLineHeight::Relative(1.45);
+        style.alignment = UiTextAlignment::Center;
+        style.wrap = UiTextWrap::WordOrCharacter;
+        style.truncation = UiTextTruncation::Ellipsis { max_graphemes: 12 };
+        let expected_style = style.clone();
+        let expected_layout = TextLayout::new(Justify::Center, LineBreak::WordOrCharacter);
+        let mut app = App::new();
+        app.insert_resource(i18n)
+            .add_systems(Update, refresh_ui_i18n_texts);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Text::new("Old body text"),
+                UiI18nText::new("ui_gallery.typography.body", "Fallback body"),
+                style,
+                UiThemeTextStyleRole::Body,
+                expected_layout,
+                bevy::text::LineHeight::RelativeToFont(1.45),
+                Node {
+                    max_width: px(240),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let entity_ref = app.world().entity(entity);
+        assert_eq!(entity_ref.get::<Text>().unwrap().0, "Runtime body text");
+        assert_eq!(
+            entity_ref.get::<UiTextStyleToken>().unwrap(),
+            &expected_style
+        );
+        assert!(entity_ref.contains::<UiThemeTextStyleRole>());
+        let layout = entity_ref.get::<TextLayout>().unwrap();
+        assert_eq!(layout.justify, Justify::Center);
+        assert_eq!(layout.linebreak, LineBreak::WordOrCharacter);
+        assert_eq!(
+            entity_ref.get::<bevy::text::LineHeight>().unwrap(),
+            &bevy::text::LineHeight::RelativeToFont(1.45)
+        );
+        let node = entity_ref.get::<Node>().unwrap();
+        assert_eq!(node.max_width, px(240));
+        assert_eq!(node.overflow, Overflow::clip());
     }
 
     #[test]

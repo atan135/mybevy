@@ -67,7 +67,7 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 
 国际化由 `UiI18n` 资源承载，默认 locale 是 `zh_cn`。文本节点如果带有 `UiI18nText`，在 i18n 资源变化时会重新解析 key。业务代码创建文本时优先使用 `*_key` helper，保留 fallback。
 
-字体由 `UiFontAssets` 资源提供，目前统一加载 `ui/fonts/MyBevyUiCjk-Regular.otf`。
+字体由 `UiFontAssets` 注册表提供；产品 UI 使用 CJK Regular，UI Gallery 额外加载可追溯的 Figtree 400/500/700 fixture。公共文本通过 `UiTextStyleToken` 解析角色、family、weight、coverage 和整节点 fallback，旧 `regular` 句柄仅保留兼容用途。
 
 ## 扩展原则
 
