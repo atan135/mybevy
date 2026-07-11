@@ -31,6 +31,8 @@ use crate::game::{
 
 pub const HEADLESS_TELEMETRY_SCHEMA: &str = "mybevy.lockstep.telemetry";
 pub const HEADLESS_TELEMETRY_SCHEMA_VERSION: u16 = 1;
+pub const HEADLESS_COMPARISON_SCHEMA: &str = "mybevy.lockstep.mismatch-comparison";
+pub const HEADLESS_COMPARISON_SCHEMA_VERSION: u16 = 1;
 pub const HEADLESS_LOCKSTEP_SCENE: &str = "arena.lockstep_sim";
 pub const EXIT_SUCCESS: u8 = 0;
 pub const EXIT_HASH_MISMATCH: u8 = 2;
@@ -166,6 +168,8 @@ pub struct TelemetryRecord {
     pub inputs: Vec<InputTelemetry>,
     pub entities: Vec<EntityTelemetry>,
     pub events: EventSummaryTelemetry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<MismatchComparisonTelemetry>,
     pub replay_recovery: ReplayRecoveryTelemetry,
     pub recovery_acceptance: Option<RecoveryAcceptanceTelemetry>,
     pub error_code: Option<String>,
@@ -280,6 +284,26 @@ pub struct EventTelemetry {
     pub buff_id: Option<u32>,
     pub value: i32,
     pub sequence: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MismatchComparisonTelemetry {
+    pub schema: &'static str,
+    pub schema_version: u16,
+    pub frame: u32,
+    pub server: MismatchComparisonSideTelemetry,
+    pub client: MismatchComparisonSideTelemetry,
+    pub unavailable: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MismatchComparisonSideTelemetry {
+    pub hash: Option<HashTelemetry>,
+    pub inputs: Option<Vec<InputTelemetry>>,
+    pub entities: Option<Vec<EntityTelemetry>>,
+    pub events: Option<EventSummaryTelemetry>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -606,7 +630,21 @@ fn run_offline_fixture(options: &HeadlessOptions) -> HeadlessRun {
         ));
 
         if mismatch {
-            records.push(failure_record(
+            let comparison = complete_mismatch_comparison(
+                frame,
+                HashTelemetry::new(
+                    authority_result.state_hash,
+                    HashSource::OfflineFixtureAuthority,
+                ),
+                HashTelemetry::new(local_result.state_hash, HashSource::LocalReplay),
+                &authority_world,
+                &local_world,
+                &inputs,
+                &inputs,
+                &authority_result.events,
+                &local_result.events,
+            );
+            let mut failure = failure_record(
                 options,
                 Some(frame),
                 "HEADLESS_HASH_MISMATCH",
@@ -619,7 +657,12 @@ fn run_offline_fixture(options: &HeadlessOptions) -> HeadlessRun {
                     replayed_frames: 0,
                 },
                 entities_from_world(&local_world),
-            ));
+            );
+            failure.server_hash = comparison.server.hash.clone();
+            failure.local_hash = comparison.client.hash.clone();
+            failure.mismatch = Some(true);
+            failure.comparison = Some(comparison);
+            records.push(failure);
             return HeadlessRun {
                 records,
                 exit_code: EXIT_HASH_MISMATCH,
@@ -731,7 +774,18 @@ fn run_offline_fixture(options: &HeadlessOptions) -> HeadlessRun {
         recovery.clone(),
     ));
     if recovery_mismatch {
-        records.push(failure_record(
+        let comparison = complete_mismatch_comparison(
+            FIXTURE_FINAL_FRAME,
+            HashTelemetry::new(authority_hash, HashSource::OfflineFixtureAuthority),
+            HashTelemetry::new(recovered_hash, HashSource::SnapshotRecovery),
+            &authority_world,
+            &recovered_world,
+            &[],
+            &[],
+            &[],
+            &[],
+        );
+        let mut failure = failure_record(
             options,
             Some(FIXTURE_FINAL_FRAME),
             "HEADLESS_RECOVERY_HASH_MISMATCH",
@@ -739,7 +793,12 @@ fn run_offline_fixture(options: &HeadlessOptions) -> HeadlessRun {
             "fixture authority and snapshot recovery hashes differ",
             recovery,
             entities_from_world(&recovered_world),
-        ));
+        );
+        failure.server_hash = comparison.server.hash.clone();
+        failure.local_hash = comparison.client.hash.clone();
+        failure.mismatch = Some(true);
+        failure.comparison = Some(comparison);
+        records.push(failure);
         return HeadlessRun {
             records,
             exit_code: EXIT_RECOVERY,
@@ -1695,7 +1754,7 @@ fn online_report_to_run_for_role(
     }
 
     if let Some((frame, code, stage, message)) = first_failure {
-        records.push(connected_failure_record(
+        let mut failure = connected_failure_record(
             &online_options,
             Some(frame),
             code,
@@ -1708,7 +1767,29 @@ fn online_report_to_run_for_role(
                 replayed_frames: frame.saturating_sub(report.initial_hash.frame.raw()),
             },
             entities_from_world(final_world),
-        ));
+        );
+        if code == "HEADLESS_HASH_MISMATCH"
+            && let Some(mismatch_frame) = report
+                .frames
+                .iter()
+                .find(|candidate| candidate.frame == frame)
+        {
+            let comparison = client_only_mismatch_comparison(
+                frame,
+                mismatch_frame
+                    .server_hash
+                    .map(|hash| HashTelemetry::new(hash, HashSource::MyServerAuthority)),
+                HashTelemetry::new(mismatch_frame.local_hash, HashSource::LocalReplay),
+                &mismatch_frame.world,
+                &mismatch_frame.inputs,
+                &mismatch_frame.events,
+            );
+            failure.server_hash = comparison.server.hash.clone();
+            failure.local_hash = comparison.client.hash.clone();
+            failure.mismatch = Some(true);
+            failure.comparison = Some(comparison);
+        }
+        records.push(failure);
         return HeadlessRun {
             records,
             exit_code: if code == "HEADLESS_HASH_MISMATCH" {
@@ -1932,6 +2013,7 @@ fn world_record(
         inputs: inputs.iter().map(InputTelemetry::from).collect(),
         entities: entities_from_world(world),
         events: EventSummaryTelemetry::from_events(events),
+        comparison: None,
         replay_recovery,
         recovery_acceptance: None,
         error_code: None,
@@ -1997,6 +2079,7 @@ fn failure_record(
         inputs: Vec::new(),
         entities,
         events: EventSummaryTelemetry::default(),
+        comparison: None,
         replay_recovery,
         recovery_acceptance: None,
         error_code: Some(error_code.into()),
@@ -2082,6 +2165,122 @@ fn entities_from_world(world: &SimWorld) -> Vec<EntityTelemetry> {
                 .collect(),
         })
         .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_mismatch_comparison(
+    frame: u32,
+    server_hash: HashTelemetry,
+    client_hash: HashTelemetry,
+    server_world: &SimWorld,
+    client_world: &SimWorld,
+    server_inputs: &[SimInput],
+    client_inputs: &[SimInput],
+    server_events: &[SimEvent],
+    client_events: &[SimEvent],
+) -> MismatchComparisonTelemetry {
+    MismatchComparisonTelemetry {
+        schema: HEADLESS_COMPARISON_SCHEMA,
+        schema_version: HEADLESS_COMPARISON_SCHEMA_VERSION,
+        frame,
+        server: mismatch_comparison_side(
+            Some(server_hash),
+            Some(server_inputs),
+            Some(server_world),
+            Some(server_events),
+        ),
+        client: mismatch_comparison_side(
+            Some(client_hash),
+            Some(client_inputs),
+            Some(client_world),
+            Some(client_events),
+        ),
+        unavailable: Vec::new(),
+    }
+}
+
+fn client_only_mismatch_comparison(
+    frame: u32,
+    server_hash: Option<HashTelemetry>,
+    client_hash: HashTelemetry,
+    client_world: &SimWorld,
+    client_inputs: &[SimInput],
+    client_events: &[SimEvent],
+) -> MismatchComparisonTelemetry {
+    MismatchComparisonTelemetry {
+        schema: HEADLESS_COMPARISON_SCHEMA,
+        schema_version: HEADLESS_COMPARISON_SCHEMA_VERSION,
+        frame,
+        server: mismatch_comparison_side(server_hash, None, None, None),
+        client: mismatch_comparison_side(
+            Some(client_hash),
+            Some(client_inputs),
+            Some(client_world),
+            Some(client_events),
+        ),
+        unavailable: vec!["server_inputs", "server_entities", "server_events"],
+    }
+}
+
+fn mismatch_comparison_side(
+    hash: Option<HashTelemetry>,
+    inputs: Option<&[SimInput]>,
+    world: Option<&SimWorld>,
+    events: Option<&[SimEvent]>,
+) -> MismatchComparisonSideTelemetry {
+    let inputs = inputs.map(|values| {
+        let mut values = values.iter().map(InputTelemetry::from).collect::<Vec<_>>();
+        values.sort_by(|left, right| {
+            (
+                left.character_id.as_str(),
+                left.entity_id,
+                left.sequence,
+                left.command,
+            )
+                .cmp(&(
+                    right.character_id.as_str(),
+                    right.entity_id,
+                    right.sequence,
+                    right.command,
+                ))
+        });
+        values
+    });
+    let entities = world.map(|world| {
+        let mut values = entities_from_world(world);
+        values.sort_by_key(|entity| entity.entity_id);
+        values
+    });
+    let events = events.map(|events| {
+        let mut summary = EventSummaryTelemetry::from_events(events);
+        summary.items.sort_by(|left, right| {
+            (
+                left.sequence,
+                left.kind,
+                left.source_entity_id,
+                left.target_entity_id,
+                left.skill_id,
+                left.buff_id,
+                left.value,
+            )
+                .cmp(&(
+                    right.sequence,
+                    right.kind,
+                    right.source_entity_id,
+                    right.target_entity_id,
+                    right.skill_id,
+                    right.buff_id,
+                    right.value,
+                ))
+        });
+        summary
+    });
+    MismatchComparisonSideTelemetry {
+        hash,
+        inputs,
+        entities,
+        events,
+    }
 }
 
 fn entity_kind_name(kind: EntityKind) -> &'static str {
@@ -2460,6 +2659,34 @@ mod tests {
             Some("HEADLESS_HASH_MISMATCH")
         );
         assert_eq!(failure.failure_stage.as_deref(), Some("frame_compare"));
+        assert_eq!(failure.mismatch, Some(true));
+        let comparison = failure.comparison.as_ref().unwrap();
+        assert_eq!(comparison.schema, HEADLESS_COMPARISON_SCHEMA);
+        assert_eq!(
+            comparison.schema_version,
+            HEADLESS_COMPARISON_SCHEMA_VERSION
+        );
+        assert_eq!(comparison.frame, 3);
+        assert!(comparison.unavailable.is_empty());
+        assert_ne!(
+            comparison.server.hash.as_ref().unwrap().hex,
+            comparison.client.hash.as_ref().unwrap().hex
+        );
+        assert_ne!(
+            comparison.server.entities.as_ref().unwrap(),
+            comparison.client.entities.as_ref().unwrap()
+        );
+        assert_eq!(
+            comparison.server.inputs.as_ref().unwrap(),
+            comparison.client.inputs.as_ref().unwrap()
+        );
+        assert_eq!(
+            comparison.server.events.as_ref().unwrap(),
+            comparison.client.events.as_ref().unwrap()
+        );
+        let value = serde_json::to_value(failure).unwrap();
+        assert_eq!(value["comparison"]["schema"], HEADLESS_COMPARISON_SCHEMA);
+        assert_eq!(value["comparison"]["frame"], 3);
     }
 
     #[test]
@@ -2506,6 +2733,7 @@ mod tests {
         assert!(value.get("replayRecovery").is_some());
         assert!(value.get("errorCode").is_some());
         assert!(value.get("failureStage").is_some());
+        assert!(value.get("comparison").is_none());
     }
 
     #[test]
