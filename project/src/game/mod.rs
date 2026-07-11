@@ -8,4 +8,7 @@ mod scenes;
 mod screens;
 mod ui_ids;
 
+pub(crate) use features::lockstep_sim::{
+    OnlineHeadlessOptions, OnlineHeadlessReport, run_online_headless,
+};
 pub use plugin::GamePlugin;

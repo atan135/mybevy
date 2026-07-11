@@ -958,6 +958,9 @@ pub enum MyServerCommand {
         ready: bool,
     },
     StartRoom,
+    EndRoom {
+        reason: String,
+    },
     SendPlayerInput {
         frame_id: u32,
         action: String,
@@ -1144,6 +1147,7 @@ pub enum MyServerEvent {
     RoomLeft(pb::RoomLeaveRes),
     ReadyChanged(pb::RoomReadyRes),
     RoomStarted(pb::RoomStartRes),
+    RoomEnded(pb::RoomEndRes),
     PlayerInputAccepted(pb::PlayerInputRes),
     MoveInputAccepted(pb::MoveInputRes),
     RoomStatePush(pb::RoomStatePush),

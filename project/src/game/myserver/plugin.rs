@@ -617,6 +617,16 @@ fn handle_myserver_commands(
                 MessageType::RoomStartRes,
                 &pb::RoomStartReq {},
             ),
+            MyServerCommand::EndRoom { reason } => send_request(
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                MessageType::RoomEndReq,
+                MessageType::RoomEndRes,
+                &pb::RoomEndReq {
+                    reason: reason.clone(),
+                },
+            ),
             MyServerCommand::SendPlayerInput {
                 frame_id,
                 action,
@@ -3268,6 +3278,9 @@ fn handle_response_packet(
         }
         MessageType::RoomStartRes => {
             decode_push::<pb::RoomStartRes, _>(events, &packet, MyServerEvent::RoomStarted)
+        }
+        MessageType::RoomEndRes => {
+            decode_push::<pb::RoomEndRes, _>(events, &packet, MyServerEvent::RoomEnded)
         }
         MessageType::PlayerInputRes => decode_push::<pb::PlayerInputRes, _>(
             events,

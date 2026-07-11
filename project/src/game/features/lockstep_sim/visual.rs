@@ -16,7 +16,8 @@ use super::{
 };
 
 pub(in crate::game::features::lockstep_sim) const LOCKSTEP_SIM_ENTITY_FOOT_WORLD_Y: f32 = 0.0;
-const LOCKSTEP_SIM_MODEL_SCALE: f32 = 14.0;
+const LOCKSTEP_SIM_MODEL_SCALE: f32 = 5.0;
+const LOCKSTEP_SIM_DEAD_MODEL_HEIGHT_SCALE: f32 = 0.6;
 const LOCKSTEP_SIM_LOCAL_MODEL_ASSET_PATH: &str = "models/characters/kaykit_adventurers/Knight.glb";
 const LOCKSTEP_SIM_REMOTE_MODEL_ASSET_PATHS: [&str; 2] = [
     "models/characters/kaykit_adventurers/Rogue.glb",
@@ -326,6 +327,7 @@ fn is_lockstep_sim_entity_moving(sim_entity: &SimEntity) -> bool {
 
 fn apply_lockstep_sim_visual_transform(transform: &mut Transform, sim_entity: &SimEntity) {
     transform.translation = lockstep_sim_entity_translation(sim_entity);
+    transform.scale = lockstep_sim_entity_scale(sim_entity);
     if let Some(rotation) = lockstep_sim_entity_rotation(sim_entity) {
         transform.rotation = rotation;
     }
@@ -333,11 +335,23 @@ fn apply_lockstep_sim_visual_transform(transform: &mut Transform, sim_entity: &S
 
 fn lockstep_sim_entity_transform(sim_entity: &SimEntity) -> Transform {
     let mut transform = Transform::from_translation(lockstep_sim_entity_translation(sim_entity))
-        .with_scale(Vec3::splat(LOCKSTEP_SIM_MODEL_SCALE));
+        .with_scale(lockstep_sim_entity_scale(sim_entity));
     if let Some(rotation) = lockstep_sim_entity_rotation(sim_entity) {
         transform.rotation = rotation;
     }
     transform
+}
+
+fn lockstep_sim_entity_scale(sim_entity: &SimEntity) -> Vec3 {
+    if sim_entity.alive {
+        Vec3::splat(LOCKSTEP_SIM_MODEL_SCALE)
+    } else {
+        Vec3::new(
+            LOCKSTEP_SIM_MODEL_SCALE,
+            LOCKSTEP_SIM_DEAD_MODEL_HEIGHT_SCALE,
+            LOCKSTEP_SIM_MODEL_SCALE,
+        )
+    }
 }
 
 fn lockstep_sim_entity_translation(sim_entity: &SimEntity) -> Vec3 {
@@ -739,6 +753,45 @@ mod tests {
         assert_eq!(debug_entry.raw_y, pos.y.raw());
         assert_eq!(debug_entry.render_x, pos.x.to_f32_for_render());
         assert_eq!(debug_entry.render_z, pos.y.to_f32_for_render());
+    }
+
+    #[test]
+    fn lockstep_sim_visuals_compress_dead_entities_on_the_next_sync() {
+        let mut app = test_app();
+        activate_scene_with_runtime_root(&mut app);
+        set_replay_world(
+            &mut app,
+            world_fixture(vec![sim_entity(
+                9000,
+                EntityKind::Monster,
+                None,
+                Vec2Fp::new(Fp::from_i32(8), Fp::ZERO),
+                QuantizedDir::LEFT,
+            )]),
+        );
+        app.update();
+        assert_eq!(
+            transform_for(&app, EntityId::new(9000)).scale,
+            Vec3::splat(LOCKSTEP_SIM_MODEL_SCALE)
+        );
+
+        app.world_mut()
+            .resource_mut::<LockstepSimReplayState>()
+            .world
+            .as_mut()
+            .unwrap()
+            .entities[0]
+            .alive = false;
+        app.update();
+
+        assert_eq!(
+            transform_for(&app, EntityId::new(9000)).scale,
+            Vec3::new(
+                LOCKSTEP_SIM_MODEL_SCALE,
+                LOCKSTEP_SIM_DEAD_MODEL_HEIGHT_SCALE,
+                LOCKSTEP_SIM_MODEL_SCALE,
+            )
+        );
     }
 
     #[test]

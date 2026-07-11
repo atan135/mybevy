@@ -140,6 +140,8 @@ pub(in crate::game::features::lockstep_sim) fn update_lockstep_sim_combat_events
 
 pub(in crate::game::features::lockstep_sim) fn sync_lockstep_sim_combat_event_visuals(
     mut commands: Commands,
+    mut meshes: Option<ResMut<Assets<Mesh>>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     scene_state: Res<LockstepSimSceneState>,
     mut event_state: ResMut<LockstepSimCombatEventState>,
     runtime_roots: Query<(Entity, &SceneRuntimeRoot)>,
@@ -167,33 +169,40 @@ pub(in crate::game::features::lockstep_sim) fn sync_lockstep_sim_combat_event_vi
     let entries_to_spawn = event_state.entries[start_index..].to_vec();
     event_state.next_visual_entry_index = event_state.entries.len();
     for entry in entries_to_spawn {
+        let marker_3d =
+            meshes
+                .as_deref_mut()
+                .zip(materials.as_deref_mut())
+                .map(|(meshes, materials)| {
+                    combat_event_visual_3d_assets(entry.kind, false, meshes, materials)
+                });
         let entity = spawn_lockstep_sim_combat_event_visual(
             &mut commands,
             session_id,
             runtime_root,
             &entry,
             false,
+            marker_3d,
         );
         event_state.visual_entities.push_back(entity);
 
-        if let Some(preview) = entry.range_preview {
+        if entry.range_preview.is_some() {
+            let marker_3d =
+                meshes
+                    .as_deref_mut()
+                    .zip(materials.as_deref_mut())
+                    .map(|(meshes, materials)| {
+                        combat_event_visual_3d_assets(entry.kind, true, meshes, materials)
+                    });
             let entity = spawn_lockstep_sim_combat_event_visual(
                 &mut commands,
                 session_id,
                 runtime_root,
                 &entry,
                 true,
+                marker_3d,
             );
             event_state.visual_entities.push_back(entity);
-            commands
-                .entity(entity)
-                .insert(
-                    Transform::from_translation(preview.center).with_scale(Vec3::new(
-                        preview.radius.max(0.1) * 2.0,
-                        preview.radius.max(0.1) * 2.0,
-                        1.0,
-                    )),
-                );
         }
     }
 
@@ -446,6 +455,7 @@ fn spawn_lockstep_sim_combat_event_visual(
     runtime_root: Option<Entity>,
     entry: &LockstepSimCombatEventEntry,
     range_preview: bool,
+    marker_3d: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
 ) -> Entity {
     let translation = if range_preview {
         entry
@@ -455,46 +465,91 @@ fn spawn_lockstep_sim_combat_event_visual(
     } else {
         entry.display_position.or(entry.source_position)
     }
-    .unwrap_or(Vec3::ZERO);
+    .unwrap_or(Vec3::ZERO)
+        + Vec3::Y * combat_event_visual_height(entry.kind, range_preview);
     let transform = Transform::from_translation(translation)
         .with_scale(combat_event_visual_scale(entry.kind, range_preview));
-    let entity = commands
-        .spawn((
-            Sprite::from_color(
-                combat_event_visual_color(entry.kind, range_preview),
-                Vec2::ONE,
-            ),
-            transform,
-            SceneOwned::new(session_id.clone()),
-            LockstepSimCombatEventVisual {
-                session_id: session_id.clone(),
-                kind: entry.kind,
-                label: entry.label.clone(),
-                frame: entry.frame,
-                sequence: entry.sequence,
-                order_index: entry.order_index,
-                source_entity: entry.source_entity,
-                target_entity: entry.target_entity,
-                value: entry.value,
-                range_preview,
-            },
-            Name::new(if range_preview {
-                format!(
-                    "LockstepSimCombatRange({}:{})",
-                    entry.frame, entry.order_index
-                )
-            } else {
-                format!(
-                    "LockstepSimCombatEvent({}:{:?}:{})",
-                    entry.frame, entry.kind, entry.order_index
-                )
-            }),
-        ))
-        .id();
+    let mut entity_commands = commands.spawn((
+        Sprite::from_color(
+            combat_event_visual_color(entry.kind, range_preview),
+            Vec2::ONE,
+        ),
+        transform,
+        SceneOwned::new(session_id.clone()),
+        LockstepSimCombatEventVisual {
+            session_id: session_id.clone(),
+            kind: entry.kind,
+            label: entry.label.clone(),
+            frame: entry.frame,
+            sequence: entry.sequence,
+            order_index: entry.order_index,
+            source_entity: entry.source_entity,
+            target_entity: entry.target_entity,
+            value: entry.value,
+            range_preview,
+        },
+        Name::new(if range_preview {
+            format!(
+                "LockstepSimCombatRange({}:{})",
+                entry.frame, entry.order_index
+            )
+        } else {
+            format!(
+                "LockstepSimCombatEvent({}:{:?}:{})",
+                entry.frame, entry.kind, entry.order_index
+            )
+        }),
+    ));
+    if let Some((mesh, material)) = marker_3d {
+        entity_commands.insert((Mesh3d(mesh), MeshMaterial3d(material)));
+    }
+    let entity = entity_commands.id();
     if let Some(runtime_root) = runtime_root {
         commands.entity(runtime_root).add_child(entity);
     }
     entity
+}
+
+fn combat_event_visual_3d_assets(
+    kind: LockstepSimCombatEventKind,
+    range_preview: bool,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> (Handle<Mesh>, Handle<StandardMaterial>) {
+    let color = combat_event_visual_color(kind, range_preview);
+    let linear = color.to_linear();
+    let material = StandardMaterial {
+        base_color: color,
+        emissive: LinearRgba::new(linear.red * 3.0, linear.green * 3.0, linear.blue * 3.0, 1.0),
+        alpha_mode: if color.to_srgba().alpha < 1.0 {
+            AlphaMode::Blend
+        } else {
+            AlphaMode::Opaque
+        },
+        unlit: true,
+        ..default()
+    };
+    let mesh = if range_preview {
+        Mesh::from(Cuboid::new(1.0, 0.08, 1.0))
+    } else {
+        Mesh::from(Cuboid::new(4.0, 4.0, 4.0))
+    };
+    (meshes.add(mesh), materials.add(material))
+}
+
+fn combat_event_visual_height(kind: LockstepSimCombatEventKind, range_preview: bool) -> f32 {
+    if range_preview {
+        return 0.08;
+    }
+    match kind {
+        LockstepSimCombatEventKind::SkillCast => 5.0,
+        LockstepSimCombatEventKind::Hit => 3.0,
+        LockstepSimCombatEventKind::DamageNumber | LockstepSimCombatEventKind::HealNumber => 8.0,
+        LockstepSimCombatEventKind::BuffApplied => 5.0,
+        LockstepSimCombatEventKind::BuffTick => 8.0,
+        LockstepSimCombatEventKind::BuffExpired => 4.0,
+        LockstepSimCombatEventKind::DeathState => 2.0,
+    }
 }
 
 fn combat_event_visual_color(kind: LockstepSimCombatEventKind, range_preview: bool) -> Color {
@@ -1056,16 +1111,17 @@ mod tests {
             .iter()
             .find(|(_, visual, _, _)| visual.range_preview)
             .unwrap();
-        assert_eq!(range.2.translation, Vec3::new(1.0, 0.0, 2.0));
+        assert_eq!(range.2.translation, Vec3::new(1.0, 0.08, 2.0));
         assert_eq!(
             range.2.scale,
-            Vec3::new(
-                DEFAULT_SKILL_PREVIEW_RADIUS * 2.0,
-                DEFAULT_SKILL_PREVIEW_RADIUS * 2.0,
-                1.0
-            )
+            Vec3::splat(DEFAULT_SKILL_PREVIEW_RADIUS * 2.0)
         );
         assert!(range.3.custom_size.is_some());
+        for (entity, _, _, _) in visuals {
+            let entity = app.world().entity(entity);
+            assert!(entity.contains::<Mesh3d>());
+            assert!(entity.contains::<MeshMaterial3d<StandardMaterial>>());
+        }
     }
 
     #[test]
@@ -1214,6 +1270,8 @@ mod tests {
     fn visual_test_app() -> App {
         let mut app = App::new();
         app.add_plugins(TransformPlugin)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<LockstepSimSceneState>()
             .init_resource::<LockstepSimCombatEventState>()
             .add_systems(Update, sync_lockstep_sim_combat_event_visuals);

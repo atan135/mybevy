@@ -1,9 +1,9 @@
 //! Explicit, windowless lockstep telemetry for local development and CI.
 //!
 //! This module does not participate in [`crate::run`] and does not implement an
-//! alternate MyServer authentication path. The offline scenario labels its
-//! comparison hash as fixture authority, while `connect-probe` only checks TCP
-//! reachability and never sends application bytes.
+//! alternate MyServer authentication path. The online scenario reuses the
+//! production MyServer and authority plugins with a ticket read from an
+//! explicitly named environment variable.
 
 use std::{
     collections::BTreeMap,
@@ -21,6 +21,8 @@ use sim_core::{
     SkillDefinition, SkillId, SkillSlot, SkillTarget, SkillTargetType, TeamId, Vec2Fp, hash_world,
     restore, snapshot, step,
 };
+
+use crate::game::{OnlineHeadlessOptions, OnlineHeadlessReport, run_online_headless};
 
 pub const HEADLESS_TELEMETRY_SCHEMA: &str = "mybevy.lockstep.telemetry";
 pub const HEADLESS_TELEMETRY_SCHEMA_VERSION: u16 = 1;
@@ -46,13 +48,14 @@ Usage:\n\
   lockstep-sim-headless [options]\n\
 \n\
 Options:\n\
-  --scenario <offline-fixture|connect-probe>\n\
+  --scenario <offline-fixture|connect-probe|online-single-client>\n\
   --run-id <id>\n\
   --room <room>\n\
   --policy <policy>\n\
   --player <player>\n\
   --inject-mismatch-frame <frame>  Explicit local test fault for diagnostics\n\
   --endpoint <ip:port>             Required by connect-probe\n\
+  --ticket-env <name>              Required by online-single-client\n\
   --connect-timeout-ms <ms>        Defaults to 500\n\
   --help\n\
 \n\
@@ -64,6 +67,7 @@ pub enum HeadlessScenario {
     #[default]
     OfflineFixture,
     ConnectProbe,
+    OnlineSingleClient,
 }
 
 impl HeadlessScenario {
@@ -71,6 +75,7 @@ impl HeadlessScenario {
         match value {
             "offline-fixture" => Some(Self::OfflineFixture),
             "connect-probe" => Some(Self::ConnectProbe),
+            "online-single-client" => Some(Self::OnlineSingleClient),
             _ => None,
         }
     }
@@ -85,6 +90,7 @@ pub struct HeadlessOptions {
     pub scenario: HeadlessScenario,
     pub inject_mismatch_frame: Option<u32>,
     pub endpoint: Option<String>,
+    pub ticket_env: Option<String>,
     pub connect_timeout: Duration,
 }
 
@@ -98,6 +104,7 @@ impl Default for HeadlessOptions {
             scenario: HeadlessScenario::OfflineFixture,
             inject_mismatch_frame: None,
             endpoint: None,
+            ticket_env: None,
             connect_timeout: Duration::from_millis(500),
         }
     }
@@ -175,6 +182,7 @@ pub enum HashSource {
     OfflineFixtureAuthority,
     LocalReplay,
     SnapshotRecovery,
+    MyServerAuthority,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -290,7 +298,7 @@ pub fn parse_headless_args(
                 let value = next_value(&mut args, "--scenario")?;
                 options.scenario = HeadlessScenario::parse(&value).ok_or_else(|| {
                     cli_error(format!(
-                        "unsupported scenario {value:?}; expected offline-fixture or connect-probe"
+                        "unsupported scenario {value:?}; expected offline-fixture, connect-probe, or online-single-client"
                     ))
                 })?;
             }
@@ -320,6 +328,12 @@ pub fn parse_headless_args(
                 options.endpoint = Some(non_empty(
                     next_value(&mut args, "--endpoint")?,
                     "--endpoint",
+                )?);
+            }
+            "--ticket-env" => {
+                options.ticket_env = Some(non_empty(
+                    next_value(&mut args, "--ticket-env")?,
+                    "--ticket-env",
                 )?);
             }
             "--connect-timeout-ms" => {
@@ -373,6 +387,7 @@ pub fn run_headless(options: &HeadlessOptions) -> HeadlessRun {
         HeadlessScenario::ConnectProbe => run_connect_probe_with(options, |address, timeout| {
             TcpStream::connect_timeout(&address, timeout).map(drop)
         }),
+        HeadlessScenario::OnlineSingleClient => run_online_single_client(options),
     }
 }
 
@@ -733,6 +748,305 @@ fn run_connect_probe_with(
     }
 }
 
+fn run_online_single_client(options: &HeadlessOptions) -> HeadlessRun {
+    let Some(endpoint) = options.endpoint.as_deref() else {
+        return failure_run(
+            options,
+            "HEADLESS_ENDPOINT_REQUIRED",
+            "configuration",
+            "online-single-client requires --endpoint <ip:port>",
+            EXIT_CONFIGURATION,
+        );
+    };
+    let address = match endpoint.parse::<SocketAddr>() {
+        Ok(address) => address,
+        Err(_) => {
+            return failure_run(
+                options,
+                "HEADLESS_ENDPOINT_INVALID",
+                "configuration",
+                "online-single-client endpoint must be a numeric ip:port",
+                EXIT_CONFIGURATION,
+            );
+        }
+    };
+    let Some(ticket_env) = options.ticket_env.as_deref() else {
+        return failure_run(
+            options,
+            "HEADLESS_TICKET_ENV_REQUIRED",
+            "configuration",
+            "online-single-client requires --ticket-env <name>",
+            EXIT_CONFIGURATION,
+        );
+    };
+
+    let report = match run_online_headless(&OnlineHeadlessOptions {
+        endpoint: address,
+        ticket_env: ticket_env.to_string(),
+        room: options.room.clone(),
+        policy: options.policy.clone(),
+        player: options.player.clone(),
+        timeout: options.connect_timeout,
+    }) {
+        Ok(report) => report,
+        Err(error) => {
+            return failure_run(
+                options,
+                error.error_code,
+                error.failure_stage,
+                error.message,
+                EXIT_CONNECTION,
+            );
+        }
+    };
+
+    online_report_to_run(options, report)
+}
+
+fn online_report_to_run(options: &HeadlessOptions, report: OnlineHeadlessReport) -> HeadlessRun {
+    let mut online_options = options.clone();
+    online_options.player = report.player_id.clone();
+    let final_frame = report
+        .frames
+        .last()
+        .map(|frame| frame.frame)
+        .unwrap_or(report.initial_hash.frame.raw());
+    let recovery = ReplayRecoveryTelemetry {
+        status: ReplayRecoveryStatus::Verified,
+        checkpoint_frame: Some(report.initial_hash.frame.raw()),
+        target_frame: Some(final_frame),
+        replayed_frames: report.frames.len() as u32,
+    };
+    let mut records = vec![connected_world_record(
+        &online_options,
+        TelemetryEvent::RunStarted,
+        Some(report.initial_hash.frame.raw()),
+        Some(HashTelemetry::new(
+            report.initial_hash,
+            HashSource::MyServerAuthority,
+        )),
+        Some(HashTelemetry::new(
+            report.initial_hash,
+            HashSource::LocalReplay,
+        )),
+        Some(false),
+        &report.initial_world,
+        &[],
+        &[],
+        ReplayRecoveryTelemetry {
+            status: ReplayRecoveryStatus::CheckpointCaptured,
+            checkpoint_frame: Some(report.initial_hash.frame.raw()),
+            target_frame: Some(final_frame),
+            replayed_frames: 0,
+        },
+    )];
+
+    let mut first_failure = None;
+    let mut observed_move = false;
+    let mut observed_cast = false;
+    let mut observed_stop = false;
+    let mut observed_skill = false;
+    let mut observed_damage_or_buff = false;
+    let initial_player_x = report
+        .initial_world
+        .entity(report.player_entity_id)
+        .map(|entity| entity.transform.pos.x.raw());
+
+    for frame in &report.frames {
+        let mismatch = frame
+            .server_hash
+            .map(|server_hash| server_hash != frame.local_hash);
+        observed_move |= frame
+            .inputs
+            .iter()
+            .any(|input| matches!(input.command, SimCommand::Move(_)));
+        observed_cast |= frame
+            .inputs
+            .iter()
+            .any(|input| matches!(input.command, SimCommand::CastSkill(_)));
+        observed_stop |= frame
+            .inputs
+            .iter()
+            .any(|input| matches!(input.command, SimCommand::Stop));
+        observed_skill |= frame
+            .events
+            .iter()
+            .any(|event| matches!(event, SimEvent::SkillCast { .. }));
+        observed_damage_or_buff |= frame.events.iter().any(|event| {
+            matches!(
+                event,
+                SimEvent::DamageApplied { .. }
+                    | SimEvent::BuffApplied { .. }
+                    | SimEvent::BuffTick { .. }
+            )
+        });
+
+        records.push(connected_world_record(
+            &online_options,
+            TelemetryEvent::Frame,
+            Some(frame.frame),
+            frame
+                .server_hash
+                .map(|hash| HashTelemetry::new(hash, HashSource::MyServerAuthority)),
+            Some(HashTelemetry::new(
+                frame.local_hash,
+                HashSource::LocalReplay,
+            )),
+            mismatch,
+            &frame.world,
+            &frame.inputs,
+            &frame.events,
+            ReplayRecoveryTelemetry {
+                status: ReplayRecoveryStatus::Pending,
+                checkpoint_frame: Some(report.initial_hash.frame.raw()),
+                target_frame: Some(final_frame),
+                replayed_frames: frame.frame.saturating_sub(report.initial_hash.frame.raw()),
+            },
+        ));
+
+        if first_failure.is_none() && frame.server_hash.is_none() {
+            first_failure = Some((
+                frame.frame,
+                "HEADLESS_SERVER_HASH_MISSING",
+                "frame_compare",
+                format!(
+                    "MyServer authority frame {} did not include a server hash",
+                    frame.frame
+                ),
+            ));
+        } else if first_failure.is_none() && mismatch == Some(true) {
+            first_failure = Some((
+                frame.frame,
+                "HEADLESS_HASH_MISMATCH",
+                "frame_compare",
+                format!(
+                    "MyServer authority and local replay hashes differ at frame {}",
+                    frame.frame
+                ),
+            ));
+        }
+    }
+
+    let final_world = report
+        .frames
+        .last()
+        .map(|frame| &frame.world)
+        .unwrap_or(&report.initial_world);
+    let final_player_x = final_world
+        .entity(report.player_entity_id)
+        .map(|entity| entity.transform.pos.x.raw());
+    if first_failure.is_none()
+        && (!observed_move
+            || !observed_cast
+            || !observed_stop
+            || initial_player_x.is_none()
+            || final_player_x == initial_player_x)
+    {
+        first_failure = Some((
+            final_frame,
+            "HEADLESS_MOVEMENT_NOT_OBSERVED",
+            "scenario_assertion",
+            "online input telemetry did not prove move/cast/stop and fixed-position movement"
+                .to_string(),
+        ));
+    }
+    if first_failure.is_none() && (!observed_skill || !observed_damage_or_buff) {
+        first_failure = Some((
+            final_frame,
+            "HEADLESS_COMBAT_EVENTS_MISSING",
+            "scenario_assertion",
+            "online event telemetry did not include SkillCast and damage or Buff evidence"
+                .to_string(),
+        ));
+    }
+    let required_hud_fields = [
+        "room=",
+        "policy=",
+        "frame=",
+        "local_hash=",
+        "server_hash=",
+        "mismatch=",
+        "events=",
+    ];
+    if first_failure.is_none()
+        && required_hud_fields
+            .iter()
+            .any(|field| !report.hud_status.contains(field))
+    {
+        first_failure = Some((
+            final_frame,
+            "HEADLESS_HUD_INCOMPLETE",
+            "scenario_assertion",
+            "lockstep HUD status is missing required online diagnostic fields".to_string(),
+        ));
+    }
+
+    if let Some((frame, code, stage, message)) = first_failure {
+        records.push(connected_failure_record(
+            &online_options,
+            Some(frame),
+            code,
+            stage,
+            message,
+            ReplayRecoveryTelemetry {
+                status: ReplayRecoveryStatus::Failed,
+                checkpoint_frame: Some(report.initial_hash.frame.raw()),
+                target_frame: Some(frame),
+                replayed_frames: frame.saturating_sub(report.initial_hash.frame.raw()),
+            },
+            entities_from_world(final_world),
+        ));
+        return HeadlessRun {
+            records,
+            exit_code: if code == "HEADLESS_HASH_MISMATCH" {
+                EXIT_HASH_MISMATCH
+            } else {
+                EXIT_SIMULATION
+            },
+        };
+    }
+
+    let final_hash = report
+        .frames
+        .last()
+        .map(|frame| frame.local_hash)
+        .unwrap_or(report.initial_hash);
+    records.push(connected_world_record(
+        &online_options,
+        TelemetryEvent::ReplayRecovery,
+        Some(final_frame),
+        Some(HashTelemetry::new(
+            final_hash,
+            HashSource::MyServerAuthority,
+        )),
+        Some(HashTelemetry::new(final_hash, HashSource::LocalReplay)),
+        Some(false),
+        final_world,
+        &[],
+        &[],
+        recovery.clone(),
+    ));
+    records.push(connected_world_record(
+        &online_options,
+        TelemetryEvent::RunCompleted,
+        Some(final_frame),
+        Some(HashTelemetry::new(
+            final_hash,
+            HashSource::MyServerAuthority,
+        )),
+        Some(HashTelemetry::new(final_hash, HashSource::LocalReplay)),
+        Some(false),
+        final_world,
+        &[],
+        &[],
+        recovery,
+    ));
+    HeadlessRun {
+        records,
+        exit_code: EXIT_SUCCESS,
+    }
+}
+
 fn fixture_world_and_config(options: &HeadlessOptions) -> Result<(SimWorld, SimConfig), String> {
     let combat = CombatConfig::from_definitions(
         vec![SkillDefinition {
@@ -911,6 +1225,35 @@ fn world_record(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn connected_world_record(
+    options: &HeadlessOptions,
+    event: TelemetryEvent,
+    frame: Option<u32>,
+    server_hash: Option<HashTelemetry>,
+    local_hash: Option<HashTelemetry>,
+    mismatch: Option<bool>,
+    world: &SimWorld,
+    inputs: &[SimInput],
+    events: &[SimEvent],
+    replay_recovery: ReplayRecoveryTelemetry,
+) -> TelemetryRecord {
+    let mut record = world_record(
+        options,
+        event,
+        frame,
+        server_hash,
+        local_hash,
+        mismatch,
+        world,
+        inputs,
+        events,
+        replay_recovery,
+    );
+    record.server_connected = true;
+    record
+}
+
 fn failure_record(
     options: &HeadlessOptions,
     frame: Option<u32>,
@@ -943,6 +1286,28 @@ fn failure_record(
         failure_stage: Some(failure_stage.into()),
         message: Some(message.into()),
     }
+}
+
+fn connected_failure_record(
+    options: &HeadlessOptions,
+    frame: Option<u32>,
+    error_code: impl Into<String>,
+    failure_stage: impl Into<String>,
+    message: impl Into<String>,
+    replay_recovery: ReplayRecoveryTelemetry,
+    entities: Vec<EntityTelemetry>,
+) -> TelemetryRecord {
+    let mut record = failure_record(
+        options,
+        frame,
+        error_code,
+        failure_stage,
+        message,
+        replay_recovery,
+        entities,
+    );
+    record.server_connected = true;
+    record
 }
 
 impl From<&SimInput> for InputTelemetry {

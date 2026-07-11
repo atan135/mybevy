@@ -1,3 +1,5 @@
+use std::env;
+
 use bevy::prelude::*;
 
 use crate::game::{
@@ -53,6 +55,17 @@ pub(in crate::game::features::lockstep_sim) fn start_lockstep_sim_authority(
             );
         }
         LockstepSimAuthorityMode::MyServer => {
+            let connect_command = match myserver_start_command_from_env_reader(
+                config.transport,
+                config.myserver_guest_id.as_deref(),
+                |name| env::var(name).ok(),
+            ) {
+                Ok(command) => command,
+                Err(error) => {
+                    error!(reason = %error, "lockstep sim direct ticket configuration rejected");
+                    return;
+                }
+            };
             leave_existing_authority_if_needed(session, authority_commands);
             info!(
                 player_id = %config.local_player_id,
@@ -70,13 +83,49 @@ pub(in crate::game::features::lockstep_sim) fn start_lockstep_sim_authority(
                     transport: config.transport,
                 },
             });
-            myserver_commands.write(MyServerCommand::GuestLogin {
-                guest_id: config.myserver_guest_id.clone(),
-                connect_game: true,
-            });
+            myserver_commands.write(connect_command);
             state.login_sent = true;
         }
     }
+}
+
+fn myserver_start_command_from_env_reader(
+    transport: crate::framework::network::NetworkTransport,
+    guest_id: Option<&str>,
+    mut read: impl FnMut(&str) -> Option<String>,
+) -> Result<MyServerCommand, String> {
+    let ticket_env = read("LOCKSTEP_SIM_MYSERVER_TICKET_ENV")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(ticket_env) = ticket_env else {
+        return Ok(MyServerCommand::GuestLogin {
+            guest_id: guest_id.map(str::to_string),
+            connect_game: true,
+        });
+    };
+    if !is_environment_variable_name(&ticket_env) {
+        return Err(
+            "LOCKSTEP_SIM_MYSERVER_TICKET_ENV is not a valid environment variable name".to_string(),
+        );
+    }
+    let ticket = read(&ticket_env)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("ticket environment variable {ticket_env:?} is missing or empty"))?;
+    Ok(MyServerCommand::ConnectWithTicket {
+        ticket,
+        transport,
+        host: None,
+        port: None,
+    })
+}
+
+fn is_environment_variable_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 pub(in crate::game::features::lockstep_sim) fn cleanup_lockstep_sim_authority(
@@ -439,5 +488,63 @@ fn leave_existing_authority_if_needed(
 ) {
     if session.role.is_some_and(|role| role != AuthorityRole::None) {
         authority_commands.write(AuthorityCommand::Leave);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framework::network::NetworkTransport;
+
+    #[test]
+    fn direct_ticket_start_is_explicit_and_keeps_default_guest_login() {
+        let guest =
+            myserver_start_command_from_env_reader(NetworkTransport::Tcp, Some("guest-a"), |_| {
+                None
+            })
+            .unwrap();
+        assert!(matches!(
+            guest,
+            MyServerCommand::GuestLogin {
+                guest_id: Some(ref guest_id),
+                connect_game: true,
+            } if guest_id == "guest-a"
+        ));
+
+        let direct =
+            myserver_start_command_from_env_reader(
+                NetworkTransport::Tcp,
+                None,
+                |name| match name {
+                    "LOCKSTEP_SIM_MYSERVER_TICKET_ENV" => Some("LOCAL_TEST_TICKET".to_string()),
+                    "LOCAL_TEST_TICKET" => Some("ticket-value".to_string()),
+                    _ => None,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            direct,
+            MyServerCommand::ConnectWithTicket {
+                ref ticket,
+                transport: NetworkTransport::Tcp,
+                host: None,
+                port: None,
+            } if ticket == "ticket-value"
+        ));
+    }
+
+    #[test]
+    fn direct_ticket_start_rejects_missing_or_invalid_environment_reference() {
+        let missing = myserver_start_command_from_env_reader(NetworkTransport::Tcp, None, |name| {
+            (name == "LOCKSTEP_SIM_MYSERVER_TICKET_ENV").then(|| "LOCAL_TEST_TICKET".to_string())
+        })
+        .unwrap_err();
+        assert!(missing.contains("missing or empty"));
+
+        let invalid = myserver_start_command_from_env_reader(NetworkTransport::Tcp, None, |name| {
+            (name == "LOCKSTEP_SIM_MYSERVER_TICKET_ENV").then(|| "INVALID-NAME".to_string())
+        })
+        .unwrap_err();
+        assert!(invalid.contains("valid environment variable name"));
     }
 }

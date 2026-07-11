@@ -35,6 +35,7 @@ use super::{
         LockstepSimEntityVisual, LockstepSimVisualState, clear_lockstep_sim_visuals,
         despawn_lockstep_sim_visual_entities, sync_lockstep_sim_entity_visuals,
     },
+    visual_smoke::LockstepSimVisualSmokeConfig,
 };
 
 pub(in crate::game) struct LockstepSimPlugin;
@@ -97,7 +98,11 @@ fn send_local_lockstep_sim_input(
     mut seq: ResMut<LockstepSimInputSeq>,
     mut send_state: ResMut<LockstepSimInputSendState>,
     mut authority_commands: MessageWriter<AuthorityCommand>,
+    visual_smoke: Option<Res<LockstepSimVisualSmokeConfig>>,
 ) {
+    if visual_smoke.is_some_and(|config| config.enabled) {
+        return;
+    }
     if !scene_state.active {
         return;
     }

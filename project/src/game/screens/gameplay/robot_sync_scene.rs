@@ -34,6 +34,9 @@ use crate::game::{
     ui_ids::{OWNER_ROBOT_SYNC_SCENE, PANEL_ROBOT_SYNC_SCENE_HUD},
 };
 
+const ROBOT_SYNC_HUD_PANEL_WIDTH: f32 = 440.0;
+const ROBOT_SYNC_HUD_PANEL_MIN_HEIGHT: f32 = 280.0;
+
 #[derive(Component)]
 pub(super) struct RobotSyncSceneLobbyButton;
 
@@ -49,10 +52,27 @@ pub(super) struct RobotSyncHudDetailsPanel;
 pub(super) struct RobotSyncHudStatusText;
 
 #[derive(Component)]
+pub(super) struct RobotSyncHudTitleText;
+
+#[derive(Component)]
 pub(super) struct RobotSyncHudHideButton;
 
 #[derive(Component)]
 pub(super) struct RobotSyncHudShowButton;
+
+fn robot_sync_hud_details_panel_node(theme: &UiTheme) -> Node {
+    Node {
+        width: px(ROBOT_SYNC_HUD_PANEL_WIDTH),
+        max_width: percent(100),
+        min_height: px(ROBOT_SYNC_HUD_PANEL_MIN_HEIGHT),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(theme.layout.row_gap),
+        padding: UiRect::all(px(theme.layout.panel_gap)),
+        border: UiRect::all(px(theme.panel.border)),
+        border_radius: BorderRadius::all(px(theme.panel.radius)),
+        ..default()
+    }
+}
 
 pub(super) fn setup_robot_sync_scene_hud(
     mut commands: Commands,
@@ -91,28 +111,23 @@ pub(super) fn setup_robot_sync_scene_hud(
         children![
             (
                 UiThemePanelNodeRole::Content,
-                Node {
-                    max_width: px(440),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(theme.layout.row_gap),
-                    padding: UiRect::all(px(theme.layout.panel_gap)),
-                    border: UiRect::all(px(theme.panel.border)),
-                    border_radius: BorderRadius::all(px(theme.panel.radius)),
-                    ..default()
-                },
+                robot_sync_hud_details_panel_node(theme),
                 BackgroundColor(theme.colors.panel_background),
                 BorderColor::all(theme.colors.panel_border),
                 UiThemeBackgroundRole::Panel,
                 UiThemeBorderRole::Panel,
                 RobotSyncHudDetailsPanel,
                 children![
-                    screen_title_key(
-                        theme,
-                        fonts,
-                        i18n,
-                        "robot_sync_scene.hud.title",
-                        "Robot Sync",
-                        UiThemeTextStyleRole::Title,
+                    (
+                        screen_title_key(
+                            theme,
+                            fonts,
+                            i18n,
+                            "robot_sync_scene.hud.title",
+                            "Robot Sync",
+                            UiThemeTextStyleRole::Title,
+                        ),
+                        RobotSyncHudTitleText,
                     ),
                     (
                         screen_label(
@@ -122,6 +137,10 @@ pub(super) fn setup_robot_sync_scene_hud(
                             UiThemeTextStyleRole::Caption,
                             UiThemeTextColorRole::Muted,
                         ),
+                        Node {
+                            width: percent(100),
+                            ..default()
+                        },
                         RobotSyncHudStatusText,
                     ),
                 ],
@@ -182,7 +201,15 @@ pub(super) fn update_robot_sync_scene_hud_status(
     authority_session: Res<AuthoritySession>,
     replay_state: Res<crate::game::features::robot_sync::RobotSyncReplayState>,
     lockstep_replay_state: Res<crate::game::features::lockstep_sim::LockstepSimReplayState>,
-    mut status_texts: Query<&mut Text, With<RobotSyncHudStatusText>>,
+    i18n: Res<UiI18n>,
+    mut title_texts: Query<
+        &mut Text,
+        (With<RobotSyncHudTitleText>, Without<RobotSyncHudStatusText>),
+    >,
+    mut status_texts: Query<
+        &mut Text,
+        (With<RobotSyncHudStatusText>, Without<RobotSyncHudTitleText>),
+    >,
 ) {
     let status = robot_sync_scene_hud_status(
         &config,
@@ -193,6 +220,17 @@ pub(super) fn update_robot_sync_scene_hud_status(
         &replay_state,
         &lockstep_replay_state,
     );
+    let title = if lockstep_scene_state.is_active() {
+        "Lockstep Sim".to_string()
+    } else {
+        i18n.tr("robot_sync_scene.hud.title", "Robot Sync")
+    };
+
+    for mut text in &mut title_texts {
+        if text.0 != title {
+            text.0 = title.clone();
+        }
+    }
 
     for mut text in &mut status_texts {
         if text.0 != status {
@@ -352,6 +390,16 @@ mod tests {
         lockstep_sim::LockstepSimPlugin,
         robot_sync::{RobotSyncConfig, RobotSyncReplayState, RobotSyncSceneState},
     };
+
+    #[test]
+    fn hud_details_panel_reserves_stable_wrapped_status_space() {
+        let node = robot_sync_hud_details_panel_node(&UiTheme::default());
+
+        assert_eq!(node.width, px(ROBOT_SYNC_HUD_PANEL_WIDTH));
+        assert_eq!(node.max_width, percent(100));
+        assert_eq!(node.min_height, px(ROBOT_SYNC_HUD_PANEL_MIN_HEIGHT));
+        assert_eq!(node.flex_direction, FlexDirection::Column);
+    }
 
     #[test]
     fn lobby_button_writes_scene_exit_and_lobby_route() {

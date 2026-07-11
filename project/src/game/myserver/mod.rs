@@ -9,6 +9,7 @@ pub(crate) use types::CharacterElements;
 pub(crate) use types::LoginSession;
 pub(crate) use types::{
     AccountLoginState, CharacterSelectionState, CharacterSummary, ElementValues,
-    GameConnectionState, MyServerCommand, MyServerDisplayError, MyServerErrorKind,
-    MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerSession,
+    GameConnectionState, MyServerAutoClientConfig, MyServerCommand, MyServerConfig,
+    MyServerDisplayError, MyServerErrorKind, MyServerErrorSource, MyServerEvent, MyServerOperation,
+    MyServerSession,
 };

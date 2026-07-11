@@ -6,7 +6,8 @@ use super::{
     audio::GameAudioPlugin,
     authority::AuthorityPlugin,
     features::{
-        FangyuanPlayerPreviewPlugin, LockstepSimPlugin, RobotSyncPlugin, TouchRipplePlugin,
+        FangyuanPlayerPreviewPlugin, LockstepSimPlugin, LockstepSimVisualSmokePlugin,
+        RobotSyncPlugin, TouchRipplePlugin,
     },
     myserver::MyServerPlugin,
     scenes::GameScenesPlugin,
@@ -30,6 +31,7 @@ impl Plugin for GamePlugin {
             TouchRipplePlugin,
             RobotSyncPlugin,
             LockstepSimPlugin,
+            LockstepSimVisualSmokePlugin,
             FangyuanPlayerPreviewPlugin,
         ))
         .add_systems(Startup, setup_camera);
