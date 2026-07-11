@@ -54,6 +54,13 @@
 - 字体子集不覆盖扩展 CJK、emoji、日文、韩文和繁体专用字形。
 - i18n fallback 优先中文内置文案，适合当前开发期验证，但正式多语言发布前需要补齐每个 locale 的完整资源。
 
+## 高保真视觉能力
+
+- 当前只有 `Natural` 和 `Stretch` 图片模式；`Contain`、`Cover`、焦点裁切、正式九宫格、平铺和图集帧描述尚未形成公共能力。
+- 阴影、渐变和复杂描边尚无共享 token、组合校验和移动端降级规则。
+- 通用属性动画、正式图片图标、状态贴图、Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。
+- 允许临时直接使用的 Bevy 原语必须附加 `UiDirectBevyVisual` marker；完整状态和判定规则见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。
+
 ## 测试覆盖
 
 - 许多核心 helper 有单元测试，包括 viewport、binding、focus、scroll、按钮视觉优先级、文本输入编辑等。

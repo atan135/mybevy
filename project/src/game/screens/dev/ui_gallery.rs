@@ -44,6 +44,18 @@ use crate::game::{
 };
 
 const GALLERY_STRESS_ITEM_COUNT: usize = 96;
+const GALLERY_VISUAL_FIXTURE_PATHS: [&str; 4] = [
+    "ui/fixtures/visual-foundation/transparent-edge.png",
+    "ui/fixtures/visual-foundation/non-square-2x1.png",
+    "ui/fixtures/visual-foundation/nine-slice-12px.png",
+    "ui/fixtures/visual-foundation/atlas-four-frames.png",
+];
+#[cfg(test)]
+const GALLERY_VISUAL_FONT_FIXTURE_PATHS: [&str; 3] = [
+    "ui/fixtures/fonts/FigtreeFixture-Regular.ttf",
+    "ui/fixtures/fonts/FigtreeFixture-Medium.ttf",
+    "ui/fixtures/fonts/FigtreeFixture-Bold.ttf",
+];
 const GALLERY_IMAGE_PATHS: [&str; 2] = [
     "ui/images/battlepass_bg_dragon01.png",
     "ui/images/battlepass_bg_dragon02.png",
@@ -107,6 +119,9 @@ enum GalleryTextInputState {
     Readonly,
     Disabled,
 }
+
+#[derive(Component)]
+struct GalleryVisualFoundationRegion;
 
 impl GalleryLoadingPreview {
     fn new() -> Self {
@@ -199,6 +214,42 @@ pub(super) fn setup_ui_gallery(
             let mut scroll_body = root.spawn(ui_scroll_column(theme));
             scroll_body.insert(SCROLL_UI_GALLERY_MAIN);
             scroll_body.with_children(|body| {
+                body.spawn((
+                    gallery_panel(theme),
+                    GalleryVisualFoundationRegion,
+                    Name::new("Gallery visual foundation region"),
+                ))
+                .with_children(|visual_panel| {
+                    visual_panel.spawn(section_label_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "ui_gallery.visual_foundation.section",
+                        "Visual Foundation",
+                    ));
+                    visual_panel.spawn(screen_label_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "ui_gallery.visual_foundation.description",
+                        "Alpha edge, 2:1 image, nine-slice, and atlas fixtures.",
+                        UiThemeTextStyleRole::Body,
+                        UiThemeTextColorRole::Muted,
+                    ));
+                    visual_panel
+                        .spawn(ui_thumbnail_grid(4, metrics.control_gap))
+                        .with_children(|fixtures| {
+                            for path in GALLERY_VISUAL_FIXTURE_PATHS {
+                                spawn_gallery_visual_fixture(
+                                    fixtures,
+                                    theme,
+                                    asset_server.load(path),
+                                    path,
+                                );
+                            }
+                        });
+                });
+
                 body.spawn(gallery_panel(theme))
                     .with_children(|typography_panel| {
                         typography_panel.spawn(section_label_key(
@@ -1323,6 +1374,31 @@ fn spawn_gallery_image_card(
         });
 }
 
+fn spawn_gallery_visual_fixture(
+    fixtures: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    image: Handle<Image>,
+    path: &'static str,
+) {
+    let mut fixture = fixtures.spawn(gallery_image_card_node(theme));
+    fixture.insert(Name::new(format!("Gallery visual fixture: {path}")));
+    fixture.with_children(|card| {
+        card.spawn(ui_image_panel_node(UiImageSize::FullWidthAspect {
+            aspect_ratio: 1.0,
+        }))
+        .with_children(|panel| {
+            panel.spawn(ui_image(
+                image,
+                UiImageFit::Stretch,
+                UiImageSize::PercentBox {
+                    width: 100.0,
+                    height: 100.0,
+                },
+            ));
+        });
+    });
+}
+
 fn spawn_gallery_atlas_source_thumbnail(
     thumbnails: &mut ChildSpawnerCommands,
     theme: &UiTheme,
@@ -1600,5 +1676,39 @@ mod tests {
             gallery_atlas_source_columns().for_width_class(UiWidthClass::Expanded),
             6
         );
+    }
+
+    #[test]
+    fn visual_foundation_fixture_paths_are_stable_and_unique() {
+        assert_eq!(GALLERY_VISUAL_FIXTURE_PATHS.len(), 4);
+        assert!(
+            GALLERY_VISUAL_FIXTURE_PATHS
+                .iter()
+                .all(|path| path.starts_with("ui/fixtures/visual-foundation/"))
+        );
+        let mut paths = GALLERY_VISUAL_FIXTURE_PATHS.to_vec();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(paths.len(), GALLERY_VISUAL_FIXTURE_PATHS.len());
+    }
+
+    #[test]
+    fn visual_foundation_manifest_is_parseable_and_assets_exist() {
+        let manifest = include_str!("../../../../assets/ui/fixtures/manifest.ron");
+        ron::de::from_str::<ron::Value>(manifest).expect("fixture manifest should be valid RON");
+
+        for path in GALLERY_VISUAL_FIXTURE_PATHS
+            .iter()
+            .chain(GALLERY_VISUAL_FONT_FIXTURE_PATHS.iter())
+        {
+            assert!(manifest.contains(path), "manifest should contain {path}");
+            assert!(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join(path)
+                    .is_file(),
+                "fixture asset should exist: {path}"
+            );
+        }
     }
 }

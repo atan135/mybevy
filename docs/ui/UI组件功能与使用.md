@@ -134,6 +134,10 @@ UI 图片 helper 位于 `widgets/image.rs`，示例资源位于：
 
 当前 UI Gallery 展示首包图片和图集源图，图集源图只是普通 PNG 展示，不是正式图集帧预览。
 
+高保真视觉 fixture 位于 `project/assets/ui/fixtures/`，清单见 `manifest.ron`，来源和许可见 `LICENSES.md`。UI Gallery 的首个固定区域会展示图片 fixture，并可通过审计 state `visual_foundation` 自动进入。fixture 只用于框架验收，不是正式业务资源；当前展示仍使用已有 `Stretch` helper，不代表已支持焦点裁切、九宫格或图集帧。
+
+视觉能力状态、Direct Bevy 逃生口和非目标见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。
+
 ## 数据绑定
 
 绑定核心在 `project/src/framework/ui/core/binding.rs`：

@@ -255,6 +255,11 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
 
 const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     UiAuditCaptureRecipe::scroll(
+        UiAuditCaptureState::VisualFoundation,
+        SCROLL_UI_GALLERY_MAIN,
+        UiScrollAuditPosition::Top,
+    ),
+    UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::Top,
         SCROLL_UI_GALLERY_MAIN,
         UiScrollAuditPosition::Top,
@@ -415,13 +420,21 @@ mod tests {
             .expect("ui gallery should be registered for audit");
         let recipe = screen.recipe.expect("ui gallery should have audit recipe");
 
-        assert_eq!(recipe.captures.len(), 3);
-        assert_eq!(recipe.captures[0].state, UiAuditCaptureState::Top);
-        assert_eq!(recipe.captures[1].state, UiAuditCaptureState::Middle);
-        assert_eq!(recipe.captures[2].state, UiAuditCaptureState::Bottom);
+        assert_eq!(recipe.captures.len(), 4);
+        assert_eq!(
+            recipe.captures[0].state,
+            UiAuditCaptureState::VisualFoundation
+        );
+        assert_eq!(recipe.captures[1].state, UiAuditCaptureState::Top);
+        assert_eq!(recipe.captures[2].state, UiAuditCaptureState::Middle);
+        assert_eq!(recipe.captures[3].state, UiAuditCaptureState::Bottom);
         assert_eq!(
             recipe.captures[0].scroll.map(|scroll| scroll.target_id),
             Some(SCROLL_UI_GALLERY_MAIN)
+        );
+        assert_eq!(
+            recipe.captures[0].scroll.map(|scroll| scroll.position),
+            Some(UiScrollAuditPosition::Top)
         );
     }
 }

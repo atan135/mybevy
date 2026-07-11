@@ -467,6 +467,11 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
         ("robot_sync_scene.hud.hide", "隐藏 HUD"),
         ("robot_sync_scene.hud.show", "显示 HUD"),
         ("ui_gallery.title", "UI 示例"),
+        ("ui_gallery.visual_foundation.section", "视觉基础"),
+        (
+            "ui_gallery.visual_foundation.description",
+            "透明边缘、2:1 图片、九宫格与图集测试资源。",
+        ),
         ("ui_gallery.typography.section", "文字排版"),
         ("ui_gallery.typography.large_title", "大标题"),
         ("ui_gallery.typography.section_title", "章节标题"),

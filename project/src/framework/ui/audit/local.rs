@@ -30,6 +30,7 @@ const DEFAULT_AUDIT_OUTPUT_ROOT: &str = "../summary/ui-audit";
 
 // These MYBEVY_UI_AUDIT_* variables belong only to the first-stage local one-shot mode.
 const INITIAL_CAPTURE_STATE: &str = "initial";
+const VISUAL_FOUNDATION_CAPTURE_STATE: &str = "visual_foundation";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
@@ -274,6 +275,7 @@ impl UiAuditConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiAuditCaptureState {
     Initial,
+    VisualFoundation,
     Top,
     Middle,
     Bottom,
@@ -283,6 +285,7 @@ impl UiAuditCaptureState {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Initial => INITIAL_CAPTURE_STATE,
+            Self::VisualFoundation => VISUAL_FOUNDATION_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -1106,6 +1109,8 @@ fn parse_capture_states(value: &str) -> (Vec<UiAuditCaptureState>, Option<UiAudi
 fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
     if value.eq_ignore_ascii_case(INITIAL_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Initial)
+    } else if value.eq_ignore_ascii_case(VISUAL_FOUNDATION_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::VisualFoundation)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -1696,6 +1701,22 @@ mod tests {
                 UiAuditCaptureState::Bottom
             ]
         );
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn config_accepts_visual_foundation_capture_state() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "visual_foundation"),
+            ]),
+            100,
+        );
+
+        assert_eq!(config.states, vec![UiAuditCaptureState::VisualFoundation]);
         assert!(config.states_from_env);
         assert!(config.config_error.is_none());
     }

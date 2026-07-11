@@ -60,6 +60,8 @@
         "robot_sync_scene.hud.hide": "Hide HUD",
         "robot_sync_scene.hud.show": "Show HUD",
         "ui_gallery.title": "UI Gallery",
+        "ui_gallery.visual_foundation.section": "Visual Foundation",
+        "ui_gallery.visual_foundation.description": "Alpha edge, 2:1 image, nine-slice, and atlas fixtures.",
         "ui_gallery.typography.section": "Typography",
         "ui_gallery.typography.large_title": "Large Title",
         "ui_gallery.typography.section_title": "Section Title",

@@ -4,5 +4,6 @@ pub(crate) use super::{
     i18n::{UiI18n, UiI18nText},
     overlays::*,
     style::*,
+    visual::*,
     widgets::*,
 };
