@@ -2,7 +2,8 @@ use bevy::prelude::*;
 
 use crate::framework::ui::{
     core::{
-        UI_PANEL_GLOBAL_LOADING, UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing,
+        UI_PANEL_GLOBAL_LOADING, UiAnimatedAlpha, UiAnimationCompletion, UiAnimationDirection,
+        UiAnimationEasing, UiAnimationId, UiAnimationRepeat, UiAnimationSpec, UiAnimations,
         UiBlockingOverlay, UiLayer, UiLayerRoot, UiMetrics, UiOwnerId, UiPanelKind, UiPanelRoot,
         UiViewport,
     },
@@ -17,6 +18,8 @@ use crate::framework::ui::{
 };
 
 const LOADING_ENTRY_FADE_SECS: f32 = 0.16;
+const LOADING_PULSE_SECS: f32 = 0.72;
+const LOADING_PULSE_ID: UiAnimationId = UiAnimationId::new("overlay.loading.pulse");
 
 #[derive(Clone, Debug)]
 pub(crate) struct UiLoading {
@@ -102,6 +105,8 @@ pub(crate) fn spawn_loading(
                 UiThemeBorderRole::Panel,
                 UiLoadingAnimatedPanel,
                 loading_entry_fade_animation(theme.colors.panel_background),
+                UiTransform::default(),
+                loading_pulse_animation(),
             ))
             .with_children(|panel| {
                 if let Some(i18n_text) = loading.i18n_text.clone() {
@@ -171,6 +176,23 @@ fn loading_entry_fade_animation(color: Color) -> UiAnimatedAlpha {
         .with_completion(UiAnimationCompletion::RemoveComponent)
 }
 
+fn loading_pulse_spec() -> UiAnimationSpec {
+    UiAnimationSpec::transform_scale(
+        LOADING_PULSE_ID,
+        Vec2::splat(0.97),
+        Vec2::ONE,
+        LOADING_PULSE_SECS,
+    )
+    .with_easing(UiAnimationEasing::EaseInOutCubic)
+    .with_direction(UiAnimationDirection::Alternate)
+    .with_repeat(UiAnimationRepeat::Infinite)
+}
+
+fn loading_pulse_animation() -> UiAnimations {
+    UiAnimations::try_from_spec(loading_pulse_spec())
+        .expect("built-in loading pulse animation must be valid")
+}
+
 fn border_with_alpha(border: BorderColor, alpha: f32) -> BorderColor {
     BorderColor {
         top: border.top.with_alpha(alpha),
@@ -212,6 +234,23 @@ mod tests {
         assert_approx_eq(animation.duration_secs, LOADING_ENTRY_FADE_SECS);
         assert_eq!(animation.easing, UiAnimationEasing::EaseOutCubic);
         assert_eq!(animation.completion, UiAnimationCompletion::RemoveComponent);
+    }
+
+    #[test]
+    fn loading_pulse_is_a_transform_loop_with_static_reduced_endpoint() {
+        let spec = loading_pulse_spec();
+
+        assert_eq!(spec.id, LOADING_PULSE_ID);
+        assert_eq!(
+            spec.target,
+            crate::framework::ui::core::UiAnimationTarget::TransformScale
+        );
+        assert_eq!(spec.repeat, UiAnimationRepeat::Infinite);
+        assert_eq!(spec.direction, UiAnimationDirection::Alternate);
+        assert_eq!(
+            spec.to,
+            crate::framework::ui::core::UiAnimationValue::Vector(Vec2::ONE)
+        );
     }
 
     #[test]

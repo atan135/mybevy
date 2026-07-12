@@ -159,7 +159,9 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - `manifest.json` 的 `status` 为 `passed` 或 dry-run 时为 `planned`。
 - `report.md` 中每个 capture 都有对应 screenshot 和 metadata 链接；远程模式至少有 screenshot / metadata artifact URI。
 - `analysis-input.json` 中每条 capture 的 `screen`、`device`、`state` 能对应回 `manifest.json` 和 `report.md`。
-- 有滚动 recipe 的 `ui_gallery` 默认覆盖 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`effects`、`middle`、`bottom`，并记录 `scroll_target_id = ui_gallery.main`；图片适配固定基线使用 `image_fit`，完整 fixture 使用 `visual_foundation`，高级图片、文字、图标、样式作用域与效果验收均使用 child anchor，不要依赖会随页面总高度变化的 `middle`。
+- 有滚动 recipe 的 `ui_gallery` 默认覆盖 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`effects`、`animations`、`middle`、`bottom`，并记录 `scroll_target_id = ui_gallery.main`；图片适配固定基线使用 `image_fit`，完整 fixture 使用 `visual_foundation`，高级图片、文字、图标、样式作用域、效果与动画验收均使用 child anchor，不要依赖会随页面总高度变化的 `middle`。
+- 任意 UI Gallery capture state 第一次应用时，全部动画样例都应 seek 到 `0.625` 并 pause；后续 30 帧稳定等待内 scroll geometry、目标值、player 和 debug snapshot 不应继续 Changed。
+- metadata 的 `motion_policy` 应与当前 `UiMotionPolicy` 一致；`animation_snapshots` 应按 Name/Entity 稳定排序，并记录 target、raw/eased progress、pause 与 `causes_layout_reflow`。
 
 失败报告需要能定位：
 

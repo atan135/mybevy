@@ -1,9 +1,14 @@
 use bevy::{ecs::hierarchy::ChildSpawnerCommands, prelude::*};
 
+#[cfg(test)]
+use crate::framework::ui::audit::UiAuditCaptureState;
 use crate::framework::ui::{
+    audit::UiAuditCaptureStateApplied,
     core::{
-        UI_PANEL_GLOBAL_LOADING, UiFloatingPanel, UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand,
-        UiPanelId, UiPanelKind, UiPanelRequest, UiPanelRoot, UiViewport, UiWidthClass,
+        UI_PANEL_GLOBAL_LOADING, UiAnimationCommand, UiAnimationDirection, UiAnimationEasing,
+        UiAnimationId, UiAnimationRepeat, UiAnimationSpec, UiAnimations, UiFloatingPanel, UiLayer,
+        UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
+        UiPanelRoot, UiViewport, UiWidthClass,
         binding::{UiBindingValues, UiBoundDisabled, UiBoundText, UiBoundVisibility},
     },
     i18n::{UiI18n, UiI18nText},
@@ -48,11 +53,12 @@ use crate::framework::ui::{
 use crate::game::{
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{
-        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES,
-        ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
-        ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES,
-        ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM,
-        OWNER_UI_GALLERY, PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_ANIMATIONS, ANCHOR_UI_GALLERY_EFFECTS,
+        ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS,
+        ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING,
+        ANCHOR_UI_GALLERY_STYLE_SCOPES, ANCHOR_UI_GALLERY_TYPOGRAPHY,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
+        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
 
@@ -107,6 +113,15 @@ const GALLERY_TYPOGRAPHY_BODY_LINE_HEIGHT: f32 = 1.35;
 const GALLERY_TYPOGRAPHY_OVERFLOW_CHILD_GAPS: f32 = 5.0;
 // Covers the two border edges when border-box layout rounds fractional text heights.
 const GALLERY_TYPOGRAPHY_BORDER_ROUNDING_ALLOWANCE: f32 = 2.0;
+const GALLERY_ANIMATION_AUDIT_PROGRESS: f32 = 0.625;
+const GALLERY_CONTROL_ANIMATION_ID: UiAnimationId = UiAnimationId::new("gallery.control.press");
+const GALLERY_PAGE_ANIMATION_ID: UiAnimationId = UiAnimationId::new("gallery.page.entry");
+const GALLERY_MODAL_ENTRY_ANIMATION_ID: UiAnimationId = UiAnimationId::new("gallery.modal.entry");
+const GALLERY_MODAL_EXIT_ANIMATION_ID: UiAnimationId = UiAnimationId::new("gallery.modal.exit");
+const GALLERY_LOADING_ANIMATION_ID: UiAnimationId = UiAnimationId::new("gallery.loading.loop");
+const GALLERY_LAYOUT_ANIMATION_ID: UiAnimationId = UiAnimationId::new("gallery.layout.size");
+const GALLERY_COLOR_ANIMATION_ID: UiAnimationId = UiAnimationId::new("gallery.color.transition");
+const GALLERY_ALPHA_ANIMATION_ID: UiAnimationId = UiAnimationId::new("gallery.alpha.transition");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct GalleryTypographyLineBudget {
@@ -141,6 +156,7 @@ pub(super) enum GalleryActionButton {
     Floating,
     CloseTop,
     UpdateBinding,
+    ReplayAnimation,
 }
 
 #[derive(Resource)]
@@ -153,6 +169,11 @@ pub(super) struct GalleryBindingPreview {
     update_count: usize,
     notice_visible: bool,
     button_disabled: bool,
+}
+
+#[derive(Default, Resource)]
+pub(super) struct GalleryAnimationAuditFreeze {
+    frozen: bool,
 }
 
 #[derive(Resource)]
@@ -207,6 +228,12 @@ struct GalleryStyleScopesRegion;
 
 #[derive(Component)]
 struct GalleryEffectsRegion;
+
+#[derive(Component)]
+struct GalleryAnimationsRegion;
+
+#[derive(Component)]
+pub(super) struct GalleryAnimationSample;
 
 #[derive(Clone, Copy, Component)]
 struct GalleryIconStatePreview(UiButtonVisualState);
@@ -308,6 +335,7 @@ pub(super) fn setup_ui_gallery(
     let asset_server = asset_server.into_inner();
     clear_color.0 = theme.colors.screen_background;
     commands.insert_resource(GalleryBindingPreview::default());
+    commands.insert_resource(GalleryAnimationAuditFreeze::default());
     binding_values.set_text(
         GALLERY_BINDING_STATUS_PATH,
         i18n.tr(
@@ -336,6 +364,8 @@ pub(super) fn setup_ui_gallery(
             BackgroundColor(theme.colors.screen_background),
             UiThemeBackgroundRole::Screen,
             UiThemeRootNodeRole::Screen,
+            UiTransform::default(),
+            gallery_page_entry_animation(),
         ))
         .with_children(|root| {
             root.spawn(gallery_header(theme, metrics, width_class))
@@ -638,6 +668,18 @@ pub(super) fn setup_ui_gallery(
                     .with_children(|effects_panel| {
                         spawn_gallery_effect_samples(
                             effects_panel,
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            width_class,
+                        );
+                    });
+
+                body.spawn(gallery_animations_panel(theme))
+                    .with_children(|animations_panel| {
+                        spawn_gallery_animation_samples(
+                            animations_panel,
                             theme,
                             metrics,
                             fonts,
@@ -1226,6 +1268,7 @@ pub(super) fn handle_ui_gallery_buttons(
     mut binding_preview: ResMut<GalleryBindingPreview>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut overlay_commands: MessageWriter<UiOverlayCommand>,
+    mut animation_commands: MessageWriter<UiAnimationCommand>,
     action_buttons: Query<&GalleryActionButton>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
@@ -1302,6 +1345,20 @@ pub(super) fn handle_ui_gallery_buttons(
                     binding_preview.button_disabled,
                 );
             }
+            GalleryActionButton::ReplayAnimation => {
+                animation_commands.write(UiAnimationCommand::continue_from_current(
+                    event.entity,
+                    UiAnimationSpec::transform_scale(
+                        GALLERY_CONTROL_ANIMATION_ID,
+                        Vec2::ONE,
+                        Vec2::splat(0.94),
+                        0.1,
+                    )
+                    .with_easing(UiAnimationEasing::EaseOutCubic)
+                    .with_direction(UiAnimationDirection::Alternate)
+                    .with_repeat(UiAnimationRepeat::Count(2)),
+                ));
+            }
         }
     }
 }
@@ -1339,6 +1396,32 @@ pub(super) fn clear_ui_gallery_loading_preview(mut commands: Commands) {
     commands.remove_resource::<GalleryLoadingPreview>();
     commands.remove_resource::<GalleryBindingPreview>();
     commands.remove_resource::<GalleryFloatingI18n>();
+    commands.remove_resource::<GalleryAnimationAuditFreeze>();
+}
+
+pub(super) fn freeze_gallery_animation_audit_state(
+    mut state_events: MessageReader<UiAuditCaptureStateApplied>,
+    mut freeze: ResMut<GalleryAnimationAuditFreeze>,
+    samples: Query<Entity, With<GalleryAnimationSample>>,
+    mut animation_commands: MessageWriter<UiAnimationCommand>,
+) {
+    for _event in state_events.read() {
+        if freeze.frozen {
+            continue;
+        }
+
+        let mut entities = samples.iter().collect::<Vec<_>>();
+        entities.sort_by_key(|entity| entity.to_bits());
+        for entity in entities {
+            animation_commands.write(UiAnimationCommand::Seek {
+                entity,
+                target: None,
+                progress: GALLERY_ANIMATION_AUDIT_PROGRESS,
+                pause: true,
+            });
+        }
+        freeze.frozen = true;
+    }
 }
 
 pub(super) fn apply_gallery_icon_state_previews(world: &mut World) {
@@ -1520,6 +1603,28 @@ fn gallery_effects_panel(theme: &UiTheme) -> impl Bundle {
     )
 }
 
+fn gallery_animations_panel(theme: &UiTheme) -> impl Bundle {
+    (
+        gallery_panel(theme),
+        GalleryAnimationsRegion,
+        ANCHOR_UI_GALLERY_ANIMATIONS,
+        Name::new("Gallery animation and transition region"),
+    )
+}
+
+fn gallery_page_entry_animation() -> UiAnimations {
+    UiAnimations::try_from_spec(
+        UiAnimationSpec::transform_translation(
+            GALLERY_PAGE_ANIMATION_ID,
+            Vec2::new(0.0, 14.0),
+            Vec2::ZERO,
+            0.22,
+        )
+        .with_easing(UiAnimationEasing::EaseOutCubic),
+    )
+    .expect("built-in Gallery page entry animation must be valid")
+}
+
 fn gallery_typography_overflow_panel(theme: &UiTheme, width_class: UiWidthClass) -> impl Bundle {
     (
         UiThemePanelNodeRole::Content,
@@ -1594,6 +1699,10 @@ fn gallery_icon_state_columns() -> UiResponsiveGridColumns {
 
 fn gallery_effect_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(1, 2, 3)
+}
+
+fn gallery_animation_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(2, 2, 4)
 }
 
 fn gallery_selection_columns() -> UiResponsiveGridColumns {
@@ -2246,6 +2355,323 @@ fn spawn_gallery_effect_tile(
             ));
         }
     });
+}
+
+fn spawn_gallery_animation_samples(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    width_class: UiWidthClass,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.animations.section",
+        "Animation and Motion",
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.animations.description",
+        "Transform-first transitions, explicit layout motion, and deterministic policy states.",
+        UiThemeTextStyleRole::Body,
+        UiThemeTextColorRole::Muted,
+    ));
+    panel
+        .spawn(gallery_animation_grid(metrics, width_class))
+        .with_children(|samples| {
+            samples.spawn((
+                primary_action_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "ui_gallery.animations.control",
+                    "Control",
+                ),
+                GalleryActionButton::ReplayAnimation,
+                GalleryAnimationSample,
+                UiTransform::default(),
+                gallery_animation(
+                    UiAnimationSpec::transform_scale(
+                        GALLERY_CONTROL_ANIMATION_ID,
+                        Vec2::splat(0.97),
+                        Vec2::ONE,
+                        0.52,
+                    )
+                    .with_easing(UiAnimationEasing::EaseInOutCubic)
+                    .with_direction(UiAnimationDirection::Alternate)
+                    .with_repeat(UiAnimationRepeat::Infinite),
+                ),
+                Name::new("Gallery control transition animation"),
+            ));
+
+            spawn_gallery_animation_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.animations.page_entry",
+                "Page entry",
+                UiAnimationSpec::transform_translation(
+                    UiAnimationId::new("gallery.page.entry_sample"),
+                    Vec2::new(0.0, 18.0),
+                    Vec2::ZERO,
+                    0.8,
+                )
+                .with_easing(UiAnimationEasing::EaseOutCubic)
+                .with_direction(UiAnimationDirection::Alternate)
+                .with_repeat(UiAnimationRepeat::Infinite),
+            );
+            spawn_gallery_animation_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.animations.modal_entry",
+                "Dialog entry",
+                UiAnimationSpec::transform_scale(
+                    GALLERY_MODAL_ENTRY_ANIMATION_ID,
+                    Vec2::splat(0.9),
+                    Vec2::ONE,
+                    0.72,
+                )
+                .with_easing(UiAnimationEasing::EaseOutCubic)
+                .with_direction(UiAnimationDirection::Alternate)
+                .with_repeat(UiAnimationRepeat::Infinite),
+            );
+            spawn_gallery_animation_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.animations.modal_exit",
+                "Dialog exit",
+                UiAnimationSpec::transform_scale(
+                    GALLERY_MODAL_EXIT_ANIMATION_ID,
+                    Vec2::ONE,
+                    Vec2::splat(0.88),
+                    0.72,
+                )
+                .with_easing(UiAnimationEasing::EaseInCubic)
+                .with_direction(UiAnimationDirection::Alternate)
+                .with_repeat(UiAnimationRepeat::Infinite),
+            );
+            spawn_gallery_animation_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.animations.loading",
+                "Loading loop",
+                UiAnimationSpec::transform_scale(
+                    GALLERY_LOADING_ANIMATION_ID,
+                    Vec2::splat(0.94),
+                    Vec2::ONE,
+                    0.64,
+                )
+                .with_easing(UiAnimationEasing::EaseInOutCubic)
+                .with_direction(UiAnimationDirection::Alternate)
+                .with_repeat(UiAnimationRepeat::Infinite),
+            );
+            spawn_gallery_layout_animation_tile(samples, theme, fonts, i18n);
+            spawn_gallery_color_animation_tile(samples, theme, fonts, i18n);
+            spawn_gallery_alpha_animation_tile(samples, theme, fonts, i18n);
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_gallery_animation_tile(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    label_key: &'static str,
+    label_fallback: &'static str,
+    animation: UiAnimationSpec,
+) {
+    parent
+        .spawn((
+            gallery_animation_tile_node(theme),
+            BackgroundColor(Color::srgb(0.12, 0.18, 0.20)),
+            BorderColor::all(theme.colors.panel_border),
+            UiTransform::default(),
+            gallery_animation(animation),
+            GalleryAnimationSample,
+            Name::new(format!("Gallery {label_fallback} animation")),
+        ))
+        .with_children(|tile| {
+            tile.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                label_key,
+                label_fallback,
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Primary,
+            ));
+        });
+}
+
+fn spawn_gallery_layout_animation_tile(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+) {
+    parent
+        .spawn((
+            Node {
+                width: px(96.0),
+                height: px(72.0),
+                min_width: px(96.0),
+                max_width: percent(100.0),
+                align_self: AlignSelf::Center,
+                justify_self: JustifySelf::Center,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                padding: UiRect::all(px(10.0)),
+                border: UiRect::all(px(theme.panel.border)),
+                border_radius: BorderRadius::all(px(theme.panel.radius)),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.16, 0.15, 0.23)),
+            BorderColor::all(theme.colors.panel_border),
+            gallery_animation(
+                UiAnimationSpec::layout_size(
+                    GALLERY_LAYOUT_ANIMATION_ID,
+                    Vec2::new(96.0, 72.0),
+                    Vec2::new(120.0, 84.0),
+                    0.9,
+                )
+                .with_easing(UiAnimationEasing::EaseInOutCubic)
+                .with_direction(UiAnimationDirection::Alternate)
+                .with_repeat(UiAnimationRepeat::Infinite),
+            ),
+            GalleryAnimationSample,
+            Name::new("Gallery explicit layout size animation"),
+        ))
+        .with_children(|tile| {
+            tile.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.animations.layout",
+                "Layout size",
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Primary,
+            ));
+        });
+}
+
+fn spawn_gallery_color_animation_tile(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+) {
+    parent
+        .spawn((
+            gallery_animation_tile_node(theme),
+            BackgroundColor(Color::srgb(0.08, 0.48, 0.43)),
+            BorderColor::all(theme.colors.panel_border),
+            gallery_animation(
+                UiAnimationSpec::background_color(
+                    GALLERY_COLOR_ANIMATION_ID,
+                    Color::srgb(0.08, 0.48, 0.43),
+                    Color::srgb(0.58, 0.23, 0.29),
+                    0.9,
+                )
+                .with_easing(UiAnimationEasing::EaseInOutCubic)
+                .with_direction(UiAnimationDirection::Alternate)
+                .with_repeat(UiAnimationRepeat::Infinite),
+            ),
+            GalleryAnimationSample,
+            Name::new("Gallery background color animation"),
+        ))
+        .with_children(|tile| {
+            tile.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.animations.color",
+                "Color transition",
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Primary,
+            ));
+        });
+}
+
+fn spawn_gallery_alpha_animation_tile(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+) {
+    parent
+        .spawn((
+            gallery_animation_tile_node(theme),
+            BackgroundColor(Color::srgba(0.18, 0.47, 0.67, 0.35)),
+            BorderColor::all(theme.colors.panel_border),
+            gallery_animation(
+                UiAnimationSpec::alpha(GALLERY_ALPHA_ANIMATION_ID, 0.35, 0.9, 0.84)
+                    .with_easing(UiAnimationEasing::EaseInOutCubic)
+                    .with_direction(UiAnimationDirection::Alternate)
+                    .with_repeat(UiAnimationRepeat::Infinite),
+            ),
+            GalleryAnimationSample,
+            Name::new("Gallery alpha animation"),
+        ))
+        .with_children(|tile| {
+            tile.spawn(screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.animations.alpha",
+                "Alpha transition",
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Primary,
+            ));
+        });
+}
+
+fn gallery_animation_tile_node(theme: &UiTheme) -> Node {
+    Node {
+        width: percent(100.0),
+        min_height: px(88.0),
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::Center,
+        padding: UiRect::all(px(10.0)),
+        border: UiRect::all(px(theme.panel.border)),
+        border_radius: BorderRadius::all(px(theme.panel.radius)),
+        ..default()
+    }
+}
+
+fn gallery_animation_grid(metrics: &UiMetrics, width_class: UiWidthClass) -> Node {
+    Node {
+        width: percent(100.0),
+        display: Display::Grid,
+        grid_template_columns: RepeatedGridTrack::flex(
+            gallery_animation_columns().for_width_class(width_class),
+            1.0,
+        ),
+        grid_auto_rows: vec![GridTrack::auto()],
+        column_gap: px(metrics.control_gap),
+        row_gap: px(metrics.control_gap),
+        align_items: AlignItems::Center,
+        justify_items: JustifyItems::Stretch,
+        padding: UiRect::bottom(px(metrics.control_gap)),
+        ..default()
+    }
+}
+
+fn gallery_animation(spec: UiAnimationSpec) -> UiAnimations {
+    UiAnimations::try_from_spec(spec).expect("built-in Gallery animation must be valid")
 }
 
 fn spawn_gallery_style_tile(
@@ -3258,6 +3684,9 @@ mod tests {
     #[derive(Component)]
     struct GalleryEffectsTestRoot;
 
+    #[derive(Default, Resource)]
+    struct AnimationCommandCount(usize);
+
     #[test]
     fn gallery_button_columns_are_single_column_on_compact() {
         assert_eq!(
@@ -3291,6 +3720,10 @@ mod tests {
         assert_eq!(
             gallery_effect_columns().for_width_class(UiWidthClass::Compact),
             1
+        );
+        assert_eq!(
+            gallery_animation_columns().for_width_class(UiWidthClass::Compact),
+            2
         );
     }
 
@@ -3332,6 +3765,20 @@ mod tests {
             gallery_effect_columns().for_width_class(UiWidthClass::Expanded),
             3
         );
+        assert_eq!(
+            gallery_animation_columns().for_width_class(UiWidthClass::Expanded),
+            4
+        );
+    }
+
+    #[test]
+    fn animation_grid_reserves_bottom_padding_inside_parent_panel() {
+        let metrics = UiMetrics::default();
+        let grid = gallery_animation_grid(&metrics, UiWidthClass::Expanded);
+        let expected_columns: Vec<RepeatedGridTrack> = RepeatedGridTrack::flex(4, 1.0);
+
+        assert_eq!(grid.padding.bottom, px(metrics.control_gap));
+        assert_eq!(grid.grid_template_columns, expected_columns);
     }
 
     #[test]
@@ -3406,6 +3853,111 @@ mod tests {
                 .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
                 .copied(),
             Some(ANCHOR_UI_GALLERY_EFFECTS)
+        );
+    }
+
+    #[test]
+    fn animations_gallery_panel_owns_stable_child_audit_anchor() {
+        let theme = UiTheme::default();
+        let mut app = App::new();
+        let animations = app.world_mut().spawn(gallery_animations_panel(&theme)).id();
+
+        assert!(
+            app.world()
+                .entity(animations)
+                .contains::<GalleryAnimationsRegion>()
+        );
+        assert_eq!(
+            app.world()
+                .entity(animations)
+                .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
+                .copied(),
+            Some(ANCHOR_UI_GALLERY_ANIMATIONS)
+        );
+    }
+
+    #[test]
+    fn audit_capture_states_freeze_gallery_animation_once_and_stay_change_stable() {
+        fn count_animation_commands(
+            mut commands: MessageReader<UiAnimationCommand>,
+            mut count: ResMut<AnimationCommandCount>,
+        ) {
+            count.0 += commands.read().count();
+        }
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .insert_resource(GalleryAnimationAuditFreeze::default())
+            .init_resource::<AnimationCommandCount>()
+            .add_message::<UiAuditCaptureStateApplied>()
+            .add_plugins(crate::framework::ui::core::animation::UiAnimationPlugin)
+            .add_systems(
+                Update,
+                (
+                    freeze_gallery_animation_audit_state,
+                    count_animation_commands,
+                )
+                    .chain()
+                    .before(crate::framework::ui::core::UiAnimationSystems::Tick),
+            );
+        let entity = app
+            .world_mut()
+            .spawn((
+                UiTransform::default(),
+                GalleryAnimationSample,
+                gallery_animation(
+                    UiAnimationSpec::transform_scale(
+                        GALLERY_LOADING_ANIMATION_ID,
+                        Vec2::splat(0.8),
+                        Vec2::ONE,
+                        1.0,
+                    )
+                    .with_repeat(UiAnimationRepeat::Infinite),
+                ),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Messages<UiAuditCaptureStateApplied>>()
+            .write(UiAuditCaptureStateApplied {
+                state: UiAuditCaptureState::VisualFoundation,
+            });
+        app.world_mut()
+            .resource_mut::<Messages<UiAuditCaptureStateApplied>>()
+            .write(UiAuditCaptureStateApplied {
+                state: UiAuditCaptureState::Animations,
+            });
+        app.update();
+
+        assert_eq!(app.world().resource::<AnimationCommandCount>().0, 1);
+        let expected = Vec2::splat(0.8).lerp(Vec2::ONE, GALLERY_ANIMATION_AUDIT_PROGRESS);
+        assert_eq!(
+            app.world().get::<UiTransform>(entity).unwrap().scale,
+            expected
+        );
+        assert!(
+            app.world()
+                .get::<crate::framework::ui::core::UiAnimationDebugSnapshot>(entity)
+                .unwrap()
+                .tracks[0]
+                .paused
+        );
+
+        app.world_mut()
+            .resource_mut::<Messages<UiAuditCaptureStateApplied>>()
+            .write(UiAuditCaptureStateApplied {
+                state: UiAuditCaptureState::Effects,
+            });
+        app.world_mut().clear_trackers();
+        app.update();
+        assert_eq!(app.world().resource::<AnimationCommandCount>().0, 1);
+        let entity_ref = app.world().entity(entity);
+        assert!(!entity_ref.get_ref::<UiTransform>().unwrap().is_changed());
+        assert!(!entity_ref.get_ref::<UiAnimations>().unwrap().is_changed());
+        assert!(
+            !entity_ref
+                .get_ref::<crate::framework::ui::core::UiAnimationDebugSnapshot>()
+                .unwrap()
+                .is_changed()
         );
     }
 

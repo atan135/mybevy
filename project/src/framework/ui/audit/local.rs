@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bevy::{app::AppExit, prelude::*, window::PrimaryWindow};
+use bevy::{app::AppExit, ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use serde::Serialize;
 
 use crate::framework::ui::{
@@ -12,8 +12,9 @@ use crate::framework::ui::{
         current_unix_timestamp_seconds, read_bool, sanitize_filename_segment,
     },
     core::{
-        UiCurrentOwner, UiHeightClass, UiInputMode, UiOrientation, UiOwnerId, UiPanelKind,
-        UiPanelRoot, UiViewport, UiWidthClass, stats::UiStats,
+        UiAnimationDebugSnapshot, UiCurrentOwner, UiHeightClass, UiInputMode, UiMotionPolicy,
+        UiOrientation, UiOwnerId, UiPanelKind, UiPanelRoot, UiViewport, UiWidthClass,
+        stats::UiStats,
     },
     style::{UiResolvedEffectDebugSnapshot, UiResolvedStyleDebugSnapshot},
     widgets::{
@@ -43,6 +44,7 @@ const ICONS_CAPTURE_STATE: &str = "icons";
 const ICON_STATES_CAPTURE_STATE: &str = "icon_states";
 const STYLE_SCOPES_CAPTURE_STATE: &str = "style_scopes";
 const EFFECTS_CAPTURE_STATE: &str = "effects";
+const ANIMATIONS_CAPTURE_STATE: &str = "animations";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
@@ -61,6 +63,7 @@ impl Plugin for UiAuditPlugin {
             .insert_resource(UiAuditConfig::from_env())
             .insert_resource(UiAuditRuntime::default())
             .add_message::<UiAuditRouteCommand>()
+            .add_message::<UiAuditCaptureStateApplied>()
             .configure_sets(
                 Update,
                 UiAuditSystems::Driver.after(UiScreenshotSystems::Timeout),
@@ -328,6 +331,7 @@ pub(crate) enum UiAuditCaptureState {
     IconStates,
     StyleScopes,
     Effects,
+    Animations,
     Top,
     Middle,
     Bottom,
@@ -348,6 +352,7 @@ impl UiAuditCaptureState {
             Self::IconStates => ICON_STATES_CAPTURE_STATE,
             Self::StyleScopes => STYLE_SCOPES_CAPTURE_STATE,
             Self::Effects => EFFECTS_CAPTURE_STATE,
+            Self::Animations => ANIMATIONS_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -488,17 +493,48 @@ fn local_ui_audit_enabled(config: Res<UiAuditConfig>) -> bool {
     config.enabled
 }
 
+#[derive(SystemParam)]
+struct UiAuditMetadataWorld<'w, 's> {
+    current_owner: Res<'w, UiCurrentOwner>,
+    viewport: Res<'w, UiViewport>,
+    stats: Res<'w, UiStats>,
+    motion_policy: Res<'w, UiMotionPolicy>,
+    panels: Query<'w, 's, &'static UiPanelRoot>,
+    style_resolutions: Query<
+        'w,
+        's,
+        (
+            Entity,
+            Option<&'static Name>,
+            &'static UiResolvedStyleDebugSnapshot,
+        ),
+    >,
+    effect_resolutions: Query<
+        'w,
+        's,
+        (
+            Entity,
+            Option<&'static Name>,
+            &'static UiResolvedEffectDebugSnapshot,
+        ),
+    >,
+    animation_snapshots: Query<
+        'w,
+        's,
+        (
+            Entity,
+            Option<&'static Name>,
+            &'static UiAnimationDebugSnapshot,
+        ),
+    >,
+    primary_window: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+}
+
 fn drive_local_ui_audit(
     mut runtime: ResMut<UiAuditRuntime>,
     config: Res<UiAuditConfig>,
     registry: Res<UiAuditScreenRegistry>,
-    current_owner: Res<UiCurrentOwner>,
-    viewport: Res<UiViewport>,
-    stats: Res<UiStats>,
-    panels: Query<&UiPanelRoot>,
-    style_resolutions: Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>,
-    effect_resolutions: Query<(Entity, Option<&Name>, &UiResolvedEffectDebugSnapshot)>,
-    primary_window: Query<&Window, With<PrimaryWindow>>,
+    metadata_world: UiAuditMetadataWorld,
     mut scroll_targets: Query<
         (
             &UiScrollAuditId,
@@ -513,6 +549,7 @@ fn drive_local_ui_audit(
         Without<UiScrollView>,
     >,
     mut route_writer: MessageWriter<UiAuditRouteCommand>,
+    mut capture_state_writer: MessageWriter<UiAuditCaptureStateApplied>,
     mut screenshot_writer: MessageWriter<crate::framework::ui::audit::UiScreenshotCommand>,
     mut screenshot_events: MessageReader<UiScreenshotEvent>,
     mut app_exit: MessageWriter<AppExit>,
@@ -523,14 +560,14 @@ fn drive_local_ui_audit(
     }
 
     if runtime.plan.is_none() {
-        let plan = match prepare_runtime_plan(&config, &registry, &primary_window) {
+        let plan = match prepare_runtime_plan(&config, &registry, &metadata_world.primary_window) {
             Ok(plan) => plan,
             Err(error) => {
                 let failure = error.failure;
                 let detail = Some(error.detail);
                 if let Err(error) = write_planless_failure_outputs(
                     &config,
-                    &primary_window,
+                    &metadata_world.primary_window,
                     failure,
                     detail.as_deref(),
                 ) {
@@ -554,7 +591,7 @@ fn drive_local_ui_audit(
     let target_panel_ready = runtime
         .plan
         .as_ref()
-        .is_some_and(|plan| target_owner_panel_ready(plan.screen.owner, &panels));
+        .is_some_and(|plan| target_owner_panel_ready(plan.screen.owner, &metadata_world.panels));
     let phase = std::mem::take(&mut runtime.phase);
     let (next_phase, action) = advance_audit_phase(
         phase,
@@ -588,7 +625,11 @@ fn drive_local_ui_audit(
             };
 
             match apply_capture_state(&capture, &mut scroll_targets, &scroll_anchors) {
-                Ok(()) => {}
+                Ok(()) => {
+                    capture_state_writer.write(UiAuditCaptureStateApplied {
+                        state: capture.state,
+                    });
+                }
                 Err((failure, detail)) => {
                     runtime.phase = UiAuditPhase::Failed(failure);
                     runtime.result = Some(UiAuditCaptureResult {
@@ -633,13 +674,15 @@ fn drive_local_ui_audit(
                     &plan,
                     &capture,
                     scroll.as_ref(),
-                    &viewport,
-                    &stats,
-                    &current_owner,
-                    &panels,
-                    &style_resolutions,
-                    &effect_resolutions,
-                    primary_window.single().ok(),
+                    &metadata_world.viewport,
+                    &metadata_world.stats,
+                    &metadata_world.current_owner,
+                    &metadata_world.panels,
+                    &metadata_world.style_resolutions,
+                    &metadata_world.effect_resolutions,
+                    &metadata_world.motion_policy,
+                    &metadata_world.animation_snapshots,
+                    metadata_world.primary_window.single().ok(),
                 );
                 match write_capture_metadata(&capture, &metadata) {
                     Ok(()) => {
@@ -1246,6 +1289,8 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::StyleScopes)
     } else if value.eq_ignore_ascii_case(EFFECTS_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Effects)
+    } else if value.eq_ignore_ascii_case(ANIMATIONS_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Animations)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -1411,6 +1456,8 @@ fn build_capture_metadata(
     panels: &Query<&UiPanelRoot>,
     style_resolutions: &Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>,
     effect_resolutions: &Query<(Entity, Option<&Name>, &UiResolvedEffectDebugSnapshot)>,
+    motion_policy: &UiMotionPolicy,
+    animation_snapshots: &Query<(Entity, Option<&Name>, &UiAnimationDebugSnapshot)>,
     primary_window: Option<&Window>,
 ) -> UiAuditMetadata {
     UiAuditMetadata {
@@ -1427,6 +1474,8 @@ fn build_capture_metadata(
         panels: panels.iter().map(UiAuditPanelMetadata::from).collect(),
         style_resolutions: collect_style_resolution_metadata(style_resolutions),
         effect_resolutions: collect_effect_resolution_metadata(effect_resolutions),
+        motion_policy: motion_policy.as_str().to_owned(),
+        animation_snapshots: collect_animation_snapshot_metadata(animation_snapshots),
         window: primary_window.map(UiAuditWindowMetadata::from),
         stats: UiAuditStatsMetadata::from(stats),
     }
@@ -1445,6 +1494,8 @@ struct UiAuditMetadata {
     panels: Vec<UiAuditPanelMetadata>,
     style_resolutions: Vec<UiAuditStyleResolutionMetadata>,
     effect_resolutions: Vec<UiAuditEffectResolutionMetadata>,
+    motion_policy: String,
+    animation_snapshots: Vec<UiAuditAnimationSnapshotMetadata>,
     window: Option<UiAuditWindowMetadata>,
     stats: UiAuditStatsMetadata,
 }
@@ -1492,6 +1543,36 @@ fn collect_effect_resolution_metadata(
             name: name.map(|name| name.as_str().to_owned()),
             snapshot: snapshot.clone(),
         })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.name
+            .as_deref()
+            .unwrap_or_default()
+            .cmp(right.name.as_deref().unwrap_or_default())
+            .then_with(|| left.entity.cmp(&right.entity))
+    });
+    values
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+struct UiAuditAnimationSnapshotMetadata {
+    entity: String,
+    name: Option<String>,
+    snapshot: UiAnimationDebugSnapshot,
+}
+
+fn collect_animation_snapshot_metadata(
+    snapshots: &Query<(Entity, Option<&Name>, &UiAnimationDebugSnapshot)>,
+) -> Vec<UiAuditAnimationSnapshotMetadata> {
+    let mut values = snapshots
+        .iter()
+        .map(
+            |(entity, name, snapshot)| UiAuditAnimationSnapshotMetadata {
+                entity: format!("{entity:?}"),
+                name: name.map(|name| name.as_str().to_owned()),
+                snapshot: snapshot.clone(),
+            },
+        )
         .collect::<Vec<_>>();
     values.sort_by(|left, right| {
         left.name
@@ -1741,6 +1822,11 @@ impl UiAuditManifestEntry {
 pub(crate) struct UiAuditRouteCommand {
     pub screen: String,
     pub owner: UiOwnerId,
+}
+
+#[derive(Clone, Copy, Debug, Message, PartialEq, Eq)]
+pub(crate) struct UiAuditCaptureStateApplied {
+    pub state: UiAuditCaptureState,
 }
 
 fn width_class_name(value: UiWidthClass) -> &'static str {
@@ -2034,6 +2120,22 @@ mod tests {
     }
 
     #[test]
+    fn config_accepts_animations_capture_state() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "animations"),
+            ]),
+            100,
+        );
+
+        assert_eq!(config.states, vec![UiAuditCaptureState::Animations]);
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
     fn audit_metadata_collects_resolved_style_snapshots_in_stable_order() {
         let mut world = World::new();
         world.spawn((
@@ -2096,6 +2198,40 @@ mod tests {
         let json = serde_json::to_string(&metadata).unwrap();
         assert!(json.contains("ui_material_shader_unavailable"));
         assert!(json.contains("requested_draw_call_upper_bound"));
+    }
+
+    #[test]
+    fn audit_metadata_collects_animation_snapshots_in_stable_order() {
+        let snapshot = |id: &str| UiAnimationDebugSnapshot {
+            policy: "full".to_owned(),
+            tracks: vec![crate::framework::ui::core::UiAnimationTrackDebugSnapshot {
+                id: id.to_owned(),
+                target: "transform_scale".to_owned(),
+                state: "running".to_owned(),
+                raw_progress: 0.625,
+                eased_progress: 0.625,
+                paused: true,
+                causes_layout_reflow: false,
+            }],
+        };
+        let mut world = World::new();
+        world.spawn((Name::new("animation-z"), snapshot("gallery.z")));
+        world.spawn((Name::new("animation-a"), snapshot("gallery.a")));
+        let mut state =
+            SystemState::<Query<(Entity, Option<&Name>, &UiAnimationDebugSnapshot)>>::new(
+                &mut world,
+            );
+        let query = state.get(&world);
+
+        let metadata = collect_animation_snapshot_metadata(&query);
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[0].name.as_deref(), Some("animation-a"));
+        assert_eq!(metadata[0].snapshot.tracks[0].id, "gallery.a");
+        assert_eq!(metadata[1].name.as_deref(), Some("animation-z"));
+        let json = serde_json::to_string(&metadata).unwrap();
+        assert!(json.contains("raw_progress"));
+        assert!(json.contains("causes_layout_reflow"));
     }
 
     #[test]

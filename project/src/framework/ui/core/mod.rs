@@ -10,7 +10,11 @@ pub(crate) mod viewport;
 
 #[allow(unused_imports)]
 pub(crate) use animation::{
-    UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiAnimationState, UiAnimationSystems,
+    UiAnimatedAlpha, UiAnimationCancelBehavior, UiAnimationCommand, UiAnimationCompletion,
+    UiAnimationDebugSnapshot, UiAnimationDirection, UiAnimationEasing, UiAnimationError,
+    UiAnimationEvent, UiAnimationEventKind, UiAnimationId, UiAnimationInterruption,
+    UiAnimationRepeat, UiAnimationSpec, UiAnimationState, UiAnimationSystems, UiAnimationTarget,
+    UiAnimationTrackDebugSnapshot, UiAnimationValue, UiAnimations, UiMotionPolicy,
 };
 pub(crate) use focus::UiFocusSystems;
 pub(crate) use framework::UiFrameworkPlugin;

@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use crate::framework::{
     audio::prelude::AudioSystemSet,
     ui::{
-        core::{UiFocusSystems, UiPanelSystems},
+        core::{UiAnimationSystems, UiFocusSystems, UiPanelSystems},
         widgets::controls::update_icon_button_visuals,
     },
 };
@@ -39,6 +39,12 @@ impl Plugin for DevScreensPlugin {
                 ui_gallery::apply_gallery_icon_state_previews
                     .after(UiFocusSystems::SyncFocusedMarkers)
                     .before(update_icon_button_visuals)
+                    .run_if(in_state(AppUiMode::UiGallery)),
+            )
+            .add_systems(
+                Update,
+                ui_gallery::freeze_gallery_animation_audit_state
+                    .before(UiAnimationSystems::Tick)
                     .run_if(in_state(AppUiMode::UiGallery)),
             )
             .add_systems(

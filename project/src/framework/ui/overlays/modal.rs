@@ -4,9 +4,9 @@ use std::fmt;
 
 use crate::framework::ui::{
     core::{
-        UI_PANEL_CONFIRM_MODAL, UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing, UiLayer,
-        UiLayerRoot, UiMetrics, UiOwnerId, UiPanelCommand, UiPanelKind, UiPanelRoot, UiViewport,
-        UiWidthClass,
+        UI_PANEL_CONFIRM_MODAL, UiAnimatedAlpha, UiAnimationCompletion, UiAnimationEasing,
+        UiAnimationId, UiAnimationSpec, UiAnimations, UiLayer, UiLayerRoot, UiMetrics, UiOwnerId,
+        UiPanelCommand, UiPanelKind, UiPanelRoot, UiViewport, UiWidthClass,
     },
     i18n::{UiI18n, UiI18nText},
     style::{
@@ -24,6 +24,8 @@ use crate::framework::ui::{
 };
 
 const CONFIRM_ENTRY_FADE_SECS: f32 = 0.16;
+const CONFIRM_ENTRY_SCALE_SECS: f32 = 0.18;
+const CONFIRM_ENTRY_SCALE_ID: UiAnimationId = UiAnimationId::new("overlay.confirm.entry_scale");
 
 #[derive(Clone, Debug)]
 pub(crate) struct UiConfirmModal {
@@ -185,6 +187,8 @@ pub(crate) fn spawn_confirm_modal(
                 UiThemeBorderRole::Panel,
                 UiConfirmAnimatedPanel,
                 confirm_entry_fade_animation(theme.colors.panel_background),
+                UiTransform::default(),
+                confirm_entry_scale_animation(),
             ))
             .with_children(|panel| {
                 if let Some(i18n_text) = modal.title_i18n_text.clone() {
@@ -483,6 +487,21 @@ fn confirm_entry_fade_animation(color: Color) -> UiAnimatedAlpha {
         .with_completion(UiAnimationCompletion::RemoveComponent)
 }
 
+fn confirm_entry_scale_spec() -> UiAnimationSpec {
+    UiAnimationSpec::transform_scale(
+        CONFIRM_ENTRY_SCALE_ID,
+        Vec2::splat(0.96),
+        Vec2::ONE,
+        CONFIRM_ENTRY_SCALE_SECS,
+    )
+    .with_easing(UiAnimationEasing::EaseOutCubic)
+}
+
+fn confirm_entry_scale_animation() -> UiAnimations {
+    UiAnimations::try_from_spec(confirm_entry_scale_spec())
+        .expect("built-in confirm entry animation must be valid")
+}
+
 fn confirm_button_colors(theme: &UiTheme, style: UiModalActionStyle) -> ButtonColors {
     match style {
         UiModalActionStyle::Primary => theme.colors.primary_button,
@@ -576,6 +595,22 @@ mod tests {
         assert_approx_eq(animation.duration_secs, CONFIRM_ENTRY_FADE_SECS);
         assert_eq!(animation.easing, UiAnimationEasing::EaseOutCubic);
         assert_eq!(animation.completion, UiAnimationCompletion::RemoveComponent);
+    }
+
+    #[test]
+    fn confirm_entry_scale_uses_visual_transform_without_layout_reflow() {
+        let spec = confirm_entry_scale_spec();
+
+        assert_eq!(spec.id, CONFIRM_ENTRY_SCALE_ID);
+        assert_eq!(
+            spec.target,
+            crate::framework::ui::core::UiAnimationTarget::TransformScale
+        );
+        assert!(!spec.target.causes_layout_reflow());
+        assert_eq!(
+            spec.to,
+            crate::framework::ui::core::UiAnimationValue::Vector(Vec2::ONE)
+        );
     }
 
     #[test]

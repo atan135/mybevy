@@ -26,7 +26,7 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 - `UiInputPlugin`：汇总 UI 输入阻断状态。
 - `UiFocusPlugin`：维护按钮和输入框焦点。
 - `UiBindingPlugin`：应用简单路径绑定。
-- `UiAnimationPlugin`：驱动 UI alpha 动画。
+- `UiAnimationPlugin`：驱动兼容 alpha 与通用 UI 属性轨道，统一处理打断、完成和动态效果策略。
 - `UiStatsPlugin`：统计 UI 节点和面板数量。
 - `UiDebugPlugin`：提供 F3 调试面板。
 
@@ -70,6 +70,8 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 字体由 `UiFontAssets` 注册表提供；产品 UI 使用 CJK Regular，UI Gallery 额外加载可追溯的 Figtree 400/500/700 fixture。公共文本通过 `UiTextStyleToken` 解析角色、family、weight、coverage 和整节点 fallback，旧 `regular` 句柄仅保留兼容用途。
 
 视觉效果由 `UiEffectBinding` 引用主题 preset。`style/effects.rs` 在应用前校验阴影、线性渐变、独立边框/圆角、Outline、裁切和预算，再写入真实 Bevy 组件；材质策略不接受页面 shader 路径，任何不支持或加载失败都使用可见 fallback 并进入 audit metadata。
+
+动画由 `UiAnimationCommand` 写入目标实体上的 `UiAnimations`。同一实体可并行播放不冲突的透明度、视觉位移、布局位置/尺寸、缩放和颜色轨道；`UiMotionPolicy` 统一选择 Full、Reduced 或 Disabled。主题刷新先写新主题值，再取消在途轨道，避免旧动画在完成时覆盖新主题。完整 target、打断和性能规则见 [UI动画与动态效果.md](UI动画与动态效果.md)。
 
 ## 扩展原则
 

@@ -2,8 +2,8 @@ mod local;
 pub(crate) mod screenshot;
 
 pub(crate) use local::{
-    UiAuditCaptureRecipe, UiAuditCaptureState, UiAuditPlugin, UiAuditRecipe, UiAuditRouteCommand,
-    UiAuditScreen, UiAuditScreenRecipe, UiAuditScreenRegistry,
+    UiAuditCaptureRecipe, UiAuditCaptureState, UiAuditCaptureStateApplied, UiAuditPlugin,
+    UiAuditRecipe, UiAuditRouteCommand, UiAuditScreen, UiAuditScreenRecipe, UiAuditScreenRegistry,
 };
 #[allow(unused_imports)]
 pub(crate) use screenshot::{

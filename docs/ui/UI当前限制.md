@@ -18,7 +18,7 @@
 ## 覆盖层
 
 - Toast replacement 会立即 despawn 旧 Toast，没有旧 Toast 的替换出场动画。
-- Loading 和 Confirm 目前有入场 alpha 动画，关闭时直接 despawn，没有退出动画。
+- Loading 和 Confirm 目前有入场 alpha；Loading panel 叠加 scale pulse，Confirm panel 叠加 scale 入场。关闭时仍直接 despawn，没有等待退出动画。
 - Toast 不进入 Panel Manager，因此不参与 `CloseTop`。
 - 当前只支持一个固定 `UI_PANEL_CONFIRM_MODAL` id；并发多个 Confirm 需要扩展 id 或栈语义。
 
@@ -35,7 +35,15 @@
 - 同实体组合多个 composite role 时按 `Surface/Border/Text -> Button/Input -> Card -> Dialog` 提交。优先拆到合理的父子节点，避免依赖重叠优先级设计页面。
 - scope 继承按实际 Bevy 父子层级每帧解析。大量绑定节点会增加 CPU 与 audit metadata 体积；当前没有增量依赖图或跨 World 样式缓存。
 - resolved component 只拥有样式字段，不拥有 Interaction、焦点、选择、禁用、loading、输入值或文本内容。业务直接修改 resolved component 会在下次解析时被覆盖。
-- 作用域 variant 当前不直接覆盖效果 preset；阴影、渐变、独立四边框和轮廓通过同级 `UiEffectBinding` 选择。通用属性动画仍不在作用域样式范围内。
+- 作用域 variant 当前不直接覆盖效果 preset；阴影、渐变、独立四边框和轮廓通过同级 `UiEffectBinding` 选择。通用属性动画由独立命令/player 管理，不属于样式继承。
+
+## 动画
+
+- 通用轨道支持 alpha、视觉/布局位置、尺寸、缩放和背景/文字颜色；当前没有旋转、关键帧序列、轨道组 barrier、弹簧或物理曲线。
+- `Alpha` 只写目标实体实际的 BackgroundColor 或 TextColor，不是子树继承 opacity。
+- ContinueFromCurrent 只读取 px 布局值和 px `UiTransform.translation`；Percent/Auto 会稳定拒绝。
+- 页面切换和 Panel owner 清理优先立即释放实体、输入和焦点，不等待整页退出动画。
+- LayoutPosition/LayoutSize 会触发 Bevy 重排，只适合少量且确需布局参与的节点；常驻视觉 loop 应使用 `UiTransform`。
 
 ## 表单与文本输入
 
@@ -77,7 +85,7 @@
 - Bevy 0.18.1 的 `TextShadow` 只有单层颜色与偏移。文字多层、spread 和 blur 会显式失败，不会用重复文本节点伪装。
 - 自定义材质当前只有 allowlist、参数/平台校验和可见 fallback，没有已交付 shader/adapter。所有材质样例都应显示降级结果，不能将其描述为真实材质渲染。
 - draw-call 和 overdraw 字段是保守配置预算，不是目标 GPU 实测；移动端发布仍需要平台分析器和真机截图。
-- 通用属性动画、Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。图标按钮已支持状态图片与 tint/background override，但没有自动旋转 loading 图标的动画协议。
+- Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。通用属性动画已支持 transform、布局、alpha 和颜色，但图标按钮尚未内置旋转 loading 图标协议。
 - 作用域样式只覆盖固定 role 和纯色/尺寸 token，不自动把任意 Bevy Node 字段转成主题属性；页面私有 transform、grid、margin 和业务状态仍由调用方拥有。
 - 允许临时直接使用的 Bevy 原语必须附加 `UiDirectBevyVisual` marker；完整状态和判定规则见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。
 

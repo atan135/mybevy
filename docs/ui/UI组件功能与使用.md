@@ -72,6 +72,12 @@ disabled > loading > pressed > hovered > selected > focused > normal
 
 正式资源、固定上游版本、许可和 SHA-256 见 `project/assets/ui/icons/manifest.ron`。UI Gallery 使用 `icons` 和 `icon_states` 两个 child-anchor state 验收 API 形态与七态矩阵。
 
+## 控件过渡和属性动画
+
+控件状态优先级仍由按钮、选择控件和输入框系统唯一决定。需要按下回弹、颜色渐变或局部入场时，监听已有 `UiButtonEvent` 并写 `UiAnimationCommand`；不要增加第二套 Interaction marker。纯视觉位移和缩放使用 `UiTransform` target，只有其他节点必须参与重排时才使用显式 layout target。
+
+同一 target 的新命令会替换旧轨道；需要无跳变接续时使用 `continue_from_current`。全局 `UiMotionPolicy` 会在 Reduced/Disabled 下缩短或静止动画，业务控件无需逐个判断可访问性设置。完整 API、颜色通道冲突和完成语义见 [UI动画与动态效果.md](UI动画与动态效果.md)。UI Gallery 的 `animations` state 固定展示控件、页面、弹窗、loading、布局、颜色和透明度样例。
+
 ## 作用域样式
 
 需要页面或子树视觉变体时，在祖先节点放 `UiStyleScope::new("variant.name")`，在实际渲染节点放 `UiStyleBinding`。绑定由类型化引用组成，不接受页面拼接属性名：

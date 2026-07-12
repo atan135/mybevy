@@ -93,6 +93,8 @@ token 只有 `Color` 和 `Scalar` 两种类型。颜色通道必须是有限的 
 
 页面和控件应保留这些 marker，这样主题、视口或 metrics 变化时节点会自动刷新。图标按钮的 `icon_tint` 由专用视觉系统读取 `UiTheme`，不需要额外 marker；全彩图标会忽略该 tint 并保持原色。
 
+仍在运行的通用 UI 属性轨道会在成功主题刷新后取消，取消帧不再把旧颜色或布局值写回；旧 `UiAnimatedAlpha` 同样停止。新主题 marker 的输出因此保持权威。已经完成并保留的轨道不再写组件。详见 [UI动画与动态效果.md](UI动画与动态效果.md)。
+
 ## 字体注册表
 
 字体加载和选择位于 `project/src/framework/ui/style/fonts.rs`。`UiFontAssets` 保留 `regular` 作为旧页面兼容句柄，同时提供 family / weight / role / face / coverage 注册表。新公共 helper 不直接读取 `regular`，而是解析 `UiTextStyleToken`。

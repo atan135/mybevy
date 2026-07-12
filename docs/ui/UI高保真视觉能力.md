@@ -46,9 +46,9 @@ commands.spawn((
 | 阴影 `shadow` | 最多三层 `BoxShadow`；单层原生 `TextShadow` | 框架支持 | `UiEffectBinding`；文字 blur/spread/多层因 Bevy 0.18.1 不支持而显式报错 |
 | 渐变 `gradient` | 背景和边框线性渐变、角度、2 至 6 个有序 RGBA 色标 | 框架支持 | `UiEffectBinding` 映射到 `BackgroundGradient` / `BorderGradient`；有限值和预算先校验 |
 | 表面 `surface` | 任意自定义 `UiMaterial` | 暂不支持 | 仅允许框架 allowlist + 类型化 adapter；当前登记的策略项没有 shader/adapter，始终使用可见 fallback |
-| 动画 `animation` | 框架现有 alpha 动画和覆盖层入场 | 框架支持 | `core/animation.rs` |
-| 动画 `animation` | 页面级 Transform 动画试验 | 允许直接使用 Bevy | 必须标记；不得冒充具备取消、主题刷新或减少动态效果语义的公共动画 |
-| 动画 `animation` | 通用位置、尺寸、缩放、颜色过渡协议 | 暂不支持 | 尚无统一目标、easing 和取消模型 |
+| 动画 `animation` | alpha、视觉/布局位置、尺寸、缩放和颜色属性轨道 | 框架支持 | `core/animation.rs`；统一 spec、消息/事件、打断、完成、主题刷新和 motion policy |
+| 动画 `animation` | 页面、控件、弹窗和 loading 的组合过渡 | 框架支持 | 视觉移动/缩放优先 `UiTransform`；布局 target 是显式 opt-in，详见 `UI动画与动态效果.md` |
+| 动画 `animation` | 关键帧序列、弹簧/物理曲线和旋转轨道 | 暂不支持 | 不在页面私建与公共命令冲突的第二套 player |
 | 控件状态 `control_state` | 按钮 idle/hovered/pressed/focused/selected/disabled/loading 视觉优先级 | 框架支持 | `widgets/controls/button.rs` |
 | 控件状态 `control_state` | Checkbox、Toggle、Segmented 的当前轻量状态结构 | 框架支持 | 当前仍是按钮式视觉，限制见 `UI当前限制.md` |
 | 控件状态 `control_state` | 图标按钮状态贴图和 tint/background override | 框架支持 | `UiIconButtonVisuals`；复用 `Interaction` 和既有 focus/selected/disabled/loading marker |
@@ -70,6 +70,7 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - 图标七态矩阵审计 state：`icon_states`
 - 作用域样式审计 state：`style_scopes`
 - 阴影、渐变和材质降级审计 state：`effects`
+- 通用属性动画与动态策略审计 state：`animations`
 - 滚动目标：`ui_gallery.main`
 - 图片适配位置：主滚动容器顶部
 - 高级图片 anchor：`ui_gallery.image_modes`
@@ -78,10 +79,11 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - 图标 anchor：`ui_gallery.icons`、`ui_gallery.icon_states`
 - 样式 anchor：`ui_gallery.style_scopes`
 - 效果 anchor：`ui_gallery.effects`
+- 动画 anchor：`ui_gallery.animations`
 - fixture 清单：`project/assets/ui/fixtures/manifest.ron`
 - 正式图标清单：`project/assets/ui/icons/manifest.ron`
 
-批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,middle,bottom`。`image_fit` 和 `visual_foundation` 固定指向顶部区域；高级图片、文字、图标、作用域样式和效果 state 根据命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。仍可显式请求兼容 state `top`。
+批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,middle,bottom`。`image_fit` 和 `visual_foundation` 固定指向顶部区域；高级图片、文字、图标、作用域样式、效果和动画 state 根据命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。审计应用第一个 Gallery capture state 时会统一冻结动画样例，避免布局循环影响任何后续 state。仍可显式请求兼容 state `top`。
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States visual_foundation -DryRun
@@ -92,7 +94,14 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States "icons,icon_states" -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States style_scopes -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States effects -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States animations -DryRun
 ```
+
+## 动画规则
+
+通用动画按实体和实际写通道仲裁。同一 target 会 replace，互不重叠的 target 可并行；Alpha 与具体颜色 target、通用颜色轨道与旧 alpha 的重叠会稳定拒绝。纯视觉移动和缩放使用 `UiTransform`，布局 position/size 只用于兄弟节点必须参与重排的少量场景。
+
+`UiMotionPolicy` 提供 Full、Reduced 和 Disabled。Disabled 当帧到达真实最终播放方向的端点；Reduced 加速有限动画并让无限循环静止。主题热更新取消在途轨道并由新主题值接管。audit metadata 的 `motion_policy` 与 `animation_snapshots` 记录固定进度、pause、target 和 layout reflow 标记；完整语义见 [UI动画与动态效果.md](UI动画与动态效果.md)。
 
 ## 阴影、渐变和材质规则
 
