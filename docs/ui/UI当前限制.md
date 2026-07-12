@@ -28,6 +28,15 @@
 - 不支持表达式绑定、列表绑定、双向绑定、批量 diff、作用域模型或生命周期自动回收。
 - 绑定按钮禁用态通过插入/移除 `DisabledButton` marker 实现，复杂业务状态仍应由业务系统管理。
 
+## 作用域样式
+
+- 当前是受限的 token/variant 系统，不是 CSS、完整设计语言或任意属性反射。只支持 Surface、Border、Text、Button、Input、Card、Dialog 已声明字段。
+- variant 名和 token 名来自主题配置，运行时业务使用类型化 role；动态未知 variant 会回退基础 role，并在 `UiResolvedStyleDebugSnapshot` 报错，不会即时创建样式。
+- 同实体组合多个 composite role 时按 `Surface/Border/Text -> Button/Input -> Card -> Dialog` 提交。优先拆到合理的父子节点，避免依赖重叠优先级设计页面。
+- scope 继承按实际 Bevy 父子层级每帧解析。大量绑定节点会增加 CPU 与 audit metadata 体积；当前没有增量依赖图或跨 World 样式缓存。
+- resolved component 只拥有样式字段，不拥有 Interaction、焦点、选择、禁用、loading、输入值或文本内容。业务直接修改 resolved component 会在下次解析时被覆盖。
+- 当前阶段不包含阴影、渐变、动画、材质或独立四边框 token；这些能力仍按各自限制处理。
+
 ## 表单与文本输入
 
 - IME composition 展示仍不完整。
@@ -66,6 +75,7 @@
 - `Failed` 和 `Invalid` 当前使用稳定颜色占位并暴露组件状态，尚无通用重试按钮、错误图标或面向玩家的错误文案协议。
 - 阴影、渐变和复杂描边尚无共享 token、组合校验和移动端降级规则。
 - 通用属性动画、Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。图标按钮已支持状态图片与 tint/background override，但没有自动旋转 loading 图标的动画协议。
+- 作用域样式只覆盖固定 role 和纯色/尺寸 token，不自动把任意 Bevy Node 字段转成主题属性；页面私有 transform、grid、margin 和业务状态仍由调用方拥有。
 - 允许临时直接使用的 Bevy 原语必须附加 `UiDirectBevyVisual` marker；完整状态和判定规则见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。
 
 ## 测试覆盖

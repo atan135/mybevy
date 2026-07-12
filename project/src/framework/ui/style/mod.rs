@@ -1,4 +1,5 @@
 pub(crate) mod fonts;
+pub(crate) mod scopes;
 pub(crate) mod theme;
 
 #[allow(unused_imports)]
@@ -7,5 +8,13 @@ pub(crate) use fonts::{
     UiFontWeight, UiRasterizedTextError, UiRasterizedTextProvenance, UiRasterizedTextSpec,
     UiTextAlignment, UiTextLineHeight, UiTextStyleError, UiTextStyleToken, UiTextTruncation,
     UiTextWrap, try_ui_styled_text, try_ui_text_clip_frame,
+};
+#[allow(unused_imports)]
+pub(crate) use scopes::{
+    UI_STYLE_VARIANT_GALLERY_NESTED, UI_STYLE_VARIANT_GALLERY_PARENT, UiBorderStyleRole,
+    UiButtonStyleRole, UiCardStyleRole, UiDialogStyleRole, UiInputStyleRole, UiResolvedButtonStyle,
+    UiResolvedInputStyle, UiResolvedStyleDebugSnapshot, UiStyleBinding, UiStyleError,
+    UiStyleErrorCode, UiStyleRef, UiStyleScope, UiStyleVariantId, UiSurfaceStyleRole,
+    UiTextStyleRole,
 };
 pub(crate) use theme::{UiTheme, UiThemePlugin};

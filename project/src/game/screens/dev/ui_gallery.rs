@@ -12,7 +12,9 @@ use crate::framework::ui::{
         UiOverlayCommand, UiToast,
     },
     style::{
-        UiFontAssets, UiFontWeight, UiTextAlignment, UiTextStyleToken, UiTextTruncation,
+        UI_STYLE_VARIANT_GALLERY_NESTED, UI_STYLE_VARIANT_GALLERY_PARENT, UiBorderStyleRole,
+        UiButtonStyleRole, UiFontAssets, UiFontWeight, UiStyleBinding, UiStyleScope,
+        UiSurfaceStyleRole, UiTextAlignment, UiTextStyleRole, UiTextStyleToken, UiTextTruncation,
         UiTextWrap, UiTheme,
         theme::{
             UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
@@ -46,9 +48,9 @@ use crate::game::{
     ui_ids::{
         ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS,
         ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
-        ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_TYPOGRAPHY,
-        ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
-        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM,
+        OWNER_UI_GALLERY, PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
 
@@ -197,6 +199,9 @@ struct GalleryIconsRegion;
 
 #[derive(Component)]
 struct GalleryIconStatesRegion;
+
+#[derive(Component)]
+struct GalleryStyleScopesRegion;
 
 #[derive(Clone, Copy, Component)]
 struct GalleryIconStatePreview(UiButtonVisualState);
@@ -610,6 +615,19 @@ pub(super) fn setup_ui_gallery(
                         asset_server,
                     );
                 });
+
+                body.spawn(gallery_style_scopes_panel(theme))
+                    .with_children(|style_panel| {
+                        spawn_gallery_style_scope_samples(
+                            style_panel,
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            width_class,
+                            asset_server,
+                        );
+                    });
 
                 body.spawn(gallery_panel(theme))
                     .with_children(|selection_panel| {
@@ -1467,6 +1485,15 @@ fn gallery_icon_states_panel(theme: &UiTheme) -> impl Bundle {
     )
 }
 
+fn gallery_style_scopes_panel(theme: &UiTheme) -> impl Bundle {
+    (
+        gallery_panel(theme),
+        GalleryStyleScopesRegion,
+        ANCHOR_UI_GALLERY_STYLE_SCOPES,
+        Name::new("Gallery scoped style comparison"),
+    )
+}
+
 fn gallery_typography_overflow_panel(theme: &UiTheme, width_class: UiWidthClass) -> impl Bundle {
     (
         UiThemePanelNodeRole::Content,
@@ -1932,6 +1959,178 @@ fn spawn_gallery_icon_state_sample(
         label_key,
         label_fallback,
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_gallery_style_scope_samples(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    width_class: UiWidthClass,
+    asset_server: &AssetServer,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.style_scopes.section",
+        "Scoped Styles",
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.style_scopes.description",
+        "Global, inherited, nested, and restored style resolution.",
+        UiThemeTextStyleRole::Body,
+        UiThemeTextColorRole::Muted,
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 2, 4),
+        ))
+        .with_children(|samples| {
+            spawn_gallery_style_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.style_scopes.global",
+                "Global default",
+                None,
+            );
+            spawn_gallery_style_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.style_scopes.parent",
+                "Parent scope",
+                Some(UI_STYLE_VARIANT_GALLERY_PARENT),
+            );
+            samples
+                .spawn((
+                    Node {
+                        width: percent(100),
+                        ..default()
+                    },
+                    UiStyleScope::new(UI_STYLE_VARIANT_GALLERY_PARENT),
+                    Name::new("Gallery parent scope host"),
+                ))
+                .with_children(|parent_scope| {
+                    spawn_gallery_style_tile(
+                        parent_scope,
+                        theme,
+                        fonts,
+                        i18n,
+                        "ui_gallery.style_scopes.nested",
+                        "Nested scope",
+                        Some(UI_STYLE_VARIANT_GALLERY_NESTED),
+                    );
+                });
+            spawn_gallery_style_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.style_scopes.restored",
+                "Outside scope / restored",
+                None,
+            );
+        });
+
+    panel
+        .spawn((
+            Node {
+                width: percent(100),
+                align_items: AlignItems::Center,
+                column_gap: px(metrics.control_gap),
+                row_gap: px(metrics.control_gap),
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            },
+            UiStyleScope::new(UI_STYLE_VARIANT_GALLERY_PARENT),
+            Name::new("Gallery scoped selected button host"),
+        ))
+        .with_children(|buttons| {
+            buttons.spawn((
+                secondary_action_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "ui_gallery.style_scopes.selected_button",
+                    "Selected persists",
+                ),
+                SelectedButton,
+                UiStyleBinding::new().with_button(UiButtonStyleRole::Secondary),
+                Name::new("Gallery scoped selected text button"),
+            ));
+            buttons.spawn((
+                icon_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    asset_server,
+                    i18n,
+                    UiIconId::HELP,
+                    "ui_gallery.style_scopes.selected_icon",
+                    "Selected scoped icon",
+                ),
+                SelectedButton,
+                UiStyleBinding::new().with_button(UiButtonStyleRole::Secondary),
+                Name::new("Gallery scoped selected icon button"),
+            ));
+        });
+}
+
+fn spawn_gallery_style_tile(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    label_key: &'static str,
+    label_fallback: &'static str,
+    scope: Option<&'static str>,
+) {
+    let mut tile = parent.spawn((
+        Node {
+            width: percent(100),
+            min_height: px(76),
+            justify_content: JustifyContent::Center,
+            padding: UiRect::all(px(12)),
+            border: UiRect::all(px(theme.panel.border)),
+            border_radius: BorderRadius::all(px(theme.panel.radius)),
+            ..default()
+        },
+        BackgroundColor(theme.colors.panel_background),
+        BorderColor::all(theme.colors.panel_border),
+        UiStyleBinding::new()
+            .with_surface(UiSurfaceStyleRole::Panel)
+            .with_border(UiBorderStyleRole::Panel),
+        Name::new(label_fallback),
+    ));
+    if let Some(scope) = scope {
+        tile.insert(UiStyleScope::new(scope));
+    }
+    tile.with_children(|content| {
+        content.spawn((
+            screen_label_key(
+                theme,
+                fonts,
+                i18n,
+                label_key,
+                label_fallback,
+                UiThemeTextStyleRole::Caption,
+                UiThemeTextColorRole::Primary,
+            ),
+            UiStyleBinding::new().with_text(UiTextStyleRole::Caption),
+        ));
+    });
 }
 
 fn spawn_gallery_typography(
@@ -2893,6 +3092,9 @@ fn gallery_floating_i18n(i18n: &UiI18n) -> GalleryFloatingI18n {
 mod tests {
     use super::*;
 
+    #[derive(Component)]
+    struct GalleryStyleTileTestRoot;
+
     #[test]
     fn gallery_button_columns_are_single_column_on_compact() {
         assert_eq!(
@@ -2990,6 +3192,90 @@ mod tests {
                 .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
                 .copied(),
             Some(ANCHOR_UI_GALLERY_ICON_STATES)
+        );
+    }
+
+    #[test]
+    fn style_scope_gallery_panel_owns_stable_child_audit_anchor() {
+        let theme = UiTheme::default();
+        let mut app = App::new();
+        let styles = app
+            .world_mut()
+            .spawn(gallery_style_scopes_panel(&theme))
+            .id();
+
+        assert!(
+            app.world()
+                .entity(styles)
+                .contains::<GalleryStyleScopesRegion>()
+        );
+        assert_eq!(
+            app.world()
+                .entity(styles)
+                .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
+                .copied(),
+            Some(ANCHOR_UI_GALLERY_STYLE_SCOPES)
+        );
+    }
+
+    #[test]
+    fn style_scope_tile_uses_caption_binding_and_theme_caption_size() {
+        let theme = UiTheme::default();
+        let fonts = UiFontAssets::test_registry();
+        let i18n = UiI18n::test_with_texts(
+            "en_us",
+            &[("ui_gallery.style_scopes.parent", "Parent scope")],
+        );
+        let caption_size = theme.text.caption;
+        let mut app = App::new();
+        app.insert_resource(theme)
+            .insert_resource(fonts)
+            .insert_resource(i18n)
+            .add_systems(
+                Update,
+                |mut commands: Commands,
+                 theme: Res<UiTheme>,
+                 fonts: Res<UiFontAssets>,
+                 i18n: Res<UiI18n>| {
+                    commands
+                        .spawn((Node::default(), GalleryStyleTileTestRoot))
+                        .with_children(|parent| {
+                            spawn_gallery_style_tile(
+                                parent,
+                                &theme,
+                                &fonts,
+                                &i18n,
+                                "ui_gallery.style_scopes.parent",
+                                "Parent scope",
+                                Some(UI_STYLE_VARIANT_GALLERY_PARENT),
+                            );
+                        });
+                },
+            );
+        app.update();
+        let mut roots = app
+            .world_mut()
+            .query_filtered::<Entity, With<GalleryStyleTileTestRoot>>();
+        let root = roots.single(app.world()).unwrap();
+        let tile = app.world().get::<Children>(root).unwrap()[0];
+        let label = app.world().get::<Children>(tile).unwrap()[0];
+
+        assert_eq!(
+            app.world()
+                .get::<UiStyleBinding>(label)
+                .unwrap()
+                .text
+                .as_ref()
+                .unwrap()
+                .role,
+            UiTextStyleRole::Caption
+        );
+        assert_eq!(
+            app.world()
+                .get::<UiTextStyleToken>(label)
+                .unwrap()
+                .font_size,
+            caption_size
         );
     }
 

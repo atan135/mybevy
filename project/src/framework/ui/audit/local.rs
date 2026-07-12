@@ -15,6 +15,7 @@ use crate::framework::ui::{
         UiCurrentOwner, UiHeightClass, UiInputMode, UiOrientation, UiOwnerId, UiPanelKind,
         UiPanelRoot, UiViewport, UiWidthClass, stats::UiStats,
     },
+    style::UiResolvedStyleDebugSnapshot,
     widgets::{
         UiScrollAuditAnchorId, UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition,
         UiScrollView, scroll_audit_metrics, scroll_audit_position_reached, set_scroll_audit_anchor,
@@ -40,6 +41,7 @@ const TYPOGRAPHY_CAPTURE_STATE: &str = "typography";
 const TYPOGRAPHY_OVERFLOW_CAPTURE_STATE: &str = "typography_overflow";
 const ICONS_CAPTURE_STATE: &str = "icons";
 const ICON_STATES_CAPTURE_STATE: &str = "icon_states";
+const STYLE_SCOPES_CAPTURE_STATE: &str = "style_scopes";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
@@ -322,6 +324,7 @@ pub(crate) enum UiAuditCaptureState {
     TypographyOverflow,
     Icons,
     IconStates,
+    StyleScopes,
     Top,
     Middle,
     Bottom,
@@ -340,6 +343,7 @@ impl UiAuditCaptureState {
             Self::TypographyOverflow => TYPOGRAPHY_OVERFLOW_CAPTURE_STATE,
             Self::Icons => ICONS_CAPTURE_STATE,
             Self::IconStates => ICON_STATES_CAPTURE_STATE,
+            Self::StyleScopes => STYLE_SCOPES_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -488,6 +492,7 @@ fn drive_local_ui_audit(
     viewport: Res<UiViewport>,
     stats: Res<UiStats>,
     panels: Query<&UiPanelRoot>,
+    style_resolutions: Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
     mut scroll_targets: Query<
         (
@@ -627,6 +632,7 @@ fn drive_local_ui_audit(
                     &stats,
                     &current_owner,
                     &panels,
+                    &style_resolutions,
                     primary_window.single().ok(),
                 );
                 match write_capture_metadata(&capture, &metadata) {
@@ -1230,6 +1236,8 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::Icons)
     } else if value.eq_ignore_ascii_case(ICON_STATES_CAPTURE_STATE) {
         Some(UiAuditCaptureState::IconStates)
+    } else if value.eq_ignore_ascii_case(STYLE_SCOPES_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::StyleScopes)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -1393,6 +1401,7 @@ fn build_capture_metadata(
     stats: &UiStats,
     current_owner: &UiCurrentOwner,
     panels: &Query<&UiPanelRoot>,
+    style_resolutions: &Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>,
     primary_window: Option<&Window>,
 ) -> UiAuditMetadata {
     UiAuditMetadata {
@@ -1407,6 +1416,7 @@ fn build_capture_metadata(
         viewport: UiAuditViewportMetadata::from(*viewport),
         current_page: current_owner.owner.map(|owner| owner.as_str().to_owned()),
         panels: panels.iter().map(UiAuditPanelMetadata::from).collect(),
+        style_resolutions: collect_style_resolution_metadata(style_resolutions),
         window: primary_window.map(UiAuditWindowMetadata::from),
         stats: UiAuditStatsMetadata::from(stats),
     }
@@ -1423,8 +1433,35 @@ struct UiAuditMetadata {
     viewport: UiAuditViewportMetadata,
     current_page: Option<String>,
     panels: Vec<UiAuditPanelMetadata>,
+    style_resolutions: Vec<UiAuditStyleResolutionMetadata>,
     window: Option<UiAuditWindowMetadata>,
     stats: UiAuditStatsMetadata,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+struct UiAuditStyleResolutionMetadata {
+    entity: String,
+    name: Option<String>,
+    snapshot: UiResolvedStyleDebugSnapshot,
+}
+
+fn collect_style_resolution_metadata(
+    resolutions: &Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>,
+) -> Vec<UiAuditStyleResolutionMetadata> {
+    let mut values = resolutions
+        .iter()
+        .map(|(entity, name, snapshot)| UiAuditStyleResolutionMetadata {
+            entity: format!("{entity:?}"),
+            name: name.map(|name| name.as_str().to_owned()),
+            snapshot: snapshot.clone(),
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.entity.cmp(&right.entity))
+    });
+    values
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -1711,6 +1748,7 @@ fn panel_kind_name(value: UiPanelKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::SystemState;
 
     fn env_reader<'a>(values: &'a [(&'a str, &'a str)]) -> impl FnMut(&str) -> Option<String> + 'a {
         move |key| {
@@ -1922,6 +1960,55 @@ mod tests {
         );
         assert!(config.states_from_env);
         assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn config_accepts_style_scope_capture_state() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "style_scopes"),
+            ]),
+            100,
+        );
+
+        assert_eq!(config.states, vec![UiAuditCaptureState::StyleScopes]);
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn audit_metadata_collects_resolved_style_snapshots_in_stable_order() {
+        let mut world = World::new();
+        world.spawn((
+            Name::new("style-z"),
+            UiResolvedStyleDebugSnapshot {
+                scopes: vec!["scope.z".to_owned()],
+                entries: Vec::new(),
+            },
+        ));
+        world.spawn((
+            Name::new("style-a"),
+            UiResolvedStyleDebugSnapshot {
+                scopes: vec!["scope.a".to_owned()],
+                entries: Vec::new(),
+            },
+        ));
+        let mut state =
+            SystemState::<Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>>::new(
+                &mut world,
+            );
+        let query = state.get(&world);
+
+        let metadata = collect_style_resolution_metadata(&query);
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[0].name.as_deref(), Some("style-a"));
+        assert_eq!(metadata[0].snapshot.scopes, vec!["scope.a"]);
+        assert_eq!(metadata[1].name.as_deref(), Some("style-z"));
+        let json = serde_json::to_string(&metadata).unwrap();
+        assert!(json.contains("style_resolutions") || json.contains("scope.a"));
     }
 
     #[test]

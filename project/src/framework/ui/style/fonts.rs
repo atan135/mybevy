@@ -10,7 +10,10 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::framework::ui::{
     i18n::UiI18nSystems,
-    style::theme::{UiTheme, UiThemeSystems, UiThemeTextStyleRole},
+    style::{
+        scopes::UiResolvedTextStyle,
+        theme::{UiTheme, UiThemeSystems, UiThemeTextStyleRole},
+    },
 };
 
 const UI_FONT_CJK_REGULAR_PATH: &str = "ui/fonts/MyBevyUiCjk-Regular.otf";
@@ -813,6 +816,7 @@ fn sync_ui_styled_text(
     mut texts: Query<(
         &mut Text,
         &UiTextStyleToken,
+        Option<&UiResolvedTextStyle>,
         &mut TextFont,
         &mut TextLayout,
         &mut bevy::text::LineHeight,
@@ -820,8 +824,16 @@ fn sync_ui_styled_text(
         &mut UiStyledTextState,
     )>,
 ) {
-    for (mut text, style, mut font, mut layout, mut line_height, mut resolution, mut state) in
-        &mut texts
+    for (
+        mut text,
+        style,
+        resolved_style,
+        mut font,
+        mut layout,
+        mut line_height,
+        mut resolution,
+        mut state,
+    ) in &mut texts
     {
         if text.0 != state.rendered && text.0 != state.source {
             state.source.clone_from(&text.0);
@@ -868,8 +880,9 @@ fn sync_ui_styled_text(
         if font.font != face.handle {
             font.font = face.handle.clone();
         }
-        if font.font_size != style.font_size {
-            font.font_size = style.font_size;
+        let font_size = resolved_style.map_or(style.font_size, |resolved| resolved.font_size);
+        if font.font_size != font_size {
+            font.font_size = font_size;
         }
         let weight = face.key.weight.bevy_weight();
         if font.weight != weight {
@@ -991,6 +1004,14 @@ impl UiRasterizedTextSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::ui::{
+        core::UiMetrics,
+        style::scopes::{
+            UI_STYLE_VARIANT_GALLERY_NESTED, UI_STYLE_VARIANT_GALLERY_PARENT, UiResolvedTextStyle,
+            UiStyleBinding, UiStyleScope, UiStyleSheet, UiStyleSheetConfig, UiStyleVariantId,
+            UiTextStyleRole, apply_resolved_ui_styles, resolve_ui_style_bindings,
+        },
+    };
     use bevy::asset::AssetPlugin;
 
     fn latin_style(weight: UiFontWeight) -> UiTextStyleToken {
@@ -1266,6 +1287,177 @@ mod tests {
         app.world_mut().clear_trackers();
         schedule.run(app.world_mut());
         assert_styled_text_component_changes(app.world(), entity, false);
+    }
+
+    #[test]
+    fn scoped_text_size_reaches_text_font_on_first_frame_and_is_then_stable() {
+        let mut app = font_runtime_test_app();
+        let config: UiStyleSheetConfig = ron::from_str(
+            r#"(
+                tokens: [(name: "size", value: Scalar(37.0))],
+                variants: [(name: "large", overrides: [
+                    TextSize(role: primary, token: "size"),
+                ])],
+            )"#,
+        )
+        .unwrap();
+        let mut theme = UiTheme::default();
+        theme.styles = UiStyleSheet::compile(config).unwrap();
+        app.insert_resource(theme)
+            .insert_resource(UiMetrics::default());
+
+        let bundle = try_ui_styled_text(
+            app.world().resource::<UiFontAssets>(),
+            "Scoped size",
+            latin_style(UiFontWeight::Regular),
+            Color::WHITE,
+        )
+        .unwrap();
+        let mut binding = UiStyleBinding::new().with_text(UiTextStyleRole::Primary);
+        binding.text.as_mut().unwrap().variant = Some(UiStyleVariantId::new("large"));
+        let entity = app.world_mut().spawn((bundle, binding)).id();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(
+            (
+                resolve_ui_style_bindings,
+                apply_resolved_ui_styles,
+                sync_ui_styled_text,
+            )
+                .chain(),
+        );
+
+        schedule.run(app.world_mut());
+
+        let entity_ref = app.world().entity(entity);
+        assert_eq!(
+            entity_ref.get::<UiTextStyleToken>().unwrap().font_size,
+            20.0
+        );
+        assert_eq!(
+            entity_ref.get::<UiResolvedTextStyle>().unwrap().font_size,
+            37.0
+        );
+        assert_eq!(entity_ref.get::<TextFont>().unwrap().font_size, 37.0);
+
+        app.world_mut().clear_trackers();
+        schedule.run(app.world_mut());
+        let entity_ref = app.world().entity(entity);
+        assert!(!entity_ref.get_ref::<TextFont>().unwrap().is_changed());
+        assert!(
+            !entity_ref
+                .get_ref::<UiResolvedTextStyle>()
+                .unwrap()
+                .is_changed()
+        );
+    }
+
+    #[test]
+    fn scoped_caption_keeps_caption_size_and_resolves_parent_and_nested_colors() {
+        let mut app = font_runtime_test_app();
+        let theme = UiTheme::default();
+        app.insert_resource(theme.clone())
+            .insert_resource(UiMetrics::default());
+        let caption_style = UiTextStyleToken::for_theme_role(
+            &theme,
+            crate::framework::ui::style::theme::UiThemeTextStyleRole::Caption,
+        );
+        let parent_bundle = try_ui_styled_text(
+            app.world().resource::<UiFontAssets>(),
+            "Parent caption",
+            caption_style.clone(),
+            theme.colors.text_primary,
+        )
+        .unwrap();
+        let parent_text = app
+            .world_mut()
+            .spawn((
+                parent_bundle,
+                UiStyleBinding::new().with_text(UiTextStyleRole::Caption),
+            ))
+            .id();
+        let nested_bundle = try_ui_styled_text(
+            app.world().resource::<UiFontAssets>(),
+            "Nested caption",
+            caption_style,
+            theme.colors.text_primary,
+        )
+        .unwrap();
+        let nested_text = app
+            .world_mut()
+            .spawn((
+                nested_bundle,
+                UiStyleBinding::new().with_text(UiTextStyleRole::Caption),
+            ))
+            .id();
+        let parent_scope = app
+            .world_mut()
+            .spawn(UiStyleScope::new(UI_STYLE_VARIANT_GALLERY_PARENT))
+            .id();
+        let nested_scope = app
+            .world_mut()
+            .spawn(UiStyleScope::new(UI_STYLE_VARIANT_GALLERY_NESTED))
+            .id();
+        app.world_mut()
+            .entity_mut(parent_scope)
+            .add_child(parent_text)
+            .add_child(nested_scope);
+        app.world_mut()
+            .entity_mut(nested_scope)
+            .add_child(nested_text);
+        let mut schedule = Schedule::default();
+        schedule.add_systems(
+            (
+                resolve_ui_style_bindings,
+                apply_resolved_ui_styles,
+                sync_ui_styled_text,
+            )
+                .chain(),
+        );
+
+        schedule.run(app.world_mut());
+
+        for entity in [parent_text, nested_text] {
+            assert_eq!(
+                app.world()
+                    .get::<UiTextStyleToken>(entity)
+                    .unwrap()
+                    .font_size,
+                theme.text.caption
+            );
+            assert_eq!(
+                app.world()
+                    .get::<UiResolvedTextStyle>(entity)
+                    .unwrap()
+                    .font_size,
+                theme.text.caption
+            );
+            assert_eq!(
+                app.world().get::<TextFont>(entity).unwrap().font_size,
+                theme.text.caption
+            );
+        }
+        assert_eq!(
+            app.world().get::<TextColor>(parent_text).unwrap().0,
+            Color::srgb(0.84, 0.98, 0.94)
+        );
+        assert_eq!(
+            app.world().get::<TextColor>(nested_text).unwrap().0,
+            Color::srgb(1.0, 0.93, 0.72)
+        );
+
+        app.world_mut().clear_trackers();
+        schedule.run(app.world_mut());
+        for entity in [parent_text, nested_text] {
+            let entity = app.world().entity(entity);
+            assert!(
+                !entity
+                    .get_ref::<UiResolvedTextStyle>()
+                    .unwrap()
+                    .is_changed()
+            );
+            assert!(!entity.get_ref::<TextFont>().unwrap().is_changed());
+            assert!(!entity.get_ref::<TextColor>().unwrap().is_changed());
+        }
     }
 
     #[test]

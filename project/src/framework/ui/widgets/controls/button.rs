@@ -176,6 +176,9 @@ impl UiIconButtonVisuals {
 #[derive(Component)]
 pub(super) struct UiIconAccessibilityLabel;
 
+#[derive(Component)]
+pub(crate) struct UiButtonStyleLabel;
+
 pub(crate) fn emit_ui_button_events(
     mut button_events: MessageWriter<UiButtonEvent>,
     mut presses: MessageReader<Pointer<Press>>,
@@ -707,6 +710,7 @@ pub(crate) fn action_button<T: Component>(
             TextColor(theme.colors.text_primary),
             UiThemeTextColorRole::Primary,
             UiThemeTextStyleRole::Button,
+            UiButtonStyleLabel,
         )],
     )
 }
@@ -737,6 +741,7 @@ pub(crate) fn action_button_key_bundle<T: Component>(
             TextColor(theme.colors.text_primary),
             UiThemeTextColorRole::Primary,
             UiThemeTextStyleRole::Button,
+            UiButtonStyleLabel,
             i18n_text,
         )],
     )
@@ -769,6 +774,7 @@ pub(crate) fn disabled_action_button<T: Component>(
             TextColor(theme.colors.text_muted),
             UiThemeTextColorRole::Muted,
             UiThemeTextStyleRole::Button,
+            UiButtonStyleLabel,
         )],
     )
 }
@@ -800,6 +806,7 @@ pub(crate) fn disabled_action_button_key_bundle<T: Component>(
             TextColor(theme.colors.text_muted),
             UiThemeTextColorRole::Muted,
             UiThemeTextStyleRole::Button,
+            UiButtonStyleLabel,
             i18n_text,
         )],
     )
@@ -924,6 +931,7 @@ pub(crate) fn icon_label_button_key_bundle<T: Bundle>(
                 TextColor(theme.colors.text_primary),
                 UiThemeTextColorRole::Primary,
                 UiThemeTextStyleRole::Button,
+                UiButtonStyleLabel,
                 UiI18nText::new(accessible_key, accessible_fallback),
             )
         ],
@@ -949,12 +957,21 @@ pub(crate) fn resolve_icon_button_style(
     visuals: UiIconButtonVisuals,
     state: UiButtonVisualState,
 ) -> UiResolvedIconButtonStyle {
+    resolve_icon_button_style_with_tokens(colors, theme.colors.icon_tint, visuals, state)
+}
+
+fn resolve_icon_button_style_with_tokens(
+    colors: ButtonColors,
+    icon_tints: ButtonColors,
+    visuals: UiIconButtonVisuals,
+    state: UiButtonVisualState,
+) -> UiResolvedIconButtonStyle {
     let state_override = visuals.override_for(state);
     UiResolvedIconButtonStyle {
         icon: state_override.icon.unwrap_or(visuals.base_icon),
         tint: state_override
             .tint
-            .unwrap_or_else(|| icon_button_state_tint(theme, state)),
+            .unwrap_or_else(|| icon_button_state_tint_from_colors(icon_tints, state)),
         background: state_override
             .background
             .unwrap_or_else(|| icon_button_background_color(colors, state)),
@@ -1078,8 +1095,12 @@ pub(crate) fn icon_button_background_color(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn icon_button_state_tint(theme: &UiTheme, state: UiButtonVisualState) -> Color {
-    let colors = theme.colors.icon_tint;
+    icon_button_state_tint_from_colors(theme.colors.icon_tint, state)
+}
+
+fn icon_button_state_tint_from_colors(colors: ButtonColors, state: UiButtonVisualState) -> Color {
     match state {
         UiButtonVisualState::Idle => colors.idle,
         UiButtonVisualState::Hovered => colors.hovered,
@@ -1142,16 +1163,36 @@ pub(crate) fn sync_icon_button_accessible_labels(
 pub(crate) fn sync_icon_button_nodes(
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
-    mut icon_buttons: Query<(&UiIconButton, &mut Node)>,
+    mut icon_buttons: Query<(&UiIconButton, Option<&UiResolvedButtonStyle>, &mut Node)>,
 ) {
-    if !theme.is_changed() && !metrics.is_changed() {
-        return;
-    }
-
-    for (icon_button, mut node) in &mut icon_buttons {
-        let next = icon_button_layout_node(&theme, &metrics, icon_button.layout);
+    for (icon_button, scoped_style, mut node) in &mut icon_buttons {
+        let mut next = icon_button_layout_node(&theme, &metrics, icon_button.layout);
+        if let Some(scoped_style) = scoped_style {
+            next.border_radius = BorderRadius::all(px(scoped_style.radius));
+            if matches!(icon_button.layout, UiIconButtonLayout::Labeled(_)) {
+                next.padding.left = px(scoped_style.padding_x);
+                next.padding.right = px(scoped_style.padding_x);
+            }
+        }
         if icon_button_layout_owned_fields_differ(&node, &next) {
             apply_icon_button_layout_owned_fields(&mut node, &next);
+        }
+    }
+}
+
+pub(crate) fn sync_button_style_labels(
+    theme: Res<UiTheme>,
+    parents: Query<&ChildOf>,
+    button_styles: Query<&UiResolvedButtonStyle>,
+    mut labels: Query<(Entity, &UiThemeTextColorRole, &mut TextColor), With<UiButtonStyleLabel>>,
+) {
+    for (entity, fallback_role, mut color) in &mut labels {
+        let next = parents
+            .iter_ancestors(entity)
+            .find_map(|ancestor| button_styles.get(ancestor).ok())
+            .map_or_else(|| fallback_role.color(&theme), |style| style.text_color);
+        if color.0 != next {
+            color.0 = next;
         }
     }
 }
@@ -1195,6 +1236,7 @@ pub(crate) fn update_icon_button_visuals(
         Has<FocusedButton>,
         Has<SelectedButton>,
         Has<LoadingButton>,
+        Option<&UiResolvedButtonStyle>,
     )>,
     mut icons: Query<(
         &mut ImageNode,
@@ -1213,6 +1255,7 @@ pub(crate) fn update_icon_button_visuals(
         is_focused,
         is_selected,
         is_loading,
+        scoped_style,
     ) in &mut buttons
     {
         let state = icon_button_visual_state(
@@ -1222,12 +1265,19 @@ pub(crate) fn update_icon_button_visuals(
             is_selected,
             is_loading,
         );
-        let colors = if is_primary {
-            theme.colors.primary_button
-        } else {
-            theme.colors.secondary_button
-        };
-        let style = resolve_icon_button_style(&theme, colors, icon_button.visuals, state);
+        let colors = scoped_style.map_or_else(
+            || {
+                if is_primary {
+                    theme.colors.primary_button
+                } else {
+                    theme.colors.secondary_button
+                }
+            },
+            |style| style.backgrounds,
+        );
+        let icon_tints = scoped_style.map_or(theme.colors.icon_tint, |style| style.icon_tints);
+        let style =
+            resolve_icon_button_style_with_tokens(colors, icon_tints, icon_button.visuals, state);
         let next_background = BackgroundColor(style.background);
         if *background != next_background {
             *background = next_background;
@@ -1267,6 +1317,7 @@ pub(crate) fn update_button_visuals(
             Has<FocusedButton>,
             Has<SelectedButton>,
             Has<LoadingButton>,
+            Option<&UiResolvedButtonStyle>,
         ),
         (
             With<Button>,
@@ -1285,17 +1336,23 @@ pub(crate) fn update_button_visuals(
         is_focused,
         is_selected,
         is_loading,
+        scoped_style,
     ) in &mut buttons
     {
         if !is_primary && !is_secondary {
             continue;
         }
 
-        let colors = if is_primary {
-            theme.colors.primary_button
-        } else {
-            theme.colors.secondary_button
-        };
+        let colors = scoped_style.map_or_else(
+            || {
+                if is_primary {
+                    theme.colors.primary_button
+                } else {
+                    theme.colors.secondary_button
+                }
+            },
+            |style| style.backgrounds,
+        );
 
         let next_background = BackgroundColor(button_background_color(
             colors,

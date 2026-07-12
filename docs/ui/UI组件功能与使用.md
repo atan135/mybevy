@@ -72,6 +72,25 @@ disabled > loading > pressed > hovered > selected > focused > normal
 
 正式资源、固定上游版本、许可和 SHA-256 见 `project/assets/ui/icons/manifest.ron`。UI Gallery 使用 `icons` 和 `icon_states` 两个 child-anchor state 验收 API 形态与七态矩阵。
 
+## 作用域样式
+
+需要页面或子树视觉变体时，在祖先节点放 `UiStyleScope::new("variant.name")`，在实际渲染节点放 `UiStyleBinding`。绑定由类型化引用组成，不接受页面拼接属性名：
+
+```rust
+UiStyleBinding::new()
+    .with_surface(UiSurfaceStyleRole::Panel)
+    .with_border(UiBorderStyleRole::Panel)
+    .with_text(UiTextStyleRole::Primary)
+```
+
+按钮根节点使用 `with_button(UiButtonStyleRole::Primary/Secondary)`；输入框、卡片和弹窗分别使用 `with_input`、`with_card`、`with_dialog`。单个请求还可通过 `UiStyleRef::with_variant` 指定组件级 variant。解析会组合请求 variant 与祖先 scope；最近 scope 优先，离开或移除 scope 后自动回到父 scope 或全局基础 role。
+
+文字绑定按语义选择 role：正文用 `Primary`，紧凑且保持主文字色的说明标签用 `Caption`，弱化说明用 `Muted`，错误和按钮文字分别用 `Error`、`Button`。role 决定基础字号与颜色，页面不要在绑定后再硬编码字号覆盖 resolved 结果。
+
+普通按钮和图标按钮都从 `UiResolvedButtonStyle` 读取背景与 icon tint，但继续复用同一套 `disabled > loading > pressed > hovered > selected > focused > idle` 状态源。输入框从 `UiResolvedInputStyle` 读取表面、边框、正文、placeholder、selection 和 error token，焦点、错误判断及 `UiTextInputValue` 仍由原系统拥有。不要在业务系统直接写 resolved component，它是 resolver 的只读输出。
+
+UI Gallery 的 `style_scopes` state 展示全局默认、父 scope、嵌套子 scope、离开 scope 后恢复，以及 Selected 普通/图标按钮。审计 metadata 同时输出每个样例的 `UiResolvedStyleDebugSnapshot`。
+
 ## 选择控件
 
 当前选择类控件以按钮视觉为基础：

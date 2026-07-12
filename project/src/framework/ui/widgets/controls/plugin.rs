@@ -35,6 +35,7 @@ impl Plugin for UiWidgetsPlugin {
                     sync_numeric_control_display,
                     sync_icon_button_accessible_labels.after(UiI18nSystems::Refresh),
                     sync_icon_button_nodes,
+                    sync_button_style_labels,
                     update_button_visuals,
                     update_icon_button_visuals,
                     update_text_input_visuals,

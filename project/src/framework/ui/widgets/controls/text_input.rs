@@ -690,6 +690,7 @@ pub(crate) fn sync_text_input_display(
             &UiTextInputPlaceholder,
             &UiTextInputCursor,
             Has<DisabledTextInput>,
+            Option<&UiResolvedInputStyle>,
         ),
         With<UiTextInput>,
     >,
@@ -713,7 +714,9 @@ pub(crate) fn sync_text_input_display(
             continue;
         };
 
-        let Ok((value, placeholder, cursor, is_disabled)) = text_inputs.get(input_entity) else {
+        let Ok((value, placeholder, cursor, is_disabled, scoped_style)) =
+            text_inputs.get(input_entity)
+        else {
             continue;
         };
 
@@ -727,12 +730,16 @@ pub(crate) fn sync_text_input_display(
             (UiTextInputDisplay::plain(value.0.clone()), None)
         };
         let color = if is_disabled || value.0.is_empty() && !is_focused {
-            theme.colors.text_muted
+            scoped_style.map_or(theme.colors.text_muted, |style| style.placeholder)
         } else {
-            theme.colors.text_primary
+            scoped_style.map_or(theme.colors.text_primary, |style| style.text)
         };
-        let selected_text_color = theme.colors.screen_background;
-        let selected_background = theme.colors.primary_button.focused;
+        let selected_text_color =
+            scoped_style.map_or(theme.colors.screen_background, |style| style.selection_text);
+        let selected_background = scoped_style
+            .map_or(theme.colors.primary_button.focused, |style| {
+                style.selection_background
+            });
 
         if !root_text.0.is_empty() {
             root_text.0.clear();
@@ -807,13 +814,14 @@ pub(crate) fn sync_text_input_caret(
             &UiTextInputValue,
             &UiTextInputCursor,
             Has<DisabledTextInput>,
+            Option<&UiResolvedInputStyle>,
         ),
         With<UiTextInput>,
     >,
     measures: Query<&TextLayoutInfo, With<UiTextInputCaretMeasure>>,
     mut carets: Query<(&mut Node, &mut BackgroundColor, &mut Visibility), With<UiTextInputCaret>>,
 ) {
-    for (input_entity, _value, cursor, is_disabled) in &text_inputs {
+    for (input_entity, _value, cursor, is_disabled, scoped_style) in &text_inputs {
         let is_focused = focus_state.focused_entity == Some(input_entity);
         let caret_visible = is_focused && !is_disabled && cursor.selection.is_none();
         let caret_x = children
@@ -842,8 +850,9 @@ pub(crate) fn sync_text_input_caret(
             if node.left != px(caret_x) {
                 node.left = px(caret_x);
             }
-            if background.0 != theme.colors.text_primary {
-                background.0 = theme.colors.text_primary;
+            let caret_color = scoped_style.map_or(theme.colors.text_primary, |style| style.text);
+            if background.0 != caret_color {
+                background.0 = caret_color;
             }
             if node.width != px(TEXT_INPUT_CARET_WIDTH) {
                 node.width = px(TEXT_INPUT_CARET_WIDTH);
@@ -862,6 +871,7 @@ pub(crate) fn sync_text_input_form_messages(
         Option<&UiTextInputRequired>,
         Has<UiTextInputError>,
         Has<DisabledTextInput>,
+        Option<&UiResolvedInputStyle>,
     )>,
     mut messages: Query<(&UiTextInputFormMessage, &mut Text, &mut TextColor)>,
 ) {
@@ -874,6 +884,7 @@ pub(crate) fn sync_text_input_form_messages(
             required,
             has_error,
             is_disabled,
+            scoped_style,
         )) = text_inputs.get(message.input)
         else {
             continue;
@@ -888,11 +899,11 @@ pub(crate) fn sync_text_input_form_messages(
         );
         let display = state.message.unwrap_or_default();
         let color = if is_disabled {
-            theme.colors.text_muted
+            scoped_style.map_or(theme.colors.text_muted, |style| style.placeholder)
         } else if state.is_error {
-            theme.colors.text_error
+            scoped_style.map_or(theme.colors.text_error, |style| style.error_text)
         } else {
-            theme.colors.text_muted
+            scoped_style.map_or(theme.colors.text_muted, |style| style.placeholder)
         };
 
         if text.0 != display {
@@ -917,6 +928,7 @@ pub(crate) fn update_text_input_visuals(
             Option<&UiTextInputValidationMessage>,
             Option<&UiTextInputAlphanumeric>,
             Option<&UiTextInputRequired>,
+            Option<&UiResolvedInputStyle>,
         ),
         (With<Button>, With<UiTextInput>),
     >,
@@ -932,6 +944,7 @@ pub(crate) fn update_text_input_visuals(
         validation_message,
         alphanumeric,
         required,
+        scoped_style,
     ) in &mut text_inputs
     {
         let is_error = text_input_has_error(
@@ -940,18 +953,32 @@ pub(crate) fn update_text_input_visuals(
             required,
             has_error,
         );
-        let background_color =
-            text_input_background_color(&theme, *interaction, is_focused, is_disabled);
+        let background_color = scoped_style.map_or_else(
+            || text_input_background_color(&theme, *interaction, is_focused, is_disabled),
+            |style| {
+                text_input_background_color_from_tokens(
+                    style,
+                    *interaction,
+                    is_focused,
+                    is_disabled,
+                )
+            },
+        );
         if background.0 != background_color {
             *background = BackgroundColor(background_color);
         }
 
-        let next_border = BorderColor::all(text_input_border_color(
-            &theme,
-            *interaction,
-            is_focused,
-            is_disabled,
-            is_error,
+        let next_border = BorderColor::all(scoped_style.map_or_else(
+            || text_input_border_color(&theme, *interaction, is_focused, is_disabled, is_error),
+            |style| {
+                text_input_border_color_from_tokens(
+                    style,
+                    *interaction,
+                    is_focused,
+                    is_disabled,
+                    is_error,
+                )
+            },
         ));
         if *border != next_border {
             *border = next_border;
@@ -974,6 +1001,24 @@ pub(crate) fn text_input_background_color(
         Interaction::Hovered => theme.colors.secondary_button.hovered,
         Interaction::None if is_focused => theme.colors.secondary_button.focused,
         Interaction::None => theme.colors.secondary_button.idle,
+    }
+}
+
+pub(crate) fn text_input_background_color_from_tokens(
+    style: &UiResolvedInputStyle,
+    interaction: Interaction,
+    is_focused: bool,
+    is_disabled: bool,
+) -> Color {
+    if is_disabled {
+        return style.backgrounds.disabled;
+    }
+
+    match interaction {
+        Interaction::Pressed => style.backgrounds.pressed,
+        Interaction::Hovered => style.backgrounds.hovered,
+        Interaction::None if is_focused => style.backgrounds.focused,
+        Interaction::None => style.backgrounds.idle,
     }
 }
 
@@ -1000,6 +1045,29 @@ pub(crate) fn text_input_border_color(
         Interaction::Pressed => theme.colors.primary_button.pressed,
         Interaction::Hovered => theme.colors.secondary_button.focused,
         Interaction::None => theme.colors.panel_border,
+    }
+}
+
+pub(crate) fn text_input_border_color_from_tokens(
+    style: &UiResolvedInputStyle,
+    interaction: Interaction,
+    is_focused: bool,
+    is_disabled: bool,
+    is_error: bool,
+) -> Color {
+    if is_disabled {
+        return style.border_disabled;
+    }
+    if is_error {
+        return style.border_error;
+    }
+    if is_focused {
+        return style.border_focused;
+    }
+    match interaction {
+        Interaction::Pressed => style.border_pressed,
+        Interaction::Hovered => style.border_hovered,
+        Interaction::None => style.border_idle,
     }
 }
 

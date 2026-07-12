@@ -7,8 +7,13 @@ use std::{
 };
 
 use crate::framework::ui::{
-    core::{UiMetrics, UiViewport},
-    style::fonts::UiTextStyleToken,
+    core::{UiFocusSystems, UiMetrics, UiViewport},
+    style::{
+        fonts::UiTextStyleToken,
+        scopes::{
+            UiStyleSheet, UiStyleSheetConfig, apply_resolved_ui_styles, resolve_ui_style_bindings,
+        },
+    },
 };
 
 const UI_THEME_CONFIG_VERSION: u32 = 1;
@@ -31,10 +36,19 @@ impl Plugin for UiThemePlugin {
         app.insert_resource(theme)
             .insert_resource(source)
             .insert_resource(hot_reload)
+            .configure_sets(
+                Update,
+                UiThemeSystems::Refresh.before(UiFocusSystems::Visuals),
+            )
             .add_systems(Startup, log_ui_theme_source)
             .add_systems(
                 Update,
-                (poll_ui_theme_hot_reload, refresh_ui_theme_visuals)
+                (
+                    poll_ui_theme_hot_reload,
+                    refresh_ui_theme_visuals,
+                    resolve_ui_style_bindings,
+                    apply_resolved_ui_styles,
+                )
                     .chain()
                     .in_set(UiThemeSystems::Refresh),
             );
@@ -48,6 +62,7 @@ pub(crate) struct UiTheme {
     pub layout: UiLayoutTheme,
     pub button: UiButtonTheme,
     pub panel: UiPanelTheme,
+    pub styles: UiStyleSheet,
 }
 
 #[derive(Clone, Debug)]
@@ -108,7 +123,7 @@ pub(crate) struct UiPanelTheme {
     pub radius: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ButtonColors {
     pub idle: Color,
     pub hovered: Color,
@@ -357,6 +372,7 @@ impl Default for UiTheme {
                 border: 1.0,
                 radius: 8.0,
             },
+            styles: UiStyleSheet::built_in(),
         }
     }
 }
@@ -384,6 +400,8 @@ struct UiThemeConfig {
     layout: UiLayoutTheme,
     button: UiButtonTheme,
     panel: UiPanelTheme,
+    #[serde(default)]
+    styles: UiStyleSheetConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -466,7 +484,9 @@ fn load_ui_theme_from_path(path: &Path) -> Result<UiTheme, String> {
     };
 
     match ron::from_str::<UiThemeConfig>(&source) {
-        Ok(config) if config.version == UI_THEME_CONFIG_VERSION => Ok(config.into_theme()),
+        Ok(config) if config.version == UI_THEME_CONFIG_VERSION => config
+            .into_theme()
+            .map_err(|error| format!("{} has invalid scoped styles: {error}", path.display())),
         Ok(config) => Err(format!(
             "{} uses unsupported version {}, expected {}",
             path.display(),
@@ -777,14 +797,16 @@ fn default_icon_tint() -> ButtonColorsConfig {
 }
 
 impl UiThemeConfig {
-    fn into_theme(self) -> UiTheme {
-        UiTheme {
+    fn into_theme(self) -> Result<UiTheme, crate::framework::ui::style::scopes::UiStyleError> {
+        let styles = UiStyleSheet::compile(self.styles)?;
+        Ok(UiTheme {
             colors: self.colors.into_colors(),
             text: self.text,
             layout: self.layout,
             button: self.button,
             panel: self.panel,
-        }
+            styles,
+        })
     }
 }
 
@@ -960,6 +982,13 @@ mod tests {
             .replace("        error: (r: 0.71, g: 0.22, b: 0.23),\n", "")
     }
 
+    fn theme_config_with_styles(styles: &str) -> String {
+        let mut config = valid_theme_config_with_version(UI_THEME_CONFIG_VERSION);
+        assert_eq!(config.pop(), Some(')'));
+        config.push_str(&format!("    styles: {styles},\n)"));
+        config
+    }
+
     fn load_config(source: &str) -> Result<UiTheme, String> {
         let temp = TempConfigDir::new("load_config");
         let path = temp.write_config("theme.ron", source);
@@ -1024,6 +1053,11 @@ mod tests {
         assert_eq!(theme.layout.content_width, 760.0);
         assert_eq!(theme.button.height, 50.0);
         assert_eq!(theme.panel.radius, 11.0);
+        assert!(theme.styles.contains_variant(
+            &crate::framework::ui::style::UiStyleVariantId::new(
+                crate::framework::ui::style::UI_STYLE_VARIANT_GALLERY_PARENT,
+            ),
+        ));
     }
 
     #[test]
@@ -1035,6 +1069,11 @@ mod tests {
         assert_srgba(theme.colors.icon_tint.hovered, (0.42, 0.94, 0.84, 1.0));
         assert_srgba(theme.colors.icon_tint.disabled, (0.62, 0.68, 0.70, 0.62));
         assert_srgba(theme.colors.icon_tint.loading, (0.46, 0.80, 1.0, 1.0));
+        assert!(theme.styles.contains_variant(
+            &crate::framework::ui::style::UiStyleVariantId::new(
+                crate::framework::ui::style::UI_STYLE_VARIANT_GALLERY_NESTED,
+            ),
+        ));
     }
 
     #[test]
@@ -1080,6 +1119,20 @@ mod tests {
         let error = load_config("(version: 1, colors:").unwrap_err();
 
         assert_error_contains(&error, "could not be parsed");
+    }
+
+    #[test]
+    fn rejects_invalid_scoped_styles_with_stable_error_code() {
+        let config = theme_config_with_styles(
+            r#"(
+                variants: [(name: "bad", overrides: [
+                    SurfaceBackground(role: panel, token: "missing"),
+                ])],
+            )"#,
+        );
+        let error = load_config(&config).unwrap_err();
+
+        assert_error_contains(&error, "ui_style_unknown_token");
     }
 
     #[test]
@@ -1358,6 +1411,64 @@ mod tests {
         let theme = app.world().resource::<UiTheme>();
         assert_eq!(theme.text.title_large, current_title_size);
         assert_eq!(theme.button.height, current_button_height);
+    }
+
+    #[test]
+    fn hot_reload_keeps_last_known_good_theme_when_scoped_styles_are_invalid() {
+        let temp = TempConfigDir::new(
+            "hot_reload_keeps_last_known_good_theme_when_scoped_styles_are_invalid",
+        );
+        let path = temp.write_config(
+            "theme.ron",
+            &valid_theme_config_with_version(UI_THEME_CONFIG_VERSION),
+        );
+        let current_theme = load_ui_theme_from_path(&path).unwrap();
+        let current_background = current_theme.colors.screen_background;
+        let invalid = theme_config_with_styles(
+            r#"(
+                tokens: [(name: "radius", value: Scalar(-1.0))],
+                variants: [(name: "bad", overrides: [
+                    BorderRadius(role: panel, token: "radius"),
+                ])],
+            )"#,
+        );
+        fs::write(&path, invalid).expect("invalid scoped style config should be written");
+
+        let mut hot_reload = UiThemeHotReload {
+            enabled: true,
+            watched_path: path,
+            last_modified: None,
+            poll_timer: Timer::from_seconds(0.0, TimerMode::Repeating),
+            last_error: None,
+        };
+        hot_reload.poll_timer.tick(std::time::Duration::ZERO);
+        let source = UiThemeSource {
+            loaded_path: Some(hot_reload.watched_path.clone()),
+            diagnostics: Vec::new(),
+        };
+        let mut app = App::new();
+        app.insert_resource(current_theme)
+            .insert_resource(source)
+            .insert_resource(hot_reload)
+            .insert_resource(Time::<()>::default())
+            .add_systems(Update, poll_ui_theme_hot_reload);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<UiTheme>().colors.screen_background,
+            current_background
+        );
+        assert!(
+            app.world()
+                .resource::<UiThemeHotReload>()
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("ui_style_invalid_value"))
+        );
     }
 
     #[test]

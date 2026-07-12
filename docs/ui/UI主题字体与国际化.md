@@ -26,9 +26,52 @@ project/assets/ui/themes/default.ron
 4. `CARGO_MANIFEST_DIR/assets/ui/themes/default.ron`。
 5. 内置 `UiTheme::default()`。
 
+## 作用域样式与组件变体
+
+`version: 1` 主题可选增加 `styles`。默认主题已显式登记 Gallery 验收 token；旧 version 1 文件没有 `styles` 时会迁移到同一份内置兼容样式，现有页面和旧 marker 无需一次性改写。
+
+```ron
+styles: (
+    tokens: [
+        (name: "page.surface", value: Color((r: 0.08, g: 0.19, b: 0.18))),
+        (name: "control.radius", value: Scalar(6.0)),
+    ],
+    variants: [
+        (
+            name: "page.compact",
+            extends: Some("page.base"),
+            overrides: [
+                SurfaceBackground(role: panel, token: "page.surface"),
+                ButtonRadius(role: secondary, token: "control.radius"),
+            ],
+        ),
+    ],
+),
+```
+
+token 只有 `Color` 和 `Scalar` 两种类型。颜色通道必须是有限的 `0..=1`，尺寸类 Scalar 必须非负，字号必须大于零；框架不依赖 clamp 修正非法配置。override 属性是固定 serde enum，不解析页面自造的属性字符串。当前类型化角色包括：
+
+- `UiSurfaceStyleRole`：screen、panel、elevated、overlay。
+- `UiBorderStyleRole`：panel、control、emphasis。
+- `UiTextStyleRole`：primary、caption、muted、error、button。
+- `UiButtonStyleRole`：primary、secondary。
+- `UiInputStyleRole`：standard、error。
+- `UiCardStyleRole`：standard、emphasis。
+- `UiDialogStyleRole`：standard、destructive。
+
+解析顺序固定为：基础 role -> 请求引用的 variant 继承链 -> 从页面根到最近祖先的 scope 链。后应用者覆盖前者；嵌套 scope 因而胜过父 scope。移除 `UiStyleScope`、把实体移出子树或重新挂到其他父级后，下一次解析会按新祖先链恢复，不保存页面私有副本。
+
+文字 role 同时表达颜色与字号语义：`Primary` 使用正文大小和主文字色，`Caption` 使用说明文字大小和主文字色，`Muted` 使用说明文字大小和弱化文字色。需要紧凑但仍强调的标签必须使用 `Caption`，不能用 `Primary` 再硬改字号，也不能用 `Muted` 冒充颜色语义。scope variant 可以分别覆盖这些 role 的颜色，不会把 Caption 提升为正文大小。
+
+同一实体通常只放一个 composite role。确需组合时，静态字段提交优先级固定为 `Surface/Border/Text -> Button/Input -> Card -> Dialog`，后者胜出；Gallery 不用重叠 composite role 建立视觉样例。按钮和输入框的 resolver 只产生 `UiResolvedButtonStyle` / `UiResolvedInputStyle`，现有控件视觉系统继续唯一负责 Interaction、focused、selected、disabled、loading、error 和输入值，不会由主题刷新重置业务状态。
+
+配置在应用前完整编译。稳定错误码包括 `ui_style_unknown_token`、`ui_style_unknown_variant`、`ui_style_variant_cycle`、`ui_style_duplicate_token`、`ui_style_duplicate_variant`、`ui_style_duplicate_override`、`ui_style_token_type_mismatch` 和 `ui_style_invalid_value`。任一错误都会让文件热更新失败并保留 last-known-good `UiTheme`，不会部分应用或 panic。
+
+带 `UiStyleBinding` 的实体会得到只读 `UiResolvedStyleDebugSnapshot`，记录 scope 链、请求 role/variant、来源链、最终关键 token、fallback 和稳定错误码。UI audit metadata 的 `style_resolutions` 会收集这些快照；`style_scopes` capture state 对齐 Gallery 固定区域。
+
 ## 主题热更新
 
-如果主题从文件加载成功，`UiThemePlugin` 会约每 0.8 秒轮询文件修改时间。解析成功后替换 `UiTheme`，解析失败则保留当前主题并记录 warning。
+如果主题从文件加载成功，`UiThemePlugin` 会约每 0.8 秒轮询文件修改时间。基础字段和全部 styles 配置解析、引用与循环校验都成功后才替换 `UiTheme`；失败则保留 last-known-good 主题并记录 warning。主题或 metrics 更新会重新解析当前祖先 scope，稳定输入的第二帧不会重复标记 resolved component、Node 或颜色 Changed。
 
 主题刷新依赖组件 marker：
 

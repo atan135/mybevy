@@ -39,8 +39,9 @@ commands.spawn((
 | 图片 `image` | 图集源纹理、像素帧、原始尺寸和归一化 pivot 描述 | 框架支持 | `UiAtlasFrame` + `try_ui_advanced_image`；越界或不支持的切片组合在生成 bundle 前返回错误 |
 | 图标 `icon` | 稳定图标 ID、正式 PNG、默认尺寸、单色着色边界、加载状态和缺失图标占位 | 框架支持 | `widgets/icon.rs`；业务只传 `UiIconId`，不得直接拼接资源路径或用 Unicode 文本冒充图标 |
 | 图标 `icon` | 纯图标、左右图标文字和固定尺寸图片按钮 | 框架支持 | `widgets/controls/button.rs`；根节点保存 i18n 可访问名称，状态切换不改变布局或点击区域 |
-| 表面 `surface` | 主题色驱动的纯色页面、面板和按钮背景 | 框架支持 | `UiThemeBackgroundRole` 和组件 helper |
-| 边框 `border` | 统一边宽、纯色边框和圆角 | 框架支持 | `UiThemeBorderRole` 和组件 helper |
+| 表面 `surface` | 主题色驱动的纯色页面、面板和按钮背景 | 框架支持 | `UiThemeBackgroundRole`；新页面可用 `UiStyleBinding` + 最近祖先 scope |
+| 表面 `surface` | 页面/子树 variant、嵌套继承和移除后恢复 | 框架支持 | `UiStyleScope`，解析顺序为 base -> request variant -> 根到最近 scope |
+| 边框 `border` | 统一边宽、纯色边框和圆角 | 框架支持 | `UiThemeBorderRole`；作用域使用类型化 Border role |
 | 边框 `border` | 独立边宽、复杂轮廓或页面专属组合 | 允许直接使用 Bevy | 必须标记并验证裁切；渐变边框不属于此逃生口 |
 | 阴影 `shadow` | 页面级 `BoxShadow` / `TextShadow` 对照试验 | 允许直接使用 Bevy | 必须标记并记录移动端验证；尚无共享 token 或降级规则 |
 | 渐变 `gradient` | 页面级 Bevy 渐变对照试验 | 允许直接使用 Bevy | 必须标记；尚无色标限制、边框组合或平台降级规则 |
@@ -66,16 +67,18 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - 混排和溢出审计 state：`typography_overflow`
 - 图标与图片按钮审计 state：`icons`
 - 图标七态矩阵审计 state：`icon_states`
+- 作用域样式审计 state：`style_scopes`
 - 滚动目标：`ui_gallery.main`
 - 图片适配位置：主滚动容器顶部
 - 高级图片 anchor：`ui_gallery.image_modes`
 - 平铺/图集 anchor：`ui_gallery.image_tiling`、`ui_gallery.image_atlas`
 - 文字 anchor：`ui_gallery.typography`、`ui_gallery.typography_overflow`
 - 图标 anchor：`ui_gallery.icons`、`ui_gallery.icon_states`
+- 样式 anchor：`ui_gallery.style_scopes`
 - fixture 清单：`project/assets/ui/fixtures/manifest.ron`
 - 正式图标清单：`project/assets/ui/icons/manifest.ron`
 
-批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,middle,bottom`。`image_fit` 和 `visual_foundation` 固定指向顶部区域；高级图片、文字和图标 state 根据命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。仍可显式请求兼容 state `top`。
+批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,middle,bottom`。`image_fit` 和 `visual_foundation` 固定指向顶部区域；高级图片、文字、图标和作用域样式 state 根据命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。仍可显式请求兼容 state `top`。
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States visual_foundation -DryRun
@@ -84,7 +87,14 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States "image_tiling,image_atlas" -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States "typography,typography_overflow" -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States "icons,icon_states" -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States style_scopes -DryRun
 ```
+
+## 作用域样式规则
+
+主题 version 1 的可选 `styles` 定义 Color/Scalar token、可继承 variant 和类型化 override。Surface、Border、Text、Button、Input、Card、Dialog 七类 role 可以按节点职责组合；未知 token/variant、循环、重复、类型错误和非法值在应用前失败，热更新保留 last-known-good 主题。
+
+每个绑定节点的 `UiResolvedStyleDebugSnapshot` 记录 scope、来源链和最终关键 token，并进入 audit metadata 的 `style_resolutions`。普通按钮、图标按钮和输入框只消费 resolved token，仍使用原有唯一状态机，不让主题刷新改写 Interaction、focused/selected/disabled/loading 或输入值。完整 schema 和优先级见 [UI主题字体与国际化.md](UI主题字体与国际化.md)。
 
 ## 图标与图片按钮规则
 
