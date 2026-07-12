@@ -91,6 +91,20 @@ UiStyleBinding::new()
 
 UI Gallery 的 `style_scopes` state 展示全局默认、父 scope、嵌套子 scope、离开 scope 后恢复，以及 Selected 普通/图标按钮。审计 metadata 同时输出每个样例的 `UiResolvedStyleDebugSnapshot`。
 
+## 阴影、渐变和描边
+
+需要共享视觉效果时，在最终渲染节点放主题 preset 绑定：
+
+```rust
+UiEffectBinding::new("surface.elevated")
+```
+
+页面只能传 preset ID。主题 `effects.presets` 负责声明盒阴影、原生文字阴影、背景/边框线性渐变、独立四边宽、独立四角圆角、圆角裁切和 Outline；框架校验后写入真实 Bevy 组件。不要在业务页面复制 `ShadowStyle`、`LinearGradient` 或材质 fallback 判断。
+
+绑定会保存节点相关字段的 baseline 和上一帧效果输出。绑定期间若主题或业务系统写入新的基础值，框架会识别并刷新恢复目标；切换 preset 不会把旧效果输出写入 baseline，移除绑定后恢复最近的外部基础值。文字阴影因 Bevy 0.18.1 限制只支持单层颜色和偏移；需要 blur、spread 或多层时应调整设计或使用有来源和可访问 fallback 的静态资源，不能复制 Text 节点模拟。
+
+自定义材质只接受框架 allowlist ID，并且当前没有可渲染 adapter。材质请求会稳定显示 preset 的背景/边框 fallback；GPU、平台、shader 和参数原因进入 `UiResolvedEffectDebugSnapshot`。完整配置、错误码和性能预算见 [UI视觉效果与材质边界.md](UI视觉效果与材质边界.md)。UI Gallery 的 `effects` state 展示所有当前组合和材质降级。
+
 ## 选择控件
 
 当前选择类控件以按钮视觉为基础：

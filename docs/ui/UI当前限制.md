@@ -35,7 +35,7 @@
 - 同实体组合多个 composite role 时按 `Surface/Border/Text -> Button/Input -> Card -> Dialog` 提交。优先拆到合理的父子节点，避免依赖重叠优先级设计页面。
 - scope 继承按实际 Bevy 父子层级每帧解析。大量绑定节点会增加 CPU 与 audit metadata 体积；当前没有增量依赖图或跨 World 样式缓存。
 - resolved component 只拥有样式字段，不拥有 Interaction、焦点、选择、禁用、loading、输入值或文本内容。业务直接修改 resolved component 会在下次解析时被覆盖。
-- 当前阶段不包含阴影、渐变、动画、材质或独立四边框 token；这些能力仍按各自限制处理。
+- 作用域 variant 当前不直接覆盖效果 preset；阴影、渐变、独立四边框和轮廓通过同级 `UiEffectBinding` 选择。通用属性动画仍不在作用域样式范围内。
 
 ## 表单与文本输入
 
@@ -73,7 +73,10 @@
 - atlas frame 当前只允许 Stretch，不支持与 NineSlice/Tiled 组合；`original_size` 和 pivot 已进入正式数据描述与校验，但当前静态 UI helper 不负责按 pivot 进行动画定位。
 - 高级图片必须来自可验证的首包/AssetServer 相对路径，不接受无路径程序化纹理；基础整图的程序化 handle 仍可使用 `ui_image`。
 - `Failed` 和 `Invalid` 当前使用稳定颜色占位并暴露组件状态，尚无通用重试按钮、错误图标或面向玩家的错误文案协议。
-- 阴影、渐变和复杂描边尚无共享 token、组合校验和移动端降级规则。
+- 阴影、线性背景/边框渐变、独立边宽/圆角、裁切和 Outline 已有受限 preset、组合校验和规划预算；当前不支持径向/锥形渐变、内阴影或基于内容自动生成效果。
+- Bevy 0.18.1 的 `TextShadow` 只有单层颜色与偏移。文字多层、spread 和 blur 会显式失败，不会用重复文本节点伪装。
+- 自定义材质当前只有 allowlist、参数/平台校验和可见 fallback，没有已交付 shader/adapter。所有材质样例都应显示降级结果，不能将其描述为真实材质渲染。
+- draw-call 和 overdraw 字段是保守配置预算，不是目标 GPU 实测；移动端发布仍需要平台分析器和真机截图。
 - 通用属性动画、Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。图标按钮已支持状态图片与 tint/background override，但没有自动旋转 loading 图标的动画协议。
 - 作用域样式只覆盖固定 role 和纯色/尺寸 token，不自动把任意 Bevy Node 字段转成主题属性；页面私有 transform、grid、margin 和业务状态仍由调用方拥有。
 - 允许临时直接使用的 Bevy 原语必须附加 `UiDirectBevyVisual` marker；完整状态和判定规则见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。

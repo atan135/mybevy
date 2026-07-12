@@ -9,6 +9,10 @@ use std::{
 use crate::framework::ui::{
     core::{UiFocusSystems, UiMetrics, UiViewport},
     style::{
+        effects::{
+            UiEffectCatalog, UiEffectCatalogConfig, UiMaterialRuntime, apply_resolved_ui_effects,
+            cleanup_removed_ui_effect_bindings, resolve_ui_effect_bindings,
+        },
         fonts::UiTextStyleToken,
         scopes::{
             UiStyleSheet, UiStyleSheetConfig, apply_resolved_ui_styles, resolve_ui_style_bindings,
@@ -36,6 +40,7 @@ impl Plugin for UiThemePlugin {
         app.insert_resource(theme)
             .insert_resource(source)
             .insert_resource(hot_reload)
+            .init_resource::<UiMaterialRuntime>()
             .configure_sets(
                 Update,
                 UiThemeSystems::Refresh.before(UiFocusSystems::Visuals),
@@ -48,6 +53,9 @@ impl Plugin for UiThemePlugin {
                     refresh_ui_theme_visuals,
                     resolve_ui_style_bindings,
                     apply_resolved_ui_styles,
+                    resolve_ui_effect_bindings,
+                    apply_resolved_ui_effects,
+                    cleanup_removed_ui_effect_bindings,
                 )
                     .chain()
                     .in_set(UiThemeSystems::Refresh),
@@ -63,6 +71,7 @@ pub(crate) struct UiTheme {
     pub button: UiButtonTheme,
     pub panel: UiPanelTheme,
     pub styles: UiStyleSheet,
+    pub effects: UiEffectCatalog,
 }
 
 #[derive(Clone, Debug)]
@@ -373,6 +382,7 @@ impl Default for UiTheme {
                 radius: 8.0,
             },
             styles: UiStyleSheet::built_in(),
+            effects: UiEffectCatalog::built_in(),
         }
     }
 }
@@ -402,6 +412,8 @@ struct UiThemeConfig {
     panel: UiPanelTheme,
     #[serde(default)]
     styles: UiStyleSheetConfig,
+    #[serde(default)]
+    effects: UiEffectCatalogConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -486,7 +498,7 @@ fn load_ui_theme_from_path(path: &Path) -> Result<UiTheme, String> {
     match ron::from_str::<UiThemeConfig>(&source) {
         Ok(config) if config.version == UI_THEME_CONFIG_VERSION => config
             .into_theme()
-            .map_err(|error| format!("{} has invalid scoped styles: {error}", path.display())),
+            .map_err(|error| format!("{} has invalid visual config: {error}", path.display())),
         Ok(config) => Err(format!(
             "{} uses unsupported version {}, expected {}",
             path.display(),
@@ -797,8 +809,9 @@ fn default_icon_tint() -> ButtonColorsConfig {
 }
 
 impl UiThemeConfig {
-    fn into_theme(self) -> Result<UiTheme, crate::framework::ui::style::scopes::UiStyleError> {
-        let styles = UiStyleSheet::compile(self.styles)?;
+    fn into_theme(self) -> Result<UiTheme, String> {
+        let styles = UiStyleSheet::compile(self.styles).map_err(|error| error.to_string())?;
+        let effects = UiEffectCatalog::compile(self.effects).map_err(|error| error.to_string())?;
         Ok(UiTheme {
             colors: self.colors.into_colors(),
             text: self.text,
@@ -806,6 +819,7 @@ impl UiThemeConfig {
             button: self.button,
             panel: self.panel,
             styles,
+            effects,
         })
     }
 }
@@ -989,6 +1003,13 @@ mod tests {
         config
     }
 
+    fn theme_config_with_effects(effects: &str) -> String {
+        let mut config = valid_theme_config_with_version(UI_THEME_CONFIG_VERSION);
+        assert_eq!(config.pop(), Some(')'));
+        config.push_str(&format!("    effects: {effects},\n)"));
+        config
+    }
+
     fn load_config(source: &str) -> Result<UiTheme, String> {
         let temp = TempConfigDir::new("load_config");
         let path = temp.write_config("theme.ron", source);
@@ -1074,6 +1095,19 @@ mod tests {
                 crate::framework::ui::style::UI_STYLE_VARIANT_GALLERY_NESTED,
             ),
         ));
+        for preset in [
+            crate::framework::ui::style::UI_EFFECT_PRESET_GALLERY_SHADOW,
+            crate::framework::ui::style::UI_EFFECT_PRESET_GALLERY_TEXT_SHADOW,
+            crate::framework::ui::style::UI_EFFECT_PRESET_GALLERY_GRADIENT,
+            crate::framework::ui::style::UI_EFFECT_PRESET_GALLERY_COMPOSITE,
+            crate::framework::ui::style::UI_EFFECT_PRESET_GALLERY_MATERIAL_FALLBACK,
+        ] {
+            assert!(
+                theme
+                    .effects
+                    .contains_preset(&crate::framework::ui::style::UiEffectPresetId::new(preset))
+            );
+        }
     }
 
     #[test]
@@ -1133,6 +1167,27 @@ mod tests {
         let error = load_config(&config).unwrap_err();
 
         assert_error_contains(&error, "ui_style_unknown_token");
+    }
+
+    #[test]
+    fn rejects_invalid_effects_with_stable_error_code() {
+        let config = theme_config_with_effects(
+            r#"(
+                presets: [(
+                    name: "bad.gradient",
+                    background_gradient: Some((
+                        angle_degrees: 90.0,
+                        stops: [
+                            (position: 0.8, color: (r: 0.1, g: 0.2, b: 0.3)),
+                            (position: 0.2, color: (r: 0.4, g: 0.5, b: 0.6)),
+                        ],
+                    )),
+                )],
+            )"#,
+        );
+        let error = load_config(&config).unwrap_err();
+
+        assert_error_contains(&error, "ui_effect_invalid_gradient_stops");
     }
 
     #[test]
@@ -1468,6 +1523,75 @@ mod tests {
                 .last_error
                 .as_deref()
                 .is_some_and(|error| error.contains("ui_style_invalid_value"))
+        );
+    }
+
+    #[test]
+    fn hot_reload_keeps_last_known_good_effect_catalog_when_effects_are_invalid() {
+        let temp = TempConfigDir::new(
+            "hot_reload_keeps_last_known_good_effect_catalog_when_effects_are_invalid",
+        );
+        let path = temp.write_config(
+            "theme.ron",
+            &valid_theme_config_with_version(UI_THEME_CONFIG_VERSION),
+        );
+        let current_theme = load_ui_theme_from_path(&path).unwrap();
+        assert!(current_theme.effects.contains_preset(
+            &crate::framework::ui::style::UiEffectPresetId::new(
+                crate::framework::ui::style::UI_EFFECT_PRESET_GALLERY_COMPOSITE,
+            ),
+        ));
+        let invalid = theme_config_with_effects(
+            r#"(
+                presets: [(
+                    name: "bad.gradient",
+                    background_gradient: Some((
+                        angle_degrees: 90.0,
+                        stops: [
+                            (position: 0.8, color: (r: 0.1, g: 0.2, b: 0.3)),
+                            (position: 0.2, color: (r: 0.4, g: 0.5, b: 0.6)),
+                        ],
+                    )),
+                )],
+            )"#,
+        );
+        fs::write(&path, invalid).expect("invalid effect config should be written");
+
+        let mut hot_reload = UiThemeHotReload {
+            enabled: true,
+            watched_path: path,
+            last_modified: None,
+            poll_timer: Timer::from_seconds(0.0, TimerMode::Repeating),
+            last_error: None,
+        };
+        hot_reload.poll_timer.tick(std::time::Duration::ZERO);
+        let source = UiThemeSource {
+            loaded_path: Some(hot_reload.watched_path.clone()),
+            diagnostics: Vec::new(),
+        };
+        let mut app = App::new();
+        app.insert_resource(current_theme)
+            .insert_resource(source)
+            .insert_resource(hot_reload)
+            .insert_resource(Time::<()>::default())
+            .add_systems(Update, poll_ui_theme_hot_reload);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+
+        app.update();
+
+        assert!(app.world().resource::<UiTheme>().effects.contains_preset(
+            &crate::framework::ui::style::UiEffectPresetId::new(
+                crate::framework::ui::style::UI_EFFECT_PRESET_GALLERY_COMPOSITE,
+            ),
+        ));
+        assert!(
+            app.world()
+                .resource::<UiThemeHotReload>()
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("ui_effect_invalid_gradient_stops"))
         );
     }
 

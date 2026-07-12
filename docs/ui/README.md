@@ -9,6 +9,7 @@
 - [UI输入路由与焦点.md](UI输入路由与焦点.md)：输入阻断、焦点候选、键盘激活和滚动协作。
 - [UI组件功能与使用.md](UI组件功能与使用.md)：文本、按钮、图标按钮、选择控件、数值控件、输入框和绑定。
 - [UI高保真视觉能力.md](UI高保真视觉能力.md)：参考图视觉能力分类、支持状态、Direct Bevy 逃生口、固定 Gallery 验收区域和资源许可边界。
+- [UI视觉效果与材质边界.md](UI视觉效果与材质边界.md)：阴影、渐变、独立描边、裁切、自定义材质准入、降级和移动端预算。
 - [UI响应式布局.md](UI响应式布局.md)：视口分类、指标推导、布局 helper、安全区和窗口验收。
 - [UI主题字体与国际化.md](UI主题字体与国际化.md)：主题 RON、字体资源、i18n RON 和热更新机制。
 - [UI覆盖层与弹窗.md](UI覆盖层与弹窗.md)：Toast、Loading、Confirm、Floating 的命令流和层级行为。
@@ -88,7 +89,7 @@ flowchart TD
 - `project/src/framework/ui/core/`：视口、层级、面板、输入、焦点、绑定、动画、统计。
 - `project/src/framework/ui/widgets/`：通用控件、布局 helper、滚动容器、图片 helper。
 - `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 和覆盖层命令处理。
-- `project/src/framework/ui/style/`：字体加载和主题 token。
+- `project/src/framework/ui/style/`：字体加载、作用域样式、主题 token、受限视觉效果和材质策略。
 - `project/src/framework/ui/i18n.rs`：UI 文案加载、fallback 和热更新。
 
 ## 文档维护规则

@@ -12,10 +12,12 @@ use crate::framework::ui::{
         UiOverlayCommand, UiToast,
     },
     style::{
-        UI_STYLE_VARIANT_GALLERY_NESTED, UI_STYLE_VARIANT_GALLERY_PARENT, UiBorderStyleRole,
-        UiButtonStyleRole, UiFontAssets, UiFontWeight, UiStyleBinding, UiStyleScope,
-        UiSurfaceStyleRole, UiTextAlignment, UiTextStyleRole, UiTextStyleToken, UiTextTruncation,
-        UiTextWrap, UiTheme,
+        UI_EFFECT_PRESET_GALLERY_COMPOSITE, UI_EFFECT_PRESET_GALLERY_GRADIENT,
+        UI_EFFECT_PRESET_GALLERY_MATERIAL_FALLBACK, UI_EFFECT_PRESET_GALLERY_SHADOW,
+        UI_EFFECT_PRESET_GALLERY_TEXT_SHADOW, UI_STYLE_VARIANT_GALLERY_NESTED,
+        UI_STYLE_VARIANT_GALLERY_PARENT, UiBorderStyleRole, UiButtonStyleRole, UiEffectBinding,
+        UiFontAssets, UiFontWeight, UiStyleBinding, UiStyleScope, UiSurfaceStyleRole,
+        UiTextAlignment, UiTextStyleRole, UiTextStyleToken, UiTextTruncation, UiTextWrap, UiTheme,
         theme::{
             UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
             UiThemeTextColorRole, UiThemeTextStyleRole,
@@ -46,8 +48,8 @@ use crate::framework::ui::{
 use crate::game::{
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{
-        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS,
-        ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
+        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES,
+        ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
         ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES,
         ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM,
         OWNER_UI_GALLERY, PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
@@ -202,6 +204,9 @@ struct GalleryIconStatesRegion;
 
 #[derive(Component)]
 struct GalleryStyleScopesRegion;
+
+#[derive(Component)]
+struct GalleryEffectsRegion;
 
 #[derive(Clone, Copy, Component)]
 struct GalleryIconStatePreview(UiButtonVisualState);
@@ -626,6 +631,18 @@ pub(super) fn setup_ui_gallery(
                             i18n,
                             width_class,
                             asset_server,
+                        );
+                    });
+
+                body.spawn(gallery_effects_panel(theme))
+                    .with_children(|effects_panel| {
+                        spawn_gallery_effect_samples(
+                            effects_panel,
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            width_class,
                         );
                     });
 
@@ -1494,6 +1511,15 @@ fn gallery_style_scopes_panel(theme: &UiTheme) -> impl Bundle {
     )
 }
 
+fn gallery_effects_panel(theme: &UiTheme) -> impl Bundle {
+    (
+        gallery_panel(theme),
+        GalleryEffectsRegion,
+        ANCHOR_UI_GALLERY_EFFECTS,
+        Name::new("Gallery effects region"),
+    )
+}
+
 fn gallery_typography_overflow_panel(theme: &UiTheme, width_class: UiWidthClass) -> impl Bundle {
     (
         UiThemePanelNodeRole::Content,
@@ -1564,6 +1590,10 @@ fn gallery_icon_button_columns() -> UiResponsiveGridColumns {
 
 fn gallery_icon_state_columns() -> UiResponsiveGridColumns {
     UiResponsiveGridColumns::new(3, 5, 7)
+}
+
+fn gallery_effect_columns() -> UiResponsiveGridColumns {
+    UiResponsiveGridColumns::new(1, 2, 3)
 }
 
 fn gallery_selection_columns() -> UiResponsiveGridColumns {
@@ -2086,6 +2116,136 @@ fn spawn_gallery_style_scope_samples(
                 Name::new("Gallery scoped selected icon button"),
             ));
         });
+}
+
+fn spawn_gallery_effect_samples(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    width_class: UiWidthClass,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.effects.section",
+        "Effects",
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.effects.description",
+        "Bounded shadows, gradients, outline, clipping, and visible material fallback.",
+        UiThemeTextStyleRole::Body,
+        UiThemeTextColorRole::Muted,
+    ));
+    panel
+        .spawn(gallery_grid(metrics, width_class, gallery_effect_columns()))
+        .with_children(|samples| {
+            spawn_gallery_effect_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.effects.box_shadow",
+                "Layered box shadow",
+                UI_EFFECT_PRESET_GALLERY_SHADOW,
+                false,
+            );
+            spawn_gallery_effect_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.effects.text_shadow",
+                "Text shadow",
+                UI_EFFECT_PRESET_GALLERY_TEXT_SHADOW,
+                true,
+            );
+            spawn_gallery_effect_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.effects.gradient",
+                "Linear + border gradient",
+                UI_EFFECT_PRESET_GALLERY_GRADIENT,
+                false,
+            );
+            spawn_gallery_effect_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.effects.composite",
+                "Rounded clipped composite",
+                UI_EFFECT_PRESET_GALLERY_COMPOSITE,
+                false,
+            );
+            spawn_gallery_effect_tile(
+                samples,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.effects.material_fallback",
+                "Material fallback",
+                UI_EFFECT_PRESET_GALLERY_MATERIAL_FALLBACK,
+                false,
+            );
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_gallery_effect_tile(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    label_key: &'static str,
+    label_fallback: &'static str,
+    preset: &'static str,
+    effect_on_label: bool,
+) {
+    let mut tile = parent.spawn((
+        Node {
+            width: percent(100),
+            min_height: px(104),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            padding: UiRect::all(px(14)),
+            row_gap: px(theme.layout.row_gap),
+            border: UiRect::all(px(theme.panel.border)),
+            border_radius: BorderRadius::all(px(theme.panel.radius)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.12, 0.15, 0.18, 1.0)),
+        BorderColor::all(theme.colors.panel_border),
+        Name::new(label_fallback),
+    ));
+    if !effect_on_label {
+        tile.insert(UiEffectBinding::new(preset));
+    }
+    tile.with_children(|content| {
+        let mut label = content.spawn(screen_label_key(
+            theme,
+            fonts,
+            i18n,
+            label_key,
+            label_fallback,
+            UiThemeTextStyleRole::Caption,
+            UiThemeTextColorRole::Primary,
+        ));
+        if effect_on_label {
+            label.insert((
+                UiEffectBinding::new(preset),
+                Name::new(format!("{label_fallback} effect label")),
+            ));
+        }
+    });
 }
 
 fn spawn_gallery_style_tile(
@@ -3095,6 +3255,9 @@ mod tests {
     #[derive(Component)]
     struct GalleryStyleTileTestRoot;
 
+    #[derive(Component)]
+    struct GalleryEffectsTestRoot;
+
     #[test]
     fn gallery_button_columns_are_single_column_on_compact() {
         assert_eq!(
@@ -3124,6 +3287,10 @@ mod tests {
         assert_eq!(
             gallery_icon_state_columns().for_width_class(UiWidthClass::Compact),
             3
+        );
+        assert_eq!(
+            gallery_effect_columns().for_width_class(UiWidthClass::Compact),
+            1
         );
     }
 
@@ -3160,6 +3327,10 @@ mod tests {
         assert_eq!(
             gallery_icon_state_columns().for_width_class(UiWidthClass::Expanded),
             7
+        );
+        assert_eq!(
+            gallery_effect_columns().for_width_class(UiWidthClass::Expanded),
+            3
         );
     }
 
@@ -3216,6 +3387,87 @@ mod tests {
                 .copied(),
             Some(ANCHOR_UI_GALLERY_STYLE_SCOPES)
         );
+    }
+
+    #[test]
+    fn effects_gallery_panel_owns_stable_child_audit_anchor() {
+        let theme = UiTheme::default();
+        let mut app = App::new();
+        let effects = app.world_mut().spawn(gallery_effects_panel(&theme)).id();
+
+        assert!(
+            app.world()
+                .entity(effects)
+                .contains::<GalleryEffectsRegion>()
+        );
+        assert_eq!(
+            app.world()
+                .entity(effects)
+                .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
+                .copied(),
+            Some(ANCHOR_UI_GALLERY_EFFECTS)
+        );
+    }
+
+    #[test]
+    fn effects_gallery_samples_use_only_registered_effect_presets() {
+        let theme = UiTheme::default();
+        let fonts = UiFontAssets::test_registry();
+        let i18n = UiI18n::test_with_texts("en_us", &[("ui_gallery.effects.section", "Effects")]);
+        let metrics = UiMetrics::default();
+        let mut app = App::new();
+        app.insert_resource(theme)
+            .insert_resource(fonts)
+            .insert_resource(i18n)
+            .insert_resource(metrics)
+            .add_systems(
+                Update,
+                |mut commands: Commands,
+                 theme: Res<UiTheme>,
+                 metrics: Res<UiMetrics>,
+                 fonts: Res<UiFontAssets>,
+                 i18n: Res<UiI18n>| {
+                    commands
+                        .spawn((Node::default(), GalleryEffectsTestRoot))
+                        .with_children(|parent| {
+                            spawn_gallery_effect_samples(
+                                parent,
+                                &theme,
+                                &metrics,
+                                &fonts,
+                                &i18n,
+                                UiWidthClass::Compact,
+                            );
+                        });
+                },
+            );
+        app.update();
+
+        let mut query = app.world_mut().query::<(&UiEffectBinding, Option<&Text>)>();
+        let mut presets = query
+            .iter(app.world())
+            .map(|(binding, text)| (binding.preset.as_str().to_owned(), text.is_some()))
+            .collect::<Vec<_>>();
+        presets.sort();
+        assert_eq!(presets.len(), 5);
+        assert_eq!(
+            presets,
+            vec![
+                (UI_EFFECT_PRESET_GALLERY_COMPOSITE.to_owned(), false),
+                (UI_EFFECT_PRESET_GALLERY_GRADIENT.to_owned(), false),
+                (UI_EFFECT_PRESET_GALLERY_MATERIAL_FALLBACK.to_owned(), false,),
+                (UI_EFFECT_PRESET_GALLERY_SHADOW.to_owned(), false),
+                (UI_EFFECT_PRESET_GALLERY_TEXT_SHADOW.to_owned(), true),
+            ]
+        );
+        for (preset, _) in &presets {
+            assert!(
+                app.world()
+                    .resource::<UiTheme>()
+                    .effects
+                    .contains_preset(&crate::framework::ui::style::UiEffectPresetId::new(preset,))
+            );
+        }
     }
 
     #[test]

@@ -17,7 +17,7 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 
 - `UiFontPlugin`：加载 UI 字体资源。
 - `UiI18nPlugin`：加载 UI 文案资源并刷新带 `UiI18nText` 的文本节点。
-- `UiThemePlugin`：加载主题 token，刷新带 theme role marker 的节点。
+- `UiThemePlugin`：加载主题 token，刷新 theme role、作用域样式和受限效果绑定。
 - `UiViewportPlugin`：维护 `UiViewport` 和 `UiMetrics`。
 - `UiWidgetsPlugin`：注册滚动、输入框、按钮、数值控件等通用控件系统。
 - `UiLayerPlugin`：定义 UI 层枚举和层标记。
@@ -40,7 +40,7 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 - `project/src/framework/ui/core/`：框架核心能力，包含 viewport、panel、layer、input、focus、binding、animation、stats。
 - `project/src/framework/ui/widgets/`：可复用 UI 控件和布局 helper。
 - `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 等顶层 UI 实现和覆盖层命令处理。
-- `project/src/framework/ui/style/`：主题 token、主题刷新、字体资源加载。
+- `project/src/framework/ui/style/`：主题 token、主题刷新、字体资源、作用域样式、受限视觉效果和材质降级策略。
 - `project/assets/ui/`：UI 字体、主题、国际化和示例图片等首包资源。
 
 业务页面可以组合 `widgets` 和 `core` 提供的资源、命令、组件，但不应绕过 Panel Manager 自行管理全局 Loading 或 Confirm。
@@ -68,6 +68,8 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 国际化由 `UiI18n` 资源承载，默认 locale 是 `zh_cn`。文本节点如果带有 `UiI18nText`，在 i18n 资源变化时会重新解析 key。业务代码创建文本时优先使用 `*_key` helper，保留 fallback。
 
 字体由 `UiFontAssets` 注册表提供；产品 UI 使用 CJK Regular，UI Gallery 额外加载可追溯的 Figtree 400/500/700 fixture。公共文本通过 `UiTextStyleToken` 解析角色、family、weight、coverage 和整节点 fallback，旧 `regular` 句柄仅保留兼容用途。
+
+视觉效果由 `UiEffectBinding` 引用主题 preset。`style/effects.rs` 在应用前校验阴影、线性渐变、独立边框/圆角、Outline、裁切和预算，再写入真实 Bevy 组件；材质策略不接受页面 shader 路径，任何不支持或加载失败都使用可见 fallback 并进入 audit metadata。
 
 ## 扩展原则
 

@@ -15,7 +15,7 @@ use crate::framework::ui::{
         UiCurrentOwner, UiHeightClass, UiInputMode, UiOrientation, UiOwnerId, UiPanelKind,
         UiPanelRoot, UiViewport, UiWidthClass, stats::UiStats,
     },
-    style::UiResolvedStyleDebugSnapshot,
+    style::{UiResolvedEffectDebugSnapshot, UiResolvedStyleDebugSnapshot},
     widgets::{
         UiScrollAuditAnchorId, UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition,
         UiScrollView, scroll_audit_metrics, scroll_audit_position_reached, set_scroll_audit_anchor,
@@ -42,10 +42,12 @@ const TYPOGRAPHY_OVERFLOW_CAPTURE_STATE: &str = "typography_overflow";
 const ICONS_CAPTURE_STATE: &str = "icons";
 const ICON_STATES_CAPTURE_STATE: &str = "icon_states";
 const STYLE_SCOPES_CAPTURE_STATE: &str = "style_scopes";
+const EFFECTS_CAPTURE_STATE: &str = "effects";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
-const STABLE_WAIT_FRAMES: u32 = 5;
+// First-use UI gradient and box-shadow pipelines can need several render frames to become visible.
+const STABLE_WAIT_FRAMES: u32 = 30;
 const PANEL_READY_TIMEOUT_FRAMES: u32 = 300;
 const STABLE_TIMEOUT_FRAMES: u32 = 120;
 const SCREENSHOT_TIMEOUT_FRAMES: u32 = 300;
@@ -325,6 +327,7 @@ pub(crate) enum UiAuditCaptureState {
     Icons,
     IconStates,
     StyleScopes,
+    Effects,
     Top,
     Middle,
     Bottom,
@@ -344,6 +347,7 @@ impl UiAuditCaptureState {
             Self::Icons => ICONS_CAPTURE_STATE,
             Self::IconStates => ICON_STATES_CAPTURE_STATE,
             Self::StyleScopes => STYLE_SCOPES_CAPTURE_STATE,
+            Self::Effects => EFFECTS_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -493,6 +497,7 @@ fn drive_local_ui_audit(
     stats: Res<UiStats>,
     panels: Query<&UiPanelRoot>,
     style_resolutions: Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>,
+    effect_resolutions: Query<(Entity, Option<&Name>, &UiResolvedEffectDebugSnapshot)>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
     mut scroll_targets: Query<
         (
@@ -633,6 +638,7 @@ fn drive_local_ui_audit(
                     &current_owner,
                     &panels,
                     &style_resolutions,
+                    &effect_resolutions,
                     primary_window.single().ok(),
                 );
                 match write_capture_metadata(&capture, &metadata) {
@@ -1238,6 +1244,8 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::IconStates)
     } else if value.eq_ignore_ascii_case(STYLE_SCOPES_CAPTURE_STATE) {
         Some(UiAuditCaptureState::StyleScopes)
+    } else if value.eq_ignore_ascii_case(EFFECTS_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Effects)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -1402,6 +1410,7 @@ fn build_capture_metadata(
     current_owner: &UiCurrentOwner,
     panels: &Query<&UiPanelRoot>,
     style_resolutions: &Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>,
+    effect_resolutions: &Query<(Entity, Option<&Name>, &UiResolvedEffectDebugSnapshot)>,
     primary_window: Option<&Window>,
 ) -> UiAuditMetadata {
     UiAuditMetadata {
@@ -1417,6 +1426,7 @@ fn build_capture_metadata(
         current_page: current_owner.owner.map(|owner| owner.as_str().to_owned()),
         panels: panels.iter().map(UiAuditPanelMetadata::from).collect(),
         style_resolutions: collect_style_resolution_metadata(style_resolutions),
+        effect_resolutions: collect_effect_resolution_metadata(effect_resolutions),
         window: primary_window.map(UiAuditWindowMetadata::from),
         stats: UiAuditStatsMetadata::from(stats),
     }
@@ -1434,6 +1444,7 @@ struct UiAuditMetadata {
     current_page: Option<String>,
     panels: Vec<UiAuditPanelMetadata>,
     style_resolutions: Vec<UiAuditStyleResolutionMetadata>,
+    effect_resolutions: Vec<UiAuditEffectResolutionMetadata>,
     window: Option<UiAuditWindowMetadata>,
     stats: UiAuditStatsMetadata,
 }
@@ -1459,6 +1470,34 @@ fn collect_style_resolution_metadata(
     values.sort_by(|left, right| {
         left.name
             .cmp(&right.name)
+            .then_with(|| left.entity.cmp(&right.entity))
+    });
+    values
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+struct UiAuditEffectResolutionMetadata {
+    entity: String,
+    name: Option<String>,
+    snapshot: UiResolvedEffectDebugSnapshot,
+}
+
+fn collect_effect_resolution_metadata(
+    resolutions: &Query<(Entity, Option<&Name>, &UiResolvedEffectDebugSnapshot)>,
+) -> Vec<UiAuditEffectResolutionMetadata> {
+    let mut values = resolutions
+        .iter()
+        .map(|(entity, name, snapshot)| UiAuditEffectResolutionMetadata {
+            entity: format!("{entity:?}"),
+            name: name.map(|name| name.as_str().to_owned()),
+            snapshot: snapshot.clone(),
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.name
+            .as_deref()
+            .unwrap_or_default()
+            .cmp(right.name.as_deref().unwrap_or_default())
             .then_with(|| left.entity.cmp(&right.entity))
     });
     values
@@ -1979,6 +2018,22 @@ mod tests {
     }
 
     #[test]
+    fn config_accepts_effects_capture_state() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "effects"),
+            ]),
+            100,
+        );
+
+        assert_eq!(config.states, vec![UiAuditCaptureState::Effects]);
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
     fn audit_metadata_collects_resolved_style_snapshots_in_stable_order() {
         let mut world = World::new();
         world.spawn((
@@ -2009,6 +2064,38 @@ mod tests {
         assert_eq!(metadata[1].name.as_deref(), Some("style-z"));
         let json = serde_json::to_string(&metadata).unwrap();
         assert!(json.contains("style_resolutions") || json.contains("scope.a"));
+    }
+
+    #[test]
+    fn audit_metadata_collects_resolved_effect_snapshots_in_stable_order() {
+        let snapshot = |request: &str, fallback| UiResolvedEffectDebugSnapshot {
+            request: request.to_owned(),
+            resolved_preset: request.to_owned(),
+            applied_components: vec!["box_shadow".to_owned()],
+            material: None,
+            budget: crate::framework::ui::style::UiEffectBudgetSnapshot::default(),
+            fallback,
+            error: fallback.then(|| "ui_material_shader_unavailable".to_owned()),
+        };
+        let mut world = World::new();
+        world.spawn((Name::new("effect-z"), snapshot("gallery.z", true)));
+        world.spawn((Name::new("effect-a"), snapshot("gallery.a", false)));
+        let mut state =
+            SystemState::<Query<(Entity, Option<&Name>, &UiResolvedEffectDebugSnapshot)>>::new(
+                &mut world,
+            );
+        let query = state.get(&world);
+
+        let metadata = collect_effect_resolution_metadata(&query);
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[0].name.as_deref(), Some("effect-a"));
+        assert_eq!(metadata[0].snapshot.request, "gallery.a");
+        assert_eq!(metadata[1].name.as_deref(), Some("effect-z"));
+        assert!(metadata[1].snapshot.fallback);
+        let json = serde_json::to_string(&metadata).unwrap();
+        assert!(json.contains("ui_material_shader_unavailable"));
+        assert!(json.contains("requested_draw_call_upper_bound"));
     }
 
     #[test]

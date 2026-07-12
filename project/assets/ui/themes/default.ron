@@ -129,4 +129,81 @@
             ),
         ],
     ),
+    effects: (
+        presets: [
+            (
+                name: "gallery.shadow",
+                box_shadows: [
+                    (color: (r: 0.0, g: 0.0, b: 0.0, a: 0.34), x_offset: 0.0, y_offset: 4.0, spread: 0.0, blur: 10.0),
+                    (color: (r: 0.0, g: 0.0, b: 0.0, a: 0.20), x_offset: 0.0, y_offset: 12.0, spread: -2.0, blur: 24.0),
+                ],
+            ),
+            (
+                name: "gallery.text_shadow",
+                text_shadows: [
+                    (color: (r: 0.0, g: 0.0, b: 0.0, a: 0.82), x_offset: 2.0, y_offset: 2.0),
+                ],
+            ),
+            (
+                name: "gallery.gradient",
+                background_gradient: Some((
+                    angle_degrees: 112.0,
+                    stops: [
+                        (position: 0.0, color: (r: 0.06, g: 0.42, b: 0.39)),
+                        (position: 0.52, color: (r: 0.12, g: 0.25, b: 0.34, a: 0.96)),
+                        (position: 1.0, color: (r: 0.40, g: 0.17, b: 0.24, a: 0.92)),
+                    ],
+                )),
+                border_gradient: Some((
+                    angle_degrees: 90.0,
+                    stops: [
+                        (position: 0.0, color: (r: 0.30, g: 0.94, b: 0.80)),
+                        (position: 1.0, color: (r: 0.98, g: 0.66, b: 0.27, a: 0.88)),
+                    ],
+                )),
+                border: Some((left: 2.0, right: 2.0, top: 2.0, bottom: 2.0)),
+                radius: Some((top_left: 8.0, top_right: 8.0, bottom_right: 8.0, bottom_left: 8.0)),
+            ),
+            (
+                name: "gallery.composite",
+                box_shadows: [
+                    (color: (r: 0.0, g: 0.0, b: 0.0, a: 0.38), x_offset: 0.0, y_offset: 8.0, spread: 1.0, blur: 18.0),
+                ],
+                background_gradient: Some((
+                    angle_degrees: 145.0,
+                    stops: [
+                        (position: 0.0, color: (r: 0.11, g: 0.31, b: 0.37)),
+                        (position: 1.0, color: (r: 0.20, g: 0.12, b: 0.22)),
+                    ],
+                )),
+                border_gradient: Some((
+                    angle_degrees: 35.0,
+                    stops: [
+                        (position: 0.0, color: (r: 0.34, g: 0.92, b: 0.79)),
+                        (position: 1.0, color: (r: 0.96, g: 0.64, b: 0.28)),
+                    ],
+                )),
+                border: Some((left: 4.0, right: 1.0, top: 2.0, bottom: 5.0)),
+                radius: Some((top_left: 18.0, top_right: 5.0, bottom_right: 16.0, bottom_left: 7.0)),
+                outline: Some((width: 1.0, offset: 2.0, color: (r: 0.72, g: 0.78, b: 0.82, a: 0.72))),
+                clip: true,
+            ),
+            (
+                name: "gallery.material_fallback",
+                border: Some((left: 2.0, right: 2.0, top: 2.0, bottom: 2.0)),
+                radius: Some((top_left: 8.0, top_right: 8.0, bottom_right: 8.0, bottom_left: 8.0)),
+                outline: Some((width: 1.0, offset: 1.0, color: (r: 1.0, g: 0.62, b: 0.36, a: 0.72))),
+                material: Some((
+                    id: "frosted_panel_v1",
+                    scalars: [0.35, 0.82],
+                    colors: [(r: 0.20, g: 0.76, b: 0.68, a: 0.82)],
+                    texture_count: 0,
+                )),
+                material_fallback: Some((
+                    background: (r: 0.24, g: 0.12, b: 0.10),
+                    border: (r: 0.96, g: 0.52, b: 0.28),
+                )),
+            ),
+        ],
+    ),
 )

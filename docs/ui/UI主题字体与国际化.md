@@ -69,9 +69,17 @@ token 只有 `Color` 和 `Scalar` 两种类型。颜色通道必须是有限的 
 
 带 `UiStyleBinding` 的实体会得到只读 `UiResolvedStyleDebugSnapshot`，记录 scope 链、请求 role/variant、来源链、最终关键 token、fallback 和稳定错误码。UI audit metadata 的 `style_resolutions` 会收集这些快照；`style_scopes` capture state 对齐 Gallery 固定区域。
 
+## 效果 preset
+
+主题 version 1 还可声明 `effects.presets`。每个 preset 可组合受限的 `box_shadows`、`text_shadows`、`background_gradient`、`border_gradient`、独立 `border`、独立 `radius`、`outline`、`clip` 和受控 `material` 请求。页面只通过 `UiEffectBinding` 引用 preset 名；shader 路径不属于主题 schema。
+
+效果配置和作用域样式一样在替换主题前完整编译。颜色、有限数值、阴影层数、色标顺序、组件组合和每节点预算任一失败都会拒绝整次更新。材质 preset 额外强制存在可见的 `material_fallback`；运行时平台/GPU/shader/adapter/参数失败会应用 fallback，而不是拒绝当前有效主题。
+
+绑定实体得到只读 `UiResolvedEffectDebugSnapshot`，记录请求/最终 preset、实际 Bevy 组件、材质结果、稳定 reason 和 draw-call/overdraw 规划值。audit metadata 的 `effect_resolutions` 收集这些快照；详细 schema、硬上限和移动端建议见 [UI视觉效果与材质边界.md](UI视觉效果与材质边界.md)。
+
 ## 主题热更新
 
-如果主题从文件加载成功，`UiThemePlugin` 会约每 0.8 秒轮询文件修改时间。基础字段和全部 styles 配置解析、引用与循环校验都成功后才替换 `UiTheme`；失败则保留 last-known-good 主题并记录 warning。主题或 metrics 更新会重新解析当前祖先 scope，稳定输入的第二帧不会重复标记 resolved component、Node 或颜色 Changed。
+如果主题从文件加载成功，`UiThemePlugin` 会约每 0.8 秒轮询文件修改时间。基础字段、全部 styles 和 effects 配置解析及校验都成功后才替换 `UiTheme`；失败则保留 last-known-good 主题并记录 warning。主题或 metrics 更新会重新解析当前祖先 scope 和效果 preset，稳定输入的第二帧不会重复标记 resolved component、Node、颜色或效果组件 Changed。
 
 主题刷新依赖组件 marker：
 

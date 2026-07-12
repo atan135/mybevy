@@ -66,24 +66,28 @@ Set-Location project
 $env:MYBEVY_UI_AUDIT="1"
 $env:MYBEVY_UI_AUDIT_SCREEN="ui-gallery"
 $env:MYBEVY_UI_AUDIT_OUTPUT="..\summary\ui-audit\manual-local-check"
-$env:MYBEVY_UI_AUDIT_STATES="image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,middle,bottom"
+$env:MYBEVY_UI_AUDIT_STATES="image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,middle,bottom"
 $env:MYBEVY_UI_AUDIT_EXIT_ON_FINISH="1"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
-输出目录会包含 `manifest.json`、`report.md`、`screenshots/` 和 `metadata/`。`ui_gallery` 的默认 runner 状态为 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`middle`、`bottom`；前两项固定指向主滚动容器顶部，高级图片、文字、图标和作用域样式分别对齐稳定 child anchor，兼容状态 `top` 仍可显式请求。其他页面默认只覆盖 `initial`。
+输出目录会包含 `manifest.json`、`report.md`、`screenshots/` 和 `metadata/`。`ui_gallery` 的默认 runner 状态为 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`effects`、`middle`、`bottom`；前两项固定指向主滚动容器顶部，高级图片、文字、图标、作用域样式和视觉效果分别对齐稳定 child anchor，兼容状态 `top` 仍可显式请求。其他页面默认只覆盖 `initial`。
 
 metadata 的 `style_resolutions` 收集带 `UiStyleBinding` 实体的 `UiResolvedStyleDebugSnapshot`，包含 scope 链、请求 role/variant、来源链、最终关键 token、fallback 和错误码。它用于 F3/AI 审核边界读取最终解析结果，不包含可写业务状态。
+
+metadata 的 `effect_resolutions` 收集带 `UiEffectBinding` 实体的 `UiResolvedEffectDebugSnapshot`，包含请求/最终 preset、实际组件、材质 reason、fallback 和 draw-call/overdraw 规划预算。材质结果是受控策略状态；当前没有 adapter 时不会把 fallback 记录成 shader 渲染成功。
 
 常规批量验收优先使用仓库根目录 runner：
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -SelfTest
-.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,middle,bottom" -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,middle,bottom" -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States auto
 ```
 
 `-DryRun` 只验证矩阵、报告和分析输入，不启动游戏、不生成真实截图。真实本地运行会为每个 screen + device 启动一次 `cargo run`，并把子进程输出写入本轮 `logs/`。
+
+本地 capture 在滚动完成后固定等待 30 个渲染帧再请求截图。该窗口用于让首次使用的 Bevy UI gradient / box-shadow pipeline 完成准备；只检查 ECS metadata 或等待 5 帧可能得到“组件已存在但首张 PNG 仍是纯色”的假通过。
 
 远程 Mock 验收用于确认 adminapi 任务模型、artifact 汇总和报告关联：
 
@@ -155,7 +159,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - `manifest.json` 的 `status` 为 `passed` 或 dry-run 时为 `planned`。
 - `report.md` 中每个 capture 都有对应 screenshot 和 metadata 链接；远程模式至少有 screenshot / metadata artifact URI。
 - `analysis-input.json` 中每条 capture 的 `screen`、`device`、`state` 能对应回 `manifest.json` 和 `report.md`。
-- 有滚动 recipe 的 `ui_gallery` 默认覆盖 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`middle`、`bottom`，并记录 `scroll_target_id = ui_gallery.main`；图片适配固定基线使用 `image_fit`，完整 fixture 使用 `visual_foundation`，高级图片、文字、图标与样式作用域验收均使用 child anchor，不要依赖会随页面总高度变化的 `middle`。
+- 有滚动 recipe 的 `ui_gallery` 默认覆盖 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`effects`、`middle`、`bottom`，并记录 `scroll_target_id = ui_gallery.main`；图片适配固定基线使用 `image_fit`，完整 fixture 使用 `visual_foundation`，高级图片、文字、图标、样式作用域与效果验收均使用 child anchor，不要依赖会随页面总高度变化的 `middle`。
 
 失败报告需要能定位：
 
