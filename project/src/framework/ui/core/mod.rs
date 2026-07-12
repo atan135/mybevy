@@ -5,6 +5,7 @@ pub(crate) mod framework;
 pub(crate) mod input;
 pub(crate) mod layer;
 pub(crate) mod panel;
+pub(crate) mod safe_area;
 pub(crate) mod stats;
 pub(crate) mod viewport;
 
@@ -25,6 +26,7 @@ pub(crate) use panel::{
     UiBlockingOverlay, UiCurrentOwner, UiFloatingPanel, UiOwnerId, UiPanelCommand, UiPanelId,
     UiPanelKind, UiPanelRequest, UiPanelRoot, UiPanelStack, UiPanelSystems, close_top_target_id,
 };
+pub(crate) use safe_area::UiSafeAreaStatus;
 #[allow(unused_imports)]
 pub(crate) use viewport::{
     UiHeightClass, UiInputMode, UiMetrics, UiOrientation, UiSafeArea, UiViewport, UiViewportPlugin,

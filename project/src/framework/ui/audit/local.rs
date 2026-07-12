@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet, HashSet},
     env, fmt, fs,
     path::{Path, PathBuf},
 };
@@ -13,16 +14,20 @@ use crate::framework::ui::{
     },
     core::{
         UiAnimationDebugSnapshot, UiCurrentOwner, UiHeightClass, UiInputMode, UiMotionPolicy,
-        UiOrientation, UiOwnerId, UiPanelKind, UiPanelRoot, UiViewport, UiWidthClass,
-        stats::UiStats,
+        UiOrientation, UiOwnerId, UiPanelKind, UiPanelRoot, UiSafeAreaStatus, UiViewport,
+        UiWidthClass, stats::UiStats,
     },
-    style::{UiResolvedEffectDebugSnapshot, UiResolvedStyleDebugSnapshot},
+    style::{
+        UiFontResolution, UiResolvedEffectDebugSnapshot, UiResolvedStyleDebugSnapshot,
+        UiTextStyleToken,
+    },
+    visual::{UiVisualBudgetProfile, UiVisualBudgetReport, UiVisualBudgetUsage},
     widgets::{
         DisabledButton, FocusedButton, UiBadge, UiControlFlags, UiControlMeta, UiControlState,
-        UiProgress, UiScrollAuditAnchorId, UiScrollAuditId, UiScrollAuditMetrics,
-        UiScrollAuditPosition, UiScrollView, UiTooltip, UiTooltipTone, resolve_control_state,
-        scroll_audit_metrics, scroll_audit_position_reached, set_scroll_audit_anchor,
-        set_scroll_audit_position,
+        UiImageStatus, UiImageWidget, UiProgress, UiScrollAuditAnchorId, UiScrollAuditId,
+        UiScrollAuditMetrics, UiScrollAuditPosition, UiScrollView, UiTooltip, UiTooltipTone,
+        resolve_control_state, scroll_audit_metrics, scroll_audit_position_reached,
+        set_scroll_audit_anchor, set_scroll_audit_position,
     },
 };
 
@@ -36,6 +41,7 @@ const DEFAULT_AUDIT_OUTPUT_ROOT: &str = "../summary/ui-audit";
 // These MYBEVY_UI_AUDIT_* variables belong only to the first-stage local one-shot mode.
 const INITIAL_CAPTURE_STATE: &str = "initial";
 const VISUAL_FOUNDATION_CAPTURE_STATE: &str = "visual_foundation";
+const VISUAL_ACCEPTANCE_CAPTURE_STATE: &str = "visual_acceptance";
 const IMAGE_FIT_CAPTURE_STATE: &str = "image_fit";
 const IMAGE_MODES_CAPTURE_STATE: &str = "image_modes";
 const IMAGE_TILING_CAPTURE_STATE: &str = "image_tiling";
@@ -329,6 +335,7 @@ impl UiAuditConfig {
 pub(crate) enum UiAuditCaptureState {
     Initial,
     VisualFoundation,
+    VisualAcceptance,
     ImageFit,
     ImageModes,
     ImageTiling,
@@ -356,6 +363,7 @@ impl UiAuditCaptureState {
         match self {
             Self::Initial => INITIAL_CAPTURE_STATE,
             Self::VisualFoundation => VISUAL_FOUNDATION_CAPTURE_STATE,
+            Self::VisualAcceptance => VISUAL_ACCEPTANCE_CAPTURE_STATE,
             Self::ImageFit => IMAGE_FIT_CAPTURE_STATE,
             Self::ImageModes => IMAGE_MODES_CAPTURE_STATE,
             Self::ImageTiling => IMAGE_TILING_CAPTURE_STATE,
@@ -517,8 +525,10 @@ fn local_ui_audit_enabled(config: Res<UiAuditConfig>) -> bool {
 struct UiAuditMetadataWorld<'w, 's> {
     current_owner: Res<'w, UiCurrentOwner>,
     viewport: Res<'w, UiViewport>,
+    safe_area_status: Res<'w, UiSafeAreaStatus>,
     stats: Res<'w, UiStats>,
     motion_policy: Res<'w, UiMotionPolicy>,
+    image_assets: Res<'w, Assets<Image>>,
     panels: Query<'w, 's, &'static UiPanelRoot>,
     style_resolutions: Query<
         'w,
@@ -545,6 +555,27 @@ struct UiAuditMetadataWorld<'w, 's> {
             Entity,
             Option<&'static Name>,
             &'static UiAnimationDebugSnapshot,
+        ),
+    >,
+    image_snapshots: Query<
+        'w,
+        's,
+        (
+            Entity,
+            Option<&'static Name>,
+            &'static ImageNode,
+            Option<&'static UiImageWidget>,
+            Option<&'static UiImageStatus>,
+        ),
+    >,
+    font_snapshots: Query<
+        'w,
+        's,
+        (
+            Entity,
+            Option<&'static Name>,
+            &'static UiTextStyleToken,
+            &'static UiFontResolution,
         ),
     >,
     control_snapshots: Query<
@@ -711,6 +742,7 @@ fn drive_local_ui_audit(
                     &capture,
                     scroll.as_ref(),
                     &metadata_world.viewport,
+                    &metadata_world.safe_area_status,
                     &metadata_world.stats,
                     &metadata_world.current_owner,
                     &metadata_world.panels,
@@ -719,6 +751,9 @@ fn drive_local_ui_audit(
                     &metadata_world.motion_policy,
                     &metadata_world.animation_snapshots,
                     &metadata_world.control_snapshots,
+                    &metadata_world.image_snapshots,
+                    &metadata_world.font_snapshots,
+                    &metadata_world.image_assets,
                     metadata_world.primary_window.single().ok(),
                 );
                 match write_capture_metadata(&capture, &metadata) {
@@ -1306,6 +1341,8 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::Initial)
     } else if value.eq_ignore_ascii_case(VISUAL_FOUNDATION_CAPTURE_STATE) {
         Some(UiAuditCaptureState::VisualFoundation)
+    } else if value.eq_ignore_ascii_case(VISUAL_ACCEPTANCE_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::VisualAcceptance)
     } else if value.eq_ignore_ascii_case(IMAGE_FIT_CAPTURE_STATE) {
         Some(UiAuditCaptureState::ImageFit)
     } else if value.eq_ignore_ascii_case(IMAGE_MODES_CAPTURE_STATE) {
@@ -1500,6 +1537,7 @@ fn build_capture_metadata(
     capture: &UiAuditCapturePlan,
     scroll: Option<&UiAuditScrollMetadata>,
     viewport: &UiViewport,
+    safe_area_status: &UiSafeAreaStatus,
     stats: &UiStats,
     current_owner: &UiCurrentOwner,
     panels: &Query<&UiPanelRoot>,
@@ -1519,8 +1557,33 @@ fn build_capture_metadata(
         Option<&UiProgress>,
         Option<&UiTooltip>,
     )>,
+    image_snapshots: &Query<(
+        Entity,
+        Option<&Name>,
+        &ImageNode,
+        Option<&UiImageWidget>,
+        Option<&UiImageStatus>,
+    )>,
+    font_snapshots: &Query<(Entity, Option<&Name>, &UiTextStyleToken, &UiFontResolution)>,
+    image_assets: &Assets<Image>,
     primary_window: Option<&Window>,
 ) -> UiAuditMetadata {
+    let style_resolutions = collect_style_resolution_metadata(style_resolutions);
+    let effect_resolutions = collect_effect_resolution_metadata(effect_resolutions);
+    let animation_snapshots = collect_animation_snapshot_metadata(animation_snapshots);
+    let control_snapshots = collect_control_snapshot_metadata(control_snapshots);
+    let (image_snapshots, image_accounting) =
+        collect_image_snapshot_metadata(image_snapshots, image_assets);
+    let font_snapshots = collect_font_snapshot_metadata(font_snapshots);
+    let visual_summary = build_visual_summary(
+        &style_resolutions,
+        &effect_resolutions,
+        &animation_snapshots,
+        &control_snapshots,
+        &image_snapshots,
+        &font_snapshots,
+    );
+    let visual_budget = build_visual_budget(viewport, stats, image_accounting, &effect_resolutions);
     UiAuditMetadata {
         screen: plan.screen.canonical.clone(),
         requested_screen: plan.screen.requested.clone(),
@@ -1530,14 +1593,18 @@ fn build_capture_metadata(
             .to_string_lossy()
             .into_owned(),
         scroll: scroll.cloned(),
-        viewport: UiAuditViewportMetadata::from(*viewport),
+        viewport: UiAuditViewportMetadata::new(*viewport, *safe_area_status),
         current_page: current_owner.owner.map(|owner| owner.as_str().to_owned()),
         panels: panels.iter().map(UiAuditPanelMetadata::from).collect(),
-        style_resolutions: collect_style_resolution_metadata(style_resolutions),
-        effect_resolutions: collect_effect_resolution_metadata(effect_resolutions),
+        style_resolutions,
+        effect_resolutions,
         motion_policy: motion_policy.as_str().to_owned(),
-        animation_snapshots: collect_animation_snapshot_metadata(animation_snapshots),
-        control_snapshots: collect_control_snapshot_metadata(control_snapshots),
+        animation_snapshots,
+        control_snapshots,
+        image_snapshots,
+        font_snapshots,
+        visual_summary,
+        visual_budget,
         window: primary_window.map(UiAuditWindowMetadata::from),
         stats: UiAuditStatsMetadata::from(stats),
     }
@@ -1559,6 +1626,10 @@ struct UiAuditMetadata {
     motion_policy: String,
     animation_snapshots: Vec<UiAuditAnimationSnapshotMetadata>,
     control_snapshots: Vec<UiAuditControlSnapshotMetadata>,
+    image_snapshots: Vec<UiAuditImageSnapshotMetadata>,
+    font_snapshots: Vec<UiAuditFontSnapshotMetadata>,
+    visual_summary: UiAuditVisualSummary,
+    visual_budget: UiVisualBudgetReport,
     window: Option<UiAuditWindowMetadata>,
     stats: UiAuditStatsMetadata,
 }
@@ -1736,6 +1807,247 @@ fn collect_control_snapshot_metadata(
     values
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct UiAuditImageSnapshotMetadata {
+    entity: String,
+    name: Option<String>,
+    presentation: String,
+    node_image_mode: &'static str,
+    status: &'static str,
+    asset_resolved: bool,
+    decoded_bytes_estimate: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct UiAuditImageAccounting {
+    unique_asset_count: usize,
+    decoded_bytes_estimate: usize,
+    unresolved_asset_count: usize,
+}
+
+fn collect_image_snapshot_metadata(
+    snapshots: &Query<(
+        Entity,
+        Option<&Name>,
+        &ImageNode,
+        Option<&UiImageWidget>,
+        Option<&UiImageStatus>,
+    )>,
+    image_assets: &Assets<Image>,
+) -> (Vec<UiAuditImageSnapshotMetadata>, UiAuditImageAccounting) {
+    let mut unique_assets = HashSet::new();
+    let mut accounting = UiAuditImageAccounting::default();
+    let mut values = snapshots
+        .iter()
+        .map(|(entity, name, image_node, widget, status)| {
+            let asset = image_assets.get(image_node.image.id());
+            if unique_assets.insert(image_node.image.id()) {
+                accounting.unique_asset_count += 1;
+                if let Some(decoded_bytes) =
+                    asset.and_then(|image| image.data.as_ref()).map(Vec::len)
+                {
+                    accounting.decoded_bytes_estimate = accounting
+                        .decoded_bytes_estimate
+                        .saturating_add(decoded_bytes);
+                } else {
+                    accounting.unresolved_asset_count += 1;
+                }
+            }
+            UiAuditImageSnapshotMetadata {
+                entity: format!("{entity:?}"),
+                name: name.map(|name| name.as_str().to_owned()),
+                presentation: widget
+                    .map(|widget| widget.presentation_kind().as_str().to_owned())
+                    .unwrap_or_else(|| node_image_mode_name(&image_node.image_mode).to_owned()),
+                node_image_mode: node_image_mode_name(&image_node.image_mode),
+                status: status.map_or("untracked", |status| status.code()),
+                asset_resolved: asset.is_some(),
+                decoded_bytes_estimate: asset.and_then(|image| image.data.as_ref()).map(Vec::len),
+            }
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.name
+            .as_deref()
+            .unwrap_or_default()
+            .cmp(right.name.as_deref().unwrap_or_default())
+            .then_with(|| left.presentation.cmp(&right.presentation))
+            .then_with(|| left.entity.cmp(&right.entity))
+    });
+    (values, accounting)
+}
+
+fn node_image_mode_name(mode: &NodeImageMode) -> &'static str {
+    match mode {
+        NodeImageMode::Auto => "auto",
+        NodeImageMode::Stretch => "stretch",
+        NodeImageMode::Sliced(_) => "sliced",
+        NodeImageMode::Tiled { .. } => "tiled",
+    }
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct UiAuditFontSnapshotMetadata {
+    entity: String,
+    name: Option<String>,
+    requested_role: &'static str,
+    requested_family: String,
+    requested_weight: String,
+    resolved_family: String,
+    resolved_weight: String,
+    status: &'static str,
+}
+
+fn collect_font_snapshot_metadata(
+    snapshots: &Query<(Entity, Option<&Name>, &UiTextStyleToken, &UiFontResolution)>,
+) -> Vec<UiAuditFontSnapshotMetadata> {
+    let mut values = snapshots
+        .iter()
+        .map(
+            |(entity, name, token, resolution)| UiAuditFontSnapshotMetadata {
+                entity: format!("{entity:?}"),
+                name: name.map(|name| name.as_str().to_owned()),
+                requested_role: token.font_role.as_str(),
+                requested_family: format!("{:?}", token.font_family).to_ascii_lowercase(),
+                requested_weight: format!("{:?}", token.font_weight).to_ascii_lowercase(),
+                resolved_family: format!("{:?}", resolution.face.family).to_ascii_lowercase(),
+                resolved_weight: format!("{:?}", resolution.face.weight).to_ascii_lowercase(),
+                status: resolution.status.as_str(),
+            },
+        )
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.name
+            .as_deref()
+            .unwrap_or_default()
+            .cmp(right.name.as_deref().unwrap_or_default())
+            .then_with(|| left.requested_role.cmp(right.requested_role))
+            .then_with(|| left.entity.cmp(&right.entity))
+    });
+    values
+}
+
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+struct UiAuditVisualSummary {
+    image_modes: BTreeMap<String, usize>,
+    image_statuses: BTreeMap<String, usize>,
+    style_scopes: BTreeMap<String, usize>,
+    style_variants: BTreeMap<String, usize>,
+    font_roles: BTreeMap<String, usize>,
+    font_resolution_statuses: BTreeMap<String, usize>,
+    effect_count: usize,
+    effect_fallback_count: usize,
+    material_request_count: usize,
+    animation_policy_states: BTreeMap<String, usize>,
+    animation_track_states: BTreeMap<String, usize>,
+    animation_track_count: usize,
+    paused_animation_track_count: usize,
+    layout_reflow_track_count: usize,
+    control_kinds: BTreeMap<String, usize>,
+    control_states: BTreeMap<String, usize>,
+}
+
+fn build_visual_summary(
+    styles: &[UiAuditStyleResolutionMetadata],
+    effects: &[UiAuditEffectResolutionMetadata],
+    animations: &[UiAuditAnimationSnapshotMetadata],
+    controls: &[UiAuditControlSnapshotMetadata],
+    images: &[UiAuditImageSnapshotMetadata],
+    fonts: &[UiAuditFontSnapshotMetadata],
+) -> UiAuditVisualSummary {
+    let mut summary = UiAuditVisualSummary::default();
+    for image in images {
+        increment_count(&mut summary.image_modes, &image.presentation);
+        increment_count(&mut summary.image_statuses, image.status);
+    }
+    for style in styles {
+        for scope in &style.snapshot.scopes {
+            increment_count(&mut summary.style_scopes, scope);
+        }
+        for entry in &style.snapshot.entries {
+            if let Some(variant) = &entry.requested_variant {
+                increment_count(&mut summary.style_variants, variant);
+            }
+        }
+    }
+    for font in fonts {
+        increment_count(&mut summary.font_roles, font.requested_role);
+        increment_count(&mut summary.font_resolution_statuses, font.status);
+    }
+    summary.effect_count = effects.len();
+    summary.effect_fallback_count = effects
+        .iter()
+        .filter(|effect| effect.snapshot.fallback)
+        .count();
+    summary.material_request_count = effects
+        .iter()
+        .filter(|effect| effect.snapshot.material.is_some())
+        .count();
+    for animation in animations {
+        increment_count(
+            &mut summary.animation_policy_states,
+            &animation.snapshot.policy,
+        );
+        for track in &animation.snapshot.tracks {
+            increment_count(&mut summary.animation_track_states, &track.state);
+            summary.animation_track_count += 1;
+            summary.paused_animation_track_count += usize::from(track.paused);
+            summary.layout_reflow_track_count += usize::from(track.causes_layout_reflow);
+        }
+    }
+    for control in controls {
+        increment_count(&mut summary.control_kinds, &control.kind);
+        increment_count(&mut summary.control_states, &control.state);
+    }
+    summary
+}
+
+fn increment_count(map: &mut BTreeMap<String, usize>, key: impl AsRef<str>) {
+    *map.entry(key.as_ref().to_owned()).or_default() += 1;
+}
+
+fn build_visual_budget(
+    viewport: &UiViewport,
+    stats: &UiStats,
+    image_accounting: UiAuditImageAccounting,
+    effects: &[UiAuditEffectResolutionMetadata],
+) -> UiVisualBudgetReport {
+    let additional_effect_draw_call_upper_bound = effects
+        .iter()
+        .map(|effect| u64::from(effect.snapshot.budget.applied_draw_call_upper_bound))
+        .sum::<u64>();
+    let custom_material_ids = effects
+        .iter()
+        .filter_map(|effect| {
+            effect
+                .snapshot
+                .material
+                .as_ref()
+                .map(|material| &material.id)
+        })
+        .collect::<BTreeSet<_>>();
+    let effect_overdraw_layers_upper_bound = effects
+        .iter()
+        .map(|effect| u64::from(effect.snapshot.budget.overdraw_layers))
+        .max()
+        .unwrap_or_default();
+    let usage = UiVisualBudgetUsage {
+        node_count: stats.ui_node_count as u64,
+        decoded_image_bytes_estimate: image_accounting.decoded_bytes_estimate as u64,
+        unresolved_image_asset_count: image_accounting.unresolved_asset_count as u64,
+        render_primitive_estimate: (stats.visible_ui_node_count as u64)
+            .saturating_add(additional_effect_draw_call_upper_bound),
+        additional_effect_draw_call_upper_bound,
+        material_count_estimate: u64::from(stats.visible_ui_node_count > 0)
+            .saturating_add(custom_material_ids.len() as u64),
+        effect_overdraw_layers_upper_bound,
+    };
+    UiVisualBudgetReport::evaluate(
+        UiVisualBudgetProfile::for_width_class(viewport.width_class),
+        usage,
+    )
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 struct UiAuditScrollMetadata {
     target_id: String,
@@ -1780,8 +2092,8 @@ struct UiAuditViewportMetadata {
     safe_area: UiAuditSafeAreaMetadata,
 }
 
-impl From<UiViewport> for UiAuditViewportMetadata {
-    fn from(viewport: UiViewport) -> Self {
+impl UiAuditViewportMetadata {
+    fn new(viewport: UiViewport, safe_area_status: UiSafeAreaStatus) -> Self {
         Self {
             logical_width: viewport.logical_width,
             logical_height: viewport.logical_height,
@@ -1800,6 +2112,16 @@ impl From<UiViewport> for UiAuditViewportMetadata {
                 right: viewport.safe_area.right,
                 top: viewport.safe_area.top,
                 bottom: viewport.safe_area.bottom,
+                source: safe_area_status.source.as_str(),
+                revision: safe_area_status.revision,
+                physical: safe_area_status.physical.map(|physical| {
+                    UiAuditPhysicalSafeAreaMetadata {
+                        left: physical.left,
+                        right: physical.right,
+                        top: physical.top,
+                        bottom: physical.bottom,
+                    }
+                }),
             },
         }
     }
@@ -1811,6 +2133,17 @@ struct UiAuditSafeAreaMetadata {
     right: f32,
     top: f32,
     bottom: f32,
+    source: &'static str,
+    revision: u64,
+    physical: Option<UiAuditPhysicalSafeAreaMetadata>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+struct UiAuditPhysicalSafeAreaMetadata {
+    left: u32,
+    right: u32,
+    top: u32,
+    bottom: u32,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -2160,6 +2493,21 @@ mod tests {
     }
 
     #[test]
+    fn config_accepts_visual_acceptance_capture_state() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_STATES, "visual_acceptance"),
+            ]),
+            100,
+        );
+
+        assert_eq!(config.states, vec![UiAuditCaptureState::VisualAcceptance]);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
     fn config_accepts_image_fit_capture_state() {
         let config = UiAuditConfig::from_env_reader(
             env_reader(&[
@@ -2480,6 +2828,146 @@ mod tests {
         let json = serde_json::to_string(&metadata).unwrap();
         assert!(json.contains("raw_progress"));
         assert!(json.contains("causes_layout_reflow"));
+    }
+
+    #[test]
+    fn audit_metadata_collects_image_modes_and_deduplicates_memory() {
+        use crate::framework::ui::widgets::{UiImageFit, UiImageSize, ui_image};
+
+        let mut image_assets = Assets::<Image>::default();
+        let mut image = Image::default();
+        image.data = Some(vec![255; 16]);
+        let handle = image_assets.add(image);
+        let mut world = World::new();
+        let contain = world
+            .spawn(ui_image(
+                handle.clone(),
+                UiImageFit::Contain,
+                UiImageSize::FixedBox {
+                    width: 20.0,
+                    height: 20.0,
+                },
+            ))
+            .id();
+        world.entity_mut(contain).insert(Name::new("image-b"));
+        let cover = world
+            .spawn(ui_image(
+                handle,
+                UiImageFit::cover(crate::framework::ui::widgets::UiImageFocus::CENTER),
+                UiImageSize::FixedBox {
+                    width: 20.0,
+                    height: 20.0,
+                },
+            ))
+            .id();
+        world.entity_mut(cover).insert(Name::new("image-a"));
+        let mut state = SystemState::<
+            Query<(
+                Entity,
+                Option<&Name>,
+                &ImageNode,
+                Option<&UiImageWidget>,
+                Option<&UiImageStatus>,
+            )>,
+        >::new(&mut world);
+        let query = state.get(&world);
+
+        let (metadata, accounting) = collect_image_snapshot_metadata(&query, &image_assets);
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[0].name.as_deref(), Some("image-a"));
+        assert_eq!(metadata[0].presentation, "cover");
+        assert_eq!(metadata[1].presentation, "contain");
+        assert_eq!(accounting.unique_asset_count, 1);
+        assert_eq!(accounting.decoded_bytes_estimate, 16);
+        assert_eq!(accounting.unresolved_asset_count, 0);
+    }
+
+    #[test]
+    fn audit_metadata_collects_font_roles_without_text_content() {
+        use crate::framework::ui::style::{
+            UiFontFamily, UiFontResolutionStatus, UiFontRole, UiFontWeight, fonts::UiFontFaceKey,
+        };
+
+        let mut world = World::new();
+        world.spawn((
+            Name::new("font-body"),
+            UiTextStyleToken {
+                font_role: UiFontRole::Body,
+                font_family: UiFontFamily::ProductCjk,
+                font_weight: UiFontWeight::Regular,
+                font_size: 18.0,
+                line_height: crate::framework::ui::style::UiTextLineHeight::Relative(1.2),
+                alignment: crate::framework::ui::style::UiTextAlignment::Left,
+                wrap: crate::framework::ui::style::UiTextWrap::WordOrCharacter,
+                truncation: crate::framework::ui::style::UiTextTruncation::None,
+            },
+            UiFontResolution {
+                face: UiFontFaceKey::new(UiFontFamily::ProductCjk, UiFontWeight::Regular),
+                rendered_source: "private text is not emitted".to_owned(),
+                status: UiFontResolutionStatus::Ready,
+            },
+        ));
+        let mut state = SystemState::<
+            Query<(Entity, Option<&Name>, &UiTextStyleToken, &UiFontResolution)>,
+        >::new(&mut world);
+        let query = state.get(&world);
+
+        let metadata = collect_font_snapshot_metadata(&query);
+        let json = serde_json::to_string(&metadata).unwrap();
+
+        assert_eq!(metadata[0].requested_role, "body");
+        assert_eq!(metadata[0].status, "ready");
+        assert!(!json.contains("private text"));
+    }
+
+    #[test]
+    fn audit_visual_budget_reuses_effect_planning_values() {
+        let effects = vec![UiAuditEffectResolutionMetadata {
+            entity: "1v0".to_owned(),
+            name: Some("effect".to_owned()),
+            snapshot: UiResolvedEffectDebugSnapshot {
+                request: "gallery.effect".to_owned(),
+                resolved_preset: "gallery.effect".to_owned(),
+                applied_components: vec!["box_shadow".to_owned()],
+                material: None,
+                budget: crate::framework::ui::style::UiEffectBudgetSnapshot {
+                    requested_draw_call_upper_bound: 3,
+                    applied_draw_call_upper_bound: 2,
+                    overdraw_layers: 2,
+                    shadow_layers: 1,
+                    gradient_stops: 0,
+                },
+                fallback: false,
+                error: None,
+            },
+        }];
+        let viewport =
+            UiViewport::from_device_logical_size(360.0, 800.0, UiInputMode::MouseTouch, default());
+        let stats = UiStats {
+            ui_node_count: 1_100,
+            visible_ui_node_count: 1_000,
+            ..default()
+        };
+        let report = build_visual_budget(
+            &viewport,
+            &stats,
+            UiAuditImageAccounting {
+                unique_asset_count: 4,
+                decoded_bytes_estimate: 24 * 1024 * 1024,
+                unresolved_asset_count: 1,
+            },
+            &effects,
+        );
+
+        assert_eq!(
+            report.status,
+            crate::framework::ui::visual::UiVisualBudgetStatus::Passed
+        );
+        assert_eq!(report.usage.additional_effect_draw_call_upper_bound, 2);
+        assert_eq!(report.usage.effect_overdraw_layers_upper_bound, 2);
+        assert_eq!(report.usage.unresolved_image_asset_count, 1);
+        assert!(report.accounting.contains("not measured GPU"));
     }
 
     #[test]

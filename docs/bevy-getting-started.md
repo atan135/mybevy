@@ -401,7 +401,7 @@ cargo run -- --window-profile phone-portrait --window-scale 50%
 cargo run -- --window-size 1280x2772 --window-scale 0.5
 ```
 
-当前内置 profile：
+当前内置 profile。phone/tablet profile 同时带确定性 safe-area fixture，用于桌面布局审计；它不是 Android 真机数据：
 
 - `desktop`: `1280x720`, scale `1.0`
 - `phone-portrait`: `1280x2772`, scale `3.25`
@@ -409,6 +409,14 @@ cargo run -- --window-size 1280x2772 --window-scale 0.5
 - `phone-small`: `720x1600`, scale `2.0`
 - `tablet-portrait`: `1600x2560`, scale `2.0`
 - `tablet-landscape`: `2560x1600`, scale `2.0`
+
+可显式覆盖逻辑像素安全区，参数顺序为 `LEFT,RIGHT,TOP,BOTTOM`：
+
+```powershell
+cargo run -- --window-profile phone-small --safe-area-insets 0,0,30,24
+```
+
+Android 生产环境不读取这个桌面参数。Activity 通过 `WindowInsetsCompat -> JNI` 发布状态栏、display cutout 和导航/手势 inset，UI 再按当前 device scale 转为逻辑像素。
 
 如果参数非法，程序会打印 warning 并回退到默认桌面尺寸。该功能只作用于桌面端 primary window 的启动尺寸，不改变 Android 真机默认行为。
 
@@ -421,9 +429,10 @@ cargo run -- --window-size 1280x2772 --window-scale 0.5
 ```powershell
 .\scripts\run-ui-audit.ps1 -SelfTest
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "top,middle,bottom" -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,phone-portrait,tablet-portrait,tablet-landscape -States visual_acceptance
 ```
 
-`-DryRun` 只验证矩阵和报告，不启动游戏、不生成真实截图。真实审计去掉 `-DryRun`，产物会写入 `summary/ui-audit/<run-id>/`。更多说明见 `docs/ui/UI调试与验收.md` 和 `docs/ui/UI自动化审计与优化方案.md`。
+`-DryRun` 只验证矩阵和报告，不启动游戏、不生成真实截图。真实审计去掉 `-DryRun`，产物会写入 `summary/ui-audit/<run-id>/`。`visual_acceptance` metadata 同时包含安全区来源、图片/字体/效果/动画汇总和开发期视觉预算；预算不是 GPU 实测。更多说明见 `docs/ui/UI调试与验收.md`、`docs/ui/UI安全区与视觉预算.md` 和 `docs/ui/UI自动化审计与优化方案.md`。
 
 ## 15. 场景框架开发期环境变量
 
@@ -743,7 +752,7 @@ project/
 crate-type = ["rlib"]
 ```
 
-桌面开发默认只构建 `rlib`，避免 Windows 本地运行和测试额外链接动态库。Android 需要的 `libproject.so` 在构建时通过 `cargo ndk ... rustc --lib -- --crate-type cdylib` 显式产出。
+桌面开发默认只构建 `rlib`，避免 Windows 本地运行和测试额外链接动态库。Android 需要的 `libproject.so` 在构建时通过 `cargo ndk ... rustc --lib --crate-type cdylib` 显式产出。
 
 如果你准备跟 Bevy 当前移动端默认方案保持一致，通常用 `GameActivity` 即可；如果你要兼容更老的 Android API，再考虑 `android-native-activity`。
 
@@ -772,7 +781,7 @@ mybevy/
 在 `project/` 目录执行类似命令：
 
 ```powershell
-cargo ndk -t arm64-v8a -o ..\android\app\src\main\jniLibs rustc --release --lib -- --crate-type cdylib
+cargo ndk -t arm64-v8a -o ..\android\app\src\main\jniLibs rustc --release --lib --crate-type cdylib
 ```
 
 执行后会在 `android/app/src/main/jniLibs/arm64-v8a/` 下得到对应的 Rust 动态库。
@@ -821,7 +830,7 @@ android/app/build/outputs/apk/release/
 - `project/src/main.rs`：桌面入口，只负责调用 `project::run()`
 - `project/src/lib.rs`：共享 Bevy App 入口，并通过 `#[bevy_main]` 支持移动端入口
 - `project/src/game/`：当前游戏玩法模块
-- `project/Cargo.toml`：桌面默认构建 `rlib`；Android 动态库由 `cargo ndk ... rustc --lib -- --crate-type cdylib` 产出
+- `project/Cargo.toml`：桌面默认构建 `rlib`；Android 动态库由 `cargo ndk ... rustc --lib --crate-type cdylib` 产出
 - `android/`：Android Gradle 壳工程，会加载 `libproject.so`
 
 当前 Android 壳工程使用 Bevy 0.18.1 间接依赖的 `android-activity 0.6.1`。
@@ -829,6 +838,8 @@ android/app/build/outputs/apk/release/
 需要保持为 `4.4.0`，并且不要在 Gradle 中启用 `prefab`。否则 Java 侧
 `GameActivity` 和 Rust 侧 native glue 的 JNI 方法签名可能不匹配，启动时会出现
 `RegisterNatives failed for 'com/google/androidgamesdk/GameActivity'`。
+
+`MainActivity` 还覆写 GameActivity 的 `WindowInsetsCompat` 回调，并保留 `super` 调用；系统栏、display cutout 和导航/手势物理 inset 通过项目 JNI symbol 进入 `UiSafeAreaStatus`。修改 Activity 或 Rust FFI 后，除了 `cargo check`，还应重新构建 arm64 动态库和 Debug APK。没有授权设备时只能证明编译/打包成立，不能声称安全区、字体、触控、图片切片或效果降级已通过真机验收。
 
 当前玩法是单界面触控/鼠标互动，并已接入控制机帧同步：
 
@@ -1014,7 +1025,7 @@ rustup target add aarch64-linux-android
 cargo install cargo-ndk
 
 Set-Location project
-cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib -- --crate-type cdylib
+cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib --crate-type cdylib
 
 Set-Location ..\android
 .\gradlew.bat assembleDebug

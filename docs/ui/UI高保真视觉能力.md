@@ -61,6 +61,7 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - 页面：`ui_gallery`，别名 `ui-gallery`、`gallery`
 - 图片适配审计 state：`image_fit`
 - fixture 兼容审计 state：`visual_foundation`
+- 综合公共能力审计 state：`visual_acceptance`
 - 九宫格审计 state：`image_modes`
 - 平铺审计 state：`image_tiling`
 - 图集帧审计 state：`image_atlas`
@@ -76,6 +77,7 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - 通用属性动画与动态策略审计 state：`animations`
 - 滚动目标：`ui_gallery.main`
 - 图片适配位置：主滚动容器顶部
+- 综合验收 anchor：`ui_gallery.visual_acceptance`
 - 高级图片 anchor：`ui_gallery.image_modes`
 - 平铺/图集 anchor：`ui_gallery.image_tiling`、`ui_gallery.image_atlas`
 - 文字 anchor：`ui_gallery.typography`、`ui_gallery.typography_overflow`
@@ -86,10 +88,11 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - fixture 清单：`project/assets/ui/fixtures/manifest.ron`
 - 正式图标清单：`project/assets/ui/icons/manifest.ron`
 
-批量 runner 的 `-States auto` 会为 UI Gallery 选择 `image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,middle,bottom`。`image_fit` 和 `visual_foundation` 固定指向顶部区域；高级图片、文字、图标、作用域样式、效果和动画 state 根据命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。审计应用第一个 Gallery capture state 时会统一冻结动画样例，避免布局循环影响任何后续 state。仍可显式请求兼容 state `top`。
+批量 runner 的 `-States auto` 会包含 `visual_acceptance` 及所有图片、字体、图标、样式、效果、动画、组件专题 state。`image_fit` 和 `visual_foundation` 固定指向顶部区域；综合区和其他专题按命名 child anchor 计算逻辑滚动偏移，不依赖页面总高度。审计应用第一个 Gallery capture state 时会统一冻结动画样例，避免布局循环影响任何后续 state。仍可显式请求兼容 state `top`。
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States visual_foundation -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,phone-portrait,tablet-portrait,tablet-landscape -States visual_acceptance -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States image_fit -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States image_modes -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small -States "image_tiling,image_atlas" -DryRun
@@ -113,6 +116,8 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 自定义材质路径永远不来自页面或 RON。框架 allowlist 固定材质 ID、shader 路径、参数数量与平台；GPU 不支持、平台不支持、shader 未注册/加载中/失败、adapter 缺失和参数非法都会应用 preset 声明的纯 UI fallback。当前没有交付真实自定义材质，因此 Gallery 不宣称 shader 渲染成功。
 
 每个效果快照进入 audit metadata 的 `effect_resolutions`，包含最终组件、fallback reason 和保守的 draw-call/overdraw 规划预算。完整数值边界、移动端建议和降级顺序见 [UI视觉效果与材质边界.md](UI视觉效果与材质边界.md)。
+
+capture metadata 还会输出 `image_snapshots`、`font_snapshots`、稳定排序的 `visual_summary` 和类型化 `visual_budget`。预算覆盖节点、图片解码 payload、render primitive 估算、额外 effect draw 上界、材质数和 overdraw 上界；这些不是 GPU 实测。profile 阈值和 Android 未验条件见 [UI安全区与视觉预算.md](UI安全区与视觉预算.md)。
 
 ## 作用域样式规则
 

@@ -46,7 +46,7 @@ use crate::framework::ui::{
         screen_label_key, screen_title_key, secondary_action_button_key, segment_option_key,
         segmented_control, selected_segment_option_key, slider_key, stepper_key, tab_key, tab_list,
         text_input, text_input_form_message, toggle_key, toggle_on_key, tooltip_target,
-        try_ui_advanced_image, ui_column, ui_image, ui_image_panel_node,
+        try_ui_advanced_image, ui_adaptive_grid, ui_column, ui_image, ui_image_panel_node,
         ui_image_panel_node_with_radius, ui_responsive_column, ui_responsive_grid,
         ui_scroll_column, ui_thumbnail_grid,
     },
@@ -61,8 +61,9 @@ use crate::game::{
         ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS,
         ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
         ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES,
-        ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM,
-        OWNER_UI_GALLERY, PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW,
+        ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
+        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
 
@@ -207,6 +208,9 @@ enum GalleryTextInputState {
 struct GalleryVisualFoundationRegion;
 
 #[derive(Component)]
+struct GalleryVisualAcceptanceRegion;
+
+#[derive(Component)]
 struct GalleryImageFitRegion;
 
 #[derive(Component)]
@@ -345,6 +349,7 @@ pub(super) fn setup_ui_gallery(
 ) {
     let theme = theme.into_inner();
     let metrics = metrics.into_inner();
+    let viewport = viewport.into_inner();
     let width_class = viewport.width_class;
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
@@ -480,6 +485,19 @@ pub(super) fn setup_ui_gallery(
                             }
                         });
                 });
+
+                body.spawn(gallery_visual_acceptance_panel(theme))
+                    .with_children(|acceptance_panel| {
+                        spawn_gallery_visual_acceptance(
+                            acceptance_panel,
+                            theme,
+                            metrics,
+                            viewport,
+                            fonts,
+                            i18n,
+                            asset_server,
+                        );
+                    });
 
                 body.spawn((
                     gallery_panel(theme),
@@ -1717,6 +1735,15 @@ fn gallery_panel_node(theme: &UiTheme) -> Node {
     }
 }
 
+fn gallery_visual_acceptance_panel(theme: &UiTheme) -> impl Bundle {
+    (
+        gallery_panel(theme),
+        GalleryVisualAcceptanceRegion,
+        ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE,
+        Name::new("Gallery high fidelity visual acceptance region"),
+    )
+}
+
 fn gallery_icons_panel(theme: &UiTheme) -> impl Bundle {
     (
         gallery_panel(theme),
@@ -1857,7 +1884,7 @@ fn gallery_icon_state_columns() -> UiResponsiveGridColumns {
 }
 
 fn gallery_effect_columns() -> UiResponsiveGridColumns {
-    UiResponsiveGridColumns::new(1, 2, 3)
+    UiResponsiveGridColumns::new(2, 2, 3)
 }
 
 fn gallery_animation_columns() -> UiResponsiveGridColumns {
@@ -2382,6 +2409,183 @@ fn spawn_gallery_style_scope_samples(
                 SelectedButton,
                 UiStyleBinding::new().with_button(UiButtonStyleRole::Secondary),
                 Name::new("Gallery scoped selected icon button"),
+            ));
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_gallery_visual_acceptance(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    viewport: &UiViewport,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    asset_server: &AssetServer,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.visual_acceptance.section",
+        "High Fidelity Acceptance",
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.visual_acceptance.description",
+        "One stable recipe combining production images, scalable surfaces, typography, icons, effects, and states.",
+        UiThemeTextStyleRole::Caption,
+        UiThemeTextColorRole::Muted,
+    ));
+
+    panel
+        .spawn(ui_image_panel_node_with_radius(
+            UiImageSize::FullWidthAspect { aspect_ratio: 3.2 },
+            theme.panel.radius,
+        ))
+        .insert(Name::new("Gallery acceptance background image frame"))
+        .with_children(|frame| {
+            frame
+                .spawn(ui_image(
+                    asset_server.load(GALLERY_IMAGE_PATHS[0]),
+                    UiImageFit::cover(UiImageFocus::CENTER),
+                    UiImageSize::PercentBox {
+                        width: 100.0,
+                        height: 100.0,
+                    },
+                ))
+                .insert(Name::new("Gallery acceptance focused cover background"));
+        });
+
+    panel
+        .spawn(ui_adaptive_grid(
+            metrics,
+            viewport,
+            UiResponsiveGridColumns::new(2, 2, 2),
+        ))
+        .with_children(|features| {
+            spawn_gallery_effect_tile(
+                features,
+                theme,
+                fonts,
+                i18n,
+                "ui_gallery.effects.composite",
+                "Shadow + gradient",
+                UI_EFFECT_PRESET_GALLERY_COMPOSITE,
+                false,
+            );
+            features
+                .spawn(ui_responsive_column(
+                    metrics,
+                    UiJustify::Start,
+                    UiAlign::Center,
+                ))
+                .with_children(|nine_slice| {
+                    spawn_gallery_advanced_preview(
+                        nine_slice,
+                        asset_server,
+                        gallery_nine_slice_spec(),
+                        UiImageSize::FixedBox {
+                            width: 120.0,
+                            height: 72.0,
+                        },
+                        "Gallery acceptance nine-slice panel",
+                    );
+                    nine_slice.spawn(screen_label(
+                        theme,
+                        fonts,
+                        "Nine-slice",
+                        UiThemeTextStyleRole::Caption,
+                        UiThemeTextColorRole::Muted,
+                    ));
+                });
+        });
+
+    panel
+        .spawn(ui_adaptive_grid(
+            metrics,
+            viewport,
+            UiResponsiveGridColumns::new(3, 3, 3),
+        ))
+        .with_children(|weights| {
+            for (weight, label) in [
+                (UiFontWeight::Regular, "Regular"),
+                (UiFontWeight::Medium, "Medium"),
+                (UiFontWeight::Bold, "Bold"),
+            ] {
+                weights.spawn((
+                    try_ui_styled_text(
+                        fonts,
+                        label,
+                        UiTextStyleToken::latin_fixture(weight, theme.text.caption),
+                        theme.colors.text_primary,
+                    )
+                    .expect("Gallery acceptance font fixture must be valid"),
+                    Node {
+                        width: percent(100),
+                        min_height: px(24),
+                        ..default()
+                    },
+                    Name::new(format!("Gallery acceptance {weight:?} text")),
+                ));
+            }
+        });
+
+    panel
+        .spawn(ui_adaptive_grid(
+            metrics,
+            viewport,
+            UiResponsiveGridColumns::new(2, 4, 4),
+        ))
+        .with_children(|states| {
+            states.spawn((
+                icon_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    asset_server,
+                    i18n,
+                    UiIconId::HELP,
+                    "ui_gallery.icons.help",
+                    "Help",
+                ),
+                Name::new("Gallery acceptance formal icon button"),
+            ));
+            states.spawn((
+                secondary_action_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "ui_gallery.buttons.selected",
+                    "Selected",
+                ),
+                SelectedButton,
+                Name::new("Gallery acceptance selected button"),
+            ));
+            states.spawn((
+                loading_primary_action_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "ui_gallery.buttons.loading",
+                    "Loading",
+                ),
+                Name::new("Gallery acceptance loading button"),
+            ));
+            states.spawn((
+                disabled_primary_action_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "ui_gallery.buttons.disabled",
+                    "Disabled",
+                ),
+                Name::new("Gallery acceptance disabled button"),
             ));
         });
 }
@@ -4482,7 +4686,7 @@ mod tests {
         );
         assert_eq!(
             gallery_effect_columns().for_width_class(UiWidthClass::Compact),
-            1
+            2
         );
         assert_eq!(
             gallery_animation_columns().for_width_class(UiWidthClass::Compact),
@@ -4574,6 +4778,47 @@ mod tests {
                 .copied(),
             Some(ANCHOR_UI_GALLERY_ICON_STATES)
         );
+    }
+
+    #[test]
+    fn visual_acceptance_panel_owns_stable_child_audit_anchor() {
+        let theme = UiTheme::default();
+        let mut app = App::new();
+        let acceptance = app
+            .world_mut()
+            .spawn(gallery_visual_acceptance_panel(&theme))
+            .id();
+        let entity = app.world().entity(acceptance);
+
+        assert!(entity.contains::<GalleryVisualAcceptanceRegion>());
+        assert_eq!(
+            entity
+                .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
+                .copied(),
+            Some(ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE)
+        );
+    }
+
+    #[test]
+    fn gallery_profiles_keep_touch_targets_across_width_and_short_height_classes() {
+        for (width, height) in [
+            (360.0, 568.0),
+            (394.0, 853.0),
+            (600.0, 960.0),
+            (800.0, 1_280.0),
+            (1_280.0, 800.0),
+        ] {
+            let viewport = UiViewport::from_device_logical_size(
+                width,
+                height,
+                crate::framework::ui::core::UiInputMode::MouseTouch,
+                default(),
+            );
+            let metrics = UiMetrics::from_viewport_and_theme(&viewport, &UiTheme::default());
+
+            assert!(metrics.button_height >= metrics.touch_target_min);
+            assert!(metrics.input_height >= metrics.touch_target_min);
+        }
     }
 
     #[test]

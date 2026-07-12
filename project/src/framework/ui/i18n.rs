@@ -495,6 +495,11 @@ fn built_in_zh_cn_texts() -> HashMap<String, String> {
             "ui_gallery.visual_foundation.description",
             "确定性图片适配样例，以及透明边缘、九宫格与图集测试资源。",
         ),
+        ("ui_gallery.visual_acceptance.section", "高保真综合验收"),
+        (
+            "ui_gallery.visual_acceptance.description",
+            "在稳定审计区域组合正式图片、可缩放表面、多字重、图标、效果与控件状态。",
+        ),
         ("ui_gallery.image_fit.section", "图片适配"),
         (
             "ui_gallery.image_fit.description",

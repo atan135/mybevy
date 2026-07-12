@@ -66,22 +66,24 @@ Set-Location project
 $env:MYBEVY_UI_AUDIT="1"
 $env:MYBEVY_UI_AUDIT_SCREEN="ui-gallery"
 $env:MYBEVY_UI_AUDIT_OUTPUT="..\summary\ui-audit\manual-local-check"
-$env:MYBEVY_UI_AUDIT_STATES="image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,middle,bottom"
+$env:MYBEVY_UI_AUDIT_STATES="image_fit,visual_foundation,visual_acceptance,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,middle,bottom"
 $env:MYBEVY_UI_AUDIT_EXIT_ON_FINISH="1"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
-输出目录会包含 `manifest.json`、`report.md`、`screenshots/` 和 `metadata/`。`ui_gallery` 的默认 runner 状态为 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`effects`、`animations`、`components`、`component_checkboxes`、`component_toggles`、`component_segmented`、`component_overlays`、`component_tooltip`、`middle`、`bottom`；前两项固定指向主滚动容器顶部，其余专题状态对齐稳定 child anchor，最后两个组件状态会确定性打开 Dropdown 与 Tooltip，兼容状态 `top` 仍可显式请求。其他页面默认只覆盖 `initial`。
+输出目录会包含 `manifest.json`、`report.md`、`screenshots/` 和 `metadata/`。`ui_gallery` 的默认 runner 状态包含 `visual_acceptance` 以及图片、字体、图标、样式、效果、动画、组件专题和滚动状态；`image_fit` / `visual_foundation` 固定指向顶部，其余专题状态对齐稳定 child anchor，最后两个组件状态会确定性打开 Dropdown 与 Tooltip，兼容状态 `top` 仍可显式请求。其他页面默认只覆盖 `initial`。
 
 metadata 的 `style_resolutions` 收集带 `UiStyleBinding` 实体的 `UiResolvedStyleDebugSnapshot`，包含 scope 链、请求 role/variant、来源链、最终关键 token、fallback 和错误码。它用于 F3/AI 审核边界读取最终解析结果，不包含可写业务状态。
 
 metadata 的 `effect_resolutions` 收集带 `UiEffectBinding` 实体的 `UiResolvedEffectDebugSnapshot`，包含请求/最终 preset、实际组件、材质 reason、fallback 和 draw-call/overdraw 规划预算。材质结果是受控策略状态；当前没有 adapter 时不会把 fallback 记录成 shader 渲染成功。
 
+metadata 的 `image_snapshots`、`font_snapshots` 和 `visual_summary` 汇总图片 mode/status、样式 scope/variant、字体 role/status、效果、动画与控件状态；`visual_budget` 记录节点、解码图片 payload、render primitive、额外 effect draw、材质和 overdraw 的开发期估算。统计口径与 profile 阈值见 [UI安全区与视觉预算.md](UI安全区与视觉预算.md)。
+
 常规批量验收优先使用仓库根目录 runner：
 
 ```powershell
 .\scripts\run-ui-audit.ps1 -SelfTest
-.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,middle,bottom" -DryRun
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,phone-portrait,tablet-portrait,tablet-landscape -States visual_acceptance -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States auto
 ```
 
@@ -159,7 +161,8 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - `manifest.json` 的 `status` 为 `passed` 或 dry-run 时为 `planned`。
 - `report.md` 中每个 capture 都有对应 screenshot 和 metadata 链接；远程模式至少有 screenshot / metadata artifact URI。
 - `analysis-input.json` 中每条 capture 的 `screen`、`device`、`state` 能对应回 `manifest.json` 和 `report.md`。
-- 有滚动 recipe 的 `ui_gallery` 默认覆盖 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`effects`、`animations`、六个 `component*` 状态、`middle`、`bottom`，并记录 `scroll_target_id = ui_gallery.main`；图片、文字、图标、样式、效果、动画和通用组件均使用 child anchor，不要依赖会随页面总高度变化的 `middle`。组件 metadata 还会输出稳定排序的 `control_snapshots`。
+- 有滚动 recipe 的 `ui_gallery` 默认覆盖 `visual_acceptance`、全部专题 state、六个 `component*` 状态、`middle` 和 `bottom`，并记录 `scroll_target_id = ui_gallery.main`；综合区、图片、文字、图标、样式、效果、动画和通用组件均使用 child anchor，不要依赖会随页面总高度变化的 `middle`。组件 metadata 还会输出稳定排序的 `control_snapshots`。
+- 每个核心 capture 的 `visual_budget.status` 不应为 `exceeded`；`warning` 需要结合 finding 和截图决定是否接受。图片内存和 draw/overdraw 都是估算，不得写成 GPU 实测通过。
 - 任意 UI Gallery capture state 第一次应用时，全部动画样例都应 seek 到 `0.625` 并 pause；后续 30 帧稳定等待内 scroll geometry、目标值、player 和 debug snapshot 不应继续 Changed。
 - metadata 的 `motion_policy` 应与当前 `UiMotionPolicy` 一致；`animation_snapshots` 应按 Name/Entity 稳定排序，并记录 target、raw/eased progress、pause 与 `causes_layout_reflow`。
 
@@ -196,7 +199,7 @@ Android 打包命令：
 
 ```powershell
 Set-Location project
-cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib -- --crate-type cdylib
+cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib --crate-type cdylib
 Set-Location ..\android
 .\gradlew.bat assembleDebug
 ```
@@ -207,9 +210,9 @@ Android 真机或模拟器上需要额外确认：
 - UI 字体能加载中文和英文文本。
 - 触控按下、拖动、松开和 UI 按钮点击不冲突。
 - 输入框能唤起软键盘，并能同步 native text input 状态。
-- 状态栏、刘海、手势导航区域没有遮挡关键 UI。当前 safe area 仍是零值，需要真机观察。
+- `viewport.safe_area.source` 在原生回调后为 `android_window_insets`，状态栏、display cutout、手势/三键导航区域没有遮挡关键 UI；IME 显隐不应改变全局 safe area。
 - 横竖屏或窗口尺寸变化后 `UiViewport` 与 `UiMetrics` 正常刷新。
 
-如果本机没有 `adb`，Android 设备级安装、渲染、触控和字体检查需要在有设备连接的环境完成。
+如果本机没有 `adb`，Android 设备级安装、渲染、触控、字体、图片切片和效果降级检查需要在有设备连接的环境完成。当前 2026-07-12 的开发环境即为此状态，真机项未完成；所需设备、API 和记录步骤见 [UI安全区与视觉预算.md](UI安全区与视觉预算.md)。
 
 当前 UI 审计还不支持 Android 真机截图和系统 UI 截图。Android 页面仍需要人工或未来远程 client 接入后，通过 `adminapi` 执行 `ui.screenshot`、`ui.read_viewport`、`ui.read_panels` 等命令验收。

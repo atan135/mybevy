@@ -11,9 +11,9 @@
 
 ## 安全区与平台适配
 
-- `UiSafeArea` 已有结构和 padding helper，但 `platform_safe_area()` 当前返回零值。
-- Android 刘海、状态栏、导航栏 inset 尚未接入原生数据。
-- Android 设备级安装、触控、字体和 soft keyboard 验收依赖 `adb` 或真机环境；没有设备时只能完成构建和桌面模拟。
+- `UiSafeArea` 已接 Android `WindowInsetsCompat -> JNI -> UiSafeAreaStatus` 生产链，覆盖系统栏、display cutout 和手势区域；首个原生回调前仍会以 `unavailable + zero` 启动。
+- 桌面 phone/tablet profile 的 inset 是确定性 fixture，不代表 OEM cutout、手势导航或三键导航实测。
+- Android 设备级安全区、触控、字体、图片切片、效果降级和 soft keyboard 仍依赖 `adb` 或真机环境。当前开发环境没有可用 `adb`，正式未验条件见 [UI安全区与视觉预算.md](UI安全区与视觉预算.md)。
 
 ## 覆盖层
 
@@ -83,7 +83,7 @@
 - 阴影、线性背景/边框渐变、独立边宽/圆角、裁切和 Outline 已有受限 preset、组合校验和规划预算；当前不支持径向/锥形渐变、内阴影或基于内容自动生成效果。
 - Bevy 0.18.1 的 `TextShadow` 只有单层颜色与偏移。文字多层、spread 和 blur 会显式失败，不会用重复文本节点伪装。
 - 自定义材质当前只有 allowlist、参数/平台校验和可见 fallback，没有已交付 shader/adapter。所有材质样例都应显示降级结果，不能将其描述为真实材质渲染。
-- draw-call 和 overdraw 字段是保守配置预算，不是目标 GPU 实测；移动端发布仍需要平台分析器和真机截图。
+- audit 的图片解码内存、render primitive、draw-call、材质和 overdraw 字段是 ECS/资源快照上的开发期估算或规划上界，不是目标 GPU 的 VRAM、batch 或像素实测；移动端发布仍需要平台分析器和真机截图。
 - Badge、Progress、Tab、Tooltip 和 Dropdown 已形成公共能力，并有类型化状态支持矩阵；Dropdown label/option 保存的是已解析字符串，运行时切换 locale 后需要业务更新 `UiDropdown` 模型或重建控件。通用属性动画已支持 transform、布局、alpha 和颜色，但图标按钮尚未内置旋转 loading 图标协议。
 - 作用域样式只覆盖固定 role 和纯色/尺寸 token，不自动把任意 Bevy Node 字段转成主题属性；页面私有 transform、grid、margin 和业务状态仍由调用方拥有。
 - 允许临时直接使用的 Bevy 原语必须附加 `UiDirectBevyVisual` marker；完整状态和判定规则见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。

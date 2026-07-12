@@ -841,6 +841,53 @@ enum UiImagePresentation {
     Advanced(UiAdvancedImageSpec),
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UiImagePresentationKind {
+    Natural,
+    Stretch,
+    Contain,
+    Cover,
+    NineSlice,
+    Tiled,
+    AtlasFrame,
+}
+
+impl UiImagePresentationKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Natural => "natural",
+            Self::Stretch => "stretch",
+            Self::Contain => "contain",
+            Self::Cover => "cover",
+            Self::NineSlice => "nine_slice",
+            Self::Tiled => "tiled",
+            Self::AtlasFrame => "atlas_frame",
+        }
+    }
+}
+
+impl UiImageWidget {
+    pub(crate) fn presentation_kind(&self) -> UiImagePresentationKind {
+        match &self.presentation {
+            UiImagePresentation::Fit(UiImageFit::Natural) => UiImagePresentationKind::Natural,
+            UiImagePresentation::Fit(UiImageFit::Stretch) => UiImagePresentationKind::Stretch,
+            UiImagePresentation::Fit(UiImageFit::Contain) => UiImagePresentationKind::Contain,
+            UiImagePresentation::Fit(UiImageFit::Cover { .. }) => UiImagePresentationKind::Cover,
+            UiImagePresentation::Advanced(spec)
+                if matches!(spec.source, UiAdvancedImageSource::AtlasFrame(_)) =>
+            {
+                UiImagePresentationKind::AtlasFrame
+            }
+            UiImagePresentation::Advanced(spec) => match spec.mode {
+                UiAdvancedImageMode::Stretch => UiImagePresentationKind::Stretch,
+                UiAdvancedImageMode::NineSlice(_) => UiImagePresentationKind::NineSlice,
+                UiAdvancedImageMode::Tiled(_) => UiImagePresentationKind::Tiled,
+            },
+        }
+    }
+}
+
 #[derive(Bundle)]
 pub(crate) struct UiAdvancedImageBundle {
     node: Node,

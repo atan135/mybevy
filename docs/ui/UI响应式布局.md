@@ -24,7 +24,7 @@ pub struct UiViewport {
 }
 ```
 
-桌面端如果使用窗口 profile，会优先使用启动配置推导逻辑设备尺寸；Android 使用运行时窗口尺寸。
+桌面端如果使用窗口 profile，会优先使用启动配置推导逻辑设备尺寸和确定性 safe-area fixture；Android 使用运行时窗口尺寸和原生 `WindowInsetsCompat`。
 
 ## 尺寸分类
 
@@ -69,7 +69,9 @@ pub struct UiViewport {
 
 `UiSafeArea` 提供 `left/right/top/bottom`，并支持 `viewport.safe_area_padding(base)`。主题 root marker 会自动把安全区加入页面和覆盖层 padding。
 
-当前 `platform_safe_area()` 返回默认零值，Android 原生刘海、状态栏、导航栏 inset 尚未接入。因此 Android 真机验收时需要重点观察顶部、底部和手势导航区域是否被遮挡。
+Android Activity 将状态栏、display cutout、导航栏和手势区域的物理 inset 通过 JNI 发布，viewport 按当前 device scale 转为逻辑像素。首个回调前 source 为 `unavailable`；有效回调后为 `android_window_insets`。IME 不进入安全区，避免软键盘弹出导致整页 padding 跳变。
+
+phone/tablet 桌面 profile 带有明确的 `desktop_profile_fixture`，也可用 `--safe-area-insets LEFT,RIGHT,TOP,BOTTOM` 覆盖逻辑像素。fixture 只用于确定性布局审计，不冒充真机结果。完整数据链和失败边界见 [UI安全区与视觉预算.md](UI安全区与视觉预算.md)。
 
 ## 布局 helper 使用原则
 
@@ -77,6 +79,7 @@ pub struct UiViewport {
 
 - `ui_content_container(metrics)`：限制正文最大宽度并居中。
 - `ui_responsive_grid(metrics, viewport.width_class, UiResponsiveGridColumns::new(...))`：按宽度分类切换列数。
+- `ui_adaptive_grid(metrics, viewport, UiResponsiveGridColumns::new(...))`：同时考虑宽度、方向和 `Short` 高度；Short 与 Expanded 竖屏最多两列。
 - `ui_action_row(metrics, viewport.width_class)`：紧凑屏从左侧开始并允许换行，宽屏靠右。
 - `ui_scroll_column_with_max_height(...)`：长内容限制高度并启用滚动。
 
@@ -96,6 +99,7 @@ cargo run -- --window-profile tablet-landscape
 cargo run -- --window-size 1280x2772
 cargo run -- --window-profile phone-portrait --window-scale 50%
 cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
+cargo run -- --window-profile phone-small --safe-area-insets 0,0,30,24
 ```
 
 可配合 `TOUCH_START_SCREEN` 直接进入页面：
@@ -110,5 +114,6 @@ cargo run -- --window-profile phone-small --window-scale 50%
 - Login、Lobby、UI Gallery、Touch Ripple HUD 在紧凑竖屏下不应有文字重叠或不可触达按钮。
 - Confirm 和 Loading 打开后下层页面不应响应。
 - Floating 在紧凑屏下不应超出安全边界。
+- `visual_acceptance` 在 Compact、Medium、Expanded、横竖屏和 Short 高度策略下不应出现固定控件缩小、文字覆盖或横向越界。
 - UI Gallery 的长列表和 Confirm 正文应可滚动。
 - Touch Ripple 页面在 UI 未阻断时应能正常按下、拖动并生成水波纹；UI 弹层打开时 gameplay 输入应被阻断。

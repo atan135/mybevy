@@ -100,7 +100,7 @@ cargo check
 
 ```powershell
 Set-Location project
-cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib -- --crate-type cdylib
+cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib --crate-type cdylib
 ```
 
 打包 Android Debug APK：

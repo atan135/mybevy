@@ -58,6 +58,8 @@
 
 `requested_draw_call_upper_bound` 是按阴影层、背景/边框渐变、轮廓和材质各记一个额外 primitive 的保守规划值。它不是实际 GPU draw-call 测量：Bevy 的批处理、裁切、目标后端和相邻节点会改变最终命令数。`overdraw_layers` 同样是配置层数指标，不是像素级 overdraw 采样。发布前仍需在目标 Android GPU 上使用平台分析器测量帧时间、实际 draw call 和 overdraw。
 
+页面级 `visual_budget` 会把所有 effect 的已应用 draw 上界求和，并取单 effect 最大 overdraw；同时结合节点、图片解码 payload、材质 ID 和可见节点生成 profile 报告。它仍是开发期估算，完整阈值和统计口径见 [UI安全区与视觉预算.md](UI安全区与视觉预算.md)。
+
 移动端超过建议值时按以下顺序建立更轻的 preset，而不是在页面运行时任意改组件：
 
 1. 移除最远、最淡的次级盒阴影。

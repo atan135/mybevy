@@ -2,11 +2,39 @@ const WINDOW_PROFILE_FLAG: &str = "--window-profile";
 const WINDOW_SIZE_FLAG: &str = "--window-size";
 const WINDOW_SCALE_FLAG: &str = "--window-scale";
 const DEVICE_SCALE_FLAG: &str = "--device-scale";
+const SAFE_AREA_FLAG: &str = "--safe-area-insets";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WindowSize {
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct WindowSafeAreaInsets {
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+impl WindowSafeAreaInsets {
+    const fn new(left: f32, right: f32, top: f32, bottom: f32) -> Self {
+        Self {
+            left,
+            right,
+            top,
+            bottom,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum WindowSafeAreaSource {
+    #[default]
+    None,
+    ProfileFixture,
+    CommandLineOverride,
 }
 
 impl WindowSize {
@@ -28,12 +56,36 @@ pub(crate) enum WindowProfile {
 impl WindowProfile {
     const fn preset(self) -> WindowDevicePreset {
         match self {
-            Self::Desktop => WindowDevicePreset::new(WindowSize::new(1280, 720), 1.0),
-            Self::PhonePortrait => WindowDevicePreset::new(WindowSize::new(1280, 2772), 3.25),
-            Self::Phone1080p => WindowDevicePreset::new(WindowSize::new(1080, 2400), 3.0),
-            Self::PhoneSmall => WindowDevicePreset::new(WindowSize::new(720, 1600), 2.0),
-            Self::TabletPortrait => WindowDevicePreset::new(WindowSize::new(1600, 2560), 2.0),
-            Self::TabletLandscape => WindowDevicePreset::new(WindowSize::new(2560, 1600), 2.0),
+            Self::Desktop => WindowDevicePreset::new(
+                WindowSize::new(1280, 720),
+                1.0,
+                WindowSafeAreaInsets::new(0.0, 0.0, 0.0, 0.0),
+            ),
+            Self::PhonePortrait => WindowDevicePreset::new(
+                WindowSize::new(1280, 2772),
+                3.25,
+                WindowSafeAreaInsets::new(0.0, 0.0, 24.0, 20.0),
+            ),
+            Self::Phone1080p => WindowDevicePreset::new(
+                WindowSize::new(1080, 2400),
+                3.0,
+                WindowSafeAreaInsets::new(0.0, 0.0, 24.0, 24.0),
+            ),
+            Self::PhoneSmall => WindowDevicePreset::new(
+                WindowSize::new(720, 1600),
+                2.0,
+                WindowSafeAreaInsets::new(0.0, 0.0, 24.0, 20.0),
+            ),
+            Self::TabletPortrait => WindowDevicePreset::new(
+                WindowSize::new(1600, 2560),
+                2.0,
+                WindowSafeAreaInsets::new(0.0, 0.0, 24.0, 16.0),
+            ),
+            Self::TabletLandscape => WindowDevicePreset::new(
+                WindowSize::new(2560, 1600),
+                2.0,
+                WindowSafeAreaInsets::new(24.0, 24.0, 0.0, 16.0),
+            ),
         }
     }
 
@@ -54,11 +106,16 @@ impl WindowProfile {
 struct WindowDevicePreset {
     size: WindowSize,
     device_scale: f32,
+    safe_area: WindowSafeAreaInsets,
 }
 
 impl WindowDevicePreset {
-    const fn new(size: WindowSize, device_scale: f32) -> Self {
-        Self { size, device_scale }
+    const fn new(size: WindowSize, device_scale: f32, safe_area: WindowSafeAreaInsets) -> Self {
+        Self {
+            size,
+            device_scale,
+            safe_area,
+        }
     }
 }
 
@@ -67,6 +124,8 @@ pub(crate) struct WindowStartupConfig {
     pub size: WindowSize,
     pub device_scale: f32,
     pub preview_scale: f32,
+    pub safe_area: WindowSafeAreaInsets,
+    pub safe_area_source: WindowSafeAreaSource,
     pub warnings: Vec<String>,
 }
 
@@ -77,6 +136,8 @@ impl Default for WindowStartupConfig {
             size: preset.size,
             device_scale: preset.device_scale,
             preview_scale: 1.0,
+            safe_area: preset.safe_area,
+            safe_area_source: WindowSafeAreaSource::None,
             warnings: Vec::new(),
         }
     }
@@ -144,6 +205,12 @@ where
             }
         } else if let Some(value) = arg.strip_prefix("--device-scale=") {
             apply_device_scale(value, &mut config);
+        } else if arg == SAFE_AREA_FLAG {
+            if let Some(value) = next_flag_value(&mut args, SAFE_AREA_FLAG, &mut config.warnings) {
+                apply_safe_area(&value, &mut config);
+            }
+        } else if let Some(value) = arg.strip_prefix("--safe-area-insets=") {
+            apply_safe_area(value, &mut config);
         }
     }
 
@@ -162,14 +229,14 @@ where
     match args.peek() {
         Some(next) if next.as_ref().starts_with("--") => {
             warnings.push(format!(
-                "{flag} requires a value; keeping current window size"
+                "{flag} requires a value; keeping current configuration"
             ));
             None
         }
         Some(_) => args.next().map(|value| value.as_ref().to_owned()),
         None => {
             warnings.push(format!(
-                "{flag} requires a value; keeping current window size"
+                "{flag} requires a value; keeping current configuration"
             ));
             None
         }
@@ -181,10 +248,18 @@ fn apply_profile(value: &str, config: &mut WindowStartupConfig) {
         let preset = profile.preset();
         config.size = preset.size;
         config.device_scale = preset.device_scale;
+        config.safe_area = preset.safe_area;
+        config.safe_area_source = if preset.safe_area == WindowSafeAreaInsets::default() {
+            WindowSafeAreaSource::None
+        } else {
+            WindowSafeAreaSource::ProfileFixture
+        };
     } else {
         let preset = WindowProfile::Desktop.preset();
         config.size = preset.size;
         config.device_scale = preset.device_scale;
+        config.safe_area = preset.safe_area;
+        config.safe_area_source = WindowSafeAreaSource::None;
         config.warnings.push(format!(
             "unknown window profile '{value}'; using default window size"
         ));
@@ -194,13 +269,21 @@ fn apply_profile(value: &str, config: &mut WindowStartupConfig) {
 fn apply_size(value: &str, config: &mut WindowStartupConfig) {
     if let Some(size) = parse_window_size(value) {
         config.size = size;
-        if let Some(device_scale) = inferred_device_scale(size) {
-            config.device_scale = device_scale;
+        if let Some(preset) = inferred_device_preset(size) {
+            config.device_scale = preset.device_scale;
+            config.safe_area = preset.safe_area;
+            config.safe_area_source = if preset.safe_area == WindowSafeAreaInsets::default() {
+                WindowSafeAreaSource::None
+            } else {
+                WindowSafeAreaSource::ProfileFixture
+            };
         }
     } else {
         let preset = WindowProfile::Desktop.preset();
         config.size = preset.size;
         config.device_scale = preset.device_scale;
+        config.safe_area = preset.safe_area;
+        config.safe_area_source = WindowSafeAreaSource::None;
         config.warnings.push(format!(
             "invalid window size '{value}'; expected WIDTHxHEIGHT, using default window size"
         ));
@@ -229,6 +312,19 @@ fn apply_device_scale(value: &str, config: &mut WindowStartupConfig) {
     }
 }
 
+fn apply_safe_area(value: &str, config: &mut WindowStartupConfig) {
+    if let Some(safe_area) = parse_safe_area(value) {
+        config.safe_area = safe_area;
+        config.safe_area_source = WindowSafeAreaSource::CommandLineOverride;
+    } else {
+        config.safe_area = WindowSafeAreaInsets::default();
+        config.safe_area_source = WindowSafeAreaSource::CommandLineOverride;
+        config.warnings.push(format!(
+            "invalid safe-area insets '{value}'; expected non-negative LEFT,RIGHT,TOP,BOTTOM logical pixels, using zero insets"
+        ));
+    }
+}
+
 fn parse_window_size(value: &str) -> Option<WindowSize> {
     let value = value.trim();
     let (width, height) = value.split_once('x').or_else(|| value.split_once('X'))?;
@@ -253,7 +349,26 @@ fn parse_positive_scale(value: &str) -> Option<f32> {
     (scale.is_finite() && scale > 0.0).then_some(scale)
 }
 
-fn inferred_device_scale(size: WindowSize) -> Option<f32> {
+fn parse_safe_area(value: &str) -> Option<WindowSafeAreaInsets> {
+    let values = value
+        .split(',')
+        .map(str::trim)
+        .map(str::parse::<f32>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    let [left, right, top, bottom] = values.as_slice() else {
+        return None;
+    };
+    if [left, right, top, bottom]
+        .into_iter()
+        .any(|value| !value.is_finite() || *value < 0.0)
+    {
+        return None;
+    }
+    Some(WindowSafeAreaInsets::new(*left, *right, *top, *bottom))
+}
+
+fn inferred_device_preset(size: WindowSize) -> Option<WindowDevicePreset> {
     [
         WindowProfile::Desktop,
         WindowProfile::PhonePortrait,
@@ -265,7 +380,6 @@ fn inferred_device_scale(size: WindowSize) -> Option<f32> {
     .into_iter()
     .map(WindowProfile::preset)
     .find(|preset| preset.size == size)
-    .map(|preset| preset.device_scale)
 }
 
 fn scaled_window_size(size: WindowSize, scale: f32) -> WindowSize {
@@ -325,6 +439,14 @@ mod tests {
         assert_approx_eq(config.device_scale, 2.0);
         assert_approx_eq(config.logical_width(), 360.0);
         assert_approx_eq(config.logical_height(), 800.0);
+        assert_eq!(
+            config.safe_area,
+            WindowSafeAreaInsets::new(0.0, 0.0, 24.0, 20.0)
+        );
+        assert_eq!(
+            config.safe_area_source,
+            WindowSafeAreaSource::ProfileFixture
+        );
         assert!(config.warnings.is_empty());
     }
 
@@ -381,6 +503,40 @@ mod tests {
         assert_approx_eq(config.device_scale, 2.5);
         assert_approx_eq(config.logical_width(), 512.0);
         assert_approx_eq(config.logical_height(), 1108.8);
+    }
+
+    #[test]
+    fn resolves_safe_area_override_in_logical_pixels() {
+        let config = resolve_from_args([
+            WINDOW_PROFILE_FLAG,
+            "phone-small",
+            SAFE_AREA_FLAG,
+            "12,8,30,22",
+        ]);
+
+        assert_eq!(
+            config.safe_area,
+            WindowSafeAreaInsets::new(12.0, 8.0, 30.0, 22.0)
+        );
+        assert_eq!(
+            config.safe_area_source,
+            WindowSafeAreaSource::CommandLineOverride
+        );
+        assert!(config.warnings.is_empty());
+    }
+
+    #[test]
+    fn invalid_safe_area_override_is_diagnostic_and_deterministic() {
+        for value in ["1,2,3", "1,2,-3,4", "1,2,NaN,4", "left,2,3,4"] {
+            let config = resolve_from_args([SAFE_AREA_FLAG, value]);
+
+            assert_eq!(config.safe_area, WindowSafeAreaInsets::default());
+            assert_eq!(
+                config.safe_area_source,
+                WindowSafeAreaSource::CommandLineOverride
+            );
+            assert_eq!(config.warnings.len(), 1);
+        }
     }
 
     #[test]
@@ -442,5 +598,30 @@ mod tests {
 
         assert_eq!(config.size, WindowSize::new(720, 1600));
         assert_eq!(config.warnings.len(), 1);
+    }
+
+    #[test]
+    fn missing_safe_area_value_preserves_insets_and_does_not_consume_next_flag() {
+        let config = resolve_from_args([
+            WINDOW_PROFILE_FLAG,
+            "phone-small",
+            SAFE_AREA_FLAG,
+            WINDOW_SCALE_FLAG,
+            "50%",
+        ]);
+
+        assert_eq!(
+            config.safe_area,
+            WindowSafeAreaInsets::new(0.0, 0.0, 24.0, 20.0)
+        );
+        assert_eq!(
+            config.safe_area_source,
+            WindowSafeAreaSource::ProfileFixture
+        );
+        assert_approx_eq(config.preview_scale, 0.5);
+        assert_eq!(
+            config.warnings,
+            vec!["--safe-area-insets requires a value; keeping current configuration".to_owned()]
+        );
     }
 }

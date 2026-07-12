@@ -106,6 +106,19 @@ pub(crate) enum UiFontRole {
     LatinFixture,
 }
 
+impl UiFontRole {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Display => "display",
+            Self::Heading => "heading",
+            Self::Body => "body",
+            Self::Caption => "caption",
+            Self::Control => "control",
+            Self::LatinFixture => "latin_fixture",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct UiFontFaceKey {
     pub family: UiFontFamily,
@@ -473,6 +486,19 @@ pub(crate) enum UiFontResolutionStatus {
     },
     InvalidStyle(UiTextStyleErrorCode),
     Unavailable,
+}
+
+impl UiFontResolutionStatus {
+    pub(crate) const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Loading { .. } => "loading",
+            Self::Fallback(_) => "fallback",
+            Self::GlyphReplacement { .. } => "glyph_replacement",
+            Self::InvalidStyle(_) => "invalid_style",
+            Self::Unavailable => "unavailable",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Component, Eq, PartialEq)]

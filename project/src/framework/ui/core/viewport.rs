@@ -1,21 +1,27 @@
 use bevy::{prelude::*, window::PrimaryWindow};
 
 #[cfg(not(target_os = "android"))]
-use crate::config::window::WindowStartupConfig;
+use crate::config::window::{WindowSafeAreaSource, WindowStartupConfig};
 use crate::framework::ui::style::UiTheme;
+
+use super::safe_area::UiSafeAreaStatus;
+#[cfg(not(target_os = "android"))]
+use super::safe_area::{UiPhysicalSafeAreaInsets, UiSafeAreaSource};
 
 pub(crate) struct UiViewportPlugin;
 
 impl Plugin for UiViewportPlugin {
     fn build(&self, app: &mut App) {
-        let initial_viewport = initial_ui_viewport(app.world());
+        let initial_safe_area = initial_safe_area_status(app.world());
+        let initial_viewport = initial_ui_viewport(app.world(), initial_safe_area.logical);
         let initial_metrics = if let Some(theme) = app.world().get_resource::<UiTheme>() {
             UiMetrics::from_viewport_and_theme(&initial_viewport, theme)
         } else {
             UiMetrics::from_viewport_and_theme(&initial_viewport, &UiTheme::default())
         };
 
-        app.insert_resource(initial_viewport)
+        app.insert_resource(initial_safe_area)
+            .insert_resource(initial_viewport)
             .insert_resource(initial_metrics)
             .add_systems(Update, update_ui_viewport_metrics);
     }
@@ -244,6 +250,7 @@ fn update_ui_viewport_metrics(
     window: Single<&Window, With<PrimaryWindow>>,
     #[cfg(not(target_os = "android"))] startup_config: Option<Res<WindowStartupConfig>>,
     theme: Res<UiTheme>,
+    mut safe_area_status: ResMut<UiSafeAreaStatus>,
     mut viewport: ResMut<UiViewport>,
     mut metrics: ResMut<UiMetrics>,
 ) {
@@ -257,6 +264,19 @@ fn update_ui_viewport_metrics(
             None::<&()>
         }
     });
+    let next_safe_area = runtime_safe_area_status(&window, {
+        #[cfg(not(target_os = "android"))]
+        {
+            startup_config.as_deref()
+        }
+        #[cfg(target_os = "android")]
+        {
+            None::<&()>
+        }
+    });
+    if *safe_area_status != next_safe_area {
+        *safe_area_status = next_safe_area;
+    }
     let next_viewport = UiViewport::from_logical_size(
         size_source.logical_width,
         size_source.logical_height,
@@ -267,7 +287,7 @@ fn update_ui_viewport_metrics(
         size_source.device_scale,
         size_source.preview_scale,
         default_input_mode(),
-        platform_safe_area(),
+        safe_area_status.logical,
     );
 
     if *viewport != next_viewport {
@@ -321,10 +341,10 @@ fn runtime_window_size_source(window: &Window) -> ViewportSizeSource {
     }
 }
 
-fn initial_ui_viewport(world: &World) -> UiViewport {
+fn initial_ui_viewport(_world: &World, _safe_area: UiSafeArea) -> UiViewport {
     #[cfg(not(target_os = "android"))]
-    if let Some(config) = world.get_resource::<WindowStartupConfig>() {
-        return viewport_from_startup_config(config, default_input_mode(), platform_safe_area());
+    if let Some(config) = _world.get_resource::<WindowStartupConfig>() {
+        return viewport_from_startup_config(config, default_input_mode(), _safe_area);
     }
 
     UiViewport::default()
@@ -382,8 +402,60 @@ fn default_input_mode() -> UiInputMode {
     UiInputMode::MouseTouch
 }
 
-fn platform_safe_area() -> UiSafeArea {
-    UiSafeArea::default()
+fn initial_safe_area_status(_world: &World) -> UiSafeAreaStatus {
+    #[cfg(not(target_os = "android"))]
+    if let Some(config) = _world.get_resource::<WindowStartupConfig>() {
+        return desktop_safe_area_status(config);
+    }
+
+    UiSafeAreaStatus::default()
+}
+
+#[cfg(not(target_os = "android"))]
+fn runtime_safe_area_status(
+    _window: &Window,
+    startup_config: Option<&WindowStartupConfig>,
+) -> UiSafeAreaStatus {
+    startup_config
+        .map(desktop_safe_area_status)
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "android")]
+fn runtime_safe_area_status(window: &Window, _startup_config: Option<&()>) -> UiSafeAreaStatus {
+    super::safe_area::android_safe_area_status(
+        UVec2::new(window.physical_width(), window.physical_height()),
+        window.scale_factor() as f32,
+    )
+}
+
+#[cfg(not(target_os = "android"))]
+fn desktop_safe_area_status(config: &WindowStartupConfig) -> UiSafeAreaStatus {
+    let logical = UiSafeArea {
+        left: config.safe_area.left,
+        right: config.safe_area.right,
+        top: config.safe_area.top,
+        bottom: config.safe_area.bottom,
+    };
+    let source = match config.safe_area_source {
+        WindowSafeAreaSource::None => UiSafeAreaSource::Unavailable,
+        WindowSafeAreaSource::ProfileFixture => UiSafeAreaSource::DesktopProfileFixture,
+        WindowSafeAreaSource::CommandLineOverride => UiSafeAreaSource::DesktopCommandLineOverride,
+    };
+    let physical = (source != UiSafeAreaSource::Unavailable).then(|| {
+        UiPhysicalSafeAreaInsets::new(
+            (logical.left * config.device_scale).round().max(0.0) as u32,
+            (logical.right * config.device_scale).round().max(0.0) as u32,
+            (logical.top * config.device_scale).round().max(0.0) as u32,
+            (logical.bottom * config.device_scale).round().max(0.0) as u32,
+        )
+    });
+    UiSafeAreaStatus {
+        logical,
+        physical,
+        source,
+        revision: u64::from(source != UiSafeAreaSource::Unavailable),
+    }
 }
 
 #[cfg(test)]
@@ -483,6 +555,7 @@ mod tests {
             device_scale: 3.25,
             preview_scale: 0.5,
             warnings: Vec::new(),
+            ..WindowStartupConfig::default()
         };
         let viewport =
             viewport_from_startup_config(&config, UiInputMode::MouseTouch, UiSafeArea::default());
@@ -492,5 +565,30 @@ mod tests {
         assert_eq!(viewport.orientation, UiOrientation::Portrait);
         assert_eq!(viewport.device_width, 1280.0);
         assert_eq!(viewport.device_height, 2772.0);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn desktop_profile_safe_area_is_explicit_and_stable() {
+        let config = crate::config::window::resolve_from_args(["--window-profile", "phone-small"]);
+        let first = desktop_safe_area_status(&config);
+        let second = desktop_safe_area_status(&config);
+
+        assert_eq!(first, second);
+        assert_eq!(first.source, UiSafeAreaSource::DesktopProfileFixture);
+        assert_eq!(first.logical.top, 24.0);
+        assert_eq!(first.logical.bottom, 20.0);
+        assert_eq!(first.physical.unwrap().top, 48);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn desktop_safe_area_override_remains_distinct_from_android_source() {
+        let config = crate::config::window::resolve_from_args(["--safe-area-insets", "4,8,12,16"]);
+        let status = desktop_safe_area_status(&config);
+
+        assert_eq!(status.source, UiSafeAreaSource::DesktopCommandLineOverride);
+        assert_eq!(status.logical.left, 4.0);
+        assert_eq!(status.logical.right, 8.0);
     }
 }

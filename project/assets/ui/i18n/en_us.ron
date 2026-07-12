@@ -65,6 +65,8 @@
         "ui_gallery.title": "UI Gallery",
         "ui_gallery.visual_foundation.section": "Visual Foundation",
         "ui_gallery.visual_foundation.description": "Deterministic image fit samples plus alpha-edge, nine-slice, and atlas fixtures.",
+        "ui_gallery.visual_acceptance.section": "High Fidelity Acceptance",
+        "ui_gallery.visual_acceptance.description": "A stable audit region combining production images, scalable surfaces, real weights, icons, effects, and control states.",
         "ui_gallery.image_fit.section": "Image Fit",
         "ui_gallery.image_fit.description": "Natural, Stretch, Contain, and focused Cover in landscape and portrait frames.",
         "ui_gallery.image_modes.section": "Nine-slice, Tiling, and Atlas Frames",

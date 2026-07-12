@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 
 use crate::framework::ui::{
-    core::{UiMetrics, UiWidthClass},
+    core::{UiHeightClass, UiMetrics, UiOrientation, UiViewport, UiWidthClass},
     style::UiTheme,
 };
 
@@ -221,6 +221,30 @@ pub(crate) fn ui_responsive_grid(
     responsive_grid_node(metrics, columns.for_width_class(width_class))
 }
 
+pub(crate) fn ui_adaptive_grid(
+    metrics: &UiMetrics,
+    viewport: &UiViewport,
+    columns: UiResponsiveGridColumns,
+) -> impl Bundle {
+    responsive_grid_node(metrics, responsive_columns_for_viewport(viewport, columns))
+}
+
+pub(crate) fn responsive_columns_for_viewport(
+    viewport: &UiViewport,
+    columns: UiResponsiveGridColumns,
+) -> u16 {
+    let base = columns.for_width_class(viewport.width_class);
+    if viewport.height_class == UiHeightClass::Short {
+        return base.min(2).max(1);
+    }
+    if viewport.orientation == UiOrientation::Portrait
+        && viewport.width_class == UiWidthClass::Expanded
+    {
+        return base.min(2).max(1);
+    }
+    base
+}
+
 pub(crate) fn ui_content_container(metrics: &UiMetrics) -> impl Bundle {
     content_container_node(metrics)
 }
@@ -311,6 +335,40 @@ mod tests {
 
         assert_eq!(columns.for_width_class(UiWidthClass::Expanded), 4);
         assert_eq!(node.grid_template_columns, expected);
+    }
+
+    #[test]
+    fn adaptive_grid_covers_width_orientation_and_short_height_policies() {
+        let columns = UiResponsiveGridColumns::new(1, 2, 4);
+        let viewport = |width, height| {
+            UiViewport::from_device_logical_size(
+                width,
+                height,
+                crate::framework::ui::core::UiInputMode::MouseTouch,
+                default(),
+            )
+        };
+
+        assert_eq!(
+            responsive_columns_for_viewport(&viewport(360.0, 800.0), columns),
+            1
+        );
+        assert_eq!(
+            responsive_columns_for_viewport(&viewport(600.0, 900.0), columns),
+            2
+        );
+        assert_eq!(
+            responsive_columns_for_viewport(&viewport(900.0, 1_200.0), columns),
+            2
+        );
+        assert_eq!(
+            responsive_columns_for_viewport(&viewport(1_000.0, 700.0), columns),
+            4
+        );
+        assert_eq!(
+            responsive_columns_for_viewport(&viewport(1_000.0, 500.0), columns),
+            2
+        );
     }
 
     #[test]

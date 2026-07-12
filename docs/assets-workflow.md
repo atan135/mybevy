@@ -250,7 +250,7 @@ Android 打包命令：
 
 ```powershell
 Set-Location project
-cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib -- --crate-type cdylib
+cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib --crate-type cdylib
 
 Set-Location ..\android
 .\gradlew.bat assembleDebug
@@ -431,6 +431,8 @@ let image = asset_server.load::<Image>(image_path);
 - UI 图片优先使用 PNG。
 - 大图和活动图应走后续下载。
 - 移动端控制尺寸，避免 4096 以上纹理无必要进入首包。
+- UI audit 的 `visual_budget.decoded_image_bytes_estimate` 会对当前 `ImageNode` handle 去重并累加已解析 `Assets<Image>` payload。它适合发现重复大图和首包解码膨胀，但不是 GPU VRAM、mipmap 或驱动 row padding 实测；目标设备仍需平台分析器。
+- 新增高保真图片后至少运行 `visual_acceptance` 或对应图片 state，确认图片 mode/status、未解析资源数和 profile 预算没有超限。预算口径见 `docs/ui/UI安全区与视觉预算.md`。
 
 ### 7.2 图集
 

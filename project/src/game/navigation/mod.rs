@@ -18,10 +18,11 @@ use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_COMPONENTS, ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES,
     ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
     ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES, ANCHOR_UI_GALLERY_TYPOGRAPHY,
-    ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR,
-    OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
-    OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE,
-    OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+    ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE,
+    OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT,
+    OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN,
+    OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
+    SCROLL_UI_GALLERY_MAIN,
 };
 
 pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
@@ -265,6 +266,11 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
         SCROLL_UI_GALLERY_MAIN,
         UiScrollAuditPosition::Top,
     ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::VisualAcceptance,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE,
+    ),
     UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::ImageFit,
         SCROLL_UI_GALLERY_MAIN,
@@ -389,7 +395,7 @@ mod tests {
     use super::*;
     use crate::game::ui_ids::{
         OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
-        OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE, SCROLL_UI_GALLERY_MAIN,
+        OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE,
     };
 
     #[test]
@@ -511,148 +517,112 @@ mod tests {
             .expect("ui gallery should be registered for audit");
         let recipe = screen.recipe.expect("ui gallery should have audit recipe");
 
-        assert_eq!(recipe.captures.len(), 21);
+        let states = recipe
+            .captures
+            .iter()
+            .map(|capture| capture.state)
+            .collect::<Vec<_>>();
         assert_eq!(
-            recipe.captures[0].state,
-            UiAuditCaptureState::VisualFoundation
+            states,
+            vec![
+                UiAuditCaptureState::VisualFoundation,
+                UiAuditCaptureState::VisualAcceptance,
+                UiAuditCaptureState::ImageFit,
+                UiAuditCaptureState::ImageModes,
+                UiAuditCaptureState::ImageTiling,
+                UiAuditCaptureState::ImageAtlas,
+                UiAuditCaptureState::Typography,
+                UiAuditCaptureState::TypographyOverflow,
+                UiAuditCaptureState::Icons,
+                UiAuditCaptureState::IconStates,
+                UiAuditCaptureState::StyleScopes,
+                UiAuditCaptureState::Effects,
+                UiAuditCaptureState::Animations,
+                UiAuditCaptureState::Components,
+                UiAuditCaptureState::ComponentCheckboxes,
+                UiAuditCaptureState::ComponentToggles,
+                UiAuditCaptureState::ComponentSegmented,
+                UiAuditCaptureState::ComponentOverlays,
+                UiAuditCaptureState::ComponentTooltip,
+                UiAuditCaptureState::Top,
+                UiAuditCaptureState::Middle,
+                UiAuditCaptureState::Bottom,
+            ]
         );
-        assert_eq!(recipe.captures[1].state, UiAuditCaptureState::ImageFit);
-        assert_eq!(recipe.captures[2].state, UiAuditCaptureState::ImageModes);
-        assert_eq!(recipe.captures[3].state, UiAuditCaptureState::ImageTiling);
-        assert_eq!(recipe.captures[4].state, UiAuditCaptureState::ImageAtlas);
-        assert_eq!(recipe.captures[5].state, UiAuditCaptureState::Typography);
+
+        let target = |state| {
+            recipe
+                .captures
+                .iter()
+                .find(|capture| capture.state == state)
+                .and_then(|capture| capture.scroll)
+                .map(|scroll| scroll.target.as_str())
+        };
         assert_eq!(
-            recipe.captures[6].state,
-            UiAuditCaptureState::TypographyOverflow
-        );
-        assert_eq!(recipe.captures[7].state, UiAuditCaptureState::Icons);
-        assert_eq!(recipe.captures[8].state, UiAuditCaptureState::IconStates);
-        assert_eq!(recipe.captures[9].state, UiAuditCaptureState::StyleScopes);
-        assert_eq!(recipe.captures[10].state, UiAuditCaptureState::Effects);
-        assert_eq!(recipe.captures[11].state, UiAuditCaptureState::Animations);
-        assert_eq!(recipe.captures[12].state, UiAuditCaptureState::Components);
-        assert_eq!(
-            recipe.captures[13].state,
-            UiAuditCaptureState::ComponentCheckboxes
-        );
-        assert_eq!(
-            recipe.captures[14].state,
-            UiAuditCaptureState::ComponentToggles
-        );
-        assert_eq!(
-            recipe.captures[15].state,
-            UiAuditCaptureState::ComponentSegmented
-        );
-        assert_eq!(
-            recipe.captures[16].state,
-            UiAuditCaptureState::ComponentOverlays
-        );
-        assert_eq!(
-            recipe.captures[17].state,
-            UiAuditCaptureState::ComponentTooltip
-        );
-        assert_eq!(recipe.captures[18].state, UiAuditCaptureState::Top);
-        assert_eq!(recipe.captures[19].state, UiAuditCaptureState::Middle);
-        assert_eq!(recipe.captures[20].state, UiAuditCaptureState::Bottom);
-        assert_eq!(
-            recipe.captures[0].scroll.map(|scroll| scroll.target_id),
-            Some(SCROLL_UI_GALLERY_MAIN)
-        );
-        assert_eq!(
-            recipe.captures[0]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
+            target(UiAuditCaptureState::VisualFoundation),
             Some(UiScrollAuditPosition::Top.as_str())
         );
         assert_eq!(
-            recipe.captures[2]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_IMAGE_MODES.as_str())
+            target(UiAuditCaptureState::VisualAcceptance),
+            Some(ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE.as_str())
         );
-        assert_eq!(
-            recipe.captures[3]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_IMAGE_TILING.as_str())
-        );
-        assert_eq!(
-            recipe.captures[5]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_TYPOGRAPHY.as_str())
-        );
-        assert_eq!(
-            recipe.captures[6]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW.as_str())
-        );
-        assert_eq!(
-            recipe.captures[7]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_ICONS.as_str())
-        );
-        assert_eq!(
-            recipe.captures[8]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_ICON_STATES.as_str())
-        );
-        assert_eq!(
-            recipe.captures[9]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_STYLE_SCOPES.as_str())
-        );
-        assert_eq!(
-            recipe.captures[10]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_EFFECTS.as_str())
-        );
-        assert_eq!(
-            recipe.captures[4]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_IMAGE_ATLAS.as_str())
-        );
-        assert_eq!(
-            recipe.captures[12]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_COMPONENTS.as_str())
-        );
-        assert_eq!(
-            recipe.captures[13]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES.as_str())
-        );
-        assert_eq!(
-            recipe.captures[14]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_COMPONENT_TOGGLES.as_str())
-        );
-        assert_eq!(
-            recipe.captures[15]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED.as_str())
-        );
-        assert_eq!(
-            recipe.captures[16]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN.as_str())
-        );
-        assert_eq!(
-            recipe.captures[17]
-                .scroll
-                .map(|scroll| scroll.target.as_str()),
-            Some(ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP.as_str())
-        );
+        for (state, anchor) in [
+            (
+                UiAuditCaptureState::ImageModes,
+                ANCHOR_UI_GALLERY_IMAGE_MODES,
+            ),
+            (
+                UiAuditCaptureState::ImageTiling,
+                ANCHOR_UI_GALLERY_IMAGE_TILING,
+            ),
+            (
+                UiAuditCaptureState::ImageAtlas,
+                ANCHOR_UI_GALLERY_IMAGE_ATLAS,
+            ),
+            (
+                UiAuditCaptureState::Typography,
+                ANCHOR_UI_GALLERY_TYPOGRAPHY,
+            ),
+            (
+                UiAuditCaptureState::TypographyOverflow,
+                ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW,
+            ),
+            (UiAuditCaptureState::Icons, ANCHOR_UI_GALLERY_ICONS),
+            (
+                UiAuditCaptureState::IconStates,
+                ANCHOR_UI_GALLERY_ICON_STATES,
+            ),
+            (
+                UiAuditCaptureState::StyleScopes,
+                ANCHOR_UI_GALLERY_STYLE_SCOPES,
+            ),
+            (UiAuditCaptureState::Effects, ANCHOR_UI_GALLERY_EFFECTS),
+            (
+                UiAuditCaptureState::Components,
+                ANCHOR_UI_GALLERY_COMPONENTS,
+            ),
+            (
+                UiAuditCaptureState::ComponentCheckboxes,
+                ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES,
+            ),
+            (
+                UiAuditCaptureState::ComponentToggles,
+                ANCHOR_UI_GALLERY_COMPONENT_TOGGLES,
+            ),
+            (
+                UiAuditCaptureState::ComponentSegmented,
+                ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED,
+            ),
+            (
+                UiAuditCaptureState::ComponentOverlays,
+                ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN,
+            ),
+            (
+                UiAuditCaptureState::ComponentTooltip,
+                ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP,
+            ),
+        ] {
+            assert_eq!(target(state), Some(anchor.as_str()));
+        }
     }
 }
