@@ -688,7 +688,7 @@ impl UiTextStyleToken {
     }
 }
 
-fn truncate_with_ellipsis(source: &str, max_graphemes: usize) -> String {
+pub(crate) fn truncate_with_ellipsis(source: &str, max_graphemes: usize) -> String {
     let graphemes = source.graphemes(true).collect::<Vec<_>>();
     if graphemes.len() <= max_graphemes {
         return source.to_owned();

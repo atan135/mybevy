@@ -113,13 +113,19 @@ UiEffectBinding::new("surface.elevated")
 
 ## 选择控件
 
-当前选择类控件以按钮视觉为基础：
+当前选择类控件复用 Button 的输入与焦点语义，但使用正式的固定子节点结构：
 
-- Checkbox：`UiCheckbox`、`UiCheckboxChecked`
-- Toggle：`UiToggle`、`UiToggleOn`
-- Segmented：`UiSegmentedControl`、`UiSegmentOption`、`UiSegmentOptionSelected`
+- Checkbox：固定 box/mark，状态 marker 是 `UiCheckbox`、`UiCheckboxChecked`。
+- Toggle：固定 track/thumb，状态 marker 是 `UiToggle`、`UiToggleOn`。
+- Segmented：固定 option/indicator，状态 marker 是 `UiSegmentedControl`、`UiSegmentOption`、`UiSegmentOptionSelected`。
 
-它们当前以 `UiButtonEvent::Click` 切换状态，并同步对应 marker。`Down` 只影响按钮 pressed 视觉，不会提交选择变化。
+它们以 `UiButtonEvent::Click` 切换状态，并发送根控件级 `UiControlEvent::ValueChanged`。`Down` 只影响 pressed 视觉，不会提交选择变化。所有状态保持固定点击区域，文案不再编码 `[x]` 或 `ON/OFF`。完整状态优先级、事件字段和支持矩阵见 [UI通用组件与交互状态.md](UI通用组件与交互状态.md)。
+
+## Badge、Progress、Tab、Tooltip 和 Dropdown
+
+`badge_key`、`progress_key`、`tab_list` / `tab_key`、`tooltip_target` 和 `dropdown_key` 是 framework 层公共能力。Tab、Dropdown 和选择控件向业务发送 `UiControlEvent`；Tooltip/Dropdown 通过 Panel Manager 创建 viewport 外层节点，不会被普通滚动容器裁切。
+
+Dropdown option 是稳定 value + 展示 label，不允许业务读取内部 option Button entity 作为选择结果。Tooltip 和 Dropdown 的边缘避让、键盘导航、click-away、Escape、owner 清理及 Modal 协作见 [UI通用组件与交互状态.md](UI通用组件与交互状态.md) 和 [UI覆盖层与弹窗.md](UI覆盖层与弹窗.md)。UI Gallery 使用 `components`、三类 `component_*` 选择控件状态、`component_overlays` 和 `component_tooltip` 分别验收静态组件、完整选择状态及两个覆盖层。
 
 ## 数值控件
 

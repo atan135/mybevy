@@ -21,9 +21,9 @@ pub(crate) use framework::UiFrameworkPlugin;
 pub(crate) use input::{UiInputState, UiInputSystems};
 pub(crate) use layer::{UiLayer, UiLayerRoot};
 pub(crate) use panel::{
-    UI_PANEL_CONFIRM_MODAL, UI_PANEL_GLOBAL_LOADING, UiBlockingOverlay, UiCurrentOwner,
-    UiFloatingPanel, UiOwnerId, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
-    UiPanelRoot, UiPanelSystems,
+    UI_PANEL_CONFIRM_MODAL, UI_PANEL_DROPDOWN, UI_PANEL_GLOBAL_LOADING, UI_PANEL_TOOLTIP,
+    UiBlockingOverlay, UiCurrentOwner, UiFloatingPanel, UiOwnerId, UiPanelCommand, UiPanelId,
+    UiPanelKind, UiPanelRequest, UiPanelRoot, UiPanelStack, UiPanelSystems, close_top_target_id,
 };
 #[allow(unused_imports)]
 pub(crate) use viewport::{

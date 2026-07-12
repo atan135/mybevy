@@ -15,7 +15,7 @@ use bevy::{
 };
 
 use crate::framework::ui::{
-    core::{UiFocusSystems, UiMetrics, focus::UiFocusState},
+    core::{UiFocusSystems, UiMetrics, UiPanelSystems, focus::UiFocusState},
     i18n::{UiI18n, UiI18nSystems, UiI18nText},
     style::{
         UiFontAssets, UiResolvedButtonStyle, UiResolvedInputStyle, UiTextStyleToken,
@@ -33,12 +33,14 @@ const TEXT_INPUT_FOCUS_SWITCH_LOG_TICKS: u64 = 12;
 const TEXT_INPUT_CARET_WIDTH: f32 = 1.5;
 
 mod button;
+mod components;
 mod numeric;
 mod plugin;
 mod selection;
 mod text_input;
 
 pub(crate) use button::*;
+pub(crate) use components::*;
 pub(crate) use numeric::*;
 pub(crate) use plugin::*;
 pub(crate) use selection::*;
@@ -50,6 +52,7 @@ mod tests {
     use bevy::asset::AssetPlugin;
 
     use super::*;
+    use crate::framework::ui::core::UiCurrentOwner;
 
     fn editable(max_chars: Option<usize>) -> UiTextInputEditMode {
         UiTextInputEditMode {
@@ -642,18 +645,18 @@ mod tests {
     }
 
     #[test]
-    fn selection_display_text_marks_state() {
+    fn selection_display_text_keeps_state_out_of_copy() {
         assert_eq!(
             selection_display_text("Medium", SelectionVisualState::Selected),
-            "[x] Medium"
+            "Medium"
         );
         assert_eq!(
             selection_display_text("Medium", SelectionVisualState::Idle),
-            "[ ] Medium"
+            "Medium"
         );
         assert_eq!(
             selection_display_text("Medium", SelectionVisualState::Disabled),
-            "[-] Medium"
+            "Medium"
         );
     }
 
@@ -679,7 +682,9 @@ mod tests {
     #[test]
     fn selection_controls_toggle_only_on_click_event() {
         let mut app = App::new();
-        app.add_message::<UiButtonEvent>()
+        app.init_resource::<UiCurrentOwner>()
+            .add_message::<UiButtonEvent>()
+            .add_message::<UiControlEvent>()
             .add_systems(Update, update_selection_control_interactions);
 
         let checkbox = app
@@ -702,6 +707,43 @@ mod tests {
         });
         app.update();
         assert!(app.world().entity(checkbox).contains::<UiCheckboxChecked>());
+    }
+
+    #[test]
+    fn checkbox_emits_root_level_stable_control_event() {
+        let mut app = App::new();
+        let owner = crate::framework::ui::core::UiOwnerId::new("test_owner");
+        let control_id = UiControlId::new("test.checkbox");
+        app.init_resource::<UiCurrentOwner>()
+            .add_message::<UiButtonEvent>()
+            .add_message::<UiControlEvent>()
+            .add_systems(Update, update_selection_control_interactions);
+        let checkbox = app
+            .world_mut()
+            .spawn((
+                Button,
+                UiCheckbox,
+                UiControlFlags::default(),
+                UiControlMeta::new(control_id, UiControlKind::Checkbox),
+                UiControlOwner(owner),
+            ))
+            .id();
+        app.world_mut().write_message(UiButtonEvent {
+            entity: checkbox,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+
+        let messages = app.world().resource::<Messages<UiControlEvent>>();
+        let mut cursor = bevy::ecs::message::MessageCursor::default();
+        let events = cursor.read(messages).collect::<Vec<_>>();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].entity, checkbox);
+        assert_eq!(events[0].owner, Some(owner));
+        assert_eq!(events[0].control_id, control_id);
+        assert_eq!(events[0].value, UiControlValue::Bool(true));
+        assert_eq!(events[0].reason, UiControlEventReason::Keyboard);
     }
 
     #[test]

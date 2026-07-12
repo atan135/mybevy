@@ -183,21 +183,21 @@ fn focus_candidates(
     panels: &Query<(Entity, &UiPanelRoot, Option<&ZIndex>)>,
     parents: &Query<&ChildOf>,
 ) -> Vec<FocusCandidate> {
-    let active_panel = active_focus_panel(panels);
     let mut candidates = buttons
         .iter()
         .filter(|(_, inherited_visibility)| {
             inherited_visibility.is_none_or(|visibility| visibility.get())
         })
-        .filter_map(|(entity, _)| {
-            let panel = nearest_panel(entity, panels, parents);
-            if active_panel.is_some() && panel != active_panel {
-                return None;
-            }
-
-            Some(FocusCandidate { entity, panel })
+        .map(|(entity, _)| FocusCandidate {
+            entity,
+            panel: nearest_panel(entity, panels, parents),
         })
         .collect::<Vec<_>>();
+
+    let active_panel = active_focus_panel(panels, &candidates);
+    if active_panel.is_some() {
+        candidates.retain(|candidate| candidate.panel == active_panel);
+    }
 
     if active_panel.is_none() {
         if let Some(fallback_panel) = highest_panel_with_buttons(&candidates, panels) {
@@ -209,19 +209,32 @@ fn focus_candidates(
     candidates
 }
 
-fn active_focus_panel(panels: &Query<(Entity, &UiPanelRoot, Option<&ZIndex>)>) -> Option<Entity> {
+fn active_focus_panel(
+    panels: &Query<(Entity, &UiPanelRoot, Option<&ZIndex>)>,
+    candidates: &[FocusCandidate],
+) -> Option<Entity> {
+    let blocking = panels
+        .iter()
+        .filter(|(_, panel, _)| panel.kind == UiPanelKind::BlockingOverlay)
+        .max_by_key(|(entity, _, z_index)| panel_order_key(*entity, z_index))
+        .map(|(entity, _, _)| entity);
+    if blocking.is_some() {
+        return blocking;
+    }
+
     panels
         .iter()
-        .filter(|(_, panel, _)| {
-            matches!(
-                panel.kind,
-                UiPanelKind::BlockingOverlay | UiPanelKind::Modal
-            )
+        .filter(|(entity, panel, _)| {
+            panel.kind == UiPanelKind::Modal
+                || (panel.kind == UiPanelKind::Floating
+                    && candidates
+                        .iter()
+                        .any(|candidate| candidate.panel == Some(*entity)))
         })
         .max_by_key(|(entity, panel, z_index)| {
             (
-                panel_kind_order(panel.kind),
                 panel_order_key(*entity, z_index),
+                panel_kind_order(panel.kind),
             )
         })
         .map(|(entity, _, _)| entity)
@@ -492,5 +505,51 @@ mod tests {
         );
         assert!(!app.world().entity(page_button).contains::<FocusedButton>());
         assert!(app.world().entity(modal_button).contains::<FocusedButton>());
+    }
+
+    #[test]
+    fn noninteractive_tooltip_does_not_steal_modal_focus() {
+        let mut app = test_app();
+        let modal = app
+            .world_mut()
+            .spawn((test_panel(UiPanelKind::Modal), ZIndex(100)))
+            .id();
+        let modal_button = spawn_focusable_button(app.world_mut());
+        app.world_mut().entity_mut(modal).add_child(modal_button);
+        app.world_mut()
+            .spawn((test_panel(UiPanelKind::Floating), ZIndex(120)));
+
+        press_tab(&mut app, false);
+
+        assert_eq!(
+            app.world().resource::<UiFocusState>().focused_entity,
+            Some(modal_button)
+        );
+    }
+
+    #[test]
+    fn focusable_dropdown_above_modal_owns_focus() {
+        let mut app = test_app();
+        let modal = app
+            .world_mut()
+            .spawn((test_panel(UiPanelKind::Modal), ZIndex(100)))
+            .id();
+        let modal_button = spawn_focusable_button(app.world_mut());
+        app.world_mut().entity_mut(modal).add_child(modal_button);
+        let dropdown = app
+            .world_mut()
+            .spawn((test_panel(UiPanelKind::Floating), ZIndex(120)))
+            .id();
+        let dropdown_option = spawn_focusable_button(app.world_mut());
+        app.world_mut()
+            .entity_mut(dropdown)
+            .add_child(dropdown_option);
+
+        press_tab(&mut app, false);
+
+        assert_eq!(
+            app.world().resource::<UiFocusState>().focused_entity,
+            Some(dropdown_option)
+        );
     }
 }

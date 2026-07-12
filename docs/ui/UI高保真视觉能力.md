@@ -50,9 +50,9 @@ commands.spawn((
 | 动画 `animation` | 页面、控件、弹窗和 loading 的组合过渡 | 框架支持 | 视觉移动/缩放优先 `UiTransform`；布局 target 是显式 opt-in，详见 `UI动画与动态效果.md` |
 | 动画 `animation` | 关键帧序列、弹簧/物理曲线和旋转轨道 | 暂不支持 | 不在页面私建与公共命令冲突的第二套 player |
 | 控件状态 `control_state` | 按钮 idle/hovered/pressed/focused/selected/disabled/loading 视觉优先级 | 框架支持 | `widgets/controls/button.rs` |
-| 控件状态 `control_state` | Checkbox、Toggle、Segmented 的当前轻量状态结构 | 框架支持 | 当前仍是按钮式视觉，限制见 `UI当前限制.md` |
+| 控件状态 `control_state` | Checkbox、Toggle、Segmented 的固定 indicator / track / thumb 结构 | 框架支持 | `widgets/controls/selection.rs`；稳定 `UiControlEvent`，状态切换不改变点击区域 |
 | 控件状态 `control_state` | 图标按钮状态贴图和 tint/background override | 框架支持 | `UiIconButtonVisuals`；复用 `Interaction` 和既有 focus/selected/disabled/loading marker |
-| 控件状态 `control_state` | Badge、Progress、Tab、Tooltip 和下拉选择 | 暂不支持 | 不在业务页面建立私有状态优先级协议 |
+| 控件状态 `control_state` | Badge、Progress、Tab、Tooltip 和 Dropdown | 框架支持 | `widgets/controls/components.rs` + `overlays/popover.rs`；类型化支持矩阵和统一状态优先级见 `UI通用组件与交互状态.md` |
 
 ## 稳定验收区域
 
@@ -68,6 +68,9 @@ UI Gallery 的第一个内容面板是固定的 `visual foundation` 区域，代
 - 混排和溢出审计 state：`typography_overflow`
 - 图标与图片按钮审计 state：`icons`
 - 图标七态矩阵审计 state：`icon_states`
+- 通用组件静态矩阵审计 state：`components`
+- 选择控件完整状态审计 state：`component_checkboxes`、`component_toggles`、`component_segmented`
+- 确定性覆盖层审计 state：`component_overlays`（Dropdown）、`component_tooltip`（Tooltip）
 - 作用域样式审计 state：`style_scopes`
 - 阴影、渐变和材质降级审计 state：`effects`
 - 通用属性动画与动态策略审计 state：`animations`

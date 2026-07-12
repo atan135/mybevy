@@ -55,8 +55,7 @@
 
 ## 选择和数值控件
 
-- Checkbox、Toggle、Segmented 当前更接近静态状态 builder，加视觉同步；没有统一选择事件协议。
-- Checkbox/Toggle 视觉仍是按钮式表达，不是原生 checkbox 或 switch track。
+- Checkbox、Toggle、Segmented 已使用固定 box/mark、track/thumb 和 indicator 结构，并通过统一 `UiControlEvent` 输出根控件级 value；当前不包含三态 checkbox、Toggle 拖动手势或 Segmented 动态增删 option 动画。
 - Slider/Stepper 已有数值模型和部分交互 helper，但完整拖拽、点击、键盘、业务事件协议仍需在具体页面验证。
 
 ## 图标与可访问性
@@ -64,7 +63,7 @@
 - 正式 PNG 图标已通过稳定 `UiIconId` 注册；当前不支持运行时 SVG、动态图集打包、任意业务路径或专用图标字体。
 - tint 只支持白色透明底单色图标；全彩图片图标固定保留原色。需要多层独立着色的图标应拆成受控资源或等待专用模型。
 - 纯图标按钮已通过隐藏 i18n 文本接入 Bevy 按钮 accessibility node；实际平台朗读仍受 Bevy/accesskit 与操作系统辅助技术环境影响，需在目标平台验收。
-- Tooltip 系统尚未形成通用能力。
+- Tooltip/Dropdown 已有公共 Panel/焦点/清理能力；当前没有 Tooltip 延迟、Dropdown 搜索/分组/多选/虚拟列表，超大数据集应使用业务列表页面。
 
 ## 字体和本地化
 
@@ -85,7 +84,7 @@
 - Bevy 0.18.1 的 `TextShadow` 只有单层颜色与偏移。文字多层、spread 和 blur 会显式失败，不会用重复文本节点伪装。
 - 自定义材质当前只有 allowlist、参数/平台校验和可见 fallback，没有已交付 shader/adapter。所有材质样例都应显示降级结果，不能将其描述为真实材质渲染。
 - draw-call 和 overdraw 字段是保守配置预算，不是目标 GPU 实测；移动端发布仍需要平台分析器和真机截图。
-- Badge、Progress、Tab、Tooltip 和下拉选择尚未形成公共能力。通用属性动画已支持 transform、布局、alpha 和颜色，但图标按钮尚未内置旋转 loading 图标协议。
+- Badge、Progress、Tab、Tooltip 和 Dropdown 已形成公共能力，并有类型化状态支持矩阵；Dropdown label/option 保存的是已解析字符串，运行时切换 locale 后需要业务更新 `UiDropdown` 模型或重建控件。通用属性动画已支持 transform、布局、alpha 和颜色，但图标按钮尚未内置旋转 loading 图标协议。
 - 作用域样式只覆盖固定 role 和纯色/尺寸 token，不自动把任意 Bevy Node 字段转成主题属性；页面私有 transform、grid、margin 和业务状态仍由调用方拥有。
 - 允许临时直接使用的 Bevy 原语必须附加 `UiDirectBevyVisual` marker；完整状态和判定规则见 [UI高保真视觉能力.md](UI高保真视觉能力.md)。
 

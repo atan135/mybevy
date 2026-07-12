@@ -53,9 +53,9 @@ pub struct UiFocusState {
 
 ## 弹窗内焦点限制
 
-当存在 `BlockingOverlay` 或 `Modal` 时，焦点候选会限制在最上层阻断面板内。没有阻断面板时，如果页面上存在多个 panel，焦点会优先落在层级最高且包含按钮的 panel 内。
+`BlockingOverlay` 始终拥有最高焦点优先级。其后在 `Modal` 与包含可聚焦候选的 `Floating` 之间按最终 ZIndex 选择最上层 panel；没有这些 panel 时，焦点优先落在层级最高且包含按钮的普通 panel 内。
 
-这个规则避免弹窗打开后 Tab 跳到下层页面按钮。
+这个规则避免弹窗打开后 Tab 跳到下层页面按钮，同时允许 Modal 上方随后打开的 Dropdown 接管 option 焦点。没有焦点候选的 Tooltip 不会抢走 owner 或 Modal 焦点。
 
 ## 键盘激活
 
@@ -70,6 +70,8 @@ pub struct UiFocusState {
 - 按住 Ctrl 时滚轮 x/y 会交换，用于横向滚动。
 - 拖拽滚动会记录起始 `ScrollPosition`，再按 pointer drag 距离更新。
 - `UiScrollViewConfig.should_block_lower` 默认是 `true`，会通过 `Pickable` 阻断下层 hover。
+
+Dropdown option 列表复用同一 `UiScrollView`，而 Dropdown 的全屏 dismiss surface 会阻断底层页面和底层滚动容器；popup body 内滚动只作用于 option 列表。
 
 ## 文本输入
 

@@ -12,7 +12,10 @@ use crate::framework::ui::{
     widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
 };
 use crate::game::ui_ids::{
-    ANCHOR_UI_GALLERY_ANIMATIONS, ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES,
+    ANCHOR_UI_GALLERY_ANIMATIONS, ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES,
+    ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN, ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED,
+    ANCHOR_UI_GALLERY_COMPONENT_TOGGLES, ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP,
+    ANCHOR_UI_GALLERY_COMPONENTS, ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES,
     ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
     ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES, ANCHOR_UI_GALLERY_TYPOGRAPHY,
     ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR,
@@ -317,6 +320,36 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
         SCROLL_UI_GALLERY_MAIN,
         ANCHOR_UI_GALLERY_ANIMATIONS,
     ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::Components,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_COMPONENTS,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::ComponentCheckboxes,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::ComponentToggles,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_COMPONENT_TOGGLES,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::ComponentSegmented,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::ComponentOverlays,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::ComponentTooltip,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP,
+    ),
     UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::Top,
         SCROLL_UI_GALLERY_MAIN,
@@ -478,7 +511,7 @@ mod tests {
             .expect("ui gallery should be registered for audit");
         let recipe = screen.recipe.expect("ui gallery should have audit recipe");
 
-        assert_eq!(recipe.captures.len(), 15);
+        assert_eq!(recipe.captures.len(), 21);
         assert_eq!(
             recipe.captures[0].state,
             UiAuditCaptureState::VisualFoundation
@@ -497,9 +530,30 @@ mod tests {
         assert_eq!(recipe.captures[9].state, UiAuditCaptureState::StyleScopes);
         assert_eq!(recipe.captures[10].state, UiAuditCaptureState::Effects);
         assert_eq!(recipe.captures[11].state, UiAuditCaptureState::Animations);
-        assert_eq!(recipe.captures[12].state, UiAuditCaptureState::Top);
-        assert_eq!(recipe.captures[13].state, UiAuditCaptureState::Middle);
-        assert_eq!(recipe.captures[14].state, UiAuditCaptureState::Bottom);
+        assert_eq!(recipe.captures[12].state, UiAuditCaptureState::Components);
+        assert_eq!(
+            recipe.captures[13].state,
+            UiAuditCaptureState::ComponentCheckboxes
+        );
+        assert_eq!(
+            recipe.captures[14].state,
+            UiAuditCaptureState::ComponentToggles
+        );
+        assert_eq!(
+            recipe.captures[15].state,
+            UiAuditCaptureState::ComponentSegmented
+        );
+        assert_eq!(
+            recipe.captures[16].state,
+            UiAuditCaptureState::ComponentOverlays
+        );
+        assert_eq!(
+            recipe.captures[17].state,
+            UiAuditCaptureState::ComponentTooltip
+        );
+        assert_eq!(recipe.captures[18].state, UiAuditCaptureState::Top);
+        assert_eq!(recipe.captures[19].state, UiAuditCaptureState::Middle);
+        assert_eq!(recipe.captures[20].state, UiAuditCaptureState::Bottom);
         assert_eq!(
             recipe.captures[0].scroll.map(|scroll| scroll.target_id),
             Some(SCROLL_UI_GALLERY_MAIN)
@@ -563,6 +617,42 @@ mod tests {
                 .scroll
                 .map(|scroll| scroll.target.as_str()),
             Some(ANCHOR_UI_GALLERY_IMAGE_ATLAS.as_str())
+        );
+        assert_eq!(
+            recipe.captures[12]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_COMPONENTS.as_str())
+        );
+        assert_eq!(
+            recipe.captures[13]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES.as_str())
+        );
+        assert_eq!(
+            recipe.captures[14]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_COMPONENT_TOGGLES.as_str())
+        );
+        assert_eq!(
+            recipe.captures[15]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED.as_str())
+        );
+        assert_eq!(
+            recipe.captures[16]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN.as_str())
+        );
+        assert_eq!(
+            recipe.captures[17]
+                .scroll
+                .map(|scroll| scroll.target.as_str()),
+            Some(ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP.as_str())
         );
     }
 }

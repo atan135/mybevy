@@ -48,6 +48,13 @@
             sha256: "1b5bdc83587ae575254aac85bd69a578937022700f809ebe956d991b297c03e0",
         ),
         (
+            id: "chevron_down",
+            path: "ui/icons/chevron-down.png",
+            tint_policy: "monochrome_tintable",
+            source: "https://raw.githubusercontent.com/lucide-icons/lucide/0.468.0/icons/chevron-down.svg",
+            sha256: "904312c34593574a364d6c363d9bf42fd292a158127a79567ec8e59aaaef3c31",
+        ),
+        (
             id: "loading",
             path: "ui/icons/loading.png",
             tint_policy: "monochrome_tintable",

@@ -8,6 +8,7 @@
 - [UI模式与面板层级.md](UI模式与面板层级.md)：页面模式、Panel Manager、层级和关闭语义。
 - [UI输入路由与焦点.md](UI输入路由与焦点.md)：输入阻断、焦点候选、键盘激活和滚动协作。
 - [UI组件功能与使用.md](UI组件功能与使用.md)：文本、按钮、图标按钮、选择控件、数值控件、输入框和绑定。
+- [UI通用组件与交互状态.md](UI通用组件与交互状态.md)：Badge、Progress、Tab、正式选择控件、Tooltip、Dropdown、九态支持矩阵和稳定事件。
 - [UI高保真视觉能力.md](UI高保真视觉能力.md)：参考图视觉能力分类、支持状态、Direct Bevy 逃生口、固定 Gallery 验收区域和资源许可边界。
 - [UI视觉效果与材质边界.md](UI视觉效果与材质边界.md)：阴影、渐变、独立描边、裁切、自定义材质准入、降级和移动端预算。
 - [UI动画与动态效果.md](UI动画与动态效果.md)：通用属性轨道、打断/完成、动态效果策略、主题刷新和确定性审计。
@@ -48,7 +49,7 @@ flowchart TD
     PanelManager["UiPanelPlugin / Panel Manager"]
     LayerRoots["UiLayerRoot<br/>Page / Floating / Modal / Loading / Toast / Debug"]
     Panels["UiPanelRoot<br/>Page / Hud / Floating / Modal / BlockingOverlay"]
-    Overlays["Toast / Loading / Confirm / Floating"]
+    Overlays["Toast / Loading / Confirm / Floating / Tooltip / Dropdown"]
 
     ScreensPlugin --> NavigationPlugin
     ScreensPlugin --> UiFrameworkPlugin

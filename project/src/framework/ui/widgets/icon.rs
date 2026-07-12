@@ -12,6 +12,7 @@ impl UiIconId {
     pub(crate) const REMOVE: Self = Self::new("remove");
     pub(crate) const HELP: Self = Self::new("help");
     pub(crate) const CLOSE: Self = Self::new("close");
+    pub(crate) const CHEVRON_DOWN: Self = Self::new("chevron_down");
     pub(crate) const LOADING: Self = Self::new("loading");
     pub(crate) const ARROW_LEFT: Self = Self::new("arrow_left");
     pub(crate) const ARROW_RIGHT: Self = Self::new("arrow_right");
@@ -103,6 +104,12 @@ pub(crate) const UI_ICON_DESCRIPTORS: &[UiIconDescriptor] = &[
         UiIconId::CLOSE,
         "ui/icons/close.png",
         22.0,
+        UiIconTintPolicy::MonochromeTintable,
+    ),
+    UiIconDescriptor::new(
+        UiIconId::CHEVRON_DOWN,
+        "ui/icons/chevron-down.png",
+        20.0,
         UiIconTintPolicy::MonochromeTintable,
     ),
     UiIconDescriptor::new(
@@ -344,6 +351,15 @@ pub(crate) fn apply_ui_icon_request(
         visual.requested = requested;
     }
 
+    apply_ui_icon_tint(requested_tint, image, visual, resolution);
+}
+
+pub(crate) fn apply_ui_icon_tint(
+    requested_tint: Color,
+    image: &mut ImageNode,
+    visual: &mut UiIconVisual,
+    resolution: &UiIconResolutionStatus,
+) {
     if visual.requested_tint != requested_tint {
         visual.requested_tint = requested_tint;
     }

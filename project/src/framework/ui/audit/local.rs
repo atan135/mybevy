@@ -18,8 +18,10 @@ use crate::framework::ui::{
     },
     style::{UiResolvedEffectDebugSnapshot, UiResolvedStyleDebugSnapshot},
     widgets::{
-        UiScrollAuditAnchorId, UiScrollAuditId, UiScrollAuditMetrics, UiScrollAuditPosition,
-        UiScrollView, scroll_audit_metrics, scroll_audit_position_reached, set_scroll_audit_anchor,
+        DisabledButton, FocusedButton, UiBadge, UiControlFlags, UiControlMeta, UiControlState,
+        UiProgress, UiScrollAuditAnchorId, UiScrollAuditId, UiScrollAuditMetrics,
+        UiScrollAuditPosition, UiScrollView, UiTooltip, UiTooltipTone, resolve_control_state,
+        scroll_audit_metrics, scroll_audit_position_reached, set_scroll_audit_anchor,
         set_scroll_audit_position,
     },
 };
@@ -45,6 +47,12 @@ const ICON_STATES_CAPTURE_STATE: &str = "icon_states";
 const STYLE_SCOPES_CAPTURE_STATE: &str = "style_scopes";
 const EFFECTS_CAPTURE_STATE: &str = "effects";
 const ANIMATIONS_CAPTURE_STATE: &str = "animations";
+const COMPONENTS_CAPTURE_STATE: &str = "components";
+const COMPONENT_CHECKBOXES_CAPTURE_STATE: &str = "component_checkboxes";
+const COMPONENT_TOGGLES_CAPTURE_STATE: &str = "component_toggles";
+const COMPONENT_SEGMENTED_CAPTURE_STATE: &str = "component_segmented";
+const COMPONENT_OVERLAYS_CAPTURE_STATE: &str = "component_overlays";
+const COMPONENT_TOOLTIP_CAPTURE_STATE: &str = "component_tooltip";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
@@ -332,6 +340,12 @@ pub(crate) enum UiAuditCaptureState {
     StyleScopes,
     Effects,
     Animations,
+    Components,
+    ComponentCheckboxes,
+    ComponentToggles,
+    ComponentSegmented,
+    ComponentOverlays,
+    ComponentTooltip,
     Top,
     Middle,
     Bottom,
@@ -353,6 +367,12 @@ impl UiAuditCaptureState {
             Self::StyleScopes => STYLE_SCOPES_CAPTURE_STATE,
             Self::Effects => EFFECTS_CAPTURE_STATE,
             Self::Animations => ANIMATIONS_CAPTURE_STATE,
+            Self::Components => COMPONENTS_CAPTURE_STATE,
+            Self::ComponentCheckboxes => COMPONENT_CHECKBOXES_CAPTURE_STATE,
+            Self::ComponentToggles => COMPONENT_TOGGLES_CAPTURE_STATE,
+            Self::ComponentSegmented => COMPONENT_SEGMENTED_CAPTURE_STATE,
+            Self::ComponentOverlays => COMPONENT_OVERLAYS_CAPTURE_STATE,
+            Self::ComponentTooltip => COMPONENT_TOOLTIP_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -527,6 +547,22 @@ struct UiAuditMetadataWorld<'w, 's> {
             &'static UiAnimationDebugSnapshot,
         ),
     >,
+    control_snapshots: Query<
+        'w,
+        's,
+        (
+            Entity,
+            Option<&'static Name>,
+            &'static UiControlMeta,
+            Option<&'static Interaction>,
+            Option<&'static UiControlFlags>,
+            Has<FocusedButton>,
+            Has<DisabledButton>,
+            Option<&'static UiBadge>,
+            Option<&'static UiProgress>,
+            Option<&'static UiTooltip>,
+        ),
+    >,
     primary_window: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
 }
 
@@ -682,6 +718,7 @@ fn drive_local_ui_audit(
                     &metadata_world.effect_resolutions,
                     &metadata_world.motion_policy,
                     &metadata_world.animation_snapshots,
+                    &metadata_world.control_snapshots,
                     metadata_world.primary_window.single().ok(),
                 );
                 match write_capture_metadata(&capture, &metadata) {
@@ -1291,6 +1328,18 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::Effects)
     } else if value.eq_ignore_ascii_case(ANIMATIONS_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Animations)
+    } else if value.eq_ignore_ascii_case(COMPONENTS_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Components)
+    } else if value.eq_ignore_ascii_case(COMPONENT_CHECKBOXES_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::ComponentCheckboxes)
+    } else if value.eq_ignore_ascii_case(COMPONENT_TOGGLES_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::ComponentToggles)
+    } else if value.eq_ignore_ascii_case(COMPONENT_SEGMENTED_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::ComponentSegmented)
+    } else if value.eq_ignore_ascii_case(COMPONENT_OVERLAYS_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::ComponentOverlays)
+    } else if value.eq_ignore_ascii_case(COMPONENT_TOOLTIP_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::ComponentTooltip)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -1458,6 +1507,18 @@ fn build_capture_metadata(
     effect_resolutions: &Query<(Entity, Option<&Name>, &UiResolvedEffectDebugSnapshot)>,
     motion_policy: &UiMotionPolicy,
     animation_snapshots: &Query<(Entity, Option<&Name>, &UiAnimationDebugSnapshot)>,
+    control_snapshots: &Query<(
+        Entity,
+        Option<&Name>,
+        &UiControlMeta,
+        Option<&Interaction>,
+        Option<&UiControlFlags>,
+        Has<FocusedButton>,
+        Has<DisabledButton>,
+        Option<&UiBadge>,
+        Option<&UiProgress>,
+        Option<&UiTooltip>,
+    )>,
     primary_window: Option<&Window>,
 ) -> UiAuditMetadata {
     UiAuditMetadata {
@@ -1476,6 +1537,7 @@ fn build_capture_metadata(
         effect_resolutions: collect_effect_resolution_metadata(effect_resolutions),
         motion_policy: motion_policy.as_str().to_owned(),
         animation_snapshots: collect_animation_snapshot_metadata(animation_snapshots),
+        control_snapshots: collect_control_snapshot_metadata(control_snapshots),
         window: primary_window.map(UiAuditWindowMetadata::from),
         stats: UiAuditStatsMetadata::from(stats),
     }
@@ -1496,6 +1558,7 @@ struct UiAuditMetadata {
     effect_resolutions: Vec<UiAuditEffectResolutionMetadata>,
     motion_policy: String,
     animation_snapshots: Vec<UiAuditAnimationSnapshotMetadata>,
+    control_snapshots: Vec<UiAuditControlSnapshotMetadata>,
     window: Option<UiAuditWindowMetadata>,
     stats: UiAuditStatsMetadata,
 }
@@ -1579,6 +1642,95 @@ fn collect_animation_snapshot_metadata(
             .as_deref()
             .unwrap_or_default()
             .cmp(right.name.as_deref().unwrap_or_default())
+            .then_with(|| left.entity.cmp(&right.entity))
+    });
+    values
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+struct UiAuditControlSnapshotMetadata {
+    entity: String,
+    name: Option<String>,
+    control_id: String,
+    kind: String,
+    state: String,
+    selected: bool,
+    disabled: bool,
+    loading: bool,
+    empty: bool,
+    error: bool,
+}
+
+fn collect_control_snapshot_metadata(
+    snapshots: &Query<(
+        Entity,
+        Option<&Name>,
+        &UiControlMeta,
+        Option<&Interaction>,
+        Option<&UiControlFlags>,
+        Has<FocusedButton>,
+        Has<DisabledButton>,
+        Option<&UiBadge>,
+        Option<&UiProgress>,
+        Option<&UiTooltip>,
+    )>,
+) -> Vec<UiAuditControlSnapshotMetadata> {
+    let mut values = snapshots
+        .iter()
+        .map(
+            |(
+                entity,
+                name,
+                meta,
+                interaction,
+                flags,
+                focused,
+                disabled_marker,
+                badge,
+                progress,
+                tooltip,
+            )| {
+                let flags = flags.copied().unwrap_or_default();
+                let state = badge
+                    .map(|badge| badge.state)
+                    .or_else(|| progress.map(|progress| progress.state))
+                    .or_else(|| {
+                        tooltip.map(|tooltip| {
+                            if disabled_marker {
+                                UiControlState::Disabled
+                            } else if tooltip.tone == UiTooltipTone::Error {
+                                UiControlState::Error
+                            } else {
+                                UiControlState::Normal
+                            }
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        resolve_control_state(
+                            interaction.copied().unwrap_or(Interaction::None),
+                            focused,
+                            flags,
+                        )
+                    });
+                UiAuditControlSnapshotMetadata {
+                    entity: format!("{entity:?}"),
+                    name: name.map(|name| name.as_str().to_owned()),
+                    control_id: meta.id.as_str().to_owned(),
+                    kind: format!("{:?}", meta.kind).to_ascii_lowercase(),
+                    state: format!("{state:?}").to_ascii_lowercase(),
+                    selected: flags.selected || state == UiControlState::Selected,
+                    disabled: flags.disabled || state == UiControlState::Disabled,
+                    loading: flags.loading || state == UiControlState::Loading,
+                    empty: flags.empty || state == UiControlState::Empty,
+                    error: flags.error || state == UiControlState::Error,
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.control_id
+            .cmp(&right.control_id)
+            .then_with(|| left.name.cmp(&right.name))
             .then_with(|| left.entity.cmp(&right.entity))
     });
     values
@@ -2133,6 +2285,102 @@ mod tests {
         assert_eq!(config.states, vec![UiAuditCaptureState::Animations]);
         assert!(config.states_from_env);
         assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn config_accepts_component_capture_states() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (
+                    ENV_UI_AUDIT_STATES,
+                    "components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip",
+                ),
+            ]),
+            100,
+        );
+
+        assert_eq!(
+            config.states,
+            vec![
+                UiAuditCaptureState::Components,
+                UiAuditCaptureState::ComponentCheckboxes,
+                UiAuditCaptureState::ComponentToggles,
+                UiAuditCaptureState::ComponentSegmented,
+                UiAuditCaptureState::ComponentOverlays,
+                UiAuditCaptureState::ComponentTooltip,
+            ]
+        );
+        assert!(config.states_from_env);
+        assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn audit_metadata_collects_control_snapshots_in_stable_id_order() {
+        let mut world = World::new();
+        world.spawn((
+            Name::new("control-z"),
+            UiControlMeta::new(
+                crate::framework::ui::widgets::UiControlId::new("z.control"),
+                crate::framework::ui::widgets::UiControlKind::Dropdown,
+            ),
+            Interaction::Hovered,
+            UiControlFlags {
+                error: true,
+                ..default()
+            },
+        ));
+        world.spawn((
+            Name::new("control-a"),
+            UiControlMeta::new(
+                crate::framework::ui::widgets::UiControlId::new("a.control"),
+                crate::framework::ui::widgets::UiControlKind::Badge,
+            ),
+            UiBadge {
+                state: crate::framework::ui::widgets::UiControlState::Selected,
+            },
+        ));
+        world.spawn((
+            Name::new("tooltip-disabled"),
+            UiControlMeta::new(
+                crate::framework::ui::widgets::UiControlId::new("tooltip.disabled"),
+                crate::framework::ui::widgets::UiControlKind::Tooltip,
+            ),
+            UiTooltip {
+                text: "Unavailable".to_owned(),
+                tone: UiTooltipTone::Error,
+            },
+            DisabledButton,
+        ));
+        let mut state = SystemState::<
+            Query<(
+                Entity,
+                Option<&Name>,
+                &UiControlMeta,
+                Option<&Interaction>,
+                Option<&UiControlFlags>,
+                Has<FocusedButton>,
+                Has<DisabledButton>,
+                Option<&UiBadge>,
+                Option<&UiProgress>,
+                Option<&UiTooltip>,
+            )>,
+        >::new(&mut world);
+        let query = state.get(&world);
+
+        let metadata = collect_control_snapshot_metadata(&query);
+
+        assert_eq!(metadata.len(), 3);
+        assert_eq!(metadata[0].control_id, "a.control");
+        assert_eq!(metadata[0].state, "selected");
+        assert!(metadata[0].selected);
+        assert_eq!(metadata[1].control_id, "tooltip.disabled");
+        assert_eq!(metadata[1].state, "disabled");
+        assert!(metadata[1].disabled);
+        assert_eq!(metadata[2].control_id, "z.control");
+        assert_eq!(metadata[2].state, "error");
+        assert!(metadata[2].error);
     }
 
     #[test]

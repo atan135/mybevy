@@ -147,6 +147,7 @@ pub(crate) struct ButtonColors {
 pub(crate) enum UiThemeBackgroundRole {
     Screen,
     Panel,
+    Popover,
     LoadingOverlay,
     ModalOverlay,
 }
@@ -204,6 +205,7 @@ impl UiThemeBackgroundRole {
         match self {
             Self::Screen => theme.colors.screen_background,
             Self::Panel => theme.colors.panel_background,
+            Self::Popover => theme.colors.panel_background.with_alpha(1.0),
             Self::LoadingOverlay => theme.colors.loading_overlay_background,
             Self::ModalOverlay => theme.colors.modal_overlay_background,
         }
@@ -1396,6 +1398,13 @@ mod tests {
                 UiThemeBackgroundRole::ModalOverlay,
             ))
             .id();
+        let popover = app
+            .world_mut()
+            .spawn((
+                BackgroundColor(Color::BLACK),
+                UiThemeBackgroundRole::Popover,
+            ))
+            .id();
 
         app.update();
 
@@ -1414,6 +1423,14 @@ mod tests {
                 .unwrap()
                 .0,
             (0.37, 0.38, 0.39, 0.73),
+        );
+        assert_srgba(
+            app.world()
+                .entity(popover)
+                .get::<BackgroundColor>()
+                .unwrap()
+                .0,
+            (0.21, 0.22, 0.23, 1.0),
         );
     }
 

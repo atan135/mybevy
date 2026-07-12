@@ -1,6 +1,6 @@
 # UI 覆盖层与弹窗
 
-覆盖层实现位于 `project/src/framework/ui/overlays/`，并由 `UiOverlayPlugin` 和 `UiPanelPlugin` 统一调度。当前覆盖层包括 Toast、Loading、Confirm modal 和 Floating panel。
+覆盖层实现位于 `project/src/framework/ui/overlays/`，并由 `UiOverlayPlugin` 和 `UiPanelPlugin` 统一调度。当前覆盖层包括 Toast、Loading、Confirm modal、Floating panel、Tooltip 和 Dropdown。
 
 ## Toast
 
@@ -68,10 +68,19 @@ Floating 不铺满屏幕，也不是阻断 overlay。它会参与 CloseTop，但
 `Escape` 和 `BrowserBack` 由 Panel Manager 转成 `UiPanelCommand::CloseTop`。关闭顺序：
 
 1. 可取消的 `BlockingOverlay`。
-2. 最近打开的 `Modal`。
-3. 最近打开的 `Floating`。
+2. 最近打开的 transient panel，按真实打开顺序在 `Modal` 与 `Floating` 间选择。
 
 Toast 不参与 CloseTop。Page/HUD 不参与 CloseTop。
+
+这个顺序保证 Modal 内随后打开的 Dropdown 会先于底层 Modal 关闭；如果 Floating 先打开、Modal 后打开，则仍先关闭 Modal。
+
+## Tooltip 和 Dropdown
+
+Tooltip 和 Dropdown 固定使用 `UI_PANEL_TOOLTIP` / `UI_PANEL_DROPDOWN`，位于 `UiLayer::Floating` 和 `ZIndex(120)`。同类新请求会替换旧 panel。
+
+Tooltip 根节点忽略 picking，不打断 owner hover，也没有焦点候选。Dropdown 使用全屏透明 dismiss surface 阻断下层交互，popup body 和 option 自己接收点击；点击外部、Escape/BrowserBack、选择 option 或 anchor despawn 都有明确关闭路径。option 列表使用框架滚动容器。
+
+Popover 根据 anchor 的最终布局矩形定位，优先下方、空间不足时翻转上方，并 clamp 到安全区和 viewport。Dropdown 在 Modal 上方打开时成为最高可聚焦 panel；选择、Escape 或 click-away 关闭后优先恢复 trigger，不会跳到底层任意按钮。Escape Closed 事件以 Panel Manager 的真实 CloseTop 目标为准。详细事件 reason、支持状态和失败边界见 [UI通用组件与交互状态.md](UI通用组件与交互状态.md)。
 
 ## owner 清理
 

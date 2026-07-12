@@ -123,6 +123,18 @@ New-MonochromeIcon "close" {
     }
 }
 
+New-MonochromeIcon "chevron-down" {
+    param($graphics)
+    $pen = New-RoundPen ([System.Drawing.Color]::White)
+    try {
+        $graphics.DrawLine($pen, 6 * $script:Scale, 9 * $script:Scale, 12 * $script:Scale, 15 * $script:Scale)
+        $graphics.DrawLine($pen, 12 * $script:Scale, 15 * $script:Scale, 18 * $script:Scale, 9 * $script:Scale)
+    }
+    finally {
+        $pen.Dispose()
+    }
+}
+
 New-MonochromeIcon "loading" {
     param($graphics)
     for ($index = 0; $index -lt 8; $index++) {

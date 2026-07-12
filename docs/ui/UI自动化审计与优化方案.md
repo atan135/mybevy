@@ -145,7 +145,7 @@ MYBEVY_UI_AUDIT_EXIT_ON_FINISH=1
 - `MYBEVY_UI_AUDIT`：启用审计模式。
 - `MYBEVY_UI_AUDIT_SCREEN`：目标界面 alias，复用 `TOUCH_START_SCREEN` 的页面命名规则。
 - `MYBEVY_UI_AUDIT_OUTPUT`：本轮审计输出目录。
-- `MYBEVY_UI_AUDIT_STATES`：目标状态列表，当前支持 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`top`、`middle`、`bottom`、`initial`。其中前两项是 UI Gallery 顶部固定区域，高级图片、文字和图标状态使用命名 child anchor 分段定位。
+- `MYBEVY_UI_AUDIT_STATES`：目标状态列表，当前支持 `image_fit`、`visual_foundation`、`image_modes`、`image_tiling`、`image_atlas`、`typography`、`typography_overflow`、`icons`、`icon_states`、`style_scopes`、`effects`、`animations`、`components`、`component_checkboxes`、`component_toggles`、`component_segmented`、`component_overlays`、`component_tooltip`、`top`、`middle`、`bottom`、`initial`。专题状态使用命名 child anchor 分段定位；最后两个组件状态分别确定性打开 Dropdown 和 Tooltip。
 - `MYBEVY_UI_AUDIT_EXIT_ON_FINISH`：审计完成后自动退出进程，方便外部 runner 批量执行。
 
 窗口尺寸继续复用现有参数：
@@ -423,7 +423,7 @@ project/assets/ui/audit/screens.ron
 
 | screen | scroll target | states |
 | --- | --- | --- |
-| `ui_gallery` | `ui_gallery.main` | `image_fit`, `visual_foundation`, `image_modes` / `image_tiling` / `image_atlas`, `typography` / `typography_overflow`, `icons` / `icon_states`（同名 `ui_gallery.*` anchor）, `top`, `middle`, `bottom` |
+| `ui_gallery` | `ui_gallery.main` | `image_fit`, `visual_foundation`, `image_modes` / `image_tiling` / `image_atlas`, `typography` / `typography_overflow`, `icons` / `icon_states`, `style_scopes`, `effects`, `animations`, `components` / `component_checkboxes` / `component_toggles` / `component_segmented` / `component_overlays` / `component_tooltip`（同名 `ui_gallery.*` anchor）, `top`, `middle`, `bottom` |
 
 其他 screen 默认只有 `initial`。如果对没有 recipe 的 screen 显式请求任一图片 state、`top`、`middle` 或 `bottom`，本地审计会失败并写出 `config_invalid`。远程 runner 会按约定发送 `<screen>.main` 作为滚动目标，真实能否执行取决于远程 client 是否注册对应稳定 ID。
 

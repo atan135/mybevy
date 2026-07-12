@@ -48,6 +48,18 @@ pub(in crate::game) const ANCHOR_UI_GALLERY_EFFECTS: UiScrollAuditAnchorId =
     UiScrollAuditAnchorId::new("ui_gallery.effects");
 pub(in crate::game) const ANCHOR_UI_GALLERY_ANIMATIONS: UiScrollAuditAnchorId =
     UiScrollAuditAnchorId::new("ui_gallery.animations");
+pub(in crate::game) const ANCHOR_UI_GALLERY_COMPONENTS: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.components");
+pub(in crate::game) const ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.components.dropdown");
+pub(in crate::game) const ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.components.tooltip");
+pub(in crate::game) const ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.components.checkboxes");
+pub(in crate::game) const ANCHOR_UI_GALLERY_COMPONENT_TOGGLES: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.components.toggles");
+pub(in crate::game) const ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED: UiScrollAuditAnchorId =
+    UiScrollAuditAnchorId::new("ui_gallery.components.segmented");
 pub(in crate::game) const PANEL_GALLERY_FLOATING: UiPanelId = UiPanelId::new("gallery_floating");
 pub(in crate::game) const PANEL_TOUCH_RIPPLE_HUD: UiPanelId = UiPanelId::new("touch_ripple_hud");
 #[allow(dead_code)]

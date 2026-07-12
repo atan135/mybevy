@@ -1,20 +1,18 @@
 use bevy::{ecs::hierarchy::ChildSpawnerCommands, prelude::*};
 
-#[cfg(test)]
-use crate::framework::ui::audit::UiAuditCaptureState;
 use crate::framework::ui::{
-    audit::UiAuditCaptureStateApplied,
+    audit::{UiAuditCaptureState, UiAuditCaptureStateApplied},
     core::{
-        UI_PANEL_GLOBAL_LOADING, UiAnimationCommand, UiAnimationDirection, UiAnimationEasing,
-        UiAnimationId, UiAnimationRepeat, UiAnimationSpec, UiAnimations, UiFloatingPanel, UiLayer,
-        UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest,
-        UiPanelRoot, UiViewport, UiWidthClass,
+        UI_PANEL_DROPDOWN, UI_PANEL_GLOBAL_LOADING, UI_PANEL_TOOLTIP, UiAnimationCommand,
+        UiAnimationDirection, UiAnimationEasing, UiAnimationId, UiAnimationRepeat, UiAnimationSpec,
+        UiAnimations, UiFloatingPanel, UiLayer, UiLayerRoot, UiMetrics, UiPanelCommand, UiPanelId,
+        UiPanelKind, UiPanelRequest, UiPanelRoot, UiViewport, UiWidthClass,
         binding::{UiBindingValues, UiBoundDisabled, UiBoundText, UiBoundVisibility},
     },
     i18n::{UiI18n, UiI18nText},
     overlays::{
-        UiConfirmModal, UiI18nTextSpec, UiLoading, UiModalActionSpec, UiModalActionStyle,
-        UiOverlayCommand, UiToast,
+        UiConfirmModal, UiDropdownPanel, UiI18nTextSpec, UiLoading, UiModalActionSpec,
+        UiModalActionStyle, UiOverlayCommand, UiToast,
     },
     style::{
         UI_EFFECT_PRESET_GALLERY_COMPOSITE, UI_EFFECT_PRESET_GALLERY_GRADIENT,
@@ -32,20 +30,23 @@ use crate::framework::ui::{
     widgets::{
         DisabledTextInput, FocusedButton, ReadonlyTextInput, SelectedButton, UiAdvancedImageMode,
         UiAdvancedImageSource, UiAdvancedImageSpec, UiAlign, UiAtlasFrame, UiButtonEvent,
-        UiButtonEventKind, UiButtonVisualState, UiIconId, UiIconLabelPlacement, UiImageConstraints,
-        UiImageFit, UiImageFocus, UiImageLength, UiImagePivot, UiImagePixelRect, UiImagePixelSize,
-        UiImageSize, UiImageTextureSource, UiImageTiling, UiJustify, UiNineSlice,
-        UiResponsiveGridColumns, UiTextInputAlphanumeric, UiTextInputError, UiTextInputHelperText,
-        UiTextInputMaxChars, UiTextInputRequired, UiTextInputSubmitted,
-        UiTextInputValidationMessage, UiTileAxis, checkbox_key, checked_checkbox_key,
-        disabled_checkbox_key, disabled_icon_button_key, disabled_primary_action_button_key,
+        UiButtonEventKind, UiButtonVisualState, UiControlFlags, UiControlId, UiControlMeta,
+        UiControlOwner, UiControlState, UiDropdown, UiDropdownOption, UiIconId,
+        UiIconLabelPlacement, UiImageConstraints, UiImageFit, UiImageFocus, UiImageLength,
+        UiImagePivot, UiImagePixelRect, UiImagePixelSize, UiImageSize, UiImageTextureSource,
+        UiImageTiling, UiJustify, UiNineSlice, UiResponsiveGridColumns, UiTextInputAlphanumeric,
+        UiTextInputError, UiTextInputHelperText, UiTextInputMaxChars, UiTextInputRequired,
+        UiTextInputSubmitted, UiTextInputValidationMessage, UiTileAxis, UiTooltipPinned,
+        UiTooltipTone, badge_key, checkbox_key, checked_checkbox_key, disabled_checkbox_key,
+        disabled_icon_button_key, disabled_primary_action_button_key,
         disabled_secondary_action_button_key, disabled_segment_option_key, disabled_slider_key,
-        disabled_stepper_key, disabled_toggle_key, icon_button_key, icon_label_button_key,
-        image_button_key, loading_icon_button_key, loading_primary_action_button_key,
-        primary_action_button_key, screen_label, screen_label_key, screen_title_key,
-        secondary_action_button_key, segment_option_key, segmented_control,
-        selected_segment_option_key, slider_key, stepper_key, text_input, text_input_form_message,
-        toggle_key, toggle_on_key, try_ui_advanced_image, ui_column, ui_image, ui_image_panel_node,
+        disabled_stepper_key, disabled_toggle_key, dropdown_key, icon_button_key,
+        icon_label_button_key, image_button_key, loading_icon_button_key,
+        loading_primary_action_button_key, primary_action_button_key, progress_key, screen_label,
+        screen_label_key, screen_title_key, secondary_action_button_key, segment_option_key,
+        segmented_control, selected_segment_option_key, slider_key, stepper_key, tab_key, tab_list,
+        text_input, text_input_form_message, toggle_key, toggle_on_key, tooltip_target,
+        try_ui_advanced_image, ui_column, ui_image, ui_image_panel_node,
         ui_image_panel_node_with_radius, ui_responsive_column, ui_responsive_grid,
         ui_scroll_column, ui_thumbnail_grid,
     },
@@ -53,12 +54,15 @@ use crate::framework::ui::{
 use crate::game::{
     navigation::{AppUiMode, game_panel_root, secondary_route_button_key},
     ui_ids::{
-        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_ANIMATIONS, ANCHOR_UI_GALLERY_EFFECTS,
-        ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS,
-        ANCHOR_UI_GALLERY_IMAGE_MODES, ANCHOR_UI_GALLERY_IMAGE_TILING,
-        ANCHOR_UI_GALLERY_STYLE_SCOPES, ANCHOR_UI_GALLERY_TYPOGRAPHY,
-        ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
-        PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+        ACTION_CANCEL, ACTION_CONFIRM, ANCHOR_UI_GALLERY_ANIMATIONS,
+        ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES, ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN,
+        ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED, ANCHOR_UI_GALLERY_COMPONENT_TOGGLES,
+        ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP, ANCHOR_UI_GALLERY_COMPONENTS,
+        ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS,
+        ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
+        ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES,
+        ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, MODAL_GALLERY_CONFIRM,
+        OWNER_UI_GALLERY, PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
 
@@ -231,6 +235,18 @@ struct GalleryEffectsRegion;
 
 #[derive(Component)]
 struct GalleryAnimationsRegion;
+
+#[derive(Component)]
+struct GalleryComponentsRegion;
+
+#[derive(Clone, Copy, Component)]
+struct GalleryControlStatePreview(UiControlState);
+
+#[derive(Component)]
+pub(super) struct GalleryAuditDropdown;
+
+#[derive(Component)]
+pub(super) struct GalleryAuditTooltip;
 
 #[derive(Component)]
 pub(super) struct GalleryAnimationSample;
@@ -683,6 +699,19 @@ pub(super) fn setup_ui_gallery(
                             theme,
                             metrics,
                             fonts,
+                            i18n,
+                            width_class,
+                        );
+                    });
+
+                body.spawn(gallery_components_panel(theme))
+                    .with_children(|components_panel| {
+                        spawn_gallery_component_samples(
+                            components_panel,
+                            theme,
+                            metrics,
+                            fonts,
+                            asset_server,
                             i18n,
                             width_class,
                         );
@@ -1479,6 +1508,127 @@ pub(super) fn apply_gallery_icon_state_previews(world: &mut World) {
     }
 }
 
+pub(super) fn apply_gallery_control_state_previews(world: &mut World) {
+    let previews = {
+        let mut query = world.query::<(Entity, &GalleryControlStatePreview)>();
+        query
+            .iter(world)
+            .map(|(entity, preview)| (entity, preview.0))
+            .collect::<Vec<_>>()
+    };
+
+    for (entity, state) in previews {
+        let mut entity = world.entity_mut(entity);
+        let desired_interaction = match state {
+            UiControlState::Hovered => Interaction::Hovered,
+            UiControlState::Pressed => Interaction::Pressed,
+            _ => Interaction::None,
+        };
+        if entity.get::<Interaction>() != Some(&desired_interaction) {
+            entity.insert(desired_interaction);
+        }
+
+        let focused = state == UiControlState::Focused;
+        if focused != entity.contains::<FocusedButton>() {
+            if focused {
+                entity.insert(FocusedButton);
+            } else {
+                entity.remove::<FocusedButton>();
+            }
+        }
+        let selected = state == UiControlState::Selected;
+        if selected != entity.contains::<SelectedButton>() {
+            if selected {
+                entity.insert(SelectedButton);
+            } else {
+                entity.remove::<SelectedButton>();
+            }
+        }
+        let flags = UiControlFlags {
+            selected,
+            disabled: state == UiControlState::Disabled,
+            loading: state == UiControlState::Loading,
+            empty: state == UiControlState::Empty,
+            error: state == UiControlState::Error,
+        };
+        if entity.get::<UiControlFlags>() != Some(&flags) {
+            entity.insert(flags);
+        }
+        let disabled = flags.disabled;
+        if disabled != entity.contains::<crate::framework::ui::widgets::DisabledButton>() {
+            if disabled {
+                entity.insert(crate::framework::ui::widgets::DisabledButton);
+            } else {
+                entity.remove::<crate::framework::ui::widgets::DisabledButton>();
+            }
+        }
+        let loading = flags.loading;
+        if loading != entity.contains::<crate::framework::ui::widgets::LoadingButton>() {
+            if loading {
+                entity.insert(crate::framework::ui::widgets::LoadingButton);
+            } else {
+                entity.remove::<crate::framework::ui::widgets::LoadingButton>();
+            }
+        }
+    }
+}
+
+pub(super) fn apply_gallery_component_audit_state(
+    mut commands: Commands,
+    mut state_events: MessageReader<UiAuditCaptureStateApplied>,
+    dropdowns: Query<
+        (Entity, &UiDropdown, &UiControlMeta, Option<&UiControlOwner>),
+        With<GalleryAuditDropdown>,
+    >,
+    tooltips: Query<(Entity, Has<UiTooltipPinned>), With<GalleryAuditTooltip>>,
+    mut panel_commands: MessageWriter<UiPanelCommand>,
+) {
+    for event in state_events.read() {
+        let is_component_state = matches!(
+            event.state,
+            UiAuditCaptureState::Components
+                | UiAuditCaptureState::ComponentCheckboxes
+                | UiAuditCaptureState::ComponentToggles
+                | UiAuditCaptureState::ComponentSegmented
+                | UiAuditCaptureState::ComponentOverlays
+                | UiAuditCaptureState::ComponentTooltip
+        );
+
+        panel_commands.write(UiPanelCommand::Close(UI_PANEL_TOOLTIP));
+        panel_commands.write(UiPanelCommand::Close(UI_PANEL_DROPDOWN));
+        let audit_tooltip = tooltips.single().ok();
+        if let Some((entity, pinned)) = audit_tooltip {
+            let should_pin = event.state == UiAuditCaptureState::ComponentTooltip;
+            if should_pin != pinned {
+                if should_pin {
+                    commands.entity(entity).insert(UiTooltipPinned);
+                } else {
+                    commands.entity(entity).remove::<UiTooltipPinned>();
+                }
+            }
+        }
+        if !is_component_state {
+            continue;
+        }
+        match event.state {
+            UiAuditCaptureState::ComponentOverlays => {
+                let Ok((entity, dropdown, meta, owner)) = dropdowns.single() else {
+                    continue;
+                };
+                panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Dropdown(
+                    UiDropdownPanel {
+                        anchor: entity,
+                        meta: *meta,
+                        owner: owner.map(|owner| owner.0).or(Some(OWNER_UI_GALLERY)),
+                        dropdown: dropdown.clone(),
+                    },
+                )));
+            }
+            _ => {}
+        }
+    }
+}
+
 pub(super) fn tag_gallery_floating_i18n_texts(
     mut commands: Commands,
     floating_i18n: Option<Res<GalleryFloatingI18n>>,
@@ -1609,6 +1759,15 @@ fn gallery_animations_panel(theme: &UiTheme) -> impl Bundle {
         GalleryAnimationsRegion,
         ANCHOR_UI_GALLERY_ANIMATIONS,
         Name::new("Gallery animation and transition region"),
+    )
+}
+
+fn gallery_components_panel(theme: &UiTheme) -> impl Bundle {
+    (
+        gallery_panel(theme),
+        GalleryComponentsRegion,
+        ANCHOR_UI_GALLERY_COMPONENTS,
+        Name::new("Gallery component state matrix"),
     )
 }
 
@@ -2355,6 +2514,610 @@ fn spawn_gallery_effect_tile(
             ));
         }
     });
+}
+
+fn spawn_gallery_component_samples(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    asset_server: &AssetServer,
+    i18n: &UiI18n,
+    width_class: UiWidthClass,
+) {
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.components.section",
+        "Component States",
+    ));
+    panel.spawn(screen_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.components.description",
+        "Reusable component states, stable geometry, overlays, and long-text boundaries.",
+        UiThemeTextStyleRole::Body,
+        UiThemeTextColorRole::Muted,
+    ));
+
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.components.badge",
+        "Badge",
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(2, 3, 6),
+        ))
+        .with_children(|badges| {
+            for (key, fallback, state) in [
+                (
+                    "ui_gallery.components.state.normal",
+                    "Normal",
+                    UiControlState::Normal,
+                ),
+                (
+                    "ui_gallery.components.state.selected",
+                    "Selected",
+                    UiControlState::Selected,
+                ),
+                (
+                    "ui_gallery.components.state.disabled",
+                    "Disabled",
+                    UiControlState::Disabled,
+                ),
+                (
+                    "ui_gallery.components.state.loading",
+                    "Loading",
+                    UiControlState::Loading,
+                ),
+                (
+                    "ui_gallery.components.state.empty",
+                    "Empty",
+                    UiControlState::Empty,
+                ),
+                (
+                    "ui_gallery.components.state.error",
+                    "Error",
+                    UiControlState::Error,
+                ),
+            ] {
+                badges.spawn((
+                    badge_key(theme, fonts, i18n, key, fallback, state),
+                    UiControlOwner(OWNER_UI_GALLERY),
+                    Name::new(format!("Gallery Badge {fallback}")),
+                ));
+            }
+        });
+
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.components.progress",
+        "Progress",
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 2, 3),
+        ))
+        .with_children(|progress| {
+            for (key, fallback, value, state) in [
+                (
+                    "ui_gallery.components.progress.normal",
+                    "72%",
+                    0.72,
+                    UiControlState::Normal,
+                ),
+                (
+                    "ui_gallery.components.progress.disabled",
+                    "34%",
+                    0.34,
+                    UiControlState::Disabled,
+                ),
+                (
+                    "ui_gallery.components.progress.loading",
+                    "Loading",
+                    0.62,
+                    UiControlState::Loading,
+                ),
+                (
+                    "ui_gallery.components.progress.empty",
+                    "Empty",
+                    0.0,
+                    UiControlState::Empty,
+                ),
+                (
+                    "ui_gallery.components.progress.error",
+                    "Error",
+                    0.0,
+                    UiControlState::Error,
+                ),
+            ] {
+                progress.spawn((
+                    progress_key(theme, fonts, i18n, key, fallback, value, state),
+                    UiControlOwner(OWNER_UI_GALLERY),
+                    Name::new(format!("Gallery Progress {fallback}")),
+                ));
+            }
+        });
+
+    panel.spawn(section_label_key(
+        theme,
+        fonts,
+        i18n,
+        "ui_gallery.components.tabs",
+        "Tabs",
+    ));
+    panel.spawn(tab_list(theme)).with_children(|tabs| {
+        for (key, fallback, state) in [
+            (
+                "ui_gallery.components.tab.normal",
+                "Normal",
+                UiControlState::Normal,
+            ),
+            (
+                "ui_gallery.components.tab.hovered",
+                "Hovered",
+                UiControlState::Hovered,
+            ),
+            (
+                "ui_gallery.components.tab.pressed",
+                "Pressed",
+                UiControlState::Pressed,
+            ),
+            (
+                "ui_gallery.components.tab.focused",
+                "Focused",
+                UiControlState::Focused,
+            ),
+            (
+                "ui_gallery.components.tab.selected",
+                "Selected",
+                UiControlState::Selected,
+            ),
+            (
+                "ui_gallery.components.tab.disabled",
+                "Disabled",
+                UiControlState::Disabled,
+            ),
+            (
+                "ui_gallery.components.tab.loading",
+                "Loading",
+                UiControlState::Loading,
+            ),
+        ] {
+            tabs.spawn((
+                tab_key(theme, fonts, i18n, fallback, key, fallback, state),
+                UiControlOwner(OWNER_UI_GALLERY),
+                GalleryControlStatePreview(state),
+                Name::new(format!("Gallery Tab {fallback}")),
+            ));
+        }
+    });
+
+    panel.spawn((
+        section_label_key(
+            theme,
+            fonts,
+            i18n,
+            "ui_gallery.components.dropdown",
+            "Dropdown",
+        ),
+        ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN,
+        Name::new("Gallery dropdown component anchor"),
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 2, 3),
+        ))
+        .with_children(|dropdowns| {
+            for (index, (key, fallback, state)) in [
+                (
+                    "ui_gallery.components.dropdown.normal",
+                    "Choose a region",
+                    UiControlState::Normal,
+                ),
+                (
+                    "ui_gallery.components.dropdown.hovered",
+                    "Hovered",
+                    UiControlState::Hovered,
+                ),
+                (
+                    "ui_gallery.components.dropdown.pressed",
+                    "Pressed",
+                    UiControlState::Pressed,
+                ),
+                (
+                    "ui_gallery.components.dropdown.focused",
+                    "Focused",
+                    UiControlState::Focused,
+                ),
+                (
+                    "ui_gallery.components.dropdown.selected",
+                    "Selected",
+                    UiControlState::Selected,
+                ),
+                (
+                    "ui_gallery.components.dropdown.disabled",
+                    "Disabled",
+                    UiControlState::Disabled,
+                ),
+                (
+                    "ui_gallery.components.dropdown.loading",
+                    "Loading",
+                    UiControlState::Loading,
+                ),
+                (
+                    "ui_gallery.components.dropdown.empty",
+                    "Empty",
+                    UiControlState::Empty,
+                ),
+                (
+                    "ui_gallery.components.dropdown.error",
+                    "Error",
+                    UiControlState::Error,
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let options = if state == UiControlState::Empty {
+                    Vec::new()
+                } else {
+                    gallery_dropdown_options(i18n)
+                };
+                let selected = matches!(state, UiControlState::Selected).then_some(2);
+                let mut entity = dropdowns.spawn((
+                    dropdown_key(
+                        theme,
+                        fonts,
+                        asset_server,
+                        i18n,
+                        key,
+                        fallback,
+                        options,
+                        selected,
+                        state,
+                    ),
+                    UiControlOwner(OWNER_UI_GALLERY),
+                    Name::new(format!("Gallery Dropdown {fallback}")),
+                ));
+                if index == 0 {
+                    entity.insert(GalleryAuditDropdown);
+                } else {
+                    entity.insert(GalleryControlStatePreview(state));
+                }
+            }
+        });
+
+    panel.spawn((
+        section_label_key(
+            theme,
+            fonts,
+            i18n,
+            "ui_gallery.components.tooltip",
+            "Tooltip",
+        ),
+        ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP,
+        Name::new("Gallery tooltip component anchor"),
+    ));
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 3, 3),
+        ))
+        .with_children(|tooltips| {
+            tooltips.spawn((
+                secondary_action_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "ui_gallery.components.tooltip.normal",
+                    "Hover or focus",
+                ),
+                tooltip_target(
+                    UiControlId::new("gallery.tooltip.normal"),
+                    i18n.tr(
+                        "ui_gallery.components.tooltip.body",
+                        "Tooltip text stays inside the viewport and follows its owner.",
+                    ),
+                    UiTooltipTone::Standard,
+                ),
+                UiControlOwner(OWNER_UI_GALLERY),
+                GalleryAuditTooltip,
+            ));
+            tooltips.spawn((
+                secondary_action_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "ui_gallery.components.tooltip.error",
+                    "Error hint",
+                ),
+                tooltip_target(
+                    UiControlId::new("gallery.tooltip.error"),
+                    i18n.tr(
+                        "ui_gallery.components.tooltip.error_body",
+                        "The requested data could not be loaded.",
+                    ),
+                    UiTooltipTone::Error,
+                ),
+                UiControlOwner(OWNER_UI_GALLERY),
+            ));
+            tooltips.spawn((
+                disabled_secondary_action_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "ui_gallery.components.tooltip.disabled",
+                    "Disabled owner",
+                ),
+                tooltip_target(
+                    UiControlId::new("gallery.tooltip.disabled"),
+                    i18n.tr(
+                        "ui_gallery.components.tooltip.disabled_body",
+                        "Disabled controls may still explain why an action is unavailable.",
+                    ),
+                    UiTooltipTone::Standard,
+                ),
+                UiControlOwner(OWNER_UI_GALLERY),
+            ));
+        });
+
+    spawn_gallery_selection_state_matrix(panel, theme, metrics, fonts, i18n, width_class);
+}
+
+fn gallery_dropdown_options(i18n: &UiI18n) -> Vec<UiDropdownOption> {
+    vec![
+        UiDropdownOption::new(
+            "north",
+            i18n.tr("ui_gallery.components.dropdown.option.north", "North Realm"),
+        ),
+        UiDropdownOption::new(
+            "locked",
+            i18n.tr(
+                "ui_gallery.components.dropdown.option.locked",
+                "Locked Region",
+            ),
+        )
+        .disabled(),
+        UiDropdownOption::new(
+            "long",
+            i18n.tr(
+                "ui_gallery.components.dropdown.option.long",
+                "A deliberately long region name that wraps without resizing the control",
+            ),
+        ),
+        UiDropdownOption::new(
+            "south",
+            i18n.tr("ui_gallery.components.dropdown.option.south", "South Realm"),
+        ),
+    ]
+}
+
+fn spawn_gallery_selection_state_matrix(
+    panel: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    width_class: UiWidthClass,
+) {
+    panel.spawn((
+        section_label_key(
+            theme,
+            fonts,
+            i18n,
+            "ui_gallery.components.selection_states",
+            "Checkbox, Toggle, and Segmented States",
+        ),
+        ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES,
+        Name::new("Gallery checkbox state anchor"),
+    ));
+    let states = [
+        ("normal", "Normal", UiControlState::Normal),
+        ("hovered", "Hovered", UiControlState::Hovered),
+        ("pressed", "Pressed", UiControlState::Pressed),
+        ("focused", "Focused", UiControlState::Focused),
+        ("selected", "Selected", UiControlState::Selected),
+        ("disabled", "Disabled", UiControlState::Disabled),
+        ("loading", "Loading", UiControlState::Loading),
+        ("error", "Error", UiControlState::Error),
+    ];
+
+    panel
+        .spawn(gallery_grid(
+            metrics,
+            width_class,
+            UiResponsiveGridColumns::new(1, 2, 4),
+        ))
+        .with_children(|grid| {
+            for (suffix, fallback, state) in states {
+                spawn_gallery_checkbox_state(grid, theme, fonts, i18n, suffix, fallback, state);
+            }
+        });
+    panel
+        .spawn((
+            gallery_grid(metrics, width_class, UiResponsiveGridColumns::new(1, 2, 4)),
+            ANCHOR_UI_GALLERY_COMPONENT_TOGGLES,
+            Name::new("Gallery toggle state anchor"),
+        ))
+        .with_children(|grid| {
+            for (suffix, fallback, state) in states {
+                spawn_gallery_toggle_state(grid, theme, fonts, i18n, suffix, fallback, state);
+            }
+        });
+    panel
+        .spawn((
+            gallery_grid(metrics, width_class, UiResponsiveGridColumns::new(1, 2, 4)),
+            ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED,
+            Name::new("Gallery segmented state anchor"),
+        ))
+        .with_children(|grid| {
+            for (suffix, fallback, state) in states {
+                grid.spawn(segmented_control(theme))
+                    .with_children(|segments| {
+                        let key = gallery_segment_state_key(suffix);
+                        let mut option = match state {
+                            UiControlState::Selected => {
+                                segments.spawn(selected_segment_option_key(
+                                    theme, fonts, i18n, suffix, key, fallback,
+                                ))
+                            }
+                            UiControlState::Disabled => {
+                                segments.spawn(disabled_segment_option_key(
+                                    theme, fonts, i18n, suffix, key, fallback,
+                                ))
+                            }
+                            _ => segments.spawn(segment_option_key(
+                                theme, fonts, i18n, suffix, key, fallback,
+                            )),
+                        };
+                        option.insert((
+                            UiControlOwner(OWNER_UI_GALLERY),
+                            GalleryControlStatePreview(state),
+                        ));
+                        if state == UiControlState::Loading {
+                            option.insert(UiControlFlags {
+                                loading: true,
+                                ..default()
+                            });
+                        } else if state == UiControlState::Error {
+                            option.insert(UiControlFlags {
+                                error: true,
+                                ..default()
+                            });
+                        }
+                    });
+            }
+        });
+}
+
+fn spawn_gallery_checkbox_state(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    suffix: &'static str,
+    fallback: &'static str,
+    state: UiControlState,
+) {
+    let key = gallery_checkbox_state_key(suffix);
+    let mut entity = match state {
+        UiControlState::Selected => {
+            parent.spawn(checked_checkbox_key(theme, fonts, i18n, key, fallback))
+        }
+        UiControlState::Disabled => {
+            parent.spawn(disabled_checkbox_key(theme, fonts, i18n, key, fallback))
+        }
+        _ => parent.spawn(checkbox_key(theme, fonts, i18n, key, fallback)),
+    };
+    entity.insert((
+        UiControlOwner(OWNER_UI_GALLERY),
+        GalleryControlStatePreview(state),
+    ));
+    if state == UiControlState::Loading {
+        entity.insert(UiControlFlags {
+            loading: true,
+            ..default()
+        });
+    } else if state == UiControlState::Error {
+        entity.insert(UiControlFlags {
+            error: true,
+            ..default()
+        });
+    }
+}
+
+fn spawn_gallery_toggle_state(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    suffix: &'static str,
+    fallback: &'static str,
+    state: UiControlState,
+) {
+    let key = gallery_toggle_state_key(suffix);
+    let mut entity = match state {
+        UiControlState::Selected => parent.spawn(toggle_on_key(theme, fonts, i18n, key, fallback)),
+        UiControlState::Disabled => {
+            parent.spawn(disabled_toggle_key(theme, fonts, i18n, key, fallback))
+        }
+        _ => parent.spawn(toggle_key(theme, fonts, i18n, key, fallback)),
+    };
+    entity.insert((
+        UiControlOwner(OWNER_UI_GALLERY),
+        GalleryControlStatePreview(state),
+    ));
+    if state == UiControlState::Loading {
+        entity.insert(UiControlFlags {
+            loading: true,
+            ..default()
+        });
+    } else if state == UiControlState::Error {
+        entity.insert(UiControlFlags {
+            error: true,
+            ..default()
+        });
+    }
+}
+
+fn gallery_checkbox_state_key(suffix: &str) -> &'static str {
+    match suffix {
+        "normal" => "ui_gallery.components.checkbox.normal",
+        "hovered" => "ui_gallery.components.checkbox.hovered",
+        "pressed" => "ui_gallery.components.checkbox.pressed",
+        "focused" => "ui_gallery.components.checkbox.focused",
+        "selected" => "ui_gallery.components.checkbox.selected",
+        "disabled" => "ui_gallery.components.checkbox.disabled",
+        "loading" => "ui_gallery.components.checkbox.loading",
+        "error" => "ui_gallery.components.checkbox.error",
+        _ => "ui_gallery.components.checkbox.normal",
+    }
+}
+
+fn gallery_toggle_state_key(suffix: &str) -> &'static str {
+    match suffix {
+        "normal" => "ui_gallery.components.toggle.normal",
+        "hovered" => "ui_gallery.components.toggle.hovered",
+        "pressed" => "ui_gallery.components.toggle.pressed",
+        "focused" => "ui_gallery.components.toggle.focused",
+        "selected" => "ui_gallery.components.toggle.selected",
+        "disabled" => "ui_gallery.components.toggle.disabled",
+        "loading" => "ui_gallery.components.toggle.loading",
+        "error" => "ui_gallery.components.toggle.error",
+        _ => "ui_gallery.components.toggle.normal",
+    }
+}
+
+fn gallery_segment_state_key(suffix: &str) -> &'static str {
+    match suffix {
+        "normal" => "ui_gallery.components.segment.normal",
+        "hovered" => "ui_gallery.components.segment.hovered",
+        "pressed" => "ui_gallery.components.segment.pressed",
+        "focused" => "ui_gallery.components.segment.focused",
+        "selected" => "ui_gallery.components.segment.selected",
+        "disabled" => "ui_gallery.components.segment.disabled",
+        "loading" => "ui_gallery.components.segment.loading",
+        "error" => "ui_gallery.components.segment.error",
+        _ => "ui_gallery.components.segment.normal",
+    }
 }
 
 fn spawn_gallery_animation_samples(
@@ -3877,6 +4640,101 @@ mod tests {
     }
 
     #[test]
+    fn component_gallery_panel_owns_stable_child_audit_anchor() {
+        let theme = UiTheme::default();
+        let mut app = App::new();
+        let components = app.world_mut().spawn(gallery_components_panel(&theme)).id();
+
+        assert!(
+            app.world()
+                .entity(components)
+                .contains::<GalleryComponentsRegion>()
+        );
+        assert_eq!(
+            app.world()
+                .entity(components)
+                .get::<crate::framework::ui::widgets::UiScrollAuditAnchorId>()
+                .copied(),
+            Some(ANCHOR_UI_GALLERY_COMPONENTS)
+        );
+    }
+
+    #[test]
+    fn component_overlay_audit_state_opens_named_dropdown() {
+        let mut app = App::new();
+        app.add_message::<UiAuditCaptureStateApplied>()
+            .add_message::<UiPanelCommand>()
+            .add_systems(Update, apply_gallery_component_audit_state);
+        let dropdown = app
+            .world_mut()
+            .spawn((
+                UiDropdown::new("Choose", vec![UiDropdownOption::new("one", "One")], None),
+                UiControlMeta::new(
+                    UiControlId::new("gallery.audit.dropdown"),
+                    crate::framework::ui::widgets::UiControlKind::Dropdown,
+                ),
+                UiControlOwner(OWNER_UI_GALLERY),
+                GalleryAuditDropdown,
+            ))
+            .id();
+        app.world_mut().write_message(UiAuditCaptureStateApplied {
+            state: UiAuditCaptureState::ComponentOverlays,
+        });
+        app.update();
+
+        let messages = app.world().resource::<Messages<UiPanelCommand>>();
+        let mut cursor = bevy::ecs::message::MessageCursor::default();
+        let commands = cursor.read(messages).collect::<Vec<_>>();
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            UiPanelCommand::Open(UiPanelRequest::Dropdown(panel)) if panel.anchor == dropdown
+        )));
+    }
+
+    #[test]
+    fn component_tooltip_audit_state_pins_without_sending_duplicate_open() {
+        let mut app = App::new();
+        app.add_message::<UiAuditCaptureStateApplied>()
+            .add_message::<UiPanelCommand>()
+            .add_systems(Update, apply_gallery_component_audit_state);
+        let tooltip = app
+            .world_mut()
+            .spawn((
+                crate::framework::ui::widgets::UiTooltip {
+                    text: "Stable tooltip".to_owned(),
+                    tone: UiTooltipTone::Standard,
+                },
+                UiControlMeta::new(
+                    UiControlId::new("gallery.audit.tooltip"),
+                    crate::framework::ui::widgets::UiControlKind::Tooltip,
+                ),
+                UiControlOwner(OWNER_UI_GALLERY),
+                GalleryAuditTooltip,
+            ))
+            .id();
+        app.world_mut().write_message(UiAuditCaptureStateApplied {
+            state: UiAuditCaptureState::ComponentTooltip,
+        });
+        app.update();
+
+        let messages = app.world().resource::<Messages<UiPanelCommand>>();
+        let mut cursor = bevy::ecs::message::MessageCursor::default();
+        let commands = cursor.read(messages).collect::<Vec<_>>();
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, UiPanelCommand::Open(UiPanelRequest::Tooltip(_))))
+        );
+        assert!(app.world().entity(tooltip).contains::<UiTooltipPinned>());
+
+        app.world_mut().write_message(UiAuditCaptureStateApplied {
+            state: UiAuditCaptureState::Middle,
+        });
+        app.update();
+        assert!(!app.world().entity(tooltip).contains::<UiTooltipPinned>());
+    }
+
+    #[test]
     fn audit_capture_states_freeze_gallery_animation_once_and_stay_change_stable() {
         fn count_animation_commands(
             mut commands: MessageReader<UiAnimationCommand>,
@@ -4117,6 +4975,56 @@ mod tests {
                 .is_some()
         );
         assert!(world.get::<SelectedButton>(focused).is_none());
+    }
+
+    #[test]
+    fn component_state_preview_writes_flags_and_clears_stale_markers() {
+        let mut world = World::new();
+        let error = world
+            .spawn((
+                GalleryControlStatePreview(UiControlState::Error),
+                Interaction::Pressed,
+                UiControlFlags::default(),
+                FocusedButton,
+                SelectedButton,
+                crate::framework::ui::widgets::DisabledButton,
+                crate::framework::ui::widgets::LoadingButton,
+            ))
+            .id();
+        let pressed = world
+            .spawn((
+                GalleryControlStatePreview(UiControlState::Pressed),
+                Interaction::None,
+                UiControlFlags::default(),
+            ))
+            .id();
+
+        apply_gallery_control_state_previews(&mut world);
+
+        assert_eq!(world.get::<Interaction>(error), Some(&Interaction::None));
+        assert_eq!(
+            world.get::<UiControlFlags>(error),
+            Some(&UiControlFlags {
+                error: true,
+                ..default()
+            })
+        );
+        assert!(world.get::<FocusedButton>(error).is_none());
+        assert!(world.get::<SelectedButton>(error).is_none());
+        assert!(
+            world
+                .get::<crate::framework::ui::widgets::DisabledButton>(error)
+                .is_none()
+        );
+        assert!(
+            world
+                .get::<crate::framework::ui::widgets::LoadingButton>(error)
+                .is_none()
+        );
+        assert_eq!(
+            world.get::<Interaction>(pressed),
+            Some(&Interaction::Pressed)
+        );
     }
 
     #[test]

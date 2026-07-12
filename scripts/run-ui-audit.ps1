@@ -244,12 +244,12 @@ function Resolve-UiAuditStates {
 
     if ($StateValue.Trim().Equals("auto", [System.StringComparison]::OrdinalIgnoreCase)) {
         if ($Screen -eq "ui_gallery") {
-            return "image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,middle,bottom"
+            return "image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,middle,bottom"
         }
         return "initial"
     }
 
-    $valid = @("initial", "visual_foundation", "image_fit", "image_modes", "image_tiling", "image_atlas", "typography", "typography_overflow", "icons", "icon_states", "style_scopes", "effects", "animations", "top", "middle", "bottom")
+    $valid = @("initial", "visual_foundation", "image_fit", "image_modes", "image_tiling", "image_atlas", "typography", "typography_overflow", "icons", "icon_states", "style_scopes", "effects", "animations", "components", "component_checkboxes", "component_toggles", "component_segmented", "component_overlays", "component_tooltip", "top", "middle", "bottom")
     $states = Split-UiAuditList @($StateValue)
     if ($states.Count -eq 0) {
         throw "At least one audit state is required when -States is not auto."
@@ -3991,7 +3991,7 @@ function Invoke-UiAuditSelfTest {
 
         $tasks = @(New-UiAuditTasks -RunRoot $tempRoot -ScreensToRun $screens -DevicesToRun $devices -StateValue "auto" -ExtraBevyArgs $extraArgs)
         Assert-SelfTest ($tasks.Count -eq 4) "task matrix expansion"
-        Assert-SelfTest ($tasks[0].states -eq "image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,middle,bottom") "ui_gallery auto states"
+        Assert-SelfTest ($tasks[0].states -eq "image_fit,visual_foundation,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,middle,bottom") "ui_gallery auto states"
         Assert-SelfTest ($tasks[2].states -eq "initial") "non-recipe screen auto states"
         Assert-SelfTest (($tasks[0].bevy_args[0] -eq "--window-profile") -and ($tasks[0].bevy_args[1] -eq "phone-small")) "device window profile mapping"
         Assert-SelfTest (($tasks[0].output_dir -replace "\\", "/").Contains("/runs/ui_gallery/phone-small")) "output path layout"

@@ -7,6 +7,7 @@ use crate::framework::ui::{
     overlays::{
         loading::{UiLoading, spawn_loading},
         modal::{UiConfirmModal, spawn_confirm_modal},
+        popover::{UiDropdownPanel, UiTooltipPanel, spawn_dropdown_panel, spawn_tooltip_panel},
     },
     style::{
         UiFontAssets, UiTheme,
@@ -28,12 +29,18 @@ impl Plugin for UiPanelPlugin {
             .configure_sets(Update, UiPanelSystems::Commands)
             .add_systems(
                 Update,
-                (write_close_top_on_return_input, handle_panel_commands)
+                (
+                    write_close_top_on_return_input,
+                    handle_panel_commands,
+                    panel_commands_applied,
+                )
                     .chain()
                     .in_set(UiPanelSystems::Commands),
             );
     }
 }
+
+fn panel_commands_applied() {}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
 pub(crate) enum UiPanelSystems {
@@ -80,6 +87,8 @@ impl fmt::Display for UiOwnerId {
 
 pub(crate) const UI_PANEL_GLOBAL_LOADING: UiPanelId = UiPanelId::new("global_loading");
 pub(crate) const UI_PANEL_CONFIRM_MODAL: UiPanelId = UiPanelId::new("confirm_modal");
+pub(crate) const UI_PANEL_TOOLTIP: UiPanelId = UiPanelId::new("tooltip");
+pub(crate) const UI_PANEL_DROPDOWN: UiPanelId = UiPanelId::new("dropdown");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[allow(dead_code)]
@@ -109,6 +118,8 @@ pub(crate) enum UiPanelRequest {
     Loading(UiLoading),
     Confirm(UiConfirmModal),
     Floating(UiFloatingPanel),
+    Tooltip(UiTooltipPanel),
+    Dropdown(UiDropdownPanel),
 }
 
 #[derive(Clone, Debug)]
@@ -143,7 +154,7 @@ struct UiPanelStackEntry {
 }
 
 #[derive(Default, Resource)]
-struct UiPanelStack {
+pub(crate) struct UiPanelStack {
     open_order: Vec<UiPanelStackEntry>,
 }
 
@@ -244,6 +255,12 @@ fn open_panel(
         UiPanelRequest::Floating(floating) => {
             spawn_floating_panel(commands, theme, metrics, viewport, fonts, floating, owner);
         }
+        UiPanelRequest::Tooltip(tooltip) => {
+            spawn_tooltip_panel(commands, theme, viewport, fonts, tooltip, owner);
+        }
+        UiPanelRequest::Dropdown(dropdown) => {
+            spawn_dropdown_panel(commands, theme, metrics, viewport, fonts, dropdown, owner);
+        }
     }
 
     if matches!(
@@ -287,20 +304,32 @@ fn close_top_panel(
     stack: &mut UiPanelStack,
 ) {
     prune_missing_stack_entries(panel_roots, stack);
-
-    if let Some(entry) = latest_stack_entry_of_kind(stack, UiPanelKind::BlockingOverlay) {
-        if is_cancellable_blocking_overlay(panel_roots, entry.id) {
-            close_panel_by_id(commands, panel_roots, entry.id);
-            remove_from_stack(stack, entry.id);
-        }
+    let Some(id) = close_top_target_id(panel_roots, stack) else {
         return;
+    };
+    close_panel_by_id(commands, panel_roots, id);
+    remove_from_stack(stack, id);
+}
+
+pub(crate) fn close_top_target_id(
+    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
+    stack: &UiPanelStack,
+) -> Option<UiPanelId> {
+    if let Some(entry) = stack.open_order.iter().rev().find(|entry| {
+        entry.kind == UiPanelKind::BlockingOverlay && panel_exists(panel_roots, entry.id)
+    }) {
+        return is_cancellable_blocking_overlay(panel_roots, entry.id).then_some(entry.id);
     }
 
-    if close_latest_panel_of_kind(commands, panel_roots, stack, UiPanelKind::Modal) {
-        return;
-    }
-
-    close_latest_panel_of_kind(commands, panel_roots, stack, UiPanelKind::Floating);
+    stack
+        .open_order
+        .iter()
+        .rev()
+        .find(|entry| {
+            matches!(entry.kind, UiPanelKind::Modal | UiPanelKind::Floating)
+                && panel_exists(panel_roots, entry.id)
+        })
+        .map(|entry| entry.id)
 }
 
 fn panel_exists(
@@ -321,32 +350,6 @@ fn prune_missing_stack_entries(
     stack
         .open_order
         .retain(|entry| panel_exists(panel_roots, entry.id));
-}
-
-fn latest_stack_entry_of_kind(
-    stack: &UiPanelStack,
-    kind: UiPanelKind,
-) -> Option<UiPanelStackEntry> {
-    stack
-        .open_order
-        .iter()
-        .rfind(|entry| entry.kind == kind)
-        .copied()
-}
-
-fn close_latest_panel_of_kind(
-    commands: &mut Commands,
-    panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
-    stack: &mut UiPanelStack,
-    kind: UiPanelKind,
-) -> bool {
-    if let Some(entry) = latest_stack_entry_of_kind(stack, kind) {
-        close_panel_by_id(commands, panel_roots, entry.id);
-        remove_from_stack(stack, entry.id);
-        return true;
-    }
-
-    false
 }
 
 fn is_cancellable_blocking_overlay(
@@ -378,6 +381,8 @@ impl UiPanelRequest {
             UiPanelRequest::Loading(_) => UI_PANEL_GLOBAL_LOADING,
             UiPanelRequest::Confirm(_) => UI_PANEL_CONFIRM_MODAL,
             UiPanelRequest::Floating(floating) => floating.id,
+            UiPanelRequest::Tooltip(_) => UI_PANEL_TOOLTIP,
+            UiPanelRequest::Dropdown(_) => UI_PANEL_DROPDOWN,
         }
     }
 
@@ -386,6 +391,7 @@ impl UiPanelRequest {
             UiPanelRequest::Loading(_) => UiPanelKind::BlockingOverlay,
             UiPanelRequest::Confirm(_) => UiPanelKind::Modal,
             UiPanelRequest::Floating(_) => UiPanelKind::Floating,
+            UiPanelRequest::Tooltip(_) | UiPanelRequest::Dropdown(_) => UiPanelKind::Floating,
         }
     }
 }
@@ -493,6 +499,7 @@ fn floating_panel_max_height_percent(viewport: &UiViewport) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::SystemState;
 
     #[test]
     fn floating_panel_width_uses_metrics_dialog_width() {
@@ -524,5 +531,82 @@ mod tests {
             node.top,
             px(metrics.page_padding + 7.0 + metrics.touch_target_min)
         );
+    }
+
+    #[test]
+    fn close_top_target_follows_open_order_across_modal_and_floating() {
+        let modal = UiPanelStackEntry {
+            id: UI_PANEL_CONFIRM_MODAL,
+            kind: UiPanelKind::Modal,
+        };
+        let dropdown = UiPanelStackEntry {
+            id: UI_PANEL_DROPDOWN,
+            kind: UiPanelKind::Floating,
+        };
+        let mut stack = UiPanelStack {
+            open_order: vec![modal, dropdown],
+        };
+        let mut world = World::new();
+        world.spawn(UiPanelRoot {
+            id: modal.id,
+            kind: modal.kind,
+            owner: None,
+        });
+        world.spawn(UiPanelRoot {
+            id: dropdown.id,
+            kind: dropdown.kind,
+            owner: None,
+        });
+        let mut state =
+            SystemState::<Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>>::new(
+                &mut world,
+            );
+
+        assert_eq!(
+            close_top_target_id(&state.get(&world), &stack),
+            Some(dropdown.id)
+        );
+        stack.open_order = vec![dropdown, modal];
+        assert_eq!(
+            close_top_target_id(&state.get(&world), &stack),
+            Some(modal.id)
+        );
+    }
+
+    #[test]
+    fn noncancellable_blocking_overlay_prevents_transient_close_target() {
+        let mut world = World::new();
+        world.spawn(UiPanelRoot {
+            id: UI_PANEL_DROPDOWN,
+            kind: UiPanelKind::Floating,
+            owner: None,
+        });
+        let blocking_id = UiPanelId::new("blocking-test");
+        world.spawn((
+            UiPanelRoot {
+                id: blocking_id,
+                kind: UiPanelKind::BlockingOverlay,
+                owner: None,
+            },
+            UiBlockingOverlay { cancellable: false },
+        ));
+        let stack = UiPanelStack {
+            open_order: vec![
+                UiPanelStackEntry {
+                    id: UI_PANEL_DROPDOWN,
+                    kind: UiPanelKind::Floating,
+                },
+                UiPanelStackEntry {
+                    id: blocking_id,
+                    kind: UiPanelKind::BlockingOverlay,
+                },
+            ],
+        };
+        let mut state =
+            SystemState::<Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>>::new(
+                &mut world,
+            );
+
+        assert_eq!(close_top_target_id(&state.get(&world), &stack), None);
     }
 }

@@ -8,6 +8,7 @@ impl Plugin for UiWidgetsPlugin {
             .init_resource::<UiTextInputClipboard>()
             .init_resource::<UiTextInputDiagnostics>()
             .add_message::<UiButtonEvent>()
+            .add_message::<UiControlEvent>()
             .add_message::<UiTextInputSubmitted>()
             .add_systems(
                 PreUpdate,
@@ -22,6 +23,19 @@ impl Plugin for UiWidgetsPlugin {
             .add_systems(
                 Update,
                 (
+                    (
+                        sync_control_gate_markers,
+                        update_component_control_interactions,
+                    )
+                        .chain(),
+                    sync_tooltip_visibility,
+                    handle_dropdown_keyboard,
+                )
+                    .before(UiPanelSystems::Commands),
+            )
+            .add_systems(
+                Update,
+                (
                     update_text_input_cursor_from_pointer,
                     sync_android_text_input
                         .after(update_text_input_cursor_from_pointer)
@@ -30,6 +44,8 @@ impl Plugin for UiWidgetsPlugin {
                     update_slider_interactions,
                     update_stepper_interactions,
                     sync_selection_control_visuals,
+                    sync_component_control_visuals,
+                    sync_static_component_visuals,
                     sync_text_input_display,
                     sync_text_input_form_messages,
                     sync_numeric_control_display,
@@ -45,6 +61,7 @@ impl Plugin for UiWidgetsPlugin {
             .add_systems(
                 PostUpdate,
                 (
+                    focus_opened_dropdown,
                     sync_text_input_caret,
                     sync_ui_icon_asset_status,
                     crate::framework::ui::widgets::image::update_ui_images,
