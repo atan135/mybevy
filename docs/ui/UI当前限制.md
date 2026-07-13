@@ -93,3 +93,11 @@
 - 许多核心 helper 有单元测试，包括 viewport、binding、focus、scroll、按钮视觉优先级、文本输入编辑等。
 - Scroll 和复杂窗口布局仍主要依赖窗口级人工验收。
 - Android 真机触控、输入法、字体渲染和安全区仍需要设备级验收。
+
+## 声明式预览
+
+- 声明式 diff 能稳定区分原位字段、子树和整页重建，但当前实际 commit 统一使用隐藏新树 + 原子 replace；尚未开放绕过完整校验的 ECS 局部 patch。
+- 本地 document watch 只在 desktop debug 构建中可显式启用，release/Android 默认且强制关闭；它不是生产内容更新通道。
+- reload 状态迁移覆盖 ID/kind/owner 兼容的 focus、输入值/光标/selection、scroll、数值与选择控件状态；不迁移 IME composition、native keyboard session、动画播放头或任意业务 component，未迁移的已识别状态会写入 decision reason。
+- 自动生成的 document audit recipe 按 `(document_id, owner)` 隔离且只来自 preview registration；直接 Stage 10 `Open` 不生成 recipe，页面能否由审计 runner 进入仍需要游戏层路由注册。
+- 详细边界和命令见 [UI声明式预览与热更新.md](UI声明式预览与热更新.md)。

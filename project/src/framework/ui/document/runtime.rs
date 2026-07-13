@@ -72,6 +72,56 @@ pub enum UiDocumentSourceOrigin {
     Fixture { fixture_id: String },
     Packaged { asset_id: UiAssetId },
     Runtime { producer: String },
+    Preview { source_path: String },
+}
+
+impl UiDocumentSourceOrigin {
+    pub fn audit_source_path(&self) -> String {
+        match self {
+            Self::Fixture { fixture_id } => safe_origin_label("fixture", fixture_id),
+            Self::Packaged { asset_id } => format!("packaged:{}", asset_id.as_str()),
+            Self::Runtime { producer } => safe_origin_label("runtime", producer),
+            Self::Preview { source_path } if safe_preview_source_path(source_path) => {
+                source_path.clone()
+            }
+            Self::Preview { .. } => "preview".to_owned(),
+        }
+    }
+}
+
+fn safe_preview_source_path(value: &str) -> bool {
+    let allowed_root = value.starts_with("ui/documents/approved/")
+        || value.starts_with("ui/documents/fixtures/")
+        || value.starts_with("ui-documents/source/");
+    allowed_root
+        && value.len() <= 280
+        && value.is_ascii()
+        && value.ends_with(".json")
+        && !value.contains(['\\', ':', '\0', '\n', '\r'])
+        && value.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'_' | b'-' | b'.')
+                })
+        })
+}
+
+fn safe_origin_label(kind: &str, value: &str) -> String {
+    if !value.is_empty()
+        && value.len() <= 240
+        && value.is_ascii()
+        && !value.starts_with('/')
+        && !value.contains(['\\', ':', '\0', '\n', '\r'])
+        && !value.split('/').any(|segment| segment == "..")
+    {
+        format!("{kind}:{value}")
+    } else {
+        kind.to_owned()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -236,6 +286,7 @@ pub struct UiDocumentNodeAuditMarker {
     pub schema_version: u32,
     pub node_id: UiNodeId,
     pub document_path: String,
+    pub source_path: String,
 }
 
 #[derive(Clone, Debug, Component, PartialEq)]
@@ -323,6 +374,24 @@ impl UiDocumentRuntime {
         node_id: &UiNodeId,
     ) -> Option<Entity> {
         self.instance(instance_id)?.nodes.get(node_id).copied()
+    }
+
+    pub fn active_validated_document(
+        &self,
+        owner: &str,
+        document_id: &UiDocumentId,
+    ) -> Option<&ValidatedUiDocument> {
+        let instance_id = self.active_instance(owner, document_id)?;
+        self.active_validated_document_by_instance(instance_id)
+    }
+
+    pub fn active_validated_document_by_instance(
+        &self,
+        instance_id: UiDocumentInstanceId,
+    ) -> Option<&ValidatedUiDocument> {
+        self.instances
+            .get(&instance_id)
+            .map(|active| &active.validated)
     }
 
     pub fn pending_count(&self) -> usize {
@@ -1291,6 +1360,7 @@ fn commit_ready_documents(world: &mut World) {
                 record.instance_id = Some(instance_id);
                 record.ecs_entity_count = entity_count;
                 write_record(world, record);
+                super::finish_committed_preview_reload(world, request_id);
             }
             Err(code) => {
                 let record = record_for_pending(&pending, UiDocumentBuildState::Failed)
@@ -1399,6 +1469,7 @@ fn spawn_prepared_node(
             schema_version: pending.prepared.validated.document().schema_version,
             node_id: node_id.clone(),
             document_path: prepared.path.clone(),
+            source_path: pending.request.origin.audit_source_path(),
         },
         UiDocumentResolvedStyleMarker(prepared.style.clone()),
         Name::new(format!("UI document node {node_id}")),

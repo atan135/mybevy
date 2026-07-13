@@ -123,6 +123,7 @@ metadata 的 `image_snapshots`、`font_snapshots` 和 `visual_summary` 汇总图
 - `audio_gallery`, `audio-gallery`
 - `wanfa_touch_ripple`, `wanfa-touch-ripple`, `touch`, `touch_ripple`, `touch-ripple`
 - `ui_gallery`, `ui-gallery`, `gallery`
+- `ui_document_gallery`, `ui-document-gallery`, `document_gallery`, `document-gallery`, `declarative_gallery`
 - `sample_scene`, `sample-scene`, `sample`
 - `robot_sync_scene`, `robot-sync-scene`, `robot`
 - `fangyuan_home`, `fangyuan-home`, `fangyuan`
@@ -153,6 +154,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - ScrollView 是否能滚轮和拖拽滚动。
 - F3 中 `pointer_blocked` 和 `block_reason` 是否符合当前交互状态。
 - F3 中 panel stack 是否符合当前覆盖层顺序。
+- F3 的 `declarative documents` 是否能按 document/node 定位 source field path，并显示安全逻辑 source 和 effective style。
 
 ## 审计报告验收重点
 
@@ -165,6 +167,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - 每个核心 capture 的 `visual_budget.status` 不应为 `exceeded`；`warning` 需要结合 finding 和截图决定是否接受。图片内存和 draw/overdraw 都是估算，不得写成 GPU 实测通过。
 - 任意 UI Gallery capture state 第一次应用时，全部动画样例都应 seek 到 `0.625` 并 pause；后续 30 帧稳定等待内 scroll geometry、目标值、player 和 debug snapshot 不应继续 Changed。
 - metadata 的 `motion_policy` 应与当前 `UiMotionPolicy` 一致；`animation_snapshots` 应按 Name/Entity 稳定排序，并记录 target、raw/eased progress、pause 与 `causes_layout_reflow`。
+- 声明式页面 metadata 的 `document_nodes` 应按 document ID/node ID 稳定排序，并包含 schema version、source path、document path 和 effective style；不得出现盘符或本机绝对路径。
 
 失败报告需要能定位：
 

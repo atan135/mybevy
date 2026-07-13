@@ -10,6 +10,7 @@ use crate::framework::ui::{
         UiInputState, UiInputSystems, UiLayer, UiLayerRoot, UiMetrics, UiPanelId, UiPanelKind,
         UiPanelRoot, UiPanelSystems, UiViewport, UiWidthClass, focus::UiFocusState, stats::UiStats,
     },
+    document::{UiDocumentNodeAuditMarker, UiDocumentResolvedStyleMarker},
     style::{
         UiFontAssets, UiTheme,
         theme::{
@@ -307,6 +308,7 @@ fn refresh_ui_debug_text(
         ),
         (With<Node>, Without<UiDebugNode>),
     >,
+    document_nodes: Query<(&UiDocumentNodeAuditMarker, &UiDocumentResolvedStyleMarker)>,
     mut texts: ParamSet<(
         Query<&mut Text, With<UiDebugHeaderText>>,
         Query<&mut Text, With<UiDebugText>>,
@@ -323,6 +325,7 @@ fn refresh_ui_debug_text(
             &panels,
             &ui_nodes,
             &layout_nodes,
+            &document_nodes,
         )
     });
 
@@ -456,6 +459,7 @@ fn build_ui_debug_body(
         ),
         (With<Node>, Without<UiDebugNode>),
     >,
+    document_nodes: &Query<(&UiDocumentNodeAuditMarker, &UiDocumentResolvedStyleMarker)>,
 ) -> String {
     let mut lines = vec![
         ui_viewport_debug_line(viewport),
@@ -498,8 +502,37 @@ fn build_ui_debug_body(
         &collect_layout_debug_entries(layout_nodes),
         UI_DEBUG_LAYOUT_BOUNDS_MAX_LINES,
     ));
+    lines.push(String::new());
+    lines.extend(document_node_debug_lines(document_nodes));
 
     lines.join("\n")
+}
+
+fn document_node_debug_lines(
+    nodes: &Query<(&UiDocumentNodeAuditMarker, &UiDocumentResolvedStyleMarker)>,
+) -> Vec<String> {
+    let mut entries = nodes
+        .iter()
+        .map(|(marker, style)| {
+            let effective_style = serde_json::to_string(&style.0)
+                .unwrap_or_else(|_| "{\"error\":\"style_not_serializable\"}".to_owned());
+            format!(
+                "  document={} schema={} node={} path={} source={} effective_style={}",
+                marker.document_id,
+                marker.schema_version,
+                marker.node_id,
+                marker.document_path,
+                marker.source_path,
+                effective_style,
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries.insert(0, "declarative documents:".to_owned());
+    if entries.len() == 1 {
+        entries.push("  none".to_owned());
+    }
+    entries
 }
 
 fn ui_stats_debug_lines(stats: &UiStats) -> Vec<String> {

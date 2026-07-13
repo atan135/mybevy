@@ -11,8 +11,8 @@ use crate::framework::ui::{
     core::binding::UiBindingValues,
     core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
     document::{
-        UiActionDescriptor, UiActionDispatch, UiActionId, UiActionRegistry, UiDocumentId,
-        UiRegisteredActionKind,
+        UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema, UiActionParamType,
+        UiActionRegistry, UiBindingPath, UiBindingType, UiDocumentId, UiRegisteredActionKind,
     },
     widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
 };
@@ -26,8 +26,8 @@ use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE,
     OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT,
     OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN,
-    OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_GALLERY,
-    SCROLL_UI_GALLERY_MAIN,
+    OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_DOCUMENT_GALLERY,
+    OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
 };
 
 pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
@@ -68,6 +68,8 @@ const DECLARATIVE_CONTINUE_ACTION: &str = "example.continue";
 const DECLARATIVE_MINIMAL_DOCUMENT: &str = "example.minimal_page";
 const DECLARATIVE_LOBBY_ROUTE: &str = "game.route_lobby";
 const DECLARATIVE_CONTINUE_NODE: &str = "page.continue";
+pub(in crate::game) const UI_DOCUMENT_GALLERY_DOCUMENT: &str = "gallery.declarative";
+const UI_DOCUMENT_GALLERY_ACTION: &str = "gallery.set_status";
 
 fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
     registry
@@ -80,6 +82,23 @@ fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
             },
         ))
         .expect("declarative UI action registration must be valid and unique");
+    registry
+        .register(
+            UiActionDescriptor::new(
+                UiActionId::from_str(UI_DOCUMENT_GALLERY_ACTION).unwrap(),
+                UiDocumentId::from_str(UI_DOCUMENT_GALLERY_DOCUMENT).unwrap(),
+                OWNER_UI_DOCUMENT_GALLERY.as_str(),
+                UiRegisteredActionKind::UpdateLocalState {
+                    binding: UiBindingPath::from_str("gallery.status").unwrap(),
+                    value_param: "value".to_owned(),
+                },
+            )
+            .with_param(
+                "value",
+                UiActionParamSchema::required(UiActionParamType::Binding(UiBindingType::String)),
+            ),
+        )
+        .expect("declarative Gallery local action registration must be valid and unique");
 }
 
 fn handle_declarative_ui_actions(
@@ -119,6 +138,7 @@ pub(super) enum AppUiMode {
     AudioGallery,
     WanfaTouchRipple,
     UiGallery,
+    UiDocumentGallery,
     SampleScene,
     RobotSyncScene,
     FangyuanHome,
@@ -136,6 +156,7 @@ impl AppUiMode {
             Self::AudioGallery => OWNER_AUDIO_GALLERY,
             Self::WanfaTouchRipple => OWNER_TOUCH_RIPPLE,
             Self::UiGallery => OWNER_UI_GALLERY,
+            Self::UiDocumentGallery => OWNER_UI_DOCUMENT_GALLERY,
             Self::SampleScene => OWNER_SAMPLE_SCENE,
             Self::RobotSyncScene => OWNER_ROBOT_SYNC_SCENE,
             Self::FangyuanHome => OWNER_FANGYUAN_HOME,
@@ -153,6 +174,7 @@ impl AppUiMode {
             Self::AudioGallery => "audio_gallery",
             Self::WanfaTouchRipple => "wanfa_touch_ripple",
             Self::UiGallery => "ui_gallery",
+            Self::UiDocumentGallery => "ui_document_gallery",
             Self::SampleScene => "sample_scene",
             Self::RobotSyncScene => "robot_sync_scene",
             Self::FangyuanHome => "fangyuan_home",
@@ -187,6 +209,13 @@ impl AppUiMode {
                 "touch-ripple",
             ],
             Self::UiGallery => &["ui_gallery", "ui-gallery", "gallery"],
+            Self::UiDocumentGallery => &[
+                "ui_document_gallery",
+                "ui-document-gallery",
+                "document_gallery",
+                "document-gallery",
+                "declarative_gallery",
+            ],
             Self::SampleScene => &["sample_scene", "sample-scene", "sample"],
             Self::RobotSyncScene => &["robot_sync_scene", "robot-sync-scene", "robot"],
             Self::FangyuanHome => &["fangyuan_home", "fangyuan-home", "fangyuan"],
@@ -432,7 +461,7 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     ),
 ];
 
-fn all_app_ui_modes() -> [AppUiMode; 12] {
+fn all_app_ui_modes() -> [AppUiMode; 13] {
     [
         AppUiMode::Login,
         AppUiMode::CharacterSelect,
@@ -442,6 +471,7 @@ fn all_app_ui_modes() -> [AppUiMode; 12] {
         AppUiMode::AudioGallery,
         AppUiMode::WanfaTouchRipple,
         AppUiMode::UiGallery,
+        AppUiMode::UiDocumentGallery,
         AppUiMode::SampleScene,
         AppUiMode::RobotSyncScene,
         AppUiMode::FangyuanHome,

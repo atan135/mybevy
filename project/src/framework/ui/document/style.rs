@@ -345,7 +345,7 @@ pub enum UiMaterialParameters {
     },
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct UiResolvedStyle {
     pub component: Option<UiStyleId>,
     pub role: Option<UiStyleId>,
@@ -353,7 +353,7 @@ pub struct UiResolvedStyle {
     pub properties: UiResolvedStyleProperties,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct UiResolvedStyleProperties {
     pub background: Option<UiResolvedBackground>,
     pub border: Option<UiResolvedBorder>,
@@ -364,7 +364,8 @@ pub struct UiResolvedStyleProperties {
     pub material: Option<UiResolvedMaterial>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UiResolvedBackground {
     Solid(UiColor),
     LinearGradient {
@@ -373,13 +374,13 @@ pub enum UiResolvedBackground {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct UiResolvedBorder {
     pub width: f32,
     pub color: UiColor,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct UiResolvedTextVisual {
     pub color: Option<UiColor>,
     pub font: Option<UiAssetId>,
@@ -389,7 +390,7 @@ pub struct UiResolvedTextVisual {
     pub weight: Option<UiTextWeight>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct UiResolvedShadow {
     pub color: UiColor,
     pub x_offset: f32,
@@ -398,13 +399,14 @@ pub struct UiResolvedShadow {
     pub spread: f32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct UiResolvedMaterial {
     pub asset: UiAssetId,
     pub parameters: UiResolvedMaterialParameters,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UiResolvedMaterialParameters {
     FrostedPanelV1 {
         blur_px: f32,

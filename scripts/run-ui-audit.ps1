@@ -60,6 +60,7 @@ $script:KnownScreens = @(
     [pscustomobject]@{ Canonical = "audio_gallery"; Aliases = @("audio_gallery", "audio-gallery") },
     [pscustomobject]@{ Canonical = "wanfa_touch_ripple"; Aliases = @("wanfa_touch_ripple", "wanfa-touch-ripple", "touch", "touch_ripple", "touch-ripple") },
     [pscustomobject]@{ Canonical = "ui_gallery"; Aliases = @("ui_gallery", "ui-gallery", "gallery") },
+    [pscustomobject]@{ Canonical = "ui_document_gallery"; Aliases = @("ui_document_gallery", "ui-document-gallery", "document_gallery", "document-gallery", "declarative_gallery") },
     [pscustomobject]@{ Canonical = "sample_scene"; Aliases = @("sample_scene", "sample-scene", "sample") },
     [pscustomobject]@{ Canonical = "robot_sync_scene"; Aliases = @("robot_sync_scene", "robot-sync-scene", "robot") },
     [pscustomobject]@{ Canonical = "fangyuan_home"; Aliases = @("fangyuan_home", "fangyuan-home", "fangyuan") }
@@ -836,6 +837,16 @@ function Get-UiAuditLikelyFiles {
         "ui_gallery" {
             return @(
                 "project/src/game/screens/dev/ui_gallery.rs",
+                "project/src/game/screens/dev/mod.rs",
+                "project/src/game/navigation/mod.rs"
+            ) + $common
+        }
+        "ui_document_gallery" {
+            return @(
+                "project/src/game/screens/dev/ui_document_gallery.rs",
+                "project/assets/ui/documents/approved/gallery/declarative_gallery.v1.json",
+                "project/src/framework/ui/document/preview.rs",
+                "project/src/framework/ui/document/runtime.rs",
                 "project/src/game/screens/dev/mod.rs",
                 "project/src/game/navigation/mod.rs"
             ) + $common

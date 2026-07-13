@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "document_id": "gallery.declarative",
+  "metadata": {
+    "title": "Declarative UI Gallery",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {
+    "gallery_banner": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fixtures/visual-foundation/non-square-2x1.png"
+      }
+    }
+  },
+  "bindings": {
+    "gallery.status": {
+      "scope": "local",
+      "value_type": { "kind": "string" },
+      "default": { "kind": "string", "value": "Ready for review" },
+      "missing": "use_default"
+    }
+  },
+  "root": {
+    "type": "scroll",
+    "id": "gallery.root",
+    "row_gap": 16,
+    "max_height": 620,
+    "block_lower": true,
+    "layout": {
+      "width": { "percent": 100 },
+      "padding": { "all": { "px": 28 } }
+    },
+    "style": { "role": "page" },
+    "component": {
+      "children": [
+        {
+          "type": "text",
+          "id": "gallery.title",
+          "content": { "literal": "Declarative UI Gallery" },
+          "style": { "text_role": "title" }
+        },
+        {
+          "type": "text",
+          "id": "gallery.status",
+          "content": {
+            "binding_path": "gallery.status",
+            "fallback": "Status unavailable"
+          },
+          "style": { "text_role": "body" }
+        },
+        {
+          "type": "image",
+          "id": "gallery.banner",
+          "asset": "gallery_banner",
+          "presentation": {
+            "kind": "fit",
+            "fit": "cover",
+            "focus": { "x": 0.5, "y": 0.5 }
+          },
+          "layout": {
+            "width": { "percent": 100 },
+            "height": { "px": 150 }
+          }
+        },
+        {
+          "type": "container",
+          "id": "gallery.actions",
+          "layout": {
+            "direction": "row",
+            "wrap": "wrap",
+            "gap": { "px": 12 }
+          },
+          "children": [
+            {
+              "type": "button",
+              "id": "gallery.action",
+              "variant": "primary",
+              "label": { "literal": "Update local status" },
+              "on_click": {
+                "action": "gallery.set_status",
+                "params": {
+                  "value": {
+                    "kind": "binding",
+                    "value": { "kind": "string", "value": "Action dispatched" }
+                  }
+                }
+              }
+            },
+            {
+              "type": "badge",
+              "id": "gallery.badge",
+              "component": {
+                "variant": "success",
+                "slots": {
+                  "label": { "kind": "text", "content": { "literal": "Runtime" } }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "text_input",
+          "id": "gallery.input",
+          "value": "Editable state survives reload",
+          "max_chars": 64,
+          "component": {
+            "slots": {
+              "label": { "kind": "text", "content": { "literal": "Preview note" } },
+              "placeholder": { "kind": "text", "content": { "literal": "Enter a note" } },
+              "helper": { "kind": "text", "content": { "literal": "Hot reload preserves compatible input" } }
+            }
+          }
+        },
+        {
+          "type": "container",
+          "id": "gallery.selection_row",
+          "layout": {
+            "direction": "row",
+            "wrap": "wrap",
+            "gap": { "px": 12 }
+          },
+          "children": [
+            {
+              "type": "checkbox",
+              "id": "gallery.checkbox",
+              "checked": true,
+              "component": {
+                "states": ["selected"],
+                "slots": {
+                  "label": { "kind": "text", "content": { "literal": "Metadata" } }
+                }
+              }
+            },
+            {
+              "type": "toggle",
+              "id": "gallery.toggle",
+              "on": true,
+              "component": {
+                "states": ["selected"],
+                "slots": {
+                  "label": { "kind": "text", "content": { "literal": "Live preview" } }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "segmented",
+          "id": "gallery.segmented",
+          "selected": "design",
+          "options": [
+            { "value": "design", "label": { "literal": "Design" } },
+            { "value": "runtime", "label": { "literal": "Runtime" } },
+            { "value": "audit", "label": { "literal": "Audit" } }
+          ],
+          "component": {
+            "slots": {
+              "label": { "kind": "text", "content": { "literal": "Workspace" } }
+            }
+          }
+        },
+        {
+          "type": "slider",
+          "id": "gallery.slider",
+          "value": 0.68,
+          "min": 0,
+          "max": 1,
+          "component": {
+            "slots": {
+              "label": { "kind": "text", "content": { "literal": "Preview scale" } }
+            }
+          }
+        },
+        {
+          "type": "stepper",
+          "id": "gallery.stepper",
+          "value": 3,
+          "min": 1,
+          "max": 8,
+          "step": 1,
+          "component": {
+            "slots": {
+              "label": { "kind": "text", "content": { "literal": "Variants" } }
+            }
+          }
+        },
+        {
+          "type": "progress",
+          "id": "gallery.progress",
+          "value": 0.76,
+          "component": {
+            "variant": "info",
+            "slots": {
+              "label": { "kind": "text", "content": { "literal": "Audit coverage" } }
+            }
+          }
+        },
+        {
+          "type": "container",
+          "id": "gallery.tabs",
+          "layout": {
+            "direction": "row",
+            "gap": { "px": 8 }
+          },
+          "children": [
+            {
+              "type": "tab",
+              "id": "gallery.tab_overview",
+              "value": "overview",
+              "component": {
+                "states": ["selected"],
+                "slots": {
+                  "label": { "kind": "text", "content": { "literal": "Overview" } }
+                }
+              }
+            },
+            {
+              "type": "tab",
+              "id": "gallery.tab_details",
+              "value": "details",
+              "component": {
+                "slots": {
+                  "label": { "kind": "text", "content": { "literal": "Details" } }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "select",
+          "id": "gallery.select",
+          "selected": "phone",
+          "options": [
+            { "value": "phone", "label": { "literal": "Phone" } },
+            { "value": "tablet", "label": { "literal": "Tablet" } }
+          ],
+          "component": {
+            "slots": {
+              "label": { "kind": "text", "content": { "literal": "Audit target" } },
+              "placeholder": { "kind": "text", "content": { "literal": "Choose target" } }
+            }
+          }
+        },
+        {
+          "type": "tooltip",
+          "id": "gallery.tooltip",
+          "tone": "standard",
+          "component": {
+            "slots": {
+              "body": { "kind": "text", "content": { "literal": "Stable node IDs connect screenshot findings to source fields." } }
+            },
+            "children": [
+              {
+                "type": "text",
+                "id": "gallery.tooltip_target",
+                "content": { "literal": "Audit metadata target" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "responsive": [
+    {
+      "id": "compact_portrait",
+      "when": {
+        "width_class": "compact",
+        "orientation": "portrait"
+      },
+      "overrides": [
+        {
+          "node_id": "gallery.root",
+          "set": {
+            "layout": {
+              "padding": { "all": { "px": 14 } },
+              "gap": { "px": 10 }
+            }
+          }
+        },
+        {
+          "node_id": "gallery.banner",
+          "set": {
+            "layout": { "height": { "px": 112 } }
+          }
+        }
+      ]
+    },
+    {
+      "id": "expanded_landscape",
+      "when": {
+        "width_class": "expanded",
+        "orientation": "landscape"
+      },
+      "overrides": [
+        {
+          "node_id": "gallery.root",
+          "set": {
+            "layout": {
+              "padding": { "all": { "px": 36 } },
+              "gap": { "px": 18 }
+            }
+          }
+        },
+        {
+          "node_id": "gallery.banner",
+          "set": {
+            "layout": { "height": { "px": 190 } }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -17,6 +17,7 @@ use crate::framework::ui::{
         UiOrientation, UiOwnerId, UiPanelKind, UiPanelRoot, UiSafeAreaStatus, UiViewport,
         UiWidthClass, stats::UiStats,
     },
+    document::{UiDocumentNodeAuditMarker, UiDocumentResolvedStyleMarker, UiDocumentRuntimeRoot},
     style::{
         UiFontResolution, UiResolvedEffectDebugSnapshot, UiResolvedStyleDebugSnapshot,
         UiTextStyleToken,
@@ -530,6 +531,16 @@ struct UiAuditMetadataWorld<'w, 's> {
     motion_policy: Res<'w, UiMotionPolicy>,
     image_assets: Res<'w, Assets<Image>>,
     panels: Query<'w, 's, &'static UiPanelRoot>,
+    document_roots: Query<'w, 's, &'static UiDocumentRuntimeRoot>,
+    document_nodes: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static UiDocumentNodeAuditMarker,
+            &'static UiDocumentResolvedStyleMarker,
+        ),
+    >,
     style_resolutions: Query<
         'w,
         's,
@@ -655,10 +666,13 @@ fn drive_local_ui_audit(
 
     let screenshot_status =
         consume_screenshot_status(&mut screenshot_events, current_capture_plan(&runtime));
-    let target_panel_ready = runtime
-        .plan
-        .as_ref()
-        .is_some_and(|plan| target_owner_panel_ready(plan.screen.owner, &metadata_world.panels));
+    let target_panel_ready = runtime.plan.as_ref().is_some_and(|plan| {
+        target_owner_panel_ready(
+            plan.screen.owner,
+            &metadata_world.panels,
+            &metadata_world.document_roots,
+        )
+    });
     let phase = std::mem::take(&mut runtime.phase);
     let (next_phase, action) = advance_audit_phase(
         phase,
@@ -746,6 +760,7 @@ fn drive_local_ui_audit(
                     &metadata_world.stats,
                     &metadata_world.current_owner,
                     &metadata_world.panels,
+                    &metadata_world.document_nodes,
                     &metadata_world.style_resolutions,
                     &metadata_world.effect_resolutions,
                     &metadata_world.motion_policy,
@@ -1156,8 +1171,15 @@ fn consume_screenshot_status(
     status
 }
 
-fn target_owner_panel_ready(owner: UiOwnerId, panels: &Query<&UiPanelRoot>) -> bool {
+fn target_owner_panel_ready(
+    owner: UiOwnerId,
+    panels: &Query<&UiPanelRoot>,
+    document_roots: &Query<&UiDocumentRuntimeRoot>,
+) -> bool {
     panels.iter().any(|panel| panel.owner == Some(owner))
+        || document_roots
+            .iter()
+            .any(|root| root.owner == owner.as_str())
 }
 
 fn apply_capture_state(
@@ -1541,6 +1563,11 @@ fn build_capture_metadata(
     stats: &UiStats,
     current_owner: &UiCurrentOwner,
     panels: &Query<&UiPanelRoot>,
+    document_nodes: &Query<(
+        Entity,
+        &UiDocumentNodeAuditMarker,
+        &UiDocumentResolvedStyleMarker,
+    )>,
     style_resolutions: &Query<(Entity, Option<&Name>, &UiResolvedStyleDebugSnapshot)>,
     effect_resolutions: &Query<(Entity, Option<&Name>, &UiResolvedEffectDebugSnapshot)>,
     motion_policy: &UiMotionPolicy,
@@ -1569,6 +1596,7 @@ fn build_capture_metadata(
     primary_window: Option<&Window>,
 ) -> UiAuditMetadata {
     let style_resolutions = collect_style_resolution_metadata(style_resolutions);
+    let document_nodes = collect_document_node_metadata(document_nodes);
     let effect_resolutions = collect_effect_resolution_metadata(effect_resolutions);
     let animation_snapshots = collect_animation_snapshot_metadata(animation_snapshots);
     let control_snapshots = collect_control_snapshot_metadata(control_snapshots);
@@ -1596,6 +1624,7 @@ fn build_capture_metadata(
         viewport: UiAuditViewportMetadata::new(*viewport, *safe_area_status),
         current_page: current_owner.owner.map(|owner| owner.as_str().to_owned()),
         panels: panels.iter().map(UiAuditPanelMetadata::from).collect(),
+        document_nodes,
         style_resolutions,
         effect_resolutions,
         motion_policy: motion_policy.as_str().to_owned(),
@@ -1621,6 +1650,7 @@ struct UiAuditMetadata {
     viewport: UiAuditViewportMetadata,
     current_page: Option<String>,
     panels: Vec<UiAuditPanelMetadata>,
+    document_nodes: Vec<UiAuditDocumentNodeMetadata>,
     style_resolutions: Vec<UiAuditStyleResolutionMetadata>,
     effect_resolutions: Vec<UiAuditEffectResolutionMetadata>,
     motion_policy: String,
@@ -1632,6 +1662,45 @@ struct UiAuditMetadata {
     visual_budget: UiVisualBudgetReport,
     window: Option<UiAuditWindowMetadata>,
     stats: UiAuditStatsMetadata,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+struct UiAuditDocumentNodeMetadata {
+    entity: String,
+    document_id: String,
+    schema_version: u32,
+    node_id: String,
+    document_path: String,
+    source_path: String,
+    effective_style: super::super::document::UiResolvedStyle,
+}
+
+fn collect_document_node_metadata(
+    nodes: &Query<(
+        Entity,
+        &UiDocumentNodeAuditMarker,
+        &UiDocumentResolvedStyleMarker,
+    )>,
+) -> Vec<UiAuditDocumentNodeMetadata> {
+    let mut values = nodes
+        .iter()
+        .map(|(entity, marker, style)| UiAuditDocumentNodeMetadata {
+            entity: format!("{entity:?}"),
+            document_id: marker.document_id.as_str().to_owned(),
+            schema_version: marker.schema_version,
+            node_id: marker.node_id.as_str().to_owned(),
+            document_path: marker.document_path.clone(),
+            source_path: marker.source_path.clone(),
+            effective_style: style.0.clone(),
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.document_id
+            .cmp(&right.document_id)
+            .then_with(|| left.node_id.cmp(&right.node_id))
+            .then_with(|| left.entity.cmp(&right.entity))
+    });
+    values
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -2359,6 +2428,7 @@ fn panel_kind_name(value: UiPanelKind) -> &'static str {
 mod tests {
     use super::*;
     use bevy::ecs::system::SystemState;
+    use std::str::FromStr;
 
     fn env_reader<'a>(values: &'a [(&'a str, &'a str)]) -> impl FnMut(&str) -> Option<String> + 'a {
         move |key| {
@@ -2762,6 +2832,46 @@ mod tests {
         assert_eq!(metadata[1].name.as_deref(), Some("style-z"));
         let json = serde_json::to_string(&metadata).unwrap();
         assert!(json.contains("style_resolutions") || json.contains("scope.a"));
+    }
+
+    #[test]
+    fn audit_metadata_collects_declarative_source_and_effective_style_stably() {
+        let mut world = World::new();
+        let document_id =
+            crate::framework::ui::document::UiDocumentId::from_str("audit.document").unwrap();
+        for (index, node) in ["audit.z", "audit.a"].into_iter().enumerate() {
+            world.spawn((
+                UiDocumentNodeAuditMarker {
+                    instance_id: crate::framework::ui::document::UiDocumentInstanceId(7),
+                    document_id: document_id.clone(),
+                    schema_version: 1,
+                    node_id: crate::framework::ui::document::UiNodeId::from_str(node).unwrap(),
+                    document_path: format!("$.root.children[{index}]"),
+                    source_path: "ui/documents/approved/audit/page.json".to_owned(),
+                },
+                UiDocumentResolvedStyleMarker(
+                    crate::framework::ui::document::UiResolvedStyle::default(),
+                ),
+            ));
+        }
+        let mut state = SystemState::<
+            Query<(
+                Entity,
+                &UiDocumentNodeAuditMarker,
+                &UiDocumentResolvedStyleMarker,
+            )>,
+        >::new(&mut world);
+        let query = state.get(&world);
+        let metadata = collect_document_node_metadata(&query);
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[0].node_id, "audit.a");
+        assert_eq!(metadata[1].node_id, "audit.z");
+        assert!(metadata.iter().all(|node| {
+            node.document_id == "audit.document"
+                && node.schema_version == 1
+                && node.source_path == "ui/documents/approved/audit/page.json"
+        }));
     }
 
     #[test]

@@ -19,6 +19,7 @@
 - [UI调试与验收.md](UI调试与验收.md)：F3 调试面板、窗口级验收命令和 Android 验收关注点。
 - [UI当前限制.md](UI当前限制.md)：当前实现边界和使用时需要规避的点。
 - [UI声明式文档协议.md](UI声明式文档协议.md)：声明式 `UiDocument` 的职责、版本兼容、目录、可信边界、安全预算和 v1 最小 fixture。
+- [UI声明式预览与热更新.md](UI声明式预览与热更新.md)：安全 source 注册、显式 reload、开发期 watch、稳定节点 diff、状态迁移、audit recipe 和声明式 Gallery。
 
 ## 设计方案
 
@@ -45,6 +46,7 @@ flowchart TD
     UiInput["UiInputState"]
     UiFocus["UiFocusState"]
     UiBinding["UiBindingValues"]
+    UiDocument["UiDocument Runtime + Preview"]
     UiDebug["UiDebugPlugin"]
     UiOverlayPlugin["UiOverlayPlugin"]
 
@@ -68,6 +70,7 @@ flowchart TD
     UiFrameworkPlugin --> UiInput
     UiFrameworkPlugin --> UiFocus
     UiFrameworkPlugin --> UiBinding
+    UiFrameworkPlugin --> UiDocument
     UiFrameworkPlugin --> UiDebug
     UiFrameworkPlugin --> UiOverlayPlugin
     UiOverlayPlugin --> UiOverlayCommand
@@ -95,6 +98,8 @@ flowchart TD
 - `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 和覆盖层命令处理。
 - `project/src/framework/ui/style/`：字体加载、作用域样式、主题 token、受限视觉效果和材质策略。
 - `project/src/framework/ui/i18n.rs`：UI 文案加载、fallback 和热更新。
+- `project/src/framework/ui/document/`：声明式模型、验证器、事务运行时、预览/reload、diff 和 audit metadata。
+- `project/assets/ui/documents/approved/`：通过批准流程并可进入首包的声明式页面。
 
 ## 文档维护规则
 
