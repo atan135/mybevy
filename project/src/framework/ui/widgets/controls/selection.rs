@@ -430,7 +430,7 @@ fn toggle_bundle<I: Bundle, M: Bundle, S: Bundle>(
     )
 }
 
-fn segment_option_key_bundle<I: Bundle, M: Bundle, S: Bundle>(
+pub(crate) fn segment_option_key_bundle<I: Bundle, M: Bundle, S: Bundle>(
     theme: &UiTheme,
     fonts: &UiFontAssets,
     text: impl Into<String>,

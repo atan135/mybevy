@@ -31,6 +31,9 @@ pub(crate) struct UiSliderTrack;
 #[derive(Component)]
 pub(crate) struct UiSliderValueText;
 
+#[derive(Component)]
+pub(crate) struct UiNumericControlLabel;
+
 #[derive(Clone, Copy, Debug, PartialEq, Component)]
 pub(crate) struct UiStepper {
     pub value: i32,
@@ -225,6 +228,7 @@ pub(crate) fn slider_bundle<T: Bundle>(
         )),
         children![
             (
+                UiNumericControlLabel,
                 slider_label_node(metrics),
                 FocusPolicy::Pass,
                 Text::new(label),
@@ -310,6 +314,7 @@ pub(crate) fn stepper_bundle<T: Bundle, D: Bundle, I: Bundle>(
         },
         children![
             (
+                UiNumericControlLabel,
                 stepper_label_node(metrics),
                 Text::new(label),
                 TextFont {

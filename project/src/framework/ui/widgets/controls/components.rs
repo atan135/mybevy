@@ -240,8 +240,15 @@ pub(crate) struct UiProgressFill;
 
 #[derive(Component)]
 pub(crate) struct UiProgressLabel {
-    key: &'static str,
-    fallback: &'static str,
+    key: Option<&'static str>,
+    fallback: String,
+}
+
+impl UiProgressLabel {
+    pub(crate) fn set_dynamic_fallback(&mut self, fallback: String) {
+        self.key = None;
+        self.fallback = fallback;
+    }
 }
 
 #[derive(Component)]
@@ -254,6 +261,9 @@ pub(crate) struct UiTab {
 
 #[derive(Component)]
 pub(crate) struct UiTabIndicator;
+
+#[derive(Component)]
+pub(crate) struct UiTabLabel;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UiDropdownOption {
@@ -317,6 +327,19 @@ impl UiDropdown {
 
     pub(crate) fn selected_option(&self) -> Option<&UiDropdownOption> {
         self.selected.and_then(|index| self.options.get(index))
+    }
+
+    pub(crate) fn set_document_status_text(
+        &mut self,
+        empty: Option<String>,
+        error: Option<String>,
+    ) {
+        if let Some(empty) = empty {
+            self.empty_text = empty;
+        }
+        if let Some(error) = error {
+            self.error_text = error;
+        }
     }
 
     pub(crate) fn display_text(&self, flags: UiControlFlags) -> String {
@@ -416,6 +439,33 @@ pub(crate) fn badge_key(
     )
 }
 
+pub(crate) fn badge(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    state: UiControlState,
+) -> impl Bundle {
+    debug_assert!(UiControlKind::Badge.supports_state(state));
+    (
+        UiBadge { state },
+        UiControlMeta::new(UiControlId::new("document.badge"), UiControlKind::Badge),
+        badge_node(theme),
+        BackgroundColor(control_state_color(theme, state)),
+        BorderColor::all(control_state_border_color(theme, state)),
+        children![(
+            UiBadgeLabel,
+            Text::new(text),
+            TextFont {
+                font: fonts.regular.clone(),
+                font_size: theme.text.caption,
+                ..default()
+            },
+            TextColor(control_state_text_color(theme, state)),
+            UiThemeTextStyleRole::Caption,
+        )],
+    )
+}
+
 pub(crate) fn progress_key(
     theme: &UiTheme,
     fonts: &UiFontAssets,
@@ -463,12 +513,85 @@ pub(crate) fn progress_key(
                 )],
             ),
             (
-                UiProgressLabel { key, fallback },
+                UiProgressLabel {
+                    key: Some(key),
+                    fallback: fallback.to_owned(),
+                },
                 Node {
                     width: px(54),
                     ..default()
                 },
                 Text::new(progress_display_text(progress, i18n.tr(key, fallback))),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.caption,
+                    ..default()
+                },
+                TextColor(control_state_text_color(theme, state)),
+                UiThemeTextStyleRole::Caption,
+            ),
+        ],
+    )
+}
+
+pub(crate) fn progress(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    text: impl Into<String>,
+    value: f32,
+    state: UiControlState,
+) -> impl Bundle {
+    debug_assert!(UiControlKind::Progress.supports_state(state));
+    let fallback = text.into();
+    let progress = UiProgress::new(value, state);
+    let fill_width = progress_fill_width(progress);
+    (
+        progress,
+        UiControlMeta::new(
+            UiControlId::new("document.progress"),
+            UiControlKind::Progress,
+        ),
+        Node {
+            width: percent(100),
+            min_height: px(36),
+            align_items: AlignItems::Center,
+            column_gap: px(theme.layout.row_gap.max(8.0)),
+            ..default()
+        },
+        children![
+            (
+                Node {
+                    min_width: px(92),
+                    flex_grow: 1.0,
+                    height: px(10),
+                    border: UiRect::all(px(theme.panel.border)),
+                    border_radius: BorderRadius::all(px(5)),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BackgroundColor(theme.colors.secondary_button.idle),
+                BorderColor::all(control_state_border_color(theme, state)),
+                children![(
+                    UiProgressFill,
+                    Node {
+                        width: percent(fill_width),
+                        height: percent(100),
+                        border_radius: BorderRadius::all(px(5)),
+                        ..default()
+                    },
+                    BackgroundColor(progress_fill_color(theme, state)),
+                )],
+            ),
+            (
+                UiProgressLabel {
+                    key: None,
+                    fallback: fallback.clone(),
+                },
+                Node {
+                    width: px(54),
+                    ..default()
+                },
+                Text::new(progress_display_text(progress, fallback)),
                 TextFont {
                     font: fonts.regular.clone(),
                     font_size: theme.text.caption,
@@ -533,6 +656,7 @@ pub(crate) fn tab_key(
         BackgroundColor(control_state_color(theme, state)),
         children![
             (
+                UiTabLabel,
                 Text::new(i18n.tr(key, fallback)),
                 TextFont {
                     font: fonts.regular.clone(),
@@ -542,6 +666,70 @@ pub(crate) fn tab_key(
                 TextColor(control_state_text_color(theme, state)),
                 UiThemeTextStyleRole::Button,
                 UiI18nText::new(key, fallback),
+            ),
+            (
+                UiTabIndicator,
+                Pickable::IGNORE,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(theme.button.padding_x),
+                    right: px(theme.button.padding_x),
+                    bottom: px(3),
+                    height: px(2),
+                    border_radius: BorderRadius::all(px(1)),
+                    ..default()
+                },
+                BackgroundColor(theme.colors.primary_button.focused),
+                if flags.selected {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                },
+            ),
+        ],
+    )
+}
+
+pub(crate) fn tab(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    value: impl Into<String>,
+    text: impl Into<String>,
+    state: UiControlState,
+) -> impl Bundle {
+    debug_assert!(UiControlKind::Tab.supports_state(state));
+    let flags = UiControlFlags::from_state(state);
+    (
+        Button,
+        FocusableButton,
+        UiTab {
+            value: value.into(),
+        },
+        UiControlMeta::new(UiControlId::new("document.tab"), UiControlKind::Tab),
+        flags,
+        UiThemeButtonNodeRole::Button,
+        Node {
+            min_width: px(theme.button.min_width),
+            height: px(theme.button.height),
+            flex_grow: 1.0,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            padding: UiRect::axes(px(theme.button.padding_x), px(0)),
+            border_radius: BorderRadius::all(px((theme.button.radius - 2.0).max(0.0))),
+            ..default()
+        },
+        BackgroundColor(control_state_color(theme, state)),
+        children![
+            (
+                UiTabLabel,
+                Text::new(text),
+                TextFont {
+                    font: fonts.regular.clone(),
+                    font_size: theme.text.button,
+                    ..default()
+                },
+                TextColor(control_state_text_color(theme, state)),
+                UiThemeTextStyleRole::Button,
             ),
             (
                 UiTabIndicator,
@@ -756,7 +944,7 @@ fn progress_fill_width(progress: UiProgress) -> f32 {
     }
 }
 
-fn progress_display_text(progress: UiProgress, fallback: String) -> String {
+pub(crate) fn progress_display_text(progress: UiProgress, fallback: String) -> String {
     match progress.state {
         UiControlState::Loading | UiControlState::Empty | UiControlState::Error => fallback,
         _ => format!("{:.0}%", progress.value * 100.0),
@@ -1048,8 +1236,11 @@ pub(crate) fn sync_static_component_visuals(
                 }
             }
             if let Ok((label, mut text, mut color)) = progress_labels.get_mut(child) {
-                let next_text =
-                    progress_display_text(*progress, i18n.tr(label.key, label.fallback));
+                let fallback = label.key.map_or_else(
+                    || label.fallback.clone(),
+                    |key| i18n.tr(key, label.fallback.clone()),
+                );
+                let next_text = progress_display_text(*progress, fallback);
                 if text.0 != next_text {
                     text.0 = next_text;
                 }
@@ -1665,8 +1856,8 @@ mod tests {
             .world_mut()
             .spawn((
                 UiProgressLabel {
-                    key: "test.progress",
-                    fallback: "Loading...",
+                    key: Some("test.progress"),
+                    fallback: "Loading...".to_owned(),
                 },
                 Text::new("stale"),
                 TextColor(Color::NONE),

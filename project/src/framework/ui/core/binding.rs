@@ -250,6 +250,16 @@ impl UiBindingValues {
         before - self.scoped_values.len()
     }
 
+    pub(crate) fn clear_instance(&mut self, document_id: &str, owner: &str) -> usize {
+        let before = self.scoped_values.len();
+        self.scoped_values.retain(|key, _| {
+            key.scope == UiDocumentBindingScope::Document
+                || key.document_id != document_id
+                || key.owner != owner
+        });
+        before - self.scoped_values.len()
+    }
+
     pub(crate) fn clear_document(&mut self, document_id: &str) -> usize {
         let before = self.scoped_values.len();
         self.scoped_values
@@ -808,6 +818,60 @@ mod tests {
             values
                 .scoped_value("binding.actions", "owner_b", &document_path, &document)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn scoped_binding_instance_cleanup_preserves_other_owners_and_document_scope() {
+        use crate::framework::ui::document::{
+            UiBindingPath as UiDocumentBindingPath, UiBindingType,
+        };
+        use std::str::FromStr;
+
+        let path = UiDocumentBindingPath::from_str("state.value").unwrap();
+        let local = UiBindingDeclaration {
+            scope: UiDocumentBindingScope::Local,
+            value_type: UiBindingType::String,
+            default: None,
+            missing: UiBindingMissingBehavior::UseConsumerFallback,
+        };
+        let document = UiBindingDeclaration {
+            scope: UiDocumentBindingScope::Document,
+            value_type: UiBindingType::String,
+            default: None,
+            missing: UiBindingMissingBehavior::UseConsumerFallback,
+        };
+        let mut values = UiBindingValues::default();
+        assert!(values.set_scoped(
+            "example.document",
+            "owner_a",
+            &path,
+            &local,
+            UiBindingValue::String("a".to_owned()),
+        ));
+        assert!(values.set_scoped(
+            "example.document",
+            "owner_b",
+            &path,
+            &local,
+            UiBindingValue::String("b".to_owned()),
+        ));
+        assert!(values.set_scoped(
+            "example.document",
+            "owner_a",
+            &path,
+            &document,
+            UiBindingValue::String("shared".to_owned()),
+        ));
+
+        assert_eq!(values.clear_instance("example.document", "owner_a"), 1);
+        assert_eq!(
+            values.scoped_value("example.document", "owner_b", &path, &local),
+            Some(UiBindingValue::String("b".to_owned()))
+        );
+        assert_eq!(
+            values.scoped_value("example.document", "owner_b", &path, &document),
+            Some(UiBindingValue::String("shared".to_owned()))
         );
     }
 }

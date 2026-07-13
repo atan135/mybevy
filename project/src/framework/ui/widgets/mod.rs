@@ -40,8 +40,8 @@ pub(crate) use image::{
     UiImagePixelRect, UiImagePixelSize, UiImagePresentationKind, UiImageSize, UiImageStatus,
     UiImageTextureSource, UiImageTiling, UiImageWidget, UiNineSlice, UiNineSliceInsets,
     UiSliceScaleMode, UiTileAxis, calculate_image_fit, calculate_nine_slice_layout,
-    calculate_tiling_layout, try_ui_advanced_image, ui_image, ui_image_panel_node,
-    ui_image_panel_node_with_radius, ui_thumbnail_grid,
+    calculate_tiling_layout, try_ui_advanced_image, try_ui_advanced_image_from_handle, ui_image,
+    ui_image_panel_node, ui_image_panel_node_with_radius, ui_thumbnail_grid,
 };
 #[allow(unused_imports)]
 pub(crate) use layout::{

@@ -1162,12 +1162,20 @@ pub(crate) fn try_ui_advanced_image(
     spec: UiAdvancedImageSpec,
     size: UiImageSize,
 ) -> Result<UiAdvancedImageBundle, UiImageError> {
+    let image: Handle<Image> = asset_server.load(spec.source.texture().path.clone());
+    try_ui_advanced_image_from_handle(image, spec, size)
+}
+
+pub(crate) fn try_ui_advanced_image_from_handle(
+    image: Handle<Image>,
+    spec: UiAdvancedImageSpec,
+    size: UiImageSize,
+) -> Result<UiAdvancedImageBundle, UiImageError> {
     spec.validate()?;
     let mut node = size.try_to_node()?;
     node.align_self = AlignSelf::Stretch;
     let source_rect = spec.source.rect();
     let image_mode = spec.mode.initial_node_image_mode();
-    let image: Handle<Image> = asset_server.load(spec.source.texture().path.clone());
     let mut image_node = ImageNode::new(image).with_mode(image_mode);
     if let Some(source_rect) = source_rect {
         image_node = image_node.with_rect(source_rect);
