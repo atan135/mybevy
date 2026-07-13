@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "document_id": "example.minimal_page",
+  "metadata": {
+    "title": "Minimal declarative UI fixture",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {
+    "hero_image": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fixtures/visual-foundation/non-square-2x1.png"
+      }
+    }
+  },
+  "tokens": {},
+  "root": {
+    "id": "page.root",
+    "type": "container",
+    "layout": {
+      "direction": "column",
+      "width": {
+        "percent": 100
+      },
+      "height": {
+        "percent": 100
+      },
+      "padding": {
+        "all": {
+          "px": 32
+        }
+      },
+      "gap": {
+        "px": 20
+      },
+      "align_items": "center"
+    },
+    "style": {
+      "role": "page"
+    },
+    "children": [
+      {
+        "id": "page.title",
+        "type": "text",
+        "content": {
+          "literal": "Declarative UI"
+        },
+        "style": {
+          "text_role": "title"
+        }
+      },
+      {
+        "id": "page.hero",
+        "type": "image",
+        "asset": "hero_image",
+        "fit": "contain",
+        "layout": {
+          "width": {
+            "percent": 100
+          },
+          "height": {
+            "px": 180
+          }
+        }
+      },
+      {
+        "id": "page.continue",
+        "type": "button",
+        "variant": "primary",
+        "label": {
+          "literal": "Continue"
+        },
+        "on_click": {
+          "action": "example.continue",
+          "args": {}
+        }
+      }
+    ]
+  },
+  "responsive": [
+    {
+      "id": "compact_portrait",
+      "when": {
+        "width_class": "compact",
+        "orientation": "portrait"
+      },
+      "overrides": [
+        {
+          "node_id": "page.root",
+          "set": {
+            "layout": {
+              "padding": {
+                "all": {
+                  "px": 16
+                }
+              },
+              "gap": {
+                "px": 12
+              }
+            }
+          }
+        },
+        {
+          "node_id": "page.hero",
+          "set": {
+            "layout": {
+              "height": {
+                "px": 120
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -18,6 +18,7 @@
 - [UI覆盖层与弹窗.md](UI覆盖层与弹窗.md)：Toast、Loading、Confirm、Floating 的命令流和层级行为。
 - [UI调试与验收.md](UI调试与验收.md)：F3 调试面板、窗口级验收命令和 Android 验收关注点。
 - [UI当前限制.md](UI当前限制.md)：当前实现边界和使用时需要规避的点。
+- [UI声明式文档协议.md](UI声明式文档协议.md)：声明式 `UiDocument` 的职责、版本兼容、目录、可信边界、安全预算和 v1 最小 fixture。
 
 ## 设计方案
 
