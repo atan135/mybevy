@@ -102,9 +102,56 @@
       ],
       "type": "string"
     },
+    "UiAssetDeclaredSize": {
+      "additionalProperties": false,
+      "properties": {
+        "decoded_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "decoded_bytes"
+      ],
+      "type": "object"
+    },
     "UiAssetEntry": {
       "additionalProperties": false,
       "properties": {
+        "declared_size": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiAssetDeclaredSize"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "frames": {
+          "additionalProperties": false,
+          "default": {},
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$": {
+              "$ref": "#/$defs/UiAtlasFrameDescription"
+            }
+          },
+          "type": "object"
+        },
         "kind": {
           "$ref": "#/$defs/UiAssetKind"
         },
@@ -169,8 +216,138 @@
             "logical_id"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "built_in_material",
+              "type": "string"
+            },
+            "material": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "material"
+          ],
+          "type": "object"
         }
       ]
+    },
+    "UiAtlasFrameDescription": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "original_height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "original_width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pivot": {
+          "$ref": "#/$defs/UiImageFocus",
+          "default": {
+            "x": 0.5,
+            "y": 0.5
+          }
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "x": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "y": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "original_width",
+        "original_height"
+      ],
+      "type": "object"
+    },
+    "UiBackgroundStyle": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "$ref": "#/$defs/UiColorValue"
+            },
+            "kind": {
+              "const": "solid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "color"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "angle_degrees": {
+              "format": "float",
+              "type": "number"
+            },
+            "kind": {
+              "const": "linear_gradient",
+              "type": "string"
+            },
+            "stops": {
+              "items": {
+                "$ref": "#/$defs/UiGradientStop"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "angle_degrees",
+            "stops"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiBorderStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "$ref": "#/$defs/UiColorValue"
+        },
+        "width": {
+          "$ref": "#/$defs/UiScalarValue"
+        }
+      },
+      "required": [
+        "width",
+        "color"
+      ],
+      "type": "object"
     },
     "UiButtonVariant": {
       "enum": [
@@ -178,6 +355,66 @@
         "secondary"
       ],
       "type": "string"
+    },
+    "UiColor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UiColorHexSchema"
+        },
+        {
+          "properties": {
+            "srgb": {
+              "$ref": "#/$defs/UiSrgbColorInput"
+            }
+          },
+          "required": [
+            "srgb"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiColorHexSchema": {
+      "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+      "type": "string"
+    },
+    "UiColorValue": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "literal",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/UiColor"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "token",
+              "type": "string"
+            },
+            "token": {
+              "$ref": "#/$defs/UiStyleId"
+            }
+          },
+          "required": [
+            "kind",
+            "token"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "UiContentAlignment": {
       "enum": [
@@ -189,6 +426,30 @@
         "space_evenly"
       ],
       "type": "string"
+    },
+    "UiCornerRadii": {
+      "additionalProperties": false,
+      "properties": {
+        "bottom_left": {
+          "$ref": "#/$defs/UiScalarValue"
+        },
+        "bottom_right": {
+          "$ref": "#/$defs/UiScalarValue"
+        },
+        "top_left": {
+          "$ref": "#/$defs/UiScalarValue"
+        },
+        "top_right": {
+          "$ref": "#/$defs/UiScalarValue"
+        }
+      },
+      "required": [
+        "top_left",
+        "top_right",
+        "bottom_right",
+        "bottom_left"
+      ],
+      "type": "object"
     },
     "UiDisplay": {
       "enum": [
@@ -234,6 +495,23 @@
         "wrap_reverse"
       ],
       "type": "string"
+    },
+    "UiGradientStop": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "$ref": "#/$defs/UiColorValue"
+        },
+        "position": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position",
+        "color"
+      ],
+      "type": "object"
     },
     "UiGridAutoFlow": {
       "enum": [
@@ -368,6 +646,146 @@
         "stretch"
       ],
       "type": "string"
+    },
+    "UiImageFocus": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "default": 0.5,
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "default": 0.5,
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "UiImagePresentation": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fit": {
+              "$ref": "#/$defs/UiImageFit",
+              "default": "contain"
+            },
+            "focus": {
+              "$ref": "#/$defs/UiImageFocus",
+              "default": {
+                "x": 0.5,
+                "y": 0.5
+              }
+            },
+            "kind": {
+              "const": "fit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "center": {
+              "$ref": "#/$defs/UiSliceScaleMode",
+              "default": {
+                "kind": "stretch"
+              }
+            },
+            "insets": {
+              "$ref": "#/$defs/UiNineSliceInsets"
+            },
+            "kind": {
+              "const": "nine_slice",
+              "type": "string"
+            },
+            "max_corner_scale": {
+              "default": 1.0,
+              "format": "float",
+              "type": "number"
+            },
+            "max_generated_slices": {
+              "default": 256,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sides": {
+              "$ref": "#/$defs/UiSliceScaleMode",
+              "default": {
+                "kind": "stretch"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "insets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "axis": {
+              "$ref": "#/$defs/UiTileAxis"
+            },
+            "kind": {
+              "const": "tiled",
+              "type": "string"
+            },
+            "max_repeats": {
+              "default": 256,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "stretch_value": {
+              "default": 1.0,
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "axis"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fit": {
+              "$ref": "#/$defs/UiImageFit",
+              "default": "contain"
+            },
+            "focus": {
+              "$ref": "#/$defs/UiImageFocus",
+              "default": {
+                "x": 0.5,
+                "y": 0.5
+              }
+            },
+            "frame": {
+              "$ref": "#/$defs/UiStyleId"
+            },
+            "kind": {
+              "const": "atlas_frame",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "frame"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "UiInsets": {
       "additionalProperties": false,
@@ -1111,6 +1529,79 @@
         }
       ]
     },
+    "UiMaterialParameters": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "blur_px": {
+              "$ref": "#/$defs/UiScalarValue"
+            },
+            "kind": {
+              "const": "frosted_panel_v1",
+              "type": "string"
+            },
+            "opacity": {
+              "$ref": "#/$defs/UiScalarValue"
+            },
+            "tint": {
+              "$ref": "#/$defs/UiColorValue"
+            }
+          },
+          "required": [
+            "kind",
+            "blur_px",
+            "opacity",
+            "tint"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiMaterialStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "asset": {
+          "$ref": "#/$defs/UiAssetId"
+        },
+        "parameters": {
+          "$ref": "#/$defs/UiMaterialParameters"
+        }
+      },
+      "required": [
+        "asset",
+        "parameters"
+      ],
+      "type": "object"
+    },
+    "UiNineSliceInsets": {
+      "additionalProperties": false,
+      "properties": {
+        "bottom": {
+          "format": "float",
+          "type": "number"
+        },
+        "left": {
+          "format": "float",
+          "type": "number"
+        },
+        "right": {
+          "format": "float",
+          "type": "number"
+        },
+        "top": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "left",
+        "right",
+        "top",
+        "bottom"
+      ],
+      "type": "object"
+    },
     "UiNode": {
       "oneOf": [
         {
@@ -1205,6 +1696,16 @@
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
+                "component": null,
+                "inline": {
+                  "background": null,
+                  "border": null,
+                  "corner_radius": null,
+                  "material": null,
+                  "opacity": null,
+                  "shadows": null,
+                  "text": null
+                },
                 "role": null,
                 "text_role": null
               }
@@ -1308,6 +1809,16 @@
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
+                "component": null,
+                "inline": {
+                  "background": null,
+                  "border": null,
+                  "corner_radius": null,
+                  "material": null,
+                  "opacity": null,
+                  "shadows": null,
+                  "text": null
+                },
                 "role": null,
                 "text_role": null
               }
@@ -1329,10 +1840,6 @@
           "properties": {
             "asset": {
               "$ref": "#/$defs/UiAssetId"
-            },
-            "fit": {
-              "$ref": "#/$defs/UiImageFit",
-              "default": "contain"
             },
             "id": {
               "$ref": "#/$defs/UiNodeId"
@@ -1413,9 +1920,30 @@
                 "z_index": 0
               }
             },
+            "presentation": {
+              "$ref": "#/$defs/UiImagePresentation",
+              "default": {
+                "fit": "contain",
+                "focus": {
+                  "x": 0.5,
+                  "y": 0.5
+                },
+                "kind": "fit"
+              }
+            },
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
+                "component": null,
+                "inline": {
+                  "background": null,
+                  "border": null,
+                  "corner_radius": null,
+                  "material": null,
+                  "opacity": null,
+                  "shadows": null,
+                  "text": null
+                },
                 "role": null,
                 "text_role": null
               }
@@ -1523,6 +2051,16 @@
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
+                "component": null,
+                "inline": {
+                  "background": null,
+                  "border": null,
+                  "corner_radius": null,
+                  "material": null,
+                  "opacity": null,
+                  "shadows": null,
+                  "text": null
+                },
                 "role": null,
                 "text_role": null
               }
@@ -1676,6 +2214,136 @@
       ],
       "type": "object"
     },
+    "UiScalarValue": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "literal",
+              "type": "string"
+            },
+            "value": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "token",
+              "type": "string"
+            },
+            "token": {
+              "$ref": "#/$defs/UiStyleId"
+            }
+          },
+          "required": [
+            "kind",
+            "token"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiShadowStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "blur": {
+          "$ref": "#/$defs/UiScalarValue"
+        },
+        "color": {
+          "$ref": "#/$defs/UiColorValue"
+        },
+        "spread": {
+          "$ref": "#/$defs/UiScalarValue"
+        },
+        "x_offset": {
+          "$ref": "#/$defs/UiScalarValue"
+        },
+        "y_offset": {
+          "$ref": "#/$defs/UiScalarValue"
+        }
+      },
+      "required": [
+        "color",
+        "x_offset",
+        "y_offset",
+        "blur",
+        "spread"
+      ],
+      "type": "object"
+    },
+    "UiSliceScaleMode": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "stretch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "tile",
+              "type": "string"
+            },
+            "stretch_value": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "stretch_value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiSrgbColorInput": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "format": "float",
+          "type": "number"
+        },
+        "blue": {
+          "format": "float",
+          "type": "number"
+        },
+        "green": {
+          "format": "float",
+          "type": "number"
+        },
+        "red": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "red",
+        "green",
+        "blue",
+        "alpha"
+      ],
+      "type": "object"
+    },
     "UiStateDefinition": {
       "additionalProperties": false,
       "properties": {
@@ -1698,6 +2366,29 @@
     "UiStyle": {
       "additionalProperties": false,
       "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStyleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "inline": {
+          "$ref": "#/$defs/UiStyleProperties",
+          "default": {
+            "background": null,
+            "border": null,
+            "corner_radius": null,
+            "material": null,
+            "opacity": null,
+            "shadows": null,
+            "text": null
+          }
+        },
         "role": {
           "anyOf": [
             {
@@ -1723,6 +2414,35 @@
       },
       "type": "object"
     },
+    "UiStyleDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "extends": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStyleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "properties": {
+          "$ref": "#/$defs/UiStyleProperties",
+          "default": {
+            "background": null,
+            "border": null,
+            "corner_radius": null,
+            "material": null,
+            "opacity": null,
+            "shadows": null,
+            "text": null
+          }
+        }
+      },
+      "type": "object"
+    },
     "UiStyleId": {
       "maxLength": 128,
       "minLength": 1,
@@ -1732,6 +2452,28 @@
     "UiStylePatch": {
       "additionalProperties": false,
       "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStyleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "inline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStyleProperties"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "role": {
           "anyOf": [
             {
@@ -1747,6 +2489,88 @@
           "anyOf": [
             {
               "$ref": "#/$defs/UiStyleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "UiStyleProperties": {
+      "additionalProperties": false,
+      "properties": {
+        "background": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBackgroundStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBorderStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corner_radius": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiCornerRadii"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "material": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiMaterialStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "opacity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiScalarValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "shadows": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/UiShadowStyle"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiTextVisualStyle"
             },
             {
               "type": "null"
@@ -1769,6 +2593,94 @@
       ],
       "type": "object"
     },
+    "UiTextVisualStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiColorValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "font": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiAssetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "font_size": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiScalarValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "letter_spacing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiScalarValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "line_height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiScalarValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiTextWeight"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "UiTextWeight": {
+      "enum": [
+        "regular",
+        "medium",
+        "bold"
+      ],
+      "type": "string"
+    },
+    "UiTileAxis": {
+      "enum": [
+        "x",
+        "y",
+        "both"
+      ],
+      "type": "string"
+    },
     "UiTokenValue": {
       "oneOf": [
         {
@@ -1779,7 +2691,7 @@
               "type": "string"
             },
             "value": {
-              "type": "string"
+              "$ref": "#/$defs/UiColor"
             }
           },
           "required": [
@@ -1796,13 +2708,30 @@
               "type": "string"
             },
             "value": {
-              "format": "int64",
-              "type": "integer"
+              "format": "float",
+              "type": "number"
             }
           },
           "required": [
             "kind",
             "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "reference",
+              "type": "string"
+            },
+            "token": {
+              "$ref": "#/$defs/UiStyleId"
+            }
+          },
+          "required": [
+            "kind",
+            "token"
           ],
           "type": "object"
         }
@@ -1862,6 +2791,16 @@
         "$ref": "#/$defs/UiStateDefinition"
       },
       "type": "array"
+    },
+    "styles": {
+      "additionalProperties": false,
+      "default": {},
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$": {
+          "$ref": "#/$defs/UiStyleDefinition"
+        }
+      },
+      "type": "object"
     },
     "tokens": {
       "additionalProperties": false,

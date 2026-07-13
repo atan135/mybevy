@@ -1,4 +1,7 @@
-use super::{UiActionId, UiAssetId, UiDocumentId, UiLayout, UiNodeId, UiStyleId};
+use super::{
+    UiActionId, UiAssetEntry, UiAssetId, UiDocumentId, UiImagePresentation, UiLayout, UiNodeId,
+    UiStyleDefinition, UiStyleId, UiStyleProperties, UiTokenValue,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -19,6 +22,8 @@ pub struct UiDocument {
     pub assets: BTreeMap<UiAssetId, UiAssetEntry>,
     #[serde(default)]
     pub tokens: BTreeMap<UiStyleId, UiTokenValue>,
+    #[serde(default)]
+    pub styles: BTreeMap<UiStyleId, UiStyleDefinition>,
     pub root: UiNode,
     #[serde(default)]
     pub states: Vec<UiStateDefinition>,
@@ -49,41 +54,6 @@ fn default_budget_profile() -> String {
     "mobile_baseline_v1".to_owned()
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct UiAssetEntry {
-    pub kind: UiAssetKind,
-    pub source: UiAssetSource,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum UiAssetKind {
-    Image,
-    Font,
-    Icon,
-    Atlas,
-    Material,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum UiAssetSource {
-    Packaged { path: String },
-    ContentCache { logical_id: String },
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum UiTokenValue {
-    Color { value: String },
-    Number { value: i64 },
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -109,7 +79,7 @@ pub enum UiNode {
         id: UiNodeId,
         asset: UiAssetId,
         #[serde(default)]
-        fit: UiImageFit,
+        presentation: UiImagePresentation,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
@@ -153,6 +123,15 @@ impl UiNode {
             | Self::Button { layout, .. } => layout,
         }
     }
+
+    pub fn style(&self) -> &UiStyle {
+        match self {
+            Self::Container { style, .. }
+            | Self::Text { style, .. }
+            | Self::Image { style, .. }
+            | Self::Button { style, .. } => style,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -180,24 +159,18 @@ pub enum UiButtonVariant {
     Secondary,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum UiImageFit {
-    #[default]
-    Contain,
-    Cover,
-    Stretch,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct UiStyle {
     #[serde(default)]
+    pub component: Option<UiStyleId>,
+    #[serde(default)]
     pub role: Option<UiStyleId>,
     #[serde(default)]
     pub text_role: Option<UiStyleId>,
+    #[serde(default)]
+    pub inline: UiStyleProperties,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -342,12 +315,16 @@ pub struct UiLayoutPatch {
     pub grid_row: Option<super::UiGridPlacement>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct UiStylePatch {
     #[serde(default)]
+    pub component: Option<UiStyleId>,
+    #[serde(default)]
     pub role: Option<UiStyleId>,
     #[serde(default)]
     pub text_role: Option<UiStyleId>,
+    #[serde(default)]
+    pub inline: Option<UiStyleProperties>,
 }

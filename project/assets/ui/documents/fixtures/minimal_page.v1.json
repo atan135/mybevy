@@ -54,7 +54,14 @@
         "id": "page.hero",
         "type": "image",
         "asset": "hero_image",
-        "fit": "contain",
+        "presentation": {
+          "kind": "fit",
+          "fit": "contain",
+          "focus": {
+            "x": 0.5,
+            "y": 0.5
+          }
+        },
         "layout": {
           "width": {
             "percent": 100

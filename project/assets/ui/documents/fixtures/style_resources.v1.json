@@ -1,0 +1,288 @@
+{
+  "schema_version": 1,
+  "document_id": "example.style_resources",
+  "metadata": {
+    "title": "Style and resource protocol golden",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {
+    "hero_image": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fixtures/visual-foundation/non-square-2x1.png"
+      },
+      "declared_size": {
+        "width": 512,
+        "height": 256,
+        "decoded_bytes": 524288
+      }
+    },
+    "body_font": {
+      "kind": "font",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fonts/figtree-regular.ttf"
+      }
+    },
+    "action_icon": {
+      "kind": "icon",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/icons/action.png"
+      },
+      "declared_size": {
+        "width": 32,
+        "height": 32,
+        "decoded_bytes": 4096
+      }
+    },
+    "menu_atlas": {
+      "kind": "atlas",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/atlases/menu.png"
+      },
+      "declared_size": {
+        "width": 256,
+        "height": 128,
+        "decoded_bytes": 131072
+      },
+      "frames": {
+        "play": {
+          "x": 0,
+          "y": 0,
+          "width": 64,
+          "height": 64,
+          "original_width": 64,
+          "original_height": 64,
+          "pivot": {
+            "x": 0.5,
+            "y": 0.5
+          }
+        }
+      }
+    },
+    "frosted_panel": {
+      "kind": "material",
+      "source": {
+        "kind": "built_in_material",
+        "material": "frosted_panel_v1"
+      }
+    }
+  },
+  "tokens": {
+    "surface": {
+      "kind": "color",
+      "value": "#204060"
+    },
+    "surface_alias": {
+      "kind": "reference",
+      "token": "surface"
+    },
+    "radius": {
+      "kind": "number",
+      "value": 12.0
+    },
+    "muted_opacity": {
+      "kind": "number",
+      "value": 0.8
+    }
+  },
+  "styles": {
+    "panel_base": {
+      "properties": {
+        "background": {
+          "kind": "solid",
+          "color": {
+            "kind": "token",
+            "token": "surface_alias"
+          }
+        },
+        "border": {
+          "width": {
+            "kind": "literal",
+            "value": 2.0
+          },
+          "color": {
+            "kind": "literal",
+            "value": "#ffffffff"
+          }
+        },
+        "corner_radius": {
+          "top_left": {
+            "kind": "token",
+            "token": "radius"
+          },
+          "top_right": {
+            "kind": "token",
+            "token": "radius"
+          },
+          "bottom_right": {
+            "kind": "token",
+            "token": "radius"
+          },
+          "bottom_left": {
+            "kind": "token",
+            "token": "radius"
+          }
+        },
+        "text": {
+          "color": {
+            "kind": "literal",
+            "value": "#f2f4f8"
+          },
+          "font": "body_font",
+          "font_size": {
+            "kind": "literal",
+            "value": 18.0
+          },
+          "line_height": {
+            "kind": "literal",
+            "value": 1.3
+          },
+          "weight": "medium"
+        },
+        "opacity": {
+          "kind": "token",
+          "token": "muted_opacity"
+        },
+        "shadows": [
+          {
+            "color": {
+              "kind": "literal",
+              "value": "#00000066"
+            },
+            "x_offset": {
+              "kind": "literal",
+              "value": 0.0
+            },
+            "y_offset": {
+              "kind": "literal",
+              "value": 4.0
+            },
+            "blur": {
+              "kind": "literal",
+              "value": 12.0
+            },
+            "spread": {
+              "kind": "literal",
+              "value": 0.0
+            }
+          }
+        ]
+      }
+    },
+    "panel_frosted": {
+      "extends": "panel_base",
+      "properties": {
+        "material": {
+          "asset": "frosted_panel",
+          "parameters": {
+            "kind": "frosted_panel_v1",
+            "blur_px": {
+              "kind": "literal",
+              "value": 16.0
+            },
+            "opacity": {
+              "kind": "literal",
+              "value": 0.9
+            },
+            "tint": {
+              "kind": "literal",
+              "value": "#80a0c0cc"
+            }
+          }
+        }
+      }
+    }
+  },
+  "root": {
+    "id": "style.root",
+    "type": "container",
+    "style": {
+      "component": "panel_frosted",
+      "inline": {
+        "background": {
+          "kind": "solid",
+          "color": {
+            "kind": "literal",
+            "value": {
+              "srgb": {
+                "red": 1.0,
+                "green": 0.5,
+                "blue": 0.0,
+                "alpha": 0.5
+              }
+            }
+          }
+        }
+      }
+    },
+    "children": [
+      {
+        "id": "style.cover",
+        "type": "image",
+        "asset": "hero_image",
+        "presentation": {
+          "kind": "fit",
+          "fit": "cover",
+          "focus": {
+            "x": 0.25,
+            "y": 0.75
+          }
+        }
+      },
+      {
+        "id": "style.slice",
+        "type": "image",
+        "asset": "hero_image",
+        "presentation": {
+          "kind": "nine_slice",
+          "insets": {
+            "left": 12.0,
+            "right": 12.0,
+            "top": 12.0,
+            "bottom": 12.0
+          },
+          "center": {
+            "kind": "tile",
+            "stretch_value": 1.0
+          },
+          "sides": {
+            "kind": "stretch"
+          },
+          "max_corner_scale": 1.0,
+          "max_generated_slices": 256
+        }
+      },
+      {
+        "id": "style.tile",
+        "type": "image",
+        "asset": "hero_image",
+        "presentation": {
+          "kind": "tiled",
+          "axis": "both",
+          "stretch_value": 1.0,
+          "max_repeats": 256
+        }
+      },
+      {
+        "id": "style.atlas",
+        "type": "image",
+        "asset": "menu_atlas",
+        "presentation": {
+          "kind": "atlas_frame",
+          "frame": "play",
+          "fit": "contain",
+          "focus": {
+            "x": 0.5,
+            "y": 0.5
+          }
+        }
+      }
+    ]
+  },
+  "states": [],
+  "responsive": []
+}

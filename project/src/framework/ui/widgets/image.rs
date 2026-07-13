@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 const INVALID_IMAGE_FALLBACK_WIDTH: f32 = 96.0;
 const INVALID_IMAGE_FALLBACK_HEIGHT: f32 = 64.0;
 const MIN_TILE_STRETCH_VALUE: f32 = 0.001;
-const MAX_SLICE_REPEAT_BUDGET: u32 = 4_096;
-const MAX_TILE_REPEAT_BUDGET: u32 = 65_536;
+pub(crate) const MAX_SLICE_REPEAT_BUDGET: u32 = 4_096;
+pub(crate) const MAX_TILE_REPEAT_BUDGET: u32 = 65_536;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum UiImageFit {

@@ -39,6 +39,14 @@ const LAYOUT_CANONICAL_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/layout_protocol.v1.canonical.json"
 ));
+const STYLE_RESOURCE_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/style_resources.v1.json"
+));
+const STYLE_RESOURCE_CANONICAL_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/style_resources.v1.canonical.json"
+));
 
 #[test]
 fn ui_document_parses_stage_one_fixture_and_indexes_nodes() {
@@ -568,6 +576,423 @@ fn ui_document_layout_json_matches_golden_and_maps_fixture() {
         layout.flex_grow = -0.0;
     }
     assert!(!negative_zero.to_canonical_json().unwrap().contains("-0.0"));
+}
+
+#[test]
+fn ui_document_style_merge_color_canonical_and_image_modes_match_golden() {
+    let document = UiDocument::parse_and_validate_json(STYLE_RESOURCE_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let canonical = document.to_canonical_json_pretty().unwrap();
+    maybe_update_golden(
+        "UPDATE_UI_DOCUMENT_GOLDENS",
+        "assets/ui/documents/fixtures/style_resources.v1.canonical.json",
+        &canonical,
+    );
+    assert_eq!(canonical, STYLE_RESOURCE_CANONICAL_DOCUMENT);
+    assert!(canonical.contains("#ff800080"));
+    assert!(!canonical.contains("\"srgb\""));
+
+    let resolved = document
+        .resolve_style(document.root.style(), "$.root.style")
+        .unwrap();
+    assert_eq!(
+        resolved.properties.background,
+        Some(UiResolvedBackground::Solid(UiColor::from_rgba8(
+            255, 128, 0, 128
+        )))
+    );
+    assert_eq!(resolved.properties.border.unwrap().width, 2.0);
+    assert_eq!(resolved.properties.corner_radius, Some([12.0; 4]));
+    assert_eq!(resolved.properties.opacity, Some(0.8));
+    assert!(matches!(
+        resolved.properties.material.unwrap().parameters,
+        UiResolvedMaterialParameters::FrostedPanelV1 { .. }
+    ));
+    let component_only = document
+        .resolve_style(
+            &UiStyle {
+                component: Some(style_id("panel_frosted")),
+                ..default()
+            },
+            "$.test.component_only",
+        )
+        .unwrap();
+    assert_eq!(
+        component_only.properties.background,
+        Some(UiResolvedBackground::Solid(UiColor::from_rgba8(
+            32, 64, 96, 255
+        )))
+    );
+
+    let mut merge_document = document.clone();
+    merge_document.styles.insert(
+        style_id("text_override"),
+        UiStyleDefinition {
+            extends: Some(style_id("panel_base")),
+            properties: UiStyleProperties {
+                text: Some(UiTextVisualStyle {
+                    color: Some(UiColorValue::Literal {
+                        value: UiColor::from_rgba8(12, 34, 56, 255),
+                    }),
+                    ..default()
+                }),
+                ..default()
+            },
+        },
+    );
+    let inherited_text = merge_document
+        .resolve_style(
+            &UiStyle {
+                component: Some(style_id("text_override")),
+                ..default()
+            },
+            "$.test.inherited_text",
+        )
+        .unwrap()
+        .properties
+        .text
+        .unwrap();
+    assert_eq!(
+        inherited_text.color,
+        Some(UiColor::from_rgba8(12, 34, 56, 255))
+    );
+    assert_eq!(inherited_text.font.unwrap().as_str(), "body_font");
+    assert_eq!(inherited_text.font_size, Some(18.0));
+    assert_eq!(inherited_text.line_height, Some(1.3));
+    assert_eq!(inherited_text.weight, Some(UiTextWeight::Medium));
+
+    let inline_text = merge_document
+        .resolve_style(
+            &UiStyle {
+                component: Some(style_id("panel_base")),
+                inline: UiStyleProperties {
+                    text: Some(UiTextVisualStyle {
+                        color: Some(UiColorValue::Literal {
+                            value: UiColor::from_rgba8(70, 80, 90, 255),
+                        }),
+                        ..default()
+                    }),
+                    ..default()
+                },
+                ..default()
+            },
+            "$.test.inline_text",
+        )
+        .unwrap()
+        .properties
+        .text
+        .unwrap();
+    assert_eq!(
+        inline_text.color,
+        Some(UiColor::from_rgba8(70, 80, 90, 255))
+    );
+    assert_eq!(inline_text.font.unwrap().as_str(), "body_font");
+    assert_eq!(inline_text.font_size, Some(18.0));
+    assert_eq!(inline_text.line_height, Some(1.3));
+    assert_eq!(inline_text.weight, Some(UiTextWeight::Medium));
+
+    let children = document.root.children();
+    let UiNode::Image { presentation, .. } = &children[0] else {
+        panic!("cover fixture must be an image")
+    };
+    assert!(matches!(
+        presentation.to_widget_fit(),
+        Some(crate::framework::ui::widgets::UiImageFit::Cover { .. })
+    ));
+    let UiNode::Image { presentation, .. } = &children[1] else {
+        panic!("slice fixture must be an image")
+    };
+    assert!(matches!(
+        presentation.to_widget_advanced_mode(),
+        Some(crate::framework::ui::widgets::UiAdvancedImageMode::NineSlice(_))
+    ));
+    let UiNode::Image { presentation, .. } = &children[2] else {
+        panic!("tile fixture must be an image")
+    };
+    assert!(matches!(
+        presentation.to_widget_advanced_mode(),
+        Some(crate::framework::ui::widgets::UiAdvancedImageMode::Tiled(_))
+    ));
+    assert!(matches!(
+        &children[3],
+        UiNode::Image {
+            presentation: UiImagePresentation::AtlasFrame { frame, .. },
+            ..
+        } if frame.as_str() == "play"
+    ));
+}
+
+#[test]
+fn ui_document_style_rejects_unknown_and_cyclic_references() {
+    let mut document = style_resource_document();
+    if let UiNode::Container { style, .. } = &mut document.root {
+        style.inline.opacity = Some(UiScalarValue::Token {
+            token: style_id("missing"),
+        });
+    }
+    assert_visual_error(
+        ValidatedUiDocument::new(document).unwrap_err(),
+        "UI_STYLE_TOKEN_UNKNOWN",
+    );
+
+    let mut document = style_resource_document();
+    document.tokens.insert(
+        style_id("cycle_a"),
+        UiTokenValue::Reference {
+            token: style_id("cycle_b"),
+        },
+    );
+    document.tokens.insert(
+        style_id("cycle_b"),
+        UiTokenValue::Reference {
+            token: style_id("cycle_a"),
+        },
+    );
+    assert_visual_error(
+        ValidatedUiDocument::new(document).unwrap_err(),
+        "UI_STYLE_TOKEN_CYCLE",
+    );
+
+    let mut document = style_resource_document();
+    document.styles.insert(
+        style_id("cycle_a"),
+        UiStyleDefinition {
+            extends: Some(style_id("cycle_b")),
+            ..default()
+        },
+    );
+    document.styles.insert(
+        style_id("cycle_b"),
+        UiStyleDefinition {
+            extends: Some(style_id("cycle_a")),
+            ..default()
+        },
+    );
+    assert_visual_error(
+        ValidatedUiDocument::new(document).unwrap_err(),
+        "UI_STYLE_REFERENCE_CYCLE",
+    );
+}
+
+#[test]
+fn ui_document_assets_reject_path_escape_kind_mismatch_and_shader_input() {
+    for invalid_path in [
+        "../escape.png",
+        "ui/../escape.png",
+        "ui\\escape.png",
+        "C:/escape.png",
+        "http://example.test/image.png",
+        "data:image/png;base64,aaaa",
+        "ui/%2fescape.png",
+        "ui/image bad.png",
+        "ui/image\tbad.png",
+        "ui/image\nbad.png",
+        "ui/image?.png",
+        "ui/image#fragment.png",
+        "ui/image%20bad.png",
+        "other/image.png",
+        "ui/Upper.png",
+    ] {
+        let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+        value["assets"]["hero_image"]["source"]["path"] = json!(invalid_path);
+        assert_visual_error(
+            UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap())
+                .unwrap_err(),
+            "UI_ASSET_PATH_INVALID",
+        );
+    }
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["root"]["children"][0]["asset"] = json!("body_font");
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_ASSET_KIND_MISMATCH",
+    );
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["root"]["children"][0]["asset"] = json!("action_icon");
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_ASSET_KIND_MISMATCH",
+    );
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["assets"]["frosted_panel"]["source"]["material"] = json!("arbitrary_shader");
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_MATERIAL_NOT_ALLOWLISTED",
+    );
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["assets"]["frosted_panel"]["source"]["shader"] = json!("shaders/foreign.wgsl");
+    let error =
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err();
+    assert_eq!(error.code(), "UI_DOCUMENT_PARSE_FAILED");
+    assert!(error.to_string().contains("unknown field `shader`"));
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["assets"]["hero_image"]["source"]["path"] = json!("ui/images/code.exe");
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_ASSET_EXTENSION_MISMATCH",
+    );
+}
+
+#[test]
+fn ui_document_visual_budgets_reject_excessive_effects_materials_and_sizes() {
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    let shadow = value["styles"]["panel_base"]["properties"]["shadows"][0].clone();
+    value["styles"]["panel_base"]["properties"]["shadows"] =
+        Value::Array(vec![shadow.clone(), shadow.clone(), shadow.clone(), shadow]);
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_STYLE_SHADOW_BUDGET_EXCEEDED",
+    );
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["root"]["style"]["inline"]["background"] = json!({
+        "kind": "linear_gradient",
+        "angle_degrees": 90.0,
+        "stops": (0..7).map(|index| json!({
+            "position": index as f32 / 6.0,
+            "color": { "kind": "literal", "value": "#ffffffff" }
+        })).collect::<Vec<_>>()
+    });
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_STYLE_GRADIENT_STOP_BUDGET_EXCEEDED",
+    );
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["assets"]["hero_image"]["declared_size"]["width"] = json!(UI_ASSET_MAX_DIMENSION + 1);
+    value["assets"]["hero_image"]["declared_size"]["decoded_bytes"] =
+        json!(UI_ASSET_MAX_DECODED_BYTES + 1);
+    let error =
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err();
+    assert_visual_error_contains(&error, "UI_ASSET_DIMENSION_BUDGET_EXCEEDED");
+    assert_visual_error_contains(&error, "UI_ASSET_DECODED_BYTES_BUDGET_EXCEEDED");
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    let material = value["assets"]["frosted_panel"].clone();
+    for index in 0..UI_DOCUMENT_MAX_MATERIALS {
+        value["assets"][format!("extra_material_{index}")] = material.clone();
+    }
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_ASSET_MATERIAL_BUDGET_EXCEEDED",
+    );
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    let image = value["assets"]["hero_image"].clone();
+    for index in 0..4 {
+        let mut extra = image.clone();
+        extra["declared_size"]["decoded_bytes"] = json!(UI_ASSET_MAX_DECODED_BYTES);
+        value["assets"][format!("extra_image_{index}")] = extra;
+    }
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_ASSET_TOTAL_DECODED_BYTES_BUDGET_EXCEEDED",
+    );
+}
+
+#[test]
+fn ui_document_image_and_resource_validation_reports_stable_field_errors() {
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["root"]["children"][0]["presentation"]["focus"]["x"] = json!(1.5);
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_IMAGE_FOCUS_INVALID",
+    );
+
+    for fit in ["contain", "stretch"] {
+        let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+        value["root"]["children"][0]["presentation"]["fit"] = json!(fit);
+        value["root"]["children"][0]["presentation"]["focus"]["y"] = json!(-0.1);
+        assert_visual_error(
+            UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap())
+                .unwrap_err(),
+            "UI_IMAGE_FOCUS_INVALID",
+        );
+    }
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["root"]["children"][3]["presentation"]["focus"]["x"] = json!(1.1);
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_IMAGE_FOCUS_INVALID",
+    );
+
+    let mut document = style_resource_document();
+    let UiNode::Container { children, .. } = &mut document.root else {
+        panic!("fixture root must be a container")
+    };
+    let UiNode::Image { presentation, .. } = &mut children[0] else {
+        panic!("fixture child must be an image")
+    };
+    let UiImagePresentation::Fit { focus, .. } = presentation else {
+        panic!("fixture child must use fit presentation")
+    };
+    focus.x = f32::NAN;
+    assert_visual_error(
+        ValidatedUiDocument::new(document).unwrap_err(),
+        "UI_IMAGE_FOCUS_INVALID",
+    );
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["root"]["children"][3]["presentation"]["frame"] = json!("missing");
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_ASSET_ATLAS_FRAME_UNKNOWN",
+    );
+
+    let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+    value["styles"]["panel_base"]["properties"]["text"]["font"] = json!("hero_image");
+    assert_visual_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_ASSET_KIND_MISMATCH",
+    );
+
+    for invalid_color in [
+        json!("204060"),
+        json!("#12345"),
+        json!({
+            "srgb": { "red": 1.1, "green": 0.0, "blue": 0.0, "alpha": 1.0 }
+        }),
+        json!({
+            "srgb": { "red": 1.0, "green": 0.0, "blue": 0.0 }
+        }),
+    ] {
+        let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
+        value["tokens"]["surface"]["value"] = invalid_color;
+        let error = UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), "UI_DOCUMENT_PARSE_FAILED");
+    }
+}
+
+fn style_resource_document() -> UiDocument {
+    UiDocument::parse_and_validate_json(STYLE_RESOURCE_DOCUMENT)
+        .unwrap()
+        .into_document()
+}
+
+fn style_id(value: &str) -> UiStyleId {
+    UiStyleId::from_str(value).unwrap()
+}
+
+fn assert_visual_error(error: UiDocumentError, code: &str) {
+    assert_visual_error_contains(&error, code);
+}
+
+fn assert_visual_error_contains(error: &UiDocumentError, code: &str) {
+    let UiDocumentError::InvalidVisual { errors } = error else {
+        panic!("expected visual error {code}, got {error:?}");
+    };
+    assert!(
+        errors.iter().any(|error| error.code == code),
+        "missing {code}: {errors:?}"
+    );
 }
 
 fn assert_layout_error(layout: &UiLayout, code: &str, path: &str) {

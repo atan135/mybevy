@@ -103,6 +103,16 @@
           "z_index": 0
         },
         "style": {
+          "component": null,
+          "inline": {
+            "background": null,
+            "border": null,
+            "corner_radius": null,
+            "material": null,
+            "opacity": null,
+            "shadows": null,
+            "text": null
+          },
           "role": null,
           "text_role": null
         },
@@ -185,6 +195,16 @@
           "z_index": 0
         },
         "style": {
+          "component": null,
+          "inline": {
+            "background": null,
+            "border": null,
+            "corner_radius": null,
+            "material": null,
+            "opacity": null,
+            "shadows": null,
+            "text": null
+          },
           "role": null,
           "text_role": null
         },
@@ -300,6 +320,16 @@
       "z_index": 7
     },
     "style": {
+      "component": null,
+      "inline": {
+        "background": null,
+        "border": null,
+        "corner_radius": null,
+        "material": null,
+        "opacity": null,
+        "shadows": null,
+        "text": null
+      },
       "role": null,
       "text_role": null
     },
@@ -307,5 +337,6 @@
   },
   "schema_version": 1,
   "states": [],
+  "styles": {},
   "tokens": {}
 }

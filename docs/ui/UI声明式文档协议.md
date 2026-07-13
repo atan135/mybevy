@@ -302,3 +302,34 @@ Rust 类型通过测试期 `schemars` 派生 Draft 2020-12 schema，并与 `proj
 Absolute 的唯一包含块是直接父节点的 border box，与 Bevy 0.18.1 `PositionType::Absolute` 一致。每个轴必须满足以下二选一规则：显式尺寸加恰好一个锚点，或省略尺寸并同时给出两侧锚点。显式尺寸加双锚点视为过度约束，少于可求解输入视为约束不足。该规则禁止节点只携带无参考系的截图坐标。
 
 所有布局错误在构建 ECS 前返回稳定 code 和完整字段 path。阶段 3 code 覆盖非有限值、负尺寸、百分比越界、约束矛盾、Grid 上限、Absolute 约束和 z-index 越界；阶段 9 将其纳入统一 severity、node ID 和修复提示报告。
+
+## 14. v1 样式、视觉与资源冻结项
+
+### 14.1 样式层级与 token
+
+样式解析顺序固定为 token 值、组件 style、节点 inline override，后层覆盖前层的同名属性。组件 style 可以通过 `extends` 继承另一个组件 style，继承链从父到子合并；节点 `style.component` 应用组件结果后，再应用 `style.inline`。背景、边框、圆角、文字、透明度、阴影和材质字段按完整属性覆盖，不做依赖 object key 顺序的隐式合并。
+
+token 只允许 `color`、有限 `number` 和指向另一 token 的 `reference`。解析器在构建实体前检查所有 token 和组件 style，包括当前节点未引用的声明。未知 token、token 类型不匹配、token 循环、未知组件 style 和 style 继承循环分别返回稳定字段错误；不根据错误文案分支。
+
+颜色输入使用非线性 sRGB 色彩空间。允许 `#rrggbb`、`#rrggbbaa`，或显式包含 `red`、`green`、`blue`、`alpha` 四个 0 至 1 数值通道的 `srgb` object。六位 hex 的 alpha 固定为 `ff`；数值通道按 `round(channel * 255)` 量化。canonical JSON 一律写小写八位 `#rrggbbaa`，因此 alpha 始终显式且不同输入形式得到相同字节表示。
+
+视觉属性首版覆盖 solid background、linear gradient、uniform border、四角 radius、文字颜色/字体资源/字号/行高/字距/字重、opacity、box shadow，以及封闭的 `frosted_panel_v1` 材质参数。linear gradient 至少 2 个、最多 6 个 stop，position 必须在 0 至 1 内按升序排列；单个 effective style 最多 3 层 box shadow。材质参数是 tagged closed enum，不接受 shader path、shader source、参数 blob 或任意材质名称。
+
+### 14.2 Asset table 与图片呈现
+
+asset table 的 kind 为 `image`、`font`、`icon`、`atlas` 或 `material`。节点和 style 只持有 asset ID；解析后仍会检查使用位置要求的 kind。`packaged` path 相对 `project/assets/`，首版只允许小写 ASCII `ui/` 根、正斜杠和安全 segment，并按 kind 限制图片/图标/图集及字体扩展名。绝对路径、盘符、URI、data URI、反斜杠、空 segment、`.`、`..`、NUL 和 percent-encoded separator 全部拒绝。`content_cache` 只接受稳定 logical ID，不接受真实缓存路径或 URL。
+
+material asset 只能使用 `built_in_material` source。当前唯一 allowlist ID 为 `frosted_panel_v1`，它映射到 framework 已注册的 `UiMaterialId::FrostedPanelV1`；document 不能提供或覆盖 framework 内部 shader 路径。单 document 最多声明 4 个 material asset。
+
+图片 presentation 是 closed enum：
+
+- `fit` 支持 `contain`、`cover`、`stretch`；`cover` 的 focus 使用左上为 `(0, 0)`、右下为 `(1, 1)` 的归一化源图坐标。
+- `nine_slice` 描述四边 inset、center/sides 的 stretch 或 tile、corner scale 和 slice 上限，并适配现有 `widgets::image::UiNineSlice`。
+- `tiled` 描述 x、y 或 both 轴、stretch value 和 repeat 上限，并适配现有 `widgets::image::UiImageTiling`。
+- `atlas_frame` 通过 atlas asset 的稳定 frame ID 选择 rect、original size 和 pivot，再应用 contain/cover/stretch。
+
+atlas 最多 256 个 frame；frame 必须位于声明的 atlas 尺寸内，original size 不得小于裁切 rect，pivot 必须位于 0 至 1。九宫格最多生成 4096 slice，平铺最多 65536 repeat；具体布局计算继续复用现有 widgets 能力，document 层不复制 Bevy 渲染系统。
+
+图片、图标和图集可声明宽、高和 decoded bytes。单边上限 4096 px，单资源 decoded bytes 上限 16 MiB，全 document 合计上限 64 MiB。声明只用于静态预检；运行时仍必须用实际解码 metadata 复核，不信任 document 自报尺寸。
+
+阶段 4 golden fixture 为 `project/assets/ui/documents/fixtures/style_resources.v1.json`，覆盖 token alias、组件继承、inline override、两种颜色输入、字体和材质引用、Contain/Cover focus、九宫格、平铺和图集 frame。对应 canonical fixture 与 Rust 派生 JSON Schema 由 `ui_document_` 测试防止漂移。

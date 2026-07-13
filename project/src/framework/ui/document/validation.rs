@@ -1,6 +1,6 @@
 use super::{
     CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UiDocument, UiDocumentId,
-    UiLayoutFieldError, UiNode, UiNodeId,
+    UiLayoutFieldError, UiNode, UiNodeId, UiVisualFieldError,
 };
 use bevy::prelude::Component;
 use serde::Serialize;
@@ -28,6 +28,9 @@ pub enum UiDocumentError {
     InvalidLayout {
         errors: Vec<UiLayoutFieldError>,
     },
+    InvalidVisual {
+        errors: Vec<UiVisualFieldError>,
+    },
 }
 
 impl UiDocumentError {
@@ -39,6 +42,7 @@ impl UiDocumentError {
             Self::UnsupportedSchemaVersion { .. } => "UI_SCHEMA_VERSION_UNSUPPORTED",
             Self::DuplicateNodeId { .. } => "UI_NODE_ID_DUPLICATE",
             Self::InvalidLayout { .. } => "UI_LAYOUT_INVALID",
+            Self::InvalidVisual { .. } => "UI_VISUAL_INVALID",
         }
     }
 }
@@ -73,6 +77,11 @@ impl fmt::Display for UiDocumentError {
                     errors.len()
                 )
             }
+            Self::InvalidVisual { errors } => write!(
+                formatter,
+                "document contains {} invalid visual or asset field(s)",
+                errors.len()
+            ),
         }
     }
 }
@@ -133,6 +142,30 @@ impl ValidatedUiDocument {
                 errors: layout_errors,
             });
         }
+        let mut visual_errors = document.validate_style_tables();
+        visual_errors.extend(document.validate_assets());
+        index_node_styles(&document, &document.root, "$.root", &mut visual_errors);
+        for (state_index, state) in document.states.iter().enumerate() {
+            index_override_styles(
+                &document,
+                &state.overrides,
+                &format!("$.states[{state_index}].overrides"),
+                &mut visual_errors,
+            );
+        }
+        for (variant_index, variant) in document.responsive.iter().enumerate() {
+            index_override_styles(
+                &document,
+                &variant.overrides,
+                &format!("$.responsive[{variant_index}].overrides"),
+                &mut visual_errors,
+            );
+        }
+        if !visual_errors.is_empty() {
+            return Err(UiDocumentError::InvalidVisual {
+                errors: visual_errors,
+            });
+        }
         Ok(Self {
             document,
             node_paths,
@@ -174,6 +207,51 @@ impl ValidatedUiDocument {
                 node_id: node_id.clone(),
                 document_path: path.clone(),
             })
+    }
+}
+
+fn index_node_styles(
+    document: &UiDocument,
+    node: &UiNode,
+    path: &str,
+    errors: &mut Vec<UiVisualFieldError>,
+) {
+    let style_path = format!("{path}.style");
+    if let Err(error) = document.resolve_style(node.style(), &style_path) {
+        errors.push(error);
+    }
+    errors.extend(document.validate_style_asset_refs(node.style(), &style_path));
+    for (index, child) in node.children().iter().enumerate() {
+        index_node_styles(
+            document,
+            child,
+            &format!("{path}.children[{index}]"),
+            errors,
+        );
+    }
+}
+
+fn index_override_styles(
+    document: &UiDocument,
+    overrides: &[super::UiNodeOverride],
+    path: &str,
+    errors: &mut Vec<UiVisualFieldError>,
+) {
+    for (index, node_override) in overrides.iter().enumerate() {
+        let Some(patch) = &node_override.set.style else {
+            continue;
+        };
+        let style = super::UiStyle {
+            component: patch.component.clone(),
+            role: patch.role.clone(),
+            text_role: patch.text_role.clone(),
+            inline: patch.inline.clone().unwrap_or_default(),
+        };
+        let style_path = format!("{path}[{index}].set.style");
+        if let Err(error) = document.resolve_style(&style, &style_path) {
+            errors.push(error);
+        }
+        errors.extend(document.validate_style_asset_refs(&style, &style_path));
     }
 }
 
