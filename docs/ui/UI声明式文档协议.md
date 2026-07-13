@@ -307,7 +307,7 @@ Absolute 的唯一包含块是直接父节点的 border box，与 Bevy 0.18.1 `P
 
 ### 14.1 样式层级与 token
 
-样式解析顺序固定为 token 值、组件 style、节点 inline override，后层覆盖前层的同名属性。组件 style 可以通过 `extends` 继承另一个组件 style，继承链从父到子合并；节点 `style.component` 应用组件结果后，再应用 `style.inline`。背景、边框、圆角、文字、透明度、阴影和材质字段按完整属性覆盖，不做依赖 object key 顺序的隐式合并。
+样式解析顺序固定为 token 值、组件 style、节点 inline override，后层覆盖前层的同名属性。组件 style 可以通过 `extends` 继承另一个组件 style，继承链从父到子合并；节点 `style.component` 应用组件结果后，再应用 `style.inline`。文字样式的 color、font、font size、line height、letter spacing 和 weight 按 nested field 分别合并，后层只覆盖显式字段；背景、边框、圆角、透明度、阴影和材质等其他完整对象属性仍按整体覆盖，不依赖 object key 顺序产生隐式合并。
 
 token 只允许 `color`、有限 `number` 和指向另一 token 的 `reference`。解析器在构建实体前检查所有 token 和组件 style，包括当前节点未引用的声明。未知 token、token 类型不匹配、token 循环、未知组件 style 和 style 继承循环分别返回稳定字段错误；不根据错误文案分支。
 
@@ -333,3 +333,35 @@ atlas 最多 256 个 frame；frame 必须位于声明的 atlas 尺寸内，origi
 图片、图标和图集可声明宽、高和 decoded bytes。单边上限 4096 px，单资源 decoded bytes 上限 16 MiB，全 document 合计上限 64 MiB。声明只用于静态预检；运行时仍必须用实际解码 metadata 复核，不信任 document 自报尺寸。
 
 阶段 4 golden fixture 为 `project/assets/ui/documents/fixtures/style_resources.v1.json`，覆盖 token alias、组件继承、inline override、两种颜色输入、字体和材质引用、Contain/Cover focus、九宫格、平铺和图集 frame。对应 canonical fixture 与 Rust 派生 JSON Schema 由 `ui_document_` 测试防止漂移。
+
+## 15. v1 内容节点与文字边界
+
+### 15.1 基础节点和内容源
+
+阶段 5 正式定义 `Container`、`Text`、`Image`、`Icon` 和 `Spacer` 五种基础节点，并保留阶段 1 `Button` 作为阶段 6 控件协议的兼容种子。只有 `Container` 直接持有 document child nodes；`Text`、`Image`、`Icon` 和 `Spacer` 都是叶节点。`Spacer` 只表达稳定 ID、布局和可选样式，不生成隐式文字或交互语义。
+
+单个文字内容只能是以下三种互斥 source shape 之一：
+
+- `literal`：文档内的 UTF-8 原文。
+- `i18n_key + fallback`：受格式约束的 namespaced key 和必须非空的文档 fallback。
+- `binding_path + fallback`：受格式约束的 namespaced path 和绑定值缺失时的显示文本；阶段 5 只定义安全 path，不读取数据，具体 scope、值类型和生命周期由阶段 7 冻结。
+
+Rust enum、Serde `untagged` closed structs 和 JSON shape preflight 共同保证三类 source 互斥。source 不能携带模板、插值表达式、正则、Rust format string、脚本或动态函数名。`format` 同样是 closed enum，只允许 `plain`、带 0 至 6 位小数约束的 `number` / `percent`，以及最多 3 位精度的 `bytes`；非 `plain` 格式只允许 binding source，运行时必须按绑定的 typed value 执行，不能求值字符串表达式。
+
+`mobile_baseline_v1` 保持阶段 1 冻结的 byte budget：单个 literal text 上限为 16 KiB UTF-8，i18n fallback、binding fallback 等普通字符串上限为 4 KiB UTF-8。超限、source 混用、format kind 不在 allowlist、typed options 越界、空 i18n fallback 和非法 binding path 都在 ECS 构建前返回稳定 code 与精确字段 path。空 asset ID 由稳定 ID 的反序列化入口拒绝，错误类别保持 `UI_DOCUMENT_PARSE_FAILED`。
+
+静态 document validation 不假装知道运行时 locale catalog。宿主在选定 catalog 后显式调用 `validate_content_with_catalog`；key 在 locale catalog 及其框架级 fallback catalog 都不存在时返回 `UI_TEXT_I18N_KEY_MISSING`。key 存在时使用 catalog 文本；key 缺失时 runtime 可显示文档 fallback 以维持可用性，但诊断不会因此被吞掉。现有 `UiI18n` 已实现同一只读 catalog adapter。
+
+### 15.2 排版适配和首版限制
+
+`Text.typography` 覆盖字体角色 `display` / `heading` / `body` / `caption` / `control`、`regular` / `medium` / `bold` 字重、normal/relative/pixel 行高、四种对齐、四种换行、最多 128 行以及 visible/clip/ellipsis overflow。`max_lines` 只有配合 clip 或 ellipsis 才合法，ellipsis 必须显式给出 `max_lines`。
+
+协议排版会转换为现有 `UiTextStyleToken`、字体 role/fallback 策略和 Bevy `TextLayout` 的 `Justify` / `LineBreak`。`max_lines` 和 overflow 作为后续 builder 必须执行的附加约束保留；Bevy 当前没有可直接替代该协议的多行 ellipsis 字段，阶段 10 不得把 ellipsis 静默降级成无限显示。阶段 4 resolved text style 仍负责颜色、显式 font asset、字号和字距；如果 style 显式给出 weight 或 line height，它按既有 component/inline 优先级覆盖 typography base，font role 继续决定 fallback 与缺字策略。
+
+v1 的一个 `Text` 节点只有一个 source 和一套排版，不支持 HTML/Markdown、富文本 markup、混合 span、span 内独立字体/颜色、内联图片、竖排、路径文字、手工断字或任意 OpenType feature。emoji 保持普通 Unicode 原文，但不承诺彩色 emoji、ZWJ shaping 或专用 emoji font；当前字体 role 无字形时复用现有 grapheme 级 fallback，最终以 `?` 替换并记录 `glyph_replacement`，不会 panic 或静默丢失整段文字。
+
+### 15.3 图片加载和失败表现
+
+`Image` 在阶段 4 asset/presentation 之上增加 canonical sRGB tint、可选 loading placeholder 和 closed failure policy。失败时只允许错误色块、复用 loading placeholder、使用另一项 image asset 或隐藏。主图片、placeholder 和 failure asset 都必须通过 asset table，且 placeholder/failure 严格要求 `image` kind；`Icon` 则严格要求 `icon` kind。`failure: placeholder` 没有提供 placeholder 时是静态错误。
+
+loading、failed 和 ready 的状态机仍由现有 image widget/AssetServer 在阶段 10 驱动；阶段 5 的纯数据适配只确定每个状态应选择的 asset、色块或隐藏结果，不提前生成实体，也不读取 GPU 状态。`content_protocol.v1.json` 及 canonical golden 覆盖中英文、长文本、binding format、缺字 emoji、图片 loading/failure、Icon 和 Spacer；`invalid/content_wrong_asset_type.v1.json` 固定错误资源类型诊断。

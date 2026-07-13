@@ -47,6 +47,18 @@ const STYLE_RESOURCE_CANONICAL_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/style_resources.v1.canonical.json"
 ));
+const CONTENT_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/content_protocol.v1.json"
+));
+const CONTENT_CANONICAL_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/content_protocol.v1.canonical.json"
+));
+const CONTENT_WRONG_ASSET_TYPE_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/invalid/content_wrong_asset_type.v1.json"
+));
 
 #[test]
 fn ui_document_parses_stage_one_fixture_and_indexes_nodes() {
@@ -971,6 +983,295 @@ fn ui_document_image_and_resource_validation_reports_stable_field_errors() {
     }
 }
 
+#[test]
+fn ui_document_content_fixture_covers_base_nodes_sources_and_golden() {
+    let document = UiDocument::parse_and_validate_json(CONTENT_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let canonical = document.to_canonical_json_pretty().unwrap();
+    maybe_update_golden(
+        "UPDATE_UI_DOCUMENT_GOLDENS",
+        "assets/ui/documents/fixtures/content_protocol.v1.canonical.json",
+        &canonical,
+    );
+    assert_eq!(canonical, CONTENT_CANONICAL_DOCUMENT);
+
+    let UiNode::Container { children, .. } = &document.root else {
+        panic!("content fixture root must be a container")
+    };
+    assert_eq!(children.len(), 8);
+    assert!(matches!(
+        &children[0],
+        UiNode::Text {
+            content: UiTextContent::Literal(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        &children[1],
+        UiNode::Text {
+            content: UiTextContent::I18n(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        &children[2],
+        UiNode::Text {
+            content: UiTextContent::Binding(UiBindingTextSource {
+                format: UiTextFormat::Bytes {
+                    precision: 1,
+                    binary_units: true,
+                },
+                ..
+            }),
+            ..
+        }
+    ));
+    assert!(matches!(&children[5], UiNode::Image { .. }));
+    assert!(matches!(&children[6], UiNode::Icon { .. }));
+    assert!(matches!(&children[7], UiNode::Spacer { .. }));
+
+    let long_text = &children[3];
+    let UiNode::Text { content, .. } = long_text else {
+        panic!("long fixture must be text")
+    };
+    assert!(content.fallback_text().len() > 150);
+    assert!(content.fallback_text().len() < UI_TEXT_LITERAL_MAX_BYTES);
+}
+
+#[test]
+fn ui_document_text_sources_are_exclusive_and_formats_are_closed() {
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][0]["content"]["i18n_key"] = json!("ui.extra.title");
+    value["root"]["children"][0]["content"]["fallback"] = json!("Extra");
+    assert_content_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_TEXT_SOURCE_NOT_EXCLUSIVE",
+    );
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][2]["content"]["format"] = json!({
+        "kind": "rust_format",
+        "expression": "{value:?}"
+    });
+    assert_content_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_TEXT_FORMAT_NOT_ALLOWED",
+    );
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][2]["content"]["format"]["precision"] = json!(4);
+    assert_content_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_TEXT_FORMAT_OPTIONS_INVALID",
+    );
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][0]["content"]["format"] = json!({
+        "kind": "number",
+        "min_fraction_digits": 0,
+        "max_fraction_digits": 2,
+        "grouping": false
+    });
+    assert_content_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_TEXT_FORMAT_SOURCE_INCOMPATIBLE",
+    );
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][2]["content"]["binding_path"] = json!("profile.name[0]");
+    let error =
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err();
+    assert_eq!(error.code(), "UI_DOCUMENT_PARSE_FAILED");
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][5]["asset"] = json!("");
+    let error =
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err();
+    assert_eq!(error.code(), "UI_DOCUMENT_PARSE_FAILED");
+}
+
+#[test]
+fn ui_document_text_validation_reports_long_text_and_typography_errors() {
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][0]["content"]["literal"] =
+        json!("x".repeat(UI_TEXT_FALLBACK_MAX_BYTES + 1));
+    assert!(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).is_ok(),
+        "a 4097-byte literal remains below the frozen 16 KiB literal budget"
+    );
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][0]["content"]["literal"] =
+        json!("x".repeat(UI_TEXT_LITERAL_MAX_BYTES + 1));
+    assert_content_error_at(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_TEXT_TOO_LONG",
+        "$.root.children[0].content.literal",
+    );
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][1]["content"]["fallback"] =
+        json!("x".repeat(UI_TEXT_FALLBACK_MAX_BYTES + 1));
+    assert_content_error_at(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_TEXT_TOO_LONG",
+        "$.root.children[1].content.fallback",
+    );
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][1]["typography"]["max_lines"] = json!(0);
+    assert_content_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_TEXT_MAX_LINES_INVALID",
+    );
+
+    let mut value: Value = serde_json::from_str(CONTENT_DOCUMENT).unwrap();
+    value["root"]["children"][0]["typography"]["max_lines"] = json!(2);
+    assert_content_error(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&value).unwrap()).unwrap_err(),
+        "UI_TEXT_MAX_LINES_REQUIRES_OVERFLOW",
+    );
+
+    let mut document = UiDocument::parse_and_validate_json(CONTENT_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let UiNode::Container { children, .. } = &mut document.root else {
+        panic!("content fixture root must be a container")
+    };
+    let UiNode::Text { typography, .. } = &mut children[0] else {
+        panic!("first fixture child must be text")
+    };
+    typography.line_height = UiTextLineHeight::Relative(f32::NAN);
+    assert_content_error(
+        ValidatedUiDocument::new(document).unwrap_err(),
+        "UI_TEXT_LINE_HEIGHT_INVALID",
+    );
+}
+
+#[test]
+fn ui_document_typography_adapts_to_framework_and_missing_glyph_policy() {
+    use crate::framework::ui::style::fonts::UiFontFaceLoadState;
+    use crate::framework::ui::style::{UiFontAssets, UiFontResolutionStatus, UiFontWeight};
+
+    let typography = UiTextTypography {
+        font_role: UiTextFontRole::Heading,
+        weight: UiTextWeight::Bold,
+        line_height: UiTextLineHeight::Relative(1.4),
+        alignment: UiTextAlignment::Center,
+        wrap: UiTextWrap::WordOrCharacter,
+        max_lines: Some(2),
+        overflow: UiTextOverflow::Ellipsis,
+    };
+    let adapter = typography.to_framework_adapter(24.0);
+    assert_eq!(adapter.style.font_weight, UiFontWeight::Bold);
+    assert_eq!(adapter.style.font_size, 24.0);
+    assert_eq!(adapter.bevy_layout.justify, Justify::Center);
+    assert_eq!(adapter.bevy_layout.linebreak, LineBreak::WordOrCharacter);
+    assert_eq!(adapter.max_lines, Some(2));
+    assert_eq!(adapter.overflow, UiTextOverflow::Ellipsis);
+
+    let fonts = UiFontAssets::test_registry();
+    let resolution = fonts.resolve_text_with_state(&adapter.style, "中文 English 🧪", |_| {
+        UiFontFaceLoadState::Loaded
+    });
+    assert!(matches!(
+        resolution.status,
+        UiFontResolutionStatus::GlyphReplacement {
+            replacement_count: 1,
+            ..
+        }
+    ));
+    assert_eq!(resolution.rendered_source, "中文 English ?");
+}
+
+#[test]
+fn ui_document_catalog_validation_distinguishes_known_and_missing_keys() {
+    use std::collections::BTreeMap;
+
+    struct Catalog(BTreeMap<UiI18nKey, String>);
+    impl UiDocumentI18nCatalog for Catalog {
+        fn lookup(&self, key: &UiI18nKey) -> Option<&str> {
+            self.0.get(key).map(String::as_str)
+        }
+    }
+
+    let document = UiDocument::parse_and_validate_json(CONTENT_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let key = UiI18nKey::from_str("ui_gallery.content.title").unwrap();
+    let catalog = Catalog(BTreeMap::from([(key, "内容标题".to_owned())]));
+    assert!(document.validate_content_with_catalog(&catalog).is_empty());
+
+    let missing = Catalog(BTreeMap::new());
+    let errors = document.validate_content_with_catalog(&missing);
+    assert!(errors.iter().any(|error| {
+        error.code == "UI_TEXT_I18N_KEY_MISSING"
+            && error.path == "$.root.children[1].content.i18n_key"
+    }));
+}
+
+#[test]
+fn ui_document_image_placeholders_failures_and_asset_kinds_are_deterministic() {
+    let document = UiDocument::parse_and_validate_json(CONTENT_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let image = &document.root.children()[5];
+    let UiNode::Image {
+        tint,
+        placeholder,
+        failure,
+        ..
+    } = image
+    else {
+        panic!("fixture child must be an image")
+    };
+    assert_eq!(tint.rgba8(), [217, 242, 255, 255]);
+    assert!(matches!(
+        resolve_image_fallback(
+            placeholder.as_ref(),
+            failure,
+            UiImageContentState::Loading
+        ),
+        UiResolvedImageFallback::Asset(asset) if asset.as_str() == "loading_placeholder"
+    ));
+    assert!(matches!(
+        resolve_image_fallback(
+            placeholder.as_ref(),
+            failure,
+            UiImageContentState::Failed
+        ),
+        UiResolvedImageFallback::Asset(asset) if asset.as_str() == "failure_image"
+    ));
+
+    let error = UiDocument::parse_and_validate_json(CONTENT_WRONG_ASSET_TYPE_DOCUMENT).unwrap_err();
+    let UiDocumentError::InvalidVisual { errors } = error else {
+        panic!("wrong asset fixture must fail visual validation")
+    };
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.code == "UI_ASSET_KIND_MISMATCH")
+            .count(),
+        3
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.path == "$.root.children[0].placeholder")
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.path == "$.root.children[0].failure.asset")
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.path == "$.root.children[1].asset")
+    );
+}
+
 fn style_resource_document() -> UiDocument {
     UiDocument::parse_and_validate_json(STYLE_RESOURCE_DOCUMENT)
         .unwrap()
@@ -992,6 +1293,28 @@ fn assert_visual_error_contains(error: &UiDocumentError, code: &str) {
     assert!(
         errors.iter().any(|error| error.code == code),
         "missing {code}: {errors:?}"
+    );
+}
+
+fn assert_content_error(error: UiDocumentError, code: &str) {
+    let UiDocumentError::InvalidContent { errors } = error else {
+        panic!("expected content error {code}, got {error:?}");
+    };
+    assert!(
+        errors.iter().any(|error| error.code == code),
+        "missing {code}: {errors:?}"
+    );
+}
+
+fn assert_content_error_at(error: UiDocumentError, code: &str, path: &str) {
+    let UiDocumentError::InvalidContent { errors } = error else {
+        panic!("expected content error {code}, got {error:?}");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.code == code && error.path == path),
+        "missing {code} at {path}: {errors:?}"
     );
 }
 

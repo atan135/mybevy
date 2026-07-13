@@ -10,11 +10,16 @@ pub enum UiIdKind {
     Asset,
     Style,
     Action,
+    I18n,
+    Binding,
 }
 
 impl UiIdKind {
     const fn requires_namespace(self) -> bool {
-        matches!(self, Self::Document | Self::Node | Self::Action)
+        matches!(
+            self,
+            Self::Document | Self::Node | Self::Action | Self::I18n | Self::Binding
+        )
     }
 }
 
@@ -147,5 +152,15 @@ define_ui_id!(
 define_ui_id!(
     UiActionId,
     UiIdKind::Action,
+    "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+);
+define_ui_id!(
+    UiI18nKey,
+    UiIdKind::I18n,
+    "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+);
+define_ui_id!(
+    UiBindingPath,
+    UiIdKind::Binding,
     "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
 );

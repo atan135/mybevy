@@ -479,16 +479,52 @@ fn validate_node_assets(
     path: &str,
     errors: &mut Vec<UiVisualFieldError>,
 ) {
-    if let UiNode::Image {
-        asset,
-        presentation,
-        ..
-    } = node
-    {
-        match document.assets.get(asset) {
-            None => errors.push(asset_error("UI_ASSET_UNKNOWN", &format!("{path}.asset"))),
-            Some(entry) => validate_presentation(entry, presentation, path, errors),
+    match node {
+        UiNode::Image {
+            asset,
+            presentation,
+            placeholder,
+            failure,
+            ..
+        } => {
+            match document.assets.get(asset) {
+                None => errors.push(asset_error("UI_ASSET_UNKNOWN", &format!("{path}.asset"))),
+                Some(entry) => validate_presentation(entry, presentation, path, errors),
+            }
+            if let Some(placeholder) = placeholder {
+                validate_node_asset_kind(
+                    document,
+                    placeholder,
+                    UiAssetKind::Image,
+                    &format!("{path}.placeholder"),
+                    errors,
+                );
+            }
+            match failure {
+                super::UiImageFailurePresentation::Placeholder if placeholder.is_none() => {
+                    errors.push(asset_error(
+                        "UI_IMAGE_FAILURE_PLACEHOLDER_REQUIRED",
+                        &format!("{path}.failure"),
+                    ));
+                }
+                super::UiImageFailurePresentation::Asset { asset } => validate_node_asset_kind(
+                    document,
+                    asset,
+                    UiAssetKind::Image,
+                    &format!("{path}.failure.asset"),
+                    errors,
+                ),
+                _ => {}
+            }
         }
+        UiNode::Icon { asset, .. } => validate_node_asset_kind(
+            document,
+            asset,
+            UiAssetKind::Icon,
+            &format!("{path}.asset"),
+            errors,
+        ),
+        _ => {}
     }
     for (index, child) in node.children().iter().enumerate() {
         validate_node_assets(
@@ -497,6 +533,22 @@ fn validate_node_assets(
             &format!("{path}.children[{index}]"),
             errors,
         );
+    }
+}
+
+fn validate_node_asset_kind(
+    document: &UiDocument,
+    asset: &super::UiAssetId,
+    expected: UiAssetKind,
+    path: &str,
+    errors: &mut Vec<UiVisualFieldError>,
+) {
+    match document.assets.get(asset) {
+        None => errors.push(asset_error("UI_ASSET_UNKNOWN", path)),
+        Some(entry) if entry.kind != expected => {
+            errors.push(asset_error("UI_ASSET_KIND_MISMATCH", path));
+        }
+        Some(_) => {}
     }
 }
 

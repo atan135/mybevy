@@ -1,6 +1,7 @@
 use super::{
-    UiActionId, UiAssetEntry, UiAssetId, UiDocumentId, UiImagePresentation, UiLayout, UiNodeId,
-    UiStyleDefinition, UiStyleId, UiStyleProperties, UiTokenValue,
+    UiActionId, UiAssetEntry, UiAssetId, UiColor, UiDocumentId, UiImageFailurePresentation,
+    UiImagePresentation, UiLayout, UiNodeId, UiStyleDefinition, UiStyleId, UiStyleProperties,
+    UiTextContent, UiTextTypography, UiTokenValue, default_image_tint,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -71,6 +72,8 @@ pub enum UiNode {
         id: UiNodeId,
         content: UiTextContent,
         #[serde(default)]
+        typography: UiTextTypography,
+        #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
         style: UiStyle,
@@ -80,6 +83,29 @@ pub enum UiNode {
         asset: UiAssetId,
         #[serde(default)]
         presentation: UiImagePresentation,
+        #[serde(default = "default_image_tint")]
+        tint: UiColor,
+        #[serde(default)]
+        placeholder: Option<UiAssetId>,
+        #[serde(default)]
+        failure: UiImageFailurePresentation,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Icon {
+        id: UiNodeId,
+        asset: UiAssetId,
+        #[serde(default = "default_image_tint")]
+        tint: UiColor,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Spacer {
+        id: UiNodeId,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
@@ -104,6 +130,8 @@ impl UiNode {
             Self::Container { id, .. }
             | Self::Text { id, .. }
             | Self::Image { id, .. }
+            | Self::Icon { id, .. }
+            | Self::Spacer { id, .. }
             | Self::Button { id, .. } => id,
         }
     }
@@ -120,6 +148,8 @@ impl UiNode {
             Self::Container { layout, .. }
             | Self::Text { layout, .. }
             | Self::Image { layout, .. }
+            | Self::Icon { layout, .. }
+            | Self::Spacer { layout, .. }
             | Self::Button { layout, .. } => layout,
         }
     }
@@ -129,16 +159,11 @@ impl UiNode {
             Self::Container { style, .. }
             | Self::Text { style, .. }
             | Self::Image { style, .. }
+            | Self::Icon { style, .. }
+            | Self::Spacer { style, .. }
             | Self::Button { style, .. } => style,
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct UiTextContent {
-    pub literal: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

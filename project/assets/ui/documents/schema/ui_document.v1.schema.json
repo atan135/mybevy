@@ -333,6 +333,34 @@
         }
       ]
     },
+    "UiBindingPath": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "type": "string"
+    },
+    "UiBindingTextSource": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_path": {
+          "$ref": "#/$defs/UiBindingPath"
+        },
+        "fallback": {
+          "default": "",
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/UiTextFormat",
+          "default": {
+            "kind": "plain"
+          }
+        }
+      },
+      "required": [
+        "binding_path"
+      ],
+      "type": "object"
+    },
     "UiBorderStyle": {
       "additionalProperties": false,
       "properties": {
@@ -634,6 +662,98 @@
           },
           "required": [
             "fr"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiI18nKey": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "type": "string"
+    },
+    "UiI18nTextSource": {
+      "additionalProperties": false,
+      "properties": {
+        "fallback": {
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/UiTextFormat",
+          "default": {
+            "kind": "plain"
+          }
+        },
+        "i18n_key": {
+          "$ref": "#/$defs/UiI18nKey"
+        }
+      },
+      "required": [
+        "i18n_key",
+        "fallback"
+      ],
+      "type": "object"
+    },
+    "UiImageFailurePresentation": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "$ref": "#/$defs/UiColor",
+              "default": "#8c1f24ff"
+            },
+            "kind": {
+              "const": "error_color",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "placeholder",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "asset": {
+              "$ref": "#/$defs/UiAssetId"
+            },
+            "kind": {
+              "const": "asset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "asset"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "hide",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
           ],
           "type": "object"
         }
@@ -1529,6 +1649,24 @@
         }
       ]
     },
+    "UiLiteralTextSource": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/UiTextFormat",
+          "default": {
+            "kind": "plain"
+          }
+        },
+        "literal": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "literal"
+      ],
+      "type": "object"
+    },
     "UiMaterialParameters": {
       "oneOf": [
         {
@@ -1826,12 +1964,173 @@
             "type": {
               "const": "text",
               "type": "string"
+            },
+            "typography": {
+              "$ref": "#/$defs/UiTextTypography",
+              "default": {
+                "alignment": "left",
+                "font_role": "body",
+                "line_height": {
+                  "kind": "normal"
+                },
+                "max_lines": null,
+                "overflow": "visible",
+                "weight": "regular",
+                "wrap": "word_or_character"
+              }
             }
           },
           "required": [
             "type",
             "id",
             "content"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "asset": {
+              "$ref": "#/$defs/UiAssetId"
+            },
+            "failure": {
+              "$ref": "#/$defs/UiImageFailurePresentation",
+              "default": {
+                "color": "#8c1f24ff",
+                "kind": "error_color"
+              }
+            },
+            "id": {
+              "$ref": "#/$defs/UiNodeId"
+            },
+            "layout": {
+              "$ref": "#/$defs/UiLayout",
+              "default": {
+                "align_content": "start",
+                "align_items": "stretch",
+                "align_self": "auto",
+                "aspect_ratio": null,
+                "border": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "column_gap": null,
+                "direction": "column",
+                "display": "flex",
+                "flex_basis": "auto",
+                "flex_grow": 0.0,
+                "flex_shrink": 1.0,
+                "gap": {
+                  "px": 0.0
+                },
+                "grid_auto_columns": [],
+                "grid_auto_flow": "row",
+                "grid_auto_rows": [],
+                "grid_column": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_columns": [],
+                "grid_row": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_rows": [],
+                "height": "auto",
+                "justify_content": "start",
+                "justify_items": "stretch",
+                "justify_self": "auto",
+                "margin": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "max_height": "auto",
+                "max_width": "auto",
+                "min_height": "auto",
+                "min_width": "auto",
+                "overflow": {
+                  "x": "visible",
+                  "y": "visible"
+                },
+                "padding": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "position": "relative",
+                "row_gap": null,
+                "scrollbar_width": 0.0,
+                "width": "auto",
+                "wrap": "no_wrap",
+                "z_index": 0
+              }
+            },
+            "placeholder": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiAssetId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "presentation": {
+              "$ref": "#/$defs/UiImagePresentation",
+              "default": {
+                "fit": "contain",
+                "focus": {
+                  "x": 0.5,
+                  "y": 0.5
+                },
+                "kind": "fit"
+              }
+            },
+            "style": {
+              "$ref": "#/$defs/UiStyle",
+              "default": {
+                "component": null,
+                "inline": {
+                  "background": null,
+                  "border": null,
+                  "corner_radius": null,
+                  "material": null,
+                  "opacity": null,
+                  "shadows": null,
+                  "text": null
+                },
+                "role": null,
+                "text_role": null
+              }
+            },
+            "tint": {
+              "$ref": "#/$defs/UiColor",
+              "default": "#ffffffff"
+            },
+            "type": {
+              "const": "image",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "asset"
           ],
           "type": "object"
         },
@@ -1920,15 +2219,119 @@
                 "z_index": 0
               }
             },
-            "presentation": {
-              "$ref": "#/$defs/UiImagePresentation",
+            "style": {
+              "$ref": "#/$defs/UiStyle",
               "default": {
-                "fit": "contain",
-                "focus": {
-                  "x": 0.5,
-                  "y": 0.5
+                "component": null,
+                "inline": {
+                  "background": null,
+                  "border": null,
+                  "corner_radius": null,
+                  "material": null,
+                  "opacity": null,
+                  "shadows": null,
+                  "text": null
                 },
-                "kind": "fit"
+                "role": null,
+                "text_role": null
+              }
+            },
+            "tint": {
+              "$ref": "#/$defs/UiColor",
+              "default": "#ffffffff"
+            },
+            "type": {
+              "const": "icon",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "asset"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/UiNodeId"
+            },
+            "layout": {
+              "$ref": "#/$defs/UiLayout",
+              "default": {
+                "align_content": "start",
+                "align_items": "stretch",
+                "align_self": "auto",
+                "aspect_ratio": null,
+                "border": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "column_gap": null,
+                "direction": "column",
+                "display": "flex",
+                "flex_basis": "auto",
+                "flex_grow": 0.0,
+                "flex_shrink": 1.0,
+                "gap": {
+                  "px": 0.0
+                },
+                "grid_auto_columns": [],
+                "grid_auto_flow": "row",
+                "grid_auto_rows": [],
+                "grid_column": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_columns": [],
+                "grid_row": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_rows": [],
+                "height": "auto",
+                "justify_content": "start",
+                "justify_items": "stretch",
+                "justify_self": "auto",
+                "margin": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "max_height": "auto",
+                "max_width": "auto",
+                "min_height": "auto",
+                "min_width": "auto",
+                "overflow": {
+                  "x": "visible",
+                  "y": "visible"
+                },
+                "padding": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "position": "relative",
+                "row_gap": null,
+                "scrollbar_width": 0.0,
+                "width": "auto",
+                "wrap": "no_wrap",
+                "z_index": 0
               }
             },
             "style": {
@@ -1949,14 +2352,13 @@
               }
             },
             "type": {
-              "const": "image",
+              "const": "spacer",
               "type": "string"
             }
           },
           "required": [
             "type",
-            "id",
-            "asset"
+            "id"
           ],
           "type": "object"
         },
@@ -2581,16 +2983,238 @@
       },
       "type": "object"
     },
+    "UiTextAlignment": {
+      "enum": [
+        "left",
+        "center",
+        "right",
+        "justified"
+      ],
+      "type": "string"
+    },
     "UiTextContent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UiLiteralTextSource"
+        },
+        {
+          "$ref": "#/$defs/UiI18nTextSource"
+        },
+        {
+          "$ref": "#/$defs/UiBindingTextSource"
+        }
+      ]
+    },
+    "UiTextFontRole": {
+      "enum": [
+        "display",
+        "heading",
+        "body",
+        "caption",
+        "control"
+      ],
+      "type": "string"
+    },
+    "UiTextFormat": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "plain",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "grouping": {
+              "default": false,
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "number",
+              "type": "string"
+            },
+            "max_fraction_digits": {
+              "default": 0,
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_fraction_digits": {
+              "default": 0,
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "percent",
+              "type": "string"
+            },
+            "max_fraction_digits": {
+              "default": 0,
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_fraction_digits": {
+              "default": 0,
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "binary_units": {
+              "default": false,
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "bytes",
+              "type": "string"
+            },
+            "precision": {
+              "default": 0,
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiTextLineHeight": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "normal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "relative",
+              "type": "string"
+            },
+            "value": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "pixels",
+              "type": "string"
+            },
+            "value": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiTextOverflow": {
+      "enum": [
+        "visible",
+        "clip",
+        "ellipsis"
+      ],
+      "type": "string"
+    },
+    "UiTextTypography": {
       "additionalProperties": false,
       "properties": {
-        "literal": {
-          "type": "string"
+        "alignment": {
+          "$ref": "#/$defs/UiTextAlignment",
+          "default": "left"
+        },
+        "font_role": {
+          "$ref": "#/$defs/UiTextFontRole",
+          "default": "body"
+        },
+        "line_height": {
+          "$ref": "#/$defs/UiTextLineHeight",
+          "default": {
+            "kind": "normal"
+          }
+        },
+        "max_lines": {
+          "default": null,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "overflow": {
+          "$ref": "#/$defs/UiTextOverflow",
+          "default": "visible"
+        },
+        "weight": {
+          "$ref": "#/$defs/UiTextWeight",
+          "default": "regular"
+        },
+        "wrap": {
+          "$ref": "#/$defs/UiTextWrap",
+          "default": "word_or_character"
         }
       },
-      "required": [
-        "literal"
-      ],
       "type": "object"
     },
     "UiTextVisualStyle": {
@@ -2670,6 +3294,15 @@
         "regular",
         "medium",
         "bold"
+      ],
+      "type": "string"
+    },
+    "UiTextWrap": {
+      "enum": [
+        "word",
+        "character",
+        "word_or_character",
+        "no_wrap"
       ],
       "type": "string"
     },

@@ -81,6 +81,10 @@
     "children": [
       {
         "asset": "hero_image",
+        "failure": {
+          "color": "#8c1f24ff",
+          "kind": "error_color"
+        },
         "id": "style.cover",
         "layout": {
           "align_content": "start",
@@ -155,6 +159,7 @@
           "wrap": "no_wrap",
           "z_index": 0
         },
+        "placeholder": null,
         "presentation": {
           "fit": "cover",
           "focus": {
@@ -177,10 +182,15 @@
           "role": null,
           "text_role": null
         },
+        "tint": "#ffffffff",
         "type": "image"
       },
       {
         "asset": "hero_image",
+        "failure": {
+          "color": "#8c1f24ff",
+          "kind": "error_color"
+        },
         "id": "style.slice",
         "layout": {
           "align_content": "start",
@@ -255,6 +265,7 @@
           "wrap": "no_wrap",
           "z_index": 0
         },
+        "placeholder": null,
         "presentation": {
           "center": {
             "kind": "tile",
@@ -287,10 +298,15 @@
           "role": null,
           "text_role": null
         },
+        "tint": "#ffffffff",
         "type": "image"
       },
       {
         "asset": "hero_image",
+        "failure": {
+          "color": "#8c1f24ff",
+          "kind": "error_color"
+        },
         "id": "style.tile",
         "layout": {
           "align_content": "start",
@@ -365,6 +381,7 @@
           "wrap": "no_wrap",
           "z_index": 0
         },
+        "placeholder": null,
         "presentation": {
           "axis": "both",
           "kind": "tiled",
@@ -385,10 +402,15 @@
           "role": null,
           "text_role": null
         },
+        "tint": "#ffffffff",
         "type": "image"
       },
       {
         "asset": "menu_atlas",
+        "failure": {
+          "color": "#8c1f24ff",
+          "kind": "error_color"
+        },
         "id": "style.atlas",
         "layout": {
           "align_content": "start",
@@ -463,6 +485,7 @@
           "wrap": "no_wrap",
           "z_index": 0
         },
+        "placeholder": null,
         "presentation": {
           "fit": "contain",
           "focus": {
@@ -486,6 +509,7 @@
           "role": null,
           "text_role": null
         },
+        "tint": "#ffffffff",
         "type": "image"
       }
     ],

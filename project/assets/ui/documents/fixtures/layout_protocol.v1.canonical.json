@@ -10,6 +10,9 @@
     "children": [
       {
         "content": {
+          "format": {
+            "kind": "plain"
+          },
           "literal": "Anchored"
         },
         "id": "layout.absolute",
@@ -116,7 +119,18 @@
           "role": null,
           "text_role": null
         },
-        "type": "text"
+        "type": "text",
+        "typography": {
+          "alignment": "left",
+          "font_role": "body",
+          "line_height": {
+            "kind": "normal"
+          },
+          "max_lines": null,
+          "overflow": "visible",
+          "weight": "regular",
+          "wrap": "word_or_character"
+        }
       },
       {
         "children": [],

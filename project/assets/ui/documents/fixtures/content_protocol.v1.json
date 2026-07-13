@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "document_id": "example.content_protocol",
+  "metadata": {
+    "title": "Content node protocol golden",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {
+    "content_image": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fixtures/visual-foundation/non-square-2x1.png"
+      }
+    },
+    "loading_placeholder": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fixtures/visual-foundation/transparent-edge.png"
+      }
+    },
+    "failure_image": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fixtures/visual-foundation/nine-slice-12px.png"
+      }
+    },
+    "help_icon": {
+      "kind": "icon",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/icons/help.png"
+      }
+    }
+  },
+  "tokens": {},
+  "styles": {},
+  "root": {
+    "id": "content.root",
+    "type": "container",
+    "children": [
+      {
+        "id": "content.chinese",
+        "type": "text",
+        "content": {
+          "literal": "中文正文与 English text"
+        },
+        "typography": {
+          "font_role": "body",
+          "weight": "regular",
+          "line_height": {
+            "kind": "relative",
+            "value": 1.35
+          },
+          "alignment": "left",
+          "wrap": "word_or_character",
+          "max_lines": null,
+          "overflow": "visible"
+        }
+      },
+      {
+        "id": "content.localized",
+        "type": "text",
+        "content": {
+          "i18n_key": "ui_gallery.content.title",
+          "fallback": "Content title"
+        },
+        "typography": {
+          "font_role": "heading",
+          "weight": "bold",
+          "line_height": {
+            "kind": "pixels",
+            "value": 28.0
+          },
+          "alignment": "center",
+          "wrap": "word",
+          "max_lines": 2,
+          "overflow": "ellipsis"
+        }
+      },
+      {
+        "id": "content.bound_number",
+        "type": "text",
+        "content": {
+          "binding_path": "profile.download_bytes",
+          "fallback": "0 B",
+          "format": {
+            "kind": "bytes",
+            "precision": 1,
+            "binary_units": true
+          }
+        }
+      },
+      {
+        "id": "content.long_text",
+        "type": "text",
+        "content": {
+          "literal": "This intentionally long fixture sentence verifies deterministic wrapping and clipping across narrow phone profiles without embedding markup, mixed spans, scripts, templates, or arbitrary formatting expressions."
+        },
+        "typography": {
+          "font_role": "caption",
+          "weight": "medium",
+          "line_height": {
+            "kind": "normal"
+          },
+          "alignment": "justified",
+          "wrap": "word_or_character",
+          "max_lines": 3,
+          "overflow": "clip"
+        }
+      },
+      {
+        "id": "content.missing_glyph",
+        "type": "text",
+        "content": {
+          "literal": "Unsupported emoji fixture: 🧪"
+        }
+      },
+      {
+        "id": "content.image",
+        "type": "image",
+        "asset": "content_image",
+        "presentation": {
+          "kind": "fit",
+          "fit": "cover",
+          "focus": {
+            "x": 0.25,
+            "y": 0.75
+          }
+        },
+        "tint": "#d9f2ffff",
+        "placeholder": "loading_placeholder",
+        "failure": {
+          "kind": "asset",
+          "asset": "failure_image"
+        }
+      },
+      {
+        "id": "content.icon",
+        "type": "icon",
+        "asset": "help_icon",
+        "tint": "#ffffffff"
+      },
+      {
+        "id": "content.spacer",
+        "type": "spacer",
+        "layout": {
+          "height": {
+            "px": 12.0
+          }
+        }
+      }
+    ]
+  },
+  "states": [],
+  "responsive": []
+}

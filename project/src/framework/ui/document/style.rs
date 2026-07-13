@@ -263,10 +263,11 @@ pub struct UiCornerRadii {
     pub bottom_left: UiScalarValue,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum UiTextWeight {
+    #[default]
     Regular,
     Medium,
     Bold,

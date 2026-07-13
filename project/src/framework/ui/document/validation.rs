@@ -1,6 +1,6 @@
 use super::{
-    CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UiDocument, UiDocumentId,
-    UiLayoutFieldError, UiNode, UiNodeId, UiVisualFieldError,
+    CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UiContentFieldError, UiDocument,
+    UiDocumentId, UiLayoutFieldError, UiNode, UiNodeId, UiVisualFieldError,
 };
 use bevy::prelude::Component;
 use serde::Serialize;
@@ -31,6 +31,9 @@ pub enum UiDocumentError {
     InvalidVisual {
         errors: Vec<UiVisualFieldError>,
     },
+    InvalidContent {
+        errors: Vec<UiContentFieldError>,
+    },
 }
 
 impl UiDocumentError {
@@ -43,6 +46,7 @@ impl UiDocumentError {
             Self::DuplicateNodeId { .. } => "UI_NODE_ID_DUPLICATE",
             Self::InvalidLayout { .. } => "UI_LAYOUT_INVALID",
             Self::InvalidVisual { .. } => "UI_VISUAL_INVALID",
+            Self::InvalidContent { .. } => "UI_CONTENT_INVALID",
         }
     }
 }
@@ -82,6 +86,11 @@ impl fmt::Display for UiDocumentError {
                 "document contains {} invalid visual or asset field(s)",
                 errors.len()
             ),
+            Self::InvalidContent { errors } => write!(
+                formatter,
+                "document contains {} invalid content field(s)",
+                errors.len()
+            ),
         }
     }
 }
@@ -107,6 +116,12 @@ impl ValidatedUiDocument {
             .filter(|version| *version > 0)
             .ok_or(UiDocumentError::InvalidSchemaVersion)?;
         validate_version(version)?;
+        let content_shape_errors = super::validate_content_json_shape(&value);
+        if !content_shape_errors.is_empty() {
+            return Err(UiDocumentError::InvalidContent {
+                errors: content_shape_errors,
+            });
+        }
         let document = serde_json::from_value(value).map_err(|error| UiDocumentError::Parse {
             message: error.to_string(),
         })?;
@@ -140,6 +155,12 @@ impl ValidatedUiDocument {
         if !layout_errors.is_empty() {
             return Err(UiDocumentError::InvalidLayout {
                 errors: layout_errors,
+            });
+        }
+        let content_errors = document.validate_content();
+        if !content_errors.is_empty() {
+            return Err(UiDocumentError::InvalidContent {
+                errors: content_errors,
             });
         }
         let mut visual_errors = document.validate_style_tables();

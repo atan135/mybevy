@@ -1,5 +1,6 @@
 mod asset;
 mod canonical;
+mod content;
 mod id;
 mod layout;
 mod model;
@@ -7,6 +8,7 @@ mod style;
 mod validation;
 
 pub use asset::*;
+pub use content::*;
 pub use id::*;
 pub use layout::*;
 pub use model::*;

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "document_id": "invalid.content_asset_types",
+  "assets": {
+    "body_font": {
+      "kind": "font",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fonts/body.otf"
+      }
+    },
+    "preview_image": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/images/preview.png"
+      }
+    }
+  },
+  "root": {
+    "id": "invalid.root",
+    "type": "container",
+    "children": [
+      {
+        "id": "invalid.image",
+        "type": "image",
+        "asset": "preview_image",
+        "placeholder": "body_font",
+        "failure": {
+          "kind": "asset",
+          "asset": "body_font"
+        }
+      },
+      {
+        "id": "invalid.icon",
+        "type": "icon",
+        "asset": "preview_image"
+      }
+    ]
+  }
+}

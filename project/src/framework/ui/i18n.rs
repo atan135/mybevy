@@ -137,6 +137,15 @@ impl UiI18n {
     }
 }
 
+impl crate::framework::ui::document::UiDocumentI18nCatalog for UiI18n {
+    fn lookup(&self, key: &crate::framework::ui::document::UiI18nKey) -> Option<&str> {
+        self.texts
+            .get(key.as_str())
+            .or_else(|| self.fallback_texts.get(key.as_str()))
+            .map(String::as_str)
+    }
+}
+
 impl UiI18nText {
     pub(crate) fn new(key: impl Into<String>, fallback: impl Into<String>) -> Self {
         Self {

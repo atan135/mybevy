@@ -130,6 +130,9 @@
     "children": [
       {
         "content": {
+          "format": {
+            "kind": "plain"
+          },
           "literal": "Declarative UI"
         },
         "id": "page.title",
@@ -220,10 +223,25 @@
           "role": null,
           "text_role": "title"
         },
-        "type": "text"
+        "type": "text",
+        "typography": {
+          "alignment": "left",
+          "font_role": "body",
+          "line_height": {
+            "kind": "normal"
+          },
+          "max_lines": null,
+          "overflow": "visible",
+          "weight": "regular",
+          "wrap": "word_or_character"
+        }
       },
       {
         "asset": "hero_image",
+        "failure": {
+          "color": "#8c1f24ff",
+          "kind": "error_color"
+        },
         "id": "page.hero",
         "layout": {
           "align_content": "start",
@@ -302,6 +320,7 @@
           "wrap": "no_wrap",
           "z_index": 0
         },
+        "placeholder": null,
         "presentation": {
           "fit": "contain",
           "focus": {
@@ -324,11 +343,15 @@
           "role": null,
           "text_role": null
         },
+        "tint": "#ffffffff",
         "type": "image"
       },
       {
         "id": "page.continue",
         "label": {
+          "format": {
+            "kind": "plain"
+          },
           "literal": "Continue"
         },
         "layout": {
