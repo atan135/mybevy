@@ -71,6 +71,7 @@
       }
     }
   },
+  "bindings": {},
   "document_id": "example.style_resources",
   "metadata": {
     "budget_profile": "mobile_baseline_v1",

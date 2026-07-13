@@ -3,6 +3,10 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
+use crate::framework::ui::document::{
+    UiBindingDeclaration, UiBindingMissingBehavior, UiBindingScope as UiDocumentBindingScope,
+    UiBindingValue, UiBindingVisibility, binding_value_matches,
+};
 use crate::framework::ui::widgets::DisabledButton;
 
 pub(crate) struct UiBindingPlugin;
@@ -57,6 +61,16 @@ impl AsRef<str> for UiBindingPath {
 pub(crate) struct UiBindingValues {
     texts: HashMap<UiBindingPath, String>,
     bools: HashMap<UiBindingPath, bool>,
+    typed_values: HashMap<UiBindingPath, UiBindingValue>,
+    scoped_values: HashMap<UiScopedBindingKey, UiBindingValue>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct UiScopedBindingKey {
+    document_id: String,
+    owner: String,
+    scope: UiDocumentBindingScope,
+    path: UiBindingPath,
 }
 
 impl UiBindingValues {
@@ -111,6 +125,136 @@ impl UiBindingValues {
 
     pub(crate) fn bool_path(&self, path: &UiBindingPath) -> Option<bool> {
         self.bools.get(path).copied()
+    }
+
+    pub(crate) fn set_number(&mut self, path: impl AsRef<str>, value: f64) -> bool {
+        let Some(path) = UiBindingPath::new(path) else {
+            return false;
+        };
+        if !value.is_finite() {
+            return false;
+        }
+        self.typed_values
+            .insert(path, UiBindingValue::Number(value))
+            != Some(UiBindingValue::Number(value))
+    }
+
+    pub(crate) fn number(&self, path: impl AsRef<str>) -> Option<f64> {
+        let path = UiBindingPath::new(path)?;
+        match self.typed_values.get(&path) {
+            Some(UiBindingValue::Number(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_visibility(
+        &mut self,
+        path: impl AsRef<str>,
+        value: UiBindingVisibility,
+    ) -> bool {
+        let Some(path) = UiBindingPath::new(path) else {
+            return false;
+        };
+        self.typed_values
+            .insert(path, UiBindingValue::Visibility(value))
+            != Some(UiBindingValue::Visibility(value))
+    }
+
+    pub(crate) fn visibility_path(&self, path: &UiBindingPath) -> Option<UiBindingVisibility> {
+        match self.typed_values.get(path) {
+            Some(UiBindingValue::Visibility(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_enum(&mut self, path: impl AsRef<str>, value: impl Into<String>) -> bool {
+        let Some(path) = UiBindingPath::new(path) else {
+            return false;
+        };
+        let value = UiBindingValue::Enum(value.into());
+        if self.typed_values.get(&path) == Some(&value) {
+            return false;
+        }
+        self.typed_values.insert(path, value);
+        true
+    }
+
+    pub(crate) fn enum_value(&self, path: impl AsRef<str>) -> Option<&str> {
+        let path = UiBindingPath::new(path)?;
+        match self.typed_values.get(&path) {
+            Some(UiBindingValue::Enum(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_scoped(
+        &mut self,
+        document_id: &str,
+        owner: &str,
+        path: &crate::framework::ui::document::UiBindingPath,
+        declaration: &UiBindingDeclaration,
+        value: UiBindingValue,
+    ) -> bool {
+        if !binding_value_matches(&declaration.value_type, &value) {
+            return false;
+        }
+        let Some(path) = UiBindingPath::new(path.as_str()) else {
+            return false;
+        };
+        let key = UiScopedBindingKey {
+            document_id: document_id.to_owned(),
+            owner: if declaration.scope == UiDocumentBindingScope::Document {
+                String::new()
+            } else {
+                owner.to_owned()
+            },
+            scope: declaration.scope,
+            path,
+        };
+        if self.scoped_values.get(&key) == Some(&value) {
+            return false;
+        }
+        self.scoped_values.insert(key, value);
+        true
+    }
+
+    pub(crate) fn scoped_value(
+        &self,
+        document_id: &str,
+        owner: &str,
+        path: &crate::framework::ui::document::UiBindingPath,
+        declaration: &UiBindingDeclaration,
+    ) -> Option<UiBindingValue> {
+        let path = UiBindingPath::new(path.as_str())?;
+        let key = UiScopedBindingKey {
+            document_id: document_id.to_owned(),
+            owner: if declaration.scope == UiDocumentBindingScope::Document {
+                String::new()
+            } else {
+                owner.to_owned()
+            },
+            scope: declaration.scope,
+            path,
+        };
+        self.scoped_values.get(&key).cloned().or_else(|| {
+            (declaration.missing == UiBindingMissingBehavior::UseDefault)
+                .then_some(declaration.default.clone())
+                .flatten()
+        })
+    }
+
+    pub(crate) fn clear_owner(&mut self, owner: &str) -> usize {
+        let before = self.scoped_values.len();
+        self.scoped_values
+            .retain(|key, _| key.scope == UiDocumentBindingScope::Document || key.owner != owner);
+        before - self.scoped_values.len()
+    }
+
+    pub(crate) fn clear_document(&mut self, document_id: &str) -> usize {
+        let before = self.scoped_values.len();
+        self.scoped_values
+            .retain(|key, _| key.document_id != document_id);
+        before - self.scoped_values.len()
     }
 
     #[allow(dead_code)]
@@ -273,8 +417,16 @@ fn apply_bound_visibility(
             continue;
         }
 
-        let value = values.bool_path(&bound_visibility.path).unwrap_or(false);
-        let next_visibility = visibility_from_bound_bool(value, bound_visibility.mode);
+        let next_visibility = if let Some(value) = values.visibility_path(&bound_visibility.path) {
+            match value {
+                UiBindingVisibility::Inherited => Visibility::Inherited,
+                UiBindingVisibility::Visible => Visibility::Visible,
+                UiBindingVisibility::Hidden => Visibility::Hidden,
+            }
+        } else {
+            let value = values.bool_path(&bound_visibility.path).unwrap_or(false);
+            visibility_from_bound_bool(value, bound_visibility.mode)
+        };
         if *visibility != next_visibility {
             *visibility = next_visibility;
         }
@@ -391,6 +543,20 @@ mod tests {
         assert_eq!(values.bool("gallery.binding.visible"), None);
         assert!(!values.remove_bool("gallery.binding.visible"));
         assert!(!values.remove_bool("gallery..binding"));
+    }
+
+    #[test]
+    fn binding_values_keep_legacy_text_and_bool_channels_independent() {
+        let mut values = UiBindingValues::default();
+
+        assert!(values.set_text("gallery.shared", "Ready"));
+        assert!(values.set_bool("gallery.shared", true));
+        assert_eq!(values.text("gallery.shared"), Some("Ready"));
+        assert_eq!(values.bool("gallery.shared"), Some(true));
+
+        assert!(values.remove_text("gallery.shared"));
+        assert_eq!(values.text("gallery.shared"), None);
+        assert_eq!(values.bool("gallery.shared"), Some(true));
     }
 
     #[test]
@@ -548,5 +714,100 @@ mod tests {
         assert!(UiBoundDisabled::new("menu.disabled").is_some());
         assert!(UiBoundVisibility::new("menu..visible").is_none());
         assert!(UiBoundDisabled::new(" ").is_none());
+    }
+
+    #[test]
+    fn binding_values_support_number_visibility_and_restricted_enum_types() {
+        let mut values = UiBindingValues::default();
+
+        assert!(values.set_number("gallery.progress", 0.75));
+        assert_eq!(values.number("gallery.progress"), Some(0.75));
+        assert!(!values.set_number("gallery.progress", f64::NAN));
+
+        assert!(values.set_visibility("gallery.visibility", UiBindingVisibility::Hidden));
+        let path = UiBindingPath::new("gallery.visibility").unwrap();
+        assert_eq!(
+            values.visibility_path(&path),
+            Some(UiBindingVisibility::Hidden)
+        );
+
+        assert!(values.set_enum("gallery.mode", "advanced"));
+        assert_eq!(values.enum_value("gallery.mode"), Some("advanced"));
+    }
+
+    #[test]
+    fn scoped_binding_values_apply_defaults_and_cleanup_owner_and_document_lifetimes() {
+        use crate::framework::ui::document::{
+            UiBindingPath as UiDocumentBindingPath, UiBindingType,
+        };
+        use std::str::FromStr;
+
+        let mut values = UiBindingValues::default();
+        let local_path = UiDocumentBindingPath::from_str("state.local").unwrap();
+        let owner_path = UiDocumentBindingPath::from_str("state.owner").unwrap();
+        let document_path = UiDocumentBindingPath::from_str("state.document").unwrap();
+        let local = UiBindingDeclaration {
+            scope: UiDocumentBindingScope::Local,
+            value_type: UiBindingType::String,
+            default: Some(UiBindingValue::String("fallback".to_owned())),
+            missing: UiBindingMissingBehavior::UseDefault,
+        };
+        let owner = UiBindingDeclaration {
+            scope: UiDocumentBindingScope::Owner,
+            value_type: UiBindingType::Bool,
+            default: None,
+            missing: UiBindingMissingBehavior::UseConsumerFallback,
+        };
+        let document = UiBindingDeclaration {
+            scope: UiDocumentBindingScope::Document,
+            value_type: UiBindingType::Number,
+            default: None,
+            missing: UiBindingMissingBehavior::UseConsumerFallback,
+        };
+
+        assert_eq!(
+            values.scoped_value("binding.actions", "owner_a", &local_path, &local),
+            Some(UiBindingValue::String("fallback".to_owned()))
+        );
+        assert!(values.set_scoped(
+            "binding.actions",
+            "owner_a",
+            &local_path,
+            &local,
+            UiBindingValue::String("local".to_owned())
+        ));
+        assert!(values.set_scoped(
+            "binding.actions",
+            "owner_a",
+            &owner_path,
+            &owner,
+            UiBindingValue::Bool(true)
+        ));
+        assert!(values.set_scoped(
+            "binding.actions",
+            "owner_a",
+            &document_path,
+            &document,
+            UiBindingValue::Number(1.0)
+        ));
+        assert!(!values.set_scoped(
+            "binding.actions",
+            "owner_a",
+            &owner_path,
+            &owner,
+            UiBindingValue::String("wrong".to_owned())
+        ));
+
+        assert_eq!(values.clear_owner("owner_a"), 2);
+        assert_eq!(
+            values.scoped_value("binding.actions", "owner_b", &document_path, &document),
+            Some(UiBindingValue::Number(1.0))
+        );
+        assert_eq!(values.clear_document("binding.actions"), 1);
+        assert!(
+            values
+                .scoped_value("binding.actions", "owner_b", &document_path, &document)
+                .is_none()
+        );
     }
 }

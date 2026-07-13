@@ -1,14 +1,19 @@
 mod widgets;
 
 use bevy::prelude::*;
-use std::env;
+use std::{env, str::FromStr};
 
 use crate::framework::ui::{
     audit::{
         UiAuditCaptureRecipe, UiAuditCaptureState, UiAuditRecipe, UiAuditRouteCommand,
         UiAuditScreen, UiAuditScreenRecipe, UiAuditScreenRegistry,
     },
+    core::binding::UiBindingValues,
     core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
+    document::{
+        UiActionDescriptor, UiActionDispatch, UiActionId, UiActionRegistry, UiDocumentId,
+        UiRegisteredActionKind,
+    },
     widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
 };
 use crate::game::ui_ids::{
@@ -33,7 +38,14 @@ impl Plugin for NavigationPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppUiMode>()
             .add_message::<GameRouteCommand>()
-            .add_systems(Startup, (register_ui_audit_screens, setup_start_mode));
+            .add_systems(
+                Startup,
+                (
+                    register_ui_audit_screens,
+                    register_game_ui_actions,
+                    setup_start_mode,
+                ),
+            );
         app.configure_sets(
             Update,
             GameRouteSystems::Commands.before(UiPanelSystems::Commands),
@@ -43,11 +55,56 @@ impl Plugin for NavigationPlugin {
             (
                 handle_route_buttons,
                 handle_ui_audit_route_commands,
+                handle_declarative_ui_actions,
                 handle_game_route_commands,
             )
                 .chain()
                 .in_set(GameRouteSystems::Commands),
         );
+    }
+}
+
+const DECLARATIVE_CONTINUE_ACTION: &str = "example.continue";
+const DECLARATIVE_MINIMAL_DOCUMENT: &str = "example.minimal_page";
+const DECLARATIVE_LOBBY_ROUTE: &str = "game.route_lobby";
+const DECLARATIVE_CONTINUE_NODE: &str = "page.continue";
+
+fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
+    registry
+        .register(UiActionDescriptor::new(
+            UiActionId::from_str(DECLARATIVE_CONTINUE_ACTION).unwrap(),
+            UiDocumentId::from_str(DECLARATIVE_MINIMAL_DOCUMENT).unwrap(),
+            OWNER_LOGIN.as_str(),
+            UiRegisteredActionKind::Route {
+                target: DECLARATIVE_LOBBY_ROUTE.to_owned(),
+            },
+        ))
+        .expect("declarative UI action registration must be valid and unique");
+}
+
+fn handle_declarative_ui_actions(
+    mut actions: MessageReader<UiActionDispatch>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
+) {
+    for action in actions.read() {
+        if let Some(mode) = adapt_registered_ui_action(action) {
+            route_commands.write(GameRouteCommand::ChangeMode(mode));
+        }
+    }
+}
+
+fn adapt_registered_ui_action(action: &UiActionDispatch) -> Option<AppUiMode> {
+    match &action.kind {
+        UiRegisteredActionKind::Route { target }
+            if action.action.as_str() == DECLARATIVE_CONTINUE_ACTION
+                && action.document_id.as_str() == DECLARATIVE_MINIMAL_DOCUMENT
+                && action.owner == OWNER_LOGIN.as_str()
+                && action.source_node.as_str() == DECLARATIVE_CONTINUE_NODE
+                && target == DECLARATIVE_LOBBY_ROUTE =>
+        {
+            Some(AppUiMode::Lobby)
+        }
+        _ => None,
     }
 }
 
@@ -207,6 +264,7 @@ fn handle_game_route_commands(
     mut next_mode: ResMut<NextState<AppUiMode>>,
     current_mode: Res<State<AppUiMode>>,
     mut current_owner: ResMut<UiCurrentOwner>,
+    mut binding_values: ResMut<UiBindingValues>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
 ) {
     current_owner.owner = Some(current_mode.get().ui_owner());
@@ -214,6 +272,7 @@ fn handle_game_route_commands(
     for command in route_commands.read() {
         match command {
             GameRouteCommand::ChangeMode(mode) => {
+                binding_values.clear_owner(current_mode.get().ui_owner().as_str());
                 panel_commands.write(UiPanelCommand::CloseAllForOwner(
                     current_mode.get().ui_owner(),
                 ));
@@ -397,6 +456,7 @@ mod tests {
         OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
         OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE,
     };
+    use std::collections::BTreeMap;
 
     #[test]
     fn audio_settings_mode_uses_dedicated_owner() {
@@ -624,5 +684,58 @@ mod tests {
         ] {
             assert_eq!(target(state), Some(anchor.as_str()));
         }
+    }
+
+    #[test]
+    fn game_registers_declarative_continue_action_and_adapts_it_to_lobby_route() {
+        let mut app = App::new();
+        app.init_resource::<UiActionRegistry>()
+            .add_systems(Startup, register_game_ui_actions);
+        app.update();
+
+        let registry = app.world().resource::<UiActionRegistry>();
+        let action_id = UiActionId::from_str(DECLARATIVE_CONTINUE_ACTION).unwrap();
+        let descriptor = registry
+            .descriptor(&action_id)
+            .expect("game action should be registered");
+        assert_eq!(descriptor.document_id.as_str(), "example.minimal_page");
+        assert_eq!(descriptor.owner, OWNER_LOGIN.as_str());
+
+        let dispatch = UiActionDispatch {
+            action: action_id,
+            document_id: descriptor.document_id.clone(),
+            owner: descriptor.owner.clone(),
+            source_node: crate::framework::ui::document::UiNodeId::from_str("page.continue")
+                .unwrap(),
+            kind: descriptor.kind.clone(),
+            params: BTreeMap::new(),
+        };
+        assert_eq!(
+            adapt_registered_ui_action(&dispatch),
+            Some(AppUiMode::Lobby)
+        );
+
+        let mut spoofed = dispatch.clone();
+        spoofed.action = UiActionId::from_str("example.other").unwrap();
+        assert_eq!(adapt_registered_ui_action(&spoofed), None);
+
+        let mut spoofed = dispatch.clone();
+        spoofed.document_id = UiDocumentId::from_str("other.document").unwrap();
+        assert_eq!(adapt_registered_ui_action(&spoofed), None);
+
+        let mut spoofed = dispatch.clone();
+        spoofed.owner = OWNER_LOBBY.as_str().to_owned();
+        assert_eq!(adapt_registered_ui_action(&spoofed), None);
+
+        let mut spoofed = dispatch.clone();
+        spoofed.source_node =
+            crate::framework::ui::document::UiNodeId::from_str("page.title").unwrap();
+        assert_eq!(adapt_registered_ui_action(&spoofed), None);
+
+        let mut spoofed = dispatch;
+        spoofed.kind = UiRegisteredActionKind::Route {
+            target: "game.route_login".to_owned(),
+        };
+        assert_eq!(adapt_registered_ui_action(&spoofed), None);
     }
 }

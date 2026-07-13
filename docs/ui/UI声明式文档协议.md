@@ -365,3 +365,36 @@ v1 的一个 `Text` 节点只有一个 source 和一套排版，不支持 HTML/M
 `Image` 在阶段 4 asset/presentation 之上增加 canonical sRGB tint、可选 loading placeholder 和 closed failure policy。失败时只允许错误色块、复用 loading placeholder、使用另一项 image asset 或隐藏。主图片、placeholder 和 failure asset 都必须通过 asset table，且 placeholder/failure 严格要求 `image` kind；`Icon` 则严格要求 `icon` kind。`failure: placeholder` 没有提供 placeholder 时是静态错误。
 
 loading、failed 和 ready 的状态机仍由现有 image widget/AssetServer 在阶段 10 驱动；阶段 5 的纯数据适配只确定每个状态应选择的 asset、色块或隐藏结果，不提前生成实体，也不读取 GPU 状态。`content_protocol.v1.json` 及 canonical golden 覆盖中英文、长文本、binding format、缺字 emoji、图片 loading/failure、Icon 和 Spacer；`invalid/content_wrong_asset_type.v1.json` 固定错误资源类型诊断。
+
+## 16. v1 绑定与动作白名单冻结项
+
+### 16.1 Typed binding 与生命周期
+
+`UiDocument.bindings` 是稳定 binding path 到声明的 closed table。每项必须显式给出 `scope` 和 `value_type`；值类型只允许 `string`、`bool`、有限 `number`、`visibility`（`inherited` / `visible` / `hidden`）以及声明自身 allowlist 的 `enum`。默认值使用同一 tagged typed value，必须与声明类型一致；`missing` 只允许由 consumer 使用其 fallback，或使用声明的 typed default，后者缺少 default 时文档无效。
+
+scope 只有以下三种：
+
+- `document`：在同一 document instance 内共享，不依赖当前 owner；document 销毁时清理。
+- `owner`：由宿主 owner 提供，同 owner 生命周期一致；owner 销毁时清理。
+- `local`：只属于当前 document + owner，动作只能更新当前实例已声明的 local path；owner 或 document 任一销毁时清理。
+
+现有 Rust 页面使用的 `UiBindingValues` text/bool API 保持可用，并扩展 number、visibility、restricted enum 与 scoped typed 存储。`UiBoundText`、`UiBoundVisibility` 和 `UiBoundDisabled` 仍由 framework 系统应用值；document builder 在阶段 10 只负责把已经验证的声明适配到这些公共能力，不复制更新系统。绑定 path 不是 ECS query、反射路径或全局资源路径，不能读取 entity/component、账号安全字段或其他 document/owner 数据。
+
+静态验证只判断 document 内可证明的事实，包括声明/default 类型、enum allowlist、text format 类型和 local target。它不会假装知道宿主有哪些 owner/document binding。宿主在构建前必须用 `UiDocumentHostValidationContext` 显式提供当前 owner、owner 存活状态、外部 binding schema 和 `UiActionRegistry`；未知外部 path 或类型不一致均拒绝构建。
+
+### 16.2 Closed action registry 与权限
+
+document 的 `UiActionInvocation` 只包含稳定 action ID 和 `params`。参数是 tagged typed value，不接受 `serde_json::Value` 或任意 JSON blob。参数类型只允许 string、bool、有限 number、受限 enum、当前 document node ID 和 typed binding value；registry descriptor 再声明参数名、required/default、数值范围、字符串长度、enum allowlist、Node target allowlist 和 binding 类型。Node allowlist 不得为空，仅仅属于同一 document 仍不足以获得目标权限。未知参数、缺少 required 参数、类型不符、非当前 document node 或未被 descriptor 允许的 node 都在 dispatch 前拒绝。
+
+`UiActionRegistry` 的 descriptor 是唯一动作权限入口，只允许四种 closed kind：
+
+- `route`：目标是 game 层注册的稳定 route ID。
+- `close_panel`：目标是当前 owner 被允许关闭的注册 panel ID。
+- `business_command`：目标是 game 层注册的稳定业务 command ID。
+- `update_local_state`：目标必须是当前 document + owner 已声明的 local binding，值必须匹配其类型。
+
+每个 descriptor 同时绑定 action ID、允许的 document ID 和 owner。runtime dispatch 只接收 source node，并从 validated document 的该节点读取 invocation，不接受调用者另行传入 action 来伪造来源。dispatch 重新检查 source node、document、owner 和 owner 存活状态，因此旧页面延迟事件、跨 owner action、跨 document node 或 owner 销毁后的请求都不会转成业务命令。route target 的字符串是 game 注册 ID，不是 `AppUiMode` Rust variant 名；framework 只产出通用 `UiActionDispatch`，不 import 或决定游戏路由、面板策略和业务消息。
+
+游戏层当前示例在 `NavigationPlugin` 注册 `example.continue`，仅当 dispatch 的 action ID、document ID、owner、source node 和 allowlisted `game.route_lobby` target 全部匹配时，才适配为 `GameRouteCommand::ChangeMode(AppUiMode::Lobby)`。这条转换位于 game 层；新增业务 action 必须以相同方式显式注册和适配。
+
+所有 action object、typed value 和 document object 都启用 unknown-field rejection。action string 额外拒绝 URL、网络 scheme、绝对/父目录路径、反斜杠路径、NUL/换行、shell metacharacter 和命令行；普通 bounded string 是不执行的 opaque 业务数据，因此 `Alice`、`SaveCommand` 等 PascalCase 内容本身合法。文档不能通过 `system`、`function`、`message`、`kind` 或 `target` selector 指定 Rust type、system/function/message 名；这些选择能力只存在于游戏层构造的 closed registry descriptor。

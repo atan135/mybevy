@@ -72,8 +72,10 @@
         "action": {
           "$ref": "#/$defs/UiActionId"
         },
-        "args": {
-          "additionalProperties": true,
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/UiActionValue"
+          },
           "default": {},
           "type": "object"
         }
@@ -82,6 +84,113 @@
         "action"
       ],
       "type": "object"
+    },
+    "UiActionValue": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "string",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "bool",
+              "type": "string"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "number",
+              "type": "string"
+            },
+            "value": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "enum",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "node",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/UiNodeId"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "binding",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/UiBindingValue"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "UiAlignItems": {
       "enum": [
@@ -333,10 +442,56 @@
         }
       ]
     },
+    "UiBindingDeclaration": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBindingValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "missing": {
+          "$ref": "#/$defs/UiBindingMissingBehavior",
+          "default": "use_consumer_fallback"
+        },
+        "scope": {
+          "$ref": "#/$defs/UiBindingScope"
+        },
+        "value_type": {
+          "$ref": "#/$defs/UiBindingType"
+        }
+      },
+      "required": [
+        "scope",
+        "value_type"
+      ],
+      "type": "object"
+    },
+    "UiBindingMissingBehavior": {
+      "enum": [
+        "use_consumer_fallback",
+        "use_default"
+      ],
+      "type": "string"
+    },
     "UiBindingPath": {
       "maxLength": 128,
       "minLength": 1,
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "type": "string"
+    },
+    "UiBindingScope": {
+      "enum": [
+        "document",
+        "owner",
+        "local"
+      ],
       "type": "string"
     },
     "UiBindingTextSource": {
@@ -360,6 +515,180 @@
         "binding_path"
       ],
       "type": "object"
+    },
+    "UiBindingType": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "string",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "bool",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "number",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "visibility",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "enum",
+              "type": "string"
+            },
+            "values": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "values"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiBindingValue": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "string",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "bool",
+              "type": "string"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "number",
+              "type": "string"
+            },
+            "value": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "visibility",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/UiBindingVisibility"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "enum",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiBindingVisibility": {
+      "enum": [
+        "inherited",
+        "visible",
+        "hidden"
+      ],
+      "type": "string"
     },
     "UiBorderStyle": {
       "additionalProperties": false,
@@ -5514,6 +5843,16 @@
       "patternProperties": {
         "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$": {
           "$ref": "#/$defs/UiAssetEntry"
+        }
+      },
+      "type": "object"
+    },
+    "bindings": {
+      "additionalProperties": false,
+      "default": {},
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$": {
+          "$ref": "#/$defs/UiBindingDeclaration"
         }
       },
       "type": "object"

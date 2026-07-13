@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "document_id": "binding.actions",
+  "bindings": {
+    "state.title": {
+      "scope": "local",
+      "value_type": { "kind": "string" },
+      "default": { "kind": "string", "value": "Ready" },
+      "missing": "use_default"
+    },
+    "state.ready": {
+      "scope": "owner",
+      "value_type": { "kind": "bool" }
+    },
+    "state.progress": {
+      "scope": "document",
+      "value_type": { "kind": "number" }
+    },
+    "state.visibility": {
+      "scope": "local",
+      "value_type": { "kind": "visibility" },
+      "default": { "kind": "visibility", "value": "visible" },
+      "missing": "use_default"
+    },
+    "state.mode": {
+      "scope": "local",
+      "value_type": {
+        "kind": "enum",
+        "values": ["basic", "advanced"]
+      },
+      "default": { "kind": "enum", "value": "basic" },
+      "missing": "use_default"
+    }
+  },
+  "root": {
+    "type": "container",
+    "id": "binding.root",
+    "children": [
+      {
+        "type": "text",
+        "id": "binding.title",
+        "content": {
+          "binding_path": "state.title",
+          "fallback": "Missing"
+        }
+      },
+      {
+        "type": "button",
+        "id": "binding.route",
+        "label": { "literal": "Route" },
+        "on_click": { "action": "binding.route" }
+      },
+      {
+        "type": "button",
+        "id": "binding.close",
+        "label": { "literal": "Close" },
+        "on_click": { "action": "binding.close" }
+      },
+      {
+        "type": "button",
+        "id": "binding.business",
+        "label": { "literal": "Business" },
+        "on_click": {
+          "action": "binding.business",
+          "params": {
+            "mode": { "kind": "enum", "value": "advanced" },
+            "target": { "kind": "node", "value": "binding.title" }
+          }
+        }
+      },
+      {
+        "type": "button",
+        "id": "binding.update",
+        "label": { "literal": "Update" },
+        "on_click": {
+          "action": "binding.update",
+          "params": {
+            "value": {
+              "kind": "binding",
+              "value": { "kind": "enum", "value": "advanced" }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

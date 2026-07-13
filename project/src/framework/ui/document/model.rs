@@ -1,11 +1,10 @@
 use super::{
-    UiActionId, UiAssetEntry, UiAssetId, UiColor, UiComponentSpec, UiControlOption, UiDocumentId,
-    UiImageFailurePresentation, UiImagePresentation, UiLayout, UiNodeId, UiStyleDefinition,
-    UiStyleId, UiStyleProperties, UiTextContent, UiTextTypography, UiTokenValue, UiTooltipToneSpec,
-    default_image_tint,
+    UiActionId, UiActionValue, UiAssetEntry, UiAssetId, UiBindingDeclaration, UiBindingPath,
+    UiColor, UiComponentSpec, UiControlOption, UiDocumentId, UiImageFailurePresentation,
+    UiImagePresentation, UiLayout, UiNodeId, UiStyleDefinition, UiStyleId, UiStyleProperties,
+    UiTextContent, UiTextTypography, UiTokenValue, UiTooltipToneSpec, default_image_tint,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -26,6 +25,8 @@ pub struct UiDocument {
     pub tokens: BTreeMap<UiStyleId, UiTokenValue>,
     #[serde(default)]
     pub styles: BTreeMap<UiStyleId, UiStyleDefinition>,
+    #[serde(default)]
+    pub bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
     pub root: UiNode,
     #[serde(default)]
     pub states: Vec<UiStateDefinition>,
@@ -435,7 +436,7 @@ fn default_true() -> bool {
 pub struct UiActionInvocation {
     pub action: UiActionId,
     #[serde(default)]
-    pub args: BTreeMap<String, Value>,
+    pub params: BTreeMap<String, UiActionValue>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

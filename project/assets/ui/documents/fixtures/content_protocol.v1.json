@@ -5,6 +5,15 @@
     "title": "Content node protocol golden",
     "budget_profile": "mobile_baseline_v1"
   },
+  "bindings": {
+    "profile.download_bytes": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "number"
+      },
+      "missing": "use_consumer_fallback"
+    }
+  },
   "assets": {
     "content_image": {
       "kind": "image",

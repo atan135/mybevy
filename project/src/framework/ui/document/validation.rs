@@ -37,6 +37,9 @@ pub enum UiDocumentError {
     InvalidControl {
         errors: Vec<UiControlFieldError>,
     },
+    InvalidBindingAction {
+        errors: Vec<super::UiBindingActionError>,
+    },
 }
 
 impl UiDocumentError {
@@ -51,6 +54,7 @@ impl UiDocumentError {
             Self::InvalidVisual { .. } => "UI_VISUAL_INVALID",
             Self::InvalidContent { .. } => "UI_CONTENT_INVALID",
             Self::InvalidControl { .. } => "UI_CONTROL_INVALID",
+            Self::InvalidBindingAction { .. } => "UI_BINDING_ACTION_INVALID",
         }
     }
 }
@@ -98,6 +102,11 @@ impl fmt::Display for UiDocumentError {
             Self::InvalidControl { errors } => write!(
                 formatter,
                 "document contains {} invalid control field(s)",
+                errors.len()
+            ),
+            Self::InvalidBindingAction { errors } => write!(
+                formatter,
+                "document contains {} invalid binding or action field(s)",
                 errors.len()
             ),
         }
@@ -201,6 +210,12 @@ impl ValidatedUiDocument {
         if !visual_errors.is_empty() {
             return Err(UiDocumentError::InvalidVisual {
                 errors: visual_errors,
+            });
+        }
+        let binding_action_errors = super::validate_binding_action_document(&document);
+        if !binding_action_errors.is_empty() {
+            return Err(UiDocumentError::InvalidBindingAction {
+                errors: binding_action_errors,
             });
         }
         Ok(Self {

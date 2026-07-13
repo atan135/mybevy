@@ -10,6 +10,7 @@
       }
     }
   },
+  "bindings": {},
   "document_id": "example.minimal_page",
   "metadata": {
     "budget_profile": "mobile_baseline_v1",
@@ -439,7 +440,7 @@
         },
         "on_click": {
           "action": "example.continue",
-          "args": {}
+          "params": {}
         },
         "style": {
           "component": null,

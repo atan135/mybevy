@@ -1,4 +1,5 @@
 mod asset;
+mod binding_action;
 mod canonical;
 mod content;
 mod control;
@@ -9,6 +10,7 @@ mod style;
 mod validation;
 
 pub use asset::*;
+pub use binding_action::*;
 pub use content::*;
 pub use control::*;
 pub use id::*;

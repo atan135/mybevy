@@ -37,6 +37,16 @@
       }
     }
   },
+  "bindings": {
+    "profile.download_bytes": {
+      "default": null,
+      "missing": "use_consumer_fallback",
+      "scope": "owner",
+      "value_type": {
+        "kind": "number"
+      }
+    }
+  },
   "document_id": "example.content_protocol",
   "metadata": {
     "budget_profile": "mobile_baseline_v1",
