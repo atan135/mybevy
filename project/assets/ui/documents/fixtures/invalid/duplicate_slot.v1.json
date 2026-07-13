@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "document_id": "invalid.duplicate_slot",
+  "root": {
+    "type": "button",
+    "id": "duplicate.button",
+    "component": {
+      "slots": {
+        "label": {
+          "kind": "text",
+          "content": { "literal": "First" }
+        },
+        "label": {
+          "kind": "text",
+          "content": { "literal": "Second" }
+        }
+      }
+    },
+    "on_click": { "action": "invalid.continue" }
+  }
+}

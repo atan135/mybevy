@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "document_id": "invalid.validation_report",
+  "metadata": {
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {
+    "unsafe_image": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "../escape.png"
+      }
+    }
+  },
+  "styles": {
+    "cycle_a": { "extends": "cycle_b" },
+    "cycle_b": { "extends": "cycle_a" }
+  },
+  "root": {
+    "type": "container",
+    "id": "validation.root",
+    "layout": {
+      "width": { "px": 20000 }
+    },
+    "style": { "component": "cycle_a" },
+    "children": [
+      {
+        "type": "image",
+        "id": "validation.image",
+        "asset": "missing_image"
+      },
+      {
+        "type": "button",
+        "id": "validation.action",
+        "component": { "states": [] },
+        "label": { "literal": "Unsafe" },
+        "on_click": {
+          "action": "invalid.action",
+          "params": {
+            "payload": {
+              "kind": "string",
+              "value": "https://example.invalid/run"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

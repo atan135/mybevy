@@ -1,7 +1,8 @@
 use super::{
-    UiDocument, UiDocumentError, UiDocumentInputMode, UiDocumentPlatform, UiHeightClass, UiLayout,
-    UiLayoutPatch, UiNode, UiNodeId, UiNodeOverride, UiOrientation, UiResponsiveCondition,
-    UiSafeAreaClass, UiStyle, UiStylePatch, UiWidthClass, ValidatedUiDocument,
+    UI_DOCUMENT_MAX_DIAGNOSTICS, UiDocument, UiDocumentError, UiDocumentInputMode,
+    UiDocumentPlatform, UiHeightClass, UiLayout, UiLayoutPatch, UiNode, UiNodeId, UiNodeOverride,
+    UiOrientation, UiResponsiveCondition, UiSafeAreaClass, UiStyle, UiStylePatch, UiWidthClass,
+    ValidatedUiDocument,
 };
 use crate::framework::ui::core::{
     UiHeightClass as RuntimeHeightClass, UiOrientation as RuntimeOrientation,
@@ -755,13 +756,16 @@ pub(crate) fn validate_responsive_state_document(
     for (state_index, state) in document.states.iter().enumerate() {
         let path = format!("$.states[{state_index}]");
         if let Some(first) = state_ids.insert(state.id.clone(), path.clone()) {
-            errors.push(error(
-                "UI_PAGE_STATE_DUPLICATE",
-                format!("{path}.id"),
-                Some(format!("{first}.id")),
-                None,
-                None,
-            ));
+            push_error(
+                &mut errors,
+                error(
+                    "UI_PAGE_STATE_DUPLICATE",
+                    format!("{path}.id"),
+                    Some(format!("{first}.id")),
+                    None,
+                    None,
+                ),
+            );
         }
         validate_override_group(
             &state.overrides,
@@ -775,40 +779,52 @@ pub(crate) fn validate_responsive_state_document(
     for (variant_index, variant) in document.responsive.iter().enumerate() {
         let path = format!("$.responsive[{variant_index}]");
         if let Some(first) = variant_ids.insert(variant.id.clone(), path.clone()) {
-            errors.push(error(
-                "UI_RESPONSIVE_VARIANT_DUPLICATE",
-                format!("{path}.id"),
-                Some(format!("{first}.id")),
-                None,
-                None,
-            ));
+            push_error(
+                &mut errors,
+                error(
+                    "UI_RESPONSIVE_VARIANT_DUPLICATE",
+                    format!("{path}.id"),
+                    Some(format!("{first}.id")),
+                    None,
+                    None,
+                ),
+            );
         }
         if variant.when.specificity() == 0 {
-            errors.push(error(
-                "UI_RESPONSIVE_CONDITION_EMPTY",
-                format!("{path}.when"),
-                None,
-                None,
-                None,
-            ));
+            push_error(
+                &mut errors,
+                error(
+                    "UI_RESPONSIVE_CONDITION_EMPTY",
+                    format!("{path}.when"),
+                    None,
+                    None,
+                    None,
+                ),
+            );
         }
         if !variant.when.is_satisfiable() {
-            errors.push(error(
-                "UI_RESPONSIVE_CONDITION_UNSATISFIABLE",
-                format!("{path}.when"),
-                None,
-                None,
-                None,
-            ));
+            push_error(
+                &mut errors,
+                error(
+                    "UI_RESPONSIVE_CONDITION_UNSATISFIABLE",
+                    format!("{path}.when"),
+                    None,
+                    None,
+                    None,
+                ),
+            );
         }
         if variant.priority.unsigned_abs() > UI_RESPONSIVE_MAX_ABS_PRIORITY as u16 {
-            errors.push(error(
-                "UI_RESPONSIVE_PRIORITY_OUT_OF_RANGE",
-                format!("{path}.priority"),
-                None,
-                None,
-                None,
-            ));
+            push_error(
+                &mut errors,
+                error(
+                    "UI_RESPONSIVE_PRIORITY_OUT_OF_RANGE",
+                    format!("{path}.priority"),
+                    None,
+                    None,
+                    None,
+                ),
+            );
         }
         validate_override_group(
             &variant.overrides,
@@ -852,22 +868,28 @@ fn validate_override_group(
     for (index, node_override) in overrides.iter().enumerate() {
         let override_path = format!("{path}[{index}]");
         if !node_paths.contains_key(&node_override.node_id) {
-            errors.push(error(
-                "UI_OVERRIDE_NODE_NOT_FOUND",
-                format!("{override_path}.node_id"),
-                None,
-                Some(node_override.node_id.clone()),
-                None,
-            ));
+            push_error(
+                errors,
+                error(
+                    "UI_OVERRIDE_NODE_NOT_FOUND",
+                    format!("{override_path}.node_id"),
+                    None,
+                    Some(node_override.node_id.clone()),
+                    None,
+                ),
+            );
         }
         if patch_writes(node_override).is_empty() {
-            errors.push(error(
-                "UI_OVERRIDE_PATCH_EMPTY",
-                format!("{override_path}.set"),
-                None,
-                Some(node_override.node_id.clone()),
-                None,
-            ));
+            push_error(
+                errors,
+                error(
+                    "UI_OVERRIDE_PATCH_EMPTY",
+                    format!("{override_path}.set"),
+                    None,
+                    Some(node_override.node_id.clone()),
+                    None,
+                ),
+            );
         }
     }
     push_conflicts(&writes, &writes, errors);
@@ -909,6 +931,9 @@ fn push_conflicts(
         };
         for left_write in left_writes {
             for right_write in right_writes {
+                if errors.len() > UI_DOCUMENT_MAX_DIAGNOSTICS {
+                    return;
+                }
                 if left_write.path == right_write.path || left_write.value == right_write.value {
                     continue;
                 }
@@ -918,13 +943,16 @@ fn push_conflicts(
                     (&right_write.path, &left_write.path)
                 };
                 if seen.insert((ordered.0.clone(), ordered.1.clone())) {
-                    errors.push(error(
-                        "UI_OVERRIDE_FIELD_CONFLICT",
-                        ordered.1.clone(),
-                        Some(ordered.0.clone()),
-                        Some(node_id.clone()),
-                        Some(field.clone()),
-                    ));
+                    push_error(
+                        errors,
+                        error(
+                            "UI_OVERRIDE_FIELD_CONFLICT",
+                            ordered.1.clone(),
+                            Some(ordered.0.clone()),
+                            Some(node_id.clone()),
+                            Some(field.clone()),
+                        ),
+                    );
                 }
             }
         }
@@ -1042,5 +1070,11 @@ fn error(
         related_path,
         node_id,
         field,
+    }
+}
+
+fn push_error(errors: &mut Vec<UiResponsiveStateError>, error: UiResponsiveStateError) {
+    if errors.len() <= UI_DOCUMENT_MAX_DIAGNOSTICS {
+        errors.push(error);
     }
 }
