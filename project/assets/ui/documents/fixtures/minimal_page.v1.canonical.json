@@ -121,8 +121,13 @@
           }
         }
       ],
+      "priority": 0,
       "when": {
+        "height_class": null,
+        "input_mode": null,
         "orientation": "portrait",
+        "platform": null,
+        "safe_area": null,
         "width_class": "compact"
       }
     }

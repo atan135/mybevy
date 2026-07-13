@@ -1051,6 +1051,14 @@
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
       "type": "string"
     },
+    "UiDocumentInputMode": {
+      "enum": [
+        "touch",
+        "mouse_keyboard",
+        "mouse_touch"
+      ],
+      "type": "string"
+    },
     "UiDocumentMetadata": {
       "additionalProperties": false,
       "properties": {
@@ -1064,6 +1072,17 @@
         }
       },
       "type": "object"
+    },
+    "UiDocumentPlatform": {
+      "enum": [
+        "windows",
+        "macos",
+        "linux",
+        "android",
+        "ios",
+        "web"
+      ],
+      "type": "string"
     },
     "UiFlexDirection": {
       "enum": [
@@ -1224,6 +1243,14 @@
           "type": "object"
         }
       ]
+    },
+    "UiHeightClass": {
+      "enum": [
+        "short",
+        "regular",
+        "tall"
+      ],
+      "type": "string"
     },
     "UiI18nKey": {
       "maxLength": 128,
@@ -5013,13 +5040,63 @@
       ],
       "type": "string"
     },
+    "UiPageState": {
+      "maxLength": 128,
+      "minLength": 3,
+      "pattern": "^(initial|loading|empty|error|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+)$",
+      "type": "string"
+    },
     "UiResponsiveCondition": {
       "additionalProperties": false,
       "properties": {
+        "height_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiHeightClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiDocumentInputMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "orientation": {
           "anyOf": [
             {
               "$ref": "#/$defs/UiOrientation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiDocumentPlatform"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "safe_area": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSafeAreaClass"
             },
             {
               "type": "null"
@@ -5045,7 +5122,7 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "type": "string"
+          "$ref": "#/$defs/UiResponsiveVariantId"
         },
         "overrides": {
           "default": [],
@@ -5053,6 +5130,13 @@
             "$ref": "#/$defs/UiNodeOverride"
           },
           "type": "array"
+        },
+        "priority": {
+          "default": 0,
+          "format": "int16",
+          "maximum": 1000,
+          "minimum": -1000,
+          "type": "integer"
         },
         "when": {
           "$ref": "#/$defs/UiResponsiveCondition"
@@ -5063,6 +5147,19 @@
         "when"
       ],
       "type": "object"
+    },
+    "UiResponsiveVariantId": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "type": "string"
+    },
+    "UiSafeAreaClass": {
+      "enum": [
+        "none",
+        "inset"
+      ],
+      "type": "string"
     },
     "UiScalarValue": {
       "oneOf": [
@@ -5198,7 +5295,7 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "type": "string"
+          "$ref": "#/$defs/UiPageState"
         },
         "overrides": {
           "default": [],

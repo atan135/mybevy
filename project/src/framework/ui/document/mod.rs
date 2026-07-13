@@ -6,6 +6,7 @@ mod control;
 mod id;
 mod layout;
 mod model;
+mod responsive;
 mod style;
 mod validation;
 
@@ -16,6 +17,7 @@ pub use control::*;
 pub use id::*;
 pub use layout::*;
 pub use model::*;
+pub use responsive::*;
 pub use style::*;
 pub use validation::*;
 

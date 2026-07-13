@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "document_id": "example.responsive_states",
+  "metadata": {
+    "title": "Responsive and page state fixture"
+  },
+  "root": {
+    "id": "page.root",
+    "type": "container",
+    "layout": {
+      "direction": "column",
+      "gap": { "px": 20 },
+      "padding": { "all": { "px": 24 } }
+    },
+    "children": [
+      {
+        "id": "page.status",
+        "type": "text",
+        "content": { "literal": "Ready" },
+        "layout": {
+          "width": { "px": 160 },
+          "height": { "px": 32 }
+        }
+      }
+    ]
+  },
+  "states": [
+    {
+      "id": "initial",
+      "overrides": [
+        {
+          "node_id": "page.status",
+          "set": { "layout": { "width": { "px": 168 } } }
+        }
+      ]
+    },
+    {
+      "id": "loading",
+      "overrides": [
+        {
+          "node_id": "page.root",
+          "set": {
+            "style": {
+              "inline": {
+                "opacity": { "kind": "literal", "value": 0.6 }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "empty",
+      "overrides": [
+        {
+          "node_id": "page.status",
+          "set": { "layout": { "height": { "px": 48 } } }
+        }
+      ]
+    },
+    {
+      "id": "error",
+      "overrides": [
+        {
+          "node_id": "page.status",
+          "set": {
+            "style": {
+              "inline": {
+                "background": {
+                  "kind": "solid",
+                  "color": { "kind": "literal", "value": "#b42318" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "checkout.ready",
+      "overrides": [
+        {
+          "node_id": "page.root",
+          "set": { "layout": { "gap": { "px": 24 } } }
+        }
+      ]
+    }
+  ],
+  "responsive": [
+    {
+      "id": "compact_width",
+      "when": { "width_class": "compact" },
+      "overrides": [
+        {
+          "node_id": "page.root",
+          "set": { "layout": { "gap": { "px": 12 } } }
+        }
+      ]
+    },
+    {
+      "id": "compact_portrait",
+      "when": {
+        "width_class": "compact",
+        "orientation": "portrait"
+      },
+      "overrides": [
+        {
+          "node_id": "page.root",
+          "set": {
+            "layout": {
+              "gap": { "px": 9 },
+              "padding": { "all": { "px": 16 } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "short_windows",
+      "when": {
+        "height_class": "short",
+        "platform": "windows"
+      },
+      "overrides": [
+        {
+          "node_id": "page.status",
+          "set": { "layout": { "width": { "px": 200 } } }
+        }
+      ]
+    },
+    {
+      "id": "touch_safe_area",
+      "priority": 10,
+      "when": {
+        "safe_area": "inset",
+        "input_mode": "touch"
+      },
+      "overrides": [
+        {
+          "node_id": "page.root",
+          "set": { "layout": { "gap": { "px": 10 } } }
+        }
+      ]
+    },
+    {
+      "id": "expanded_tall_landscape",
+      "when": {
+        "width_class": "expanded",
+        "height_class": "tall",
+        "orientation": "landscape"
+      },
+      "overrides": [
+        {
+          "node_id": "page.root",
+          "set": { "layout": { "direction": "row" } }
+        }
+      ]
+    }
+  ]
+}

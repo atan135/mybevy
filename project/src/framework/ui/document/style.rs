@@ -194,7 +194,7 @@ pub struct UiStyleProperties {
 }
 
 impl UiStyleProperties {
-    fn merge_from(&mut self, higher_priority: &Self) {
+    pub(crate) fn merge_from(&mut self, higher_priority: &Self) {
         if higher_priority.background.is_some() {
             self.background.clone_from(&higher_priority.background);
         }

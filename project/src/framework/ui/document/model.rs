@@ -1,8 +1,9 @@
 use super::{
     UiActionId, UiActionValue, UiAssetEntry, UiAssetId, UiBindingDeclaration, UiBindingPath,
     UiColor, UiComponentSpec, UiControlOption, UiDocumentId, UiImageFailurePresentation,
-    UiImagePresentation, UiLayout, UiNodeId, UiStyleDefinition, UiStyleId, UiStyleProperties,
-    UiTextContent, UiTextTypography, UiTokenValue, UiTooltipToneSpec, default_image_tint,
+    UiImagePresentation, UiLayout, UiNodeId, UiPageState, UiResponsiveVariantId, UiStyleDefinition,
+    UiStyleId, UiStyleProperties, UiTextContent, UiTextTypography, UiTokenValue, UiTooltipToneSpec,
+    default_image_tint,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -466,7 +467,7 @@ pub struct UiStyle {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct UiStateDefinition {
-    pub id: String,
+    pub id: UiPageState,
     #[serde(default)]
     pub overrides: Vec<UiNodeOverride>,
 }
@@ -475,7 +476,10 @@ pub struct UiStateDefinition {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct UiResponsiveVariant {
-    pub id: String,
+    pub id: UiResponsiveVariantId,
+    #[serde(default)]
+    #[cfg_attr(test, schemars(range(min = -1000, max = 1000)))]
+    pub priority: i16,
     pub when: UiResponsiveCondition,
     #[serde(default)]
     pub overrides: Vec<UiNodeOverride>,
@@ -488,7 +492,15 @@ pub struct UiResponsiveCondition {
     #[serde(default)]
     pub width_class: Option<UiWidthClass>,
     #[serde(default)]
+    pub height_class: Option<UiHeightClass>,
+    #[serde(default)]
     pub orientation: Option<UiOrientation>,
+    #[serde(default)]
+    pub safe_area: Option<UiSafeAreaClass>,
+    #[serde(default)]
+    pub input_mode: Option<UiDocumentInputMode>,
+    #[serde(default)]
+    pub platform: Option<UiDocumentPlatform>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -503,9 +515,47 @@ pub enum UiWidthClass {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+pub enum UiHeightClass {
+    Short,
+    Regular,
+    Tall,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
 pub enum UiOrientation {
     Portrait,
     Landscape,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiSafeAreaClass {
+    None,
+    Inset,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiDocumentInputMode {
+    Touch,
+    MouseKeyboard,
+    MouseTouch,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiDocumentPlatform {
+    Windows,
+    Macos,
+    Linux,
+    Android,
+    Ios,
+    Web,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

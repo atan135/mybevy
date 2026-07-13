@@ -40,6 +40,9 @@ pub enum UiDocumentError {
     InvalidBindingAction {
         errors: Vec<super::UiBindingActionError>,
     },
+    InvalidResponsiveState {
+        errors: Vec<super::UiResponsiveStateError>,
+    },
 }
 
 impl UiDocumentError {
@@ -55,6 +58,7 @@ impl UiDocumentError {
             Self::InvalidContent { .. } => "UI_CONTENT_INVALID",
             Self::InvalidControl { .. } => "UI_CONTROL_INVALID",
             Self::InvalidBindingAction { .. } => "UI_BINDING_ACTION_INVALID",
+            Self::InvalidResponsiveState { .. } => "UI_RESPONSIVE_STATE_INVALID",
         }
     }
 }
@@ -107,6 +111,11 @@ impl fmt::Display for UiDocumentError {
             Self::InvalidBindingAction { errors } => write!(
                 formatter,
                 "document contains {} invalid binding or action field(s)",
+                errors.len()
+            ),
+            Self::InvalidResponsiveState { errors } => write!(
+                formatter,
+                "document contains {} invalid responsive or state field(s)",
                 errors.len()
             ),
         }
@@ -173,6 +182,13 @@ impl ValidatedUiDocument {
         if !layout_errors.is_empty() {
             return Err(UiDocumentError::InvalidLayout {
                 errors: layout_errors,
+            });
+        }
+        let responsive_state_errors =
+            super::validate_responsive_state_document(&document, &node_paths);
+        if !responsive_state_errors.is_empty() {
+            return Err(UiDocumentError::InvalidResponsiveState {
+                errors: responsive_state_errors,
             });
         }
         let content_errors = document.validate_content();

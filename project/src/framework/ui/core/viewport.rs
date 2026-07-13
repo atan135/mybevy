@@ -8,6 +8,11 @@ use super::safe_area::UiSafeAreaStatus;
 #[cfg(not(target_os = "android"))]
 use super::safe_area::{UiPhysicalSafeAreaInsets, UiSafeAreaSource};
 
+pub(crate) const UI_VIEWPORT_WIDTH_MEDIUM_MIN: f32 = 480.0;
+pub(crate) const UI_VIEWPORT_WIDTH_EXPANDED_MIN: f32 = 840.0;
+pub(crate) const UI_VIEWPORT_HEIGHT_REGULAR_MIN: f32 = 600.0;
+pub(crate) const UI_VIEWPORT_HEIGHT_TALL_MIN: f32 = 800.0;
+
 pub(crate) struct UiViewportPlugin;
 
 impl Plugin for UiViewportPlugin {
@@ -370,31 +375,97 @@ fn viewport_from_startup_config(
     )
 }
 
-fn width_class_for(logical_width: f32) -> UiWidthClass {
-    if logical_width < 480.0 {
+pub(crate) fn width_class_for(logical_width: f32) -> UiWidthClass {
+    if logical_width < UI_VIEWPORT_WIDTH_MEDIUM_MIN {
         UiWidthClass::Compact
-    } else if logical_width < 840.0 {
+    } else if logical_width < UI_VIEWPORT_WIDTH_EXPANDED_MIN {
         UiWidthClass::Medium
     } else {
         UiWidthClass::Expanded
     }
 }
 
-fn height_class_for(logical_height: f32) -> UiHeightClass {
-    if logical_height < 600.0 {
+pub(crate) fn height_class_for(logical_height: f32) -> UiHeightClass {
+    if logical_height < UI_VIEWPORT_HEIGHT_REGULAR_MIN {
         UiHeightClass::Short
-    } else if logical_height < 800.0 {
+    } else if logical_height < UI_VIEWPORT_HEIGHT_TALL_MIN {
         UiHeightClass::Regular
     } else {
         UiHeightClass::Tall
     }
 }
 
-fn orientation_for(logical_width: f32, logical_height: f32) -> UiOrientation {
+pub(crate) fn orientation_for(logical_width: f32, logical_height: f32) -> UiOrientation {
     if logical_height >= logical_width {
         UiOrientation::Portrait
     } else {
         UiOrientation::Landscape
+    }
+}
+
+pub(crate) fn responsive_classes_are_satisfiable(
+    width_class: Option<UiWidthClass>,
+    height_class: Option<UiHeightClass>,
+    orientation: Option<UiOrientation>,
+) -> bool {
+    let width = width_interval(width_class);
+    let height = height_interval(height_class);
+    match orientation {
+        None => true,
+        Some(UiOrientation::Portrait) => height
+            .upper_exclusive
+            .is_none_or(|height_upper| height_upper > width.lower),
+        Some(UiOrientation::Landscape) => width
+            .upper_exclusive
+            .is_none_or(|width_upper| width_upper > height.lower),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ClassInterval {
+    lower: f32,
+    upper_exclusive: Option<f32>,
+}
+
+fn width_interval(class: Option<UiWidthClass>) -> ClassInterval {
+    match class {
+        None => ClassInterval {
+            lower: 0.0,
+            upper_exclusive: None,
+        },
+        Some(UiWidthClass::Compact) => ClassInterval {
+            lower: 0.0,
+            upper_exclusive: Some(UI_VIEWPORT_WIDTH_MEDIUM_MIN),
+        },
+        Some(UiWidthClass::Medium) => ClassInterval {
+            lower: UI_VIEWPORT_WIDTH_MEDIUM_MIN,
+            upper_exclusive: Some(UI_VIEWPORT_WIDTH_EXPANDED_MIN),
+        },
+        Some(UiWidthClass::Expanded) => ClassInterval {
+            lower: UI_VIEWPORT_WIDTH_EXPANDED_MIN,
+            upper_exclusive: None,
+        },
+    }
+}
+
+fn height_interval(class: Option<UiHeightClass>) -> ClassInterval {
+    match class {
+        None => ClassInterval {
+            lower: 0.0,
+            upper_exclusive: None,
+        },
+        Some(UiHeightClass::Short) => ClassInterval {
+            lower: 0.0,
+            upper_exclusive: Some(UI_VIEWPORT_HEIGHT_REGULAR_MIN),
+        },
+        Some(UiHeightClass::Regular) => ClassInterval {
+            lower: UI_VIEWPORT_HEIGHT_REGULAR_MIN,
+            upper_exclusive: Some(UI_VIEWPORT_HEIGHT_TALL_MIN),
+        },
+        Some(UiHeightClass::Tall) => ClassInterval {
+            lower: UI_VIEWPORT_HEIGHT_TALL_MIN,
+            upper_exclusive: None,
+        },
     }
 }
 
@@ -488,6 +559,30 @@ mod tests {
         assert_eq!(viewport.width_class, UiWidthClass::Expanded);
         assert_eq!(viewport.height_class, UiHeightClass::Regular);
         assert_eq!(viewport.orientation, UiOrientation::Landscape);
+    }
+
+    #[test]
+    fn viewport_responsive_class_satisfiability_respects_orientation() {
+        assert!(!responsive_classes_are_satisfiable(
+            Some(UiWidthClass::Compact),
+            Some(UiHeightClass::Tall),
+            Some(UiOrientation::Landscape),
+        ));
+        assert!(responsive_classes_are_satisfiable(
+            Some(UiWidthClass::Compact),
+            Some(UiHeightClass::Short),
+            Some(UiOrientation::Landscape),
+        ));
+        assert!(!responsive_classes_are_satisfiable(
+            Some(UiWidthClass::Expanded),
+            Some(UiHeightClass::Short),
+            Some(UiOrientation::Portrait),
+        ));
+        assert!(responsive_classes_are_satisfiable(
+            Some(UiWidthClass::Expanded),
+            Some(UiHeightClass::Tall),
+            Some(UiOrientation::Portrait),
+        ));
     }
 
     #[test]

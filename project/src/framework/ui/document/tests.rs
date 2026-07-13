@@ -67,6 +67,10 @@ const CONTROL_COMPLETE_CANONICAL_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/controls/complete_states.v1.canonical.json"
 ));
+const RESPONSIVE_STATE_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/responsive_states.v1.json"
+));
 
 #[test]
 fn ui_document_parses_stage_one_fixture_and_indexes_nodes() {
@@ -152,6 +156,468 @@ fn ui_document_rejects_missing_root_and_unknown_fields() {
 }
 
 #[test]
+fn ui_document_responsive_profile_classifies_exact_boundaries() {
+    use crate::framework::ui::core::{
+        UiHeightClass as RuntimeHeightClass, UiInputMode as RuntimeInputMode,
+        UiOrientation as RuntimeOrientation, UiSafeArea as RuntimeSafeArea, UiViewport,
+        UiWidthClass as RuntimeWidthClass,
+    };
+
+    let profile = |width, height| {
+        UiTargetProfile::new(
+            width,
+            height,
+            UiSafeAreaClass::None,
+            UiDocumentInputMode::MouseKeyboard,
+            UiDocumentPlatform::Windows,
+        )
+        .unwrap()
+    };
+
+    assert_eq!(profile(479.99, 599.99).width_class(), UiWidthClass::Compact);
+    assert_eq!(profile(480.0, 599.99).width_class(), UiWidthClass::Medium);
+    assert_eq!(profile(839.99, 599.99).width_class(), UiWidthClass::Medium);
+    assert_eq!(profile(840.0, 599.99).width_class(), UiWidthClass::Expanded);
+    assert_eq!(profile(480.0, 599.99).height_class(), UiHeightClass::Short);
+    assert_eq!(profile(480.0, 600.0).height_class(), UiHeightClass::Regular);
+    assert_eq!(
+        profile(480.0, 799.99).height_class(),
+        UiHeightClass::Regular
+    );
+    assert_eq!(profile(480.0, 800.0).height_class(), UiHeightClass::Tall);
+    assert_eq!(profile(600.0, 600.0).orientation(), UiOrientation::Portrait);
+    assert_eq!(
+        profile(600.01, 600.0).orientation(),
+        UiOrientation::Landscape
+    );
+
+    assert!(
+        UiTargetProfile::new(
+            f32::NAN,
+            600.0,
+            UiSafeAreaClass::None,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        )
+        .is_err()
+    );
+    assert!(
+        UiTargetProfile::new(
+            0.0,
+            600.0,
+            UiSafeAreaClass::None,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        )
+        .is_err()
+    );
+
+    for (width, height) in [
+        (320.0, 568.0),
+        (479.99, 600.0),
+        (480.0, 600.0),
+        (839.99, 799.99),
+        (840.0, 800.0),
+        (1_280.0, 720.0),
+        (600.0, 600.0),
+    ] {
+        let document = profile(width, height);
+        let runtime = UiViewport::from_device_logical_size(
+            width,
+            height,
+            RuntimeInputMode::MouseKeyboard,
+            RuntimeSafeArea::default(),
+        );
+        assert_eq!(
+            document.width_class(),
+            match runtime.width_class {
+                RuntimeWidthClass::Compact => UiWidthClass::Compact,
+                RuntimeWidthClass::Medium => UiWidthClass::Medium,
+                RuntimeWidthClass::Expanded => UiWidthClass::Expanded,
+            }
+        );
+        assert_eq!(
+            document.height_class(),
+            match runtime.height_class {
+                RuntimeHeightClass::Short => UiHeightClass::Short,
+                RuntimeHeightClass::Regular => UiHeightClass::Regular,
+                RuntimeHeightClass::Tall => UiHeightClass::Tall,
+            }
+        );
+        assert_eq!(
+            document.orientation(),
+            match runtime.orientation {
+                RuntimeOrientation::Portrait => UiOrientation::Portrait,
+                RuntimeOrientation::Landscape => UiOrientation::Landscape,
+            }
+        );
+    }
+}
+
+#[test]
+fn ui_document_effective_merge_is_deterministic_auditable_and_non_mutating() {
+    let validated = UiDocument::parse_and_validate_json(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    let source_canonical = validated.document().to_canonical_json().unwrap();
+    let profile = UiTargetProfile::new(
+        360.0,
+        568.0,
+        UiSafeAreaClass::Inset,
+        UiDocumentInputMode::Touch,
+        UiDocumentPlatform::Windows,
+    )
+    .unwrap();
+    let effective = validated
+        .effective_document(&profile, &UiPageState::initial())
+        .unwrap();
+
+    assert_eq!(
+        effective.source_document_id.as_str(),
+        "example.responsive_states"
+    );
+    assert_eq!(effective.document.root.layout().gap, UiLength::Px(10.0));
+    assert_eq!(
+        effective.document.root.layout().padding.all,
+        UiLength::Px(16.0)
+    );
+    let status = find_document_test_node(&effective.document.root, "page.status");
+    assert_eq!(status.layout().width, UiLength::Px(168.0));
+    assert!(effective.document.responsive.is_empty());
+    assert!(effective.document.states.is_empty());
+    assert_eq!(
+        effective
+            .applied_overrides
+            .iter()
+            .map(|evidence| evidence.source_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "compact_width",
+            "compact_portrait",
+            "short_windows",
+            "touch_safe_area",
+            "initial"
+        ]
+    );
+    assert_eq!(
+        effective.applied_overrides[1].fields,
+        vec!["layout.gap", "layout.padding"]
+    );
+    let output = effective.to_json_pretty().unwrap();
+    assert!(output.contains("\"target_profile\""));
+    assert!(output.contains("\"applied_overrides\""));
+    assert_eq!(
+        validated.document().to_canonical_json().unwrap(),
+        source_canonical
+    );
+
+    let no_high_priority_profile = UiTargetProfile::new(
+        360.0,
+        700.0,
+        UiSafeAreaClass::None,
+        UiDocumentInputMode::MouseKeyboard,
+        UiDocumentPlatform::Linux,
+    )
+    .unwrap();
+    let specific = validated
+        .effective_document(&no_high_priority_profile, &UiPageState::initial())
+        .unwrap();
+    assert_eq!(specific.document.root.layout().gap, UiLength::Px(9.0));
+}
+
+#[test]
+fn ui_document_orientation_and_state_switch_preserve_stable_node_ids() {
+    let validated = UiDocument::parse_and_validate_json(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    let landscape = UiTargetProfile::new(
+        1_000.0,
+        800.0,
+        UiSafeAreaClass::None,
+        UiDocumentInputMode::MouseKeyboard,
+        UiDocumentPlatform::Linux,
+    )
+    .unwrap();
+    let portrait = UiTargetProfile::new(
+        800.0,
+        1_000.0,
+        UiSafeAreaClass::None,
+        UiDocumentInputMode::MouseKeyboard,
+        UiDocumentPlatform::Linux,
+    )
+    .unwrap();
+    let landscape_effective = validated
+        .effective_document(&landscape, &UiPageState::initial())
+        .unwrap();
+    let portrait_effective = validated
+        .effective_document(&portrait, &UiPageState::initial())
+        .unwrap();
+    assert_eq!(
+        landscape_effective.document.root.layout().direction,
+        UiFlexDirection::Row
+    );
+    assert_eq!(
+        portrait_effective.document.root.layout().direction,
+        UiFlexDirection::Column
+    );
+    assert_eq!(
+        landscape_effective.document.root.id(),
+        portrait_effective.document.root.id()
+    );
+
+    for state in [
+        UiPageState::loading(),
+        UiPageState::empty(),
+        UiPageState::error(),
+        UiPageState::new("checkout.ready").unwrap(),
+    ] {
+        let effective = validated.effective_document(&portrait, &state).unwrap();
+        assert_eq!(effective.document.root.id().as_str(), "page.root");
+        assert_eq!(
+            find_document_test_node(&effective.document.root, "page.status")
+                .id()
+                .as_str(),
+            "page.status"
+        );
+    }
+
+    let loading = validated
+        .effective_document(&portrait, &UiPageState::loading())
+        .unwrap();
+    assert!(matches!(
+        loading.document.root.style().inline.opacity,
+        Some(UiScalarValue::Literal { value }) if value == 0.6
+    ));
+    let empty = validated
+        .effective_document(&portrait, &UiPageState::empty())
+        .unwrap();
+    assert_eq!(
+        find_document_test_node(&empty.document.root, "page.status")
+            .layout()
+            .height,
+        UiLength::Px(48.0)
+    );
+    let business = validated
+        .effective_document(&portrait, &UiPageState::new("checkout.ready").unwrap())
+        .unwrap();
+    assert_eq!(business.document.root.layout().gap, UiLength::Px(24.0));
+
+    let missing = validated
+        .effective_document(&portrait, &UiPageState::new("checkout.missing").unwrap())
+        .unwrap_err();
+    assert_eq!(missing.code(), "UI_PAGE_STATE_NOT_FOUND");
+    assert!(matches!(
+        missing,
+        UiEffectiveDocumentError::StateNotFound { state }
+            if state.as_str() == "checkout.missing"
+    ));
+}
+
+#[test]
+fn ui_document_responsive_validation_rejects_conflicts_and_unknown_targets() {
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    value["responsive"].as_array_mut().unwrap().push(json!({
+        "id": "safe_area_conflict",
+        "when": { "safe_area": "inset" },
+        "overrides": [{
+            "node_id": "page.root",
+            "set": { "layout": { "gap": { "px": 99 } } }
+        }]
+    }));
+    let error = UiDocument::parse_and_validate_json(&value.to_string()).unwrap_err();
+    assert!(matches!(
+        error,
+        UiDocumentError::InvalidResponsiveState { errors }
+            if errors.iter().any(|error| {
+                error.code == "UI_OVERRIDE_FIELD_CONFLICT"
+                    && error.node_id.as_ref().is_some_and(|id| id.as_str() == "page.root")
+                    && error.field.as_deref() == Some("layout.gap")
+            })
+    ));
+
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    value["states"][0]["overrides"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "node_id": "page.missing",
+            "set": { "layout": { "height": { "px": 10 } } }
+        }));
+    let error = UiDocument::parse_and_validate_json(&value.to_string()).unwrap_err();
+    assert!(matches!(
+        error,
+        UiDocumentError::InvalidResponsiveState { errors }
+            if errors.iter().any(|error| {
+                error.code == "UI_OVERRIDE_NODE_NOT_FOUND"
+                    && error.path == "$.states[0].overrides[1].node_id"
+            })
+    ));
+
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    value["responsive"][0]["when"] = json!({});
+    let error = UiDocument::parse_and_validate_json(&value.to_string()).unwrap_err();
+    assert!(matches!(
+        error,
+        UiDocumentError::InvalidResponsiveState { errors }
+            if errors.iter().any(|error| error.code == "UI_RESPONSIVE_CONDITION_EMPTY")
+    ));
+
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    value["states"][0]["overrides"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "node_id": "page.status",
+            "set": { "layout": { "width": { "px": 999 } } }
+        }));
+    let error = UiDocument::parse_and_validate_json(&value.to_string()).unwrap_err();
+    assert!(matches!(
+        error,
+        UiDocumentError::InvalidResponsiveState { errors }
+            if errors.iter().any(|error| {
+                error.code == "UI_OVERRIDE_FIELD_CONFLICT"
+                    && error.path == "$.states[0].overrides[1].set.layout.width"
+                    && error.related_path.as_deref()
+                        == Some("$.states[0].overrides[0].set.layout.width")
+            })
+    ));
+
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    let duplicate = value["states"][1].clone();
+    value["states"].as_array_mut().unwrap().push(duplicate);
+    let error = UiDocument::parse_and_validate_json(&value.to_string()).unwrap_err();
+    assert!(matches!(
+        error,
+        UiDocumentError::InvalidResponsiveState { errors }
+            if errors.iter().any(|error| error.code == "UI_PAGE_STATE_DUPLICATE")
+    ));
+}
+
+#[test]
+fn ui_document_responsive_geometry_conflicts_use_joint_satisfiability() {
+    let mut mutually_exclusive: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    mutually_exclusive["responsive"] = json!([
+        {
+            "id": "compact_landscape",
+            "when": {
+                "width_class": "compact",
+                "orientation": "landscape"
+            },
+            "overrides": [{
+                "node_id": "page.root",
+                "set": { "layout": { "gap": { "px": 1 } } }
+            }]
+        },
+        {
+            "id": "tall_landscape",
+            "when": {
+                "height_class": "tall",
+                "orientation": "landscape"
+            },
+            "overrides": [{
+                "node_id": "page.root",
+                "set": { "layout": { "gap": { "px": 2 } } }
+            }]
+        }
+    ]);
+    UiDocument::parse_and_validate_json(&mutually_exclusive.to_string()).unwrap();
+
+    let mut compatible = mutually_exclusive.clone();
+    compatible["responsive"][1]["id"] = json!("short_landscape");
+    compatible["responsive"][1]["when"]["height_class"] = json!("short");
+    let error = UiDocument::parse_and_validate_json(&compatible.to_string()).unwrap_err();
+    assert!(matches!(
+        error,
+        UiDocumentError::InvalidResponsiveState { errors }
+            if errors.iter().any(|error| error.code == "UI_OVERRIDE_FIELD_CONFLICT")
+    ));
+
+    let mut unsatisfiable = mutually_exclusive;
+    unsatisfiable["responsive"] = json!([{
+        "id": "impossible_compact_tall_landscape",
+        "when": {
+            "width_class": "compact",
+            "height_class": "tall",
+            "orientation": "landscape"
+        },
+        "overrides": [{
+            "node_id": "page.root",
+            "set": { "layout": { "gap": { "px": 3 } } }
+        }]
+    }]);
+    let error = UiDocument::parse_and_validate_json(&unsatisfiable.to_string()).unwrap_err();
+    assert!(matches!(
+        error,
+        UiDocumentError::InvalidResponsiveState { errors }
+            if errors.iter().any(|error| {
+                error.code == "UI_RESPONSIVE_CONDITION_UNSATISFIABLE"
+                    && error.path == "$.responsive[0].when"
+            })
+    ));
+}
+
+#[test]
+fn ui_document_effective_merge_revalidates_combined_constraints() {
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    value["root"]["layout"]["max_width"] = json!({ "px": 100 });
+    value["responsive"].as_array_mut().unwrap().push(json!({
+        "id": "compact_invalid_effective_width",
+        "priority": 20,
+        "when": { "width_class": "compact" },
+        "overrides": [{
+            "node_id": "page.root",
+            "set": { "layout": { "width": { "px": 200 } } }
+        }]
+    }));
+    let validated = UiDocument::parse_and_validate_json(&value.to_string()).unwrap();
+    let profile = UiTargetProfile::new(
+        360.0,
+        700.0,
+        UiSafeAreaClass::None,
+        UiDocumentInputMode::MouseKeyboard,
+        UiDocumentPlatform::Linux,
+    )
+    .unwrap();
+    let error = validated
+        .effective_document(&profile, &UiPageState::initial())
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        UiEffectiveDocumentError::InvalidEffectiveDocument {
+            source: UiDocumentError::InvalidLayout { errors }
+        } if errors.iter().any(|error| {
+            error.code == "UI_LAYOUT_CONSTRAINT_CONTRADICTION"
+                && error.path == "$.root.layout.width.value_max"
+        })
+    ));
+}
+
+#[test]
+fn ui_document_responsive_protocol_rejects_environment_and_open_selectors() {
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    value["responsive"][0]["when"]["environment"] = json!("UI_DENSITY");
+    let error = UiDocument::parse_and_validate_json(&value.to_string()).unwrap_err();
+    assert_eq!(error.code(), "UI_DOCUMENT_PARSE_FAILED");
+    assert!(error.to_string().contains("unknown field `environment`"));
+
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    value["responsive"][0]["when"]["platform"] = json!("custom_platform");
+    assert_eq!(
+        UiDocument::parse_and_validate_json(&value.to_string())
+            .unwrap_err()
+            .code(),
+        "UI_DOCUMENT_PARSE_FAILED"
+    );
+    assert!(UiPageState::new("ready").is_err());
+    assert_eq!(UiPageState::new("a.b").unwrap().as_str(), "a.b");
+    assert!(UiPageState::new("Checkout.Ready").is_err());
+    assert!(UiResponsiveVariantId::new("Compact Portrait").is_err());
+
+    let mut value: Value = serde_json::from_str(RESPONSIVE_STATE_DOCUMENT).unwrap();
+    value["states"][0]["id"] = json!("a.b");
+    let document = UiDocument::parse_and_validate_json(&value.to_string())
+        .unwrap()
+        .into_document();
+    assert_eq!(document.states[0].id.as_str(), "a.b");
+}
+
+#[test]
 fn ui_document_canonical_json_matches_golden_and_round_trips() {
     let document = UiDocument::parse_and_validate_json(MINIMAL_DOCUMENT)
         .unwrap()
@@ -211,6 +677,23 @@ fn ui_document_schema_matches_rust_model() {
     );
     assert_eq!(value["properties"]["schema_version"]["minimum"], 1);
     assert_eq!(value["properties"]["schema_version"]["maximum"], 1);
+    assert_eq!(
+        value["$defs"]["UiResponsiveCondition"]["additionalProperties"],
+        false
+    );
+    assert_eq!(
+        value["$defs"]["UiResponsiveVariant"]["properties"]["priority"]["minimum"],
+        -1000
+    );
+    assert_eq!(
+        value["$defs"]["UiResponsiveVariant"]["properties"]["priority"]["maximum"],
+        1000
+    );
+    assert_eq!(
+        value["$defs"]["UiPageState"]["pattern"],
+        "^(initial|loading|empty|error|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+)$"
+    );
+    assert_eq!(value["$defs"]["UiPageState"]["minLength"], 3);
 }
 
 #[test]
@@ -548,7 +1031,7 @@ fn ui_document_layout_errors_include_document_field_path() {
         .unwrap()
         .into_document();
     document.states.push(UiStateDefinition {
-        id: "invalid_constraints".to_owned(),
+        id: UiPageState::new("example.invalid_constraints").unwrap(),
         overrides: vec![UiNodeOverride {
             node_id: UiNodeId::from_str("page.hero").unwrap(),
             set: UiNodePatch {
@@ -1656,6 +2139,28 @@ fn style_resource_document() -> UiDocument {
     UiDocument::parse_and_validate_json(STYLE_RESOURCE_DOCUMENT)
         .unwrap()
         .into_document()
+}
+
+fn find_document_test_node<'a>(node: &'a UiNode, id: &str) -> &'a UiNode {
+    if node.id().as_str() == id {
+        return node;
+    }
+    node.children()
+        .iter()
+        .find_map(|child| {
+            let found = find_document_test_node_optional(child, id);
+            found
+        })
+        .unwrap_or_else(|| panic!("missing fixture node {id}"))
+}
+
+fn find_document_test_node_optional<'a>(node: &'a UiNode, id: &str) -> Option<&'a UiNode> {
+    if node.id().as_str() == id {
+        return Some(node);
+    }
+    node.children()
+        .iter()
+        .find_map(|child| find_document_test_node_optional(child, id))
 }
 
 fn style_id(value: &str) -> UiStyleId {
