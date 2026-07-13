@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.invalid_progress","root":{"type":"progress","id":"controls.progress","value":1.5,"component":{"slots":{"label":{"kind":"text","content":{"literal":"Download"}}}}}}

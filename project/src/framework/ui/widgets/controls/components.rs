@@ -48,6 +48,9 @@ impl fmt::Display for UiControlId {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum UiControlKind {
+    Button,
+    ImageButton,
+    TextInput,
     Badge,
     Progress,
     Tab,
@@ -56,6 +59,10 @@ pub(crate) enum UiControlKind {
     Checkbox,
     Toggle,
     Segmented,
+    Slider,
+    Stepper,
+    Scroll,
+    Modal,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -78,6 +85,26 @@ impl UiControlKind {
         use UiControlState as State;
 
         match self {
+            Kind::Button | Kind::ImageButton | Kind::Tab => matches!(
+                state,
+                State::Normal
+                    | State::Hovered
+                    | State::Pressed
+                    | State::Focused
+                    | State::Selected
+                    | State::Disabled
+                    | State::Loading
+            ),
+            Kind::TextInput => matches!(
+                state,
+                State::Normal
+                    | State::Hovered
+                    | State::Pressed
+                    | State::Focused
+                    | State::Disabled
+                    | State::Empty
+                    | State::Error
+            ),
             Kind::Badge => matches!(
                 state,
                 State::Normal
@@ -91,19 +118,22 @@ impl UiControlKind {
                 state,
                 State::Normal | State::Disabled | State::Loading | State::Empty | State::Error
             ),
-            Kind::Tab => matches!(
+            Kind::Tooltip => matches!(state, State::Normal | State::Disabled | State::Error),
+            Kind::Dropdown => true,
+            Kind::Checkbox | Kind::Toggle | Kind::Segmented => !matches!(state, State::Empty),
+            Kind::Slider | Kind::Stepper => matches!(
                 state,
                 State::Normal
                     | State::Hovered
                     | State::Pressed
                     | State::Focused
-                    | State::Selected
                     | State::Disabled
-                    | State::Loading
+                    | State::Error
             ),
-            Kind::Tooltip => matches!(state, State::Normal | State::Disabled | State::Error),
-            Kind::Dropdown => true,
-            Kind::Checkbox | Kind::Toggle | Kind::Segmented => !matches!(state, State::Empty),
+            Kind::Scroll | Kind::Modal => matches!(
+                state,
+                State::Normal | State::Loading | State::Empty | State::Error
+            ),
         }
     }
 }

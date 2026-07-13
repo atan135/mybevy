@@ -1,7 +1,8 @@
 use super::{
-    UiActionId, UiAssetEntry, UiAssetId, UiColor, UiDocumentId, UiImageFailurePresentation,
-    UiImagePresentation, UiLayout, UiNodeId, UiStyleDefinition, UiStyleId, UiStyleProperties,
-    UiTextContent, UiTextTypography, UiTokenValue, default_image_tint,
+    UiActionId, UiAssetEntry, UiAssetId, UiColor, UiComponentSpec, UiControlOption, UiDocumentId,
+    UiImageFailurePresentation, UiImagePresentation, UiLayout, UiNodeId, UiStyleDefinition,
+    UiStyleId, UiStyleProperties, UiTextContent, UiTextTypography, UiTokenValue, UiTooltipToneSpec,
+    default_image_tint,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -114,9 +115,190 @@ pub enum UiNode {
     Button {
         id: UiNodeId,
         #[serde(default)]
-        variant: UiButtonVariant,
-        label: UiTextContent,
+        #[serde(rename = "variant")]
+        legacy_variant: Option<UiButtonVariant>,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        label: Option<UiTextContent>,
         on_click: UiActionInvocation,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    TextInput {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        value: String,
+        #[serde(default)]
+        max_chars: Option<u32>,
+        #[serde(default)]
+        readonly: bool,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Checkbox {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        checked: bool,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Toggle {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        on: bool,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Segmented {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        options: Vec<UiControlOption>,
+        #[serde(default)]
+        selected: Option<String>,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Slider {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        value: f32,
+        #[serde(default)]
+        min: f32,
+        #[serde(default = "default_slider_max")]
+        max: f32,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Stepper {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        value: i32,
+        #[serde(default)]
+        min: i32,
+        #[serde(default = "default_stepper_max")]
+        max: i32,
+        #[serde(default = "default_stepper_step")]
+        step: i32,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Scroll {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        row_gap: f32,
+        #[serde(default)]
+        max_height: Option<f32>,
+        #[serde(default = "default_true")]
+        block_lower: bool,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Modal {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        cancellable: bool,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    ImageButton {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        asset: UiAssetId,
+        #[serde(default)]
+        presentation: UiImagePresentation,
+        #[serde(default = "default_image_tint")]
+        tint: UiColor,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Badge {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Progress {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        value: f32,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Tab {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        value: String,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Tooltip {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        tone: UiTooltipToneSpec,
+        #[serde(default)]
+        layout: UiLayout,
+        #[serde(default)]
+        style: UiStyle,
+    },
+    Select {
+        id: UiNodeId,
+        #[serde(default)]
+        component: UiComponentSpec,
+        #[serde(default)]
+        options: Vec<UiControlOption>,
+        #[serde(default)]
+        selected: Option<String>,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
@@ -132,14 +314,51 @@ impl UiNode {
             | Self::Image { id, .. }
             | Self::Icon { id, .. }
             | Self::Spacer { id, .. }
-            | Self::Button { id, .. } => id,
+            | Self::Button { id, .. }
+            | Self::TextInput { id, .. }
+            | Self::Checkbox { id, .. }
+            | Self::Toggle { id, .. }
+            | Self::Segmented { id, .. }
+            | Self::Slider { id, .. }
+            | Self::Stepper { id, .. }
+            | Self::Scroll { id, .. }
+            | Self::Modal { id, .. }
+            | Self::ImageButton { id, .. }
+            | Self::Badge { id, .. }
+            | Self::Progress { id, .. }
+            | Self::Tab { id, .. }
+            | Self::Tooltip { id, .. }
+            | Self::Select { id, .. } => id,
         }
     }
 
     pub fn children(&self) -> &[UiNode] {
         match self {
             Self::Container { children, .. } => children,
+            Self::Button { component, .. }
+            | Self::TextInput { component, .. }
+            | Self::Checkbox { component, .. }
+            | Self::Toggle { component, .. }
+            | Self::Segmented { component, .. }
+            | Self::Slider { component, .. }
+            | Self::Stepper { component, .. }
+            | Self::Scroll { component, .. }
+            | Self::Modal { component, .. }
+            | Self::ImageButton { component, .. }
+            | Self::Badge { component, .. }
+            | Self::Progress { component, .. }
+            | Self::Tab { component, .. }
+            | Self::Tooltip { component, .. }
+            | Self::Select { component, .. } => &component.children,
             _ => &[],
+        }
+    }
+
+    pub(crate) fn child_path(&self, path: &str, index: usize) -> String {
+        if matches!(self, Self::Container { .. }) {
+            format!("{path}.children[{index}]")
+        } else {
+            format!("{path}.component.children[{index}]")
         }
     }
 
@@ -150,7 +369,21 @@ impl UiNode {
             | Self::Image { layout, .. }
             | Self::Icon { layout, .. }
             | Self::Spacer { layout, .. }
-            | Self::Button { layout, .. } => layout,
+            | Self::Button { layout, .. }
+            | Self::TextInput { layout, .. }
+            | Self::Checkbox { layout, .. }
+            | Self::Toggle { layout, .. }
+            | Self::Segmented { layout, .. }
+            | Self::Slider { layout, .. }
+            | Self::Stepper { layout, .. }
+            | Self::Scroll { layout, .. }
+            | Self::Modal { layout, .. }
+            | Self::ImageButton { layout, .. }
+            | Self::Badge { layout, .. }
+            | Self::Progress { layout, .. }
+            | Self::Tab { layout, .. }
+            | Self::Tooltip { layout, .. }
+            | Self::Select { layout, .. } => layout,
         }
     }
 
@@ -161,9 +394,39 @@ impl UiNode {
             | Self::Image { style, .. }
             | Self::Icon { style, .. }
             | Self::Spacer { style, .. }
-            | Self::Button { style, .. } => style,
+            | Self::Button { style, .. }
+            | Self::TextInput { style, .. }
+            | Self::Checkbox { style, .. }
+            | Self::Toggle { style, .. }
+            | Self::Segmented { style, .. }
+            | Self::Slider { style, .. }
+            | Self::Stepper { style, .. }
+            | Self::Scroll { style, .. }
+            | Self::Modal { style, .. }
+            | Self::ImageButton { style, .. }
+            | Self::Badge { style, .. }
+            | Self::Progress { style, .. }
+            | Self::Tab { style, .. }
+            | Self::Tooltip { style, .. }
+            | Self::Select { style, .. } => style,
         }
     }
+}
+
+fn default_slider_max() -> f32 {
+    1.0
+}
+
+fn default_stepper_max() -> i32 {
+    100
+}
+
+fn default_stepper_step() -> i32 {
+    1
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

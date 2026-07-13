@@ -1,6 +1,6 @@
 use super::{
-    CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UiContentFieldError, UiDocument,
-    UiDocumentId, UiLayoutFieldError, UiNode, UiNodeId, UiVisualFieldError,
+    CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UiContentFieldError, UiControlFieldError,
+    UiDocument, UiDocumentId, UiLayoutFieldError, UiNode, UiNodeId, UiVisualFieldError,
 };
 use bevy::prelude::Component;
 use serde::Serialize;
@@ -34,6 +34,9 @@ pub enum UiDocumentError {
     InvalidContent {
         errors: Vec<UiContentFieldError>,
     },
+    InvalidControl {
+        errors: Vec<UiControlFieldError>,
+    },
 }
 
 impl UiDocumentError {
@@ -47,6 +50,7 @@ impl UiDocumentError {
             Self::InvalidLayout { .. } => "UI_LAYOUT_INVALID",
             Self::InvalidVisual { .. } => "UI_VISUAL_INVALID",
             Self::InvalidContent { .. } => "UI_CONTENT_INVALID",
+            Self::InvalidControl { .. } => "UI_CONTROL_INVALID",
         }
     }
 }
@@ -89,6 +93,11 @@ impl fmt::Display for UiDocumentError {
             Self::InvalidContent { errors } => write!(
                 formatter,
                 "document contains {} invalid content field(s)",
+                errors.len()
+            ),
+            Self::InvalidControl { errors } => write!(
+                formatter,
+                "document contains {} invalid control field(s)",
                 errors.len()
             ),
         }
@@ -161,6 +170,13 @@ impl ValidatedUiDocument {
         if !content_errors.is_empty() {
             return Err(UiDocumentError::InvalidContent {
                 errors: content_errors,
+            });
+        }
+        let mut control_errors = Vec::new();
+        validate_node_controls(&document.root, "$.root", &mut control_errors);
+        if !control_errors.is_empty() {
+            return Err(UiDocumentError::InvalidControl {
+                errors: control_errors,
             });
         }
         let mut visual_errors = document.validate_style_tables();
@@ -242,13 +258,24 @@ fn index_node_styles(
         errors.push(error);
     }
     errors.extend(document.validate_style_asset_refs(node.style(), &style_path));
+    if let Some(component) = node.component() {
+        for (state, style) in &component.state_overrides {
+            let state_path = format!("{path}.component.state_overrides.{state}");
+            if let Err(error) = document.resolve_style(style, &state_path) {
+                errors.push(error);
+            }
+            errors.extend(document.validate_style_asset_refs(style, &state_path));
+        }
+    }
     for (index, child) in node.children().iter().enumerate() {
-        index_node_styles(
-            document,
-            child,
-            &format!("{path}.children[{index}]"),
-            errors,
-        );
+        index_node_styles(document, child, &node.child_path(path, index), errors);
+    }
+}
+
+fn validate_node_controls(node: &UiNode, path: &str, errors: &mut Vec<UiControlFieldError>) {
+    super::validate_control_node(node, path, errors);
+    for (index, child) in node.children().iter().enumerate() {
+        validate_node_controls(child, &node.child_path(path, index), errors);
     }
 }
 
@@ -332,7 +359,7 @@ fn index_node(
     for (index, child) in node.children().iter().enumerate() {
         index_node(
             child,
-            &format!("{path}.children[{index}]"),
+            &node.child_path(path, index),
             node_paths,
             layout_errors,
         )?;

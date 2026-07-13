@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_checkbox","root":{"type":"checkbox","id":"controls.checkbox","component":{"slots":{"label":{"kind":"text","content":{"literal":"Remember me"}}}}}}

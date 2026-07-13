@@ -59,6 +59,14 @@ const CONTENT_WRONG_ASSET_TYPE_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/invalid/content_wrong_asset_type.v1.json"
 ));
+const CONTROL_COMPLETE_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/controls/complete_states.v1.json"
+));
+const CONTROL_COMPLETE_CANONICAL_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/controls/complete_states.v1.canonical.json"
+));
 
 #[test]
 fn ui_document_parses_stage_one_fixture_and_indexes_nodes() {
@@ -1270,6 +1278,378 @@ fn ui_document_image_placeholders_failures_and_asset_kinds_are_deterministic() {
             .iter()
             .any(|error| error.path == "$.root.children[1].asset")
     );
+}
+
+#[test]
+fn ui_document_control_minimal_fixtures_cover_every_component() {
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ui/documents/fixtures/controls/minimal");
+    let mut found = Vec::new();
+    for entry in fs::read_dir(directory).unwrap() {
+        let entry = entry.unwrap();
+        let source = fs::read_to_string(entry.path()).unwrap();
+        let validated = UiDocument::parse_and_validate_json(&source)
+            .unwrap_or_else(|error| panic!("{}: {error:?}", entry.path().display()));
+        found.push(control_node_name(&validated.document().root));
+    }
+    found.sort_unstable();
+    assert_eq!(
+        found,
+        [
+            "badge",
+            "button",
+            "checkbox",
+            "image_button",
+            "modal",
+            "progress",
+            "scroll",
+            "segmented",
+            "select",
+            "slider",
+            "stepper",
+            "tab",
+            "text_input",
+            "toggle",
+            "tooltip",
+        ]
+    );
+}
+
+#[test]
+fn ui_document_control_complete_fixture_covers_states_slots_and_canonical() {
+    use crate::framework::ui::{
+        core::UiPanelKind,
+        widgets::{UiControlKind, UiControlState, UiSlider, UiStepper},
+    };
+
+    let validated = UiDocument::parse_and_validate_json(CONTROL_COMPLETE_DOCUMENT).unwrap();
+    let document = validated.document();
+    let children = document.root.children();
+    assert_eq!(children.len(), 15);
+    assert!(children.iter().all(|node| node.component().is_some()));
+    let expected_kinds = [
+        ("button", UiControlKind::Button, 7),
+        ("text_input", UiControlKind::TextInput, 7),
+        ("checkbox", UiControlKind::Checkbox, 8),
+        ("toggle", UiControlKind::Toggle, 8),
+        ("segmented", UiControlKind::Segmented, 8),
+        ("slider", UiControlKind::Slider, 6),
+        ("stepper", UiControlKind::Stepper, 6),
+        ("scroll", UiControlKind::Scroll, 4),
+        ("modal", UiControlKind::Modal, 4),
+        ("image_button", UiControlKind::ImageButton, 7),
+        ("badge", UiControlKind::Badge, 6),
+        ("progress", UiControlKind::Progress, 5),
+        ("tab", UiControlKind::Tab, 7),
+        ("tooltip", UiControlKind::Tooltip, 3),
+        ("select", UiControlKind::Dropdown, 9),
+    ];
+    for (name, expected_kind, override_count) in expected_kinds {
+        let node = children
+            .iter()
+            .find(|node| control_node_name(node) == name)
+            .unwrap();
+        assert_eq!(node.widget_adapter().unwrap().kind, expected_kind, "{name}");
+        assert_eq!(
+            node.component().unwrap().state_overrides.len(),
+            override_count,
+            "{name}"
+        );
+    }
+
+    let button = children
+        .iter()
+        .find(|node| control_node_name(node) == "button")
+        .unwrap()
+        .widget_adapter()
+        .unwrap();
+    assert_eq!(button.kind, UiControlKind::Button);
+    assert_eq!(button.variant, UiWidgetVariantAdapter::Primary);
+    assert_eq!(button.size, UiComponentSize::Large);
+    assert_eq!(button.state, UiControlState::Selected);
+
+    let slider = children
+        .iter()
+        .find(|node| control_node_name(node) == "slider")
+        .unwrap()
+        .widget_adapter()
+        .unwrap();
+    assert_eq!(slider.kind, UiControlKind::Slider);
+    assert_eq!(slider.state, UiControlState::Pressed);
+    assert_eq!(slider.slider, Some(UiSlider::new(0.7, 0.0, 1.0)));
+
+    let stepper = children
+        .iter()
+        .find(|node| control_node_name(node) == "stepper")
+        .unwrap()
+        .widget_adapter()
+        .unwrap();
+    assert_eq!(stepper.kind, UiControlKind::Stepper);
+    assert_eq!(stepper.stepper, Some(UiStepper::new(2, 0, 10, 1)));
+
+    let select_node = children
+        .iter()
+        .find(|node| control_node_name(node) == "select")
+        .unwrap();
+    let select = select_node.widget_adapter().unwrap();
+    assert_eq!(select.kind, UiControlKind::Dropdown);
+    assert_eq!(select.state, UiControlState::Disabled);
+    assert!(select.flags.disabled && select.flags.loading && select.flags.error);
+    assert!(select.flags.selected && select.flags.empty);
+    let scroll = children
+        .iter()
+        .find(|node| control_node_name(node) == "scroll")
+        .unwrap()
+        .widget_adapter()
+        .unwrap();
+    assert_eq!(scroll.kind, UiControlKind::Scroll);
+    let scroll_config = scroll.scroll.unwrap();
+    assert_eq!(scroll_config.row_gap, 12.0);
+    assert_eq!(scroll_config.max_height, Val::Px(360.0));
+    assert!(scroll_config.should_block_lower);
+
+    let modal = children
+        .iter()
+        .find(|node| control_node_name(node) == "modal")
+        .unwrap()
+        .widget_adapter()
+        .unwrap();
+    assert_eq!(modal.kind, UiControlKind::Modal);
+    assert_eq!(modal.panel_kind, Some(UiPanelKind::Modal));
+
+    let canonical = document.to_canonical_json().unwrap();
+    maybe_update_golden(
+        "UPDATE_UI_DOCUMENT_GOLDENS",
+        "assets/ui/documents/fixtures/controls/complete_states.v1.canonical.json",
+        &canonical,
+    );
+    assert_eq!(canonical, CONTROL_COMPLETE_CANONICAL_DOCUMENT);
+}
+
+#[test]
+fn ui_document_control_invalid_fixtures_report_stable_node_diagnostics() {
+    let expected = [
+        (
+            "badge.v1.json",
+            "UI_CONTROL_STATE_UNSUPPORTED",
+            "$.root.component.states[0]",
+        ),
+        (
+            "button.v1.json",
+            "UI_CONTROL_NESTING_UNSUPPORTED",
+            "$.root.component.children",
+        ),
+        (
+            "checkbox.v1.json",
+            "UI_CONTROL_STATE_UNSUPPORTED",
+            "$.root.component.states[0]",
+        ),
+        (
+            "image_button.v1.json",
+            "UI_CONTROL_SLOT_UNSUPPORTED",
+            "$.root.component.slots.body",
+        ),
+        (
+            "modal.v1.json",
+            "UI_CONTROL_SLOT_REQUIRED",
+            "$.root.component.slots.body",
+        ),
+        (
+            "progress.v1.json",
+            "UI_CONTROL_VALUE_INVALID",
+            "$.root.value",
+        ),
+        (
+            "scroll.v1.json",
+            "UI_CONTROL_STATE_UNSUPPORTED",
+            "$.root.component.states[0]",
+        ),
+        (
+            "segmented.v1.json",
+            "UI_CONTROL_OPTIONS_INVALID",
+            "$.root.options",
+        ),
+        (
+            "select.v1.json",
+            "UI_CONTROL_OPTION_VALUE_INVALID",
+            "$.root.options[1].value",
+        ),
+        ("slider.v1.json", "UI_CONTROL_RANGE_INVALID", "$.root"),
+        ("stepper.v1.json", "UI_CONTROL_RANGE_INVALID", "$.root"),
+        (
+            "tab.v1.json",
+            "UI_CONTROL_SLOT_UNSUPPORTED",
+            "$.root.component.slots.body",
+        ),
+        (
+            "text_input.v1.json",
+            "UI_CONTROL_LABEL_REQUIRED",
+            "$.root.component.slots.label",
+        ),
+        (
+            "toggle.v1.json",
+            "UI_CONTROL_SLOT_UNSUPPORTED",
+            "$.root.component.slots.helper",
+        ),
+        (
+            "tooltip.v1.json",
+            "UI_CONTROL_TOOLTIP_TARGET_REQUIRED",
+            "$.root.component.children",
+        ),
+    ];
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ui/documents/fixtures/controls/invalid");
+    let fixture_count = fs::read_dir(&directory).unwrap().count();
+    assert_eq!(fixture_count, expected.len());
+
+    for (file, code, path) in expected {
+        let source = fs::read_to_string(directory.join(file)).unwrap();
+        let error = UiDocument::parse_and_validate_json(&source).unwrap_err();
+        let UiDocumentError::InvalidControl { errors } = error else {
+            panic!("{file}: expected control error, got {error:?}");
+        };
+        assert!(
+            errors.iter().any(|error| {
+                error.code == code
+                    && error.path == path
+                    && error.node_id.as_str().starts_with("controls.")
+            }),
+            "{file}: missing {code} at {path}: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn ui_document_control_state_priority_matches_existing_widgets_contract() {
+    use crate::framework::ui::widgets::UiControlState;
+
+    let mut document = UiDocument::parse_and_validate_json(CONTROL_COMPLETE_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let UiNode::Container { children, .. } = &mut document.root else {
+        panic!("control fixture root must be a container")
+    };
+    let select = children
+        .iter_mut()
+        .find(|node| control_node_name(node) == "select")
+        .unwrap();
+    let cases = [
+        (
+            vec![UiComponentState::Focused, UiComponentState::Selected],
+            UiControlState::Selected,
+        ),
+        (
+            vec![UiComponentState::Selected, UiComponentState::Hovered],
+            UiControlState::Hovered,
+        ),
+        (
+            vec![UiComponentState::Hovered, UiComponentState::Pressed],
+            UiControlState::Pressed,
+        ),
+        (
+            vec![UiComponentState::Pressed, UiComponentState::Error],
+            UiControlState::Error,
+        ),
+        (
+            vec![UiComponentState::Error, UiComponentState::Loading],
+            UiControlState::Loading,
+        ),
+        (
+            vec![UiComponentState::Loading, UiComponentState::Disabled],
+            UiControlState::Disabled,
+        ),
+    ];
+    for (states, expected) in cases {
+        match select {
+            UiNode::Select { component, .. } => component.states = states,
+            _ => unreachable!(),
+        }
+        assert_eq!(select.widget_adapter().unwrap().state, expected);
+    }
+}
+
+#[test]
+fn ui_document_control_values_match_existing_widget_authority() {
+    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ui/documents/fixtures/controls/minimal");
+
+    let mut text_input: Value =
+        serde_json::from_str(&fs::read_to_string(fixture_root.join("text_input.v1.json")).unwrap())
+            .unwrap();
+    text_input["root"]["value"] = json!("你好吗");
+    text_input["root"]["max_chars"] = json!(2);
+    assert_control_error_at_node(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&text_input).unwrap())
+            .unwrap_err(),
+        "UI_CONTROL_TEXT_INPUT_VALUE_TOO_LONG",
+        "$.root.value",
+        "controls.text_input",
+    );
+
+    let mut checkbox: Value =
+        serde_json::from_str(&fs::read_to_string(fixture_root.join("checkbox.v1.json")).unwrap())
+            .unwrap();
+    checkbox["root"]["checked"] = json!(true);
+    assert_control_error_at_node(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&checkbox).unwrap())
+            .unwrap_err(),
+        "UI_CONTROL_SELECTED_STATE_MISMATCH",
+        "$.root.component.states",
+        "controls.checkbox",
+    );
+
+    let mut toggle: Value =
+        serde_json::from_str(&fs::read_to_string(fixture_root.join("toggle.v1.json")).unwrap())
+            .unwrap();
+    toggle["root"]["component"]["states"] = json!(["selected"]);
+    assert_control_error_at_node(
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&toggle).unwrap()).unwrap_err(),
+        "UI_CONTROL_SELECTED_STATE_MISMATCH",
+        "$.root.component.states",
+        "controls.toggle",
+    );
+
+    let mut slider: Value =
+        serde_json::from_str(&fs::read_to_string(fixture_root.join("slider.v1.json")).unwrap())
+            .unwrap();
+    slider["root"]["step"] = json!(0.1);
+    let error =
+        UiDocument::parse_and_validate_json(&serde_json::to_string(&slider).unwrap()).unwrap_err();
+    assert_eq!(error.code(), "UI_DOCUMENT_PARSE_FAILED");
+    assert!(error.to_string().contains("unknown field `step`"));
+}
+
+fn assert_control_error_at_node(error: UiDocumentError, code: &str, path: &str, node_id: &str) {
+    let UiDocumentError::InvalidControl { errors } = error else {
+        panic!("expected control error {code}, got {error:?}");
+    };
+    assert!(
+        errors.iter().any(|error| {
+            error.code == code && error.path == path && error.node_id.as_str() == node_id
+        }),
+        "missing {code} at {path} for {node_id}: {errors:?}"
+    );
+}
+
+fn control_node_name(node: &UiNode) -> &'static str {
+    match node {
+        UiNode::Button { .. } => "button",
+        UiNode::TextInput { .. } => "text_input",
+        UiNode::Checkbox { .. } => "checkbox",
+        UiNode::Toggle { .. } => "toggle",
+        UiNode::Segmented { .. } => "segmented",
+        UiNode::Slider { .. } => "slider",
+        UiNode::Stepper { .. } => "stepper",
+        UiNode::Scroll { .. } => "scroll",
+        UiNode::Modal { .. } => "modal",
+        UiNode::ImageButton { .. } => "image_button",
+        UiNode::Badge { .. } => "badge",
+        UiNode::Progress { .. } => "progress",
+        UiNode::Tab { .. } => "tab",
+        UiNode::Tooltip { .. } => "tooltip",
+        UiNode::Select { .. } => "select",
+        _ => panic!("node is not a control: {node:?}"),
+    }
 }
 
 fn style_resource_document() -> UiDocument {

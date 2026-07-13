@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_text_input","root":{"type":"text_input","id":"controls.text_input","component":{"slots":{"label":{"kind":"text","content":{"literal":"Name"}},"placeholder":{"kind":"text","content":{"literal":"Enter name"}}}}}}

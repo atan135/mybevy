@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "document_id": "controls.complete_states",
+  "assets": {
+    "portrait": {
+      "kind": "image",
+      "source": { "kind": "packaged", "path": "ui/fixtures/visual-foundation/non-square-2x1.png" }
+    }
+  },
+  "root": {
+    "type": "container",
+    "id": "controls.root",
+    "children": [
+      {
+        "type": "button", "id": "controls.button", "variant": "primary",
+        "label": { "literal": "Continue" }, "on_click": { "action": "controls.continue" },
+        "component": { "size": "large", "states": ["selected", "focused"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "selected": {}, "disabled": {}, "loading": {} } }
+      },
+      {
+        "type": "text_input", "id": "controls.text_input", "value": "Pilot", "max_chars": 32,
+        "component": { "size": "small", "states": ["error", "focused"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "disabled": {}, "empty": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Name" } }, "placeholder": { "kind": "text", "content": { "literal": "Enter name" } }, "helper": { "kind": "text", "content": { "literal": "Public name" } }, "error": { "kind": "text", "content": { "literal": "Invalid name" } } } }
+      },
+      {
+        "type": "checkbox", "id": "controls.checkbox", "checked": true,
+        "component": { "states": ["selected"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "selected": {}, "disabled": {}, "loading": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Remember" } } } }
+      },
+      {
+        "type": "toggle", "id": "controls.toggle", "on": true,
+        "component": { "states": ["selected"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "selected": {}, "disabled": {}, "loading": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Sound" } } } }
+      },
+      {
+        "type": "segmented", "id": "controls.segmented", "selected": "high",
+        "options": [{ "value": "low", "label": { "literal": "Low" } }, { "value": "high", "label": { "literal": "High" } }],
+        "component": { "states": ["focused"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "selected": {}, "disabled": {}, "loading": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Quality" } }, "helper": { "kind": "text", "content": { "literal": "Rendering quality" } } } }
+      },
+      {
+        "type": "slider", "id": "controls.slider", "value": 0.7, "min": 0.0, "max": 1.0,
+        "component": { "states": ["pressed", "focused"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "disabled": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Volume" } }, "helper": { "kind": "text", "content": { "literal": "Effects volume" } } } }
+      },
+      {
+        "type": "stepper", "id": "controls.stepper", "value": 2, "min": 0, "max": 10, "step": 1,
+        "component": { "states": ["hovered"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "disabled": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Count" } }, "error": { "kind": "text", "content": { "literal": "Out of range" } } } }
+      },
+      {
+        "type": "scroll", "id": "controls.scroll", "row_gap": 12.0, "max_height": 360.0, "block_lower": true,
+        "component": { "states": ["empty"], "state_overrides": { "normal": {}, "loading": {}, "empty": {}, "error": {} }, "slots": { "empty": { "kind": "text", "content": { "literal": "No rows" } }, "error": { "kind": "text", "content": { "literal": "Rows unavailable" } } }, "children": [{ "type": "spacer", "id": "controls.scroll_child" }] }
+      },
+      {
+        "type": "modal", "id": "controls.modal", "cancellable": true,
+        "component": { "states": ["loading"], "state_overrides": { "normal": {}, "loading": {}, "empty": {}, "error": {} }, "slots": { "title": { "kind": "text", "content": { "literal": "Confirm" } }, "body": { "kind": "text", "content": { "literal": "Continue?" } }, "error": { "kind": "text", "content": { "literal": "Unable to continue" } } } }
+      },
+      {
+        "type": "image_button", "id": "controls.image_button", "asset": "portrait",
+        "component": { "variant": "secondary", "states": ["loading"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "selected": {}, "disabled": {}, "loading": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Open portrait" } } } }
+      },
+      {
+        "type": "badge", "id": "controls.badge",
+        "component": { "variant": "success", "states": ["selected"], "state_overrides": { "normal": {}, "selected": {}, "disabled": {}, "loading": {}, "empty": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Online" } } } }
+      },
+      {
+        "type": "progress", "id": "controls.progress", "value": 0.72,
+        "component": { "variant": "info", "states": ["loading"], "state_overrides": { "normal": {}, "disabled": {}, "loading": {}, "empty": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Download" } } } }
+      },
+      {
+        "type": "tab", "id": "controls.tab", "value": "overview",
+        "component": { "variant": "subtle", "states": ["selected", "focused"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "selected": {}, "disabled": {}, "loading": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Overview" } } } }
+      },
+      {
+        "type": "tooltip", "id": "controls.tooltip", "tone": "error",
+        "component": { "states": ["error"], "state_overrides": { "normal": {}, "disabled": {}, "error": {} }, "slots": { "body": { "kind": "text", "content": { "literal": "More information" } } }, "children": [{ "type": "spacer", "id": "controls.tooltip_target" }] }
+      },
+      {
+        "type": "select", "id": "controls.select", "selected": "east",
+        "options": [{ "value": "east", "label": { "literal": "East" } }, { "value": "west", "label": { "literal": "West" }, "disabled": true }],
+        "component": { "states": ["disabled", "loading", "error", "pressed", "hovered", "selected", "focused", "empty"], "state_overrides": { "normal": {}, "hovered": {}, "pressed": {}, "focused": {}, "selected": {}, "disabled": {}, "loading": {}, "empty": {}, "error": {} }, "slots": { "label": { "kind": "text", "content": { "literal": "Region" } }, "placeholder": { "kind": "text", "content": { "literal": "Choose region" } }, "empty": { "kind": "text", "content": { "literal": "No regions" } }, "error": { "kind": "text", "content": { "literal": "Regions unavailable" } } } }
+      }
+    ]
+  }
+}

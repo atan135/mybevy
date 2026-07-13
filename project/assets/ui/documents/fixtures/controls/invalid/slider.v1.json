@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.invalid_slider","root":{"type":"slider","id":"controls.slider","component":{"slots":{"label":{"kind":"text","content":{"literal":"Volume"}}}},"value":2.0,"min":0.0,"max":1.0}}

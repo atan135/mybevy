@@ -374,13 +374,43 @@ fn validate_node_content(node: &UiNode, path: &str, errors: &mut Vec<UiContentFi
             validate_text_content(content, &format!("{path}.content"), errors);
             validate_typography(typography, &format!("{path}.typography"), errors);
         }
-        UiNode::Button { label, .. } => {
+        UiNode::Button {
+            label: Some(label), ..
+        } => {
             validate_text_content(label, &format!("{path}.label"), errors);
         }
         _ => {}
     }
+    validate_component_text(node, path, errors);
     for (index, child) in node.children().iter().enumerate() {
-        validate_node_content(child, &format!("{path}.children[{index}]"), errors);
+        validate_node_content(child, &node.child_path(path, index), errors);
+    }
+}
+
+fn validate_component_text(node: &UiNode, path: &str, errors: &mut Vec<UiContentFieldError>) {
+    let Some(component) = node.component() else {
+        return;
+    };
+    for (slot, content) in &component.slots {
+        if let super::UiControlSlotContent::Text { content } = content {
+            validate_text_content(
+                content,
+                &format!("{path}.component.slots.{slot}.content"),
+                errors,
+            );
+        }
+    }
+    match node {
+        UiNode::Segmented { options, .. } | UiNode::Select { options, .. } => {
+            for (index, option) in options.iter().enumerate() {
+                validate_text_content(
+                    &option.label,
+                    &format!("{path}.options[{index}].label"),
+                    errors,
+                );
+            }
+        }
+        _ => {}
     }
 }
 
@@ -497,7 +527,9 @@ fn validate_node_catalog(
 ) {
     let text = match node {
         UiNode::Text { content, .. } => Some((content, "content")),
-        UiNode::Button { label, .. } => Some((label, "label")),
+        UiNode::Button {
+            label: Some(label), ..
+        } => Some((label, "label")),
         _ => None,
     };
     if let Some((UiTextContent::I18n(source), field)) = text
@@ -508,8 +540,37 @@ fn validate_node_catalog(
             &format!("{path}.{field}.i18n_key"),
         ));
     }
+    if let Some(component) = node.component() {
+        for (slot, content) in &component.slots {
+            if let super::UiControlSlotContent::Text {
+                content: UiTextContent::I18n(source),
+            } = content
+                && catalog.lookup(&source.i18n_key).is_none()
+            {
+                errors.push(content_error(
+                    "UI_TEXT_I18N_KEY_MISSING",
+                    &format!("{path}.component.slots.{slot}.content.i18n_key"),
+                ));
+            }
+        }
+    }
+    match node {
+        UiNode::Segmented { options, .. } | UiNode::Select { options, .. } => {
+            for (index, option) in options.iter().enumerate() {
+                if let UiTextContent::I18n(source) = &option.label
+                    && catalog.lookup(&source.i18n_key).is_none()
+                {
+                    errors.push(content_error(
+                        "UI_TEXT_I18N_KEY_MISSING",
+                        &format!("{path}.options[{index}].label.i18n_key"),
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
     for (index, child) in node.children().iter().enumerate() {
-        validate_node_catalog(child, &format!("{path}.children[{index}]"), catalog, errors);
+        validate_node_catalog(child, &node.child_path(path, index), catalog, errors);
     }
 }
 
@@ -534,35 +595,81 @@ fn validate_node_json_shape(
         Some("button") => object.get("label").map(|content| (content, "label")),
         _ => None,
     };
-    if let Some((content, field)) = text
-        && let Some(content) = content.as_object()
+    if let Some((content, field)) = text {
+        validate_text_json_shape(content, &format!("{path}.{field}"), errors);
+    }
+    if let Some(component) = object
+        .get("component")
+        .and_then(serde_json::Value::as_object)
     {
-        let source_count = ["literal", "i18n_key", "binding_path"]
-            .into_iter()
-            .filter(|key| content.contains_key(*key))
-            .count();
-        if source_count != 1 {
-            errors.push(content_error(
-                "UI_TEXT_SOURCE_NOT_EXCLUSIVE",
-                &format!("{path}.{field}"),
-            ));
-        }
-        if let Some(format) = content.get("format").and_then(serde_json::Value::as_object)
-            && !matches!(
-                format.get("kind").and_then(serde_json::Value::as_str),
-                Some("plain" | "number" | "percent" | "bytes")
-            )
+        if let Some(slots) = component
+            .get("slots")
+            .and_then(serde_json::Value::as_object)
         {
-            errors.push(content_error(
-                "UI_TEXT_FORMAT_NOT_ALLOWED",
-                &format!("{path}.{field}.format"),
-            ));
+            for (slot, content) in slots {
+                if content.get("kind").and_then(serde_json::Value::as_str) == Some("text")
+                    && let Some(content) = content.get("content")
+                {
+                    validate_text_json_shape(
+                        content,
+                        &format!("{path}.component.slots.{slot}.content"),
+                        errors,
+                    );
+                }
+            }
+        }
+        if let Some(children) = component
+            .get("children")
+            .and_then(serde_json::Value::as_array)
+        {
+            for (index, child) in children.iter().enumerate() {
+                validate_node_json_shape(
+                    child,
+                    &format!("{path}.component.children[{index}]"),
+                    errors,
+                );
+            }
+        }
+    }
+    if let Some(options) = object.get("options").and_then(serde_json::Value::as_array) {
+        for (index, option) in options.iter().enumerate() {
+            if let Some(label) = option.get("label") {
+                validate_text_json_shape(label, &format!("{path}.options[{index}].label"), errors);
+            }
         }
     }
     if let Some(children) = object.get("children").and_then(serde_json::Value::as_array) {
         for (index, child) in children.iter().enumerate() {
             validate_node_json_shape(child, &format!("{path}.children[{index}]"), errors);
         }
+    }
+}
+
+fn validate_text_json_shape(
+    content: &serde_json::Value,
+    path: &str,
+    errors: &mut Vec<UiContentFieldError>,
+) {
+    let Some(content) = content.as_object() else {
+        return;
+    };
+    let source_count = ["literal", "i18n_key", "binding_path"]
+        .into_iter()
+        .filter(|key| content.contains_key(*key))
+        .count();
+    if source_count != 1 {
+        errors.push(content_error("UI_TEXT_SOURCE_NOT_EXCLUSIVE", path));
+    }
+    if let Some(format) = content.get("format").and_then(serde_json::Value::as_object)
+        && !matches!(
+            format.get("kind").and_then(serde_json::Value::as_str),
+            Some("plain" | "number" | "percent" | "bytes")
+        )
+    {
+        errors.push(content_error(
+            "UI_TEXT_FORMAT_NOT_ALLOWED",
+            &format!("{path}.format"),
+        ));
     }
 }
 

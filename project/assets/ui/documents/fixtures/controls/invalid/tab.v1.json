@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.invalid_tab","root":{"type":"tab","id":"controls.tab","component":{"slots":{"label":{"kind":"text","content":{"literal":"Overview"}},"body":{"kind":"text","content":{"literal":"Unsupported"}}}}}}

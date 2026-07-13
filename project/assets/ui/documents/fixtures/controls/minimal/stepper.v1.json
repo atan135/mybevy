@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_stepper","root":{"type":"stepper","id":"controls.stepper","component":{"slots":{"label":{"kind":"text","content":{"literal":"Count"}}}},"value":2,"min":0,"max":10,"step":1}}

@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_image_button","assets":{"portrait":{"kind":"image","source":{"kind":"packaged","path":"ui/fixtures/visual-foundation/non-square-2x1.png"}}},"root":{"type":"image_button","id":"controls.image_button","component":{"slots":{"label":{"kind":"text","content":{"literal":"Open portrait"}}}},"asset":"portrait"}}

@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_button","root":{"type":"button","id":"controls.button","label":{"literal":"Continue"},"on_click":{"action":"controls.continue"}}}

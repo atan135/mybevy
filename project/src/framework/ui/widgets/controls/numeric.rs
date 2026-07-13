@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, Component)]
+#[derive(Clone, Copy, Debug, PartialEq, Component)]
 pub(crate) struct UiSlider {
     pub value: f32,
     pub min: f32,
@@ -31,7 +31,7 @@ pub(crate) struct UiSliderTrack;
 #[derive(Component)]
 pub(crate) struct UiSliderValueText;
 
-#[derive(Clone, Copy, Debug, Component)]
+#[derive(Clone, Copy, Debug, PartialEq, Component)]
 pub(crate) struct UiStepper {
     pub value: i32,
     pub min: i32,

@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_tooltip","root":{"type":"tooltip","id":"controls.tooltip","component":{"slots":{"body":{"kind":"text","content":{"literal":"More information"}}},"children":[{"type":"spacer","id":"controls.tooltip_target"}]}}}

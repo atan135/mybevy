@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_toggle","root":{"type":"toggle","id":"controls.toggle","component":{"slots":{"label":{"kind":"text","content":{"literal":"Sound"}}}}}}

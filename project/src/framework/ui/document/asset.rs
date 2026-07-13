@@ -524,15 +524,48 @@ fn validate_node_assets(
             &format!("{path}.asset"),
             errors,
         ),
+        UiNode::ImageButton {
+            asset,
+            presentation,
+            ..
+        } => match document.assets.get(asset) {
+            None => errors.push(asset_error("UI_ASSET_UNKNOWN", &format!("{path}.asset"))),
+            Some(entry) => validate_presentation(entry, presentation, path, errors),
+        },
         _ => {}
     }
+    if let Some(component) = node.component() {
+        for (slot, content) in &component.slots {
+            match content {
+                super::UiControlSlotContent::Icon { asset, .. } => validate_node_asset_kind(
+                    document,
+                    asset,
+                    UiAssetKind::Icon,
+                    &format!("{path}.component.slots.{slot}.asset"),
+                    errors,
+                ),
+                super::UiControlSlotContent::Image {
+                    asset,
+                    presentation,
+                    ..
+                } => match document.assets.get(asset) {
+                    None => errors.push(asset_error(
+                        "UI_ASSET_UNKNOWN",
+                        &format!("{path}.component.slots.{slot}.asset"),
+                    )),
+                    Some(entry) => validate_presentation(
+                        entry,
+                        presentation,
+                        &format!("{path}.component.slots.{slot}"),
+                        errors,
+                    ),
+                },
+                super::UiControlSlotContent::Text { .. } => {}
+            }
+        }
+    }
     for (index, child) in node.children().iter().enumerate() {
-        validate_node_assets(
-            document,
-            child,
-            &format!("{path}.children[{index}]"),
-            errors,
-        );
+        validate_node_assets(document, child, &node.child_path(path, index), errors);
     }
 }
 

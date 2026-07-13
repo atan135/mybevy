@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_progress","root":{"type":"progress","id":"controls.progress","component":{"slots":{"label":{"kind":"text","content":{"literal":"Download"}}}},"value":0.25}}

@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_badge","root":{"type":"badge","id":"controls.badge","component":{"slots":{"label":{"kind":"text","content":{"literal":"New"}}}}}}

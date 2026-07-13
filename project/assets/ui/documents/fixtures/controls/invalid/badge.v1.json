@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.invalid_badge","root":{"type":"badge","id":"controls.badge","component":{"states":["hovered"],"slots":{"label":{"kind":"text","content":{"literal":"New"}}}}}}

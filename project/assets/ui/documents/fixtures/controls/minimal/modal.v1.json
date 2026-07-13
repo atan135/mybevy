@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.minimal_modal","root":{"type":"modal","id":"controls.modal","component":{"slots":{"title":{"kind":"text","content":{"literal":"Confirm"}},"body":{"kind":"text","content":{"literal":"Continue?"}}}},"cancellable":true}}

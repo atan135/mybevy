@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.invalid_select","root":{"type":"select","id":"controls.select","component":{"slots":{"label":{"kind":"text","content":{"literal":"Region"}}}},"options":[{"value":"east","label":{"literal":"East"}},{"value":"east","label":{"literal":"Duplicate"}}]}}

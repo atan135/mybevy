@@ -347,6 +347,16 @@
         "type": "image"
       },
       {
+        "component": {
+          "children": [],
+          "size": "medium",
+          "slots": {},
+          "state_overrides": {},
+          "states": [
+            "normal"
+          ],
+          "variant": "default"
+        },
         "id": "page.continue",
         "label": {
           "format": {

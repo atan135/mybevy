@@ -1,0 +1,1 @@
+{"schema_version":1,"document_id":"controls.invalid_segmented","root":{"type":"segmented","id":"controls.segmented","component":{"slots":{"label":{"kind":"text","content":{"literal":"Quality"}}}},"options":[]}}
