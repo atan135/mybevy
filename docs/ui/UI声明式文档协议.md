@@ -287,6 +287,18 @@ fixture 中的字段是 v1 核心模型的协议种子。后续 Rust 类型、JS
 
 普通输入允许省略明确声明为 optional/default 的字段。解析后 canonical JSON 必须写出全部默认字段，包括空 table/list、`null` optional、默认 enum 和零值布局种子，不能根据平台或运行时环境省略。
 
-Canonical JSON 使用 UTF-8、两空格缩进、LF 结尾；所有 object key 递归按 Unicode code point 升序排列，array 保持协议顺序。整数保持十进制整数表示，不写指数、`NaN`、`Infinity` 或负零。当前种子模型不包含浮点字段；阶段 3 引入数值类型时必须继续冻结有限数值和负零规则。canonical 输出完成后再次解析必须得到相同 Rust 值和相同 canonical bytes。
+Canonical JSON 使用 UTF-8、两空格缩进、LF 结尾；所有 object key 递归按 Unicode code point 升序排列，array 保持协议顺序。整数保持十进制整数表示，不写指数、`NaN`、`Infinity` 或负零。阶段 3 引入的浮点数必须有限，并将负零归一化；canonical 输出完成后再次解析必须得到相同 Rust 值和相同 canonical bytes。
 
 Rust 类型通过测试期 `schemars` 派生 Draft 2020-12 schema，并与 `project/assets/ui/documents/schema/ui_document.v1.schema.json` 做完整 golden 比对。`schemars` 仅为 dev-dependency，不进入桌面或 Android 的生产依赖图。canonical golden 位于 `project/assets/ui/documents/fixtures/minimal_page.v1.canonical.json`。
+
+## 13. v1 布局和值类型冻结项
+
+阶段 3 将布局种子扩展为受限的正式协议。长度只允许 `auto`、`px`、`percent`、`vw` 和 `vh`；所有数值必须有限，尺寸、间距和边框不得为负，百分比及 viewport 百分比范围为 0 至 100。`min_width`、`max_width`、`min_height` 和 `max_height` 仅在单位相同时做静态矛盾检查，跨单位约束交给 Bevy 在确定 viewport 后求值。canonical JSON 将 `-0.0` 归一化为 `0.0`。
+
+布局 `display` 只允许 `flex`、`grid` 和 `none`。Flex 支持方向、换行、grow/shrink/basis、轴对齐和独立 row/column gap；Grid 支持显式行列、固定 repeat、自动轨道、自动流和子项 start/span。单轴最多 32 个轨道定义，单项 repeat 最大 16，展开后最多 64 条轨道，span 最大 32。Grid 不提供任意 CSS 字符串、命名 line、auto-fill 或 auto-fit。
+
+`overflow` 每轴只允许 `visible`、`clip` 和 `scroll`。局部 `z_index` 映射为独立 Bevy `ZIndex` 组件而不是 `Node` 字段，绝对值不得超过 1000；它不提供跨 UI 树的 `GlobalZIndex` 能力。
+
+Absolute 的唯一包含块是直接父节点的 border box，与 Bevy 0.18.1 `PositionType::Absolute` 一致。每个轴必须满足以下二选一规则：显式尺寸加恰好一个锚点，或省略尺寸并同时给出两侧锚点。显式尺寸加双锚点视为过度约束，少于可求解输入视为约束不足。该规则禁止节点只携带无参考系的截图坐标。
+
+所有布局错误在构建 ECS 前返回稳定 code 和完整字段 path。阶段 3 code 覆盖非有限值、负尺寸、百分比越界、约束矛盾、Grid 上限、Absolute 约束和 z-index 越界；阶段 9 将其纳入统一 severity、node ID 和修复提示报告。

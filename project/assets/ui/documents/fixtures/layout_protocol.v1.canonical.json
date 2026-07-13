@@ -1,0 +1,311 @@
+{
+  "assets": {},
+  "document_id": "example.layout_protocol",
+  "metadata": {
+    "budget_profile": "mobile_baseline_v1",
+    "title": "Layout protocol golden"
+  },
+  "responsive": [],
+  "root": {
+    "children": [
+      {
+        "content": {
+          "literal": "Anchored"
+        },
+        "id": "layout.absolute",
+        "layout": {
+          "align_content": "start",
+          "align_items": "stretch",
+          "align_self": "auto",
+          "aspect_ratio": null,
+          "border": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "column_gap": null,
+          "direction": "column",
+          "display": "flex",
+          "flex_basis": "auto",
+          "flex_grow": 0.0,
+          "flex_shrink": 1.0,
+          "gap": {
+            "px": 0.0
+          },
+          "grid_auto_columns": [],
+          "grid_auto_flow": "row",
+          "grid_auto_rows": [],
+          "grid_column": {
+            "span": 2,
+            "start": 2
+          },
+          "grid_columns": [],
+          "grid_row": {
+            "span": 1,
+            "start": null
+          },
+          "grid_rows": [],
+          "height": {
+            "px": 40.0
+          },
+          "justify_content": "start",
+          "justify_items": "stretch",
+          "justify_self": "auto",
+          "margin": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "max_height": "auto",
+          "max_width": "auto",
+          "min_height": "auto",
+          "min_width": "auto",
+          "overflow": {
+            "x": "visible",
+            "y": "visible"
+          },
+          "padding": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "position": {
+            "absolute": {
+              "bottom": {
+                "px": 12.0
+              },
+              "containing_block": "parent_border_box",
+              "left": null,
+              "right": {
+                "px": 12.0
+              },
+              "top": null
+            }
+          },
+          "row_gap": null,
+          "scrollbar_width": 0.0,
+          "width": {
+            "px": 120.0
+          },
+          "wrap": "no_wrap",
+          "z_index": 0
+        },
+        "style": {
+          "role": null,
+          "text_role": null
+        },
+        "type": "text"
+      },
+      {
+        "children": [],
+        "id": "layout.hidden",
+        "layout": {
+          "align_content": "start",
+          "align_items": "stretch",
+          "align_self": "auto",
+          "aspect_ratio": null,
+          "border": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "column_gap": null,
+          "direction": "column",
+          "display": "none",
+          "flex_basis": "auto",
+          "flex_grow": 0.0,
+          "flex_shrink": 1.0,
+          "gap": {
+            "px": 0.0
+          },
+          "grid_auto_columns": [],
+          "grid_auto_flow": "row",
+          "grid_auto_rows": [],
+          "grid_column": {
+            "span": 1,
+            "start": null
+          },
+          "grid_columns": [],
+          "grid_row": {
+            "span": 1,
+            "start": null
+          },
+          "grid_rows": [],
+          "height": "auto",
+          "justify_content": "start",
+          "justify_items": "stretch",
+          "justify_self": "auto",
+          "margin": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "max_height": "auto",
+          "max_width": "auto",
+          "min_height": "auto",
+          "min_width": "auto",
+          "overflow": {
+            "x": "visible",
+            "y": "visible"
+          },
+          "padding": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "position": "relative",
+          "row_gap": null,
+          "scrollbar_width": 0.0,
+          "width": "auto",
+          "wrap": "no_wrap",
+          "z_index": 0
+        },
+        "style": {
+          "role": null,
+          "text_role": null
+        },
+        "type": "container"
+      }
+    ],
+    "id": "layout.root",
+    "layout": {
+      "align_content": "space_between",
+      "align_items": "center",
+      "align_self": "auto",
+      "aspect_ratio": 1.7777777910232544,
+      "border": {
+        "all": {
+          "px": 1.0
+        },
+        "bottom": null,
+        "left": null,
+        "right": null,
+        "top": null
+      },
+      "column_gap": null,
+      "direction": "column",
+      "display": "grid",
+      "flex_basis": "auto",
+      "flex_grow": 0.0,
+      "flex_shrink": 1.0,
+      "gap": {
+        "px": 8.0
+      },
+      "grid_auto_columns": [],
+      "grid_auto_flow": "row_dense",
+      "grid_auto_rows": [
+        {
+          "percent": 25.0
+        }
+      ],
+      "grid_column": {
+        "span": 1,
+        "start": null
+      },
+      "grid_columns": [
+        {
+          "repeat": 3,
+          "size": {
+            "fr": 1.0
+          }
+        }
+      ],
+      "grid_row": {
+        "span": 1,
+        "start": null
+      },
+      "grid_rows": [
+        {
+          "repeat": 1,
+          "size": "auto"
+        },
+        {
+          "repeat": 1,
+          "size": {
+            "px": 80.0
+          }
+        }
+      ],
+      "height": {
+        "vh": 100.0
+      },
+      "justify_content": "center",
+      "justify_items": "stretch",
+      "justify_self": "auto",
+      "margin": {
+        "all": {
+          "px": 0.0
+        },
+        "bottom": null,
+        "left": null,
+        "right": null,
+        "top": null
+      },
+      "max_height": "auto",
+      "max_width": {
+        "px": 1280.0
+      },
+      "min_height": "auto",
+      "min_width": {
+        "px": 320.0
+      },
+      "overflow": {
+        "x": "clip",
+        "y": "scroll"
+      },
+      "padding": {
+        "all": {
+          "px": 16.0
+        },
+        "bottom": null,
+        "left": {
+          "percent": 2.0
+        },
+        "right": null,
+        "top": null
+      },
+      "position": "relative",
+      "row_gap": {
+        "vh": 1.0
+      },
+      "scrollbar_width": 12.0,
+      "width": {
+        "vw": 100.0
+      },
+      "wrap": "no_wrap",
+      "z_index": 7
+    },
+    "style": {
+      "role": null,
+      "text_role": null
+    },
+    "type": "container"
+  },
+  "schema_version": 1,
+  "states": [],
+  "tokens": {}
+}

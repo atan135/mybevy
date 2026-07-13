@@ -33,6 +33,9 @@ fn sort_json_objects(value: &mut Value) {
             object.extend(entries);
         }
         Value::Array(values) => values.iter_mut().for_each(sort_json_objects),
+        Value::Number(number) if number.is_f64() && number.as_f64() == Some(0.0) => {
+            *number = serde_json::Number::from_f64(0.0).expect("zero is finite");
+        }
         _ => {}
     }
 }

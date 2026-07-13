@@ -1,6 +1,6 @@
 use super::{
-    CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UiDocument, UiDocumentId, UiNode,
-    UiNodeId,
+    CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UiDocument, UiDocumentId,
+    UiLayoutFieldError, UiNode, UiNodeId,
 };
 use bevy::prelude::Component;
 use serde::Serialize;
@@ -25,6 +25,9 @@ pub enum UiDocumentError {
         first_path: String,
         duplicate_path: String,
     },
+    InvalidLayout {
+        errors: Vec<UiLayoutFieldError>,
+    },
 }
 
 impl UiDocumentError {
@@ -35,6 +38,7 @@ impl UiDocumentError {
             Self::FutureSchemaVersion { .. } => "UI_SCHEMA_FUTURE_VERSION",
             Self::UnsupportedSchemaVersion { .. } => "UI_SCHEMA_VERSION_UNSUPPORTED",
             Self::DuplicateNodeId { .. } => "UI_NODE_ID_DUPLICATE",
+            Self::InvalidLayout { .. } => "UI_LAYOUT_INVALID",
         }
     }
 }
@@ -62,6 +66,13 @@ impl fmt::Display for UiDocumentError {
                 formatter,
                 "node id `{node_id}` is duplicated at {duplicate_path}; first defined at {first_path}"
             ),
+            Self::InvalidLayout { errors } => {
+                write!(
+                    formatter,
+                    "document contains {} invalid layout field(s)",
+                    errors.len()
+                )
+            }
         }
     }
 }
@@ -96,7 +107,32 @@ impl ValidatedUiDocument {
     pub fn new(document: UiDocument) -> Result<Self, UiDocumentError> {
         validate_version(document.schema_version)?;
         let mut node_paths = BTreeMap::new();
-        index_node(&document.root, "$.root", &mut node_paths)?;
+        let mut layout_errors = Vec::new();
+        index_node(
+            &document.root,
+            "$.root",
+            &mut node_paths,
+            &mut layout_errors,
+        )?;
+        for (state_index, state) in document.states.iter().enumerate() {
+            index_override_layouts(
+                &state.overrides,
+                &format!("$.states[{state_index}].overrides"),
+                &mut layout_errors,
+            );
+        }
+        for (variant_index, variant) in document.responsive.iter().enumerate() {
+            index_override_layouts(
+                &variant.overrides,
+                &format!("$.responsive[{variant_index}].overrides"),
+                &mut layout_errors,
+            );
+        }
+        if !layout_errors.is_empty() {
+            return Err(UiDocumentError::InvalidLayout {
+                errors: layout_errors,
+            });
+        }
         Ok(Self {
             document,
             node_paths,
@@ -141,6 +177,24 @@ impl ValidatedUiDocument {
     }
 }
 
+fn index_override_layouts(
+    overrides: &[super::UiNodeOverride],
+    path: &str,
+    layout_errors: &mut Vec<UiLayoutFieldError>,
+) {
+    for (index, node_override) in overrides.iter().enumerate() {
+        let Some(layout) = &node_override.set.layout else {
+            continue;
+        };
+        layout_errors.extend(layout.validate_fields().into_iter().map(|error| {
+            UiLayoutFieldError {
+                code: error.code,
+                path: format!("{path}[{index}].set.layout.{}", error.path),
+            }
+        }));
+    }
+}
+
 fn validate_version(version: u32) -> Result<(), UiDocumentError> {
     if version > CURRENT_SCHEMA_VERSION {
         Err(UiDocumentError::FutureSchemaVersion {
@@ -161,6 +215,7 @@ fn index_node(
     node: &UiNode,
     path: &str,
     node_paths: &mut BTreeMap<UiNodeId, String>,
+    layout_errors: &mut Vec<UiLayoutFieldError>,
 ) -> Result<(), UiDocumentError> {
     if let Some(first_path) = node_paths.insert(node.id().clone(), path.to_owned()) {
         return Err(UiDocumentError::DuplicateNodeId {
@@ -169,8 +224,19 @@ fn index_node(
             duplicate_path: path.to_owned(),
         });
     }
+    layout_errors.extend(node.layout().validate_fields().into_iter().map(|error| {
+        UiLayoutFieldError {
+            code: error.code,
+            path: format!("{path}.layout.{}", error.path),
+        }
+    }));
     for (index, child) in node.children().iter().enumerate() {
-        index_node(child, &format!("{path}.children[{index}]"), node_paths)?;
+        index_node(
+            child,
+            &format!("{path}.children[{index}]"),
+            node_paths,
+            layout_errors,
+        )?;
     }
     Ok(())
 }

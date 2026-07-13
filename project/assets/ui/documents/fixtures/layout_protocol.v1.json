@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "document_id": "example.layout_protocol",
+  "metadata": {
+    "title": "Layout protocol golden",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {},
+  "tokens": {},
+  "root": {
+    "id": "layout.root",
+    "type": "container",
+    "layout": {
+      "display": "grid",
+      "width": {
+        "vw": 100.0
+      },
+      "height": {
+        "vh": 100.0
+      },
+      "min_width": {
+        "px": 320.0
+      },
+      "max_width": {
+        "px": 1280.0
+      },
+      "aspect_ratio": 1.7777778,
+      "margin": {
+        "all": {
+          "px": 0.0
+        }
+      },
+      "padding": {
+        "all": {
+          "px": 16.0
+        },
+        "left": {
+          "percent": 2.0
+        }
+      },
+      "border": {
+        "all": {
+          "px": 1.0
+        }
+      },
+      "gap": {
+        "px": 8.0
+      },
+      "row_gap": {
+        "vh": 1.0
+      },
+      "align_items": "center",
+      "justify_items": "stretch",
+      "align_content": "space_between",
+      "justify_content": "center",
+      "overflow": {
+        "x": "clip",
+        "y": "scroll"
+      },
+      "scrollbar_width": 12.0,
+      "z_index": 7,
+      "grid_columns": [
+        {
+          "repeat": 3,
+          "size": {
+            "fr": 1.0
+          }
+        }
+      ],
+      "grid_rows": [
+        {
+          "repeat": 1,
+          "size": "auto"
+        },
+        {
+          "repeat": 1,
+          "size": {
+            "px": 80.0
+          }
+        }
+      ],
+      "grid_auto_rows": [
+        {
+          "percent": 25.0
+        }
+      ],
+      "grid_auto_flow": "row_dense"
+    },
+    "children": [
+      {
+        "id": "layout.absolute",
+        "type": "text",
+        "content": {
+          "literal": "Anchored"
+        },
+        "layout": {
+          "position": {
+            "absolute": {
+              "containing_block": "parent_border_box",
+              "right": {
+                "px": 12.0
+              },
+              "bottom": {
+                "px": 12.0
+              }
+            }
+          },
+          "width": {
+            "px": 120.0
+          },
+          "height": {
+            "px": 40.0
+          },
+          "grid_column": {
+            "start": 2,
+            "span": 2
+          },
+          "grid_row": {
+            "span": 1
+          }
+        }
+      },
+      {
+        "id": "layout.hidden",
+        "type": "container",
+        "layout": {
+          "display": "none"
+        },
+        "children": []
+      }
+    ]
+  },
+  "states": [],
+  "responsive": []
+}

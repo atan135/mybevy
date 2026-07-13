@@ -1,4 +1,4 @@
-use super::{UiActionId, UiAssetId, UiDocumentId, UiNodeId, UiStyleId};
+use super::{UiActionId, UiAssetId, UiDocumentId, UiLayout, UiNodeId, UiStyleId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -144,6 +144,15 @@ impl UiNode {
             _ => &[],
         }
     }
+
+    pub fn layout(&self) -> &UiLayout {
+        match self {
+            Self::Container { layout, .. }
+            | Self::Text { layout, .. }
+            | Self::Image { layout, .. }
+            | Self::Button { layout, .. } => layout,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -181,79 +190,6 @@ pub enum UiImageFit {
     Stretch,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct UiLayout {
-    #[serde(default)]
-    pub direction: UiDirection,
-    #[serde(default)]
-    pub width: Option<UiSeedLength>,
-    #[serde(default)]
-    pub height: Option<UiSeedLength>,
-    #[serde(default)]
-    pub padding: UiSeedInsets,
-    #[serde(default)]
-    pub gap: UiSeedLength,
-    #[serde(default)]
-    pub align_items: UiAlignItems,
-}
-
-impl Default for UiLayout {
-    fn default() -> Self {
-        Self {
-            direction: UiDirection::default(),
-            width: None,
-            height: None,
-            padding: UiSeedInsets::default(),
-            gap: UiSeedLength::default(),
-            align_items: UiAlignItems::default(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum UiDirection {
-    Row,
-    #[default]
-    Column,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum UiAlignItems {
-    #[default]
-    Stretch,
-    Start,
-    Center,
-    End,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum UiSeedLength {
-    Px(i32),
-    Percent(u16),
-}
-
-impl Default for UiSeedLength {
-    fn default() -> Self {
-        Self::Px(0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct UiSeedInsets {
-    #[serde(default)]
-    pub all: UiSeedLength,
-}
-
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -283,7 +219,7 @@ pub struct UiResponsiveVariant {
     pub overrides: Vec<UiNodeOverride>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct UiResponsiveCondition {
@@ -328,22 +264,82 @@ pub struct UiNodePatch {
     pub style: Option<UiStylePatch>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct UiLayoutPatch {
     #[serde(default)]
-    pub direction: Option<UiDirection>,
+    pub display: Option<super::UiDisplay>,
     #[serde(default)]
-    pub width: Option<UiSeedLength>,
+    pub position: Option<super::UiLayoutPosition>,
     #[serde(default)]
-    pub height: Option<UiSeedLength>,
+    pub direction: Option<super::UiFlexDirection>,
     #[serde(default)]
-    pub padding: Option<UiSeedInsets>,
+    pub width: Option<super::UiLength>,
     #[serde(default)]
-    pub gap: Option<UiSeedLength>,
+    pub height: Option<super::UiLength>,
     #[serde(default)]
-    pub align_items: Option<UiAlignItems>,
+    pub min_width: Option<super::UiLength>,
+    #[serde(default)]
+    pub min_height: Option<super::UiLength>,
+    #[serde(default)]
+    pub max_width: Option<super::UiLength>,
+    #[serde(default)]
+    pub max_height: Option<super::UiLength>,
+    #[serde(default)]
+    pub aspect_ratio: Option<f32>,
+    #[serde(default)]
+    pub margin: Option<super::UiInsets>,
+    #[serde(default)]
+    pub padding: Option<super::UiInsets>,
+    #[serde(default)]
+    pub border: Option<super::UiInsets>,
+    #[serde(default)]
+    pub gap: Option<super::UiLength>,
+    #[serde(default)]
+    pub row_gap: Option<super::UiLength>,
+    #[serde(default)]
+    pub column_gap: Option<super::UiLength>,
+    #[serde(default)]
+    pub align_items: Option<super::UiAlignItems>,
+    #[serde(default)]
+    pub justify_items: Option<super::UiAlignItems>,
+    #[serde(default)]
+    pub align_self: Option<super::UiAlignSelf>,
+    #[serde(default)]
+    pub justify_self: Option<super::UiAlignSelf>,
+    #[serde(default)]
+    pub align_content: Option<super::UiContentAlignment>,
+    #[serde(default)]
+    pub justify_content: Option<super::UiContentAlignment>,
+    #[serde(default)]
+    pub wrap: Option<super::UiFlexWrap>,
+    #[serde(default)]
+    pub flex_grow: Option<f32>,
+    #[serde(default)]
+    pub flex_shrink: Option<f32>,
+    #[serde(default)]
+    pub flex_basis: Option<super::UiLength>,
+    #[serde(default)]
+    pub overflow: Option<super::UiOverflow>,
+    #[serde(default)]
+    pub scrollbar_width: Option<f32>,
+    #[serde(default)]
+    pub z_index: Option<i32>,
+    #[serde(default)]
+    pub grid_columns: Option<Vec<super::UiGridTrack>>,
+    #[serde(default)]
+    pub grid_rows: Option<Vec<super::UiGridTrack>>,
+    #[serde(default)]
+    pub grid_auto_columns: Option<Vec<super::UiGridTrackSize>>,
+    #[serde(default)]
+    pub grid_auto_rows: Option<Vec<super::UiGridTrackSize>>,
+    #[serde(default)]
+    pub grid_auto_flow: Option<super::UiGridAutoFlow>,
+    #[serde(default)]
+    pub grid_column: Option<super::UiGridPlacement>,
+    #[serde(default)]
+    pub grid_row: Option<super::UiGridPlacement>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

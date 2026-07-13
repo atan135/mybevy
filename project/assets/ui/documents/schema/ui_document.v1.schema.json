@@ -1,5 +1,65 @@
 {
   "$defs": {
+    "UiAbsoluteContainingBlock": {
+      "enum": [
+        "parent_border_box"
+      ],
+      "type": "string"
+    },
+    "UiAbsolutePosition": {
+      "additionalProperties": false,
+      "properties": {
+        "bottom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "containing_block": {
+          "$ref": "#/$defs/UiAbsoluteContainingBlock",
+          "default": "parent_border_box"
+        },
+        "left": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "right": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "top": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
     "UiActionId": {
       "maxLength": 128,
       "minLength": 1,
@@ -25,6 +85,16 @@
     },
     "UiAlignItems": {
       "enum": [
+        "stretch",
+        "start",
+        "center",
+        "end"
+      ],
+      "type": "string"
+    },
+    "UiAlignSelf": {
+      "enum": [
+        "auto",
         "stretch",
         "start",
         "center",
@@ -109,10 +179,22 @@
       ],
       "type": "string"
     },
-    "UiDirection": {
+    "UiContentAlignment": {
       "enum": [
-        "row",
-        "column"
+        "start",
+        "center",
+        "end",
+        "space_between",
+        "space_around",
+        "space_evenly"
+      ],
+      "type": "string"
+    },
+    "UiDisplay": {
+      "enum": [
+        "flex",
+        "grid",
+        "none"
       ],
       "type": "string"
     },
@@ -136,6 +218,149 @@
       },
       "type": "object"
     },
+    "UiFlexDirection": {
+      "enum": [
+        "row",
+        "row_reverse",
+        "column",
+        "column_reverse"
+      ],
+      "type": "string"
+    },
+    "UiFlexWrap": {
+      "enum": [
+        "no_wrap",
+        "wrap",
+        "wrap_reverse"
+      ],
+      "type": "string"
+    },
+    "UiGridAutoFlow": {
+      "enum": [
+        "row",
+        "column",
+        "row_dense",
+        "column_dense"
+      ],
+      "type": "string"
+    },
+    "UiGridPlacement": {
+      "additionalProperties": false,
+      "properties": {
+        "span": {
+          "default": 1,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "default": null,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UiGridTrack": {
+      "additionalProperties": false,
+      "properties": {
+        "repeat": {
+          "default": 1,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "size": {
+          "$ref": "#/$defs/UiGridTrackSize"
+        }
+      },
+      "required": [
+        "size"
+      ],
+      "type": "object"
+    },
+    "UiGridTrackSize": {
+      "oneOf": [
+        {
+          "enum": [
+            "auto"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "px": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "px"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "percent": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "percent"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "vw": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "vw"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "vh": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "vh"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fr": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "fr"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "UiImageFit": {
       "enum": [
         "contain",
@@ -144,27 +369,19 @@
       ],
       "type": "string"
     },
-    "UiLayout": {
+    "UiInsets": {
       "additionalProperties": false,
       "properties": {
-        "align_items": {
-          "$ref": "#/$defs/UiAlignItems",
-          "default": "stretch"
-        },
-        "direction": {
-          "$ref": "#/$defs/UiDirection",
-          "default": "column"
-        },
-        "gap": {
-          "$ref": "#/$defs/UiSeedLength",
+        "all": {
+          "$ref": "#/$defs/UiLength",
           "default": {
-            "px": 0
+            "px": 0.0
           }
         },
-        "height": {
+        "bottom": {
           "anyOf": [
             {
-              "$ref": "#/$defs/UiSeedLength"
+              "$ref": "#/$defs/UiLength"
             },
             {
               "type": "null"
@@ -172,18 +389,32 @@
           ],
           "default": null
         },
-        "padding": {
-          "$ref": "#/$defs/UiSeedInsets",
-          "default": {
-            "all": {
-              "px": 0
-            }
-          }
-        },
-        "width": {
+        "left": {
           "anyOf": [
             {
-              "$ref": "#/$defs/UiSeedLength"
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "right": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "top": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
             },
             {
               "type": "null"
@@ -194,9 +425,239 @@
       },
       "type": "object"
     },
+    "UiLayout": {
+      "additionalProperties": false,
+      "properties": {
+        "align_content": {
+          "$ref": "#/$defs/UiContentAlignment",
+          "default": "start"
+        },
+        "align_items": {
+          "$ref": "#/$defs/UiAlignItems",
+          "default": "stretch"
+        },
+        "align_self": {
+          "$ref": "#/$defs/UiAlignSelf",
+          "default": "auto"
+        },
+        "aspect_ratio": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "border": {
+          "$ref": "#/$defs/UiInsets",
+          "default": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          }
+        },
+        "column_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "direction": {
+          "$ref": "#/$defs/UiFlexDirection",
+          "default": "column"
+        },
+        "display": {
+          "$ref": "#/$defs/UiDisplay",
+          "default": "flex"
+        },
+        "flex_basis": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "flex_grow": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "flex_shrink": {
+          "default": 1.0,
+          "format": "float",
+          "type": "number"
+        },
+        "gap": {
+          "$ref": "#/$defs/UiLength",
+          "default": {
+            "px": 0.0
+          }
+        },
+        "grid_auto_columns": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiGridTrackSize"
+          },
+          "type": "array"
+        },
+        "grid_auto_flow": {
+          "$ref": "#/$defs/UiGridAutoFlow",
+          "default": "row"
+        },
+        "grid_auto_rows": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiGridTrackSize"
+          },
+          "type": "array"
+        },
+        "grid_column": {
+          "$ref": "#/$defs/UiGridPlacement",
+          "default": {
+            "span": 1,
+            "start": null
+          }
+        },
+        "grid_columns": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiGridTrack"
+          },
+          "type": "array"
+        },
+        "grid_row": {
+          "$ref": "#/$defs/UiGridPlacement",
+          "default": {
+            "span": 1,
+            "start": null
+          }
+        },
+        "grid_rows": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiGridTrack"
+          },
+          "type": "array"
+        },
+        "height": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "justify_content": {
+          "$ref": "#/$defs/UiContentAlignment",
+          "default": "start"
+        },
+        "justify_items": {
+          "$ref": "#/$defs/UiAlignItems",
+          "default": "stretch"
+        },
+        "justify_self": {
+          "$ref": "#/$defs/UiAlignSelf",
+          "default": "auto"
+        },
+        "margin": {
+          "$ref": "#/$defs/UiInsets",
+          "default": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          }
+        },
+        "max_height": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "max_width": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "min_height": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "min_width": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "overflow": {
+          "$ref": "#/$defs/UiOverflow",
+          "default": {
+            "x": "visible",
+            "y": "visible"
+          }
+        },
+        "padding": {
+          "$ref": "#/$defs/UiInsets",
+          "default": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          }
+        },
+        "position": {
+          "$ref": "#/$defs/UiLayoutPosition",
+          "default": "relative"
+        },
+        "row_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scrollbar_width": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "wrap": {
+          "$ref": "#/$defs/UiFlexWrap",
+          "default": "no_wrap"
+        },
+        "z_index": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "UiLayoutPatch": {
       "additionalProperties": false,
       "properties": {
+        "align_content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiContentAlignment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "align_items": {
           "anyOf": [
             {
@@ -208,21 +669,100 @@
           ],
           "default": null
         },
-        "direction": {
+        "align_self": {
           "anyOf": [
             {
-              "$ref": "#/$defs/UiDirection"
+              "$ref": "#/$defs/UiAlignSelf"
             },
             {
               "type": "null"
             }
           ],
           "default": null
+        },
+        "aspect_ratio": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiInsets"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "column_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiFlexDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "flex_basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "flex_grow": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "flex_shrink": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "gap": {
           "anyOf": [
             {
-              "$ref": "#/$defs/UiSeedLength"
+              "$ref": "#/$defs/UiLength"
             },
             {
               "type": "null"
@@ -230,10 +770,182 @@
           ],
           "default": null
         },
+        "grid_auto_columns": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/UiGridTrackSize"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "grid_auto_flow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiGridAutoFlow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "grid_auto_rows": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/UiGridTrackSize"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "grid_column": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiGridPlacement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "grid_columns": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/UiGridTrack"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "grid_row": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiGridPlacement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "grid_rows": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/UiGridTrack"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "height": {
           "anyOf": [
             {
-              "$ref": "#/$defs/UiSeedLength"
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "justify_content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiContentAlignment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "justify_items": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiAlignItems"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "justify_self": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiAlignSelf"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "margin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiInsets"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_width": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "min_height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "min_width": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "overflow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiOverflow"
             },
             {
               "type": "null"
@@ -244,7 +956,7 @@
         "padding": {
           "anyOf": [
             {
-              "$ref": "#/$defs/UiSeedInsets"
+              "$ref": "#/$defs/UiInsets"
             },
             {
               "type": "null"
@@ -252,19 +964,152 @@
           ],
           "default": null
         },
-        "width": {
+        "position": {
           "anyOf": [
             {
-              "$ref": "#/$defs/UiSeedLength"
+              "$ref": "#/$defs/UiLayoutPosition"
             },
             {
               "type": "null"
             }
           ],
           "default": null
+        },
+        "row_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scrollbar_width": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "width": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "wrap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiFlexWrap"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "z_index": {
+          "default": null,
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "type": "object"
+    },
+    "UiLayoutPosition": {
+      "oneOf": [
+        {
+          "enum": [
+            "relative"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "absolute": {
+              "$ref": "#/$defs/UiAbsolutePosition"
+            }
+          },
+          "required": [
+            "absolute"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiLength": {
+      "oneOf": [
+        {
+          "enum": [
+            "auto"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "px": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "px"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "percent": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "percent"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "vw": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "vw"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "vh": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "vh"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "UiNode": {
       "oneOf": [
@@ -284,18 +1129,77 @@
             "layout": {
               "$ref": "#/$defs/UiLayout",
               "default": {
+                "align_content": "start",
                 "align_items": "stretch",
-                "direction": "column",
-                "gap": {
-                  "px": 0
+                "align_self": "auto",
+                "aspect_ratio": null,
+                "border": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
                 },
-                "height": null,
+                "column_gap": null,
+                "direction": "column",
+                "display": "flex",
+                "flex_basis": "auto",
+                "flex_grow": 0.0,
+                "flex_shrink": 1.0,
+                "gap": {
+                  "px": 0.0
+                },
+                "grid_auto_columns": [],
+                "grid_auto_flow": "row",
+                "grid_auto_rows": [],
+                "grid_column": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_columns": [],
+                "grid_row": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_rows": [],
+                "height": "auto",
+                "justify_content": "start",
+                "justify_items": "stretch",
+                "justify_self": "auto",
+                "margin": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "max_height": "auto",
+                "max_width": "auto",
+                "min_height": "auto",
+                "min_width": "auto",
+                "overflow": {
+                  "x": "visible",
+                  "y": "visible"
+                },
                 "padding": {
                   "all": {
-                    "px": 0
-                  }
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
                 },
-                "width": null
+                "position": "relative",
+                "row_gap": null,
+                "scrollbar_width": 0.0,
+                "width": "auto",
+                "wrap": "no_wrap",
+                "z_index": 0
               }
             },
             "style": {
@@ -328,18 +1232,77 @@
             "layout": {
               "$ref": "#/$defs/UiLayout",
               "default": {
+                "align_content": "start",
                 "align_items": "stretch",
-                "direction": "column",
-                "gap": {
-                  "px": 0
+                "align_self": "auto",
+                "aspect_ratio": null,
+                "border": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
                 },
-                "height": null,
+                "column_gap": null,
+                "direction": "column",
+                "display": "flex",
+                "flex_basis": "auto",
+                "flex_grow": 0.0,
+                "flex_shrink": 1.0,
+                "gap": {
+                  "px": 0.0
+                },
+                "grid_auto_columns": [],
+                "grid_auto_flow": "row",
+                "grid_auto_rows": [],
+                "grid_column": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_columns": [],
+                "grid_row": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_rows": [],
+                "height": "auto",
+                "justify_content": "start",
+                "justify_items": "stretch",
+                "justify_self": "auto",
+                "margin": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "max_height": "auto",
+                "max_width": "auto",
+                "min_height": "auto",
+                "min_width": "auto",
+                "overflow": {
+                  "x": "visible",
+                  "y": "visible"
+                },
                 "padding": {
                   "all": {
-                    "px": 0
-                  }
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
                 },
-                "width": null
+                "position": "relative",
+                "row_gap": null,
+                "scrollbar_width": 0.0,
+                "width": "auto",
+                "wrap": "no_wrap",
+                "z_index": 0
               }
             },
             "style": {
@@ -377,18 +1340,77 @@
             "layout": {
               "$ref": "#/$defs/UiLayout",
               "default": {
+                "align_content": "start",
                 "align_items": "stretch",
-                "direction": "column",
-                "gap": {
-                  "px": 0
+                "align_self": "auto",
+                "aspect_ratio": null,
+                "border": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
                 },
-                "height": null,
+                "column_gap": null,
+                "direction": "column",
+                "display": "flex",
+                "flex_basis": "auto",
+                "flex_grow": 0.0,
+                "flex_shrink": 1.0,
+                "gap": {
+                  "px": 0.0
+                },
+                "grid_auto_columns": [],
+                "grid_auto_flow": "row",
+                "grid_auto_rows": [],
+                "grid_column": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_columns": [],
+                "grid_row": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_rows": [],
+                "height": "auto",
+                "justify_content": "start",
+                "justify_items": "stretch",
+                "justify_self": "auto",
+                "margin": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "max_height": "auto",
+                "max_width": "auto",
+                "min_height": "auto",
+                "min_width": "auto",
+                "overflow": {
+                  "x": "visible",
+                  "y": "visible"
+                },
                 "padding": {
                   "all": {
-                    "px": 0
-                  }
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
                 },
-                "width": null
+                "position": "relative",
+                "row_gap": null,
+                "scrollbar_width": 0.0,
+                "width": "auto",
+                "wrap": "no_wrap",
+                "z_index": 0
               }
             },
             "style": {
@@ -422,18 +1444,77 @@
             "layout": {
               "$ref": "#/$defs/UiLayout",
               "default": {
+                "align_content": "start",
                 "align_items": "stretch",
-                "direction": "column",
-                "gap": {
-                  "px": 0
+                "align_self": "auto",
+                "aspect_ratio": null,
+                "border": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
                 },
-                "height": null,
+                "column_gap": null,
+                "direction": "column",
+                "display": "flex",
+                "flex_basis": "auto",
+                "flex_grow": 0.0,
+                "flex_shrink": 1.0,
+                "gap": {
+                  "px": 0.0
+                },
+                "grid_auto_columns": [],
+                "grid_auto_flow": "row",
+                "grid_auto_rows": [],
+                "grid_column": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_columns": [],
+                "grid_row": {
+                  "span": 1,
+                  "start": null
+                },
+                "grid_rows": [],
+                "height": "auto",
+                "justify_content": "start",
+                "justify_items": "stretch",
+                "justify_self": "auto",
+                "margin": {
+                  "all": {
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
+                },
+                "max_height": "auto",
+                "max_width": "auto",
+                "min_height": "auto",
+                "min_width": "auto",
+                "overflow": {
+                  "x": "visible",
+                  "y": "visible"
+                },
                 "padding": {
                   "all": {
-                    "px": 0
-                  }
+                    "px": 0.0
+                  },
+                  "bottom": null,
+                  "left": null,
+                  "right": null,
+                  "top": null
                 },
-                "width": null
+                "position": "relative",
+                "row_gap": null,
+                "scrollbar_width": 0.0,
+                "width": "auto",
+                "wrap": "no_wrap",
+                "z_index": 0
               }
             },
             "on_click": {
@@ -522,6 +1603,28 @@
       ],
       "type": "string"
     },
+    "UiOverflow": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/UiOverflowAxis",
+          "default": "visible"
+        },
+        "y": {
+          "$ref": "#/$defs/UiOverflowAxis",
+          "default": "visible"
+        }
+      },
+      "type": "object"
+    },
+    "UiOverflowAxis": {
+      "enum": [
+        "visible",
+        "clip",
+        "scroll"
+      ],
+      "type": "string"
+    },
     "UiResponsiveCondition": {
       "additionalProperties": false,
       "properties": {
@@ -572,50 +1675,6 @@
         "when"
       ],
       "type": "object"
-    },
-    "UiSeedInsets": {
-      "additionalProperties": false,
-      "properties": {
-        "all": {
-          "$ref": "#/$defs/UiSeedLength",
-          "default": {
-            "px": 0
-          }
-        }
-      },
-      "type": "object"
-    },
-    "UiSeedLength": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "px": {
-              "format": "int32",
-              "type": "integer"
-            }
-          },
-          "required": [
-            "px"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "percent": {
-              "format": "uint16",
-              "maximum": 65535,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "percent"
-          ],
-          "type": "object"
-        }
-      ]
     },
     "UiStateDefinition": {
       "additionalProperties": false,
