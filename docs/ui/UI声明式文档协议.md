@@ -268,4 +268,25 @@ fixture 中的字段是 v1 核心模型的协议种子。后续 Rust 类型、JS
 - 任意代码、脚本、shell、网络和绝对路径能力均未进入协议。
 - `mobile_baseline_v1` 给出可执行的硬预算，超限行为为拒绝加载。
 
-阶段 2 需要继续确认：ID 字符格式、每个字段的显式默认值、完整 JSON Schema、canonical JSON 字段顺序和合法/非法 fixture。上述事项不改变本阶段的可信边界。
+阶段 2 已继续确认 ID 字符格式、字段默认值、完整 JSON Schema、canonical JSON 字段顺序和合法/非法 fixture，详见第 12 节；这些落地项没有改变阶段 1 冻结的可信边界。
+
+## 12. v1 核心模型冻结项
+
+阶段 2 已将阶段 1 fixture 对应的核心 Rust 模型落在 `framework/ui/document/`。当前节点、布局、样式、token、state 和 responsive 类型是后续阶段扩展的 v1 种子，不代表阶段 3 至阶段 8 的完整能力已经实现。
+
+### 12.1 稳定 ID
+
+所有 ID 使用 ASCII 小写 snake_case segment，segment 之间使用 `.` 分隔，总长度为 1 至 128 bytes。每个 segment 必须以 `a-z` 开头，后续字符只允许 `a-z`、`0-9` 和 `_`。
+
+- `UiDocumentId`、`UiNodeId` 和 `UiActionId` 必须至少包含两个 segment，例如 `example.minimal_page`、`page.root` 和 `example.continue`。
+- `UiAssetId` 和 `UiStyleId` 允许单 segment，例如 `hero_image` 和 `title`。
+- ID 区分大小写之外不做 Unicode normalization，因为非 ASCII 输入直接拒绝。
+- 单个 document 的 node ID 必须唯一；验证后的 node index 保存 canonical document path，并由同一对 `document_id + node_id` 生成 ECS marker 和 audit metadata。
+
+### 12.2 默认值和 canonical JSON
+
+普通输入允许省略明确声明为 optional/default 的字段。解析后 canonical JSON 必须写出全部默认字段，包括空 table/list、`null` optional、默认 enum 和零值布局种子，不能根据平台或运行时环境省略。
+
+Canonical JSON 使用 UTF-8、两空格缩进、LF 结尾；所有 object key 递归按 Unicode code point 升序排列，array 保持协议顺序。整数保持十进制整数表示，不写指数、`NaN`、`Infinity` 或负零。当前种子模型不包含浮点字段；阶段 3 引入数值类型时必须继续冻结有限数值和负零规则。canonical 输出完成后再次解析必须得到相同 Rust 值和相同 canonical bytes。
+
+Rust 类型通过测试期 `schemars` 派生 Draft 2020-12 schema，并与 `project/assets/ui/documents/schema/ui_document.v1.schema.json` 做完整 golden 比对。`schemars` 仅为 dev-dependency，不进入桌面或 Android 的生产依赖图。canonical golden 位于 `project/assets/ui/documents/fixtures/minimal_page.v1.canonical.json`。

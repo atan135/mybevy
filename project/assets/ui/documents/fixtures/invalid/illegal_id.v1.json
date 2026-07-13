@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "document_id": "Example.illegal_id",
+  "root": {
+    "id": "page.root",
+    "type": "container"
+  }
+}

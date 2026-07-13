@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "document_id": "example.duplicate_node",
+  "root": {
+    "id": "page.root",
+    "type": "container",
+    "children": [
+      {
+        "id": "page.root",
+        "type": "text",
+        "content": {
+          "literal": "Duplicate"
+        }
+      }
+    ]
+  }
+}

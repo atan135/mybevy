@@ -1,0 +1,9 @@
+{
+  "schema_version": 2,
+  "document_id": "example.future_version",
+  "future_only": true,
+  "root": {
+    "id": "page.root",
+    "type": "container"
+  }
+}

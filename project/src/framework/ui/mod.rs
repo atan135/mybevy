@@ -1,6 +1,7 @@
 pub(crate) mod audit;
 pub(crate) mod core;
 pub(crate) mod debug;
+pub mod document;
 pub(crate) mod i18n;
 pub(crate) mod overlays;
 pub(crate) mod prelude;

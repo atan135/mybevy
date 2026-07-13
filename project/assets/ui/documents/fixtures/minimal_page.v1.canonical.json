@@ -1,0 +1,177 @@
+{
+  "assets": {
+    "hero_image": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/fixtures/visual-foundation/non-square-2x1.png"
+      }
+    }
+  },
+  "document_id": "example.minimal_page",
+  "metadata": {
+    "budget_profile": "mobile_baseline_v1",
+    "title": "Minimal declarative UI fixture"
+  },
+  "responsive": [
+    {
+      "id": "compact_portrait",
+      "overrides": [
+        {
+          "node_id": "page.root",
+          "set": {
+            "layout": {
+              "align_items": null,
+              "direction": null,
+              "gap": {
+                "px": 12
+              },
+              "height": null,
+              "padding": {
+                "all": {
+                  "px": 16
+                }
+              },
+              "width": null
+            },
+            "style": null
+          }
+        },
+        {
+          "node_id": "page.hero",
+          "set": {
+            "layout": {
+              "align_items": null,
+              "direction": null,
+              "gap": null,
+              "height": {
+                "px": 120
+              },
+              "padding": null,
+              "width": null
+            },
+            "style": null
+          }
+        }
+      ],
+      "when": {
+        "orientation": "portrait",
+        "width_class": "compact"
+      }
+    }
+  ],
+  "root": {
+    "children": [
+      {
+        "content": {
+          "literal": "Declarative UI"
+        },
+        "id": "page.title",
+        "layout": {
+          "align_items": "stretch",
+          "direction": "column",
+          "gap": {
+            "px": 0
+          },
+          "height": null,
+          "padding": {
+            "all": {
+              "px": 0
+            }
+          },
+          "width": null
+        },
+        "style": {
+          "role": null,
+          "text_role": "title"
+        },
+        "type": "text"
+      },
+      {
+        "asset": "hero_image",
+        "fit": "contain",
+        "id": "page.hero",
+        "layout": {
+          "align_items": "stretch",
+          "direction": "column",
+          "gap": {
+            "px": 0
+          },
+          "height": {
+            "px": 180
+          },
+          "padding": {
+            "all": {
+              "px": 0
+            }
+          },
+          "width": {
+            "percent": 100
+          }
+        },
+        "style": {
+          "role": null,
+          "text_role": null
+        },
+        "type": "image"
+      },
+      {
+        "id": "page.continue",
+        "label": {
+          "literal": "Continue"
+        },
+        "layout": {
+          "align_items": "stretch",
+          "direction": "column",
+          "gap": {
+            "px": 0
+          },
+          "height": null,
+          "padding": {
+            "all": {
+              "px": 0
+            }
+          },
+          "width": null
+        },
+        "on_click": {
+          "action": "example.continue",
+          "args": {}
+        },
+        "style": {
+          "role": null,
+          "text_role": null
+        },
+        "type": "button",
+        "variant": "primary"
+      }
+    ],
+    "id": "page.root",
+    "layout": {
+      "align_items": "center",
+      "direction": "column",
+      "gap": {
+        "px": 20
+      },
+      "height": {
+        "percent": 100
+      },
+      "padding": {
+        "all": {
+          "px": 32
+        }
+      },
+      "width": {
+        "percent": 100
+      }
+    },
+    "style": {
+      "role": "page",
+      "text_role": null
+    },
+    "type": "container"
+  },
+  "schema_version": 1,
+  "states": [],
+  "tokens": {}
+}

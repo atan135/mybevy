@@ -24,6 +24,9 @@ tokio = { version = "1.37", features = ["rt-multi-thread", "net", "io-util", "sy
 tokio_kcp = "0.9.8"
 unicode-segmentation = "1.13.2"
 
+[dev-dependencies]
+schemars = "1"
+
 [target.'cfg(not(target_os = "android"))'.dependencies]
 arboard = "3.6"
 

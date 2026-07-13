@@ -1,0 +1,825 @@
+{
+  "$defs": {
+    "UiActionId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "type": "string"
+    },
+    "UiActionInvocation": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/UiActionId"
+        },
+        "args": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "UiAlignItems": {
+      "enum": [
+        "stretch",
+        "start",
+        "center",
+        "end"
+      ],
+      "type": "string"
+    },
+    "UiAssetEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/UiAssetKind"
+        },
+        "source": {
+          "$ref": "#/$defs/UiAssetSource"
+        }
+      },
+      "required": [
+        "kind",
+        "source"
+      ],
+      "type": "object"
+    },
+    "UiAssetId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "type": "string"
+    },
+    "UiAssetKind": {
+      "enum": [
+        "image",
+        "font",
+        "icon",
+        "atlas",
+        "material"
+      ],
+      "type": "string"
+    },
+    "UiAssetSource": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "packaged",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "content_cache",
+              "type": "string"
+            },
+            "logical_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "logical_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiButtonVariant": {
+      "enum": [
+        "primary",
+        "secondary"
+      ],
+      "type": "string"
+    },
+    "UiDirection": {
+      "enum": [
+        "row",
+        "column"
+      ],
+      "type": "string"
+    },
+    "UiDocumentId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "type": "string"
+    },
+    "UiDocumentMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_profile": {
+          "default": "mobile_baseline_v1",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "UiImageFit": {
+      "enum": [
+        "contain",
+        "cover",
+        "stretch"
+      ],
+      "type": "string"
+    },
+    "UiLayout": {
+      "additionalProperties": false,
+      "properties": {
+        "align_items": {
+          "$ref": "#/$defs/UiAlignItems",
+          "default": "stretch"
+        },
+        "direction": {
+          "$ref": "#/$defs/UiDirection",
+          "default": "column"
+        },
+        "gap": {
+          "$ref": "#/$defs/UiSeedLength",
+          "default": {
+            "px": 0
+          }
+        },
+        "height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSeedLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "padding": {
+          "$ref": "#/$defs/UiSeedInsets",
+          "default": {
+            "all": {
+              "px": 0
+            }
+          }
+        },
+        "width": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSeedLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "UiLayoutPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "align_items": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiAlignItems"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSeedLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSeedLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "padding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSeedInsets"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "width": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSeedLength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "UiNode": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "children": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/UiNode"
+              },
+              "type": "array"
+            },
+            "id": {
+              "$ref": "#/$defs/UiNodeId"
+            },
+            "layout": {
+              "$ref": "#/$defs/UiLayout",
+              "default": {
+                "align_items": "stretch",
+                "direction": "column",
+                "gap": {
+                  "px": 0
+                },
+                "height": null,
+                "padding": {
+                  "all": {
+                    "px": 0
+                  }
+                },
+                "width": null
+              }
+            },
+            "style": {
+              "$ref": "#/$defs/UiStyle",
+              "default": {
+                "role": null,
+                "text_role": null
+              }
+            },
+            "type": {
+              "const": "container",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/UiTextContent"
+            },
+            "id": {
+              "$ref": "#/$defs/UiNodeId"
+            },
+            "layout": {
+              "$ref": "#/$defs/UiLayout",
+              "default": {
+                "align_items": "stretch",
+                "direction": "column",
+                "gap": {
+                  "px": 0
+                },
+                "height": null,
+                "padding": {
+                  "all": {
+                    "px": 0
+                  }
+                },
+                "width": null
+              }
+            },
+            "style": {
+              "$ref": "#/$defs/UiStyle",
+              "default": {
+                "role": null,
+                "text_role": null
+              }
+            },
+            "type": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "content"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "asset": {
+              "$ref": "#/$defs/UiAssetId"
+            },
+            "fit": {
+              "$ref": "#/$defs/UiImageFit",
+              "default": "contain"
+            },
+            "id": {
+              "$ref": "#/$defs/UiNodeId"
+            },
+            "layout": {
+              "$ref": "#/$defs/UiLayout",
+              "default": {
+                "align_items": "stretch",
+                "direction": "column",
+                "gap": {
+                  "px": 0
+                },
+                "height": null,
+                "padding": {
+                  "all": {
+                    "px": 0
+                  }
+                },
+                "width": null
+              }
+            },
+            "style": {
+              "$ref": "#/$defs/UiStyle",
+              "default": {
+                "role": null,
+                "text_role": null
+              }
+            },
+            "type": {
+              "const": "image",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "asset"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/UiNodeId"
+            },
+            "label": {
+              "$ref": "#/$defs/UiTextContent"
+            },
+            "layout": {
+              "$ref": "#/$defs/UiLayout",
+              "default": {
+                "align_items": "stretch",
+                "direction": "column",
+                "gap": {
+                  "px": 0
+                },
+                "height": null,
+                "padding": {
+                  "all": {
+                    "px": 0
+                  }
+                },
+                "width": null
+              }
+            },
+            "on_click": {
+              "$ref": "#/$defs/UiActionInvocation"
+            },
+            "style": {
+              "$ref": "#/$defs/UiStyle",
+              "default": {
+                "role": null,
+                "text_role": null
+              }
+            },
+            "type": {
+              "const": "button",
+              "type": "string"
+            },
+            "variant": {
+              "$ref": "#/$defs/UiButtonVariant",
+              "default": "primary"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "label",
+            "on_click"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiNodeId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "type": "string"
+    },
+    "UiNodeOverride": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "$ref": "#/$defs/UiNodeId"
+        },
+        "set": {
+          "$ref": "#/$defs/UiNodePatch"
+        }
+      },
+      "required": [
+        "node_id",
+        "set"
+      ],
+      "type": "object"
+    },
+    "UiNodePatch": {
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiLayoutPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "style": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "UiOrientation": {
+      "enum": [
+        "portrait",
+        "landscape"
+      ],
+      "type": "string"
+    },
+    "UiResponsiveCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "orientation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiOrientation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "width_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiWidthClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "UiResponsiveVariant": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "overrides": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiNodeOverride"
+          },
+          "type": "array"
+        },
+        "when": {
+          "$ref": "#/$defs/UiResponsiveCondition"
+        }
+      },
+      "required": [
+        "id",
+        "when"
+      ],
+      "type": "object"
+    },
+    "UiSeedInsets": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "$ref": "#/$defs/UiSeedLength",
+          "default": {
+            "px": 0
+          }
+        }
+      },
+      "type": "object"
+    },
+    "UiSeedLength": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "px": {
+              "format": "int32",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "px"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "percent": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "percent"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiStateDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "overrides": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiNodeOverride"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "UiStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStyleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "text_role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStyleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "UiStyleId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "type": "string"
+    },
+    "UiStylePatch": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStyleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "text_role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiStyleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "UiTextContent": {
+      "additionalProperties": false,
+      "properties": {
+        "literal": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "literal"
+      ],
+      "type": "object"
+    },
+    "UiTokenValue": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "color",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "number",
+              "type": "string"
+            },
+            "value": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiWidthClass": {
+      "enum": [
+        "compact",
+        "medium",
+        "expanded"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assets": {
+      "additionalProperties": false,
+      "default": {},
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$": {
+          "$ref": "#/$defs/UiAssetEntry"
+        }
+      },
+      "type": "object"
+    },
+    "document_id": {
+      "$ref": "#/$defs/UiDocumentId"
+    },
+    "metadata": {
+      "$ref": "#/$defs/UiDocumentMetadata",
+      "default": {
+        "budget_profile": "mobile_baseline_v1",
+        "title": ""
+      }
+    },
+    "responsive": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/UiResponsiveVariant"
+      },
+      "type": "array"
+    },
+    "root": {
+      "$ref": "#/$defs/UiNode"
+    },
+    "schema_version": {
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "states": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/UiStateDefinition"
+      },
+      "type": "array"
+    },
+    "tokens": {
+      "additionalProperties": false,
+      "default": {},
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$": {
+          "$ref": "#/$defs/UiTokenValue"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "document_id",
+    "root"
+  ],
+  "title": "UiDocument",
+  "type": "object"
+}
