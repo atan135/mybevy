@@ -1,6 +1,6 @@
 # UI 声明式文档协议
 
-本文定义 `UiDocument` 的协议边界、版本兼容、安全模型、目录约定和首版资源预算。它是后续 Rust 数据模型、JSON Schema、验证器和 ECS 构建器的规范输入。阶段 1 只冻结协议决策和最小 fixture，不代表运行时已经能够加载声明式页面。
+本文定义 `UiDocument` 的协议边界、版本兼容、安全模型、目录约定和首版资源预算。当前 Rust 数据模型、JSON Schema、验证器和 ECS runtime 以本文为协议依据；预览和 reload 的实现边界见 [UI声明式预览与热更新.md](UI声明式预览与热更新.md)。
 
 ## 1. 目标与职责
 
@@ -16,7 +16,7 @@
 它的主要使用流程是：
 
 ```text
-AI / 人工编辑
+外部 producer / 人工编辑
   -> JSON 或受控 RON
   -> 完整解析
   -> 版本判定和必要迁移
@@ -53,6 +53,9 @@ AI / 人工编辑
 | `framework/ui/widgets` | 将声明式控件映射到稳定公共 helper 和统一交互事件 | 为文档复制一套控件内部结构或交互系统 |
 | `game` | 注册 document ID、owner、panel、route 和 action ID；实现业务命令；决定页面进入/退出和权限 | 允许文档通过字符串指定任意 Rust 类型、system 或消息 |
 | Rust 业务页面 | 承载暂未进入白名单的复杂 UI，并可嵌入或打开声明式 panel | 绕过同一 Panel Manager、input、focus 和 audit 规则 |
+| 外部 producer | 人工 authoring 工具，以及规划中的 `tools/ui-generation/`；输出不可信 JSON 并调用最小校验/预览 facade | 成为 runtime 插件、让 `project` 反向依赖工具，或直接获得业务执行能力 |
+
+参考图生成器属于协议外部 producer，不属于 `UiDocument` runtime。规划中的工具可以单向依赖 `project` 暴露的最小稳定 facade，复用 canonical JSON、Schema/语义校验、预算和开发期预览；`project`、Android 壳和正式构建不得反向依赖工具。provider、图片预处理、prompt、视觉分析、修复、评测、成本和日志实现不能注册进 `UiFrameworkPlugin` 或进入正式游戏依赖图。完整规划见 [UI参考图生成与正式包边界.md](UI参考图生成与正式包边界.md)。
 
 游戏层必须先向 action registry 注册允许的 action ID、参数 schema、owner 范围和处理器，document 才能引用它。示例中的 `example.continue` 只是注册表键，不是函数名、消息类型名或自动获得执行权的命令。未知 action、参数类型不符、owner 不符或当前权限不允许时均拒绝加载或执行。
 
@@ -154,12 +157,12 @@ RON 只允许用于开发者人工维护且进入首包批准目录的资源。R
 | 内容 | 目录 | 运行时可直接加载 |
 | --- | --- | --- |
 | 人工 authoring source | `project/ui-documents/source/` | 否，必须经过批准流程 |
-| AI 或工具生成 draft | `artifacts/ui-documents/drafts/` | 否，始终按不可信草稿处理 |
+| 规划中的参考图生成 run、draft、source map 和生成期素材 | `summary/ui-generation/<run-id>/` | 否，始终按不可信草稿处理 |
 | 批准的首包 document | `project/assets/ui/documents/approved/` | 是，但仍需完整校验 |
 | 测试和协议 fixture | `project/assets/ui/documents/fixtures/` | 仅 dev/test build |
 | effective document、报告和截图 metadata | `artifacts/ui-documents/runtime/` | 否，只是派生产物，不能反向当 source |
 
-draft 不得通过重命名或复制自动升级为 approved。批准步骤至少要固定 schema version、canonical hash、资源清单、budget profile 和 action allowlist 审核结果。`artifacts/` 产物不进入 APK 首包。
+draft 不得通过重命名或复制自动升级为 approved。批准步骤至少要固定 schema version、canonical hash、资源清单、budget profile 和 action allowlist 审核结果。未来参考图生成工具只能通过要求显式确认的受控 `promote` 流程，把通过校验和人工批准的 JSON、授权资源及必要确定性注册适配写入正式目录；该命令目前尚未实现。`summary/ui-generation/` 和 `artifacts/` 产物都不进入 APK 首包，晋升后的正式文件会随桌面和 Android 游戏包交付。
 
 首版仓库用 `project/assets/ui/documents/fixtures/minimal_page.v1.json` 保存协议 fixture。它用于后续 parser、schema、迁移和构建测试，不是已注册的正式业务页面。
 

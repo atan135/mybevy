@@ -88,6 +88,14 @@ preview 不提供另一套 schema migration。旧版本先按 `UI声明式文档
 
 声明式页面适合结构稳定、白名单控件足够、需要 AI/人工共同编辑和批量审核的页面。复杂业务状态机、特殊手势、3D/场景绑定或协议暂不支持的组件继续放在 `game/screens/` 的 Rust 页面。Rust 适配层拥有 owner、路由、action registry、host binding 和生命周期；framework document 不导入业务 enum、system 或命令实现。
 
+## 未来参考图生成工具的预览边界
+
+规划中的参考图生成器是独立 `tools/ui-generation/` 开发工具，不是 `UiDocumentPreviewPlugin` 的子模块。它可以通过 `project` 后续暴露的最小稳定 facade 提交 staging JSON、选择安全逻辑 source，并复用本页已有的完整校验、事务 reload、状态迁移、截图和 audit metadata；这不要求、也不允许把 provider、图片预处理、prompt、generator、修复或评测代码注册进正式 `UiFrameworkPlugin`。
+
+生成工具的参考图、模型响应、草稿、source map、日志和生成期素材规划保存在被忽略的 `summary/ui-generation/<run-id>/`。preview 只消费当前待验证文档和明确允许的开发资源，不负责批准授权、写入 `project/assets/` 或创建业务 action。预览成功也不表示草稿已批准。
+
+后续只有显式 `promote` 流程可以在完整校验、人工批准、目标所有权、许可证和冲突检查后，把 `UiDocument` JSON、授权资源及封闭模板生成的必要 owner/route/registration 适配写入正式目录。晋升后的页面再按现有 approved source 和游戏路由加载，并随正式包交付。该独立工具和 `promote` 命令目前尚未实现；详细约定见 [UI参考图生成与正式包边界.md](UI参考图生成与正式包边界.md)。
+
 ## 当前限制
 
 - diff 已冻结分类和测试，但实际 ECS commit 仍采用整页事务 replace，没有开放局部实体 patch API。
@@ -95,3 +103,4 @@ preview 不提供另一套 schema migration。旧版本先按 `UI声明式文档
 - TextInput 当前保留值、焦点、光标和 selection；IME composition 与 native keyboard session 不迁移，但会在 reload report 中单独记录拒绝原因。
 - Scroll offset 在 commit 时先恢复非负有限值，后续 Bevy layout 会按新内容范围约束；结构显著缩短时应结合 report 和截图复核。
 - 自动 recipe registry 是 framework 元数据；实际 audit screen 的可路由性仍由游戏层注册。
+- 当前 preview 没有参考图分析、模型 provider、生成/修复或草稿晋升能力；未来工具只能以外部 producer 身份复用 preview。
