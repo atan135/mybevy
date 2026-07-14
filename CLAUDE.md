@@ -24,6 +24,8 @@
 - `docs/scene/`：场景框架相关文档，当前总文档规划场景生命周期、资源、切换、流式加载、相机和联机同步
 - `docs/ui/`：UI 框架相关文档，描述整体架构、输入实现、组件使用、布局、主题和限制，不记录开发期任务流程
 - `scripts/`：仓库级开发辅助脚本
+- `tools/`：不进入正式游戏包的独立开发工具工程
+- `tools/ui-generation/`：AI 参考图生成 UI 的桌面/CI Rust 工具；拥有独立 `Cargo.toml`、`Cargo.lock` 和 target，只单向依赖 `project` 的最小 `UiDocument` tooling facade
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
 - `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene、fight 和 fangyuan 边界
@@ -95,6 +97,15 @@ cargo fmt
 ```powershell
 cargo check
 ```
+
+检查独立 UI 生成工具：
+
+```powershell
+cargo test --manifest-path tools/ui-generation/Cargo.toml
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
+```
+
+生成工具的任务检查只读取输入并规划被忽略的 `summary/ui-generation/<run-id>/`，不会创建 run 目录或修改正式游戏文件。provider、图片预处理、生成和晋升能力按 `docs/ui/UI参考图生成与正式包边界.md` 分阶段实现。
 
 构建 Android Rust 动态库：
 

@@ -1,0 +1,60 @@
+{
+  "contract_version": 1,
+  "run_id": "fixture-contract-v1",
+  "page_purpose": {
+    "summary": "Document the Stage 1 task input contract",
+    "audience": "UI developers",
+    "required_actions": [
+      "review generated layout"
+    ]
+  },
+  "primary_reference": {
+    "reference_id": "primary",
+    "path": "reference.example.png",
+    "metadata": {
+      "original_size": {
+        "width": 1080,
+        "height": 2400
+      },
+      "orientation": "normal",
+      "color_space": "srgb",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "source": "Documentation-only placeholder; no binary fixture is committed",
+        "authorization": "analysis_only",
+        "license_reference": "fixtures/README.md"
+      }
+    }
+  },
+  "additional_references": [],
+  "target_viewport": {
+    "logical_width": 360.0,
+    "logical_height": 800.0,
+    "device_scale": 3.0
+  },
+  "visible_text": [
+    {
+      "text": "Review"
+    }
+  ],
+  "must_preserve": [
+    {
+      "description": "The primary action remains visible"
+    }
+  ],
+  "allowed_changes": {
+    "areas": [
+      "layout",
+      "spacing",
+      "decoration"
+    ],
+    "text_changes_allowed": false,
+    "protected_regions": [
+      "primary action"
+    ]
+  },
+  "visual_preferences": {
+    "decorative_treatment": "use_project_theme",
+    "surface_detail": "minimal"
+  }
+}

@@ -1,5 +1,6 @@
 # Rust / Bevy build artifacts
 /project/target/
+/tools/ui-generation/target/
 /logs/
 /artifacts/
 /local/

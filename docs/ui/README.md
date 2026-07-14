@@ -23,7 +23,7 @@
 
 ## 设计方案
 
-- [UI参考图生成与正式包边界.md](UI参考图生成与正式包边界.md)：规划中的独立 AI 生成工具、生成期 staging、受控晋升、Rust 适配限制和正式桌面/Android 包隔离边界。该工具和晋升命令尚未实现。
+- [UI参考图生成与正式包边界.md](UI参考图生成与正式包边界.md)：独立 AI 生成工具的输入契约、生成期 staging、受控晋升、Rust 适配限制和正式桌面/Android 包隔离边界。Stage 1 已实现任务检查与依赖边界检查；provider、图片预处理、生成和晋升尚未实现。
 - [UI自动化审计与优化方案.md](UI自动化审计与优化方案.md)：内置 UI 审计模式、全屏截图、滚动检查、AI 分析和自动修复闭环的方案设计。该文档描述目标机制，不代表当前已完整实现。
 
 ## 总览图
@@ -100,7 +100,9 @@ flowchart TD
 - `project/src/framework/ui/style/`：字体加载、作用域样式、主题 token、受限视觉效果和材质策略。
 - `project/src/framework/ui/i18n.rs`：UI 文案加载、fallback 和热更新。
 - `project/src/framework/ui/document/`：声明式模型、验证器、事务运行时、预览/reload、diff 和 audit metadata。
+- `project/src/framework/ui/document/tooling.rs`：供独立仓库工具复用的最小 `UiDocument` 协议、验证和 canonical facade。
 - `project/assets/ui/documents/approved/`：通过批准流程并可进入首包的声明式页面。
+- `tools/ui-generation/`：拥有独立 Cargo 根的桌面/CI 生成工具；不属于正式游戏 target、feature、plugin 或 Android 构建。
 
 ## 文档维护规则
 

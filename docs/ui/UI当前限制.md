@@ -104,8 +104,9 @@
 
 ## AI 参考图生成
 
-- 独立 `tools/ui-generation/` 工具工程、provider、图片预处理、视觉分析、`UiDocument` 生成/修复/评测和 `promote` 命令目前均未实现。
-- 未来生成工具属于桌面/CI 开发工具，不进入 `project` 正式依赖图，不注册进 `UiFrameworkPlugin`，也不由 Android `cargo ndk ... --lib` 构建。
+- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 严格任务输入、参考图 bytes/SHA-256 校验、结构化缺失问题、run 目录只读规划、任务状态/取消，以及结构化 Cargo manifest/path 依赖图与 lockfile 的离线边界检查；当前不会创建实际 run 目录。
+- provider、图片解码/EXIF、视觉分析、`UiDocument` 生成/修复/评测、预览接入和 `promote` 命令尚未实现，当前不能从参考图产出或晋升正式页面。
+- 生成工具属于桌面/CI 开发工具，拥有独立 Cargo 根，只能单向依赖 `project::framework::ui::document::tooling`，不进入 `project` 正式依赖图，不注册进 `UiFrameworkPlugin`，也不由 Android `cargo ndk ... --lib` 构建。
 - 原始参考图、模型响应、日志、草稿、source map 和生成期素材规划保存在被忽略的 `summary/ui-generation/<run-id>/`，不能写入 `project/assets/` 或随正式包交付。
 - 只有通过 Schema、语义、能力、action/binding、资源预算和授权检查，并经过人工批准与显式晋升的 `UiDocument` JSON、授权资源和必要确定性注册适配，才属于正式游戏内容并随桌面和 Android 包交付。
 - 页面主体规划为声明式 JSON；未知业务 action/binding 必须阻塞晋升，模型不能生成任意 Rust 业务实现。完整设计边界见 [UI参考图生成与正式包边界.md](UI参考图生成与正式包边界.md)。
