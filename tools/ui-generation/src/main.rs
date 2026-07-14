@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use ui_generation::{
     boundary::verify_dependency_boundary, inspect_task, lifecycle::CancellationToken,
+    preprocess::preprocess_task,
 };
 
 #[derive(Debug, Parser)]
@@ -20,6 +21,15 @@ enum Command {
     InspectTask {
         #[arg(long)]
         task: PathBuf,
+        #[arg(long)]
+        repository_root: PathBuf,
+    },
+    /// Safely normalizes task reference images into an ignored run directory and cache.
+    PreprocessTask {
+        #[arg(long)]
+        task: PathBuf,
+        #[arg(long)]
+        options: Option<PathBuf>,
         #[arg(long)]
         repository_root: PathBuf,
     },
@@ -55,6 +65,17 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             &CancellationToken::default(),
         )?)
         .expect("task inspection is serializable"),
+        Command::PreprocessTask {
+            task,
+            options,
+            repository_root,
+        } => serde_json::to_value(preprocess_task(
+            &task,
+            options.as_deref(),
+            &repository_root,
+            &CancellationToken::default(),
+        )?)
+        .expect("preprocess result is serializable"),
         Command::CheckBoundary { repository_root } => {
             serde_json::to_value(verify_dependency_boundary(&repository_root)?)
                 .expect("dependency boundary report is serializable")

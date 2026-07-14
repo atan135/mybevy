@@ -103,9 +103,10 @@ cargo check
 ```powershell
 cargo test --manifest-path tools/ui-generation/Cargo.toml
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- preprocess-task --task <task.json> --options <preprocess.options.json> --repository-root .
 ```
 
-生成工具的任务检查只读取输入并规划被忽略的 `summary/ui-generation/<run-id>/`，不会创建 run 目录或修改正式游戏文件。当前 provider 基础只包含离线 fixture/mock、凭据边界和受控调用协议；在线适配、图片预处理、生成和晋升能力按 `docs/ui/UI参考图生成与正式包边界.md` 分阶段实现。
+`inspect-task` 只读取输入并规划目录；`preprocess-task` 会把受限 PNG/JPEG 输入标准化到被忽略的 `summary/ui-generation/<run-id>/input/preprocessed/`，并复用 `summary/ui-generation/.cache/preprocess/`，但不会修改正式游戏文件。当前 provider 基础只包含离线 fixture/mock、凭据边界和受控调用协议；在线适配、视觉分析、生成和晋升能力按 `docs/ui/UI参考图生成与正式包边界.md` 分阶段实现。
 
 构建 Android Rust 动态库：
 

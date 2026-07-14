@@ -3,6 +3,7 @@ pub mod contract;
 pub mod credentials;
 pub mod directory;
 pub mod lifecycle;
+pub mod preprocess;
 pub mod provider;
 
 use contract::{GenerationTask, TaskAssessment, VerifiedReferenceImage};

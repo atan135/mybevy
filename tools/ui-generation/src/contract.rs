@@ -12,6 +12,7 @@ use std::{
 };
 
 const MAX_TASK_JSON_BYTES: u64 = 1024 * 1024;
+pub const MAX_REFERENCE_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -115,6 +116,8 @@ pub enum ImageOrientation {
     Rotate270,
     MirrorHorizontal,
     MirrorVertical,
+    Rotate90MirrorHorizontal,
+    Rotate270MirrorHorizontal,
     Unknown,
 }
 
@@ -574,6 +577,17 @@ fn hash_reference_file(
     reference_id: &str,
     cancellation: &CancellationToken,
 ) -> Result<(u64, String), TaskFailure> {
+    let metadata =
+        fs::metadata(path).map_err(|error| image_read_failure(path, reference_id, error))?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_REFERENCE_IMAGE_BYTES {
+        return Err(TaskFailure::new(
+            TaskFailureKind::ImageDimensionsUnsafe,
+            format!(
+                "reference image `{reference_id}` must be a regular file of 1..={MAX_REFERENCE_IMAGE_BYTES} encoded bytes"
+            ),
+            Some(path.display().to_string()),
+        ));
+    }
     let file = File::open(path).map_err(|error| image_read_failure(path, reference_id, error))?;
     let mut reader = BufReader::new(file);
     let mut digest = Sha256::new();
@@ -677,7 +691,10 @@ fn validate_reference_role(
 }
 
 fn validate_viewport(viewport: TargetViewport, path: &str) -> Result<(), TaskFailure> {
-    if viewport.logical_width <= 0.0
+    if !viewport.logical_width.is_finite()
+        || !viewport.logical_height.is_finite()
+        || !viewport.device_scale.is_finite()
+        || viewport.logical_width <= 0.0
         || viewport.logical_height <= 0.0
         || viewport.device_scale <= 0.0
     {

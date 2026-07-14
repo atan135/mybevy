@@ -51,10 +51,11 @@ project / Android / 正式构建 -X-> ui-generation tool
 
 当前最小 facade 位于 `project::framework::ui::document::tooling`，只暴露协议模型、schema version、validation report、资源预算信息和 canonical JSON 能力。后续只有在真实预览接入需要时才扩展受控预览入口。provider SDK、图片解码/EXIF、prompt、视觉分析、修复、评测、调用成本和生成日志实现只属于工具工程，不能加入 `project/Cargo.toml` 的正式依赖图，也不能注册进 `UiFrameworkPlugin`。
 
-工具提供以下 Stage 1 命令：
+工具当前提供以下输入、预处理和边界命令：
 
 ```powershell
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- inspect-task --task <task.json> --repository-root .
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- preprocess-task --task <task.json> --options <preprocess.options.json> --repository-root .
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
 ```
 
@@ -65,6 +66,12 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --rep
 run ID 只允许安全的小写 ASCII 标识，不接受绝对路径、`..`、路径分隔符或 Windows 保留名。目录计划固定包含 `input/`、`analysis/`、`draft/`、`assets/`、`preview/`、`logs/` 和 `manifest.json`；已有目标和通过符号链接逃逸仓库的根会被拒绝。状态模型区分 pending、输入校验、ready、running、completed、failed 和 cancelled，取消是幂等终态且在图片读取边界检查。
 
 Stage 2 的 provider 协议用 `visual_analysis` 和 `structured_generation` 两种供应商无关请求隔离模型名称、SDK 请求和原始响应。请求、图片 bytes、prompt 和结构化输入没有序列化实现；普通 trace 只允许记录 run/prompt/schema 版本、图片数量/总字节数、尝试结果、耗时和经过字符校验的服务端 request ID。统一 runner 强制单次超时、外部取消、本地最小请求间隔和最多 10 次的有限重试，并只重试 timeout、rate limit 和 service unavailable。凭据只由环境变量或注入的系统安全存储读取，secret 的 `Debug`/`Display` 恒为 `[REDACTED]`。当前没有在线供应商 SDK 或网络适配；离线 `FixtureProvider` 和 `MockProvider` 用于本地与 CI。
+
+Stage 3 的 `preprocess-task` 只接受内容识别为 PNG/JPEG、编码体积不超过 64 MiB、单边不超过 16384 px 且解码像素不超过 2400 万的参考图。工具读取编码尺寸、原始/解码色彩类型、alpha、EXIF 方向和 ICC profile 的长度/hash；任务声明方向与实际 EXIF 冲突会失败，无 EXIF 时才使用已确认的任务声明。标准副本固定输出确定性 RGBA8 PNG，但当前不执行或声称未经验证的 ICC 色彩转换，manifest 会同时保留声明色彩空间和嵌入 profile 证据。
+
+裁切、安全区和系统 UI 排除区均来自严格 options JSON，坐标统一使用完整 EXIF 归一化图的左上原点像素边界，不根据内容猜测。每张参考图最多允许 64 个系统 UI 排除区，超限在解码和绘制前失败，避免 options 放大辅助图绘制成本。manifest 明确记录原图像素、EXIF 归一化像素、预览像素、目标 logical px 和 device physical px 的尺寸、比例、裁切偏移与舍入规则；Raw 与 EXIF 空间保留全图往返，预览、logical 和 physical 空间只接受 crop 内坐标。超大图按固定 max edge/像素预算等比缩小，同时保留原尺寸和映射。网格、区域编号和高对比图是带 `auxiliary_only` 的独立 artifact，不能替代原图或标准预览作为后续证据。
+
+预处理 cache key 绑定输入 SHA-256、预处理协议/实现版本、声明 metadata、reference ID、目标 viewport、页面/局部验证 profile 和全部输出选项。cache 与 run 都先写同卷 staging 目录再 rename，已有 run 不覆盖，损坏 cache 不静默复用；所有输出固定在被忽略的 `summary/ui-generation/` 下。页面/状态/viewport 参考图会拒绝无可见变化的空白页；局部 detail 允许纯色素材，避免把合法色块误判为空白。
 
 ## 产物分类
 
@@ -159,7 +166,7 @@ Stage 2 的 provider 协议用 `visual_analysis` 和 `structured_generation` 两
 截至本文更新时：
 
 - 现有 `UiDocument` 协议、验证器、事务 runtime、preview/reload 和 audit metadata 已可供正式游戏与开发预览使用；`document::tooling` 提供不含游戏业务内部实现的最小验证/canonical facade。
-- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 任务输入、metadata/hash 校验、问题列表、目录规划、状态/取消和依赖方向检查，以及 Stage 2 provider 协议、凭据读取边界、有限调用策略、文本 fixture/mock 和脱敏 trace。
-- `summary/ui-generation/<run-id>/` 的结构和忽略边界已有可执行规划，但 Stage 1 默认不创建用户运行产物。
-- 在线 provider 适配、参考图像素预处理、视觉分析、生成/修复/评测、预览接入和 `promote` 命令尚未实现；当前 provider 基础只提供供应商无关协议和离线测试能力。
+- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 任务输入与依赖方向检查、Stage 2 provider 安全协议，以及 Stage 3 受限图片解码、EXIF/ICC 记录、统一坐标映射、显式区域、下采样、辅助图和原子缓存/run 产物。
+- `inspect-task` 默认不创建用户运行产物；`preprocess-task` 会创建被忽略的 `summary/ui-generation/<run-id>/input/preprocessed/` 和 `.cache/preprocess/`，不会写入正式游戏目录。
+- 在线 provider 适配、结构化视觉分析、`UiDocument` 生成/修复/评测、预览接入和 `promote` 命令尚未实现；当前 provider 基础只提供供应商无关协议和离线测试能力。
 - 目前不能宣称能够从参考图自动生成、批准或晋升正式 UI；实现进度以对应 checklist 和代码验证结果为准。

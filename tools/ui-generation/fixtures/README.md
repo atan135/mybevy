@@ -13,3 +13,9 @@ metadata and follow the repository Git LFS rules. Tool fixtures must never be co
 They exercise valid structured output, malformed output, a deliberately over-budget result for a
 later validator, and an interrupted request. The fixtures contain neither credentials nor copied
 model responses; their payloads were authored specifically for automated tests.
+
+`preprocess.options.json` is a text-only Stage 3 options example. Every rectangle is expressed in
+the full EXIF-normalized image's top-left pixel-edge coordinate system; no region is inferred from
+image content. The example dimensions correspond to the documentation-only task placeholder and
+do not cause the nonexistent `reference.example.png` to be read. Pixel/EXIF test images are
+generated programmatically in private temporary directories.

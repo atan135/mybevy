@@ -1,0 +1,51 @@
+{
+  "protocol_version": 1,
+  "defaults": {
+    "preview": {
+      "max_edge": 2048
+    },
+    "auxiliary": {
+      "grid_spacing": 128,
+      "number_regions": true,
+      "high_contrast": true
+    }
+  },
+  "references": {
+    "primary": {
+      "crop": {
+        "x": 0,
+        "y": 0,
+        "width": 1080,
+        "height": 2400
+      },
+      "safe_area": {
+        "x": 0,
+        "y": 96,
+        "width": 1080,
+        "height": 2208
+      },
+      "system_ui_exclusions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1080,
+          "height": 96
+        },
+        {
+          "x": 0,
+          "y": 2304,
+          "width": 1080,
+          "height": 96
+        }
+      ],
+      "preview": {
+        "max_edge": 2048
+      },
+      "auxiliary": {
+        "grid_spacing": 128,
+        "number_regions": true,
+        "high_contrast": true
+      }
+    }
+  }
+}
