@@ -105,7 +105,7 @@ cargo test --manifest-path tools/ui-generation/Cargo.toml
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
 ```
 
-生成工具的任务检查只读取输入并规划被忽略的 `summary/ui-generation/<run-id>/`，不会创建 run 目录或修改正式游戏文件。provider、图片预处理、生成和晋升能力按 `docs/ui/UI参考图生成与正式包边界.md` 分阶段实现。
+生成工具的任务检查只读取输入并规划被忽略的 `summary/ui-generation/<run-id>/`，不会创建 run 目录或修改正式游戏文件。当前 provider 基础只包含离线 fixture/mock、凭据边界和受控调用协议；在线适配、图片预处理、生成和晋升能力按 `docs/ui/UI参考图生成与正式包边界.md` 分阶段实现。
 
 构建 Android Rust 动态库：
 

@@ -1,7 +1,9 @@
 pub mod boundary;
 pub mod contract;
+pub mod credentials;
 pub mod directory;
 pub mod lifecycle;
+pub mod provider;
 
 use contract::{GenerationTask, TaskAssessment, VerifiedReferenceImage};
 use directory::RunDirectoryPlan;

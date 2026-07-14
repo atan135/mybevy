@@ -18,6 +18,14 @@ pub enum TaskFailureKind {
     UnsafeOutputPath,
     Cancelled,
     DependencyBoundaryViolation,
+    ProviderNotFound,
+    ProviderCapabilityUnsupported,
+    ProviderTimeout,
+    ProviderRateLimited,
+    ProviderAuthentication,
+    ProviderServiceUnavailable,
+    ProviderResponseMalformed,
+    CredentialUnavailable,
 }
 
 impl TaskFailureKind {
@@ -31,6 +39,14 @@ impl TaskFailureKind {
             Self::UnsafeOutputPath => "UI_GENERATION_OUTPUT_PATH_UNSAFE",
             Self::Cancelled => "UI_GENERATION_CANCELLED",
             Self::DependencyBoundaryViolation => "UI_GENERATION_DEPENDENCY_BOUNDARY_VIOLATION",
+            Self::ProviderNotFound => "UI_GENERATION_PROVIDER_NOT_FOUND",
+            Self::ProviderCapabilityUnsupported => "UI_GENERATION_PROVIDER_CAPABILITY_UNSUPPORTED",
+            Self::ProviderTimeout => "UI_GENERATION_PROVIDER_TIMEOUT",
+            Self::ProviderRateLimited => "UI_GENERATION_PROVIDER_RATE_LIMITED",
+            Self::ProviderAuthentication => "UI_GENERATION_PROVIDER_AUTHENTICATION_FAILED",
+            Self::ProviderServiceUnavailable => "UI_GENERATION_PROVIDER_SERVICE_UNAVAILABLE",
+            Self::ProviderResponseMalformed => "UI_GENERATION_PROVIDER_RESPONSE_MALFORMED",
+            Self::CredentialUnavailable => "UI_GENERATION_CREDENTIAL_UNAVAILABLE",
         }
     }
 }
@@ -43,6 +59,8 @@ pub struct TaskFailure {
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_request_id: Option<String>,
 }
 
 impl TaskFailure {
@@ -52,6 +70,7 @@ impl TaskFailure {
             code: kind.code().to_owned(),
             message: message.into(),
             subject,
+            server_request_id: None,
         }
     }
 
@@ -73,6 +92,15 @@ impl TaskFailure {
 
     pub fn subject(&self) -> Option<&str> {
         self.subject.as_deref()
+    }
+
+    pub(crate) fn with_server_request_id(mut self, server_request_id: impl Into<String>) -> Self {
+        self.server_request_id = Some(server_request_id.into());
+        self
+    }
+
+    pub fn server_request_id(&self) -> Option<&str> {
+        self.server_request_id.as_deref()
     }
 }
 

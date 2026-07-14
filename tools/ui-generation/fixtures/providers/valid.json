@@ -1,0 +1,33 @@
+{
+  "fixture_version": 1,
+  "case": "valid",
+  "source": {
+    "description": "Repository-authored minimal valid provider response for offline tests.",
+    "authored_for_tests": true,
+    "contains_sensitive_data": false
+  },
+  "provider": {
+    "id": "fixture-valid",
+    "capabilities": {
+      "image_input": true,
+      "structured_output": true,
+      "max_image_count": 4,
+      "operations": ["visual_analysis", "structured_generation"]
+    }
+  },
+  "expected_operation": "visual_analysis",
+  "outcome": {
+    "kind": "success",
+    "schema": {
+      "schema_id": "ui-reference-analysis",
+      "schema_version": 1
+    },
+    "value": {
+      "regions": [],
+      "uncertainties": []
+    },
+    "server_request_id": "fixture-valid-001",
+    "input_units": 12,
+    "output_units": 8
+  }
+}

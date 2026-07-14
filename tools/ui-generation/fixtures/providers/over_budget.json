@@ -1,0 +1,33 @@
+{
+  "fixture_version": 1,
+  "case": "over_budget",
+  "source": {
+    "description": "Repository-authored structurally valid result that exceeds a later-stage node budget.",
+    "authored_for_tests": true,
+    "contains_sensitive_data": false
+  },
+  "provider": {
+    "id": "fixture-over-budget",
+    "capabilities": {
+      "image_input": true,
+      "structured_output": true,
+      "max_image_count": 4,
+      "operations": ["visual_analysis"]
+    }
+  },
+  "expected_operation": "visual_analysis",
+  "outcome": {
+    "kind": "success",
+    "schema": {
+      "schema_id": "ui-reference-analysis",
+      "schema_version": 1
+    },
+    "value": {
+      "regions": [],
+      "simulated_node_count": 10001
+    },
+    "server_request_id": "fixture-over-budget-001",
+    "input_units": 20,
+    "output_units": 10001
+  }
+}

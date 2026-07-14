@@ -8,3 +8,8 @@ generation tool. `task.valid.json` is a contract example and intentionally refer
 Any future binary fixture must include its source, authorization, and license record in the task
 metadata and follow the repository Git LFS rules. Tool fixtures must never be copied into
 `project/assets/` merely to make a generation test pass.
+
+`providers/` contains non-sensitive, text-only provider response fixtures owned by this repository.
+They exercise valid structured output, malformed output, a deliberately over-budget result for a
+later validator, and an interrupted request. The fixtures contain neither credentials nor copied
+model responses; their payloads were authored specifically for automated tests.

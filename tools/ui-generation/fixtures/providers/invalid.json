@@ -1,0 +1,23 @@
+{
+  "fixture_version": 1,
+  "case": "invalid",
+  "source": {
+    "description": "Repository-authored malformed-response outcome for offline tests.",
+    "authored_for_tests": true,
+    "contains_sensitive_data": false
+  },
+  "provider": {
+    "id": "fixture-invalid",
+    "capabilities": {
+      "image_input": true,
+      "structured_output": true,
+      "max_image_count": 4,
+      "operations": ["visual_analysis"]
+    }
+  },
+  "expected_operation": "visual_analysis",
+  "outcome": {
+    "kind": "malformed_response",
+    "server_request_id": "fixture-invalid-001"
+  }
+}
