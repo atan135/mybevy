@@ -1,0 +1,66 @@
+{
+  "schema_id": "ui-reference-analysis",
+  "schema_version": 1,
+  "analysis_id": "analysis.over_budget",
+  "run_id": "fixture-over-budget",
+  "provider": { "provider_id": "fixture-analysis", "server_request_id": "fixture-budget-001", "prompt_version": "analysis-v1" },
+  "references": [
+    {
+      "reference_id": "primary",
+      "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "preprocess_cache_key": "2222222222222222222222222222222222222222222222222222222222222222",
+      "preprocess_protocol_version": 1,
+      "preprocess_implementation_version": "ui-reference-preprocess-1",
+      "preprocess_manifest_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "standard_preview_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "coordinate_space": "standard_preview_pixel",
+      "coordinate_convention": "top-left origin; x right; y down; continuous pixel-edge coordinates; bounds are closed for points and half-open for rectangles",
+      "width": 100,
+      "height": 100
+    }
+  ],
+  "regions": [
+    {
+      "region_id": "region.main",
+      "reference_id": "primary",
+      "label": "text budget fixture",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0, "evidence_ids": ["evidence.reference"] },
+      "confidence": 1.0,
+      "evidence_ids": ["evidence.reference"]
+    }
+  ],
+  "elements": [
+    {
+      "element_id": "page.root",
+      "parent_id": null,
+      "region_id": "region.main",
+      "kind": "text",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0, "evidence_ids": ["evidence.reference"] },
+      "layout": { "kind": "content_flow", "anchors": [], "flow_axis": "vertical", "scroll_axes": [], "evidence_ids": ["evidence.reference"] },
+      "alignment_clues": [],
+      "repeated_pattern": null,
+      "confidence": 1.0,
+      "evidence_ids": ["evidence.reference"],
+      "component_candidates": [{ "kind": "label", "confidence": 1.0, "evidence_ids": ["evidence.reference"] }],
+      "text": {
+        "original_candidates": [
+          {
+            "source": "model",
+            "raw_text": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "confidence": 1.0,
+            "evidence_ids": ["evidence.reference"]
+          }
+        ],
+        "human_provided_text": null,
+        "human_input_id": null,
+        "adopted": { "strategy": "candidate", "candidate_index": 0 }
+      },
+      "image": null
+    }
+  ],
+  "root_element_id": "page.root",
+  "evidence": [
+    { "evidence_id": "evidence.reference", "source": { "kind": "reference_region", "reference_id": "primary", "region_id": "region.main" }, "detail": "Repository-authored text length budget failure." }
+  ],
+  "uncertainties": []
+}

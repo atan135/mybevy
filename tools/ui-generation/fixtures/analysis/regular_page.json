@@ -1,0 +1,175 @@
+{
+  "schema_id": "ui-reference-analysis",
+  "schema_version": 1,
+  "analysis_id": "analysis.regular_page",
+  "run_id": "fixture-regular-page",
+  "provider": {
+    "provider_id": "fixture-analysis",
+    "server_request_id": "fixture-regular-001",
+    "prompt_version": "analysis-v1"
+  },
+  "references": [
+    {
+      "reference_id": "primary",
+      "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "preprocess_cache_key": "2222222222222222222222222222222222222222222222222222222222222222",
+      "preprocess_protocol_version": 1,
+      "preprocess_implementation_version": "ui-reference-preprocess-1",
+      "preprocess_manifest_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "standard_preview_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "coordinate_space": "standard_preview_pixel",
+      "coordinate_convention": "top-left origin; x right; y down; continuous pixel-edge coordinates; bounds are closed for points and half-open for rectangles",
+      "width": 1080,
+      "height": 1920
+    }
+  ],
+  "regions": [
+    {
+      "region_id": "region.main",
+      "reference_id": "primary",
+      "label": "main page",
+      "bounding_box": {
+        "reference_id": "primary",
+        "coordinate_space": "standard_preview_pixel",
+        "x": 0.0,
+        "y": 0.0,
+        "width": 1080.0,
+        "height": 1920.0,
+        "evidence_ids": ["evidence.reference"]
+      },
+      "confidence": 0.99,
+      "evidence_ids": ["evidence.reference"]
+    }
+  ],
+  "elements": [
+    {
+      "element_id": "page.root",
+      "parent_id": null,
+      "region_id": "region.main",
+      "kind": "background",
+      "bounding_box": {
+        "reference_id": "primary",
+        "coordinate_space": "standard_preview_pixel",
+        "x": 0.0,
+        "y": 0.0,
+        "width": 1080.0,
+        "height": 1920.0,
+        "evidence_ids": ["evidence.reference"]
+      },
+      "layout": {
+        "kind": "proportional_stretch",
+        "anchors": [],
+        "flow_axis": null,
+        "scroll_axes": [],
+        "evidence_ids": ["evidence.reference"]
+      },
+      "alignment_clues": [],
+      "repeated_pattern": null,
+      "confidence": 0.99,
+      "evidence_ids": ["evidence.reference", "evidence.provider"],
+      "component_candidates": [],
+      "text": null,
+      "image": {
+        "role": "background",
+        "description_candidates": [
+          {
+            "raw_description": "full-screen muted blue background",
+            "confidence": 0.91,
+            "evidence_ids": ["evidence.provider"]
+          }
+        ],
+        "likely_nine_slice": false
+      }
+    },
+    {
+      "element_id": "page.title",
+      "parent_id": "page.root",
+      "region_id": "region.main",
+      "kind": "text",
+      "bounding_box": {
+        "reference_id": "primary",
+        "coordinate_space": "standard_preview_pixel",
+        "x": 120.0,
+        "y": 240.0,
+        "width": 840.0,
+        "height": 120.0,
+        "evidence_ids": ["evidence.reference", "evidence.provider"]
+      },
+      "layout": {
+        "kind": "fixed_anchor",
+        "anchors": ["top", "horizontal_center"],
+        "flow_axis": null,
+        "scroll_axes": [],
+        "evidence_ids": ["evidence.reference"]
+      },
+      "alignment_clues": [
+        {
+          "axis": "horizontal",
+          "relation": "centered",
+          "target": { "kind": "region", "region_id": "region.main", "edge": "horizontal_center" },
+          "offset": 0.0,
+          "confidence": 0.96,
+          "evidence_ids": ["evidence.reference"]
+        }
+      ],
+      "repeated_pattern": null,
+      "confidence": 0.93,
+      "evidence_ids": ["evidence.reference", "evidence.provider", "evidence.human"] ,
+      "component_candidates": [
+        {
+          "kind": "label",
+          "confidence": 0.98,
+          "evidence_ids": ["evidence.provider"]
+        }
+      ],
+      "text": {
+        "original_candidates": [
+          {
+            "source": "ocr",
+            "raw_text": "START",
+            "confidence": 0.72,
+            "evidence_ids": ["evidence.provider"]
+          },
+          {
+            "source": "model",
+            "raw_text": "Start",
+            "confidence": 0.81,
+            "evidence_ids": ["evidence.provider"]
+          }
+        ],
+        "human_provided_text": "Start game",
+        "human_input_id": "task.visible_text.0000",
+        "adopted": { "strategy": "human_provided" }
+      },
+      "image": null
+    }
+  ],
+  "root_element_id": "page.root",
+  "evidence": [
+    {
+      "evidence_id": "evidence.reference",
+      "source": { "kind": "reference_region", "reference_id": "primary", "region_id": "region.main" },
+      "detail": "Observed in the repository-authored standard preview fixture."
+    },
+    {
+      "evidence_id": "evidence.provider",
+      "source": { "kind": "provider_response", "provider_id": "fixture-analysis", "server_request_id": "fixture-regular-001" },
+      "detail": "Offline fixture provider structured output."
+    },
+    {
+      "evidence_id": "evidence.human",
+      "source": { "kind": "human_input", "input_id": "task.visible_text.0000" },
+      "detail": "Repository-authored visible text supplied by a human."
+    }
+  ],
+  "uncertainties": [
+    {
+      "uncertainty_id": "uncertainty.title_text",
+      "kind": "text_conflict",
+      "subject": { "element_id": "page.title", "reference_id": "primary", "region_id": "region.main" },
+      "impact": "OCR/model candidates do not exactly match the human-provided title.",
+      "follow_up_question": "Confirm that the human-provided title remains authoritative.",
+      "evidence_ids": ["evidence.provider", "evidence.human"]
+    }
+  ]
+}

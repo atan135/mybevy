@@ -19,3 +19,10 @@ the full EXIF-normalized image's top-left pixel-edge coordinate system; no regio
 image content. The example dimensions correspond to the documentation-only task placeholder and
 do not cause the nonexistent `reference.example.png` to be read. Pixel/EXIF test images are
 generated programmatically in private temporary directories.
+
+`analysis/` contains repository-authored, non-sensitive Stage 4 structured-output fixtures. The
+valid corpus covers a regular page, long scrolling list, gameplay HUD, and modal. It deliberately
+uses placeholder hashes and contains no copied product art or third-party model output. The invalid
+corpus isolates an unknown field, a 1176-character recognition candidate that exceeds the text
+budget, and a parent cycle with no graph root. These files stay in the tool crate and are never
+copied to `project/assets/`.

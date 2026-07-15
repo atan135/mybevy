@@ -107,8 +107,9 @@
 - 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 严格任务输入、参考图 bytes/SHA-256 校验、结构化缺失问题、run 目录只读规划、任务状态/取消，以及结构化 Cargo manifest/path 依赖图与 lockfile 的离线边界检查；当前不会创建实际 run 目录。
 - Stage 2 已提供供应商无关的视觉分析/结构化生成请求、凭据读取与脱敏边界、超时/取消/限速/有限重试 runner、capability 检查以及文本 Fixture/Mock provider；请求中的 prompt、图片 bytes 和结构化输入不能作为普通 metadata 序列化。
 - Stage 3 已提供受限 PNG/JPEG 解码、EXIF/ICC/alpha 记录、八方向归一化、显式裁切/安全区/系统 UI 排除、五坐标系往返、确定性 PNG 下采样、独立辅助图和版本化原子缓存；所有产物仍是被忽略的生成期证据。
+- Stage 4 已提供独立 `UiReferenceAnalysis`、Draft 2020-12 JSON Schema、输入结构预算和语义诊断，覆盖区域/元素图、标准预览坐标证据、布局行为、视觉种类、候选组件、文字/图片候选、证据来源和显式 uncertainty；该类型只存在于工具 crate，不属于正式 runtime/schema。纯解析结果仍不可信，只有与实际 `ProviderExecution`、`GenerationTask.visible_text` 派生的人工输入 ID/text 和 Stage 3 manifest 证据全部交叉匹配的 integrated parser 结果才拥有生成期来源证明。
 - 预处理不会猜测区域，也不执行未经验证的 ICC 色彩转换；每张参考图最多允许 64 个显式系统 UI 排除区。页面类参考图的“空白”判定只覆盖无可见像素或 visible RGBA 全通道变化不超过 2 的页面，纯色 detail 仍允许。当前只支持 PNG/JPEG，编码上限 64 MiB、单边上限 16384 px、解码像素上限 2400 万。
-- 在线 provider 适配、结构化视觉分析协议、`UiDocument` 生成/修复/评测、预览接入和 `promote` 命令尚未实现，当前不能从参考图产出或晋升正式页面。
+- 在线 provider/OCR 适配、视觉 token/布局规划、`UiDocument` 生成/修复/评测、预览接入和 `promote` 命令尚未实现，当前不能从参考图产出或晋升正式页面。
 - 生成工具属于桌面/CI 开发工具，拥有独立 Cargo 根，只能单向依赖 `project::framework::ui::document::tooling`，不进入 `project` 正式依赖图，不注册进 `UiFrameworkPlugin`，也不由 Android `cargo ndk ... --lib` 构建。
 - 原始参考图、模型响应、日志、草稿、source map 和生成期素材规划保存在被忽略的 `summary/ui-generation/<run-id>/`，不能写入 `project/assets/` 或随正式包交付。
 - 只有通过 Schema、语义、能力、action/binding、资源预算和授权检查，并经过人工批准与显式晋升的 `UiDocument` JSON、授权资源和必要确定性注册适配，才属于正式游戏内容并随桌面和 Android 包交付。

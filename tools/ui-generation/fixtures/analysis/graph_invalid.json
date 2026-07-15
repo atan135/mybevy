@@ -1,0 +1,69 @@
+{
+  "schema_id": "ui-reference-analysis",
+  "schema_version": 1,
+  "analysis_id": "analysis.graph_invalid",
+  "run_id": "fixture-graph-invalid",
+  "provider": { "provider_id": "fixture-analysis", "server_request_id": "fixture-graph-001", "prompt_version": "analysis-v1" },
+  "references": [
+    {
+      "reference_id": "primary",
+      "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "preprocess_cache_key": "2222222222222222222222222222222222222222222222222222222222222222",
+      "preprocess_protocol_version": 1,
+      "preprocess_implementation_version": "ui-reference-preprocess-1",
+      "preprocess_manifest_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "standard_preview_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "coordinate_space": "standard_preview_pixel",
+      "coordinate_convention": "top-left origin; x right; y down; continuous pixel-edge coordinates; bounds are closed for points and half-open for rectangles",
+      "width": 100,
+      "height": 100
+    }
+  ],
+  "regions": [
+    {
+      "region_id": "region.graph",
+      "reference_id": "primary",
+      "label": "invalid graph",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0, "evidence_ids": ["evidence.reference"] },
+      "confidence": 1.0,
+      "evidence_ids": ["evidence.reference"]
+    }
+  ],
+  "elements": [
+    {
+      "element_id": "graph.a",
+      "parent_id": "graph.b",
+      "region_id": "region.graph",
+      "kind": "surface",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0, "evidence_ids": ["evidence.reference"] },
+      "layout": { "kind": "proportional_stretch", "anchors": [], "flow_axis": null, "scroll_axes": [], "evidence_ids": ["evidence.reference"] },
+      "alignment_clues": [],
+      "repeated_pattern": null,
+      "confidence": 1.0,
+      "evidence_ids": ["evidence.reference"],
+      "component_candidates": [],
+      "text": null,
+      "image": null
+    },
+    {
+      "element_id": "graph.b",
+      "parent_id": "graph.a",
+      "region_id": "region.graph",
+      "kind": "surface",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 10.0, "y": 10.0, "width": 80.0, "height": 80.0, "evidence_ids": ["evidence.reference"] },
+      "layout": { "kind": "proportional_stretch", "anchors": [], "flow_axis": null, "scroll_axes": [], "evidence_ids": ["evidence.reference"] },
+      "alignment_clues": [],
+      "repeated_pattern": null,
+      "confidence": 1.0,
+      "evidence_ids": ["evidence.reference"],
+      "component_candidates": [],
+      "text": null,
+      "image": null
+    }
+  ],
+  "root_element_id": "graph.a",
+  "evidence": [
+    { "evidence_id": "evidence.reference", "source": { "kind": "reference_region", "reference_id": "primary", "region_id": "region.graph" }, "detail": "Repository-authored graph validation failure." }
+  ],
+  "uncertainties": []
+}

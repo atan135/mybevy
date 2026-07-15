@@ -1,0 +1,116 @@
+{
+  "schema_id": "ui-reference-analysis",
+  "schema_version": 1,
+  "analysis_id": "analysis.modal",
+  "run_id": "fixture-modal",
+  "provider": { "provider_id": "fixture-analysis", "server_request_id": "fixture-modal-001", "prompt_version": "analysis-v1" },
+  "references": [
+    {
+      "reference_id": "primary",
+      "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "preprocess_cache_key": "2222222222222222222222222222222222222222222222222222222222222222",
+      "preprocess_protocol_version": 1,
+      "preprocess_implementation_version": "ui-reference-preprocess-1",
+      "preprocess_manifest_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "standard_preview_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "coordinate_space": "standard_preview_pixel",
+      "coordinate_convention": "top-left origin; x right; y down; continuous pixel-edge coordinates; bounds are closed for points and half-open for rectangles",
+      "width": 800,
+      "height": 1200
+    }
+  ],
+  "regions": [
+    {
+      "region_id": "region.modal",
+      "reference_id": "primary",
+      "label": "center modal",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 0.0, "y": 0.0, "width": 800.0, "height": 1200.0, "evidence_ids": ["evidence.reference"] },
+      "confidence": 0.94,
+      "evidence_ids": ["evidence.reference"]
+    }
+  ],
+  "elements": [
+    {
+      "element_id": "modal.root",
+      "parent_id": null,
+      "region_id": "region.modal",
+      "kind": "background",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 0.0, "y": 0.0, "width": 800.0, "height": 1200.0, "evidence_ids": ["evidence.reference"] },
+      "layout": { "kind": "proportional_stretch", "anchors": [], "flow_axis": null, "scroll_axes": [], "evidence_ids": ["evidence.reference"] },
+      "alignment_clues": [],
+      "repeated_pattern": null,
+      "confidence": 0.98,
+      "evidence_ids": ["evidence.reference"],
+      "component_candidates": [],
+      "text": null,
+      "image": { "role": "background", "description_candidates": [{ "raw_description": "dimmed page behind modal", "confidence": 0.85, "evidence_ids": ["evidence.provider"] }], "likely_nine_slice": false }
+    },
+    {
+      "element_id": "modal.panel",
+      "parent_id": "modal.root",
+      "region_id": "region.modal",
+      "kind": "nine_slice_candidate",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 120.0, "y": 360.0, "width": 560.0, "height": 420.0, "evidence_ids": ["evidence.reference"] },
+      "layout": { "kind": "fixed_anchor", "anchors": ["horizontal_center", "vertical_center"], "flow_axis": null, "scroll_axes": [], "evidence_ids": ["evidence.reference"] },
+      "alignment_clues": [{ "axis": "horizontal", "relation": "centered", "target": { "kind": "region", "region_id": "region.modal", "edge": "horizontal_center" }, "offset": 0.0, "confidence": 0.97, "evidence_ids": ["evidence.reference"] }],
+      "repeated_pattern": null,
+      "confidence": 0.84,
+      "evidence_ids": ["evidence.reference", "evidence.provider"],
+      "component_candidates": [{ "kind": "dialog", "confidence": 0.96, "evidence_ids": ["evidence.provider"] }, { "kind": "card", "confidence": 0.83, "evidence_ids": ["evidence.provider"] }],
+      "text": null,
+      "image": { "role": "nine_slice_candidate", "description_candidates": [{ "raw_description": "framed dialog surface with repeatable center", "confidence": 0.78, "evidence_ids": ["evidence.provider"] }], "likely_nine_slice": true }
+    },
+    {
+      "element_id": "modal.border",
+      "parent_id": "modal.panel",
+      "region_id": "region.modal",
+      "kind": "border",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 120.0, "y": 360.0, "width": 560.0, "height": 420.0, "evidence_ids": ["evidence.reference"] },
+      "layout": { "kind": "proportional_stretch", "anchors": [], "flow_axis": null, "scroll_axes": [], "evidence_ids": ["evidence.provider"] },
+      "alignment_clues": [{ "axis": "vertical", "relation": "aligned_edge", "target": { "kind": "element", "element_id": "modal.panel", "edge": "top" }, "offset": 0.0, "confidence": 0.88, "evidence_ids": ["evidence.reference"] }],
+      "repeated_pattern": null,
+      "confidence": 0.76,
+      "evidence_ids": ["evidence.reference", "evidence.provider"],
+      "component_candidates": [],
+      "text": null,
+      "image": null
+    },
+    {
+      "element_id": "modal.title",
+      "parent_id": "modal.panel",
+      "region_id": "region.modal",
+      "kind": "text",
+      "bounding_box": { "reference_id": "primary", "coordinate_space": "standard_preview_pixel", "x": 200.0, "y": 438.0, "width": 400.0, "height": 64.0, "evidence_ids": ["evidence.reference", "evidence.provider"] },
+      "layout": { "kind": "content_flow", "anchors": [], "flow_axis": "vertical", "scroll_axes": [], "evidence_ids": ["evidence.provider"] },
+      "alignment_clues": [{ "axis": "horizontal", "relation": "centered", "target": { "kind": "element", "element_id": "modal.panel", "edge": "horizontal_center" }, "offset": 0.0, "confidence": 0.92, "evidence_ids": ["evidence.reference"] }],
+      "repeated_pattern": null,
+      "confidence": 0.69,
+      "evidence_ids": ["evidence.reference", "evidence.provider", "evidence.human"],
+      "component_candidates": [{ "kind": "label", "confidence": 0.96, "evidence_ids": ["evidence.provider"] }],
+      "text": {
+        "original_candidates": [
+          { "source": "ocr", "raw_text": "Continue", "confidence": 0.54, "evidence_ids": ["evidence.provider"] },
+          { "source": "model", "raw_text": "Continue...", "confidence": 0.61, "evidence_ids": ["evidence.provider"] }
+        ],
+        "human_provided_text": "Continue?",
+        "human_input_id": "task.visible_text.0000",
+        "adopted": { "strategy": "human_provided" }
+      },
+      "image": null
+    }
+  ],
+  "root_element_id": "modal.root",
+  "evidence": [
+    { "evidence_id": "evidence.reference", "source": { "kind": "reference_region", "reference_id": "primary", "region_id": "region.modal" }, "detail": "Repository-authored modal pixel observation." },
+    { "evidence_id": "evidence.provider", "source": { "kind": "provider_response", "provider_id": "fixture-analysis", "server_request_id": "fixture-modal-001" }, "detail": "Offline fixture recognition candidates." },
+    { "evidence_id": "evidence.human", "source": { "kind": "human_input", "input_id": "task.visible_text.0000" }, "detail": "Repository-authored authoritative dialog text." }
+  ],
+  "uncertainties": [
+    { "uncertainty_id": "uncertainty.occlusion", "kind": "occlusion", "subject": { "element_id": "modal.border", "reference_id": "primary", "region_id": "region.modal" }, "impact": "The lower border is partly covered by foreground content.", "follow_up_question": "Should the hidden border continue uniformly?", "evidence_ids": ["evidence.reference"] },
+    { "uncertainty_id": "uncertainty.blur", "kind": "blur", "subject": { "element_id": "modal.panel", "reference_id": "primary", "region_id": "region.modal" }, "impact": "Blur prevents an exact surface texture classification.", "follow_up_question": "Is the surface intentionally textured or flat?", "evidence_ids": ["evidence.reference", "evidence.provider"] },
+    { "uncertainty_id": "uncertainty.cropping", "kind": "cropping", "subject": { "element_id": null, "reference_id": "primary", "region_id": "region.modal" }, "impact": "The surrounding page is cropped and cannot establish responsive behavior.", "follow_up_question": "Provide an uncropped page reference for the target viewport.", "evidence_ids": ["evidence.reference"] },
+    { "uncertainty_id": "uncertainty.font", "kind": "unknown_font", "subject": { "element_id": "modal.title", "reference_id": "primary", "region_id": "region.modal" }, "impact": "The exact font family and weight cannot be identified.", "follow_up_question": "Which approved project font role should be used?", "evidence_ids": ["evidence.provider"] },
+    { "uncertainty_id": "uncertainty.interaction", "kind": "hidden_interaction", "subject": { "element_id": "modal.panel", "reference_id": "primary", "region_id": "region.modal" }, "impact": "A still image cannot prove dismiss and focus behavior.", "follow_up_question": "How can the modal be dismissed and where should focus start?", "evidence_ids": ["evidence.provider"] },
+    { "uncertainty_id": "uncertainty.title_text", "kind": "text_conflict", "subject": { "element_id": "modal.title", "reference_id": "primary", "region_id": "region.modal" }, "impact": "Recognition candidates conflict with authoritative human text.", "follow_up_question": "Keep the supplied question mark in the final copy?", "evidence_ids": ["evidence.provider", "evidence.human"] }
+  ]
+}
