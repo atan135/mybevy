@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod asset_strategy;
 pub mod boundary;
 pub mod contract;
 pub mod credentials;

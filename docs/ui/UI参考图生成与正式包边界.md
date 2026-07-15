@@ -1,6 +1,6 @@
 # UI 参考图生成与正式包边界
 
-本文冻结“参考图 -> `UiDocument` -> 正式游戏页面”流程的工程边界。仓库当前已提供 Stage 1-4 `tools/ui-generation/` 独立工具、输入契约、工作目录规划、provider 无关调用协议、图片预处理和结构化视觉分析协议；在线供应商适配、文档生成、预览接入和 `promote` 命令仍未实现。
+本文冻结“参考图 -> `UiDocument` -> 正式游戏页面”流程的工程边界。仓库当前已提供 Stage 1-6 `tools/ui-generation/` 独立工具、输入契约、工作目录规划、provider 无关调用协议、图片预处理、结构化视觉分析、确定性页面规划和素材策略协议；在线供应商适配、文档生成、预览接入和 `promote` 命令仍未实现。
 
 ## 目标
 
@@ -19,7 +19,8 @@
 
 ```text
 tools/ui-generation/
-  src/                  当前包含输入、状态、目录、依赖边界、凭据和 provider 基础；后续承载预处理、生成、修复、评测和晋升
+  src/                  当前包含输入、状态、目录、依赖边界、provider、预处理、分析、页面规划和素材策略；后续承载文档生成、修复、评测和晋升
+  assets/               工具侧只读、版本化的正式 UI asset ID metadata；不包含正式资源副本
   fixtures/             来源明确、允许公开提交的离线 fixture
   Cargo.toml            独立工具 crate，不属于 project workspace 或 target
   Cargo.lock            工具自身依赖锁定
@@ -175,12 +176,22 @@ Stage 4 的 `UiReferenceAnalysis` 只存在于工具 crate，是独立于正式 
 
 每个 token 都携带稳定的 `origin`：`observed_geometry` 仅表示来自 bounding box/父子位置的几何值，`existing_catalog_suggestion` 表示按视觉角色或控件类型提出的现有主题建议，`heuristic_assumption` 表示字号比例、默认阴影等启发式假设。颜色、圆角、边框和阴影目前不是像素测量结果；后续阶段不得把 catalog 建议或启发式值当作参考图视觉证据。在线视觉测量仍不属于当前能力。
 
-规划诊断会稳定报告同轴矛盾对齐、固定宽度双边锚定、过度绝对定位和子元素不可能最小尺寸。规划器不会写入 `project/assets/`，也不会生成 Stage 6 的素材分类结果。
+规划诊断会稳定报告同轴矛盾对齐、固定宽度双边锚定、过度绝对定位和子元素不可能最小尺寸。规划器本身不会写入 `project/assets/`；Stage 6 素材策略以其输出和同一份 analysis ID 为后续输入。
+
+### Stage 6 素材策略
+
+`tools/ui-generation/src/asset_strategy.rs` 为每个分析元素确定性记录 `existing_asset`、`programmatic`、`authorized_crop`、`recreate`、`generate` 或 `placeholder` 六类处置。未获得显式资源匹配的图片类元素不会猜路径或静默消失，而是生成带诊断的 placeholder；表面、文字、边框和状态等可表达内容默认归入程序化表现。重制和生成规格固定记录像素尺寸、alpha、nine-slice 边距、sRGB 要求和用途。生成 provenance 只允许受控 subject/style tag 摘要，记录工具 ID/版本、许可证和人工审核状态，不保存完整 prompt，新草稿也不能把自身标记为已批准。
+
+工具侧 `assets/ui_asset_catalog.v1.json` 为当前正式 `project/assets/ui/{atlas,icons,images,fonts}` 建立稳定 asset ID、hash、尺寸、alpha、许可证和检索 tag。加载 catalog 时会递归复验生产资源全覆盖、文件 hash/metadata、许可文件、任意层大小写碰撞、重复 ID、路径逃逸和符号链接，并对目录深度和遍历条目设置显式预算。查询结果只返回稳定 ID；策略匹配不接受模型提供的 packaged path。图标、背景、内容图、装饰和 nine-slice 还必须分别匹配 catalog 的用途 tag，程序化替代与输出规格用途也必须和分析元素 kind 兼容；无法证明兼容时拒绝该决定，由调用方显式保留 placeholder/review。既有背景和 atlas 中尚无许可记录的文件明确保留 `unknown` 并产生审核诊断，不把“文件已经在包内”等同于许可已确认。
+
+局部裁切采用 fail-closed 授权：只有任务明确标记 `derivatives_allowed` 且带许可/授权记录时才能建立 crop；`analysis_only`、`distribution_allowed`、`unknown`、`denied` 和缺许可引用全部拒绝。素材策略入口会先复验 task 和 analysis 语义、planning protocol/analysis ID，重算 Stage 3 cache key 和完整坐标映射，再交叉核对 source/manifest/标准预览 hash、实现版本、尺寸和坐标约定，将 Stage 4 preview bbox 按向外取整映射到 EXIF-normalized 坐标。catalog JSON、manifest、artifact 数量/字节/像素和目录遍历都在解析或分配前受显式预算约束。实际像素只从 run 内精确匹配 hash 的标准预览读取，经同目录 staging 和文件 flush/sync 后，以 hard-link create-if-absent 进行原子 no-clobber 提交，再删除 staging；已有目标或竞争窗口内新建目标都不会被覆盖。draft asset ID 使用带固定前缀的无填充 base32 无损映射为跨平台文件名，`a.b` 与 `a_b` 不碰撞。规格与裁切尺寸不一致时不隐式缩放，写前写后还会复核正式 `project/assets/` 文件 hash 快照。
+
+PNG/JPEG 草稿检查会在解码前拒绝超编码字节或超 Android 尺寸/像素预算，并通过受限解码器约束分配；检查结果稳定报告 8-bit Android 颜色类型、alpha 要求、透明边缘和透明 RGB bleed、APNG、ICC/sRGB 证据，以及 JPEG 有损压缩审核项。无法证明颜色转换时输出 `review_required`，不会声称已经完成 ICC 转换；超出 Android 纹理预算、格式/解码失败或规格不符则拒绝。
 
 截至本文更新时：
 
 - 现有 `UiDocument` 协议、验证器、事务 runtime、preview/reload 和 audit metadata 已可供正式游戏与开发预览使用；`document::tooling` 提供不含游戏业务内部实现的最小验证/canonical facade。
-- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 任务输入与依赖方向检查、Stage 2 provider 安全协议、Stage 3 受限图片解码与坐标/缓存、Stage 4 结构化视觉分析 Schema/语义校验/离线 fixture，以及 Stage 5 确定性 token、组件和布局规划。
+- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 任务输入与依赖方向检查、Stage 2 provider 安全协议、Stage 3 受限图片解码与坐标/缓存、Stage 4 结构化视觉分析 Schema/语义校验/离线 fixture、Stage 5 确定性 token/组件/布局规划，以及 Stage 6 稳定 asset ID catalog、六类素材策略、授权裁切与草稿质量检查。
 - `inspect-task` 默认不创建用户运行产物；`preprocess-task` 会创建被忽略的 `summary/ui-generation/<run-id>/input/preprocessed/` 和 `.cache/preprocess/`，不会写入正式游戏目录。
-- 在线 provider/OCR 适配、`UiDocument` 生成/修复/评测、预览接入和 `promote` 命令尚未实现；当前分析能力只提供严格中间协议、校验和离线测试路径。
+- 在线 provider/OCR/图片生成适配、`UiDocument` 生成/修复/评测、预览接入和 `promote` 命令尚未实现；当前能力只提供严格中间协议、确定性规划/素材策略、校验和离线测试路径。
 - 目前不能宣称能够从参考图自动生成、批准或晋升正式 UI；实现进度以对应 checklist 和代码验证结果为准。
