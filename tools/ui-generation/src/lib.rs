@@ -4,6 +4,7 @@ pub mod boundary;
 pub mod contract;
 pub mod credentials;
 pub mod directory;
+pub mod generation;
 pub mod lifecycle;
 pub mod planning;
 pub mod preprocess;

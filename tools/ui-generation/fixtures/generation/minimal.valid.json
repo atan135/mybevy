@@ -1,0 +1,34 @@
+{
+  "document": {
+    "schema_version": 1,
+    "document_id": "generated.minimal_fixture",
+    "metadata": {
+      "title": "Generated minimal fixture",
+      "budget_profile": "mobile_baseline_v1"
+    },
+    "assets": {},
+    "tokens": {},
+    "root": {
+      "type": "container",
+      "id": "page.root",
+      "layout": {
+        "direction": "column",
+        "width": { "percent": 100 },
+        "height": { "percent": 100 }
+      },
+      "style": { "role": "page" },
+      "children": [
+        {
+          "type": "text",
+          "id": "page.title",
+          "content": { "literal": "Start game" },
+          "style": { "text_role": "title" }
+        }
+      ]
+    }
+  },
+  "assumptions": [],
+  "unimplemented_states": [],
+  "required_new_components": [],
+  "unsupported_capabilities": []
+}

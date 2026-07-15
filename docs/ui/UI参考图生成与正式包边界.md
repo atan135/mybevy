@@ -1,6 +1,6 @@
 # UI 参考图生成与正式包边界
 
-本文冻结“参考图 -> `UiDocument` -> 正式游戏页面”流程的工程边界。仓库当前已提供 Stage 1-6 `tools/ui-generation/` 独立工具、输入契约、工作目录规划、provider 无关调用协议、图片预处理、结构化视觉分析、确定性页面规划和素材策略协议；在线供应商适配、文档生成、预览接入和 `promote` 命令仍未实现。
+本文冻结“参考图 -> `UiDocument` -> 正式游戏页面”流程的工程边界。仓库当前已提供 Stage 1-7 `tools/ui-generation/` 独立工具、输入契约、工作目录规划、provider 无关调用协议、图片预处理、结构化视觉分析、确定性页面规划、素材策略和受控 `UiDocument` 生成验证；在线供应商适配、生成 CLI 落盘、有限修复、预览接入和 `promote` 命令仍未实现。
 
 ## 目标
 
@@ -188,10 +188,20 @@ Stage 4 的 `UiReferenceAnalysis` 只存在于工具 crate，是独立于正式 
 
 PNG/JPEG 草稿检查会在解码前拒绝超编码字节或超 Android 尺寸/像素预算，并通过受限解码器约束分配；检查结果稳定报告 8-bit Android 颜色类型、alpha 要求、透明边缘和透明 RGB bleed、APNG、ICC/sRGB 证据，以及 JPEG 有损压缩审核项。无法证明颜色转换时输出 `review_required`，不会声称已经完成 ICC 转换；超出 Android 纹理预算、格式/解码失败或规格不符则拒绝。
 
+### Stage 7 结构化 UiDocument 生成
+
+`tools/ui-generation/src/generation.rs` 将已验证的 `UiReferenceAnalysis`、确定性布局计划、token/组件建议和 Stage 6 素材表组成 provider `structured_generation` 请求。请求携带固定版本的输出契约、目标 `UiDocument` schema 版本、literal-only 文本策略、stable asset allowlist 和由参考元素 ID 确定性派生的 node ID/source map；不从 Markdown 代码块或自然语言中截取 JSON。
+
+provider 响应先受独立的 envelope 字节、深度、节点、容器和字符串预算约束，再交给游戏工程 `document::tooling` facade 执行正式 canonical JSON、Schema、语义、能力和资源预算验证。工具不复制正式 `UiDocument` 协议验证器；正式验证后的 canonical 结构还必须精确覆盖 source map 的节点集合与父子层级。所有可见文字只允许使用分析阶段明确采用的 literal，未解决文字保持 unsupported；生成阶段禁止新增 i18n key、binding 或 action。参考图中看似可交互但没有受信任业务注册的元素只产生未实现项，不会凭空绑定行为。
+
+素材只允许使用 Stage 6 已明确选中的 stable asset ID，并逐项复核 catalog 中的 packaged path 和类型；placeholder、待生成、待重制或待授权裁切项不能偷偷引用正式资源。输出独立记录 assumptions、unimplemented states、required new components 和 unsupported capabilities；合并预算由 provider、analysis、planning 和 asset strategy 的公开最大预算推导，排序去重后不得截断明细，协议预算漂移导致越界时稳定失败。trace 只保留经过安全 label 约束的 provider/model/prompt/schema 标识、组合输入 hash、受控生成参数、server request ID 和 canonical 文档 hash，不保存完整 prompt 或原始响应。
+
+当前 Stage 7 是工具库 API 和离线 fixture 验证链路：最小页面、复杂嵌套页面、正式协议非法输出、不支持能力、注册组件 variant、stable asset path、source map 碰撞和 Markdown fence 均有测试。它尚未提供生成 CLI、在线模型适配、草稿目录原子落盘、有限修复或进程内预览；这些能力分别留给后续阶段。
+
 截至本文更新时：
 
 - 现有 `UiDocument` 协议、验证器、事务 runtime、preview/reload 和 audit metadata 已可供正式游戏与开发预览使用；`document::tooling` 提供不含游戏业务内部实现的最小验证/canonical facade。
-- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 任务输入与依赖方向检查、Stage 2 provider 安全协议、Stage 3 受限图片解码与坐标/缓存、Stage 4 结构化视觉分析 Schema/语义校验/离线 fixture、Stage 5 确定性 token/组件/布局规划，以及 Stage 6 稳定 asset ID catalog、六类素材策略、授权裁切与草稿质量检查。
+- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 任务输入与依赖方向检查、Stage 2 provider 安全协议、Stage 3 受限图片解码与坐标/缓存、Stage 4 结构化视觉分析 Schema/语义校验/离线 fixture、Stage 5 确定性 token/组件/布局规划、Stage 6 稳定 asset ID catalog、六类素材策略、授权裁切与草稿质量检查，以及 Stage 7 结构化 `UiDocument` 生成、正式 facade 验证、source map 和生成追踪。
 - `inspect-task` 默认不创建用户运行产物；`preprocess-task` 会创建被忽略的 `summary/ui-generation/<run-id>/input/preprocessed/` 和 `.cache/preprocess/`，不会写入正式游戏目录。
-- 在线 provider/OCR/图片生成适配、`UiDocument` 生成/修复/评测、预览接入和 `promote` 命令尚未实现；当前能力只提供严格中间协议、确定性规划/素材策略、校验和离线测试路径。
-- 目前不能宣称能够从参考图自动生成、批准或晋升正式 UI；实现进度以对应 checklist 和代码验证结果为准。
+- 在线 provider/OCR/图片生成适配、生成 CLI/草稿原子落盘、有限修复/评测、预览接入和 `promote` 命令尚未实现；当前结构化生成能力通过工具 API 和离线 fixture 验证，不会自动写入正式目录。
+- 目前不能宣称已经具备从参考图自动生成并落盘、批准或晋升正式 UI 的端到端流程；实现进度以对应 checklist 和代码验证结果为准。

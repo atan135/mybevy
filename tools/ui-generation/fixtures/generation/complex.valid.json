@@ -1,0 +1,65 @@
+{
+  "document": {
+    "schema_version": 1,
+    "document_id": "generated.complex_fixture",
+    "metadata": {
+      "title": "Generated complex fixture",
+      "budget_profile": "mobile_baseline_v1"
+    },
+    "assets": {},
+    "tokens": {},
+    "root": {
+      "type": "container",
+      "id": "modal.root",
+      "layout": {
+        "direction": "column",
+        "width": { "percent": 100 },
+        "height": { "percent": 100 },
+        "align_items": "center",
+        "justify_content": "center"
+      },
+      "children": [
+        {
+          "type": "container",
+          "id": "modal.panel",
+          "layout": {
+            "direction": "column",
+            "width": { "px": 720 },
+            "gap": { "px": 20 }
+          },
+          "style": { "role": "panel" },
+          "children": [
+            {
+              "type": "container",
+              "id": "modal.border",
+              "layout": { "height": { "px": 1 } },
+              "style": { "role": "separator" }
+            },
+            {
+              "type": "text",
+              "id": "modal.title",
+              "content": { "literal": "Continue?" },
+              "style": { "text_role": "title" }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "assumptions": [
+    {
+      "code": "GENERATION_MODAL_LAYOUT_ASSUMED",
+      "subject_id": "modal.panel",
+      "message": "Panel flow is inferred from the single visible state."
+    }
+  ],
+  "unimplemented_states": [],
+  "required_new_components": [],
+  "unsupported_capabilities": [
+    {
+      "code": "GENERATION_NINE_SLICE_PENDING",
+      "subject_id": "modal.panel",
+      "message": "The nine-slice candidate has no packaged approved asset."
+    }
+  ]
+}

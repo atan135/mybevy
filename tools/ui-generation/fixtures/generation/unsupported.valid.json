@@ -1,0 +1,53 @@
+{
+  "document": {
+    "schema_version": 1,
+    "document_id": "generated.unsupported_fixture",
+    "metadata": {
+      "title": "Generated unsupported-capability fixture",
+      "budget_profile": "mobile_baseline_v1"
+    },
+    "assets": {},
+    "tokens": {},
+    "root": {
+      "type": "container",
+      "id": "hud.root",
+      "layout": {
+        "width": { "percent": 100 },
+        "height": { "percent": 100 }
+      },
+      "children": [
+        {
+          "type": "container",
+          "id": "hud.health",
+          "layout": { "width": { "px": 360 }, "height": { "px": 44 } }
+        },
+        {
+          "type": "container",
+          "id": "hud.ability_icon",
+          "layout": { "width": { "px": 88 }, "height": { "px": 88 } }
+        },
+        {
+          "type": "container",
+          "id": "hud.spark",
+          "layout": { "width": { "px": 40 }, "height": { "px": 40 } }
+        }
+      ]
+    }
+  },
+  "assumptions": [],
+  "unimplemented_states": [
+    {
+      "code": "GENERATION_ABILITY_ACTION_PENDING",
+      "subject_id": "hud.ability_icon",
+      "message": "The visible ability control has no registered action mapping."
+    }
+  ],
+  "required_new_components": [],
+  "unsupported_capabilities": [
+    {
+      "code": "GENERATION_ABILITY_ASSET_PENDING",
+      "subject_id": "hud.ability_icon",
+      "message": "The ability image has no approved packaged asset."
+    }
+  ]
+}

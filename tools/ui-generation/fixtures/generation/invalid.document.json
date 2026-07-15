@@ -1,0 +1,22 @@
+{
+  "document": {
+    "schema_version": 1,
+    "document_id": "generated.invalid_fixture",
+    "root": {
+      "type": "container",
+      "id": "page.root",
+      "unknown_provider_field": true,
+      "children": [
+        {
+          "type": "text",
+          "id": "page.title",
+          "content": { "literal": "Start game" }
+        }
+      ]
+    }
+  },
+  "assumptions": [],
+  "unimplemented_states": [],
+  "required_new_components": [],
+  "unsupported_capabilities": []
+}

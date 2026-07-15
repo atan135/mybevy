@@ -26,3 +26,8 @@ uses placeholder hashes and contains no copied product art or third-party model 
 corpus isolates an unknown field, a 1176-character recognition candidate that exceeds the text
 budget, and a parent cycle with no graph root. These files stay in the tool crate and are never
 copied to `project/assets/`.
+
+`generation/` contains repository-authored Stage 7 structured provider envelopes for a minimal
+page, a nested page, a formally invalid `UiDocument`, and a valid draft with explicitly unsupported
+behavior. They contain no prompt transcript, model response transcript, user image, or production
+asset.

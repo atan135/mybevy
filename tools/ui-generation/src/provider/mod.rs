@@ -350,7 +350,7 @@ fn validate_request_labels(run_id: &str, prompt_version: &str) -> Result<(), Tas
     Ok(())
 }
 
-fn is_safe_metadata_label(value: &str, maximum_length: usize) -> bool {
+pub(crate) fn is_safe_metadata_label(value: &str, maximum_length: usize) -> bool {
     !value.is_empty()
         && value.len() <= maximum_length
         && value
