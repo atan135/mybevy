@@ -462,13 +462,22 @@ mod tests {
 
     fn test_policy(max_attempts: u32) -> ProviderExecutionPolicy {
         ProviderExecutionPolicy {
-            attempt_timeout: Duration::from_millis(20),
+            // These tests exercise retry, contract, and rate-limit semantics. Keep scheduling
+            // contention from turning them into accidental timeout tests.
+            attempt_timeout: Duration::from_secs(10),
             minimum_request_interval: Duration::ZERO,
             retry: RetryPolicy {
                 max_attempts,
                 initial_backoff: Duration::from_millis(1),
                 max_backoff: Duration::from_millis(3),
             },
+        }
+    }
+
+    fn timeout_test_policy(max_attempts: u32) -> ProviderExecutionPolicy {
+        ProviderExecutionPolicy {
+            attempt_timeout: Duration::from_millis(20),
+            ..test_policy(max_attempts)
         }
     }
 
@@ -624,7 +633,7 @@ mod tests {
         ));
         let mut registry = ProviderRegistry::default();
         registry.register(provider).unwrap();
-        let runner = ProviderRunner::new(registry, test_policy(1)).unwrap();
+        let runner = ProviderRunner::new(registry, timeout_test_policy(1)).unwrap();
         let started = Instant::now();
         let failure = runner
             .execute(

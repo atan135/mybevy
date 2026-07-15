@@ -167,10 +167,20 @@ Stage 4 的 `UiReferenceAnalysis` 只存在于工具 crate，是独立于正式 
 
 ## 当前状态
 
+### Stage 5 规划协议
+
+`tools/ui-generation/src/planning.rs` 将已通过 Stage 4 校验的分析结果转换为有预算、顺序稳定的页面规划。它聚类可见几何得到字号、间距、重复尺寸、圆角和边框候选，按重复 pattern 保留组件实例到参考元素的 source mapping，并输出父子、尺寸、锚点、对齐、间距、伸缩和滚动约束。计划步骤固定按结构、视觉、装饰排序。
+
+规划器通过 `UiDocument` tooling facade 的只读 catalog 匹配现有 theme token 和正式协议实际支持的 widget variant。variant catalog 与 `UiDocument` semantic validator 共用支持矩阵；label、card、list、list item 等没有正式 component variant 的候选不会被标记为全局复用。匹配成功才建议复用全局项；未匹配 token 默认限制为页面作用域，未匹配的重复组件限制为组件作用域。
+
+每个 token 都携带稳定的 `origin`：`observed_geometry` 仅表示来自 bounding box/父子位置的几何值，`existing_catalog_suggestion` 表示按视觉角色或控件类型提出的现有主题建议，`heuristic_assumption` 表示字号比例、默认阴影等启发式假设。颜色、圆角、边框和阴影目前不是像素测量结果；后续阶段不得把 catalog 建议或启发式值当作参考图视觉证据。在线视觉测量仍不属于当前能力。
+
+规划诊断会稳定报告同轴矛盾对齐、固定宽度双边锚定、过度绝对定位和子元素不可能最小尺寸。规划器不会写入 `project/assets/`，也不会生成 Stage 6 的素材分类结果。
+
 截至本文更新时：
 
 - 现有 `UiDocument` 协议、验证器、事务 runtime、preview/reload 和 audit metadata 已可供正式游戏与开发预览使用；`document::tooling` 提供不含游戏业务内部实现的最小验证/canonical facade。
-- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 任务输入与依赖方向检查、Stage 2 provider 安全协议、Stage 3 受限图片解码与坐标/缓存，以及 Stage 4 结构化视觉分析 Schema、语义校验和离线 fixture。
+- 独立 `tools/ui-generation/` 工具工程已实现 Stage 1 任务输入与依赖方向检查、Stage 2 provider 安全协议、Stage 3 受限图片解码与坐标/缓存、Stage 4 结构化视觉分析 Schema/语义校验/离线 fixture，以及 Stage 5 确定性 token、组件和布局规划。
 - `inspect-task` 默认不创建用户运行产物；`preprocess-task` 会创建被忽略的 `summary/ui-generation/<run-id>/input/preprocessed/` 和 `.cache/preprocess/`，不会写入正式游戏目录。
 - 在线 provider/OCR 适配、`UiDocument` 生成/修复/评测、预览接入和 `promote` 命令尚未实现；当前分析能力只提供严格中间协议、校验和离线测试路径。
 - 目前不能宣称能够从参考图自动生成、批准或晋升正式 UI；实现进度以对应 checklist 和代码验证结果为准。

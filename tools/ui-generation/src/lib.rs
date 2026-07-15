@@ -4,6 +4,7 @@ pub mod contract;
 pub mod credentials;
 pub mod directory;
 pub mod lifecycle;
+pub mod planning;
 pub mod preprocess;
 pub mod provider;
 

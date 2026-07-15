@@ -346,31 +346,7 @@ fn validate_variant(
     node_id: &UiNodeId,
     errors: &mut Vec<UiControlFieldError>,
 ) {
-    let valid = match node {
-        UiNode::Button { .. } | UiNode::ImageButton { .. } => matches!(
-            component.variant,
-            UiComponentVariant::Default
-                | UiComponentVariant::Primary
-                | UiComponentVariant::Secondary
-                | UiComponentVariant::Destructive
-        ),
-        UiNode::Badge { .. } | UiNode::Progress { .. } => matches!(
-            component.variant,
-            UiComponentVariant::Default
-                | UiComponentVariant::Info
-                | UiComponentVariant::Success
-                | UiComponentVariant::Warning
-                | UiComponentVariant::Error
-        ),
-        UiNode::Tab { .. } => matches!(
-            component.variant,
-            UiComponentVariant::Default
-                | UiComponentVariant::Primary
-                | UiComponentVariant::Secondary
-                | UiComponentVariant::Subtle
-        ),
-        _ => component.variant == UiComponentVariant::Default,
-    };
+    let valid = component_variant_supported(document_component_kind(node), component.variant);
     if !valid {
         push_error(
             errors,
@@ -378,6 +354,56 @@ fn validate_variant(
             &format!("{path}.component.variant"),
             node_id,
         );
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UiDocumentComponentKind {
+    Button,
+    Badge,
+    Progress,
+    Tab,
+    Other,
+}
+
+pub(crate) fn component_variant_supported(
+    kind: UiDocumentComponentKind,
+    variant: UiComponentVariant,
+) -> bool {
+    match kind {
+        UiDocumentComponentKind::Button => matches!(
+            variant,
+            UiComponentVariant::Default
+                | UiComponentVariant::Primary
+                | UiComponentVariant::Secondary
+                | UiComponentVariant::Destructive
+        ),
+        UiDocumentComponentKind::Badge | UiDocumentComponentKind::Progress => matches!(
+            variant,
+            UiComponentVariant::Default
+                | UiComponentVariant::Info
+                | UiComponentVariant::Success
+                | UiComponentVariant::Warning
+                | UiComponentVariant::Error
+        ),
+        UiDocumentComponentKind::Tab => matches!(
+            variant,
+            UiComponentVariant::Default
+                | UiComponentVariant::Primary
+                | UiComponentVariant::Secondary
+                | UiComponentVariant::Subtle
+        ),
+        UiDocumentComponentKind::Other => variant == UiComponentVariant::Default,
+    }
+}
+
+fn document_component_kind(node: &UiNode) -> UiDocumentComponentKind {
+    match node {
+        UiNode::Button { .. } | UiNode::ImageButton { .. } => UiDocumentComponentKind::Button,
+        UiNode::Badge { .. } => UiDocumentComponentKind::Badge,
+        UiNode::Progress { .. } => UiDocumentComponentKind::Progress,
+        UiNode::Tab { .. } => UiDocumentComponentKind::Tab,
+        _ => UiDocumentComponentKind::Other,
     }
 }
 
