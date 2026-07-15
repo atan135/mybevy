@@ -190,6 +190,39 @@ struct ProviderGenerationEnvelope {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct GenerationPolicyDiagnostic {
+    pub code: String,
+    pub document_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StagingDocumentValidation {
+    pub valid: bool,
+    pub formal_report: UiValidationReport,
+    pub policy_diagnostics: Vec<GenerationPolicyDiagnostic>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationRepairPolicySnapshot {
+    pub document_id: String,
+    pub ui_document_schema_version: u32,
+    pub source_map: Vec<SourceMapEntry>,
+    pub allowed_assets: BTreeMap<String, String>,
+    pub allow_actions: bool,
+    pub allow_bindings: bool,
+    pub allow_i18n_keys: bool,
+    pub allow_hidden_states: bool,
+    pub allow_responsive_variants: bool,
+    pub budget_profile: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GenerationTrace {
     pub provider_id: String,
     pub model_id: String,
@@ -260,6 +293,19 @@ pub struct PreparedGenerationRequest {
     allowed_assets: Vec<AllowedAsset>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct StagedGeneration {
+    document: Value,
+    envelope: ProviderGenerationEnvelope,
+    execution: ProviderExecution,
+}
+
+impl StagedGeneration {
+    pub(crate) fn document(&self) -> &Value {
+        &self.document
+    }
+}
+
 impl PreparedGenerationRequest {
     pub fn request(&self) -> &ProviderRequest {
         &self.request
@@ -267,6 +313,30 @@ impl PreparedGenerationRequest {
 
     pub fn input_sha256(&self) -> &str {
         &self.input_sha256
+    }
+
+    pub(crate) fn repair_policy_snapshot(&self) -> GenerationRepairPolicySnapshot {
+        GenerationRepairPolicySnapshot {
+            document_id: self.configuration.document_id.clone(),
+            ui_document_schema_version: self.configuration.ui_document_schema_version,
+            source_map: self.source_map.clone(),
+            allowed_assets: self
+                .allowed_assets
+                .iter()
+                .map(|asset| (asset.asset_id.clone(), asset.path.clone()))
+                .collect(),
+            allow_actions: false,
+            allow_bindings: false,
+            allow_i18n_keys: false,
+            allow_hidden_states: false,
+            allow_responsive_variants: false,
+            budget_profile: project::framework::ui::document::tooling::UI_DOCUMENT_BUDGET_PROFILE
+                .to_owned(),
+        }
+    }
+
+    pub(crate) fn run_id(&self) -> &str {
+        &self.analysis.run_id
     }
 }
 
@@ -353,6 +423,14 @@ fn validate_generation_execution_inner(
     execution: &ProviderExecution,
     prepared: &PreparedGenerationRequest,
 ) -> Result<GeneratedUiDocument, TaskFailure> {
+    let staged = extract_generation_staging(execution, prepared)?;
+    finalize_staging_generation(&staged, staged.document.clone(), prepared)
+}
+
+pub(crate) fn extract_generation_staging(
+    execution: &ProviderExecution,
+    prepared: &PreparedGenerationRequest,
+) -> Result<StagedGeneration, TaskFailure> {
     validate_execution_provenance(execution, prepared)?;
     validate_value_budget(
         &execution.response.output.value,
@@ -384,21 +462,35 @@ fn validate_generation_execution_inner(
     }
     validate_value_budget(&envelope.document, UI_DOCUMENT_MAX_BYTES)?;
 
-    let formal = validate_json_bytes(&document_bytes);
-    if !formal.report.valid {
-        let codes = formal
-            .report
-            .diagnostics
-            .iter()
-            .take(8)
-            .map(|diagnostic| diagnostic.code.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
+    Ok(StagedGeneration {
+        document: envelope.document.clone(),
+        envelope,
+        execution: execution.clone(),
+    })
+}
+
+pub fn validate_staging_document(
+    document: &Value,
+    prepared: &PreparedGenerationRequest,
+) -> Result<StagingDocumentValidation, TaskFailure> {
+    let document_bytes = serde_json::to_vec(document)
+        .map_err(|_| malformed("staging UiDocument cannot be serialized as strict JSON"))?;
+    if document_bytes.len() > UI_DOCUMENT_MAX_BYTES {
         return Err(TaskFailure::new(
             TaskFailureKind::ProviderResponseMalformed,
-            format!("formal UiDocument facade rejected provider output: {codes}"),
+            "staging UiDocument exceeds the formal byte budget",
             None,
         ));
+    }
+    validate_value_budget(document, UI_DOCUMENT_MAX_BYTES)?;
+
+    let formal = validate_json_bytes(&document_bytes);
+    if !formal.report.valid {
+        return Ok(StagingDocumentValidation {
+            valid: false,
+            formal_report: formal.report,
+            policy_diagnostics: Vec::new(),
+        });
     }
     let source = std::str::from_utf8(&document_bytes).map_err(|_| {
         TaskFailure::new(
@@ -419,6 +511,61 @@ fn validate_generation_execution_inner(
     })?;
     let canonical_value: Value = serde_json::from_str(&canonical_document_json)
         .expect("formal canonical JSON is always parseable");
+    let policy_diagnostics = match validate_document_policy(&canonical_value, prepared) {
+        Ok(_) => Vec::new(),
+        Err(failure) => vec![policy_diagnostic(&failure)],
+    };
+    Ok(StagingDocumentValidation {
+        valid: policy_diagnostics.is_empty(),
+        formal_report: formal.report,
+        policy_diagnostics,
+    })
+}
+
+pub(crate) fn finalize_staging_generation(
+    staged: &StagedGeneration,
+    document: Value,
+    prepared: &PreparedGenerationRequest,
+) -> Result<GeneratedUiDocument, TaskFailure> {
+    let document_bytes = serde_json::to_vec(&document)
+        .map_err(|_| malformed("staging UiDocument cannot be serialized as strict JSON"))?;
+    let validation = validate_staging_document(&document, prepared)?;
+    if !validation.valid {
+        let codes = validation
+            .formal_report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .chain(
+                validation
+                    .policy_diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.code.as_str()),
+            )
+            .take(8)
+            .collect::<Vec<_>>()
+            .join(",");
+        let policy_detail = validation
+            .policy_diagnostics
+            .first()
+            .map(|diagnostic| format!("; {}", diagnostic.message))
+            .unwrap_or_default();
+        return Err(TaskFailure::new(
+            TaskFailureKind::ProviderResponseMalformed,
+            format!("formal UiDocument facade rejected provider output: {codes}{policy_detail}"),
+            None,
+        ));
+    }
+    let source = std::str::from_utf8(&document_bytes)
+        .map_err(|_| malformed("staging UiDocument is not valid UTF-8 JSON"))?;
+    let canonical_document_json = canonicalize_json(source).map_err(|error| {
+        malformed(format!(
+            "formal UiDocument canonicalization failed: {}",
+            error.code()
+        ))
+    })?;
+    let canonical_value: Value = serde_json::from_str(&canonical_document_json)
+        .expect("formal canonical JSON is always parseable");
     let document_paths = validate_document_policy(&canonical_value, prepared)?;
     let source_map = prepared
         .source_map
@@ -428,9 +575,12 @@ fn validate_generation_execution_inner(
             ..entry.clone()
         })
         .collect();
+    let mut envelope = staged.envelope.clone();
+    envelope.document = document;
     let disclosures = merge_disclosures(envelope, prepared)?;
     let canonical_document_sha256 = sha256(canonical_document_json.as_bytes());
-    let server_request_id = execution
+    let server_request_id = staged
+        .execution
         .response
         .server_request_id
         .as_ref()
@@ -443,7 +593,7 @@ fn validate_generation_execution_inner(
         text_decisions: prepared.text_decisions.clone(),
         disclosures,
         trace: GenerationTrace {
-            provider_id: execution.trace.provider_id.as_str().to_owned(),
+            provider_id: staged.execution.trace.provider_id.as_str().to_owned(),
             model_id: prepared.configuration.model_id.clone(),
             prompt_version: prepared.configuration.prompt_version.clone(),
             output_schema: generation_output_contract(),
@@ -453,8 +603,36 @@ fn validate_generation_execution_inner(
             server_request_id,
             canonical_document_sha256,
         },
-        validation_report: formal.report,
+        validation_report: validation.formal_report,
     })
+}
+
+fn policy_diagnostic(failure: &TaskFailure) -> GenerationPolicyDiagnostic {
+    let code = match failure.message() {
+        message if message.contains("document_id") => "UI_GENERATION_DOCUMENT_ID_FROZEN",
+        message if message.contains("schema_version") => "UI_GENERATION_SCHEMA_VERSION_FROZEN",
+        message if message.contains("hidden states") || message.contains("responsive") => {
+            "UI_GENERATION_VISIBLE_STATE_SCOPE_FROZEN"
+        }
+        message
+            if message.contains("actions, bindings, or i18n")
+                || message.contains("binding declarations") =>
+        {
+            "UI_GENERATION_BUSINESS_BEHAVIOR_FORBIDDEN"
+        }
+        message if message.contains("node IDs") || message.contains("node hierarchy") => {
+            "UI_GENERATION_SOURCE_MAP_FROZEN"
+        }
+        message if message.contains("asset") => "UI_GENERATION_ASSET_ALLOWLIST_FROZEN",
+        message if message.contains("text") => "UI_GENERATION_LITERAL_TEXT_FROZEN",
+        _ => "UI_GENERATION_POLICY_VIOLATION",
+    };
+    GenerationPolicyDiagnostic {
+        code: code.to_owned(),
+        document_path: "$".to_owned(),
+        node_id: None,
+        message: failure.message().to_owned(),
+    }
 }
 
 fn validate_execution_provenance(

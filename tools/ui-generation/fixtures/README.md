@@ -31,3 +31,7 @@ copied to `project/assets/`.
 page, a nested page, a formally invalid `UiDocument`, and a valid draft with explicitly unsupported
 behavior. They contain no prompt transcript, model response transcript, user image, or production
 asset.
+
+`preview/` contains repository-authored bare `UiDocument` inputs for the feature-gated Stage 8
+standalone preview process. They contain no business action, binding, packaged asset, or generated
+binary material.

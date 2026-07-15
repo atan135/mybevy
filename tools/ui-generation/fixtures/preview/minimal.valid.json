@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "document_id": "generated.standalone_preview_fixture",
+  "metadata": {
+    "title": "Standalone preview fixture",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {},
+  "tokens": {},
+  "root": {
+    "type": "container",
+    "id": "page.root",
+    "layout": {
+      "direction": "column",
+      "width": { "percent": 100 },
+      "height": { "percent": 100 },
+      "align_items": "center",
+      "justify_content": "center",
+      "gap": { "px": 16 }
+    },
+    "style": { "role": "page" },
+    "children": [
+      {
+        "type": "text",
+        "id": "page.title",
+        "content": { "literal": "Standalone UiDocument" },
+        "style": { "text_role": "title" }
+      },
+      {
+        "type": "text",
+        "id": "page.caption",
+        "content": { "literal": "Stage 8 deterministic preview" },
+        "style": { "text_role": "caption" }
+      }
+    ]
+  }
+}

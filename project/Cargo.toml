@@ -4,9 +4,18 @@ version = "0.1.0"
 edition = "2024"
 default-run = "project"
 
+[features]
+default = []
+ui-document-preview-tool = []
+
 [lib]
 name = "project"
 crate-type = ["rlib"]
+
+[[bin]]
+name = "ui-document-preview"
+path = "src/bin/ui_document_preview.rs"
+required-features = ["ui-document-preview-tool"]
 
 [dependencies]
 accesskit = "0.21.1"

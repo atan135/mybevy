@@ -104,9 +104,10 @@ cargo check
 cargo test --manifest-path tools/ui-generation/Cargo.toml
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- preprocess-task --task <task.json> --options <preprocess.options.json> --repository-root .
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- preview-document --document <document.json> --output-directory <new-output-dir> --repository-root . --width 390 --height 844
 ```
 
-`inspect-task` 只读取输入并规划目录；`preprocess-task` 会把受限 PNG/JPEG 输入标准化到被忽略的 `summary/ui-generation/<run-id>/input/preprocessed/`，并复用 `summary/ui-generation/.cache/preprocess/`，但不会修改正式游戏文件。工具已提供离线 fixture/mock、凭据边界、受控 provider 调用、独立 `UiReferenceAnalysis`、确定性页面规划、稳定 asset ID catalog、六类素材策略、授权裁切、Android 草稿资源检查，以及通过正式 facade 验证的结构化 `UiDocument` 生成 API/source map/追踪；当前没有在线模型/OCR/图片生成适配、生成 CLI 落盘、预览或晋升能力，后续按 `docs/ui/UI参考图生成与正式包边界.md` 分阶段实现。
+`inspect-task` 只读取输入并规划目录；`preprocess-task` 会把受限 PNG/JPEG 输入标准化到被忽略的 `summary/ui-generation/<run-id>/input/preprocessed/`，并复用 `summary/ui-generation/.cache/preprocess/`，但不会修改正式游戏文件。工具已提供离线 fixture/mock、凭据边界、受控 provider 调用、独立 `UiReferenceAnalysis`、确定性页面规划、稳定 asset ID catalog、六类素材策略、授权裁切、Android 草稿资源检查、通过正式 facade 验证的结构化 `UiDocument` 生成 API/source map/追踪、最多三轮的有限结构修复、事务 run manifest，以及显式 feature-gated 的独立进程预览。当前没有在线模型/OCR/图片生成适配、生成 CLI 落盘或晋升能力，后续按 `docs/ui/UI参考图生成与正式包边界.md` 分阶段实现。
 
 构建 Android Rust 动态库：
 

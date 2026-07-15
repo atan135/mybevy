@@ -1,8 +1,11 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use ui_generation::{
-    boundary::verify_dependency_boundary, inspect_task, lifecycle::CancellationToken,
+    boundary::verify_dependency_boundary,
+    inspect_task,
+    lifecycle::CancellationToken,
     preprocess::preprocess_task,
+    preview::{CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command, run_preview},
 };
 
 #[derive(Debug, Parser)]
@@ -37,6 +40,19 @@ enum Command {
     CheckBoundary {
         #[arg(long)]
         repository_root: PathBuf,
+    },
+    /// Runs the feature-gated standalone declarative preview process for one validated document.
+    PreviewDocument {
+        #[arg(long)]
+        document: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long, default_value_t = 390)]
+        width: u32,
+        #[arg(long, default_value_t = 844)]
+        height: u32,
     },
 }
 
@@ -79,6 +95,33 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
         Command::CheckBoundary { repository_root } => {
             serde_json::to_value(verify_dependency_boundary(&repository_root)?)
                 .expect("dependency boundary report is serializable")
+        }
+        Command::PreviewDocument {
+            document,
+            output_directory,
+            repository_root,
+            width,
+            height,
+        } => {
+            let plan = prepare_preview_command(
+                &repository_root,
+                &document,
+                &output_directory,
+                width,
+                height,
+            )?;
+            let result = run_preview(plan, &CommandPreviewExecutor, &CancellationToken::default());
+            if result.status == PreviewRunStatus::Failed {
+                let failure = result.failure.as_ref();
+                return Err(ui_generation::lifecycle::TaskFailure::new(
+                    ui_generation::lifecycle::TaskFailureKind::InvalidInput,
+                    failure.map_or("standalone preview failed", |failure| {
+                        failure.detail.as_str()
+                    }),
+                    failure.map(|failure| failure.code.clone()),
+                ));
+            }
+            serde_json::to_value(result).expect("preview result is serializable")
         }
     };
     println!(

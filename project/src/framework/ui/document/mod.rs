@@ -11,6 +11,8 @@ mod preview;
 mod report;
 mod responsive;
 mod runtime;
+#[cfg(all(not(target_os = "android"), feature = "ui-document-preview-tool"))]
+mod standalone_preview;
 mod style;
 pub mod tooling;
 mod validation;
@@ -27,6 +29,8 @@ pub use preview::*;
 pub use report::*;
 pub use responsive::*;
 pub use runtime::*;
+#[cfg(all(not(target_os = "android"), feature = "ui-document-preview-tool"))]
+pub use standalone_preview::*;
 pub use style::*;
 pub use validation::*;
 

@@ -17,6 +17,7 @@ pub struct DependencyBoundaryReport {
     pub project_lock_excludes_tool_package: bool,
     pub tool_lock_contains_project_package: bool,
     pub crates_are_independent_workspaces: bool,
+    pub standalone_preview_target_is_feature_gated: bool,
 }
 
 pub fn verify_dependency_boundary(
@@ -42,6 +43,8 @@ pub fn verify_dependency_boundary(
     let project_workspace = enclosing_workspace_root(&project_manifest)?;
     let tool_workspace = enclosing_workspace_root(&tool_manifest)?;
     let crates_are_independent_workspaces = project_workspace != tool_workspace;
+    let standalone_preview_target_is_feature_gated =
+        preview_target_is_feature_gated(&parse_toml_file(&project_manifest)?);
 
     validate_boundary_flags(
         project_dependency_graph_excludes_tool,
@@ -49,6 +52,7 @@ pub fn verify_dependency_boundary(
         project_lock_excludes_tool_package,
         tool_lock_contains_project_package,
         crates_are_independent_workspaces,
+        standalone_preview_target_is_feature_gated,
     )?;
 
     Ok(DependencyBoundaryReport {
@@ -59,6 +63,7 @@ pub fn verify_dependency_boundary(
         project_lock_excludes_tool_package,
         tool_lock_contains_project_package,
         crates_are_independent_workspaces,
+        standalone_preview_target_is_feature_gated,
     })
 }
 
@@ -290,19 +295,49 @@ fn validate_boundary_flags(
     project_lock_excludes_tool_package: bool,
     tool_lock_contains_project_package: bool,
     crates_are_independent_workspaces: bool,
+    standalone_preview_target_is_feature_gated: bool,
 ) -> Result<(), TaskFailure> {
     if project_dependency_graph_excludes_tool
         && tool_dependency_graph_reaches_project
         && project_lock_excludes_tool_package
         && tool_lock_contains_project_package
         && crates_are_independent_workspaces
+        && standalone_preview_target_is_feature_gated
     {
         Ok(())
     } else {
         Err(boundary_failure(format!(
-            "dependency direction must be ui-generation -> project with independent Cargo roots (project_graph_excludes_tool={project_dependency_graph_excludes_tool}, tool_graph_reaches_project={tool_dependency_graph_reaches_project}, project_lock_excludes_tool={project_lock_excludes_tool_package}, tool_lock_contains_project={tool_lock_contains_project_package}, independent={crates_are_independent_workspaces})"
+            "dependency direction must be ui-generation -> project with independent Cargo roots and a feature-gated preview target (project_graph_excludes_tool={project_dependency_graph_excludes_tool}, tool_graph_reaches_project={tool_dependency_graph_reaches_project}, project_lock_excludes_tool={project_lock_excludes_tool_package}, tool_lock_contains_project={tool_lock_contains_project_package}, independent={crates_are_independent_workspaces}, preview_feature_gated={standalone_preview_target_is_feature_gated})"
         )))
     }
+}
+
+fn preview_target_is_feature_gated(document: &Value) -> bool {
+    let feature = "ui-document-preview-tool";
+    let feature_declared = document
+        .get("features")
+        .and_then(Value::as_table)
+        .is_some_and(|features| features.contains_key(feature));
+    let excluded_from_default = document
+        .get("features")
+        .and_then(|features| features.get("default"))
+        .and_then(Value::as_array)
+        .is_none_or(|defaults| !defaults.iter().any(|value| value.as_str() == Some(feature)));
+    let target_gated = document
+        .get("bin")
+        .and_then(Value::as_array)
+        .is_some_and(|bins| {
+            bins.iter().any(|bin| {
+                bin.get("name").and_then(Value::as_str) == Some("ui-document-preview")
+                    && bin
+                        .get("required-features")
+                        .and_then(Value::as_array)
+                        .is_some_and(|features| {
+                            features.len() == 1 && features[0].as_str() == Some(feature)
+                        })
+            })
+        });
+    feature_declared && excluded_from_default && target_gated
 }
 
 fn boundary_failure(message: impl Into<String>) -> TaskFailure {
@@ -366,6 +401,7 @@ mod tests {
             true,
             true,
             true,
+            true,
         )
         .unwrap_err();
         assert_eq!(failure.kind(), TaskFailureKind::DependencyBoundaryViolation);
@@ -387,6 +423,30 @@ mod tests {
         .unwrap();
         assert!(lock_contains_local_package(&lock, "project").unwrap());
         assert!(!lock_contains_local_package(&lock, "ui-generation").unwrap());
+    }
+
+    #[test]
+    fn standalone_preview_target_requires_non_default_feature() {
+        let gated: Value = toml::from_str(
+            r#"
+            [features]
+            default = []
+            ui-document-preview-tool = []
+
+            [[bin]]
+            name = "ui-document-preview"
+            required-features = ["ui-document-preview-tool"]
+            "#,
+        )
+        .unwrap();
+        assert!(preview_target_is_feature_gated(&gated));
+
+        let mut ungated = gated;
+        ungated["bin"][0]
+            .as_table_mut()
+            .unwrap()
+            .remove("required-features");
+        assert!(!preview_target_is_feature_gated(&ungated));
     }
 
     #[test]

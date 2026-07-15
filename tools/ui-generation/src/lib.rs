@@ -8,7 +8,10 @@ pub mod generation;
 pub mod lifecycle;
 pub mod planning;
 pub mod preprocess;
+pub mod preview;
 pub mod provider;
+pub mod repair;
+pub mod run_manifest;
 
 use contract::{GenerationTask, TaskAssessment, VerifiedReferenceImage};
 use directory::RunDirectoryPlan;
