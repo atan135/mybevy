@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use ui_generation::{
+    audit::{AuditVisualExpectation, parse_page_states, run_document_audit_command},
     boundary::verify_dependency_boundary,
     inspect_task,
     lifecycle::CancellationToken,
@@ -53,6 +54,21 @@ enum Command {
         width: u32,
         #[arg(long, default_value_t = 844)]
         height: u32,
+    },
+    /// Captures the standalone declarative screen for every requested state and audit device.
+    AuditDocument {
+        #[arg(long)]
+        document: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+        #[arg(long)]
+        repository_root: PathBuf,
+        /// Comma-separated closed page-state IDs. Defaults to `initial`.
+        #[arg(long)]
+        states: Option<String>,
+        /// Explicitly require these non-initial fixture states to differ visually from initial.
+        #[arg(long)]
+        require_distinct_from_initial: Option<String>,
     },
 }
 
@@ -122,6 +138,39 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
                 ));
             }
             serde_json::to_value(result).expect("preview result is serializable")
+        }
+        Command::AuditDocument {
+            document,
+            output_directory,
+            repository_root,
+            states,
+            require_distinct_from_initial,
+        } => {
+            let states = parse_page_states(states.as_deref())?;
+            let visual_expectation = require_distinct_from_initial.map_or_else(
+                || Ok(AuditVisualExpectation::default()),
+                |input| {
+                    AuditVisualExpectation::distinct_from_initial(parse_page_states(Some(&input))?)
+                },
+            )?;
+            let result = run_document_audit_command(
+                &repository_root,
+                &document,
+                &output_directory,
+                &states,
+                &visual_expectation,
+            )?;
+            if matches!(
+                result.status,
+                ui_generation::audit::AuditMatrixStatus::Failed
+            ) {
+                return Err(ui_generation::lifecycle::TaskFailure::new(
+                    ui_generation::lifecycle::TaskFailureKind::InvalidInput,
+                    "one or more document audit captures failed",
+                    Some(result.manifest_path.display().to_string()),
+                ));
+            }
+            serde_json::to_value(result).expect("audit result is serializable")
         }
     };
     println!(

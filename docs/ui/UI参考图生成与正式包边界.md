@@ -1,6 +1,6 @@
 # UI 参考图生成与正式包边界
 
-本文冻结“参考图 -> `UiDocument` -> 正式游戏页面”流程的工程边界。仓库当前已提供 Stage 1-8 `tools/ui-generation/` 独立工具、输入契约、工作目录规划、provider 无关调用协议、图片预处理、结构化视觉分析、确定性页面规划、素材策略、受控 `UiDocument` 生成验证、有限结构修复和独立进程预览；在线供应商适配、生成 CLI 落盘和 `promote` 命令仍未实现。
+本文冻结“参考图 -> `UiDocument` -> 正式游戏页面”流程的工程边界。仓库当前已提供 Stage 1-9 `tools/ui-generation/` 独立工具、输入契约、工作目录规划、provider 无关调用协议、图片预处理、结构化视觉分析、确定性页面规划、素材策略、受控 `UiDocument` 生成验证、有限结构修复、独立进程预览和多状态/响应式审计矩阵；在线供应商适配、生成 CLI 落盘和 `promote` 命令仍未实现。
 
 ## 目标
 
@@ -59,6 +59,8 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- inspect-task --task 
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- preprocess-task --task <task.json> --options <preprocess.options.json> --repository-root .
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- preview-document --document <document.json> --output-directory <new-output-dir> --repository-root . --width 390 --height 844
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- audit-document --document <document.json> --output-directory <new-output-dir> --repository-root . --states initial,loading
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- audit-document --document <fixture.json> --output-directory <new-output-dir> --repository-root . --states initial,loading --require-distinct-from-initial loading
 ```
 
 `check-boundary` 不在外层 `cargo run` 中再次启动 Cargo。它用 TOML parser 递归遍历所有普通、target、build、dev、optional、workspace 继承和 patch/replace 的本地 path 依赖，以 canonical manifest 路径检查完整的本地依赖可达性；同时检查两侧 `Cargo.lock` 的 resolved 本地包集合、祖先 workspace，以及 standalone preview target 是否由非默认 `ui-document-preview-tool` feature 和 `required-features` 双重隔离，避免直接依赖扫描漏过 `project -> middle -> ui-generation`，也避免预览工具进入默认桌面或 Android `--lib` 构建。
@@ -106,6 +108,16 @@ Stage 4 的 `UiReferenceAnalysis` 只存在于工具 crate，是独立于正式 
 7. 只有验证和批准均完成的 run 才能进入受控 `promote` 流程。
 
 参考图只能证明可见状态。隐藏交互、业务权限、响应式规则和不可见页面状态不能由模型静默猜测；无法由白名单能力表达的内容必须保留为阻塞问题或人工工作项。
+
+## 多状态与响应式证据
+
+Stage 7 的单图生成请求继续拒绝非空 `states` 和 `responsive`，不能因为后续能力出现而放宽该门禁。Stage 9 只为有额外可信输入的同页参考图提供独立的 `PageSeriesEvidence` 校验：它要求 task 中声明的 `state`/`viewport` 附加参考、Stage 4 analysis 中对应 reference-region evidence，以及将附加参考元素映射回主参考稳定节点的共享 source map。正式文档只能包含该矩阵逐项声明的 state 和 responsive override，不能为每张图复制一份页面，也不能由模型补造未见状态。
+
+有两个以上不同 viewport 的可信参考时，responsive variant 才可以标记为 `observed`；只有主 viewport 时，允许使用项目既有尺寸分类作为 `project_default`，并在输出中写入假设。可见 `loading`、`empty`、`error`、`selected`、`disabled`、`modal` 等状态只有在各自 reference 中出现且能够由现有 `UiDocument` layout/style 或控件状态协议表达时才进入草稿。没有可见证据的状态保持未实现，不产生视觉伪造。
+
+工具不会把参考图中的按钮外观变成业务 Rust 或开放 action/binding。当前没有受主机注册表确认的默认本地 action 时，交互一律标为 `SERIES_ACTION_UNBOUND`。可访问性补充复用正式控件协议：已有 label/title slot 作为 accessible label 来源、按稳定节点顺序生成键盘焦点顺序、显式 44 logical px 最小尺寸或现有 runtime component minimum 作为触控目标策略；它不改变主参考视觉结构。
+
+`audit-document` 在一个新的输出目录内调用 feature-gated standalone declarative preview，为 `ui_document_preview × phone-portrait/tablet-landscape × 每个显式 state` 生成 PNG、严格 preview metadata 和 `audit-manifest.json`。`--require-distinct-from-initial` 是 fixture 的显式视觉契约：只对列出的状态检查截图 hash 必须不同于 initial，并将不满足的格子写入 manifest；它不把所有业务状态都误判为必须视觉不同。standalone preview 固定为声明式 Page panel，因此 `UiNode::Modal` 的画面可审计，但 Modal panel 的输入阻断和 owner cleanup 仍由正式 runtime 测试验证。该工具不能路由或加载游戏业务页面，不写入 `summary/` 以外的目录，不构成审批或晋升。底层 standalone preview 新增 `--page-state <closed-state-id>`，仍只在 `ui-document-preview-tool` 非默认 feature 下编译；默认桌面、Android `--lib` 和 `UiFrameworkPlugin` 不包含生成器、provider 或审计工具。
 
 ## 受控晋升
 

@@ -43,6 +43,7 @@ pub struct UiDocumentStandalonePreviewOptions {
     pub result_path: PathBuf,
     pub width: u32,
     pub height: u32,
+    pub page_state: UiPageState,
     pub timeout_frames: u32,
     pub stable_frames: u32,
 }
@@ -61,6 +62,7 @@ impl UiDocumentStandalonePreviewOptions {
         let mut result_path = None;
         let mut width = 390;
         let mut height = 844;
+        let mut page_state = UiPageState::initial();
         let mut timeout_frames = 1200;
         let mut stable_frames = DEFAULT_STABLE_FRAMES;
         while let Some(flag) = arguments.next() {
@@ -84,6 +86,26 @@ impl UiDocumentStandalonePreviewOptions {
                 "--result" => result_path = Some(PathBuf::from(value)),
                 "--width" => width = parse_u32(value, "width")?,
                 "--height" => height = parse_u32(value, "height")?,
+                "--page-state" => {
+                    page_state = value
+                        .to_str()
+                        .ok_or_else(|| {
+                            setup_error(
+                                UiDocumentStandalonePreviewFailureKind::ConfigurationInvalid,
+                                "UI_DOCUMENT_PREVIEW_PAGE_STATE_INVALID",
+                                "preview page state must be valid UTF-8",
+                            )
+                        })
+                        .and_then(|value| {
+                            value.parse().map_err(|_| {
+                                setup_error(
+                                    UiDocumentStandalonePreviewFailureKind::ConfigurationInvalid,
+                                    "UI_DOCUMENT_PREVIEW_PAGE_STATE_INVALID",
+                                    "preview page state is not a closed UiDocument page-state ID",
+                                )
+                            })
+                        })?;
+                }
                 "--timeout-frames" => timeout_frames = parse_u32(value, "timeout frames")?,
                 "--stable-frames" => stable_frames = parse_u32(value, "stable frames")?,
                 _ => {
@@ -101,6 +123,7 @@ impl UiDocumentStandalonePreviewOptions {
             result_path: required_path(result_path, "result")?,
             width,
             height,
+            page_state,
             timeout_frames,
             stable_frames,
         };
@@ -189,6 +212,7 @@ struct PreviewResult {
     canonical_document_sha256: String,
     width: u32,
     height: u32,
+    page_state: String,
     elapsed_frames: u32,
     stable_frames: u32,
     screenshot_path: String,
@@ -410,7 +434,9 @@ fn setup_preview(
             panel: UiDocumentPanel::Page,
             layer: UiDocumentLayer::Page,
             target_profile,
-            page_state: UiPageState::initial(),
+            // The standalone process is only an audit/preview surface. State switching still
+            // flows through the normal declarative effective-document merge.
+            page_state: config.options.page_state.clone(),
             owner_alive: true,
             host_bindings: default(),
             watch: false,
@@ -631,6 +657,7 @@ fn finish_preview(
         canonical_document_sha256: config.canonical_document_sha256.clone(),
         width: config.options.width,
         height: config.options.height,
+        page_state: config.options.page_state.to_string(),
         elapsed_frames: driver.elapsed_frames,
         stable_frames: driver.stable_frames,
         screenshot_path: config
@@ -780,6 +807,8 @@ mod tests {
             "390",
             "--height",
             "844",
+            "--page-state",
+            "loading",
             "--timeout-frames",
             "600",
             "--stable-frames",
@@ -790,6 +819,7 @@ mod tests {
         let options = UiDocumentStandalonePreviewOptions::parse_args(arguments).unwrap();
         assert_eq!(options.width, 390);
         assert_eq!(options.height, 844);
+        assert_eq!(options.page_state, UiPageState::loading());
 
         let unknown = ["--unknown", "value"].into_iter().map(OsString::from);
         assert_eq!(
@@ -846,6 +876,7 @@ mod tests {
             canonical_document_sha256: "a".repeat(64),
             width: 390,
             height: 844,
+            page_state: "initial".to_owned(),
             elapsed_frames: 60,
             stable_frames: 30,
             screenshot_path: "preview.png".to_owned(),

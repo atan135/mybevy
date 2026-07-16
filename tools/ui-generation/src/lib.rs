@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod asset_strategy;
+pub mod audit;
 pub mod boundary;
 pub mod contract;
 pub mod credentials;
@@ -12,6 +13,7 @@ pub mod preview;
 pub mod provider;
 pub mod repair;
 pub mod run_manifest;
+pub mod series;
 
 use contract::{GenerationTask, TaskAssessment, VerifiedReferenceImage};
 use directory::RunDirectoryPlan;

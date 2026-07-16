@@ -159,6 +159,15 @@ pub enum UiDocumentPreviewCommand {
         owner: String,
         source_json: String,
     },
+    /// Rebuilds the registered document through the normal effective-document merge for an
+    /// explicitly declared visible page state. This is a preview/audit command, not a business
+    /// action binding.
+    SetPageState {
+        reload_id: UiDocumentReloadId,
+        document_id: UiDocumentId,
+        owner: String,
+        page_state: UiPageState,
+    },
     SetWatchEnabled(bool),
 }
 
@@ -754,6 +763,35 @@ fn handle_preview_commands(
                 let key = PreviewKey { document_id, owner };
                 if let Some(entry) = registry.registrations.get_mut(&key) {
                     entry.registration.source_json = source_json.clone();
+                    start_reload(
+                        reload_id,
+                        key,
+                        source_json,
+                        &runtime,
+                        focus.as_deref(),
+                        &parents,
+                        &states,
+                        &segment_options,
+                        &mut registry,
+                        &mut runtime_commands,
+                        &mut reload_events,
+                    );
+                } else {
+                    emit_unregistered_report(reload_id, key, &mut reload_events);
+                }
+            }
+            UiDocumentPreviewCommand::SetPageState {
+                reload_id,
+                document_id,
+                owner,
+                page_state,
+            } => {
+                let key = PreviewKey { document_id, owner };
+                let source_json = registry.registrations.get_mut(&key).map(|entry| {
+                    entry.registration.page_state = page_state;
+                    entry.registration.source_json.clone()
+                });
+                if let Some(source_json) = source_json {
                     start_reload(
                         reload_id,
                         key,
@@ -1874,7 +1912,7 @@ mod tests {
     use std::str::FromStr;
 
     use crate::framework::ui::{
-        core::UiMetrics,
+        core::{UiInputState, UiMetrics, UiPanelKind, UiPanelRoot, input::UiInputPlugin},
         style::{UiFontAssets, UiTheme},
         widgets::controls::UiTextInputSelection,
     };
@@ -2354,7 +2392,16 @@ mod tests {
                         ]
                     }
                 ]
-            }
+            },
+            "states": [{
+                "id": "loading",
+                "overrides": [{
+                    "node_id": "state.root",
+                    "set": { "style": { "inline": {
+                        "opacity": { "kind": "literal", "value": 0.6 }
+                    } } }
+                }]
+            }]
         })
         .to_string()
     }
@@ -2406,6 +2453,52 @@ mod tests {
                 reload_report(&app, 1)
             );
         }
+        app
+    }
+
+    fn modal_preview_document() -> String {
+        r#"{
+          "schema_version": 1,
+          "document_id": "preview.runtime",
+          "root": {
+            "type": "modal",
+            "id": "modal.dialog",
+            "cancellable": true,
+            "layout": {
+              "width": { "percent": 100 },
+              "min_height": { "px": 176 },
+              "padding": { "all": { "px": 24 } }
+            },
+            "component": {
+              "slots": {
+                "title": { "kind": "text", "content": { "literal": "Confirm action" } },
+                "body": { "kind": "text", "content": { "literal": "This is a formal modal node." } }
+              }
+            }
+          }
+        }"#
+        .to_owned()
+    }
+
+    fn modal_preview_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(UiTheme::default());
+        app.insert_resource(UiMetrics::default());
+        app.insert_resource(UiFontAssets::test_registry());
+        app.init_resource::<UiFocusState>();
+        app.add_plugins((
+            super::super::UiDocumentRuntimePlugin,
+            UiDocumentPreviewPlugin,
+            UiInputPlugin,
+        ));
+        let mut registration = preview_registration(modal_preview_document());
+        registration.panel = UiDocumentPanel::Modal;
+        registration.layer = UiDocumentLayer::Modal;
+        app.world_mut()
+            .write_message(UiDocumentPreviewCommand::Register(registration));
+        app.update();
+        app.update();
+        app.update();
         app
     }
 
@@ -2722,6 +2815,116 @@ mod tests {
             assert!(!decision.preserved);
             assert_eq!(decision.reason, reason);
         }
+    }
+
+    #[test]
+    fn ui_document_preview_switches_declared_page_state_through_the_runtime_reload_path() {
+        let mut app =
+            stateful_preview_app(stateful_preview_document(200, 32, true, false, "details"));
+        let document_id = UiDocumentId::from_str("preview.runtime").unwrap();
+        let old_instance = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .active_instance("preview_owner", &document_id)
+            .unwrap();
+        let old_root = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .node_entity(old_instance, &UiNodeId::from_str("state.root").unwrap())
+            .unwrap();
+        let old_scroll = active_node(&app, "preview_owner", "state.scroll");
+        app.world_mut()
+            .get_mut::<ScrollPosition>(old_scroll)
+            .unwrap()
+            .0 = Vec2::new(0.0, 24.0);
+
+        app.world_mut()
+            .write_message(UiDocumentPreviewCommand::SetPageState {
+                reload_id: UiDocumentReloadId(70),
+                document_id: document_id.clone(),
+                owner: "preview_owner".to_owned(),
+                page_state: UiPageState::loading(),
+            });
+        app.update();
+
+        let report = reload_report(&app, 70);
+        assert_eq!(report.status, UiDocumentReloadStatus::Committed);
+        let new_instance = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .active_instance("preview_owner", &document_id)
+            .unwrap();
+        assert_ne!(new_instance, old_instance);
+        assert!(app.world().get_entity(old_root).is_err());
+        assert!(state_decision_for(&report, "state.scroll", "scroll").preserved);
+        assert_eq!(
+            app.world()
+                .get::<ScrollPosition>(active_node(&app, "preview_owner", "state.scroll"))
+                .unwrap()
+                .0,
+            Vec2::new(0.0, 24.0)
+        );
+        assert_eq!(
+            app.world()
+                .resource::<UiDocumentPreviewRegistry>()
+                .registrations
+                .get(&PreviewKey {
+                    document_id,
+                    owner: "preview_owner".to_owned(),
+                })
+                .unwrap()
+                .registration
+                .page_state,
+            UiPageState::loading()
+        );
+    }
+
+    #[test]
+    fn ui_document_modal_panel_blocks_input_and_owner_cleanup_removes_the_modal_root() {
+        let source = modal_preview_document();
+        let parsed = document(&source);
+        assert!(matches!(parsed.root, UiNode::Modal { .. }));
+
+        let mut app = modal_preview_app();
+        let document_id = UiDocumentId::from_str("preview.runtime").unwrap();
+        let instance = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .active_instance("preview_owner", &document_id)
+            .unwrap();
+        let root = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .instance(instance)
+            .unwrap()
+            .root;
+        assert_eq!(
+            app.world().get::<UiPanelRoot>(root).unwrap().kind,
+            UiPanelKind::Modal
+        );
+        assert!(app.world().resource::<UiInputState>().pointer_blocked);
+        assert!(
+            app.world()
+                .resource::<UiInputState>()
+                .top_blocking_panel
+                .is_some()
+        );
+
+        app.world_mut()
+            .write_message(UiDocumentRuntimeCommand::CloseAllForOwner {
+                owner: "preview_owner".to_owned(),
+            });
+        app.update();
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance("preview_owner", &document_id)
+                .is_none()
+        );
+        assert!(app.world().get_entity(root).is_err());
+        assert!(!app.world().resource::<UiInputState>().pointer_blocked);
     }
 
     #[test]

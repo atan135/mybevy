@@ -7,6 +7,7 @@ use crate::{
         ASSET_STRATEGY_PROTOCOL_VERSION, AssetCatalog, AssetDisposition, AssetStrategyManifest,
         CatalogAssetKind, MAX_ASSET_ENTRIES,
     },
+    contract::GenerationTask,
     lifecycle::{TaskFailure, TaskFailureKind},
     planning::{
         MAX_PLAN_COMPONENTS, MAX_PLAN_TOKENS, PLANNING_PROTOCOL_VERSION, RecommendationScope,
@@ -17,6 +18,7 @@ use crate::{
         StructuredOutputContract, is_safe_metadata_label,
     },
 };
+use project::framework::ui::document::UiDocument;
 use project::framework::ui::document::tooling::{
     CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UI_DOCUMENT_MAX_BYTES,
     UiValidationReport, canonicalize_json, validate_json_bytes,
@@ -244,6 +246,8 @@ pub struct GeneratedUiDocument {
     pub disclosures: GenerationDisclosures,
     pub trace: GenerationTrace,
     pub validation_report: UiValidationReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_series: Option<crate::series::PageSeriesValidation>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -265,6 +269,8 @@ struct GenerationPolicy<'a> {
     allow_actions: bool,
     allow_bindings: bool,
     allow_i18n_keys: bool,
+    allow_visible_states: bool,
+    allow_responsive_variants: bool,
     protocol_fields_only: bool,
 }
 
@@ -276,6 +282,8 @@ struct GenerationStructuredInputs<'a> {
     analysis: &'a UiReferenceAnalysis,
     plan: &'a UiGenerationPlan,
     asset_strategy: &'a AssetStrategyManifest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    visible_series: Option<&'a crate::series::PageSeriesEvidence>,
     policy: GenerationPolicy<'a>,
     parameters: &'a GenerationParameters,
 }
@@ -291,6 +299,13 @@ pub struct PreparedGenerationRequest {
     source_map: Vec<SourceMapEntry>,
     text_decisions: Vec<TextSourceDecision>,
     allowed_assets: Vec<AllowedAsset>,
+    visible_series: Option<VisibleSeriesScope>,
+}
+
+#[derive(Clone, Debug)]
+struct VisibleSeriesScope {
+    task: GenerationTask,
+    evidence: crate::series::PageSeriesEvidence,
 }
 
 #[derive(Clone, Debug)]
@@ -328,8 +343,8 @@ impl PreparedGenerationRequest {
             allow_actions: false,
             allow_bindings: false,
             allow_i18n_keys: false,
-            allow_hidden_states: false,
-            allow_responsive_variants: false,
+            allow_hidden_states: self.visible_series.is_some(),
+            allow_responsive_variants: self.visible_series.is_some(),
             budget_profile: project::framework::ui::document::tooling::UI_DOCUMENT_BUDGET_PROFILE
                 .to_owned(),
         }
@@ -355,9 +370,56 @@ pub fn prepare_generation_request(
     catalog: &AssetCatalog,
     configuration: GenerationConfiguration,
 ) -> Result<PreparedGenerationRequest, TaskFailure> {
+    prepare_generation_request_with_series(
+        analysis,
+        plan,
+        asset_strategy,
+        catalog,
+        configuration,
+        None,
+    )
+}
+
+/// Prepares a generation request with visible states/responsive variants only when a separately
+/// trusted same-page evidence matrix is supplied. The normal Stage 7 entry point above remains
+/// single-state and continues to reject these fields.
+pub fn prepare_visible_series_generation_request(
+    task: &GenerationTask,
+    analysis: &UiReferenceAnalysis,
+    plan: &UiGenerationPlan,
+    asset_strategy: &AssetStrategyManifest,
+    catalog: &AssetCatalog,
+    configuration: GenerationConfiguration,
+    evidence: crate::series::PageSeriesEvidence,
+) -> Result<PreparedGenerationRequest, TaskFailure> {
+    task.validate()?;
+    prepare_generation_request_with_series(
+        analysis,
+        plan,
+        asset_strategy,
+        catalog,
+        configuration,
+        Some(VisibleSeriesScope {
+            task: task.clone(),
+            evidence,
+        }),
+    )
+}
+
+fn prepare_generation_request_with_series(
+    analysis: &UiReferenceAnalysis,
+    plan: &UiGenerationPlan,
+    asset_strategy: &AssetStrategyManifest,
+    catalog: &AssetCatalog,
+    configuration: GenerationConfiguration,
+    visible_series: Option<VisibleSeriesScope>,
+) -> Result<PreparedGenerationRequest, TaskFailure> {
     validate_trusted_inputs(analysis, plan, asset_strategy)?;
-    let source_map = derive_source_map(analysis);
-    let text_decisions = derive_text_decisions(analysis);
+    let primary_reference_id = visible_series
+        .as_ref()
+        .map(|scope| scope.task.primary_reference.reference_id.as_str());
+    let source_map = derive_source_map(analysis, primary_reference_id);
+    let text_decisions = derive_text_decisions(analysis, primary_reference_id);
     let allowed_assets = collect_allowed_assets(asset_strategy, catalog)?;
     let structured = GenerationStructuredInputs {
         model_id: &configuration.model_id,
@@ -365,6 +427,7 @@ pub fn prepare_generation_request(
         analysis,
         plan,
         asset_strategy,
+        visible_series: visible_series.as_ref().map(|scope| &scope.evidence),
         policy: GenerationPolicy {
             document_id: &configuration.document_id,
             ui_document_schema_version: configuration.ui_document_schema_version,
@@ -374,6 +437,8 @@ pub fn prepare_generation_request(
             allow_actions: false,
             allow_bindings: false,
             allow_i18n_keys: false,
+            allow_visible_states: visible_series.is_some(),
+            allow_responsive_variants: visible_series.is_some(),
             protocol_fields_only: true,
         },
         parameters: &configuration.parameters,
@@ -403,6 +468,7 @@ pub fn prepare_generation_request(
         source_map,
         text_decisions,
         allowed_assets,
+        visible_series,
     })
 }
 
@@ -511,8 +577,10 @@ pub fn validate_staging_document(
     })?;
     let canonical_value: Value = serde_json::from_str(&canonical_document_json)
         .expect("formal canonical JSON is always parseable");
-    let policy_diagnostics = match validate_document_policy(&canonical_value, prepared) {
-        Ok(_) => Vec::new(),
+    let policy_diagnostics = match validate_document_policy(&canonical_value, prepared)
+        .and_then(|_| validate_visible_series_document(&canonical_value, prepared).map(|_| ()))
+    {
+        Ok(()) => Vec::new(),
         Err(failure) => vec![policy_diagnostic(&failure)],
     };
     Ok(StagingDocumentValidation {
@@ -567,6 +635,7 @@ pub(crate) fn finalize_staging_generation(
     let canonical_value: Value = serde_json::from_str(&canonical_document_json)
         .expect("formal canonical JSON is always parseable");
     let document_paths = validate_document_policy(&canonical_value, prepared)?;
+    let visible_series = validate_visible_series_document(&canonical_value, prepared)?;
     let source_map = prepared
         .source_map
         .iter()
@@ -604,6 +673,7 @@ pub(crate) fn finalize_staging_generation(
             canonical_document_sha256,
         },
         validation_report: validation.formal_report,
+        visible_series,
     })
 }
 
@@ -711,10 +781,17 @@ fn validate_trusted_inputs(
     Ok(())
 }
 
-fn derive_source_map(analysis: &UiReferenceAnalysis) -> Vec<SourceMapEntry> {
+fn derive_source_map(
+    analysis: &UiReferenceAnalysis,
+    reference_filter: Option<&str>,
+) -> Vec<SourceMapEntry> {
     let mut entries = analysis
         .elements
         .iter()
+        .filter(|element| {
+            reference_filter
+                .is_none_or(|reference_id| element.bounding_box.reference_id == reference_id)
+        })
         .map(|element| SourceMapEntry {
             reference_element_id: element.element_id.clone(),
             node_id: element.element_id.clone(),
@@ -727,11 +804,18 @@ fn derive_source_map(analysis: &UiReferenceAnalysis) -> Vec<SourceMapEntry> {
     entries
 }
 
-fn derive_text_decisions(analysis: &UiReferenceAnalysis) -> Vec<TextSourceDecision> {
+fn derive_text_decisions(
+    analysis: &UiReferenceAnalysis,
+    reference_filter: Option<&str>,
+) -> Vec<TextSourceDecision> {
     let mut decisions = analysis
         .elements
         .iter()
         .filter(|element| element.kind == VisualElementKind::Text)
+        .filter(|element| {
+            reference_filter
+                .is_none_or(|reference_id| element.bounding_box.reference_id == reference_id)
+        })
         .map(|element| TextSourceDecision {
             reference_element_id: element.element_id.clone(),
             node_id: element.element_id.clone(),
@@ -838,16 +922,17 @@ fn validate_document_policy(
             "provider schema_version differs from the requested UiDocument version",
         ));
     }
-    for field in ["states", "responsive"] {
-        if object
-            .get(field)
-            .and_then(Value::as_array)
-            .is_some_and(|items| !items.is_empty())
-        {
-            return Err(malformed(
-                "generation cannot infer hidden states or responsive variants from one visible state",
-            ));
-        }
+    if prepared.visible_series.is_none()
+        && ["states", "responsive"].into_iter().any(|field| {
+            object
+                .get(field)
+                .and_then(Value::as_array)
+                .is_some_and(|items| !items.is_empty())
+        })
+    {
+        return Err(malformed(
+            "generation cannot infer hidden states or responsive variants from one visible state",
+        ));
     }
     reject_business_fields(document)?;
     validate_assets(object, prepared)?;
@@ -886,6 +971,33 @@ fn validate_document_policy(
         .into_iter()
         .map(|(id, node)| (id, node.path))
         .collect())
+}
+
+fn validate_visible_series_document(
+    document: &Value,
+    prepared: &PreparedGenerationRequest,
+) -> Result<Option<crate::series::PageSeriesValidation>, TaskFailure> {
+    let Some(scope) = prepared.visible_series.as_ref() else {
+        return Ok(None);
+    };
+    let source = serde_json::to_string(document)
+        .map_err(|_| malformed("visible-series document cannot be serialized"))?;
+    let document = UiDocument::parse_and_validate_json(&source)
+        .map_err(|error| {
+            malformed(format!(
+                "canonical UiDocument could not be reloaded for visible-series validation: {}",
+                error.code()
+            ))
+        })?
+        .into_document();
+    crate::series::validate_page_series(&scope.task, &prepared.analysis, &document, &scope.evidence)
+        .map(Some)
+        .map_err(|failure| {
+            malformed(format!(
+                "visible-series evidence does not authorize the generated document: {}",
+                failure.message()
+            ))
+        })
 }
 
 fn collect_nodes<'a>(
@@ -979,6 +1091,9 @@ fn validate_literal_text(
         .elements
         .iter()
         .filter(|element| element.kind == VisualElementKind::Text)
+        // A visible page series intentionally maps secondary references back to the primary
+        // document nodes. Only nodes present in this document can contribute literal text.
+        .filter(|element| nodes.contains_key(&element.element_id))
     {
         match adopted_text(element) {
             Some(text) => {
@@ -1101,7 +1216,13 @@ fn validate_mapped_assets(
     nodes: &BTreeMap<String, DocumentNode<'_>>,
     prepared: &PreparedGenerationRequest,
 ) -> Result<(), TaskFailure> {
-    for entry in &prepared.asset_strategy.entries {
+    for entry in prepared
+        .asset_strategy
+        .entries
+        .iter()
+        // Secondary-reference elements are evidence for the shared page, not duplicate nodes.
+        .filter(|entry| nodes.contains_key(entry.element_id()))
+    {
         let mapped_asset = nodes[entry.element_id()]
             .value
             .get("asset")
@@ -1409,6 +1530,183 @@ mod tests {
         }
     }
 
+    fn visible_series_prepared() -> (PreparedGenerationRequest, Value) {
+        let mut analysis_value: Value =
+            serde_json::from_slice(&fixture_analysis("regular_page.json")).unwrap();
+        let primary_reference = analysis_value["references"][0].clone();
+        let primary_region = analysis_value["regions"][0].clone();
+        let primary_root = analysis_value["elements"][0].clone();
+        let primary_evidence = analysis_value["evidence"][0].clone();
+        for (reference_id, region_id, element_id, evidence_id, width, height) in [
+            (
+                "loading_ref",
+                "region.loading",
+                "loading.root",
+                "evidence.loading",
+                390,
+                844,
+            ),
+            (
+                "tablet_ref",
+                "region.tablet",
+                "tablet.root",
+                "evidence.tablet",
+                1280,
+                800,
+            ),
+        ] {
+            let mut reference = primary_reference.clone();
+            reference["reference_id"] = Value::String(reference_id.to_owned());
+            reference["width"] = Value::from(width);
+            reference["height"] = Value::from(height);
+            analysis_value["references"]
+                .as_array_mut()
+                .unwrap()
+                .push(reference);
+
+            let mut region = primary_region.clone();
+            region["region_id"] = Value::String(region_id.to_owned());
+            region["reference_id"] = Value::String(reference_id.to_owned());
+            region["bounding_box"]["reference_id"] = Value::String(reference_id.to_owned());
+            region["bounding_box"]["width"] = Value::from(width as f64);
+            region["bounding_box"]["height"] = Value::from(height as f64);
+            region["bounding_box"]["evidence_ids"] = serde_json::json!([evidence_id]);
+            region["evidence_ids"] = serde_json::json!([evidence_id]);
+            analysis_value["regions"]
+                .as_array_mut()
+                .unwrap()
+                .push(region);
+
+            let mut element = primary_root.clone();
+            element["element_id"] = Value::String(element_id.to_owned());
+            element["parent_id"] = Value::String("page.root".to_owned());
+            element["region_id"] = Value::String(region_id.to_owned());
+            element["bounding_box"]["reference_id"] = Value::String(reference_id.to_owned());
+            element["bounding_box"]["width"] = Value::from(width as f64);
+            element["bounding_box"]["height"] = Value::from(height as f64);
+            element["bounding_box"]["evidence_ids"] = serde_json::json!([evidence_id]);
+            element["layout"]["evidence_ids"] = serde_json::json!([evidence_id]);
+            element["evidence_ids"] = serde_json::json!([evidence_id, "evidence.provider"]);
+            analysis_value["elements"]
+                .as_array_mut()
+                .unwrap()
+                .push(element);
+
+            let mut evidence = primary_evidence.clone();
+            evidence["evidence_id"] = Value::String(evidence_id.to_owned());
+            evidence["source"]["reference_id"] = Value::String(reference_id.to_owned());
+            evidence["source"]["region_id"] = Value::String(region_id.to_owned());
+            analysis_value["evidence"]
+                .as_array_mut()
+                .unwrap()
+                .push(evidence);
+        }
+        let analysis = parse_analysis_json(&serde_json::to_vec(&analysis_value).unwrap()).unwrap();
+        let task: GenerationTask = serde_json::from_value(serde_json::json!({
+            "contract_version": 1,
+            "run_id": "fixture-regular-page",
+            "primary_reference": {
+                "reference_id": "primary",
+                "path": "primary.png",
+                "metadata": {
+                    "original_size": { "width": 390, "height": 844 },
+                    "orientation": "normal",
+                    "color_space": "srgb",
+                    "sha256": "0".repeat(64),
+                    "provenance": { "source": "fixture", "authorization": "analysis_only" }
+                }
+            },
+            "additional_references": [
+                {
+                    "reference_id": "loading_ref",
+                    "path": "loading.png",
+                    "metadata": {
+                        "original_size": { "width": 390, "height": 844 },
+                        "orientation": "normal", "color_space": "srgb", "sha256": "1".repeat(64),
+                        "provenance": { "source": "fixture", "authorization": "analysis_only" }
+                    },
+                    "priority": 1,
+                    "role": { "kind": "state", "state_id": "loading", "transition_evidence": "fixture" }
+                },
+                {
+                    "reference_id": "tablet_ref",
+                    "path": "tablet.png",
+                    "metadata": {
+                        "original_size": { "width": 1280, "height": 800 },
+                        "orientation": "normal", "color_space": "srgb", "sha256": "2".repeat(64),
+                        "provenance": { "source": "fixture", "authorization": "analysis_only" }
+                    },
+                    "priority": 2,
+                    "role": { "kind": "viewport", "viewport": { "logical_width": 1280.0, "logical_height": 800.0, "device_scale": 1.0 } }
+                }
+            ],
+            "target_viewport": { "logical_width": 390.0, "logical_height": 844.0, "device_scale": 3.0 }
+        }))
+        .unwrap();
+        let evidence = serde_json::from_value(serde_json::json!({
+            "version": crate::series::PAGE_SERIES_EVIDENCE_VERSION,
+            "primary_reference_id": "primary",
+            "shared_nodes": [
+                { "canonical_element_id": "page.root", "alternate_element_id": "loading.root", "reference_id": "loading_ref", "evidence_ids": ["evidence.loading"] },
+                { "canonical_element_id": "page.root", "alternate_element_id": "tablet.root", "reference_id": "tablet_ref", "evidence_ids": ["evidence.tablet"] }
+            ],
+            "visible_states": [{
+                "definition": { "id": "loading", "overrides": [{
+                    "node_id": "page.root",
+                    "set": { "style": { "inline": { "opacity": { "kind": "literal", "value": 0.6 } } } }
+                }] },
+                "reference_id": "loading_ref",
+                "evidence_ids": ["evidence.loading"]
+            }],
+            "responsive_variants": [{
+                "variant": {
+                    "id": "expanded_landscape",
+                    "when": { "width_class": "expanded", "orientation": "landscape" },
+                    "overrides": [{ "node_id": "page.root", "set": { "layout": { "direction": "row" } } }]
+                },
+                "derivation": "observed",
+                "reference_ids": ["primary", "tablet_ref"],
+                "evidence_ids": ["evidence.reference", "evidence.tablet"]
+            }]
+        }))
+        .unwrap();
+        let plan = plan_analysis(&analysis);
+        let catalog = AssetCatalog::load_repository(&repository_root()).unwrap();
+        let strategy = build_asset_strategy(&analysis, &plan, &catalog, &[], &[]).unwrap();
+        let prepared = prepare_visible_series_generation_request(
+            &task,
+            &analysis,
+            &plan,
+            &strategy,
+            &catalog,
+            GenerationConfiguration::new(
+                "generated.visible_series_fixture",
+                "fixture-model-v1",
+                "ui-document-v1",
+                GenerationParameters::new(0, 262_144, Some(7)).unwrap(),
+            )
+            .unwrap(),
+            evidence,
+        )
+        .unwrap();
+        let mut output = fixture_generation("minimal.valid.json");
+        output["document"]["document_id"] =
+            Value::String("generated.visible_series_fixture".to_owned());
+        output["document"]["states"] = serde_json::json!([{
+            "id": "loading",
+            "overrides": [{
+                "node_id": "page.root",
+                "set": { "style": { "inline": { "opacity": { "kind": "literal", "value": 0.6 } } } }
+            }]
+        }]);
+        output["document"]["responsive"] = serde_json::json!([{
+            "id": "expanded_landscape",
+            "when": { "width_class": "expanded", "orientation": "landscape" },
+            "overrides": [{ "node_id": "page.root", "set": { "layout": { "direction": "row" } } }]
+        }]);
+        (prepared, output)
+    }
+
     #[test]
     fn minimal_fixture_is_canonical_and_source_mapped() {
         let prepared = prepared("regular_page.json", "generated.minimal_fixture");
@@ -1430,6 +1728,32 @@ mod tests {
         assert_eq!(generated.trace.server_request_id, "fixture-generation-001");
         assert_eq!(generated.trace.input_sha256, prepared.input_sha256());
         assert!(generated.canonical_document_json.ends_with('\n'));
+    }
+
+    #[test]
+    fn visible_series_generation_requires_shared_evidence_for_state_and_responsive_variants() {
+        let (prepared, output) = visible_series_prepared();
+        let generated =
+            validate_generation_execution(&execution(&prepared, output.clone()), &prepared)
+                .unwrap();
+        let series = generated.visible_series.unwrap();
+        assert!(series.source_map.iter().any(|entry| {
+            entry.reference_element_id == "loading.root" && entry.node_id == "page.root"
+        }));
+        assert!(series.source_map.iter().any(|entry| {
+            entry.reference_element_id == "tablet.root" && entry.node_id == "page.root"
+        }));
+        assert!(prepared.request().structured_inputs().is_some_and(|input| {
+            input["policy"]["allow_visible_states"] == true
+                && input["policy"]["allow_responsive_variants"] == true
+        }));
+
+        let mut unauthorized = output;
+        unauthorized["document"]["states"][0]["id"] = Value::String("error".to_owned());
+        let failure = validate_generation_execution(&execution(&prepared, unauthorized), &prepared)
+            .unwrap_err();
+        assert_eq!(failure.kind(), TaskFailureKind::ProviderResponseMalformed);
+        assert!(failure.message().contains("visible-series evidence"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::lifecycle::{CancellationToken, TaskFailure, TaskFailureKind};
 use image::{ColorType, ImageDecoder, Limits, codecs::png::PngDecoder};
+use project::framework::ui::document::UiPageState;
 use project::framework::ui::document::tooling::{
     UI_DOCUMENT_MAX_BYTES, UiAssetSource, canonicalize_json, validate_json_bytes,
 };
@@ -57,6 +58,7 @@ pub struct PreviewCommandPlan {
     pub log_path: PathBuf,
     pub width: u32,
     pub height: u32,
+    pub page_state: String,
     pub timeout_frames: u32,
     pub stable_frames: u32,
     pub process_timeout_ms: u64,
@@ -108,6 +110,7 @@ struct StandalonePreviewResult {
     canonical_document_sha256: String,
     width: u32,
     height: u32,
+    page_state: String,
     elapsed_frames: u32,
     stable_frames: u32,
     screenshot_path: String,
@@ -256,6 +259,27 @@ pub fn prepare_preview_command(
     width: u32,
     height: u32,
 ) -> Result<PreviewCommandPlan, TaskFailure> {
+    prepare_preview_command_for_state(
+        repository_root,
+        document_path,
+        output_directory,
+        width,
+        height,
+        &UiPageState::initial(),
+    )
+}
+
+/// Prepares the feature-gated standalone preview for one explicitly declared visible page state.
+/// The state is parsed before the subprocess starts; the formal runtime remains the authority for
+/// verifying that the state exists and can be merged with the requested target profile.
+pub fn prepare_preview_command_for_state(
+    repository_root: &Path,
+    document_path: &Path,
+    output_directory: &Path,
+    width: u32,
+    height: u32,
+    page_state: &UiPageState,
+) -> Result<PreviewCommandPlan, TaskFailure> {
     if output_directory.exists() || output_directory.as_os_str().is_empty() {
         return Err(TaskFailure::new(
             TaskFailureKind::OutputDirectoryConflict,
@@ -307,6 +331,8 @@ pub fn prepare_preview_command(
         width.to_string(),
         "--height".to_owned(),
         height.to_string(),
+        "--page-state".to_owned(),
+        page_state.to_string(),
         "--timeout-frames".to_owned(),
         "1200".to_owned(),
         "--stable-frames".to_owned(),
@@ -322,6 +348,7 @@ pub fn prepare_preview_command(
         log_path,
         width,
         height,
+        page_state: page_state.to_string(),
         timeout_frames: 1200,
         stable_frames: 30,
         process_timeout_ms: 900_000,
@@ -547,6 +574,7 @@ fn validate_preview_evidence_at(
         || result.document_id.trim().is_empty()
         || result.width != plan.width
         || result.height != plan.height
+        || result.page_state != plan.page_state
         || result.canonical_document_sha256 != plan.canonical_document_sha256
         || result.screenshot_path != plan.screenshot_path.to_string_lossy()
         || result.elapsed_frames > plan.timeout_frames
@@ -951,6 +979,7 @@ mod tests {
                 "canonical_document_sha256": plan.canonical_document_sha256,
                 "width": plan.width,
                 "height": plan.height,
+                "page_state": plan.page_state,
                 "elapsed_frames": 60,
                 "stable_frames": 30,
                 "screenshot_path": plan.screenshot_path.to_string_lossy(),
