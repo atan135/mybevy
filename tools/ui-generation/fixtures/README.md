@@ -35,3 +35,12 @@ asset.
 `preview/` contains repository-authored bare `UiDocument` inputs for the feature-gated Stage 8
 standalone preview process. They contain no business action, binding, packaged asset, or generated
 binary material.
+
+`evaluation/catalog.v1.json` is the Stage 11 offline evaluation corpus. It has six
+repository-authored synthetic text cases: login, list, HUD, modal, complex art panel, and a
+phone/tablet multi-state document. Each case explicitly records expected components, key regions,
+allowed differences, unsupported capabilities, device/state coverage, and a reviewer-role-only
+human acceptance result. It references the existing structured fixtures by a path constrained to
+this directory; it contains no binary reference image, personal data, account copy, prompt, or raw
+provider response. `evaluate-fixtures` invokes the non-network `FixtureProvider` and revalidates
+each formal artifact before emitting aggregate counts only.

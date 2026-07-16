@@ -5,6 +5,7 @@ use crate::{
         finalize_staging_generation, validate_staging_document,
     },
     lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
+    observability::TaskBudget,
     provider::{
         ProviderExecutionFailure, ProviderExecutionTrace, ProviderId, ProviderRequest,
         ProviderRunner, RequestLogMetadata, StructuredOutputContract,
@@ -191,6 +192,8 @@ pub fn repair_generated_document(
             return failed_run(initial, Vec::new(), failure_for_task(kind, &failure));
         }
     };
+    let budget = TaskBudget::new(runner.task_limits())
+        .expect("a constructed provider runner always has valid task limits");
     repair_staged_document(
         staged,
         prepared,
@@ -198,6 +201,7 @@ pub fn repair_generated_document(
         provider_id,
         cancellation,
         configuration,
+        &budget,
     )
 }
 
@@ -208,6 +212,7 @@ fn repair_staged_document(
     provider_id: &ProviderId,
     cancellation: &CancellationToken,
     configuration: RepairConfiguration,
+    budget: &TaskBudget,
 ) -> RepairRunResult {
     let initial = staged.document().clone();
     let mut current = initial.clone();
@@ -307,7 +312,8 @@ fn repair_staged_document(
         )
         .expect("trusted repair request labels and contract are valid");
         let request_metadata = request.log_metadata();
-        let execution = match runner.execute(provider_id, request, cancellation) {
+        let execution = match runner.execute_with_budget(provider_id, request, cancellation, budget)
+        {
             Ok(execution) => execution,
             Err(execution_failure) => {
                 rounds.push(RepairRoundEvidence {
@@ -789,6 +795,7 @@ mod tests {
                     initial_backoff: Duration::ZERO,
                     max_backoff: Duration::ZERO,
                 },
+                task_limits: crate::observability::TaskExecutionLimits::default(),
             },
         )
         .unwrap();

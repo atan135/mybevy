@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ui_generation::{
     audit::{AuditVisualExpectation, parse_page_states, run_document_audit_command},
     boundary::verify_dependency_boundary,
+    evaluation::run_fixture_evaluation,
     inspect_task,
     lifecycle::CancellationToken,
     preprocess::preprocess_task,
@@ -73,6 +74,13 @@ enum Command {
         /// Explicitly require these non-initial fixture states to differ visually from initial.
         #[arg(long)]
         require_distinct_from_initial: Option<String>,
+    },
+    /// Runs the repository-owned offline evaluation corpus and emits aggregate, redacted metrics.
+    EvaluateFixtures {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        repository_root: PathBuf,
     },
     /// Emits the small, high-impact decision template bound to a committed generation run.
     PromotionDecisions {
@@ -215,6 +223,11 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             }
             serde_json::to_value(result).expect("audit result is serializable")
         }
+        Command::EvaluateFixtures {
+            catalog,
+            repository_root,
+        } => serde_json::to_value(run_fixture_evaluation(&repository_root, &catalog)?)
+            .expect("evaluation report is serializable"),
         Command::PromotionDecisions {
             run_id,
             repository_root,

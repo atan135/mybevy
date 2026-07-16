@@ -2,7 +2,10 @@ use super::{
     Provider, ProviderCallContext, ProviderError, ProviderErrorKind, ProviderId, ProviderRequest,
     ProviderResponse, RequestLogMetadata, ServerRequestId, duration_millis, validate_response,
 };
-use crate::lifecycle::{CancellationToken, TaskFailure, TaskFailureKind};
+use crate::{
+    lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
+    observability::{TaskBudget, TaskExecutionLimits},
+};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -67,6 +70,8 @@ pub struct ProviderExecutionPolicy {
     pub attempt_timeout: Duration,
     pub minimum_request_interval: Duration,
     pub retry: RetryPolicy,
+    /// Limits are checked before every provider attempt and after each reported usage record.
+    pub task_limits: TaskExecutionLimits,
 }
 
 impl ProviderExecutionPolicy {
@@ -83,7 +88,8 @@ impl ProviderExecutionPolicy {
                 "provider timeout and local rate interval cannot exceed one hour",
             ));
         }
-        self.retry.validate()
+        self.retry.validate()?;
+        self.task_limits.validate()
     }
 }
 
@@ -93,6 +99,7 @@ impl Default for ProviderExecutionPolicy {
             attempt_timeout: Duration::from_secs(60),
             minimum_request_interval: Duration::ZERO,
             retry: RetryPolicy::default(),
+            task_limits: TaskExecutionLimits::default(),
         }
     }
 }
@@ -206,6 +213,28 @@ impl ProviderRunner {
         request: ProviderRequest,
         cancellation: &CancellationToken,
     ) -> Result<ProviderExecution, ProviderExecutionFailure> {
+        let budget = TaskBudget::new(self.policy.task_limits.clone()).map_err(|failure| {
+            ProviderExecutionFailure {
+                failure,
+                trace: ProviderExecutionTrace {
+                    provider_id: provider_id.clone(),
+                    request: request.log_metadata(),
+                    attempts: Vec::new(),
+                },
+            }
+        })?;
+        self.execute_with_budget(provider_id, request, cancellation, &budget)
+    }
+
+    /// Uses a caller-owned task budget so analysis, generation, and bounded repair can share
+    /// one hard stop instead of each phase receiving an independent retry allowance.
+    pub fn execute_with_budget(
+        &self,
+        provider_id: &ProviderId,
+        request: ProviderRequest,
+        cancellation: &CancellationToken,
+        budget: &TaskBudget,
+    ) -> Result<ProviderExecution, ProviderExecutionFailure> {
         let metadata = request.log_metadata();
         let mut trace = ProviderExecutionTrace {
             provider_id: provider_id.clone(),
@@ -237,6 +266,14 @@ impl ProviderRunner {
             if !self.rate_limit_clock.wait(rate_wait, cancellation) {
                 return Err(cancelled_failure(trace));
             }
+            // Rate waiting belongs to the task wall clock. Reserve only after it has elapsed so
+            // an overdue task cannot begin one more provider attempt.
+            budget
+                .reserve_provider_attempt(request.image_count())
+                .map_err(|failure| ProviderExecutionFailure {
+                    failure,
+                    trace: trace.clone(),
+                })?;
 
             let started = Instant::now();
             let result = invoke_with_timeout(
@@ -252,6 +289,18 @@ impl ProviderRunner {
                 Ok(response)
             }) {
                 Ok(response) => {
+                    if let Err(failure) = budget.record_provider_usage(
+                        response.usage.input_units,
+                        response.usage.output_units,
+                    ) {
+                        trace.attempts.push(ProviderAttemptTrace {
+                            attempt,
+                            outcome: ProviderAttemptOutcome::Succeeded,
+                            server_request_id: response.server_request_id.clone(),
+                            elapsed_ms,
+                        });
+                        return Err(ProviderExecutionFailure { failure, trace });
+                    }
                     trace.attempts.push(ProviderAttemptTrace {
                         attempt,
                         outcome: ProviderAttemptOutcome::Succeeded,
@@ -284,6 +333,10 @@ impl ProviderRunner {
                 }
             }
         }
+    }
+
+    pub fn task_limits(&self) -> TaskExecutionLimits {
+        self.policy.task_limits.clone()
     }
 
     fn reserve_rate_slot(&self, provider_id: &ProviderId) -> Duration {
@@ -387,6 +440,7 @@ fn cancelled_failure(trace: ProviderExecutionTrace) -> ProviderExecutionFailure 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observability::{TaskBudget, TaskExecutionLimits};
     use crate::provider::{
         MockProvider, MockScenario, ProviderCapabilities, ProviderDescriptor, ProviderOperation,
         StructuredProviderOutput,
@@ -471,6 +525,7 @@ mod tests {
                 initial_backoff: Duration::from_millis(1),
                 max_backoff: Duration::from_millis(3),
             },
+            task_limits: TaskExecutionLimits::default(),
         }
     }
 
@@ -679,5 +734,86 @@ mod tests {
             .unwrap();
         assert_eq!(provider.call_count(), 2);
         assert_eq!(clock.waits(), vec![Duration::from_millis(12)]);
+    }
+
+    #[test]
+    fn caller_owned_task_budget_stops_the_next_provider_attempt_before_invocation() {
+        let provider = Arc::new(MockProvider::new(
+            descriptor("budgeted-fixture"),
+            [success("first"), success("second")],
+        ));
+        let mut registry = ProviderRegistry::default();
+        registry.register(provider.clone()).unwrap();
+        let runner = ProviderRunner::new(registry, test_policy(1)).unwrap();
+        let budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 1,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        let provider_id = ProviderId::new("budgeted-fixture").unwrap();
+        runner
+            .execute_with_budget(
+                &provider_id,
+                test_request(),
+                &CancellationToken::default(),
+                &budget,
+            )
+            .unwrap();
+        let failure = runner
+            .execute_with_budget(
+                &provider_id,
+                test_request(),
+                &CancellationToken::default(),
+                &budget,
+            )
+            .unwrap_err();
+        assert_eq!(
+            failure.failure.subject(),
+            Some("UI_GENERATION_LIMIT_PROVIDER_CALLS")
+        );
+        assert_eq!(provider.call_count(), 1);
+    }
+
+    #[test]
+    fn rate_wait_is_charged_before_the_next_task_attempt_starts() {
+        let provider = Arc::new(MockProvider::new(
+            descriptor("rate-budget-fixture"),
+            [success("first"), success("second")],
+        ));
+        let mut registry = ProviderRegistry::default();
+        registry.register(provider.clone()).unwrap();
+        let mut policy = test_policy(1);
+        policy.minimum_request_interval = Duration::from_millis(150);
+        let runner = ProviderRunner::new(registry, policy).unwrap();
+        let budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 2,
+            max_elapsed_ms: 100,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        let provider_id = ProviderId::new("rate-budget-fixture").unwrap();
+        runner
+            .execute_with_budget(
+                &provider_id,
+                test_request(),
+                &CancellationToken::default(),
+                &budget,
+            )
+            .unwrap();
+        let failure = runner
+            .execute_with_budget(
+                &provider_id,
+                test_request(),
+                &CancellationToken::default(),
+                &budget,
+            )
+            .unwrap_err();
+        assert_eq!(
+            failure.failure.subject(),
+            Some("UI_GENERATION_LIMIT_ELAPSED")
+        );
+        assert_eq!(provider.call_count(), 1);
     }
 }

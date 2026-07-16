@@ -1,0 +1,110 @@
+{
+  "catalog_version": 1,
+  "source": {
+    "kind": "repository_authored_synthetic_text_fixture",
+    "statement": "Each case is a repository-authored synthetic structured fixture. No user reference image, copied product artwork, prompt transcript, provider transcript, account text, or personal information is included.",
+    "license": "CC0-1.0",
+    "contains_user_data": false
+  },
+  "cases": [
+    {
+      "id": "login_minimal",
+      "category": "login",
+      "fixture": { "path": "generation/minimal.valid.json", "artifact_kind": "generation_envelope" },
+      "expected_components": ["container", "text"],
+      "key_regions": ["page.root", "page.title"],
+      "allowed_differences": ["theme_token_selection"],
+      "unsupported_capabilities": ["business_auth_binding"],
+      "viewports": [{ "name": "phone_portrait", "width": 390, "height": 844 }],
+      "states": ["initial"],
+      "human_acceptance": {
+        "status": "accepted_with_limitations",
+        "reviewer_role": "repository-maintainer",
+        "basis": "Formal document shape is accepted; authentication behavior remains intentionally unbound."
+      }
+    },
+    {
+      "id": "scrolling_list",
+      "category": "list",
+      "fixture": { "path": "analysis/long_list.json", "artifact_kind": "analysis" },
+      "expected_components": ["scroll_region", "list", "list_item"],
+      "key_regions": ["region.list", "list.viewport", "list.row_sample"],
+      "allowed_differences": ["row_content_literals"],
+      "unsupported_capabilities": ["data_binding_virtualization"],
+      "viewports": [{ "name": "phone_portrait", "width": 390, "height": 844 }],
+      "states": ["initial"],
+      "human_acceptance": {
+        "status": "accepted_with_limitations",
+        "reviewer_role": "repository-maintainer",
+        "basis": "Scroll geometry and repetition evidence are accepted; live data behavior is outside the fixture."
+      }
+    },
+    {
+      "id": "gameplay_hud",
+      "category": "hud",
+      "fixture": { "path": "analysis/hud.json", "artifact_kind": "analysis" },
+      "expected_components": ["container", "label"],
+      "key_regions": ["region.hud", "hud.root"],
+      "allowed_differences": ["approved_icon_asset"],
+      "unsupported_capabilities": ["combat_binding"],
+      "viewports": [{ "name": "phone_landscape", "width": 844, "height": 390 }],
+      "states": ["initial"],
+      "human_acceptance": {
+        "status": "accepted_with_limitations",
+        "reviewer_role": "repository-maintainer",
+        "basis": "HUD layout evidence is accepted; combat data and actions remain outside UiDocument generation."
+      }
+    },
+    {
+      "id": "confirmation_modal",
+      "category": "modal",
+      "fixture": { "path": "analysis/modal.json", "artifact_kind": "analysis" },
+      "expected_components": ["dialog", "card", "label"],
+      "key_regions": ["region.modal", "modal.panel", "modal.title"],
+      "allowed_differences": ["approved_font_role"],
+      "unsupported_capabilities": ["dismiss_action_binding"],
+      "viewports": [{ "name": "phone_portrait", "width": 390, "height": 844 }],
+      "states": ["initial", "fixture.modal"],
+      "human_acceptance": {
+        "status": "accepted_with_limitations",
+        "reviewer_role": "repository-maintainer",
+        "basis": "Modal hierarchy is accepted while hidden dismissal and focus behavior remain explicit review items."
+      }
+    },
+    {
+      "id": "complex_art_panel",
+      "category": "art_panel",
+      "fixture": { "path": "generation/complex.valid.json", "artifact_kind": "generation_envelope" },
+      "expected_components": ["container", "text"],
+      "key_regions": ["modal.root", "modal.panel", "modal.border"],
+      "allowed_differences": ["authorized_nine_slice_asset"],
+      "unsupported_capabilities": ["unapproved_generated_art"],
+      "viewports": [{ "name": "tablet_landscape", "width": 1280, "height": 800 }],
+      "states": ["initial"],
+      "human_acceptance": {
+        "status": "accepted_with_limitations",
+        "reviewer_role": "repository-maintainer",
+        "basis": "Formal panel structure is accepted; the missing licensed nine-slice asset remains unsupported."
+      }
+    },
+    {
+      "id": "phone_tablet_visible_states",
+      "category": "responsive_state",
+      "fixture": { "path": "audit/phone_tablet_multi_state.valid.json", "artifact_kind": "ui_document" },
+      "expected_components": ["container", "text", "modal"],
+      "key_regions": ["page.root", "page.initial", "page.modal"],
+      "allowed_differences": ["responsive_gap_and_direction"],
+      "unsupported_capabilities": ["undeclared_interaction_state"],
+      "viewports": [
+        { "name": "phone_portrait", "width": 390, "height": 844 },
+        { "name": "tablet_landscape", "width": 1280, "height": 800 }
+      ],
+      "states": ["initial", "loading", "empty", "error", "fixture.selected", "fixture.disabled", "fixture.modal"],
+      "human_acceptance": {
+        "status": "accepted",
+        "reviewer_role": "repository-maintainer",
+        "basis": "Declared states and both target viewports are accepted for deterministic preview audit."
+      }
+    }
+  ]
+}
