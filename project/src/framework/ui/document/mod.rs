@@ -1,3 +1,4 @@
+mod approval;
 mod asset;
 mod binding_action;
 mod budget;
@@ -17,6 +18,7 @@ mod style;
 pub mod tooling;
 mod validation;
 
+pub use approval::*;
 pub use asset::*;
 pub use binding_action::*;
 pub use budget::*;

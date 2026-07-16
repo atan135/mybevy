@@ -141,7 +141,7 @@ impl AssetCatalog {
                 "asset catalog JSON must be 1-{MAX_CATALOG_JSON_BYTES} bytes"
             )));
         }
-        let document: AssetCatalogDocument =
+        let mut document: AssetCatalogDocument =
             serde_json::from_slice(catalog_json).map_err(|error| {
                 TaskFailure::invalid(format!(
                     "asset catalog does not match the strict schema: {error}"
@@ -153,12 +153,6 @@ impl AssetCatalog {
                 document.schema_version
             )));
         }
-        if document.assets.is_empty() || document.assets.len() > MAX_ASSET_ENTRIES {
-            return Err(TaskFailure::invalid(format!(
-                "asset catalog must contain 1-{MAX_ASSET_ENTRIES} entries"
-            )));
-        }
-
         let repository_root = canonical_regular_directory(repository_root, "repository root")?;
         let packaged_root = repository_root.join("project/assets");
         let ui_root =
@@ -168,6 +162,14 @@ impl AssetCatalog {
                 &ui_root,
                 "project UI asset root escapes repository",
             ));
+        }
+        document
+            .assets
+            .extend(load_generated_catalog_assets(&ui_root)?);
+        if document.assets.is_empty() || document.assets.len() > MAX_ASSET_ENTRIES {
+            return Err(TaskFailure::invalid(format!(
+                "asset catalog must contain 1-{MAX_ASSET_ENTRIES} entries"
+            )));
         }
 
         let discovered = discover_production_assets(&ui_root)?;
@@ -215,6 +217,12 @@ impl AssetCatalog {
             .binary_search_by(|asset| asset.asset_id.as_str().cmp(asset_id))
             .ok()
             .map(|index| &self.assets[index])
+    }
+
+    /// Looks up a verified packaged path without allowing callers to infer arbitrary filesystem
+    /// locations from an asset ID or model output.
+    pub fn resolve_by_path(&self, path: &str) -> Option<&CatalogAsset> {
+        self.assets.iter().find(|asset| asset.path == path)
     }
 
     pub fn schema_version(&self) -> u32 {
@@ -274,6 +282,111 @@ impl AssetCatalog {
         });
         Ok(matches)
     }
+}
+
+/// Loads one checked catalog fragment per promoted page. Fragments are deliberately constrained
+/// to `ui/documents/approved/<page>/...` so a promotion cannot extend the stable catalog for
+/// arbitrary existing production paths.
+fn load_generated_catalog_assets(ui_root: &Path) -> Result<Vec<CatalogAsset>, TaskFailure> {
+    let approved_root = ui_root.join("documents/approved");
+    match fs::symlink_metadata(&approved_root) {
+        Ok(metadata) => {
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(unsafe_path(
+                    &approved_root,
+                    "approved document root is not a real directory",
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(TaskFailure::invalid(format!(
+                "approved document root metadata unavailable: {error}"
+            )));
+        }
+    }
+    let mut directories = Vec::new();
+    for entry in fs::read_dir(&approved_root).map_err(|error| {
+        TaskFailure::invalid(format!("approved document root cannot be read: {error}"))
+    })? {
+        let entry = entry.map_err(|error| {
+            TaskFailure::invalid(format!("approved document entry failed: {error}"))
+        })?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            TaskFailure::invalid(format!(
+                "approved document entry metadata unavailable: {error}"
+            ))
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(unsafe_path(
+                &path,
+                "approved document pages must use one real directory per promotion",
+            ));
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if !is_safe_tag(name) {
+            return Err(TaskFailure::invalid(
+                "approved document promotion directory name is not a safe lowercase label",
+            ));
+        }
+        directories.push(path);
+    }
+    if directories.len() > MAX_ASSET_ENTRIES {
+        return Err(TaskFailure::invalid(
+            "approved document catalog directory count exceeds budget",
+        ));
+    }
+    directories.sort();
+    let mut assets = Vec::new();
+    for directory in directories {
+        let manifest = directory.join("catalog.v1.json");
+        match fs::symlink_metadata(&manifest) {
+            Ok(metadata) => {
+                if !metadata.is_file() || metadata.file_type().is_symlink() {
+                    return Err(unsafe_path(
+                        &manifest,
+                        "approved document catalog fragment is not a regular file",
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(TaskFailure::invalid(format!(
+                    "approved document catalog fragment metadata unavailable: {error}"
+                )));
+            }
+        }
+        let bytes = read_bounded(&manifest, MAX_CATALOG_JSON_BYTES as u64)?;
+        let fragment: AssetCatalogDocument = serde_json::from_slice(&bytes).map_err(|error| {
+            TaskFailure::invalid(format!(
+                "approved document catalog fragment is invalid: {error}"
+            ))
+        })?;
+        if fragment.schema_version != UI_ASSET_CATALOG_SCHEMA_VERSION || fragment.assets.is_empty()
+        {
+            return Err(TaskFailure::invalid(
+                "approved document catalog fragment has an unsupported schema or no assets",
+            ));
+        }
+        let folder = directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let prefix = format!("ui/documents/approved/{folder}/");
+        for asset in fragment.assets {
+            if !asset.path.starts_with(&prefix) {
+                return Err(TaskFailure::invalid(
+                    "approved document catalog fragment references a path outside its promotion directory",
+                ));
+            }
+            assets.push(asset);
+        }
+    }
+    Ok(assets)
 }
 
 fn validate_catalog_asset(asset: &CatalogAsset) -> Result<(), TaskFailure> {
@@ -3079,6 +3192,66 @@ mod tests {
             .unwrap();
         assert_eq!(matches[0].asset_id, "ui.icon.close");
         assert_eq!(matches[0].matched_terms, vec!["close", "icon"]);
+    }
+
+    #[test]
+    fn generated_catalog_fragment_is_scoped_and_reuses_formal_asset_validation() {
+        let repository = tempfile::tempdir().unwrap();
+        let packaged_root = repository.path().join("project/assets");
+        let ui_root = packaged_root.join("ui");
+        let promotion_root = ui_root.join("documents/approved/promotion_fixture");
+        fs::create_dir_all(promotion_root.join("assets")).unwrap();
+        let image = RgbaImage::from_pixel(1, 1, Rgba([12, 34, 56, 200]));
+        let bytes = png_bytes(&image);
+        let image_path = promotion_root.join("assets/promotion.png");
+        fs::write(&image_path, &bytes).unwrap();
+        let mut fragment = serde_json::json!({
+            "schema_version": UI_ASSET_CATALOG_SCHEMA_VERSION,
+            "assets": [{
+                "asset_id": "ui.generated.promotion_fixture.image",
+                "path": "ui/documents/approved/promotion_fixture/assets/promotion.png",
+                "kind": "raster",
+                "sha256": sha256_bytes(&bytes),
+                "byte_length": bytes.len(),
+                "width": 1,
+                "height": 1,
+                "alpha": "straight",
+                "license": {"status": "redistributable", "reference": "ui/documents/approved/promotion_fixture/LICENSES.md"},
+                "tags": ["generated", "promotion_fixture"]
+            }]
+        });
+        fs::write(
+            promotion_root.join("catalog.v1.json"),
+            serde_json::to_vec_pretty(&fragment).unwrap(),
+        )
+        .unwrap();
+        fs::write(promotion_root.join("LICENSES.md"), b"fixture license\n").unwrap();
+
+        let assets = load_generated_catalog_assets(&ui_root).unwrap();
+        assert_eq!(assets.len(), 1);
+        validate_catalog_asset(&assets[0]).unwrap();
+        validate_catalog_file(
+            &packaged_root.canonicalize().unwrap(),
+            &ui_root.canonicalize().unwrap(),
+            &assets[0],
+        )
+        .unwrap();
+
+        fragment["assets"][0]["path"] = Value::String("ui/images/escape.png".to_owned());
+        fs::write(
+            promotion_root.join("catalog.v1.json"),
+            serde_json::to_vec_pretty(&fragment).unwrap(),
+        )
+        .unwrap();
+        assert!(load_generated_catalog_assets(&ui_root).is_err());
+
+        let outside = repository.path().join("outside-catalog.json");
+        fs::write(&outside, b"{}\n").unwrap();
+        let catalog_path = promotion_root.join("catalog.v1.json");
+        fs::remove_file(&catalog_path).unwrap();
+        if create_file_symlink(&outside, &catalog_path).is_ok() {
+            assert!(load_generated_catalog_assets(&ui_root).is_err());
+        }
     }
 
     #[test]

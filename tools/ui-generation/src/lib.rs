@@ -10,6 +10,7 @@ pub mod lifecycle;
 pub mod planning;
 pub mod preprocess;
 pub mod preview;
+pub mod promotion;
 pub mod provider;
 pub mod repair;
 pub mod run_manifest;

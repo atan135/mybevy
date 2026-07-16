@@ -7,6 +7,10 @@ use ui_generation::{
     lifecycle::CancellationToken,
     preprocess::preprocess_task,
     preview::{CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command, run_preview},
+    promotion::{
+        create_promotion_decision_template, create_promotion_plan, promote,
+        record_promotion_decisions,
+    },
 };
 
 #[derive(Debug, Parser)]
@@ -69,6 +73,45 @@ enum Command {
         /// Explicitly require these non-initial fixture states to differ visually from initial.
         #[arg(long)]
         require_distinct_from_initial: Option<String>,
+    },
+    /// Emits the small, high-impact decision template bound to a committed generation run.
+    PromotionDecisions {
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        repository_root: PathBuf,
+    },
+    /// Validates and append-only records explicit human decisions for a committed generation run.
+    RecordPromotionDecisions {
+        #[arg(long)]
+        decisions: PathBuf,
+        #[arg(long)]
+        repository_root: PathBuf,
+    },
+    /// Emits the exact no-write promotion plan. Its hash is required by `promote`.
+    PromotionPlan {
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        route: String,
+        #[arg(long)]
+        repository_root: PathBuf,
+    },
+    /// The only tool command allowed to write approved documents and explicitly promoted assets.
+    Promote {
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        route: String,
+        /// Must exactly equal the `plan_sha256` emitted by `promotion-plan`.
+        #[arg(long)]
+        confirm_plan: String,
+        #[arg(long)]
+        repository_root: PathBuf,
     },
 }
 
@@ -172,6 +215,45 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             }
             serde_json::to_value(result).expect("audit result is serializable")
         }
+        Command::PromotionDecisions {
+            run_id,
+            repository_root,
+        } => serde_json::to_value(create_promotion_decision_template(
+            &repository_root,
+            &run_id,
+        )?)
+        .expect("promotion decision template is serializable"),
+        Command::RecordPromotionDecisions {
+            decisions,
+            repository_root,
+        } => serde_json::to_value(record_promotion_decisions(&repository_root, &decisions)?)
+            .expect("promotion decision record is serializable"),
+        Command::PromotionPlan {
+            run_id,
+            owner,
+            route,
+            repository_root,
+        } => serde_json::to_value(create_promotion_plan(
+            &repository_root,
+            &run_id,
+            &owner,
+            &route,
+        )?)
+        .expect("promotion plan is serializable"),
+        Command::Promote {
+            run_id,
+            owner,
+            route,
+            confirm_plan,
+            repository_root,
+        } => serde_json::to_value(promote(
+            &repository_root,
+            &run_id,
+            &owner,
+            &route,
+            &confirm_plan,
+        )?)
+        .expect("promotion result is serializable"),
     };
     println!(
         "{}",

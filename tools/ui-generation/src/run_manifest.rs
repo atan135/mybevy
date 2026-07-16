@@ -26,7 +26,7 @@ const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_STAGE_RESOURCE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_STAGE_EVIDENCE_BYTES: u64 = 256 * 1024 * 1024;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactLink {
     pub relative_path: String,
@@ -57,7 +57,7 @@ impl ArtifactLink {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StageEvidenceLinks {
     pub input_preprocess_manifest: ArtifactLink,
@@ -69,14 +69,14 @@ pub struct StageEvidenceLinks {
     pub generation_trace: ArtifactLink,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunBundleStatus {
     Passed,
     Failed,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunArtifactRecord {
     pub kind: String,
@@ -85,7 +85,7 @@ pub struct RunArtifactRecord {
     pub byte_length: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UiGenerationRunManifest {
     pub protocol_version: u32,

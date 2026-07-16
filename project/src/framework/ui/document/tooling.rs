@@ -6,9 +6,10 @@
 
 pub use super::{
     CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UI_DOCUMENT_BUDGET_PROFILE,
-    UI_DOCUMENT_MAX_BYTES, UiAssetSource, UiDocument, UiDocumentBudgetUsage, UiDocumentError,
-    UiDocumentValidationResult, UiValidationDiagnostic, UiValidationPhase, UiValidationReport,
-    UiValidationSeverity, ValidatedUiDocument,
+    UI_DOCUMENT_MAX_BYTES, UiApprovedDocumentRegistration, UiApprovedDocumentRegistrationError,
+    UiAssetSource, UiDocument, UiDocumentBudgetUsage, UiDocumentError, UiDocumentValidationResult,
+    UiValidationDiagnostic, UiValidationPhase, UiValidationReport, UiValidationSeverity,
+    ValidatedUiDocument, parse_approved_document_registration,
 };
 use super::{
     UiComponentVariant,
