@@ -2789,7 +2789,10 @@ fn send_auth_request(
         events,
         MessageType::AuthReq,
         MessageType::AuthRes,
-        &pb::AuthReq { ticket },
+        &pb::AuthReq {
+            ticket,
+            client_protocol_version: 0,
+        },
     ) else {
         return;
     };
@@ -4027,6 +4030,10 @@ mod tests {
                 ok,
                 player_id: player_id.to_string(),
                 error_code: error_code.to_string(),
+                server_protocol_version: 0,
+                minimum_client_protocol_version: 0,
+                upgrade_message: String::new(),
+                upgrade_url: String::new(),
             },
         )
     }
