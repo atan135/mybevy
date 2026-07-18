@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "kind": "rgba_pair",
+      "id": "one_by_one_equal",
+      "reference": { "width": 1, "height": 1, "rgba": [12, 34, 56, 255] },
+      "actual": { "width": 1, "height": 1, "rgba": [12, 34, 56, 255] },
+      "expected_status": "passed"
+    },
+    {
+      "kind": "rgba_pair",
+      "id": "solid_equal",
+      "reference": { "width": 2, "height": 2, "rgba": [210, 40, 70, 255, 210, 40, 70, 255, 210, 40, 70, 255, 210, 40, 70, 255] },
+      "actual": { "width": 2, "height": 2, "rgba": [210, 40, 70, 255, 210, 40, 70, 255, 210, 40, 70, 255, 210, 40, 70, 255] },
+      "expected_status": "passed"
+    },
+    {
+      "kind": "rgba_pair",
+      "id": "local_difference",
+      "reference": { "width": 3, "height": 1, "rgba": [0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255] },
+      "actual": { "width": 3, "height": 1, "rgba": [0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255] },
+      "expected_status": "threshold_failed"
+    },
+    {
+      "kind": "rgba_pair",
+      "id": "transparent_difference",
+      "reference": { "width": 1, "height": 1, "rgba": [30, 60, 90, 0] },
+      "actual": { "width": 1, "height": 1, "rgba": [30, 60, 90, 1] },
+      "expected_status": "threshold_failed"
+    },
+    {
+      "kind": "rgba_pair",
+      "id": "dimensions_mismatch",
+      "reference": { "width": 1, "height": 1, "rgba": [0, 0, 0, 255] },
+      "actual": { "width": 2, "height": 1, "rgba": [0, 0, 0, 255, 0, 0, 0, 255] },
+      "expected_status": "comparison_failed"
+    },
+    {
+      "kind": "invalid_input",
+      "id": "corrupt_png",
+      "extension": "png",
+      "bytes_hex": "89504e470d0a1a0a",
+      "expected_code": "image_corrupt"
+    },
+    {
+      "kind": "invalid_input",
+      "id": "unsupported_gif",
+      "extension": "gif",
+      "bytes_hex": "47494638396101000100",
+      "expected_code": "image_unsupported_format"
+    }
+  ]
+}
