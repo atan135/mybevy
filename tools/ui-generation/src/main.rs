@@ -6,6 +6,7 @@ use ui_generation::{
     evaluation::run_fixture_evaluation,
     inspect_task,
     lifecycle::CancellationToken,
+    offline::run_offline_fixture_generation,
     preprocess::preprocess_task,
     preview::{CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command, run_preview},
     promotion::{
@@ -81,6 +82,17 @@ enum Command {
         catalog: PathBuf,
         #[arg(long)]
         repository_root: PathBuf,
+    },
+    /// Runs the complete repository-owned offline fixture path and seals a previewed draft run.
+    GenerateFixture {
+        #[arg(long)]
+        task: PathBuf,
+        #[arg(long)]
+        options: Option<PathBuf>,
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long)]
+        document_id: String,
     },
     /// Emits the small, high-impact decision template bound to a committed generation run.
     PromotionDecisions {
@@ -228,6 +240,19 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             repository_root,
         } => serde_json::to_value(run_fixture_evaluation(&repository_root, &catalog)?)
             .expect("evaluation report is serializable"),
+        Command::GenerateFixture {
+            task,
+            options,
+            repository_root,
+            document_id,
+        } => serde_json::to_value(run_offline_fixture_generation(
+            &task,
+            options.as_deref(),
+            &repository_root,
+            &document_id,
+            &CancellationToken::default(),
+        )?)
+        .expect("offline fixture run result is serializable"),
         Command::PromotionDecisions {
             run_id,
             repository_root,

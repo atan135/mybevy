@@ -77,6 +77,27 @@ impl FixtureProvider {
     pub fn case(&self) -> FixtureCase {
         self.fixture.case
     }
+
+    /// Rebinds only the structured value of a repository-authored success fixture.
+    /// Operation, schema, provider metadata, usage, and request identity remain fixture-owned.
+    pub fn bind_success_value(&mut self, value: Value) -> Result<(), TaskFailure> {
+        match (&self.fixture.case, &mut self.fixture.outcome) {
+            (FixtureCase::Valid, FixtureOutcome::Success { value: output, .. }) => {
+                *output = value;
+                Ok(())
+            }
+            _ => Err(fixture_failure()),
+        }
+    }
+
+    pub fn success_server_request_id(&self) -> Option<&str> {
+        match &self.fixture.outcome {
+            FixtureOutcome::Success {
+                server_request_id, ..
+            } => server_request_id.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 impl Provider for FixtureProvider {
@@ -227,6 +248,29 @@ mod tests {
         assert_eq!(
             invoke("interrupted.json").unwrap_err().kind,
             ProviderErrorKind::Cancelled
+        );
+    }
+
+    #[test]
+    fn valid_fixture_can_bind_dynamic_structured_evidence_without_changing_identity() {
+        let mut provider = FixtureProvider::load(&fixture_path("valid.json")).unwrap();
+        provider
+            .bind_success_value(serde_json::json!({"bound": true}))
+            .unwrap();
+
+        let response = provider
+            .invoke(
+                request(),
+                ProviderCallContext::new(1, Duration::from_secs(1), CancellationToken::default()),
+            )
+            .unwrap();
+        assert_eq!(response.output.value, serde_json::json!({"bound": true}));
+        assert_eq!(
+            response
+                .server_request_id
+                .as_ref()
+                .map(ServerRequestId::as_str),
+            Some("fixture-valid-001")
         );
     }
 }

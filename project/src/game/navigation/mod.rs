@@ -27,7 +27,7 @@ use crate::game::ui_ids::{
     OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT,
     OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN,
     OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_DOCUMENT_GALLERY,
-    OWNER_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
+    OWNER_UI_GALLERY, OWNER_UI_GENERATED_ACCEPTANCE, SCROLL_UI_GALLERY_MAIN,
 };
 
 pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
@@ -139,6 +139,7 @@ pub(super) enum AppUiMode {
     WanfaTouchRipple,
     UiGallery,
     UiDocumentGallery,
+    UiGeneratedAcceptance,
     SampleScene,
     RobotSyncScene,
     FangyuanHome,
@@ -157,6 +158,7 @@ impl AppUiMode {
             Self::WanfaTouchRipple => OWNER_TOUCH_RIPPLE,
             Self::UiGallery => OWNER_UI_GALLERY,
             Self::UiDocumentGallery => OWNER_UI_DOCUMENT_GALLERY,
+            Self::UiGeneratedAcceptance => OWNER_UI_GENERATED_ACCEPTANCE,
             Self::SampleScene => OWNER_SAMPLE_SCENE,
             Self::RobotSyncScene => OWNER_ROBOT_SYNC_SCENE,
             Self::FangyuanHome => OWNER_FANGYUAN_HOME,
@@ -175,6 +177,7 @@ impl AppUiMode {
             Self::WanfaTouchRipple => "wanfa_touch_ripple",
             Self::UiGallery => "ui_gallery",
             Self::UiDocumentGallery => "ui_document_gallery",
+            Self::UiGeneratedAcceptance => "ui_generated_acceptance",
             Self::SampleScene => "sample_scene",
             Self::RobotSyncScene => "robot_sync_scene",
             Self::FangyuanHome => "fangyuan_home",
@@ -215,6 +218,11 @@ impl AppUiMode {
                 "document_gallery",
                 "document-gallery",
                 "declarative_gallery",
+            ],
+            Self::UiGeneratedAcceptance => &[
+                "ui_generated_acceptance",
+                "ui-generated-acceptance",
+                "generated_acceptance",
             ],
             Self::SampleScene => &["sample_scene", "sample-scene", "sample"],
             Self::RobotSyncScene => &["robot_sync_scene", "robot-sync-scene", "robot"],
@@ -461,7 +469,7 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     ),
 ];
 
-fn all_app_ui_modes() -> [AppUiMode; 13] {
+fn all_app_ui_modes() -> [AppUiMode; 14] {
     [
         AppUiMode::Login,
         AppUiMode::CharacterSelect,
@@ -472,6 +480,7 @@ fn all_app_ui_modes() -> [AppUiMode; 13] {
         AppUiMode::WanfaTouchRipple,
         AppUiMode::UiGallery,
         AppUiMode::UiDocumentGallery,
+        AppUiMode::UiGeneratedAcceptance,
         AppUiMode::SampleScene,
         AppUiMode::RobotSyncScene,
         AppUiMode::FangyuanHome,
@@ -484,13 +493,25 @@ mod tests {
     use super::*;
     use crate::game::ui_ids::{
         OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
-        OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE,
+        OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE, OWNER_UI_GENERATED_ACCEPTANCE,
     };
     use std::collections::BTreeMap;
 
     #[test]
     fn audio_settings_mode_uses_dedicated_owner() {
         assert_eq!(AppUiMode::AudioSettings.ui_owner(), OWNER_AUDIO_SETTINGS);
+    }
+
+    #[test]
+    fn generated_acceptance_mode_uses_promoted_owner_and_alias() {
+        assert_eq!(
+            AppUiMode::UiGeneratedAcceptance.ui_owner(),
+            OWNER_UI_GENERATED_ACCEPTANCE
+        );
+        assert_eq!(
+            parse_start_screen_mode("ui-generated-acceptance"),
+            Some(AppUiMode::UiGeneratedAcceptance)
+        );
     }
 
     #[test]

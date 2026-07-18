@@ -1,0 +1,24 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": [
+    "phone-small",
+    "phone-portrait",
+    "tablet-portrait",
+    "tablet-landscape"
+  ],
+  "document_id": "generated.acceptance_fixture",
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "generated_acceptance_approved",
+  "page_state": "initial",
+  "panel": "page",
+  "protocol_version": 1,
+  "route": "ui_generated_acceptance",
+  "source": {
+    "relative_path": "generated_acceptance_fixture/document.v1.json",
+    "root": "approved"
+  },
+  "template_version": 1,
+  "theme_tokens": []
+}

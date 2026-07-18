@@ -9,6 +9,7 @@ pub mod evaluation;
 pub mod generation;
 pub mod lifecycle;
 pub mod observability;
+pub mod offline;
 pub mod planning;
 pub mod preprocess;
 pub mod preview;

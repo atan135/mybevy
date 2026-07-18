@@ -61,6 +61,7 @@ $script:KnownScreens = @(
     [pscustomobject]@{ Canonical = "wanfa_touch_ripple"; Aliases = @("wanfa_touch_ripple", "wanfa-touch-ripple", "touch", "touch_ripple", "touch-ripple") },
     [pscustomobject]@{ Canonical = "ui_gallery"; Aliases = @("ui_gallery", "ui-gallery", "gallery") },
     [pscustomobject]@{ Canonical = "ui_document_gallery"; Aliases = @("ui_document_gallery", "ui-document-gallery", "document_gallery", "document-gallery", "declarative_gallery") },
+    [pscustomobject]@{ Canonical = "ui_generated_acceptance"; Aliases = @("ui_generated_acceptance", "ui-generated-acceptance", "generated_acceptance") },
     [pscustomobject]@{ Canonical = "sample_scene"; Aliases = @("sample_scene", "sample-scene", "sample") },
     [pscustomobject]@{ Canonical = "robot_sync_scene"; Aliases = @("robot_sync_scene", "robot-sync-scene", "robot") },
     [pscustomobject]@{ Canonical = "fangyuan_home"; Aliases = @("fangyuan_home", "fangyuan-home", "fangyuan") }

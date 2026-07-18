@@ -1,0 +1,219 @@
+{
+  "assets": {},
+  "bindings": {},
+  "document_id": "generated.acceptance_fixture",
+  "metadata": {
+    "budget_profile": "mobile_baseline_v1",
+    "title": "Generated acceptance fixture"
+  },
+  "responsive": [],
+  "root": {
+    "children": [
+      {
+        "content": {
+          "format": {
+            "kind": "plain"
+          },
+          "literal": "Start game"
+        },
+        "id": "page.title",
+        "layout": {
+          "align_content": "start",
+          "align_items": "stretch",
+          "align_self": "auto",
+          "aspect_ratio": null,
+          "border": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "column_gap": null,
+          "direction": "column",
+          "display": "flex",
+          "flex_basis": "auto",
+          "flex_grow": 0.0,
+          "flex_shrink": 1.0,
+          "gap": {
+            "px": 0.0
+          },
+          "grid_auto_columns": [],
+          "grid_auto_flow": "row",
+          "grid_auto_rows": [],
+          "grid_column": {
+            "span": 1,
+            "start": null
+          },
+          "grid_columns": [],
+          "grid_row": {
+            "span": 1,
+            "start": null
+          },
+          "grid_rows": [],
+          "height": "auto",
+          "justify_content": "start",
+          "justify_items": "stretch",
+          "justify_self": "auto",
+          "margin": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "max_height": "auto",
+          "max_width": "auto",
+          "min_height": "auto",
+          "min_width": "auto",
+          "overflow": {
+            "x": "visible",
+            "y": "visible"
+          },
+          "padding": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "position": "relative",
+          "row_gap": null,
+          "scrollbar_width": 0.0,
+          "width": "auto",
+          "wrap": "no_wrap",
+          "z_index": 0
+        },
+        "style": {
+          "component": null,
+          "inline": {
+            "background": null,
+            "border": null,
+            "corner_radius": null,
+            "material": null,
+            "opacity": null,
+            "shadows": null,
+            "text": null
+          },
+          "role": null,
+          "text_role": "title"
+        },
+        "type": "text",
+        "typography": {
+          "alignment": "left",
+          "font_role": "body",
+          "line_height": {
+            "kind": "normal"
+          },
+          "max_lines": null,
+          "overflow": "visible",
+          "weight": "regular",
+          "wrap": "word_or_character"
+        }
+      }
+    ],
+    "id": "page.root",
+    "layout": {
+      "align_content": "start",
+      "align_items": "stretch",
+      "align_self": "auto",
+      "aspect_ratio": null,
+      "border": {
+        "all": {
+          "px": 0.0
+        },
+        "bottom": null,
+        "left": null,
+        "right": null,
+        "top": null
+      },
+      "column_gap": null,
+      "direction": "column",
+      "display": "flex",
+      "flex_basis": "auto",
+      "flex_grow": 0.0,
+      "flex_shrink": 1.0,
+      "gap": {
+        "px": 0.0
+      },
+      "grid_auto_columns": [],
+      "grid_auto_flow": "row",
+      "grid_auto_rows": [],
+      "grid_column": {
+        "span": 1,
+        "start": null
+      },
+      "grid_columns": [],
+      "grid_row": {
+        "span": 1,
+        "start": null
+      },
+      "grid_rows": [],
+      "height": {
+        "percent": 100.0
+      },
+      "justify_content": "start",
+      "justify_items": "stretch",
+      "justify_self": "auto",
+      "margin": {
+        "all": {
+          "px": 0.0
+        },
+        "bottom": null,
+        "left": null,
+        "right": null,
+        "top": null
+      },
+      "max_height": "auto",
+      "max_width": "auto",
+      "min_height": "auto",
+      "min_width": "auto",
+      "overflow": {
+        "x": "visible",
+        "y": "visible"
+      },
+      "padding": {
+        "all": {
+          "px": 0.0
+        },
+        "bottom": null,
+        "left": null,
+        "right": null,
+        "top": null
+      },
+      "position": "relative",
+      "row_gap": null,
+      "scrollbar_width": 0.0,
+      "width": {
+        "percent": 100.0
+      },
+      "wrap": "no_wrap",
+      "z_index": 0
+    },
+    "style": {
+      "component": null,
+      "inline": {
+        "background": null,
+        "border": null,
+        "corner_radius": null,
+        "material": null,
+        "opacity": null,
+        "shadows": null,
+        "text": null
+      },
+      "role": "page",
+      "text_role": null
+    },
+    "type": "container"
+  },
+  "schema_version": 1,
+  "states": [],
+  "styles": {},
+  "tokens": {}
+}

@@ -2,6 +2,7 @@ mod audio_gallery;
 mod audio_monitor;
 mod ui_document_gallery;
 mod ui_gallery;
+mod ui_generated_acceptance;
 
 use bevy::prelude::*;
 
@@ -19,6 +20,10 @@ impl Plugin for DevScreensPlugin {
             .add_systems(
                 OnEnter(AppUiMode::UiDocumentGallery),
                 ui_document_gallery::setup_ui_document_gallery,
+            )
+            .add_systems(
+                OnEnter(AppUiMode::UiGeneratedAcceptance),
+                ui_generated_acceptance::setup_ui_generated_acceptance,
             )
             .add_systems(
                 OnEnter(AppUiMode::AudioGallery),
@@ -71,6 +76,10 @@ impl Plugin for DevScreensPlugin {
             .add_systems(
                 OnExit(AppUiMode::UiDocumentGallery),
                 ui_document_gallery::cleanup_ui_document_gallery,
+            )
+            .add_systems(
+                OnExit(AppUiMode::UiGeneratedAcceptance),
+                ui_generated_acceptance::cleanup_ui_generated_acceptance,
             )
             .add_systems(
                 OnExit(AppUiMode::AudioGallery),

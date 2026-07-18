@@ -14,6 +14,8 @@ pub(in crate::game) const OWNER_TOUCH_RIPPLE: UiOwnerId = UiOwnerId::new("wanfa_
 pub(in crate::game) const OWNER_UI_GALLERY: UiOwnerId = UiOwnerId::new("ui_gallery");
 pub(in crate::game) const OWNER_UI_DOCUMENT_GALLERY: UiOwnerId =
     UiOwnerId::new("ui_document_gallery");
+pub(in crate::game) const OWNER_UI_GENERATED_ACCEPTANCE: UiOwnerId =
+    UiOwnerId::new("generated_acceptance_approved");
 pub(in crate::game) const OWNER_SAMPLE_SCENE: UiOwnerId = UiOwnerId::new("sample_scene");
 pub(in crate::game) const OWNER_ROBOT_SYNC_SCENE: UiOwnerId = UiOwnerId::new("robot_sync_scene");
 pub(in crate::game) const OWNER_FANGYUAN_HOME: UiOwnerId = UiOwnerId::new("fangyuan_home");
