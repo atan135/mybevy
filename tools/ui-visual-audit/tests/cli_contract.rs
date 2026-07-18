@@ -43,6 +43,77 @@ fn help_is_human_readable_and_successful() {
     assert!(stdout.contains("--reference"));
     assert!(stdout.contains("--allowed-input-root"));
     assert!(stdout.contains("--output-directory"));
+
+    let normalization = Command::new(env!("CARGO_BIN_EXE_ui-visual-audit"))
+        .arg("normalize-align")
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert_eq!(normalization.status.code(), Some(0));
+    let stdout = String::from_utf8(normalization.stdout).unwrap();
+    assert!(stdout.contains("--normalization-manifest"));
+    assert!(stdout.contains("--allowed-output-root"));
+}
+
+#[test]
+fn normalization_cli_has_stable_success_and_maximum_translation_failure_contracts() {
+    let repository = TestRepository::new();
+    let rgba = [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255];
+    let reference = repository.write_png("normalize-reference.png", 2, 2, &rgba);
+    let actual = repository.write_png("normalize-actual.png", 2, 2, &rgba);
+    let success_manifest = repository.write_bytes(
+        "normalize-success.json",
+        br#"{"schema_version":1,"algorithm_version":"normalize_align_v1","orientation_policy":"apply_exif","color_policy":"srgb_only","alpha_policy":"straight_zero_transparent_rgb","reference":{"crop":{"kind":"none"}},"actual":{"crop":{"kind":"none"}},"alignment":{"mode":"none","maximum_translation":{"x":0,"y":0}}}"#,
+    );
+    let mut success = Command::new(env!("CARGO_BIN_EXE_ui-visual-audit"));
+    success
+        .arg("normalize-align")
+        .arg("--repository-root")
+        .arg(&repository.root)
+        .arg("--allowed-input-root")
+        .arg(&repository.inputs)
+        .arg("--allowed-output-root")
+        .arg(&repository.outputs)
+        .arg("--reference")
+        .arg(&reference)
+        .arg("--actual")
+        .arg(&actual)
+        .arg("--normalization-manifest")
+        .arg(&success_manifest)
+        .arg("--output-directory")
+        .arg(repository.outputs.join("normalize-success"));
+    let output = success.output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["algorithm_version"], "normalize_align_v1");
+    assert_eq!(report["status"], "passed");
+    assert_eq!(report["alignment"]["scale_x_millionths"], 1_000_000);
+
+    let failure_manifest = repository.write_bytes(
+        "normalize-failure.json",
+        br#"{"schema_version":1,"algorithm_version":"normalize_align_v1","orientation_policy":"apply_exif","color_policy":"srgb_only","alpha_policy":"straight_zero_transparent_rgb","reference":{"crop":{"kind":"none"}},"actual":{"crop":{"kind":"none"}},"alignment":{"mode":"declared_integer","maximum_translation":{"x":0,"y":0},"declared_translation":{"x":1,"y":0}}}"#,
+    );
+    let mut failure = Command::new(env!("CARGO_BIN_EXE_ui-visual-audit"));
+    failure
+        .arg("normalize-align")
+        .arg("--repository-root")
+        .arg(&repository.root)
+        .arg("--allowed-input-root")
+        .arg(&repository.inputs)
+        .arg("--allowed-output-root")
+        .arg(&repository.outputs)
+        .arg("--reference")
+        .arg(&reference)
+        .arg("--actual")
+        .arg(&actual)
+        .arg("--normalization-manifest")
+        .arg(&failure_manifest)
+        .arg("--output-directory")
+        .arg(repository.outputs.join("normalize-failure"));
+    let output = failure.output().unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["failure"]["code"], "maximum_translation_exceeded");
 }
 
 #[test]

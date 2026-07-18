@@ -75,3 +75,23 @@ Exit codes are public protocol:
 - `5`: internal serialization or artifact-write failure.
 
 `fixtures/comparison/golden-cases.json` is the versioned, reproducible golden source for 1x1, solid, local-difference, transparent, dimension-mismatch, corrupt, and unsupported-format cases. Tests materialize its RGBA specifications as PNG files in temporary repositories, so no generated binary is committed. Any future committed PNG/JPEG reference baseline remains subject to the repository Git LFS rules.
+
+## Normalization, explicit crops, and bounded alignment
+
+`normalize-align` is a separate, versioned preprocessing boundary. It does not change `exact_rgba_v1`: consumers pass its aligned PNG artifacts to a later comparison stage explicitly. Version `normalize_align_v1` applies EXIF orientations 1 through 8, converts supported unprofiled/declared-sRGB PNG/JPEG pixels to RGBA8, uses straight alpha, and zeros hidden RGB when alpha is zero. It rejects PNG iCCP/cICP, non-sRGB standalone gamma, and JPEG ICC inputs because this version has no real ICC transform and does not claim one.
+
+The normalization manifest is strict JSON. Reference and actual crops are role-specific and must be declared as `none`, `system_ui`, `safe_area`, or `fixed_border`; arbitrary resize and stretch are forbidden. Cropped physical dimensions and aspect ratios must match. Alignment is either disabled, a deterministic integer search, or an explicit integer translation. Per-axis limits are mandatory, hard-capped at 16 pixels, and scale always remains `1.0`. See `fixtures/comparison/normalize-align-v1.manifest.json` for the complete default contract.
+
+```powershell
+cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- normalize-align `
+  --repository-root . `
+  --allowed-input-root tools/ui-visual-audit/fixtures `
+  --allowed-input-root summary `
+  --allowed-output-root summary/ui-visual-audit `
+  --reference <reference.png> `
+  --actual <actual.png> `
+  --normalization-manifest tools/ui-visual-audit/fixtures/comparison/normalize-align-v1.manifest.json `
+  --output-directory summary/ui-visual-audit/<new-run-directory>
+```
+
+The run retains full normalized, explicitly cropped, and aligned reference/actual PNGs plus `normalization-report.json`. The report records original, oriented, cropped, and aligned sizes; EXIF operation; source/output color and alpha semantics; pixel format; crop kind and insets; bounded translation; fixed millionth scale; quality checks; and exact forward/inverse integer transforms between original image bounds and aligned coordinates. Fully transparent, conservatively near-blank, too-small screenshots, explicit SHA-256 identity mismatches, and hash-proven reference/actual swaps have separate machine codes. Normalization comparison failures keep the completed intermediate PNGs and return exit code `3`; malformed inputs and unsupported profiles return `2`; artifact failures return `5`.

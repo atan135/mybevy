@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "algorithm_version": "normalize_align_v1",
+  "orientation_policy": "apply_exif",
+  "color_policy": "srgb_only",
+  "alpha_policy": "straight_zero_transparent_rgb",
+  "reference": {
+    "crop": { "kind": "none" }
+  },
+  "actual": {
+    "crop": { "kind": "none" }
+  },
+  "alignment": {
+    "mode": "integer_search",
+    "maximum_translation": { "x": 2, "y": 2 }
+  }
+}

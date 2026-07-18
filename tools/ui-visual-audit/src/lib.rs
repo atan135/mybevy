@@ -1,4 +1,5 @@
 pub mod comparison;
+pub mod normalization;
 pub mod reference_manifest;
 
 pub use comparison::{
@@ -8,6 +9,14 @@ pub use comparison::{
     ComparisonOutcome, ComparisonReport, ComparisonRequest, ComparisonStatus, ConfigInputReport,
     DimensionsReport, EXACT_RGBA_ALGORITHM_VERSION, ExactMetrics, FailureType, ImageInputReport,
     RegionResult, compare_images,
+};
+pub use normalization::{
+    AffineTransform, AlignmentMode, AlignmentReport, AlphaPolicy, ColorPolicy, CoordinateMapping,
+    CropDeclaration, CropKind, CropReport, ImageRoleManifest, InputNormalizationReport,
+    IntegerOffset, NORMALIZATION_MANIFEST_SCHEMA_VERSION, NORMALIZATION_REPORT_FILENAME,
+    NORMALIZATION_REPORT_SCHEMA_VERSION, NORMALIZE_ALIGN_ALGORITHM_VERSION, NormalizationManifest,
+    NormalizationOutcome, NormalizationReport, NormalizationRequest, NormalizationStatus,
+    OrientationPolicy, PixelRect, QualityReport, normalize_and_align,
 };
 pub use reference_manifest::{
     AllowedDifferences, AuthorizationStatus, BaselineRevision, ColorSpace, ErrorCode,

@@ -37,12 +37,25 @@ impl TestRepository {
         path
     }
 
+    #[allow(dead_code)]
+    pub fn write_rgb_png(&self, name: &str, width: u32, height: u32, rgb: &[u8]) -> PathBuf {
+        assert_eq!(rgb.len(), width as usize * height as usize * 3);
+        let path = self.inputs.join(name);
+        let mut bytes = Vec::new();
+        PngEncoder::new(&mut bytes)
+            .write_image(rgb, width, height, ExtendedColorType::Rgb8)
+            .unwrap();
+        fs::write(&path, bytes).unwrap();
+        path
+    }
+
     pub fn write_bytes(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.inputs.join(name);
         fs::write(&path, bytes).unwrap();
         path
     }
 
+    #[allow(dead_code)]
     pub fn write_config(&self, threshold: f64) -> PathBuf {
         let source = format!(
             "{{\"schema_version\":1,\"algorithm_version\":\"exact_rgba_v1\",\"max_changed_pixel_ratio\":{threshold}}}"

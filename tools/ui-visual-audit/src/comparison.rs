@@ -60,6 +60,8 @@ pub enum ComparisonErrorCode {
     ImageUnsupportedFormat,
     ImageFormatMismatch,
     ImageCorrupt,
+    ExifOrientationInvalid,
+    UnsupportedColorProfile,
     ConfigTooLarge,
     ConfigReadFailed,
     ConfigParseFailed,
@@ -72,6 +74,14 @@ pub enum ComparisonErrorCode {
     DimensionsMismatch,
     MaskDimensionsMismatch,
     MaskExcludesAllPixels,
+    CropInvalid,
+    ScreenshotTooSmall,
+    ImageAllTransparent,
+    ImageNearBlank,
+    InputIdentityMismatch,
+    InputsSwapped,
+    AspectRatioMismatch,
+    MaximumTranslationExceeded,
     ThresholdExceeded,
     ArtifactWriteFailed,
     InternalFailure,
@@ -88,7 +98,7 @@ pub struct ComparisonFailure {
 }
 
 impl ComparisonFailure {
-    fn new(
+    pub(crate) fn new(
         failure_type: FailureType,
         code: ComparisonErrorCode,
         message: impl Into<String>,
@@ -101,7 +111,7 @@ impl ComparisonFailure {
         }
     }
 
-    fn at_path(mut self, path: &Path) -> Self {
+    pub(crate) fn at_path(mut self, path: &Path) -> Self {
         self.path = Some(path.display().to_string());
         self
     }
@@ -133,19 +143,19 @@ impl ComparisonError {
         Self::internal(ComparisonErrorCode::InternalFailure, message)
     }
 
-    fn input(code: ComparisonErrorCode, message: impl Into<String>) -> Self {
+    pub(crate) fn input(code: ComparisonErrorCode, message: impl Into<String>) -> Self {
         Self {
             failure: ComparisonFailure::new(FailureType::Input, code, message),
         }
     }
 
-    fn internal(code: ComparisonErrorCode, message: impl Into<String>) -> Self {
+    pub(crate) fn internal(code: ComparisonErrorCode, message: impl Into<String>) -> Self {
         Self {
             failure: ComparisonFailure::new(FailureType::Internal, code, message),
         }
     }
 
-    fn at_path(mut self, path: &Path) -> Self {
+    pub(crate) fn at_path(mut self, path: &Path) -> Self {
         self.failure = self.failure.at_path(path);
         self
     }
@@ -531,7 +541,7 @@ fn comparison_failure_report(
     }
 }
 
-fn resolve_allowed_input_roots(
+pub(crate) fn resolve_allowed_input_roots(
     repository_root: &Path,
     requested: &[PathBuf],
 ) -> Result<Vec<PathBuf>, ComparisonError> {
@@ -554,7 +564,7 @@ fn resolve_allowed_input_roots(
         .collect()
 }
 
-fn resolve_allowed_root(
+pub(crate) fn resolve_allowed_root(
     repository_root: &Path,
     requested: &Path,
     invalid_code: ComparisonErrorCode,
@@ -609,7 +619,7 @@ fn resolve_from_repository(
     })
 }
 
-fn resolve_input_file(
+pub(crate) fn resolve_input_file(
     repository_root: &Path,
     allowed_roots: &[PathBuf],
     requested: &Path,
@@ -639,7 +649,7 @@ fn resolve_input_file(
     Ok(canonical)
 }
 
-fn create_output_directory(
+pub(crate) fn create_output_directory(
     repository_root: &Path,
     allowed_root: &Path,
     requested: &Path,
