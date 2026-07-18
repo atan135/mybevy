@@ -207,6 +207,7 @@ pub struct VisualAnalysisRequest {
     run_id: String,
     prompt_version: String,
     instruction: Arc<str>,
+    structured_inputs: Option<Arc<Value>>,
     images: Vec<ProviderImage>,
     output: StructuredOutputContract,
 }
@@ -235,6 +236,24 @@ impl ProviderRequest {
         images: Vec<ProviderImage>,
         output: StructuredOutputContract,
     ) -> Result<Self, TaskFailure> {
+        Self::visual_analysis_with_context(
+            run_id,
+            prompt_version,
+            instruction,
+            None,
+            images,
+            output,
+        )
+    }
+
+    pub fn visual_analysis_with_context(
+        run_id: impl Into<String>,
+        prompt_version: impl Into<String>,
+        instruction: impl Into<Arc<str>>,
+        structured_inputs: Option<Value>,
+        images: Vec<ProviderImage>,
+        output: StructuredOutputContract,
+    ) -> Result<Self, TaskFailure> {
         let run_id = run_id.into();
         let prompt_version = prompt_version.into();
         validate_request_labels(&run_id, &prompt_version)?;
@@ -247,6 +266,7 @@ impl ProviderRequest {
             run_id,
             prompt_version,
             instruction: instruction.into(),
+            structured_inputs: structured_inputs.map(Arc::new),
             images,
             output,
         }))
@@ -300,7 +320,7 @@ impl ProviderRequest {
 
     pub fn structured_inputs(&self) -> Option<&Value> {
         match self {
-            Self::VisualAnalysis(_) => None,
+            Self::VisualAnalysis(request) => request.structured_inputs.as_deref(),
             Self::StructuredGeneration(request) => Some(&request.structured_inputs),
         }
     }
@@ -635,6 +655,26 @@ mod tests {
         }
         assert!(metadata.contains("prompt-v2"));
         assert!(metadata.contains("image_bytes"));
+    }
+
+    #[test]
+    fn visual_analysis_can_carry_redacted_structured_context_without_becoming_generation() {
+        let request = ProviderRequest::visual_analysis_with_context(
+            "visual-context-run",
+            "prompt-v1",
+            "private visual instruction",
+            Some(json!({"region_metrics": {"changed": 4}})),
+            vec![test_image()],
+            test_contract(),
+        )
+        .unwrap();
+        assert_eq!(request.operation(), ProviderOperation::VisualAnalysis);
+        assert_eq!(
+            request.structured_inputs().unwrap()["region_metrics"]["changed"],
+            4
+        );
+        assert!(request.log_metadata().has_structured_inputs);
+        assert!(!format!("{request:?}").contains("region_metrics"));
     }
 
     #[test]

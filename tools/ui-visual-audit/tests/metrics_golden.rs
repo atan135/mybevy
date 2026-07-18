@@ -211,8 +211,22 @@ fn artifacts_have_fixed_dimensions_and_repeatable_pixels() {
     ))
     .unwrap();
     assert_eq!(first.report.metrics, second.report.metrics);
+    assert_eq!(first.report.schema_version, 2);
     assert_eq!(first.report.artifacts.len(), 5);
     for filename in ["overlay.png", "heatmap.png", "binary-diff.png"] {
+        let artifact_type = filename.trim_end_matches(".png").replace('-', "_");
+        let artifact = first
+            .report
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.artifact_type == artifact_type)
+            .unwrap();
+        let artifact_bytes = fs::read(repository.outputs.join("first").join(filename)).unwrap();
+        assert_eq!(artifact.byte_length, Some(artifact_bytes.len() as u64));
+        assert_eq!(
+            artifact.sha256.as_deref(),
+            Some(format!("{:x}", Sha256::digest(&artifact_bytes)).as_str())
+        );
         let first_image = image::open(repository.outputs.join("first").join(filename)).unwrap();
         assert_eq!(first_image.dimensions(), (case.width, case.height));
         assert_eq!(

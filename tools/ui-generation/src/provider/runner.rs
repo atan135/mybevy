@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
-    observability::{TaskBudget, TaskExecutionLimits},
+    provider_budget::{TaskBudget, TaskExecutionLimits},
 };
 use serde::Serialize;
 use std::{
@@ -207,6 +207,7 @@ impl ProviderRunner {
         })
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn execute(
         &self,
         provider_id: &ProviderId,
@@ -228,6 +229,7 @@ impl ProviderRunner {
 
     /// Uses a caller-owned task budget so analysis, generation, and bounded repair can share
     /// one hard stop instead of each phase receiving an independent retry allowance.
+    #[allow(clippy::result_large_err)]
     pub fn execute_with_budget(
         &self,
         provider_id: &ProviderId,
@@ -440,12 +442,12 @@ fn cancelled_failure(trace: ProviderExecutionTrace) -> ProviderExecutionFailure 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observability::{TaskBudget, TaskExecutionLimits};
     use crate::provider::{
         MockProvider, MockScenario, ProviderCapabilities, ProviderDescriptor, ProviderOperation,
         StructuredProviderOutput,
         tests::{test_contract, test_request},
     };
+    use crate::provider_budget::{TaskBudget, TaskExecutionLimits};
     use serde_json::json;
     use std::collections::BTreeSet;
 

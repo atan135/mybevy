@@ -2,10 +2,10 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::{io::Write, path::PathBuf};
 use ui_visual_audit::{
-    ComparisonError, ComparisonErrorResponse, ComparisonRequest, DiffAnalysisRequest,
-    ManifestError, NormalizationRequest, RegionAuditRequest, SemanticAuditRequest,
-    analyze_aligned_diff, audit_regions, audit_semantics, compare_images,
-    load_and_validate_manifest, normalize_and_align,
+    AiAnalysisRequest, ComparisonError, ComparisonErrorResponse, ComparisonRequest,
+    DiffAnalysisRequest, ManifestError, NormalizationRequest, RegionAuditRequest,
+    SemanticAuditRequest, analyze_aligned_diff, analyze_with_ai, audit_regions, audit_semantics,
+    compare_images, load_and_validate_manifest, normalize_and_align,
 };
 
 #[derive(Debug, Parser)]
@@ -112,6 +112,21 @@ enum Command {
         allowed_output_root: PathBuf,
         #[arg(long)]
         metadata: PathBuf,
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+    },
+    /// Run an explicitly configured fixture, mock, or online AI visual-analysis provider.
+    AnalyzeAi {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long, required = true)]
+        allowed_input_root: Vec<PathBuf>,
+        #[arg(long)]
+        allowed_output_root: PathBuf,
+        #[arg(long)]
+        bundle: PathBuf,
         #[arg(long)]
         config: PathBuf,
         #[arg(long)]
@@ -307,6 +322,34 @@ fn run() -> i32 {
                 },
                 Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
                     format!("semantic audit report cannot be serialized for stdout: {error}"),
+                )),
+            },
+            Err(error) => exit_with_comparison_error(error),
+        },
+        Command::AnalyzeAi {
+            repository_root,
+            allowed_input_root,
+            allowed_output_root,
+            bundle,
+            config,
+            output_directory,
+        } => match analyze_with_ai(&AiAnalysisRequest {
+            repository_root,
+            allowed_input_roots: allowed_input_root,
+            allowed_output_root,
+            bundle,
+            config,
+            output_directory,
+        }) {
+            Ok(outcome) => match serde_json::to_vec_pretty(&outcome.report) {
+                Ok(bytes) => match std::io::stdout().lock().write_all(&bytes) {
+                    Ok(()) => outcome.exit_code.as_i32(),
+                    Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
+                        format!("AI analysis report cannot be written to stdout: {error}"),
+                    )),
+                },
+                Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
+                    format!("AI analysis report cannot be serialized for stdout: {error}"),
                 )),
             },
             Err(error) => exit_with_comparison_error(error),

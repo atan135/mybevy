@@ -44,7 +44,7 @@ param(
     [string]$AdminApiToken = "",
     [int]$RemoteCommandTimeoutMs = 5000,
     [int]$RemotePollIntervalMs = 250,
-    [ValidateSet("Auto", "Fixture", "Off")]
+    [ValidateSet("Auto", "Fixture", "Provider", "Off")]
     [string]$AnalysisMode = "Auto",
     [string]$AnalysisResultPath = "",
     [ValidateSet("Off", "Plan", "Mock", "Command")]
@@ -60,6 +60,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:MaxUiAuditDeterministicHardFailures = 1024
 
 $script:BasicDevices = @(
     "desktop",
@@ -1021,6 +1022,7 @@ function New-UiAuditAnalysisInput {
             }
 
             $captures.Add([pscustomobject]@{
+                capture_id = "$screen.$device.$state"
                 screen = $screen
                 device = $device
                 state = $state
@@ -1206,30 +1208,76 @@ function ConvertTo-UiAuditAnalysisIssues {
     $issues = New-Object System.Collections.Generic.List[object]
     $index = 0
     foreach ($issue in @($RawAnalysis.issues)) {
-        Assert-UiAuditIssueRequiredFields -Issue $issue -Index $index
+        $normalizedInputIssue = $issue
+        if ($null -ne $issue.PSObject.Properties["capture_id"] -and $null -eq $issue.PSObject.Properties["screen"]) {
+            $captureId = [string]$issue.capture_id
+            $matchedCaptures = @($AnalysisInput.captures | Where-Object { [string]$_.capture_id -eq $captureId })
+            if ($matchedCaptures.Count -ne 1) {
+                throw "issue[$Index] does not match exactly one analysis input capture_id: $captureId"
+            }
+            $capture = $matchedCaptures[0]
+            $evidenceDescriptions = New-Object System.Collections.Generic.List[string]
+            foreach ($entry in @($issue.evidence)) {
+                if ($null -eq $entry.PSObject.Properties["image_id"] -or $null -eq $entry.PSObject.Properties["description"]) {
+                    throw "issue[$Index] structured evidence is missing image_id or description"
+                }
+                $imageId = [string]$entry.image_id
+                if (-not $imageId.StartsWith("$captureId.", [System.StringComparison]::Ordinal)) {
+                    throw "issue[$Index] structured evidence does not belong to capture_id: $imageId"
+                }
+                $evidenceDescriptions.Add([string]$entry.description)
+            }
+            if ($evidenceDescriptions.Count -eq 0) {
+                throw "issue[$Index] structured evidence is empty"
+            }
+            $normalizedInputIssue = [pscustomobject]@{
+                screen = [string]$capture.screen
+                device = [string]$capture.device
+                state = [string]$capture.state
+                severity = if ($null -ne $issue.PSObject.Properties["severity"]) { [string]$issue.severity } else { "" }
+                problem_type = if ($null -ne $issue.PSObject.Properties["problem_type"]) { [string]$issue.problem_type } else { $null }
+                problem = [string]$issue.problem
+                evidence = ($evidenceDescriptions.ToArray() -join "; ")
+                likely_cause = [string]$issue.likely_cause
+                suggested_files = @($issue.suggested_files)
+                blocking = $null
+                capture_id = $captureId
+                evidence_images = @($issue.evidence | ForEach-Object { [string]$_.image_id })
+                region = if ($null -ne $issue.PSObject.Properties["region"]) { $issue.region } else { $null }
+                reference_element = if ($null -ne $issue.PSObject.Properties["reference_element"]) { $issue.reference_element } else { $null }
+                node_id = if ($null -ne $issue.PSObject.Properties["node_id"]) { $issue.node_id } else { $null }
+            }
+        }
+
+        Assert-UiAuditIssueRequiredFields -Issue $normalizedInputIssue -Index $index
 
         $severity = ConvertTo-UiAuditIssueSeverity `
-            -Severity $(if ($null -ne $issue.PSObject.Properties["severity"]) { [string]$issue.severity } else { "" }) `
-            -ProblemType $(if ($null -ne $issue.PSObject.Properties["problem_type"]) { [string]$issue.problem_type } else { "" }) `
-            -Problem ([string]$issue.problem)
-        $problemType = if ($null -ne $issue.PSObject.Properties["problem_type"]) { [string]$issue.problem_type } else { $null }
+            -Severity $(if ($null -ne $normalizedInputIssue.PSObject.Properties["severity"]) { [string]$normalizedInputIssue.severity } else { "" }) `
+            -ProblemType $(if ($null -ne $normalizedInputIssue.PSObject.Properties["problem_type"]) { [string]$normalizedInputIssue.problem_type } else { "" }) `
+            -Problem ([string]$normalizedInputIssue.problem)
+        $problemType = if ($null -ne $normalizedInputIssue.PSObject.Properties["problem_type"]) { [string]$normalizedInputIssue.problem_type } else { $null }
         $blocking = Test-UiAuditIssueBlocking `
             -Severity $severity `
-            -Blocking $(if ($null -ne $issue.PSObject.Properties["blocking"]) { $issue.blocking } else { $null }) `
+            -Blocking $(if ($null -ne $normalizedInputIssue.PSObject.Properties["blocking"]) { $normalizedInputIssue.blocking } else { $null }) `
             -ProblemType $problemType `
-            -Problem ([string]$issue.problem)
+            -Problem ([string]$normalizedInputIssue.problem)
 
         $normalized = [pscustomobject]@{
-            screen = [string]$issue.screen
-            device = [string]$issue.device
-            state = [string]$issue.state
+            screen = [string]$normalizedInputIssue.screen
+            device = [string]$normalizedInputIssue.device
+            state = [string]$normalizedInputIssue.state
             severity = $severity
             problem_type = $problemType
-            problem = [string]$issue.problem
-            evidence = [string]$issue.evidence
-            likely_cause = [string]$issue.likely_cause
-            suggested_files = @($issue.suggested_files | ForEach-Object { [string]$_ })
+            problem = [string]$normalizedInputIssue.problem
+            evidence = [string]$normalizedInputIssue.evidence
+            likely_cause = [string]$normalizedInputIssue.likely_cause
+            suggested_files = @($normalizedInputIssue.suggested_files | ForEach-Object { [string]$_ })
             blocking = [bool]$blocking
+            capture_id = if ($null -ne $normalizedInputIssue.PSObject.Properties["capture_id"]) { [string]$normalizedInputIssue.capture_id } else { $null }
+            evidence_images = if ($null -ne $normalizedInputIssue.PSObject.Properties["evidence_images"]) { @($normalizedInputIssue.evidence_images) } else { @() }
+            region = if ($null -ne $normalizedInputIssue.PSObject.Properties["region"]) { $normalizedInputIssue.region } else { $null }
+            reference_element = if ($null -ne $normalizedInputIssue.PSObject.Properties["reference_element"]) { $normalizedInputIssue.reference_element } else { $null }
+            node_id = if ($null -ne $normalizedInputIssue.PSObject.Properties["node_id"]) { $normalizedInputIssue.node_id } else { $null }
         }
 
         if (-not $validCaptureKeys.Contains((Get-UiAuditIssueKey -Issue $normalized))) {
@@ -1241,6 +1289,109 @@ function ConvertTo-UiAuditAnalysisIssues {
     }
 
     return @($issues.ToArray())
+}
+
+function Assert-UiAuditProviderReport {
+    param(
+        [Parameter(Mandatory = $true)]$Report,
+        [Parameter(Mandatory = $true)]$AnalysisInput
+    )
+
+    foreach ($field in @("schema_version", "algorithm_version", "status", "provider", "input", "issues", "deterministic_hard_failures", "deterministic_hard_failures_preserved", "visual_similarity_is_sole_conclusion", "privacy", "artifacts")) {
+        if ($null -eq $Report.PSObject.Properties[$field]) {
+            throw "provider analysis report is missing required field '$field'"
+        }
+    }
+    if ([int]$Report.schema_version -ne 1 -or
+        [string]$Report.algorithm_version -ne "ui_ai_visual_analysis_v1" -or
+        [string]$Report.status -ne "completed" -or
+        -not [bool]$Report.deterministic_hard_failures_preserved -or
+        [bool]$Report.visual_similarity_is_sole_conclusion) {
+        throw "provider analysis report violates the version, status, or deterministic-preservation contract"
+    }
+    foreach ($field in @("mode", "provider_id", "audit_model_id", "self_review_is_sole_conclusion", "attempts")) {
+        if ($null -eq $Report.provider.PSObject.Properties[$field]) {
+            throw "provider analysis report provider is missing '$field'"
+        }
+    }
+    if ([bool]$Report.provider.self_review_is_sole_conclusion -or
+        [string]::IsNullOrWhiteSpace([string]$Report.provider.provider_id) -or
+        [string]::IsNullOrWhiteSpace([string]$Report.provider.audit_model_id)) {
+        throw "provider analysis report has unsafe provider/model evidence"
+    }
+    foreach ($field in @("bundle_path", "bundle_sha256", "capture_count", "image_count", "image_bytes", "region_metric_count", "semantic_node_count", "provider_images")) {
+        if ($null -eq $Report.input.PSObject.Properties[$field]) {
+            throw "provider analysis report input is missing '$field'"
+        }
+    }
+    if (@($Report.input.provider_images).Count -ne [int]$Report.input.image_count) {
+        throw "provider analysis report image provenance count does not match image_count"
+    }
+    foreach ($image in @($Report.input.provider_images)) {
+        foreach ($field in @("image_id", "source_sha256", "provider_sha256", "redaction_rect_count")) {
+            if ($null -eq $image.PSObject.Properties[$field]) {
+                throw "provider analysis report image provenance is missing '$field'"
+            }
+        }
+        if ([string]$image.source_sha256 -notmatch "^[0-9a-f]{64}$" -or [string]$image.provider_sha256 -notmatch "^[0-9a-f]{64}$") {
+            throw "provider analysis report image provenance hash is invalid"
+        }
+    }
+    foreach ($field in @("credentials_persisted", "image_bytes_persisted", "raw_provider_response_persisted", "prompt_persisted", "sensitive_text_redaction", "provider_redacted_image_count", "provider_redaction_rect_count", "metadata_sensitive_string_count", "response_redaction_count")) {
+        if ($null -eq $Report.privacy.PSObject.Properties[$field]) {
+            throw "provider analysis report privacy is missing '$field'"
+        }
+    }
+    if ([bool]$Report.privacy.credentials_persisted -or
+        [bool]$Report.privacy.image_bytes_persisted -or
+        [bool]$Report.privacy.raw_provider_response_persisted -or
+        [bool]$Report.privacy.prompt_persisted) {
+        throw "provider analysis report indicates persisted sensitive provider payloads"
+    }
+
+    $hardFailures = @($Report.deterministic_hard_failures)
+    if ($hardFailures.Count -gt $script:MaxUiAuditDeterministicHardFailures) {
+        throw "provider analysis report deterministic hard failure count exceeds the fixed limit"
+    }
+    $captureCounts = @{}
+    foreach ($capture in @($AnalysisInput.captures)) {
+        if ($null -eq $capture.PSObject.Properties["capture_id"] -or
+            [string]::IsNullOrWhiteSpace([string]$capture.capture_id)) {
+            throw "analysis input capture is missing its explicit capture_id"
+        }
+        $captureId = [string]$capture.capture_id
+        if ($captureCounts.ContainsKey($captureId)) {
+            $captureCounts[$captureId] += 1
+        } else {
+            $captureCounts[$captureId] = 1
+        }
+    }
+    $hardFailureIndex = 0
+    foreach ($hardFailure in $hardFailures) {
+        foreach ($field in @("capture_id", "finding")) {
+            if ($null -eq $hardFailure.PSObject.Properties[$field]) {
+                throw "provider deterministic hard failure[$hardFailureIndex] is missing '$field'"
+            }
+        }
+        $captureId = [string]$hardFailure.capture_id
+        if ([string]::IsNullOrWhiteSpace($captureId) -or
+            -not $captureCounts.ContainsKey($captureId) -or
+            [int]$captureCounts[$captureId] -ne 1) {
+            throw "provider deterministic hard failure[$hardFailureIndex] does not bind exactly one analysis input capture"
+        }
+        foreach ($field in @("code", "severity", "message", "primary")) {
+            if ($null -eq $hardFailure.finding.PSObject.Properties[$field] -or
+                $null -eq $hardFailure.finding.$field) {
+                throw "provider deterministic hard failure[$hardFailureIndex] finding is missing '$field'"
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$hardFailure.finding.code) -or
+            [string]::IsNullOrWhiteSpace([string]$hardFailure.finding.severity) -or
+            [string]::IsNullOrWhiteSpace([string]$hardFailure.finding.message)) {
+            throw "provider deterministic hard failure[$hardFailureIndex] finding has empty required evidence"
+        }
+        $hardFailureIndex += 1
+    }
 }
 
 function New-UiAuditAnalysisSummary {
@@ -1317,7 +1468,7 @@ function Invoke-UiAuditAnalysis {
         }
     }
 
-    $shouldReadFixture = $normalizedMode -eq "Fixture" -or -not [string]::IsNullOrWhiteSpace($ResultPath)
+    $shouldReadFixture = $normalizedMode -in @("Fixture", "Provider") -or -not [string]::IsNullOrWhiteSpace($ResultPath)
     if (-not $shouldReadFixture) {
         return [pscustomobject]@{
             schema_version = 1
@@ -1325,7 +1476,7 @@ function Invoke-UiAuditAnalysis {
             status = "skipped"
             pass = $true
             failure_type = $null
-            detail = "no analysis result fixture supplied; external AI analysis is not implemented in this phase"
+            detail = "no analysis result supplied; run the explicit analyze-ai adapter or provide a fixture result"
             input = [ordered]@{
                 path = $InputPath
                 capture_count = @($AnalysisInput.captures).Count
@@ -1353,6 +1504,14 @@ function Invoke-UiAuditAnalysis {
         return New-UiAuditAnalysisFailure -Mode $normalizedMode -FailureType "ai_result_invalid" -Detail $_.Exception.Message -AnalysisInput $AnalysisInput -InputPath $InputPath -ResultPath $ResultPath
     }
 
+    if ($normalizedMode -eq "Provider") {
+        try {
+            Assert-UiAuditProviderReport -Report $raw -AnalysisInput $AnalysisInput
+        } catch {
+            return New-UiAuditAnalysisFailure -Mode $normalizedMode -FailureType "ai_result_invalid" -Detail $_.Exception.Message -AnalysisInput $AnalysisInput -InputPath $InputPath -ResultPath $ResultPath
+        }
+    }
+
     try {
         $issues = @(ConvertTo-UiAuditAnalysisIssues -RawAnalysis $raw -AnalysisInput $AnalysisInput)
     } catch {
@@ -1361,16 +1520,28 @@ function Invoke-UiAuditAnalysis {
 
     $counts = New-UiAuditAnalysisSummary -Issues $issues
     $blockingIssues = @($issues | Where-Object { [bool]$_.blocking -or $_.severity -in @("severe", "medium") })
-    $status = if ($blockingIssues.Count -gt 0) { "failed" } else { "passed" }
-    $failureType = if ($blockingIssues.Count -gt 0) { "ai_blocking_issue" } else { $null }
+    $deterministicHardFailures = if ($normalizedMode -eq "Provider") { @($raw.deterministic_hard_failures) } else { @() }
+    $deterministicHardFailureCount = $deterministicHardFailures.Count
+    $status = if ($deterministicHardFailureCount -gt 0 -or $blockingIssues.Count -gt 0) { "failed" } else { "passed" }
+    $failureType = if ($deterministicHardFailureCount -gt 0) {
+        "deterministic_hard_failure"
+    } elseif ($blockingIssues.Count -gt 0) {
+        "ai_blocking_issue"
+    } else {
+        $null
+    }
 
-    return [pscustomobject]@{
+    $analysisResult = [pscustomobject]@{
         schema_version = 1
         mode = $normalizedMode
         status = $status
         pass = ($status -eq "passed")
         failure_type = $failureType
-        detail = if ($failureType) { "severe, medium, or blocking analysis issue found" } else { $null }
+        detail = if ($failureType -eq "deterministic_hard_failure") {
+            "deterministic semantic hard failure found"
+        } elseif ($failureType) {
+            "severe, medium, or blocking analysis issue found"
+        } else { $null }
         input = [ordered]@{
             path = $InputPath
             capture_count = @($AnalysisInput.captures).Count
@@ -1380,6 +1551,11 @@ function Invoke-UiAuditAnalysis {
         severity_counts = $counts
         issues = @($issues)
     }
+    if ($normalizedMode -eq "Provider") {
+        $analysisResult | Add-Member -NotePropertyName deterministic_hard_failure_count -NotePropertyValue $deterministicHardFailureCount
+        $analysisResult | Add-Member -NotePropertyName deterministic_hard_failures -NotePropertyValue @($deterministicHardFailures)
+    }
+    return $analysisResult
 }
 
 function Write-UiAuditAnalysisOutput {
@@ -3584,7 +3760,7 @@ function Write-UiAuditRunnerOutputs {
         [object[]]$RemoteTargetsValue = @(),
         [AllowEmptyString()][string]$RemoteBackendName = "",
         [string[]]$LocalDevicesValue = @(),
-        [ValidateSet("Auto", "Fixture", "Off")]
+        [ValidateSet("Auto", "Fixture", "Provider", "Off")]
         [string]$AnalysisModeName = $AnalysisMode,
         [AllowEmptyString()][string]$AnalysisResultFile = $AnalysisResultPath
     )
@@ -3658,7 +3834,7 @@ function Write-UiAuditRunnerOutputs {
     $analysisResultFullPath = if ([string]::IsNullOrWhiteSpace($AnalysisResultFile)) { "" } else { Get-FullPath $AnalysisResultFile }
     $analysis = Invoke-UiAuditAnalysis -RunRoot $RunRoot -AnalysisInput $analysisInput -InputPath $analysisInputPath -Mode $AnalysisModeName -ResultPath $analysisResultFullPath
     $analysisPath = Write-UiAuditAnalysisOutput -RunRoot $RunRoot -Analysis $analysis
-    $manifest.analysis = [ordered]@{
+    $analysisForManifest = [ordered]@{
         input = $analysisInputPath
         output = $analysisPath
         mode = $analysis.mode
@@ -3669,6 +3845,11 @@ function Write-UiAuditRunnerOutputs {
         severity_counts = $analysis.severity_counts
         issues = @($analysis.issues)
     }
+    if ($AnalysisModeName -eq "Provider") {
+        $analysisForManifest.deterministic_hard_failure_count = [int]$analysis.deterministic_hard_failure_count
+        $analysisForManifest.deterministic_hard_failures = @($analysis.deterministic_hard_failures)
+    }
+    $manifest.analysis = $analysisForManifest
     if ($status -eq "passed" -and $analysis.status -eq "failed") {
         $manifest.status = "failed"
     }
@@ -4225,6 +4406,130 @@ function Invoke-UiAuditSelfTest {
         Assert-SelfTest ($minorAnalysis.status -eq "passed" -and [bool]$minorAnalysis.pass -and $minorAnalysis.severity_counts.minor -eq 1 -and $minorAnalysis.severity_counts.blocking -eq 0) "minor analysis does not block"
         $minorReport = Get-Content -Raw -Path (Join-FullPath $tempRoot "report.md")
         Assert-SelfTest ($minorReport.Contains("## Analysis") -and $minorReport.Contains("对齐可以更整齐")) "analysis report includes minor issue"
+
+        $providerResultPath = Join-FullPath $analysisFixtureRoot "provider.json"
+        $providerFixtureHash = (("a" * 64) -join "")
+        [ordered]@{
+            schema_version = 1
+            algorithm_version = "ui_ai_visual_analysis_v1"
+            status = "completed"
+            provider = [ordered]@{
+                mode = "fixture"
+                provider_id = "fixture-ai"
+                audit_model_id = "fixture-audit-v1"
+                generation_model_id = "fixture-generation-v1"
+                self_review_is_sole_conclusion = $false
+                attempts = 1
+                input_units = $null
+                output_units = $null
+            }
+            input = [ordered]@{
+                bundle_path = "bundle.json"
+                bundle_sha256 = $providerFixtureHash
+                capture_count = 1
+                image_count = 1
+                image_bytes = 128
+                region_metric_count = 1
+                semantic_node_count = 1
+                provider_images = @(
+                    [ordered]@{
+                        image_id = "$($passed.captures[0].screen).$($passed.captures[0].device).$($passed.captures[0].state).overlay"
+                        source_sha256 = $providerFixtureHash
+                        provider_sha256 = $providerFixtureHash
+                        redaction_rect_count = 0
+                    }
+                )
+            }
+            issues = @(
+                [ordered]@{
+                    capture_id = "$($passed.captures[0].screen).$($passed.captures[0].device).$($passed.captures[0].state)"
+                    problem_type = "spacing"
+                    severity = "minor"
+                    problem = "provider spacing evidence"
+                    evidence = @(
+                        [ordered]@{
+                            image_id = "$($passed.captures[0].screen).$($passed.captures[0].device).$($passed.captures[0].state).overlay"
+                            description = "overlay evidence"
+                        }
+                    )
+                    region = [ordered]@{ region_id = "content"; bounds = $null }
+                    reference_element = "content panel"
+                    node_id = "page.content"
+                    likely_cause = "fixture provider cause"
+                    suggested_files = @("project/src/game/screens/dev/ui_gallery.rs")
+                }
+            )
+            deterministic_hard_failures = @()
+            deterministic_hard_failures_preserved = $true
+            visual_similarity_is_sole_conclusion = $false
+            privacy = [ordered]@{
+                credentials_persisted = $false
+                image_bytes_persisted = $false
+                raw_provider_response_persisted = $false
+                prompt_persisted = $false
+                sensitive_text_redaction = "fixture redaction"
+                provider_redacted_image_count = 0
+                provider_redaction_rect_count = 0
+                metadata_sensitive_string_count = 0
+                response_redaction_count = 0
+            }
+            artifacts = @([ordered]@{ artifact_type = "ai_analysis_report"; path = "ai-analysis-report.json" })
+        } | ConvertTo-Json -Depth 20 | Set-Content -Path $providerResultPath -Encoding UTF8
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-provider" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Provider" -AnalysisResultFile $providerResultPath
+        $providerAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($providerAnalysis.status -eq "passed" -and $providerAnalysis.mode -eq "Provider" -and $providerAnalysis.deterministic_hard_failure_count -eq 0 -and @($providerAnalysis.deterministic_hard_failures).Count -eq 0 -and $providerAnalysis.issues[0].capture_id -and @($providerAnalysis.issues[0].evidence_images).Count -eq 1) "provider structured analysis compatibility"
+
+        $providerHardFailurePath = Join-FullPath $analysisFixtureRoot "provider-hard-failure.json"
+        $providerHardFailure = Read-JsonFile $providerResultPath
+        $providerHardFailure.issues = @()
+        $providerHardFailure.deterministic_hard_failures = @(
+            [ordered]@{
+                capture_id = "$($passed.captures[0].screen).$($passed.captures[0].device).$($passed.captures[0].state)"
+                finding = [ordered]@{
+                    code = "critical_text_clipped"
+                    severity = "hard_failure"
+                    message = "critical text is clipped"
+                    primary = [ordered]@{
+                        stable_id = "root/title"
+                        capture_entity = "1v1#fixture"
+                        entity_name = "Title"
+                        document_id = $null
+                        node_id = "title"
+                        source_path = "project/src/game/screens/dev/ui_gallery.rs"
+                        panel_id = "page"
+                        likely_files = @("project/src/game/screens/dev/ui_gallery.rs")
+                    }
+                }
+            }
+        )
+        $providerHardFailure | ConvertTo-Json -Depth 20 | Set-Content -Path $providerHardFailurePath -Encoding UTF8
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-provider-hard-failure" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Provider" -AnalysisResultFile $providerHardFailurePath
+        $providerHardAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        $providerHardManifest = Read-JsonFile (Join-FullPath $tempRoot "manifest.json")
+        Assert-SelfTest ($providerHardAnalysis.status -eq "failed" -and -not [bool]$providerHardAnalysis.pass -and $providerHardAnalysis.failure_type -eq "deterministic_hard_failure" -and $providerHardAnalysis.deterministic_hard_failure_count -eq 1 -and $providerHardAnalysis.severity_counts.total -eq 0 -and $providerHardAnalysis.deterministic_hard_failures[0].finding.code -eq "critical_text_clipped") "provider deterministic hard failure independently fails and is retained"
+        Assert-SelfTest ($providerHardManifest.status -eq "failed" -and $providerHardManifest.analysis.deterministic_hard_failure_count -eq 1 -and @($providerHardManifest.analysis.deterministic_hard_failures).Count -eq 1) "provider manifest preserves and gates deterministic hard failures"
+
+        $providerForgedHardFailurePath = Join-FullPath $analysisFixtureRoot "provider-forged-hard-failure.json"
+        $providerForgedHardFailure = Read-JsonFile $providerHardFailurePath
+        $providerForgedHardFailure.deterministic_hard_failures[0].capture_id = "forged.capture.initial"
+        $providerForgedHardFailure | ConvertTo-Json -Depth 20 | Set-Content -Path $providerForgedHardFailurePath -Encoding UTF8
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-provider-forged-hard-failure" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Provider" -AnalysisResultFile $providerForgedHardFailurePath
+        $providerForgedHardAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($providerForgedHardAnalysis.status -eq "failed" -and $providerForgedHardAnalysis.failure_type -eq "ai_result_invalid") "provider forged hard failure capture is rejected"
+
+        $rawProviderResultPath = Join-FullPath $analysisFixtureRoot "raw-provider.json"
+        [ordered]@{ schema_version = 1; issues = @() } | ConvertTo-Json -Depth 5 | Set-Content -Path $rawProviderResultPath -Encoding UTF8
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-provider-raw-rejected" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Provider" -AnalysisResultFile $rawProviderResultPath
+        $rawProviderAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($rawProviderAnalysis.status -eq "failed" -and $rawProviderAnalysis.failure_type -eq "ai_result_invalid") "provider raw output is rejected"
+
+        $missingPreservationPath = Join-FullPath $analysisFixtureRoot "provider-missing-preservation.json"
+        $missingPreservation = Read-JsonFile $providerResultPath
+        $missingPreservation.PSObject.Properties.Remove("deterministic_hard_failures_preserved")
+        $missingPreservation | ConvertTo-Json -Depth 20 | Set-Content -Path $missingPreservationPath -Encoding UTF8
+        Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "selftest-provider-preservation-rejected" -Results @($passed) -ScreensValue @("ui_gallery") -DevicesValue @($devices[0]) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($devices[0]) -AnalysisModeName "Provider" -AnalysisResultFile $missingPreservationPath
+        $missingPreservationAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($missingPreservationAnalysis.status -eq "failed" -and $missingPreservationAnalysis.failure_type -eq "ai_result_invalid") "provider missing preservation evidence is rejected"
 
         $blockingResultPath = Join-FullPath $analysisFixtureRoot "blocking.json"
         Write-FakeAnalysisResult -Path $blockingResultPath -Issues @(

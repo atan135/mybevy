@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "run_id": "replace-with-safe-run-id",
+  "captures": [
+    {
+      "capture_id": "login.phone-portrait.initial",
+      "screen": "login",
+      "device": "phone-portrait",
+      "state": "initial",
+      "images": {
+        "reference": "project/target/ui-visual-audit/replace/reference.png",
+        "actual": "project/target/ui-visual-audit/replace/actual.png",
+        "overlay": "project/target/ui-visual-audit/replace/overlay.png",
+        "heatmap": "project/target/ui-visual-audit/replace/heatmap.png"
+      },
+      "diff_metrics": "project/target/ui-visual-audit/replace/diff-metrics-report.json",
+      "region_metrics": "project/target/ui-visual-audit/replace/region-audit-report.json",
+      "semantic_report": "project/target/ui-visual-audit/replace/semantic-audit-report.json",
+      "ui_metadata": "project/target/ui-visual-audit/replace/capture.metadata.json",
+      "allowed_differences": {
+        "profile": "login-default",
+        "notes": [
+          "No live account data is allowed in this sample"
+        ]
+      },
+      "likely_files": [
+        "project/src/game/screens/auth/login.rs"
+      ],
+      "privacy": {
+        "redact_semantic_text": true,
+        "redaction_rects": []
+      }
+    }
+  ]
+}

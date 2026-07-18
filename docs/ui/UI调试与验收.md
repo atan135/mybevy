@@ -162,7 +162,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 
 - `manifest.json` 的 `status` 为 `passed` 或 dry-run 时为 `planned`。
 - `report.md` 中每个 capture 都有对应 screenshot 和 metadata 链接；远程模式至少有 screenshot / metadata artifact URI。
-- `analysis-input.json` 中每条 capture 的 `screen`、`device`、`state` 能对应回 `manifest.json` 和 `report.md`。
+- `analysis-input.json` 中每条 capture 的 `capture_id`、`screen`、`device`、`state` 能对应回 `manifest.json` 和 `report.md`。`Provider` 模式可读取 `ui_ai_visual_analysis_v1` 报告中的结构化 image evidence，并保留 region、reference element 和 node ID；原有 `Fixture`、`Auto` 与 `Off` 行为保持兼容。
 - 有滚动 recipe 的 `ui_gallery` 默认覆盖 `visual_acceptance`、全部专题 state、六个 `component*` 状态、`middle` 和 `bottom`，并记录 `scroll_target_id = ui_gallery.main`；综合区、图片、文字、图标、样式、效果、动画和通用组件均使用 child anchor，不要依赖会随页面总高度变化的 `middle`。组件 metadata 还会输出稳定排序的 `control_snapshots`。
 - 每个核心 capture 的 `visual_budget.status` 不应为 `exceeded`；`warning` 需要结合 finding 和截图决定是否接受。图片内存和 draw/overdraw 都是估算，不得写成 GPU 实测通过。
 - 任意 UI Gallery capture state 第一次应用时，全部动画样例都应 seek 到 `0.625` 并 pause；后续 30 帧稳定等待内 scroll geometry、目标值、player 和 debug snapshot 不应继续 Changed。
@@ -174,6 +174,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - 节点 `clip_bounds` 是自身 bounds、viewport 和全部裁切祖先的交集。不可见、完全裁切和无语义纯布局节点不进入常规告警；可见语义节点的明显零尺寸在裁切跳过前检查。
 - `semantic_tree.panels` 应能证明 active focus scope、focus suppression、Pickable 和 `UiInputState` 阻断。Loading 无可聚焦控件时焦点必须清空；Modal 上方只允许受控 Dropdown/Tooltip transient 层；Toast 不得阻断或捕获焦点。
 - `ui_semantic_audit_v1` 的 hard failure 与视觉相似度、局部分数分开，高相似度不得抵消裁切、不可点击、滚动不可达或覆盖层输入错误；总四态门禁仍由后续聚合阶段负责。
+- `ui_ai_visual_analysis_v1` 的每个 capture 必须同时绑定 reference、actual、overlay、heatmap、diff report、区域指标、semantic report schema v3、原始 UI metadata hash、允许差异和 privacy rect；diff artifact hash 与 region binding 任一错配都必须在 provider 调用前失败。图片先读取 header 并预留解码像素/字节预算，再对同一快照执行受限完整解码。在线 provider 只接收语义文本框与显式 privacy rect 遮罩后的内存图片副本；可见且未完全裁切的文本缺少有效 measured bounds 时拒绝上传。敏感 metadata 值按固定数量、单值字节和总字节上限去重收集，ASCII echo 不区分大小写、非 ASCII echo 精确匹配，结构 ID/路径保持可追踪。HTTP 禁止重定向并限制输出 token。AI 引用的 capture/image/region/node/file 必须可反查；报告没有 pass/降级 deterministic hard failure 的字段，且生成模型与审核模型独立记录。
 
 失败报告需要能定位：
 
@@ -186,7 +187,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - 本地启动与输出：`launch_failed`、`timeout`、`manifest_missing`、`manifest_invalid`、`output_missing`、`process_failed`。
 - 游戏内审计：`screen_not_found`、`panel_not_ready`、`unstable_ui`、`scroll_target_missing`、`scroll_target_unreachable`、`screenshot_failed`、`config_invalid`。
 - 远程任务：`device_offline`、`debug_disabled`、`send_failed`、`client_timeout`、`client_rejected`、`artifact_upload_failed`、`remote_error`、`remote_failed`。
-- AI 与修复：`ai_blocking_issue`、`ai_missing_capture_metadata`、`ai_result_invalid`、`safety_policy_rejected`、`fix_check_failed`、`max_iterations_reached`。
+- AI 与修复：`ai_blocking_issue`、`deterministic_hard_failure`、`ai_missing_capture_metadata`、`ai_result_invalid`、`safety_policy_rejected`、`fix_check_failed`、`max_iterations_reached`。
 
 ## 当前已知窗口验收状态
 

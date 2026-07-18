@@ -4,16 +4,34 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+default = ["full"]
+full = [
+    "dep:clap",
+    "dep:image",
+    "dep:jsonschema",
+    "dep:project",
+    "dep:schemars",
+    "dep:sha2",
+    "dep:toml",
+]
+provider-core = []
+
+[[bin]]
+name = "ui-generation"
+path = "src/main.rs"
+required-features = ["full"]
+
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
-jsonschema = { version = "0.47", default-features = false }
-project = { path = "../../project" }
-schemars = "1"
+clap = { version = "4.5", features = ["derive"], optional = true }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"], optional = true }
+jsonschema = { version = "0.47", default-features = false, optional = true }
+project = { path = "../../project", optional = true }
+schemars = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-toml = "0.9"
+sha2 = { version = "0.10", optional = true }
+toml = { version = "0.9", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -11,6 +11,7 @@ use image::{
     RgbaImage, codecs::png::PngEncoder,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     fs,
@@ -20,7 +21,7 @@ use std::{
 };
 
 pub const DIFF_METRICS_CONFIG_SCHEMA_VERSION: u32 = 1;
-pub const DIFF_METRICS_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const DIFF_METRICS_REPORT_SCHEMA_VERSION: u32 = 2;
 pub const DIFF_METRICS_ALGORITHM_VERSION: &str = "ui_diff_metrics_v1";
 pub const DIFF_METRICS_REPORT_FILENAME: &str = "diff-metrics-report.json";
 pub const DIFF_METRICS_PEAK_MEMORY_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
@@ -78,7 +79,9 @@ pub struct DiffConfigInputReport {
 #[serde(deny_unknown_fields)]
 pub struct DiffInputsReport {
     pub reference: ImageInputReport,
+    pub reference_sha256: String,
     pub actual: ImageInputReport,
+    pub actual_sha256: String,
     pub config: DiffConfigInputReport,
 }
 
@@ -248,6 +251,8 @@ pub struct DiffArtifactReport {
     pub dimensions: Option<PixelSize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub byte_length: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -276,6 +281,7 @@ pub struct DiffAnalysisOutcome {
 
 pub(crate) struct DecodedAlignedInput {
     pub(crate) report: ImageInputReport,
+    pub(crate) sha256: String,
     pub(crate) rgba: RgbaImage,
 }
 
@@ -339,7 +345,9 @@ pub fn analyze_aligned_diff(
 
     let inputs = DiffInputsReport {
         reference: reference.report.clone(),
+        reference_sha256: reference.sha256.clone(),
         actual: actual.report.clone(),
+        actual_sha256: actual.sha256.clone(),
         config: DiffConfigInputReport {
             path: config_path.display().to_string(),
             schema_version: config.schema_version,
@@ -400,6 +408,7 @@ pub fn analyze_aligned_diff(
                 .to_string(),
             dimensions: Some(artifact.dimensions),
             byte_length: Some(artifact.bytes.len() as u64),
+            sha256: Some(format!("{:x}", Sha256::digest(&artifact.bytes))),
         })
         .collect();
     let report_path = output_directory.join(DIFF_METRICS_REPORT_FILENAME);
@@ -576,8 +585,9 @@ pub(crate) fn decode_aligned_png(path: &Path) -> Result<DecodedAlignedInput, Com
                 width: rgba.width(),
                 height: rgba.height(),
             },
-            byte_length: metadata.len(),
+            byte_length: bytes.len() as u64,
         },
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
         rgba,
     })
 }
@@ -1354,6 +1364,7 @@ fn report_artifact(path: &Path) -> DiffArtifactReport {
         path: path.display().to_string(),
         dimensions: None,
         byte_length: None,
+        sha256: None,
     }
 }
 

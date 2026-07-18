@@ -1,9 +1,24 @@
+pub mod ai;
 pub mod comparison;
 pub mod metrics;
 pub mod normalization;
 pub mod reference_manifest;
 pub mod regions;
 pub mod semantic;
+
+pub use ai::{
+    AI_ANALYSIS_ALGORITHM_VERSION, AI_ANALYSIS_BUNDLE_SCHEMA_VERSION,
+    AI_ANALYSIS_CONFIG_SCHEMA_VERSION, AI_ANALYSIS_OUTPUT_SCHEMA_ID,
+    AI_ANALYSIS_PROVIDER_OUTPUT_SCHEMA_VERSION, AI_ANALYSIS_REPORT_FILENAME,
+    AI_ANALYSIS_REPORT_SCHEMA_VERSION, AiAllowedDifferences, AiAnalysisBundle, AiAnalysisConfig,
+    AiAnalysisOutcome, AiAnalysisReport, AiAnalysisRequest, AiAnalysisStatus, AiCaptureBundle,
+    AiCaptureImages, AiCapturePrivacy, AiDeterministicHardFailure, AiEvidence, AiImageRole,
+    AiInputReport, AiIssueRegion, AiMockScenario, AiPrivacyReport, AiProblemType, AiProviderConfig,
+    AiProviderImageReport, AiProviderIssue, AiProviderOutput, AiProviderPolicy, AiProviderReport,
+    AiSeverity, MAX_AI_CAPTURES, MAX_AI_IMAGE_BYTES, MAX_AI_IMAGES, MAX_AI_ISSUES,
+    MAX_AI_SENSITIVE_TOTAL_BYTES, MAX_AI_SENSITIVE_VALUE_BYTES, MAX_AI_SENSITIVE_VALUES,
+    MAX_AI_TOTAL_IMAGE_BYTES, analyze_with_ai,
+};
 
 pub use comparison::{
     ArtifactReport, COMPARISON_CONFIG_SCHEMA_VERSION, COMPARISON_REPORT_FILENAME,

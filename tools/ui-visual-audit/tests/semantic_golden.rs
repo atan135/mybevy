@@ -1,4 +1,5 @@
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 use tempfile::TempDir;
 use ui_visual_audit::{
@@ -40,7 +41,11 @@ fn compact_and_expanded_profiles_pass_and_skip_nonsemantic_hidden_nodes() {
     for name in ["compact-pass.metadata.json", "expanded-pass.metadata.json"] {
         let output = TempDir::new_in(repository_root()).unwrap();
         let outcome = run(fixture(name), &output);
-        assert_eq!(outcome.report.schema_version, 2);
+        assert_eq!(outcome.report.schema_version, 3);
+        assert_eq!(
+            outcome.report.input.metadata_sha256,
+            format!("{:x}", Sha256::digest(fs::read(fixture(name)).unwrap()))
+        );
         assert_eq!(outcome.report.status, SemanticAuditStatus::Passed);
         assert!(!outcome.report.separation.semantic_hard_failure);
         assert!(!outcome.report.separation.visual_similarity_consumed);

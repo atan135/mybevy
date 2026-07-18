@@ -1,32 +1,57 @@
+#[cfg(feature = "full")]
 pub mod analysis;
+#[cfg(feature = "full")]
 pub mod asset_strategy;
+#[cfg(feature = "full")]
 pub mod audit;
+#[cfg(feature = "full")]
 pub mod boundary;
+#[cfg(feature = "full")]
 pub mod contract;
 pub mod credentials;
+#[cfg(feature = "full")]
 pub mod directory;
+#[cfg(feature = "full")]
 pub mod evaluation;
+#[cfg(feature = "full")]
 pub mod generation;
 pub mod lifecycle;
+#[cfg(feature = "full")]
 pub mod observability;
+#[cfg(feature = "full")]
 pub mod offline;
+#[cfg(feature = "full")]
 pub mod planning;
+#[cfg(feature = "full")]
 pub mod preprocess;
+#[cfg(feature = "full")]
 pub mod preview;
+#[cfg(feature = "full")]
 pub mod promotion;
 pub mod provider;
+pub mod provider_budget;
+#[cfg(feature = "full")]
 pub mod repair;
+#[cfg(feature = "full")]
 pub mod run_manifest;
+#[cfg(feature = "full")]
 pub mod series;
 
+#[cfg(feature = "full")]
 use contract::{GenerationTask, TaskAssessment, VerifiedReferenceImage};
+#[cfg(feature = "full")]
 use directory::RunDirectoryPlan;
+#[cfg(feature = "full")]
 use lifecycle::{CancellationToken, TaskFailure};
+#[cfg(feature = "full")]
 use serde::Serialize;
+#[cfg(feature = "full")]
 use std::path::Path;
 
+#[cfg(feature = "full")]
 pub const TASK_CONTRACT_VERSION: u32 = 1;
 
+#[cfg(feature = "full")]
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskInspection {
@@ -38,6 +63,7 @@ pub struct TaskInspection {
 }
 
 /// Performs the Stage 1 checks without creating a run directory or writing any run artifacts.
+#[cfg(feature = "full")]
 pub fn inspect_task(
     task_path: &Path,
     repository_root: &Path,
@@ -60,7 +86,7 @@ pub fn inspect_task(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full"))]
 mod tests {
     use project::framework::ui::document::tooling;
 

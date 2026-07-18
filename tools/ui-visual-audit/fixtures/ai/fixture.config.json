@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "algorithm_version": "ui_ai_visual_analysis_v1",
+  "provider": {
+    "mode": "fixture",
+    "provider_id": "fixture-ai-audit",
+    "audit_model_id": "fixture-audit-v1",
+    "generation_model_id": "fixture-generation-v1",
+    "response": "tools/ui-visual-audit/fixtures/ai/fixture-response.json"
+  },
+  "policy": {
+    "attempt_timeout_ms": 1000,
+    "minimum_request_interval_ms": 0,
+    "max_attempts": 1,
+    "initial_backoff_ms": 0,
+    "max_backoff_ms": 0,
+    "max_output_tokens": 1024
+  }
+}

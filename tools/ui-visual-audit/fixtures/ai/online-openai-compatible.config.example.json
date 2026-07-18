@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "algorithm_version": "ui_ai_visual_analysis_v1",
+  "provider": {
+    "mode": "online",
+    "enabled": true,
+    "provider_id": "openai-compatible-ai-audit",
+    "audit_model_id": "replace-with-a-vision-audit-model",
+    "generation_model_id": "replace-with-the-generation-model-or-remove-this-field",
+    "endpoint": "https://replace-with-provider.example/v1/chat/completions",
+    "credential_environment": "UI_VISUAL_AUDIT_API_KEY"
+  },
+  "policy": {
+    "attempt_timeout_ms": 60000,
+    "minimum_request_interval_ms": 1000,
+    "max_attempts": 3,
+    "initial_backoff_ms": 500,
+    "max_backoff_ms": 5000,
+    "max_output_tokens": 4096
+  }
+}

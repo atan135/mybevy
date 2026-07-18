@@ -3,17 +3,18 @@ use crate::comparison::{
     create_output_directory, resolve_allowed_input_roots, resolve_allowed_root, resolve_input_file,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
 pub const SEMANTIC_AUDIT_ALGORITHM_VERSION: &str = "ui_semantic_audit_v1";
 pub const SEMANTIC_AUDIT_CONFIG_SCHEMA_VERSION: u32 = 1;
 pub const SEMANTIC_TREE_SCHEMA_VERSION: u32 = 3;
-pub const SEMANTIC_AUDIT_REPORT_SCHEMA_VERSION: u32 = 2;
+pub const SEMANTIC_AUDIT_REPORT_SCHEMA_VERSION: u32 = 3;
 pub const SEMANTIC_AUDIT_REPORT_FILENAME: &str = "semantic-audit-report.json";
 pub const SEMANTIC_AUDIT_PEAK_MEMORY_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_SEMANTIC_FINDINGS: usize = 1_024;
@@ -295,6 +296,7 @@ pub enum SemanticAuditStatus {
 pub struct SemanticInputReport {
     pub path: String,
     pub byte_length: u64,
+    pub metadata_sha256: String,
     pub device_profile: String,
     pub target_root_id: String,
     pub node_count: usize,
@@ -377,7 +379,7 @@ pub fn audit_semantics(
     )?;
     let metadata_path = resolve_input_file(&repository_root, &input_roots, &request.metadata)?;
     let config_path = resolve_input_file(&repository_root, &input_roots, &request.config)?;
-    let (metadata, metadata_len) = load_metadata(&metadata_path)?;
+    let (metadata, metadata_len, metadata_sha256) = load_metadata(&metadata_path)?;
     let config = load_config(&config_path)?;
     validate_protocol(&metadata, &config)?;
     let estimated_memory = estimate_memory(metadata_len, &metadata.semantic_tree)?;
@@ -420,6 +422,7 @@ pub fn audit_semantics(
         input: SemanticInputReport {
             path: metadata_path.display().to_string(),
             byte_length: metadata_len,
+            metadata_sha256,
             device_profile: metadata.device,
             target_root_id: metadata.semantic_tree.target_root_id.clone(),
             node_count: metadata.semantic_tree.nodes.len(),
@@ -460,7 +463,7 @@ pub fn audit_semantics(
     })
 }
 
-fn load_metadata(path: &Path) -> Result<(RuntimeAuditMetadata, u64), ComparisonError> {
+fn load_metadata(path: &Path) -> Result<(RuntimeAuditMetadata, u64, String), ComparisonError> {
     let bytes = read_limited(
         path,
         MAX_METADATA_BYTES,
@@ -473,7 +476,9 @@ fn load_metadata(path: &Path) -> Result<(RuntimeAuditMetadata, u64), ComparisonE
         )
         .at_path(path)
     })?;
-    Ok((metadata, bytes.len() as u64))
+    let length = bytes.len() as u64;
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    Ok((metadata, length, sha256))
 }
 
 fn load_config(path: &Path) -> Result<SemanticAuditConfig, ComparisonError> {
@@ -492,29 +497,31 @@ fn read_limited(
     maximum: u64,
     code: ComparisonErrorCode,
 ) -> Result<Vec<u8>, ComparisonError> {
-    let length = fs::metadata(path)
+    let file = fs::File::open(path).map_err(|error| {
+        ComparisonError::input(
+            ComparisonErrorCode::ConfigReadFailed,
+            format!("input metadata cannot be opened: {error}"),
+        )
+        .at_path(path)
+    })?;
+    let mut bytes = Vec::new();
+    file.take(maximum + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| {
             ComparisonError::input(
                 ComparisonErrorCode::ConfigReadFailed,
                 format!("input metadata cannot be read: {error}"),
             )
             .at_path(path)
-        })?
-        .len();
-    if length > maximum {
+        })?;
+    if bytes.len() as u64 > maximum {
         return Err(ComparisonError::input(
             code,
-            format!("input length {length} exceeds the {maximum}-byte limit"),
+            format!("input length exceeds the {maximum}-byte limit"),
         )
         .at_path(path));
     }
-    fs::read(path).map_err(|error| {
-        ComparisonError::input(
-            ComparisonErrorCode::ConfigReadFailed,
-            format!("input metadata cannot be read: {error}"),
-        )
-        .at_path(path)
-    })
+    Ok(bytes)
 }
 
 fn validate_protocol(
@@ -1650,6 +1657,7 @@ mod tests {
                 input: SemanticInputReport {
                     path: "fixture".to_owned(),
                     byte_length: 1,
+                    metadata_sha256: "0".repeat(64),
                     device_profile: "compact".to_owned(),
                     target_root_id: "root".to_owned(),
                     node_count: 0,
@@ -1691,7 +1699,7 @@ mod tests {
         let error = persist_report(
             &final_path,
             &serde_json::from_str::<SemanticAuditReport>(
-                r#"{"schema_version":2,"algorithm_version":"ui_semantic_audit_v1","status":"passed","input":{"path":"f","byte_length":1,"device_profile":"compact","target_root_id":"root","node_count":0,"panel_count":0},"coordinate_space":"logical_pixels","rect_convention":"half_open","rounding":"nearest_1_64_half_away_from_zero","rules":{"evaluated_visible_nodes":0,"skipped_invisible_nodes":0,"skipped_fully_clipped_nodes":0,"skipped_layout_only_nodes":0,"hard_failure_count":0,"findings_by_code":{}},"separation":{"semantic_hard_failure":false,"visual_similarity_consumed":false,"local_visual_scores_consumed":false,"can_visual_score_offset_hard_failure":false},"findings":[],"performance":{"estimated_peak_memory_bytes":1,"budget_bytes":67108864,"memory_basis":"test"},"artifacts":[]}"#,
+                r#"{"schema_version":3,"algorithm_version":"ui_semantic_audit_v1","status":"passed","input":{"path":"f","byte_length":1,"metadata_sha256":"0000000000000000000000000000000000000000000000000000000000000000","device_profile":"compact","target_root_id":"root","node_count":0,"panel_count":0},"coordinate_space":"logical_pixels","rect_convention":"half_open","rounding":"nearest_1_64_half_away_from_zero","rules":{"evaluated_visible_nodes":0,"skipped_invisible_nodes":0,"skipped_fully_clipped_nodes":0,"skipped_layout_only_nodes":0,"hard_failure_count":0,"findings_by_code":{}},"separation":{"semantic_hard_failure":false,"visual_similarity_consumed":false,"local_visual_scores_consumed":false,"can_visual_score_offset_hard_failure":false},"findings":[],"performance":{"estimated_peak_memory_bytes":1,"budget_bytes":67108864,"memory_basis":"test"},"artifacts":[]}"#,
             )
             .unwrap(),
         )
