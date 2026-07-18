@@ -2,8 +2,9 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::{io::Write, path::PathBuf};
 use ui_visual_audit::{
-    ComparisonError, ComparisonErrorResponse, ComparisonRequest, ManifestError,
-    NormalizationRequest, compare_images, load_and_validate_manifest, normalize_and_align,
+    ComparisonError, ComparisonErrorResponse, ComparisonRequest, DiffAnalysisRequest,
+    ManifestError, NormalizationRequest, analyze_aligned_diff, compare_images,
+    load_and_validate_manifest, normalize_and_align,
 };
 
 #[derive(Debug, Parser)]
@@ -59,6 +60,23 @@ enum Command {
         actual: PathBuf,
         #[arg(long)]
         normalization_manifest: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+    },
+    /// Analyze two aligned RGBA8/sRGB PNGs and render deterministic diff artifacts.
+    AnalyzeDiff {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long, required = true)]
+        allowed_input_root: Vec<PathBuf>,
+        #[arg(long)]
+        allowed_output_root: PathBuf,
+        #[arg(long)]
+        reference: PathBuf,
+        #[arg(long)]
+        actual: PathBuf,
+        #[arg(long)]
+        config: PathBuf,
         #[arg(long)]
         output_directory: PathBuf,
     },
@@ -160,6 +178,36 @@ fn run() -> i32 {
                 },
                 Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
                     format!("normalization report cannot be serialized for stdout: {error}"),
+                )),
+            },
+            Err(error) => exit_with_comparison_error(error),
+        },
+        Command::AnalyzeDiff {
+            repository_root,
+            allowed_input_root,
+            allowed_output_root,
+            reference,
+            actual,
+            config,
+            output_directory,
+        } => match analyze_aligned_diff(&DiffAnalysisRequest {
+            repository_root,
+            allowed_input_roots: allowed_input_root,
+            allowed_output_root,
+            reference,
+            actual,
+            config,
+            output_directory,
+        }) {
+            Ok(outcome) => match serde_json::to_vec_pretty(&outcome.report) {
+                Ok(bytes) => match std::io::stdout().lock().write_all(&bytes) {
+                    Ok(()) => outcome.exit_code.as_i32(),
+                    Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
+                        format!("diff analysis report cannot be written to stdout: {error}"),
+                    )),
+                },
+                Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
+                    format!("diff analysis report cannot be serialized for stdout: {error}"),
                 )),
             },
             Err(error) => exit_with_comparison_error(error),

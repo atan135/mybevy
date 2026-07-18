@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "algorithm_version": "ui_diff_metrics_v1",
+  "cases": [
+    {
+      "id": "solid_color_bias",
+      "width": 16,
+      "height": 16,
+      "fixture": "solid_color_bias",
+      "expected_metrics_sha256": "7dff10fb1df7a20bee98194579a29990c7a93696d48c84ac6629a332924cc880"
+    },
+    {
+      "id": "one_pixel_shift",
+      "width": 32,
+      "height": 16,
+      "fixture": "one_pixel_shift",
+      "expected_metrics_sha256": "c87daa324969b6e6eb9e2151810363e9c22456d40973be7e04c4ccd161ffeb8c"
+    },
+    {
+      "id": "font_antialias_edge",
+      "width": 16,
+      "height": 16,
+      "fixture": "font_antialias_edge",
+      "expected_metrics_sha256": "8e3f376486c340bf6a45e064ce778098209821f8bedd18e894c903f731c84026"
+    },
+    {
+      "id": "missing_control",
+      "width": 32,
+      "height": 24,
+      "fixture": "missing_control",
+      "expected_metrics_sha256": "ad695283cdb7808c8e8cc7fb1055938be0421c84c9a419b528d0c13231c8792b"
+    },
+    {
+      "id": "large_background_change",
+      "width": 32,
+      "height": 24,
+      "fixture": "large_background_change",
+      "expected_metrics_sha256": "f39d36485ac6f42b28987bda1978c94c47c9700ed62e61fa700ea141e1af5e67"
+    },
+    {
+      "id": "alpha_change",
+      "width": 8,
+      "height": 8,
+      "fixture": "alpha_change",
+      "expected_metrics_sha256": "5f98b0bb4013a1dd86dcb8389bcfea8eb0f6a647d32389e6d08228f8856a9692"
+    }
+  ]
+}

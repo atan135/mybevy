@@ -95,3 +95,35 @@ cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- normalize-align `
 ```
 
 The run retains full normalized, explicitly cropped, and aligned reference/actual PNGs plus `normalization-report.json`. The report records original, oriented, cropped, and aligned sizes; EXIF operation; source/output color and alpha semantics; pixel format; crop kind and insets; bounded translation; fixed millionth scale; quality checks; and exact forward/inverse integer transforms between original image bounds and aligned coordinates. Fully transparent, conservatively near-blank, too-small screenshots, explicit SHA-256 identity mismatches, and hash-proven reference/actual swaps have separate machine codes. Normalization comparison failures keep the completed intermediate PNGs and return exit code `3`; malformed inputs and unsupported profiles return `2`; artifact failures return `5`.
+
+## Full-image metrics and visual diffs
+
+`analyze-diff` consumes the same-size aligned PNG pair produced above. It is a separate `ui_diff_metrics_v1` boundary and does not change `exact_rgba_v1` or `normalize_align_v1`. Inputs must be lowercase PNG with an 8-bit RGBA IHDR, supported sRGB semantics, and normalized straight alpha whose fully transparent pixels contain zero RGB. Implicit RGB conversion, hidden transparent RGB, ICC/CICP data, non-sRGB gamma, dimension mismatch, unsafe paths, and decode/budget failures are rejected explicitly.
+
+```powershell
+cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- analyze-diff `
+  --repository-root . `
+  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-input-root tools/ui-visual-audit/fixtures `
+  --allowed-output-root project/target/ui-visual-audit `
+  --reference <aligned-reference.png> `
+  --actual <aligned-actual.png> `
+  --config tools/ui-visual-audit/fixtures/comparison/ui-diff-metrics-v1.config.json `
+  --output-directory project/target/ui-visual-audit/<new-run-directory>
+```
+
+Raw evidence includes per-channel absolute sums, means in channel-unit millionths, maxima, exact changed pixels, configured over-threshold pixels, and a separate alpha section. Tolerated evidence never replaces raw evidence. The default small-noise rule ignores only pixels where every RGBA channel differs by at most 3. The anti-alias rule additionally ignores RGB differences up to 12 only when reference and actual are both fixed-threshold edges at the exact same coordinate and alpha differs by at most 3. It performs no neighbor search, blur, resize, or translation, so a 1-pixel layout or font-position change remains visible.
+
+The structural metric is SSIM from Wang et al. (2004), adapted only by fixing the UI audit execution contract: alpha is composited over white with integer arithmetic, luma is `(77R + 150G + 29B + 128) / 256`, windows are non-overlapping 8x8 blocks including deterministic partial edge blocks, population variance is used, and `K1=0.01`, `K2=0.03`, `L=255`. All sufficient statistics and the SSIM rational formula use `i128`; each window and the final average use signed half-up rounding to millionths. Its declared range is `[-1_000_000, 1_000_000]`, where `1_000_000` is identical structure. This local luminance metric is useful for UI geometry but is not treated as a final gate or substituted for color/alpha evidence.
+
+Explainable categories are reported separately:
+
+- geometry is the XOR of same-coordinate 3x3 Sobel edge membership;
+- color is a tolerated changed pixel where edge membership agrees;
+- large-area content is a 4-connected tolerated-difference component meeting both the configured absolute and image-ratio minimum.
+
+Every category records counts, ratios, and dominant bounds where applicable. Processing is single-threaded and row-major with fixed integer color, edge, rounding, and connected-component rules. `side-by-side.png` is `2W x H` with each half unchanged; `overlay.png`, `heatmap.png`, and the tolerance-aware `binary-diff.png` are `W x H`. The five-file bundle, including `diff-metrics-report.json`, is staged through create-new temporary files and finalized with same-directory hard links, which fail atomically if a destination appears; rollback removes only paths recorded as created by the current transaction.
+
+Before allocating metric and artifact work buffers, the tool computes the same conservative peak estimate written to the report: `pixel_count * 64 + 4 MiB`, using checked integer arithmetic. Runs above the public 512 MiB `DIFF_METRICS_PEAK_MEMORY_BUDGET_BYTES` limit fail as `image_too_large`; the estimate and budget cannot drift because validation returns the exact value later serialized. Reports mark this as `estimated_not_os_measured`. Elapsed milliseconds cover input validation, decoding, analysis, and PNG encoding, but explicitly exclude artifact persistence and stdout serialization.
+
+`fixtures/comparison/ui-diff-metrics-v1.golden-cases.json` is a binary-free textual fixture catalog for solid bias, 1-pixel shift, font anti-alias edges, missing control, large background change, and alpha change. Tests deterministically generate each PNG and pin the SHA-256 of the complete serialized metric object, so every raw, tolerated, SSIM, and category value participates in golden review.

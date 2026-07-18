@@ -62,6 +62,7 @@ pub enum ComparisonErrorCode {
     ImageCorrupt,
     ExifOrientationInvalid,
     UnsupportedColorProfile,
+    AlignedAlphaInvalid,
     ConfigTooLarge,
     ConfigReadFailed,
     ConfigParseFailed,

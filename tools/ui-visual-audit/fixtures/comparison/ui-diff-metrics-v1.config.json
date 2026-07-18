@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "algorithm_version": "ui_diff_metrics_v1",
+  "over_threshold_channel_abs": 8,
+  "small_channel_tolerance": 3,
+  "edge_antialias_tolerance": 12,
+  "edge_luma_threshold": 96,
+  "ssim_window_size": 8,
+  "large_area_min_pixels": 16,
+  "large_area_min_ratio_millionths": 1000
+}

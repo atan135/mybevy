@@ -1,4 +1,5 @@
 pub mod comparison;
+pub mod metrics;
 pub mod normalization;
 pub mod reference_manifest;
 
@@ -9,6 +10,12 @@ pub use comparison::{
     ComparisonOutcome, ComparisonReport, ComparisonRequest, ComparisonStatus, ConfigInputReport,
     DimensionsReport, EXACT_RGBA_ALGORITHM_VERSION, ExactMetrics, FailureType, ImageInputReport,
     RegionResult, compare_images,
+};
+pub use metrics::{
+    DIFF_METRICS_ALGORITHM_VERSION, DIFF_METRICS_CONFIG_SCHEMA_VERSION,
+    DIFF_METRICS_PEAK_MEMORY_BUDGET_BYTES, DIFF_METRICS_REPORT_FILENAME,
+    DIFF_METRICS_REPORT_SCHEMA_VERSION, DiffAnalysisOutcome, DiffAnalysisReport,
+    DiffAnalysisRequest, DiffAnalysisStatus, DiffMetricsConfig, analyze_aligned_diff,
 };
 pub use normalization::{
     AffineTransform, AlignmentMode, AlignmentReport, AlphaPolicy, ColorPolicy, CoordinateMapping,
