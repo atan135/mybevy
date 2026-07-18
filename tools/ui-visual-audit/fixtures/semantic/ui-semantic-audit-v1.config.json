@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "algorithm_version": "ui_semantic_audit_v1",
+  "minimum_touch_width": 44.0,
+  "minimum_touch_height": 44.0,
+  "geometry_epsilon": 0.015625,
+  "text_overlap_minimum_area": 1.0,
+  "require_safe_area_for_roles": [
+    "critical_text",
+    "button",
+    "icon_button",
+    "text_input"
+  ]
+}

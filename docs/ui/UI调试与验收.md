@@ -168,6 +168,12 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - 任意 UI Gallery capture state 第一次应用时，全部动画样例都应 seek 到 `0.625` 并 pause；后续 30 帧稳定等待内 scroll geometry、目标值、player 和 debug snapshot 不应继续 Changed。
 - metadata 的 `motion_policy` 应与当前 `UiMotionPolicy` 一致；`animation_snapshots` 应按 Name/Entity 稳定排序，并记录 target、raw/eased progress、pause 与 `causes_layout_reflow`。
 - 声明式页面 metadata 的 `document_nodes` 应按 document ID/node ID 稳定排序，并包含 schema version、source path、document path 和 effective style；不得出现盘符或本机绝对路径。
+- capture metadata 的 `semantic_tree.schema_version = 3` 使用 `logical_pixels`、半开矩形和 1/64 像素规范化；`target_root_id` 只覆盖目标页面、同 owner 可见覆盖层和全局可见 Toast，不得混入其他 owner。
+- `semantic_tree.nodes[].stable_id` 不包含 Bevy Entity。声明式节点使用 owner/panel/document/node 身份，传统节点使用稳定命名层级或同语义 sibling ordinal；节点同时输出父级、深度、可选实体 `Name` 和 `ComputedNode::stack_index()`，`capture_entity` 仅用于单次 capture 诊断。
+- `semantic_tree.panels[]` 输出 panel/Toast root 的真实 `capture_entity`、可选实体 `Name` 和按 panel ID/kind 定位的 `likely_files`；overlay finding 不得用占位 Entity 或统一 overlays 目录代替真实定位。
+- 节点 `clip_bounds` 是自身 bounds、viewport 和全部裁切祖先的交集。不可见、完全裁切和无语义纯布局节点不进入常规告警；可见语义节点的明显零尺寸在裁切跳过前检查。
+- `semantic_tree.panels` 应能证明 active focus scope、focus suppression、Pickable 和 `UiInputState` 阻断。Loading 无可聚焦控件时焦点必须清空；Modal 上方只允许受控 Dropdown/Tooltip transient 层；Toast 不得阻断或捕获焦点。
+- `ui_semantic_audit_v1` 的 hard failure 与视觉相似度、局部分数分开，高相似度不得抵消裁切、不可点击、滚动不可达或覆盖层输入错误；总四态门禁仍由后续聚合阶段负责。
 
 失败报告需要能定位：
 

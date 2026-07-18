@@ -67,6 +67,7 @@ pub(crate) fn spawn_loading(
 ) {
     commands
         .spawn((
+            Name::new("UiGlobalLoadingRoot"),
             UiPanelRoot {
                 id: UI_PANEL_GLOBAL_LOADING,
                 kind: UiPanelKind::BlockingOverlay,

@@ -118,6 +118,7 @@ pub(crate) fn spawn_tooltip_panel(
 
     commands
         .spawn((
+            Name::new("UiTooltipRoot"),
             UiPanelRoot {
                 id: UI_PANEL_TOOLTIP,
                 kind: UiPanelKind::Floating,
@@ -151,6 +152,7 @@ pub(crate) fn spawn_tooltip_panel(
                     },
                     TextColor(text_color),
                     UiThemeTextStyleRole::Caption,
+                    Pickable::IGNORE,
                 ));
             });
         });
@@ -176,6 +178,7 @@ pub(crate) fn spawn_dropdown_panel(
 
     commands
         .spawn((
+            Name::new("UiDropdownRoot"),
             UiPanelRoot {
                 id: UI_PANEL_DROPDOWN,
                 kind: UiPanelKind::Floating,

@@ -3,6 +3,7 @@ pub mod metrics;
 pub mod normalization;
 pub mod reference_manifest;
 pub mod regions;
+pub mod semantic;
 
 pub use comparison::{
     ArtifactReport, COMPARISON_CONFIG_SCHEMA_VERSION, COMPARISON_REPORT_FILENAME,
@@ -42,4 +43,14 @@ pub use regions::{
     RegionAuditOutcome, RegionAuditReport, RegionAuditRequest, RegionAuditResult, RegionLevel,
     RegionLocalStatus, RegionShape, RegionThreshold, SemanticRole, ThresholdProfiles,
     ThresholdViolation, WeightSummary, audit_regions,
+};
+pub use semantic::{
+    IdentitySource, MAX_SEMANTIC_FINDINGS, MAX_SEMANTIC_OVERLAP_CANDIDATES,
+    SEMANTIC_AUDIT_ALGORITHM_VERSION, SEMANTIC_AUDIT_CONFIG_SCHEMA_VERSION,
+    SEMANTIC_AUDIT_PEAK_MEMORY_BUDGET_BYTES, SEMANTIC_AUDIT_REPORT_FILENAME,
+    SEMANTIC_AUDIT_REPORT_SCHEMA_VERSION, SEMANTIC_TREE_SCHEMA_VERSION, SemanticAuditConfig,
+    SemanticAuditOutcome, SemanticAuditReport, SemanticAuditRequest, SemanticAuditStatus,
+    SemanticFinding, SemanticFindingCode, SemanticLayerPolicy, SemanticLocation, SemanticNode,
+    SemanticNodeRole, SemanticPanel, SemanticPanelKind, SemanticRect, SemanticRuleSummary,
+    SemanticScroll, SemanticSeparationContract, SemanticTree, audit_semantics,
 };

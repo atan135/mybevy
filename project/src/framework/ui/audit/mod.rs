@@ -1,5 +1,6 @@
 mod local;
 pub(crate) mod screenshot;
+mod semantic;
 
 pub(crate) use local::{
     UiAuditCaptureRecipe, UiAuditCaptureState, UiAuditCaptureStateApplied,

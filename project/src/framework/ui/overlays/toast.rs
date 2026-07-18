@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{picking::Pickable, prelude::*};
 
 use crate::framework::ui::{
     core::{
@@ -53,6 +53,17 @@ pub(crate) struct UiToastRoot {
     fade_out_secs: f32,
 }
 
+#[cfg(test)]
+impl UiToastRoot {
+    pub(crate) fn for_audit_test() -> Self {
+        Self {
+            timer: Timer::from_seconds(1.0, TimerMode::Once),
+            fade_out_started: false,
+            fade_out_secs: TOAST_FADE_OUT_SECS,
+        }
+    }
+}
+
 #[derive(Component)]
 pub(crate) struct UiToastAnimatedVisual;
 
@@ -102,6 +113,7 @@ pub(crate) fn spawn_toast(
 
     commands
         .spawn((
+            Name::new("UiToastRoot"),
             UiToastRoot {
                 timer: Timer::from_seconds(duration_secs, TimerMode::Once),
                 fade_out_started: false,
@@ -125,6 +137,7 @@ pub(crate) fn spawn_toast(
                 ..default()
             },
             ZIndex(200),
+            Pickable::IGNORE,
             UiThemeRootNodeRole::Toast,
         ))
         .with_children(|root| {
@@ -135,6 +148,7 @@ pub(crate) fn spawn_toast(
                 UiThemeBackgroundRole::Panel,
                 UiThemeBorderRole::Panel,
                 UiToastAnimatedVisual,
+                Pickable::IGNORE,
                 toast_fade_in_animation(fade_in_secs),
             ))
             .with_children(|panel| {
@@ -238,6 +252,7 @@ fn toast_label(
         UiThemeTextColorRole::Primary,
         UiThemeTextStyleRole::Caption,
         UiToastAnimatedVisual,
+        Pickable::IGNORE,
         toast_fade_in_animation(fade_in_secs),
     )
 }
@@ -270,6 +285,7 @@ fn should_start_toast_fade_out(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::world::CommandQueue;
 
     const EPSILON: f32 = 0.0001;
 
@@ -335,5 +351,26 @@ mod tests {
             node.max_width,
             px(metrics.dialog_max_width.min(metrics.content_max_width))
         );
+    }
+
+    #[test]
+    fn complete_toast_subtree_is_pick_through() {
+        let mut world = World::new();
+        let mut queue = CommandQueue::default();
+        let mut commands = Commands::new(&mut queue, &world);
+        spawn_toast(
+            &mut commands,
+            &UiTheme::default(),
+            &UiMetrics::default(),
+            &UiViewport::default(),
+            &UiFontAssets::test_registry(),
+            &UiToast::new("toast"),
+        );
+        queue.apply(&mut world);
+
+        let mut query = world.query::<&Pickable>();
+        let values = query.iter(&world).collect::<Vec<_>>();
+        assert_eq!(values.len(), 3);
+        assert!(values.iter().all(|pickable| **pickable == Pickable::IGNORE));
     }
 }

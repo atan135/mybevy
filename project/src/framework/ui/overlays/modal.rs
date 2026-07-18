@@ -152,6 +152,7 @@ pub(crate) fn spawn_confirm_modal(
 ) {
     commands
         .spawn((
+            Name::new("UiConfirmModalRoot"),
             UiPanelRoot {
                 id: UI_PANEL_CONFIRM_MODAL,
                 kind: UiPanelKind::Modal,

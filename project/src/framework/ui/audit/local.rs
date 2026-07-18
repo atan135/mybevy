@@ -17,6 +17,7 @@ use crate::framework::ui::{
         UiScreenshotEvent, UiScreenshotPlugin, UiScreenshotSystems, absolute_display_path,
         current_unix_timestamp_seconds, read_bool, sanitize_filename_segment,
     },
+    audit::semantic::{UiAuditSemanticTree, UiAuditSemanticWorld, collect_semantic_tree},
     core::{
         UiAnimationDebugSnapshot, UiCurrentOwner, UiHeightClass, UiInputMode, UiMotionPolicy,
         UiOrientation, UiOwnerId, UiPanelKind, UiPanelRoot, UiSafeAreaStatus, UiViewport,
@@ -1145,6 +1146,7 @@ struct UiAuditMetadataWorld<'w, 's> {
         ),
     >,
     primary_window: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    semantic: UiAuditSemanticWorld<'w, 's>,
 }
 
 fn drive_local_ui_audit(
@@ -1353,6 +1355,7 @@ fn drive_local_ui_audit(
                     &metadata_world.image_snapshots,
                     &metadata_world.font_snapshots,
                     &metadata_world.image_assets,
+                    &metadata_world.semantic,
                     metadata_world.primary_window.single().ok(),
                     &metadata_world.i18n,
                     &metadata_world.theme_source,
@@ -2804,6 +2807,7 @@ fn build_capture_metadata(
     )>,
     font_snapshots: &Query<(Entity, Option<&Name>, &UiTextStyleToken, &UiFontResolution)>,
     image_assets: &Assets<Image>,
+    semantic_world: &UiAuditSemanticWorld,
     primary_window: Option<&Window>,
     i18n: &UiI18n,
     theme_source: &UiThemeSource,
@@ -2819,6 +2823,7 @@ fn build_capture_metadata(
     let (image_snapshots, image_accounting) =
         collect_image_snapshot_metadata(image_snapshots, image_assets);
     let font_snapshots = collect_font_snapshot_metadata(font_snapshots);
+    let semantic_tree = collect_semantic_tree(semantic_world, readiness.target_root, viewport);
     let visual_summary = build_visual_summary(
         &style_resolutions,
         &effect_resolutions,
@@ -2896,6 +2901,7 @@ fn build_capture_metadata(
         control_snapshots,
         image_snapshots,
         font_snapshots,
+        semantic_tree,
         visual_summary,
         visual_budget,
         window: primary_window.map(UiAuditWindowMetadata::from),
@@ -2928,6 +2934,7 @@ struct UiAuditMetadata {
     control_snapshots: Vec<UiAuditControlSnapshotMetadata>,
     image_snapshots: Vec<UiAuditImageSnapshotMetadata>,
     font_snapshots: Vec<UiAuditFontSnapshotMetadata>,
+    semantic_tree: UiAuditSemanticTree,
     visual_summary: UiAuditVisualSummary,
     visual_budget: UiVisualBudgetReport,
     window: Option<UiAuditWindowMetadata>,
