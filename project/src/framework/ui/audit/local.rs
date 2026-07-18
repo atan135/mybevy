@@ -2,10 +2,15 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     env, fmt, fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
-use bevy::{app::AppExit, ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
+use bevy::{
+    app::AppExit, ecs::system::SystemParam, prelude::*, time::TimeUpdateStrategy,
+    window::PrimaryWindow,
+};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::framework::ui::{
     audit::screenshot::{
@@ -17,10 +22,14 @@ use crate::framework::ui::{
         UiOrientation, UiOwnerId, UiPanelKind, UiPanelRoot, UiSafeAreaStatus, UiViewport,
         UiWidthClass, stats::UiStats,
     },
-    document::{UiDocumentNodeAuditMarker, UiDocumentResolvedStyleMarker, UiDocumentRuntimeRoot},
+    document::{
+        UiDocumentInstanceId, UiDocumentNodeAuditMarker, UiDocumentResolvedStyleMarker,
+        UiDocumentRuntimeRoot,
+    },
+    i18n::UiI18n,
     style::{
         UiFontResolution, UiResolvedEffectDebugSnapshot, UiResolvedStyleDebugSnapshot,
-        UiTextStyleToken,
+        UiTextStyleToken, UiThemeSource,
     },
     visual::{UiVisualBudgetProfile, UiVisualBudgetReport, UiVisualBudgetUsage},
     widgets::{
@@ -37,7 +46,27 @@ const ENV_UI_AUDIT_SCREEN: &str = "MYBEVY_UI_AUDIT_SCREEN";
 const ENV_UI_AUDIT_OUTPUT: &str = "MYBEVY_UI_AUDIT_OUTPUT";
 const ENV_UI_AUDIT_STATES: &str = "MYBEVY_UI_AUDIT_STATES";
 const ENV_UI_AUDIT_EXIT_ON_FINISH: &str = "MYBEVY_UI_AUDIT_EXIT_ON_FINISH";
+const ENV_UI_AUDIT_DETERMINISTIC: &str = "MYBEVY_UI_AUDIT_DETERMINISTIC";
+const ENV_UI_AUDIT_TARGET_LOGICAL_WIDTH: &str = "MYBEVY_UI_AUDIT_TARGET_LOGICAL_WIDTH";
+const ENV_UI_AUDIT_TARGET_LOGICAL_HEIGHT: &str = "MYBEVY_UI_AUDIT_TARGET_LOGICAL_HEIGHT";
+const ENV_UI_AUDIT_TARGET_PHYSICAL_WIDTH: &str = "MYBEVY_UI_AUDIT_TARGET_PHYSICAL_WIDTH";
+const ENV_UI_AUDIT_TARGET_PHYSICAL_HEIGHT: &str = "MYBEVY_UI_AUDIT_TARGET_PHYSICAL_HEIGHT";
+const ENV_UI_AUDIT_TARGET_DEVICE_SCALE: &str = "MYBEVY_UI_AUDIT_TARGET_DEVICE_SCALE";
+const ENV_UI_AUDIT_LOCALE: &str = "MYBEVY_UI_AUDIT_LOCALE";
+const ENV_UI_AUDIT_THEME: &str = "MYBEVY_UI_AUDIT_THEME";
+const ENV_UI_AUDIT_RANDOM_SEED: &str = "MYBEVY_UI_AUDIT_RANDOM_SEED";
+const ENV_UI_AUDIT_FROZEN_TIME_SECONDS: &str = "MYBEVY_UI_AUDIT_FROZEN_TIME_SECONDS";
+const ENV_UI_AUDIT_ANIMATION_PROGRESS: &str = "MYBEVY_UI_AUDIT_ANIMATION_PROGRESS";
+const ENV_UI_AUDIT_DYNAMIC_POLICY: &str = "MYBEVY_UI_AUDIT_DYNAMIC_POLICY";
+const ENV_UI_AUDIT_STABLE_FIXTURE_ID: &str = "MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID";
+const ENV_UI_AUDIT_DYNAMIC_MASK_ID: &str = "MYBEVY_UI_AUDIT_DYNAMIC_MASK_ID";
+const ENV_UI_AUDIT_REPEAT_CAPTURES: &str = "MYBEVY_UI_AUDIT_REPEAT_CAPTURES";
+const ENV_UI_AUDIT_GIT_COMMIT: &str = "MYBEVY_UI_AUDIT_GIT_COMMIT";
 const DEFAULT_AUDIT_OUTPUT_ROOT: &str = "../summary/ui-audit";
+const DEFAULT_AUDIT_LOCALE: &str = "zh_cn";
+const DEFAULT_AUDIT_THEME: &str = "default";
+const DEFAULT_STABLE_FIXTURE_ID: &str = "repository_static_data";
+const MAX_REPEAT_CAPTURES: u32 = 8;
 
 // These MYBEVY_UI_AUDIT_* variables belong only to the first-stage local one-shot mode.
 const INITIAL_CAPTURE_STATE: &str = "initial";
@@ -73,9 +102,13 @@ pub(crate) struct UiAuditPlugin;
 
 impl Plugin for UiAuditPlugin {
     fn build(&self, app: &mut App) {
+        let config = UiAuditConfig::from_env();
+        configure_deterministic_runtime(app, config.enabled, &config.determinism);
+        let determinism_context = UiAuditDeterminismContext::from(&config.determinism);
         app.add_plugins(UiScreenshotPlugin)
             .init_resource::<UiAuditScreenRegistry>()
-            .insert_resource(UiAuditConfig::from_env())
+            .insert_resource(config)
+            .insert_resource(determinism_context)
             .insert_resource(UiAuditRuntime::default())
             .add_message::<UiAuditRouteCommand>()
             .add_message::<UiAuditCaptureStateApplied>()
@@ -90,6 +123,35 @@ impl Plugin for UiAuditPlugin {
                     .in_set(UiAuditSystems::Driver),
             );
     }
+}
+
+fn configure_deterministic_runtime(
+    app: &mut App,
+    audit_enabled: bool,
+    config: &UiAuditDeterminismConfig,
+) {
+    if audit_enabled && config.enabled {
+        app.init_resource::<Time<Virtual>>();
+        if valid_frozen_time(config.frozen_time_seconds) {
+            freeze_virtual_time(
+                &mut app.world_mut().resource_mut::<Time<Virtual>>(),
+                config.frozen_time_seconds,
+            );
+        }
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
+            .insert_resource(UiMotionPolicy::Disabled);
+    }
+}
+
+fn freeze_virtual_time(time: &mut Time<Virtual>, frozen_time_seconds: f64) {
+    *time = Time::<Virtual>::default();
+    time.advance_by(Duration::from_secs_f64(frozen_time_seconds));
+    time.advance_by(Duration::ZERO);
+    time.pause();
+}
+
+fn valid_frozen_time(value: f64) -> bool {
+    value.is_finite() && value >= 0.0
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
@@ -131,7 +193,7 @@ impl UiAuditScreenRegistry {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UiAuditScreen {
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
@@ -159,7 +221,7 @@ impl UiAuditScreen {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UiAuditScreenRecipe {
     pub screen: UiAuditScreen,
 }
@@ -170,10 +232,11 @@ impl UiAuditScreenRecipe {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct UiAuditRecipe {
     pub captures: &'static [UiAuditCaptureRecipe],
     pub ready: Option<UiAuditReadyCondition>,
+    pub reference: UiAuditReferenceRecipe,
 }
 
 impl UiAuditRecipe {
@@ -181,6 +244,7 @@ impl UiAuditRecipe {
         Self {
             captures,
             ready: None,
+            reference: UiAuditReferenceRecipe::DEFAULT,
         }
     }
 
@@ -189,6 +253,91 @@ impl UiAuditRecipe {
         self.ready = Some(ready);
         self
     }
+
+    pub(crate) const fn with_reference(mut self, reference: UiAuditReferenceRecipe) -> Self {
+        self.reference = reference;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UiAuditReferenceRecipe {
+    pub target_viewport: UiAuditTargetViewport,
+    pub locale: &'static str,
+    pub theme: &'static str,
+    pub random_seed: Option<u64>,
+    pub frozen_time_seconds: f64,
+    pub animation_progress: f32,
+    pub dynamic_content: UiAuditDynamicContentRecipe,
+}
+
+impl UiAuditReferenceRecipe {
+    const DEFAULT: Self = Self {
+        target_viewport: UiAuditTargetViewport::RuntimeProfile,
+        locale: DEFAULT_AUDIT_LOCALE,
+        theme: DEFAULT_AUDIT_THEME,
+        random_seed: None,
+        frozen_time_seconds: 0.0,
+        animation_progress: 1.0,
+        dynamic_content: UiAuditDynamicContentRecipe::StableFixture(DEFAULT_STABLE_FIXTURE_ID),
+    };
+
+    pub(crate) const fn new() -> Self {
+        Self::DEFAULT
+    }
+
+    pub(crate) const fn with_target_viewport(
+        mut self,
+        target_viewport: UiAuditTargetViewport,
+    ) -> Self {
+        self.target_viewport = target_viewport;
+        self
+    }
+
+    pub(crate) const fn with_locale(mut self, locale: &'static str) -> Self {
+        self.locale = locale;
+        self
+    }
+
+    pub(crate) const fn with_theme(mut self, theme: &'static str) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub(crate) const fn with_random_seed(mut self, random_seed: Option<u64>) -> Self {
+        self.random_seed = random_seed;
+        self
+    }
+
+    pub(crate) const fn with_frozen_time_seconds(mut self, frozen_time_seconds: f64) -> Self {
+        self.frozen_time_seconds = frozen_time_seconds;
+        self
+    }
+
+    pub(crate) const fn with_animation_progress(mut self, animation_progress: f32) -> Self {
+        self.animation_progress = animation_progress;
+        self
+    }
+
+    pub(crate) const fn with_dynamic_content(
+        mut self,
+        dynamic_content: UiAuditDynamicContentRecipe,
+    ) -> Self {
+        self.dynamic_content = dynamic_content;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UiAuditTargetViewport {
+    RuntimeProfile,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UiAuditDynamicContentRecipe {
+    StableFixture(&'static str),
+    ExplicitMask(&'static str),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,6 +408,107 @@ impl UiAuditScrollTarget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiAuditReadyCondition {
     OwnerPanel,
+    OwnerDocument,
+}
+
+#[derive(Clone, Debug, Resource, Serialize, PartialEq)]
+pub(crate) struct UiAuditDeterminismContext {
+    pub enabled: bool,
+    pub random_seed: Option<u64>,
+    pub frozen_time_seconds: f64,
+    pub animation_progress: f32,
+    pub dynamic_policy: String,
+    pub stable_fixture_id: Option<String>,
+    pub dynamic_mask_id: Option<String>,
+}
+
+impl From<&UiAuditDeterminismConfig> for UiAuditDeterminismContext {
+    fn from(config: &UiAuditDeterminismConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            random_seed: config.random_seed,
+            frozen_time_seconds: config.frozen_time_seconds,
+            animation_progress: config.animation_progress,
+            dynamic_policy: config.dynamic_policy.as_str().to_owned(),
+            stable_fixture_id: config.stable_fixture_id.clone(),
+            dynamic_mask_id: config.dynamic_mask_id.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct UiAuditTargetViewportConfig {
+    logical_width: f32,
+    logical_height: f32,
+    physical_width: u32,
+    physical_height: u32,
+    device_scale: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum UiAuditDynamicPolicy {
+    #[default]
+    StableFixture,
+    ExplicitMask,
+}
+
+impl UiAuditDynamicPolicy {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::StableFixture => "stable_fixture",
+            Self::ExplicitMask => "explicit_mask",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct UiAuditDeterminismConfig {
+    enabled: bool,
+    target_viewport: Option<UiAuditTargetViewportConfig>,
+    locale: String,
+    theme: String,
+    random_seed: Option<u64>,
+    frozen_time_seconds: f64,
+    animation_progress: f32,
+    dynamic_policy: UiAuditDynamicPolicy,
+    stable_fixture_id: Option<String>,
+    dynamic_mask_id: Option<String>,
+    repeat_captures: u32,
+    git_commit: Option<String>,
+    overrides: UiAuditDeterminismOverrides,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct UiAuditDeterminismOverrides {
+    target_viewport: bool,
+    locale: bool,
+    theme: bool,
+    random_seed: bool,
+    frozen_time_seconds: bool,
+    animation_progress: bool,
+    dynamic_policy: bool,
+    stable_fixture_id: bool,
+    dynamic_mask_id: bool,
+}
+
+impl Default for UiAuditDeterminismConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            target_viewport: None,
+            locale: DEFAULT_AUDIT_LOCALE.to_owned(),
+            theme: DEFAULT_AUDIT_THEME.to_owned(),
+            random_seed: None,
+            frozen_time_seconds: 0.0,
+            animation_progress: 1.0,
+            dynamic_policy: UiAuditDynamicPolicy::StableFixture,
+            stable_fixture_id: Some(DEFAULT_STABLE_FIXTURE_ID.to_owned()),
+            dynamic_mask_id: None,
+            repeat_captures: 1,
+            git_commit: None,
+            overrides: UiAuditDeterminismOverrides::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Resource)]
@@ -269,6 +519,7 @@ struct UiAuditConfig {
     states: Vec<UiAuditCaptureState>,
     states_from_env: bool,
     exit_on_finish: bool,
+    determinism: UiAuditDeterminismConfig,
     config_error: Option<UiAuditFailureKind>,
 }
 
@@ -281,6 +532,7 @@ impl Default for UiAuditConfig {
             states: vec![UiAuditCaptureState::Initial],
             states_from_env: false,
             exit_on_finish: false,
+            determinism: UiAuditDeterminismConfig::default(),
             config_error: None,
         }
     }
@@ -302,6 +554,10 @@ impl UiAuditConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_AUDIT_OUTPUT_ROOT).join(run_id.to_string()));
         let exit_on_finish = read_bool(&mut read, ENV_UI_AUDIT_EXIT_ON_FINISH).unwrap_or(false);
+        let (mut determinism, determinism_error) = parse_determinism_config(&mut read, enabled);
+        if !enabled {
+            determinism.enabled = false;
+        }
 
         let (states, states_from_env, state_error) = match read(ENV_UI_AUDIT_STATES) {
             Some(value) => {
@@ -311,7 +567,7 @@ impl UiAuditConfig {
             None => (vec![UiAuditCaptureState::Initial], false, None),
         };
         let config_error = if enabled {
-            state_error.or_else(|| {
+            state_error.or(determinism_error).or_else(|| {
                 screen
                     .is_none()
                     .then_some(UiAuditFailureKind::ConfigInvalid)
@@ -327,9 +583,218 @@ impl UiAuditConfig {
             states,
             states_from_env,
             exit_on_finish,
+            determinism,
             config_error,
         }
     }
+}
+
+fn parse_determinism_config(
+    read: &mut impl FnMut(&str) -> Option<String>,
+    _audit_enabled: bool,
+) -> (UiAuditDeterminismConfig, Option<UiAuditFailureKind>) {
+    let mut config = UiAuditDeterminismConfig::default();
+    let mut invalid = false;
+    config.enabled = read_bool(read, ENV_UI_AUDIT_DETERMINISTIC).unwrap_or(false);
+
+    let (locale_supplied, locale) = parse_optional_env::<String>(read, ENV_UI_AUDIT_LOCALE)
+        .unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.overrides.locale = locale_supplied;
+    config.locale = locale
+        .unwrap_or_else(|| DEFAULT_AUDIT_LOCALE.to_owned())
+        .to_ascii_lowercase()
+        .replace('-', "_");
+
+    let (theme_supplied, theme) = parse_optional_env::<String>(read, ENV_UI_AUDIT_THEME)
+        .unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.overrides.theme = theme_supplied;
+    config.theme = theme.unwrap_or_else(|| DEFAULT_AUDIT_THEME.to_owned());
+
+    let (random_seed_supplied, random_seed) =
+        parse_optional_env::<u64>(read, ENV_UI_AUDIT_RANDOM_SEED).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.overrides.random_seed = random_seed_supplied;
+    config.random_seed = random_seed;
+
+    let (frozen_time_supplied, frozen_time) =
+        parse_optional_env::<f64>(read, ENV_UI_AUDIT_FROZEN_TIME_SECONDS).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.overrides.frozen_time_seconds = frozen_time_supplied;
+    config.frozen_time_seconds = frozen_time.unwrap_or_default();
+
+    let (animation_progress_supplied, animation_progress) =
+        parse_optional_env::<f32>(read, ENV_UI_AUDIT_ANIMATION_PROGRESS).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.overrides.animation_progress = animation_progress_supplied;
+    config.animation_progress = animation_progress.unwrap_or(1.0);
+
+    let (dynamic_policy_supplied, dynamic_policy) =
+        parse_optional_env::<String>(read, ENV_UI_AUDIT_DYNAMIC_POLICY).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.overrides.dynamic_policy = dynamic_policy_supplied;
+    config.dynamic_policy = match dynamic_policy
+        .unwrap_or_else(|| "stable_fixture".to_owned())
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .as_str()
+    {
+        "stable_fixture" => UiAuditDynamicPolicy::StableFixture,
+        "explicit_mask" => UiAuditDynamicPolicy::ExplicitMask,
+        _ => {
+            invalid = true;
+            UiAuditDynamicPolicy::StableFixture
+        }
+    };
+
+    let (stable_fixture_supplied, stable_fixture_id) =
+        parse_optional_env::<String>(read, ENV_UI_AUDIT_STABLE_FIXTURE_ID).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.overrides.stable_fixture_id = stable_fixture_supplied;
+    config.stable_fixture_id =
+        stable_fixture_id.or_else(|| Some(DEFAULT_STABLE_FIXTURE_ID.to_owned()));
+
+    let (dynamic_mask_supplied, dynamic_mask_id) =
+        parse_optional_env::<String>(read, ENV_UI_AUDIT_DYNAMIC_MASK_ID).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.overrides.dynamic_mask_id = dynamic_mask_supplied;
+    config.dynamic_mask_id = dynamic_mask_id;
+
+    let (_, repeat_captures) = parse_optional_env::<u32>(read, ENV_UI_AUDIT_REPEAT_CAPTURES)
+        .unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.repeat_captures = repeat_captures.unwrap_or(1);
+
+    let (_, git_commit) = parse_optional_env::<String>(read, ENV_UI_AUDIT_GIT_COMMIT)
+        .unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    config.git_commit = git_commit;
+
+    let (logical_width_supplied, logical_width) =
+        parse_optional_env::<f32>(read, ENV_UI_AUDIT_TARGET_LOGICAL_WIDTH).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    let (logical_height_supplied, logical_height) =
+        parse_optional_env::<f32>(read, ENV_UI_AUDIT_TARGET_LOGICAL_HEIGHT).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    let (physical_width_supplied, physical_width) =
+        parse_optional_env::<u32>(read, ENV_UI_AUDIT_TARGET_PHYSICAL_WIDTH).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    let (physical_height_supplied, physical_height) =
+        parse_optional_env::<u32>(read, ENV_UI_AUDIT_TARGET_PHYSICAL_HEIGHT).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    let (device_scale_supplied, device_scale) =
+        parse_optional_env::<f32>(read, ENV_UI_AUDIT_TARGET_DEVICE_SCALE).unwrap_or_else(|()| {
+            invalid = true;
+            (true, None)
+        });
+    let viewport_parts = [
+        logical_width_supplied,
+        logical_height_supplied,
+        physical_width_supplied,
+        physical_height_supplied,
+        device_scale_supplied,
+    ];
+    if viewport_parts.iter().all(|present| *present) {
+        config.overrides.target_viewport = true;
+        config.target_viewport = Some(UiAuditTargetViewportConfig {
+            logical_width: logical_width.unwrap_or_default(),
+            logical_height: logical_height.unwrap_or_default(),
+            physical_width: physical_width.unwrap_or_default(),
+            physical_height: physical_height.unwrap_or_default(),
+            device_scale: device_scale.unwrap_or_default(),
+        });
+    } else if viewport_parts.iter().any(|present| *present) {
+        invalid = true;
+    }
+
+    (config, invalid.then_some(UiAuditFailureKind::ConfigInvalid))
+}
+
+fn validate_determinism_config(config: &UiAuditDeterminismConfig, audit_enabled: bool) -> bool {
+    if !config.enabled {
+        return true;
+    }
+
+    let viewport_values_valid = config.target_viewport.is_some_and(|viewport| {
+        viewport.logical_width.is_finite()
+            && viewport.logical_width > 0.0
+            && viewport.logical_height.is_finite()
+            && viewport.logical_height > 0.0
+            && viewport.physical_width > 0
+            && viewport.physical_height > 0
+            && viewport.device_scale.is_finite()
+            && viewport.device_scale > 0.0
+    });
+    let dynamic_policy_valid = match config.dynamic_policy {
+        UiAuditDynamicPolicy::StableFixture => config
+            .stable_fixture_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty()),
+        UiAuditDynamicPolicy::ExplicitMask => config
+            .dynamic_mask_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty()),
+    };
+    let commit_valid = config.git_commit.as_deref().is_none_or(|commit| {
+        commit == "unknown"
+            || ((7..=64).contains(&commit.len())
+                && commit.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    });
+    audit_enabled
+        && viewport_values_valid
+        && !config.locale.is_empty()
+        && !config.theme.trim().is_empty()
+        && valid_frozen_time(config.frozen_time_seconds)
+        && (config.animation_progress - 1.0).abs() <= f32::EPSILON
+        && dynamic_policy_valid
+        && (2..=MAX_REPEAT_CAPTURES).contains(&config.repeat_captures)
+        && commit_valid
+}
+
+fn parse_optional_env<T: std::str::FromStr>(
+    read: &mut impl FnMut(&str) -> Option<String>,
+    key: &str,
+) -> Result<(bool, Option<T>), ()> {
+    let Some(value) = read(key) else {
+        return Ok((false, None));
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(());
+    }
+    value
+        .parse()
+        .map(|parsed| (true, Some(parsed)))
+        .map_err(|_| ())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -395,6 +860,8 @@ struct UiAuditRuntime {
     plan: Option<UiAuditRunPlan>,
     capture_index: usize,
     manifest_entries: Vec<UiAuditManifestEntry>,
+    first_capture_hashes: BTreeMap<String, String>,
+    screenshot_evidence: Option<UiAuditScreenshotEvidence>,
     result: Option<UiAuditCaptureResult>,
     exit_requested: bool,
 }
@@ -410,6 +877,8 @@ enum UiAuditPhase {
     ApplyCaptureState,
     WaitForStable {
         waited_frames: u32,
+        stable_frames: u32,
+        last_signature: Option<u64>,
     },
     RequestScreenshot,
     WaitForScreenshot {
@@ -428,6 +897,7 @@ struct UiAuditRunPlan {
     report_path: PathBuf,
     device: String,
     ready_condition: Option<UiAuditReadyCondition>,
+    determinism: UiAuditDeterminismConfig,
     captures: Vec<UiAuditCapturePlan>,
 }
 
@@ -437,6 +907,9 @@ struct UiAuditCapturePlan {
     state: UiAuditCaptureState,
     screenshot_path: PathBuf,
     metadata_path: PathBuf,
+    repetition_index: u32,
+    repetition_total: u32,
+    target_viewport: Option<UiAuditTargetViewportConfig>,
     scroll: Option<UiAuditScrollRecipe>,
 }
 
@@ -466,7 +939,14 @@ enum UiAuditRunStatus {
 enum UiAuditFailureKind {
     ScreenNotFound,
     PanelNotReady,
+    DocumentNotReady,
+    LocaleNotReady,
+    ThemeNotReady,
+    FontNotReady,
+    ImageNotReady,
     UnstableUi,
+    ScreenshotSizeMismatch,
+    NondeterministicCapture,
     ScreenshotFailed,
     ScrollTargetMissing,
     ScrollTargetUnreachable,
@@ -474,12 +954,25 @@ enum UiAuditFailureKind {
     OutputWriteFailed,
 }
 
+impl Default for UiAuditFailureKind {
+    fn default() -> Self {
+        Self::PanelNotReady
+    }
+}
+
 impl UiAuditFailureKind {
     const fn as_str(self) -> &'static str {
         match self {
             Self::ScreenNotFound => "screen_not_found",
             Self::PanelNotReady => "panel_not_ready",
+            Self::DocumentNotReady => "document_not_ready",
+            Self::LocaleNotReady => "locale_not_ready",
+            Self::ThemeNotReady => "theme_not_ready",
+            Self::FontNotReady => "font_not_ready",
+            Self::ImageNotReady => "image_not_ready",
             Self::UnstableUi => "unstable_ui",
+            Self::ScreenshotSizeMismatch => "screenshot_size_mismatch",
+            Self::NondeterministicCapture => "nondeterministic_capture",
             Self::ScreenshotFailed => "screenshot_failed",
             Self::ScrollTargetMissing => "scroll_target_missing",
             Self::ScrollTargetUnreachable => "scroll_target_unreachable",
@@ -510,12 +1003,54 @@ enum UiAuditScreenshotStatus {
     Pending,
     Saved,
     Failed,
+    SizeMismatch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct UiAuditStepInput {
-    target_panel_ready: bool,
+    readiness: UiAuditReadiness,
     screenshot_status: UiAuditScreenshotStatus,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct UiAuditReadiness {
+    target_root: Option<Entity>,
+    target_document_instance_id: Option<u64>,
+    panel_ready: bool,
+    document_ready: bool,
+    target_ready: bool,
+    target_not_ready_failure: UiAuditFailureKind,
+    locale_ready: bool,
+    theme_ready: bool,
+    fonts_ready: bool,
+    images_ready: bool,
+    animations_ready: bool,
+    viewport_ready: bool,
+    signature: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct UiAuditScreenshotEvidence {
+    captured_size: (u32, u32),
+    requested_logical_size: Option<(u32, u32)>,
+    requested_physical_size: Option<(u32, u32)>,
+    request_frame: u64,
+    completion_frame: u64,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct UiAuditCaptureArtifactMetadata {
+    sha256: String,
+    byte_length: u64,
+    captured_width: u32,
+    captured_height: u32,
+    requested_logical_width: Option<u32>,
+    requested_logical_height: Option<u32>,
+    requested_physical_width: Option<u32>,
+    requested_physical_height: Option<u32>,
+    request_frame: u64,
+    completion_frame: u64,
+    exact_match_with_first_repetition: Option<bool>,
 }
 
 fn local_ui_audit_enabled(config: Res<UiAuditConfig>) -> bool {
@@ -529,9 +1064,13 @@ struct UiAuditMetadataWorld<'w, 's> {
     safe_area_status: Res<'w, UiSafeAreaStatus>,
     stats: Res<'w, UiStats>,
     motion_policy: Res<'w, UiMotionPolicy>,
+    virtual_time: ResMut<'w, Time<Virtual>>,
+    i18n: Res<'w, UiI18n>,
+    theme_source: Res<'w, UiThemeSource>,
     image_assets: Res<'w, Assets<Image>>,
-    panels: Query<'w, 's, &'static UiPanelRoot>,
-    document_roots: Query<'w, 's, &'static UiDocumentRuntimeRoot>,
+    panels: Query<'w, 's, (Entity, &'static UiPanelRoot)>,
+    document_roots: Query<'w, 's, (Entity, &'static UiDocumentRuntimeRoot)>,
+    parents: Query<'w, 's, &'static ChildOf>,
     document_nodes: Query<
         'w,
         's,
@@ -611,8 +1150,9 @@ struct UiAuditMetadataWorld<'w, 's> {
 fn drive_local_ui_audit(
     mut runtime: ResMut<UiAuditRuntime>,
     config: Res<UiAuditConfig>,
+    mut determinism_context: ResMut<UiAuditDeterminismContext>,
     registry: Res<UiAuditScreenRegistry>,
-    metadata_world: UiAuditMetadataWorld,
+    mut metadata_world: UiAuditMetadataWorld,
     mut scroll_targets: Query<
         (
             &UiScrollAuditId,
@@ -661,23 +1201,32 @@ fn drive_local_ui_audit(
                 return;
             }
         };
+        if plan.determinism.enabled {
+            freeze_virtual_time(
+                &mut metadata_world.virtual_time,
+                plan.determinism.frozen_time_seconds,
+            );
+        }
+        *determinism_context = UiAuditDeterminismContext::from(&plan.determinism);
         runtime.plan = Some(plan);
     }
 
-    let screenshot_status =
-        consume_screenshot_status(&mut screenshot_events, current_capture_plan(&runtime));
-    let target_panel_ready = runtime.plan.as_ref().is_some_and(|plan| {
-        target_owner_panel_ready(
-            plan.screen.owner,
-            &metadata_world.panels,
-            &metadata_world.document_roots,
-        )
-    });
+    let current_capture = current_capture_plan(&runtime).cloned();
+    let screenshot_status = consume_screenshot_status(
+        &mut screenshot_events,
+        current_capture.as_ref(),
+        &mut runtime.screenshot_evidence,
+    );
+    let readiness = runtime
+        .plan
+        .as_ref()
+        .map(|plan| collect_ui_audit_readiness(plan, &metadata_world))
+        .unwrap_or_default();
     let phase = std::mem::take(&mut runtime.phase);
     let (next_phase, action) = advance_audit_phase(
         phase,
         UiAuditStepInput {
-            target_panel_ready,
+            readiness,
             screenshot_status,
         },
     );
@@ -734,6 +1283,7 @@ fn drive_local_ui_audit(
             }
         }
         Some(UiAuditPureAction::RequestScreenshot) => {
+            runtime.screenshot_evidence = None;
             if let (Some(plan), Some(capture)) =
                 (runtime.plan.as_ref(), current_capture_plan(&runtime))
             {
@@ -750,6 +1300,40 @@ fn drive_local_ui_audit(
                 runtime.plan.as_ref().cloned(),
                 current_capture_plan(&runtime).cloned(),
             ) {
+                let artifact = match build_capture_artifact_metadata(
+                    &capture,
+                    runtime.screenshot_evidence.as_ref(),
+                    runtime
+                        .first_capture_hashes
+                        .get(capture.state.as_str())
+                        .map(String::as_str),
+                ) {
+                    Ok(artifact) => artifact,
+                    Err((failure, detail)) => {
+                        runtime.phase = UiAuditPhase::Failed(failure);
+                        runtime.result = Some(UiAuditCaptureResult {
+                            status: UiAuditRunStatus::Failed,
+                            failure: Some(failure),
+                            detail: Some(detail.clone()),
+                        });
+                        if let Err(error) = write_failure_outputs(
+                            &plan,
+                            &runtime.manifest_entries,
+                            &capture,
+                            failure,
+                            Some(&detail),
+                        ) {
+                            error!("ui audit failure output write failed: {error}");
+                        }
+                        request_exit_if_needed(&mut runtime, &config, &mut app_exit);
+                        return;
+                    }
+                };
+                let first_hash = runtime
+                    .first_capture_hashes
+                    .entry(capture.state.as_str().to_owned())
+                    .or_insert_with(|| artifact.sha256.clone())
+                    .clone();
                 let scroll = capture_scroll_metadata(&capture, &mut scroll_targets);
                 let metadata = build_capture_metadata(
                     &plan,
@@ -770,12 +1354,46 @@ fn drive_local_ui_audit(
                     &metadata_world.font_snapshots,
                     &metadata_world.image_assets,
                     metadata_world.primary_window.single().ok(),
+                    &metadata_world.i18n,
+                    &metadata_world.theme_source,
+                    &metadata_world.virtual_time,
+                    readiness,
+                    artifact.clone(),
                 );
                 match write_capture_metadata(&capture, &metadata) {
                     Ok(()) => {
+                        if capture.repetition_index > 0 && artifact.sha256 != first_hash {
+                            let failure = UiAuditFailureKind::NondeterministicCapture;
+                            let detail = format!(
+                                "state '{}' repetition {} sha256 {} differs from first repetition {}",
+                                capture.state.as_str(),
+                                capture.repetition_index + 1,
+                                artifact.sha256,
+                                first_hash
+                            );
+                            runtime.phase = UiAuditPhase::Failed(failure);
+                            runtime.result = Some(UiAuditCaptureResult {
+                                status: UiAuditRunStatus::Failed,
+                                failure: Some(failure),
+                                detail: Some(detail.clone()),
+                            });
+                            if let Err(error) = write_failure_outputs(
+                                &plan,
+                                &runtime.manifest_entries,
+                                &capture,
+                                failure,
+                                Some(&detail),
+                            ) {
+                                error!("ui audit failure output write failed: {error}");
+                            }
+                            request_exit_if_needed(&mut runtime, &config, &mut app_exit);
+                            return;
+                        }
                         runtime
                             .manifest_entries
-                            .push(UiAuditManifestEntry::success(&plan, &capture));
+                            .push(UiAuditManifestEntry::success_with_artifact(
+                                &plan, &capture, &artifact,
+                            ));
                         runtime.capture_index = runtime.capture_index.saturating_add(1);
                         if runtime.capture_index >= plan.captures.len() {
                             let manifest = UiAuditManifest::new(runtime.manifest_entries.clone());
@@ -867,6 +1485,7 @@ fn request_exit_if_needed(
     }
 }
 
+#[derive(Debug)]
 struct UiAuditPlanError {
     failure: UiAuditFailureKind,
     detail: String,
@@ -910,14 +1529,105 @@ fn prepare_runtime_plan(
             detail,
         },
     )?;
+    let determinism = resolve_determinism_for_screen(
+        &config.determinism,
+        screen.recipe.map(|recipe| recipe.reference),
+        primary_window,
+    )?;
+    if !validate_determinism_config(&determinism, config.enabled) {
+        return Err(UiAuditPlanError {
+            failure: UiAuditFailureKind::ConfigInvalid,
+            detail: "invalid deterministic audit configuration after applying screen recipe"
+                .to_owned(),
+        });
+    }
 
-    Ok(plan_audit_paths(
+    Ok(plan_audit_paths_with_determinism(
         &config.output_root,
         resolved,
         &device,
         screen.recipe.and_then(|recipe| recipe.ready),
+        determinism,
         &captures,
     ))
+}
+
+fn resolve_determinism_for_screen(
+    base: &UiAuditDeterminismConfig,
+    reference: Option<UiAuditReferenceRecipe>,
+    primary_window: &Query<&Window, With<PrimaryWindow>>,
+) -> Result<UiAuditDeterminismConfig, UiAuditPlanError> {
+    let mut resolved = base.clone();
+    if !resolved.enabled {
+        return Ok(resolved);
+    }
+
+    let reference = reference.unwrap_or(UiAuditReferenceRecipe::DEFAULT);
+    if !resolved.overrides.target_viewport {
+        resolved.target_viewport = Some(match reference.target_viewport {
+            UiAuditTargetViewport::RuntimeProfile => primary_window
+                .single()
+                .ok()
+                .map(target_viewport_from_window)
+                .ok_or_else(|| UiAuditPlanError {
+                    failure: UiAuditFailureKind::ConfigInvalid,
+                    detail: "deterministic audit requires a primary window to resolve the runtime profile viewport"
+                        .to_owned(),
+                })?,
+        });
+    }
+    if !resolved.overrides.locale {
+        resolved.locale = normalize_locale(reference.locale);
+    }
+    if !resolved.overrides.theme {
+        resolved.theme = reference.theme.trim().to_owned();
+    }
+    if !resolved.overrides.random_seed {
+        resolved.random_seed = reference.random_seed;
+    }
+    if !resolved.overrides.frozen_time_seconds {
+        resolved.frozen_time_seconds = reference.frozen_time_seconds;
+    }
+    if !resolved.overrides.animation_progress {
+        resolved.animation_progress = reference.animation_progress;
+    }
+    if !resolved.overrides.dynamic_policy {
+        match reference.dynamic_content {
+            UiAuditDynamicContentRecipe::StableFixture(id) => {
+                resolved.dynamic_policy = UiAuditDynamicPolicy::StableFixture;
+                if !resolved.overrides.stable_fixture_id {
+                    resolved.stable_fixture_id = Some(id.to_owned());
+                }
+                if !resolved.overrides.dynamic_mask_id {
+                    resolved.dynamic_mask_id = None;
+                }
+            }
+            UiAuditDynamicContentRecipe::ExplicitMask(id) => {
+                resolved.dynamic_policy = UiAuditDynamicPolicy::ExplicitMask;
+                if !resolved.overrides.dynamic_mask_id {
+                    resolved.dynamic_mask_id = Some(id.to_owned());
+                }
+                if !resolved.overrides.stable_fixture_id {
+                    resolved.stable_fixture_id = None;
+                }
+            }
+        }
+    }
+    Ok(resolved)
+}
+
+fn target_viewport_from_window(window: &Window) -> UiAuditTargetViewportConfig {
+    UiAuditTargetViewportConfig {
+        logical_width: window.resolution.width(),
+        logical_height: window.resolution.height(),
+        physical_width: window.resolution.physical_width(),
+        physical_height: window.resolution.physical_height(),
+        device_scale: window.resolution.scale_factor(),
+    }
+}
+
+fn normalize_locale(locale: &str) -> String {
+    locale.trim().to_ascii_lowercase().replace('-', "_")
 }
 
 fn plan_audit_paths(
@@ -927,18 +1637,47 @@ fn plan_audit_paths(
     ready_condition: Option<UiAuditReadyCondition>,
     captures: &[UiAuditCaptureRecipe],
 ) -> UiAuditRunPlan {
+    plan_audit_paths_with_determinism(
+        output_root,
+        screen,
+        device,
+        ready_condition,
+        UiAuditDeterminismConfig::default(),
+        captures,
+    )
+}
+
+fn plan_audit_paths_with_determinism(
+    output_root: &Path,
+    screen: UiAuditResolvedScreen,
+    device: &str,
+    ready_condition: Option<UiAuditReadyCondition>,
+    determinism: UiAuditDeterminismConfig,
+    captures: &[UiAuditCaptureRecipe],
+) -> UiAuditRunPlan {
     let screen_segment = sanitize_filename_segment(&screen.canonical);
     let device_segment = sanitize_filename_segment(device);
+    let repetition_total = if determinism.enabled {
+        determinism.repeat_captures
+    } else {
+        1
+    };
     let capture_plans = captures
         .iter()
+        .flat_map(|capture| {
+            (0..repetition_total).map(|repetition_index| (*capture, repetition_index))
+        })
         .enumerate()
-        .map(|(index, capture)| {
+        .map(|(index, (capture, repetition_index))| {
             plan_capture_paths(
                 output_root,
                 &screen_segment,
                 &device_segment,
                 index,
-                *capture,
+                capture,
+                repetition_index,
+                repetition_total,
+                determinism.target_viewport,
             )
         })
         .collect();
@@ -950,6 +1689,7 @@ fn plan_audit_paths(
         report_path: output_root.join("report.md"),
         device: device_segment,
         ready_condition,
+        determinism,
         captures: capture_plans,
     }
 }
@@ -960,9 +1700,15 @@ fn plan_capture_paths(
     device_segment: &str,
     index: usize,
     capture: UiAuditCaptureRecipe,
+    repetition_index: u32,
+    repetition_total: u32,
+    target_viewport: Option<UiAuditTargetViewportConfig>,
 ) -> UiAuditCapturePlan {
     let state_segment = sanitize_filename_segment(capture.state.as_str());
-    let file_stem = format!("{index:02}-{state_segment}");
+    let repetition_suffix = (repetition_total > 1)
+        .then(|| format!("-repeat-{:02}", repetition_index + 1))
+        .unwrap_or_default();
+    let file_stem = format!("{index:02}-{state_segment}{repetition_suffix}");
 
     UiAuditCapturePlan {
         index,
@@ -977,6 +1723,9 @@ fn plan_capture_paths(
             .join(screen_segment)
             .join(device_segment)
             .join(format!("{file_stem}.json")),
+        repetition_index,
+        repetition_total,
+        target_viewport,
         scroll: capture.scroll,
     }
 }
@@ -1054,12 +1803,13 @@ fn advance_audit_phase(
         ),
         UiAuditPhase::EnterScreen => (UiAuditPhase::WaitForScreen { waited_frames: 0 }, None),
         UiAuditPhase::WaitForScreen { waited_frames } => {
-            if input.target_panel_ready {
+            if input.readiness.target_ready {
                 (UiAuditPhase::ApplyCaptureState, None)
             } else if waited_frames >= PANEL_READY_TIMEOUT_FRAMES {
+                let failure = input.readiness.target_not_ready_failure;
                 (
-                    UiAuditPhase::Failed(UiAuditFailureKind::PanelNotReady),
-                    Some(UiAuditPureAction::Fail(UiAuditFailureKind::PanelNotReady)),
+                    UiAuditPhase::Failed(failure),
+                    Some(UiAuditPureAction::Fail(failure)),
                 )
             } else {
                 (
@@ -1071,29 +1821,67 @@ fn advance_audit_phase(
             }
         }
         UiAuditPhase::ApplyCaptureState => (
-            UiAuditPhase::WaitForStable { waited_frames: 0 },
+            UiAuditPhase::WaitForStable {
+                waited_frames: 0,
+                stable_frames: 0,
+                last_signature: None,
+            },
             Some(UiAuditPureAction::ApplyCaptureState),
         ),
-        UiAuditPhase::WaitForStable { waited_frames } => {
-            if !input.target_panel_ready {
+        UiAuditPhase::WaitForStable {
+            waited_frames,
+            stable_frames,
+            last_signature,
+        } => {
+            if !input.readiness.target_ready {
                 (
                     UiAuditPhase::Failed(UiAuditFailureKind::UnstableUi),
                     Some(UiAuditPureAction::Fail(UiAuditFailureKind::UnstableUi)),
-                )
-            } else if waited_frames >= STABLE_WAIT_FRAMES {
-                (
-                    UiAuditPhase::RequestScreenshot,
-                    Some(UiAuditPureAction::RequestScreenshot),
                 )
             } else if waited_frames >= STABLE_TIMEOUT_FRAMES {
+                let failure = if !input.readiness.locale_ready {
+                    UiAuditFailureKind::LocaleNotReady
+                } else if !input.readiness.theme_ready {
+                    UiAuditFailureKind::ThemeNotReady
+                } else if !input.readiness.fonts_ready {
+                    UiAuditFailureKind::FontNotReady
+                } else if !input.readiness.images_ready {
+                    UiAuditFailureKind::ImageNotReady
+                } else if !input.readiness.viewport_ready {
+                    UiAuditFailureKind::ScreenshotSizeMismatch
+                } else {
+                    UiAuditFailureKind::UnstableUi
+                };
                 (
-                    UiAuditPhase::Failed(UiAuditFailureKind::UnstableUi),
-                    Some(UiAuditPureAction::Fail(UiAuditFailureKind::UnstableUi)),
+                    UiAuditPhase::Failed(failure),
+                    Some(UiAuditPureAction::Fail(failure)),
                 )
             } else {
+                let resources_ready = input.readiness.locale_ready
+                    && input.readiness.theme_ready
+                    && input.readiness.fonts_ready
+                    && input.readiness.images_ready
+                    && input.readiness.animations_ready
+                    && input.readiness.viewport_ready;
+                let next_stable_frames =
+                    if resources_ready && last_signature == Some(input.readiness.signature) {
+                        stable_frames.saturating_add(1)
+                    } else if resources_ready {
+                        1
+                    } else {
+                        0
+                    };
+                if next_stable_frames >= STABLE_WAIT_FRAMES {
+                    return (
+                        UiAuditPhase::RequestScreenshot,
+                        Some(UiAuditPureAction::RequestScreenshot),
+                    );
+                }
                 (
                     UiAuditPhase::WaitForStable {
                         waited_frames: waited_frames.saturating_add(1),
+                        stable_frames: next_stable_frames,
+                        last_signature: resources_ready.then_some(input.readiness.signature),
                     },
                     None,
                 )
@@ -1110,6 +1898,12 @@ fn advance_audit_phase(
                     UiAuditFailureKind::ScreenshotFailed,
                 )),
             ),
+            UiAuditScreenshotStatus::SizeMismatch => (
+                UiAuditPhase::Failed(UiAuditFailureKind::ScreenshotSizeMismatch),
+                Some(UiAuditPureAction::Fail(
+                    UiAuditFailureKind::ScreenshotSizeMismatch,
+                )),
+            ),
             UiAuditScreenshotStatus::Pending => {
                 (UiAuditPhase::WaitForScreenshot { waited_frames: 0 }, None)
             }
@@ -1123,6 +1917,12 @@ fn advance_audit_phase(
                 UiAuditPhase::Failed(UiAuditFailureKind::ScreenshotFailed),
                 Some(UiAuditPureAction::Fail(
                     UiAuditFailureKind::ScreenshotFailed,
+                )),
+            ),
+            UiAuditScreenshotStatus::SizeMismatch => (
+                UiAuditPhase::Failed(UiAuditFailureKind::ScreenshotSizeMismatch),
+                Some(UiAuditPureAction::Fail(
+                    UiAuditFailureKind::ScreenshotSizeMismatch,
                 )),
             ),
             UiAuditScreenshotStatus::Pending => {
@@ -1152,6 +1952,7 @@ fn advance_audit_phase(
 fn consume_screenshot_status(
     screenshot_events: &mut MessageReader<UiScreenshotEvent>,
     capture: Option<&UiAuditCapturePlan>,
+    evidence: &mut Option<UiAuditScreenshotEvidence>,
 ) -> UiAuditScreenshotStatus {
     let Some(capture) = capture else {
         return UiAuditScreenshotStatus::Pending;
@@ -1160,7 +1961,25 @@ fn consume_screenshot_status(
     for event in screenshot_events.read() {
         match event {
             UiScreenshotEvent::Saved(saved) if saved.request.path == capture.screenshot_path => {
-                status = UiAuditScreenshotStatus::Saved;
+                *evidence = Some(UiAuditScreenshotEvidence {
+                    captured_size: saved.captured_size,
+                    requested_logical_size: saved.request.logical_size,
+                    requested_physical_size: saved.request.physical_size,
+                    request_frame: saved.request.request_frame,
+                    completion_frame: saved.completion_frame,
+                });
+                let request_matches = saved
+                    .request
+                    .physical_size
+                    .is_some_and(|requested| requested == saved.captured_size);
+                let target_matches = capture
+                    .target_physical_size()
+                    .is_none_or(|target| target == saved.captured_size);
+                status = if request_matches && target_matches {
+                    UiAuditScreenshotStatus::Saved
+                } else {
+                    UiAuditScreenshotStatus::SizeMismatch
+                };
             }
             UiScreenshotEvent::Failed(failed) if failed.request.path == capture.screenshot_path => {
                 status = UiAuditScreenshotStatus::Failed;
@@ -1171,15 +1990,326 @@ fn consume_screenshot_status(
     status
 }
 
-fn target_owner_panel_ready(
-    owner: UiOwnerId,
-    panels: &Query<&UiPanelRoot>,
-    document_roots: &Query<&UiDocumentRuntimeRoot>,
-) -> bool {
-    panels.iter().any(|panel| panel.owner == Some(owner))
-        || document_roots
+impl UiAuditCapturePlan {
+    fn target_physical_size(&self) -> Option<(u32, u32)> {
+        self.target_viewport
+            .map(|viewport| (viewport.physical_width, viewport.physical_height))
+    }
+}
+
+fn collect_ui_audit_readiness(
+    plan: &UiAuditRunPlan,
+    world: &UiAuditMetadataWorld,
+) -> UiAuditReadiness {
+    let target_panel = world
+        .panels
+        .iter()
+        .filter(|(_, panel)| panel.owner == Some(plan.screen.owner))
+        .min_by_key(|(entity, _)| entity.index());
+    let panel_ready = target_panel.is_some();
+    let target_document = world
+        .document_roots
+        .iter()
+        .filter(|(_, root)| root.owner == plan.screen.owner.as_str())
+        .max_by_key(|(entity, root)| (root.generation, entity.index()));
+    let document_ready = target_document.is_some_and(|(root_entity, root)| {
+        document_instance_ready(
+            root_entity,
+            root.instance_id,
+            &world.document_nodes,
+            &world.parents,
+        )
+    });
+    let (target_root, target_ready, target_not_ready_failure) = match plan.ready_condition {
+        Some(UiAuditReadyCondition::OwnerPanel) => (
+            target_panel.map(|(entity, _)| entity),
+            panel_ready,
+            UiAuditFailureKind::PanelNotReady,
+        ),
+        Some(UiAuditReadyCondition::OwnerDocument) => (
+            target_document.map(|(entity, _)| entity),
+            document_ready,
+            UiAuditFailureKind::DocumentNotReady,
+        ),
+        None => {
+            if let Some((entity, _)) = target_panel {
+                (Some(entity), true, UiAuditFailureKind::PanelNotReady)
+            } else {
+                (
+                    target_document.map(|(entity, _)| entity),
+                    document_ready,
+                    UiAuditFailureKind::PanelNotReady,
+                )
+            }
+        }
+    };
+    let locale_ready = !plan.determinism.enabled
+        || requested_locale_is_active(&plan.determinism.locale, world.i18n.locale());
+    let theme_ready = !plan.determinism.enabled
+        || requested_theme_is_loaded(&plan.determinism.theme, &world.theme_source);
+    let fonts_ready = world
+        .font_snapshots
+        .iter()
+        .filter(|(entity, _, _, _)| {
+            target_root.is_some_and(|root| entity_is_within_target(*entity, root, &world.parents))
+        })
+        .all(|(_, _, _, resolution)| ui_font_resource_ready(&resolution.status));
+    let images_ready = scoped_images_ready(
+        target_root,
+        &world.parents,
+        &world.image_snapshots,
+        &world.image_assets,
+    );
+    let animations_ready = !plan.determinism.enabled
+        || world
+            .animation_snapshots
             .iter()
-            .any(|root| root.owner == owner.as_str())
+            .filter(|(entity, _, _)| {
+                target_root
+                    .is_some_and(|root| entity_is_within_target(*entity, root, &world.parents))
+            })
+            .all(|(_, _, snapshot)| {
+                snapshot.policy == UiMotionPolicy::Disabled.as_str()
+                    && snapshot
+                        .tracks
+                        .iter()
+                        .all(|track| track.state == "finished")
+            });
+    let viewport_ready = plan.determinism.target_viewport.is_none_or(|target| {
+        world.primary_window.single().ok().is_some_and(|window| {
+            dimensions_approximately_equal(window.resolution.width(), target.logical_width)
+                && dimensions_approximately_equal(window.resolution.height(), target.logical_height)
+                && window.resolution.physical_width() == target.physical_width
+                && window.resolution.physical_height() == target.physical_height
+                && dimensions_approximately_equal(
+                    window.resolution.scale_factor(),
+                    target.device_scale,
+                )
+        })
+    });
+    let signature = build_readiness_signature(plan, world, target_root, target_document);
+
+    UiAuditReadiness {
+        target_root,
+        target_document_instance_id: target_document
+            .filter(|(entity, _)| Some(*entity) == target_root)
+            .map(|(_, root)| root.instance_id.0),
+        panel_ready,
+        document_ready,
+        target_ready,
+        target_not_ready_failure,
+        locale_ready,
+        theme_ready,
+        fonts_ready,
+        images_ready,
+        animations_ready,
+        viewport_ready,
+        signature,
+    }
+}
+
+fn entity_is_within_target(entity: Entity, target_root: Entity, parents: &Query<&ChildOf>) -> bool {
+    let mut current = entity;
+    for _ in 0..=1024 {
+        if current == target_root {
+            return true;
+        }
+        let Ok(parent) = parents.get(current) else {
+            return false;
+        };
+        current = parent.parent();
+    }
+    false
+}
+
+fn document_instance_ready(
+    root_entity: Entity,
+    instance_id: UiDocumentInstanceId,
+    document_nodes: &Query<(
+        Entity,
+        &UiDocumentNodeAuditMarker,
+        &UiDocumentResolvedStyleMarker,
+    )>,
+    parents: &Query<&ChildOf>,
+) -> bool {
+    document_nodes.iter().any(|(entity, marker, _)| {
+        marker.instance_id == instance_id && entity_is_within_target(entity, root_entity, parents)
+    })
+}
+
+fn scoped_images_ready(
+    target_root: Option<Entity>,
+    parents: &Query<&ChildOf>,
+    image_snapshots: &Query<(
+        Entity,
+        Option<&Name>,
+        &ImageNode,
+        Option<&UiImageWidget>,
+        Option<&UiImageStatus>,
+    )>,
+    image_assets: &Assets<Image>,
+) -> bool {
+    image_snapshots
+        .iter()
+        .filter(|(entity, _, _, _, _)| {
+            target_root.is_some_and(|root| entity_is_within_target(*entity, root, parents))
+        })
+        .all(|(_, _, image_node, widget, status)| {
+            ui_image_resource_ready(
+                widget.is_some(),
+                status.copied(),
+                image_assets.contains(image_node.image.id()),
+            )
+        })
+}
+
+fn requested_theme_is_loaded(requested: &str, source: &UiThemeSource) -> bool {
+    let loaded = source.loaded_file_name();
+    requested_theme_file_is_loaded(requested, loaded.as_deref(), source.using_fallback())
+}
+
+fn requested_locale_is_active(requested: &str, active: &str) -> bool {
+    normalize_locale(requested) == normalize_locale(active)
+}
+
+fn requested_theme_file_is_loaded(
+    requested: &str,
+    loaded_file_name: Option<&str>,
+    using_fallback: bool,
+) -> bool {
+    if using_fallback {
+        return false;
+    }
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return false;
+    }
+    let requested_file = Path::new(requested)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| requested.to_owned());
+    let expected_file = if Path::new(&requested_file).extension().is_some() {
+        requested_file
+    } else {
+        format!("{requested_file}.ron")
+    };
+    loaded_file_name.is_some_and(|loaded| loaded.eq_ignore_ascii_case(&expected_file))
+}
+
+fn ui_font_resource_ready(status: &super::super::style::UiFontResolutionStatus) -> bool {
+    !matches!(status.as_str(), "loading" | "unavailable")
+}
+
+fn ui_image_resource_ready(
+    tracked_widget: bool,
+    status: Option<UiImageStatus>,
+    asset_resolved: bool,
+) -> bool {
+    if !tracked_widget {
+        return asset_resolved;
+    }
+    matches!(
+        status,
+        Some(UiImageStatus::Ready { .. } | UiImageStatus::Invalid(_))
+    )
+}
+
+fn dimensions_approximately_equal(actual: f32, expected: f32) -> bool {
+    (actual - expected).abs() <= 0.05
+}
+
+fn build_readiness_signature(
+    plan: &UiAuditRunPlan,
+    world: &UiAuditMetadataWorld,
+    target_root: Option<Entity>,
+    target_document: Option<(Entity, &UiDocumentRuntimeRoot)>,
+) -> u64 {
+    let mut evidence = Vec::new();
+    evidence.push(format!("screen={}", plan.screen.canonical));
+    evidence.push(format!("locale={}", world.i18n.locale()));
+    evidence.push(format!(
+        "theme={}:{}",
+        world.theme_source.loaded_file_name().unwrap_or_default(),
+        world.theme_source.using_fallback()
+    ));
+    for (entity, panel) in world
+        .panels
+        .iter()
+        .filter(|(entity, _)| target_root.is_some_and(|root| *entity == root))
+    {
+        evidence.push(format!(
+            "panel={entity:?}:{}:{}:{}",
+            panel.id,
+            panel_kind_name(panel.kind),
+            panel.owner.map(|owner| owner.as_str()).unwrap_or_default()
+        ));
+    }
+    if let Some((entity, root)) = target_document.filter(|(entity, _)| {
+        target_root.is_some_and(|target| entity_is_within_target(*entity, target, &world.parents))
+    }) {
+        evidence.push(format!(
+            "document={entity:?}:{}:{}:{}:{}:{}",
+            root.owner, root.document_id, root.instance_id.0, root.schema_version, root.generation
+        ));
+        for (node_entity, marker, _) in world.document_nodes.iter().filter(|(node, marker, _)| {
+            marker.instance_id == root.instance_id
+                && target_root
+                    .is_some_and(|target| entity_is_within_target(*node, target, &world.parents))
+        }) {
+            evidence.push(format!(
+                "document_node={node_entity:?}:{}:{}",
+                marker.instance_id.0, marker.node_id
+            ));
+        }
+    }
+    for (_, name, _, resolution) in world.font_snapshots.iter().filter(|(entity, _, _, _)| {
+        target_root.is_some_and(|root| entity_is_within_target(*entity, root, &world.parents))
+    }) {
+        evidence.push(format!(
+            "font={}:{:?}:{}",
+            name.map(Name::as_str).unwrap_or_default(),
+            resolution.face,
+            resolution.status.as_str()
+        ));
+    }
+    for (_, name, image_node, _, status) in
+        world.image_snapshots.iter().filter(|(entity, _, _, _, _)| {
+            target_root.is_some_and(|root| entity_is_within_target(*entity, root, &world.parents))
+        })
+    {
+        evidence.push(format!(
+            "image={}:{}:{}",
+            name.map(Name::as_str).unwrap_or_default(),
+            image_node.image.id(),
+            status.map_or("untracked", |status| status.code())
+        ));
+    }
+    for (_, name, snapshot) in world.animation_snapshots.iter().filter(|(entity, _, _)| {
+        target_root.is_some_and(|root| entity_is_within_target(*entity, root, &world.parents))
+    }) {
+        evidence.push(format!(
+            "animation={}:{}",
+            name.map(Name::as_str).unwrap_or_default(),
+            serde_json::to_string(snapshot).unwrap_or_else(|_| "invalid".to_owned())
+        ));
+    }
+    if let Ok(window) = world.primary_window.single() {
+        evidence.push(format!(
+            "window={:.3}x{:.3}:{}x{}:{:.3}",
+            window.resolution.width(),
+            window.resolution.height(),
+            window.resolution.physical_width(),
+            window.resolution.physical_height(),
+            window.resolution.scale_factor()
+        ));
+    }
+    evidence.sort();
+    let digest = Sha256::digest(evidence.join("\n").as_bytes());
+    u64::from_be_bytes(
+        digest[..8]
+            .try_into()
+            .expect("sha256 prefix is eight bytes"),
+    )
 }
 
 fn apply_capture_state(
@@ -1298,6 +2428,30 @@ fn failure_detail(
                 plan.screen.owner
             )
         }),
+        UiAuditFailureKind::DocumentNotReady => plan.map(|plan| {
+            format!(
+                "target owner '{}' did not finish declarative document construction before timeout",
+                plan.screen.owner
+            )
+        }),
+        UiAuditFailureKind::LocaleNotReady => plan.map(|plan| {
+            format!(
+                "requested locale '{}' was not active before timeout",
+                plan.determinism.locale
+            )
+        }),
+        UiAuditFailureKind::ThemeNotReady => plan.map(|plan| {
+            format!(
+                "requested theme '{}' was not loaded from its theme file before timeout",
+                plan.determinism.theme
+            )
+        }),
+        UiAuditFailureKind::FontNotReady => {
+            Some("one or more UI fonts remained loading or unavailable before timeout".to_owned())
+        }
+        UiAuditFailureKind::ImageNotReady => {
+            Some("one or more UI images remained unresolved before timeout".to_owned())
+        }
         UiAuditFailureKind::UnstableUi => plan.map(|plan| {
             format!(
                 "target owner '{}' disappeared before stable capture",
@@ -1307,6 +2461,25 @@ fn failure_detail(
         UiAuditFailureKind::ScreenshotFailed => {
             Some(format!("screenshot status ended as {screenshot_status:?}"))
         }
+        UiAuditFailureKind::ScreenshotSizeMismatch => plan.and_then(|plan| {
+            plan.determinism.target_viewport.map(|target| {
+                format!(
+                    "screenshot did not match target viewport logical {:.3}x{:.3}, physical {}x{}, scale {:.3}",
+                    target.logical_width,
+                    target.logical_height,
+                    target.physical_width,
+                    target.physical_height,
+                    target.device_scale
+                )
+            })
+        }),
+        UiAuditFailureKind::NondeterministicCapture => capture.map(|capture| {
+            format!(
+                "state '{}' repetition {} differed from the first exact PNG hash",
+                capture.state.as_str(),
+                capture.repetition_index + 1
+            )
+        }),
         UiAuditFailureKind::ScrollTargetMissing => capture.and_then(|capture| {
             capture.scroll.map(|scroll| {
                 format!(
@@ -1433,6 +2606,44 @@ fn write_capture_metadata(
     metadata: &UiAuditMetadata,
 ) -> Result<(), String> {
     write_json_file(&capture.metadata_path, metadata)
+}
+
+fn build_capture_artifact_metadata(
+    capture: &UiAuditCapturePlan,
+    evidence: Option<&UiAuditScreenshotEvidence>,
+    first_repetition_sha256: Option<&str>,
+) -> Result<UiAuditCaptureArtifactMetadata, (UiAuditFailureKind, String)> {
+    let evidence = evidence.ok_or_else(|| {
+        (
+            UiAuditFailureKind::ScreenshotFailed,
+            "saved screenshot did not retain capture evidence".to_owned(),
+        )
+    })?;
+    let bytes = fs::read(&capture.screenshot_path).map_err(|error| {
+        (
+            UiAuditFailureKind::ScreenshotFailed,
+            format!(
+                "could not read saved screenshot '{}': {error}",
+                capture.screenshot_path.display()
+            ),
+        )
+    })?;
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let requested_logical = evidence.requested_logical_size;
+    let requested_physical = evidence.requested_physical_size;
+    Ok(UiAuditCaptureArtifactMetadata {
+        sha256: sha256.clone(),
+        byte_length: bytes.len() as u64,
+        captured_width: evidence.captured_size.0,
+        captured_height: evidence.captured_size.1,
+        requested_logical_width: requested_logical.map(|size| size.0),
+        requested_logical_height: requested_logical.map(|size| size.1),
+        requested_physical_width: requested_physical.map(|size| size.0),
+        requested_physical_height: requested_physical.map(|size| size.1),
+        request_frame: evidence.request_frame,
+        completion_frame: evidence.completion_frame,
+        exact_match_with_first_repetition: first_repetition_sha256.map(|first| first == sha256),
+    })
 }
 
 fn write_run_outputs(plan: &UiAuditRunPlan, manifest: &UiAuditManifest) -> Result<(), String> {
@@ -1562,7 +2773,7 @@ fn build_capture_metadata(
     safe_area_status: &UiSafeAreaStatus,
     stats: &UiStats,
     current_owner: &UiCurrentOwner,
-    panels: &Query<&UiPanelRoot>,
+    panels: &Query<(Entity, &UiPanelRoot)>,
     document_nodes: &Query<(
         Entity,
         &UiDocumentNodeAuditMarker,
@@ -1594,6 +2805,11 @@ fn build_capture_metadata(
     font_snapshots: &Query<(Entity, Option<&Name>, &UiTextStyleToken, &UiFontResolution)>,
     image_assets: &Assets<Image>,
     primary_window: Option<&Window>,
+    i18n: &UiI18n,
+    theme_source: &UiThemeSource,
+    virtual_time: &Time<Virtual>,
+    readiness: UiAuditReadiness,
+    artifact: UiAuditCaptureArtifactMetadata,
 ) -> UiAuditMetadata {
     let style_resolutions = collect_style_resolution_metadata(style_resolutions);
     let document_nodes = collect_document_node_metadata(document_nodes);
@@ -1620,10 +2836,58 @@ fn build_capture_metadata(
         screenshot_path: absolute_display_path(&capture.screenshot_path)
             .to_string_lossy()
             .into_owned(),
+        application: UiAuditApplicationMetadata {
+            package_name: env!("CARGO_PKG_NAME"),
+            package_version: env!("CARGO_PKG_VERSION"),
+            git_commit: plan
+                .determinism
+                .git_commit
+                .clone()
+                .unwrap_or_else(|| "unknown".to_owned()),
+            git_commit_source: plan
+                .determinism
+                .git_commit
+                .as_ref()
+                .map_or("unavailable", |_| "runner_environment"),
+        },
+        capture_identity: UiAuditCaptureIdentityMetadata {
+            state: capture.state.as_str().to_owned(),
+            repetition_index: capture.repetition_index + 1,
+            repetition_total: capture.repetition_total,
+        },
+        environment: UiAuditEnvironmentMetadata {
+            requested_locale: plan.determinism.locale.clone(),
+            actual_locale: i18n.locale().to_owned(),
+            requested_theme: plan.determinism.theme.clone(),
+            loaded_theme_file: theme_source.loaded_file_name(),
+            theme_fallback: theme_source.using_fallback(),
+        },
+        determinism: UiAuditDeterminismMetadata {
+            enabled: plan.determinism.enabled,
+            random_seed: plan.determinism.random_seed,
+            frozen_time_seconds: plan.determinism.frozen_time_seconds,
+            actual_virtual_elapsed_seconds: virtual_time.elapsed_secs_f64(),
+            actual_virtual_delta_seconds: virtual_time.delta_secs_f64(),
+            clock_control: if plan.determinism.enabled {
+                "manual_zero_delta"
+            } else {
+                "runtime"
+            },
+            requested_animation_progress: plan.determinism.animation_progress,
+            actual_motion_policy: motion_policy.as_str(),
+            dynamic_policy: plan.determinism.dynamic_policy.as_str(),
+            stable_fixture_id: plan.determinism.stable_fixture_id.clone(),
+            dynamic_mask_id: plan.determinism.dynamic_mask_id.clone(),
+        },
+        resource_readiness: UiAuditResourceReadinessMetadata::from(readiness),
+        artifact,
         scroll: scroll.cloned(),
         viewport: UiAuditViewportMetadata::new(*viewport, *safe_area_status),
         current_page: current_owner.owner.map(|owner| owner.as_str().to_owned()),
-        panels: panels.iter().map(UiAuditPanelMetadata::from).collect(),
+        panels: panels
+            .iter()
+            .map(|(_, panel)| UiAuditPanelMetadata::from(panel))
+            .collect(),
         document_nodes,
         style_resolutions,
         effect_resolutions,
@@ -1646,6 +2910,12 @@ struct UiAuditMetadata {
     state: String,
     device: String,
     screenshot_path: String,
+    application: UiAuditApplicationMetadata,
+    capture_identity: UiAuditCaptureIdentityMetadata,
+    environment: UiAuditEnvironmentMetadata,
+    determinism: UiAuditDeterminismMetadata,
+    resource_readiness: UiAuditResourceReadinessMetadata,
+    artifact: UiAuditCaptureArtifactMetadata,
     scroll: Option<UiAuditScrollMetadata>,
     viewport: UiAuditViewportMetadata,
     current_page: Option<String>,
@@ -1662,6 +2932,78 @@ struct UiAuditMetadata {
     visual_budget: UiVisualBudgetReport,
     window: Option<UiAuditWindowMetadata>,
     stats: UiAuditStatsMetadata,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct UiAuditApplicationMetadata {
+    package_name: &'static str,
+    package_version: &'static str,
+    git_commit: String,
+    git_commit_source: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct UiAuditCaptureIdentityMetadata {
+    state: String,
+    repetition_index: u32,
+    repetition_total: u32,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct UiAuditEnvironmentMetadata {
+    requested_locale: String,
+    actual_locale: String,
+    requested_theme: String,
+    loaded_theme_file: Option<String>,
+    theme_fallback: bool,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+struct UiAuditDeterminismMetadata {
+    enabled: bool,
+    random_seed: Option<u64>,
+    frozen_time_seconds: f64,
+    actual_virtual_elapsed_seconds: f64,
+    actual_virtual_delta_seconds: f64,
+    clock_control: &'static str,
+    requested_animation_progress: f32,
+    actual_motion_policy: &'static str,
+    dynamic_policy: &'static str,
+    stable_fixture_id: Option<String>,
+    dynamic_mask_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct UiAuditResourceReadinessMetadata {
+    target_root_entity: Option<String>,
+    target_document_instance_id: Option<u64>,
+    panel_ready: bool,
+    document_ready: bool,
+    locale_ready: bool,
+    theme_ready: bool,
+    fonts_ready: bool,
+    images_ready: bool,
+    animations_ready: bool,
+    viewport_ready: bool,
+    stable_signature: u64,
+}
+
+impl From<UiAuditReadiness> for UiAuditResourceReadinessMetadata {
+    fn from(readiness: UiAuditReadiness) -> Self {
+        Self {
+            target_root_entity: readiness.target_root.map(|entity| format!("{entity:?}")),
+            target_document_instance_id: readiness.target_document_instance_id,
+            panel_ready: readiness.panel_ready,
+            document_ready: readiness.document_ready,
+            locale_ready: readiness.locale_ready,
+            theme_ready: readiness.theme_ready,
+            fonts_ready: readiness.fonts_ready,
+            images_ready: readiness.images_ready,
+            animations_ready: readiness.animations_ready,
+            viewport_ready: readiness.viewport_ready,
+            stable_signature: readiness.signature,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -2309,14 +3651,34 @@ struct UiAuditManifestEntry {
     metadata_path: String,
     scroll_target_id: Option<String>,
     scroll_position: Option<String>,
+    repetition_index: u32,
+    repetition_total: u32,
+    screenshot_sha256: Option<String>,
+    screenshot_byte_length: Option<u64>,
     status: UiAuditRunStatus,
     failure: Option<String>,
     detail: Option<String>,
 }
 
 impl UiAuditManifestEntry {
+    #[cfg(test)]
     fn success(plan: &UiAuditRunPlan, capture: &UiAuditCapturePlan) -> Self {
-        Self::new(plan, capture, UiAuditRunStatus::Passed, None, None)
+        Self::new(plan, capture, UiAuditRunStatus::Passed, None, None, None)
+    }
+
+    fn success_with_artifact(
+        plan: &UiAuditRunPlan,
+        capture: &UiAuditCapturePlan,
+        artifact: &UiAuditCaptureArtifactMetadata,
+    ) -> Self {
+        Self::new(
+            plan,
+            capture,
+            UiAuditRunStatus::Passed,
+            None,
+            None,
+            Some(artifact),
+        )
     }
 
     fn failure(
@@ -2331,6 +3693,7 @@ impl UiAuditManifestEntry {
             UiAuditRunStatus::Failed,
             Some(failure.as_str()),
             detail,
+            None,
         )
     }
 
@@ -2340,6 +3703,7 @@ impl UiAuditManifestEntry {
         status: UiAuditRunStatus,
         failure: Option<&str>,
         detail: Option<&str>,
+        artifact: Option<&UiAuditCaptureArtifactMetadata>,
     ) -> Self {
         Self {
             screen: plan.screen.canonical.clone(),
@@ -2358,6 +3722,10 @@ impl UiAuditManifestEntry {
             scroll_position: capture
                 .scroll
                 .map(|scroll| scroll.target.as_str().to_owned()),
+            repetition_index: capture.repetition_index + 1,
+            repetition_total: capture.repetition_total,
+            screenshot_sha256: artifact.map(|artifact| artifact.sha256.clone()),
+            screenshot_byte_length: artifact.map(|artifact| artifact.byte_length),
             status,
             failure: failure.map(str::to_owned),
             detail: detail.map(str::to_owned),
@@ -2428,6 +3796,7 @@ fn panel_kind_name(value: UiPanelKind) -> &'static str {
 mod tests {
     use super::*;
     use bevy::ecs::system::SystemState;
+    use bevy::window::WindowResolution;
     use std::str::FromStr;
 
     fn env_reader<'a>(values: &'a [(&'a str, &'a str)]) -> impl FnMut(&str) -> Option<String> + 'a {
@@ -2446,7 +3815,18 @@ mod tests {
         advance_audit_phase(
             phase,
             UiAuditStepInput {
-                target_panel_ready,
+                readiness: UiAuditReadiness {
+                    panel_ready: target_panel_ready,
+                    target_ready: target_panel_ready,
+                    locale_ready: true,
+                    theme_ready: true,
+                    fonts_ready: true,
+                    images_ready: true,
+                    animations_ready: true,
+                    viewport_ready: true,
+                    signature: 1,
+                    ..default()
+                },
                 screenshot_status,
             },
         )
@@ -2521,6 +3901,237 @@ mod tests {
         assert!(config.states_from_env);
         assert!(config.exit_on_finish);
         assert!(config.config_error.is_none());
+    }
+
+    #[test]
+    fn deterministic_config_binds_environment_viewport_and_closed_policy() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-generated-acceptance"),
+                (ENV_UI_AUDIT_DETERMINISTIC, "1"),
+                (ENV_UI_AUDIT_TARGET_LOGICAL_WIDTH, "360"),
+                (ENV_UI_AUDIT_TARGET_LOGICAL_HEIGHT, "800"),
+                (ENV_UI_AUDIT_TARGET_PHYSICAL_WIDTH, "720"),
+                (ENV_UI_AUDIT_TARGET_PHYSICAL_HEIGHT, "1600"),
+                (ENV_UI_AUDIT_TARGET_DEVICE_SCALE, "2"),
+                (ENV_UI_AUDIT_LOCALE, "ZH-CN"),
+                (ENV_UI_AUDIT_THEME, "default"),
+                (ENV_UI_AUDIT_RANDOM_SEED, "42"),
+                (ENV_UI_AUDIT_FROZEN_TIME_SECONDS, "0"),
+                (ENV_UI_AUDIT_ANIMATION_PROGRESS, "1"),
+                (ENV_UI_AUDIT_DYNAMIC_POLICY, "stable_fixture"),
+                (ENV_UI_AUDIT_STABLE_FIXTURE_ID, "acceptance_data"),
+                (ENV_UI_AUDIT_REPEAT_CAPTURES, "2"),
+                (ENV_UI_AUDIT_GIT_COMMIT, "0123456789abcdef"),
+            ]),
+            100,
+        );
+
+        assert!(config.config_error.is_none());
+        assert!(config.determinism.enabled);
+        assert_eq!(config.determinism.locale, "zh_cn");
+        assert_eq!(config.determinism.random_seed, Some(42));
+        assert_eq!(config.determinism.repeat_captures, 2);
+        assert_eq!(
+            config.determinism.target_viewport,
+            Some(UiAuditTargetViewportConfig {
+                logical_width: 360.0,
+                logical_height: 800.0,
+                physical_width: 720,
+                physical_height: 1600,
+                device_scale: 2.0,
+            })
+        );
+    }
+
+    #[test]
+    fn deterministic_config_requires_mask_when_dynamic_content_is_not_fixture_data() {
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                (ENV_UI_AUDIT_DETERMINISTIC, "1"),
+                (ENV_UI_AUDIT_TARGET_LOGICAL_WIDTH, "360"),
+                (ENV_UI_AUDIT_TARGET_LOGICAL_HEIGHT, "800"),
+                (ENV_UI_AUDIT_TARGET_PHYSICAL_WIDTH, "720"),
+                (ENV_UI_AUDIT_TARGET_PHYSICAL_HEIGHT, "1600"),
+                (ENV_UI_AUDIT_TARGET_DEVICE_SCALE, "2"),
+                (ENV_UI_AUDIT_DYNAMIC_POLICY, "explicit_mask"),
+                (ENV_UI_AUDIT_REPEAT_CAPTURES, "2"),
+            ]),
+            100,
+        );
+
+        assert!(config.config_error.is_none());
+        assert!(!validate_determinism_config(&config.determinism, true));
+    }
+
+    #[test]
+    fn deterministic_runtime_injects_elapsed_time_with_zero_delta_and_terminal_animation_policy() {
+        let mut app = App::new();
+        let config = UiAuditDeterminismConfig {
+            enabled: true,
+            frozen_time_seconds: 123.5,
+            ..default()
+        };
+
+        configure_deterministic_runtime(&mut app, true, &config);
+
+        assert!(matches!(
+            app.world().resource::<TimeUpdateStrategy>(),
+            TimeUpdateStrategy::ManualDuration(duration) if duration.is_zero()
+        ));
+        assert_eq!(
+            *app.world().resource::<UiMotionPolicy>(),
+            UiMotionPolicy::Disabled
+        );
+        let time = app.world().resource::<Time<Virtual>>();
+        assert!((time.elapsed_secs_f64() - 123.5).abs() <= f64::EPSILON);
+        assert_eq!(time.delta(), Duration::ZERO);
+        assert!(time.is_paused());
+    }
+
+    #[test]
+    fn deterministic_environment_alone_does_not_change_ordinary_runtime() {
+        let parsed = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT_DETERMINISTIC, "1"),
+                (ENV_UI_AUDIT_FROZEN_TIME_SECONDS, "123.5"),
+            ]),
+            100,
+        );
+        assert!(!parsed.enabled);
+        assert!(!parsed.determinism.enabled);
+        assert!(!UiAuditDeterminismContext::from(&parsed.determinism).enabled);
+
+        let mut app = App::new();
+        app.init_resource::<Time<Virtual>>()
+            .insert_resource(TimeUpdateStrategy::Automatic)
+            .insert_resource(UiMotionPolicy::Reduced);
+        app.world_mut()
+            .resource_mut::<Time<Virtual>>()
+            .advance_by(Duration::from_secs(42));
+        let before_elapsed = app.world().resource::<Time<Virtual>>().elapsed();
+        let before_delta = app.world().resource::<Time<Virtual>>().delta();
+
+        configure_deterministic_runtime(
+            &mut app,
+            false,
+            &UiAuditDeterminismConfig {
+                enabled: true,
+                frozen_time_seconds: 123.5,
+                ..default()
+            },
+        );
+
+        assert!(matches!(
+            app.world().resource::<TimeUpdateStrategy>(),
+            TimeUpdateStrategy::Automatic
+        ));
+        let time = app.world().resource::<Time<Virtual>>();
+        assert_eq!(time.elapsed(), before_elapsed);
+        assert_eq!(time.delta(), before_delta);
+        assert!(!time.is_paused());
+        assert_eq!(
+            *app.world().resource::<UiMotionPolicy>(),
+            UiMotionPolicy::Reduced
+        );
+    }
+
+    #[test]
+    fn deterministic_config_rejects_blank_or_malformed_numeric_values() {
+        for (bad_key, bad_value) in [
+            (ENV_UI_AUDIT_RANDOM_SEED, "not-a-seed"),
+            (ENV_UI_AUDIT_FROZEN_TIME_SECONDS, "NaN?"),
+            (ENV_UI_AUDIT_ANIMATION_PROGRESS, "done"),
+            (ENV_UI_AUDIT_REPEAT_CAPTURES, ""),
+            (ENV_UI_AUDIT_TARGET_LOGICAL_WIDTH, "wide"),
+            (ENV_UI_AUDIT_TARGET_LOGICAL_HEIGHT, "tall"),
+            (ENV_UI_AUDIT_TARGET_PHYSICAL_WIDTH, "wide"),
+            (ENV_UI_AUDIT_TARGET_PHYSICAL_HEIGHT, "tall"),
+            (ENV_UI_AUDIT_TARGET_DEVICE_SCALE, "retina"),
+        ] {
+            let value = |key, valid| if key == bad_key { bad_value } else { valid };
+            let config = UiAuditConfig::from_env_reader(
+                env_reader(&[
+                    (ENV_UI_AUDIT, "1"),
+                    (ENV_UI_AUDIT_SCREEN, "ui-gallery"),
+                    (ENV_UI_AUDIT_DETERMINISTIC, "1"),
+                    (
+                        ENV_UI_AUDIT_TARGET_LOGICAL_WIDTH,
+                        value(ENV_UI_AUDIT_TARGET_LOGICAL_WIDTH, "360"),
+                    ),
+                    (
+                        ENV_UI_AUDIT_TARGET_LOGICAL_HEIGHT,
+                        value(ENV_UI_AUDIT_TARGET_LOGICAL_HEIGHT, "800"),
+                    ),
+                    (
+                        ENV_UI_AUDIT_TARGET_PHYSICAL_WIDTH,
+                        value(ENV_UI_AUDIT_TARGET_PHYSICAL_WIDTH, "720"),
+                    ),
+                    (
+                        ENV_UI_AUDIT_TARGET_PHYSICAL_HEIGHT,
+                        value(ENV_UI_AUDIT_TARGET_PHYSICAL_HEIGHT, "1600"),
+                    ),
+                    (
+                        ENV_UI_AUDIT_TARGET_DEVICE_SCALE,
+                        value(ENV_UI_AUDIT_TARGET_DEVICE_SCALE, "2"),
+                    ),
+                    (
+                        ENV_UI_AUDIT_RANDOM_SEED,
+                        value(ENV_UI_AUDIT_RANDOM_SEED, "42"),
+                    ),
+                    (
+                        ENV_UI_AUDIT_FROZEN_TIME_SECONDS,
+                        value(ENV_UI_AUDIT_FROZEN_TIME_SECONDS, "123.5"),
+                    ),
+                    (
+                        ENV_UI_AUDIT_ANIMATION_PROGRESS,
+                        value(ENV_UI_AUDIT_ANIMATION_PROGRESS, "1"),
+                    ),
+                    (
+                        ENV_UI_AUDIT_REPEAT_CAPTURES,
+                        value(ENV_UI_AUDIT_REPEAT_CAPTURES, "2"),
+                    ),
+                ]),
+                100,
+            );
+
+            assert_eq!(
+                config.config_error,
+                Some(UiAuditFailureKind::ConfigInvalid),
+                "{bad_key}={bad_value:?} must not silently fall back"
+            );
+        }
+    }
+
+    #[test]
+    fn deterministic_config_requires_finite_non_negative_frozen_time() {
+        let base = UiAuditDeterminismConfig {
+            enabled: true,
+            target_viewport: Some(UiAuditTargetViewportConfig {
+                logical_width: 390.0,
+                logical_height: 844.0,
+                physical_width: 780,
+                physical_height: 1688,
+                device_scale: 2.0,
+            }),
+            repeat_captures: 2,
+            ..default()
+        };
+        let valid = UiAuditDeterminismConfig {
+            frozen_time_seconds: 123.5,
+            ..base.clone()
+        };
+        assert!(validate_determinism_config(&valid, true));
+        for frozen_time_seconds in [-1.0, f64::NAN, f64::INFINITY] {
+            let invalid = UiAuditDeterminismConfig {
+                frozen_time_seconds,
+                ..base.clone()
+            };
+            assert!(!validate_determinism_config(&invalid, true));
+        }
     }
 
     #[test]
@@ -3113,6 +4724,31 @@ mod tests {
         );
         assert_eq!(UiAuditFailureKind::UnstableUi.as_str(), "unstable_ui");
         assert_eq!(
+            UiAuditFailureKind::DocumentNotReady.as_str(),
+            "document_not_ready"
+        );
+        assert_eq!(
+            UiAuditFailureKind::LocaleNotReady.as_str(),
+            "locale_not_ready"
+        );
+        assert_eq!(
+            UiAuditFailureKind::ThemeNotReady.as_str(),
+            "theme_not_ready"
+        );
+        assert_eq!(UiAuditFailureKind::FontNotReady.as_str(), "font_not_ready");
+        assert_eq!(
+            UiAuditFailureKind::ImageNotReady.as_str(),
+            "image_not_ready"
+        );
+        assert_eq!(
+            UiAuditFailureKind::ScreenshotSizeMismatch.as_str(),
+            "screenshot_size_mismatch"
+        );
+        assert_eq!(
+            UiAuditFailureKind::NondeterministicCapture.as_str(),
+            "nondeterministic_capture"
+        );
+        assert_eq!(
             UiAuditFailureKind::ScreenshotFailed.as_str(),
             "screenshot_failed"
         );
@@ -3148,6 +4784,67 @@ mod tests {
             Some(UiOwnerId::new("ui_gallery"))
         );
         assert!(registry.resolve("missing").is_none());
+    }
+
+    #[test]
+    fn screen_reference_recipe_populates_run_plan_without_matching_environment_fields() {
+        const RECIPE_CAPTURES: &[UiAuditCaptureRecipe] = &[UiAuditCaptureRecipe::initial()];
+        let reference = UiAuditReferenceRecipe::DEFAULT
+            .with_target_viewport(UiAuditTargetViewport::RuntimeProfile)
+            .with_locale("en-US")
+            .with_theme("night")
+            .with_random_seed(Some(77))
+            .with_frozen_time_seconds(123.5)
+            .with_animation_progress(1.0)
+            .with_dynamic_content(UiAuditDynamicContentRecipe::ExplicitMask("clock-region"));
+        let mut registry = UiAuditScreenRegistry::default();
+        registry.register(
+            UiAuditScreen::new(
+                "recipe_screen",
+                &["recipe-screen"],
+                UiOwnerId::new("recipe_screen"),
+            )
+            .with_recipe(UiAuditRecipe::new(RECIPE_CAPTURES).with_reference(reference)),
+        );
+        let config = UiAuditConfig::from_env_reader(
+            env_reader(&[
+                (ENV_UI_AUDIT, "1"),
+                (ENV_UI_AUDIT_SCREEN, "recipe-screen"),
+                (ENV_UI_AUDIT_DETERMINISTIC, "1"),
+                (ENV_UI_AUDIT_REPEAT_CAPTURES, "2"),
+            ]),
+            100,
+        );
+        assert!(config.config_error.is_none());
+
+        let mut world = World::new();
+        world.spawn((
+            Window {
+                resolution: WindowResolution::new(780, 1688).with_scale_factor_override(2.0),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        let mut state = SystemState::<Query<&Window, With<PrimaryWindow>>>::new(&mut world);
+        let windows = state.get(&world);
+        let expected_viewport = target_viewport_from_window(windows.single().unwrap());
+
+        let plan = prepare_runtime_plan(&config, &registry, &windows).unwrap();
+
+        assert_eq!(plan.determinism.target_viewport, Some(expected_viewport));
+        assert_eq!(plan.determinism.locale, "en_us");
+        assert_eq!(plan.determinism.theme, "night");
+        assert_eq!(plan.determinism.random_seed, Some(77));
+        assert_eq!(plan.determinism.frozen_time_seconds, 123.5);
+        assert_eq!(
+            plan.determinism.dynamic_policy,
+            UiAuditDynamicPolicy::ExplicitMask
+        );
+        assert_eq!(
+            plan.determinism.dynamic_mask_id.as_deref(),
+            Some("clock-region")
+        );
+        assert_eq!(plan.captures.len(), 2);
     }
 
     #[test]
@@ -3206,6 +4903,96 @@ mod tests {
     }
 
     #[test]
+    fn deterministic_plan_expands_repetitions_with_stable_identity() {
+        let plan = plan_audit_paths_with_determinism(
+            Path::new("../summary/ui-audit/repeat-run"),
+            resolved_test_screen(),
+            "phone-small",
+            None,
+            UiAuditDeterminismConfig {
+                enabled: true,
+                repeat_captures: 2,
+                ..default()
+            },
+            &[UiAuditCaptureRecipe::initial()],
+        );
+
+        assert_eq!(plan.captures.len(), 2);
+        assert_eq!(plan.captures[0].repetition_index, 0);
+        assert_eq!(plan.captures[1].repetition_index, 1);
+        assert_eq!(plan.captures[1].repetition_total, 2);
+        assert!(
+            plan.captures[0]
+                .screenshot_path
+                .ends_with("00-initial-repeat-01.png")
+        );
+        assert!(
+            plan.captures[1]
+                .screenshot_path
+                .ends_with("01-initial-repeat-02.png")
+        );
+    }
+
+    #[test]
+    fn repeated_capture_uses_exact_png_sha256_evidence() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test clock should follow epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mybevy-ui-audit-repeat-{}-{unique}",
+            std::process::id()
+        ));
+        let plan = plan_audit_paths_with_determinism(
+            &root,
+            resolved_test_screen(),
+            "phone-small",
+            None,
+            UiAuditDeterminismConfig {
+                enabled: true,
+                repeat_captures: 2,
+                ..default()
+            },
+            &[UiAuditCaptureRecipe::initial()],
+        );
+        let evidence = UiAuditScreenshotEvidence {
+            captured_size: (2, 2),
+            requested_logical_size: Some((2, 2)),
+            requested_physical_size: Some((2, 2)),
+            request_frame: 10,
+            completion_frame: 11,
+        };
+        fs::create_dir_all(
+            plan.captures[0]
+                .screenshot_path
+                .parent()
+                .expect("capture path has a parent"),
+        )
+        .unwrap();
+        fs::write(&plan.captures[0].screenshot_path, b"exact-png-a").unwrap();
+        fs::write(&plan.captures[1].screenshot_path, b"exact-png-a").unwrap();
+        let first = build_capture_artifact_metadata(&plan.captures[0], Some(&evidence), None)
+            .expect("first artifact should hash");
+        let matching = build_capture_artifact_metadata(
+            &plan.captures[1],
+            Some(&evidence),
+            Some(&first.sha256),
+        )
+        .expect("matching artifact should hash");
+        assert_eq!(matching.exact_match_with_first_repetition, Some(true));
+
+        fs::write(&plan.captures[1].screenshot_path, b"exact-png-b").unwrap();
+        let changed = build_capture_artifact_metadata(
+            &plan.captures[1],
+            Some(&evidence),
+            Some(&first.sha256),
+        )
+        .expect("changed artifact should still hash");
+        assert_eq!(changed.exact_match_with_first_repetition, Some(false));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn state_machine_routes_then_waits_for_panel() {
         assert_eq!(
             step(UiAuditPhase::Init, false, UiAuditScreenshotStatus::Pending),
@@ -3242,6 +5029,30 @@ mod tests {
     }
 
     #[test]
+    fn state_machine_distinguishes_document_build_timeout() {
+        assert_eq!(
+            advance_audit_phase(
+                UiAuditPhase::WaitForScreen {
+                    waited_frames: PANEL_READY_TIMEOUT_FRAMES,
+                },
+                UiAuditStepInput {
+                    readiness: UiAuditReadiness {
+                        target_not_ready_failure: UiAuditFailureKind::DocumentNotReady,
+                        ..default()
+                    },
+                    screenshot_status: UiAuditScreenshotStatus::Pending,
+                },
+            ),
+            (
+                UiAuditPhase::Failed(UiAuditFailureKind::DocumentNotReady),
+                Some(UiAuditPureAction::Fail(
+                    UiAuditFailureKind::DocumentNotReady,
+                )),
+            )
+        );
+    }
+
+    #[test]
     fn state_machine_applies_capture_state_after_panel_is_ready() {
         assert_eq!(
             step(
@@ -3258,7 +5069,11 @@ mod tests {
                 UiAuditScreenshotStatus::Pending
             ),
             (
-                UiAuditPhase::WaitForStable { waited_frames: 0 },
+                UiAuditPhase::WaitForStable {
+                    waited_frames: 0,
+                    stable_frames: 0,
+                    last_signature: None,
+                },
                 Some(UiAuditPureAction::ApplyCaptureState)
             )
         );
@@ -3268,16 +5083,29 @@ mod tests {
     fn state_machine_waits_fixed_stable_frames_before_screenshot() {
         assert_eq!(
             step(
-                UiAuditPhase::WaitForStable { waited_frames: 4 },
+                UiAuditPhase::WaitForStable {
+                    waited_frames: 4,
+                    stable_frames: 4,
+                    last_signature: Some(1),
+                },
                 true,
                 UiAuditScreenshotStatus::Pending
             ),
-            (UiAuditPhase::WaitForStable { waited_frames: 5 }, None)
+            (
+                UiAuditPhase::WaitForStable {
+                    waited_frames: 5,
+                    stable_frames: 5,
+                    last_signature: Some(1),
+                },
+                None
+            )
         );
         assert_eq!(
             step(
                 UiAuditPhase::WaitForStable {
-                    waited_frames: STABLE_WAIT_FRAMES
+                    waited_frames: STABLE_WAIT_FRAMES,
+                    stable_frames: STABLE_WAIT_FRAMES - 1,
+                    last_signature: Some(1),
                 },
                 true,
                 UiAuditScreenshotStatus::Pending
@@ -3293,13 +5121,290 @@ mod tests {
     fn state_machine_classifies_unstable_ui_when_panel_disappears() {
         assert_eq!(
             step(
-                UiAuditPhase::WaitForStable { waited_frames: 2 },
+                UiAuditPhase::WaitForStable {
+                    waited_frames: 2,
+                    stable_frames: 2,
+                    last_signature: Some(1),
+                },
                 false,
                 UiAuditScreenshotStatus::Pending
             ),
             (
                 UiAuditPhase::Failed(UiAuditFailureKind::UnstableUi),
                 Some(UiAuditPureAction::Fail(UiAuditFailureKind::UnstableUi))
+            )
+        );
+    }
+
+    #[test]
+    fn state_machine_classifies_resource_and_viewport_timeouts_independently() {
+        let timeout_phase = UiAuditPhase::WaitForStable {
+            waited_frames: STABLE_TIMEOUT_FRAMES,
+            stable_frames: 0,
+            last_signature: None,
+        };
+        let readiness = |locale_ready, theme_ready, fonts_ready, images_ready, viewport_ready| {
+            UiAuditReadiness {
+                panel_ready: true,
+                target_ready: true,
+                locale_ready,
+                theme_ready,
+                fonts_ready,
+                images_ready,
+                animations_ready: true,
+                viewport_ready,
+                ..default()
+            }
+        };
+        for (readiness, failure) in [
+            (
+                readiness(false, true, true, true, true),
+                UiAuditFailureKind::LocaleNotReady,
+            ),
+            (
+                readiness(true, false, true, true, true),
+                UiAuditFailureKind::ThemeNotReady,
+            ),
+            (
+                readiness(true, true, false, true, true),
+                UiAuditFailureKind::FontNotReady,
+            ),
+            (
+                readiness(true, true, true, false, true),
+                UiAuditFailureKind::ImageNotReady,
+            ),
+            (
+                readiness(true, true, true, true, false),
+                UiAuditFailureKind::ScreenshotSizeMismatch,
+            ),
+        ] {
+            assert_eq!(
+                advance_audit_phase(
+                    timeout_phase.clone(),
+                    UiAuditStepInput {
+                        readiness,
+                        screenshot_status: UiAuditScreenshotStatus::Pending,
+                    },
+                ),
+                (
+                    UiAuditPhase::Failed(failure),
+                    Some(UiAuditPureAction::Fail(failure)),
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn resource_gate_distinguishes_loading_from_stable_fallback_and_invalid_states() {
+        use crate::framework::ui::{style::UiFontResolutionStatus, widgets::UiImageError};
+
+        assert!(ui_font_resource_ready(&UiFontResolutionStatus::Ready));
+        assert!(!ui_font_resource_ready(&UiFontResolutionStatus::Loading {
+            used_fallback: true,
+        }));
+        assert!(!ui_font_resource_ready(
+            &UiFontResolutionStatus::Unavailable
+        ));
+        assert!(ui_image_resource_ready(
+            true,
+            Some(UiImageStatus::Ready {
+                source_size: UVec2::new(10, 10),
+            }),
+            true,
+        ));
+        assert!(ui_image_resource_ready(
+            true,
+            Some(UiImageStatus::Invalid(UiImageError::ZeroContainerSize)),
+            false,
+        ));
+        assert!(!ui_image_resource_ready(
+            true,
+            Some(UiImageStatus::Loading),
+            false,
+        ));
+        assert!(!ui_image_resource_ready(
+            true,
+            Some(UiImageStatus::Failed),
+            false,
+        ));
+        assert!(ui_image_resource_ready(false, None, true));
+    }
+
+    #[test]
+    fn scoped_resource_gate_blocks_a_pending_image_under_the_target_root() {
+        let mut world = World::new();
+        let target_root = world.spawn_empty().id();
+        world.spawn((
+            ImageNode::new(Handle::<Image>::default()),
+            ChildOf(target_root),
+        ));
+        let mut state = SystemState::<(
+            Query<&ChildOf>,
+            Query<(
+                Entity,
+                Option<&Name>,
+                &ImageNode,
+                Option<&UiImageWidget>,
+                Option<&UiImageStatus>,
+            )>,
+        )>::new(&mut world);
+        let (parents, images) = state.get(&world);
+
+        assert!(!scoped_images_ready(
+            Some(target_root),
+            &parents,
+            &images,
+            &Assets::<Image>::default(),
+        ));
+    }
+
+    #[test]
+    fn scoped_resource_gate_ignores_a_pending_image_under_an_unrelated_root() {
+        let mut world = World::new();
+        let target_root = world.spawn_empty().id();
+        let unrelated_root = world.spawn_empty().id();
+        world.spawn((
+            ImageNode::new(Handle::<Image>::default()),
+            ChildOf(unrelated_root),
+        ));
+        let mut state = SystemState::<(
+            Query<&ChildOf>,
+            Query<(
+                Entity,
+                Option<&Name>,
+                &ImageNode,
+                Option<&UiImageWidget>,
+                Option<&UiImageStatus>,
+            )>,
+        )>::new(&mut world);
+        let (parents, images) = state.get(&world);
+
+        assert!(scoped_images_ready(
+            Some(target_root),
+            &parents,
+            &images,
+            &Assets::<Image>::default(),
+        ));
+    }
+
+    #[test]
+    fn document_readiness_does_not_cross_satisfy_instances_with_the_same_document_id() {
+        let mut world = World::new();
+        let first_root = world.spawn_empty().id();
+        let second_root = world.spawn_empty().id();
+        let document_id =
+            crate::framework::ui::document::UiDocumentId::from_str("audit.same").unwrap();
+        world.spawn((
+            UiDocumentNodeAuditMarker {
+                instance_id: UiDocumentInstanceId(1),
+                document_id,
+                schema_version: 1,
+                node_id: crate::framework::ui::document::UiNodeId::from_str("audit.node").unwrap(),
+                document_path: "$.root".to_owned(),
+                source_path: "audit.json".to_owned(),
+            },
+            UiDocumentResolvedStyleMarker(
+                crate::framework::ui::document::UiResolvedStyle::default(),
+            ),
+            ChildOf(first_root),
+        ));
+        let mut state = SystemState::<(
+            Query<(
+                Entity,
+                &UiDocumentNodeAuditMarker,
+                &UiDocumentResolvedStyleMarker,
+            )>,
+            Query<&ChildOf>,
+        )>::new(&mut world);
+        let (nodes, parents) = state.get(&world);
+
+        assert!(document_instance_ready(
+            first_root,
+            UiDocumentInstanceId(1),
+            &nodes,
+            &parents,
+        ));
+        assert!(!document_instance_ready(
+            second_root,
+            UiDocumentInstanceId(2),
+            &nodes,
+            &parents,
+        ));
+    }
+
+    #[test]
+    fn locale_and_theme_readiness_require_the_requested_loaded_sources() {
+        assert!(requested_locale_is_active("zh-CN", "zh_cn"));
+        assert!(!requested_locale_is_active("en_us", "zh_cn"));
+        assert!(requested_theme_file_is_loaded(
+            "default",
+            Some("default.ron"),
+            false,
+        ));
+        assert!(!requested_theme_file_is_loaded("default", None, true,));
+        assert!(!requested_theme_file_is_loaded(
+            "night",
+            Some("default.ron"),
+            false,
+        ));
+        assert!(requested_theme_file_is_loaded(
+            "night",
+            Some("night.ron"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn state_machine_resets_stability_on_signature_change() {
+        let result = advance_audit_phase(
+            UiAuditPhase::WaitForStable {
+                waited_frames: 10,
+                stable_frames: 9,
+                last_signature: Some(1),
+            },
+            UiAuditStepInput {
+                readiness: UiAuditReadiness {
+                    panel_ready: true,
+                    target_ready: true,
+                    locale_ready: true,
+                    theme_ready: true,
+                    fonts_ready: true,
+                    images_ready: true,
+                    animations_ready: true,
+                    viewport_ready: true,
+                    signature: 2,
+                    ..default()
+                },
+                screenshot_status: UiAuditScreenshotStatus::Pending,
+            },
+        );
+
+        assert_eq!(
+            result,
+            (
+                UiAuditPhase::WaitForStable {
+                    waited_frames: 11,
+                    stable_frames: 1,
+                    last_signature: Some(2),
+                },
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn state_machine_classifies_saved_size_mismatch() {
+        assert_eq!(
+            step(
+                UiAuditPhase::WaitForScreenshot { waited_frames: 1 },
+                true,
+                UiAuditScreenshotStatus::SizeMismatch,
+            ),
+            (
+                UiAuditPhase::Failed(UiAuditFailureKind::ScreenshotSizeMismatch),
+                Some(UiAuditPureAction::Fail(
+                    UiAuditFailureKind::ScreenshotSizeMismatch,
+                )),
             )
         );
     }

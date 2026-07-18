@@ -27,4 +27,4 @@ pub(crate) use scopes::{
     UiStyleErrorCode, UiStyleRef, UiStyleScope, UiStyleVariantId, UiSurfaceStyleRole,
     UiTextStyleRole,
 };
-pub(crate) use theme::{UiTheme, UiThemePlugin};
+pub(crate) use theme::{UiTheme, UiThemePlugin, UiThemeSource};

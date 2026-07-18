@@ -5,8 +5,9 @@ use std::{env, str::FromStr};
 
 use crate::framework::ui::{
     audit::{
-        UiAuditCaptureRecipe, UiAuditCaptureState, UiAuditRecipe, UiAuditRouteCommand,
-        UiAuditScreen, UiAuditScreenRecipe, UiAuditScreenRegistry,
+        UiAuditCaptureRecipe, UiAuditCaptureState, UiAuditDynamicContentRecipe,
+        UiAuditReadyCondition, UiAuditRecipe, UiAuditReferenceRecipe, UiAuditRouteCommand,
+        UiAuditScreen, UiAuditScreenRecipe, UiAuditScreenRegistry, UiAuditTargetViewport,
     },
     core::binding::UiBindingValues,
     core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
@@ -348,13 +349,40 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
         let screen = UiAuditScreen::new(mode.canonical_screen(), mode.aliases(), mode.ui_owner());
         if mode == AppUiMode::UiGallery {
             registry.register_recipe(UiAuditScreenRecipe::new(
-                screen.with_recipe(UiAuditRecipe::new(UI_GALLERY_AUDIT_CAPTURES)),
+                screen.with_recipe(
+                    UiAuditRecipe::new(UI_GALLERY_AUDIT_CAPTURES)
+                        .with_reference(DEFAULT_REFERENCE_AUDIT_RECIPE),
+                ),
+            ));
+        } else if matches!(
+            mode,
+            AppUiMode::UiDocumentGallery | AppUiMode::UiGeneratedAcceptance
+        ) {
+            registry.register_recipe(UiAuditScreenRecipe::new(
+                screen.with_recipe(
+                    UiAuditRecipe::new(DOCUMENT_AUDIT_CAPTURES)
+                        .with_reference(DEFAULT_REFERENCE_AUDIT_RECIPE)
+                        .with_ready(UiAuditReadyCondition::OwnerDocument),
+                ),
             ));
         } else {
             registry.register(screen);
         }
     }
 }
+
+const DEFAULT_REFERENCE_AUDIT_RECIPE: UiAuditReferenceRecipe = UiAuditReferenceRecipe::new()
+    .with_target_viewport(UiAuditTargetViewport::RuntimeProfile)
+    .with_locale("zh_cn")
+    .with_theme("default")
+    .with_random_seed(None)
+    .with_frozen_time_seconds(0.0)
+    .with_animation_progress(1.0)
+    .with_dynamic_content(UiAuditDynamicContentRecipe::StableFixture(
+        "repository_static_data",
+    ));
+
+const DOCUMENT_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[UiAuditCaptureRecipe::initial()];
 
 const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     UiAuditCaptureRecipe::scroll(

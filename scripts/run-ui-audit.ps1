@@ -16,6 +16,24 @@ param(
     [string]$WindowSize = "",
     [string]$DeviceScale = "",
     [string]$WindowScale = "",
+    [switch]$DeterministicCapture,
+    [string]$Locale = "zh_cn",
+    [ValidateSet("default")]
+    [string]$Theme = "default",
+    [UInt64]$RandomSeed = 0,
+    [ValidateScript({
+        if ([double]::IsNaN($_) -or [double]::IsInfinity($_) -or $_ -lt 0) {
+            throw "FrozenTimeSeconds must be a finite, non-negative number."
+        }
+        $true
+    })]
+    [double]$FrozenTimeSeconds = 0,
+    [ValidateSet("StableFixture", "ExplicitMask")]
+    [string]$DynamicContentPolicy = "StableFixture",
+    [string]$StableFixtureId = "repository_static_data",
+    [string]$DynamicMaskId = "",
+    [ValidateRange(2, 8)]
+    [int]$RepeatCaptures = 2,
     [string[]]$BevyArgs = @(),
     [string[]]$DeviceId = @(),
     [string[]]$ClientId = @(),
@@ -269,6 +287,33 @@ function Resolve-UiAuditStates {
     return ($normalized.ToArray() -join ",")
 }
 
+function Get-UiAuditDeterministicProfile {
+    param([Parameter(Mandatory = $true)][string]$Device)
+
+    switch ($Device) {
+        "desktop" { return [pscustomobject]@{ logical_width = 1280.0; logical_height = 720.0; physical_width = 1280; physical_height = 720; device_scale = 1.0 } }
+        "phone-portrait" { return [pscustomobject]@{ logical_width = (1280.0 / 3.25); logical_height = (2772.0 / 3.25); physical_width = 1280; physical_height = 2772; device_scale = 3.25 } }
+        "phone-1080p" { return [pscustomobject]@{ logical_width = 360.0; logical_height = 800.0; physical_width = 1080; physical_height = 2400; device_scale = 3.0 } }
+        "phone-small" { return [pscustomobject]@{ logical_width = 360.0; logical_height = 800.0; physical_width = 720; physical_height = 1600; device_scale = 2.0 } }
+        "tablet-portrait" { return [pscustomobject]@{ logical_width = 800.0; logical_height = 1280.0; physical_width = 1600; physical_height = 2560; device_scale = 2.0 } }
+        "tablet-landscape" { return [pscustomobject]@{ logical_width = 1280.0; logical_height = 800.0; physical_width = 2560; physical_height = 1600; device_scale = 2.0 } }
+        default { throw "Deterministic capture does not know window profile '$Device'." }
+    }
+}
+
+function Get-UiAuditGitCommit {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    try {
+        $commit = (& git -C $RepositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace([string]$commit) -and ([string]$commit).Trim() -match '^[0-9a-fA-F]{7,64}$') {
+            return ([string]$commit).Trim().ToLowerInvariant()
+        }
+    } catch {
+    }
+    return "unknown"
+}
+
 function New-UiAuditRunId {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $suffix = [Guid]::NewGuid().ToString("N").Substring(0, 6)
@@ -448,6 +493,30 @@ function New-UiAuditTask {
     $statesForScreen = Resolve-UiAuditStates -Screen $Screen -StateValue $StateValue
     $extraArgs = if ($null -eq $ExtraBevyArgs) { @() } else { @($ExtraBevyArgs) }
     $bevyArgsForDevice = @("--window-profile", $Device) + $extraArgs
+    $determinism = $null
+    if ($DeterministicCapture) {
+        if ([string]::IsNullOrWhiteSpace($Locale) -or [string]::IsNullOrWhiteSpace($Theme)) {
+            throw "Deterministic capture requires non-empty -Locale and -Theme."
+        }
+        if ($DynamicContentPolicy -eq "StableFixture" -and [string]::IsNullOrWhiteSpace($StableFixtureId)) {
+            throw "StableFixture dynamic policy requires -StableFixtureId."
+        }
+        if ($DynamicContentPolicy -eq "ExplicitMask" -and [string]::IsNullOrWhiteSpace($DynamicMaskId)) {
+            throw "ExplicitMask dynamic policy requires -DynamicMaskId."
+        }
+        $determinism = [pscustomobject]@{
+            target_viewport = Get-UiAuditDeterministicProfile -Device $Device
+            locale = $Locale.Trim().ToLowerInvariant().Replace("-", "_")
+            theme = $Theme.Trim()
+            random_seed = $RandomSeed
+            frozen_time_seconds = $FrozenTimeSeconds
+            animation_progress = 1.0
+            dynamic_policy = if ($DynamicContentPolicy -eq "StableFixture") { "stable_fixture" } else { "explicit_mask" }
+            stable_fixture_id = if ($DynamicContentPolicy -eq "StableFixture") { $StableFixtureId.Trim() } else { $null }
+            dynamic_mask_id = if ($DynamicContentPolicy -eq "ExplicitMask") { $DynamicMaskId.Trim() } else { $null }
+            repeat_captures = $RepeatCaptures
+        }
+    }
 
     return [pscustomobject]@{
         screen = $Screen
@@ -459,6 +528,7 @@ function New-UiAuditTask {
         stderr_log = "$logPrefix.stderr.log"
         cargo_args = @("run", "--") + $bevyArgsForDevice
         bevy_args = $bevyArgsForDevice
+        determinism = $determinism
     }
 }
 
@@ -3237,6 +3307,37 @@ function Invoke-UiAuditCargoRun {
     $psi.Environment["MYBEVY_UI_AUDIT_OUTPUT"] = [string]$Task.output_dir
     $psi.Environment["MYBEVY_UI_AUDIT_STATES"] = [string]$Task.states
     $psi.Environment["MYBEVY_UI_AUDIT_EXIT_ON_FINISH"] = "1"
+    $psi.Environment["MYBEVY_UI_AUDIT_GIT_COMMIT"] = Get-UiAuditGitCommit -RepositoryRoot (Split-Path -Parent $ProjectRoot)
+    $psi.Environment["MYBEVY_UI_AUDIT_DETERMINISTIC"] = if ($null -ne $Task.determinism) { "1" } else { "0" }
+    if ($null -ne $Task.determinism) {
+        $target = $Task.determinism.target_viewport
+        $psi.Environment["MYBEVY_UI_AUDIT_TARGET_LOGICAL_WIDTH"] = ([double]$target.logical_width).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $psi.Environment["MYBEVY_UI_AUDIT_TARGET_LOGICAL_HEIGHT"] = ([double]$target.logical_height).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $psi.Environment["MYBEVY_UI_AUDIT_TARGET_PHYSICAL_WIDTH"] = ([int]$target.physical_width).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $psi.Environment["MYBEVY_UI_AUDIT_TARGET_PHYSICAL_HEIGHT"] = ([int]$target.physical_height).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $psi.Environment["MYBEVY_UI_AUDIT_TARGET_DEVICE_SCALE"] = ([double]$target.device_scale).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $psi.Environment["MYBEVY_UI_AUDIT_LOCALE"] = [string]$Task.determinism.locale
+        $psi.Environment["MYBEVY_UI_AUDIT_THEME"] = [string]$Task.determinism.theme
+        $psi.Environment["MYBEVY_UI_AUDIT_RANDOM_SEED"] = ([UInt64]$Task.determinism.random_seed).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $psi.Environment["MYBEVY_UI_AUDIT_FROZEN_TIME_SECONDS"] = ([double]$Task.determinism.frozen_time_seconds).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $psi.Environment["MYBEVY_UI_AUDIT_ANIMATION_PROGRESS"] = "1"
+        $psi.Environment["MYBEVY_UI_AUDIT_DYNAMIC_POLICY"] = [string]$Task.determinism.dynamic_policy
+        [void]$psi.Environment.Remove("MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID")
+        [void]$psi.Environment.Remove("MYBEVY_UI_AUDIT_DYNAMIC_MASK_ID")
+        if (-not [string]::IsNullOrWhiteSpace([string]$Task.determinism.stable_fixture_id)) {
+            $psi.Environment["MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID"] = [string]$Task.determinism.stable_fixture_id
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$Task.determinism.dynamic_mask_id)) {
+            $psi.Environment["MYBEVY_UI_AUDIT_DYNAMIC_MASK_ID"] = [string]$Task.determinism.dynamic_mask_id
+        }
+        $psi.Environment["MYBEVY_UI_AUDIT_REPEAT_CAPTURES"] = ([int]$Task.determinism.repeat_captures).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $psi.Environment["MYBEVY_UI_LOCALE"] = [string]$Task.determinism.locale
+        if ([string]$Task.determinism.theme -eq "default") {
+            [void]$psi.Environment.Remove("MYBEVY_UI_THEME")
+        } else {
+            $psi.Environment["MYBEVY_UI_THEME"] = [string]$Task.determinism.theme
+        }
+    }
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $psi
@@ -3322,6 +3423,10 @@ function Convert-ChildEntriesToCaptures {
             metadata = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $metadataPath
             screenshot_exists = $screenshotExists
             metadata_exists = $metadataExists
+            repetition_index = if ($null -ne $entry.PSObject.Properties["repetition_index"]) { [int]$entry.repetition_index } else { 1 }
+            repetition_total = if ($null -ne $entry.PSObject.Properties["repetition_total"]) { [int]$entry.repetition_total } else { 1 }
+            screenshot_sha256 = if ($null -ne $entry.PSObject.Properties["screenshot_sha256"]) { [string]$entry.screenshot_sha256 } else { $null }
+            screenshot_byte_length = if ($null -ne $entry.PSObject.Properties["screenshot_byte_length"]) { [UInt64]$entry.screenshot_byte_length } else { $null }
             scroll_target_id = $entry.scroll_target_id
             scroll_position = $entry.scroll_position
         })
@@ -3356,6 +3461,7 @@ function Resolve-UiAuditTaskResult {
         child_report = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $childReportPath
         cargo_args = @($Task.cargo_args)
         bevy_args = @($Task.bevy_args)
+        determinism = $Task.determinism
         captures = @()
     }
 
@@ -3400,7 +3506,9 @@ function Resolve-UiAuditTaskResult {
 
     $failedCaptures = @($captures | Where-Object { $_.status -ne "passed" })
     if ($failedCaptures.Count -gt 0) {
-        $base.failure_type = "audit_failed"
+        $deterministicFailureTypes = @("document_not_ready", "font_not_ready", "image_not_ready", "unstable_ui", "screenshot_size_mismatch", "nondeterministic_capture")
+        $firstFailure = [string]$failedCaptures[0].failure
+        $base.failure_type = if ($firstFailure -in $deterministicFailureTypes) { $firstFailure } else { "audit_failed" }
         $base.detail = (($failedCaptures | ForEach-Object {
             $failure = if ($_.failure) { [string]$_.failure } else { "unknown" }
             if ($_.detail) {
@@ -3457,6 +3565,7 @@ function New-PlannedTaskResult {
         child_report = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path (Join-FullPath $Task.output_dir "report.md")
         cargo_args = @($Task.cargo_args)
         bevy_args = @($Task.bevy_args)
+        determinism = $Task.determinism
         captures = @()
     }
 }
@@ -3506,6 +3615,21 @@ function Write-UiAuditRunnerOutputs {
         created_at = (Get-Date).ToString("o")
         status = $status
         dry_run = $IsDryRun
+        deterministic_capture = [bool]$DeterministicCapture
+        deterministic_capture_config = if ($DeterministicCapture) {
+            [ordered]@{
+                locale = $Locale.Trim().ToLowerInvariant().Replace("-", "_")
+                theme = $Theme.Trim()
+                random_seed = $RandomSeed
+                frozen_time_seconds = $FrozenTimeSeconds
+                animation_progress = 1.0
+                dynamic_policy = if ($DynamicContentPolicy -eq "StableFixture") { "stable_fixture" } else { "explicit_mask" }
+                stable_fixture_id = if ($DynamicContentPolicy -eq "StableFixture") { $StableFixtureId.Trim() } else { $null }
+                dynamic_mask_id = if ($DynamicContentPolicy -eq "ExplicitMask") { $DynamicMaskId.Trim() } else { $null }
+                repeat_captures = $RepeatCaptures
+                comparison = "exact_png_sha256"
+            }
+        } else { $null }
         rerun_from_manifest = $RerunSource
         screens = @($ScreensValue)
         devices = @($DevicesValue)
@@ -3635,6 +3759,11 @@ function Build-UiAuditReport {
     $lines.Add("- Run ID: ``$RunIdValue``")
     $lines.Add("- Status: ``$($Manifest.status)``")
     $lines.Add("- Mode: ``$($Manifest.runner_mode)``")
+    $lines.Add("- Deterministic capture: ``$([bool]$Manifest.deterministic_capture)``")
+    if ([bool]$Manifest.deterministic_capture) {
+        $lines.Add("- Repetitions: ``$($Manifest.deterministic_capture_config.repeat_captures)`` (exact PNG SHA-256)")
+        $lines.Add("- Locale / theme: ``$($Manifest.deterministic_capture_config.locale)`` / ``$($Manifest.deterministic_capture_config.theme)``")
+    }
     $lines.Add("- Screens: ``$($Manifest.screens -join ', ')``")
     $lines.Add("- Devices: ``$($Manifest.devices -join ', ')``")
     $lines.Add("- Total tasks: $($Manifest.summary.total)")
@@ -3900,6 +4029,10 @@ function New-FakeChildManifest {
         metadata_path = $metadata
         scroll_target_id = $null
         scroll_position = $null
+        repetition_index = 1
+        repetition_total = 1
+        screenshot_sha256 = $null
+        screenshot_byte_length = $null
         status = $Status
         failure = $Failure
         detail = if ($Failure) { "fake failure" } else { $null }
@@ -4008,6 +4141,30 @@ function Invoke-UiAuditSelfTest {
         Assert-SelfTest (($tasks[0].bevy_args[0] -eq "--window-profile") -and ($tasks[0].bevy_args[1] -eq "phone-small")) "device window profile mapping"
         Assert-SelfTest (($tasks[0].output_dir -replace "\\", "/").Contains("/runs/ui_gallery/phone-small")) "output path layout"
 
+        $savedDeterministicCapture = $DeterministicCapture
+        $savedDynamicContentPolicy = $DynamicContentPolicy
+        $savedDynamicMaskId = $DynamicMaskId
+        $savedRepeatCaptures = $RepeatCaptures
+        $DeterministicCapture = $true
+        $DynamicContentPolicy = "StableFixture"
+        $RepeatCaptures = 2
+        $deterministicTask = New-UiAuditTask -RunRoot (Join-FullPath $tempRoot "deterministic") -Screen "ui_generated_acceptance" -Device "phone-small" -StateValue "initial" -ExtraBevyArgs @()
+        Assert-SelfTest ($deterministicTask.determinism.repeat_captures -eq 2 -and $deterministicTask.determinism.dynamic_policy -eq "stable_fixture") "deterministic task carries repetition and closed dynamic policy"
+        Assert-SelfTest ($deterministicTask.determinism.target_viewport.logical_width -eq 360.0 -and $deterministicTask.determinism.target_viewport.physical_width -eq 720 -and $deterministicTask.determinism.target_viewport.device_scale -eq 2.0) "deterministic task binds logical physical and scale viewport"
+        $DynamicContentPolicy = "ExplicitMask"
+        $DynamicMaskId = ""
+        $maskRejected = $false
+        try {
+            [void](New-UiAuditTask -RunRoot (Join-FullPath $tempRoot "missing-mask") -Screen "ui_gallery" -Device "phone-small" -StateValue "initial" -ExtraBevyArgs @())
+        } catch {
+            $maskRejected = $_.Exception.Message -like "*DynamicMaskId*"
+        }
+        Assert-SelfTest $maskRejected "explicit dynamic policy fails closed without mask id"
+        $DeterministicCapture = $savedDeterministicCapture
+        $DynamicContentPolicy = $savedDynamicContentPolicy
+        $DynamicMaskId = $savedDynamicMaskId
+        $RepeatCaptures = $savedRepeatCaptures
+
         New-FakeChildManifest -Task $tasks[0] -Status "passed" -CreateArtifacts
         $passedLaunch = [pscustomobject]@{ started = $true; launch_error = $null; timed_out = $false; exit_code = 0 }
         $passed = Resolve-UiAuditTaskResult -Task $tasks[0] -LaunchResult $passedLaunch -RunRoot $tempRoot
@@ -4029,6 +4186,11 @@ function Invoke-UiAuditSelfTest {
         New-FakeChildManifest -Task $tasks[2] -Status "failed" -Failure "screen_not_found"
         $auditFailed = Resolve-UiAuditTaskResult -Task $tasks[2] -LaunchResult $passedLaunch -RunRoot $tempRoot
         Assert-SelfTest ($auditFailed.failure_type -eq "audit_failed") "audit failure classification"
+
+        $nondeterministicTask = New-UiAuditTask -RunRoot (Join-FullPath $tempRoot "nondeterministic") -Screen "ui_generated_acceptance" -Device "phone-small" -StateValue "initial" -ExtraBevyArgs @()
+        New-FakeChildManifest -Task $nondeterministicTask -Status "failed" -Failure "nondeterministic_capture"
+        $nondeterministic = Resolve-UiAuditTaskResult -Task $nondeterministicTask -LaunchResult $passedLaunch -RunRoot $tempRoot
+        Assert-SelfTest ($nondeterministic.failure_type -eq "nondeterministic_capture") "deterministic capture failure type is preserved"
 
         $timeoutLaunch = [pscustomobject]@{ started = $true; launch_error = $null; timed_out = $true; exit_code = $null }
         $timeout = Resolve-UiAuditTaskResult -Task $tasks[3] -LaunchResult $timeoutLaunch -RunRoot $tempRoot
@@ -4354,6 +4516,9 @@ function Invoke-UiAuditSelfTest {
 
 function Invoke-UiAuditRunner {
     $effectiveMode = if ($Remote) { "Remote" } else { $Mode }
+    if ($effectiveMode -eq "Remote" -and $DeterministicCapture) {
+        throw "-DeterministicCapture currently supports local window profiles only; remote deterministic capture requires the stage 11 device contract."
+    }
 
     $scriptRoot = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
         $PSScriptRoot

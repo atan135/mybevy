@@ -390,9 +390,22 @@ impl Default for UiTheme {
 }
 
 #[derive(Clone, Debug, Resource)]
-struct UiThemeSource {
+pub(crate) struct UiThemeSource {
     loaded_path: Option<PathBuf>,
     diagnostics: Vec<String>,
+}
+
+impl UiThemeSource {
+    pub(crate) fn loaded_file_name(&self) -> Option<String> {
+        self.loaded_path
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+    }
+
+    pub(crate) fn using_fallback(&self) -> bool {
+        self.loaded_path.is_none()
+    }
 }
 
 #[derive(Debug, Resource)]
