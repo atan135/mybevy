@@ -1,6 +1,7 @@
 # Rust / Bevy build artifacts
 /project/target/
 /tools/ui-generation/target/
+/tools/ui-visual-audit/target/
 /logs/
 /artifacts/
 /local/
@@ -34,6 +35,8 @@ fangyuan-bake-report.txt
 # Local summary notes
 /summary/*
 !/summary/.gitkeep
+# Private visual-audit references and run artifacts remain local.
+/summary/ui-visual-audit/
 
 # OS-generated files
 .DS_Store

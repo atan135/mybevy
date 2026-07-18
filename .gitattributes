@@ -30,3 +30,8 @@ project/assets/**/*.spp filter=lfs diff=lfs merge=lfs -text
 
 # Repository-owned binary inputs for the development-only UI generation tool.
 tools/ui-generation/fixtures/**/*.png filter=lfs diff=lfs merge=lfs -text
+
+# Repository-owned baselines for the development-only visual audit tool.
+tools/ui-visual-audit/fixtures/references/**/*.png filter=lfs diff=lfs merge=lfs -text
+tools/ui-visual-audit/fixtures/references/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+tools/ui-visual-audit/fixtures/references/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
