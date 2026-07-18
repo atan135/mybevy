@@ -1043,4 +1043,27 @@ $env:JAVA_HOME="C:\Program Files\Java\jdk-21"
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+## 19. 运行离线 UI 生成验收
+
+`tools/ui-generation/` 是独立开发工具，不属于正式游戏 workspace。新成员只需要在修改生成链路或复验 approved 页面时运行它：
+
+```powershell
+cargo test --manifest-path tools/ui-generation/Cargo.toml
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- generate-fixture --task tools/ui-generation/fixtures/acceptance/task.valid.json --repository-root . --document-id generated.acceptance_fixture
+```
+
+`generate-fixture` 使用仓库自有结构化 fixture，但会真实读取任务中的参考图、校验 hash 和 viewport、运行 Bevy 预览并生成 sealed bundle。任务的 `run_id` 必须唯一；重复运行时使用一份带新 run ID 的任务文件。输出只进入被忽略的 `summary/ui-generation/<run-id>/`，不会自动进入正式游戏。
+
+正式晋升必须单独执行 `promotion-decisions`、`record-promotion-decisions`、`promotion-plan` 和带精确 plan hash 的 `promote`。已晋升验收样例可用正常游戏路由检查：
+
+```powershell
+$env:TOUCH_START_SCREEN="ui_generated_acceptance"
+cargo run --manifest-path project/Cargo.toml -- --window-profile phone-portrait
+```
+
+该离线链路不是在线 AI 验收。仓库当前仍没有在线 provider、OCR 或图片生成适配，不能把 FixtureProvider 的成功结果解释为任意用户参考图已经通过真实模型分析。
+
+## 20. 方圆 Bake 与 Android 验证边界
+
 方圆 Bake 与 Android 验证边界：`project/assets` 会整体进入 APK assets，因此 `.fyb` 只有在明确作为首包发布资源时才放入 `project/assets`；普通 dry-run 产物留在被忽略的 `artifacts/`。当前最小验证顺序是先跑 `.\scripts\run-fangyuan-bake-dry-run.ps1`，再用 `MYBEVY_START_SCENE="dev.fangyuan_home"` 的手机比例窗口确认 RON 首包路径没有被破坏；如需覆盖缓存和后续下载边界，再运行 `cargo test fangyuan_blueprint_cache -- --nocapture`、`cargo test fangyuan_streaming_update -- --nocapture` 和 `cargo test fangyuan_cache_authority -- --nocapture`。完整 Android APK 构建按上面的 `cargo ndk` 和 `gradlew.bat assembleDebug` 命令在需要时单独执行。

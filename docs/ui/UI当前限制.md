@@ -110,7 +110,7 @@
 - Stage 4 已提供独立 `UiReferenceAnalysis`、Draft 2020-12 JSON Schema、输入结构预算和语义诊断，覆盖区域/元素图、标准预览坐标证据、布局行为、视觉种类、候选组件、文字/图片候选、证据来源和显式 uncertainty；该类型只存在于工具 crate，不属于正式 runtime/schema。纯解析结果仍不可信，只有与实际 `ProviderExecution`、`GenerationTask.visible_text` 派生的人工输入 ID/text 和 Stage 3 manifest 证据全部交叉匹配的 integrated parser 结果才拥有生成期来源证明。
 - Stage 5 已提供确定性 token、重复组件、布局约束、分阶段步骤和规划诊断；Stage 6 已提供正式 UI 资源的递归稳定 asset ID catalog、现有/程序化/授权裁切/重制/生成/占位六类策略、元素/资源用途兼容矩阵、结构化资源规格与生成 provenance、no-clobber run 内裁切，以及 PNG/JPEG/Android 草稿检查。catalog 中缺少授权资料的现有背景和 atlas 仍标记为 `unknown`，不会自动变为可裁切或可晋升资源。
 - 预处理不会猜测区域，也不执行未经验证的 ICC 色彩转换；每张参考图最多允许 64 个显式系统 UI 排除区。页面类参考图的“空白”判定只覆盖无可见像素或 visible RGBA 全通道变化不超过 2 的页面，纯色 detail 仍允许。当前只支持 PNG/JPEG，编码上限 64 MiB、单边上限 16384 px、解码像素上限 2400 万。
-- 在线 provider/OCR/图片生成适配，以及从用户参考图自动生成并落盘完整运行包，尚未实现。当前离线 fixture 已覆盖结构化生成/修复、预览审计、受控晋升与评测，但这些受控 API/fixture 不能被描述为真实线上模型或用户参考图验收。
+- 在线 provider/OCR/图片生成适配尚未实现。离线 `generate-fixture` 已能把真实任务、仓库自有参考图、结构化 fixture、生成/修复、预览和 sealed bundle 串成完整运行包，并可经显式 `promote` 进入正式路由；该证据不能被描述为真实线上模型或任意用户参考图的自动视觉分析。
 - 分析 cache、评测报告和 provider 统计都属于工具工程的被忽略运行产物；cache 精确绑定输入 hash、model、prompt、schema 和参数，支持显式失效。报告只允许输出脱敏后的聚合指标和稳定 failure code，不能记录 prompt、原始模型内容、账号文本、个人信息或凭据。
 - `TaskBudget` 对共享调用链设置调用、耗时、图片、输入/输出和估算成本硬上限；超过上限会停止。成本仅基于 provider 返回 usage 和配置单价的估算，不能替代供应商账单或线上验收。
 - 生成工具属于桌面/CI 开发工具，拥有独立 Cargo 根，只能单向依赖 `project::framework::ui::document::tooling`，不进入 `project` 正式依赖图，不注册进 `UiFrameworkPlugin`，也不由 Android `cargo ndk ... --lib` 构建。

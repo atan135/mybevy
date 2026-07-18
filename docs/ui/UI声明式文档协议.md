@@ -162,7 +162,7 @@ RON 只允许用于开发者人工维护且进入首包批准目录的资源。R
 | 测试和协议 fixture | `project/assets/ui/documents/fixtures/` | 仅 dev/test build |
 | effective document、报告和截图 metadata | `artifacts/ui-documents/runtime/` | 否，只是派生产物，不能反向当 source |
 
-draft 不得通过重命名或复制自动升级为 approved。批准步骤至少要固定 schema version、canonical hash、资源清单、budget profile 和 action allowlist 审核结果。未来参考图生成工具只能通过要求显式确认的受控 `promote` 流程，把通过校验和人工批准的 JSON、授权资源及必要确定性注册适配写入正式目录；该命令目前尚未实现。`summary/ui-generation/` 和 `artifacts/` 产物都不进入 APK 首包，晋升后的正式文件会随桌面和 Android 游戏包交付。
+draft 不得通过重命名或复制自动升级为 approved。批准步骤至少要固定 schema version、canonical hash、资源清单、budget profile 和 action allowlist 审核结果。参考图生成工具只能通过已实现且要求重复精确 plan hash 的 `promote` 流程，把通过校验和人工批准的 JSON、授权资源及 closed registration 审阅声明写入正式目录；游戏路由适配仍由游戏层显式实现。`summary/ui-generation/` 和 `artifacts/` 产物都不进入 APK 首包，晋升后的正式文件会随桌面和 Android 游戏包交付。
 
 首版仓库用 `project/assets/ui/documents/fixtures/minimal_page.v1.json` 保存协议 fixture。它用于后续 parser、schema、迁移和构建测试，不是已注册的正式业务页面。
 
