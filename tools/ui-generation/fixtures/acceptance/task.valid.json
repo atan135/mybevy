@@ -1,0 +1,61 @@
+{
+  "contract_version": 1,
+  "run_id": "acceptance-03-final-20260718-04",
+  "page_purpose": {
+    "summary": "Verify the offline reference-to-approved-page delivery path",
+    "audience": "UI developers",
+    "required_actions": [
+      "review the generated fixture page before promotion"
+    ]
+  },
+  "primary_reference": {
+    "reference_id": "primary",
+    "path": "reference.png",
+    "metadata": {
+      "original_size": {
+        "width": 128,
+        "height": 64
+      },
+      "orientation": "normal",
+      "color_space": "srgb",
+      "sha256": "3e6e037d35969b3e4413d35077cb81e142c9610e9ec09f5875e3e6ba361aa7db",
+      "provenance": {
+        "source": "Repository-authored copy of the visual foundation non-square fixture",
+        "authorization": "analysis_only",
+        "license_reference": "tools/ui-generation/fixtures/README.md"
+      }
+    }
+  },
+  "additional_references": [],
+  "target_viewport": {
+    "logical_width": 390.0,
+    "logical_height": 844.0,
+    "device_scale": 1.0
+  },
+  "visible_text": [
+    {
+      "text": "Start game",
+      "context": "Acceptance fixture title"
+    }
+  ],
+  "must_preserve": [
+    {
+      "description": "The title remains visible"
+    }
+  ],
+  "allowed_changes": {
+    "areas": [
+      "layout",
+      "spacing",
+      "decoration"
+    ],
+    "text_changes_allowed": false,
+    "protected_regions": [
+      "title"
+    ]
+  },
+  "visual_preferences": {
+    "decorative_treatment": "use_project_theme",
+    "surface_detail": "minimal"
+  }
+}

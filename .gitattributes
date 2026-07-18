@@ -27,3 +27,6 @@ project/assets/**/*.blend filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.psd filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.kra filter=lfs diff=lfs merge=lfs -text
 project/assets/**/*.spp filter=lfs diff=lfs merge=lfs -text
+
+# Repository-owned binary inputs for the development-only UI generation tool.
+tools/ui-generation/fixtures/**/*.png filter=lfs diff=lfs merge=lfs -text

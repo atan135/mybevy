@@ -1,7 +1,8 @@
 # UI generation fixtures
 
-This directory contains reviewable, repository-owned text fixtures for the development-only UI
-generation tool. `task.valid.json` is a contract example and intentionally references a nonexistent
+This directory contains reviewable, repository-owned fixtures for the development-only UI
+generation tool. Except for the documented analysis-only acceptance PNG below, the fixtures are
+text. `task.valid.json` is a contract example and intentionally references a nonexistent
 `reference.example.png`; no third-party or unlicensed binary reference image is committed for Stage
 1. Tests that exercise byte reads and SHA-256 verification create private temporary files.
 
@@ -9,10 +10,19 @@ Any future binary fixture must include its source, authorization, and license re
 metadata and follow the repository Git LFS rules. Tool fixtures must never be copied into
 `project/assets/` merely to make a generation test pass.
 
+`acceptance/reference.png` is a repository-authored analysis-only copy of
+`project/assets/ui/fixtures/visual-foundation/non-square-2x1.png`. The original is documented as a
+repository-authored CC0 UI fixture in `project/assets/ui/fixtures/LICENSES.md`; the copy remains
+under the same CC0 grant, is managed by Git LFS, and exists only so the offline acceptance input is
+owned by the tool crate instead of an Android asset source set. It must not be promoted or copied
+into `project/assets/` by the generation workflow. `acceptance/task.valid.json` records its exact
+dimensions, SHA-256, `analysis_only` authorization, and this license reference.
+
 `providers/` contains non-sensitive, text-only provider response fixtures owned by this repository.
 They exercise valid structured output, malformed output, a deliberately over-budget result for a
 later validator, and an interrupted request. The fixtures contain neither credentials nor copied
 model responses; their payloads were authored specifically for automated tests.
+`providers/generation.valid.json` is the structured-generation half of the offline acceptance run.
 
 `preprocess.options.json` is a text-only Stage 3 options example. Every rectangle is expressed in
 the full EXIF-normalized image's top-left pixel-edge coordinate system; no region is inferred from

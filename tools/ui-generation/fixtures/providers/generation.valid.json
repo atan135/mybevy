@@ -1,0 +1,63 @@
+{
+  "fixture_version": 1,
+  "case": "valid",
+  "source": {
+    "description": "Repository-authored structured generation response used by the offline acceptance pipeline.",
+    "authored_for_tests": true,
+    "contains_sensitive_data": false
+  },
+  "provider": {
+    "id": "fixture-generation",
+    "capabilities": {
+      "image_input": false,
+      "structured_output": true,
+      "max_image_count": 0,
+      "operations": ["structured_generation"]
+    }
+  },
+  "expected_operation": "structured_generation",
+  "outcome": {
+    "kind": "success",
+    "schema": {
+      "schema_id": "ui-document-generation",
+      "schema_version": 1
+    },
+    "value": {
+      "document": {
+        "schema_version": 1,
+        "document_id": "generated.acceptance_fixture",
+        "metadata": {
+          "title": "Generated acceptance fixture",
+          "budget_profile": "mobile_baseline_v1"
+        },
+        "assets": {},
+        "tokens": {},
+        "root": {
+          "type": "container",
+          "id": "page.root",
+          "layout": {
+            "direction": "column",
+            "width": { "percent": 100 },
+            "height": { "percent": 100 }
+          },
+          "style": { "role": "page" },
+          "children": [
+            {
+              "type": "text",
+              "id": "page.title",
+              "content": { "literal": "Start game" },
+              "style": { "text_role": "title" }
+            }
+          ]
+        }
+      },
+      "assumptions": [],
+      "unimplemented_states": [],
+      "required_new_components": [],
+      "unsupported_capabilities": []
+    },
+    "server_request_id": "fixture-generation-001",
+    "input_units": 16,
+    "output_units": 12
+  }
+}
