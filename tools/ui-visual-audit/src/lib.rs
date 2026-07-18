@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod comparison;
+pub mod gate;
 pub mod metrics;
 pub mod normalization;
 pub mod reference_manifest;
@@ -27,6 +28,13 @@ pub use comparison::{
     ComparisonOutcome, ComparisonReport, ComparisonRequest, ComparisonStatus, ConfigInputReport,
     DimensionsReport, EXACT_RGBA_ALGORITHM_VERSION, ExactMetrics, FailureType, ImageInputReport,
     RegionResult, compare_images,
+};
+pub use gate::{
+    GateBundle, GateConfig, GateExitCode, GateFailureType, GateOutcome, GateRequest, GateState,
+    VISUAL_GATE_ALGORITHM_VERSION, VISUAL_GATE_BUNDLE_SCHEMA_VERSION,
+    VISUAL_GATE_CONFIG_SCHEMA_VERSION, VISUAL_GATE_PEAK_MEMORY_BUDGET_BYTES,
+    VISUAL_GATE_REPORT_FILENAME, VISUAL_GATE_REPORT_SCHEMA_VERSION, VisualGateReport,
+    evaluate_visual_gate,
 };
 pub use metrics::{
     DIFF_METRICS_ALGORITHM_VERSION, DIFF_METRICS_CONFIG_SCHEMA_VERSION,

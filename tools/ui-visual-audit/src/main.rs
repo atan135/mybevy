@@ -3,9 +3,9 @@ use serde::Serialize;
 use std::{io::Write, path::PathBuf};
 use ui_visual_audit::{
     AiAnalysisRequest, ComparisonError, ComparisonErrorResponse, ComparisonRequest,
-    DiffAnalysisRequest, ManifestError, NormalizationRequest, RegionAuditRequest,
+    DiffAnalysisRequest, GateRequest, ManifestError, NormalizationRequest, RegionAuditRequest,
     SemanticAuditRequest, analyze_aligned_diff, analyze_with_ai, audit_regions, audit_semantics,
-    compare_images, load_and_validate_manifest, normalize_and_align,
+    compare_images, evaluate_visual_gate, load_and_validate_manifest, normalize_and_align,
 };
 
 #[derive(Debug, Parser)]
@@ -119,6 +119,21 @@ enum Command {
     },
     /// Run an explicitly configured fixture, mock, or online AI visual-analysis provider.
     AnalyzeAi {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long, required = true)]
+        allowed_input_root: Vec<PathBuf>,
+        #[arg(long)]
+        allowed_output_root: PathBuf,
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+    },
+    /// Merge deterministic reports and optional AI issues into the strict four-state gate.
+    EvaluateGate {
         #[arg(long)]
         repository_root: PathBuf,
         #[arg(long, required = true)]
@@ -350,6 +365,34 @@ fn run() -> i32 {
                 },
                 Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
                     format!("AI analysis report cannot be serialized for stdout: {error}"),
+                )),
+            },
+            Err(error) => exit_with_comparison_error(error),
+        },
+        Command::EvaluateGate {
+            repository_root,
+            allowed_input_root,
+            allowed_output_root,
+            bundle,
+            config,
+            output_directory,
+        } => match evaluate_visual_gate(&GateRequest {
+            repository_root,
+            allowed_input_roots: allowed_input_root,
+            allowed_output_root,
+            bundle,
+            config,
+            output_directory,
+        }) {
+            Ok(outcome) => match serde_json::to_vec_pretty(&outcome.report) {
+                Ok(bytes) => match std::io::stdout().lock().write_all(&bytes) {
+                    Ok(()) => outcome.exit_code.as_i32(),
+                    Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
+                        format!("visual gate report cannot be written to stdout: {error}"),
+                    )),
+                },
+                Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
+                    format!("visual gate report cannot be serialized for stdout: {error}"),
                 )),
             },
             Err(error) => exit_with_comparison_error(error),

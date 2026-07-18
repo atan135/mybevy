@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "fixture_id": "stage09-human-labeled-boundaries-v1",
+  "scope": "Sixteen repository-maintainer labels over all six profile metrics plus synthetic threshold and precedence cases derived from the committed UI audit fixtures. This is a deterministic engineering fixture, not a user study or production distribution.",
+  "profile": "repository-fixture-balanced",
+  "false_positive_count": 0,
+  "false_negative_count": 0,
+  "misclassification_count": 0,
+  "false_positive_definition": "The actual four-state rank is more restrictive than the expected rank: passed < needs_review < failed < invalid.",
+  "false_negative_definition": "The actual four-state rank is less restrictive than the expected rank: passed < needs_review < failed < invalid.",
+  "adjustment_rationale": "Critical alpha and large-area tolerances remain zero; normal antialias-scale differences use a 5% ceiling; decorative-only misses are routed to review. Severe and medium AI labels block, while minor labels remain report-only.",
+  "cases": [
+    {"case_id":"threshold_equal","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"normal","metric":"raw_changed_ratio_millionths","observed_millionths":50000,"expected_profile_threshold_millionths":50000,"ai_severity":null,"expected_state":"passed"},
+    {"case_id":"threshold_plus_one_critical","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"critical","metric":"raw_changed_ratio_millionths","observed_millionths":1001,"expected_profile_threshold_millionths":1000,"ai_severity":null,"expected_state":"failed"},
+    {"case_id":"threshold_plus_one_normal","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"normal","metric":"raw_changed_ratio_millionths","observed_millionths":50001,"expected_profile_threshold_millionths":50000,"ai_severity":null,"expected_state":"failed"},
+    {"case_id":"threshold_plus_one_decorative","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"decorative","metric":"raw_changed_ratio_millionths","observed_millionths":150001,"expected_profile_threshold_millionths":150000,"ai_severity":null,"expected_state":"needs_review"},
+    {"case_id":"dimension_over_everything","dimension_hard_failure":true,"semantic_hard_failure":true,"region_level":"critical","metric":"raw_changed_ratio_millionths","observed_millionths":1000000,"expected_profile_threshold_millionths":1000,"ai_severity":"severe","expected_state":"failed"},
+    {"case_id":"semantic_hard_failure","dimension_hard_failure":false,"semantic_hard_failure":true,"region_level":"decorative","metric":"raw_changed_ratio_millionths","observed_millionths":0,"expected_profile_threshold_millionths":150000,"ai_severity":"minor","expected_state":"failed"},
+    {"case_id":"ai_severe","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"normal","metric":"raw_changed_ratio_millionths","observed_millionths":0,"expected_profile_threshold_millionths":50000,"ai_severity":"severe","expected_state":"failed"},
+    {"case_id":"ai_medium","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"normal","metric":"raw_changed_ratio_millionths","observed_millionths":0,"expected_profile_threshold_millionths":50000,"ai_severity":"medium","expected_state":"failed"},
+    {"case_id":"ai_minor","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"normal","metric":"raw_changed_ratio_millionths","observed_millionths":0,"expected_profile_threshold_millionths":50000,"ai_severity":"minor","expected_state":"passed"},
+    {"case_id":"one_bad_region_cannot_average","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"critical","metric":"raw_changed_ratio_millionths","observed_millionths":1001,"expected_profile_threshold_millionths":1000,"ai_severity":"minor","expected_state":"failed"},
+    {"case_id":"critical_alpha_plus_one","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"critical","metric":"alpha_changed_ratio_millionths","observed_millionths":1,"expected_profile_threshold_millionths":0,"ai_severity":null,"expected_state":"failed"},
+    {"case_id":"normal_tolerated_plus_one","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"normal","metric":"tolerated_changed_ratio_millionths","observed_millionths":50001,"expected_profile_threshold_millionths":50000,"ai_severity":null,"expected_state":"failed"},
+    {"case_id":"normal_ssim_below_one","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"normal","metric":"ssim_millionths","observed_millionths":949999,"expected_profile_threshold_millionths":950000,"ai_severity":null,"expected_state":"failed"},
+    {"case_id":"decorative_geometry_plus_one","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"decorative","metric":"geometry_changed_ratio_millionths","observed_millionths":250001,"expected_profile_threshold_millionths":250000,"ai_severity":null,"expected_state":"needs_review"},
+    {"case_id":"critical_large_area_plus_one","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"critical","metric":"large_area_ratio_millionths","observed_millionths":1,"expected_profile_threshold_millionths":0,"ai_severity":null,"expected_state":"failed"},
+    {"case_id":"clean","dimension_hard_failure":false,"semantic_hard_failure":false,"region_level":"normal","metric":"raw_changed_ratio_millionths","observed_millionths":0,"expected_profile_threshold_millionths":50000,"ai_severity":null,"expected_state":"passed"}
+  ]
+}

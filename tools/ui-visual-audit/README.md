@@ -210,3 +210,26 @@ cargo test --manifest-path tools/ui-visual-audit/Cargo.toml ai::tests::explicit_
 ```
 
 Do not run the online sample on captures containing production account data or unreviewed personal text. The repository fixture and mock never make network requests.
+
+## Four-state visual gate
+
+`evaluate-gate` is the strict `ui_visual_gate_v1` aggregation boundary. A gate bundle binds every upstream report by path and lowercase SHA-256, then cross-checks the diff schema v2, region schema v1, semantic schema v3, and optional AI schema v1 protocol versions. It also checks aligned image hashes, dimensions, reference binding, region result/weight consistency, semantic finding counts and separation flags, AI source image hashes, and exact preservation of deterministic semantic hard failures. A malformed or forged evidence chain produces the terminal state `invalid`; it is never treated as an ordinary visual failure.
+
+```powershell
+cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- evaluate-gate `
+  --repository-root . `
+  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-input-root tools/ui-visual-audit/fixtures `
+  --allowed-output-root project/target/ui-visual-audit `
+  --bundle <ui-visual-gate-bundle.json> `
+  --config tools/ui-visual-audit/fixtures/gate/conservative.config.json `
+  --output-directory project/target/ui-visual-audit/<new-gate-run>
+```
+
+The terminal states and process exit codes are `passed`/`0`, `needs_review`/`3`, `failed`/`4`, and `invalid`/`2`. Stable primary failure priority is invalid evidence, dimension mismatch, semantic hard failure, critical-region failure, severe AI issue, normal-region failure, medium AI issue, then decorative-region review. Severe and medium AI issues block; minor issues are retained but never block automatically. Critical and normal region failures block independently, while a decorative-only failure requests review. AI is optional and cannot downgrade deterministic evidence.
+
+Each capture uses the Stage 8 identity `capture_id == screen.device.state`, names a reference profile, and binds its baseline; duplicate identities are rejected. `reference_profiles` may provide a complete six-metric threshold set for that exact binding; otherwise the strict `conservative_default` applies and the report records that fallback. Critical thresholds cannot be looser than normal, and normal cannot be looser than decorative. Maximum thresholds are inclusive, as is minimum SSIM. Every region retains raw, alpha, tolerated, SSIM, geometry, and large-area measurements; the applied profile threshold; profile violations; and separate upstream Stage 6 status/violations. Only the selected Stage 9 profile violations decide the gate. Upstream local results remain diagnostic and cannot silently make a deliberately relaxed reference profile fail. The diagnostic per-region quality floor is reported only to aid inspection. There is no global numeric score and no weighted average can hide a failed region.
+
+`fixtures/gate/human-labeled-cases.json` contains sixteen repository-maintainer labels covering all six profile metrics plus deterministic synthetic boundary and precedence cases. It records zero false positives, zero false negatives, and zero four-state misclassifications for this fixture and defines the state ranking used by those counts. The test loads `fixtures/gate/conservative.config.json`, requires a unique bidirectional profile/calibration fixture link, derives each case threshold from the formal profile and named metric, pins the recorded threshold, and asserts the exact terminal state case by case. Its scope is deliberately narrow: it is an engineering regression set derived from committed fixtures, not a user study, production sample, or claim that thresholds are universally calibrated.
+
+Gate config, bundle, and reports use strict unknown-field rejection. Capture/profile/count/string sizes, individual report bytes, and total evidence bytes are bounded. Output uses a new isolated directory and create-new temporary file plus no-clobber finalization; rerunning into an existing destination fails without changing its report.

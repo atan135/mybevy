@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "algorithm_version": "ui_visual_gate_v1",
+  "conservative_default": {
+    "critical": {
+      "max_raw_changed_ratio_millionths": 0,
+      "max_alpha_changed_ratio_millionths": 0,
+      "max_tolerated_changed_ratio_millionths": 0,
+      "minimum_ssim_millionths": 1000000,
+      "max_geometry_changed_ratio_millionths": 0,
+      "max_large_area_ratio_millionths": 0
+    },
+    "normal": {
+      "max_raw_changed_ratio_millionths": 25000,
+      "max_alpha_changed_ratio_millionths": 5000,
+      "max_tolerated_changed_ratio_millionths": 25000,
+      "minimum_ssim_millionths": 975000,
+      "max_geometry_changed_ratio_millionths": 50000,
+      "max_large_area_ratio_millionths": 25000
+    },
+    "decorative": {
+      "max_raw_changed_ratio_millionths": 100000,
+      "max_alpha_changed_ratio_millionths": 50000,
+      "max_tolerated_changed_ratio_millionths": 100000,
+      "minimum_ssim_millionths": 900000,
+      "max_geometry_changed_ratio_millionths": 150000,
+      "max_large_area_ratio_millionths": 100000
+    }
+  },
+  "reference_profiles": [
+    {
+      "profile_id": "repository-fixture-balanced",
+      "reference_binding": {
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "revision": 1
+      },
+      "thresholds": {
+        "critical": {
+          "max_raw_changed_ratio_millionths": 1000,
+          "max_alpha_changed_ratio_millionths": 0,
+          "max_tolerated_changed_ratio_millionths": 1000,
+          "minimum_ssim_millionths": 999000,
+          "max_geometry_changed_ratio_millionths": 1000,
+          "max_large_area_ratio_millionths": 0
+        },
+        "normal": {
+          "max_raw_changed_ratio_millionths": 50000,
+          "max_alpha_changed_ratio_millionths": 10000,
+          "max_tolerated_changed_ratio_millionths": 50000,
+          "minimum_ssim_millionths": 950000,
+          "max_geometry_changed_ratio_millionths": 100000,
+          "max_large_area_ratio_millionths": 50000
+        },
+        "decorative": {
+          "max_raw_changed_ratio_millionths": 150000,
+          "max_alpha_changed_ratio_millionths": 75000,
+          "max_tolerated_changed_ratio_millionths": 150000,
+          "minimum_ssim_millionths": 850000,
+          "max_geometry_changed_ratio_millionths": 250000,
+          "max_large_area_ratio_millionths": 150000
+        }
+      },
+      "calibration_fixture_id": "stage09-human-labeled-boundaries-v1",
+      "adjustment_rationale": "The fixture profile permits the repository's explicitly labeled small antialias and decorative cases while retaining zero alpha and large-area tolerance for critical UI. It is not a production-population calibration."
+    }
+  ]
+}

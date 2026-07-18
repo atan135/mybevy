@@ -175,6 +175,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - `semantic_tree.panels` 应能证明 active focus scope、focus suppression、Pickable 和 `UiInputState` 阻断。Loading 无可聚焦控件时焦点必须清空；Modal 上方只允许受控 Dropdown/Tooltip transient 层；Toast 不得阻断或捕获焦点。
 - `ui_semantic_audit_v1` 的 hard failure 与视觉相似度、局部分数分开，高相似度不得抵消裁切、不可点击、滚动不可达或覆盖层输入错误；总四态门禁仍由后续聚合阶段负责。
 - `ui_ai_visual_analysis_v1` 的每个 capture 必须同时绑定 reference、actual、overlay、heatmap、diff report、区域指标、semantic report schema v3、原始 UI metadata hash、允许差异和 privacy rect；diff artifact hash 与 region binding 任一错配都必须在 provider 调用前失败。图片先读取 header 并预留解码像素/字节预算，再对同一快照执行受限完整解码。在线 provider 只接收语义文本框与显式 privacy rect 遮罩后的内存图片副本；可见且未完全裁切的文本缺少有效 measured bounds 时拒绝上传。敏感 metadata 值按固定数量、单值字节和总字节上限去重收集，ASCII echo 不区分大小写、非 ASCII echo 精确匹配，结构 ID/路径保持可追踪。HTTP 禁止重定向并限制输出 token。AI 引用的 capture/image/region/node/file 必须可反查；报告没有 pass/降级 deterministic hard failure 的字段，且生成模型与审核模型独立记录。
+- `ui_visual_gate_v1` 只消费由 path + SHA-256 绑定并通过版本、尺寸、aligned image hash、reference binding 和 hard-failure 保留校验的上游报告；capture 必须沿用唯一的 `capture_id == screen.device.state`。四态为 `passed`、`failed`、`needs_review` 和 `invalid`：证据无效优先于尺寸/语义 hard failure，随后依次保留 critical、AI severe、normal、AI medium 和 decorative review。critical/normal、AI severe/medium 阻断，decorative-only 进入人工复核，AI minor 仅报告。每个 reference profile 可覆盖完整六项区域阈值，未匹配时使用保守默认；Stage 6 local status/violations 作为独立 upstream diagnostics，不参与 selected profile 的 Stage 9 决策。每个区域的正式 profile 指标、阈值、违规项和决定都独立输出，不生成可掩盖局部失败的全局平均分。
 
 失败报告需要能定位：
 
