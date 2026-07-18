@@ -2,6 +2,7 @@ pub mod comparison;
 pub mod metrics;
 pub mod normalization;
 pub mod reference_manifest;
+pub mod regions;
 
 pub use comparison::{
     ArtifactReport, COMPARISON_CONFIG_SCHEMA_VERSION, COMPARISON_REPORT_FILENAME,
@@ -31,4 +32,14 @@ pub use reference_manifest::{
     ReferenceImage, ReferenceKey, ReferenceManifest, ReferenceProvenance, ReferenceStorage,
     ResolvedReference, ValidatedReferenceManifest, Viewport, load_and_validate_manifest,
     parse_and_validate_manifest, validate_baseline_update, validate_manifest,
+};
+pub use regions::{
+    AuditRegionDeclaration, AuditRegionSource, AuditScope, BoundsSource, BoundsSourceKind,
+    ClippingPolicy, CoordinateSpace, DifferenceLocation, IgnoreRegionDeclaration,
+    IgnoreRegionResult, PixelPoint, REGION_AUDIT_ALGORITHM_VERSION,
+    REGION_AUDIT_CONFIG_SCHEMA_VERSION, REGION_AUDIT_REPORT_FILENAME,
+    REGION_AUDIT_REPORT_SCHEMA_VERSION, ReferenceBinding, RegionArtifactReport, RegionAuditConfig,
+    RegionAuditOutcome, RegionAuditReport, RegionAuditRequest, RegionAuditResult, RegionLevel,
+    RegionLocalStatus, RegionShape, RegionThreshold, SemanticRole, ThresholdProfiles,
+    ThresholdViolation, WeightSummary, audit_regions,
 };

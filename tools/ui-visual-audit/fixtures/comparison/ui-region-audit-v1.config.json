@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "algorithm_version": "ui_region_audit_v1",
+  "reference_binding": {
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "revision": 1
+  },
+  "audit_scope": "declared_regions_only",
+  "maximum_ignored_ratio_millionths": 100000,
+  "threshold_profiles": {
+    "critical": {
+      "weight": 100,
+      "max_raw_changed_ratio_millionths": 0,
+      "max_alpha_changed_ratio_millionths": 0,
+      "max_tolerated_changed_ratio_millionths": 0,
+      "minimum_ssim_millionths": 1000000,
+      "max_geometry_changed_ratio_millionths": 0,
+      "max_large_area_ratio_millionths": 0
+    },
+    "normal": {
+      "weight": 40,
+      "max_raw_changed_ratio_millionths": 50000,
+      "max_alpha_changed_ratio_millionths": 10000,
+      "max_tolerated_changed_ratio_millionths": 50000,
+      "minimum_ssim_millionths": 950000,
+      "max_geometry_changed_ratio_millionths": 100000,
+      "max_large_area_ratio_millionths": 50000
+    },
+    "decorative": {
+      "weight": 10,
+      "max_raw_changed_ratio_millionths": 200000,
+      "max_alpha_changed_ratio_millionths": 100000,
+      "max_tolerated_changed_ratio_millionths": 200000,
+      "minimum_ssim_millionths": 800000,
+      "max_geometry_changed_ratio_millionths": 300000,
+      "max_large_area_ratio_millionths": 200000
+    }
+  },
+  "bounds_sources": [
+    {
+      "source_kind": "reference_element",
+      "source_id": "hud.score_text",
+      "coordinate_space": "reference_original",
+      "bounds": { "x": 0, "y": 0, "width": 8, "height": 8 }
+    },
+    {
+      "source_kind": "declarative_node",
+      "source_id": "hud.action_button",
+      "coordinate_space": "actual_original",
+      "bounds": { "x": 4, "y": 4, "width": 8, "height": 8 }
+    }
+  ],
+  "regions": [
+    {
+      "region_id": "score",
+      "label": "Score text",
+      "semantic_role": "key_text",
+      "level": "critical",
+      "clipping": "reject_out_of_bounds",
+      "source": {
+        "kind": "bounds_source",
+        "source_kind": "reference_element",
+        "source_id": "hud.score_text"
+      }
+    },
+    {
+      "region_id": "action",
+      "label": "Action button",
+      "semantic_role": "key_button",
+      "level": "critical",
+      "clipping": "reject_out_of_bounds",
+      "source": {
+        "kind": "bounds_source",
+        "source_kind": "declarative_node",
+        "source_id": "hud.action_button"
+      }
+    },
+    {
+      "region_id": "content",
+      "label": "HUD content",
+      "semantic_role": "content",
+      "level": "normal",
+      "clipping": "reject_out_of_bounds",
+      "source": {
+        "kind": "manual",
+        "coordinate_space": "aligned",
+        "shape": {
+          "kind": "rectangle",
+          "bounds": { "x": 10, "y": 0, "width": 4, "height": 4 }
+        }
+      }
+    },
+    {
+      "region_id": "frame",
+      "label": "Decorative frame",
+      "semantic_role": "decoration",
+      "level": "decorative",
+      "clipping": "clip_to_aligned",
+      "source": {
+        "kind": "manual",
+        "coordinate_space": "aligned",
+        "shape": {
+          "kind": "polygon",
+          "points": [
+            { "x": 12, "y": 12 },
+            { "x": 18, "y": 12 },
+            { "x": 18, "y": 18 },
+            { "x": 12, "y": 18 }
+          ]
+        }
+      }
+    }
+  ],
+  "ignore_regions": [
+    {
+      "ignore_id": "clock",
+      "reason": "Clock is populated from the live device at capture time",
+      "reference_binding": {
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "revision": 1
+      },
+      "coordinate_space": "reference_original",
+      "clipping": "reject_out_of_bounds",
+      "shape": {
+        "kind": "rectangle",
+        "bounds": { "x": 0, "y": 0, "width": 4, "height": 4 }
+      }
+    },
+    {
+      "ignore_id": "avatar_animation",
+      "reason": "Animated avatar pixels are covered by a reviewed binary mask",
+      "reference_binding": {
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "revision": 1
+      },
+      "coordinate_space": "aligned",
+      "clipping": "reject_out_of_bounds",
+      "shape": {
+        "kind": "mask_image",
+        "path": "inputs/dynamic-mask.png",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ]
+}

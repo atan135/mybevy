@@ -274,16 +274,16 @@ pub struct DiffAnalysisOutcome {
     pub exit_code: ComparisonExitCode,
 }
 
-struct DecodedAlignedInput {
-    report: ImageInputReport,
-    rgba: RgbaImage,
+pub(crate) struct DecodedAlignedInput {
+    pub(crate) report: ImageInputReport,
+    pub(crate) rgba: RgbaImage,
 }
 
-struct ComputedDiff {
-    metrics: DiffMetrics,
-    raw_changed: Vec<bool>,
-    tolerated_changed: Vec<bool>,
-    max_diff: Vec<u8>,
+pub(crate) struct ComputedDiff {
+    pub(crate) metrics: DiffMetrics,
+    pub(crate) raw_changed: Vec<bool>,
+    pub(crate) tolerated_changed: Vec<bool>,
+    pub(crate) max_diff: Vec<u8>,
 }
 
 struct EncodedArtifact {
@@ -377,7 +377,8 @@ pub fn analyze_aligned_diff(
         });
     }
 
-    let computed = compute_diff(&reference.rgba, &actual.rgba, &config);
+    let included = vec![true; reference.rgba.len() / 4];
+    let computed = compute_masked_diff(&reference.rgba, &actual.rgba, &config, &included)?;
     let encoded = render_artifacts(
         &reference.rgba,
         &actual.rgba,
@@ -452,7 +453,7 @@ fn determinism_parameters(config: &DiffMetricsConfig) -> DeterminismParameters {
     }
 }
 
-fn load_config(path: &Path) -> Result<DiffMetricsConfig, ComparisonError> {
+pub(crate) fn load_config(path: &Path) -> Result<DiffMetricsConfig, ComparisonError> {
     let metadata = fs::metadata(path).map_err(|error| {
         ComparisonError::input(
             ComparisonErrorCode::ConfigReadFailed,
@@ -502,7 +503,7 @@ fn load_config(path: &Path) -> Result<DiffMetricsConfig, ComparisonError> {
     Ok(config)
 }
 
-fn decode_aligned_png(path: &Path) -> Result<DecodedAlignedInput, ComparisonError> {
+pub(crate) fn decode_aligned_png(path: &Path) -> Result<DecodedAlignedInput, ComparisonError> {
     let metadata = fs::metadata(path).map_err(|error| {
         ComparisonError::input(
             ComparisonErrorCode::InputMissing,
@@ -645,7 +646,10 @@ fn validate_aligned_png_contract(path: &Path, bytes: &[u8]) -> Result<(), Compar
     .at_path(path))
 }
 
-fn validate_pixel_budget(reference: PixelSize, actual: PixelSize) -> Result<u64, ComparisonError> {
+pub(crate) fn validate_pixel_budget(
+    reference: PixelSize,
+    actual: PixelSize,
+) -> Result<u64, ComparisonError> {
     let mut largest = 0_u64;
     let total = [reference, actual]
         .into_iter()
@@ -726,12 +730,28 @@ fn ensure_outputs_do_not_alias_inputs(
     Ok(())
 }
 
-fn compute_diff(
+pub(crate) fn compute_masked_diff(
     reference: &RgbaImage,
     actual: &RgbaImage,
     config: &DiffMetricsConfig,
-) -> ComputedDiff {
-    let pixel_count = u64::from(reference.width()) * u64::from(reference.height());
+    included: &[bool],
+) -> Result<ComputedDiff, ComparisonError> {
+    let image_pixel_count = u64::from(reference.width()) * u64::from(reference.height());
+    if reference.dimensions() != actual.dimensions()
+        || included.len() != usize::try_from(image_pixel_count).unwrap_or(usize::MAX)
+    {
+        return Err(ComparisonError::internal(
+            ComparisonErrorCode::InternalFailure,
+            "masked metric inputs have inconsistent dimensions",
+        ));
+    }
+    let pixel_count = included.iter().filter(|value| **value).count() as u64;
+    if pixel_count == 0 {
+        return Err(ComparisonError::input(
+            ComparisonErrorCode::RegionEmpty,
+            "masked metric selection must contain at least one pixel",
+        ));
+    }
     let reference_luma = composited_luma(reference);
     let actual_luma = composited_luma(actual);
     let reference_edges = sobel_edges(
@@ -749,9 +769,9 @@ fn compute_diff(
     let mut sums = [0_u64; 4];
     let mut maxima = [0_u8; 4];
     let mut channel_over = [0_u64; 4];
-    let mut raw_changed = vec![false; pixel_count as usize];
-    let mut tolerated_changed = vec![false; pixel_count as usize];
-    let mut max_diff = vec![0_u8; pixel_count as usize];
+    let mut raw_changed = vec![false; image_pixel_count as usize];
+    let mut tolerated_changed = vec![false; image_pixel_count as usize];
+    let mut max_diff = vec![0_u8; image_pixel_count as usize];
     let mut changed_pixels = 0_u64;
     let mut over_threshold_pixels = 0_u64;
     let mut alpha_changed = 0_u64;
@@ -768,6 +788,9 @@ fn compute_diff(
     for (index, (reference_pixel, actual_pixel)) in
         reference.pixels().zip(actual.pixels()).enumerate()
     {
+        if !included[index] {
+            continue;
+        }
         let mut diffs = [0_u8; 4];
         for channel in 0..4 {
             let difference = reference_pixel[channel].abs_diff(actual_pixel[channel]);
@@ -840,6 +863,7 @@ fn compute_diff(
     let total_sum = sums.iter().sum::<u64>();
     let large_area = large_area_metrics(
         &tolerated_changed,
+        included,
         reference.width(),
         reference.height(),
         config,
@@ -850,8 +874,9 @@ fn compute_diff(
         reference.width(),
         reference.height(),
         usize::from(config.ssim_window_size),
+        included,
     );
-    ComputedDiff {
+    Ok(ComputedDiff {
         metrics: DiffMetrics {
             raw: RawDiffMetrics {
                 evaluated_pixels: pixel_count,
@@ -928,7 +953,7 @@ fn compute_diff(
         raw_changed,
         tolerated_changed,
         max_diff,
-    }
+    })
 }
 
 fn channel_metrics(
@@ -989,6 +1014,7 @@ fn windowed_ssim_millionths(
     width: u32,
     height: u32,
     window: usize,
+    included: &[bool],
 ) -> (i32, u64) {
     let mut score_sum = 0_i64;
     let mut windows = 0_u64;
@@ -1005,6 +1031,9 @@ fn windowed_ssim_millionths(
             for y in top..bottom {
                 for x in left..right {
                     let index = y * width as usize + x;
+                    if !included[index] {
+                        continue;
+                    }
                     let xv = i128::from(reference[index]);
                     let yv = i128::from(actual[index]);
                     sx += xv;
@@ -1014,6 +1043,9 @@ fn windowed_ssim_millionths(
                     sxy += xv * yv;
                     count += 1;
                 }
+            }
+            if count == 0 {
+                continue;
             }
             // C1=(0.01*255)^2=65025/10000 and C2=(0.03*255)^2=585225/10000.
             let luminance_numerator = 20_000 * sx * sy + 65_025 * count * count;
@@ -1038,11 +1070,12 @@ fn windowed_ssim_millionths(
 
 fn large_area_metrics(
     mask: &[bool],
+    included: &[bool],
     width: u32,
     height: u32,
     config: &DiffMetricsConfig,
 ) -> LargeAreaDifferenceMetrics {
-    let pixel_count = u64::from(width) * u64::from(height);
+    let pixel_count = included.iter().filter(|value| **value).count() as u64;
     let ratio_minimum = divide_round(
         pixel_count.saturating_mul(u64::from(config.large_area_min_ratio_millionths)),
         1_000_000,
@@ -1353,11 +1386,11 @@ mod tests {
         let identity = vec![128_u8; 64];
         let shifted = vec![138_u8; 64];
         assert_eq!(
-            windowed_ssim_millionths(&identity, &identity, 8, 8, 8),
+            windowed_ssim_millionths(&identity, &identity, 8, 8, 8, &[true; 64]),
             (1_000_000, 1)
         );
         assert_eq!(
-            windowed_ssim_millionths(&identity, &shifted, 8, 8, 8),
+            windowed_ssim_millionths(&identity, &shifted, 8, 8, 8, &[true; 64]),
             (997_178, 1)
         );
     }

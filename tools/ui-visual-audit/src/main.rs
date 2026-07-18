@@ -3,8 +3,8 @@ use serde::Serialize;
 use std::{io::Write, path::PathBuf};
 use ui_visual_audit::{
     ComparisonError, ComparisonErrorResponse, ComparisonRequest, DiffAnalysisRequest,
-    ManifestError, NormalizationRequest, analyze_aligned_diff, compare_images,
-    load_and_validate_manifest, normalize_and_align,
+    ManifestError, NormalizationRequest, RegionAuditRequest, analyze_aligned_diff, audit_regions,
+    compare_images, load_and_validate_manifest, normalize_and_align,
 };
 
 #[derive(Debug, Parser)]
@@ -77,6 +77,27 @@ enum Command {
         actual: PathBuf,
         #[arg(long)]
         config: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+    },
+    /// Apply explicit include/exclude regions and local weighted rules to aligned inputs.
+    AuditRegions {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long, required = true)]
+        allowed_input_root: Vec<PathBuf>,
+        #[arg(long)]
+        allowed_output_root: PathBuf,
+        #[arg(long)]
+        reference: PathBuf,
+        #[arg(long)]
+        actual: PathBuf,
+        #[arg(long)]
+        diff_config: PathBuf,
+        #[arg(long)]
+        region_config: PathBuf,
+        #[arg(long)]
+        normalization_report: PathBuf,
         #[arg(long)]
         output_directory: PathBuf,
     },
@@ -208,6 +229,40 @@ fn run() -> i32 {
                 },
                 Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
                     format!("diff analysis report cannot be serialized for stdout: {error}"),
+                )),
+            },
+            Err(error) => exit_with_comparison_error(error),
+        },
+        Command::AuditRegions {
+            repository_root,
+            allowed_input_root,
+            allowed_output_root,
+            reference,
+            actual,
+            diff_config,
+            region_config,
+            normalization_report,
+            output_directory,
+        } => match audit_regions(&RegionAuditRequest {
+            repository_root,
+            allowed_input_roots: allowed_input_root,
+            allowed_output_root,
+            reference,
+            actual,
+            diff_config,
+            region_config,
+            normalization_report,
+            output_directory,
+        }) {
+            Ok(outcome) => match serde_json::to_vec_pretty(&outcome.report) {
+                Ok(bytes) => match std::io::stdout().lock().write_all(&bytes) {
+                    Ok(()) => outcome.exit_code.as_i32(),
+                    Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
+                        format!("region audit report cannot be written to stdout: {error}"),
+                    )),
+                },
+                Err(error) => exit_with_comparison_error(ComparisonError::internal_failure(
+                    format!("region audit report cannot be serialized for stdout: {error}"),
                 )),
             },
             Err(error) => exit_with_comparison_error(error),

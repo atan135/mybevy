@@ -127,3 +127,31 @@ Every category records counts, ratios, and dominant bounds where applicable. Pro
 Before allocating metric and artifact work buffers, the tool computes the same conservative peak estimate written to the report: `pixel_count * 64 + 4 MiB`, using checked integer arithmetic. Runs above the public 512 MiB `DIFF_METRICS_PEAK_MEMORY_BUDGET_BYTES` limit fail as `image_too_large`; the estimate and budget cannot drift because validation returns the exact value later serialized. Reports mark this as `estimated_not_os_measured`. Elapsed milliseconds cover input validation, decoding, analysis, and PNG encoding, but explicitly exclude artifact persistence and stdout serialization.
 
 `fixtures/comparison/ui-diff-metrics-v1.golden-cases.json` is a binary-free textual fixture catalog for solid bias, 1-pixel shift, font anti-alias edges, missing control, large background change, and alpha change. Tests deterministically generate each PNG and pin the SHA-256 of the complete serialized metric object, so every raw, tolerated, SSIM, and category value participates in golden review.
+
+## Region, mask, and local weighted rules
+
+`audit-regions` is the independent `ui_region_audit_v1` stage after normalization and full-image metric analysis. It consumes the exact aligned PNG artifacts and successful `normalization-report.json` from `normalize_align_v1`, plus the unchanged `ui_diff_metrics_v1` metric configuration. The region configuration and report are strict JSON; the committed example is `fixtures/comparison/ui-region-audit-v1.config.json`.
+
+```powershell
+cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- audit-regions `
+  --repository-root . `
+  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-input-root tools/ui-visual-audit/fixtures `
+  --allowed-output-root project/target/ui-visual-audit `
+  --reference <aligned-reference.png> `
+  --actual <aligned-actual.png> `
+  --diff-config tools/ui-visual-audit/fixtures/comparison/ui-diff-metrics-v1.config.json `
+  --region-config <bound-region-config.json> `
+  --normalization-report <normalization-report.json> `
+  --output-directory project/target/ui-visual-audit/<new-region-run>
+```
+
+Every config binds the original reference SHA-256 and positive baseline revision. The hash must equal the reference identity recorded by the supplied normalization report. Every ignore declaration repeats that binding, has a non-empty review reason, and fails when either hash or revision no longer matches the active config. PNG mask shapes additionally bind their own encoded-file SHA-256. This makes a baseline change invalidate stale exclusions instead of silently carrying them forward.
+
+Shapes use explicit `aligned`, `reference_original`, or `actual_original` coordinates. Rectangles use half-open integer bounds. Polygons are rasterized deterministically at integer pixel centers with no anti-alias expansion. PNG masks must already be aligned, same-size, canonical RGBA8/sRGB PNGs and select pixels by nonzero alpha. A declaration chooses either `reject_out_of_bounds` or `clip_to_aligned`; empty selections always fail. Reference-element bounds may originate only in reference-original or aligned space, while declarative-node bounds may originate only in actual-original or aligned space. Original coordinates are transformed by the exact forward maps from the normalization report, and major differences are mapped back through both inverse transforms.
+
+`declared_regions_only` audits only the union of explicit include regions. `full_image` is accepted only when the declared include union covers every aligned pixel; a gap fails as `audit_scope_incomplete`, and the tool never invents an implicit region result. Exclusions are unioned once for coverage, so overlap does not inflate the ignored ratio. The exact ignored fraction is capped below 100% by `maximum_ignored_ratio_millionths`, and no configuration can exclude every pixel. `ignored-regions.png` paints every excluded pixel opaque magenta. `audit-coverage.png` uses red for critical, amber for normal, cyan for decorative, magenta for ignored, and a dimmed source image for uncovered pixels.
+
+Each region independently reports raw RGBA/alpha/tolerance metrics, fixed-point SSIM, geometry/color/large-area categories, threshold violations, local status, overlap counts, and up to five strongest aligned/reference-original/actual-original difference locations. Ratios use only evaluated region pixels. Sobel membership is calculated on the full aligned inputs before region sampling so a region boundary does not invent an edge. SSIM keeps the global 8x8 grid, includes only evaluated pixels in each window, skips empty windows, and gives each non-empty window equal weight. Large-area connectivity cannot cross an excluded pixel. Critical, normal, and decorative profiles have strictly decreasing weights; key text and key buttons must be critical. Critical maximum tolerances cannot be looser than normal, and normal cannot be looser than decorative. Weight totals sum independent region outcomes and never average overlapping pixels or conceal a failed region.
+
+The report intentionally says `region_local_rules_only_no_global_pass_failed_needs_review_or_invalid_gate`. A region may have local status `failed` while the command exits `0`; stage 9 owns global status and threshold exit behavior. Input, mapping, stale binding, mask, ratio, memory, and artifact errors still use the shared stable snake-case failure protocol. Region processing preserves the 512 MiB deterministic memory gate with additional selection-mask headroom, limits declaration and polygon counts, and persists its two PNGs plus JSON with the same create-new, no-clobber transaction discipline as full-image metrics.
