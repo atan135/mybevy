@@ -4176,6 +4176,408 @@ function New-UiAuditComparisonResultCapture {
     }
 }
 
+# Closed-loop audit evidence intentionally lives beside (rather than inside) the comparison
+# bundle. `ui-visual-audit` owns that bundle's strict schema; this layer turns its independently
+# verified semantic, visual, and AI artifacts into repair-safe issue groups without weakening the
+# report validator or conflating the three kinds of evidence.
+function Get-UiAuditClosedLoopIssueProperty {
+    param(
+        [AllowNull()]$Value,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [AllowNull()]$Default = $null
+    )
+
+    if ($null -eq $Value) {
+        return $Default
+    }
+    if ($Value -is [System.Collections.IDictionary]) {
+        if ($Value.Contains($Name)) {
+            return $Value[$Name]
+        }
+        return $Default
+    }
+    if ($null -eq $Value.PSObject.Properties[$Name]) {
+        return $Default
+    }
+    return $Value.$Name
+}
+
+function ConvertTo-UiAuditClosedLoopAttribution {
+    param(
+        [AllowNull()][string]$SourcePath,
+        [AllowNull()][string[]]$LikelyFiles = @(),
+        [AllowNull()][string]$ProblemType,
+        [AllowNull()][string]$NodeId,
+        [AllowNull()][string]$DocumentPath
+    )
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($SourcePath)) {
+        $candidates += $SourcePath
+    }
+    $candidates += @($LikelyFiles | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    $normalizedType = if ([string]::IsNullOrWhiteSpace($ProblemType)) { "" } else { $ProblemType.Trim().ToLowerInvariant().Replace("-", "_") }
+    # The strict visual tool namespaces provider and semantic problem types. Attribution is about
+    # repair ownership, so use the underlying visual category rather than the evidence source.
+    $normalizedType = $normalizedType -replace "^(ai|semantic)_", ""
+    $isDocumentStyle = $normalizedType -in @("color", "typography", "imagery", "style")
+    $normalizedCandidates = @($candidates | ForEach-Object { ([string]$_).Trim().Replace("\", "/").ToLowerInvariant() })
+    # Treat a protected reference/rule path as manual even if an untrusted provider also names a
+    # plausible document file. This prevents an analyzer suggestion from laundering a baseline,
+    # mask, or threshold change into a document repair.
+    foreach ($path in $normalizedCandidates) {
+        if ($path -match "(^|/)(references?|baselines?|masks?|thresholds?|comparison|ui-visual-audit/fixtures/references)(/|$)") {
+            return "reference_or_rule"
+        }
+    }
+    foreach ($path in $normalizedCandidates) {
+        if ($path -match "(^|/)(project/assets/)?ui/documents/|/draft/[^/]+\.json$") {
+            if ($isDocumentStyle) {
+                return "document_style"
+            }
+            return "document_layout"
+        }
+        if ($path -match "(^|/)draft(/|$)|project/assets/ui/(images|atlas|icons)/") {
+            return "draft_asset"
+        }
+        if ($path -match "project/src/framework/ui/style/(theme|tokens)") {
+            return "theme"
+        }
+        if ($path -match "project/src/framework/ui/widgets/") {
+            return "common_widget"
+        }
+        if ($path -match "project/src/framework/ui/") {
+            return "framework"
+        }
+        if ($path -match "project/src/game/(screens|navigation|myserver)/") {
+            return "business_content"
+        }
+    }
+
+    # The generator source map carries the structured UiDocument field path even when the runtime
+    # metadata deliberately exposes no physical source file. It authorizes document ownership,
+    # but an unresolved node remains manual-only later in New-UiAuditClosedLoopIssue.
+    if (-not [string]::IsNullOrWhiteSpace($DocumentPath) -or -not [string]::IsNullOrWhiteSpace($NodeId)) {
+        if ($isDocumentStyle) {
+            return "document_style"
+        }
+        return "document_layout"
+    }
+    return "reference_or_rule"
+}
+
+function Get-UiAuditClosedLoopRootCauseKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$Attribution,
+        [AllowNull()][string]$NodeId,
+        [AllowNull()][string]$SourcePath,
+        [AllowNull()][string]$RegionId,
+        [Parameter(Mandatory = $true)][string]$ProblemType,
+        [AllowNull()][string]$LikelyCause
+    )
+
+    $location = if (-not [string]::IsNullOrWhiteSpace($NodeId)) {
+        "node:$($NodeId.Trim().ToLowerInvariant())"
+    } elseif (-not [string]::IsNullOrWhiteSpace($SourcePath)) {
+        "source:$($SourcePath.Trim().Replace("\", "/").ToLowerInvariant())"
+    } elseif (-not [string]::IsNullOrWhiteSpace($RegionId)) {
+        "region:$($RegionId.Trim().ToLowerInvariant())"
+    } else {
+        "unlocated"
+    }
+    $cause = if ([string]::IsNullOrWhiteSpace($LikelyCause)) { "" } else { ($LikelyCause -replace "\d+", "#").Trim().ToLowerInvariant() }
+    return "$Attribution|$location|$($ProblemType.Trim().ToLowerInvariant())|$cause"
+}
+
+function Get-UiAuditClosedLoopGroupId {
+    param([Parameter(Mandatory = $true)][string]$RootCauseKey)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($RootCauseKey)
+        $digest = $sha.ComputeHash($bytes)
+        $hex = -join ($digest | ForEach-Object { $_.ToString("x2") })
+        return "issue-group-" + $hex.Substring(0, 16)
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function New-UiAuditClosedLoopIssue {
+    param(
+        [Parameter(Mandatory = $true)][string]$IssueId,
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Priority,
+        [Parameter(Mandatory = $true)]$Capture,
+        [Parameter(Mandatory = $true)]$Region,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Evidence,
+        [Parameter(Mandatory = $true)][string]$ProblemType,
+        [Parameter(Mandatory = $true)][string]$Message,
+        [Parameter(Mandatory = $true)][string]$Severity,
+        [Parameter(Mandatory = $true)][bool]$Blocking,
+        [AllowNull()]$Document = $null,
+        [AllowNull()][string]$LikelyCause = $null,
+        [AllowNull()][string[]]$LikelyFiles = @()
+    )
+
+    if ($null -eq $Evidence -or $Evidence.Count -eq 0 -or @($Evidence | Where-Object { $null -eq $_ }).Count -gt 0) {
+        throw "closed-loop issue '$IssueId' is missing evidence"
+    }
+    foreach ($entry in @($Evidence)) {
+        $artifact = Get-UiAuditClosedLoopIssueProperty -Value $entry -Name "artifact"
+        $artifactPath = [string](Get-UiAuditClosedLoopIssueProperty -Value $artifact -Name "path")
+        $artifactSha256 = [string](Get-UiAuditClosedLoopIssueProperty -Value $artifact -Name "sha256")
+        if ([string]::IsNullOrWhiteSpace($artifactPath) -or $artifactSha256 -notmatch "^[0-9a-f]{64}$") {
+            throw "closed-loop issue '$IssueId' has invalid evidence artifact"
+        }
+        if ([string]::IsNullOrWhiteSpace([string](Get-UiAuditClosedLoopIssueProperty -Value $entry -Name "description"))) {
+            throw "closed-loop issue '$IssueId' has evidence without a description"
+        }
+    }
+    foreach ($field in @("screen", "device", "state")) {
+        if ([string]::IsNullOrWhiteSpace([string](Get-UiAuditClosedLoopIssueProperty -Value $Capture -Name $field))) {
+            throw "closed-loop issue '$IssueId' is missing capture $field"
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace([string](Get-UiAuditClosedLoopIssueProperty -Value $Region -Name "region_id"))) {
+        throw "closed-loop issue '$IssueId' is missing region evidence"
+    }
+    $nodeId = [string](Get-UiAuditClosedLoopIssueProperty -Value $Document -Name "node_id")
+    $sourcePath = [string](Get-UiAuditClosedLoopIssueProperty -Value $Document -Name "source_path")
+    $documentPath = [string](Get-UiAuditClosedLoopIssueProperty -Value $Document -Name "document_path")
+    $attribution = ConvertTo-UiAuditClosedLoopAttribution -SourcePath $sourcePath -LikelyFiles $LikelyFiles -ProblemType $ProblemType -NodeId $nodeId -DocumentPath $documentPath
+    $rootCauseKey = Get-UiAuditClosedLoopRootCauseKey -Attribution $attribution -NodeId $nodeId -SourcePath $sourcePath -RegionId ([string]$Region.region_id) -ProblemType $ProblemType -LikelyCause $LikelyCause
+    # A runtime node ID does not authorize a patch by itself. It must resolve through the draft
+    # source map or semantic source path before later fix planning may target it.
+    $unknownNode = -not [string]::IsNullOrWhiteSpace($nodeId) -and [string]::IsNullOrWhiteSpace($sourcePath) -and [string]::IsNullOrWhiteSpace($documentPath)
+    $manual = $attribution -eq "reference_or_rule" -or $unknownNode
+    return [pscustomobject]([ordered]@{
+            issue_id = $IssueId
+            source = $Source
+            priority = $Priority
+            screen = [string]$Capture.screen
+            device = [string]$Capture.device
+            state = [string]$Capture.state
+            region = $Region
+            evidence = @($Evidence)
+            document = $Document
+            problem_type = $ProblemType
+            message = $Message
+            severity = $Severity
+            blocking = $Blocking
+            likely_cause = $LikelyCause
+            likely_files = @($LikelyFiles)
+            attribution = $attribution
+            requires_manual_review = $manual
+            automatic_fix_allowed = -not $manual
+            manual_review_reason = if ($unknownNode) { "unknown_document_node" } elseif ($attribution -eq "reference_or_rule") { "reference_or_rule" } else { $null }
+            protected_targets = if ($attribution -eq "reference_or_rule") { @("reference", "baseline", "mask", "threshold") } else { @() }
+            root_cause_key = $rootCauseKey
+        })
+}
+
+function Get-UiAuditClosedLoopSourceMap {
+    $map = @{}
+    if ($null -eq $script:UiAuditClosedLoopGeneration -or
+        $null -eq $script:UiAuditClosedLoopGeneration.source_map -or
+        [string]::IsNullOrWhiteSpace([string]$script:UiAuditClosedLoopGeneration.source_map)) {
+        return $map
+    }
+    $path = Get-FullPath ([string]$script:UiAuditClosedLoopGeneration.source_map)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $map
+    }
+    try {
+        foreach ($entry in @(Read-JsonFile $path)) {
+            $nodeId = [string](Get-UiAuditClosedLoopIssueProperty -Value $entry -Name "node_id")
+            if (-not [string]::IsNullOrWhiteSpace($nodeId)) {
+                $map[$nodeId] = $entry
+            }
+        }
+    } catch {
+        throw "closed-loop source map is invalid: $($_.Exception.Message)"
+    }
+    return $map
+}
+
+function Resolve-UiAuditClosedLoopDocument {
+    param(
+        [AllowNull()]$SemanticLocation,
+        [AllowNull()][string]$NodeId,
+        [Parameter(Mandatory = $true)]$SourceMap
+    )
+
+    $resolvedNodeId = if (-not [string]::IsNullOrWhiteSpace($NodeId)) { $NodeId } else { [string](Get-UiAuditClosedLoopIssueProperty -Value $SemanticLocation -Name "node_id") }
+    $mapped = if (-not [string]::IsNullOrWhiteSpace($resolvedNodeId) -and $SourceMap.ContainsKey($resolvedNodeId)) { $SourceMap[$resolvedNodeId] } else { $null }
+    $sourcePath = [string](Get-UiAuditClosedLoopIssueProperty -Value $SemanticLocation -Name "source_path")
+    return [ordered]@{
+        document_id = [string](Get-UiAuditClosedLoopIssueProperty -Value $SemanticLocation -Name "document_id")
+        node_id = if ([string]::IsNullOrWhiteSpace($resolvedNodeId)) { $null } else { $resolvedNodeId }
+        source_path = if ([string]::IsNullOrWhiteSpace($sourcePath)) { $null } else { $sourcePath }
+        document_path = Get-UiAuditClosedLoopIssueProperty -Value $mapped -Name "document_path"
+        reference_element = Get-UiAuditClosedLoopIssueProperty -Value $mapped -Name "reference_element_id"
+    }
+}
+
+function Group-UiAuditClosedLoopIssues {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Issues)
+
+    $groupsByKey = @{}
+    foreach ($issue in @($Issues)) {
+        $key = [string]$issue.root_cause_key
+        if ([string]::IsNullOrWhiteSpace($key)) {
+            throw "closed-loop issue grouping requires a root_cause_key"
+        }
+        if (-not $groupsByKey.ContainsKey($key)) {
+            $groupsByKey[$key] = [pscustomobject]@{
+                group_id = Get-UiAuditClosedLoopGroupId $key
+                root_cause_key = $key
+                attribution = [string]$issue.attribution
+                requires_manual_review = [bool]$issue.requires_manual_review
+                automatic_fix_allowed = [bool]$issue.automatic_fix_allowed
+                issue_ids = New-Object System.Collections.Generic.List[string]
+                captures = New-Object System.Collections.Generic.List[object]
+                evidence = New-Object System.Collections.Generic.List[object]
+                priorities = New-Object System.Collections.Generic.List[string]
+            }
+        }
+        $group = $groupsByKey[$key]
+        $group.issue_ids.Add([string]$issue.issue_id)
+        $group.priorities.Add([string]$issue.priority)
+        $group.captures.Add([ordered]@{ screen = [string]$issue.screen; device = [string]$issue.device; state = [string]$issue.state })
+        foreach ($entry in @($issue.evidence)) { $group.evidence.Add($entry) }
+    }
+    return @($groupsByKey.Values | Sort-Object group_id | ForEach-Object {
+            [ordered]@{
+                group_id = $_.group_id
+                root_cause_key = $_.root_cause_key
+                attribution = $_.attribution
+                requires_manual_review = $_.requires_manual_review
+                automatic_fix_allowed = $_.automatic_fix_allowed
+                priorities = @($_.priorities | Select-Object -Unique)
+                issue_ids = @($_.issue_ids.ToArray())
+                # Keep every capture occurrence in discovery order. A group may legitimately
+                # have several independent findings for one capture, and deduping ordered
+                # dictionaries through Sort-Object is not stable across PowerShell versions.
+                captures = @($_.captures.ToArray())
+                evidence = @($_.evidence.ToArray())
+            }
+        })
+}
+
+function New-UiAuditClosedLoopAuditReport {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$RunIdValue,
+        [Parameter(Mandatory = $true)][object[]]$Comparisons
+    )
+
+    $sourceMap = Get-UiAuditClosedLoopSourceMap
+    $hardIssues = New-Object System.Collections.Generic.List[object]
+    $visualIssues = New-Object System.Collections.Generic.List[object]
+    $aiIssues = New-Object System.Collections.Generic.List[object]
+    foreach ($comparison in @($Comparisons)) {
+        $capture = [pscustomobject]@{
+            screen = [string]$comparison.pair.reference.key.screen
+            device = [string]$comparison.pair.reference.key.device
+            state = [string]$comparison.pair.reference.key.state
+        }
+        $semantic = Read-JsonFile $comparison.semantic_report
+        $regions = Read-JsonFile $comparison.region_report
+        $gate = Read-JsonFile $comparison.gate_report
+        $semanticArtifact = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $comparison.semantic_report
+        $regionArtifact = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $comparison.region_report
+        $gateArtifact = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $comparison.gate_report
+        $overlayArtifact = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $comparison.overlay_path
+        $heatmapArtifact = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $comparison.heatmap_path
+        $issueIndex = 0
+        foreach ($finding in @($semantic.findings)) {
+            $issueIndex += 1
+            $primary = Get-UiAuditClosedLoopIssueProperty -Value $finding -Name "primary"
+            $document = Resolve-UiAuditClosedLoopDocument -SemanticLocation $primary -NodeId $null -SourceMap $sourceMap
+            $hardIssues.Add((New-UiAuditClosedLoopIssue -IssueId "hard-$($comparison.capture_id)-$issueIndex" -Source "semantic" -Priority "hard" -Capture $capture -Region ([ordered]@{
+                        region_id = "semantic.$([string](Get-UiAuditClosedLoopIssueProperty -Value $primary -Name "stable_id"))"
+                        bounds = Get-UiAuditClosedLoopIssueProperty -Value $finding -Name "evidence_rect"
+                    }) -Evidence @([ordered]@{
+                        kind = "semantic_finding"
+                        artifact = $semanticArtifact
+                        description = [string]$finding.message
+                        image_role = $null
+                    }) -ProblemType ("semantic_" + [string]$finding.code) -Message ([string]$finding.message) -Severity "hard_failure" -Blocking $true -Document $document -LikelyCause ([string]$finding.code) -LikelyFiles @((Get-UiAuditClosedLoopIssueProperty -Value $primary -Name "likely_files"))))
+        }
+        foreach ($regionResult in @($regions.region_results | Where-Object { [string]$_.local_status -eq "failed" })) {
+            $issueIndex += 1
+            $visualIssues.Add((New-UiAuditClosedLoopIssue -IssueId "visual-region-$($comparison.capture_id)-$issueIndex" -Source "region_audit" -Priority "visual" -Capture $capture -Region ([ordered]@{
+                        region_id = [string]$regionResult.region_id
+                        bounds = $regionResult.mapped_aligned_bounds
+                    }) -Evidence @([ordered]@{
+                        kind = "region_threshold"
+                        artifact = $regionArtifact
+                        description = "threshold violations: $((@($regionResult.threshold_violations | ForEach-Object { [string]$_.metric }) -join ', '))"
+                        image_role = "overlay"
+                        image = $overlayArtifact
+                    }, [ordered]@{
+                        kind = "visual_heatmap"
+                        artifact = $heatmapArtifact
+                        description = "aligned heatmap for failed region"
+                        image_role = "heatmap"
+                    }) -ProblemType "visual_region_threshold" -Message "visual region '$($regionResult.region_id)' exceeded its approved threshold" -Severity $(if ([string]$regionResult.level -eq "critical") { "severe" } else { "medium" }) -Blocking $true -LikelyCause "region threshold violation"))
+        }
+        foreach ($reason in @($gate.captures[0].reasons)) {
+            $failureType = [string]$reason.failure_type
+            if ($failureType -in @("none", "semantic_hard_failure", "critical_region_failure", "normal_region_failure", "decorative_region_review", "ai_severe_issue", "ai_medium_issue")) {
+                continue
+            }
+            $issueIndex += 1
+            $visualIssues.Add((New-UiAuditClosedLoopIssue -IssueId "visual-gate-$($comparison.capture_id)-$issueIndex" -Source "visual_gate" -Priority "visual" -Capture $capture -Region ([ordered]@{ region_id = [string]$reason.source_id; bounds = $null }) -Evidence @([ordered]@{
+                        kind = "gate_reason"
+                        artifact = $gateArtifact
+                        description = [string]$reason.message
+                        image_role = "overlay"
+                        image = $overlayArtifact
+                    }) -ProblemType ("gate_" + $failureType) -Message ([string]$reason.message) -Severity $(if ([bool]$reason.blocking) { "severe" } else { "minor" }) -Blocking ([bool]$reason.blocking) -LikelyCause $failureType))
+        }
+        if ($null -ne $comparison.ai_report) {
+            $ai = Read-JsonFile $comparison.ai_report
+            $aiArtifact = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $comparison.ai_report
+            foreach ($providerIssue in @($ai.issues)) {
+                $issueIndex += 1
+                $document = Resolve-UiAuditClosedLoopDocument -SemanticLocation $null -NodeId ([string](Get-UiAuditClosedLoopIssueProperty -Value $providerIssue -Name "node_id")) -SourceMap $sourceMap
+                $evidence = New-Object System.Collections.Generic.List[object]
+                foreach ($entry in @(Get-UiAuditClosedLoopIssueProperty -Value $providerIssue -Name "evidence" -Default @())) {
+                    $evidence.Add([ordered]@{
+                            kind = "ai_evidence"
+                            artifact = $aiArtifact
+                            image_id = [string](Get-UiAuditClosedLoopIssueProperty -Value $entry -Name "image_id")
+                            description = [string](Get-UiAuditClosedLoopIssueProperty -Value $entry -Name "description")
+                        })
+                }
+                $region = Get-UiAuditClosedLoopIssueProperty -Value $providerIssue -Name "region"
+                $regionId = [string](Get-UiAuditClosedLoopIssueProperty -Value $region -Name "region_id")
+                if ([string]::IsNullOrWhiteSpace($regionId)) { $regionId = "ai.unbounded" }
+                $severity = [string]$providerIssue.severity
+                $blocking = $severity -in @("severe", "medium")
+                $aiIssues.Add((New-UiAuditClosedLoopIssue -IssueId "ai-$($comparison.capture_id)-$issueIndex" -Source "ai_analyzer" -Priority "ai" -Capture $capture -Region ([ordered]@{ region_id = $regionId; bounds = Get-UiAuditClosedLoopIssueProperty -Value $region -Name "bounds" }) -Evidence @($evidence.ToArray()) -ProblemType ("ai_" + [string]$providerIssue.problem_type) -Message ([string]$providerIssue.problem) -Severity $severity -Blocking $blocking -Document $document -LikelyCause ([string]$providerIssue.likely_cause) -LikelyFiles @((Get-UiAuditClosedLoopIssueProperty -Value $providerIssue -Name "suggested_files" -Default @()))))
+            }
+        }
+    }
+
+    $allIssues = @($hardIssues.ToArray()) + @($visualIssues.ToArray()) + @($aiIssues.ToArray())
+    $groups = @(Group-UiAuditClosedLoopIssues -Issues $allIssues)
+    return [ordered]@{
+        schema_version = 1
+        run_id = $RunIdValue
+        status = if (@($allIssues | Where-Object { [bool]$_.blocking }).Count -gt 0) { "failed" } else { "passed" }
+        priority_order = @("hard", "visual", "ai")
+        hard_issues = @($hardIssues.ToArray())
+        visual_issues = @($visualIssues.ToArray())
+        ai_issues = @($aiIssues.ToArray())
+        issue_groups = $groups
+        manual_review_group_ids = @($groups | Where-Object { [bool]$_.requires_manual_review } | ForEach-Object { [string]$_.group_id })
+        source_map_bound = ($sourceMap.Count -gt 0)
+    }
+}
+
 function Complete-UiAuditReferenceComparison {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -4270,7 +4672,35 @@ function Complete-UiAuditReferenceComparison {
                     device = [string]$comparison.pair.reference.key.device
                     state = [string]$comparison.pair.reference.key.state
                     reason = "comparison report input assembly failed: $($_.Exception.Message)"
-                })
+            })
+        }
+    }
+    $closedLoopAudit = $null
+    $closedLoopAuditLink = $null
+    if ($completed.Count -gt 0) {
+        try {
+            $closedLoopAudit = New-UiAuditClosedLoopAuditReport -RepositoryRoot $RepositoryRoot -RunIdValue $RunIdValue -Comparisons @($completed.ToArray())
+            $closedLoopAuditPath = Join-FullPath $RunRoot "comparison/closed-loop-audit.json"
+            Write-UiAuditJsonFile -Path $closedLoopAuditPath -Value $closedLoopAudit
+            $closedLoopAuditLink = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $closedLoopAuditPath
+            $manifest | Add-Member -NotePropertyName "closed_loop_audit" -NotePropertyValue ([ordered]@{
+                    report = $closedLoopAuditLink
+                    status = [string]$closedLoopAudit.status
+                    hard_issue_count = @($closedLoopAudit.hard_issues).Count
+                    visual_issue_count = @($closedLoopAudit.visual_issues).Count
+                    ai_issue_count = @($closedLoopAudit.ai_issues).Count
+                    issue_group_count = @($closedLoopAudit.issue_groups).Count
+                    manual_review_group_ids = @($closedLoopAudit.manual_review_group_ids)
+                    source_map_bound = [bool]$closedLoopAudit.source_map_bound
+                    generation_manifest = if ($null -ne $script:UiAuditClosedLoopGeneration -and $null -ne $script:UiAuditClosedLoopGeneration.closed_loop_manifest) {
+                        New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path ([string]$script:UiAuditClosedLoopGeneration.closed_loop_manifest)
+                    } else { $null }
+                }) -Force
+            if ($null -ne $manifest.artifact_links) {
+                $manifest.artifact_links | Add-Member -NotePropertyName "closed_loop_audit" -NotePropertyValue $closedLoopAuditLink -Force
+            }
+        } catch {
+            $failures.Add([pscustomobject]@{ screen = "matrix"; device = "all"; state = "all"; reason = "closed-loop audit issue normalization failed: $($_.Exception.Message)" })
         }
     }
     $bundlePath = Join-FullPath $RunRoot "comparison/comparison-bundle.json"
@@ -4392,6 +4822,34 @@ function Write-UiAuditStrictSelfTestPng {
     }
 }
 
+function Add-UiAuditStrictSelfTestDifference {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    Add-Type -AssemblyName System.Drawing
+    $source = New-Object System.Drawing.Bitmap $Path
+    $bitmap = New-Object System.Drawing.Bitmap $source
+    $source.Dispose()
+    $temporaryPath = "$Path.selftest-difference.png"
+    try {
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::Tomato)
+        try {
+            # A small local difference preserves the original alignment while exceeding the
+            # strict zero-tolerance visual threshold used by this self-test reference.
+            $graphics.FillRectangle($brush, 24, 24, 32, 32)
+        } finally {
+            $brush.Dispose()
+            $graphics.Dispose()
+        }
+        $bitmap.Save($temporaryPath, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+        $bitmap.Dispose()
+    }
+    Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+}
+
 function Invoke-UiAuditStrictReferenceSelfTest {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
 
@@ -4403,6 +4861,7 @@ function Invoke-UiAuditStrictReferenceSelfTest {
     $savedStrictReference = $StrictReference
     $savedDeterministicCapture = $DeterministicCapture
     $savedComparisonAiMode = $ComparisonAiMode
+    $savedClosedLoopGeneration = $script:UiAuditClosedLoopGeneration
     try {
         $profiles = @(
             [pscustomobject]@{ device = "phone-small"; state = "initial"; color = [System.Drawing.Color]::SteelBlue },
@@ -4467,11 +4926,74 @@ function Invoke-UiAuditStrictReferenceSelfTest {
         Assert-SelfTest (@($strictResult.captures).Count -eq 3 -and @($strictResult.captures | ForEach-Object { $_.device } | Select-Object -Unique).Count -eq 2 -and @($strictResult.captures | ForEach-Object { $_.state } | Select-Object -Unique).Count -eq 2) "strict reference comparison covers two devices and a multi-state UI page"
         $strictManifest = Read-JsonFile (Join-FullPath $runRoot "manifest.json")
         Assert-SelfTest ($strictManifest.comparison.performance.matrix_elapsed_milliseconds -ge 0 -and $strictManifest.comparison.performance.artifact_bytes -gt 0) "strict comparison records matrix time and artifact budget evidence"
+
+        # Exercise the normalizer against the reports emitted by the real comparison commands,
+        # with a temporary visual mismatch plus independently recorded semantic and AI evidence.
+        # This intentionally does not alter a reference, mask, or threshold.
+        $failedReferenceEntries = @(Get-UiAuditReferenceEntries -RepositoryRoot $RepositoryRoot -ManifestPath $manifestPath -LocaleValue "zh_cn" -ThemeValue "default")
+        $failedPairSet = Get-UiAuditCapturedReferencePairs -Results $results.ToArray() -References $failedReferenceEntries -RunRoot $runRoot
+        $failedPair = @($failedPairSet.pairs)[0]
+        # The audit tool never overwrites a prior comparison artifact. Keep the capture ID that
+        # its AI bundle validates, but isolate this intentionally failing comparison output.
+        $failedAuditRoot = Join-FullPath $runRoot "closed-loop-failure"
+        New-Item -ItemType Directory -Force -Path $failedAuditRoot | Out-Null
+        Add-UiAuditStrictSelfTestDifference -Path ([string]$failedPair.actual_path)
+        $failedComparison = Invoke-UiAuditReferencePairComparison -RepositoryRoot $RepositoryRoot -RunRoot $failedAuditRoot -Pair $failedPair -ReferenceManifestPath $manifestPath -ComparisonAiModeValue "Fixture"
+        $sourceMapPath = Join-FullPath $failedAuditRoot "draft/source-map.json"
+        Write-UiAuditJsonFile -Path $sourceMapPath -Value @([ordered]@{
+                reference_element_id = "reference.title"
+                node_id = "page.title"
+                reference_id = "selftest-reference"
+                evidence_ids = @("selftest-evidence")
+                document_path = "$.root.children[0]"
+            })
+        $script:UiAuditClosedLoopGeneration = [pscustomobject]@{ source_map = $sourceMapPath }
+
+        $failedSemantic = Read-JsonFile $failedComparison.semantic_report
+        $failedSemantic.status = "semantic_failed"
+        $failedSemantic.findings = @([ordered]@{
+                code = "text_overlap"
+                severity = "hard_failure"
+                message = "self-test semantic overlap"
+                primary = [ordered]@{
+                    stable_id = "page.title"
+                    capture_entity = "selftest#page.title"
+                    entity_name = "Title"
+                    document_id = "selftest-document"
+                    node_id = "page.title"
+                    source_path = "ui/documents/selftest/document.json"
+                    panel_id = "selftest"
+                    likely_files = @("ui/documents/selftest/document.json")
+                }
+                related_stable_id = $null
+                evidence_rect = [ordered]@{ x = 0.0; y = 0.0; width = 20.0; height = 20.0 }
+            })
+        Write-UiAuditJsonFile -Path $failedComparison.semantic_report -Value $failedSemantic
+
+        $failedAi = Read-JsonFile $failedComparison.ai_report
+        $failedAi.issues = @([ordered]@{
+                capture_id = [string]$failedComparison.capture_id
+                problem_type = "typography"
+                severity = "minor"
+                problem = "self-test AI typography suggestion"
+                evidence = @([ordered]@{ image_id = "$($failedComparison.capture_id).actual"; description = "actual capture typography evidence" })
+                region = [ordered]@{ region_id = "full_capture"; bounds = $null }
+                reference_element = "reference.title"
+                node_id = "page.title"
+                likely_cause = "self-test typography"
+                suggested_files = @("ui/documents/selftest/document.json")
+            })
+        Write-UiAuditJsonFile -Path $failedComparison.ai_report -Value $failedAi
+
+        $closedLoopAudit = New-UiAuditClosedLoopAuditReport -RepositoryRoot $RepositoryRoot -RunIdValue "$suffix-issues" -Comparisons @($failedComparison)
+        Assert-SelfTest (@($closedLoopAudit.hard_issues).Count -eq 1 -and @($closedLoopAudit.visual_issues).Count -eq 1 -and @($closedLoopAudit.ai_issues).Count -eq 1 -and ($closedLoopAudit.priority_order -join ",") -eq "hard,visual,ai") "closed-loop report preserves hard visual and AI priority classes"
+        Assert-SelfTest ($closedLoopAudit.source_map_bound -and $closedLoopAudit.hard_issues[0].document.node_id -eq "page.title" -and $closedLoopAudit.ai_issues[0].attribution -eq "document_style" -and @($closedLoopAudit.visual_issues[0].evidence).Count -eq 2) "closed-loop report binds document source map and visual evidence"
     } finally {
         $ReferenceManifest = $savedReferenceManifest
         $StrictReference = $savedStrictReference
         $DeterministicCapture = $savedDeterministicCapture
         $ComparisonAiMode = $savedComparisonAiMode
+        $script:UiAuditClosedLoopGeneration = $savedClosedLoopGeneration
         if (Test-Path -LiteralPath $runRoot) {
             Remove-Item -LiteralPath $runRoot -Recurse -Force
         }
@@ -5507,6 +6029,51 @@ function Invoke-UiAuditSelfTest {
 
         $devices = @(Resolve-UiAuditDevices @("phone-small", "tablet-portrait"))
         Assert-SelfTest ($devices.Count -eq 2 -and $devices[0] -eq "phone-small" -and $devices[1] -eq "tablet-portrait") "device parsing"
+
+        $attributionCases = @(
+            [pscustomobject]@{ path = "project/assets/ui/documents/fixtures/page.json"; type = "layout"; expected = "document_layout" },
+            [pscustomobject]@{ path = "project/assets/ui/documents/fixtures/page.json"; type = "style"; expected = "document_style" },
+            [pscustomobject]@{ path = "summary/ui-generation/test/draft/icon.png"; type = "imagery"; expected = "draft_asset" },
+            [pscustomobject]@{ path = "project/src/game/screens/auth/login.rs"; type = "content"; expected = "business_content" },
+            [pscustomobject]@{ path = "project/src/framework/ui/widgets/controls/button.rs"; type = "layout"; expected = "common_widget" },
+            [pscustomobject]@{ path = "project/src/framework/ui/style/theme.rs"; type = "color"; expected = "theme" },
+            [pscustomobject]@{ path = "project/src/framework/ui/core.rs"; type = "layout"; expected = "framework" },
+            [pscustomobject]@{ path = "tools/ui-visual-audit/fixtures/references/example.png"; type = "layout"; expected = "reference_or_rule" }
+        )
+        foreach ($case in $attributionCases) {
+            Assert-SelfTest ((ConvertTo-UiAuditClosedLoopAttribution -SourcePath $case.path -ProblemType $case.type) -eq $case.expected) "closed-loop attribution $($case.expected)"
+        }
+        Assert-SelfTest ((ConvertTo-UiAuditClosedLoopAttribution -SourcePath "ui/documents/approved/login/document.v1.json" -ProblemType "ai_typography") -eq "document_style") "closed-loop AI document typography attribution"
+        Assert-SelfTest ((ConvertTo-UiAuditClosedLoopAttribution -SourcePath "summary/ui-generation/fixture/draft/generated-document.json" -ProblemType "ai_color") -eq "document_style") "closed-loop generated draft document style attribution"
+        Assert-SelfTest ((ConvertTo-UiAuditClosedLoopAttribution -ProblemType "ai_imagery" -NodeId "page.hero" -DocumentPath "$.root.children[0]") -eq "document_style") "closed-loop source-mapped document style attribution"
+        Assert-SelfTest ((ConvertTo-UiAuditClosedLoopAttribution -SourcePath "project/assets/ui/documents/fixtures/page.json" -LikelyFiles @("project/assets/ui/references/approved.png") -ProblemType "layout") -eq "reference_or_rule") "closed-loop protected rule path overrides incorrect document attribution"
+        $closedLoopCapturePhone = [pscustomobject]@{ screen = "ui_gallery"; device = "phone-small"; state = "initial" }
+        $closedLoopCaptureTablet = [pscustomobject]@{ screen = "ui_gallery"; device = "tablet-portrait"; state = "initial" }
+        $closedLoopDocument = [ordered]@{ document_id = "fixture"; node_id = "page.shared"; source_path = "project/src/framework/ui/widgets/controls.rs"; document_path = "$.root"; reference_element = "reference.shared" }
+        $closedLoopEvidence = @([ordered]@{ kind = "fixture"; artifact = [ordered]@{ path = "summary/test.json"; sha256 = ("a" * 64) }; description = "fixture evidence" })
+        $closedLoopPhoneIssue = New-UiAuditClosedLoopIssue -IssueId "fixture-phone" -Source "semantic" -Priority "hard" -Capture $closedLoopCapturePhone -Region ([ordered]@{ region_id = "semantic.page.shared"; bounds = $null }) -Evidence $closedLoopEvidence -ProblemType "semantic_text_overlap" -Message "fixture overlap" -Severity "hard_failure" -Blocking $true -Document $closedLoopDocument -LikelyCause "text_overlap"
+        $closedLoopTabletIssue = New-UiAuditClosedLoopIssue -IssueId "fixture-tablet" -Source "semantic" -Priority "hard" -Capture $closedLoopCaptureTablet -Region ([ordered]@{ region_id = "semantic.page.shared"; bounds = $null }) -Evidence $closedLoopEvidence -ProblemType "semantic_text_overlap" -Message "fixture overlap" -Severity "hard_failure" -Blocking $true -Document $closedLoopDocument -LikelyCause "text_overlap"
+        $closedLoopGroups = @(Group-UiAuditClosedLoopIssues -Issues @($closedLoopPhoneIssue, $closedLoopTabletIssue))
+        Assert-SelfTest ($closedLoopPhoneIssue.attribution -eq "common_widget" -and $closedLoopGroups.Count -eq 1 -and @($closedLoopGroups[0].captures).Count -eq 2 -and @($closedLoopGroups[0].evidence).Count -eq 2) "closed-loop cross-device root-cause grouping"
+        $unknownNodeDocument = Resolve-UiAuditClosedLoopDocument -SemanticLocation $null -NodeId "missing.node" -SourceMap @{}
+        $unknownNodeIssue = New-UiAuditClosedLoopIssue -IssueId "fixture-unknown-node" -Source "semantic" -Priority "hard" -Capture $closedLoopCapturePhone -Region ([ordered]@{ region_id = "semantic.missing.node"; bounds = $null }) -Evidence $closedLoopEvidence -ProblemType "semantic_text_overlap" -Message "unknown fixture node" -Severity "hard_failure" -Blocking $true -Document $unknownNodeDocument -LikelyCause "text_overlap"
+        Assert-SelfTest ($unknownNodeDocument.node_id -eq "missing.node" -and $null -eq $unknownNodeDocument.document_path -and $unknownNodeIssue.attribution -eq "document_layout" -and [bool]$unknownNodeIssue.requires_manual_review -and -not [bool]$unknownNodeIssue.automatic_fix_allowed) "closed-loop unknown node remains unbound and manual"
+        $referenceIssue = New-UiAuditClosedLoopIssue -IssueId "fixture-reference" -Source "visual_gate" -Priority "visual" -Capture $closedLoopCapturePhone -Region ([ordered]@{ region_id = "full_capture"; bounds = $null }) -Evidence $closedLoopEvidence -ProblemType "gate_dimension_mismatch" -Message "fixture reference mismatch" -Severity "severe" -Blocking $true -Document ([ordered]@{ document_id = $null; node_id = $null; source_path = "tools/ui-visual-audit/fixtures/references/example.png"; document_path = $null; reference_element = $null }) -LikelyCause "reference mismatch"
+        Assert-SelfTest ($referenceIssue.attribution -eq "reference_or_rule" -and [bool]$referenceIssue.requires_manual_review -and -not [bool]$referenceIssue.automatic_fix_allowed -and $referenceIssue.manual_review_reason -eq "reference_or_rule" -and @($referenceIssue.protected_targets).Count -eq 4) "closed-loop reference or rule issue requires manual review"
+        $missingEvidenceRejected = $false
+        try {
+            [void](New-UiAuditClosedLoopIssue -IssueId "fixture-missing-evidence" -Source "ai_analyzer" -Priority "ai" -Capture $closedLoopCapturePhone -Region ([ordered]@{ region_id = "ai.unbounded"; bounds = $null }) -Evidence @() -ProblemType "ai_other" -Message "missing evidence" -Severity "minor" -Blocking $false)
+        } catch {
+            $missingEvidenceRejected = $_.Exception.Message -like "*missing evidence*"
+        }
+        Assert-SelfTest $missingEvidenceRejected "closed-loop issue rejects missing evidence"
+        $invalidEvidenceRejected = $false
+        try {
+            [void](New-UiAuditClosedLoopIssue -IssueId "fixture-invalid-evidence" -Source "ai_analyzer" -Priority "ai" -Capture $closedLoopCapturePhone -Region ([ordered]@{ region_id = "ai.unbounded"; bounds = $null }) -Evidence @([ordered]@{ kind = "fixture"; artifact = [ordered]@{ path = "summary/test.json"; sha256 = "not-a-hash" }; description = "bad artifact" }) -ProblemType "ai_other" -Message "invalid evidence" -Severity "minor" -Blocking $false)
+        } catch {
+            $invalidEvidenceRejected = $_.Exception.Message -like "*invalid evidence artifact*"
+        }
+        Assert-SelfTest $invalidEvidenceRejected "closed-loop issue rejects malformed evidence artifact"
 
         $extraArgs = Get-WindowArgumentOverrides -WindowProfileValue "" -WindowSizeValue "1280x2772" -DeviceScaleValue "3.25" -WindowScaleValue "50%" -RawBevyArgs @("--foo", "bar") -RawRemainingArgs @("--window-profile", "desktop")
         Assert-SelfTest (($extraArgs -join "|") -eq "--window-size|1280x2772|--device-scale|3.25|--window-scale|50%|--foo|bar|--window-profile|desktop") "window argument expansion"
