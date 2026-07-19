@@ -87,6 +87,15 @@ metadata 的 `image_snapshots`、`font_snapshots` 和 `visual_summary` 汇总图
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States auto
 ```
 
+严格 reference 验收从已批准 manifest 自动展开矩阵，并为每个 capture 生成 comparison bundle、four-state gate 与人机报告：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -StrictReference -ReferenceManifest path\to\approved-reference-manifest.json -DeterministicCapture
+.\scripts\run-ui-audit-ci.ps1 -ReferenceManifest path\to\approved-reference-manifest.json
+```
+
+普通 runner 不带 `-StrictReference` 时不会读取 reference，也不会改变既有本地/远程审计。严格 run 的 `-RerunFromManifest` 会优先复跑 `comparison.failed_captures` 的精确 `screen/device/state`。CI 入口默认使用 Fixture AI；在线 AI 仅允许在安全的手动/定时任务中通过 `-OnlineAi` 和 `MYBEVY_UI_AUDIT_AI_CONFIG` 显式启用。
+
 `-DryRun` 只验证矩阵、报告和分析输入，不启动游戏、不生成真实截图。真实本地运行会为每个 screen + device 启动一次 `cargo run`，并把子进程输出写入本轮 `logs/`。
 
 本地 capture 在滚动完成后固定等待 30 个渲染帧再请求截图。该窗口用于让首次使用的 Bevy UI gradient / box-shadow pipeline 完成准备；只检查 ECS metadata 或等待 5 帧可能得到“组件已存在但首张 PNG 仍是纯色”的假通过。
@@ -160,7 +169,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 
 完整视觉比较报告由独立工具的 `build-report` 生成。输入 `ui_comparison_bundle_v1` 必须按 capture 同时绑定 reference、actual、overlay、heatmap、六项指标、区域阈值、mask、允许差异、算法版本、AI 实际运行状态、四态门禁和问题定位字段；baseline guard 还必须以 path + SHA-256 绑定当前 reference manifest，并让 reference ID、screen/device/state、observed revision/hash 和 reference artifact hash 与其中的 active entry 一致。输出为 `comparison-result.json` 和 `report.md`。根 manifest 先以 path + SHA-256 绑定 comparison input、analysis 和 fix iteration，结果再反向记录根 manifest 的最终 path + SHA-256。缺图、hash 换包、链接不完整、active reference 不一致或未批准 baseline 变化会直接失败，不显示成正常成功链接。
 
-当前 `run-ui-audit.ps1` 会在 `manifest.json.artifact_links` 记录 analysis input/output 和已完成 fix iteration 的 path、SHA-256、byte length；完整 comparison 入口保持 `null`，直到后续比较引擎提供四图和结构化证据。Stage 10 不自动展开 reference manifest 矩阵，也不代表 CI 或远程 Android 已接入。
+当前 `run-ui-audit.ps1` 会在 `manifest.json.artifact_links` 记录 analysis input/output 和已完成 fix iteration 的 path、SHA-256、byte length。带 `-StrictReference` 的本地确定性 run 还会在 `manifest.json.comparison` 记录 reference manifest、comparison input/result/report、失败 capture、Fixture/Provider 状态、矩阵耗时、估算峰值内存、artifact 大小和预算；完整 artifact 位于 `comparison/`，每个工具步骤在 `logs/comparison/` 有独立日志。reference 图是 LFS pointer、hash/manifest 不匹配、artifact 缺失、工具失败或预算超限均为失败，不能降级为普通通过。
 
 Baseline 更新必须在自动修复循环之外显式执行：
 
@@ -242,3 +251,5 @@ Android 真机或模拟器上需要额外确认：
 如果本机没有 `adb`，Android 设备级安装、渲染、触控、字体、图片切片和效果降级检查需要在有设备连接的环境完成。当前 2026-07-12 的开发环境即为此状态，真机项未完成；所需设备、API 和记录步骤见 [UI安全区与视觉预算.md](UI安全区与视觉预算.md)。
 
 当前 UI 审计还不支持 Android 真机截图和系统 UI 截图。Android 页面仍需要人工或未来远程 client 接入后，通过 `adminapi` 执行 `ui.screenshot`、`ui.read_viewport`、`ui.read_panels` 等命令验收。
+
+`-RequireRealAndroid` 的真机成功验证只能走 `-Remote -RemoteBackend Http`。`-Remote -RemoteBackend Mock -RequireRealAndroid` 仍允许作为 fail-closed 安全回归：runner 会写入 `manifest.json.android_validation.status = external_unavailable` 并以失败退出，明确 Mock 不是设备证据。当前环境没有可验证的设备 metadata 合同；Http 未满足 metadata 验证时同样写入 `external_unavailable` 或 `pending_remote_metadata_validation`，并列出状态栏、安全区、字体和触控四项待验证内容。

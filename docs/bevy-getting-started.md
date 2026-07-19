@@ -430,7 +430,11 @@ Android 生产环境不读取这个桌面参数。Activity 通过 `WindowInsetsC
 .\scripts\run-ui-audit.ps1 -SelfTest
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "top,middle,bottom" -DryRun
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,phone-portrait,tablet-portrait,tablet-landscape -States visual_acceptance
+.\scripts\run-ui-audit.ps1 -StrictReference -ReferenceManifest path\to\approved-reference-manifest.json -DeterministicCapture
+.\scripts\run-ui-audit-ci.ps1 -ReferenceManifest path\to\approved-reference-manifest.json
 ```
+
+严格 reference 模式会按 manifest 自动展开 `screen/device/state`，输出 comparison bundle、report 与性能预算记录到被忽略的 `summary/ui-audit/<run-id>/comparison/`。CI 入口默认离线 Fixture AI；在线 AI 仅允许显式 `-OnlineAi` 且提供 `MYBEVY_UI_AUDIT_AI_CONFIG` 的手动或定时任务。没有 reference 时继续使用普通 runner，不会触发比较。
 
 `-DryRun` 只验证矩阵和报告，不启动游戏、不生成真实截图。真实审计去掉 `-DryRun`，产物会写入 `summary/ui-audit/<run-id>/`。`visual_acceptance` metadata 同时包含安全区来源、图片/字体/效果/动画汇总和开发期视觉预算；预算不是 GPU 实测。更多说明见 `docs/ui/UI调试与验收.md`、`docs/ui/UI安全区与视觉预算.md` 和 `docs/ui/UI自动化审计与优化方案.md`。
 

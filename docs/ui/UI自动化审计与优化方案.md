@@ -167,6 +167,26 @@ cargo run -- --window-size 1366x768 --device-scale 1.0
 .\scripts\run-ui-audit.ps1 -Screens ui-gallery -Devices phone-small,tablet-landscape -States "top,middle,bottom" -DryRun
 ```
 
+有已批准 reference manifest 时，严格模式不使用上面的普通 screen/device 参数，而是按 manifest 的 `screen + device + state` 自动展开；每项必须与确定性 viewport、locale 和 theme 一致：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -SelfTest
+.\scripts\run-ui-audit.ps1 -StrictReference -ReferenceManifest path\to\approved-reference-manifest.json -DeterministicCapture
+.\scripts\run-ui-audit.ps1 -StrictReference -ReferenceManifest <manifest.json> -DeterministicCapture -RerunFromManifest summary\ui-audit\<failed-run>\manifest.json
+```
+
+严格模式依次执行 exact compare、normalize/align、diff、region、semantic、Fixture AI、four-state gate 和 `build-report`。失败 capture 会写进根 `manifest.json.comparison.failed_captures`，下次 `-RerunFromManifest` 只重跑关联 `screen/device/state`；无 reference 的普通审计行为不变。
+
+CI 使用显式入口，默认离线 Fixture AI，不读取在线 provider 凭据：
+
+```powershell
+.\scripts\run-ui-audit-ci.ps1 -ReferenceManifest path\to\approved-reference-manifest.json
+```
+
+在线 provider 只能以手动或定时任务显式添加 `-OnlineAi`，并必须提供 `MYBEVY_UI_AUDIT_AI_CONFIG`。日常 CI 不启用该开关。
+
+仓库的 `.github/workflows/ui-visual-audit.yml` 会在 push、PR 和手动触发时，在 Windows runner 上拉取 LFS、运行工具 contract tests 及 `run-ui-audit.ps1 -SelfTest` 的两设备、多状态严格 Fixture AI 证据链。workflow 不读取在线 AI 凭据，也不调用 `-OnlineAi`；真实 provider 仅能由另行授权的手动或定时 workflow 调用。
+
 `-DryRun` 只验证 screen / device / state 矩阵、输出 `manifest.json`、`analysis-input.json`、`analysis.json` 和 `report.md`，不会启动 `cargo run`，也不会生成真实截图。真实本地运行会为每个 screen + device 创建一次 `cargo run`，设置 `MYBEVY_UI_AUDIT_*` 并把 stdout / stderr 写入本轮 `logs/`。
 
 远程 Mock 演示：
@@ -541,11 +561,26 @@ summary/ui-audit/<run-id>/
   iterations/
     00-before/
     01-after-fix/
+  comparison/
+    <screen.device.state>/
+      compare/
+      normalize/
+      diff/
+      regions/
+      semantic/
+      ai/
+      gate/
+    comparison-bundle.json
+    report/
+      comparison-result.json
+      report.md
 ```
 
 远程 Mock / Http 模式会在 task/capture 中记录 `task_id`、`request_id`、`remote_task_ids`、`screenshot_artifact_uri`、`metadata_artifact_uri` 和可选 `log_artifact_uri`。Mock 后端还会在 run 目录下写入本地 `artifacts/<task-id>/` 文件，便于演示。
 
 `summary/ui-audit/` 被仓库根目录 `.gitignore` 的 `/summary/*` 规则忽略。常规审计产物不提交 Git；需要分享时应复制必要的 `report.md`、`manifest.json`、`analysis*.json` 和截图到明确的文档附件位置，或在 PR / 任务系统中引用外部 artifact。清理旧产物时删除 `summary/ui-audit/<run-id>/` 或整个 `summary/ui-audit/` 即可，保留 `summary/.gitkeep`。
+
+严格比较还在 `manifest.json.comparison.performance` 记录矩阵耗时、工具估算峰值内存、artifact 字节数及其预算。`logs/comparison/` 保存每一个工具命令的稳定日志；reference 图是 LFS pointer、工具缓存/manifest 缺失、artifact 缺失、超时或预算超限都会使 comparison 失败并给出可操作的路径/命令提示。
 
 `manifest.json` 记录本轮任务：
 

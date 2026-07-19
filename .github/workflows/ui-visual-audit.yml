@@ -1,0 +1,37 @@
+name: UI Visual Audit
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  offline-reference-audit:
+    name: Offline strict reference audit
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout sources and LFS references
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify visual audit tool contracts
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path tools/ui-visual-audit/Cargo.toml -- --check
+          cargo test --manifest-path tools/ui-visual-audit/Cargo.toml
+          cargo check --manifest-path tools/ui-visual-audit/Cargo.toml
+
+      - name: Run deterministic strict reference fixture audit
+        shell: pwsh
+        run: .\scripts\run-ui-audit.ps1 -SelfTest
+
+      # Online AI is intentionally absent from push and pull_request. Use the
+      # explicit run-ui-audit-ci.ps1 -OnlineAi path with a protected provider
+      # configuration in a separately authorized manual or scheduled workflow.

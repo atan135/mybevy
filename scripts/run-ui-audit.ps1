@@ -47,6 +47,14 @@ param(
     [ValidateSet("Auto", "Fixture", "Provider", "Off")]
     [string]$AnalysisMode = "Auto",
     [string]$AnalysisResultPath = "",
+    [string]$ReferenceManifest = "",
+    [switch]$StrictReference,
+    [ValidateSet("Fixture", "Off", "Provider")]
+    [string]$ComparisonAiMode = "Fixture",
+    [int]$ComparisonBudgetSeconds = 1800,
+    [Int64]$ComparisonBudgetPeakMemoryBytes = 805306368,
+    [Int64]$ComparisonBudgetArtifactBytes = 1073741824,
+    [switch]$RequireRealAndroid,
     [ValidateSet("Off", "Plan", "Mock", "Command")]
     [string]$FixMode = "Off",
     [int]$MaxFixIterations = 5,
@@ -133,6 +141,8 @@ $script:AnalysisBlockingProblemTypes = @(
     "modal_layering_error"
 )
 $script:LastUiAuditAnalysisStatus = $null
+$script:UiAuditComparisonToolManifest = "tools/ui-visual-audit/Cargo.toml"
+$script:UiAuditReferenceManifestSchemaVersion = 1
 
 $script:FixStrategyPriority = @(
     [ordered]@{
@@ -2797,6 +2807,21 @@ function Resolve-UiAuditRunnerExitCode {
         return 1
     }
 
+    $runnerManifestPath = Join-FullPath $RunRoot "manifest.json"
+    if (Test-Path -LiteralPath $runnerManifestPath -PathType Leaf) {
+        $runnerManifest = Read-JsonFile $runnerManifestPath
+        if ($null -ne $runnerManifest.PSObject.Properties["comparison"] -and
+            $null -ne $runnerManifest.comparison -and
+            [string]$runnerManifest.comparison.status -eq "failed") {
+            return 1
+        }
+        if ($null -ne $runnerManifest.PSObject.Properties["android_validation"] -and
+            [bool]$runnerManifest.android_validation.required -and
+            [string]$runnerManifest.android_validation.status -ne "passed") {
+            return 1
+        }
+    }
+
     if ($script:LastUiAuditAnalysisStatus -and $script:LastUiAuditAnalysisStatus.status -eq "failed") {
         if ($script:LastUiAuditAnalysisStatus.failure_type -eq "ai_blocking_issue" -and $FixMode -ne "Off") {
             Write-Host "Blocking UI analysis issue found. Starting fix loop ($FixMode, max iterations: $MaxFixIterations)."
@@ -3500,6 +3525,955 @@ function Read-JsonFile {
     return (Get-Content -Raw -Path $Path | ConvertFrom-Json)
 }
 
+function ConvertTo-RepositoryRelativePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $relative = Get-RelativePathCompat -BasePath $RepositoryRoot -TargetPath $Path
+    if ($relative.StartsWith("../", [System.StringComparison]::Ordinal) -or $relative -eq "..") {
+        throw "Audit evidence must remain inside the repository: $Path"
+    }
+    return $relative
+}
+
+function New-UiAuditRepositoryArtifactLink {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $full = Get-FullPath $Path
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+        throw "Required audit artifact is missing: $full"
+    }
+    return [ordered]@{
+        path = ConvertTo-RepositoryRelativePath -RepositoryRoot $RepositoryRoot -Path $full
+        sha256 = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
+function Test-UiAuditGitLfsPointer {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -eq 0) {
+        return $false
+    }
+    $prefixLength = [Math]::Min(128, $bytes.Length)
+    $prefix = [System.Text.Encoding]::ASCII.GetString($bytes, 0, $prefixLength)
+    return $prefix.StartsWith("version https://git-lfs.github.com/spec/v1", [System.StringComparison]::Ordinal)
+}
+
+function Invoke-UiAuditVisualTool {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$LogName,
+        [int[]]$AcceptedExitCodes = @(0)
+    )
+
+    $toolManifest = Join-FullPath $RepositoryRoot $script:UiAuditComparisonToolManifest
+    if (-not (Test-Path -LiteralPath $toolManifest -PathType Leaf)) {
+        throw "UI visual audit tool manifest is missing: $toolManifest"
+    }
+    $logDirectory = Join-FullPath $RunRoot "logs/comparison"
+    New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+    $logPath = Join-FullPath $logDirectory "$LogName.log"
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $cacheBinary = Join-FullPath $RepositoryRoot "tools/ui-visual-audit/target/debug/ui-visual-audit.exe"
+    $cacheStatus = if (Test-Path -LiteralPath $cacheBinary -PathType Leaf) { "UI visual audit cache hit: $cacheBinary" } else { "UI visual audit cache cold; cargo will build $Command" }
+    Write-Host $cacheStatus
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "cargo"
+    $psi.WorkingDirectory = $RepositoryRoot
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    Set-ProcessArguments -ProcessStartInfo $psi -Arguments (@("run", "--quiet", "--manifest-path", $toolManifest, "--", $Command) + $Arguments)
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+    try {
+        [void]$process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $completed = $process.WaitForExit([Math]::Max(1, $ComparisonBudgetSeconds) * 1000)
+        if (-not $completed) {
+            Stop-ProcessTreeCompat -Process $process
+            [void]$process.WaitForExit(10000)
+            $timeoutOutput = ($stdoutTask.GetAwaiter().GetResult() + [Environment]::NewLine + $stderrTask.GetAwaiter().GetResult())
+            Set-Content -LiteralPath $logPath -Value $timeoutOutput -Encoding UTF8
+            $stopwatch.Stop()
+            throw "ui-visual-audit $Command timed out after $ComparisonBudgetSeconds seconds. See $logPath."
+        }
+        $process.WaitForExit()
+        $output = $stdoutTask.GetAwaiter().GetResult() + [Environment]::NewLine + $stderrTask.GetAwaiter().GetResult()
+        $exitCode = $process.ExitCode
+    } finally {
+        $process.Dispose()
+    }
+    $stopwatch.Stop()
+    Set-Content -LiteralPath $logPath -Value $output -Encoding UTF8
+    if ($exitCode -notin $AcceptedExitCodes) {
+        $detail = (@($output -split "`r?`n") | Select-Object -Last 8) -join [Environment]::NewLine
+        throw "ui-visual-audit $Command failed with exit code $exitCode. See $logPath. $detail"
+    }
+    return [pscustomobject]@{
+        exit_code = $exitCode
+        elapsed_milliseconds = [int64]$stopwatch.ElapsedMilliseconds
+        log = $logPath
+    }
+}
+
+function Get-UiAuditReferenceEntries {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ManifestPath,
+        [Parameter(Mandatory = $true)][string]$LocaleValue,
+        [Parameter(Mandatory = $true)][string]$ThemeValue
+    )
+
+    $fullManifest = Get-FullPath $ManifestPath
+    if (-not (Test-Path -LiteralPath $fullManifest -PathType Leaf)) {
+        throw "Reference manifest not found: $fullManifest"
+    }
+    $manifest = Read-JsonFile $fullManifest
+    if ($manifest.schema_version -ne $script:UiAuditReferenceManifestSchemaVersion -or $null -eq $manifest.references) {
+        throw "Reference manifest must use schema_version $($script:UiAuditReferenceManifestSchemaVersion) and contain references: $fullManifest"
+    }
+
+    $locale = $LocaleValue.Trim().ToLowerInvariant().Replace("-", "_")
+    $theme = $ThemeValue.Trim()
+    $entries = New-Object System.Collections.Generic.List[object]
+    foreach ($reference in @($manifest.references)) {
+        if ([string]$reference.key.locale -ne $locale -or [string]$reference.key.theme -ne $theme) {
+            continue
+        }
+        if ([string]$reference.key.device -notin $script:BasicDevices) {
+            throw "Reference '$($reference.reference_id)' uses unsupported runner device '$($reference.key.device)'."
+        }
+        [void](Resolve-UiAuditScreens @([string]$reference.key.screen))
+        $deviceProfile = Get-UiAuditDeterministicProfile -Device ([string]$reference.key.device)
+        if ([int]$reference.viewport.physical_size.width -ne [int]$deviceProfile.physical_width -or
+            [int]$reference.viewport.physical_size.height -ne [int]$deviceProfile.physical_height -or
+            [Math]::Abs(([double]$reference.viewport.device_scale) - ([double]$deviceProfile.device_scale)) -gt 0.000001) {
+            throw "Reference '$($reference.reference_id)' viewport does not match deterministic profile '$($reference.key.device)'."
+        }
+        $root = if ([string]$reference.image.storage -eq "committed_fixture") {
+            Join-FullPath $RepositoryRoot "tools/ui-visual-audit/fixtures/references"
+        } elseif ([string]$reference.image.storage -eq "temporary_local") {
+            Join-FullPath $RepositoryRoot "summary/ui-visual-audit"
+        } else {
+            throw "Reference '$($reference.reference_id)' has unsupported storage '$($reference.image.storage)'."
+        }
+        $imagePath = Join-FullPath $root ([string]$reference.image.relative_path)
+        if (-not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
+            throw "Reference '$($reference.reference_id)' is missing: $imagePath. Fetch approved baselines with 'git lfs pull' or restore the temporary local reference."
+        }
+        if (Test-UiAuditGitLfsPointer -Path $imagePath) {
+            throw "Reference '$($reference.reference_id)' is a Git LFS pointer, not an image: $imagePath. Run 'git lfs pull' before strict comparison."
+        }
+        $entries.Add([pscustomobject]@{
+                reference = $reference
+                image_path = $imagePath
+            })
+    }
+    if ($entries.Count -eq 0) {
+        throw "Reference manifest contains no entries for locale '$locale' and theme '$theme'."
+    }
+    return @($entries.ToArray())
+}
+
+function Get-UiAuditReferenceTaskSeeds {
+    param([Parameter(Mandatory = $true)][object[]]$References)
+
+    $seeds = New-Object System.Collections.Generic.List[object]
+    foreach ($group in @($References | Group-Object { "$($_.reference.key.screen)|$($_.reference.key.device)" })) {
+        $first = @($group.Group)[0].reference
+        $states = @($group.Group | ForEach-Object { [string]$_.reference.key.state } | Select-Object -Unique)
+        $seeds.Add([pscustomobject]@{
+                screen = [string]$first.key.screen
+                device = [string]$first.key.device
+                states = ($states -join ",")
+            })
+    }
+    return @($seeds.ToArray())
+}
+
+function New-UiAuditThresholdProfile {
+    param(
+        [Parameter(Mandatory = $true)][double]$MaximumChangedRatio,
+        [ValidateRange(1, 65535)][int]$Weight = 100
+    )
+
+    $maximum = [Math]::Min(1000000, [Math]::Max(0, [int]([Math]::Round($MaximumChangedRatio * 1000000))))
+    return [ordered]@{
+        weight = $Weight
+        max_raw_changed_ratio_millionths = $maximum
+        max_alpha_changed_ratio_millionths = $maximum
+        max_tolerated_changed_ratio_millionths = $maximum
+        minimum_ssim_millionths = 0
+        max_geometry_changed_ratio_millionths = $maximum
+        max_large_area_ratio_millionths = $maximum
+    }
+}
+
+function ConvertTo-UiAuditGateThreshold {
+    param([Parameter(Mandatory = $true)]$RegionThreshold)
+    return [ordered]@{
+        max_raw_changed_ratio_millionths = [int]$RegionThreshold.max_raw_changed_ratio_millionths
+        max_alpha_changed_ratio_millionths = [int]$RegionThreshold.max_alpha_changed_ratio_millionths
+        max_tolerated_changed_ratio_millionths = [int]$RegionThreshold.max_tolerated_changed_ratio_millionths
+        minimum_ssim_millionths = [int]$RegionThreshold.minimum_ssim_millionths
+        max_geometry_changed_ratio_millionths = [int]$RegionThreshold.max_geometry_changed_ratio_millionths
+        max_large_area_ratio_millionths = [int]$RegionThreshold.max_large_area_ratio_millionths
+    }
+}
+
+function New-UiAuditBoundReport {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    return New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $Path
+}
+
+function Get-UiAuditCapturedReferencePairs {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Results,
+        [Parameter(Mandatory = $true)][object[]]$References,
+        [Parameter(Mandatory = $true)][string]$RunRoot
+    )
+
+    $capturesById = @{}
+    foreach ($capture in @($Results | ForEach-Object { $_.captures } | Where-Object { $null -ne $_ })) {
+        if ([string]$capture.status -ne "passed" -or -not [bool]$capture.screenshot_exists -or -not [bool]$capture.metadata_exists) {
+            continue
+        }
+        if ($capture.repetition_index -gt 1) {
+            continue
+        }
+        $captureId = "$($capture.screen).$($capture.device).$($capture.state)"
+        if (-not $capturesById.ContainsKey($captureId)) {
+            $capturesById[$captureId] = $capture
+        }
+    }
+
+    $pairs = New-Object System.Collections.Generic.List[object]
+    $missing = New-Object System.Collections.Generic.List[object]
+    foreach ($entry in $References) {
+        $reference = $entry.reference
+        $captureId = "$($reference.key.screen).$($reference.key.device).$($reference.key.state)"
+        if (-not $capturesById.ContainsKey($captureId)) {
+            $missing.Add([pscustomobject]@{
+                    screen = [string]$reference.key.screen
+                    device = [string]$reference.key.device
+                    state = [string]$reference.key.state
+                    reason = "capture artifact is missing or failed"
+                })
+            continue
+        }
+        $capture = $capturesById[$captureId]
+        $actual = Resolve-ArtifactPath -Value ([string]$capture.screenshot) -TaskOutputDir $RunRoot
+        $metadata = Resolve-ArtifactPath -Value ([string]$capture.metadata) -TaskOutputDir $RunRoot
+        if (-not (Test-Path -LiteralPath $actual -PathType Leaf) -or -not (Test-Path -LiteralPath $metadata -PathType Leaf)) {
+            $missing.Add([pscustomobject]@{
+                    screen = [string]$reference.key.screen
+                    device = [string]$reference.key.device
+                    state = [string]$reference.key.state
+                    reason = "capture artifact path is missing"
+                })
+            continue
+        }
+        $pairs.Add([pscustomobject]@{
+                capture_id = $captureId
+                capture = $capture
+                reference = $reference
+                reference_path = [string]$entry.image_path
+                actual_path = $actual
+                metadata_path = $metadata
+            })
+    }
+    return [pscustomobject]@{ pairs = @($pairs.ToArray()); missing = @($missing.ToArray()) }
+}
+
+function Write-UiAuditJsonFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)]$Value
+    )
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    $Value | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
+function Get-UiAuditComparisonArguments {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$RunRoot
+    )
+    return @(
+        "--repository-root", $RepositoryRoot,
+        "--allowed-input-root", $RepositoryRoot,
+        "--allowed-input-root", $RunRoot,
+        "--allowed-output-root", $RunRoot
+    )
+}
+
+function Invoke-UiAuditReferencePairComparison {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)]$Pair,
+        [Parameter(Mandatory = $true)][string]$ReferenceManifestPath,
+        [Parameter(Mandatory = $true)][string]$ComparisonAiModeValue
+    )
+
+    $reference = $Pair.reference
+    $captureId = [string]$Pair.capture_id
+    $segment = Get-SafePathSegment $captureId
+    $workingRoot = Join-FullPath $RunRoot (Join-Path "comparison" $segment)
+    $configRoot = Join-FullPath $workingRoot "configs"
+    $baseArgs = Get-UiAuditComparisonArguments -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot
+    $referenceBinding = [ordered]@{
+        sha256 = [string]$reference.image.sha256
+        revision = [int]$reference.baseline.version
+    }
+    $threshold = New-UiAuditThresholdProfile -MaximumChangedRatio ([double]$reference.allowed_differences.max_changed_pixel_ratio)
+    $criticalThreshold = New-UiAuditThresholdProfile -MaximumChangedRatio ([double]$reference.allowed_differences.max_changed_pixel_ratio) -Weight 100
+    $normalThreshold = New-UiAuditThresholdProfile -MaximumChangedRatio ([double]$reference.allowed_differences.max_changed_pixel_ratio) -Weight 40
+    $decorativeThreshold = New-UiAuditThresholdProfile -MaximumChangedRatio ([double]$reference.allowed_differences.max_changed_pixel_ratio) -Weight 10
+    $gateThreshold = ConvertTo-UiAuditGateThreshold -RegionThreshold $threshold
+    $width = [int]$reference.metadata.original_size.width
+    $height = [int]$reference.metadata.original_size.height
+    $compareConfig = Join-FullPath $configRoot "exact.config.json"
+    $normalizeConfig = Join-FullPath $configRoot "normalize.config.json"
+    $diffConfig = Join-FullPath $configRoot "diff.config.json"
+    $regionConfig = Join-FullPath $configRoot "regions.config.json"
+    $semanticConfig = Join-FullPath $configRoot "semantic.config.json"
+    $gateConfig = Join-FullPath $configRoot "gate.config.json"
+    Write-UiAuditJsonFile -Path $compareConfig -Value ([ordered]@{
+            schema_version = 1
+            algorithm_version = "exact_rgba_v1"
+            max_changed_pixel_ratio = [double]$reference.allowed_differences.max_changed_pixel_ratio
+        })
+    Write-UiAuditJsonFile -Path $normalizeConfig -Value ([ordered]@{
+            schema_version = 1
+            algorithm_version = "normalize_align_v1"
+            orientation_policy = "apply_exif"
+            color_policy = "srgb_only"
+            alpha_policy = "straight_zero_transparent_rgb"
+            reference = [ordered]@{ crop = [ordered]@{ kind = "none" } }
+            actual = [ordered]@{ crop = [ordered]@{ kind = "none" } }
+            alignment = [ordered]@{ mode = "integer_search"; maximum_translation = [ordered]@{ x = 2; y = 2 } }
+        })
+    Write-UiAuditJsonFile -Path $diffConfig -Value ([ordered]@{
+            schema_version = 1
+            algorithm_version = "ui_diff_metrics_v1"
+            over_threshold_channel_abs = 8
+            small_channel_tolerance = 3
+            edge_antialias_tolerance = 12
+            edge_luma_threshold = 96
+            ssim_window_size = 8
+            large_area_min_pixels = 16
+            large_area_min_ratio_millionths = 1000
+        })
+    Write-UiAuditJsonFile -Path $regionConfig -Value ([ordered]@{
+            schema_version = 1
+            algorithm_version = "ui_region_audit_v1"
+            reference_binding = $referenceBinding
+            audit_scope = "full_image"
+            maximum_ignored_ratio_millionths = 0
+            threshold_profiles = [ordered]@{ critical = $criticalThreshold; normal = $normalThreshold; decorative = $decorativeThreshold }
+            bounds_sources = @()
+            regions = @([ordered]@{
+                    region_id = "full_capture"
+                    label = "Full capture"
+                    semantic_role = "content"
+                    level = "normal"
+                    clipping = "reject_out_of_bounds"
+                    source = [ordered]@{
+                        kind = "manual"
+                        coordinate_space = "aligned"
+                        shape = [ordered]@{ kind = "rectangle"; bounds = [ordered]@{ x = 0; y = 0; width = $width; height = $height } }
+                    }
+                })
+            ignore_regions = @()
+        })
+    Write-UiAuditJsonFile -Path $semanticConfig -Value ([ordered]@{
+            schema_version = 1
+            algorithm_version = "ui_semantic_audit_v1"
+            minimum_touch_width = 44.0
+            minimum_touch_height = 44.0
+            geometry_epsilon = 0.015625
+            text_overlap_minimum_area = 1.0
+            require_safe_area_for_roles = @("critical_text", "button", "icon_button", "text_input")
+        })
+    Write-UiAuditJsonFile -Path $gateConfig -Value ([ordered]@{
+            schema_version = 1
+            algorithm_version = "ui_visual_gate_v1"
+            conservative_default = [ordered]@{ critical = $gateThreshold; normal = $gateThreshold; decorative = $gateThreshold }
+            reference_profiles = @([ordered]@{
+                    profile_id = [string]$reference.allowed_differences.profile
+                    reference_binding = $referenceBinding
+                    thresholds = [ordered]@{ critical = $gateThreshold; normal = $gateThreshold; decorative = $gateThreshold }
+                    calibration_fixture_id = "repository-reference-manifest"
+                    adjustment_rationale = "Threshold is bound to the approved reference manifest allowed_differences policy."
+                })
+        })
+
+    $compareOutput = Join-FullPath $workingRoot "compare"
+    $normalizeOutput = Join-FullPath $workingRoot "normalize"
+    $diffOutput = Join-FullPath $workingRoot "diff"
+    $regionOutput = Join-FullPath $workingRoot "regions"
+    $semanticOutput = Join-FullPath $workingRoot "semantic"
+    $toolRuns = New-Object System.Collections.Generic.List[object]
+    $toolRuns.Add((Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "compare" -LogName "$segment-compare" -AcceptedExitCodes @(0, 4) -Arguments ($baseArgs + @("--reference", $Pair.reference_path, "--actual", $Pair.actual_path, "--config", $compareConfig, "--output-directory", $compareOutput))))
+    $toolRuns.Add((Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "normalize-align" -LogName "$segment-normalize" -Arguments ($baseArgs + @("--reference", $Pair.reference_path, "--actual", $Pair.actual_path, "--normalization-manifest", $normalizeConfig, "--output-directory", $normalizeOutput))))
+    $alignedReference = Join-FullPath $normalizeOutput "aligned-reference.png"
+    $alignedActual = Join-FullPath $normalizeOutput "aligned-actual.png"
+    $normalizationReport = Join-FullPath $normalizeOutput "normalization-report.json"
+    $toolRuns.Add((Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "analyze-diff" -LogName "$segment-diff" -Arguments ($baseArgs + @("--reference", $alignedReference, "--actual", $alignedActual, "--config", $diffConfig, "--output-directory", $diffOutput))))
+    $diffReport = Join-FullPath $diffOutput "diff-metrics-report.json"
+    $toolRuns.Add((Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "audit-regions" -LogName "$segment-regions" -AcceptedExitCodes @(0, 4) -Arguments ($baseArgs + @("--reference", $alignedReference, "--actual", $alignedActual, "--diff-config", $diffConfig, "--region-config", $regionConfig, "--normalization-report", $normalizationReport, "--output-directory", $regionOutput))))
+    $regionReport = Join-FullPath $regionOutput "region-audit-report.json"
+    $toolRuns.Add((Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "audit-semantics" -LogName "$segment-semantic" -AcceptedExitCodes @(0, 4) -Arguments ($baseArgs + @("--metadata", $Pair.metadata_path, "--config", $semanticConfig, "--output-directory", $semanticOutput))))
+    $semanticReport = Join-FullPath $semanticOutput "semantic-audit-report.json"
+
+    $aiReport = $null
+    if ($ComparisonAiModeValue -ne "Off") {
+        $aiResponse = Join-FullPath $configRoot "fixture-response.json"
+        $aiConfig = Join-FullPath $configRoot "ai.config.json"
+        $aiBundle = Join-FullPath $configRoot "ai.bundle.json"
+        $aiOutput = Join-FullPath $workingRoot "ai"
+        if ($ComparisonAiModeValue -eq "Provider") {
+            $providerConfig = [string]$env:MYBEVY_UI_AUDIT_AI_CONFIG
+            if ([string]::IsNullOrWhiteSpace($providerConfig) -or -not (Test-Path -LiteralPath $providerConfig -PathType Leaf)) {
+                throw "ComparisonAiMode Provider requires MYBEVY_UI_AUDIT_AI_CONFIG to name an explicit provider config. CI never enables it implicitly."
+            }
+            Copy-Item -LiteralPath $providerConfig -Destination $aiConfig -Force
+        } else {
+            Write-UiAuditJsonFile -Path $aiResponse -Value ([ordered]@{ schema_version = 1; issues = @() })
+            Write-UiAuditJsonFile -Path $aiConfig -Value ([ordered]@{
+                    schema_version = 1
+                    algorithm_version = "ui_ai_visual_analysis_v1"
+                    provider = [ordered]@{
+                        mode = "fixture"
+                        provider_id = "runner-fixture-ai"
+                        audit_model_id = "runner-fixture-audit-v1"
+                        generation_model_id = "runner-fixture-generation-v1"
+                        response = $aiResponse
+                    }
+                    policy = [ordered]@{
+                        attempt_timeout_ms = 1000
+                        minimum_request_interval_ms = 0
+                        max_attempts = 1
+                        initial_backoff_ms = 0
+                        max_backoff_ms = 0
+                        max_output_tokens = 1024
+                    }
+                })
+        }
+        Write-UiAuditJsonFile -Path $aiBundle -Value ([ordered]@{
+                schema_version = 1
+                run_id = "strict-$captureId"
+                captures = @([ordered]@{
+                        capture_id = $captureId
+                        screen = [string]$reference.key.screen
+                        device = [string]$reference.key.device
+                        state = [string]$reference.key.state
+                        images = [ordered]@{
+                            reference = $alignedReference
+                            actual = $alignedActual
+                            overlay = (Join-FullPath $diffOutput "overlay.png")
+                            heatmap = (Join-FullPath $diffOutput "heatmap.png")
+                        }
+                        diff_metrics = $diffReport
+                        region_metrics = $regionReport
+                        semantic_report = $semanticReport
+                        ui_metadata = $Pair.metadata_path
+                        allowed_differences = [ordered]@{ profile = [string]$reference.allowed_differences.profile; notes = @($reference.allowed_differences.notes) }
+                        likely_files = @()
+                        privacy = [ordered]@{ redact_semantic_text = $true; redaction_rects = @() }
+                    })
+            })
+        $toolRuns.Add((Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "analyze-ai" -LogName "$segment-ai" -Arguments ($baseArgs + @("--bundle", $aiBundle, "--config", $aiConfig, "--output-directory", $aiOutput))))
+        $aiReport = Join-FullPath $aiOutput "ai-analysis-report.json"
+    }
+
+    $gateBundle = Join-FullPath $configRoot "gate.bundle.json"
+    Write-UiAuditJsonFile -Path $gateBundle -Value ([ordered]@{
+            schema_version = 1
+            run_id = "strict-$captureId"
+            captures = @([ordered]@{
+                    capture_id = $captureId
+                    screen = [string]$reference.key.screen
+                    device = [string]$reference.key.device
+                    state = [string]$reference.key.state
+                    reference_profile = [string]$reference.allowed_differences.profile
+                    reference_binding = $referenceBinding
+                    diff_report = (New-UiAuditBoundReport -RepositoryRoot $RepositoryRoot -Path $diffReport)
+                    region_report = (New-UiAuditBoundReport -RepositoryRoot $RepositoryRoot -Path $regionReport)
+                    semantic_report = (New-UiAuditBoundReport -RepositoryRoot $RepositoryRoot -Path $semanticReport)
+                })
+            ai_report = if ($null -eq $aiReport) { $null } else { (New-UiAuditBoundReport -RepositoryRoot $RepositoryRoot -Path $aiReport) }
+        })
+    $gateOutput = Join-FullPath $workingRoot "gate"
+    $toolRuns.Add((Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "evaluate-gate" -LogName "$segment-gate" -AcceptedExitCodes @(0, 2, 3, 4) -Arguments ($baseArgs + @("--bundle", $gateBundle, "--config", $gateConfig, "--output-directory", $gateOutput))))
+
+    foreach ($path in @((Join-FullPath $compareOutput "comparison-report.json"), $normalizationReport, $diffReport, $regionReport, $semanticReport, (Join-FullPath $gateOutput "visual-gate-report.json"), (Join-FullPath $diffOutput "overlay.png"), (Join-FullPath $diffOutput "heatmap.png"))) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Comparison tool completed without required artifact: $path"
+        }
+    }
+    return [pscustomobject]@{
+        pair = $Pair
+        capture_id = $captureId
+        reference_binding = $referenceBinding
+        compare_report = (Join-FullPath $compareOutput "comparison-report.json")
+        normalization_report = $normalizationReport
+        diff_report = $diffReport
+        region_report = $regionReport
+        semantic_report = $semanticReport
+        ai_report = $aiReport
+        gate_report = (Join-FullPath $gateOutput "visual-gate-report.json")
+        reference_path = $Pair.reference_path
+        actual_path = $Pair.actual_path
+        overlay_path = (Join-FullPath $diffOutput "overlay.png")
+        heatmap_path = (Join-FullPath $diffOutput "heatmap.png")
+        tool_runs = @($toolRuns.ToArray())
+    }
+}
+
+function New-UiAuditComparisonMetricSummary {
+    param([Parameter(Mandatory = $true)]$Metrics)
+    return [ordered]@{
+        raw_changed_ratio_millionths = [int]$Metrics.raw.changed_pixel_ratio_millionths
+        alpha_changed_ratio_millionths = [int]$Metrics.alpha.changed_pixel_ratio_millionths
+        tolerated_changed_ratio_millionths = [int]$Metrics.tolerated.changed_pixel_ratio_millionths
+        ssim_millionths = [int]$Metrics.perceptual.score_millionths
+        geometry_changed_ratio_millionths = [int]$Metrics.categories.geometry_edges.mismatched_edge_ratio_millionths
+        large_area_ratio_millionths = [int]$Metrics.categories.large_area_content.covered_pixel_ratio_millionths
+    }
+}
+
+function New-UiAuditComparisonResultCapture {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ReferenceManifestPath,
+        [Parameter(Mandatory = $true)]$Comparison
+    )
+
+    $diff = Read-JsonFile $Comparison.diff_report
+    $regions = Read-JsonFile $Comparison.region_report
+    $gate = Read-JsonFile $Comparison.gate_report
+    $ai = if ($null -eq $Comparison.ai_report) { $null } else { Read-JsonFile $Comparison.ai_report }
+    $reference = $Comparison.pair.reference
+    $regionSummaries = New-Object System.Collections.Generic.List[object]
+    foreach ($region in @($regions.region_results)) {
+        $regionSummaries.Add([ordered]@{
+                region_id = [string]$region.region_id
+                level = [string]$region.level
+                bounds = $region.mapped_aligned_bounds
+                status = [string]$region.local_status
+                metrics = (New-UiAuditComparisonMetricSummary -Metrics $region.metrics)
+                threshold = [ordered]@{
+                    profile = [string]$reference.allowed_differences.profile
+                    values = [ordered]@{
+                        max_raw_changed_ratio_millionths = [int]$region.threshold.max_raw_changed_ratio_millionths
+                        max_alpha_changed_ratio_millionths = [int]$region.threshold.max_alpha_changed_ratio_millionths
+                        max_tolerated_changed_ratio_millionths = [int]$region.threshold.max_tolerated_changed_ratio_millionths
+                        minimum_ssim_millionths = [int]$region.threshold.minimum_ssim_millionths
+                        max_geometry_changed_ratio_millionths = [int]$region.threshold.max_geometry_changed_ratio_millionths
+                        max_large_area_ratio_millionths = [int]$region.threshold.max_large_area_ratio_millionths
+                    }
+                }
+            })
+    }
+    $thresholdValues = [ordered]@{
+        max_raw_changed_ratio_millionths = [int]$regions.region_results[0].threshold.max_raw_changed_ratio_millionths
+        max_alpha_changed_ratio_millionths = [int]$regions.region_results[0].threshold.max_alpha_changed_ratio_millionths
+        max_tolerated_changed_ratio_millionths = [int]$regions.region_results[0].threshold.max_tolerated_changed_ratio_millionths
+        minimum_ssim_millionths = [int]$regions.region_results[0].threshold.minimum_ssim_millionths
+        max_geometry_changed_ratio_millionths = [int]$regions.region_results[0].threshold.max_geometry_changed_ratio_millionths
+        max_large_area_ratio_millionths = [int]$regions.region_results[0].threshold.max_large_area_ratio_millionths
+    }
+    $gateState = ([string]$gate.status).ToLowerInvariant()
+    $issues = New-Object System.Collections.Generic.List[object]
+    foreach ($reason in @($gate.captures[0].reasons)) {
+        if ([string]$reason.failure_type -eq "none") {
+            continue
+        }
+        $issues.Add([ordered]@{
+                issue_id = "gate-$($issues.Count + 1)"
+                source = "visual_gate"
+                region_id = $null
+                severity = if ([bool]$reason.blocking) { "severe" } else { "minor" }
+                message = [string]$reason.message
+                evidence = [ordered]@{ image_role = "overlay"; rect = $null; description = [string]$reason.source_id }
+                node_id = $null
+                source_path = $null
+                likely_files = @()
+                likely_cause = $null
+                suggested_change_scope = $null
+            })
+    }
+    return [ordered]@{
+        capture_id = [string]$Comparison.capture_id
+        screen = [string]$reference.key.screen
+        device = [string]$reference.key.device
+        state = [string]$reference.key.state
+        reference_binding = $Comparison.reference_binding
+        artifacts = [ordered]@{
+            reference = (New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $Comparison.reference_path)
+            actual = (New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $Comparison.actual_path)
+            overlay = (New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $Comparison.overlay_path)
+            heatmap = (New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $Comparison.heatmap_path)
+        }
+        metrics = (New-UiAuditComparisonMetricSummary -Metrics $diff.metrics)
+        regions = @($regionSummaries.ToArray())
+        masks = @()
+        allowed_differences = [ordered]@{
+            profile = [string]$reference.allowed_differences.profile
+            notes = @($reference.allowed_differences.notes)
+        }
+        algorithms = [ordered]@{
+            compare = "exact_rgba_v1"
+            normalize = "normalize_align_v1"
+            diff = "ui_diff_metrics_v1"
+            regions = "ui_region_audit_v1"
+            semantic = "ui_semantic_audit_v1"
+            gate = "ui_visual_gate_v1"
+        }
+        thresholds = @([ordered]@{ profile = [string]$reference.allowed_differences.profile; values = $thresholdValues })
+        ai = if ($null -eq $ai) {
+            [ordered]@{ ran = $false; provider_id = $null; model_id = $null; issue_count = 0 }
+        } else {
+            [ordered]@{ ran = $true; provider_id = [string]$ai.provider.provider_id; model_id = [string]$ai.provider.audit_model_id; issue_count = @($ai.issues).Count }
+        }
+        gate_state = $gateState
+        issues = @($issues.ToArray())
+        baseline_guard = [ordered]@{
+            reference_id = [string]$reference.reference_id
+            reference_manifest = (New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $ReferenceManifestPath)
+            expected = $Comparison.reference_binding
+            observed = $Comparison.reference_binding
+            approval_receipt = $null
+        }
+    }
+}
+
+function Complete-UiAuditReferenceComparison {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][string]$RunIdValue,
+        [Parameter(Mandatory = $true)][object[]]$Results,
+        [Parameter(Mandatory = $true)][bool]$IsDryRun
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ReferenceManifest)) {
+        return $null
+    }
+    if (-not $StrictReference) {
+        throw "-ReferenceManifest requires -StrictReference so ordinary audit runs cannot silently become baseline comparisons."
+    }
+    if (-not $DeterministicCapture -and -not $IsDryRun) {
+        throw "Strict reference comparison requires -DeterministicCapture."
+    }
+    if ($ComparisonBudgetSeconds -le 0 -or $ComparisonBudgetPeakMemoryBytes -le 0 -or $ComparisonBudgetArtifactBytes -le 0) {
+        throw "Comparison budgets must be positive."
+    }
+
+    $referenceManifestPath = Get-FullPath $ReferenceManifest
+    $validate = Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "validate-manifest" -LogName "reference-manifest" -Arguments @("--repository-root", $RepositoryRoot, "--manifest", $referenceManifestPath)
+    $references = @(Get-UiAuditReferenceEntries -RepositoryRoot $RepositoryRoot -ManifestPath $referenceManifestPath -LocaleValue $Locale -ThemeValue $Theme)
+    $manifestPath = Join-FullPath $RunRoot "manifest.json"
+    $manifest = Read-JsonFile $manifestPath
+    $referenceLink = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $referenceManifestPath
+    if ($IsDryRun) {
+        $manifest | Add-Member -NotePropertyName "comparison" -NotePropertyValue ([ordered]@{
+                mode = "strict_reference"
+                status = "planned"
+                reference_manifest = $referenceLink
+                matrix_total = $references.Count
+                ai_mode = "fixture"
+                detail = "dry run did not produce screenshots or comparison evidence"
+            }) -Force
+        $manifest | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+        return $manifest.comparison
+    }
+
+    $overall = [System.Diagnostics.Stopwatch]::StartNew()
+    $pairSet = Get-UiAuditCapturedReferencePairs -Results $Results -References $references -RunRoot $RunRoot
+    $completed = New-Object System.Collections.Generic.List[object]
+    $failures = New-Object System.Collections.Generic.List[object]
+    foreach ($missing in @($pairSet.missing)) {
+        $failures.Add($missing)
+    }
+    foreach ($pair in @($pairSet.pairs)) {
+        try {
+            Write-Host "Comparing $($pair.capture_id) against strict reference $($pair.reference.reference_id)"
+            $comparison = Invoke-UiAuditReferencePairComparison -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Pair $pair -ReferenceManifestPath $referenceManifestPath -ComparisonAiModeValue $ComparisonAiMode
+            $completed.Add($comparison)
+        } catch {
+            $failures.Add([pscustomobject]@{
+                    screen = [string]$pair.reference.key.screen
+                    device = [string]$pair.reference.key.device
+                    state = [string]$pair.reference.key.state
+                    reason = $_.Exception.Message
+                })
+        }
+    }
+    $overall.Stop()
+    $artifactBytes = if (Test-Path -LiteralPath (Join-FullPath $RunRoot "comparison")) {
+        [int64](@(Get-ChildItem -LiteralPath (Join-FullPath $RunRoot "comparison") -Recurse -File | Measure-Object -Property Length -Sum).Sum)
+    } else { [int64]0 }
+    $peakMemory = [int64]0
+    foreach ($comparison in @($completed.ToArray())) {
+        foreach ($reportPath in @($comparison.diff_report, $comparison.semantic_report, $comparison.gate_report)) {
+            $report = Read-JsonFile $reportPath
+            $candidate = if ($null -ne $report.performance -and $null -ne $report.performance.peak_working_memory) { [int64]$report.performance.peak_working_memory.bytes } elseif ($null -ne $report.performance -and $null -ne $report.performance.estimated_peak_memory_bytes) { [int64]$report.performance.estimated_peak_memory_bytes } else { 0 }
+            $peakMemory = [Math]::Max($peakMemory, $candidate)
+        }
+    }
+    if ($overall.Elapsed.TotalSeconds -gt $ComparisonBudgetSeconds) {
+        $failures.Add([pscustomobject]@{ screen = "matrix"; device = "all"; state = "all"; reason = "comparison matrix exceeded $ComparisonBudgetSeconds seconds" })
+    }
+    if ($peakMemory -gt $ComparisonBudgetPeakMemoryBytes) {
+        $failures.Add([pscustomobject]@{ screen = "matrix"; device = "all"; state = "all"; reason = "estimated peak memory $peakMemory exceeds budget $ComparisonBudgetPeakMemoryBytes" })
+    }
+    if ($artifactBytes -gt $ComparisonBudgetArtifactBytes) {
+        $failures.Add([pscustomobject]@{ screen = "matrix"; device = "all"; state = "all"; reason = "comparison artifacts $artifactBytes exceed budget $ComparisonBudgetArtifactBytes" })
+    }
+
+    $captureResults = New-Object System.Collections.Generic.List[object]
+    foreach ($comparison in @($completed.ToArray())) {
+        try {
+            $captureResults.Add((New-UiAuditComparisonResultCapture -RepositoryRoot $RepositoryRoot -ReferenceManifestPath $referenceManifestPath -Comparison $comparison))
+        } catch {
+            $failures.Add([pscustomobject]@{
+                    screen = [string]$comparison.pair.reference.key.screen
+                    device = [string]$comparison.pair.reference.key.device
+                    state = [string]$comparison.pair.reference.key.state
+                    reason = "comparison report input assembly failed: $($_.Exception.Message)"
+                })
+        }
+    }
+    $bundlePath = Join-FullPath $RunRoot "comparison/comparison-bundle.json"
+    $comparisonInputLink = $null
+    $resultLink = $null
+    $reportLink = $null
+    if ($failures.Count -eq 0 -and $captureResults.Count -gt 0) {
+        $analysisPath = Join-FullPath $RunRoot "analysis.json"
+        $analysisBacklink = Read-JsonFile $analysisPath
+        $analysisBacklink.artifact_backlink.root_manifest = ConvertTo-RepositoryRelativePath -RepositoryRoot $RepositoryRoot -Path $manifestPath
+        $analysisBacklink | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $analysisPath -Encoding UTF8
+        $analysisLink = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $analysisPath
+        $bundle = [ordered]@{
+            schema_version = 1
+            algorithm_version = "ui_comparison_bundle_v1"
+            run_id = $RunIdValue
+            root_manifest = [ordered]@{ path = ConvertTo-RepositoryRelativePath -RepositoryRoot $RepositoryRoot -Path $manifestPath }
+            analysis = $analysisLink
+            fix_iterations = @()
+            captures = @($captureResults.ToArray())
+        }
+        Write-UiAuditJsonFile -Path $bundlePath -Value $bundle
+        $comparisonInputLink = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $bundlePath
+        $manifest | Add-Member -NotePropertyName "runner_analysis" -NotePropertyValue $manifest.analysis -Force
+        $manifest | Add-Member -NotePropertyName "analysis" -NotePropertyValue $analysisLink -Force
+        $manifest | Add-Member -NotePropertyName "fix_iterations" -NotePropertyValue @() -Force
+        $manifest | Add-Member -NotePropertyName "comparison" -NotePropertyValue ([ordered]@{
+                mode = "strict_reference"
+                status = "building_report"
+                reference_manifest = $referenceLink
+                input = [string]$comparisonInputLink.path
+                input_sha256 = [string]$comparisonInputLink.sha256
+                matrix_total = $references.Count
+                ai_mode = $ComparisonAiMode.ToLowerInvariant()
+            }) -Force
+        $manifest | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+        try {
+            $reportOutput = Join-FullPath $RunRoot "comparison/report"
+            [void](Invoke-UiAuditVisualTool -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot -Command "build-report" -LogName "comparison-report" -Arguments ((Get-UiAuditComparisonArguments -RepositoryRoot $RepositoryRoot -RunRoot $RunRoot) + @("--bundle", $bundlePath, "--output-directory", $reportOutput)))
+            $resultPath = Join-FullPath $reportOutput "comparison-result.json"
+            $reportPath = Join-FullPath $reportOutput "report.md"
+            $resultLink = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $resultPath
+            $reportLink = New-UiAuditRepositoryArtifactLink -RepositoryRoot $RepositoryRoot -Path $reportPath
+        } catch {
+            $failures.Add([pscustomobject]@{ screen = "matrix"; device = "all"; state = "all"; reason = "build-report failed: $($_.Exception.Message)" })
+        }
+    }
+    $gateFailures = @($captureResults.ToArray() | Where-Object { $_.gate_state -ne "passed" } | ForEach-Object {
+            [pscustomobject]@{ screen = $_.screen; device = $_.device; state = $_.state; reason = "visual gate state $($_.gate_state)" }
+        })
+    foreach ($failure in $gateFailures) {
+        $failures.Add($failure)
+    }
+    $status = if ($failures.Count -gt 0) { "failed" } else { "passed" }
+    $comparisonSummary = [ordered]@{
+        mode = "strict_reference"
+        status = $status
+        reference_manifest = $referenceLink
+        input = if ($null -eq $comparisonInputLink) { $null } else { [string]$comparisonInputLink.path }
+        input_sha256 = if ($null -eq $comparisonInputLink) { $null } else { [string]$comparisonInputLink.sha256 }
+        result = $resultLink
+        report = $reportLink
+        matrix_total = $references.Count
+        compared_captures = $captureResults.Count
+        failed_captures = @($failures.ToArray())
+        ai_mode = $ComparisonAiMode.ToLowerInvariant()
+        performance = [ordered]@{
+            matrix_elapsed_milliseconds = [int64]$overall.ElapsedMilliseconds
+            estimated_peak_memory_bytes = $peakMemory
+            artifact_bytes = $artifactBytes
+            budgets = [ordered]@{
+                matrix_seconds = $ComparisonBudgetSeconds
+                peak_memory_bytes = $ComparisonBudgetPeakMemoryBytes
+                artifact_bytes = $ComparisonBudgetArtifactBytes
+            }
+        }
+    }
+    $manifest | Add-Member -NotePropertyName "comparison" -NotePropertyValue $comparisonSummary -Force
+    if ($status -eq "failed") {
+        $manifest.status = "failed"
+    }
+    $manifest | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Add-Content -LiteralPath (Join-FullPath $RunRoot "report.md") -Encoding UTF8 -Value ("`n## Strict Reference Comparison`n`n- Status: ``$status```n- Matrix elapsed: ``$([int64]$overall.ElapsedMilliseconds) ms```n- Estimated peak memory: ``$peakMemory bytes```n- Artifact bytes: ``$artifactBytes```n- Full report: $(if ($reportLink) { "[$($reportLink.path)]($($reportLink.path))" } else { "-" })`n")
+    Write-Host "Strict comparison: $status; captures=$($captureResults.Count)/$($references.Count); elapsed=$([int64]$overall.ElapsedMilliseconds)ms; artifacts=$artifactBytes bytes"
+    return $comparisonSummary
+}
+
+function Write-UiAuditStrictSelfTestPng {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][int]$Width,
+        [Parameter(Mandatory = $true)][int]$Height,
+        [Parameter(Mandatory = $true)][System.Drawing.Color]$Color
+    )
+
+    Add-Type -AssemblyName System.Drawing
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    $bitmap = New-Object System.Drawing.Bitmap $Width, $Height
+    try {
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try {
+            $graphics.Clear($Color)
+            $accent = [System.Drawing.Color]::FromArgb(255, 255 - $Color.R, 255 - $Color.G, 255 - $Color.B)
+            $accentBrush = New-Object System.Drawing.SolidBrush $accent
+            $lightBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+            try {
+                $graphics.FillRectangle($accentBrush, [int]($Width * 0.08), [int]($Height * 0.08), [int]($Width * 0.84), [int]($Height * 0.12))
+                $graphics.FillEllipse($lightBrush, [int]($Width * 0.35), [int]($Height * 0.38), [int]($Width * 0.3), [int]($Height * 0.3))
+            } finally {
+                $accentBrush.Dispose()
+                $lightBrush.Dispose()
+            }
+        } finally {
+            $graphics.Dispose()
+        }
+        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+        $bitmap.Dispose()
+    }
+}
+
+function Invoke-UiAuditStrictReferenceSelfTest {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    $suffix = "strict-selftest-" + [Guid]::NewGuid().ToString("N")
+    $runRoot = Join-FullPath $RepositoryRoot (Join-Path "summary/ui-audit" $suffix)
+    $referenceRoot = Join-FullPath $RepositoryRoot (Join-Path "summary/ui-visual-audit" $suffix)
+    $manifestPath = Join-FullPath $runRoot "reference-manifest.json"
+    $savedReferenceManifest = $ReferenceManifest
+    $savedStrictReference = $StrictReference
+    $savedDeterministicCapture = $DeterministicCapture
+    $savedComparisonAiMode = $ComparisonAiMode
+    try {
+        $profiles = @(
+            [pscustomobject]@{ device = "phone-small"; state = "initial"; color = [System.Drawing.Color]::SteelBlue },
+            [pscustomobject]@{ device = "phone-small"; state = "bottom"; color = [System.Drawing.Color]::DarkSlateBlue },
+            [pscustomobject]@{ device = "tablet-portrait"; state = "initial"; color = [System.Drawing.Color]::DarkOliveGreen }
+        )
+        $references = New-Object System.Collections.Generic.List[object]
+        $results = New-Object System.Collections.Generic.List[object]
+        foreach ($profile in $profiles) {
+            $deviceProfile = Get-UiAuditDeterministicProfile -Device $profile.device
+            $fileName = "$($profile.device)-$($profile.state).png"
+            $referenceImage = Join-FullPath $referenceRoot $fileName
+            $actualImage = Join-FullPath $runRoot (Join-Path "captures" $fileName)
+            Write-UiAuditStrictSelfTestPng -Path $referenceImage -Width $deviceProfile.physical_width -Height $deviceProfile.physical_height -Color $profile.color
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $actualImage) | Out-Null
+            Copy-Item -LiteralPath $referenceImage -Destination $actualImage -Force
+            $metadata = Join-FullPath $runRoot (Join-Path "captures" "$($profile.device).metadata.json")
+            Copy-Item -LiteralPath (Join-FullPath $RepositoryRoot "tools/ui-visual-audit/fixtures/semantic/compact-pass.metadata.json") -Destination $metadata -Force
+            $hash = (Get-FileHash -LiteralPath $referenceImage -Algorithm SHA256).Hash.ToLowerInvariant()
+            $references.Add([ordered]@{
+                    reference_id = "selftest_ui_gallery_$($profile.device)_$($profile.state)"
+                    key = [ordered]@{ screen = "ui_gallery"; device = $profile.device; state = $profile.state; locale = "zh_cn"; theme = "default" }
+                    viewport = [ordered]@{
+                        logical_size = [ordered]@{ width = [double]$deviceProfile.logical_width; height = [double]$deviceProfile.logical_height }
+                        physical_size = [ordered]@{ width = [int]$deviceProfile.physical_width; height = [int]$deviceProfile.physical_height }
+                        device_scale = [double]$deviceProfile.device_scale
+                        orientation = "portrait"
+                    }
+                    image = [ordered]@{ storage = "temporary_local"; relative_path = "$suffix/$fileName"; sha256 = $hash }
+                    metadata = [ordered]@{ original_size = [ordered]@{ width = [int]$deviceProfile.physical_width; height = [int]$deviceProfile.physical_height }; color_space = "srgb" }
+                    provenance = [ordered]@{ source = "runner strict self-test"; source_uri = $null; authorization_status = "local_restricted"; license_id = "test-only" }
+                    baseline = [ordered]@{ version = 1; update_reason = "runner strict self-test"; previous_sha256 = $null }
+                    allowed_differences = [ordered]@{ profile = "strict_selftest"; per_channel_tolerance = 0; max_changed_pixel_ratio = 0.0; notes = @("generated only for runner self-test") }
+                })
+            $results.Add([pscustomobject]@{
+                    screen = "ui_gallery"
+                    device = $profile.device
+                    status = "passed"
+                    captures = @([pscustomobject]@{
+                            screen = "ui_gallery"
+                            device = $profile.device
+                            state = $profile.state
+                            status = "passed"
+                            screenshot = ConvertTo-RunRelativePath -RunRoot $runRoot -Path $actualImage
+                            metadata = ConvertTo-RunRelativePath -RunRoot $runRoot -Path $metadata
+                            screenshot_exists = $true
+                            metadata_exists = $true
+                            repetition_index = 1
+                        })
+                })
+        }
+        Write-UiAuditJsonFile -Path $manifestPath -Value ([ordered]@{ schema_version = 1; references = @($references.ToArray()) })
+        $ReferenceManifest = $manifestPath
+        $StrictReference = $true
+        $DeterministicCapture = $true
+        $ComparisonAiMode = "Fixture"
+        Write-UiAuditRunnerOutputs -RunRoot $runRoot -RunIdValue $suffix -Results @($results.ToArray()) -ScreensValue @("ui_gallery") -DevicesValue @($profiles | ForEach-Object { $_.device }) -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @($profiles | ForEach-Object { $_.device })
+        $comparison = Complete-UiAuditReferenceComparison -RepositoryRoot $RepositoryRoot -RunRoot $runRoot -RunIdValue $suffix -Results @($results.ToArray()) -IsDryRun $false
+        Assert-SelfTest ($comparison.status -eq "passed" -and $comparison.compared_captures -eq 3) "strict reference comparison expands and passes three capture mappings"
+        Assert-SelfTest ((Test-Path (Join-FullPath $runRoot "comparison/report/comparison-result.json")) -and (Test-Path (Join-FullPath $runRoot "comparison/report/report.md"))) "strict reference comparison writes structured result and report"
+        $strictResult = Read-JsonFile (Join-FullPath $runRoot "comparison/report/comparison-result.json")
+        Assert-SelfTest (@($strictResult.captures).Count -eq 3 -and @($strictResult.captures | ForEach-Object { $_.device } | Select-Object -Unique).Count -eq 2 -and @($strictResult.captures | ForEach-Object { $_.state } | Select-Object -Unique).Count -eq 2) "strict reference comparison covers two devices and a multi-state UI page"
+        $strictManifest = Read-JsonFile (Join-FullPath $runRoot "manifest.json")
+        Assert-SelfTest ($strictManifest.comparison.performance.matrix_elapsed_milliseconds -ge 0 -and $strictManifest.comparison.performance.artifact_bytes -gt 0) "strict comparison records matrix time and artifact budget evidence"
+    } finally {
+        $ReferenceManifest = $savedReferenceManifest
+        $StrictReference = $savedStrictReference
+        $DeterministicCapture = $savedDeterministicCapture
+        $ComparisonAiMode = $savedComparisonAiMode
+        if (Test-Path -LiteralPath $runRoot) {
+            Remove-Item -LiteralPath $runRoot -Recurse -Force
+        }
+        if (Test-Path -LiteralPath $referenceRoot) {
+            Remove-Item -LiteralPath $referenceRoot -Recurse -Force
+        }
+    }
+}
+
 function Get-FailedTaskSeedsFromManifest {
     param(
         [Parameter(Mandatory = $true)][string]$ManifestPath,
@@ -3517,7 +4491,15 @@ function Get-FailedTaskSeedsFromManifest {
     }
 
     $failed = @($manifest.tasks | Where-Object { $_.status -ne "passed" -and $_.status -ne "planned" })
-    if ($failed.Count -eq 0) {
+    $failedComparisons = @()
+    if ($null -ne $manifest.PSObject.Properties["comparison"] -and $null -ne $manifest.comparison -and $null -ne $manifest.comparison.PSObject.Properties["failed_captures"]) {
+        $failedComparisons = @($manifest.comparison.failed_captures | Where-Object {
+                -not [string]::IsNullOrWhiteSpace([string]$_.screen) -and
+                    -not [string]::IsNullOrWhiteSpace([string]$_.device) -and
+                    -not [string]::IsNullOrWhiteSpace([string]$_.state)
+            })
+    }
+    if ($failed.Count -eq 0 -and $failedComparisons.Count -eq 0) {
         return @()
     }
 
@@ -3529,13 +4511,20 @@ function Get-FailedTaskSeedsFromManifest {
             if ([string]::IsNullOrWhiteSpace($screen) -or [string]::IsNullOrWhiteSpace($device)) {
                 throw "Failed task in rerun manifest is missing screen or device."
             }
-            $seeds.Add([pscustomobject]@{ screen = $screen; device = $device })
+            $seeds.Add([pscustomobject]@{ screen = $screen; device = $device; states = $null })
+        }
+        foreach ($capture in $failedComparisons) {
+            $seeds.Add([pscustomobject]@{
+                    screen = [string]$capture.screen
+                    device = [string]$capture.device
+                    states = [string]$capture.state
+                })
         }
     } else {
         $screens = @($failed | ForEach-Object { [string]$_.screen } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
         foreach ($screen in $screens) {
             foreach ($device in $MatrixDevices) {
-                $seeds.Add([pscustomobject]@{ screen = $screen; device = $device })
+                $seeds.Add([pscustomobject]@{ screen = $screen; device = $device; states = $null })
             }
         }
     }
@@ -3553,7 +4542,8 @@ function New-UiAuditTasksFromSeeds {
 
     $tasks = New-Object System.Collections.Generic.List[object]
     foreach ($seed in $Seeds) {
-        $tasks.Add((New-UiAuditTask -RunRoot $RunRoot -Screen ([string]$seed.screen) -Device ([string]$seed.device) -StateValue $StateValue -ExtraBevyArgs $ExtraBevyArgs))
+        $seedStates = if ($null -ne $seed.PSObject.Properties["states"] -and -not [string]::IsNullOrWhiteSpace([string]$seed.states)) { [string]$seed.states } else { $StateValue }
+        $tasks.Add((New-UiAuditTask -RunRoot $RunRoot -Screen ([string]$seed.screen) -Device ([string]$seed.device) -StateValue $seedStates -ExtraBevyArgs $ExtraBevyArgs))
     }
     return @($tasks.ToArray())
 }
@@ -4971,6 +5961,8 @@ function Invoke-UiAuditSelfTest {
         $MaxFixIterations = $savedMaxFixIterations
         $script:LastUiAuditAnalysisStatus = $null
 
+        Invoke-UiAuditStrictReferenceSelfTest -RepositoryRoot $repoRoot
+
         Write-Host "Self-test passed."
     } finally {
         if (Test-Path $tempRoot) {
@@ -4979,10 +5971,63 @@ function Invoke-UiAuditSelfTest {
     }
 }
 
+function Complete-UiAuditAndroidValidation {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][string]$Backend
+    )
+
+    if (-not $RequireRealAndroid) {
+        return $null
+    }
+    $manifestPath = Join-FullPath $RunRoot "manifest.json"
+    $manifest = Read-JsonFile $manifestPath
+    $adb = Get-Command adb -ErrorAction SilentlyContinue
+    $status = if ($Backend -ne "Http") {
+        "external_unavailable"
+    } elseif ($null -eq $adb) {
+        "external_unavailable"
+    } else {
+        "pending_remote_metadata_validation"
+    }
+    $detail = if ($Backend -ne "Http") {
+        "real Android validation requires -RemoteBackend Http; Mock artifacts are not device evidence"
+    } elseif ($null -eq $adb) {
+        "adb was not found; connect a real Android device and install the remote UI debug backend before validating status bar, safe area, fonts, and touch"
+    } else {
+        "adb is available, but the current remote protocol does not yet return Android system-bar/safe-area/font/touch metadata in a validated device contract"
+    }
+    $manifest | Add-Member -NotePropertyName "android_validation" -NotePropertyValue ([ordered]@{
+            required = $true
+            status = $status
+            backend = $Backend
+            adb_available = ($null -ne $adb)
+            checks = @("status_bar", "safe_area", "font", "touch")
+            detail = $detail
+        }) -Force
+    $manifest.status = "failed"
+    $manifest | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Add-Content -LiteralPath (Join-FullPath $RunRoot "report.md") -Encoding UTF8 -Value ("`n## Android Device Validation`n`n- Status: ``$status`` `n- Detail: $detail`n")
+    Write-Warning "Android device validation is ${status}: $detail"
+    return $manifest.android_validation
+}
+
 function Invoke-UiAuditRunner {
     $effectiveMode = if ($Remote) { "Remote" } else { $Mode }
+    if ($StrictReference -and [string]::IsNullOrWhiteSpace($ReferenceManifest)) {
+        throw "-StrictReference requires -ReferenceManifest."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ReferenceManifest) -and -not $StrictReference) {
+        throw "-ReferenceManifest requires explicit -StrictReference; ordinary audit mode remains reference-free."
+    }
     if ($effectiveMode -eq "Remote" -and $DeterministicCapture) {
         throw "-DeterministicCapture currently supports local window profiles only; remote deterministic capture requires the stage 11 device contract."
+    }
+    if ($effectiveMode -eq "Remote" -and $StrictReference) {
+        throw "Strict reference comparison requires a deterministic remote Android capture contract. The current remote runner records Mock/Http artifacts but does not yet provide that contract."
+    }
+    if ($RequireRealAndroid -and $effectiveMode -ne "Remote") {
+        throw "-RequireRealAndroid is only meaningful with -Remote -RemoteBackend Http and a real Android capture backend."
     }
 
     $scriptRoot = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
@@ -5044,6 +6089,7 @@ function Invoke-UiAuditRunner {
                 $results.Add((New-PlannedRemoteTaskResult -Task $task -RunRoot $runRoot -RunIdValue $runIdValue))
             }
             Write-UiAuditRunnerOutputs -RunRoot $runRoot -RunIdValue $runIdValue -Results @($results.ToArray()) -ScreensValue $screensToRun -DevicesValue $devicesToRun -IsDryRun $true -RerunSource $RerunFromManifest -RunnerMode "Remote" -RemoteTargetsValue $remoteTargets -RemoteBackendName $RemoteBackend -LocalDevicesValue $localFallbackDevices
+            [void](Complete-UiAuditAndroidValidation -RunRoot $runRoot -Backend $RemoteBackend)
             Write-Host "Dry run complete. Remote adminapi tasks were not created."
             Write-Host "Manifest: $(Join-FullPath $runRoot "manifest.json")"
             Write-Host "Report: $(Join-FullPath $runRoot "report.md")"
@@ -5064,6 +6110,7 @@ function Invoke-UiAuditRunner {
         }
 
         Write-UiAuditRunnerOutputs -RunRoot $runRoot -RunIdValue $runIdValue -Results @($results.ToArray()) -ScreensValue $screensToRun -DevicesValue $devicesToRun -IsDryRun $false -RerunSource $RerunFromManifest -RunnerMode "Remote" -RemoteTargetsValue $remoteTargets -RemoteBackendName $RemoteBackend -LocalDevicesValue $localFallbackDevices
+        [void](Complete-UiAuditAndroidValidation -RunRoot $runRoot -Backend $RemoteBackend)
         Write-Host "Manifest: $(Join-FullPath $runRoot "manifest.json")"
         Write-Host "Report: $(Join-FullPath $runRoot "report.md")"
 
@@ -5089,8 +6136,17 @@ function Invoke-UiAuditRunner {
         $devicesToRun = @($seeds | ForEach-Object { [string]$_.device } | Select-Object -Unique)
         $tasks = @(New-UiAuditTasksFromSeeds -RunRoot $runRoot -Seeds $seeds -StateValue $States -ExtraBevyArgs $extraBevyArgs)
     } else {
-        $screensToRun = @(Resolve-UiAuditScreens $Screens)
-        $tasks = @(New-UiAuditTasks -RunRoot $runRoot -ScreensToRun $screensToRun -DevicesToRun $devicesToRun -StateValue $States -ExtraBevyArgs $extraBevyArgs)
+        if ($StrictReference) {
+            $referenceEntries = @(Get-UiAuditReferenceEntries -RepositoryRoot $repoRoot -ManifestPath $ReferenceManifest -LocaleValue $Locale -ThemeValue $Theme)
+            $seeds = @(Get-UiAuditReferenceTaskSeeds -References $referenceEntries)
+            $screensToRun = @($seeds | ForEach-Object { [string]$_.screen } | Select-Object -Unique)
+            $devicesToRun = @($seeds | ForEach-Object { [string]$_.device } | Select-Object -Unique)
+            $tasks = @(New-UiAuditTasksFromSeeds -RunRoot $runRoot -Seeds $seeds -StateValue $States -ExtraBevyArgs $extraBevyArgs)
+            Write-Host "Strict reference matrix: $($referenceEntries.Count) capture mappings across $($tasks.Count) runner tasks."
+        } else {
+            $screensToRun = @(Resolve-UiAuditScreens $Screens)
+            $tasks = @(New-UiAuditTasks -RunRoot $runRoot -ScreensToRun $screensToRun -DevicesToRun $devicesToRun -StateValue $States -ExtraBevyArgs $extraBevyArgs)
+        }
     }
 
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
@@ -5107,6 +6163,7 @@ function Invoke-UiAuditRunner {
             $results.Add((New-PlannedTaskResult -Task $task -RunRoot $runRoot))
         }
         Write-UiAuditRunnerOutputs -RunRoot $runRoot -RunIdValue $runIdValue -Results @($results.ToArray()) -ScreensValue $screensToRun -DevicesValue $devicesToRun -IsDryRun $true -RerunSource $RerunFromManifest -RunnerMode "Local" -LocalDevicesValue $devicesToRun
+        [void](Complete-UiAuditReferenceComparison -RepositoryRoot $repoRoot -RunRoot $runRoot -RunIdValue $runIdValue -Results @($results.ToArray()) -IsDryRun $true)
         Write-Host "Dry run complete. No cargo process was started."
         Write-Host "Manifest: $(Join-FullPath $runRoot "manifest.json")"
         Write-Host "Report: $(Join-FullPath $runRoot "report.md")"
@@ -5128,6 +6185,7 @@ function Invoke-UiAuditRunner {
     }
 
     Write-UiAuditRunnerOutputs -RunRoot $runRoot -RunIdValue $runIdValue -Results @($results.ToArray()) -ScreensValue $screensToRun -DevicesValue $devicesToRun -IsDryRun $false -RerunSource $RerunFromManifest -RunnerMode "Local" -LocalDevicesValue $devicesToRun
+    [void](Complete-UiAuditReferenceComparison -RepositoryRoot $repoRoot -RunRoot $runRoot -RunIdValue $runIdValue -Results @($results.ToArray()) -IsDryRun $false)
     Write-Host "Manifest: $(Join-FullPath $runRoot "manifest.json")"
     Write-Host "Report: $(Join-FullPath $runRoot "report.md")"
 
