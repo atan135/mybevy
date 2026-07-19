@@ -5,6 +5,7 @@ use crate::{
         validate_passed_preview_evidence_at,
     },
     repair::{MAX_REPAIR_ROUNDS, RepairRunResult, RepairRunStatus},
+    workspace::WorkspaceIsolationRecord,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1350,6 +1351,8 @@ pub struct ClosedLoopRunManifest {
     pub provenance: ClosedLoopRunProvenance,
     pub artifacts: ClosedLoopArtifactLinks,
     pub checkpoints: Vec<ClosedLoopStateCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceIsolationRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<TaskFailure>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1387,11 +1390,38 @@ impl ClosedLoopRunManifest {
                 cache_key: created_cache_key.into(),
                 attempt: 1,
             }],
+            workspace: None,
             failure: None,
             cancellation: None,
         };
         manifest.validate()?;
         Ok(manifest)
+    }
+
+    /// Binds the isolated filesystem boundary before the runner starts work.
+    /// It is intentionally only legal from `Created`: a resumed attempt must
+    /// retain the original clean source commit, dirty-state digest, locks, and
+    /// initial file snapshot instead of silently switching workspaces.
+    pub fn attach_workspace(
+        &mut self,
+        workspace: WorkspaceIsolationRecord,
+    ) -> Result<(), TaskFailure> {
+        self.validate()?;
+        if self.state != ClosedLoopRunState::Created || self.workspace.is_some() {
+            return Err(TaskFailure::invalid_state_transition(
+                "workspace isolation can only be attached once to a created closed-loop run",
+            ));
+        }
+        workspace.validate().map_err(|_| {
+            TaskFailure::manifest_corrupt("closed-loop workspace isolation record is invalid")
+        })?;
+        if workspace.source.source_commit != self.provenance.source_commit {
+            return Err(TaskFailure::manifest_corrupt(
+                "closed-loop workspace source commit differs from run provenance",
+            ));
+        }
+        self.workspace = Some(workspace);
+        self.validate()
     }
 
     pub fn transition(
@@ -1745,6 +1775,16 @@ impl ClosedLoopRunManifest {
         })?;
         validate_closed_loop_provenance(&self.provenance)?;
         validate_closed_loop_artifacts(&self.artifacts)?;
+        if let Some(workspace) = &self.workspace {
+            workspace.validate().map_err(|_| {
+                TaskFailure::manifest_corrupt("closed-loop workspace isolation record is invalid")
+            })?;
+            if workspace.source.source_commit != self.provenance.source_commit {
+                return Err(TaskFailure::manifest_corrupt(
+                    "closed-loop workspace source commit differs from run provenance",
+                ));
+            }
+        }
         if self.checkpoints.is_empty()
             || self.checkpoints.first().map(|checkpoint| checkpoint.state)
                 != Some(ClosedLoopRunState::Created)
@@ -2144,7 +2184,7 @@ mod tests {
     fn closed_loop_provenance() -> ClosedLoopRunProvenance {
         ClosedLoopRunProvenance {
             tool_version: "ui-generation-0.1.0".to_owned(),
-            source_commit: "0123456789abcdef".to_owned(),
+            source_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
             model_id: "offline-fixture".to_owned(),
             prompt_version: "ui-generation-v1".to_owned(),
             schema_id: "ui-document".to_owned(),
@@ -2179,6 +2219,35 @@ mod tests {
             analysis: None,
             fix: None,
             approval: None,
+        }
+    }
+
+    fn closed_loop_workspace_record() -> WorkspaceIsolationRecord {
+        WorkspaceIsolationRecord {
+            protocol_version: crate::workspace::WORKSPACE_ISOLATION_PROTOCOL_VERSION,
+            mode: crate::workspace::IsolatedWorkspaceMode::DraftStaging,
+            source: crate::workspace::SourceWorktreeSnapshot {
+                source_commit: closed_loop_provenance().source_commit,
+                is_dirty: true,
+                porcelain_v1_sha256: "b".repeat(64),
+                porcelain_entry_count: 2,
+            },
+            workspace_relative_path: "staging".to_owned(),
+            allowed_modification_roots: vec!["draft".to_owned(), "assets".to_owned()],
+            lock_targets: vec!["page:closed-loop-fixture".to_owned()],
+            lock_leases: vec![crate::workspace::WorkspaceLeaseRecord {
+                target: "page:closed-loop-fixture".to_owned(),
+                lease_id: "c".repeat(64),
+            }],
+            lock_recovery: crate::workspace::WorkspaceLockRecoveryPolicy {
+                stale_after_ms: 60_000,
+                cancellation_preserves_workspace: true,
+                process_crash_reclaims_expired_locks: true,
+            },
+            initial_snapshot: crate::workspace::WorkspaceTreeSnapshot {
+                captured_at_unix_ms: 1,
+                files: BTreeMap::new(),
+            },
         }
     }
 
@@ -2734,6 +2803,29 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind(), TaskFailureKind::InvalidStateTransition);
         assert_eq!(manifest.state, ClosedLoopRunState::Created);
+    }
+
+    #[test]
+    fn closed_loop_manifest_binds_a_valid_workspace_before_execution() {
+        let mut manifest = closed_loop_manifest();
+        manifest
+            .attach_workspace(closed_loop_workspace_record())
+            .unwrap();
+        let serialized = manifest.to_json_bytes().unwrap();
+        assert_eq!(
+            ClosedLoopRunManifest::parse_json(&serialized).unwrap(),
+            manifest
+        );
+        assert!(
+            manifest
+                .transition(ClosedLoopRunState::Preparing, 2, cache_key('b'))
+                .is_ok()
+        );
+        assert!(
+            manifest
+                .attach_workspace(closed_loop_workspace_record())
+                .is_err()
+        );
     }
 
     #[test]

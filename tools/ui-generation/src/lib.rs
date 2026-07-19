@@ -36,6 +36,8 @@ pub mod repair;
 pub mod run_manifest;
 #[cfg(feature = "full")]
 pub mod series;
+#[cfg(feature = "full")]
+pub mod workspace;
 
 #[cfg(feature = "full")]
 use contract::{GenerationTask, TaskAssessment, VerifiedReferenceImage};

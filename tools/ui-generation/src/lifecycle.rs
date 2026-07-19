@@ -40,6 +40,9 @@ pub enum TaskFailureKind {
     TargetViewportMissing,
     OutputDirectoryConflict,
     UnsafeOutputPath,
+    WorkspaceSnapshotFailed,
+    WorkspaceIsolationFailed,
+    WorkspaceLockTimeout,
     Cancelled,
     DependencyBoundaryViolation,
     ProviderNotFound,
@@ -85,6 +88,9 @@ impl TaskFailureKind {
             Self::TargetViewportMissing => "UI_GENERATION_TARGET_VIEWPORT_MISSING",
             Self::OutputDirectoryConflict => "UI_GENERATION_OUTPUT_DIRECTORY_CONFLICT",
             Self::UnsafeOutputPath => "UI_GENERATION_OUTPUT_PATH_UNSAFE",
+            Self::WorkspaceSnapshotFailed => "UI_GENERATION_WORKSPACE_SNAPSHOT_FAILED",
+            Self::WorkspaceIsolationFailed => "UI_GENERATION_WORKSPACE_ISOLATION_FAILED",
+            Self::WorkspaceLockTimeout => "UI_GENERATION_WORKSPACE_LOCK_TIMEOUT",
             Self::Cancelled => "UI_GENERATION_CANCELLED",
             Self::DependencyBoundaryViolation => "UI_GENERATION_DEPENDENCY_BOUNDARY_VIOLATION",
             Self::ProviderNotFound => "UI_GENERATION_PROVIDER_NOT_FOUND",
@@ -347,6 +353,18 @@ mod tests {
             (
                 TaskFailureKind::OutputDirectoryConflict,
                 "UI_GENERATION_OUTPUT_DIRECTORY_CONFLICT",
+            ),
+            (
+                TaskFailureKind::WorkspaceSnapshotFailed,
+                "UI_GENERATION_WORKSPACE_SNAPSHOT_FAILED",
+            ),
+            (
+                TaskFailureKind::WorkspaceIsolationFailed,
+                "UI_GENERATION_WORKSPACE_ISOLATION_FAILED",
+            ),
+            (
+                TaskFailureKind::WorkspaceLockTimeout,
+                "UI_GENERATION_WORKSPACE_LOCK_TIMEOUT",
             ),
             (TaskFailureKind::Cancelled, "UI_GENERATION_CANCELLED"),
         ];
