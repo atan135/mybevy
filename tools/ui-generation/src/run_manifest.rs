@@ -1102,6 +1102,882 @@ fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// Versioned manifest for the complete generate, audit, repair, and approval
+/// lifecycle. This is intentionally separate from `UiGenerationRunManifest`:
+/// that type is the sealed Stage 3 bundle consumed by promotion and must remain
+/// backward compatible while the closed-loop runner is introduced incrementally.
+pub const CLOSED_LOOP_RUN_MANIFEST_PROTOCOL_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClosedLoopRunState {
+    Created,
+    Preparing,
+    Generating,
+    Validating,
+    Previewing,
+    Auditing,
+    PlanningFix,
+    ApplyingFix,
+    Verifying,
+    AwaitingApproval,
+    Passed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClosedLoopStatePolicy {
+    pub allowed_from: &'static [ClosedLoopRunState],
+    pub timeout_ms: u64,
+    pub retryable: bool,
+    pub terminal: bool,
+    pub performs_external_call: bool,
+}
+
+impl ClosedLoopRunState {
+    pub const fn policy(self) -> ClosedLoopStatePolicy {
+        use ClosedLoopRunState::*;
+        match self {
+            Created => ClosedLoopStatePolicy {
+                allowed_from: &[],
+                timeout_ms: 0,
+                retryable: false,
+                terminal: false,
+                performs_external_call: false,
+            },
+            Preparing => ClosedLoopStatePolicy {
+                allowed_from: &[Created],
+                timeout_ms: 60_000,
+                retryable: true,
+                terminal: false,
+                performs_external_call: false,
+            },
+            Generating => ClosedLoopStatePolicy {
+                allowed_from: &[Preparing, Verifying],
+                timeout_ms: 300_000,
+                retryable: true,
+                terminal: false,
+                performs_external_call: true,
+            },
+            Validating => ClosedLoopStatePolicy {
+                allowed_from: &[Generating, ApplyingFix],
+                timeout_ms: 60_000,
+                retryable: true,
+                terminal: false,
+                performs_external_call: false,
+            },
+            Previewing => ClosedLoopStatePolicy {
+                allowed_from: &[Validating],
+                timeout_ms: 300_000,
+                retryable: true,
+                terminal: false,
+                performs_external_call: true,
+            },
+            Auditing => ClosedLoopStatePolicy {
+                allowed_from: &[Previewing, Verifying],
+                timeout_ms: 300_000,
+                retryable: true,
+                terminal: false,
+                performs_external_call: true,
+            },
+            PlanningFix => ClosedLoopStatePolicy {
+                allowed_from: &[Auditing],
+                timeout_ms: 60_000,
+                retryable: true,
+                terminal: false,
+                performs_external_call: false,
+            },
+            ApplyingFix => ClosedLoopStatePolicy {
+                allowed_from: &[PlanningFix],
+                timeout_ms: 120_000,
+                retryable: true,
+                terminal: false,
+                performs_external_call: true,
+            },
+            Verifying => ClosedLoopStatePolicy {
+                allowed_from: &[ApplyingFix],
+                timeout_ms: 300_000,
+                retryable: true,
+                terminal: false,
+                performs_external_call: false,
+            },
+            AwaitingApproval => ClosedLoopStatePolicy {
+                allowed_from: &[Auditing, PlanningFix, Verifying],
+                timeout_ms: 7 * 24 * 60 * 60 * 1000,
+                retryable: false,
+                terminal: false,
+                performs_external_call: false,
+            },
+            Passed => ClosedLoopStatePolicy {
+                allowed_from: &[AwaitingApproval],
+                timeout_ms: 0,
+                retryable: false,
+                terminal: true,
+                performs_external_call: false,
+            },
+            Failed | Cancelled => ClosedLoopStatePolicy {
+                allowed_from: &[],
+                timeout_ms: 0,
+                retryable: false,
+                terminal: true,
+                performs_external_call: false,
+            },
+        }
+    }
+
+    pub const fn is_terminal(self) -> bool {
+        self.policy().terminal
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClosedLoopArtifactKind {
+    GenerationInput,
+    ReferenceManifest,
+    UiDocument,
+    Asset,
+    Preview,
+    Comparison,
+    Analysis,
+    Fix,
+    Approval,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedLoopArtifactLinks {
+    pub generation_input: ArtifactLink,
+    pub reference_manifest: ArtifactLink,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_document: Option<ArtifactLink>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ArtifactLink>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedLoopViewport {
+    pub logical_width: u32,
+    pub logical_height: u32,
+    pub device_scale_milli: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedLoopBudgetConfiguration {
+    pub max_provider_calls: u32,
+    pub max_elapsed_ms: u64,
+    pub max_images: u32,
+    pub max_input_units: u64,
+    pub max_output_units: u64,
+    pub max_estimated_cost_microunits: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedLoopRunProvenance {
+    pub tool_version: String,
+    pub source_commit: String,
+    pub model_id: String,
+    pub prompt_version: String,
+    pub schema_id: String,
+    pub schema_version: u32,
+    pub algorithm_version: String,
+    pub viewport: ClosedLoopViewport,
+    pub theme_id: String,
+    pub locale: String,
+    pub budget: ClosedLoopBudgetConfiguration,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedLoopStateCheckpoint {
+    pub state: ClosedLoopRunState,
+    pub entered_at_unix_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at_unix_ms: Option<u64>,
+    pub cache_key: String,
+    pub attempt: u32,
+}
+
+impl ClosedLoopStateCheckpoint {
+    pub const fn identity(&self, checkpoint_index: usize) -> ClosedLoopCheckpointIdentity {
+        ClosedLoopCheckpointIdentity {
+            checkpoint_index,
+            state: self.state,
+            attempt: self.attempt,
+        }
+    }
+}
+
+/// Identifies one persisted attempt, including repeated states in a repair loop.
+/// State alone is deliberately not a recovery key.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedLoopCheckpointIdentity {
+    pub checkpoint_index: usize,
+    pub state: ClosedLoopRunState,
+    pub attempt: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedLoopCancellation {
+    pub reason: String,
+    pub requested_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedLoopRunManifest {
+    pub protocol_version: u32,
+    pub run_id: String,
+    pub state: ClosedLoopRunState,
+    pub created_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+    pub provenance: ClosedLoopRunProvenance,
+    pub artifacts: ClosedLoopArtifactLinks,
+    pub checkpoints: Vec<ClosedLoopStateCheckpoint>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<TaskFailure>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancellation: Option<ClosedLoopCancellation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClosedLoopRecoveryPlan {
+    pub last_complete_checkpoint: Option<ClosedLoopCheckpointIdentity>,
+    pub restart_checkpoint: ClosedLoopCheckpointIdentity,
+    pub restart_cache_key: String,
+    pub reusable_external_call_checkpoints: Vec<ClosedLoopCheckpointIdentity>,
+}
+
+impl ClosedLoopRunManifest {
+    pub fn create(
+        run_id: impl Into<String>,
+        created_at_unix_ms: u64,
+        provenance: ClosedLoopRunProvenance,
+        artifacts: ClosedLoopArtifactLinks,
+        created_cache_key: impl Into<String>,
+    ) -> Result<Self, TaskFailure> {
+        let manifest = Self {
+            protocol_version: CLOSED_LOOP_RUN_MANIFEST_PROTOCOL_VERSION,
+            run_id: run_id.into(),
+            state: ClosedLoopRunState::Created,
+            created_at_unix_ms,
+            updated_at_unix_ms: created_at_unix_ms,
+            provenance,
+            artifacts,
+            checkpoints: vec![ClosedLoopStateCheckpoint {
+                state: ClosedLoopRunState::Created,
+                entered_at_unix_ms: created_at_unix_ms,
+                completed_at_unix_ms: None,
+                cache_key: created_cache_key.into(),
+                attempt: 1,
+            }],
+            failure: None,
+            cancellation: None,
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn transition(
+        &mut self,
+        next: ClosedLoopRunState,
+        entered_at_unix_ms: u64,
+        cache_key: impl Into<String>,
+    ) -> Result<(), TaskFailure> {
+        self.validate()?;
+        let cache_key = cache_key.into();
+        if !is_sha256(&cache_key) {
+            return Err(TaskFailure::invalid(
+                "closed-loop checkpoint cache keys must be SHA-256 values",
+            ));
+        }
+        if self.state.is_terminal() {
+            return Err(TaskFailure::invalid_state_transition(
+                "a terminal closed-loop run cannot transition to another state",
+            ));
+        }
+        if next.is_terminal() {
+            return Err(TaskFailure::invalid_state_transition(
+                "use fail, cancel, or approve instead of transitioning to a terminal state",
+            ));
+        }
+        if !next.policy().allowed_from.contains(&self.state) {
+            return Err(TaskFailure::invalid_state_transition(format!(
+                "invalid closed-loop run transition from {:?} to {:?}",
+                self.state, next
+            )));
+        }
+        validate_state_artifacts(next, &self.artifacts)?;
+        self.complete_current(entered_at_unix_ms)?;
+        self.state = next;
+        self.updated_at_unix_ms = entered_at_unix_ms;
+        self.checkpoints.push(ClosedLoopStateCheckpoint {
+            state: next,
+            entered_at_unix_ms,
+            completed_at_unix_ms: None,
+            cache_key,
+            attempt: 1,
+        });
+        self.validate()
+    }
+
+    pub fn approve(&mut self, approved_at_unix_ms: u64) -> Result<(), TaskFailure> {
+        self.validate()?;
+        if self.state != ClosedLoopRunState::AwaitingApproval {
+            return Err(TaskFailure::invalid_state_transition(
+                "only a run awaiting approval can be passed",
+            ));
+        }
+        validate_state_artifacts(ClosedLoopRunState::Passed, &self.artifacts)?;
+        self.complete_current(approved_at_unix_ms)?;
+        self.state = ClosedLoopRunState::Passed;
+        self.updated_at_unix_ms = approved_at_unix_ms;
+        self.checkpoints.push(ClosedLoopStateCheckpoint {
+            state: ClosedLoopRunState::Passed,
+            entered_at_unix_ms: approved_at_unix_ms,
+            completed_at_unix_ms: Some(approved_at_unix_ms),
+            cache_key: self.current_checkpoint()?.cache_key.clone(),
+            attempt: 1,
+        });
+        self.validate()
+    }
+
+    pub fn fail(
+        &mut self,
+        failed_at_unix_ms: u64,
+        failure: TaskFailure,
+    ) -> Result<(), TaskFailure> {
+        self.validate()?;
+        if self.state.is_terminal() {
+            return Err(TaskFailure::invalid_state_transition(
+                "a terminal closed-loop run cannot be failed again",
+            ));
+        }
+        self.complete_current(failed_at_unix_ms)?;
+        self.state = ClosedLoopRunState::Failed;
+        self.updated_at_unix_ms = failed_at_unix_ms;
+        self.failure = Some(failure);
+        self.checkpoints.push(ClosedLoopStateCheckpoint {
+            state: ClosedLoopRunState::Failed,
+            entered_at_unix_ms: failed_at_unix_ms,
+            completed_at_unix_ms: Some(failed_at_unix_ms),
+            cache_key: self.current_checkpoint()?.cache_key.clone(),
+            attempt: 1,
+        });
+        self.validate()
+    }
+
+    /// Cancellation wins only while the run is non-terminal. A concurrent caller
+    /// that observes a completed approval receives `false` and cannot overwrite it.
+    pub fn cancel(&mut self, cancelled_at_unix_ms: u64, reason: impl Into<String>) -> bool {
+        if self.validate().is_err() || self.state.is_terminal() {
+            return false;
+        }
+        let reason = reason.into();
+        if reason.trim().is_empty() || self.complete_current(cancelled_at_unix_ms).is_err() {
+            return false;
+        }
+        let cache_key = match self.current_checkpoint() {
+            Ok(checkpoint) => checkpoint.cache_key.clone(),
+            Err(_) => return false,
+        };
+        self.state = ClosedLoopRunState::Cancelled;
+        self.updated_at_unix_ms = cancelled_at_unix_ms;
+        self.cancellation = Some(ClosedLoopCancellation {
+            reason,
+            requested_at_unix_ms: cancelled_at_unix_ms,
+        });
+        self.checkpoints.push(ClosedLoopStateCheckpoint {
+            state: ClosedLoopRunState::Cancelled,
+            entered_at_unix_ms: cancelled_at_unix_ms,
+            completed_at_unix_ms: Some(cancelled_at_unix_ms),
+            cache_key,
+            attempt: 1,
+        });
+        self.validate().is_ok()
+    }
+
+    pub fn recovery_plan(
+        &self,
+        expected_cache_keys: &BTreeMap<ClosedLoopCheckpointIdentity, String>,
+    ) -> Result<ClosedLoopRecoveryPlan, TaskFailure> {
+        self.validate()?;
+        if self.state.is_terminal() {
+            return Err(TaskFailure::invalid_state_transition(
+                "a terminal closed-loop run cannot be resumed",
+            ));
+        }
+        for (identity, key) in expected_cache_keys {
+            if !is_sha256(key) {
+                return Err(TaskFailure::invalid(
+                    "closed-loop recovery cache keys must be SHA-256 values",
+                ));
+            }
+            let checkpoint = self
+                .checkpoints
+                .get(identity.checkpoint_index)
+                .ok_or_else(|| {
+                    TaskFailure::new(
+                        TaskFailureKind::CacheIncompatible,
+                        "closed-loop recovery cache key refers to a missing checkpoint",
+                        None,
+                    )
+                })?;
+            if checkpoint.state != identity.state || checkpoint.attempt != identity.attempt {
+                return Err(TaskFailure::new(
+                    TaskFailureKind::CacheIncompatible,
+                    "closed-loop recovery cache key does not match checkpoint identity",
+                    None,
+                ));
+            }
+        }
+
+        let mut last_complete_index = None;
+        let mut reusable_external_call_checkpoints = Vec::new();
+        for (index, checkpoint) in self.checkpoints.iter().enumerate() {
+            let identity = checkpoint.identity(index);
+            if checkpoint.completed_at_unix_ms.is_none()
+                || expected_cache_keys.get(&identity) != Some(&checkpoint.cache_key)
+            {
+                break;
+            }
+            last_complete_index = Some(index);
+            if checkpoint.state.policy().performs_external_call {
+                reusable_external_call_checkpoints.push(identity);
+            }
+        }
+
+        let restart_index = last_complete_index.map_or(0, |index| index + 1);
+        let restart_checkpoint = self.checkpoints.get(restart_index).ok_or_else(|| {
+            TaskFailure::manifest_corrupt(
+                "closed-loop manifest has no incomplete state after its last complete checkpoint",
+            )
+        })?;
+        let restart_checkpoint_identity = restart_checkpoint.identity(restart_index);
+        let restart_cache_key = expected_cache_keys
+            .get(&restart_checkpoint_identity)
+            .cloned()
+            .ok_or_else(|| {
+                TaskFailure::new(
+                    TaskFailureKind::CacheIncompatible,
+                    "closed-loop recovery requires a cache key for the exact restart checkpoint",
+                    None,
+                )
+            })?;
+        Ok(ClosedLoopRecoveryPlan {
+            last_complete_checkpoint: last_complete_index
+                .map(|index| self.checkpoints[index].identity(index)),
+            restart_checkpoint: restart_checkpoint_identity,
+            restart_cache_key,
+            reusable_external_call_checkpoints,
+        })
+    }
+
+    /// Keeps complete checkpoints through the recovery point and starts a new
+    /// attempt at the first stale or incomplete state. Callers persist this
+    /// manifest before any new external work begins.
+    pub fn restart_from(
+        &mut self,
+        plan: &ClosedLoopRecoveryPlan,
+        restarted_at_unix_ms: u64,
+    ) -> Result<(), TaskFailure> {
+        self.validate()?;
+        if self.state.is_terminal() || plan.restart_checkpoint.state.is_terminal() {
+            return Err(TaskFailure::invalid_state_transition(
+                "a terminal closed-loop state cannot be restarted",
+            ));
+        }
+        let restart_index = plan.restart_checkpoint.checkpoint_index;
+        let restart_checkpoint = self.checkpoints.get(restart_index).ok_or_else(|| {
+            TaskFailure::manifest_corrupt("recovery state is absent from manifest")
+        })?;
+        if restart_checkpoint.identity(restart_index) != plan.restart_checkpoint {
+            return Err(TaskFailure::manifest_corrupt(
+                "recovery checkpoint identity does not match the current manifest",
+            ));
+        }
+        match &plan.last_complete_checkpoint {
+            None if restart_index != 0 => {
+                return Err(TaskFailure::manifest_corrupt(
+                    "recovery plan omits the checkpoint before its restart boundary",
+                ));
+            }
+            Some(identity) => {
+                let expected_index = identity.checkpoint_index.checked_add(1).ok_or_else(|| {
+                    TaskFailure::manifest_corrupt("recovery checkpoint index overflowed")
+                })?;
+                let checkpoint =
+                    self.checkpoints
+                        .get(identity.checkpoint_index)
+                        .ok_or_else(|| {
+                            TaskFailure::manifest_corrupt(
+                                "recovery completion checkpoint is absent",
+                            )
+                        })?;
+                if expected_index != restart_index
+                    || checkpoint.identity(identity.checkpoint_index) != *identity
+                    || checkpoint.completed_at_unix_ms.is_none()
+                {
+                    return Err(TaskFailure::manifest_corrupt(
+                        "recovery plan does not use an exact complete checkpoint boundary",
+                    ));
+                }
+            }
+            None => {}
+        }
+        if !is_sha256(&plan.restart_cache_key)
+            || self.checkpoints[..restart_index]
+                .iter()
+                .any(|checkpoint| checkpoint.completed_at_unix_ms.is_none())
+            || (restart_index + 1 < self.checkpoints.len()
+                && self.checkpoints[restart_index]
+                    .completed_at_unix_ms
+                    .is_none())
+        {
+            return Err(TaskFailure::manifest_corrupt(
+                "closed-loop recovery plan does not start at a complete boundary",
+            ));
+        }
+        let attempt = restart_checkpoint.attempt.checked_add(1).ok_or_else(|| {
+            TaskFailure::manifest_corrupt("closed-loop attempt counter overflowed")
+        })?;
+        self.checkpoints.truncate(restart_index);
+        self.state = plan.restart_checkpoint.state;
+        self.updated_at_unix_ms = restarted_at_unix_ms;
+        self.failure = None;
+        self.cancellation = None;
+        self.checkpoints.push(ClosedLoopStateCheckpoint {
+            state: plan.restart_checkpoint.state,
+            entered_at_unix_ms: restarted_at_unix_ms,
+            completed_at_unix_ms: None,
+            cache_key: plan.restart_cache_key.clone(),
+            attempt,
+        });
+        self.validate()
+    }
+
+    pub fn to_json_bytes(&self) -> Result<Vec<u8>, TaskFailure> {
+        self.validate()?;
+        let bytes = pretty_json_bytes(self)?;
+        if bytes.len() > MAX_MANIFEST_BYTES {
+            return Err(TaskFailure::invalid(
+                "closed-loop run manifest exceeds its byte budget",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    pub fn parse_json(bytes: &[u8]) -> Result<Self, TaskFailure> {
+        if bytes.len() > MAX_MANIFEST_BYTES {
+            return Err(TaskFailure::manifest_corrupt(
+                "closed-loop run manifest exceeds its byte budget",
+            ));
+        }
+        let manifest: Self = serde_json::from_slice(bytes).map_err(|_| {
+            TaskFailure::manifest_corrupt("closed-loop run manifest is malformed or incomplete")
+        })?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn load(path: &Path) -> Result<Self, TaskFailure> {
+        let bytes =
+            read_bounded_stable_file(path, MAX_MANIFEST_BYTES as u64, "closed-loop manifest")
+                .map_err(|_| {
+                    TaskFailure::manifest_corrupt("closed-loop run manifest cannot be read")
+                })?;
+        Self::parse_json(&bytes)
+    }
+
+    pub fn write_new(&self, path: &Path) -> Result<(), TaskFailure> {
+        let bytes = self.to_json_bytes()?;
+        write_new_synced(path, &bytes)
+    }
+
+    fn complete_current(&mut self, completed_at_unix_ms: u64) -> Result<(), TaskFailure> {
+        let checkpoint = self.current_checkpoint_mut()?;
+        if completed_at_unix_ms < checkpoint.entered_at_unix_ms {
+            return Err(TaskFailure::manifest_corrupt(
+                "closed-loop checkpoint completion predates its entry",
+            ));
+        }
+        checkpoint.completed_at_unix_ms = Some(completed_at_unix_ms);
+        Ok(())
+    }
+
+    fn current_checkpoint(&self) -> Result<&ClosedLoopStateCheckpoint, TaskFailure> {
+        self.checkpoints.last().ok_or_else(|| {
+            TaskFailure::manifest_corrupt("closed-loop manifest has no current checkpoint")
+        })
+    }
+
+    fn current_checkpoint_mut(&mut self) -> Result<&mut ClosedLoopStateCheckpoint, TaskFailure> {
+        self.checkpoints.last_mut().ok_or_else(|| {
+            TaskFailure::manifest_corrupt("closed-loop manifest has no current checkpoint")
+        })
+    }
+
+    fn validate(&self) -> Result<(), TaskFailure> {
+        if self.protocol_version != CLOSED_LOOP_RUN_MANIFEST_PROTOCOL_VERSION {
+            return Err(TaskFailure::protocol_incompatible(format!(
+                "closed-loop run manifest protocol {} is unsupported",
+                self.protocol_version
+            )));
+        }
+        crate::directory::RunId::parse(&self.run_id).map_err(|_| {
+            TaskFailure::manifest_corrupt("closed-loop run manifest has an unsafe run ID")
+        })?;
+        validate_closed_loop_provenance(&self.provenance)?;
+        validate_closed_loop_artifacts(&self.artifacts)?;
+        if self.checkpoints.is_empty()
+            || self.checkpoints.first().map(|checkpoint| checkpoint.state)
+                != Some(ClosedLoopRunState::Created)
+            || self.checkpoints.last().map(|checkpoint| checkpoint.state) != Some(self.state)
+        {
+            return Err(TaskFailure::manifest_corrupt(
+                "closed-loop checkpoints do not have a valid created/current boundary",
+            ));
+        }
+        let mut previous: Option<&ClosedLoopStateCheckpoint> = None;
+        for checkpoint in &self.checkpoints {
+            if !is_sha256(&checkpoint.cache_key) || checkpoint.attempt == 0 {
+                return Err(TaskFailure::manifest_corrupt(
+                    "closed-loop checkpoint has an invalid cache key or attempt",
+                ));
+            }
+            if checkpoint
+                .completed_at_unix_ms
+                .is_some_and(|completed| completed < checkpoint.entered_at_unix_ms)
+            {
+                return Err(TaskFailure::manifest_corrupt(
+                    "closed-loop checkpoint completion predates its entry",
+                ));
+            }
+            if let Some(previous) = previous {
+                if previous.state.is_terminal()
+                    || previous.completed_at_unix_ms.is_none()
+                    || checkpoint.entered_at_unix_ms < previous.entered_at_unix_ms
+                    || (!checkpoint.state.is_terminal()
+                        && !checkpoint
+                            .state
+                            .policy()
+                            .allowed_from
+                            .contains(&previous.state))
+                {
+                    return Err(TaskFailure::manifest_corrupt(
+                        "closed-loop checkpoint sequence has an illegal transition",
+                    ));
+                }
+            }
+            previous = Some(checkpoint);
+        }
+        let current = self.current_checkpoint()?;
+        if self.state.is_terminal() {
+            if current.completed_at_unix_ms.is_none() {
+                return Err(TaskFailure::manifest_corrupt(
+                    "closed-loop terminal checkpoint is incomplete",
+                ));
+            }
+        } else if current.completed_at_unix_ms.is_some() {
+            return Err(TaskFailure::manifest_corrupt(
+                "closed-loop non-terminal checkpoint is already complete",
+            ));
+        }
+        if self.updated_at_unix_ms < self.created_at_unix_ms
+            || self.updated_at_unix_ms < current.entered_at_unix_ms
+        {
+            return Err(TaskFailure::manifest_corrupt(
+                "closed-loop manifest timestamps are inconsistent",
+            ));
+        }
+        match self.state {
+            ClosedLoopRunState::Failed
+                if self.failure.is_none()
+                    || self.cancellation.is_some()
+                    || self
+                        .failure
+                        .as_ref()
+                        .is_some_and(|failure| failure.code() != failure.kind().code()) =>
+            {
+                return Err(TaskFailure::manifest_corrupt(
+                    "failed closed-loop run has inconsistent failure data",
+                ));
+            }
+            ClosedLoopRunState::Cancelled
+                if self.cancellation.as_ref().is_none_or(|cancellation| {
+                    cancellation.reason.trim().is_empty()
+                        || cancellation.requested_at_unix_ms < self.created_at_unix_ms
+                }) || self.failure.is_some() =>
+            {
+                return Err(TaskFailure::manifest_corrupt(
+                    "cancelled closed-loop run has inconsistent cancellation data",
+                ));
+            }
+            ClosedLoopRunState::Failed | ClosedLoopRunState::Cancelled => {}
+            _ if self.failure.is_some() || self.cancellation.is_some() => {
+                return Err(TaskFailure::manifest_corrupt(
+                    "non-terminal closed-loop run contains terminal failure data",
+                ));
+            }
+            _ => {}
+        }
+        validate_state_artifacts(self.state, &self.artifacts)
+    }
+}
+
+fn validate_closed_loop_provenance(
+    provenance: &ClosedLoopRunProvenance,
+) -> Result<(), TaskFailure> {
+    let required = [
+        &provenance.tool_version,
+        &provenance.source_commit,
+        &provenance.model_id,
+        &provenance.prompt_version,
+        &provenance.schema_id,
+        &provenance.algorithm_version,
+        &provenance.theme_id,
+        &provenance.locale,
+    ];
+    if required.iter().any(|value| value.trim().is_empty())
+        || provenance.schema_version == 0
+        || provenance.viewport.logical_width == 0
+        || provenance.viewport.logical_height == 0
+        || provenance.viewport.device_scale_milli == 0
+        || provenance.budget.max_provider_calls == 0
+        || provenance.budget.max_elapsed_ms == 0
+        || provenance.budget.max_images == 0
+        || provenance.budget.max_input_units == 0
+        || provenance.budget.max_output_units == 0
+        || provenance.budget.max_estimated_cost_microunits == 0
+    {
+        return Err(TaskFailure::manifest_corrupt(
+            "closed-loop manifest has incomplete provenance or budget configuration",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_closed_loop_artifacts(artifacts: &ClosedLoopArtifactLinks) -> Result<(), TaskFailure> {
+    let mut paths = BTreeSet::new();
+    let links = std::iter::once(&artifacts.generation_input)
+        .chain(std::iter::once(&artifacts.reference_manifest))
+        .chain(artifacts.ui_document.iter())
+        .chain(artifacts.assets.iter())
+        .chain(artifacts.preview.iter())
+        .chain(artifacts.comparison.iter())
+        .chain(artifacts.analysis.iter())
+        .chain(artifacts.fix.iter())
+        .chain(artifacts.approval.iter());
+    for link in links {
+        ArtifactLink::new(&link.relative_path, &link.sha256, link.byte_length).map_err(|_| {
+            TaskFailure::manifest_corrupt("closed-loop manifest has an invalid artifact link")
+        })?;
+        if !paths.insert(link.relative_path.to_ascii_lowercase()) {
+            return Err(TaskFailure::manifest_corrupt(
+                "closed-loop manifest contains duplicate artifact paths",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_state_artifacts(
+    state: ClosedLoopRunState,
+    artifacts: &ClosedLoopArtifactLinks,
+) -> Result<(), TaskFailure> {
+    let required = |artifact: ClosedLoopArtifactKind, present: bool| {
+        if present {
+            Ok(())
+        } else {
+            Err(TaskFailure::manifest_corrupt(format!(
+                "closed-loop state {:?} requires {:?} evidence",
+                state, artifact
+            )))
+        }
+    };
+    match state {
+        ClosedLoopRunState::Created
+        | ClosedLoopRunState::Preparing
+        | ClosedLoopRunState::Generating
+        | ClosedLoopRunState::Failed
+        | ClosedLoopRunState::Cancelled => Ok(()),
+        ClosedLoopRunState::Validating | ClosedLoopRunState::Previewing => required(
+            ClosedLoopArtifactKind::UiDocument,
+            artifacts.ui_document.is_some(),
+        ),
+        ClosedLoopRunState::Auditing => {
+            required(
+                ClosedLoopArtifactKind::UiDocument,
+                artifacts.ui_document.is_some(),
+            )?;
+            required(ClosedLoopArtifactKind::Preview, artifacts.preview.is_some())
+        }
+        ClosedLoopRunState::PlanningFix => {
+            required(
+                ClosedLoopArtifactKind::Comparison,
+                artifacts.comparison.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::Analysis,
+                artifacts.analysis.is_some(),
+            )
+        }
+        ClosedLoopRunState::ApplyingFix | ClosedLoopRunState::Verifying => {
+            required(ClosedLoopArtifactKind::Fix, artifacts.fix.is_some())
+        }
+        ClosedLoopRunState::AwaitingApproval => {
+            required(
+                ClosedLoopArtifactKind::UiDocument,
+                artifacts.ui_document.is_some(),
+            )?;
+            required(ClosedLoopArtifactKind::Preview, artifacts.preview.is_some())?;
+            required(
+                ClosedLoopArtifactKind::Comparison,
+                artifacts.comparison.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::Analysis,
+                artifacts.analysis.is_some(),
+            )
+        }
+        ClosedLoopRunState::Passed => {
+            required(
+                ClosedLoopArtifactKind::Approval,
+                artifacts.approval.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::UiDocument,
+                artifacts.ui_document.is_some(),
+            )?;
+            required(ClosedLoopArtifactKind::Preview, artifacts.preview.is_some())?;
+            required(
+                ClosedLoopArtifactKind::Comparison,
+                artifacts.comparison.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::Analysis,
+                artifacts.analysis.is_some(),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1259,6 +2135,123 @@ mod tests {
     fn artifact_link(run_root: &Path, relative: &str) -> ArtifactLink {
         let bytes = fs::read(run_root.join(relative)).unwrap();
         ArtifactLink::new(relative, hash_bytes(&bytes), bytes.len() as u64).unwrap()
+    }
+
+    fn closed_loop_link(relative_path: &str) -> ArtifactLink {
+        ArtifactLink::new(relative_path, "a".repeat(64), 1).unwrap()
+    }
+
+    fn closed_loop_provenance() -> ClosedLoopRunProvenance {
+        ClosedLoopRunProvenance {
+            tool_version: "ui-generation-0.1.0".to_owned(),
+            source_commit: "0123456789abcdef".to_owned(),
+            model_id: "offline-fixture".to_owned(),
+            prompt_version: "ui-generation-v1".to_owned(),
+            schema_id: "ui-document".to_owned(),
+            schema_version: 1,
+            algorithm_version: "reference-analysis-v1".to_owned(),
+            viewport: ClosedLoopViewport {
+                logical_width: 390,
+                logical_height: 844,
+                device_scale_milli: 3_000,
+            },
+            theme_id: "default".to_owned(),
+            locale: "zh_cn".to_owned(),
+            budget: ClosedLoopBudgetConfiguration {
+                max_provider_calls: 6,
+                max_elapsed_ms: 300_000,
+                max_images: 12,
+                max_input_units: 1_000_000,
+                max_output_units: 250_000,
+                max_estimated_cost_microunits: 10_000_000,
+            },
+        }
+    }
+
+    fn closed_loop_artifacts() -> ClosedLoopArtifactLinks {
+        ClosedLoopArtifactLinks {
+            generation_input: closed_loop_link("input/task.json"),
+            reference_manifest: closed_loop_link("input/reference-manifest.json"),
+            ui_document: None,
+            assets: Vec::new(),
+            preview: None,
+            comparison: None,
+            analysis: None,
+            fix: None,
+            approval: None,
+        }
+    }
+
+    fn cache_key(letter: char) -> String {
+        letter.to_string().repeat(64)
+    }
+
+    fn closed_loop_manifest() -> ClosedLoopRunManifest {
+        ClosedLoopRunManifest::create(
+            "closed-loop-fixture",
+            1,
+            closed_loop_provenance(),
+            closed_loop_artifacts(),
+            cache_key('a'),
+        )
+        .unwrap()
+    }
+
+    fn advance_to_auditing() -> ClosedLoopRunManifest {
+        let mut manifest = closed_loop_manifest();
+        manifest
+            .transition(ClosedLoopRunState::Preparing, 2, cache_key('b'))
+            .unwrap();
+        manifest
+            .transition(ClosedLoopRunState::Generating, 3, cache_key('c'))
+            .unwrap();
+        manifest.artifacts.ui_document = Some(closed_loop_link("draft/document.json"));
+        manifest
+            .transition(ClosedLoopRunState::Validating, 4, cache_key('d'))
+            .unwrap();
+        manifest
+            .transition(ClosedLoopRunState::Previewing, 5, cache_key('e'))
+            .unwrap();
+        manifest.artifacts.preview = Some(closed_loop_link("preview/phone-portrait.png"));
+        manifest
+            .transition(ClosedLoopRunState::Auditing, 6, cache_key('f'))
+            .unwrap();
+        manifest
+    }
+
+    fn expected_checkpoint_cache_keys(
+        manifest: &ClosedLoopRunManifest,
+    ) -> BTreeMap<ClosedLoopCheckpointIdentity, String> {
+        manifest
+            .checkpoints
+            .iter()
+            .enumerate()
+            .map(|(index, checkpoint)| (checkpoint.identity(index), checkpoint.cache_key.clone()))
+            .collect()
+    }
+
+    fn advance_through_fix_cycle_to_auditing() -> ClosedLoopRunManifest {
+        let mut manifest = advance_to_auditing();
+        manifest.artifacts.comparison = Some(closed_loop_link("audit/comparison-first.json"));
+        manifest.artifacts.analysis = Some(closed_loop_link("audit/analysis-first.json"));
+        manifest
+            .transition(ClosedLoopRunState::PlanningFix, 7, cache_key('1'))
+            .unwrap();
+        manifest.artifacts.fix = Some(closed_loop_link("fix/plan-first.json"));
+        manifest
+            .transition(ClosedLoopRunState::ApplyingFix, 8, cache_key('2'))
+            .unwrap();
+        manifest
+            .transition(ClosedLoopRunState::Validating, 9, cache_key('3'))
+            .unwrap();
+        manifest
+            .transition(ClosedLoopRunState::Previewing, 10, cache_key('4'))
+            .unwrap();
+        manifest.artifacts.preview = Some(closed_loop_link("preview/phone-portrait-after-fix.png"));
+        manifest
+            .transition(ClosedLoopRunState::Auditing, 11, cache_key('5'))
+            .unwrap();
+        manifest
     }
 
     fn failed_repair(initial_document: Value) -> RepairRunResult {
@@ -1709,6 +2702,147 @@ mod tests {
             assert!(error.is_err());
             assert!(!linked_root.join("COMMITTED").exists());
         }
+    }
+
+    #[test]
+    fn closed_loop_manifest_covers_the_full_approval_lifecycle() {
+        let mut manifest = advance_to_auditing();
+        manifest.artifacts.comparison = Some(closed_loop_link("audit/comparison.json"));
+        manifest.artifacts.analysis = Some(closed_loop_link("audit/analysis.json"));
+        manifest
+            .transition(ClosedLoopRunState::AwaitingApproval, 7, cache_key('1'))
+            .unwrap();
+        manifest.artifacts.approval = Some(closed_loop_link("approval/release.json"));
+        manifest.approve(8).unwrap();
+
+        assert_eq!(manifest.state, ClosedLoopRunState::Passed);
+        assert!(manifest.state.is_terminal());
+        assert_eq!(manifest.checkpoints.len(), 8);
+        assert!(
+            manifest
+                .checkpoints
+                .iter()
+                .all(|checkpoint| checkpoint.completed_at_unix_ms.is_some())
+        );
+    }
+
+    #[test]
+    fn closed_loop_manifest_rejects_illegal_state_transitions() {
+        let mut manifest = closed_loop_manifest();
+        let error = manifest
+            .transition(ClosedLoopRunState::Generating, 2, cache_key('b'))
+            .unwrap_err();
+        assert_eq!(error.kind(), TaskFailureKind::InvalidStateTransition);
+        assert_eq!(manifest.state, ClosedLoopRunState::Created);
+    }
+
+    #[test]
+    fn closed_loop_manifest_detects_corruption_and_protocol_incompatibility() {
+        let corruption = ClosedLoopRunManifest::parse_json(b"not JSON").unwrap_err();
+        assert_eq!(corruption.kind(), TaskFailureKind::ManifestCorrupt);
+
+        let mut incompatible = serde_json::to_value(closed_loop_manifest()).unwrap();
+        incompatible["protocol_version"] = serde_json::json!(99);
+        let incompatibility =
+            ClosedLoopRunManifest::parse_json(&serde_json::to_vec(&incompatible).unwrap())
+                .unwrap_err();
+        assert_eq!(
+            incompatibility.kind(),
+            TaskFailureKind::ProtocolIncompatible
+        );
+    }
+
+    #[test]
+    fn closed_loop_manifest_reuses_completed_external_calls_with_matching_cache_keys() {
+        let mut manifest = advance_to_auditing();
+        let expected = expected_checkpoint_cache_keys(&manifest);
+        let plan = manifest.recovery_plan(&expected).unwrap();
+        assert_eq!(
+            plan.last_complete_checkpoint,
+            Some(manifest.checkpoints[4].identity(4))
+        );
+        assert_eq!(plan.restart_checkpoint, manifest.checkpoints[5].identity(5));
+        assert_eq!(
+            plan.reusable_external_call_checkpoints,
+            [
+                manifest.checkpoints[2].identity(2),
+                manifest.checkpoints[4].identity(4)
+            ]
+        );
+
+        let mut stale_generation = expected.clone();
+        stale_generation.insert(manifest.checkpoints[2].identity(2), cache_key('9'));
+        let stale_plan = manifest.recovery_plan(&stale_generation).unwrap();
+        assert_eq!(
+            stale_plan.last_complete_checkpoint,
+            Some(manifest.checkpoints[1].identity(1))
+        );
+        assert_eq!(
+            stale_plan.restart_checkpoint,
+            manifest.checkpoints[2].identity(2)
+        );
+        assert!(stale_plan.reusable_external_call_checkpoints.is_empty());
+
+        manifest.restart_from(&plan, 7).unwrap();
+        assert_eq!(manifest.state, ClosedLoopRunState::Auditing);
+        assert_eq!(manifest.checkpoints.last().unwrap().attempt, 2);
+    }
+
+    #[test]
+    fn closed_loop_recovery_uses_the_latest_repeated_checkpoint_in_a_fix_cycle() {
+        let mut manifest = advance_through_fix_cycle_to_auditing();
+        let mut expected = expected_checkpoint_cache_keys(&manifest);
+        let latest_preview = manifest.checkpoints[9].identity(9);
+        let first_preview = manifest.checkpoints[4].identity(4);
+        assert_eq!(latest_preview.state, ClosedLoopRunState::Previewing);
+        assert_eq!(first_preview.state, ClosedLoopRunState::Previewing);
+        assert_ne!(latest_preview, first_preview);
+
+        let plan = manifest.recovery_plan(&expected).unwrap();
+        assert_eq!(plan.last_complete_checkpoint, Some(latest_preview.clone()));
+        assert_eq!(
+            plan.restart_checkpoint,
+            manifest.checkpoints[10].identity(10)
+        );
+        assert!(
+            plan.reusable_external_call_checkpoints
+                .contains(&latest_preview)
+        );
+
+        expected.insert(latest_preview.clone(), cache_key('6'));
+        let plan = manifest.recovery_plan(&expected).unwrap();
+        assert_eq!(
+            plan.last_complete_checkpoint,
+            Some(manifest.checkpoints[8].identity(8))
+        );
+        assert_eq!(plan.restart_checkpoint, latest_preview);
+        manifest.restart_from(&plan, 12).unwrap();
+        assert_eq!(manifest.checkpoints.len(), 10);
+        assert_eq!(manifest.checkpoints[4].identity(4), first_preview);
+        assert_eq!(
+            manifest.checkpoints[9].state,
+            ClosedLoopRunState::Previewing
+        );
+        assert_eq!(manifest.checkpoints[9].attempt, 2);
+        assert_eq!(manifest.checkpoints[9].cache_key, cache_key('6'));
+    }
+
+    #[test]
+    fn closed_loop_manifest_persists_and_cancellation_cannot_replace_passed_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("closed-loop-manifest.json");
+        let mut manifest = advance_to_auditing();
+        manifest.artifacts.comparison = Some(closed_loop_link("audit/comparison.json"));
+        manifest.artifacts.analysis = Some(closed_loop_link("audit/analysis.json"));
+        manifest
+            .transition(ClosedLoopRunState::AwaitingApproval, 7, cache_key('1'))
+            .unwrap();
+        manifest.artifacts.approval = Some(closed_loop_link("approval/release.json"));
+        manifest.approve(8).unwrap();
+        manifest.write_new(&path).unwrap();
+        assert_eq!(ClosedLoopRunManifest::load(&path).unwrap(), manifest);
+        assert!(!manifest.cancel(9, "too late"));
+        assert_eq!(manifest.state, ClosedLoopRunState::Passed);
     }
 
     #[cfg(unix)]

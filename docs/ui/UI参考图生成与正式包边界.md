@@ -70,6 +70,71 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- evaluate-fixtures --
 
 run ID 只允许安全的小写 ASCII 标识，不接受绝对路径、`..`、路径分隔符或 Windows 保留名。目录计划固定包含 `input/`、`analysis/`、`draft/`、`assets/`、`preview/`、`logs/` 和 `manifest.json`；已有目标和通过符号链接逃逸仓库的根会被拒绝。状态模型区分 pending、输入校验、ready、running、completed、failed 和 cancelled，取消是幂等终态且在图片读取边界检查。
 
+## 闭环运行契约
+
+`tools/ui-generation/src/run_manifest.rs` 提供 `ClosedLoopRunManifest`，作为后续生成、预览、视觉审核、受限修复和人工晋升 Runner 的唯一持久化状态契约。它不替换已由晋升流程读取的 sealed `UiGenerationRunManifest`；后者仍只表示已完成 Stage 3 产物的 bundle。闭环 Runner 目前尚未接入在线 provider，这份契约和其离线测试不代表在线生成或自动修复已经启用。
+
+每份闭环 manifest 固定关联 generation input、reference manifest、可选 `UiDocument`、草稿 assets、preview、comparison、analysis、fix 和 approval artifact。每个 link 使用受限相对路径、SHA-256 和字节数，重复路径或不安全链接都会使 manifest 损坏。provenance 同时记录工具版本、源提交、模型、prompt、schema、算法、viewport、theme、locale 及全部硬预算，不能用运行时默认值替代这些可追溯输入。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created
+    Created --> Preparing
+    Preparing --> Generating
+    Generating --> Validating
+    Validating --> Previewing
+    Previewing --> Auditing
+    Auditing --> PlanningFix
+    PlanningFix --> ApplyingFix
+    ApplyingFix --> Validating
+    Auditing --> AwaitingApproval
+    PlanningFix --> AwaitingApproval
+    Verifying --> Auditing
+    Verifying --> Generating
+    ApplyingFix --> Verifying
+    AwaitingApproval --> Passed
+    Created --> Cancelled
+    Preparing --> Cancelled
+    Generating --> Cancelled
+    Validating --> Cancelled
+    Previewing --> Cancelled
+    Auditing --> Cancelled
+    PlanningFix --> Cancelled
+    ApplyingFix --> Cancelled
+    Verifying --> Cancelled
+    AwaitingApproval --> Cancelled
+    Created --> Failed
+    Preparing --> Failed
+    Generating --> Failed
+    Validating --> Failed
+    Previewing --> Failed
+    Auditing --> Failed
+    PlanningFix --> Failed
+    ApplyingFix --> Failed
+    Verifying --> Failed
+    AwaitingApproval --> Failed
+```
+
+| State | 允许前序和进入证据 | 持久化字段 | 超时 / 重试 | 终态 |
+| --- | --- | --- | --- | --- |
+| `Created` | 新建 manifest；generation input 和 reference manifest 已绑定 | 创建时间、provenance、artifact links、初始 cache key | 不适用 / 否 | 否 |
+| `Preparing` | `Created` | checkpoint 时间、cache key、attempt | 60 秒 / 是 | 否 |
+| `Generating` | `Preparing` 或需重新生成的 `Verifying` | checkpoint、生成调用 cache key | 300 秒 / 是 | 否 |
+| `Validating` | `Generating` 或 `ApplyingFix`；必须已有 `UiDocument` | checkpoint、document link | 60 秒 / 是 | 否 |
+| `Previewing` | `Validating`；必须已有 `UiDocument` | checkpoint、preview 调用 cache key | 300 秒 / 是 | 否 |
+| `Auditing` | `Previewing` 或 `Verifying`；必须已有 document 和 preview | checkpoint、审核调用 cache key | 300 秒 / 是 | 否 |
+| `PlanningFix` | `Auditing`；必须已有 comparison 和 analysis | checkpoint、fix-plan cache key | 60 秒 / 是 | 否 |
+| `ApplyingFix` | `PlanningFix`；必须已有 fix plan | checkpoint、修复调用 cache key | 120 秒 / 是 | 否 |
+| `Verifying` | `ApplyingFix`；必须已有 fix plan | checkpoint、验证 cache key | 300 秒 / 是 | 否 |
+| `AwaitingApproval` | `Auditing`、`PlanningFix` 或 `Verifying`；必须已有 document、preview、comparison、analysis | checkpoint、人工审批等待记录 | 7 天 / 否 | 否 |
+| `Passed` | `AwaitingApproval`；必须额外有 approval artifact | 完成 checkpoint | 不适用 / 否 | 是 |
+| `Failed` | 任一非终态；必须带共享 `TaskFailure` | failure、完成 checkpoint | 不适用 / 否 | 是 |
+| `Cancelled` | 任一非终态；必须带取消原因和时间 | cancellation、完成 checkpoint | 不适用 / 否 | 是 |
+
+每次状态进入都保存 cache key、attempt、进入/完成时间；成功 state 只在完成 checkpoint 后可作为恢复点。恢复输入必须以精确 checkpoint identity（`checkpoint_index + state + attempt`）关联每个当前计算出的 cache key，不能以 state 名称作为 key，因为一次修复循环会重复 `Validating`、`Previewing`、`Auditing` 等 state。Runner 从最近一个连续、完整且 identity/key 都相等的 checkpoint 继续；只有 cache key 未变化的已完成 `Generating`、`Previewing`、`Auditing` 或 `ApplyingFix` 外部调用可以复用。任一较早或后续循环中的 key 变化都会从该精确 checkpoint 重新开始，不能跳过它或回退到同名的首个 checkpoint 而混用旧 artifact。恢复后的新 attempt 必须先持久化 manifest，再启动外部工作。
+
+生成工具、审核 Runner 和后续闭环 Runner 都以 `TaskFailureKind` 作为统一失败分类。已有 PowerShell audit 的 `manifest_invalid`、`ai_blocking_issue`、`safety_policy_rejected`、`fix_check_failed` 等稳定 `failure_type` 可映射到 manifest、审核、安全策略和验证失败；未知外部字符串不得静默重命名。manifest 损坏、协议版本不兼容、非法跳转和取消晚于 `Passed` 都必须 fail-closed，不得改变已完成审批结果。
+
 Stage 2 的 provider 协议用 `visual_analysis` 和 `structured_generation` 两种供应商无关请求隔离模型名称、SDK 请求和原始响应。请求、图片 bytes、prompt 和结构化输入没有序列化实现；普通 trace 只允许记录 run/prompt/schema 版本、图片数量/总字节数、尝试结果、耗时和经过字符校验的服务端 request ID。统一 runner 强制单次超时、外部取消、本地最小请求间隔和最多 10 次的有限重试，并只重试 timeout、rate limit 和 service unavailable。每个调用链还可以共享 `TaskBudget`：它在每次尝试前硬性限制调用次数、累计图片数和总耗时，并在 provider 返回 usage 后限制输入/输出量与按配置估算的微单位成本；任一上限到达即停止，不能靠 repair 或重试扩大额度。凭据只由环境变量或注入的系统安全存储读取，secret 的 `Debug`/`Display` 恒为 `[REDACTED]`。当前没有在线供应商 SDK 或网络适配；离线 `FixtureProvider` 和 `MockProvider` 用于本地与 CI。
 
 Stage 3 的 `preprocess-task` 只接受内容识别为 PNG/JPEG、编码体积不超过 64 MiB、单边不超过 16384 px 且解码像素不超过 2400 万的参考图。工具读取编码尺寸、原始/解码色彩类型、alpha、EXIF 方向和 ICC profile 的长度/hash；任务声明方向与实际 EXIF 冲突会失败，无 EXIF 时才使用已确认的任务声明。标准副本固定输出确定性 RGBA8 PNG，但当前不执行或声称未经验证的 ICC 色彩转换，manifest 会同时保留声明色彩空间和嵌入 profile 证据。

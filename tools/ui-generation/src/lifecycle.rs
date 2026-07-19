@@ -11,6 +11,22 @@ use std::{
 #[serde(rename_all = "snake_case")]
 pub enum TaskFailureKind {
     InvalidInput,
+    ManifestCorrupt,
+    ProtocolIncompatible,
+    InvalidStateTransition,
+    ArtifactMissing,
+    ArtifactInvalid,
+    CacheIncompatible,
+    RunnerLaunchFailed,
+    RunnerTimeout,
+    ValidationFailed,
+    PreviewFailed,
+    AuditFailed,
+    FixPlanRejected,
+    FixApplicationFailed,
+    VerificationFailed,
+    ApprovalRejected,
+    SafetyPolicyRejected,
     ImageUnreadable,
     ImageHashMismatch,
     ImageUnsupportedFormat,
@@ -40,6 +56,22 @@ impl TaskFailureKind {
     pub const fn code(self) -> &'static str {
         match self {
             Self::InvalidInput => "UI_GENERATION_INPUT_INVALID",
+            Self::ManifestCorrupt => "UI_GENERATION_MANIFEST_CORRUPT",
+            Self::ProtocolIncompatible => "UI_GENERATION_PROTOCOL_INCOMPATIBLE",
+            Self::InvalidStateTransition => "UI_GENERATION_STATE_TRANSITION_INVALID",
+            Self::ArtifactMissing => "UI_GENERATION_ARTIFACT_MISSING",
+            Self::ArtifactInvalid => "UI_GENERATION_ARTIFACT_INVALID",
+            Self::CacheIncompatible => "UI_GENERATION_CACHE_INCOMPATIBLE",
+            Self::RunnerLaunchFailed => "UI_GENERATION_RUNNER_LAUNCH_FAILED",
+            Self::RunnerTimeout => "UI_GENERATION_RUNNER_TIMEOUT",
+            Self::ValidationFailed => "UI_GENERATION_VALIDATION_FAILED",
+            Self::PreviewFailed => "UI_GENERATION_PREVIEW_FAILED",
+            Self::AuditFailed => "UI_GENERATION_AUDIT_FAILED",
+            Self::FixPlanRejected => "UI_GENERATION_FIX_PLAN_REJECTED",
+            Self::FixApplicationFailed => "UI_GENERATION_FIX_APPLICATION_FAILED",
+            Self::VerificationFailed => "UI_GENERATION_VERIFICATION_FAILED",
+            Self::ApprovalRejected => "UI_GENERATION_APPROVAL_REJECTED",
+            Self::SafetyPolicyRejected => "UI_GENERATION_SAFETY_POLICY_REJECTED",
             Self::ImageUnreadable => "UI_GENERATION_IMAGE_UNREADABLE",
             Self::ImageHashMismatch => "UI_GENERATION_IMAGE_HASH_MISMATCH",
             Self::ImageUnsupportedFormat => "UI_GENERATION_IMAGE_FORMAT_UNSUPPORTED",
@@ -65,9 +97,36 @@ impl TaskFailureKind {
             Self::CredentialUnavailable => "UI_GENERATION_CREDENTIAL_UNAVAILABLE",
         }
     }
+
+    /// Converts the stable `failure_type` values emitted by the UI audit runner
+    /// into the shared tool failure taxonomy. Unknown values remain explicit at
+    /// their source instead of being silently relabelled.
+    pub fn from_legacy_failure_type(value: &str) -> Option<Self> {
+        match value {
+            "manifest_missing" | "manifest_invalid" => Some(Self::ManifestCorrupt),
+            "output_missing" | "artifact_upload_failed" => Some(Self::ArtifactMissing),
+            "timeout" | "client_timeout" => Some(Self::RunnerTimeout),
+            "launch_failed" | "process_failed" => Some(Self::RunnerLaunchFailed),
+            "ai_blocking_issue"
+            | "deterministic_hard_failure"
+            | "ai_analysis_failed"
+            | "ai_missing_capture"
+            | "ai_missing_capture_metadata"
+            | "ai_remote_artifact_read_failed"
+            | "ai_result_invalid"
+            | "audit_failed"
+            | "nondeterministic_capture" => Some(Self::AuditFailed),
+            "safety_policy_rejected" | "baseline_update_forbidden" => {
+                Some(Self::SafetyPolicyRejected)
+            }
+            "fix_command_missing" | "fix_command_failed" => Some(Self::FixApplicationFailed),
+            "fix_check_failed" | "max_iterations_reached" => Some(Self::VerificationFailed),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskFailure {
     kind: TaskFailureKind,
@@ -92,6 +151,18 @@ impl TaskFailure {
 
     pub fn invalid(message: impl Into<String>) -> Self {
         Self::new(TaskFailureKind::InvalidInput, message, None)
+    }
+
+    pub fn manifest_corrupt(message: impl Into<String>) -> Self {
+        Self::new(TaskFailureKind::ManifestCorrupt, message, None)
+    }
+
+    pub fn protocol_incompatible(message: impl Into<String>) -> Self {
+        Self::new(TaskFailureKind::ProtocolIncompatible, message, None)
+    }
+
+    pub fn invalid_state_transition(message: impl Into<String>) -> Self {
+        Self::new(TaskFailureKind::InvalidStateTransition, message, None)
     }
 
     pub fn kind(&self) -> TaskFailureKind {
@@ -308,5 +379,25 @@ mod tests {
         token.request();
         let failure = observer.checkpoint().unwrap_err();
         assert_eq!(failure.kind(), TaskFailureKind::Cancelled);
+    }
+
+    #[test]
+    fn legacy_audit_failure_types_use_the_shared_taxonomy() {
+        assert_eq!(
+            TaskFailureKind::from_legacy_failure_type("manifest_invalid"),
+            Some(TaskFailureKind::ManifestCorrupt)
+        );
+        assert_eq!(
+            TaskFailureKind::from_legacy_failure_type("ai_blocking_issue"),
+            Some(TaskFailureKind::AuditFailed)
+        );
+        assert_eq!(
+            TaskFailureKind::from_legacy_failure_type("safety_policy_rejected"),
+            Some(TaskFailureKind::SafetyPolicyRejected)
+        );
+        assert_eq!(
+            TaskFailureKind::from_legacy_failure_type("unknown_runner_failure"),
+            None
+        );
     }
 }
