@@ -3,6 +3,10 @@ use std::path::PathBuf;
 use ui_generation::{
     audit::{AuditVisualExpectation, parse_page_states, run_document_audit_command},
     boundary::verify_dependency_boundary,
+    closed_loop_fix_plan::{
+        FixPlanPolicy, create_closed_loop_fix_plan, load_closed_loop_audit,
+        write_closed_loop_fix_plan,
+    },
     closed_loop_generation::{GenerationMode, run_closed_loop_generation},
     evaluation::run_fixture_evaluation,
     inspect_task,
@@ -110,6 +114,19 @@ enum Command {
         /// Environment variable name only. Its credential value is never accepted as an argument.
         #[arg(long)]
         provider_credential_environment: Option<String>,
+    },
+    /// Builds a bounded, non-applying repair plan from a Stage 4 closed-loop audit report.
+    ClosedLoopPlan {
+        #[arg(long)]
+        audit: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+        /// Repeat to replace the draft/assets default modification roots.
+        #[arg(long = "allowed-root")]
+        allowed_roots: Vec<String>,
+        /// A group ID whose multi-page issue is known to need an unsupported protocol capability.
+        #[arg(long = "protocol-limitation")]
+        protocol_limitations: Vec<String>,
     },
     /// Emits the small, high-impact decision template bound to a committed generation run.
     PromotionDecisions {
@@ -287,6 +304,22 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             &CancellationToken::default(),
         )?)
         .expect("closed-loop generation result is serializable"),
+        Command::ClosedLoopPlan {
+            audit,
+            output_directory,
+            allowed_roots,
+            protocol_limitations,
+        } => {
+            let audit = load_closed_loop_audit(&audit)?;
+            let mut policy = FixPlanPolicy::default();
+            if !allowed_roots.is_empty() {
+                policy.allowed_roots = allowed_roots;
+            }
+            policy.protocol_limitations = protocol_limitations.into_iter().collect();
+            let plan = create_closed_loop_fix_plan(&audit, &policy)?;
+            serde_json::to_value(write_closed_loop_fix_plan(&plan, &output_directory)?)
+                .expect("closed-loop fix plan output is serializable")
+        }
         Command::PromotionDecisions {
             run_id,
             repository_root,

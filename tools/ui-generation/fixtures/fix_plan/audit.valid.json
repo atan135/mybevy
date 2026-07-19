@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "run_id": "fix-plan-fixture",
+  "status": "failed",
+  "priority_order": ["hard", "visual", "ai"],
+  "hard_issues": [
+    {
+      "issue_id": "hard-title",
+      "source": "semantic",
+      "priority": "hard",
+      "screen": "home",
+      "device": "phone",
+      "state": "initial",
+      "region": { "region_id": "semantic.page.title", "bounds": null },
+      "evidence": [{
+        "kind": "semantic_finding",
+        "artifact": { "path": "comparison/semantic.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "byte_length": 120 },
+        "description": "title overlap",
+        "image_role": null,
+        "image": null,
+        "image_id": null
+      }],
+      "document": {
+        "document_id": "generated.fixture",
+        "node_id": "page.title",
+        "source_path": null,
+        "document_path": "$.root.children[0].layout",
+        "reference_element": "reference.title"
+      },
+      "problem_type": "semantic_text_overlap",
+      "message": "title overlaps the subtitle",
+      "severity": "hard_failure",
+      "blocking": true,
+      "likely_cause": "text_overlap",
+      "likely_files": [],
+      "attribution": "document_layout",
+      "requires_manual_review": false,
+      "automatic_fix_allowed": true,
+      "manual_review_reason": null,
+      "protected_targets": [],
+      "root_cause_key": "document_layout|node:page.title|semantic_text_overlap|text_overlap"
+    }
+  ],
+  "visual_issues": [],
+  "ai_issues": [
+    {
+      "issue_id": "ai-hero",
+      "source": "ai_analyzer",
+      "priority": "ai",
+      "screen": "home",
+      "device": "tablet",
+      "state": "initial",
+      "region": { "region_id": "hero", "bounds": null },
+      "evidence": [{
+        "kind": "ai_evidence",
+        "artifact": { "path": "comparison/analysis.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "byte_length": 240 },
+        "description": "hero color differs",
+        "image_role": null,
+        "image": null,
+        "image_id": "capture-hero"
+      }],
+      "document": {
+        "document_id": "generated.fixture",
+        "node_id": "page.hero",
+        "source_path": null,
+        "document_path": "$.root.children[1].style.fill",
+        "reference_element": "reference.hero"
+      },
+      "problem_type": "ai_color",
+      "message": "hero color is too saturated",
+      "severity": "medium",
+      "blocking": true,
+      "likely_cause": "color",
+      "likely_files": [],
+      "attribution": "document_style",
+      "requires_manual_review": false,
+      "automatic_fix_allowed": true,
+      "manual_review_reason": null,
+      "protected_targets": [],
+      "root_cause_key": "document_style|node:page.hero|ai_color|color"
+    }
+  ],
+  "issue_groups": [
+    {
+      "group_id": "group-title",
+      "root_cause_key": "document_layout|node:page.title|semantic_text_overlap|text_overlap",
+      "attribution": "document_layout",
+      "requires_manual_review": false,
+      "automatic_fix_allowed": true,
+      "priorities": ["hard"],
+      "issue_ids": ["hard-title"],
+      "captures": [{ "screen": "home", "device": "phone", "state": "initial" }],
+      "evidence": [{
+        "kind": "semantic_finding",
+        "artifact": { "path": "comparison/semantic.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "byte_length": 120 },
+        "description": "title overlap",
+        "image_role": null,
+        "image": null,
+        "image_id": null
+      }]
+    },
+    {
+      "group_id": "group-hero",
+      "root_cause_key": "document_style|node:page.hero|ai_color|color",
+      "attribution": "document_style",
+      "requires_manual_review": false,
+      "automatic_fix_allowed": true,
+      "priorities": ["ai"],
+      "issue_ids": ["ai-hero"],
+      "captures": [{ "screen": "home", "device": "tablet", "state": "initial" }],
+      "evidence": [{
+        "kind": "ai_evidence",
+        "artifact": { "path": "comparison/analysis.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "byte_length": 240 },
+        "description": "hero color differs",
+        "image_role": null,
+        "image": null,
+        "image_id": "capture-hero"
+      }]
+    }
+  ],
+  "manual_review_group_ids": [],
+  "source_map_bound": true
+}
