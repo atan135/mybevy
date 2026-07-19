@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ui_generation::{
     audit::{AuditVisualExpectation, parse_page_states, run_document_audit_command},
     boundary::verify_dependency_boundary,
+    closed_loop_apply::{apply_closed_loop_patches, preview_closed_loop_apply},
     closed_loop_fix_plan::{
         FixPlanPolicy, create_closed_loop_fix_plan, load_closed_loop_audit,
         write_closed_loop_fix_plan,
@@ -127,6 +128,26 @@ enum Command {
         /// A group ID whose multi-page issue is known to need an unsupported protocol capability.
         #[arg(long = "protocol-limitation")]
         protocol_limitations: Vec<String>,
+    },
+    /// Renders the complete no-write diff for a typed patch set bound to a Stage 5 fix plan.
+    ClosedLoopPatchPreview {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        patches: PathBuf,
+        #[arg(long)]
+        repository_root: PathBuf,
+    },
+    /// Applies an explicitly approved typed patch set. This command never commits or pushes.
+    ClosedLoopPatchApply {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        patches: PathBuf,
+        #[arg(long)]
+        approval: PathBuf,
+        #[arg(long)]
+        repository_root: PathBuf,
     },
     /// Emits the small, high-impact decision template bound to a committed generation run.
     PromotionDecisions {
@@ -320,6 +341,28 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             serde_json::to_value(write_closed_loop_fix_plan(&plan, &output_directory)?)
                 .expect("closed-loop fix plan output is serializable")
         }
+        Command::ClosedLoopPatchPreview {
+            plan,
+            patches,
+            repository_root,
+        } => serde_json::to_value(preview_closed_loop_apply(
+            &repository_root,
+            &plan,
+            &patches,
+        )?)
+        .expect("closed-loop patch preview is serializable"),
+        Command::ClosedLoopPatchApply {
+            plan,
+            patches,
+            approval,
+            repository_root,
+        } => serde_json::to_value(apply_closed_loop_patches(
+            &repository_root,
+            &plan,
+            &patches,
+            &approval,
+        )?)
+        .expect("closed-loop patch result is serializable"),
         Command::PromotionDecisions {
             run_id,
             repository_root,

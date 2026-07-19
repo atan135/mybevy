@@ -227,7 +227,7 @@ impl Default for FixPlanPolicy {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixPlanPolicySummary {
     pub allowed_roots: Vec<String>,
@@ -238,7 +238,7 @@ pub struct FixPlanPolicySummary {
     pub dependency_changes_allowed: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixTarget {
     pub target_file: String,
@@ -248,7 +248,7 @@ pub struct FixTarget {
     pub node_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixVerificationMatrix {
     pub captures: Vec<AuditCapture>,
@@ -257,7 +257,7 @@ pub struct FixVerificationMatrix {
     pub rerun_shared_scope_consumers: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixPlanAction {
     pub action_id: String,
@@ -275,7 +275,7 @@ pub struct FixPlanAction {
     pub may_regress_other_device_states: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixPlanRejection {
     pub group_id: String,
@@ -283,7 +283,7 @@ pub struct FixPlanRejection {
     pub detail: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixPlanFinding {
     pub code: String,
@@ -291,7 +291,7 @@ pub struct FixPlanFinding {
     pub group_id: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClosedLoopFixPlan {
     pub protocol_version: u32,
