@@ -1,10 +1,12 @@
 pub mod ai;
+pub mod baseline;
 pub mod comparison;
 pub mod gate;
 pub mod metrics;
 pub mod normalization;
 pub mod reference_manifest;
 pub mod regions;
+pub mod report;
 pub mod semantic;
 
 pub use ai::{
@@ -19,6 +21,13 @@ pub use ai::{
     AiSeverity, MAX_AI_CAPTURES, MAX_AI_IMAGE_BYTES, MAX_AI_IMAGES, MAX_AI_ISSUES,
     MAX_AI_SENSITIVE_TOTAL_BYTES, MAX_AI_SENSITIVE_VALUE_BYTES, MAX_AI_SENSITIVE_VALUES,
     MAX_AI_TOTAL_IMAGE_BYTES, analyze_with_ai,
+};
+pub use baseline::{
+    BASELINE_APPROVAL_SCHEMA_VERSION, BASELINE_PLAN_ALGORITHM_VERSION, BASELINE_PLAN_FILENAME,
+    BASELINE_PLAN_SCHEMA_VERSION, BASELINE_RECEIPT_FILENAME, BASELINE_RECEIPT_SCHEMA_VERSION,
+    BASELINE_RERUN_VERIFICATION_FILENAME, BASELINE_RERUN_VERIFICATION_SCHEMA_VERSION,
+    BaselineApplyRequest, BaselinePlanRequest, BaselineRerunVerificationRequest,
+    apply_baseline_update, plan_baseline_update, verify_baseline_rerun,
 };
 
 pub use comparison::{
@@ -66,6 +75,11 @@ pub use regions::{
     RegionAuditOutcome, RegionAuditReport, RegionAuditRequest, RegionAuditResult, RegionLevel,
     RegionLocalStatus, RegionShape, RegionThreshold, SemanticRole, ThresholdProfiles,
     ThresholdViolation, WeightSummary, audit_regions,
+};
+pub use report::{
+    COMPARISON_BUNDLE_ALGORITHM_VERSION, COMPARISON_BUNDLE_SCHEMA_VERSION,
+    COMPARISON_RESULT_FILENAME, COMPARISON_RESULT_SCHEMA_VERSION, REPORT_FILENAME,
+    ReportBuildRequest, build_comparison_report,
 };
 pub use semantic::{
     IdentitySource, MAX_SEMANTIC_FINDINGS, MAX_SEMANTIC_OVERLAP_CANDIDATES,

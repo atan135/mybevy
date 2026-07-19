@@ -158,6 +158,19 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 
 ## 审计报告验收重点
 
+完整视觉比较报告由独立工具的 `build-report` 生成。输入 `ui_comparison_bundle_v1` 必须按 capture 同时绑定 reference、actual、overlay、heatmap、六项指标、区域阈值、mask、允许差异、算法版本、AI 实际运行状态、四态门禁和问题定位字段；baseline guard 还必须以 path + SHA-256 绑定当前 reference manifest，并让 reference ID、screen/device/state、observed revision/hash 和 reference artifact hash 与其中的 active entry 一致。输出为 `comparison-result.json` 和 `report.md`。根 manifest 先以 path + SHA-256 绑定 comparison input、analysis 和 fix iteration，结果再反向记录根 manifest 的最终 path + SHA-256。缺图、hash 换包、链接不完整、active reference 不一致或未批准 baseline 变化会直接失败，不显示成正常成功链接。
+
+当前 `run-ui-audit.ps1` 会在 `manifest.json.artifact_links` 记录 analysis input/output 和已完成 fix iteration 的 path、SHA-256、byte length；完整 comparison 入口保持 `null`，直到后续比较引擎提供四图和结构化证据。Stage 10 不自动展开 reference manifest 矩阵，也不代表 CI 或远程 Android 已接入。
+
+Baseline 更新必须在自动修复循环之外显式执行：
+
+1. `plan-baseline-update` 记录原因、旧新图片、前后指标和全部关联 device/state，只生成计划，不修改 baseline。
+2. 人工单独撰写 approval JSON，以 `plan_sha256` 绑定计划，并记录 approver、时间和 rationale；工具不会生成批准结论。
+3. `apply-baseline-update` 在替换 manifest/image 前先 stage receipt；receipt 发布和 post-update manifest 校验位于可回滚事务内，检查 manifest、候选图和指标证据没有变旧后才完成更新，receipt 仍为 `acceptance_complete = false`。
+4. 关联 screen + locale + theme 下全部 device/state 都进入新的 `comparison-result.json`，且 reference ID、active binding 和每个 gate 都为 `passed` 后，`verify-baseline-rerun` 才生成完成证明。
+
+自动 fix command 会在执行前拒绝 baseline plan/apply/verify 命令，并把正式 reference fixture 根加入禁止变更快照。检测到 reference hash 与预期 binding 不同而没有匹配人工 receipt 时，报告默认阻断。
+
 成功报告需要确认：
 
 - `manifest.json` 的 `status` 为 `passed` 或 dry-run 时为 `planned`。
@@ -176,6 +189,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - `ui_semantic_audit_v1` 的 hard failure 与视觉相似度、局部分数分开，高相似度不得抵消裁切、不可点击、滚动不可达或覆盖层输入错误；总四态门禁仍由后续聚合阶段负责。
 - `ui_ai_visual_analysis_v1` 的每个 capture 必须同时绑定 reference、actual、overlay、heatmap、diff report、区域指标、semantic report schema v3、原始 UI metadata hash、允许差异和 privacy rect；diff artifact hash 与 region binding 任一错配都必须在 provider 调用前失败。图片先读取 header 并预留解码像素/字节预算，再对同一快照执行受限完整解码。在线 provider 只接收语义文本框与显式 privacy rect 遮罩后的内存图片副本；可见且未完全裁切的文本缺少有效 measured bounds 时拒绝上传。敏感 metadata 值按固定数量、单值字节和总字节上限去重收集，ASCII echo 不区分大小写、非 ASCII echo 精确匹配，结构 ID/路径保持可追踪。HTTP 禁止重定向并限制输出 token。AI 引用的 capture/image/region/node/file 必须可反查；报告没有 pass/降级 deterministic hard failure 的字段，且生成模型与审核模型独立记录。
 - `ui_visual_gate_v1` 只消费由 path + SHA-256 绑定并通过版本、尺寸、aligned image hash、reference binding 和 hard-failure 保留校验的上游报告；capture 必须沿用唯一的 `capture_id == screen.device.state`。四态为 `passed`、`failed`、`needs_review` 和 `invalid`：证据无效优先于尺寸/语义 hard failure，随后依次保留 critical、AI severe、normal、AI medium 和 decorative review。critical/normal、AI severe/medium 阻断，decorative-only 进入人工复核，AI minor 仅报告。每个 reference profile 可覆盖完整六项区域阈值，未匹配时使用保守默认；Stage 6 local status/violations 作为独立 upstream diagnostics，不参与 selected profile 的 Stage 9 决策。每个区域的正式 profile 指标、阈值、违规项和决定都独立输出，不生成可掩盖局部失败的全局平均分。
+- `ui_comparison_bundle_v1` 的每个问题必须显示 region、severity、证据图片/rect、可选 node ID、source path、likely files、likely cause 和建议修改范围；确实没有来源时明确为 `null`/`unknown`。报告同时显示 mask、允许差异、算法、阈值和 AI 是否实际运行。
 
 失败报告需要能定位：
 
@@ -189,6 +203,7 @@ cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
 - 游戏内审计：`screen_not_found`、`panel_not_ready`、`unstable_ui`、`scroll_target_missing`、`scroll_target_unreachable`、`screenshot_failed`、`config_invalid`。
 - 远程任务：`device_offline`、`debug_disabled`、`send_failed`、`client_timeout`、`client_rejected`、`artifact_upload_failed`、`remote_error`、`remote_failed`。
 - AI 与修复：`ai_blocking_issue`、`deterministic_hard_failure`、`ai_missing_capture_metadata`、`ai_result_invalid`、`safety_policy_rejected`、`fix_check_failed`、`max_iterations_reached`。
+- 报告与基准：`report_input_invalid`、`report_link_invalid`、`baseline_plan_invalid`、`baseline_approval_required`、`baseline_conflict`、`baseline_rerun_incomplete`、`baseline_update_forbidden`。
 
 ## 当前已知窗口验收状态
 

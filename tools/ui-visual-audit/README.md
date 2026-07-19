@@ -233,3 +233,59 @@ Each capture uses the Stage 8 identity `capture_id == screen.device.state`, name
 `fixtures/gate/human-labeled-cases.json` contains sixteen repository-maintainer labels covering all six profile metrics plus deterministic synthetic boundary and precedence cases. It records zero false positives, zero false negatives, and zero four-state misclassifications for this fixture and defines the state ranking used by those counts. The test loads `fixtures/gate/conservative.config.json`, requires a unique bidirectional profile/calibration fixture link, derives each case threshold from the formal profile and named metric, pins the recorded threshold, and asserts the exact terminal state case by case. Its scope is deliberately narrow: it is an engineering regression set derived from committed fixtures, not a user study, production sample, or claim that thresholds are universally calibrated.
 
 Gate config, bundle, and reports use strict unknown-field rejection. Capture/profile/count/string sizes, individual report bytes, and total evidence bytes are bounded. Output uses a new isolated directory and create-new temporary file plus no-clobber finalization; rerunning into an existing destination fails without changing its report.
+
+## Comparison bundle and review report
+
+`build-report` validates the strict `ui_comparison_bundle_v1` machine contract and creates `comparison-result.json` plus `report.md` in a new output directory. Each capture identity remains `screen.device.state` and must include reference, actual, overlay, and heatmap path + SHA-256 links; the six fixed-point metrics; region bounds, levels, thresholds, and status; masks and review reasons; allowed-difference notes; every algorithm version; whether AI actually ran; the four-state gate result; and located issues. Its baseline guard also binds a validated active reference manifest; the declared reference ID, screen/device/state, observed revision/hash, and captured reference artifact hash must all agree with that manifest. Issues keep an explicit region or `null`, severity, evidence image/rect, node ID, source path, likely files, likely cause, and suggested change scope. Unknown information stays `null`/`unknown`; the renderer does not invent source evidence.
+
+```powershell
+cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- build-report `
+  --repository-root . `
+  --allowed-input-root summary/ui-audit `
+  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-output-root summary/ui-audit `
+  --bundle <comparison-input.json> `
+  --output-directory summary/ui-audit/<run-id>/comparison
+```
+
+The root manifest first binds the comparison input path and SHA-256 together with the same run ID, analysis path/hash, and fix-iteration path/hash links. The generated result records the final root-manifest path/hash and the comparison-input path/hash, so validators can prove `root -> comparison input -> result -> root` without an impossible circular file hash. Every artifact is resolved below an allowed input root and hashed from a bounded read before Markdown is rendered. Missing artifacts, swapped hashes, incomplete root links, and stale baseline bindings fail with stable machine codes; no missing path is rendered as an ordinary successful link. Output is create-new/no-clobber and deterministic for the same structured evidence.
+
+The repository runner records `artifact_links` for `analysis-input.json`, `analysis.json`, and completed fix iterations. It intentionally leaves `comparison = null` until the comparison engine has supplied the full four-image evidence bundle. Stage 10 does not imply Stage 11's automatic reference-manifest matrix expansion, CI task, or remote-device execution.
+
+## Explicit baseline update workflow
+
+Baseline replacement is never part of generation, AI analysis, report rendering, or the automatic fix loop. It uses three explicit commands:
+
+```powershell
+# 1. Read-only planning. The output directory must be new.
+cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- plan-baseline-update `
+  --repository-root . `
+  --manifest <reference-manifest.json> `
+  --reference-id <reference-id> `
+  --new-image <candidate.png> `
+  --reason "reviewed visual refresh reason" `
+  --metrics-before <before-metrics.json> `
+  --metrics-after <after-metrics.json> `
+  --allowed-output-root summary/ui-visual-audit `
+  --output-directory summary/ui-visual-audit/<plan-id>
+
+# 2. Apply only after a separately authored approval JSON binds the exact plan SHA-256.
+cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- apply-baseline-update `
+  --repository-root . `
+  --plan <baseline-update-plan.json> `
+  --approval <human-approval.json> `
+  --allowed-output-root summary/ui-visual-audit `
+  --output-directory summary/ui-visual-audit/<apply-id>
+
+# 3. Prove every related device/state was rerun before acceptance is complete.
+cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- verify-baseline-rerun `
+  --repository-root . `
+  --receipt <baseline-update-receipt.json> `
+  --comparison-result <comparison-result.json> `
+  --allowed-output-root summary/ui-visual-audit `
+  --output-directory summary/ui-visual-audit/<verification-id>
+```
+
+The immutable plan records the update reason, old/new image identity and dimensions, before/after metric report identities, prior/new revision binding, and every manifest entry sharing screen + locale + theme as a required device/state rerun. It always says `human_approval_required = true` and `automatic_fix_may_apply = false`. The separate approval JSON must use schema 1 and provide `plan_sha256`, `approved = true`, non-empty approver, timestamp, and rationale. The tool never writes or self-approves that record.
+
+Apply fails on a stale manifest, changed candidate, changed metric evidence, wrong old binding, path conflict, or unapproved plan. It archives hash-bound old/new image evidence and stages the receipt before replacing any baseline file; receipt publication and post-update manifest validation run inside the manifest/image rollback transaction. Its receipt remains `applied_rerun_required`, `rerun_verification_required = true`, and `acceptance_complete = false`. Only `verify-baseline-rerun` can produce `acceptance_complete = true`, after a bound comparison result contains every required capture with its expected reference ID/revision/hash and an individually `passed` gate state. The runner's fix-command boundary rejects baseline plan/apply/verify entry points before execution and snapshots the committed reference root as forbidden state, including when Git ignores a changed path.

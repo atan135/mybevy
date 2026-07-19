@@ -2,10 +2,12 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::{io::Write, path::PathBuf};
 use ui_visual_audit::{
-    AiAnalysisRequest, ComparisonError, ComparisonErrorResponse, ComparisonRequest,
-    DiffAnalysisRequest, GateRequest, ManifestError, NormalizationRequest, RegionAuditRequest,
-    SemanticAuditRequest, analyze_aligned_diff, analyze_with_ai, audit_regions, audit_semantics,
-    compare_images, evaluate_visual_gate, load_and_validate_manifest, normalize_and_align,
+    AiAnalysisRequest, BaselineApplyRequest, BaselinePlanRequest, BaselineRerunVerificationRequest,
+    ComparisonError, ComparisonErrorResponse, ComparisonRequest, DiffAnalysisRequest, GateRequest,
+    ManifestError, NormalizationRequest, RegionAuditRequest, ReportBuildRequest,
+    SemanticAuditRequest, analyze_aligned_diff, analyze_with_ai, apply_baseline_update,
+    audit_regions, audit_semantics, build_comparison_report, compare_images, evaluate_visual_gate,
+    load_and_validate_manifest, normalize_and_align, plan_baseline_update, verify_baseline_rerun,
 };
 
 #[derive(Debug, Parser)]
@@ -144,6 +146,66 @@ enum Command {
         bundle: PathBuf,
         #[arg(long)]
         config: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+    },
+    /// Validate a strict comparison bundle and render machine/human reports.
+    BuildReport {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long, required = true)]
+        allowed_input_root: Vec<PathBuf>,
+        #[arg(long)]
+        allowed_output_root: PathBuf,
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+    },
+    /// Create an immutable baseline update plan; never changes the baseline.
+    PlanBaselineUpdate {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        reference_id: String,
+        #[arg(long)]
+        new_image: PathBuf,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        metrics_before: PathBuf,
+        #[arg(long)]
+        metrics_after: PathBuf,
+        #[arg(long)]
+        allowed_output_root: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+    },
+    /// Apply a non-stale baseline plan with a separate explicit human approval record.
+    ApplyBaselineUpdate {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        approval: PathBuf,
+        #[arg(long)]
+        allowed_output_root: PathBuf,
+        #[arg(long)]
+        output_directory: PathBuf,
+    },
+    /// Prove every device/state related to an updated baseline was rerun.
+    VerifyBaselineRerun {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long)]
+        receipt: PathBuf,
+        #[arg(long)]
+        comparison_result: PathBuf,
+        #[arg(long)]
+        allowed_output_root: PathBuf,
         #[arg(long)]
         output_directory: PathBuf,
     },
@@ -395,6 +457,78 @@ fn run() -> i32 {
                     format!("visual gate report cannot be serialized for stdout: {error}"),
                 )),
             },
+            Err(error) => exit_with_comparison_error(error),
+        },
+        Command::BuildReport {
+            repository_root,
+            allowed_input_root,
+            allowed_output_root,
+            bundle,
+            output_directory,
+        } => match build_comparison_report(&ReportBuildRequest {
+            repository_root,
+            allowed_input_roots: allowed_input_root,
+            allowed_output_root,
+            bundle,
+            output_directory,
+        }) {
+            Ok(result) => write_stdout_json(&result),
+            Err(error) => exit_with_comparison_error(error),
+        },
+        Command::PlanBaselineUpdate {
+            repository_root,
+            manifest,
+            reference_id,
+            new_image,
+            reason,
+            metrics_before,
+            metrics_after,
+            allowed_output_root,
+            output_directory,
+        } => match plan_baseline_update(&BaselinePlanRequest {
+            repository_root,
+            manifest,
+            reference_id,
+            new_image,
+            reason,
+            metrics_before,
+            metrics_after,
+            allowed_output_root,
+            output_directory,
+        }) {
+            Ok(plan) => write_stdout_json(&plan),
+            Err(error) => exit_with_comparison_error(error),
+        },
+        Command::ApplyBaselineUpdate {
+            repository_root,
+            plan,
+            approval,
+            allowed_output_root,
+            output_directory,
+        } => match apply_baseline_update(&BaselineApplyRequest {
+            repository_root,
+            plan,
+            approval,
+            allowed_output_root,
+            output_directory,
+        }) {
+            Ok(receipt) => write_stdout_json(&receipt),
+            Err(error) => exit_with_comparison_error(error),
+        },
+        Command::VerifyBaselineRerun {
+            repository_root,
+            receipt,
+            comparison_result,
+            allowed_output_root,
+            output_directory,
+        } => match verify_baseline_rerun(&BaselineRerunVerificationRequest {
+            repository_root,
+            receipt,
+            comparison_result,
+            allowed_output_root,
+            output_directory,
+        }) {
+            Ok(verification) => write_stdout_json(&verification),
             Err(error) => exit_with_comparison_error(error),
         },
     }

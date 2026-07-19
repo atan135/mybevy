@@ -389,6 +389,24 @@ function ConvertTo-RunRelativePath {
     return Get-RelativePathCompat $RunRoot $Path
 }
 
+function New-UiAuditArtifactLink {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $full = Get-FullPath $Path
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+        throw "Artifact link target is missing: $full"
+    }
+    $item = Get-Item -LiteralPath $full
+    return [ordered]@{
+        path = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $full
+        sha256 = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
+        byte_length = [int64]$item.Length
+    }
+}
+
 function ConvertTo-CommandLineArgument {
     param([Parameter(Mandatory = $true)][string]$Value)
 
@@ -1561,10 +1579,18 @@ function Invoke-UiAuditAnalysis {
 function Write-UiAuditAnalysisOutput {
     param(
         [Parameter(Mandatory = $true)][string]$RunRoot,
-        [Parameter(Mandatory = $true)]$Analysis
+        [Parameter(Mandatory = $true)]$Analysis,
+        [Parameter(Mandatory = $true)][string]$RunIdValue,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$CaptureIds
     )
 
     $analysisPath = Join-FullPath $RunRoot "analysis.json"
+    $Analysis | Add-Member -NotePropertyName "artifact_backlink" -NotePropertyValue ([ordered]@{
+        schema_version = 1
+        root_run_id = $RunIdValue
+        root_manifest = "manifest.json"
+        capture_ids = @($CaptureIds)
+    }) -Force
     $Analysis | ConvertTo-Json -Depth 20 | Set-Content -Path $analysisPath -Encoding UTF8
     return ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $analysisPath
 }
@@ -1594,6 +1620,7 @@ function New-UiAuditFixPolicy {
             "project/target/",
             "android/app/build/",
             "android/build/"
+            "tools/ui-visual-audit/fixtures/references/"
         )
         forbidden_file_names = @(
             ".env",
@@ -1604,7 +1631,35 @@ function New-UiAuditFixPolicy {
             "(?i)(^|[\\/])(secret|secrets|token|tokens|credential|credentials)([\\/\.]|$)",
             "(?i)\.(pem|p12|pfx|key)$"
         )
+        forbidden_command_patterns = @(
+            "(?i)(^|[\s;|&])(plan-baseline-update|apply-baseline-update|verify-baseline-rerun)([\s;|&]|$)",
+            "(?i)(^|[\s;|&])(update-baseline|baseline-update)([\s;|&]|$)"
+        )
         strategy_priority = @($script:FixStrategyPriority)
+    }
+}
+
+function Test-UiAuditFixCommandBoundary {
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)]$Policy
+    )
+
+    foreach ($pattern in @($Policy.forbidden_command_patterns)) {
+        if ($Command -match [string]$pattern) {
+            return [pscustomobject]@{
+                allowed = $false
+                failure_type = "baseline_update_forbidden"
+                detail = "automatic fix commands cannot plan, apply, or verify baseline updates"
+                matched_pattern = [string]$pattern
+            }
+        }
+    }
+    return [pscustomobject]@{
+        allowed = $true
+        failure_type = $null
+        detail = "command does not invoke a baseline update entry point"
+        matched_pattern = $null
     }
 }
 
@@ -2449,6 +2504,25 @@ function Update-UiAuditManifestWithFixLoop {
     if ($FixLoop.status -eq "passed") {
         $manifest.status = "passed"
     }
+    $fixLinks = New-Object System.Collections.Generic.List[object]
+    foreach ($iteration in @($FixLoop.iterations)) {
+        if ([string]::IsNullOrWhiteSpace([string]$iteration.after_manifest)) {
+            continue
+        }
+        $manifestFull = Join-FullPath $RunRoot ([string]$iteration.after_manifest)
+        $analysisFull = if ([string]::IsNullOrWhiteSpace([string]$iteration.after_analysis)) { $null } else { Join-FullPath $RunRoot ([string]$iteration.after_analysis) }
+        $reportFull = if ([string]::IsNullOrWhiteSpace([string]$iteration.after_report)) { $null } else { Join-FullPath $RunRoot ([string]$iteration.after_report) }
+        $fixLinks.Add([ordered]@{
+            iteration = [int]$iteration.iteration
+            manifest = New-UiAuditArtifactLink -RunRoot $RunRoot -Path $manifestFull
+            analysis = if ($analysisFull -and (Test-Path -LiteralPath $analysisFull -PathType Leaf)) { New-UiAuditArtifactLink -RunRoot $RunRoot -Path $analysisFull } else { $null }
+            report = if ($reportFull -and (Test-Path -LiteralPath $reportFull -PathType Leaf)) { New-UiAuditArtifactLink -RunRoot $RunRoot -Path $reportFull } else { $null }
+        })
+    }
+    if ($null -eq $manifest.PSObject.Properties["artifact_links"]) {
+        $manifest | Add-Member -NotePropertyName "artifact_links" -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+    $manifest.artifact_links | Add-Member -NotePropertyName "fix_iterations" -NotePropertyValue @($fixLinks.ToArray()) -Force
     $manifest | ConvertTo-Json -Depth 30 | Set-Content -Path $manifestPath -Encoding UTF8
     Build-UiAuditReport -RunRoot $RunRoot -RunIdValue $RunIdValue -Manifest $manifest | Set-Content -Path (Join-FullPath $RunRoot "report.md") -Encoding UTF8
     return $manifest
@@ -2570,6 +2644,23 @@ function Invoke-UiAuditFixLoop {
                 Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
                 return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = "fix_command_missing"; exit_code = 1; detail = $iterationRecord.detail }
             }
+            $commandBoundary = Test-UiAuditFixCommandBoundary -Command $Command -Policy $policy
+            if (-not [bool]$commandBoundary.allowed) {
+                $iterationRecord.status = "failed"
+                $iterationRecord.failure_type = [string]$commandBoundary.failure_type
+                $iterationRecord.detail = [string]$commandBoundary.detail
+                $iterationRecord.fixer = [ordered]@{
+                    mode = "Command"
+                    command = $Command
+                    status = "rejected"
+                    boundary = $commandBoundary
+                }
+                $iterationRecords.Add([pscustomobject]$iterationRecord)
+                $record.iterations = @($iterationRecords.ToArray())
+                $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType $iterationRecord.failure_type -Detail $iterationRecord.detail -FinalIssues $lastIssues
+                Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
+                return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = $iterationRecord.failure_type; exit_code = 1; detail = $iterationRecord.detail }
+            }
             $beforePaths = Get-GitStatusPathSet -RepoRoot $RepoRoot
             $beforePolicySnapshot = Get-UiAuditPolicyFileSnapshot -RepoRoot $RepoRoot -Policy $policy
             $commandResult = Invoke-UiAuditFixCommand -RepoRoot $RepoRoot -IterationDir $iterationDir -Command $Command -PlanPath $planPath
@@ -2651,6 +2742,14 @@ function Invoke-UiAuditFixLoop {
 
         $afterRunId = "$RunIdValue-fix-$iteration"
         $afterManifest = Write-MockUiAuditFixRerun -RunRoot $iterationDir -RunIdValue $afterRunId -OriginalManifest $manifest -RerunPlan $rerunPlan -Scenario $MockScenario -BlockingIssues $lastIssues
+        $afterManifestPath = Join-FullPath $iterationDir "manifest.json"
+        $afterManifest | Add-Member -NotePropertyName "artifact_backlink" -NotePropertyValue ([ordered]@{
+            schema_version = 1
+            root_run_id = $RunIdValue
+            root_manifest = ConvertTo-RunRelativePath -RunRoot $iterationDir -Path (Join-FullPath $RunRoot "manifest.json")
+            capture_ids = @($afterManifest.tasks | ForEach-Object { $_.captures } | Where-Object { $null -ne $_ } | ForEach-Object { "$($_.screen).$($_.device).$($_.state)" } | Select-Object -Unique)
+        }) -Force
+        $afterManifest | ConvertTo-Json -Depth 30 | Set-Content -Path $afterManifestPath -Encoding UTF8
         $iterationRecord.after_manifest = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path (Join-FullPath $iterationDir "manifest.json")
         $iterationRecord.after_report = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path (Join-FullPath $iterationDir "report.md")
         $iterationRecord.after_analysis = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path (Join-FullPath $iterationDir "analysis.json")
@@ -3833,7 +3932,7 @@ function Write-UiAuditRunnerOutputs {
     $analysisInputPath = Write-UiAuditAnalysisInput -RunRoot $RunRoot -AnalysisInput $analysisInput
     $analysisResultFullPath = if ([string]::IsNullOrWhiteSpace($AnalysisResultFile)) { "" } else { Get-FullPath $AnalysisResultFile }
     $analysis = Invoke-UiAuditAnalysis -RunRoot $RunRoot -AnalysisInput $analysisInput -InputPath $analysisInputPath -Mode $AnalysisModeName -ResultPath $analysisResultFullPath
-    $analysisPath = Write-UiAuditAnalysisOutput -RunRoot $RunRoot -Analysis $analysis
+    $analysisPath = Write-UiAuditAnalysisOutput -RunRoot $RunRoot -Analysis $analysis -RunIdValue $RunIdValue -CaptureIds @($analysisInput.captures | ForEach-Object { [string]$_.capture_id })
     $analysisForManifest = [ordered]@{
         input = $analysisInputPath
         output = $analysisPath
@@ -3854,6 +3953,13 @@ function Write-UiAuditRunnerOutputs {
         $manifest.status = "failed"
     }
     $script:LastUiAuditAnalysisStatus = $analysis
+    $manifest.artifact_links = [ordered]@{
+        schema_version = 1
+        analysis_input = New-UiAuditArtifactLink -RunRoot $RunRoot -Path (Join-FullPath $RunRoot $analysisInputPath)
+        analysis = New-UiAuditArtifactLink -RunRoot $RunRoot -Path (Join-FullPath $RunRoot $analysisPath)
+        comparison = $null
+        fix_iterations = @()
+    }
     $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $manifestPath -Encoding UTF8
     Build-UiAuditReport -RunRoot $RunRoot -RunIdValue $RunIdValue -Manifest $manifest | Set-Content -Path $reportPath -Encoding UTF8
 }
@@ -4092,6 +4198,32 @@ function Build-UiAuditReport {
         } else {
             $lines.Add("")
             $lines.Add("No analysis issues.")
+        }
+    }
+
+    if ($null -ne $Manifest.PSObject.Properties["artifact_links"] -and $null -ne $Manifest.artifact_links) {
+        $links = $Manifest.artifact_links
+        $lines.Add("")
+        $lines.Add("## Artifact Links")
+        $lines.Add("")
+        $lines.Add("- Analysis input: $(Format-MarkdownLink "analysis-input" $links.analysis_input.path) (``$($links.analysis_input.sha256)``)")
+        $lines.Add("- Analysis output: $(Format-MarkdownLink "analysis" $links.analysis.path) (``$($links.analysis.sha256)``)")
+        if ($links.comparison) {
+            $lines.Add("- Comparison: $(Format-MarkdownLink "comparison" $links.comparison.path) (``$($links.comparison.sha256)``)")
+        } else {
+            $lines.Add("- Comparison: pending strict comparison bundle; Stage 11 runner integration is not implied")
+        }
+        $linkedIterations = @($links.fix_iterations)
+        if ($linkedIterations.Count -gt 0) {
+            $lines.Add("")
+            $lines.Add("| Fix iteration | Manifest | Analysis | Report |")
+            $lines.Add("| --- | --- | --- | --- |")
+            foreach ($link in $linkedIterations) {
+                $linkedManifest = Format-MarkdownLink "manifest" $link.manifest.path
+                $linkedAnalysis = if ($link.analysis) { Format-MarkdownLink "analysis" $link.analysis.path } else { "-" }
+                $linkedReport = if ($link.report) { Format-MarkdownLink "report" $link.report.path } else { "-" }
+                $lines.Add("| $($link.iteration) | $linkedManifest | $linkedAnalysis | $linkedReport |")
+            }
         }
     }
 
@@ -4389,6 +4521,10 @@ function Invoke-UiAuditSelfTest {
         Assert-SelfTest (Test-Path (Join-FullPath $tempRoot "report.md")) "root report write"
         Assert-SelfTest (Test-Path (Join-FullPath $tempRoot "analysis-input.json")) "analysis input write"
         Assert-SelfTest (Test-Path (Join-FullPath $tempRoot "analysis.json")) "analysis output write"
+        $linkedManifest = Read-JsonFile (Join-FullPath $tempRoot "manifest.json")
+        Assert-SelfTest ($linkedManifest.artifact_links.analysis.sha256 -match "^[0-9a-f]{64}$" -and $linkedManifest.artifact_links.analysis_input.sha256 -match "^[0-9a-f]{64}$") "root manifest binds analysis artifacts by path and hash"
+        $linkedAnalysis = Read-JsonFile (Join-FullPath $tempRoot "analysis.json")
+        Assert-SelfTest ($linkedAnalysis.artifact_backlink.root_run_id -eq "selftest" -and @($linkedAnalysis.artifact_backlink.capture_ids).Count -eq 3) "analysis artifact links back to root run and captures"
         $analysisInput = Read-JsonFile (Join-FullPath $tempRoot "analysis-input.json")
         Assert-SelfTest (@($analysisInput.captures).Count -eq 3) "analysis input captures only resolved captures"
         Assert-SelfTest ((@($analysisInput.captures[0].likely_files) -contains "project/src/game/screens/dev/ui_gallery.rs")) "analysis input likely files"
@@ -4721,6 +4857,10 @@ function Invoke-UiAuditSelfTest {
         Assert-SelfTest ((Test-Path (Join-FullPath $fixPassRoot "iterations/01-after-fix/checks/cargo-fmt.stdout.log")) -and (Test-Path (Join-FullPath $fixPassRoot "iterations/01-after-fix/checks/cargo-check.stdout.log"))) "fix loop preserves check logs"
         $fixPassReport = Get-Content -Raw -Path (Join-FullPath $fixPassRoot "report.md")
         Assert-SelfTest ($fixPassReport.Contains("## Fix Loop") -and $fixPassReport.Contains("After report")) "fix loop report section is written"
+        Assert-SelfTest (@($fixPassManifest.artifact_links.fix_iterations).Count -eq 1 -and $fixPassManifest.artifact_links.fix_iterations[0].manifest.sha256 -match "^[0-9a-f]{64}$") "root manifest binds fix iteration artifacts"
+        $linkedFixManifest = Read-JsonFile (Join-FullPath $fixPassRoot "iterations/01-after-fix/manifest.json")
+        Assert-SelfTest ($linkedFixManifest.artifact_backlink.root_run_id -eq "fix-mock-pass" -and @($linkedFixManifest.artifact_backlink.capture_ids).Count -gt 0) "fix iteration manifest links back to root run and captures"
+        Assert-SelfTest ($fixPassReport.Contains("## Artifact Links")) "report displays linked analysis and fix artifacts"
 
         $script:LastUiAuditAnalysisStatus = $null
         $fixMaxRoot = Join-FullPath $fixBase "mock-max"
@@ -4800,6 +4940,26 @@ function Invoke-UiAuditSelfTest {
         Assert-SelfTest ($commandDeleteFixResult.exit_code -eq 1 -and $fixCommandDeleteManifest.fix_loop.failure_type -eq "safety_policy_rejected") "command fix loop rejects ignored summary delete"
         Assert-SelfTest (@($fixCommandDeleteManifest.fix_loop.iterations[0].fixer.policy_changed_paths) -contains "summary/ui-audit/preexisting-delete-test/old.txt") "command fix loop records ignored deleted path"
         Assert-SelfTest (@($fixCommandDeleteManifest.fix_loop.iterations[0].safety.violations | Where-Object { $_.relative -eq "summary/ui-audit/preexisting-delete-test/old.txt" -and $_.reason -like "forbidden_root:*" }).Count -eq 1) "command fix loop records violation reason for ignored summary delete"
+
+        $boundaryPolicy = New-UiAuditFixPolicy
+        $baselineBoundary = Test-UiAuditFixCommandBoundary -Command "cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- apply-baseline-update --plan plan.json" -Policy $boundaryPolicy
+        $ordinaryBoundary = Test-UiAuditFixCommandBoundary -Command "cargo fmt --manifest-path project/Cargo.toml" -Policy $boundaryPolicy
+        Assert-SelfTest (-not [bool]$baselineBoundary.allowed -and $baselineBoundary.failure_type -eq "baseline_update_forbidden") "fix loop rejects baseline update commands before execution"
+        Assert-SelfTest ([bool]$ordinaryBoundary.allowed) "fix loop command boundary preserves ordinary UI fix commands"
+
+        $baselineCommandRoot = Join-FullPath $commandRepoRoot "baseline-command-run"
+        $baselineCommandResult = New-FakePassedUiAuditResult -RunRoot $baselineCommandRoot
+        $baselineCommandAnalysis = Join-FullPath $analysisFixtureRoot "baseline-command-blocking.json"
+        Write-FakeAnalysisResult -Path $baselineCommandAnalysis -Issues @(
+            (New-FakeAnalysisIssue -Capture $baselineCommandResult.captures[0] -Severity "severe" -ProblemType "text_overlap" -Problem "blocking before forbidden baseline command")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $baselineCommandRoot -RunIdValue "baseline-command" -Results @($baselineCommandResult) -ScreensValue @("ui_gallery") -DevicesValue @("phone-small") -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @("phone-small") -AnalysisModeName "Fixture" -AnalysisResultFile $baselineCommandAnalysis
+        $baselineMarker = Join-FullPath $commandRepoRoot "baseline-command-executed.txt"
+        $baselineCommand = "Set-Content -Path '$baselineMarker' -Value bad; cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- apply-baseline-update --plan plan.json"
+        $baselineCommandOutcome = Invoke-UiAuditFixLoop -RunRoot $baselineCommandRoot -RunIdValue "baseline-command" -RepoRoot $commandRepoRoot -ProjectRoot $projectRoot -Mode "Command" -MaxIterations 5 -Command $baselineCommand -MockScenario "Pass"
+        $baselineCommandManifest = Read-JsonFile (Join-FullPath $baselineCommandRoot "manifest.json")
+        Assert-SelfTest ($baselineCommandOutcome.failure_type -eq "baseline_update_forbidden" -and $baselineCommandManifest.fix_loop.failure_type -eq "baseline_update_forbidden") "fix loop records forbidden baseline command as a stable failure"
+        Assert-SelfTest (-not (Test-Path -LiteralPath $baselineMarker)) "fix loop rejects baseline update command before any command side effect"
 
         Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "remote-blocking-for-fix-plan" -Results @($remoteResult) -ScreensValue @("ui_gallery") -DevicesValue @($remoteTargets[0].label) -IsDryRun $false -RerunSource "" -RunnerMode "Remote" -RemoteTargetsValue $remoteTargets -RemoteBackendName "Mock" -LocalDevicesValue @("desktop") -AnalysisModeName "Fixture" -AnalysisResultFile $remoteBlockingResultPath
         $remoteManifestForFix = Read-JsonFile (Join-FullPath $tempRoot "manifest.json")
