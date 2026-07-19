@@ -1107,7 +1107,7 @@ fn hash_bytes(bytes: &[u8]) -> String {
 /// lifecycle. This is intentionally separate from `UiGenerationRunManifest`:
 /// that type is the sealed Stage 3 bundle consumed by promotion and must remain
 /// backward compatible while the closed-loop runner is introduced incrementally.
-pub const CLOSED_LOOP_RUN_MANIFEST_PROTOCOL_VERSION: u32 = 1;
+pub const CLOSED_LOOP_RUN_MANIFEST_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1237,6 +1237,11 @@ impl ClosedLoopRunState {
 pub enum ClosedLoopArtifactKind {
     GenerationInput,
     ReferenceManifest,
+    GenerationResult,
+    ProviderMetadata,
+    ValidationReport,
+    SourceMap,
+    DraftAssetsManifest,
     UiDocument,
     Asset,
     Preview,
@@ -1251,6 +1256,16 @@ pub enum ClosedLoopArtifactKind {
 pub struct ClosedLoopArtifactLinks {
     pub generation_input: ArtifactLink,
     pub reference_manifest: ArtifactLink,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation_result: Option<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_metadata: Option<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_report: Option<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_map: Option<ArtifactLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft_assets_manifest: Option<ArtifactLink>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui_document: Option<ArtifactLink>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1917,6 +1932,11 @@ fn validate_closed_loop_artifacts(artifacts: &ClosedLoopArtifactLinks) -> Result
     let mut paths = BTreeSet::new();
     let links = std::iter::once(&artifacts.generation_input)
         .chain(std::iter::once(&artifacts.reference_manifest))
+        .chain(artifacts.generation_result.iter())
+        .chain(artifacts.provider_metadata.iter())
+        .chain(artifacts.validation_report.iter())
+        .chain(artifacts.source_map.iter())
+        .chain(artifacts.draft_assets_manifest.iter())
         .chain(artifacts.ui_document.iter())
         .chain(artifacts.assets.iter())
         .chain(artifacts.preview.iter())
@@ -1957,10 +1977,36 @@ fn validate_state_artifacts(
         | ClosedLoopRunState::Generating
         | ClosedLoopRunState::Failed
         | ClosedLoopRunState::Cancelled => Ok(()),
-        ClosedLoopRunState::Validating | ClosedLoopRunState::Previewing => required(
+        ClosedLoopRunState::Validating => required(
             ClosedLoopArtifactKind::UiDocument,
             artifacts.ui_document.is_some(),
         ),
+        ClosedLoopRunState::Previewing => {
+            required(
+                ClosedLoopArtifactKind::UiDocument,
+                artifacts.ui_document.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::GenerationResult,
+                artifacts.generation_result.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::ProviderMetadata,
+                artifacts.provider_metadata.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::ValidationReport,
+                artifacts.validation_report.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::SourceMap,
+                artifacts.source_map.is_some(),
+            )?;
+            required(
+                ClosedLoopArtifactKind::DraftAssetsManifest,
+                artifacts.draft_assets_manifest.is_some(),
+            )
+        }
         ClosedLoopRunState::Auditing => {
             required(
                 ClosedLoopArtifactKind::UiDocument,
@@ -2212,6 +2258,11 @@ mod tests {
         ClosedLoopArtifactLinks {
             generation_input: closed_loop_link("input/task.json"),
             reference_manifest: closed_loop_link("input/reference-manifest.json"),
+            generation_result: None,
+            provider_metadata: None,
+            validation_report: None,
+            source_map: None,
+            draft_assets_manifest: None,
             ui_document: None,
             assets: Vec::new(),
             preview: None,
@@ -2275,6 +2326,12 @@ mod tests {
             .transition(ClosedLoopRunState::Generating, 3, cache_key('c'))
             .unwrap();
         manifest.artifacts.ui_document = Some(closed_loop_link("draft/document.json"));
+        manifest.artifacts.generation_result = Some(closed_loop_link("logs/generation.json"));
+        manifest.artifacts.provider_metadata = Some(closed_loop_link("logs/provider.json"));
+        manifest.artifacts.validation_report = Some(closed_loop_link("draft/validation.json"));
+        manifest.artifacts.source_map = Some(closed_loop_link("draft/source-map.json"));
+        manifest.artifacts.draft_assets_manifest =
+            Some(closed_loop_link("draft/assets-manifest.json"));
         manifest
             .transition(ClosedLoopRunState::Validating, 4, cache_key('d'))
             .unwrap();

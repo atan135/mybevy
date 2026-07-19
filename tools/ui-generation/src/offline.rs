@@ -50,6 +50,9 @@ pub struct OfflineFixtureRunResult {
     pub run_root: PathBuf,
     pub generated_document: PathBuf,
     pub source_map: PathBuf,
+    pub validation_report: PathBuf,
+    pub generation_trace: PathBuf,
+    pub draft_assets_manifest: PathBuf,
     pub preview_screenshot: PathBuf,
     pub run_report: PathBuf,
     pub bundle_manifest: PathBuf,
@@ -252,6 +255,13 @@ pub fn run_offline_fixture_generation(
     write_new_synced(&document_path, generated.canonical_document_json.as_bytes())?;
     let source_map_path = run_root.join("draft/source-map.json");
     write_json_new(&source_map_path, &generated.source_map)?;
+    let validation_report_path = run_root.join("draft/validation-report.json");
+    write_json_new(&validation_report_path, &generated.validation_report)?;
+    // Keep the empty set explicit so every generated run has a stable draft-assets artifact.
+    // A later asset-producing generator may append immutable asset links without changing the
+    // closed-loop manifest shape.
+    let draft_assets_manifest_path = run_root.join("draft/assets-manifest.json");
+    write_json_new(&draft_assets_manifest_path, &Vec::<String>::new())?;
     let trace_path = run_root.join("logs/generation-trace.json");
     write_json_new(&trace_path, &generated.trace)?;
 
@@ -329,9 +339,14 @@ pub fn run_offline_fixture_generation(
         &preview,
     )?;
     if preview.status != PreviewRunStatus::Passed {
+        let detail = preview
+            .failure
+            .as_ref()
+            .map(|failure| format!("{}: {}", failure.code, failure.detail))
+            .unwrap_or_else(|| "preview did not produce passed evidence".to_owned());
         return Err(TaskFailure::new(
-            TaskFailureKind::InvalidInput,
-            "offline fixture generation preview failed",
+            TaskFailureKind::PreviewFailed,
+            format!("offline fixture generation preview failed: {detail}"),
             Some(bundle.manifest_path.display().to_string()),
         ));
     }
@@ -344,6 +359,9 @@ pub fn run_offline_fixture_generation(
         run_root,
         generated_document: document_path,
         source_map: source_map_path,
+        validation_report: validation_report_path,
+        generation_trace: trace_path,
+        draft_assets_manifest: draft_assets_manifest_path,
         preview_screenshot: preview.command.screenshot_path,
         run_report: report_path,
         bundle_manifest: bundle.manifest_path,

@@ -61,6 +61,12 @@ param(
     [string]$FixCommand = "",
     [ValidateSet("Pass", "MaxIterations", "CheckFailed", "UnsafePath")]
     [string]$MockFixScenario = "Pass",
+    [ValidateSet("Off", "Fixture", "Plan", "Provider")]
+    [string]$GenerationMode = "Off",
+    [string]$GenerationTask = "",
+    [string]$GenerationOptions = "",
+    [string]$GenerationDocumentId = "generated.audit_draft",
+    [string]$ProviderCredentialEnvironment = "",
     [switch]$DryRun,
     [switch]$SelfTest,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -141,6 +147,7 @@ $script:AnalysisBlockingProblemTypes = @(
     "modal_layering_error"
 )
 $script:LastUiAuditAnalysisStatus = $null
+$script:UiAuditClosedLoopGeneration = $null
 $script:UiAuditComparisonToolManifest = "tools/ui-visual-audit/Cargo.toml"
 $script:UiAuditReferenceManifestSchemaVersion = 1
 
@@ -4657,6 +4664,70 @@ function Invoke-UiAuditCargoRun {
     }
 }
 
+function Invoke-UiAuditClosedLoopGeneration {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Mode
+    )
+
+    if ($Mode -eq "Off") {
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($GenerationDocumentId)) {
+        throw "-GenerationDocumentId must not be empty when -GenerationMode is enabled."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($GenerationTask)) {
+        throw "-GenerationTask is required when -GenerationMode is enabled; use a task with a unique run_id and approved reference metadata."
+    }
+    $taskPath = Get-FullPath $GenerationTask
+    if (-not (Test-Path -LiteralPath $taskPath -PathType Leaf)) {
+        throw "Generation task was not found: $taskPath"
+    }
+
+    $arguments = @(
+        "run", "--quiet",
+        "--manifest-path", (Join-FullPath $RepositoryRoot "tools/ui-generation/Cargo.toml"),
+        "--",
+        "closed-loop-generate",
+        "--mode", $Mode.ToLowerInvariant(),
+        "--task", $taskPath,
+        "--repository-root", $RepositoryRoot,
+        "--document-id", $GenerationDocumentId.Trim()
+    )
+    if (-not [string]::IsNullOrWhiteSpace($GenerationOptions)) {
+        $arguments += @("--options", (Get-FullPath $GenerationOptions))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProviderCredentialEnvironment)) {
+        $arguments += @("--provider-credential-environment", $ProviderCredentialEnvironment.Trim())
+    }
+
+    # Prompt construction, model output validation, credential resolution, and provider metadata
+    # remain inside the stable Rust tool contract. This wrapper only records its JSON result.
+    $hadSourceCommit = Test-Path "Env:MYBEVY_UI_AUDIT_GIT_COMMIT"
+    $previousSourceCommit = $env:MYBEVY_UI_AUDIT_GIT_COMMIT
+    $env:MYBEVY_UI_AUDIT_GIT_COMMIT = Get-UiAuditGitCommit -RepositoryRoot $RepositoryRoot
+    try {
+        $output = @(& cargo @arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        if ($hadSourceCommit) {
+            $env:MYBEVY_UI_AUDIT_GIT_COMMIT = $previousSourceCommit
+        } else {
+            Remove-Item "Env:MYBEVY_UI_AUDIT_GIT_COMMIT" -ErrorAction SilentlyContinue
+        }
+    }
+    if ($exitCode -ne 0) {
+        $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+        throw "Closed-loop generation mode $Mode failed: $detail"
+    }
+    try {
+        return (($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Closed-loop generation tool did not emit a valid JSON result: $($_.Exception.Message)"
+    }
+}
+
 function Convert-ChildEntriesToCaptures {
     param(
         [Parameter(Mandatory = $true)]$ChildManifest,
@@ -4913,6 +4984,9 @@ function Write-UiAuditRunnerOutputs {
             planned = $planned.Count
         }
         tasks = @($Results)
+    }
+    if ($null -ne $script:UiAuditClosedLoopGeneration) {
+        $manifest.generation = $script:UiAuditClosedLoopGeneration
     }
 
     $manifestPath = Join-FullPath $RunRoot "manifest.json"
@@ -6053,6 +6127,25 @@ function Invoke-UiAuditRunner {
         $existing = @(Get-ChildItem -Force -Path $runRoot)
         if ($existing.Count -gt 0) {
             throw "Run output directory already exists and is not empty: $runRoot"
+        }
+    }
+
+    $script:UiAuditClosedLoopGeneration = $null
+    if ($GenerationMode -ne "Off") {
+        if ($DryRun) {
+            $script:UiAuditClosedLoopGeneration = [ordered]@{
+                protocol_version = 1
+                mode = $GenerationMode.ToLowerInvariant()
+                status = "planned_by_audit_runner"
+                detail = "dry run; closed-loop generation was not started"
+            }
+        } else {
+            $script:UiAuditClosedLoopGeneration = Invoke-UiAuditClosedLoopGeneration -RepositoryRoot $repoRoot -Mode $GenerationMode
+            Write-Host "Closed-loop generation: $($script:UiAuditClosedLoopGeneration.status)"
+            if ($null -ne $script:UiAuditClosedLoopGeneration.audit_registration) {
+                $registration = $script:UiAuditClosedLoopGeneration.audit_registration
+                Write-Host "Draft runtime registration: $($registration.screen) / $($registration.device) / $($registration.states -join ', ')"
+            }
         }
     }
 

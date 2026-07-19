@@ -11,7 +11,7 @@ use std::{
     fs::OpenOptions,
     io::{Cursor, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -209,8 +209,7 @@ impl PreviewExecutor for CommandPreviewExecutor {
         let timeout = Duration::from_millis(plan.process_timeout_ms);
         loop {
             if cancellation.is_requested() {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_process_tree(&mut child);
                 return Ok(PreviewProcessRecord {
                     exit_code: None,
                     timed_out: false,
@@ -219,8 +218,7 @@ impl PreviewExecutor for CommandPreviewExecutor {
                 });
             }
             if started.elapsed() >= timeout {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_process_tree(&mut child);
                 return Ok(PreviewProcessRecord {
                     exit_code: None,
                     timed_out: true,
@@ -239,8 +237,7 @@ impl PreviewExecutor for CommandPreviewExecutor {
                 }
                 Ok(None) => thread::sleep(Duration::from_millis(10)),
                 Err(_) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    terminate_process_tree(&mut child);
                     return Err(preview_failure(
                         PreviewFailureKind::ProcessFailed,
                         "UI_GENERATION_PREVIEW_PROCESS_WAIT_FAILED",
@@ -250,6 +247,29 @@ impl PreviewExecutor for CommandPreviewExecutor {
             }
         }
     }
+}
+
+/// `cargo run` can parent another cargo process and the preview executable. Killing only the
+/// direct process leaves the renderer alive on Windows and can hold the inherited log handles
+/// open indefinitely. Terminate the complete tree before returning timeout/cancellation evidence.
+fn terminate_process_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let status = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if status.is_err() {
+            let _ = child.kill();
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
 }
 
 pub fn prepare_preview_command(
@@ -351,7 +371,9 @@ pub fn prepare_preview_command_for_state(
         page_state: page_state.to_string(),
         timeout_frames: 1200,
         stable_frames: 30,
-        process_timeout_ms: 900_000,
+        // Match the closed-loop Previewing state budget. This includes a cold `cargo run`, so
+        // callers receive a durable timeout record instead of a parent process hanging forever.
+        process_timeout_ms: 300_000,
         canonical_document_sha256,
     })
 }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ui_generation::{
     audit::{AuditVisualExpectation, parse_page_states, run_document_audit_command},
     boundary::verify_dependency_boundary,
+    closed_loop_generation::{GenerationMode, run_closed_loop_generation},
     evaluation::run_fixture_evaluation,
     inspect_task,
     lifecycle::CancellationToken,
@@ -93,6 +94,22 @@ enum Command {
         repository_root: PathBuf,
         #[arg(long)]
         document_id: String,
+    },
+    /// Runs a bounded closed-loop generation mode without exposing provider protocol to scripts.
+    ClosedLoopGenerate {
+        #[arg(long, value_parser = parse_generation_mode, default_value = "off")]
+        mode: GenerationMode,
+        #[arg(long)]
+        task: PathBuf,
+        #[arg(long)]
+        options: Option<PathBuf>,
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long)]
+        document_id: String,
+        /// Environment variable name only. Its credential value is never accepted as an argument.
+        #[arg(long)]
+        provider_credential_environment: Option<String>,
     },
     /// Emits the small, high-impact decision template bound to a committed generation run.
     PromotionDecisions {
@@ -253,6 +270,23 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             &CancellationToken::default(),
         )?)
         .expect("offline fixture run result is serializable"),
+        Command::ClosedLoopGenerate {
+            mode,
+            task,
+            options,
+            repository_root,
+            document_id,
+            provider_credential_environment,
+        } => serde_json::to_value(run_closed_loop_generation(
+            mode,
+            &task,
+            options.as_deref(),
+            &repository_root,
+            &document_id,
+            provider_credential_environment.as_deref(),
+            &CancellationToken::default(),
+        )?)
+        .expect("closed-loop generation result is serializable"),
         Command::PromotionDecisions {
             run_id,
             repository_root,
@@ -298,4 +332,14 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
         serde_json::to_string_pretty(&output).expect("CLI report is serializable")
     );
     Ok(())
+}
+
+fn parse_generation_mode(value: &str) -> Result<GenerationMode, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "off" => Ok(GenerationMode::Off),
+        "fixture" => Ok(GenerationMode::Fixture),
+        "plan" => Ok(GenerationMode::Plan),
+        "provider" => Ok(GenerationMode::Provider),
+        _ => Err("generation mode must be Off, Fixture, Plan, or Provider".to_owned()),
+    }
 }
