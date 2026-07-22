@@ -58,9 +58,22 @@ param(
     [ValidateSet("Off", "Plan", "Mock", "Command")]
     [string]$FixMode = "Off",
     [int]$MaxFixIterations = 5,
+    # Zero keeps the original global limit for callers that have not selected a repair scope.
+    [ValidateRange(0, 100)]
+    [int]$MaxGenerationFixIterations = 0,
+    [ValidateRange(0, 100)]
+    [int]$MaxDocumentFixIterations = 0,
+    [ValidateRange(0, 100)]
+    [int]$MaxAssetFixIterations = 0,
+    [ValidateRange(0, 100)]
+    [int]$MaxCodeFixIterations = 0,
     [string]$FixCommand = "",
-    [ValidateSet("Pass", "MaxIterations", "CheckFailed", "UnsafePath")]
+    # The non-pass cases are offline fixtures used by the closed-loop state-machine self-test.
+    [ValidateSet("Pass", "MaxIterations", "CheckFailed", "UnsafePath", "Degraded", "Oscillation", "Cancelled")]
     [string]$MockFixScenario = "Pass",
+    # A user may create this file while a fix command or validation process is running.
+    # An empty value resolves to <run-root>/cancel-fix.request.
+    [string]$FixCancellationFile = "",
     [ValidateSet("Off", "Fixture", "Plan", "Provider")]
     [string]$GenerationMode = "Off",
     [string]$GenerationTask = "",
@@ -2018,6 +2031,454 @@ function New-UiAuditFixRerunPlan {
     }
 }
 
+function Get-UiAuditFixProperty {
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [AllowNull()][object]$Default = $null
+    )
+
+    if ($null -eq $Value -or $null -eq $Value.PSObject.Properties[$Name]) {
+        return $Default
+    }
+    return $Value.$Name
+}
+
+function Get-UiAuditFixIssueCategory {
+    param([Parameter(Mandatory = $true)]$Issue)
+
+    $explicit = [string](Get-UiAuditFixProperty -Value $Issue -Name "repair_category")
+    if ($explicit -in @("generation", "document", "asset", "code")) {
+        return $explicit
+    }
+
+    $attribution = [string](Get-UiAuditFixProperty -Value $Issue -Name "attribution")
+    switch ($attribution) {
+        "document_layout" { return "document" }
+        "document_style" { return "document" }
+        "draft_asset" { return "asset" }
+        "common_widget" { return "code" }
+        "theme" { return "code" }
+        "framework" { return "code" }
+    }
+
+    $source = [string](Get-UiAuditFixProperty -Value $Issue -Name "source")
+    if ($source -eq "generation") {
+        return "generation"
+    }
+    foreach ($path in @(Get-UiAuditFixProperty -Value $Issue -Name "suggested_files" -Default @())) {
+        $normalized = ([string]$path -replace "\\", "/")
+        if ($normalized -match "(^|/)draft(/|$)|(^|/)assets?/") {
+            return "asset"
+        }
+        if ($normalized -match "(^|/)ui/documents?/") {
+            return "document"
+        }
+    }
+    return "code"
+}
+
+function Get-UiAuditFixIssueCategories {
+    param([AllowEmptyCollection()][object[]]$Issues)
+
+    $categories = New-Object System.Collections.Generic.List[string]
+    foreach ($issue in @($Issues)) {
+        $category = Get-UiAuditFixIssueCategory -Issue $issue
+        if (-not $categories.Contains($category)) {
+            $categories.Add($category)
+        }
+    }
+    if ($categories.Count -eq 0) {
+        $categories.Add("code")
+    }
+    return @($categories.ToArray())
+}
+
+function New-UiAuditFixIterationBudget {
+    param(
+        [Parameter(Mandatory = $true)][int]$GlobalLimit,
+        [Parameter(Mandatory = $true)][int]$GenerationLimit,
+        [Parameter(Mandatory = $true)][int]$DocumentLimit,
+        [Parameter(Mandatory = $true)][int]$AssetLimit,
+        [Parameter(Mandatory = $true)][int]$CodeLimit
+    )
+
+    if ($GlobalLimit -lt 1) {
+        throw "MaxFixIterations must be at least 1."
+    }
+    return [ordered]@{
+        global_max = $GlobalLimit
+        categories = [ordered]@{
+            generation = [ordered]@{ max = if ($GenerationLimit -gt 0) { $GenerationLimit } else { $GlobalLimit }; used = 0 }
+            document = [ordered]@{ max = if ($DocumentLimit -gt 0) { $DocumentLimit } else { $GlobalLimit }; used = 0 }
+            asset = [ordered]@{ max = if ($AssetLimit -gt 0) { $AssetLimit } else { $GlobalLimit }; used = 0 }
+            code = [ordered]@{ max = if ($CodeLimit -gt 0) { $CodeLimit } else { $GlobalLimit }; used = 0 }
+        }
+    }
+}
+
+function Test-UiAuditFixIterationBudget {
+    param(
+        [Parameter(Mandatory = $true)]$Budget,
+        [Parameter(Mandatory = $true)][string[]]$Categories
+    )
+
+    $exhausted = New-Object System.Collections.Generic.List[string]
+    foreach ($category in @($Categories)) {
+        $entry = $Budget.categories.$category
+        if ($null -eq $entry -or [int]$entry.used -ge [int]$entry.max) {
+            $exhausted.Add($category)
+        }
+    }
+    return [pscustomobject]@{
+        allowed = ($exhausted.Count -eq 0)
+        categories = @($Categories)
+        exhausted_categories = @($exhausted.ToArray())
+    }
+}
+
+function Use-UiAuditFixIterationBudget {
+    param(
+        [Parameter(Mandatory = $true)]$Budget,
+        [Parameter(Mandatory = $true)][string[]]$Categories
+    )
+
+    foreach ($category in @($Categories)) {
+        $Budget.categories.$category.used = [int]$Budget.categories.$category.used + 1
+    }
+}
+
+function Get-UiAuditFixIssueSignature {
+    param([Parameter(Mandatory = $true)]$Issue)
+
+    $rootCause = [string](Get-UiAuditFixProperty -Value $Issue -Name "root_cause_key")
+    if (-not [string]::IsNullOrWhiteSpace($rootCause)) {
+        return "root:$rootCause"
+    }
+    $parts = @(
+        [string](Get-UiAuditFixProperty -Value $Issue -Name "problem_type"),
+        [string](Get-UiAuditFixProperty -Value $Issue -Name "likely_cause"),
+        [string](Get-UiAuditFixProperty -Value $Issue -Name "attribution"),
+        [string](Get-UiAuditFixProperty -Value $Issue -Name "source_path"),
+        [string](Get-UiAuditFixProperty -Value $Issue -Name "document_path"),
+        [string](Get-UiAuditFixProperty -Value $Issue -Name "node_id"),
+        [string](Get-UiAuditFixProperty -Value (Get-UiAuditFixProperty -Value $Issue -Name "region") -Name "region_id")
+    ) | ForEach-Object { $_.Trim().ToLowerInvariant() }
+    return "issue:" + ($parts -join "|")
+}
+
+function Get-UiAuditFixIssueIdentity {
+    param([Parameter(Mandatory = $true)]$Issue)
+
+    $logical = [string](Get-UiAuditFixProperty -Value $Issue -Name "logical_problem_key")
+    if (-not [string]::IsNullOrWhiteSpace($logical)) {
+        return "logical:" + $logical.Trim().ToLowerInvariant()
+    }
+    $rootCause = [string](Get-UiAuditFixProperty -Value $Issue -Name "root_cause_key")
+    if (-not [string]::IsNullOrWhiteSpace($rootCause)) {
+        return "root:" + $rootCause.Trim().ToLowerInvariant()
+    }
+    $likelyCause = [string](Get-UiAuditFixProperty -Value $Issue -Name "likely_cause")
+    if (-not [string]::IsNullOrWhiteSpace($likelyCause)) {
+        return "cause:" + $likelyCause.Trim().ToLowerInvariant()
+    }
+    return Get-UiAuditFixIssueSignature -Issue $Issue
+}
+
+function Get-UiAuditFixIssueMetric {
+    param([Parameter(Mandatory = $true)]$Issue)
+
+    foreach ($candidate in @(
+            (Get-UiAuditFixProperty -Value $Issue -Name "critical_region_metric"),
+            (Get-UiAuditFixProperty -Value $Issue -Name "metric_value"),
+            (Get-UiAuditFixProperty -Value $Issue -Name "score"),
+            (Get-UiAuditFixProperty -Value (Get-UiAuditFixProperty -Value $Issue -Name "region") -Name "metric_value")
+        )) {
+        if ($null -ne $candidate) {
+            $parsed = 0.0
+            if ([double]::TryParse([string]$candidate, [ref]$parsed) -and -not [double]::IsNaN($parsed) -and -not [double]::IsInfinity($parsed)) {
+                return [pscustomobject]@{ value = $parsed; source = "reported" }
+            }
+        }
+    }
+
+    $severity = [string](Get-UiAuditFixProperty -Value $Issue -Name "severity")
+    $fallback = switch ($severity) {
+        "hard_failure" { 100.0 }
+        "severe" { 30.0 }
+        "medium" { 10.0 }
+        default { 1.0 }
+    }
+    return [pscustomobject]@{ value = $fallback; source = "severity_fallback" }
+}
+
+function Get-UiAuditFixIssueSummary {
+    param([AllowEmptyCollection()][object[]]$Issues)
+
+    $signatures = New-Object System.Collections.Generic.List[string]
+    $signatureSet = New-Object 'System.Collections.Generic.HashSet[string]'
+    $logicalSignatures = New-Object System.Collections.Generic.List[string]
+    $logicalSignatureSet = New-Object 'System.Collections.Generic.HashSet[string]'
+    $devices = @{}
+    $logicalDevices = @{}
+    $hardFailures = 0
+    $metric = 0.0
+    $usesFallbackMetric = $false
+    foreach ($issue in @($Issues)) {
+        $signature = Get-UiAuditFixIssueSignature -Issue $issue
+        if ($signatureSet.Add($signature)) {
+            $signatures.Add($signature)
+        }
+        $logicalSignature = Get-UiAuditFixIssueIdentity -Issue $issue
+        if ($logicalSignatureSet.Add($logicalSignature)) {
+            $logicalSignatures.Add($logicalSignature)
+        }
+        if (-not $logicalDevices.ContainsKey($logicalSignature)) {
+            $logicalDevices[$logicalSignature] = New-Object System.Collections.Generic.List[string]
+        }
+        if (-not $devices.ContainsKey($signature)) {
+            $devices[$signature] = New-Object System.Collections.Generic.List[string]
+        }
+        $device = [string](Get-UiAuditFixProperty -Value $issue -Name "device")
+        if (-not [string]::IsNullOrWhiteSpace($device) -and -not $devices[$signature].Contains($device)) {
+            $devices[$signature].Add($device)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($device) -and -not $logicalDevices[$logicalSignature].Contains($device)) {
+            $logicalDevices[$logicalSignature].Add($device)
+        }
+        if (([string](Get-UiAuditFixProperty -Value $issue -Name "severity") -eq "hard_failure") -or
+            ([string](Get-UiAuditFixProperty -Value $issue -Name "priority") -eq "hard")) {
+            $hardFailures += 1
+        }
+        $issueMetric = Get-UiAuditFixIssueMetric -Issue $issue
+        $metric += [double]$issueMetric.value
+        if ($issueMetric.source -eq "severity_fallback") {
+            $usesFallbackMetric = $true
+        }
+    }
+    return [pscustomobject]@{
+        hard_failure_count = $hardFailures
+        blocking_issue_count = @($Issues).Count
+        critical_region_metric = $metric
+        metric_source = if ($usesFallbackMetric) { "severity_fallback_or_reported" } else { "reported" }
+        signatures = @($signatures.ToArray() | Sort-Object)
+        logical_signatures = @($logicalSignatures.ToArray() | Sort-Object)
+        signature_devices = $devices
+        logical_signature_devices = $logicalDevices
+    }
+}
+
+function Test-UiAuditFixImprovement {
+    param(
+        [Parameter(Mandatory = $true)]$Before,
+        [Parameter(Mandatory = $true)]$After
+    )
+
+    $beforeSet = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($signature in @($Before.logical_signatures)) { [void]$beforeSet.Add([string]$signature) }
+    $newBlocking = New-Object System.Collections.Generic.List[string]
+    $migrated = New-Object System.Collections.Generic.List[string]
+    foreach ($signature in @($After.logical_signatures)) {
+        if (-not $beforeSet.Contains([string]$signature)) {
+            $newBlocking.Add([string]$signature)
+            continue
+        }
+        $beforeDevices = if ($Before.logical_signature_devices.ContainsKey($signature)) { @($Before.logical_signature_devices[$signature]) } else { @() }
+        $afterDevices = if ($After.logical_signature_devices.ContainsKey($signature)) { @($After.logical_signature_devices[$signature]) } else { @() }
+        foreach ($device in @($afterDevices | Select-Object -Unique)) {
+            if ($device -notin $beforeDevices) {
+                $migrated.Add("$signature@$device")
+            }
+        }
+    }
+    $sameSignatures = (($Before.signatures -join "\n") -eq ($After.signatures -join "\n"))
+    $hardReduced = [int]$After.hard_failure_count -lt [int]$Before.hard_failure_count
+    $metricImproved = [double]$After.critical_region_metric -lt [double]$Before.critical_region_metric
+    $blockingReduced = [int]$After.blocking_issue_count -lt [int]$Before.blocking_issue_count
+    $noNewBlocking = ($newBlocking.Count -eq 0)
+    return [pscustomobject]@{
+        improved = ($noNewBlocking -and ($hardReduced -or $metricImproved -or $blockingReduced))
+        hard_failure_reduced = $hardReduced
+        critical_region_metric_improved = $metricImproved
+        blocking_issue_count_reduced = $blockingReduced
+        no_new_blocking_issues = $noNewBlocking
+        same_problem_signatures = $sameSignatures
+        new_blocking_signatures = @($newBlocking.ToArray())
+        migrated_problem_signatures = @($migrated.ToArray())
+        before = $Before
+        after = $After
+    }
+}
+
+function Test-UiAuditFixOscillation {
+    param([Parameter(Mandatory = $true)][string[]]$SignatureHistory)
+
+    if ($SignatureHistory.Count -lt 3) {
+        return $false
+    }
+    $last = $SignatureHistory.Count - 1
+    return $SignatureHistory[$last] -eq $SignatureHistory[$last - 2] -and
+        $SignatureHistory[$last] -ne $SignatureHistory[$last - 1]
+}
+
+function New-UiAuditFixWorkspaceSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)]$Policy,
+        [Parameter(Mandatory = $true)][string]$SnapshotDir,
+        [switch]$IncludeBackups
+    )
+
+    $repoFull = Get-FullPath $RepoRoot
+    New-Item -ItemType Directory -Force -Path $SnapshotDir | Out-Null
+    $backupRoot = Join-FullPath $SnapshotDir "files"
+    if ($IncludeBackups) {
+        New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+    }
+    $entries = New-Object System.Collections.Generic.List[object]
+    foreach ($root in @($Policy.allowed_roots)) {
+        $rootPath = Join-FullPath $repoFull ([string]$root)
+        if (-not (Test-Path -LiteralPath $rootPath)) {
+            continue
+        }
+        $rootItem = Get-Item -LiteralPath $rootPath -Force
+        if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "fix workspace snapshot refuses a reparse-point root: $root"
+        }
+        $items = if ($rootItem.PSIsContainer) {
+            @(Get-ChildItem -LiteralPath $rootPath -File -Force -Recurse -ErrorAction Stop)
+        } else {
+            @($rootItem)
+        }
+        foreach ($item in $items) {
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "fix workspace snapshot refuses a reparse-point file: $($item.FullName)"
+            }
+            $relative = (Get-RelativePathCompat -BasePath $repoFull -TargetPath $item.FullName) -replace "\\", "/"
+            $backup = $null
+            if ($IncludeBackups) {
+                $backup = Join-FullPath $backupRoot $relative
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backup) | Out-Null
+                Copy-Item -LiteralPath $item.FullName -Destination $backup -Force
+                $backup = ConvertTo-RunRelativePath -RunRoot $SnapshotDir -Path $backup
+            }
+            $entries.Add([pscustomobject]@{
+                    relative_path = $relative
+                    sha256 = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                    byte_length = [int64]$item.Length
+                    backup = $backup
+                })
+        }
+    }
+    $snapshot = [pscustomobject]@{
+        captured_at = (Get-Date).ToString("o")
+        repository_root = $repoFull
+        snapshot_directory = (Get-FullPath $SnapshotDir)
+        entries = @($entries.ToArray() | Sort-Object relative_path)
+    }
+    $snapshot | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-FullPath $SnapshotDir "workspace-snapshot.json") -Encoding UTF8
+    return $snapshot
+}
+
+function Compare-UiAuditFixWorkspaceSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]$Before,
+        [Parameter(Mandatory = $true)]$After
+    )
+
+    $beforeMap = @{}
+    $afterMap = @{}
+    foreach ($entry in @($Before.entries)) { $beforeMap[[string]$entry.relative_path] = $entry }
+    foreach ($entry in @($After.entries)) { $afterMap[[string]$entry.relative_path] = $entry }
+    $created = New-Object System.Collections.Generic.List[string]
+    $modified = New-Object System.Collections.Generic.List[string]
+    $deleted = New-Object System.Collections.Generic.List[string]
+    $all = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($path in $beforeMap.Keys) { [void]$all.Add($path) }
+    foreach ($path in $afterMap.Keys) { [void]$all.Add($path) }
+    foreach ($path in $all) {
+        if (-not $beforeMap.ContainsKey($path)) { $created.Add($path); continue }
+        if (-not $afterMap.ContainsKey($path)) { $deleted.Add($path); continue }
+        if ([string]$beforeMap[$path].sha256 -ne [string]$afterMap[$path].sha256) { $modified.Add($path) }
+    }
+    return [pscustomobject]@{
+        created = @($created.ToArray() | Sort-Object)
+        modified = @($modified.ToArray() | Sort-Object)
+        deleted = @($deleted.ToArray() | Sort-Object)
+        changed_paths = @((@($created.ToArray()) + @($modified.ToArray()) + @($deleted.ToArray())) | Sort-Object)
+    }
+}
+
+function Restore-UiAuditFixWorkspaceSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)]$Before,
+        [Parameter(Mandatory = $true)]$After
+    )
+
+    $repoFull = Get-FullPath $RepoRoot
+    $diff = Compare-UiAuditFixWorkspaceSnapshot -Before $Before -After $After
+    $beforeMap = @{}
+    $afterMap = @{}
+    foreach ($entry in @($Before.entries)) { $beforeMap[[string]$entry.relative_path] = $entry }
+    foreach ($entry in @($After.entries)) { $afterMap[[string]$entry.relative_path] = $entry }
+    $restored = New-Object System.Collections.Generic.List[string]
+    $skipped = New-Object System.Collections.Generic.List[string]
+    foreach ($relative in @($diff.changed_paths)) {
+        $path = Join-FullPath $repoFull $relative
+        $afterEntry = $afterMap[$relative]
+        $currentHash = if (Test-Path -LiteralPath $path -PathType Leaf) {
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        } else { $null }
+        $expectedAfterHash = if ($null -ne $afterEntry) { [string]$afterEntry.sha256 } else { $null }
+        if ($currentHash -ne $expectedAfterHash) {
+            $skipped.Add($relative)
+            continue
+        }
+        $beforeEntry = $beforeMap[$relative]
+        if ($null -eq $beforeEntry) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                Remove-Item -LiteralPath $path -Force
+            }
+        } else {
+            $source = Join-FullPath ([string]$Before.snapshot_directory) ([string]$beforeEntry.backup)
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+                $skipped.Add($relative)
+                continue
+            }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            Copy-Item -LiteralPath $source -Destination $path -Force
+        }
+        $restored.Add($relative)
+    }
+    return [pscustomobject]@{
+        status = if ($skipped.Count -eq 0) { "restored" } else { "concurrent_change_preserved" }
+        restored_paths = @($restored.ToArray())
+        skipped_paths = @($skipped.ToArray())
+        diff = $diff
+    }
+}
+
+function Write-UiAuditFixWorkspaceDiff {
+    param(
+        [Parameter(Mandatory = $true)][string]$IterationDir,
+        [Parameter(Mandatory = $true)]$Before,
+        [Parameter(Mandatory = $true)]$After
+    )
+
+    $diff = Compare-UiAuditFixWorkspaceSnapshot -Before $Before -After $After
+    $path = Join-FullPath $IterationDir "workspace-diff.json"
+    ([ordered]@{
+            schema_version = 1
+            generated_at = (Get-Date).ToString("o")
+            diff = $diff
+        }) | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $path -Encoding UTF8
+    return [pscustomobject]@{
+        path = $path
+        diff = $diff
+    }
+}
+
 function Copy-UiAuditIterationSnapshot {
     param(
         [Parameter(Mandatory = $true)][string]$SourceRoot,
@@ -2027,10 +2488,19 @@ function Copy-UiAuditIterationSnapshot {
     )
 
     New-Item -ItemType Directory -Force -Path $SnapshotDir | Out-Null
-    foreach ($name in @("manifest.json", "report.md", "analysis.json", "analysis-input.json")) {
+    foreach ($name in @(
+            "manifest.json",
+            "report.md",
+            "analysis.json",
+            "analysis-input.json",
+            "comparison/closed-loop-audit.json",
+            "comparison/report/comparison-result.json",
+            "comparison/report/report.md"
+        )) {
         $source = Join-FullPath $SourceRoot $name
         $destination = Join-FullPath $SnapshotDir $name
         if ((Test-Path $source) -and -not $source.Equals($destination, [System.StringComparison]::OrdinalIgnoreCase)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
             Copy-Item -LiteralPath $source -Destination $destination -Force
         }
     }
@@ -2048,6 +2518,8 @@ function Copy-UiAuditIterationSnapshot {
             $safeName = "{0:D3}-{1}-{2}-{3}" -f $index, (Get-SafePathSegment ([string]$capture.screen)), (Get-SafePathSegment ([string]$capture.device)), (Get-SafePathSegment ([string]$capture.state))
             $screenshotCopy = $null
             $metadataCopy = $null
+            $screenshotHash = $null
+            $metadataHash = $null
 
             foreach ($entry in @(
                     [pscustomobject]@{ kind = "screenshot"; value = if ($capture.PSObject.Properties["screenshot"]) { [string]$capture.screenshot } else { "" }; extension = ".png" },
@@ -2074,8 +2546,10 @@ function Copy-UiAuditIterationSnapshot {
                 }
                 if ($entry.kind -eq "screenshot") {
                     $screenshotCopy = ConvertTo-RunRelativePath -RunRoot $SnapshotDir -Path $target
+                    $screenshotHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
                 } else {
                     $metadataCopy = ConvertTo-RunRelativePath -RunRoot $SnapshotDir -Path $target
+                    $metadataHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
                 }
             }
 
@@ -2089,7 +2563,9 @@ function Copy-UiAuditIterationSnapshot {
                 screenshot_artifact_uri = if ($capture.PSObject.Properties["screenshot_artifact_uri"]) { [string]$capture.screenshot_artifact_uri } else { $null }
                 metadata_artifact_uri = if ($capture.PSObject.Properties["metadata_artifact_uri"]) { [string]$capture.metadata_artifact_uri } else { $null }
                 copied_screenshot = $screenshotCopy
+                copied_screenshot_sha256 = $screenshotHash
                 copied_metadata = $metadataCopy
+                copied_metadata_sha256 = $metadataHash
             })
         }
     }
@@ -2253,7 +2729,8 @@ function Write-MockUiAuditFixRerun {
         [Parameter(Mandatory = $true)]$OriginalManifest,
         [Parameter(Mandatory = $true)]$RerunPlan,
         [Parameter(Mandatory = $true)][string]$Scenario,
-        [Parameter(Mandatory = $true)][object[]]$BlockingIssues
+        [Parameter(Mandatory = $true)][object[]]$BlockingIssues,
+        [Parameter(Mandatory = $true)][int]$Iteration
     )
 
     $results = New-Object System.Collections.Generic.List[object]
@@ -2277,12 +2754,31 @@ function Write-MockUiAuditFixRerun {
     }
 
     $analysisFixture = Join-FullPath $RunRoot "mock-analysis.json"
-    if ($Scenario -eq "MaxIterations") {
-        $firstResult = @($results.ToArray())[0]
+    if ($Scenario -in @("MaxIterations", "Degraded", "Oscillation")) {
+        $sourceDevice = if (@($BlockingIssues).Count -gt 0) { [string]$BlockingIssues[0].device } else { "" }
+        $firstResult = @($results.ToArray() | Where-Object { [string]$_.device -eq $sourceDevice } | Select-Object -First 1)
+        if ($firstResult.Count -eq 0) {
+            $firstResult = @($results.ToArray())[0]
+        }
         $firstCapture = @($firstResult.captures)[0]
-        Write-FakeAnalysisResult -Path $analysisFixture -Issues @(
-            (New-FakeAnalysisIssue -Capture $firstCapture -Severity "severe" -ProblemType "text_overlap" -Problem "mock issue persists after fix")
-        )
+        $problemType = "text_overlap"
+        $problem = "mock issue persists after fix"
+        if ($Scenario -eq "Degraded") {
+            $problemType = "critical_clipping"
+            $problem = "mock fix introduced a new blocking issue"
+        } elseif ($Scenario -eq "Oscillation" -and ($Iteration % 2) -eq 1) {
+            $problemType = "critical_clipping"
+            $problem = "mock issue oscillated to another presentation"
+        }
+        $likelyCause = if ($Scenario -eq "Degraded") {
+            "mock new blocking root cause"
+        } elseif ($Scenario -eq "Oscillation" -and @($BlockingIssues).Count -gt 0) {
+            [string]$BlockingIssues[0].likely_cause
+        } else {
+            "fixture likely cause"
+        }
+        $fixtureIssue = New-FakeAnalysisIssue -Capture $firstCapture -Severity "severe" -ProblemType $problemType -Problem $problem -LikelyCause $likelyCause
+        Write-FakeAnalysisResult -Path $analysisFixture -Issues @($fixtureIssue)
     } else {
         Write-FakeAnalysisResult -Path $analysisFixture -Issues @()
     }
@@ -2299,7 +2795,8 @@ function Invoke-UiAuditProcess {
         [Parameter(Mandatory = $true)][string]$StdoutLog,
         [Parameter(Mandatory = $true)][string]$StderrLog,
         [int]$TimeoutSeconds = 600,
-        [hashtable]$Environment = @{}
+        [hashtable]$Environment = @{},
+        [AllowNull()][string]$CancellationPath = $null
     )
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StdoutLog) | Out-Null
@@ -2319,26 +2816,47 @@ function Invoke-UiAuditProcess {
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     try {
+        if (-not [string]::IsNullOrWhiteSpace($CancellationPath) -and (Test-Path -LiteralPath $CancellationPath -PathType Leaf)) {
+            Set-Content -Path $StdoutLog -Value "" -Encoding UTF8
+            Set-Content -Path $StderrLog -Value "fix process cancelled before launch" -Encoding UTF8
+            return [pscustomobject]@{ started = $false; exit_code = $null; timed_out = $false; cancelled = $true; launch_error = "cancelled before launch"; stdout = $StdoutLog; stderr = $StderrLog }
+        }
         if (-not $process.Start()) {
-            return [pscustomobject]@{ started = $false; exit_code = $null; timed_out = $false; launch_error = "process did not start"; stdout = $StdoutLog; stderr = $StderrLog }
+            return [pscustomobject]@{ started = $false; exit_code = $null; timed_out = $false; cancelled = $false; launch_error = "process did not start"; stdout = $StdoutLog; stderr = $StderrLog }
         }
 
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
+        $cancelled = $false
+        while (-not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+            if (-not [string]::IsNullOrWhiteSpace($CancellationPath) -and (Test-Path -LiteralPath $CancellationPath -PathType Leaf)) {
+                $cancelled = $true
+                Stop-ProcessTreeCompat -Process $process
+                break
+            }
+            [void]$process.WaitForExit(250)
+        }
+        if ($cancelled) {
+            [void]$process.WaitForExit(10000)
+            Set-Content -Path $StdoutLog -Value $stdoutTask.GetAwaiter().GetResult() -Encoding UTF8
+            Set-Content -Path $StderrLog -Value ($stderrTask.GetAwaiter().GetResult() + [Environment]::NewLine + "fix process cancelled by request file") -Encoding UTF8
+            return [pscustomobject]@{ started = $true; exit_code = $null; timed_out = $false; cancelled = $true; launch_error = $null; stdout = $StdoutLog; stderr = $StderrLog }
+        }
+        if (-not $process.HasExited) {
             Stop-ProcessTreeCompat -Process $process
             Set-Content -Path $StdoutLog -Value $stdoutTask.GetAwaiter().GetResult() -Encoding UTF8
             Set-Content -Path $StderrLog -Value $stderrTask.GetAwaiter().GetResult() -Encoding UTF8
-            return [pscustomobject]@{ started = $true; exit_code = $null; timed_out = $true; launch_error = $null; stdout = $StdoutLog; stderr = $StderrLog }
+            return [pscustomobject]@{ started = $true; exit_code = $null; timed_out = $true; cancelled = $false; launch_error = $null; stdout = $StdoutLog; stderr = $StderrLog }
         }
 
         Set-Content -Path $StdoutLog -Value $stdoutTask.GetAwaiter().GetResult() -Encoding UTF8
         Set-Content -Path $StderrLog -Value $stderrTask.GetAwaiter().GetResult() -Encoding UTF8
-        return [pscustomobject]@{ started = $true; exit_code = $process.ExitCode; timed_out = $false; launch_error = $null; stdout = $StdoutLog; stderr = $StderrLog }
+        return [pscustomobject]@{ started = $true; exit_code = $process.ExitCode; timed_out = $false; cancelled = $false; launch_error = $null; stdout = $StdoutLog; stderr = $StderrLog }
     } catch {
         Set-Content -Path $StdoutLog -Value "" -Encoding UTF8
         Set-Content -Path $StderrLog -Value $_.Exception.Message -Encoding UTF8
-        return [pscustomobject]@{ started = $false; exit_code = $null; timed_out = $false; launch_error = $_.Exception.Message; stdout = $StdoutLog; stderr = $StderrLog }
+        return [pscustomobject]@{ started = $false; exit_code = $null; timed_out = $false; cancelled = $false; launch_error = $_.Exception.Message; stdout = $StdoutLog; stderr = $StderrLog }
     } finally {
         $process.Dispose()
     }
@@ -2349,7 +2867,8 @@ function Invoke-UiAuditFixChecks {
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
         [Parameter(Mandatory = $true)][string]$IterationDir,
         [Parameter(Mandatory = $true)][string]$Mode,
-        [Parameter(Mandatory = $true)][string]$Scenario
+        [Parameter(Mandatory = $true)][string]$Scenario,
+        [AllowNull()][string]$CancellationPath = $null
     )
 
     $checksDir = Join-FullPath $IterationDir "checks"
@@ -2360,6 +2879,15 @@ function Invoke-UiAuditFixChecks {
     $checkStderr = Join-FullPath $checksDir "cargo-check.stderr.log"
 
     if ($Mode -eq "Mock") {
+        if ($Scenario -eq "Cancelled" -or (-not [string]::IsNullOrWhiteSpace($CancellationPath) -and (Test-Path -LiteralPath $CancellationPath -PathType Leaf))) {
+            Set-Content -Path $fmtStdout -Value "" -Encoding UTF8
+            Set-Content -Path $fmtStderr -Value "mock fix verification cancelled" -Encoding UTF8
+            return [pscustomobject]@{
+                status = "cancelled"
+                failure_type = "cancelled"
+                commands = @([ordered]@{ command = "cargo fmt"; status = "cancelled"; exit_code = $null; stdout = ConvertTo-RunRelativePath -RunRoot $IterationDir -Path $fmtStdout; stderr = ConvertTo-RunRelativePath -RunRoot $IterationDir -Path $fmtStderr })
+            }
+        }
         Set-Content -Path $fmtStdout -Value "mock cargo fmt completed" -Encoding UTF8
         Set-Content -Path $fmtStderr -Value "" -Encoding UTF8
         if ($Scenario -eq "CheckFailed") {
@@ -2387,7 +2915,14 @@ function Invoke-UiAuditFixChecks {
         }
     }
 
-    $fmt = Invoke-UiAuditProcess -FileName "cargo" -Arguments @("fmt") -WorkingDirectory $ProjectRoot -StdoutLog $fmtStdout -StderrLog $fmtStderr -TimeoutSeconds 600
+    $fmt = Invoke-UiAuditProcess -FileName "cargo" -Arguments @("fmt") -WorkingDirectory $ProjectRoot -StdoutLog $fmtStdout -StderrLog $fmtStderr -TimeoutSeconds 600 -CancellationPath $CancellationPath
+    if ([bool]$fmt.cancelled) {
+        return [pscustomobject]@{
+            status = "cancelled"
+            failure_type = "cancelled"
+            commands = @([ordered]@{ command = "cargo fmt"; status = "cancelled"; exit_code = $null; timed_out = $false; stdout = ConvertTo-RunRelativePath -RunRoot $IterationDir -Path $fmtStdout; stderr = ConvertTo-RunRelativePath -RunRoot $IterationDir -Path $fmtStderr })
+        }
+    }
     if (-not [bool]$fmt.started -or [bool]$fmt.timed_out -or [int]$fmt.exit_code -ne 0) {
         return [pscustomobject]@{
             status = "failed"
@@ -2396,7 +2931,17 @@ function Invoke-UiAuditFixChecks {
         }
     }
 
-    $check = Invoke-UiAuditProcess -FileName "cargo" -Arguments @("check") -WorkingDirectory $ProjectRoot -StdoutLog $checkStdout -StderrLog $checkStderr -TimeoutSeconds 1200
+    $check = Invoke-UiAuditProcess -FileName "cargo" -Arguments @("check") -WorkingDirectory $ProjectRoot -StdoutLog $checkStdout -StderrLog $checkStderr -TimeoutSeconds 1200 -CancellationPath $CancellationPath
+    if ([bool]$check.cancelled) {
+        return [pscustomobject]@{
+            status = "cancelled"
+            failure_type = "cancelled"
+            commands = @(
+                [ordered]@{ command = "cargo fmt"; status = "passed"; exit_code = $fmt.exit_code; timed_out = $fmt.timed_out; stdout = ConvertTo-RunRelativePath -RunRoot $IterationDir -Path $fmtStdout; stderr = ConvertTo-RunRelativePath -RunRoot $IterationDir -Path $fmtStderr },
+                [ordered]@{ command = "cargo check"; status = "cancelled"; exit_code = $null; timed_out = $false; stdout = ConvertTo-RunRelativePath -RunRoot $IterationDir -Path $checkStdout; stderr = ConvertTo-RunRelativePath -RunRoot $IterationDir -Path $checkStderr }
+            )
+        }
+    }
     $checkStatus = if ([bool]$check.started -and -not [bool]$check.timed_out -and [int]$check.exit_code -eq 0) { "passed" } else { "failed" }
     return [pscustomobject]@{
         status = $checkStatus
@@ -2450,7 +2995,8 @@ function Invoke-UiAuditFixCommand {
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [Parameter(Mandatory = $true)][string]$IterationDir,
         [Parameter(Mandatory = $true)][string]$Command,
-        [Parameter(Mandatory = $true)][string]$PlanPath
+        [Parameter(Mandatory = $true)][string]$PlanPath,
+        [AllowNull()][string]$CancellationPath = $null
     )
 
     $stdout = Join-FullPath $IterationDir "fix-command.stdout.log"
@@ -2459,8 +3005,9 @@ function Invoke-UiAuditFixCommand {
         MYBEVY_UI_AUDIT_FIX_PLAN = $PlanPath
         MYBEVY_UI_AUDIT_FIX_ITERATION_DIR = $IterationDir
         MYBEVY_UI_AUDIT_FIX_RUN_ROOT = (Split-Path -Parent (Split-Path -Parent $IterationDir))
+        MYBEVY_UI_AUDIT_FIX_CANCEL_FILE = $CancellationPath
     }
-    return Invoke-UiAuditProcess -FileName "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $Command) -WorkingDirectory $RepoRoot -StdoutLog $stdout -StderrLog $stderr -TimeoutSeconds 900 -Environment $env
+    return Invoke-UiAuditProcess -FileName "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $Command) -WorkingDirectory $RepoRoot -StdoutLog $stdout -StderrLog $stderr -TimeoutSeconds 900 -Environment $env -CancellationPath $CancellationPath
 }
 
 function New-UiAuditFixLoopRecord {
@@ -2468,17 +3015,28 @@ function New-UiAuditFixLoopRecord {
         [Parameter(Mandatory = $true)][string]$Mode,
         [Parameter(Mandatory = $true)][int]$MaxIterations,
         [Parameter(Mandatory = $true)]$Policy,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Issues
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Issues,
+        [Parameter(Mandatory = $true)]$IterationBudget,
+        [Parameter(Mandatory = $true)][string]$CancellationPath
     )
 
     return [ordered]@{
-        schema_version = 1
+        schema_version = 2
         mode = $Mode
+        state = "preparing"
+        state_history = @([ordered]@{ state = "preparing"; at = (Get-Date).ToString("o"); detail = "fix loop initialized" })
         status = "running"
         pass = $false
         failure_type = $null
         detail = $null
         max_fix_iterations = $MaxIterations
+        iteration_budget = $IterationBudget
+        cancellation = [ordered]@{
+            request_path = $CancellationPath
+            requested = $false
+            terminated_external_call = $false
+            last_complete_iteration = 0
+        }
         started_at = (Get-Date).ToString("o")
         completed_at = $null
         initial_blocking_issue_count = $Issues.Count
@@ -2488,6 +3046,21 @@ function New-UiAuditFixLoopRecord {
         iterations = @()
         final_issues = @($Issues)
     }
+}
+
+function Set-UiAuditFixLoopState {
+    param(
+        [Parameter(Mandatory = $true)]$Record,
+        [Parameter(Mandatory = $true)][string]$State,
+        [AllowNull()][string]$Detail = $null
+    )
+
+    $Record.state = $State
+    $Record.state_history = @($Record.state_history) + @([ordered]@{
+            state = $State
+            at = (Get-Date).ToString("o")
+            detail = $Detail
+        })
 }
 
 function Complete-UiAuditFixLoopRecord {
@@ -2505,6 +3078,14 @@ function Complete-UiAuditFixLoopRecord {
     $Record.detail = $Detail
     $Record.completed_at = (Get-Date).ToString("o")
     $Record.final_issues = @($FinalIssues)
+    $terminalState = switch ($Status) {
+        "passed" { "passed" }
+        "cancelled" { "cancelled" }
+        "planned" { "planned" }
+        "skipped" { "skipped" }
+        default { "failed" }
+    }
+    Set-UiAuditFixLoopState -Record $Record -State $terminalState -Detail $Detail
     return $Record
 }
 
@@ -2554,7 +3135,12 @@ function Invoke-UiAuditFixLoop {
         [Parameter(Mandatory = $true)][string]$Mode,
         [Parameter(Mandatory = $true)][int]$MaxIterations,
         [AllowNull()][string]$Command,
-        [Parameter(Mandatory = $true)][string]$MockScenario
+        [Parameter(Mandatory = $true)][string]$MockScenario,
+        [int]$MaxGenerationIterations = 0,
+        [int]$MaxDocumentIterations = 0,
+        [int]$MaxAssetIterations = 0,
+        [int]$MaxCodeIterations = 0,
+        [AllowNull()][string]$CancellationPath = $null
     )
 
     if ($Mode -eq "Off") {
@@ -2564,24 +3150,45 @@ function Invoke-UiAuditFixLoop {
         throw "MaxFixIterations must be at least 1."
     }
 
+    $policy = New-UiAuditFixPolicy
+    $iterationBudget = New-UiAuditFixIterationBudget `
+        -GlobalLimit $MaxIterations `
+        -GenerationLimit $MaxGenerationIterations `
+        -DocumentLimit $MaxDocumentIterations `
+        -AssetLimit $MaxAssetIterations `
+        -CodeLimit $MaxCodeIterations
+    if ([string]::IsNullOrWhiteSpace($CancellationPath)) {
+        $CancellationPath = Join-FullPath $RunRoot "cancel-fix.request"
+    } else {
+        $CancellationPath = Get-FullPath $CancellationPath
+    }
+
     $manifest = Read-JsonFile (Join-FullPath $RunRoot "manifest.json")
     $analysis = if ($null -ne $manifest.PSObject.Properties["analysis"]) { $manifest.analysis } else { $null }
     $blockingIssues = @(Get-UiAuditBlockingIssues -Analysis $analysis)
     if ($blockingIssues.Count -eq 0) {
-        $policy = New-UiAuditFixPolicy
-        $record = New-UiAuditFixLoopRecord -Mode $Mode -MaxIterations $MaxIterations -Policy $policy -Issues @()
+        $record = New-UiAuditFixLoopRecord -Mode $Mode -MaxIterations $MaxIterations -Policy $policy -Issues @() -IterationBudget $iterationBudget -CancellationPath $CancellationPath
         $record = Complete-UiAuditFixLoopRecord -Record $record -Status "skipped" -FailureType $null -Detail "no blocking analysis issue; fix loop was not started" -FinalIssues @()
         Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
         return [pscustomobject]@{ status = "skipped"; pass = $true; failure_type = $null; exit_code = 0; detail = $record.detail }
     }
 
-    $policy = New-UiAuditFixPolicy
     $scenarioChangedPaths = @()
     if ($Mode -eq "Mock" -and $MockScenario -eq "UnsafePath") {
         $scenarioChangedPaths = @("summary/ui-audit/mock-forbidden.rs")
     }
     $safety = Test-UiAuditFixSafety -RepoRoot $RepoRoot -Issues $blockingIssues -ChangedPaths $scenarioChangedPaths -Policy $policy
-    $record = New-UiAuditFixLoopRecord -Mode $Mode -MaxIterations $MaxIterations -Policy $policy -Issues $blockingIssues
+    $record = New-UiAuditFixLoopRecord -Mode $Mode -MaxIterations $MaxIterations -Policy $policy -Issues $blockingIssues -IterationBudget $iterationBudget -CancellationPath $CancellationPath
+    if ($MockScenario -eq "Cancelled") {
+        New-Item -ItemType File -Force -Path $CancellationPath | Out-Null
+    }
+    if (Test-Path -LiteralPath $CancellationPath -PathType Leaf) {
+        $record.cancellation.requested = $true
+        Set-UiAuditFixLoopState -Record $record -State "cancelled" -Detail "cancellation was requested before a fix iteration started"
+        $record = Complete-UiAuditFixLoopRecord -Record $record -Status "cancelled" -FailureType "cancelled" -Detail "fix loop cancelled before any external call; no source file was changed" -FinalIssues $blockingIssues
+        Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
+        return [pscustomobject]@{ status = "cancelled"; pass = $false; failure_type = "cancelled"; exit_code = 1; detail = $record.detail }
+    }
     $iterationsRoot = Join-FullPath $RunRoot "iterations"
     New-Item -ItemType Directory -Force -Path $iterationsRoot | Out-Null
     $beforeDir = Join-FullPath $iterationsRoot "00-before"
@@ -2619,14 +3226,39 @@ function Invoke-UiAuditFixLoop {
 
     $iterationRecords = New-Object System.Collections.Generic.List[object]
     $lastIssues = @($blockingIssues)
+    $lastSummary = Get-UiAuditFixIssueSummary -Issues $lastIssues
+    $signatureHistory = New-Object System.Collections.Generic.List[string]
+    $signatureHistory.Add(($lastSummary.signatures -join "`n"))
     for ($iteration = 1; $iteration -le $MaxIterations; $iteration += 1) {
         $iterationDir = Join-FullPath $iterationsRoot ("{0:D2}-after-fix" -f $iteration)
         New-Item -ItemType Directory -Force -Path $iterationDir | Out-Null
+        $categories = @(Get-UiAuditFixIssueCategories -Issues $lastIssues)
+        $budgetCheck = Test-UiAuditFixIterationBudget -Budget $iterationBudget -Categories $categories
+        if (-not [bool]$budgetCheck.allowed) {
+            $budgetRecord = [ordered]@{
+                iteration = $iteration
+                path = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $iterationDir
+                status = "failed"
+                failure_type = "iteration_budget_exhausted"
+                categories = $categories
+                budget = $budgetCheck
+                detail = "one or more repair-category iteration budgets were exhausted before applying a fix"
+            }
+            $iterationRecords.Add([pscustomobject]$budgetRecord)
+            $record.iterations = @($iterationRecords.ToArray())
+            $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType "iteration_budget_exhausted" -Detail $budgetRecord.detail -FinalIssues $lastIssues
+            Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
+            return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = "iteration_budget_exhausted"; exit_code = 1; detail = $record.detail }
+        }
+        Use-UiAuditFixIterationBudget -Budget $iterationBudget -Categories $categories
+        Set-UiAuditFixLoopState -Record $record -State "applying_fix" -Detail "starting iteration $iteration for $($categories -join ', ') repair scope"
         $planPath = Join-FullPath $iterationDir "fix-plan.json"
         ([ordered]@{
             iteration = $iteration
             mode = $Mode
             issues = @($lastIssues)
+            repair_categories = $categories
+            iteration_budget = $iterationBudget
             strategy_priority = @($policy.strategy_priority)
             safety = $safety
             rerun_plan = $rerunPlan
@@ -2640,6 +3272,8 @@ function Invoke-UiAuditFixLoop {
             failure_type = $null
             fix_plan = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $planPath
             selected_strategy = "page_local_layout"
+            repair_categories = $categories
+            iteration_budget = $budgetCheck
             fixer = $null
             safety = $safety
             checks = $null
@@ -2648,6 +3282,11 @@ function Invoke-UiAuditFixLoop {
             after_report = $null
             after_analysis = $null
             after_snapshot = $null
+            workspace_before = $null
+            workspace_after = $null
+            workspace_diff = $null
+            improvement = $null
+            rollback = $null
         }
 
         if ($Mode -eq "Command") {
@@ -2679,10 +3318,34 @@ function Invoke-UiAuditFixLoop {
                 return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = $iterationRecord.failure_type; exit_code = 1; detail = $iterationRecord.detail }
             }
             $beforePaths = Get-GitStatusPathSet -RepoRoot $RepoRoot
+            $preexistingUserPaths = @($beforePaths | Where-Object {
+                    [bool](Test-UiAuditFixPathAllowed -RepoRoot $RepoRoot -PathValue ([string]$_) -Policy $policy).allowed
+                })
+            if ($preexistingUserPaths.Count -gt 0) {
+                $iterationRecord.status = "failed"
+                $iterationRecord.failure_type = "dirty_workspace_rejected"
+                $iterationRecord.detail = "command-mode repair refuses allowed-root files that were dirty when the iteration started"
+                $iterationRecord.fixer = [ordered]@{
+                    mode = "Command"
+                    status = "rejected"
+                    preexisting_user_paths = @($preexistingUserPaths)
+                }
+                $iterationRecords.Add([pscustomobject]$iterationRecord)
+                $record.iterations = @($iterationRecords.ToArray())
+                $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType "dirty_workspace_rejected" -Detail $iterationRecord.detail -FinalIssues $lastIssues
+                Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
+                return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = "dirty_workspace_rejected"; exit_code = 1; detail = $record.detail }
+            }
             $beforePolicySnapshot = Get-UiAuditPolicyFileSnapshot -RepoRoot $RepoRoot -Policy $policy
-            $commandResult = Invoke-UiAuditFixCommand -RepoRoot $RepoRoot -IterationDir $iterationDir -Command $Command -PlanPath $planPath
+            $workspaceBefore = New-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-before") -IncludeBackups
+            $iterationRecord.workspace_before = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path ([string]$workspaceBefore.snapshot_directory)
+            $commandResult = Invoke-UiAuditFixCommand -RepoRoot $RepoRoot -IterationDir $iterationDir -Command $Command -PlanPath $planPath -CancellationPath $CancellationPath
             $afterPaths = Get-GitStatusPathSet -RepoRoot $RepoRoot
             $afterPolicySnapshot = Get-UiAuditPolicyFileSnapshot -RepoRoot $RepoRoot -Policy $policy
+            $workspaceAfter = New-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-after")
+            $workspaceDiff = Write-UiAuditFixWorkspaceDiff -IterationDir $iterationDir -Before $workspaceBefore -After $workspaceAfter
+            $iterationRecord.workspace_after = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path ([string]$workspaceAfter.snapshot_directory)
+            $iterationRecord.workspace_diff = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $workspaceDiff.path
             $gitChangedPaths = @(Compare-GitStatusPathSet -Before $beforePaths -After $afterPaths)
             $policyChangedPaths = @(Compare-UiAuditPolicyFileSnapshot -Before $beforePolicySnapshot -After $afterPolicySnapshot)
             $newChangedPaths = @(Merge-UiAuditChangedPaths -PathSets @($gitChangedPaths, $policyChangedPaths))
@@ -2690,9 +3353,11 @@ function Invoke-UiAuditFixLoop {
             $iterationRecord.fixer = [ordered]@{
                 mode = "Command"
                 command = $Command
-                status = if ([bool]$commandResult.started -and -not [bool]$commandResult.timed_out -and [int]$commandResult.exit_code -eq 0) { "passed" } else { "failed" }
+                started = [bool]$commandResult.started
+                status = if ([bool]$commandResult.cancelled) { "cancelled" } elseif ([bool]$commandResult.started -and -not [bool]$commandResult.timed_out -and [int]$commandResult.exit_code -eq 0) { "passed" } else { "failed" }
                 exit_code = $commandResult.exit_code
                 timed_out = $commandResult.timed_out
+                cancelled = [bool]$commandResult.cancelled
                 stdout = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path ([string]$commandResult.stdout)
                 stderr = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path ([string]$commandResult.stderr)
                 git_changed_paths = @($gitChangedPaths)
@@ -2700,9 +3365,23 @@ function Invoke-UiAuditFixLoop {
                 new_changed_paths = @($newChangedPaths)
             }
             $iterationRecord.safety = $postSafety
+            if ([bool]$commandResult.cancelled) {
+                $iterationRecord.status = "cancelled"
+                $iterationRecord.failure_type = "cancelled"
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
+                $record.cancellation.requested = $true
+                $record.cancellation.terminated_external_call = $true
+                $record.cancellation.last_complete_iteration = $iteration - 1
+                $iterationRecords.Add([pscustomobject]$iterationRecord)
+                $record.iterations = @($iterationRecords.ToArray())
+                $record = Complete-UiAuditFixLoopRecord -Record $record -Status "cancelled" -FailureType "cancelled" -Detail "fix command was terminated by the cancellation request; only the last complete iteration was retained" -FinalIssues $lastIssues
+                Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
+                return [pscustomobject]@{ status = "cancelled"; pass = $false; failure_type = "cancelled"; exit_code = 1; detail = $record.detail }
+            }
             if ($iterationRecord.fixer.status -ne "passed") {
                 $iterationRecord.status = "failed"
                 $iterationRecord.failure_type = "fix_command_failed"
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
                 $iterationRecords.Add([pscustomobject]$iterationRecord)
                 $record.iterations = @($iterationRecords.ToArray())
                 $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType "fix_command_failed" -Detail "fix command failed before cargo checks" -FinalIssues $lastIssues
@@ -2712,6 +3391,7 @@ function Invoke-UiAuditFixLoop {
             if (-not [bool]$postSafety.allowed) {
                 $iterationRecord.status = "failed"
                 $iterationRecord.failure_type = "safety_policy_rejected"
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
                 $iterationRecords.Add([pscustomobject]$iterationRecord)
                 $record.iterations = @($iterationRecords.ToArray())
                 $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType "safety_policy_rejected" -Detail "fix command changed files outside the UI fix allowlist" -FinalIssues $lastIssues
@@ -2735,11 +3415,37 @@ function Invoke-UiAuditFixLoop {
             $iterationRecord.fixer = $fixerOutput
         }
 
-        $checks = Invoke-UiAuditFixChecks -ProjectRoot $ProjectRoot -IterationDir $iterationDir -Mode $Mode -Scenario $MockScenario
+        Set-UiAuditFixLoopState -Record $record -State "verifying" -Detail "running validation for fix iteration $iteration"
+        $checks = Invoke-UiAuditFixChecks -ProjectRoot $ProjectRoot -IterationDir $iterationDir -Mode $Mode -Scenario $MockScenario -CancellationPath $CancellationPath
         $iterationRecord.checks = $checks
+        if ($Mode -eq "Command") {
+            $postCheckWorkspace = New-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-after-checks")
+            $iterationRecord.workspace_after = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path ([string]$postCheckWorkspace.snapshot_directory)
+            $workspaceAfter = $postCheckWorkspace
+            $workspaceDiff = Write-UiAuditFixWorkspaceDiff -IterationDir $iterationDir -Before $workspaceBefore -After $workspaceAfter
+            $iterationRecord.workspace_diff = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $workspaceDiff.path
+        }
+        if ($checks.status -eq "cancelled") {
+            $iterationRecord.status = "cancelled"
+            $iterationRecord.failure_type = "cancelled"
+            if ($Mode -eq "Command") {
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
+            }
+            $record.cancellation.requested = $true
+            $record.cancellation.terminated_external_call = ($Mode -eq "Command")
+            $record.cancellation.last_complete_iteration = $iteration - 1
+            $iterationRecords.Add([pscustomobject]$iterationRecord)
+            $record.iterations = @($iterationRecords.ToArray())
+            $record = Complete-UiAuditFixLoopRecord -Record $record -Status "cancelled" -FailureType "cancelled" -Detail "validation was cancelled; the last complete iteration was preserved" -FinalIssues $lastIssues
+            Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
+            return [pscustomobject]@{ status = "cancelled"; pass = $false; failure_type = "cancelled"; exit_code = 1; detail = $record.detail }
+        }
         if ($checks.status -ne "passed") {
             $iterationRecord.status = "failed"
             $iterationRecord.failure_type = "fix_check_failed"
+            if ($Mode -eq "Command") {
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
+            }
             $iterationRecords.Add([pscustomobject]$iterationRecord)
             $record.iterations = @($iterationRecords.ToArray())
             $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType "fix_check_failed" -Detail "cargo fmt or cargo check failed after fix" -FinalIssues $lastIssues
@@ -2758,7 +3464,8 @@ function Invoke-UiAuditFixLoop {
         }
 
         $afterRunId = "$RunIdValue-fix-$iteration"
-        $afterManifest = Write-MockUiAuditFixRerun -RunRoot $iterationDir -RunIdValue $afterRunId -OriginalManifest $manifest -RerunPlan $rerunPlan -Scenario $MockScenario -BlockingIssues $lastIssues
+        Set-UiAuditFixLoopState -Record $record -State "auditing" -Detail "rerunning affected UI audit matrix for fix iteration $iteration"
+        $afterManifest = Write-MockUiAuditFixRerun -RunRoot $iterationDir -RunIdValue $afterRunId -OriginalManifest $manifest -RerunPlan $rerunPlan -Scenario $MockScenario -BlockingIssues $lastIssues -Iteration $iteration
         $afterManifestPath = Join-FullPath $iterationDir "manifest.json"
         $afterManifest | Add-Member -NotePropertyName "artifact_backlink" -NotePropertyValue ([ordered]@{
             schema_version = 1
@@ -2778,9 +3485,13 @@ function Invoke-UiAuditFixLoop {
         }
 
         $afterIssues = @(Get-UiAuditBlockingIssues -Analysis $afterManifest.analysis)
+        $afterSummary = Get-UiAuditFixIssueSummary -Issues $afterIssues
+        $improvement = Test-UiAuditFixImprovement -Before $lastSummary -After $afterSummary
+        $iterationRecord.improvement = $improvement
         $lastIssues = @($afterIssues)
         if ($afterIssues.Count -eq 0) {
             $iterationRecord.status = "passed"
+            $record.cancellation.last_complete_iteration = $iteration
             $iterationRecords.Add([pscustomobject]$iterationRecord)
             $record.iterations = @($iterationRecords.ToArray())
             $record = Complete-UiAuditFixLoopRecord -Record $record -Status "passed" -FailureType $null -Detail "blocking UI analysis issues cleared after fix iteration $iteration" -FinalIssues @()
@@ -2788,10 +3499,46 @@ function Invoke-UiAuditFixLoop {
             return [pscustomobject]@{ status = "passed"; pass = $true; failure_type = $null; exit_code = 0; detail = $record.detail }
         }
 
+        $currentSignatureSet = ($afterSummary.signatures -join "`n")
+        $signatureHistory.Add($currentSignatureSet)
+        $oscillating = Test-UiAuditFixOscillation -SignatureHistory @($signatureHistory.ToArray())
+        if (-not [bool]$improvement.improved -and [bool]$improvement.same_problem_signatures) {
+            $record.stagnant_rounds = if (-not $record.Contains("stagnant_rounds")) { 1 } else { [int]$record.stagnant_rounds + 1 }
+        } else {
+            $record.stagnant_rounds = 0
+        }
+        $stopFailure = $null
+        $stopDetail = $null
+        if ($improvement.new_blocking_signatures.Count -gt 0) {
+            $stopFailure = "fix_regression_detected"
+            $stopDetail = "rerun introduced new blocking issue signatures; the iteration is not eligible for further automatic repair"
+        } elseif ($improvement.migrated_problem_signatures.Count -gt 0) {
+            $stopFailure = "problem_migrated_to_other_device"
+            $stopDetail = "the unresolved problem migrated to another device/state matrix entry"
+        } elseif ($oscillating) {
+            $stopFailure = "fix_oscillation_detected"
+            $stopDetail = "problem signatures oscillated between prior iterations without a stable improvement"
+        } elseif ([int]$record.stagnant_rounds -ge 2 -and $iteration -lt $MaxIterations) {
+            $stopFailure = "no_improvement_detected"
+            $stopDetail = "two consecutive iterations retained the same problem signatures without an improvement"
+        }
+        if ($null -ne $stopFailure) {
+            $iterationRecord.status = "failed"
+            $iterationRecord.failure_type = $stopFailure
+            $iterationRecord.detail = $stopDetail
+            $iterationRecord.remaining_issues = @($afterIssues)
+            $iterationRecords.Add([pscustomobject]$iterationRecord)
+            $record.iterations = @($iterationRecords.ToArray())
+            $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType $stopFailure -Detail $stopDetail -FinalIssues $afterIssues
+            Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
+            return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = $stopFailure; exit_code = 1; detail = $record.detail }
+        }
+
         $iterationRecord.status = "failed"
         $iterationRecord.failure_type = "ai_blocking_issue"
         $iterationRecord.remaining_issues = @($afterIssues)
         $iterationRecords.Add([pscustomobject]$iterationRecord)
+        $lastSummary = $afterSummary
     }
 
     $record.iterations = @($iterationRecords.ToArray())
@@ -2840,7 +3587,12 @@ function Resolve-UiAuditRunnerExitCode {
                 -Mode $FixMode `
                 -MaxIterations $MaxFixIterations `
                 -Command $FixCommand `
-                -MockScenario $MockFixScenario
+                -MockScenario $MockFixScenario `
+                -MaxGenerationIterations $MaxGenerationFixIterations `
+                -MaxDocumentIterations $MaxDocumentFixIterations `
+                -MaxAssetIterations $MaxAssetFixIterations `
+                -MaxCodeIterations $MaxCodeFixIterations `
+                -CancellationPath $FixCancellationFile
             if ($fixResult.status -eq "passed") {
                 Write-Host "Fix loop passed."
             } else {
@@ -2858,7 +3610,12 @@ function Resolve-UiAuditRunnerExitCode {
                 -Mode $FixMode `
                 -MaxIterations $MaxFixIterations `
                 -Command $FixCommand `
-                -MockScenario $MockFixScenario
+                -MockScenario $MockFixScenario `
+                -MaxGenerationIterations $MaxGenerationFixIterations `
+                -MaxDocumentIterations $MaxDocumentFixIterations `
+                -MaxAssetIterations $MaxAssetFixIterations `
+                -MaxCodeIterations $MaxCodeFixIterations `
+                -CancellationPath $FixCancellationFile
             if ($fixResult.status -eq "skipped") {
                 Write-Host "Fix loop skipped: $($fixResult.detail)"
             }
@@ -2876,7 +3633,12 @@ function Resolve-UiAuditRunnerExitCode {
             -Mode $FixMode `
             -MaxIterations $MaxFixIterations `
             -Command $FixCommand `
-            -MockScenario $MockFixScenario
+            -MockScenario $MockFixScenario `
+            -MaxGenerationIterations $MaxGenerationFixIterations `
+            -MaxDocumentIterations $MaxDocumentFixIterations `
+            -MaxAssetIterations $MaxAssetFixIterations `
+            -MaxCodeIterations $MaxCodeFixIterations `
+            -CancellationPath $FixCancellationFile
         if ($fixResult.status -eq "skipped") {
             Write-Host "Fix loop skipped: $($fixResult.detail)"
         }
@@ -5980,6 +6742,7 @@ function New-FakeAnalysisIssue {
         [string]$Severity = "minor",
         [string]$ProblemType = "visual_polish",
         [string]$Problem = "alignment could be cleaner",
+        [string]$LikelyCause = "fixture likely cause",
         [AllowNull()][object]$Blocking = $null
     )
 
@@ -5991,7 +6754,7 @@ function New-FakeAnalysisIssue {
         problem_type = $ProblemType
         problem = $Problem
         evidence = "fixture evidence for $($Capture.state)"
-        likely_cause = "fixture likely cause"
+        likely_cause = $LikelyCause
         suggested_files = @("project/src/game/screens/dev/ui_gallery.rs")
     }
     if ($null -ne $Blocking) {
@@ -6591,6 +7354,111 @@ function Invoke-UiAuditSelfTest {
         $baselineCommandManifest = Read-JsonFile (Join-FullPath $baselineCommandRoot "manifest.json")
         Assert-SelfTest ($baselineCommandOutcome.failure_type -eq "baseline_update_forbidden" -and $baselineCommandManifest.fix_loop.failure_type -eq "baseline_update_forbidden") "fix loop records forbidden baseline command as a stable failure"
         Assert-SelfTest (-not (Test-Path -LiteralPath $baselineMarker)) "fix loop rejects baseline update command before any command side effect"
+
+        # Stage 7 state-machine fixtures deliberately use the runner's public loop entry point.
+        # They prove stop/rollback behavior without writing the repository itself.
+        $stage7Root = Join-FullPath $fixBase "stage7"
+        New-Item -ItemType Directory -Force -Path $stage7Root | Out-Null
+
+        $degradedRoot = Join-FullPath $stage7Root "mock-degraded"
+        $degradedResult = New-FakePassedUiAuditResult -RunRoot $degradedRoot
+        $degradedAnalysis = Join-FullPath $analysisFixtureRoot "stage7-degraded.json"
+        Write-FakeAnalysisResult -Path $degradedAnalysis -Issues @(
+            (New-FakeAnalysisIssue -Capture $degradedResult.captures[0] -Severity "severe" -ProblemType "text_overlap" -Problem "blocking before degradation fixture")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $degradedRoot -RunIdValue "stage7-degraded" -Results @($degradedResult) -ScreensValue @("ui_gallery") -DevicesValue @("phone-small") -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @("phone-small") -AnalysisModeName "Fixture" -AnalysisResultFile $degradedAnalysis
+        $degradedOutcome = Invoke-UiAuditFixLoop -RunRoot $degradedRoot -RunIdValue "stage7-degraded" -RepoRoot $repoRoot -ProjectRoot $projectRoot -Mode "Mock" -MaxIterations 5 -Command "" -MockScenario "Degraded"
+        $degradedManifest = Read-JsonFile (Join-FullPath $degradedRoot "manifest.json")
+        Assert-SelfTest ($degradedOutcome.failure_type -eq "fix_regression_detected" -and $degradedManifest.fix_loop.failure_type -eq "fix_regression_detected" -and @($degradedManifest.fix_loop.iterations).Count -eq 1) "fix loop stops a new blocking regression after one rerun"
+        Assert-SelfTest (-not [bool]$degradedManifest.fix_loop.iterations[0].improvement.no_new_blocking_issues -and @($degradedManifest.fix_loop.iterations[0].improvement.new_blocking_signatures).Count -gt 0) "fix loop records regression evidence and problem signatures"
+
+        $stagnantRoot = Join-FullPath $stage7Root "mock-stagnant"
+        $stagnantResult = New-FakePassedUiAuditResult -RunRoot $stagnantRoot
+        $stagnantAnalysis = Join-FullPath $analysisFixtureRoot "stage7-stagnant.json"
+        Write-FakeAnalysisResult -Path $stagnantAnalysis -Issues @(
+            (New-FakeAnalysisIssue -Capture $stagnantResult.captures[0] -Severity "severe" -ProblemType "text_overlap" -Problem "blocking before stagnant fixture")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $stagnantRoot -RunIdValue "stage7-stagnant" -Results @($stagnantResult) -ScreensValue @("ui_gallery") -DevicesValue @("phone-small") -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @("phone-small") -AnalysisModeName "Fixture" -AnalysisResultFile $stagnantAnalysis
+        $stagnantOutcome = Invoke-UiAuditFixLoop -RunRoot $stagnantRoot -RunIdValue "stage7-stagnant" -RepoRoot $repoRoot -ProjectRoot $projectRoot -Mode "Mock" -MaxIterations 3 -Command "" -MockScenario "MaxIterations"
+        $stagnantManifest = Read-JsonFile (Join-FullPath $stagnantRoot "manifest.json")
+        Assert-SelfTest ($stagnantOutcome.failure_type -eq "no_improvement_detected" -and @($stagnantManifest.fix_loop.iterations).Count -eq 2 -and [int]$stagnantManifest.fix_loop.stagnant_rounds -eq 2) "fix loop stops after two unchanged, unimproved issue signatures"
+
+        $oscillationRoot = Join-FullPath $stage7Root "mock-oscillation"
+        $oscillationResult = New-FakePassedUiAuditResult -RunRoot $oscillationRoot
+        $oscillationAnalysis = Join-FullPath $analysisFixtureRoot "stage7-oscillation.json"
+        $oscillationIssue = New-FakeAnalysisIssue -Capture $oscillationResult.captures[0] -Severity "severe" -ProblemType "text_overlap" -Problem "blocking before oscillation fixture"
+        $oscillationIssue["logical_problem_key"] = "stage7-oscillating-root-cause"
+        Write-FakeAnalysisResult -Path $oscillationAnalysis -Issues @($oscillationIssue)
+        Write-UiAuditRunnerOutputs -RunRoot $oscillationRoot -RunIdValue "stage7-oscillation" -Results @($oscillationResult) -ScreensValue @("ui_gallery") -DevicesValue @("phone-small") -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @("phone-small") -AnalysisModeName "Fixture" -AnalysisResultFile $oscillationAnalysis
+        $oscillationOutcome = Invoke-UiAuditFixLoop -RunRoot $oscillationRoot -RunIdValue "stage7-oscillation" -RepoRoot $repoRoot -ProjectRoot $projectRoot -Mode "Mock" -MaxIterations 5 -Command "" -MockScenario "Oscillation"
+        $oscillationManifest = Read-JsonFile (Join-FullPath $oscillationRoot "manifest.json")
+        Assert-SelfTest ($oscillationOutcome.failure_type -eq "fix_oscillation_detected" -and @($oscillationManifest.fix_loop.iterations).Count -eq 2) "fix loop stops an alternating problem-signature oscillation"
+        Assert-SelfTest (Test-UiAuditFixOscillation -SignatureHistory @("issue:a", "issue:b", "issue:a")) "oscillation detector recognizes an A-B-A state sequence"
+
+        $budgetRoot = Join-FullPath $stage7Root "mock-category-budget"
+        $budgetResult = New-FakePassedUiAuditResult -RunRoot $budgetRoot
+        $budgetAnalysis = Join-FullPath $analysisFixtureRoot "stage7-category-budget.json"
+        Write-FakeAnalysisResult -Path $budgetAnalysis -Issues @(
+            (New-FakeAnalysisIssue -Capture $budgetResult.captures[0] -Severity "severe" -ProblemType "text_overlap" -Problem "blocking before category budget fixture")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $budgetRoot -RunIdValue "stage7-category-budget" -Results @($budgetResult) -ScreensValue @("ui_gallery") -DevicesValue @("phone-small") -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @("phone-small") -AnalysisModeName "Fixture" -AnalysisResultFile $budgetAnalysis
+        $budgetOutcome = Invoke-UiAuditFixLoop -RunRoot $budgetRoot -RunIdValue "stage7-category-budget" -RepoRoot $repoRoot -ProjectRoot $projectRoot -Mode "Mock" -MaxIterations 5 -MaxCodeIterations 1 -Command "" -MockScenario "MaxIterations"
+        $budgetManifest = Read-JsonFile (Join-FullPath $budgetRoot "manifest.json")
+        Assert-SelfTest ($budgetOutcome.failure_type -eq "iteration_budget_exhausted" -and [int]$budgetManifest.fix_loop.iteration_budget.categories.code.used -eq 1 -and [int]$budgetManifest.fix_loop.iteration_budget.categories.asset.used -eq 0 -and @($budgetManifest.fix_loop.iterations).Count -eq 2) "fix loop enforces the code-specific iteration budget without charging other categories"
+
+        $rollbackRepo = Join-FullPath $stage7Root "command-rollback-repo"
+        $rollbackSourceDir = Join-FullPath $rollbackRepo "project/src/game/screens/dev"
+        New-Item -ItemType Directory -Force -Path $rollbackSourceDir | Out-Null
+        $automaticPath = Join-FullPath $rollbackSourceDir "automated.rs"
+        $userPath = Join-FullPath $rollbackSourceDir "user-preexisting.rs"
+        Set-Content -LiteralPath $automaticPath -Value "before automated change" -Encoding UTF8
+        Set-Content -LiteralPath $userPath -Value "user content before run" -Encoding UTF8
+
+        $commandFailureRoot = Join-FullPath $stage7Root "command-failure"
+        $commandFailureResult = New-FakePassedUiAuditResult -RunRoot $commandFailureRoot
+        $commandFailureAnalysis = Join-FullPath $analysisFixtureRoot "stage7-command-failure.json"
+        Write-FakeAnalysisResult -Path $commandFailureAnalysis -Issues @(
+            (New-FakeAnalysisIssue -Capture $commandFailureResult.captures[0] -Severity "severe" -ProblemType "text_overlap" -Problem "blocking before command failure fixture")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $commandFailureRoot -RunIdValue "stage7-command-failure" -Results @($commandFailureResult) -ScreensValue @("ui_gallery") -DevicesValue @("phone-small") -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @("phone-small") -AnalysisModeName "Fixture" -AnalysisResultFile $commandFailureAnalysis
+        $commandFailure = 'Set-Content -LiteralPath "project/src/game/screens/dev/automated.rs" -Value "automated failure change" -Encoding UTF8; exit 7'
+        $commandFailureOutcome = Invoke-UiAuditFixLoop -RunRoot $commandFailureRoot -RunIdValue "stage7-command-failure" -RepoRoot $rollbackRepo -ProjectRoot $projectRoot -Mode "Command" -MaxIterations 2 -Command $commandFailure -MockScenario "Pass"
+        $commandFailureManifest = Read-JsonFile (Join-FullPath $commandFailureRoot "manifest.json")
+        Assert-SelfTest ($commandFailureOutcome.failure_type -eq "fix_command_failed" -and $commandFailureManifest.fix_loop.iterations[0].rollback.status -eq "restored") "command failure rolls back the allowed-root workspace snapshot"
+        Assert-SelfTest ((Get-Content -Raw -LiteralPath $automaticPath).Trim() -eq "before automated change" -and (Get-Content -Raw -LiteralPath $userPath).Trim() -eq "user content before run") "command rollback restores automation files without overwriting preexisting user files"
+
+        $commandCancelRoot = Join-FullPath $stage7Root "command-cancel"
+        $commandCancelResult = New-FakePassedUiAuditResult -RunRoot $commandCancelRoot
+        $commandCancelAnalysis = Join-FullPath $analysisFixtureRoot "stage7-command-cancel.json"
+        Write-FakeAnalysisResult -Path $commandCancelAnalysis -Issues @(
+            (New-FakeAnalysisIssue -Capture $commandCancelResult.captures[0] -Severity "severe" -ProblemType "text_overlap" -Problem "blocking before command cancellation fixture")
+        )
+        Write-UiAuditRunnerOutputs -RunRoot $commandCancelRoot -RunIdValue "stage7-command-cancel" -Results @($commandCancelResult) -ScreensValue @("ui_gallery") -DevicesValue @("phone-small") -IsDryRun $false -RerunSource "" -RunnerMode "Local" -LocalDevicesValue @("phone-small") -AnalysisModeName "Fixture" -AnalysisResultFile $commandCancelAnalysis
+        $cancelRequest = Join-FullPath $commandCancelRoot "external-cancel.request"
+        $commandStartedMarker = Join-FullPath $commandCancelRoot "iterations/01-after-fix/command-started.marker"
+        $cancelWriterScript = "while (-not (Test-Path -LiteralPath '$($commandStartedMarker.Replace("'", "''"))')) { Start-Sleep -Milliseconds 50 }; Start-Sleep -Milliseconds 250; [System.IO.File]::WriteAllText('$($cancelRequest.Replace("'", "''"))', 'cancel')"
+        $cancelWriter = Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $cancelWriterScript) -PassThru -WindowStyle Hidden
+        try {
+            $commandCancel = 'Set-Content -LiteralPath "project/src/game/screens/dev/automated.rs" -Value "automated cancellation change" -Encoding UTF8; [System.IO.File]::WriteAllText((Join-Path $env:MYBEVY_UI_AUDIT_FIX_ITERATION_DIR "command-started.marker"), "started"); Start-Sleep -Seconds 20'
+            $commandCancelOutcome = Invoke-UiAuditFixLoop -RunRoot $commandCancelRoot -RunIdValue "stage7-command-cancel" -RepoRoot $rollbackRepo -ProjectRoot $projectRoot -Mode "Command" -MaxIterations 2 -Command $commandCancel -MockScenario "Pass" -CancellationPath $cancelRequest
+        } finally {
+            [void]$cancelWriter.WaitForExit(10000)
+            if (-not $cancelWriter.HasExited) {
+                Stop-Process -Id $cancelWriter.Id -Force
+            }
+            $cancelWriter.Dispose()
+        }
+        $commandCancelManifest = Read-JsonFile (Join-FullPath $commandCancelRoot "manifest.json")
+        $cancelIteration = $commandCancelManifest.fix_loop.iterations[0]
+        $cancelDiagnostic = "outcome=$($commandCancelOutcome.failure_type); loop=$($commandCancelManifest.fix_loop.failure_type); terminated=$($commandCancelManifest.fix_loop.cancellation.terminated_external_call); started=$($cancelIteration.fixer.started); rollback=$($cancelIteration.rollback.status)"
+        Assert-SelfTest ($commandCancelOutcome.failure_type -eq "cancelled" -and [bool]$commandCancelManifest.fix_loop.cancellation.terminated_external_call -and [bool]$cancelIteration.fixer.started -and $cancelIteration.rollback.status -eq "restored") "active external command cancellation terminates and rolls back the incomplete iteration ($cancelDiagnostic)"
+        Assert-SelfTest ((Get-Content -Raw -LiteralPath $automaticPath).Trim() -eq "before automated change" -and (Get-Content -Raw -LiteralPath $userPath).Trim() -eq "user content before run" -and [int]$commandCancelManifest.fix_loop.cancellation.last_complete_iteration -eq 0) "cancellation preserves prior user content and the last complete iteration boundary"
+        $workspaceBeforeJson = Read-JsonFile (Join-FullPath (Join-FullPath $commandCancelRoot ([string]$cancelIteration.workspace_before)) "workspace-snapshot.json")
+        Assert-SelfTest ((Test-Path -LiteralPath (Join-FullPath $commandCancelRoot ([string]$cancelIteration.fix_plan))) -and (Test-Path -LiteralPath (Join-FullPath $commandCancelRoot ([string]$cancelIteration.workspace_diff))) -and @($workspaceBeforeJson.entries | Where-Object { $_.relative_path -eq "project/src/game/screens/dev/automated.rs" -and $_.sha256 -match "^[0-9a-f]{64}$" -and -not [string]::IsNullOrWhiteSpace([string]$_.backup) }).Count -eq 1) "cancelled iteration retains fix plan, workspace hashes, rollback backup, and diff evidence"
+
+        $passIteration = $fixPassManifest.fix_loop.iterations[0]
+        $passAfterSnapshot = Read-JsonFile (Join-FullPath (Join-FullPath $fixPassRoot ([string]$passIteration.after_snapshot.path)) "snapshot.json")
+        Assert-SelfTest ((Test-Path -LiteralPath (Join-FullPath $fixPassRoot ([string]$passIteration.fix_plan))) -and (Test-Path -LiteralPath (Join-FullPath $fixPassRoot ([string]$passIteration.after_analysis))) -and (Test-Path -LiteralPath (Join-FullPath $fixPassRoot ([string]$passIteration.after_report))) -and @($passIteration.checks.commands).Count -eq 2 -and @($passAfterSnapshot.captures | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.copied_screenshot) -and [string]$_.copied_screenshot_sha256 -match "^[0-9a-f]{64}$" }).Count -gt 0) "completed iteration retains captures, comparison/analysis snapshot, fix plan, resource hashes, and verification logs"
 
         Write-UiAuditRunnerOutputs -RunRoot $tempRoot -RunIdValue "remote-blocking-for-fix-plan" -Results @($remoteResult) -ScreensValue @("ui_gallery") -DevicesValue @($remoteTargets[0].label) -IsDryRun $false -RerunSource "" -RunnerMode "Remote" -RemoteTargetsValue $remoteTargets -RemoteBackendName "Mock" -LocalDevicesValue @("desktop") -AnalysisModeName "Fixture" -AnalysisResultFile $remoteBlockingResultPath
         $remoteManifestForFix = Read-JsonFile (Join-FullPath $tempRoot "manifest.json")
