@@ -1,13 +1,13 @@
 //! Lightweight provider-call budgets shared by generation and audit tools.
 
 use crate::lifecycle::{TaskFailure, TaskFailureKind};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
 
-const MAX_LIMIT_DURATION_MS: u64 = 60 * 60 * 1000;
+const MAX_LIMIT_DURATION_MS: u64 = 24 * 60 * 60 * 1000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskExecutionLimits {
@@ -16,6 +16,7 @@ pub struct TaskExecutionLimits {
     pub max_images: usize,
     pub max_input_units: u64,
     pub max_output_units: u64,
+    pub max_iterations: u32,
     pub max_estimated_cost_microunits: u64,
     pub input_cost_microunits_per_1k: u64,
     pub output_cost_microunits_per_1k: u64,
@@ -29,6 +30,7 @@ impl TaskExecutionLimits {
             || self.max_images == 0
             || self.max_input_units == 0
             || self.max_output_units == 0
+            || self.max_iterations == 0
             || self.max_estimated_cost_microunits == 0
         {
             return Err(TaskFailure::invalid(
@@ -47,6 +49,7 @@ impl Default for TaskExecutionLimits {
             max_images: 12,
             max_input_units: 1_000_000,
             max_output_units: 250_000,
+            max_iterations: 4,
             max_estimated_cost_microunits: 10_000_000,
             input_cost_microunits_per_1k: 1_000,
             output_cost_microunits_per_1k: 2_000,
@@ -54,13 +57,14 @@ impl Default for TaskExecutionLimits {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskUsageSnapshot {
     pub provider_calls: u32,
     pub images: usize,
     pub input_units: u64,
     pub output_units: u64,
+    pub iterations: u32,
     pub estimated_cost_microunits: u64,
     pub elapsed_ms: u64,
 }
@@ -70,6 +74,32 @@ pub struct TaskBudget {
     limits: TaskExecutionLimits,
     started: Instant,
     usage: Arc<Mutex<TaskUsageSnapshot>>,
+}
+
+/// An uncommitted local provider-attempt reservation. Dropping it restores exactly the call and
+/// image capacity it reserved, which lets a higher-level runtime compose local and shared quota
+/// checks without charging a run that never reaches an external provider.
+pub struct TaskAttemptReservation {
+    usage: Arc<Mutex<TaskUsageSnapshot>>,
+    image_count: usize,
+    committed: bool,
+}
+
+impl TaskAttemptReservation {
+    pub fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for TaskAttemptReservation {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let mut usage = self.usage.lock().expect("task budget mutex poisoned");
+        usage.provider_calls = usage.provider_calls.saturating_sub(1);
+        usage.images = usage.images.saturating_sub(self.image_count);
+    }
 }
 
 impl TaskBudget {
@@ -97,9 +127,17 @@ impl TaskBudget {
     }
 
     pub fn reserve_provider_attempt(&self, image_count: usize) -> Result<(), TaskFailure> {
+        self.reserve_provider_attempt_reservation(image_count)?
+            .commit();
+        Ok(())
+    }
+
+    pub fn reserve_provider_attempt_reservation(
+        &self,
+        image_count: usize,
+    ) -> Result<TaskAttemptReservation, TaskFailure> {
         let elapsed = elapsed_ms(self.started);
         let mut usage = self.usage.lock().expect("task budget mutex poisoned");
-        usage.elapsed_ms = elapsed;
         if elapsed > self.limits.max_elapsed_ms {
             return Err(limit_failure(
                 "UI_GENERATION_LIMIT_ELAPSED",
@@ -123,7 +161,12 @@ impl TaskBudget {
         }
         usage.provider_calls += 1;
         usage.images = next_images;
-        Ok(())
+        usage.elapsed_ms = elapsed;
+        Ok(TaskAttemptReservation {
+            usage: Arc::clone(&self.usage),
+            image_count,
+            committed: false,
+        })
     }
 
     pub fn record_provider_usage(
@@ -141,23 +184,21 @@ impl TaskBudget {
 
         let elapsed = elapsed_ms(self.started);
         let mut usage = self.usage.lock().expect("task budget mutex poisoned");
-        usage.elapsed_ms = elapsed;
-        usage.input_units = usage.input_units.checked_add(input_units).ok_or_else(|| {
+        let mut next = usage.clone();
+        next.elapsed_ms = elapsed;
+        next.input_units = next.input_units.checked_add(input_units).ok_or_else(|| {
             limit_failure(
                 "UI_GENERATION_LIMIT_INPUT_UNITS",
                 "task input-unit limit overflowed",
             )
         })?;
-        usage.output_units = usage
-            .output_units
-            .checked_add(output_units)
-            .ok_or_else(|| {
-                limit_failure(
-                    "UI_GENERATION_LIMIT_OUTPUT_UNITS",
-                    "task output-unit limit overflowed",
-                )
-            })?;
-        usage.estimated_cost_microunits = usage
+        next.output_units = next.output_units.checked_add(output_units).ok_or_else(|| {
+            limit_failure(
+                "UI_GENERATION_LIMIT_OUTPUT_UNITS",
+                "task output-unit limit overflowed",
+            )
+        })?;
+        next.estimated_cost_microunits = next
             .estimated_cost_microunits
             .checked_add(cost)
             .ok_or_else(|| {
@@ -169,24 +210,46 @@ impl TaskBudget {
                 "task elapsed-time limit reached",
             ));
         }
-        if usage.input_units > self.limits.max_input_units {
+        if next.input_units > self.limits.max_input_units {
             return Err(limit_failure(
                 "UI_GENERATION_LIMIT_INPUT_UNITS",
                 "task input-unit limit reached",
             ));
         }
-        if usage.output_units > self.limits.max_output_units {
+        if next.output_units > self.limits.max_output_units {
             return Err(limit_failure(
                 "UI_GENERATION_LIMIT_OUTPUT_UNITS",
                 "task output-unit limit reached",
             ));
         }
-        if usage.estimated_cost_microunits > self.limits.max_estimated_cost_microunits {
+        if next.estimated_cost_microunits > self.limits.max_estimated_cost_microunits {
             return Err(limit_failure(
                 "UI_GENERATION_LIMIT_COST",
                 "task estimated-cost limit reached",
             ));
         }
+        *usage = next;
+        Ok(())
+    }
+
+    /// Reserves a repair or audit iteration before performing any externally visible work.
+    pub fn reserve_iteration(&self) -> Result<(), TaskFailure> {
+        let elapsed = elapsed_ms(self.started);
+        let mut usage = self.usage.lock().expect("task budget mutex poisoned");
+        if elapsed > self.limits.max_elapsed_ms {
+            return Err(limit_failure(
+                "UI_GENERATION_LIMIT_ELAPSED",
+                "task elapsed-time limit reached",
+            ));
+        }
+        if usage.iterations >= self.limits.max_iterations {
+            return Err(limit_failure(
+                "UI_GENERATION_LIMIT_ITERATIONS",
+                "task iteration limit reached",
+            ));
+        }
+        usage.iterations += 1;
+        usage.elapsed_ms = elapsed;
         Ok(())
     }
 }
@@ -229,5 +292,25 @@ mod tests {
         assert!(budget.reserve_provider_attempt(1).is_err());
         budget.record_provider_usage(Some(10), Some(10)).unwrap();
         assert_eq!(budget.snapshot().images, 2);
+    }
+
+    #[test]
+    fn iterations_are_a_hard_stop_and_rejected_usage_is_not_partially_recorded() {
+        let budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 2,
+            max_images: 2,
+            max_input_units: 1,
+            max_output_units: 1,
+            max_iterations: 1,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        budget.reserve_iteration().unwrap();
+        assert_eq!(
+            budget.reserve_iteration().unwrap_err().subject(),
+            Some("UI_GENERATION_LIMIT_ITERATIONS")
+        );
+        assert!(budget.record_provider_usage(Some(2), None).is_err());
+        assert_eq!(budget.snapshot().input_units, 0);
     }
 }

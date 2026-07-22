@@ -8,6 +8,7 @@ pub use crate::provider_budget::{TaskBudget, TaskExecutionLimits, TaskUsageSnaps
 use crate::{
     analysis::UiReferenceAnalysis,
     lifecycle::{TaskFailure, TaskFailureKind},
+    operations::{CacheDimensions, CacheViewport},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,6 +31,10 @@ pub struct AnalysisCacheIdentity {
     pub prompt_version: String,
     pub schema_id: String,
     pub schema_version: u32,
+    pub theme_revision: String,
+    pub font_revision: String,
+    pub viewport: CacheViewport,
+    pub algorithm_revision: String,
     pub parameters: Value,
 }
 
@@ -40,6 +45,10 @@ impl AnalysisCacheIdentity {
         prompt_version: impl Into<String>,
         schema_id: impl Into<String>,
         schema_version: u32,
+        theme_revision: impl Into<String>,
+        font_revision: impl Into<String>,
+        viewport: CacheViewport,
+        algorithm_revision: impl Into<String>,
         parameters: Value,
     ) -> Result<Self, TaskFailure> {
         let identity = Self {
@@ -48,6 +57,10 @@ impl AnalysisCacheIdentity {
             prompt_version: prompt_version.into(),
             schema_id: schema_id.into(),
             schema_version,
+            theme_revision: theme_revision.into(),
+            font_revision: font_revision.into(),
+            viewport,
+            algorithm_revision: algorithm_revision.into(),
             parameters,
         };
         identity.validate()?;
@@ -60,16 +73,18 @@ impl AnalysisCacheIdentity {
     }
 
     fn validate(&self) -> Result<(), TaskFailure> {
-        if !is_sha256(&self.input_sha256)
-            || !is_safe_label(&self.model_id, 128)
-            || !is_safe_label(&self.prompt_version, 128)
-            || !is_safe_label(&self.schema_id, 128)
-            || self.schema_version == 0
-        {
-            return Err(TaskFailure::invalid(
-                "analysis cache identity requires an input hash and safe model/prompt/schema labels",
-            ));
+        CacheDimensions {
+            input_sha256: self.input_sha256.clone(),
+            schema_id: self.schema_id.clone(),
+            schema_version: self.schema_version,
+            prompt_revision: self.prompt_version.clone(),
+            model_revision: self.model_id.clone(),
+            theme_revision: self.theme_revision.clone(),
+            font_revision: self.font_revision.clone(),
+            viewport: self.viewport.clone(),
+            algorithm_revision: self.algorithm_revision.clone(),
         }
+        .validate()?;
         let parameter_bytes = serde_json::to_vec(&self.parameters)
             .map_err(|_| TaskFailure::invalid("analysis cache parameters cannot be serialized"))?;
         if parameter_bytes.len() > MAX_CACHE_PARAMETER_BYTES
@@ -125,6 +140,7 @@ impl AnalysisCache {
         &self,
         identity: &AnalysisCacheIdentity,
     ) -> Result<Option<AnalysisCacheEntry>, TaskFailure> {
+        identity.validate()?;
         let path = self.entry_path(&identity.cache_key())?;
         if !path.exists() {
             return Ok(None);
@@ -146,6 +162,13 @@ impl AnalysisCache {
             TaskFailure::new(
                 TaskFailureKind::PreprocessCacheCorrupt,
                 "analysis cache entry is malformed",
+                None,
+            )
+        })?;
+        entry.identity.validate().map_err(|_| {
+            TaskFailure::new(
+                TaskFailureKind::PreprocessCacheCorrupt,
+                "analysis cache entry has invalid reuse dimensions",
                 None,
             )
         })?;
@@ -292,6 +315,10 @@ fn is_sensitive_field_name(value: &str) -> bool {
         "raw_output",
         "model_response",
         "account",
+        "user",
+        "name",
+        "address",
+        "profile",
         "player_id",
         "email",
         "phone",
@@ -363,6 +390,7 @@ mod tests {
             max_images: 2,
             max_input_units: 4,
             max_output_units: 4,
+            max_iterations: 1,
             max_estimated_cost_microunits: 3,
             input_cost_microunits_per_1k: 1_000,
             output_cost_microunits_per_1k: 1_000,
@@ -394,6 +422,10 @@ mod tests {
             "analysis-v1",
             "ui-reference-analysis",
             1,
+            "default-theme-v1",
+            "ui-font-v1",
+            fixture_viewport(),
+            "analysis-v1",
             serde_json::json!({"temperature": 0}),
         )
         .unwrap();
@@ -403,6 +435,10 @@ mod tests {
             "analysis-v2",
             "ui-reference-analysis",
             1,
+            "default-theme-v1",
+            "ui-font-v1",
+            fixture_viewport(),
+            "analysis-v1",
             serde_json::json!({"temperature": 0}),
         )
         .unwrap();
@@ -414,6 +450,10 @@ mod tests {
                 "analysis-v1",
                 "ui-reference-analysis",
                 1,
+                "default-theme-v1",
+                "ui-font-v1",
+                fixture_viewport(),
+                "analysis-v1",
                 serde_json::json!({"api_key": "do-not-store"}),
             )
             .is_err()
@@ -430,6 +470,10 @@ mod tests {
             "analysis-v1",
             "ui-reference-analysis",
             1,
+            "default-theme-v1",
+            "ui-font-v1",
+            fixture_viewport(),
+            "analysis-v1",
             serde_json::json!({"temperature": 0}),
         )
         .unwrap();
@@ -448,10 +492,28 @@ mod tests {
             "analysis-v1",
             "ui-reference-analysis",
             1,
+            "default-theme-v1",
+            "ui-font-v1",
+            fixture_viewport(),
+            "analysis-v1",
             serde_json::json!({"temperature": 1}),
         )
         .unwrap();
         assert!(cache.load(&changed).unwrap().is_none());
+        let changed_theme = AnalysisCacheIdentity::new(
+            "a".repeat(64),
+            "fixture-model",
+            "analysis-v1",
+            "ui-reference-analysis",
+            1,
+            "default-theme-v2",
+            "ui-font-v1",
+            fixture_viewport(),
+            "analysis-v1",
+            serde_json::json!({"temperature": 0}),
+        )
+        .unwrap();
+        assert!(cache.load(&changed_theme).unwrap().is_none());
         assert!(cache.invalidate(&identity).unwrap());
         assert!(cache.load(&identity).unwrap().is_none());
         assert!(!cache.invalidate(&identity).unwrap());
@@ -472,5 +534,13 @@ mod tests {
         assert_eq!(redacted["raw_response"], REDACTED);
         assert_eq!(redacted["email_note"], REDACTED);
         assert_eq!(redacted["safe_count"], 3);
+    }
+
+    fn fixture_viewport() -> CacheViewport {
+        CacheViewport {
+            width: 390,
+            height: 844,
+            device_scale_milli: 3_000,
+        }
     }
 }

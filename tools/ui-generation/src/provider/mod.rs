@@ -4,6 +4,10 @@ mod runner;
 
 pub use fixture::{FixtureCase, FixtureProvider};
 pub use mock::{MockProvider, MockScenario};
+#[cfg(feature = "full")]
+pub use runner::{
+    OfflineRuntimeGovernanceStressReport, run_offline_runtime_governance_stress_fixture,
+};
 pub use runner::{
     ProviderAttemptOutcome, ProviderAttemptTrace, ProviderExecution, ProviderExecutionFailure,
     ProviderExecutionPolicy, ProviderExecutionTrace, ProviderRegistry, ProviderRunner, RetryPolicy,

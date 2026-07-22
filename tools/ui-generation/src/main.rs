@@ -13,12 +13,16 @@ use ui_generation::{
     inspect_task,
     lifecycle::CancellationToken,
     offline::run_offline_fixture_generation,
+    operations::{
+        ArtifactCleaner, ArtifactRetentionInventory, run_offline_operations_stress_fixture,
+    },
     preprocess::preprocess_task,
     preview::{CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command, run_preview},
     promotion::{
         create_promotion_decision_template, create_promotion_plan, promote,
         record_promotion_decisions,
     },
+    provider::run_offline_runtime_governance_stress_fixture,
 };
 
 #[derive(Debug, Parser)]
@@ -149,6 +153,25 @@ enum Command {
         #[arg(long)]
         repository_root: PathBuf,
     },
+    /// Creates a new marker-protected root for closed-loop artifact retention and cleanup.
+    InitializeArtifactRoot {
+        #[arg(long)]
+        artifact_root: PathBuf,
+    },
+    /// Plans or applies retention cleanup only below a marker-protected artifact root.
+    CleanupArtifacts {
+        #[arg(long)]
+        artifact_root: PathBuf,
+        #[arg(long)]
+        inventory: PathBuf,
+        #[arg(long)]
+        now_unix_ms: u64,
+        /// Only print the retention plan without deleting any artifact run directory.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Runs the deterministic no-network queue, budget, cache, disk, and log stress rehearsal.
+    OperationsStressFixture,
     /// Emits the small, high-impact decision template bound to a committed generation run.
     PromotionDecisions {
         #[arg(long)]
@@ -363,6 +386,46 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             &approval,
         )?)
         .expect("closed-loop patch result is serializable"),
+        Command::InitializeArtifactRoot { artifact_root } => {
+            let _ = ArtifactCleaner::initialize(&artifact_root)?;
+            serde_json::json!({
+                "protocol_version": ui_generation::operations::OPERATIONS_PROTOCOL_VERSION,
+                "artifact_root": artifact_root,
+                "status": "initialized"
+            })
+        }
+        Command::CleanupArtifacts {
+            artifact_root,
+            inventory,
+            now_unix_ms,
+            dry_run,
+        } => {
+            let cleaner = ArtifactCleaner::open(&artifact_root)?;
+            let inventory = ArtifactRetentionInventory::load(&inventory)?;
+            let plan = cleaner.plan(&inventory, now_unix_ms)?;
+            let deleted_run_ids = if dry_run {
+                Vec::new()
+            } else {
+                cleaner.apply(&plan)?
+            };
+            serde_json::json!({
+                "plan": plan,
+                "dry_run": dry_run,
+                "deleted_run_ids": deleted_run_ids
+            })
+        }
+        Command::OperationsStressFixture => {
+            let mut report = serde_json::to_value(run_offline_operations_stress_fixture()?)
+                .expect("operations stress report is serializable");
+            if let serde_json::Value::Object(report) = &mut report {
+                report.insert(
+                    "provider_runtime".to_owned(),
+                    serde_json::to_value(run_offline_runtime_governance_stress_fixture()?)
+                        .expect("runtime governance stress report is serializable"),
+                );
+            }
+            report
+        }
         Command::PromotionDecisions {
             run_id,
             repository_root,

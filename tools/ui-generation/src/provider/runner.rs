@@ -1,12 +1,18 @@
+#[cfg(feature = "full")]
+use super::{FixtureProvider, ProviderImage, StructuredOutputContract};
 use super::{
     Provider, ProviderCallContext, ProviderError, ProviderErrorKind, ProviderId, ProviderRequest,
     ProviderResponse, RequestLogMetadata, ServerRequestId, duration_millis, validate_response,
 };
+#[cfg(feature = "full")]
+use crate::operations::ProviderRuntimeGovernor;
 use crate::{
     lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
     provider_budget::{TaskBudget, TaskExecutionLimits},
 };
 use serde::Serialize;
+#[cfg(feature = "full")]
+use std::path::Path;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, mpsc},
@@ -142,6 +148,91 @@ pub struct ProviderExecutionFailure {
     pub trace: ProviderExecutionTrace,
 }
 
+/// Deterministic, repository-owned evidence that the optional shared governor is wired into the
+/// real provider execution path. It uses only the local fixture provider and never reads a secret
+/// or opens a network connection.
+#[cfg(feature = "full")]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfflineRuntimeGovernanceStressReport {
+    pub first_provider_call_succeeded: bool,
+    pub daily_budget_blocked_second_call: bool,
+    pub provider_calls_recorded: u32,
+    pub final_status: String,
+}
+
+#[cfg(feature = "full")]
+pub fn run_offline_runtime_governance_stress_fixture()
+-> Result<OfflineRuntimeGovernanceStressReport, TaskFailure> {
+    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/providers/valid.json");
+    let provider = Arc::new(FixtureProvider::load(&fixture_path)?);
+    let provider_id = provider.descriptor().id.clone();
+    let mut registry = ProviderRegistry::default();
+    registry.register(provider)?;
+    let limits = TaskExecutionLimits {
+        max_provider_calls: 1,
+        max_images: 2,
+        max_iterations: 2,
+        ..TaskExecutionLimits::default()
+    };
+    let governor = Arc::new(ProviderRuntimeGovernor::new(
+        crate::operations::TaskQueuePolicy {
+            max_queued_or_running: 2,
+            default_provider_concurrency: 1,
+            provider_concurrency: BTreeMap::new(),
+        },
+        crate::operations::DailyBudget::new("2026-07-22", limits)?,
+    )?);
+    let runner = ProviderRunner::new_with_runtime_governor(
+        registry,
+        ProviderExecutionPolicy {
+            retry: RetryPolicy {
+                max_attempts: 1,
+                initial_backoff: Duration::ZERO,
+                max_backoff: Duration::ZERO,
+            },
+            ..ProviderExecutionPolicy::default()
+        },
+        governor.clone(),
+    )?;
+    let request = || {
+        ProviderRequest::visual_analysis(
+            "runtime-governance-stress",
+            "fixture-prompt-v1",
+            "repository-owned offline fixture instruction",
+            vec![ProviderImage::new(
+                "fixture-reference",
+                "image/png",
+                Arc::<[u8]>::from(b"offline-runtime-governance".as_slice()),
+            )?],
+            StructuredOutputContract::new("ui-reference-analysis", 1)?,
+        )
+    };
+    runner
+        .execute(&provider_id, request()?, &CancellationToken::default())
+        .map_err(|failure| failure.failure)?;
+    let blocked = runner
+        .execute(&provider_id, request()?, &CancellationToken::default())
+        .unwrap_err();
+    let daily_budget_blocked_second_call = blocked.failure.kind()
+        == TaskFailureKind::ProviderRateLimited
+        && blocked.failure.subject() == Some("UI_GENERATION_DAILY_PROVIDER_CALLS");
+    if !daily_budget_blocked_second_call {
+        return Err(TaskFailure::new(
+            TaskFailureKind::ProviderRateLimited,
+            "runtime governance stress fixture did not block the second provider call",
+            None,
+        ));
+    }
+    let snapshot = governor.daily_snapshot();
+    Ok(OfflineRuntimeGovernanceStressReport {
+        first_provider_call_succeeded: true,
+        daily_budget_blocked_second_call,
+        provider_calls_recorded: snapshot.usage.provider_calls,
+        final_status: "passed".to_owned(),
+    })
+}
+
 #[derive(Default)]
 pub struct ProviderRegistry {
     providers: BTreeMap<ProviderId, Arc<dyn Provider>>,
@@ -176,6 +267,8 @@ pub struct ProviderRunner {
     policy: ProviderExecutionPolicy,
     rate_slots: Mutex<BTreeMap<ProviderId, Instant>>,
     rate_limit_clock: Arc<dyn RateLimitClock>,
+    #[cfg(feature = "full")]
+    runtime_governor: Option<Arc<ProviderRuntimeGovernor>>,
 }
 
 impl ProviderRunner {
@@ -189,7 +282,22 @@ impl ProviderRunner {
             policy,
             rate_slots: Mutex::new(BTreeMap::new()),
             rate_limit_clock: Arc::new(SystemRateLimitClock),
+            #[cfg(feature = "full")]
+            runtime_governor: None,
         })
+    }
+
+    /// Installs explicit shared governance for this runner. Multiple runners receive the same
+    /// `Arc` when their calls must share queue slots and a daily provider budget.
+    #[cfg(feature = "full")]
+    pub fn new_with_runtime_governor(
+        registry: ProviderRegistry,
+        policy: ProviderExecutionPolicy,
+        runtime_governor: Arc<ProviderRuntimeGovernor>,
+    ) -> Result<Self, TaskFailure> {
+        let mut runner = Self::new(registry, policy)?;
+        runner.runtime_governor = Some(runtime_governor);
+        Ok(runner)
     }
 
     #[cfg(test)]
@@ -204,6 +312,8 @@ impl ProviderRunner {
             policy,
             rate_slots: Mutex::new(BTreeMap::new()),
             rate_limit_clock,
+            #[cfg(feature = "full")]
+            runtime_governor: None,
         })
     }
 
@@ -268,8 +378,37 @@ impl ProviderRunner {
             if !self.rate_limit_clock.wait(rate_wait, cancellation) {
                 return Err(cancelled_failure(trace));
             }
-            // Rate waiting belongs to the task wall clock. Reserve only after it has elapsed so
-            // an overdue task cannot begin one more provider attempt.
+            #[cfg(feature = "full")]
+            let runtime_lease = match self.runtime_governor.as_ref() {
+                Some(governor) => Some(
+                    governor
+                        .acquire_provider_attempt(
+                            &trace.request.run_id,
+                            attempt,
+                            provider_id.as_str(),
+                            request.image_count(),
+                            cancellation,
+                            budget,
+                        )
+                        .map_err(|failure| ProviderExecutionFailure {
+                            failure,
+                            trace: trace.clone(),
+                        })?,
+                ),
+                None => {
+                    // Rate waiting belongs to the task wall clock. Reserve only after it has
+                    // elapsed so an overdue task cannot begin one more provider attempt.
+                    budget
+                        .reserve_provider_attempt(request.image_count())
+                        .map_err(|failure| ProviderExecutionFailure {
+                            failure,
+                            trace: trace.clone(),
+                        })?;
+                    None
+                }
+            };
+
+            #[cfg(not(feature = "full"))]
             budget
                 .reserve_provider_attempt(request.image_count())
                 .map_err(|failure| ProviderExecutionFailure {
@@ -291,6 +430,22 @@ impl ProviderRunner {
                 Ok(response)
             }) {
                 Ok(response) => {
+                    #[cfg(feature = "full")]
+                    if let Some(runtime_lease) = &runtime_lease
+                        && let Err(failure) = runtime_lease.record_success(
+                            elapsed_ms,
+                            response.usage.input_units,
+                            response.usage.output_units,
+                        )
+                    {
+                        trace.attempts.push(ProviderAttemptTrace {
+                            attempt,
+                            outcome: ProviderAttemptOutcome::Succeeded,
+                            server_request_id: response.server_request_id.clone(),
+                            elapsed_ms,
+                        });
+                        return Err(ProviderExecutionFailure { failure, trace });
+                    }
                     if let Err(failure) = budget.record_provider_usage(
                         response.usage.input_units,
                         response.usage.output_units,
@@ -318,6 +473,12 @@ impl ProviderRunner {
                         server_request_id: error.server_request_id.clone(),
                         elapsed_ms,
                     });
+                    #[cfg(feature = "full")]
+                    if let Some(runtime_lease) = &runtime_lease
+                        && let Err(failure) = runtime_lease.record_elapsed(elapsed_ms)
+                    {
+                        return Err(ProviderExecutionFailure { failure, trace });
+                    }
                     if error.kind == ProviderErrorKind::Cancelled || cancellation.is_requested() {
                         return Err(cancelled_failure(trace));
                     }
@@ -327,6 +488,8 @@ impl ProviderRunner {
                             trace,
                         });
                     }
+                    #[cfg(feature = "full")]
+                    drop(runtime_lease);
                     let delay = self.policy.retry.delay_for(attempt, &error);
                     if !sleep_with_cancellation(delay, cancellation) {
                         return Err(cancelled_failure(trace));
@@ -442,14 +605,18 @@ fn cancelled_failure(trace: ProviderExecutionTrace) -> ProviderExecutionFailure 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "full")]
+    use crate::operations::{
+        DailyBudget, DailyBudgetSnapshot, ProviderRuntimeGovernor, TaskQueuePolicy,
+    };
     use crate::provider::{
-        MockProvider, MockScenario, ProviderCapabilities, ProviderDescriptor, ProviderOperation,
-        StructuredProviderOutput,
+        FixtureProvider, MockProvider, MockScenario, ProviderCapabilities, ProviderDescriptor,
+        ProviderOperation, StructuredProviderOutput,
         tests::{test_contract, test_request},
     };
-    use crate::provider_budget::{TaskBudget, TaskExecutionLimits};
+    use crate::provider_budget::{TaskBudget, TaskExecutionLimits, TaskUsageSnapshot};
     use serde_json::json;
-    use std::collections::BTreeSet;
+    use std::{collections::BTreeSet, path::Path};
 
     struct DeterministicRateLimitClock {
         now: Mutex<Instant>,
@@ -536,6 +703,47 @@ mod tests {
             attempt_timeout: Duration::from_millis(20),
             ..test_policy(max_attempts)
         }
+    }
+
+    #[cfg(feature = "full")]
+    fn shared_runtime_governor(
+        limits: TaskExecutionLimits,
+        provider_concurrency: u32,
+    ) -> Arc<ProviderRuntimeGovernor> {
+        Arc::new(
+            ProviderRuntimeGovernor::new(
+                TaskQueuePolicy {
+                    max_queued_or_running: 4,
+                    default_provider_concurrency: provider_concurrency,
+                    provider_concurrency: BTreeMap::new(),
+                },
+                DailyBudget::new("2026-07-22", limits).unwrap(),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[cfg(feature = "full")]
+    fn runtime_governor_from_snapshot(
+        limits: TaskExecutionLimits,
+        usage: TaskUsageSnapshot,
+    ) -> Arc<ProviderRuntimeGovernor> {
+        let daily_budget = DailyBudget::from_snapshot(
+            limits,
+            DailyBudgetSnapshot {
+                day: "2026-07-22".to_owned(),
+                usage,
+            },
+        )
+        .unwrap();
+        Arc::new(ProviderRuntimeGovernor::new(TaskQueuePolicy::default(), daily_budget).unwrap())
+    }
+
+    #[cfg(feature = "full")]
+    fn fixture_provider_path(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/providers")
+            .join(name)
     }
 
     #[test]
@@ -817,5 +1025,532 @@ mod tests {
             Some("UI_GENERATION_LIMIT_ELAPSED")
         );
         assert_eq!(provider.call_count(), 1);
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn shared_runtime_governor_blocks_real_concurrent_provider_calls_and_releases_on_cancel() {
+        let governor = shared_runtime_governor(TaskExecutionLimits::default(), 1);
+        let provider_id = ProviderId::new("governed-concurrency").unwrap();
+        let blocking_provider = Arc::new(MockProvider::new(
+            descriptor("governed-concurrency"),
+            [MockScenario::Timeout],
+        ));
+        let mut blocking_registry = ProviderRegistry::default();
+        blocking_registry
+            .register(blocking_provider.clone())
+            .unwrap();
+        let mut blocking_policy = test_policy(1);
+        blocking_policy.attempt_timeout = Duration::from_secs(1);
+        let blocking_runner = ProviderRunner::new_with_runtime_governor(
+            blocking_registry,
+            blocking_policy,
+            governor.clone(),
+        )
+        .unwrap();
+        let cancellation = CancellationToken::default();
+        let thread_cancellation = cancellation.clone();
+        let thread_provider_id = provider_id.clone();
+        let blocking_thread = thread::spawn(move || {
+            blocking_runner.execute(&thread_provider_id, test_request(), &thread_cancellation)
+        });
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while blocking_provider.call_count() == 0 {
+            assert!(Instant::now() < deadline, "blocking provider did not start");
+            thread::sleep(Duration::from_millis(1));
+        }
+
+        let succeeding_provider = Arc::new(MockProvider::new(
+            descriptor("governed-concurrency"),
+            [success("after-cancel")],
+        ));
+        let mut succeeding_registry = ProviderRegistry::default();
+        succeeding_registry
+            .register(succeeding_provider.clone())
+            .unwrap();
+        let succeeding_runner = ProviderRunner::new_with_runtime_governor(
+            succeeding_registry,
+            test_policy(1),
+            governor.clone(),
+        )
+        .unwrap();
+        let saturated_budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 2,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        let daily_before_saturation = governor.daily_snapshot();
+        let saturated = succeeding_runner
+            .execute_with_budget(
+                &provider_id,
+                test_request(),
+                &CancellationToken::default(),
+                &saturated_budget,
+            )
+            .unwrap_err();
+        assert_eq!(
+            saturated.failure.kind(),
+            TaskFailureKind::ProviderRateLimited
+        );
+        assert_eq!(
+            saturated.failure.subject(),
+            Some("UI_GENERATION_QUEUE_PROVIDER_CONCURRENCY")
+        );
+        assert_eq!(succeeding_provider.call_count(), 0);
+        assert_eq!(saturated_budget.snapshot().provider_calls, 0);
+        assert_eq!(saturated_budget.snapshot().images, 0);
+        assert_eq!(governor.daily_snapshot(), daily_before_saturation);
+
+        cancellation.request();
+        assert_eq!(
+            blocking_thread.join().unwrap().unwrap_err().failure.kind(),
+            TaskFailureKind::Cancelled
+        );
+        succeeding_runner
+            .execute(&provider_id, test_request(), &CancellationToken::default())
+            .unwrap();
+        assert_eq!(succeeding_provider.call_count(), 1);
+        assert!(governor.queue_snapshot().provider_active.is_empty());
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn shared_runtime_governor_releases_provider_slot_after_failure() {
+        let governor = shared_runtime_governor(TaskExecutionLimits::default(), 1);
+        let provider_id = ProviderId::new("governed-failure").unwrap();
+        let failing_provider = Arc::new(MockProvider::new(
+            descriptor("governed-failure"),
+            [MockScenario::ServiceUnavailable { request_id: None }],
+        ));
+        let mut failing_registry = ProviderRegistry::default();
+        failing_registry.register(failing_provider).unwrap();
+        let failing_runner = ProviderRunner::new_with_runtime_governor(
+            failing_registry,
+            test_policy(1),
+            governor.clone(),
+        )
+        .unwrap();
+        let failing_budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 2,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        assert_eq!(
+            failing_runner
+                .execute_with_budget(
+                    &provider_id,
+                    test_request(),
+                    &CancellationToken::default(),
+                    &failing_budget,
+                )
+                .unwrap_err()
+                .failure
+                .kind(),
+            TaskFailureKind::ProviderServiceUnavailable
+        );
+        assert_eq!(failing_budget.snapshot().provider_calls, 1);
+        assert_eq!(failing_budget.snapshot().images, 1);
+        let failure_usage = governor.daily_snapshot().usage;
+        assert_eq!(failure_usage.provider_calls, 1);
+        assert_eq!(failure_usage.images, 1);
+        assert_eq!(failure_usage.iterations, 1);
+        assert!(governor.queue_snapshot().provider_active.is_empty());
+
+        let succeeding_provider = Arc::new(MockProvider::new(
+            descriptor("governed-failure"),
+            [success("after-failure")],
+        ));
+        let mut succeeding_registry = ProviderRegistry::default();
+        succeeding_registry
+            .register(succeeding_provider.clone())
+            .unwrap();
+        ProviderRunner::new_with_runtime_governor(
+            succeeding_registry,
+            test_policy(1),
+            governor.clone(),
+        )
+        .unwrap()
+        .execute(&provider_id, test_request(), &CancellationToken::default())
+        .unwrap();
+        assert_eq!(succeeding_provider.call_count(), 1);
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn timed_out_provider_attempt_commits_budgets_and_releases_its_slot() {
+        let governor = shared_runtime_governor(TaskExecutionLimits::default(), 1);
+        let provider = Arc::new(MockProvider::new(
+            descriptor("governed-timeout-accounting"),
+            [MockScenario::Timeout],
+        ));
+        let mut registry = ProviderRegistry::default();
+        registry.register(provider.clone()).unwrap();
+        let timeout_budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 2,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        let failure = ProviderRunner::new_with_runtime_governor(
+            registry,
+            timeout_test_policy(1),
+            governor.clone(),
+        )
+        .unwrap()
+        .execute_with_budget(
+            &ProviderId::new("governed-timeout-accounting").unwrap(),
+            test_request(),
+            &CancellationToken::default(),
+            &timeout_budget,
+        )
+        .unwrap_err();
+        assert_eq!(failure.failure.kind(), TaskFailureKind::ProviderTimeout);
+        assert_eq!(provider.call_count(), 1);
+        assert_eq!(timeout_budget.snapshot().provider_calls, 1);
+        assert_eq!(timeout_budget.snapshot().images, 1);
+        let timeout_usage = governor.daily_snapshot().usage;
+        assert_eq!(timeout_usage.provider_calls, 1);
+        assert_eq!(timeout_usage.images, 1);
+        assert_eq!(timeout_usage.iterations, 1);
+        assert!(timeout_usage.elapsed_ms > 0);
+        assert!(governor.queue_snapshot().provider_active.is_empty());
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn daily_call_and_restored_snapshot_limits_stop_real_provider_execution() {
+        let limits = TaskExecutionLimits {
+            max_provider_calls: 1,
+            max_images: 2,
+            max_iterations: 4,
+            ..TaskExecutionLimits::default()
+        };
+        let governor = shared_runtime_governor(limits.clone(), 1);
+        let provider_id = ProviderId::new("governed-daily-calls").unwrap();
+        let first_provider = Arc::new(MockProvider::new(
+            descriptor("governed-daily-calls"),
+            [success("daily-first")],
+        ));
+        let mut first_registry = ProviderRegistry::default();
+        first_registry.register(first_provider.clone()).unwrap();
+        ProviderRunner::new_with_runtime_governor(first_registry, test_policy(1), governor.clone())
+            .unwrap()
+            .execute(&provider_id, test_request(), &CancellationToken::default())
+            .unwrap();
+        assert_eq!(first_provider.call_count(), 1);
+
+        let blocked_provider = Arc::new(MockProvider::new(
+            descriptor("governed-daily-calls"),
+            [success("daily-blocked")],
+        ));
+        let mut blocked_registry = ProviderRegistry::default();
+        blocked_registry.register(blocked_provider.clone()).unwrap();
+        let blocked = ProviderRunner::new_with_runtime_governor(
+            blocked_registry,
+            test_policy(1),
+            governor.clone(),
+        )
+        .unwrap()
+        .execute(&provider_id, test_request(), &CancellationToken::default())
+        .unwrap_err();
+        assert_eq!(blocked.failure.kind(), TaskFailureKind::ProviderRateLimited);
+        assert_eq!(
+            blocked.failure.subject(),
+            Some("UI_GENERATION_DAILY_PROVIDER_CALLS")
+        );
+        assert_eq!(blocked_provider.call_count(), 0);
+
+        let restored_daily = DailyBudget::from_snapshot(limits, governor.daily_snapshot()).unwrap();
+        let restored_governor = Arc::new(
+            ProviderRuntimeGovernor::new(TaskQueuePolicy::default(), restored_daily).unwrap(),
+        );
+        let restored_provider = Arc::new(MockProvider::new(
+            descriptor("governed-daily-calls"),
+            [success("restored-blocked")],
+        ));
+        let mut restored_registry = ProviderRegistry::default();
+        restored_registry
+            .register(restored_provider.clone())
+            .unwrap();
+        let restored = ProviderRunner::new_with_runtime_governor(
+            restored_registry,
+            test_policy(1),
+            restored_governor,
+        )
+        .unwrap()
+        .execute(&provider_id, test_request(), &CancellationToken::default())
+        .unwrap_err();
+        assert_eq!(
+            restored.failure.subject(),
+            Some("UI_GENERATION_DAILY_PROVIDER_CALLS")
+        );
+        assert_eq!(restored_provider.call_count(), 0);
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn daily_call_and_image_preflight_failures_do_not_consume_iterations() {
+        let call_limits = TaskExecutionLimits {
+            max_provider_calls: 1,
+            max_images: 4,
+            max_iterations: 4,
+            ..TaskExecutionLimits::default()
+        };
+        let call_governor = runtime_governor_from_snapshot(
+            call_limits.clone(),
+            TaskUsageSnapshot {
+                provider_calls: 1,
+                images: 1,
+                ..TaskUsageSnapshot::default()
+            },
+        );
+        let call_provider = Arc::new(MockProvider::new(
+            descriptor("governed-daily-preflight-call"),
+            [success("must-not-call")],
+        ));
+        let mut call_registry = ProviderRegistry::default();
+        call_registry.register(call_provider.clone()).unwrap();
+        let call_budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 2,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        let call_failure = ProviderRunner::new_with_runtime_governor(
+            call_registry,
+            test_policy(1),
+            call_governor.clone(),
+        )
+        .unwrap()
+        .execute_with_budget(
+            &ProviderId::new("governed-daily-preflight-call").unwrap(),
+            test_request(),
+            &CancellationToken::default(),
+            &call_budget,
+        )
+        .unwrap_err();
+        assert_eq!(
+            call_failure.failure.subject(),
+            Some("UI_GENERATION_DAILY_PROVIDER_CALLS")
+        );
+        assert_eq!(call_provider.call_count(), 0);
+        assert_eq!(call_budget.snapshot().provider_calls, 0);
+        assert_eq!(call_budget.snapshot().images, 0);
+        assert_eq!(call_governor.daily_snapshot().usage.iterations, 0);
+        assert_eq!(call_governor.daily_snapshot().usage.provider_calls, 1);
+        assert!(call_governor.queue_snapshot().provider_active.is_empty());
+
+        let image_limits = TaskExecutionLimits {
+            max_provider_calls: 4,
+            max_images: 1,
+            max_iterations: 4,
+            ..TaskExecutionLimits::default()
+        };
+        let image_governor = runtime_governor_from_snapshot(
+            image_limits.clone(),
+            TaskUsageSnapshot {
+                images: 1,
+                ..TaskUsageSnapshot::default()
+            },
+        );
+        let image_provider = Arc::new(MockProvider::new(
+            descriptor("governed-daily-preflight-image"),
+            [success("must-not-call")],
+        ));
+        let mut image_registry = ProviderRegistry::default();
+        image_registry.register(image_provider.clone()).unwrap();
+        let image_budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 2,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        let image_failure = ProviderRunner::new_with_runtime_governor(
+            image_registry,
+            test_policy(1),
+            image_governor.clone(),
+        )
+        .unwrap()
+        .execute_with_budget(
+            &ProviderId::new("governed-daily-preflight-image").unwrap(),
+            test_request(),
+            &CancellationToken::default(),
+            &image_budget,
+        )
+        .unwrap_err();
+        assert_eq!(
+            image_failure.failure.subject(),
+            Some("UI_GENERATION_DAILY_IMAGES")
+        );
+        assert_eq!(image_provider.call_count(), 0);
+        assert_eq!(image_budget.snapshot().provider_calls, 0);
+        assert_eq!(image_budget.snapshot().images, 0);
+        assert_eq!(image_governor.daily_snapshot().usage.iterations, 0);
+        assert_eq!(image_governor.daily_snapshot().usage.images, 1);
+        assert!(image_governor.queue_snapshot().provider_active.is_empty());
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn local_budget_preflight_failure_does_not_consume_daily_quota_or_slot() {
+        let governor = shared_runtime_governor(TaskExecutionLimits::default(), 1);
+        let provider = Arc::new(MockProvider::new(
+            descriptor("governed-local-preflight"),
+            [success("must-not-call")],
+        ));
+        let mut registry = ProviderRegistry::default();
+        registry.register(provider.clone()).unwrap();
+        let local_budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 1,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        local_budget.reserve_provider_attempt(1).unwrap();
+        let local_before = local_budget.snapshot();
+        let failure =
+            ProviderRunner::new_with_runtime_governor(registry, test_policy(1), governor.clone())
+                .unwrap()
+                .execute_with_budget(
+                    &ProviderId::new("governed-local-preflight").unwrap(),
+                    test_request(),
+                    &CancellationToken::default(),
+                    &local_budget,
+                )
+                .unwrap_err();
+        assert_eq!(
+            failure.failure.subject(),
+            Some("UI_GENERATION_LIMIT_PROVIDER_CALLS")
+        );
+        assert_eq!(provider.call_count(), 0);
+        assert_eq!(
+            local_budget.snapshot().provider_calls,
+            local_before.provider_calls
+        );
+        assert_eq!(local_budget.snapshot().images, local_before.images);
+        assert_eq!(
+            governor.daily_snapshot().usage,
+            TaskUsageSnapshot::default()
+        );
+        assert!(governor.queue_snapshot().provider_active.is_empty());
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn cancelled_preflight_does_not_consume_local_or_daily_quota() {
+        let governor = shared_runtime_governor(TaskExecutionLimits::default(), 1);
+        let provider = Arc::new(MockProvider::new(
+            descriptor("governed-cancelled-preflight"),
+            [success("must-not-call")],
+        ));
+        let mut registry = ProviderRegistry::default();
+        registry.register(provider.clone()).unwrap();
+        let local_budget = TaskBudget::new(TaskExecutionLimits {
+            max_provider_calls: 2,
+            max_images: 2,
+            ..TaskExecutionLimits::default()
+        })
+        .unwrap();
+        let cancellation = CancellationToken::default();
+        cancellation.request();
+        let failure =
+            ProviderRunner::new_with_runtime_governor(registry, test_policy(1), governor.clone())
+                .unwrap()
+                .execute_with_budget(
+                    &ProviderId::new("governed-cancelled-preflight").unwrap(),
+                    test_request(),
+                    &cancellation,
+                    &local_budget,
+                )
+                .unwrap_err();
+        assert_eq!(failure.failure.kind(), TaskFailureKind::Cancelled);
+        assert_eq!(provider.call_count(), 0);
+        assert_eq!(local_budget.snapshot().provider_calls, 0);
+        assert_eq!(local_budget.snapshot().images, 0);
+        assert_eq!(
+            governor.daily_snapshot().usage,
+            TaskUsageSnapshot::default()
+        );
+        assert!(governor.queue_snapshot().provider_active.is_empty());
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn daily_usage_and_iteration_limits_stop_real_provider_execution() {
+        let usage_limits = TaskExecutionLimits {
+            max_provider_calls: 4,
+            max_images: 4,
+            max_iterations: 4,
+            max_input_units: 16,
+            max_output_units: 4,
+            ..TaskExecutionLimits::default()
+        };
+        let usage_governor = shared_runtime_governor(usage_limits, 1);
+        let fixture_provider =
+            Arc::new(FixtureProvider::load(&fixture_provider_path("valid.json")).unwrap());
+        let fixture_id = fixture_provider.descriptor().id.clone();
+        let mut fixture_registry = ProviderRegistry::default();
+        fixture_registry.register(fixture_provider).unwrap();
+        let usage_failure = ProviderRunner::new_with_runtime_governor(
+            fixture_registry,
+            test_policy(1),
+            usage_governor,
+        )
+        .unwrap()
+        .execute(&fixture_id, test_request(), &CancellationToken::default())
+        .unwrap_err();
+        assert_eq!(usage_failure.trace.attempts.len(), 1);
+        assert_eq!(
+            usage_failure.failure.subject(),
+            Some("UI_GENERATION_DAILY_OUTPUT_UNITS")
+        );
+
+        let iteration_governor = shared_runtime_governor(
+            TaskExecutionLimits {
+                max_provider_calls: 4,
+                max_images: 4,
+                max_iterations: 1,
+                ..TaskExecutionLimits::default()
+            },
+            1,
+        );
+        let iteration_provider = Arc::new(MockProvider::new(
+            descriptor("governed-daily-iterations"),
+            [success("iteration-first"), success("iteration-blocked")],
+        ));
+        let mut iteration_registry = ProviderRegistry::default();
+        iteration_registry
+            .register(iteration_provider.clone())
+            .unwrap();
+        let iteration_runner = ProviderRunner::new_with_runtime_governor(
+            iteration_registry,
+            test_policy(1),
+            iteration_governor,
+        )
+        .unwrap();
+        let iteration_id = ProviderId::new("governed-daily-iterations").unwrap();
+        iteration_runner
+            .execute(&iteration_id, test_request(), &CancellationToken::default())
+            .unwrap();
+        let iteration_failure = iteration_runner
+            .execute(&iteration_id, test_request(), &CancellationToken::default())
+            .unwrap_err();
+        assert_eq!(
+            iteration_failure.failure.subject(),
+            Some("UI_GENERATION_DAILY_ITERATIONS")
+        );
+        assert_eq!(iteration_provider.call_count(), 1);
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn offline_runtime_governance_stress_fixture_uses_the_real_execute_path() {
+        let report = run_offline_runtime_governance_stress_fixture().unwrap();
+        assert!(report.first_provider_call_succeeded);
+        assert!(report.daily_budget_blocked_second_call);
+        assert_eq!(report.provider_calls_recorded, 1);
+        assert_eq!(report.final_status, "passed");
     }
 }

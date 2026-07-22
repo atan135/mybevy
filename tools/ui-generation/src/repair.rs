@@ -292,6 +292,13 @@ fn repair_staged_document(
                 ),
             );
         }
+        if let Err(failure) = budget.reserve_iteration() {
+            return failed_run(
+                initial,
+                rounds,
+                failure_for_task(RepairFailureKind::MaximumRoundsReached, &failure),
+            );
+        }
         let round = rounds.len() as u8 + 1;
         let structured_request = serde_json::to_value(RepairStructuredInput {
             round,

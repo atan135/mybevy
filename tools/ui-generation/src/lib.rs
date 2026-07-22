@@ -27,6 +27,8 @@ pub mod observability;
 #[cfg(feature = "full")]
 pub mod offline;
 #[cfg(feature = "full")]
+pub mod operations;
+#[cfg(feature = "full")]
 pub mod planning;
 #[cfg(feature = "full")]
 pub mod preprocess;
