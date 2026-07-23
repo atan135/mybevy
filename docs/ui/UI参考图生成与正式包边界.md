@@ -272,6 +272,92 @@ PR 只读工作流会对 `tools/ui-visual-audit/fixtures/references/`、baseline
 
 线上 provider 验收必须单独记录 provider、模型、价格版本、人工审批和受限运行 ID；它不属于普通 `cargo test`、CI 或正式游戏构建前提。本仓库当前没有在线 SDK、凭据或网络测试，因此离线 fixture 是唯一可重复的默认评测链路。
 
+## 本地运行与运维
+
+本节是开发期闭环的操作入口。所有命令从仓库根目录执行，默认只使用仓库自有 fixture，不读取在线凭据、不访问 provider、adminapi、远程设备，也不修改正式游戏目录。
+
+### 最小离线路径
+
+先检查工具与正式包的依赖边界：
+
+```powershell
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
+```
+
+要预览已批准的验收页面，可创建一个尚不存在的临时输出目录后运行：
+
+```powershell
+$output = Join-Path $env:TEMP ("mybevy-ui-preview-" + [Guid]::NewGuid().ToString("N"))
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- preview-document --document project/assets/ui/documents/approved/generated_acceptance_fixture/document.v1.json --output-directory $output --repository-root . --width 390 --height 844
+```
+
+完整的默认离线验收使用新 run ID、regular/complex fixture、四个桌面 profile、多状态审计、严格自比较、修复失败演练与 Runner self-test：
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-ui-e2e-acceptance.ps1
+```
+
+该脚本会把可复查报告写入被忽略的 `summary/ui-generation/<run-id>-report/`，并保留关联的 run artifact。状态 `passed_with_external_android_blocker` 表示离线桌面流程已通过，但不代表 Android 真机已经验收。重复运行时不要复用已有的 run ID 或手工覆盖 run 目录。
+
+### 交付前验证
+
+阶段交付时使用下列命令取得当前版本证据。PowerShell Runner 只能由 PowerShell 7 的 `pwsh` 执行；Windows PowerShell 5.1 不能作为替代宿主。
+
+```powershell
+cargo test --manifest-path tools/ui-generation/Cargo.toml
+cargo fmt --manifest-path tools/ui-generation/Cargo.toml --all -- --check
+cargo check --manifest-path tools/ui-generation/Cargo.toml
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-ci-security-contract --repository-root .
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- ci-security-fixture --repository-root .
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-ui-supply-chain.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-ui-reference-baseline-approval.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/write-ui-ci-failure-report.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-ui-audit.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-ui-e2e-acceptance.ps1
+Set-Location project
+cargo fmt -- --check
+cargo test
+cargo check
+Set-Location ..
+git diff --check
+```
+
+`run-ui-e2e-acceptance.ps1` 已包含双设备以上的严格 reference comparison，以及 `FixMode` 的离线成功、失败、回滚和 worktree 隔离演练。所有生成输出都应留在 `summary/` 或系统临时目录；它们不是可提交的源文件。
+
+### 权限和人工边界
+
+| 操作 | 允许方式 | 约束 |
+| --- | --- | --- |
+| fixture 生成、预览、审计、评测和诊断 | 默认自动、离线 | 仅写入新的受限 run root 或临时目录，失败保留证据。 |
+| 草稿 `UiDocument`、草稿资源和页面局部修复 | 仅在显式运行的受限修复流程内自动 | 必须通过 allowlist、预算、diff、回归矩阵和 worktree 隔离；不得修改调用者工作树。 |
+| provider 调用、用户参考图上传和远程设备执行 | 人工批准后才可进行 | 当前仓库没有已实现的在线 provider 或经验证的远程 Android 截图/metadata 合同。 |
+| promotion 到 `project/assets/ui/documents/approved/` 或正式资源目录 | 人工 decision record 与精确 promotion plan hash 后显式执行 | `promote` 是唯一允许写正式目录的工具命令；它不会自动提交或 push。 |
+| reference、baseline、mask、threshold、安全策略、验证脚本、凭据和 Git 历史 | 自动化明确禁止修改 | 相关问题进入人工复核，不能通过修改规则或证据来规避失败。 |
+
+凭据只能由运行时环境变量或系统安全存储注入，不进入任务 JSON、prompt 快照、manifest、报告、正式资源或 Git。当前离线链路不需要也不应设置 provider 凭据。发现凭据、账号文本、个人信息或原始模型内容出现在 artifact 时，应停止分享该 artifact，保留最小定位信息并检查脱敏链路。
+
+### 失败定位顺序
+
+| 现象 | 先检查 | 后续处理 |
+| --- | --- | --- |
+| 任务或参考图被拒绝 | `inspect-task` 输出、任务 schema、图片尺寸/EXIF/hash、授权字段 | 修正输入或授权记录；不要降低输入预算或伪造 hash。 |
+| 生成、预览或审计失败 | run 的 `manifest.json`、`report.md`、command log 与 artifact hash | 按稳定 `failure_type` 定位；超时、取消和 provider 不可用保留终态后可从完整 checkpoint 恢复。 |
+| 视觉或语义问题阻塞 | `analysis.json`、comparison report、source map 和关联 capture | 先修正草稿或页面局部范围，再复跑原失败 capture、受影响矩阵和共享 UI 使用者。 |
+| 修复被拒绝或回滚 | fix plan、policy violation、workspace diff 与验证日志 | 检查 allowlist、预算、审批和 regression evidence；不得在调用者工作树重放自动修复。 |
+| CI 或安全合同失败 | `check-ci-security-contract`、`ci-security-fixture` 和三个 PowerShell self-test | 修正 workflow/策略/报告脱敏的实际问题；不得删除审批、供应链或脱敏门禁。 |
+| Android 外部阻塞 | 验收报告中的 `android.required_evidence` | 等待授权的 API 31+ 设备、arm64 Debug APK、远程截图与系统 metadata 合同及 Remote Http 执行授权；在这些条件具备前保持 `external_blocked`。 |
+
+### 协议、缓存和基准升级
+
+Schema、prompt、模型、算法、reference、baseline、主题、字体或 viewport 任一项变更时，必须创建新的 immutable run，并以新 provenance、cache key、截图、comparison 和 approval 重新验收；不能把旧 artifact 或 cache 解释为新版本的证据。缓存只可复用所有 identity 维度完全一致且已通过完整校验的结构化结果；损坏 cache、未知版本和不匹配 key 必须失效而非降级复用。
+
+兼容性变更先更新协议实现、schema/semantic 测试和迁移说明，再验证已有已批准文档仍可被正式 runtime 校验。reference 或 baseline 变更必须带来源、授权、hash、人工审批和比较规则更新；PR 中还需要 `ui-reference-baseline-approved` 审批标签。任何升级都不得覆盖旧 run、替换历史 evidence，或把在线输出混入离线 fixture。
+
+### Artifact 保留和清理
+
+默认保留失败 run、最后完整 checkpoint、修复前后快照、comparison/analysis、审批记录和命令日志，以便恢复和审计。日志必须先脱敏；原始参考图、prompt、模型原始响应和凭据不能作为共享报告或正式资源提交。`cleanup-artifacts` 只能在显式初始化、带 marker 的 artifact root 下计划或执行保留期清理，不能对 `summary/`、工作树或未知目录做递归删除。需要清理本地磁盘时，先确认没有运行中的 Cargo、preview、Runner 或 Android 构建进程。
+
 ## 正式构建隔离验证
 
 后续实现验收不能只依赖 Rust dead-code elimination。至少应提供以下证据：

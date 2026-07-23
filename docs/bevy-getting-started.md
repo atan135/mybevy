@@ -1057,6 +1057,15 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --rep
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- generate-fixture --task tools/ui-generation/fixtures/acceptance/task.valid.json --repository-root . --document-id generated.acceptance_fixture
 ```
 
+如果只需检查正式已批准的验收页面能否在独立声明式预览中打开，可运行：
+
+```powershell
+$output = Join-Path $env:TEMP ("mybevy-ui-preview-" + [Guid]::NewGuid().ToString("N"))
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- preview-document --document project/assets/ui/documents/approved/generated_acceptance_fixture/document.v1.json --output-directory $output --repository-root . --width 390 --height 844
+```
+
+需要完整离线桌面验收时，使用 `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-ui-e2e-acceptance.ps1`。它使用新的 run ID 完成 repository fixture、四 profile、多状态、reference comparison、FixMode 演练和 Runner self-test；报告位于被忽略的 `summary/ui-generation/`。该命令不调用在线 provider 或远程 Android，因此 `passed_with_external_android_blocker` 不等同于真机验收通过。
+
 `generate-fixture` 使用仓库自有结构化 fixture，但会真实读取任务中的参考图、校验 hash 和 viewport、运行 Bevy 预览并生成 sealed bundle。任务的 `run_id` 必须唯一；重复运行时使用一份带新 run ID 的任务文件。输出只进入被忽略的 `summary/ui-generation/<run-id>/`，不会自动进入正式游戏。
 
 正式晋升必须单独执行 `promotion-decisions`、`record-promotion-decisions`、`promotion-plan` 和带精确 plan hash 的 `promote`。已晋升验收样例可用正常游戏路由检查：
