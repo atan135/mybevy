@@ -38,11 +38,23 @@ pub struct AuditDevice {
     pub height: u32,
 }
 
-pub const DEFAULT_AUDIT_DEVICES: [AuditDevice; 2] = [
+/// Matches the Stage 11 desktop Runner matrix in logical pixels. It does not imply Android or
+/// physical-density validation; those require a real-device metadata contract.
+pub const DEFAULT_AUDIT_DEVICES: [AuditDevice; 4] = [
+    AuditDevice {
+        name: "phone-small",
+        width: 360,
+        height: 800,
+    },
     AuditDevice {
         name: "phone-portrait",
-        width: 390,
-        height: 844,
+        width: 394,
+        height: 853,
+    },
+    AuditDevice {
+        name: "tablet-portrait",
+        width: 800,
+        height: 1280,
     },
     AuditDevice {
         name: "tablet-landscape",
@@ -663,7 +675,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.status, AuditMatrixStatus::Passed);
-        assert_eq!(result.captures.len(), 14);
+        assert_eq!(result.captures.len(), 28);
         assert_eq!(result.visual_expectation, visual_expectation);
         assert!(result.visual_expectation_failures.is_empty());
         assert!(result.captures.iter().all(|capture| {
@@ -693,7 +705,7 @@ mod tests {
         assert!(result.manifest_path.is_file());
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(&result.manifest_path).unwrap()).unwrap();
-        assert_eq!(manifest["captures"].as_array().unwrap().len(), 14);
+        assert_eq!(manifest["captures"].as_array().unwrap().len(), 28);
         assert!(
             manifest["visual_expectation_failures"]
                 .as_array()
@@ -724,7 +736,7 @@ mod tests {
                 assert_ne!(state_hash, initial_hash, "{} / {state}", device.name);
             }
         }
-        assert_eq!(executor.captures.lock().unwrap().len(), 14);
+        assert_eq!(executor.captures.lock().unwrap().len(), 28);
     }
 
     #[test]
@@ -747,7 +759,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.status, AuditMatrixStatus::Failed);
-        assert_eq!(result.visual_expectation_failures.len(), 2);
+        assert_eq!(
+            result.visual_expectation_failures.len(),
+            DEFAULT_AUDIT_DEVICES.len()
+        );
         assert!(
             result
                 .visual_expectation_failures
@@ -793,7 +808,10 @@ mod tests {
                     .selected_preview()
                     .is_some_and(|preview| preview.command.screenshot_path.is_file())
         }));
-        assert_eq!(executor.calls.lock().unwrap().len(), 4);
+        assert_eq!(
+            executor.calls.lock().unwrap().len(),
+            DEFAULT_AUDIT_DEVICES.len() * 2
+        );
     }
 
     #[test]
@@ -828,7 +846,10 @@ mod tests {
                 && capture.attempts[1].preview.status == PreviewRunStatus::Passed
                 && capture.attempts[0].output_directory != capture.attempts[1].output_directory
         }));
-        assert_eq!(executor.calls.lock().unwrap().len(), 4);
+        assert_eq!(
+            executor.calls.lock().unwrap().len(),
+            DEFAULT_AUDIT_DEVICES.len() * 2
+        );
     }
 
     #[test]
@@ -892,7 +913,10 @@ mod tests {
                             && failure.code == "UI_GENERATION_PREVIEW_RESULT_MISMATCH"
                     })
         }));
-        assert_eq!(executor.calls.lock().unwrap().len(), 2);
+        assert_eq!(
+            executor.calls.lock().unwrap().len(),
+            DEFAULT_AUDIT_DEVICES.len()
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::{
     credentials::{CredentialLocator, CredentialResolver},
     directory::RunId,
     lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
-    offline::{OfflineFixtureRunResult, run_offline_fixture_generation},
+    offline::{OfflineFixtureProfile, OfflineFixtureRunResult, run_offline_fixture_generation},
     run_manifest::{
         ArtifactLink, ClosedLoopArtifactLinks, ClosedLoopBudgetConfiguration,
         ClosedLoopRunManifest, ClosedLoopRunProvenance, ClosedLoopRunState, ClosedLoopViewport,
@@ -132,6 +132,7 @@ pub fn run_closed_loop_generation(
                 preprocess_options_path,
                 repository_root,
                 document_id,
+                OfflineFixtureProfile::Regular,
                 cancellation,
             );
             match fixture {
@@ -586,6 +587,7 @@ mod tests {
         OfflineFixtureRunResult {
             protocol_version: 1,
             mode: "offline_fixture".to_owned(),
+            fixture_profile: "regular".to_owned(),
             run_id: "acceptance-03-final-20260718-04".to_owned(),
             document_id: "generated.audit_draft".to_owned(),
             run_root,

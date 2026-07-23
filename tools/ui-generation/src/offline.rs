@@ -40,11 +40,53 @@ const GENERATION_MODEL_ID: &str = "fixture-generation-v1";
 const GENERATION_PROMPT_VERSION: &str = "ui-document-fixture-v1";
 const MAX_FIXTURE_BYTES: u64 = 4 * 1024 * 1024;
 
+/// Repository-authored fixture profiles. This keeps the regular and complex acceptance evidence
+/// distinct without exposing any online-provider selection through the CLI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OfflineFixtureProfile {
+    Regular,
+    Complex,
+}
+
+impl OfflineFixtureProfile {
+    pub fn parse(value: &str) -> Result<Self, TaskFailure> {
+        match value {
+            "regular" => Ok(Self::Regular),
+            "complex" => Ok(Self::Complex),
+            _ => Err(TaskFailure::invalid(
+                "offline fixture profile must be `regular` or `complex`",
+            )),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Regular => "regular",
+            Self::Complex => "complex",
+        }
+    }
+
+    fn analysis_fixture_file(self) -> &'static str {
+        match self {
+            Self::Regular => "regular_page.json",
+            Self::Complex => "modal.json",
+        }
+    }
+
+    fn generation_provider_fixture_file(self) -> &'static str {
+        match self {
+            Self::Regular => "generation.valid.json",
+            Self::Complex => "generation.complex.valid.json",
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OfflineFixtureRunResult {
     pub protocol_version: u32,
     pub mode: String,
+    pub fixture_profile: String,
     pub run_id: String,
     pub document_id: String,
     pub run_root: PathBuf,
@@ -64,6 +106,7 @@ pub struct OfflineFixtureRunResult {
 struct OfflineRunReport<'a> {
     protocol_version: u32,
     mode: &'static str,
+    fixture_profile: &'static str,
     run_id: &'a str,
     task_sha256: String,
     target_viewport: crate::contract::TargetViewport,
@@ -93,6 +136,7 @@ pub fn run_offline_fixture_generation(
     preprocess_options_path: Option<&Path>,
     repository_root: &Path,
     document_id: &str,
+    fixture_profile: OfflineFixtureProfile,
     cancellation: &CancellationToken,
 ) -> Result<OfflineFixtureRunResult, TaskFailure> {
     cancellation.checkpoint()?;
@@ -132,8 +176,9 @@ pub fn run_offline_fixture_generation(
         trusted_preprocess.push(trusted);
     }
 
-    let analysis_fixture =
-        repository_root.join("tools/ui-generation/fixtures/analysis/regular_page.json");
+    let analysis_fixture = repository_root
+        .join("tools/ui-generation/fixtures/analysis")
+        .join(fixture_profile.analysis_fixture_file());
     let mut analysis = parse_analysis_json(&read_bounded(
         &analysis_fixture,
         MAX_FIXTURE_BYTES,
@@ -198,8 +243,9 @@ pub fn run_offline_fixture_generation(
             generation_parameters,
         )?,
     )?;
-    let generation_provider_path =
-        repository_root.join("tools/ui-generation/fixtures/providers/generation.valid.json");
+    let generation_provider_path = repository_root
+        .join("tools/ui-generation/fixtures/providers")
+        .join(fixture_profile.generation_provider_fixture_file());
     let mut generation_provider = FixtureProvider::load(&generation_provider_path)?;
     let generation_request_id = generation_provider
         .success_server_request_id()
@@ -281,6 +327,7 @@ pub fn run_offline_fixture_generation(
     let report = OfflineRunReport {
         protocol_version: OFFLINE_FIXTURE_RUN_PROTOCOL_VERSION,
         mode: "offline_fixture",
+        fixture_profile: fixture_profile.label(),
         run_id: &task.run_id,
         task_sha256: hash_bytes(&task_bytes),
         target_viewport: viewport,
@@ -354,6 +401,7 @@ pub fn run_offline_fixture_generation(
     Ok(OfflineFixtureRunResult {
         protocol_version: OFFLINE_FIXTURE_RUN_PROTOCOL_VERSION,
         mode: "offline_fixture".to_owned(),
+        fixture_profile: fixture_profile.label().to_owned(),
         run_id: task.run_id,
         document_id: document_id.to_owned(),
         run_root,

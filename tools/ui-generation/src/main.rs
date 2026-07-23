@@ -13,7 +13,7 @@ use ui_generation::{
     evaluation::run_fixture_evaluation,
     inspect_task,
     lifecycle::CancellationToken,
-    offline::run_offline_fixture_generation,
+    offline::{OfflineFixtureProfile, run_offline_fixture_generation},
     operations::{
         ArtifactCleaner, ArtifactRetentionInventory, run_offline_operations_stress_fixture,
     },
@@ -114,6 +114,9 @@ enum Command {
         repository_root: PathBuf,
         #[arg(long)]
         document_id: String,
+        /// Repository-authored input/output fixture shape. Never selects an online provider.
+        #[arg(long, default_value = "regular")]
+        fixture_profile: String,
     },
     /// Runs a bounded closed-loop generation mode without exposing provider protocol to scripts.
     ClosedLoopGenerate {
@@ -342,11 +345,13 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             options,
             repository_root,
             document_id,
+            fixture_profile,
         } => serde_json::to_value(run_offline_fixture_generation(
             &task,
             options.as_deref(),
             &repository_root,
             &document_id,
+            OfflineFixtureProfile::parse(&fixture_profile)?,
             &CancellationToken::default(),
         )?)
         .expect("offline fixture run result is serializable"),

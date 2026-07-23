@@ -66,6 +66,14 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- evaluate-fixtures --
 
 `check-boundary` 不在外层 `cargo run` 中再次启动 Cargo。它用 TOML parser 递归遍历所有普通、target、build、dev、optional、workspace 继承和 patch/replace 的本地 path 依赖，以 canonical manifest 路径检查完整的本地依赖可达性；同时检查两侧 `Cargo.lock` 的 resolved 本地包集合、祖先 workspace，以及 standalone preview target 是否由非默认 `ui-document-preview-tool` feature 和 `required-features` 双重隔离，避免直接依赖扫描漏过 `project -> middle -> ui-generation`，也避免预览工具进入默认桌面或 Android `--lib` 构建。
 
+### Stage 11 离线端到端验收
+
+阶段 11 的仓库内证据由 `pwsh -NoProfile -File scripts/run-ui-e2e-acceptance.ps1` 生成。脚本为 regular 与 complex 两个仓库自有 fixture 生成新的安全 run ID，复制输入到临时目录后运行 `generate-fixture`、四 profile (`phone-small`、`phone-portrait`、`tablet-portrait`、`tablet-landscape`) standalone audit、多状态 Modal/Loading fixture、exact self-reference integrity compare、受控失败演练与 worktree isolation self-test。临时输入在 `finally` 中删除；可复查证据、命令日志和 JSON/Markdown 报告保留在忽略的 `summary/ui-generation/<run>-report/` 和对应 run root。
+
+该脚本只能调用 repository fixture provider，绝不读取凭据、调用在线 provider、adminapi 或远程设备。`ui-visual-audit` 的 config 会复制到每个受控 run root 后再比较，不能通过扩大 allowed-input root 绕过路径边界。Runner 使用 PowerShell 7 (`pwsh`)；Windows PowerShell 5.1 不能解析当前 Runner 的语法，不能作为验收宿主。
+
+Android 真机截图和 metadata 不由该脚本伪造。即使主机存在 `adb`，在已批准的 Remote Http 链路能返回并验证 Android system-bar/safe-area、IME、touch、density/orientation、font、nine-slice 和 material fallback metadata 之前，报告必须保留 `external_blocked`。桌面 profile 只能证明声明式预览和布局策略，不能替代真实设备验收。
+
 `inspect-task` 的输入是 `deny_unknown_fields` 的 serde JSON。它包含页面用途、主参考图、按显式 priority 排序的多状态/多尺寸/局部参考图、目标逻辑 viewport、可见文字、必须保留内容和允许修改范围。每张图声明原始尺寸、方向、色彩空间、SHA-256、来源与授权状态；Stage 1 只校验声明和文件 bytes/hash，不解码像素或推断 EXIF。缺失的装饰处理可确定性回落到项目主题，高影响的用途、文案、保留内容、修改范围、方向、色彩空间、授权和状态转换证据会进入结构化问题，目标 viewport 缺失则直接失败。
 
 run ID 只允许安全的小写 ASCII 标识，不接受绝对路径、`..`、路径分隔符或 Windows 保留名。目录计划固定包含 `input/`、`analysis/`、`draft/`、`assets/`、`preview/`、`logs/` 和 `manifest.json`；已有目标和通过符号链接逃逸仓库的根会被拒绝。状态模型区分 pending、输入校验、ready、running、completed、failed 和 cancelled，取消是幂等终态且在图片读取边界检查。
