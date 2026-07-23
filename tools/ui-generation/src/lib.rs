@@ -7,6 +7,8 @@ pub mod audit;
 #[cfg(feature = "full")]
 pub mod boundary;
 #[cfg(feature = "full")]
+pub mod ci_security;
+#[cfg(feature = "full")]
 pub mod closed_loop_apply;
 #[cfg(feature = "full")]
 pub mod closed_loop_fix_plan;

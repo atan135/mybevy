@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ui_generation::{
     audit::{AuditVisualExpectation, parse_page_states, run_document_audit_command},
     boundary::verify_dependency_boundary,
+    ci_security::{check_ci_security_contract, run_ci_security_fixture},
     closed_loop_apply::{apply_closed_loop_patches, preview_closed_loop_apply},
     closed_loop_fix_plan::{
         FixPlanPolicy, create_closed_loop_fix_plan, load_closed_loop_audit,
@@ -55,6 +56,16 @@ enum Command {
     },
     /// Verifies that Cargo metadata contains only the allowed tool -> project dependency.
     CheckBoundary {
+        #[arg(long)]
+        repository_root: PathBuf,
+    },
+    /// Verifies the repository CI workflow and five-mode security contract without using secrets.
+    CheckCiSecurityContract {
+        #[arg(long)]
+        repository_root: PathBuf,
+    },
+    /// Runs deterministic rejection fixtures for CI credentials, permissions, paths, and reports.
+    CiSecurityFixture {
         #[arg(long)]
         repository_root: PathBuf,
     },
@@ -252,6 +263,14 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
         Command::CheckBoundary { repository_root } => {
             serde_json::to_value(verify_dependency_boundary(&repository_root)?)
                 .expect("dependency boundary report is serializable")
+        }
+        Command::CheckCiSecurityContract { repository_root } => {
+            serde_json::to_value(check_ci_security_contract(&repository_root)?)
+                .expect("CI security contract report is serializable")
+        }
+        Command::CiSecurityFixture { repository_root } => {
+            serde_json::to_value(run_ci_security_fixture(&repository_root)?)
+                .expect("CI security fixture report is serializable")
         }
         Command::PreviewDocument {
             document,

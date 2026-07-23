@@ -1,0 +1,53 @@
+name: UI Online Audit Contract
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1-5'
+
+permissions: {}
+
+jobs:
+  online-contract:
+    name: Protected online generation and audit contract
+    runs-on: windows-latest
+    timeout-minutes: 15
+    environment: ui-audit-online
+    permissions:
+      contents: read
+    env:
+      MYBEVY_UI_AUDIT_ONLINE_EXECUTION: contract_only
+      MYBEVY_UI_AUDIT_ONLINE_POLICY: tools/ui-generation/fixtures/ci/ui-ci-security-policy.v1.json
+    steps:
+      - name: Checkout sources without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify online prerequisites without provider access
+        shell: pwsh
+        run: |
+          cargo run --locked --manifest-path tools/ui-generation/Cargo.toml -- check-ci-security-contract --repository-root .
+          .\scripts\test-ui-supply-chain.ps1 -RepositoryRoot .
+
+      - name: Write redacted downloadable contract failure report
+        if: always()
+        shell: pwsh
+        run: .\scripts\write-ui-ci-failure-report.ps1 -OutputPath .\artifacts\ui-online-contract-report.json -RunMode online_contract
+
+      - name: Upload redacted contract failure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-online-contract-failure-report
+          path: artifacts/ui-online-contract-report.json
+          if-no-files-found: error
+          retention-days: 14
+
+      # This workflow intentionally does not reference a secret, call a provider,
+      # upload a reference image, or start a remote device. A real provider adapter
+      # requires a new reviewed workflow revision and environment approval.

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "approval_label": "ui-reference-baseline-approved",
+  "protected_path_prefixes": [
+    "tools/ui-visual-audit/fixtures/references/",
+    "tools/ui-visual-audit/fixtures/baselines/",
+    "tools/ui-visual-audit/fixtures/masks/",
+    "tools/ui-visual-audit/fixtures/thresholds/"
+  ],
+  "modes": {
+    "local_development": {
+      "triggers": ["local"],
+      "execution": "offline",
+      "reads_online_credentials": false,
+      "permits_network": false,
+      "permits_remote_device": false
+    },
+    "pr_fixture": {
+      "triggers": ["pull_request"],
+      "execution": "offline",
+      "reads_online_credentials": false,
+      "permits_network": false,
+      "permits_remote_device": false
+    },
+    "pr_deterministic_audit": {
+      "triggers": ["pull_request", "push", "workflow_dispatch"],
+      "execution": "offline",
+      "reads_online_credentials": false,
+      "permits_network": false,
+      "permits_remote_device": false
+    },
+    "manual_online_generation": {
+      "triggers": ["workflow_dispatch"],
+      "execution": "contract_only",
+      "reads_online_credentials": false,
+      "permits_network": false,
+      "permits_remote_device": false,
+      "credential_environment_name": "UI_GENERATION_PROVIDER_TOKEN",
+      "required_environment": "ui-audit-online"
+    },
+    "scheduled_online_audit": {
+      "triggers": ["schedule"],
+      "execution": "contract_only",
+      "reads_online_credentials": false,
+      "permits_network": false,
+      "permits_remote_device": false,
+      "credential_environment_name": "UI_GENERATION_PROVIDER_TOKEN",
+      "required_environment": "ui-audit-online"
+    }
+  },
+  "online_contract": {
+    "execution": "contract_only",
+    "credential_scope": "provider_api_only",
+    "approved_provider_domains": ["provider.example.invalid"],
+    "reference_upload": "approved_provider_only",
+    "user_reference_upload_enabled": false,
+    "timeout_seconds": 600
+  },
+  "artifacts": {
+    "failure_reports_downloadable": true,
+    "redaction_required": true,
+    "include_original_credentials": false,
+    "include_unapproved_reference_images": false,
+    "max_artifact_bytes": 33554432,
+    "retention_days": 14
+  },
+  "supply_chain": {
+    "require_locked_cargo": true,
+    "reject_git_dependencies": true,
+    "generated_resources_require_license": true,
+    "model_output_requires_human_approval": true,
+    "untrusted_shader_execution": "forbidden",
+    "approved_shader_license_required": true
+  },
+  "quotas": {
+    "offline_timeout_minutes": 20,
+    "online_contract_timeout_minutes": 15,
+    "cache_max_bytes": 536870912,
+    "artifact_max_bytes": 33554432
+  }
+}

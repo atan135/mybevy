@@ -324,6 +324,11 @@ fn is_sensitive_field_name(value: &str) -> bool {
         "phone",
         "visible_text",
         "content",
+        "reference_image",
+        "reference_image_bytes",
+        "reference_path",
+        "image_bytes",
+        "data_url",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
