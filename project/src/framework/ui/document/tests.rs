@@ -72,6 +72,10 @@ const RESPONSIVE_STATE_DOCUMENT: &str = include_str!(concat!(
     "/assets/ui/documents/fixtures/responsive_states.v1.json"
 ));
 
+fn normalize_golden_line_endings(value: &str) -> String {
+    value.replace("\r\n", "\n")
+}
+
 #[test]
 fn ui_document_parses_stage_one_fixture_and_indexes_nodes() {
     let validated = UiDocument::parse_and_validate_json(MINIMAL_DOCUMENT).unwrap();
@@ -629,7 +633,7 @@ fn ui_document_canonical_json_matches_golden_and_round_trips() {
         "assets/ui/documents/fixtures/minimal_page.v1.canonical.json",
         &canonical,
     );
-    assert_eq!(canonical, CANONICAL_DOCUMENT);
+    assert_eq!(canonical, normalize_golden_line_endings(CANONICAL_DOCUMENT));
 
     let reparsed = UiDocument::parse_and_validate_json(&canonical)
         .unwrap()
@@ -660,7 +664,7 @@ fn ui_document_schema_matches_rust_model() {
         "assets/ui/documents/schema/ui_document.v1.schema.json",
         &schema,
     );
-    assert_eq!(schema, DOCUMENT_SCHEMA);
+    assert_eq!(schema, normalize_golden_line_endings(DOCUMENT_SCHEMA));
 
     let value: Value = serde_json::from_str(&schema).unwrap();
     assert_eq!(value["title"], "UiDocument");
@@ -1066,7 +1070,10 @@ fn ui_document_layout_json_matches_golden_and_maps_fixture() {
         "assets/ui/documents/fixtures/layout_protocol.v1.canonical.json",
         &canonical,
     );
-    assert_eq!(canonical, LAYOUT_CANONICAL_DOCUMENT);
+    assert_eq!(
+        canonical,
+        normalize_golden_line_endings(LAYOUT_CANONICAL_DOCUMENT)
+    );
 
     let root = document.root.layout().to_bevy_layout().unwrap();
     assert_eq!(root.node.display, Display::Grid);
@@ -1092,7 +1099,10 @@ fn ui_document_style_merge_color_canonical_and_image_modes_match_golden() {
         "assets/ui/documents/fixtures/style_resources.v1.canonical.json",
         &canonical,
     );
-    assert_eq!(canonical, STYLE_RESOURCE_CANONICAL_DOCUMENT);
+    assert_eq!(
+        canonical,
+        normalize_golden_line_endings(STYLE_RESOURCE_CANONICAL_DOCUMENT)
+    );
     assert!(canonical.contains("#ff800080"));
     assert!(!canonical.contains("\"srgb\""));
 
@@ -1485,7 +1495,10 @@ fn ui_document_content_fixture_covers_base_nodes_sources_and_golden() {
         "assets/ui/documents/fixtures/content_protocol.v1.canonical.json",
         &canonical,
     );
-    assert_eq!(canonical, CONTENT_CANONICAL_DOCUMENT);
+    assert_eq!(
+        canonical,
+        normalize_golden_line_endings(CONTENT_CANONICAL_DOCUMENT)
+    );
 
     let UiNode::Container { children, .. } = &document.root else {
         panic!("content fixture root must be a container")

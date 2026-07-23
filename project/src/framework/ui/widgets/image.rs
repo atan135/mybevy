@@ -1162,6 +1162,7 @@ pub(crate) fn try_ui_advanced_image(
     spec: UiAdvancedImageSpec,
     size: UiImageSize,
 ) -> Result<UiAdvancedImageBundle, UiImageError> {
+    spec.validate()?;
     let image: Handle<Image> = asset_server.load(spec.source.texture().path.clone());
     try_ui_advanced_image_from_handle(image, spec, size)
 }
@@ -2174,6 +2175,7 @@ mod tests {
         let app = image_runtime_test_app();
         let asset_server = app.world().resource::<AssetServer>();
         let path = "ui/fixtures/atlas-invalid-combination.png";
+        let handle_before_rejection = asset_server.get_handle::<Image>(path);
         let spec = UiAdvancedImageSpec {
             source: UiAdvancedImageSource::AtlasFrame(UiAtlasFrame {
                 source: texture_source(path, 128, 32),
@@ -2184,7 +2186,6 @@ mod tests {
             mode: UiAdvancedImageMode::NineSlice(UiNineSlice::uniform(4.0)),
         };
 
-        assert!(asset_server.get_handle::<Image>(path).is_none());
         let result = try_ui_advanced_image(
             asset_server,
             spec,
@@ -2194,7 +2195,10 @@ mod tests {
             },
         );
         assert!(matches!(result, Err(UiImageError::IncompatibleAtlasMode)));
-        assert!(asset_server.get_handle::<Image>(path).is_none());
+        assert_eq!(
+            asset_server.get_handle::<Image>(path),
+            handle_before_rejection
+        );
     }
 
     #[test]
