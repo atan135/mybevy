@@ -1249,6 +1249,7 @@ fn execution_policy(policy: &AiProviderPolicy) -> Result<ProviderExecutionPolicy
         max_images: MAX_AI_IMAGES.saturating_mul(policy.max_attempts as usize),
         max_input_units: 1_000_000,
         max_output_units: 250_000,
+        max_iterations: policy.max_attempts,
         max_estimated_cost_microunits: 10_000_000,
         input_cost_microunits_per_1k: 1_000,
         output_cost_microunits_per_1k: 2_000,
@@ -2853,6 +2854,22 @@ mod tests {
             validate_config(&disabled).unwrap_err().failure.code,
             ComparisonErrorCode::AiProviderUnsupported
         );
+    }
+
+    #[test]
+    fn execution_policy_binds_iteration_budget_to_the_attempt_limit() {
+        let policy = AiProviderPolicy {
+            attempt_timeout_ms: 1_000,
+            minimum_request_interval_ms: 0,
+            max_attempts: 3,
+            initial_backoff_ms: 100,
+            max_backoff_ms: 1_000,
+            max_output_tokens: 1_024,
+        };
+
+        let execution = execution_policy(&policy).unwrap();
+        assert_eq!(execution.task_limits.max_provider_calls, 3);
+        assert_eq!(execution.task_limits.max_iterations, 3);
     }
 
     #[test]

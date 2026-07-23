@@ -1132,6 +1132,9 @@ pub struct ClosedLoopStatePolicy {
     pub allowed_from: &'static [ClosedLoopRunState],
     pub timeout_ms: u64,
     pub retryable: bool,
+    /// Includes the first attempt. Recovery cannot turn a transient failure into
+    /// an unbounded loop.
+    pub max_attempts: u32,
     pub terminal: bool,
     pub performs_external_call: bool,
 }
@@ -1144,6 +1147,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[],
                 timeout_ms: 0,
                 retryable: false,
+                max_attempts: 1,
                 terminal: false,
                 performs_external_call: false,
             },
@@ -1151,6 +1155,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[Created],
                 timeout_ms: 60_000,
                 retryable: true,
+                max_attempts: 3,
                 terminal: false,
                 performs_external_call: false,
             },
@@ -1158,6 +1163,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[Preparing, Verifying],
                 timeout_ms: 300_000,
                 retryable: true,
+                max_attempts: 3,
                 terminal: false,
                 performs_external_call: true,
             },
@@ -1165,6 +1171,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[Generating, ApplyingFix],
                 timeout_ms: 60_000,
                 retryable: true,
+                max_attempts: 3,
                 terminal: false,
                 performs_external_call: false,
             },
@@ -1172,6 +1179,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[Validating],
                 timeout_ms: 300_000,
                 retryable: true,
+                max_attempts: 3,
                 terminal: false,
                 performs_external_call: true,
             },
@@ -1179,6 +1187,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[Previewing, Verifying],
                 timeout_ms: 300_000,
                 retryable: true,
+                max_attempts: 3,
                 terminal: false,
                 performs_external_call: true,
             },
@@ -1186,6 +1195,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[Auditing],
                 timeout_ms: 60_000,
                 retryable: true,
+                max_attempts: 3,
                 terminal: false,
                 performs_external_call: false,
             },
@@ -1193,6 +1203,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[PlanningFix],
                 timeout_ms: 120_000,
                 retryable: true,
+                max_attempts: 3,
                 terminal: false,
                 performs_external_call: true,
             },
@@ -1200,6 +1211,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[ApplyingFix],
                 timeout_ms: 300_000,
                 retryable: true,
+                max_attempts: 3,
                 terminal: false,
                 performs_external_call: false,
             },
@@ -1207,6 +1219,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[Auditing, PlanningFix, Verifying],
                 timeout_ms: 7 * 24 * 60 * 60 * 1000,
                 retryable: false,
+                max_attempts: 1,
                 terminal: false,
                 performs_external_call: false,
             },
@@ -1214,6 +1227,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[AwaitingApproval],
                 timeout_ms: 0,
                 retryable: false,
+                max_attempts: 1,
                 terminal: true,
                 performs_external_call: false,
             },
@@ -1221,6 +1235,7 @@ impl ClosedLoopRunState {
                 allowed_from: &[],
                 timeout_ms: 0,
                 retryable: false,
+                max_attempts: 1,
                 terminal: true,
                 performs_external_call: false,
             },
@@ -1657,6 +1672,18 @@ impl ClosedLoopRunManifest {
                 "recovery checkpoint identity does not match the current manifest",
             ));
         }
+        let state_policy = restart_checkpoint.state.policy();
+        if !state_policy.retryable {
+            return Err(TaskFailure::invalid_state_transition(
+                "closed-loop recovery can only restart a retryable state",
+            ));
+        }
+        if restart_checkpoint.attempt >= state_policy.max_attempts {
+            return Err(TaskFailure::invalid_state_transition(format!(
+                "closed-loop recovery exhausted the {} attempt limit for {:?}",
+                state_policy.max_attempts, restart_checkpoint.state
+            )));
+        }
         match &plan.last_complete_checkpoint {
             None if restart_index != 0 => {
                 return Err(TaskFailure::manifest_corrupt(
@@ -1811,9 +1838,13 @@ impl ClosedLoopRunManifest {
         }
         let mut previous: Option<&ClosedLoopStateCheckpoint> = None;
         for checkpoint in &self.checkpoints {
-            if !is_sha256(&checkpoint.cache_key) || checkpoint.attempt == 0 {
+            let state_policy = checkpoint.state.policy();
+            if !is_sha256(&checkpoint.cache_key)
+                || checkpoint.attempt == 0
+                || checkpoint.attempt > state_policy.max_attempts
+            {
                 return Err(TaskFailure::manifest_corrupt(
-                    "closed-loop checkpoint has an invalid cache key or attempt",
+                    "closed-loop checkpoint has an invalid cache key or exceeds its attempt limit",
                 ));
             }
             if checkpoint
@@ -2935,6 +2966,42 @@ mod tests {
         manifest.restart_from(&plan, 7).unwrap();
         assert_eq!(manifest.state, ClosedLoopRunState::Auditing);
         assert_eq!(manifest.checkpoints.last().unwrap().attempt, 2);
+    }
+
+    #[test]
+    fn closed_loop_recovery_enforces_a_bounded_attempt_count() {
+        let mut manifest = advance_to_auditing();
+
+        let first_plan = manifest
+            .recovery_plan(&expected_checkpoint_cache_keys(&manifest))
+            .unwrap();
+        manifest.restart_from(&first_plan, 7).unwrap();
+
+        let second_plan = manifest
+            .recovery_plan(&expected_checkpoint_cache_keys(&manifest))
+            .unwrap();
+        manifest.restart_from(&second_plan, 8).unwrap();
+        assert_eq!(manifest.checkpoints.last().unwrap().attempt, 3);
+
+        let exhausted_plan = manifest
+            .recovery_plan(&expected_checkpoint_cache_keys(&manifest))
+            .unwrap();
+        let before = manifest.clone();
+        let failure = manifest.restart_from(&exhausted_plan, 9).unwrap_err();
+        assert_eq!(failure.kind(), TaskFailureKind::InvalidStateTransition);
+        assert!(failure.message().contains("exhausted the 3 attempt limit"));
+        assert_eq!(manifest, before);
+    }
+
+    #[test]
+    fn closed_loop_manifest_rejects_a_persisted_checkpoint_above_its_attempt_limit() {
+        let mut malformed = serde_json::to_value(advance_to_auditing()).unwrap();
+        malformed["checkpoints"][5]["attempt"] = serde_json::json!(4);
+
+        let failure = ClosedLoopRunManifest::parse_json(&serde_json::to_vec(&malformed).unwrap())
+            .unwrap_err();
+        assert_eq!(failure.kind(), TaskFailureKind::ManifestCorrupt);
+        assert!(failure.message().contains("exceeds its attempt limit"));
     }
 
     #[test]

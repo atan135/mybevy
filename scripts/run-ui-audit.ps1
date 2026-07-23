@@ -82,6 +82,7 @@ param(
     [string]$ProviderCredentialEnvironment = "",
     [switch]$DryRun,
     [switch]$SelfTest,
+    [switch]$SelfTestWorktree,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$RemainingArgs = @()
 )
@@ -3248,6 +3249,52 @@ function Compare-GitStatusPathSet {
     return @($changed.ToArray())
 }
 
+function New-UiAuditFixIsolatedWorktree {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$IterationDir
+    )
+
+    $sourceRoot = Get-FullPath $RepoRoot
+    $worktreeRoot = Join-FullPath $IterationDir "worktree"
+    if (Test-Path -LiteralPath $worktreeRoot) {
+        throw "isolated fix worktree target already exists: $worktreeRoot"
+    }
+
+    $sourceCommitLines = @(& git -C $sourceRoot rev-parse --verify "HEAD^{commit}" 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $sourceCommitLines.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$sourceCommitLines[0])) {
+        $detail = ($sourceCommitLines | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+        throw "isolated fix worktree requires a Git source commit: $detail"
+    }
+    $sourceCommit = ([string]$sourceCommitLines[0]).Trim()
+    $sourceStatus = @(& git -C $sourceRoot status --porcelain=v1 --untracked-files=all 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        $detail = ($sourceStatus | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+        throw "isolated fix worktree could not snapshot the source worktree: $detail"
+    }
+
+    $createOutput = @(& git -C $sourceRoot worktree add --detach $worktreeRoot $sourceCommit 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        $detail = ($createOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+        throw "isolated fix worktree creation failed: $detail"
+    }
+    $actualCommitLines = @(& git -C $worktreeRoot rev-parse --verify "HEAD^{commit}" 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $actualCommitLines.Count -ne 1 -or ([string]$actualCommitLines[0]).Trim() -ne $sourceCommit) {
+        $detail = ($actualCommitLines | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+        throw "isolated fix worktree does not match its recorded source commit: $detail"
+    }
+
+    return [pscustomobject]@{
+        mode = "detached_git_worktree"
+        source_root = $sourceRoot
+        source_commit = $sourceCommit
+        source_was_dirty = ($sourceStatus.Count -gt 0)
+        source_status_entry_count = $sourceStatus.Count
+        worktree_root = (Get-FullPath $worktreeRoot)
+        retained_for_recovery = $true
+    }
+}
+
 function Invoke-UiAuditFixCommand {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
@@ -3575,9 +3622,29 @@ function Invoke-UiAuditFixLoop {
                 Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
                 return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = $iterationRecord.failure_type; exit_code = 1; detail = $iterationRecord.detail }
             }
-            $beforePaths = Get-GitStatusPathSet -RepoRoot $RepoRoot
+            try {
+                $isolatedWorkspace = New-UiAuditFixIsolatedWorktree -RepoRoot $RepoRoot -IterationDir $iterationDir
+            } catch {
+                $iterationRecord.status = "failed"
+                $iterationRecord.failure_type = "isolated_workspace_unavailable"
+                $iterationRecord.detail = $_.Exception.Message
+                $iterationRecord.fixer = [ordered]@{
+                    mode = "Command"
+                    status = "rejected"
+                    isolation_required = "detached_git_worktree"
+                }
+                $iterationRecords.Add([pscustomobject]$iterationRecord)
+                $record.iterations = @($iterationRecords.ToArray())
+                $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType $iterationRecord.failure_type -Detail $iterationRecord.detail -FinalIssues $lastIssues
+                Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
+                return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = $iterationRecord.failure_type; exit_code = 1; detail = $record.detail }
+            }
+            $iterationRecord.workspace_isolation = $isolatedWorkspace
+            $executionRepoRoot = [string]$isolatedWorkspace.worktree_root
+            $executionProjectRoot = Join-FullPath $executionRepoRoot "project"
+            $beforePaths = Get-GitStatusPathSet -RepoRoot $executionRepoRoot
             $preexistingUserPaths = @($beforePaths | Where-Object {
-                    [bool](Test-UiAuditFixPathAllowed -RepoRoot $RepoRoot -PathValue ([string]$_) -Policy $policy).allowed
+                    [bool](Test-UiAuditFixPathAllowed -RepoRoot $executionRepoRoot -PathValue ([string]$_) -Policy $policy).allowed
                 })
             if ($preexistingUserPaths.Count -gt 0) {
                 $iterationRecord.status = "failed"
@@ -3594,20 +3661,20 @@ function Invoke-UiAuditFixLoop {
                 Update-UiAuditManifestWithFixLoop -RunRoot $RunRoot -RunIdValue $RunIdValue -FixLoop $record | Out-Null
                 return [pscustomobject]@{ status = "failed"; pass = $false; failure_type = "dirty_workspace_rejected"; exit_code = 1; detail = $record.detail }
             }
-            $beforePolicySnapshot = Get-UiAuditPolicyFileSnapshot -RepoRoot $RepoRoot -Policy $policy
-            $workspaceBefore = New-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-before") -IncludeBackups
+            $beforePolicySnapshot = Get-UiAuditPolicyFileSnapshot -RepoRoot $executionRepoRoot -Policy $policy
+            $workspaceBefore = New-UiAuditFixWorkspaceSnapshot -RepoRoot $executionRepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-before") -IncludeBackups
             $iterationRecord.workspace_before = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path ([string]$workspaceBefore.snapshot_directory)
-            $commandResult = Invoke-UiAuditFixCommand -RepoRoot $RepoRoot -IterationDir $iterationDir -Command $Command -PlanPath $planPath -CancellationPath $CancellationPath
-            $afterPaths = Get-GitStatusPathSet -RepoRoot $RepoRoot
-            $afterPolicySnapshot = Get-UiAuditPolicyFileSnapshot -RepoRoot $RepoRoot -Policy $policy
-            $workspaceAfter = New-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-after")
+            $commandResult = Invoke-UiAuditFixCommand -RepoRoot $executionRepoRoot -IterationDir $iterationDir -Command $Command -PlanPath $planPath -CancellationPath $CancellationPath
+            $afterPaths = Get-GitStatusPathSet -RepoRoot $executionRepoRoot
+            $afterPolicySnapshot = Get-UiAuditPolicyFileSnapshot -RepoRoot $executionRepoRoot -Policy $policy
+            $workspaceAfter = New-UiAuditFixWorkspaceSnapshot -RepoRoot $executionRepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-after")
             $workspaceDiff = Write-UiAuditFixWorkspaceDiff -IterationDir $iterationDir -Before $workspaceBefore -After $workspaceAfter
             $iterationRecord.workspace_after = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path ([string]$workspaceAfter.snapshot_directory)
             $iterationRecord.workspace_diff = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path $workspaceDiff.path
             $gitChangedPaths = @(Compare-GitStatusPathSet -Before $beforePaths -After $afterPaths)
             $policyChangedPaths = @(Compare-UiAuditPolicyFileSnapshot -Before $beforePolicySnapshot -After $afterPolicySnapshot)
             $newChangedPaths = @(Merge-UiAuditChangedPaths -PathSets @($gitChangedPaths, $policyChangedPaths))
-            $postSafety = Test-UiAuditFixSafety -RepoRoot $RepoRoot -Issues @() -ChangedPaths $newChangedPaths -Policy $policy
+            $postSafety = Test-UiAuditFixSafety -RepoRoot $executionRepoRoot -Issues @() -ChangedPaths $newChangedPaths -Policy $policy
             $iterationRecord.fixer = [ordered]@{
                 mode = "Command"
                 command = $Command
@@ -3626,7 +3693,7 @@ function Invoke-UiAuditFixLoop {
             if ([bool]$commandResult.cancelled) {
                 $iterationRecord.status = "cancelled"
                 $iterationRecord.failure_type = "cancelled"
-                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $executionRepoRoot -Before $workspaceBefore -After $workspaceAfter
                 $record.cancellation.requested = $true
                 $record.cancellation.terminated_external_call = $true
                 $record.cancellation.last_complete_iteration = $iteration - 1
@@ -3639,7 +3706,7 @@ function Invoke-UiAuditFixLoop {
             if ($iterationRecord.fixer.status -ne "passed") {
                 $iterationRecord.status = "failed"
                 $iterationRecord.failure_type = "fix_command_failed"
-                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $executionRepoRoot -Before $workspaceBefore -After $workspaceAfter
                 $iterationRecords.Add([pscustomobject]$iterationRecord)
                 $record.iterations = @($iterationRecords.ToArray())
                 $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType "fix_command_failed" -Detail "fix command failed before cargo checks" -FinalIssues $lastIssues
@@ -3649,7 +3716,7 @@ function Invoke-UiAuditFixLoop {
             if (-not [bool]$postSafety.allowed) {
                 $iterationRecord.status = "failed"
                 $iterationRecord.failure_type = "safety_policy_rejected"
-                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $executionRepoRoot -Before $workspaceBefore -After $workspaceAfter
                 $iterationRecords.Add([pscustomobject]$iterationRecord)
                 $record.iterations = @($iterationRecords.ToArray())
                 $record = Complete-UiAuditFixLoopRecord -Record $record -Status "failed" -FailureType "safety_policy_rejected" -Detail "fix command changed files outside the UI fix allowlist" -FinalIssues $lastIssues
@@ -3684,10 +3751,10 @@ function Invoke-UiAuditFixLoop {
         }
         $iterationRecord.validation_changed_paths = @($validationChangedPaths)
         $iterationRecord.rerun_plan = Resolve-UiAuditFixRerunMatrix -Plan $rerunPlan -ChangedPaths $validationChangedPaths
-        $checks = Invoke-UiAuditFixChecks -RepositoryRoot $RepoRoot -ProjectRoot $ProjectRoot -IterationDir $iterationDir -Mode $Mode -Scenario $MockScenario -ChangedPaths $validationChangedPaths -CancellationPath $CancellationPath
+        $checks = Invoke-UiAuditFixChecks -RepositoryRoot $(if ($Mode -eq "Command") { $executionRepoRoot } else { $RepoRoot }) -ProjectRoot $(if ($Mode -eq "Command") { $executionProjectRoot } else { $ProjectRoot }) -IterationDir $iterationDir -Mode $Mode -Scenario $MockScenario -ChangedPaths $validationChangedPaths -CancellationPath $CancellationPath
         $iterationRecord.checks = $checks
         if ($Mode -eq "Command") {
-            $postCheckWorkspace = New-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-after-checks")
+            $postCheckWorkspace = New-UiAuditFixWorkspaceSnapshot -RepoRoot $executionRepoRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "workspace-after-checks")
             $iterationRecord.workspace_after = ConvertTo-RunRelativePath -RunRoot $RunRoot -Path ([string]$postCheckWorkspace.snapshot_directory)
             $workspaceAfter = $postCheckWorkspace
             $workspaceDiff = Write-UiAuditFixWorkspaceDiff -IterationDir $iterationDir -Before $workspaceBefore -After $workspaceAfter
@@ -3697,7 +3764,7 @@ function Invoke-UiAuditFixLoop {
             $iterationRecord.status = "cancelled"
             $iterationRecord.failure_type = "cancelled"
             if ($Mode -eq "Command") {
-                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $executionRepoRoot -Before $workspaceBefore -After $workspaceAfter
             }
             $record.cancellation.requested = $true
             $record.cancellation.terminated_external_call = ($Mode -eq "Command")
@@ -3712,7 +3779,7 @@ function Invoke-UiAuditFixLoop {
             $iterationRecord.status = "failed"
             $iterationRecord.failure_type = "fix_check_failed"
             if ($Mode -eq "Command") {
-                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $RepoRoot -Before $workspaceBefore -After $workspaceAfter
+                $iterationRecord.rollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $executionRepoRoot -Before $workspaceBefore -After $workspaceAfter
             }
             $iterationRecords.Add([pscustomobject]$iterationRecord)
             $record.iterations = @($iterationRecords.ToArray())
@@ -6945,6 +7012,79 @@ function Assert-SelfTest {
     }
 }
 
+function Invoke-UiAuditWorktreeIsolationSelfTest {
+    $tempRoot = Join-FullPath ([System.IO.Path]::GetTempPath()) ("mybevy-ui-audit-worktree-selftest-" + [Guid]::NewGuid().ToString("N"))
+    try {
+        $sourceRoot = Join-FullPath $tempRoot "source"
+        $iterationDir = Join-FullPath $tempRoot "iteration"
+        $sourceFile = Join-FullPath $sourceRoot "project/src/game/screens/dev/automated.rs"
+        $protectedRelative = "summary/ui-audit/protected.txt"
+        $planPath = Join-FullPath $iterationDir "fix-plan.json"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sourceFile) | Out-Null
+        New-Item -ItemType Directory -Force -Path $iterationDir | Out-Null
+        Set-Content -LiteralPath $sourceFile -Value "baseline" -Encoding UTF8
+        Set-Content -LiteralPath $planPath -Value "{}" -Encoding UTF8
+
+        & git -C $sourceRoot init --quiet
+        & git -C $sourceRoot config user.email "ui-audit-selftest@example.invalid"
+        & git -C $sourceRoot config user.name "UI Audit Self Test"
+        & git -C $sourceRoot add project
+        & git -C $sourceRoot commit --quiet -m "initial isolated-worktree fixture"
+        Assert-SelfTest ($LASTEXITCODE -eq 0) "worktree self-test fixture repository initializes"
+
+        # This tracked caller edit must be recorded but never become worktree input.
+        Set-Content -LiteralPath $sourceFile -Value "caller dirty" -Encoding UTF8
+        $workspace = New-UiAuditFixIsolatedWorktree -RepoRoot $sourceRoot -IterationDir $iterationDir
+        $worktreeRoot = [string]$workspace.worktree_root
+        $worktreeFile = Join-FullPath $worktreeRoot "project/src/game/screens/dev/automated.rs"
+        Assert-SelfTest ([bool]$workspace.source_was_dirty -and (Get-Content -Raw -LiteralPath $worktreeFile).Trim() -eq "baseline") "detached worktree records dirty source without copying it"
+
+        $policy = New-UiAuditFixPolicy
+        $beforeMutation = New-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "before-mutation") -IncludeBackups
+        $mutation = Invoke-UiAuditFixCommand -RepoRoot $worktreeRoot -IterationDir $iterationDir -Command 'Set-Content -LiteralPath "project/src/game/screens/dev/automated.rs" -Value "worktree mutation" -Encoding UTF8' -PlanPath $planPath
+        Assert-SelfTest ([int]$mutation.exit_code -eq 0 -and (Get-Content -Raw -LiteralPath $worktreeFile).Trim() -eq "worktree mutation" -and (Get-Content -Raw -LiteralPath $sourceFile).Trim() -eq "caller dirty") "command mutation stays in the detached worktree"
+
+        $protectedCommand = 'New-Item -ItemType Directory -Force summary/ui-audit | Out-Null; Set-Content -LiteralPath summary/ui-audit/protected.txt -Value forbidden -Encoding UTF8'
+        $protectedResult = Invoke-UiAuditFixCommand -RepoRoot $worktreeRoot -IterationDir $iterationDir -Command $protectedCommand -PlanPath $planPath
+        $protectedSafety = Test-UiAuditFixSafety -RepoRoot $worktreeRoot -Issues @() -ChangedPaths @($protectedRelative) -Policy $policy
+        Assert-SelfTest ([int]$protectedResult.exit_code -eq 0 -and -not [bool]$protectedSafety.allowed -and -not (Test-Path -LiteralPath (Join-FullPath $sourceRoot $protectedRelative))) "protected targets are rejected without modifying the dirty source worktree"
+
+        $afterMutation = New-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "after-mutation")
+        $mutationRollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Before $beforeMutation -After $afterMutation
+        Assert-SelfTest ($mutationRollback.status -eq "restored" -and (Get-Content -Raw -LiteralPath $worktreeFile).Trim() -eq "baseline") "isolated worktree mutation can be rolled back without restoring the caller tree"
+
+        $beforeFailure = New-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "before-failure") -IncludeBackups
+        $failure = Invoke-UiAuditFixCommand -RepoRoot $worktreeRoot -IterationDir $iterationDir -Command 'Set-Content -LiteralPath "project/src/game/screens/dev/automated.rs" -Value "failure mutation" -Encoding UTF8; exit 7' -PlanPath $planPath
+        $afterFailure = New-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "after-failure")
+        $failureRollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Before $beforeFailure -After $afterFailure
+        Assert-SelfTest ([int]$failure.exit_code -eq 7 -and $failureRollback.status -eq "restored" -and (Get-Content -Raw -LiteralPath $worktreeFile).Trim() -eq "baseline" -and (Get-Content -Raw -LiteralPath $sourceFile).Trim() -eq "caller dirty") "failed command rollback occurs only in the detached worktree"
+
+        $cancelRequest = Join-FullPath $iterationDir "cancel.request"
+        $startedMarker = Join-FullPath $iterationDir "command-started.marker"
+        $beforeCancellation = New-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "before-cancellation") -IncludeBackups
+        $cancelWriterScript = "while (-not (Test-Path -LiteralPath '$($startedMarker.Replace("'", "''"))')) { Start-Sleep -Milliseconds 25 }; [System.IO.File]::WriteAllText('$($cancelRequest.Replace("'", "''"))', 'cancel')"
+        $cancelWriter = Start-Process -FilePath (Get-UiAuditPowerShellExecutable) -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $cancelWriterScript) -PassThru -WindowStyle Hidden
+        try {
+            $cancellation = Invoke-UiAuditFixCommand -RepoRoot $worktreeRoot -IterationDir $iterationDir -Command 'Set-Content -LiteralPath "project/src/game/screens/dev/automated.rs" -Value "cancel mutation" -Encoding UTF8; [System.IO.File]::WriteAllText((Join-Path $env:MYBEVY_UI_AUDIT_FIX_ITERATION_DIR "command-started.marker"), "started"); Start-Sleep -Seconds 20' -PlanPath $planPath -CancellationPath $cancelRequest
+        } finally {
+            [void]$cancelWriter.WaitForExit(10000)
+            if (-not $cancelWriter.HasExited) {
+                Stop-Process -Id $cancelWriter.Id -Force
+            }
+            $cancelWriter.Dispose()
+        }
+        $afterCancellation = New-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Policy $policy -SnapshotDir (Join-FullPath $iterationDir "after-cancellation")
+        $cancellationRollback = Restore-UiAuditFixWorkspaceSnapshot -RepoRoot $worktreeRoot -Before $beforeCancellation -After $afterCancellation
+        Assert-SelfTest ([bool]$cancellation.cancelled -and $cancellationRollback.status -eq "restored" -and (Get-Content -Raw -LiteralPath $worktreeFile).Trim() -eq "baseline" -and (Get-Content -Raw -LiteralPath $sourceFile).Trim() -eq "caller dirty") "cancelled command rollback occurs only in the detached worktree"
+
+        Write-Host "Worktree isolation self-test passed."
+    } finally {
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -Recurse -Force -LiteralPath $tempRoot
+        }
+    }
+}
+
 function New-FakeChildManifest {
     param(
         [Parameter(Mandatory = $true)][object]$Task,
@@ -7601,6 +7741,11 @@ function Invoke-UiAuditSelfTest {
 
         $commandRepoRoot = Join-FullPath $fixBase "command-temp-repo"
         New-Item -ItemType Directory -Force -Path $commandRepoRoot | Out-Null
+        & git -C $commandRepoRoot init --quiet
+        & git -C $commandRepoRoot config user.email "ui-audit-selftest@example.invalid"
+        & git -C $commandRepoRoot config user.name "UI Audit Self Test"
+        & git -C $commandRepoRoot commit --allow-empty --quiet -m "initial command fixture"
+        Assert-SelfTest ($LASTEXITCODE -eq 0) "command fixture repository initializes for detached worktree isolation"
         $script:LastUiAuditAnalysisStatus = $null
         $fixCommandRoot = Join-FullPath $commandRepoRoot "run"
         $fixCommandResult = New-FakePassedUiAuditResult -RunRoot $fixCommandRoot
@@ -7621,6 +7766,9 @@ function Invoke-UiAuditSelfTest {
         $preexistingDeletePath = Join-FullPath $commandRepoRoot "summary/ui-audit/preexisting-delete-test/old.txt"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $preexistingDeletePath) | Out-Null
         Set-Content -Path $preexistingDeletePath -Value "old" -Encoding UTF8
+        & git -C $commandRepoRoot add summary/ui-audit/preexisting-delete-test/old.txt
+        & git -C $commandRepoRoot commit --quiet -m "tracked protected delete fixture"
+        Assert-SelfTest ($LASTEXITCODE -eq 0) "protected delete fixture is part of the isolated worktree source commit"
         $fixCommandDeleteResult = New-FakePassedUiAuditResult -RunRoot $fixCommandDeleteRoot
         $fixCommandDeletePath = Join-FullPath $analysisFixtureRoot "fix-command-delete-blocking.json"
         Write-FakeAnalysisResult -Path $fixCommandDeletePath -Issues @(
@@ -7712,6 +7860,12 @@ function Invoke-UiAuditSelfTest {
         $userPath = Join-FullPath $rollbackSourceDir "user-preexisting.rs"
         Set-Content -LiteralPath $automaticPath -Value "before automated change" -Encoding UTF8
         Set-Content -LiteralPath $userPath -Value "user content before run" -Encoding UTF8
+        & git -C $rollbackRepo init --quiet
+        & git -C $rollbackRepo config user.email "ui-audit-selftest@example.invalid"
+        & git -C $rollbackRepo config user.name "UI Audit Self Test"
+        & git -C $rollbackRepo add project
+        & git -C $rollbackRepo commit --quiet -m "initial rollback fixture"
+        Assert-SelfTest ($LASTEXITCODE -eq 0) "rollback fixture repository initializes for detached worktree isolation"
 
         $commandFailureRoot = Join-FullPath $stage7Root "command-failure"
         $commandFailureResult = New-FakePassedUiAuditResult -RunRoot $commandFailureRoot
@@ -8021,6 +8175,11 @@ function Invoke-UiAuditRunner {
 
 if ($SelfTest) {
     Invoke-UiAuditSelfTest
+    exit 0
+}
+
+if ($SelfTestWorktree) {
+    Invoke-UiAuditWorktreeIsolationSelfTest
     exit 0
 }
 
