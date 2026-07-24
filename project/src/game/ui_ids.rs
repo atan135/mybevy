@@ -16,6 +16,8 @@ pub(in crate::game) const OWNER_UI_DOCUMENT_GALLERY: UiOwnerId =
     UiOwnerId::new("ui_document_gallery");
 pub(in crate::game) const OWNER_UI_GENERATED_ACCEPTANCE: UiOwnerId =
     UiOwnerId::new("generated_acceptance_approved");
+pub(in crate::game) const OWNER_AI_LOGIN_REFERENCE: UiOwnerId =
+    UiOwnerId::new("ai_login_reference");
 pub(in crate::game) const OWNER_SAMPLE_SCENE: UiOwnerId = UiOwnerId::new("sample_scene");
 pub(in crate::game) const OWNER_ROBOT_SYNC_SCENE: UiOwnerId = UiOwnerId::new("robot_sync_scene");
 pub(in crate::game) const OWNER_FANGYUAN_HOME: UiOwnerId = UiOwnerId::new("fangyuan_home");
@@ -30,6 +32,8 @@ pub(in crate::game) const PANEL_AUDIO_SETTINGS: UiPanelId = UiPanelId::new("audi
 pub(in crate::game) const PANEL_AUDIO_MONITOR: UiPanelId = UiPanelId::new("audio_monitor_page");
 pub(in crate::game) const PANEL_AUDIO_GALLERY: UiPanelId = UiPanelId::new("audio_gallery_page");
 pub(in crate::game) const PANEL_UI_GALLERY: UiPanelId = UiPanelId::new("ui_gallery_page");
+pub(in crate::game) const PANEL_AI_LOGIN_REFERENCE: UiPanelId =
+    UiPanelId::new("ai_login_reference_page");
 pub(in crate::game) const SCROLL_UI_GALLERY_MAIN: UiScrollAuditId =
     UiScrollAuditId::new("ui_gallery.main");
 pub(in crate::game) const ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE: UiScrollAuditAnchorId =

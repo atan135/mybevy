@@ -1,3 +1,4 @@
+mod ai_login_reference;
 mod audio_gallery;
 mod audio_monitor;
 mod ui_document_gallery;
@@ -24,6 +25,10 @@ impl Plugin for DevScreensPlugin {
             .add_systems(
                 OnEnter(AppUiMode::UiGeneratedAcceptance),
                 ui_generated_acceptance::setup_ui_generated_acceptance,
+            )
+            .add_systems(
+                OnEnter(AppUiMode::AiLoginReference),
+                ai_login_reference::setup_ai_login_reference,
             )
             .add_systems(
                 OnEnter(AppUiMode::AudioGallery),
@@ -80,6 +85,15 @@ impl Plugin for DevScreensPlugin {
             .add_systems(
                 OnExit(AppUiMode::UiGeneratedAcceptance),
                 ui_generated_acceptance::cleanup_ui_generated_acceptance,
+            )
+            .add_systems(
+                Update,
+                (
+                    ai_login_reference::animate_ai_login_reference_buttons,
+                    ai_login_reference::sync_ai_login_reference_button_visuals,
+                )
+                    .chain()
+                    .run_if(in_state(AppUiMode::AiLoginReference)),
             )
             .add_systems(
                 OnExit(AppUiMode::AudioGallery),

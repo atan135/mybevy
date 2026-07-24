@@ -25,10 +25,11 @@ use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
     ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES, ANCHOR_UI_GALLERY_TYPOGRAPHY,
     ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE,
-    OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT,
-    OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN,
-    OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE, OWNER_UI_DOCUMENT_GALLERY,
-    OWNER_UI_GALLERY, OWNER_UI_GENERATED_ACCEPTANCE, SCROLL_UI_GALLERY_MAIN,
+    OWNER_AI_LOGIN_REFERENCE, OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS,
+    OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY,
+    OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
+    OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GALLERY, OWNER_UI_GENERATED_ACCEPTANCE,
+    SCROLL_UI_GALLERY_MAIN,
 };
 
 pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
@@ -141,6 +142,7 @@ pub(super) enum AppUiMode {
     UiGallery,
     UiDocumentGallery,
     UiGeneratedAcceptance,
+    AiLoginReference,
     SampleScene,
     RobotSyncScene,
     FangyuanHome,
@@ -160,6 +162,7 @@ impl AppUiMode {
             Self::UiGallery => OWNER_UI_GALLERY,
             Self::UiDocumentGallery => OWNER_UI_DOCUMENT_GALLERY,
             Self::UiGeneratedAcceptance => OWNER_UI_GENERATED_ACCEPTANCE,
+            Self::AiLoginReference => OWNER_AI_LOGIN_REFERENCE,
             Self::SampleScene => OWNER_SAMPLE_SCENE,
             Self::RobotSyncScene => OWNER_ROBOT_SYNC_SCENE,
             Self::FangyuanHome => OWNER_FANGYUAN_HOME,
@@ -179,6 +182,7 @@ impl AppUiMode {
             Self::UiGallery => "ui_gallery",
             Self::UiDocumentGallery => "ui_document_gallery",
             Self::UiGeneratedAcceptance => "ui_generated_acceptance",
+            Self::AiLoginReference => "ai_login_reference",
             Self::SampleScene => "sample_scene",
             Self::RobotSyncScene => "robot_sync_scene",
             Self::FangyuanHome => "fangyuan_home",
@@ -225,6 +229,7 @@ impl AppUiMode {
                 "ui-generated-acceptance",
                 "generated_acceptance",
             ],
+            Self::AiLoginReference => &["ai_login_reference", "ai-login-reference", "image_login"],
             Self::SampleScene => &["sample_scene", "sample-scene", "sample"],
             Self::RobotSyncScene => &["robot_sync_scene", "robot-sync-scene", "robot"],
             Self::FangyuanHome => &["fangyuan_home", "fangyuan-home", "fangyuan"],
@@ -497,7 +502,7 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     ),
 ];
 
-fn all_app_ui_modes() -> [AppUiMode; 14] {
+fn all_app_ui_modes() -> [AppUiMode; 15] {
     [
         AppUiMode::Login,
         AppUiMode::CharacterSelect,
@@ -509,6 +514,7 @@ fn all_app_ui_modes() -> [AppUiMode; 14] {
         AppUiMode::UiGallery,
         AppUiMode::UiDocumentGallery,
         AppUiMode::UiGeneratedAcceptance,
+        AppUiMode::AiLoginReference,
         AppUiMode::SampleScene,
         AppUiMode::RobotSyncScene,
         AppUiMode::FangyuanHome,
