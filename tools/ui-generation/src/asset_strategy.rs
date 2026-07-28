@@ -538,12 +538,23 @@ fn validate_catalog_file(
                 asset.asset_id
             )));
         }
-        let has_alpha = image.color().has_alpha();
-        if (asset.alpha == AlphaMode::Straight) != has_alpha {
-            return Err(TaskFailure::invalid(format!(
-                "catalog asset `{}` alpha metadata changed",
-                asset.asset_id
-            )));
+        match asset.alpha {
+            AlphaMode::Straight if !image.color().has_alpha() => {
+                return Err(TaskFailure::invalid(format!(
+                    "catalog asset `{}` alpha metadata changed",
+                    asset.asset_id
+                )));
+            }
+            AlphaMode::Opaque
+                if image.color().has_alpha()
+                    && image.to_rgba8().pixels().any(|pixel| pixel.0[3] != u8::MAX) =>
+            {
+                return Err(TaskFailure::invalid(format!(
+                    "catalog asset `{}` alpha metadata changed",
+                    asset.asset_id
+                )));
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -3181,7 +3192,7 @@ mod tests {
     #[test]
     fn repository_catalog_is_complete_and_searches_by_stable_id_metadata() {
         let catalog = AssetCatalog::load_repository(&repository_root()).unwrap();
-        assert_eq!(catalog.assets.len(), 22);
+        assert_eq!(catalog.assets.len(), 25);
         assert!(catalog.resolve("ui.icon.close").is_some());
         assert!(catalog.resolve("ui/icons/close.png").is_none());
         let matches = catalog
@@ -3252,6 +3263,45 @@ mod tests {
         if create_file_symlink(&outside, &catalog_path).is_ok() {
             assert!(load_generated_catalog_assets(&ui_root).is_err());
         }
+    }
+
+    #[test]
+    fn catalog_opaque_alpha_validation_allows_opaque_rgba_and_rejects_transparency() {
+        let repository = tempfile::tempdir().unwrap();
+        let packaged_root = repository.path().join("project/assets");
+        let ui_root = packaged_root.join("ui");
+        let image_root = ui_root.join("images");
+        fs::create_dir_all(&image_root).unwrap();
+        let image_path = image_root.join("opaque-rgba.png");
+
+        let opaque = png_bytes(&RgbaImage::from_pixel(2, 2, Rgba([12, 34, 56, 255])));
+        fs::write(&image_path, &opaque).unwrap();
+        let mut asset = CatalogAsset {
+            asset_id: "ui.image.opaque_rgba".to_owned(),
+            path: "ui/images/opaque-rgba.png".to_owned(),
+            kind: CatalogAssetKind::Raster,
+            sha256: sha256_bytes(&opaque),
+            byte_length: opaque.len() as u64,
+            width: Some(2),
+            height: Some(2),
+            alpha: AlphaMode::Opaque,
+            license: CatalogLicense {
+                status: CatalogLicenseStatus::Unknown,
+                reference: None,
+            },
+            tags: vec!["image".to_owned(), "opaque".to_owned()],
+        };
+        let canonical_packaged_root = packaged_root.canonicalize().unwrap();
+        let canonical_ui_root = ui_root.canonicalize().unwrap();
+        validate_catalog_file(&canonical_packaged_root, &canonical_ui_root, &asset).unwrap();
+
+        let transparent = png_bytes(&RgbaImage::from_pixel(2, 2, Rgba([12, 34, 56, 0])));
+        fs::write(&image_path, &transparent).unwrap();
+        asset.sha256 = sha256_bytes(&transparent);
+        asset.byte_length = transparent.len() as u64;
+        assert!(
+            validate_catalog_file(&canonical_packaged_root, &canonical_ui_root, &asset).is_err()
+        );
     }
 
     #[test]
