@@ -18,3 +18,12 @@ url = "2"
 
 [dev-dependencies]
 tempfile = "3"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package."ui-generation"]
+opt-level = 1
