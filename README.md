@@ -74,6 +74,8 @@ Set-Location project
 cargo run
 ```
 
+仓库根 `.cargo/config.toml` 会让游戏工程和独立工具共享根 `target/` 构建缓存，因此从 `project/` 执行游戏命令时二进制仍输出到 `target/debug/`。通常不要设置 `CARGO_TARGET_DIR`；脚本或 CI 必须显式设置时，只能将它指向仓库根 `target/`，避免重新产生清单本地缓存。
+
 格式化和检查：
 
 ```powershell

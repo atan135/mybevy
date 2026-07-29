@@ -39,6 +39,8 @@ cargo --version
 
 现在应该把 `project/` 当成游戏工程根目录。
 
+仓库根 `.cargo/config.toml` 将所有 Cargo 清单的构建输出统一到根 `target/`。因此即使在 `project/` 目录执行 `cargo run` 或 `cargo build`，桌面二进制也会位于仓库根的 `target/debug/` 或 `target/release/`。常规开发不要设置 `CARGO_TARGET_DIR`；脚本或 CI 必须显式设置时，只能将其设为仓库根 `target/`，不要使用清单本地的独立缓存。
+
 方式一：先进入 `project/` 再初始化
 
 ```powershell
@@ -673,7 +675,7 @@ cargo build --release
 构建完成后，产物在：
 
 ```text
-project/target/release/project.exe
+target/release/project.exe
 ```
 
 如果后续你在 `project/assets/` 里放了贴图、音频、字体等资源，发布时通常要把资源目录一起带上。常见发布目录结构：
@@ -687,7 +689,7 @@ dist/
 也就是说：
 
 1. 先执行 `cargo build --release`
-2. 拿到 `project/target/release/project.exe`
+2. 拿到 `target/release/project.exe`
 3. 把 `project/assets/` 复制到最终发布目录
 4. 然后把整个目录发给别人运行
 

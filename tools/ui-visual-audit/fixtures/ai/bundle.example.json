@@ -8,15 +8,15 @@
       "device": "phone-portrait",
       "state": "initial",
       "images": {
-        "reference": "project/target/ui-visual-audit/replace/reference.png",
-        "actual": "project/target/ui-visual-audit/replace/actual.png",
-        "overlay": "project/target/ui-visual-audit/replace/overlay.png",
-        "heatmap": "project/target/ui-visual-audit/replace/heatmap.png"
+        "reference": "target/ui-visual-audit/replace/reference.png",
+        "actual": "target/ui-visual-audit/replace/actual.png",
+        "overlay": "target/ui-visual-audit/replace/overlay.png",
+        "heatmap": "target/ui-visual-audit/replace/heatmap.png"
       },
-      "diff_metrics": "project/target/ui-visual-audit/replace/diff-metrics-report.json",
-      "region_metrics": "project/target/ui-visual-audit/replace/region-audit-report.json",
-      "semantic_report": "project/target/ui-visual-audit/replace/semantic-audit-report.json",
-      "ui_metadata": "project/target/ui-visual-audit/replace/capture.metadata.json",
+      "diff_metrics": "target/ui-visual-audit/replace/diff-metrics-report.json",
+      "region_metrics": "target/ui-visual-audit/replace/region-audit-report.json",
+      "semantic_report": "target/ui-visual-audit/replace/semantic-audit-report.json",
+      "ui_metadata": "target/ui-visual-audit/replace/capture.metadata.json",
       "allowed_differences": {
         "profile": "login-default",
         "notes": [

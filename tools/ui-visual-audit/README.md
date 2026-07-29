@@ -1,6 +1,6 @@
 # UI Visual Audit Tool
 
-This development-only crate owns reference manifests and deterministic visual comparison. It is intentionally outside `project/`, has its own Cargo target directory, and has no dependency edge into the game or Android package. Android packages only `project/assets/`, so this executable, its dependencies, fixtures, and reports add no game runtime size or startup work.
+This development-only crate owns reference manifests and deterministic visual comparison. It is intentionally outside `project/`, has no dependency edge into the game or Android package, and shares the repository-root `target/` Cargo cache through `.cargo/config.toml`. Android packages only `project/assets/`, so this executable, its dependencies, fixtures, and reports add no game runtime size or startup work.
 
 ## Reference storage
 
@@ -103,13 +103,13 @@ The run retains full normalized, explicitly cropped, and aligned reference/actua
 ```powershell
 cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- analyze-diff `
   --repository-root . `
-  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-input-root target/ui-visual-audit `
   --allowed-input-root tools/ui-visual-audit/fixtures `
-  --allowed-output-root project/target/ui-visual-audit `
+  --allowed-output-root target/ui-visual-audit `
   --reference <aligned-reference.png> `
   --actual <aligned-actual.png> `
   --config tools/ui-visual-audit/fixtures/comparison/ui-diff-metrics-v1.config.json `
-  --output-directory project/target/ui-visual-audit/<new-run-directory>
+  --output-directory target/ui-visual-audit/<new-run-directory>
 ```
 
 Raw evidence includes per-channel absolute sums, means in channel-unit millionths, maxima, exact changed pixels, configured over-threshold pixels, and a separate alpha section. Tolerated evidence never replaces raw evidence. The default small-noise rule ignores only pixels where every RGBA channel differs by at most 3. The anti-alias rule additionally ignores RGB differences up to 12 only when reference and actual are both fixed-threshold edges at the exact same coordinate and alpha differs by at most 3. It performs no neighbor search, blur, resize, or translation, so a 1-pixel layout or font-position change remains visible.
@@ -135,15 +135,15 @@ Before allocating metric and artifact work buffers, the tool computes the same c
 ```powershell
 cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- audit-regions `
   --repository-root . `
-  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-input-root target/ui-visual-audit `
   --allowed-input-root tools/ui-visual-audit/fixtures `
-  --allowed-output-root project/target/ui-visual-audit `
+  --allowed-output-root target/ui-visual-audit `
   --reference <aligned-reference.png> `
   --actual <aligned-actual.png> `
   --diff-config tools/ui-visual-audit/fixtures/comparison/ui-diff-metrics-v1.config.json `
   --region-config <bound-region-config.json> `
   --normalization-report <normalization-report.json> `
-  --output-directory project/target/ui-visual-audit/<new-region-run>
+  --output-directory target/ui-visual-audit/<new-region-run>
 ```
 
 Every config binds the original reference SHA-256 and positive baseline revision. The hash must equal the reference identity recorded by the supplied normalization report. Every ignore declaration repeats that binding, has a non-empty review reason, and fails when either hash or revision no longer matches the active config. PNG mask shapes additionally bind their own encoded-file SHA-256. This makes a baseline change invalidate stale exclusions instead of silently carrying them forward.
@@ -163,12 +163,12 @@ The report intentionally says `region_local_rules_only_no_global_pass_failed_nee
 ```powershell
 cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- audit-semantics `
   --repository-root . `
-  --allowed-input-root project/target/ui-audit `
+  --allowed-input-root target/ui-audit `
   --allowed-input-root tools/ui-visual-audit/fixtures/semantic `
-  --allowed-output-root project/target/ui-visual-audit `
+  --allowed-output-root target/ui-visual-audit `
   --metadata <capture-metadata.json> `
   --config tools/ui-visual-audit/fixtures/semantic/ui-semantic-audit-v1.config.json `
-  --output-directory project/target/ui-visual-audit/<new-semantic-run>
+  --output-directory target/ui-visual-audit/<new-semantic-run>
 ```
 
 Node bounds are intersected with the viewport and every clipping/scroll ancestor before `fully_clipped` is decided. Invisible, fully clipped, and pure layout nodes are excluded from ordinary rules, while visible zero-size semantic nodes are checked before the clip skip. Text overlap compares only effective visible text measurements in the same panel. The rules cover critical text clipping, safe-area overflow, unreachable scroll content, touch target size, visible/accessibility label evidence, disabled/loading interaction consistency, and overlay z/focus/input behavior.
@@ -186,12 +186,12 @@ Overlay metadata distinguishes the single active focus scope from inactive under
 ```powershell
 cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- analyze-ai `
   --repository-root . `
-  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-input-root target/ui-visual-audit `
   --allowed-input-root tools/ui-visual-audit/fixtures/ai `
-  --allowed-output-root project/target/ui-visual-audit `
+  --allowed-output-root target/ui-visual-audit `
   --bundle <ui-ai-analysis-bundle.json> `
   --config tools/ui-visual-audit/fixtures/ai/fixture.config.json `
-  --output-directory project/target/ui-visual-audit/<new-ai-run>
+  --output-directory target/ui-visual-audit/<new-ai-run>
 ```
 
 The provider output is strict structured JSON: each issue carries `capture_id`, problem type, severity, problem, image evidence, declared region or screenshot bounds, optional reference element and semantic node ID, likely cause, and suggested files. The adapter rejects unknown fields, nonexistent capture/image/region/node references, out-of-bounds rectangles, and files not present in capture source evidence. Provider output has no pass or hard-failure downgrade field. Every deterministic semantic finding is copied unchanged into `deterministic_hard_failures`, while AI may add explanation or higher-severity issues. Stage 9 still owns the aggregate state and score gate.
@@ -218,12 +218,12 @@ Do not run the online sample on captures containing production account data or u
 ```powershell
 cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- evaluate-gate `
   --repository-root . `
-  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-input-root target/ui-visual-audit `
   --allowed-input-root tools/ui-visual-audit/fixtures `
-  --allowed-output-root project/target/ui-visual-audit `
+  --allowed-output-root target/ui-visual-audit `
   --bundle <ui-visual-gate-bundle.json> `
   --config tools/ui-visual-audit/fixtures/gate/conservative.config.json `
-  --output-directory project/target/ui-visual-audit/<new-gate-run>
+  --output-directory target/ui-visual-audit/<new-gate-run>
 ```
 
 The terminal states and process exit codes are `passed`/`0`, `needs_review`/`3`, `failed`/`4`, and `invalid`/`2`. Stable primary failure priority is invalid evidence, dimension mismatch, semantic hard failure, critical-region failure, severe AI issue, normal-region failure, medium AI issue, then decorative-region review. Severe and medium AI issues block; minor issues are retained but never block automatically. Critical and normal region failures block independently, while a decorative-only failure requests review. AI is optional and cannot downgrade deterministic evidence.
@@ -242,7 +242,7 @@ Gate config, bundle, and reports use strict unknown-field rejection. Capture/pro
 cargo run --manifest-path tools/ui-visual-audit/Cargo.toml -- build-report `
   --repository-root . `
   --allowed-input-root summary/ui-audit `
-  --allowed-input-root project/target/ui-visual-audit `
+  --allowed-input-root target/ui-visual-audit `
   --allowed-output-root summary/ui-audit `
   --bundle <comparison-input.json> `
   --output-directory summary/ui-audit/<run-id>/comparison

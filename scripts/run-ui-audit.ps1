@@ -4691,7 +4691,7 @@ function Invoke-UiAuditVisualTool {
     New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
     $logPath = Join-FullPath $logDirectory "$LogName.log"
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $cacheBinary = Join-FullPath $RepositoryRoot "tools/ui-visual-audit/target/debug/ui-visual-audit.exe"
+    $cacheBinary = Join-FullPath $RepositoryRoot "target/debug/ui-visual-audit.exe"
     $cacheStatus = if (Test-Path -LiteralPath $cacheBinary -PathType Leaf) { "UI visual audit cache hit: $cacheBinary" } else { "UI visual audit cache cold; cargo will build $Command" }
     Write-Host $cacheStatus
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -7617,8 +7617,10 @@ function Invoke-UiAuditSelfTest {
         Assert-SelfTest ([bool]$allowedPath.allowed) "fix safety allows screen-local UI path"
         $forbiddenSummary = Test-UiAuditFixPathAllowed -RepoRoot $repoRoot -PathValue "summary/ui-audit/bad.rs" -Policy $policy
         Assert-SelfTest (-not [bool]$forbiddenSummary.allowed -and $forbiddenSummary.reason -like "forbidden_root:*") "fix safety rejects audit artifact path"
-        $forbiddenTarget = Test-UiAuditFixPathAllowed -RepoRoot $repoRoot -PathValue "project/target/debug/build-output.rs" -Policy $policy
-        Assert-SelfTest (-not [bool]$forbiddenTarget.allowed) "fix safety rejects build output path"
+        $forbiddenSharedTarget = Test-UiAuditFixPathAllowed -RepoRoot $repoRoot -PathValue "target/debug/build-output.rs" -Policy $policy
+        Assert-SelfTest (-not [bool]$forbiddenSharedTarget.allowed) "fix safety rejects shared target build output path"
+        $forbiddenProjectTarget = Test-UiAuditFixPathAllowed -RepoRoot $repoRoot -PathValue "project/target/debug/build-output.rs" -Policy $policy
+        Assert-SelfTest (-not [bool]$forbiddenProjectTarget.allowed) "fix safety rejects legacy project target build output path"
         $forbiddenEnv = Test-UiAuditFixPathAllowed -RepoRoot $repoRoot -PathValue ".env" -Policy $policy
         Assert-SelfTest (-not [bool]$forbiddenEnv.allowed) "fix safety rejects env files"
 
