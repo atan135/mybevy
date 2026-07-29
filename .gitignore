@@ -1,4 +1,5 @@
 # Rust / Bevy build artifacts
+/target/
 /project/target/
 /tools/ui-generation/target/
 /tools/ui-visual-audit/target/
