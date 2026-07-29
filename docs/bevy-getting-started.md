@@ -41,6 +41,14 @@ cargo --version
 
 仓库根 `.cargo/config.toml` 将所有 Cargo 清单的构建输出统一到根 `target/`。因此即使在 `project/` 目录执行 `cargo run` 或 `cargo build`，桌面二进制也会位于仓库根的 `target/debug/` 或 `target/release/`。常规开发不要设置 `CARGO_TARGET_DIR`；脚本或 CI 必须显式设置时，只能将其设为仓库根 `target/`，不要使用清单本地的独立缓存。
 
+共享 `target/` 的清理必须由仓库根脚本控制：`pwsh -File scripts/clear-shared-cargo-target.ps1` 默认只预演，实际删除还需要 `-Execute -ConfirmSharedTargetCleanup`。`-IncrementalOnly` 可仅预演或清理 `target/debug/incremental`，适用于 stale incremental 缓存。正在运行游戏、Cargo/Rust 编译或测试、UI 工具，或 Android Gradle/Java/ADB 构建时禁止清理；脚本会在预演和实际删除前检查这些进程。
+
+当前配置下，从任一 Cargo 根执行 `cargo clean` 都会影响同一个根 `target/`，因此也会使其他 Cargo 根失去缓存。仅在根 `target/` 超过 35 GiB、磁盘空间紧张或完成发布/大型分支后人工检查，优先处理 stale incremental；不要在每次构建前清空缓存。
+
+遇到 `Blocking waiting for file lock` 时，先观察另一条 Cargo 命令是否仍有 CPU、磁盘或日志进展，这是正常排队。若无进展，检查遗留 `cargo`、`rustc`、`link`、游戏和 UI 工具进程；只有进程均已结束且等待持续、产物和日志都不再变化时，才按可能死锁保留信息并重新启动构建，不要先清理缓存。
+
+如需回滚，移除根 `.cargo/config.toml`，恢复 `.gitignore`、脚本和现行文档中的本地 `target/` 路径，再删除根共享缓存，最后分别在 `project/`、`tools/ui-generation/` 与 `tools/ui-visual-audit/` 重建。这个过程不要求改 Rust 源码、锁文件或 UI 工具与正式包的依赖方向，且删除后的旧 `target` 路径不应被视为仍在使用的共享缓存。
+
 方式一：先进入 `project/` 再初始化
 
 ```powershell

@@ -52,6 +52,8 @@
 
 - 所有 Rust 和 Bevy 相关命令默认在 `project/` 目录执行
 - 仓库根 `.cargo/config.toml` 将所有 Cargo 清单的构建输出统一到仓库根 `target/`；常规命令不要单独设置 `CARGO_TARGET_DIR`，自动化如必须显式设置则只能指向该根目录缓存，不能恢复清单本地的独立缓存
+- 共享缓存默认使用 `scripts/clear-shared-cargo-target.ps1` 预演；只有在所有 Cargo/Rust、游戏、UI 工具、测试和 Android Gradle/Java/ADB 进程停止后，才能使用 `-Execute -ConfirmSharedTargetCleanup` 删除。当前配置下任一 Cargo 根的 `cargo clean` 都会影响全部共享缓存；磁盘压力或发布后优先人工清理 stale `target/debug/incremental`，不要在每次构建前清空 `target/`
+- 出现共享 Cargo 锁等待时，先确认其他 Cargo 是否仍有 CPU、磁盘或日志进展；无进展时排查遗留 `cargo`、`rustc`、`link`、游戏和 UI 工具进程，只有所有进程结束且等待持续、产物不变时才按可能死锁重新启动构建。回滚时移除根 `.cargo/config.toml`，恢复 `.gitignore`、脚本和文档路径，删除根缓存并分别重建三个 Cargo 根；不改源码、锁文件或工具依赖方向
 - 新增游戏功能时，优先把逻辑放进 `project/src/` 下的模块，而不是持续堆在 `main.rs`
 - UI 页面结构放在 `project/src/game/screens/`，具体玩法放在 `project/src/game/features/`，具体游戏场景注册和适配放在 `project/src/game/scenes/`，UI 框架能力放在 `project/src/framework/ui/`
 - UI 通用控件放在 `project/src/framework/ui/widgets/`，颜色、字号、间距、圆角等可微调参数集中放在 `project/src/framework/ui/style/theme.rs`
