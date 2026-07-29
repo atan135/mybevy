@@ -15,9 +15,9 @@ pub const UI_APPROVED_DOCUMENT_REGISTRATION_PROTOCOL_VERSION: u32 = 1;
 const REGISTRATION_KIND: &str = "ui_document_promotion_registration";
 const REGISTRATION_TEMPLATE_VERSION: u32 = 1;
 const REQUIRED_AUDIT_PROFILES: [&str; 4] = [
-    "phone-small",
-    "phone-portrait",
-    "tablet-portrait",
+    "desktop",
+    "phone-landscape",
+    "phone-1080p-landscape",
     "tablet-landscape",
 ];
 
@@ -296,7 +296,7 @@ mod tests {
       "panel": "page",
       "layer": "page",
       "page_state": "initial",
-      "audit_profiles": ["phone-small", "phone-portrait", "tablet-portrait", "tablet-landscape"],
+      "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
       "i18n_keys": [],
       "theme_tokens": [],
       "action_or_binding_registration": []
@@ -386,9 +386,9 @@ mod tests {
         assert_eq!(
             registration.audit_profiles(),
             [
-                "phone-small",
-                "phone-portrait",
-                "tablet-portrait",
+                "desktop",
+                "phone-landscape",
+                "phone-1080p-landscape",
                 "tablet-landscape"
             ]
         );
@@ -498,10 +498,10 @@ mod tests {
         assert_eq!(
             recipe.profiles,
             [
-                "phone-portrait",
-                "phone-small",
-                "tablet-landscape",
-                "tablet-portrait"
+                "desktop",
+                "phone-1080p-landscape",
+                "phone-landscape",
+                "tablet-landscape"
             ]
         );
 

@@ -41,9 +41,9 @@ pub(super) fn setup_ui_document_gallery(
             watch: true,
             open_on_register: true,
             audit_profiles: vec![
-                "phone-small".to_owned(),
-                "phone-portrait".to_owned(),
-                "tablet-portrait".to_owned(),
+                "desktop".to_owned(),
+                "phone-landscape".to_owned(),
+                "phone-1080p-landscape".to_owned(),
                 "tablet-landscape".to_owned(),
             ],
         },

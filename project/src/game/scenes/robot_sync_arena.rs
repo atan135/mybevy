@@ -873,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn robot_sync_arena_fixed_camera_covers_phone_portrait_bounds_and_spawns() {
+    fn robot_sync_arena_fixed_camera_covers_portrait_and_landscape_bounds_and_spawns() {
         let manifest =
             SceneManifest::load_first_package_ron(ROBOT_SYNC_ARENA_SCENE_MANIFEST_PATH).unwrap();
         let layout =
@@ -889,7 +889,6 @@ mod tests {
             panic!("robot sync arena camera should use a perspective 3D projection");
         };
 
-        let aspect_ratio = 1280.0 / 2772.0;
         let world_min = arena_world_min(&layout.arena.min);
         let world_max = arena_world_max(&layout.arena.max);
         let mut points = vec![
@@ -910,18 +909,23 @@ mod tests {
             Vec3::new(position.x, 0.0, position.y)
         }));
 
-        for point in points {
-            assert!(
-                point_is_inside_camera_frustum(
-                    camera_config.transform,
-                    fov_y_radians,
-                    aspect_ratio,
-                    near,
-                    far,
-                    point,
-                ),
-                "point {point:?} should be visible from the fixed robot sync camera"
-            );
+        for (profile, aspect_ratio) in [
+            ("phone portrait", 1280.0 / 2772.0),
+            ("phone landscape", 16.0 / 9.0),
+        ] {
+            for point in &points {
+                assert!(
+                    point_is_inside_camera_frustum(
+                        camera_config.transform,
+                        fov_y_radians,
+                        aspect_ratio,
+                        near,
+                        far,
+                        *point,
+                    ),
+                    "point {point:?} should be visible from the fixed robot sync camera in {profile}"
+                );
+            }
         }
     }
 

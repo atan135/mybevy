@@ -92,11 +92,18 @@ $script:MaxUiAuditDeterministicHardFailures = 1024
 
 $script:BasicDevices = @(
     "desktop",
+    "phone-landscape",
+    "phone-1080p-landscape",
+    "tablet-landscape"
+)
+
+$script:SupportedDevices = @(
+    $script:BasicDevices + @(
     "phone-small",
     "phone-portrait",
     "phone-1080p",
-    "tablet-portrait",
-    "tablet-landscape"
+    "tablet-portrait"
+    )
 )
 
 $script:KnownScreens = @(
@@ -276,8 +283,8 @@ function Resolve-UiAuditDevices {
     $resolved = New-Object System.Collections.Generic.List[string]
     foreach ($token in $tokens) {
         $device = $token.Trim().ToLowerInvariant()
-        if ($device -notin $script:BasicDevices) {
-            throw "Unknown UI audit device '$token'. Known devices: $($script:BasicDevices -join ', ')"
+        if ($device -notin $script:SupportedDevices) {
+            throw "Unknown UI audit device '$token'. Known devices: $($script:SupportedDevices -join ', ')"
         }
 
         if (-not $resolved.Contains($device)) {
@@ -324,6 +331,8 @@ function Get-UiAuditDeterministicProfile {
 
     switch ($Device) {
         "desktop" { return [pscustomobject]@{ logical_width = 1280.0; logical_height = 720.0; physical_width = 1280; physical_height = 720; device_scale = 1.0 } }
+        "phone-landscape" { return [pscustomobject]@{ logical_width = 800.0; logical_height = 360.0; physical_width = 1600; physical_height = 720; device_scale = 2.0 } }
+        "phone-1080p-landscape" { return [pscustomobject]@{ logical_width = 800.0; logical_height = 360.0; physical_width = 2400; physical_height = 1080; device_scale = 3.0 } }
         "phone-portrait" { return [pscustomobject]@{ logical_width = (1280.0 / 3.25); logical_height = (2772.0 / 3.25); physical_width = 1280; physical_height = 2772; device_scale = 3.25 } }
         "phone-1080p" { return [pscustomobject]@{ logical_width = 360.0; logical_height = 800.0; physical_width = 1080; physical_height = 2400; device_scale = 3.0 } }
         "phone-small" { return [pscustomobject]@{ logical_width = 360.0; logical_height = 800.0; physical_width = 720; physical_height = 1600; device_scale = 2.0 } }

@@ -47,7 +47,9 @@ impl WindowSize {
 pub(crate) enum WindowProfile {
     Desktop,
     PhonePortrait,
+    PhoneLandscape,
     Phone1080p,
+    Phone1080pLandscape,
     PhoneSmall,
     TabletPortrait,
     TabletLandscape,
@@ -66,10 +68,20 @@ impl WindowProfile {
                 3.25,
                 WindowSafeAreaInsets::new(0.0, 0.0, 24.0, 20.0),
             ),
+            Self::PhoneLandscape => WindowDevicePreset::new(
+                WindowSize::new(1600, 720),
+                2.0,
+                WindowSafeAreaInsets::new(24.0, 24.0, 0.0, 0.0),
+            ),
             Self::Phone1080p => WindowDevicePreset::new(
                 WindowSize::new(1080, 2400),
                 3.0,
                 WindowSafeAreaInsets::new(0.0, 0.0, 24.0, 24.0),
+            ),
+            Self::Phone1080pLandscape => WindowDevicePreset::new(
+                WindowSize::new(2400, 1080),
+                3.0,
+                WindowSafeAreaInsets::new(24.0, 24.0, 0.0, 0.0),
             ),
             Self::PhoneSmall => WindowDevicePreset::new(
                 WindowSize::new(720, 1600),
@@ -93,7 +105,9 @@ impl WindowProfile {
         match value.trim().to_ascii_lowercase().as_str() {
             "desktop" => Some(Self::Desktop),
             "phone-portrait" => Some(Self::PhonePortrait),
+            "phone-landscape" => Some(Self::PhoneLandscape),
             "phone-1080p" => Some(Self::Phone1080p),
+            "phone-1080p-landscape" => Some(Self::Phone1080pLandscape),
             "phone-small" => Some(Self::PhoneSmall),
             "tablet-portrait" => Some(Self::TabletPortrait),
             "tablet-landscape" => Some(Self::TabletLandscape),
@@ -372,7 +386,9 @@ fn inferred_device_preset(size: WindowSize) -> Option<WindowDevicePreset> {
     [
         WindowProfile::Desktop,
         WindowProfile::PhonePortrait,
+        WindowProfile::PhoneLandscape,
         WindowProfile::Phone1080p,
+        WindowProfile::Phone1080pLandscape,
         WindowProfile::PhoneSmall,
         WindowProfile::TabletPortrait,
         WindowProfile::TabletLandscape,
@@ -409,8 +425,16 @@ mod tests {
             Some(WindowSize::new(1280, 2772))
         );
         assert_eq!(
+            WindowProfile::parse("phone-landscape").map(|profile| profile.preset().size),
+            Some(WindowSize::new(1600, 720))
+        );
+        assert_eq!(
             WindowProfile::parse("phone-1080p").map(|profile| profile.preset().size),
             Some(WindowSize::new(1080, 2400))
+        );
+        assert_eq!(
+            WindowProfile::parse("phone-1080p-landscape").map(|profile| profile.preset().size),
+            Some(WindowSize::new(2400, 1080))
         );
         assert_eq!(
             WindowProfile::parse("phone-small").map(|profile| profile.preset().size),

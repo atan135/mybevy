@@ -375,9 +375,9 @@ pub fn create_promotion_plan(
         layer: "page".to_owned(),
         page_state: "initial".to_owned(),
         audit_profiles: vec![
-            "phone-small".to_owned(),
-            "phone-portrait".to_owned(),
-            "tablet-portrait".to_owned(),
+            "desktop".to_owned(),
+            "phone-landscape".to_owned(),
+            "phone-1080p-landscape".to_owned(),
             "tablet-landscape".to_owned(),
         ],
         // Stage 7 refuses generated i18n/action/binding fields. Page-local JSON tokens stay in

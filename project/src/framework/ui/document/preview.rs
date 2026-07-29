@@ -822,7 +822,10 @@ fn normalized_audit_profiles(profiles: &[String]) -> Vec<String> {
         .filter(|profile| {
             matches!(
                 profile.as_str(),
-                "phone-small"
+                "desktop"
+                    | "phone-landscape"
+                    | "phone-1080p-landscape"
+                    | "phone-small"
                     | "phone-portrait"
                     | "phone-1080p"
                     | "tablet-portrait"
@@ -835,9 +838,9 @@ fn normalized_audit_profiles(profiles: &[String]) -> Vec<String> {
         .collect::<Vec<_>>();
     if result.is_empty() {
         result = vec![
-            "phone-small".to_owned(),
-            "phone-portrait".to_owned(),
-            "tablet-portrait".to_owned(),
+            "desktop".to_owned(),
+            "phone-landscape".to_owned(),
+            "phone-1080p-landscape".to_owned(),
             "tablet-landscape".to_owned(),
         ];
     }
@@ -2098,9 +2101,17 @@ mod tests {
     fn ui_document_audit_profiles_are_allowlisted_and_defaulted() {
         assert_eq!(
             normalized_audit_profiles(&["desktop".to_owned(), "phone-small".to_owned()]),
-            vec!["phone-small"]
+            vec!["desktop", "phone-small"]
         );
-        assert!(normalized_audit_profiles(&[]).contains(&"tablet-landscape".to_owned()));
+        assert_eq!(
+            normalized_audit_profiles(&[]),
+            vec![
+                "desktop",
+                "phone-landscape",
+                "phone-1080p-landscape",
+                "tablet-landscape"
+            ]
+        );
     }
 
     #[test]

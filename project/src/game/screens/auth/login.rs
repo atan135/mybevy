@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::framework::ui::{
     core::{
-        UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport,
+        UiLayer, UiLayerRoot, UiMetrics, UiOrientation, UiPanelKind, UiViewport,
         binding::{UiBindingValues, UiBoundText},
         focus::UiFocusState,
     },
@@ -215,10 +215,13 @@ pub(super) fn setup_login_screen(
 ) {
     let theme = theme.into_inner();
     let metrics = metrics.into_inner();
+    let viewport = viewport.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
     let subtitle = i18n.tr(LOGIN_SUBTITLE_BINDING_PATH, LOGIN_SUBTITLE_FALLBACK);
+    let panel_width = auth_panel_width(viewport, theme, metrics);
+    let panel_gap = auth_panel_gap(viewport, theme);
     binding_values.set_text(LOGIN_SUBTITLE_BINDING_PATH, subtitle.clone());
     commands
         .spawn((
@@ -244,11 +247,11 @@ pub(super) fn setup_login_screen(
                 UiThemePanelNodeRole::Standard,
                 Node {
                     width: percent(100),
-                    max_width: px(theme.layout.auth_panel_width),
+                    max_width: px(panel_width),
                     align_self: AlignSelf::FlexStart,
                     flex_direction: FlexDirection::Column,
-                    row_gap: px(theme.layout.panel_gap),
-                    padding: UiRect::all(px(theme.panel.padding)),
+                    row_gap: px(panel_gap),
+                    padding: UiRect::all(px(auth_panel_padding(viewport, theme, metrics))),
                     border: UiRect::all(px(theme.panel.border)),
                     border_radius: BorderRadius::all(px(theme.panel.radius)),
                     ..default()
@@ -314,10 +317,13 @@ pub(super) fn setup_character_select_screen(
 
     let theme = theme.into_inner();
     let metrics = metrics.into_inner();
+    let viewport = viewport.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
     let subtitle = i18n.tr(CHARACTER_SUBTITLE_BINDING_PATH, CHARACTER_SUBTITLE_FALLBACK);
+    let panel_width = auth_panel_width(viewport, theme, metrics);
+    let panel_gap = auth_panel_gap(viewport, theme);
     binding_values.set_text(CHARACTER_SUBTITLE_BINDING_PATH, subtitle.clone());
 
     commands
@@ -348,11 +354,11 @@ pub(super) fn setup_character_select_screen(
                 UiThemePanelNodeRole::Standard,
                 Node {
                     width: percent(100),
-                    max_width: px(theme.layout.auth_panel_width),
+                    max_width: px(panel_width),
                     align_self: AlignSelf::FlexStart,
                     flex_direction: FlexDirection::Column,
-                    row_gap: px(theme.layout.panel_gap),
-                    padding: UiRect::all(px(theme.panel.padding)),
+                    row_gap: px(panel_gap),
+                    padding: UiRect::all(px(auth_panel_padding(viewport, theme, metrics))),
                     border: UiRect::all(px(theme.panel.border)),
                     border_radius: BorderRadius::all(px(theme.panel.radius)),
                     ..default()
@@ -487,6 +493,30 @@ fn spawn_auth_form_section(
                     );
                 });
         });
+}
+
+fn auth_panel_width(viewport: &UiViewport, theme: &UiTheme, metrics: &UiMetrics) -> f32 {
+    if viewport.orientation == UiOrientation::Landscape {
+        theme.layout.content_width.min(metrics.content_max_width)
+    } else {
+        theme.layout.auth_panel_width
+    }
+}
+
+fn auth_panel_gap(viewport: &UiViewport, theme: &UiTheme) -> f32 {
+    if viewport.orientation == UiOrientation::Landscape && viewport.logical_height < 600.0 {
+        theme.layout.row_gap
+    } else {
+        theme.layout.panel_gap
+    }
+}
+
+fn auth_panel_padding(viewport: &UiViewport, theme: &UiTheme, metrics: &UiMetrics) -> f32 {
+    if viewport.orientation == UiOrientation::Landscape && viewport.logical_height < 600.0 {
+        metrics.panel_padding
+    } else {
+        theme.panel.padding
+    }
 }
 
 fn spawn_dynamic_auth_children(

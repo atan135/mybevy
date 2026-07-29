@@ -279,7 +279,7 @@ try {
             "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/run-ui-audit.ps1",
             "-RunId", $desktopRunId,
             "-Screens", "ui-gallery",
-            "-Devices", "phone-small,phone-portrait,tablet-portrait,tablet-landscape",
+            "-Devices", "phone-landscape,phone-1080p-landscape,tablet-landscape",
             "-States", "visual_acceptance,middle,bottom",
             "-DeterministicCapture", "-RepeatCaptures", "2", "-AnalysisMode", "Fixture",
             "-AnalysisResultPath", "tools/ui-visual-audit/fixtures/ai/fixture-response.json"

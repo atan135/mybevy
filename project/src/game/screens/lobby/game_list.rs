@@ -20,8 +20,9 @@ use crate::framework::{
             },
         },
         widgets::{
-            UiButtonEvent, UiButtonEventKind, primary_action_button_key, screen_label_key,
-            screen_title_key, secondary_action_button_key,
+            UiButtonEvent, UiButtonEventKind, UiResponsiveGridColumns, primary_action_button_key,
+            screen_label_key, screen_title_key, secondary_action_button_key, ui_adaptive_grid,
+            ui_scroll_column,
         },
     },
 };
@@ -127,6 +128,7 @@ pub(super) fn setup_game_list_screen(
 ) {
     let theme = theme.into_inner();
     let metrics = metrics.into_inner();
+    let viewport = viewport.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
     clear_color.0 = theme.colors.screen_background;
@@ -242,339 +244,369 @@ pub(super) fn setup_game_list_screen(
                 ],
             ),
             (
-                UiThemePanelNodeRole::Content,
-                Node {
-                    width: percent(100),
-                    max_width: px(theme.layout.content_width),
-                    align_self: AlignSelf::Center,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(theme.layout.card_gap),
-                    padding: UiRect::all(px(theme.layout.panel_gap)),
-                    border: UiRect::all(px(theme.panel.border)),
-                    border_radius: BorderRadius::all(px(theme.panel.radius)),
-                    ..default()
-                },
-                BackgroundColor(theme.colors.panel_background),
-                BorderColor::all(theme.colors.panel_border),
-                UiThemeBackgroundRole::Panel,
-                UiThemeBorderRole::Panel,
-                children![
-                    screen_label_key(
-                        theme,
-                        fonts,
-                        i18n,
-                        "lobby.available",
-                        "Available",
-                        UiThemeTextStyleRole::SectionLabel,
-                        UiThemeTextColorRole::Muted,
-                    ),
-                    (
-                        Node {
-                            width: percent(100),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::SpaceBetween,
-                            column_gap: px(theme.layout.row_column_gap),
-                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
-                            ..default()
-                        },
-                        children![
-                            (
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: px(theme.layout.row_gap),
-                                    flex_grow: 1.0,
-                                    ..default()
-                                },
-                                children![
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.touch_ripple.title",
-                                        "Touch Ripple",
-                                        UiThemeTextStyleRole::Body,
-                                        UiThemeTextColorRole::Primary,
-                                    ),
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.touch_ripple.description",
-                                        "Current prototype",
-                                        UiThemeTextStyleRole::Caption,
-                                        UiThemeTextColorRole::Muted,
-                                    ),
-                                ],
+                ui_scroll_column(theme),
+                children![(
+                    UiThemePanelNodeRole::Content,
+                    Node {
+                        width: percent(100),
+                        max_width: px(theme.layout.content_width),
+                        align_self: AlignSelf::Center,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(theme.layout.card_gap),
+                        padding: UiRect::all(px(theme.layout.panel_gap)),
+                        border: UiRect::all(px(theme.panel.border)),
+                        border_radius: BorderRadius::all(px(theme.panel.radius)),
+                        ..default()
+                    },
+                    BackgroundColor(theme.colors.panel_background),
+                    BorderColor::all(theme.colors.panel_border),
+                    UiThemeBackgroundRole::Panel,
+                    UiThemeBorderRole::Panel,
+                    children![
+                        screen_label_key(
+                            theme,
+                            fonts,
+                            i18n,
+                            "lobby.available",
+                            "Available",
+                            UiThemeTextStyleRole::SectionLabel,
+                            UiThemeTextColorRole::Muted,
+                        ),
+                        (
+                            ui_adaptive_grid(
+                                metrics,
+                                viewport,
+                                UiResponsiveGridColumns::new(1, 2, 3),
                             ),
-                            (
-                                primary_action_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "lobby.play",
-                                    "Play",
+                            children![
+                                (
+                                    Node {
+                                        width: percent(100),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        column_gap: px(theme.layout.row_column_gap),
+                                        padding: UiRect::axes(
+                                            px(0),
+                                            px(theme.layout.row_padding_y)
+                                        ),
+                                        ..default()
+                                    },
+                                    children![
+                                        (
+                                            Node {
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: px(theme.layout.row_gap),
+                                                flex_grow: 1.0,
+                                                ..default()
+                                            },
+                                            children![
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.touch_ripple.title",
+                                                    "Touch Ripple",
+                                                    UiThemeTextStyleRole::Body,
+                                                    UiThemeTextColorRole::Primary,
+                                                ),
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.touch_ripple.description",
+                                                    "Current prototype",
+                                                    UiThemeTextStyleRole::Caption,
+                                                    UiThemeTextColorRole::Muted,
+                                                ),
+                                            ],
+                                        ),
+                                        (
+                                            primary_action_button_key(
+                                                theme,
+                                                metrics,
+                                                fonts,
+                                                i18n,
+                                                "lobby.play",
+                                                "Play",
+                                            ),
+                                            TouchRipplePlayButton,
+                                        ),
+                                    ],
                                 ),
-                                TouchRipplePlayButton,
-                            ),
-                        ],
-                    ),
-                    (
-                        Node {
-                            width: percent(100),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::SpaceBetween,
-                            column_gap: px(theme.layout.row_column_gap),
-                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
-                            ..default()
-                        },
-                        children![
-                            (
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: px(theme.layout.row_gap),
-                                    flex_grow: 1.0,
-                                    ..default()
-                                },
-                                children![
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.lockstep_sim_scene.title",
-                                        "Lockstep Sim",
-                                        UiThemeTextStyleRole::Body,
-                                        UiThemeTextColorRole::Primary,
-                                    ),
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.lockstep_sim_scene.description",
-                                        "Shared deterministic simulation arena",
-                                        UiThemeTextStyleRole::Caption,
-                                        UiThemeTextColorRole::Muted,
-                                    ),
-                                ],
-                            ),
-                            (
-                                primary_action_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "lobby.enter",
-                                    "Enter",
+                                (
+                                    Node {
+                                        width: percent(100),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        column_gap: px(theme.layout.row_column_gap),
+                                        padding: UiRect::axes(
+                                            px(0),
+                                            px(theme.layout.row_padding_y)
+                                        ),
+                                        ..default()
+                                    },
+                                    children![
+                                        (
+                                            Node {
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: px(theme.layout.row_gap),
+                                                flex_grow: 1.0,
+                                                ..default()
+                                            },
+                                            children![
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.lockstep_sim_scene.title",
+                                                    "Lockstep Sim",
+                                                    UiThemeTextStyleRole::Body,
+                                                    UiThemeTextColorRole::Primary,
+                                                ),
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.lockstep_sim_scene.description",
+                                                    "Shared deterministic simulation arena",
+                                                    UiThemeTextStyleRole::Caption,
+                                                    UiThemeTextColorRole::Muted,
+                                                ),
+                                            ],
+                                        ),
+                                        (
+                                            primary_action_button_key(
+                                                theme,
+                                                metrics,
+                                                fonts,
+                                                i18n,
+                                                "lobby.enter",
+                                                "Enter",
+                                            ),
+                                            LockstepSimArenaPlayButton,
+                                        ),
+                                    ],
                                 ),
-                                LockstepSimArenaPlayButton,
-                            ),
-                        ],
-                    ),
-                    (
-                        Node {
-                            width: percent(100),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::SpaceBetween,
-                            column_gap: px(theme.layout.row_column_gap),
-                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
-                            ..default()
-                        },
-                        children![
-                            (
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: px(theme.layout.row_gap),
-                                    flex_grow: 1.0,
-                                    ..default()
-                                },
-                                children![
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.sample_scene.title",
-                                        "Sample Scene",
-                                        UiThemeTextStyleRole::Body,
-                                        UiThemeTextColorRole::Primary,
-                                    ),
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.sample_scene.description",
-                                        "Dungeon room scene prototype",
-                                        UiThemeTextStyleRole::Caption,
-                                        UiThemeTextColorRole::Muted,
-                                    ),
-                                ],
-                            ),
-                            (
-                                primary_action_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "lobby.enter",
-                                    "Enter",
+                                (
+                                    Node {
+                                        width: percent(100),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        column_gap: px(theme.layout.row_column_gap),
+                                        padding: UiRect::axes(
+                                            px(0),
+                                            px(theme.layout.row_padding_y)
+                                        ),
+                                        ..default()
+                                    },
+                                    children![
+                                        (
+                                            Node {
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: px(theme.layout.row_gap),
+                                                flex_grow: 1.0,
+                                                ..default()
+                                            },
+                                            children![
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.sample_scene.title",
+                                                    "Sample Scene",
+                                                    UiThemeTextStyleRole::Body,
+                                                    UiThemeTextColorRole::Primary,
+                                                ),
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.sample_scene.description",
+                                                    "Dungeon room scene prototype",
+                                                    UiThemeTextStyleRole::Caption,
+                                                    UiThemeTextColorRole::Muted,
+                                                ),
+                                            ],
+                                        ),
+                                        (
+                                            primary_action_button_key(
+                                                theme,
+                                                metrics,
+                                                fonts,
+                                                i18n,
+                                                "lobby.enter",
+                                                "Enter",
+                                            ),
+                                            SampleDungeonRoomPlayButton,
+                                        ),
+                                    ],
                                 ),
-                                SampleDungeonRoomPlayButton,
-                            ),
-                        ],
-                    ),
-                    (
-                        Node {
-                            width: percent(100),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::SpaceBetween,
-                            column_gap: px(theme.layout.row_column_gap),
-                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
-                            ..default()
-                        },
-                        children![
-                            (
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: px(theme.layout.row_gap),
-                                    flex_grow: 1.0,
-                                    ..default()
-                                },
-                                children![
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.robot_sync_scene.title",
-                                        "Robot Sync",
-                                        UiThemeTextStyleRole::Body,
-                                        UiThemeTextColorRole::Primary,
-                                    ),
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.robot_sync_scene.description",
-                                        "500x500 authority frame robot arena",
-                                        UiThemeTextStyleRole::Caption,
-                                        UiThemeTextColorRole::Muted,
-                                    ),
-                                ],
-                            ),
-                            (
-                                primary_action_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "lobby.enter",
-                                    "Enter",
+                                (
+                                    Node {
+                                        width: percent(100),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        column_gap: px(theme.layout.row_column_gap),
+                                        padding: UiRect::axes(
+                                            px(0),
+                                            px(theme.layout.row_padding_y)
+                                        ),
+                                        ..default()
+                                    },
+                                    children![
+                                        (
+                                            Node {
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: px(theme.layout.row_gap),
+                                                flex_grow: 1.0,
+                                                ..default()
+                                            },
+                                            children![
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.robot_sync_scene.title",
+                                                    "Robot Sync",
+                                                    UiThemeTextStyleRole::Body,
+                                                    UiThemeTextColorRole::Primary,
+                                                ),
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.robot_sync_scene.description",
+                                                    "500x500 authority frame robot arena",
+                                                    UiThemeTextStyleRole::Caption,
+                                                    UiThemeTextColorRole::Muted,
+                                                ),
+                                            ],
+                                        ),
+                                        (
+                                            primary_action_button_key(
+                                                theme,
+                                                metrics,
+                                                fonts,
+                                                i18n,
+                                                "lobby.enter",
+                                                "Enter",
+                                            ),
+                                            RobotSyncArenaPlayButton,
+                                        ),
+                                    ],
                                 ),
-                                RobotSyncArenaPlayButton,
-                            ),
-                        ],
-                    ),
-                    (
-                        Node {
-                            width: percent(100),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::SpaceBetween,
-                            column_gap: px(theme.layout.row_column_gap),
-                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
-                            ..default()
-                        },
-                        children![
-                            (
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: px(theme.layout.row_gap),
-                                    flex_grow: 1.0,
-                                    ..default()
-                                },
-                                children![
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.fangyuan_home.title",
-                                        "方圆灵构家园原型",
-                                        UiThemeTextStyleRole::Body,
-                                        UiThemeTextColorRole::Primary,
-                                    ),
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.fangyuan_home.description",
-                                        "蓝图家园场景预览",
-                                        UiThemeTextStyleRole::Caption,
-                                        UiThemeTextColorRole::Muted,
-                                    ),
-                                ],
-                            ),
-                            (
-                                primary_action_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "lobby.enter",
-                                    "Enter",
+                                (
+                                    Node {
+                                        width: percent(100),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        column_gap: px(theme.layout.row_column_gap),
+                                        padding: UiRect::axes(
+                                            px(0),
+                                            px(theme.layout.row_padding_y)
+                                        ),
+                                        ..default()
+                                    },
+                                    children![
+                                        (
+                                            Node {
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: px(theme.layout.row_gap),
+                                                flex_grow: 1.0,
+                                                ..default()
+                                            },
+                                            children![
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.fangyuan_home.title",
+                                                    "方圆灵构家园原型",
+                                                    UiThemeTextStyleRole::Body,
+                                                    UiThemeTextColorRole::Primary,
+                                                ),
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.fangyuan_home.description",
+                                                    "蓝图家园场景预览",
+                                                    UiThemeTextStyleRole::Caption,
+                                                    UiThemeTextColorRole::Muted,
+                                                ),
+                                            ],
+                                        ),
+                                        (
+                                            primary_action_button_key(
+                                                theme,
+                                                metrics,
+                                                fonts,
+                                                i18n,
+                                                "lobby.enter",
+                                                "Enter",
+                                            ),
+                                            FangyuanHomePlayButton,
+                                        ),
+                                    ],
                                 ),
-                                FangyuanHomePlayButton,
-                            ),
-                        ],
-                    ),
-                    (
-                        Node {
-                            width: percent(100),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::SpaceBetween,
-                            column_gap: px(theme.layout.row_column_gap),
-                            padding: UiRect::axes(px(0), px(theme.layout.row_padding_y)),
-                            ..default()
-                        },
-                        children![
-                            (
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: px(theme.layout.row_gap),
-                                    flex_grow: 1.0,
-                                    ..default()
-                                },
-                                children![
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.fangyuan_player_preview.title",
-                                        "方圆玩家预览",
-                                        UiThemeTextStyleRole::Body,
-                                        UiThemeTextColorRole::Primary,
-                                    ),
-                                    screen_label_key(
-                                        theme,
-                                        fonts,
-                                        i18n,
-                                        "lobby.fangyuan_player_preview.description",
-                                        "最小玩家 Entity 外观闭环",
-                                        UiThemeTextStyleRole::Caption,
-                                        UiThemeTextColorRole::Muted,
-                                    ),
-                                ],
-                            ),
-                            (
-                                primary_action_button_key(
-                                    theme,
-                                    metrics,
-                                    fonts,
-                                    i18n,
-                                    "lobby.enter",
-                                    "Enter",
+                                (
+                                    Node {
+                                        width: percent(100),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        column_gap: px(theme.layout.row_column_gap),
+                                        padding: UiRect::axes(
+                                            px(0),
+                                            px(theme.layout.row_padding_y)
+                                        ),
+                                        ..default()
+                                    },
+                                    children![
+                                        (
+                                            Node {
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: px(theme.layout.row_gap),
+                                                flex_grow: 1.0,
+                                                ..default()
+                                            },
+                                            children![
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.fangyuan_player_preview.title",
+                                                    "方圆玩家预览",
+                                                    UiThemeTextStyleRole::Body,
+                                                    UiThemeTextColorRole::Primary,
+                                                ),
+                                                screen_label_key(
+                                                    theme,
+                                                    fonts,
+                                                    i18n,
+                                                    "lobby.fangyuan_player_preview.description",
+                                                    "最小玩家 Entity 外观闭环",
+                                                    UiThemeTextStyleRole::Caption,
+                                                    UiThemeTextColorRole::Muted,
+                                                ),
+                                            ],
+                                        ),
+                                        (
+                                            primary_action_button_key(
+                                                theme,
+                                                metrics,
+                                                fonts,
+                                                i18n,
+                                                "lobby.enter",
+                                                "Enter",
+                                            ),
+                                            FangyuanPlayerPreviewPlayButton,
+                                        ),
+                                    ],
                                 ),
-                                FangyuanPlayerPreviewPlayButton,
-                            ),
-                        ],
-                    ),
-                ],
+                            ],
+                        ),
+                    ],
+                )],
             ),
         ],
     ));

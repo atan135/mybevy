@@ -42,19 +42,19 @@ pub struct AuditDevice {
 /// physical-density validation; those require a real-device metadata contract.
 pub const DEFAULT_AUDIT_DEVICES: [AuditDevice; 4] = [
     AuditDevice {
-        name: "phone-small",
-        width: 360,
-        height: 800,
+        name: "desktop",
+        width: 1280,
+        height: 720,
     },
     AuditDevice {
-        name: "phone-portrait",
-        width: 394,
-        height: 853,
-    },
-    AuditDevice {
-        name: "tablet-portrait",
+        name: "phone-landscape",
         width: 800,
-        height: 1280,
+        height: 360,
+    },
+    AuditDevice {
+        name: "phone-1080p-landscape",
+        width: 800,
+        height: 360,
     },
     AuditDevice {
         name: "tablet-landscape",
