@@ -115,16 +115,14 @@ git diff --check
 
 ```powershell
 Set-Location project
-cargo run -- --window-profile phone-portrait
-cargo run -- --window-profile phone-1080p
-cargo run -- --window-profile phone-small
-cargo run -- --window-profile tablet-portrait
+cargo run -- --window-profile phone-landscape
+cargo run -- --window-profile phone-1080p-landscape
 cargo run -- --window-profile tablet-landscape
-cargo run -- --window-size 1280x2772
-cargo run -- --window-profile phone-portrait --window-scale 50%
+cargo run -- --window-size 1600x720
+cargo run -- --window-profile phone-landscape --window-scale 50%
 ```
 
-这些参数只影响桌面开发窗口，不改变 Android 真机默认行为。
+这些参数只影响桌面开发窗口。Android 真机 Activity 固定为横屏；旧竖屏 profile 仍保留给历史兼容性回归。
 
 ## 常用开发入口
 
@@ -141,7 +139,7 @@ cargo run
 ```powershell
 Set-Location project
 $env:MYBEVY_START_SCENE="arena.robot_sync"
-cargo run -- --window-profile phone-small --window-scale 50%
+cargo run -- --window-profile phone-landscape --window-scale 50%
 ```
 
 Robot Sync 手动输入模式：
@@ -150,7 +148,7 @@ Robot Sync 手动输入模式：
 Set-Location project
 $env:MYBEVY_START_SCENE="arena.robot_sync"
 $env:ROBOT_SYNC_INPUT_MODE="manual"
-cargo run -- --window-profile phone-small --window-scale 50%
+cargo run -- --window-profile phone-landscape --window-scale 50%
 ```
 
 音频监控和音频测试页：

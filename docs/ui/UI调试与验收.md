@@ -117,11 +117,11 @@ metadata 的 `image_snapshots`、`font_snapshots` 和 `visual_summary` 汇总图
 当前 runner 支持的基础设备矩阵：
 
 - `desktop`
-- `phone-small`
-- `phone-portrait`
-- `phone-1080p`
-- `tablet-portrait`
+- `phone-landscape`
+- `phone-1080p-landscape`
 - `tablet-landscape`
+
+旧的 `phone-small`、`phone-portrait`、`phone-1080p` 和 `tablet-portrait` profile 仍可显式用于历史兼容性回归，但不属于默认横屏矩阵。
 
 当前支持的 screen alias：
 
@@ -143,14 +143,12 @@ metadata 的 `image_snapshots`、`font_snapshots` 和 `visual_summary` 汇总图
 
 ```powershell
 Set-Location project
-cargo run -- --window-profile phone-portrait
-cargo run -- --window-profile phone-1080p
-cargo run -- --window-profile phone-small
-cargo run -- --window-profile tablet-portrait
+cargo run -- --window-profile phone-landscape
+cargo run -- --window-profile phone-1080p-landscape
 cargo run -- --window-profile tablet-landscape
-cargo run -- --window-size 1280x2772
-cargo run -- --window-profile phone-portrait --window-scale 50%
-cargo run -- --window-size 1280x2772 --device-scale 3.25 --window-scale 50%
+cargo run -- --window-size 1600x720
+cargo run -- --window-profile phone-landscape --window-scale 50%
+cargo run -- --window-size 1600x720 --device-scale 2 --window-scale 50%
 ```
 
 窗口验收重点：

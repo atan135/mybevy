@@ -384,41 +384,41 @@ fn update_game() {}
 桌面开发时可以通过窗口 profile 启动，用来模拟手机或平板分辨率验收 UI。所有命令都在 `project/` 目录执行：
 
 ```powershell
-cargo run -- --window-profile phone-portrait
-cargo run -- --window-profile phone-1080p
-cargo run -- --window-profile phone-small
-cargo run -- --window-profile tablet-portrait
+cargo run -- --window-profile phone-landscape
+cargo run -- --window-profile phone-1080p-landscape
 cargo run -- --window-profile tablet-landscape
 cargo run -- --window-profile desktop
 ```
 
-也可以直接传自定义设备物理分辨率。程序会对已知尺寸推断设备缩放，例如 `1280x2772` 会按当前 Android 验收机的 `3.25` 缩放模拟，UI 逻辑宽度约为 `394`：
+也可以直接传自定义设备物理分辨率。程序会对已知尺寸推断设备缩放，例如 `1600x720` 会按横屏手机 profile 的 `2.0` 缩放模拟，UI 逻辑尺寸为 `800x360`：
 
 ```powershell
-cargo run -- --window-size 1280x2772
+cargo run -- --window-size 1600x720
 ```
 
 如果需要模拟其它 DPI/缩放，可以显式传设备缩放：
 
 ```powershell
-cargo run -- --window-size 1280x2772 --device-scale 3.25
+cargo run -- --window-size 1600x720 --device-scale 2
 ```
 
 如果设备分辨率在当前显示器上放不下，可以增加桌面预览缩放。预览缩放只影响桌面窗口显示尺寸，不改变 UI 逻辑排版：
 
 ```powershell
-cargo run -- --window-profile phone-portrait --window-scale 50%
-cargo run -- --window-size 1280x2772 --window-scale 0.5
+cargo run -- --window-profile phone-landscape --window-scale 50%
+cargo run -- --window-size 1600x720 --window-scale 0.5
 ```
 
 当前内置 profile。phone/tablet profile 同时带确定性 safe-area fixture，用于桌面布局审计；它不是 Android 真机数据：
 
 - `desktop`: `1280x720`, scale `1.0`
+- `phone-landscape`: `1600x720`, scale `2.0`
+- `phone-1080p-landscape`: `2400x1080`, scale `3.0`
+- `tablet-landscape`: `2560x1600`, scale `2.0`
 - `phone-portrait`: `1280x2772`, scale `3.25`
 - `phone-1080p`: `1080x2400`, scale `3.0`
 - `phone-small`: `720x1600`, scale `2.0`
 - `tablet-portrait`: `1600x2560`, scale `2.0`
-- `tablet-landscape`: `2560x1600`, scale `2.0`
 
 可显式覆盖逻辑像素安全区，参数顺序为 `LEFT,RIGHT,TOP,BOTTOM`：
 
@@ -426,7 +426,7 @@ cargo run -- --window-size 1280x2772 --window-scale 0.5
 cargo run -- --window-profile phone-small --safe-area-insets 0,0,30,24
 ```
 
-Android 生产环境不读取这个桌面参数。Activity 通过 `WindowInsetsCompat -> JNI` 发布状态栏、display cutout 和导航/手势 inset，UI 再按当前 device scale 转为逻辑像素。
+Android 生产环境不读取这个桌面参数，且 Activity 固定为横屏。Activity 通过 `WindowInsetsCompat -> JNI` 发布状态栏、display cutout 和导航/手势 inset，UI 再按当前 device scale 转为逻辑像素。
 
 如果参数非法，程序会打印 warning 并回退到默认桌面尺寸。该功能只作用于桌面端 primary window 的启动尺寸，不改变 Android 真机默认行为。
 
