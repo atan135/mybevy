@@ -15,16 +15,15 @@
 
 ## 基础原则
 
-- 复核开始时间：2026-07-22 18:58:54 +08:00
-- 复核结束时间：2026-07-23 10:40:03 +08:00
-- 复核总结：复核阶段 1 至 9 的闭环实现并补齐持久化重试上限、Command 修复 worktree 隔离与严格审核迭代预算初始化；完成快速隔离自测及完整离线 Runner 回归，不调用在线 provider、远程设备或 AI 凭据。
+- 复核完成时间：2026-07-28 19:44:37 +08:00
+- 复核总结：复核既有闭环治理、隔离、修复策略、受保护路径、失败恢复和 default-off 离线合同；阶段 7-10 的独立验证与 Stage 11 离线验收均未调用在线 provider 或 AI 凭据。
 
-- [x] 每次运行拥有不可变输入快照、唯一 run ID、显式状态机和完整 artifact 关联。（验证：`tools/ui-generation/src/run_manifest.rs:1375` 的 `ClosedLoopRunManifest` 与 checkpoint/recovery 契约；主 agent 运行 `cargo test --manifest-path tools/ui-generation/Cargo.toml closed_loop_ -- --nocapture`，30 passed）
-- [x] 自动化只在独立工作目录或专用 Git worktree 中修改文件，不破坏用户现有 dirty worktree。（验证：`scripts/run-ui-audit.ps1:3249` 创建 detached worktree，`-SelfTestWorktree` 以 caller dirty fixture 覆盖不复制、仅 worktree 修改、失败/取消回滚；主 agent 复跑通过）
-- [x] 修复范围按 UI 文档、草稿资源、页面局部代码、通用控件、主题、框架核心逐级升级。（验证：`scripts/run-ui-audit.ps1:1639` 的策略及 allowed roots 分层限制；`closed_loop_` 测试覆盖计划作用域与升级审批，30 passed）
-- [x] 参考图、审核阈值、mask、安全策略、验证脚本和基准图不属于自动修复允许范围。（验证：`scripts/run-ui-audit.ps1:5322` 将 protected reference/rule 归入人工复核，`-SelfTestWorktree` 与完整 self-test 均验证 protected path 拒绝）
-- [x] 任一外部调用、修改、验证和审批都有超时、失败出口、重试上限和可恢复记录。（验证：`run_manifest.rs:1137` 定义每状态 `max_attempts`，`restart_from` 与 parse 均 fail-closed；`tools/ui-visual-audit/src/ai.rs:1249` 绑定 iteration/provider 上限；完整 `run-ui-audit.ps1 -SelfTest` exit 0，689.7s）
-- [x] 普通开发、构建和 CI 默认不调用付费模型，也不需要 AI 凭据。（验证：`closed_loop_generation.rs:437` 的 Off mode 无副作用/凭据依赖测试通过；`.github/workflows/ui-visual-audit.yml:35` 明确 push/PR 不含 Online AI）
+- [x] 每次运行拥有不可变输入快照、唯一 run ID、显式状态机和完整 artifact 关联。（验证：`tools/ui-generation/src/run_manifest.rs` 的 `ClosedLoopRunManifest` 与 checkpoint/recovery 契约；既有 closed loop tests 和本轮 fixture run 均通过）
+- [x] 自动化只在独立工作目录或专用 Git worktree 中修改文件，不破坏用户现有 dirty worktree。（验证：`scripts/run-ui-audit.ps1` 的 detached worktree/isolation path；Stage 11 report `caller_worktree_unchanged=true`）
+- [x] 修复范围按 UI 文档、草稿资源、页面局部代码、通用控件、主题、框架核心逐级升级。（验证：Runner fix policy/allowed roots 与 `closed_loop_fix_plan` scope/approval guards 已由阶段 5-8 测试覆盖）
+- [x] 参考图、审核阈值、mask、安全策略、验证脚本和基准图不属于自动修复允许范围。（验证：Runner protected target policy、CI baseline approval gate 与阶段 10 security fixture 均 fail-closed）
+- [x] 任一外部调用、修改、验证和审批都有超时、失败出口、重试上限和可恢复记录。（验证：state policy max attempts、iteration budget、cancellation/recovery 和阶段 7 Runner SelfTest 通过）
+- [x] 普通开发、构建和 CI 默认不调用付费模型，也不需要 AI 凭据。（验证：default Off/Fixture mode、CI five-mode contract 与 Stage 11 report 均为 offline-only 且 cost `[0,0]`）
 
 ## 阶段 1：端到端运行契约和状态机
 
@@ -130,122 +129,122 @@
 
 ## 阶段 7：迭代控制、改善判定和回滚
 
-- 开始时间：2026-07-22 14:29:22 +08:00
-- 结束时间：2026-07-22 16:12:34 +08:00
-- 开发总结：扩展 Runner 修复循环的分类预算、迭代 artifact 快照、改善判定和提前停止策略；Command 修复在失败、退化、取消时按允许根的 hash 备份条件回滚，不覆盖并发或既有用户改动。
-- 验证记录：主审核独立运行 `./scripts/run-ui-audit.ps1 -SelfTest`（exit 0，627.1 秒，严格比较 3/3）、PowerShell parser 与 `git diff --check` 通过；SelfTest 覆盖退化、两轮停滞、振荡、分类预算、命令失败回滚和运行中取消。
+- 开始时间：2026-07-28 18:36:44 +08:00
+- 结束时间：2026-07-28 18:45:38 +08:00
+- 开发总结：核验既有 Runner 的阶段 7 实现：分类迭代预算、不可变 iteration artifact、改善/停滞/振荡判定、受 hash guard 的回滚与取消恢复均已实现；无需新增业务代码。
+- 验证记录：主审核独立运行 `./scripts/run-ui-audit.ps1 -SelfTest` exit 0（128.7 秒，strict comparison captures 3/3）；PowerShell AST parser 与 `git diff --check` 通过，工作区无代码改动。
 
-- [x] 复用并扩展现有 MaxFixIterations，分别限制生成修复、文档修复、素材修复和代码修复次数。（验证：`run-ui-audit.ps1` 增加四个 `Max*FixIterations` 参数、分类预算记录和 `iteration_budget_exhausted`；SelfTest 断言 code 分类上限不计入 asset）
-- [x] 每轮保留 before/after 文档、资源 hash、截图、比较结果、analysis、fix plan、diff 和验证日志。（验证：`Copy-UiAuditIterationSnapshot`、workspace snapshot/diff 和 iteration artifact links；SelfTest 断言 capture SHA-256、analysis/report、fix plan 与 check logs 可追溯）
-- [x] 定义改善判定：hard failure 减少、关键区域指标改善且未引入新阻塞问题。（验证：`Test-UiAuditFixImprovement` 同时计算 hard failure、region metric、blocking count、logical root cause 与新阻塞问题）
-- [x] 连续两轮问题签名相同、指标无改善、问题迁移到其他设备或预算耗尽时提前停止。（验证：fix loop 记录 `stagnant_rounds`，检测 regression/device migration/ABA oscillation/category budget；SelfTest 覆盖退化、停滞、振荡和预算耗尽）
-- [x] 修复后出现编译失败、schema 失败、截图失败或严重回归时回滚本轮文件快照。（验证：Command 修复在 command/check/rerun regression 失败时调用 `Restore-UiAuditFixWorkspaceSnapshot`；SelfTest 断言 command failure rollback 为 `restored`）
-- [x] 回滚不得覆盖 run 启动前不属于自动化的用户改动。（验证：restore 仅恢复当前 hash 仍等于本轮 after snapshot 的路径；SelfTest 断言预存 user 文件内容保持不变）
-- [x] 支持用户取消后安全终止当前外部调用并保留最后完整 iteration。（验证：`FixCancellationFile` 驱动 `Invoke-UiAuditProcess` 取消；SelfTest 启动外部 Command 后写取消文件，断言 terminated、rollback restored 与 `last_complete_iteration = 0`）
-- [x] 为改善、退化、振荡、最大次数、验证失败和取消补充状态机测试。（验证：Runner SelfTest 覆盖 Pass、MaxIterations、CheckFailed、Degraded、stagnation、Oscillation、分类预算、Command rollback 和 active cancellation）
-- [x] 运行 FixMode Fixture/Mock 的完整正向与失败演练。（验证：`./scripts/run-ui-audit.ps1 -SelfTest` exit 0，627.1 秒；strict comparison captures 3/3 passed）
+- [x] 复用并扩展现有 MaxFixIterations，分别限制生成修复、文档修复、素材修复和代码修复次数。（验证：`scripts/run-ui-audit.ps1:60` 定义四类 `Max*FixIterations`，`New/Test/Use-UiAuditFixIterationBudget` 在 `:2183` 记录分类额度，SelfTest 断言 code 上限不计入 asset）
+- [x] 每轮保留 before/after 文档、资源 hash、截图、比较结果、analysis、fix plan、diff 和验证日志。（验证：`Copy-UiAuditIterationSnapshot` 与 iteration artifact links 保存 capture SHA-256、analysis/report、fix plan、workspace snapshot/diff 和检查日志；SelfTest 通过）
+- [x] 定义改善判定：hard failure 减少、关键区域指标改善且未引入新阻塞问题。（验证：`Test-UiAuditFixImprovement` 位于 `scripts/run-ui-audit.ps1:2357`，比较 hard failure、关键区域、blocking issue 和新阻塞问题；SelfTest 通过）
+- [x] 连续两轮问题签名相同、指标无改善、问题迁移到其他设备或预算耗尽时提前停止。（验证：Runner loop 使用 `Test-UiAuditFixOscillation`、停滞和 device migration 判定，分类预算耗尽返回 `iteration_budget_exhausted`；SelfTest 覆盖）
+- [x] 修复后出现编译失败、schema 失败、截图失败或严重回归时回滚本轮文件快照。（验证：`Restore-UiAuditFixWorkspaceSnapshot` 位于 `scripts/run-ui-audit.ps1:2498`，Command 在命令、检查、取消和 regression 失败后恢复快照；SelfTest 通过）
+- [x] 回滚不得覆盖 run 启动前不属于自动化的用户改动。（验证：恢复前要求当前 hash 与本轮 after hash 一致；SelfTest 断言用户文件保持 `user content before run`）
+- [x] 支持用户取消后安全终止当前外部调用并保留最后完整 iteration。（验证：`FixCancellationFile` 参数与活动进程终止路径记录 `last_complete_iteration`；SelfTest 取消场景通过）
+- [x] 为改善、退化、振荡、最大次数、验证失败和取消补充状态机测试。（验证：`scripts/run-ui-audit.ps1:7854` 之后的 SelfTest 覆盖 pass、max iterations、check failure、degraded、stagnation、oscillation、分类预算、rollback 和 cancellation）
+- [x] 运行 FixMode Fixture/Mock 的完整正向与失败演练。（验证：主审核 `./scripts/run-ui-audit.ps1 -SelfTest` exit 0，strict comparison 3/3 passed）
 
 ## 阶段 8：分层验证和复跑矩阵
 
-- 开始时间：2026-07-22 16:14:16 +08:00
-- 结束时间：2026-07-22 17:25:38 +08:00
-- 开发总结：Runner 按 UiDocument、资源、Rust 和 PowerShell 改动选择最小充分验证集，持久化命令级证据与失败类别；修复复跑固定为原失败 capture、关联 screen/device/state、共享组件矩阵三阶段，并对共享 UI 变更扩展至 UI Gallery 和全部注册页面。
-- 验证记录：主审核独立运行 `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-ui-audit.ps1 -SelfTest`（exit 0，674 秒，strict comparison 3/3）、PowerShell parser 与 `git diff --check` 均通过；资源 LFS 属性断言、验证计划、失败分类与复跑顺序均由 Runner SelfTest 覆盖。
+- 开始时间：2026-07-28 18:45:38 +08:00
+- 结束时间：2026-07-28 19:08:30 +08:00
+- 开发总结：核验并补齐分层验证实现；修正 catalog 对全不透明 RGBA PNG 的 alpha metadata 误拒绝，保持实际透明像素 fail-closed，新增回归测试并更新当前 catalog 资产计数。
+- 验证记录：主审核独立运行 `cargo test --manifest-path tools/ui-generation/Cargo.toml --lib asset_strategy` 为 17/17；worker 运行工具全量 206/206、promotion 6/6、fmt/check/boundary、PowerShell AST、Runner SelfTest（124.2 秒，strict captures 3/3）和 `git diff --check` 均通过。
 
-- [x] 仅修改 `UiDocument` 时运行 schema、语义、资源和声明式运行时测试，不无条件触发全量 Rust 编译。（验证：`New-UiAuditValidationPlan` 为 document-only 仅选择 `document_schema_semantic` 与 `document_declarative_runtime`；SelfTest 断言不含 `cargo-check`）
-- [x] 修改 Rust 时在 `project/` 运行 `cargo fmt`、相关 focused tests 和 `cargo check`。（验证：Rust scope 选择 `cargo-fmt`、`cargo-focused-tests`、`cargo-check`；Runner SelfTest 断言三项顺序）
-- [x] 修改 PowerShell Runner 时运行 parser 检查、self-test 和 `git diff --check`。（验证：Runner scope 选择 `runner_parser`、`runner_self_test`、`runner_diff_check`，优先调用 `pwsh`；独立 parser/self-test/diff 检查通过）
-- [x] 修改资源时校验格式、尺寸、透明通道、许可证、Git LFS 和 Android 加载兼容性。（验证：resource scope 选择 format/dimension/alpha、license/Android、Git LFS commands，并对每个二进制资源实际执行 `git check-attr filter=lfs`；SelfTest 覆盖 fixture）
-- [x] 修复后先复跑原失败 capture，再复跑该 screen 的全部关联 device/state，最后运行受影响共享组件页面。（验证：`rerun_order` 固化 original capture、affected matrix、shared matrix；Mock rerun manifest 断言 phase 顺序）
-- [x] theme、widget 或 framework 变更必须复跑 UI Gallery 和所有注册使用者的基础矩阵。（验证：`Resolve-UiAuditFixRerunMatrix` 检测 shared UI 路径并追加 `KnownScreens`，SelfTest 断言包含 `ui_gallery` 和全部注册页面）
-- [x] 明确区分工具失败、环境失败、产品失败和审核失败，环境失败不得自动解释为视觉退化。（验证：`Get-UiAuditFailureClass` 分类并写入 command/task/analysis 记录；SelfTest 覆盖 Runner、device offline、Rust validation 和 AI audit issue）
-- [x] 将每项验证命令、耗时、退出码和日志路径写入 iteration manifest。（验证：`Invoke-UiAuditFixChecks` 写入 command、coverage、duration_ms、exit_code、timeout、stdout/stderr 和 failure_class；SelfTest 断言证据齐全）
-- [x] 为验证选择、失败分类和矩阵扩展补充测试。（验证：Runner SelfTest 覆盖 document/resource/Rust/Runner 选择、LFS、命令证据、失败分类、shared rerun 和实际 Mock rerun）
+- [x] 仅修改 `UiDocument` 时运行 schema、语义、资源和声明式运行时测试，不无条件触发全量 Rust 编译。（验证：`scripts/run-ui-audit.ps1:3034` 按 modification scope 选择 document validation，验证计划在 `:3104` 生成；SelfTest 覆盖）
+- [x] 修改 Rust 时在 `project/` 运行 `cargo fmt`、相关 focused tests 和 `cargo check`。（验证：Runner 在 Rust scope 调用 format/focused/check；本轮工具 `cargo fmt --check`、focused asset strategy 17/17 与 `cargo check` 通过）
+- [x] 修改 PowerShell Runner 时运行 parser 检查、self-test 和 `git diff --check`。（验证：Runner scope contract 与 PowerShell AST、`run-ui-audit.ps1 -SelfTest`、`git diff --check` 通过）
+- [x] 修改资源时校验格式、尺寸、透明通道、许可证、Git LFS 和 Android 加载兼容性。（验证：`asset_strategy.rs:541` 以实际像素 alpha 校验 opaque，新增 opaque RGBA/transparent RGBA 回归；catalog validation 同时覆盖规格、许可、LFS 和 Android 质量检查）
+- [x] 修复后先复跑原失败 capture，再复跑该 screen 的全部关联 device/state，最后运行受影响共享组件页面。（验证：`New-UiAuditFixRerunPlan` 在 `scripts/run-ui-audit.ps1:2044` 定义原 capture、关联矩阵和共享页面阶段，SelfTest 覆盖）
+- [x] theme、widget 或 framework 变更必须复跑 UI Gallery 和所有注册使用者的基础矩阵。（验证：Runner 在 `scripts/run-ui-audit.ps1:2087` 扩展 shared UI rerun；SelfTest 验证矩阵扩展）
+- [x] 明确区分工具失败、环境失败、产品失败和审核失败，环境失败不得自动解释为视觉退化。（验证：`scripts/run-ui-audit.ps1:2995` 写入 failure class，SelfTest 覆盖 product/environment/audit 路径）
+- [x] 将每项验证命令、耗时、退出码和日志路径写入 iteration manifest。（验证：`scripts/run-ui-audit.ps1:3152` 持久化 command evidence，SelfTest 断言 iteration log/artifact links）
+- [x] 为验证选择、失败分类和矩阵扩展补充测试。（验证：Runner SelfTest 及工具全量 206/206 通过；本轮定向回归 17/17 通过）
 
 ## 阶段 9：缓存、队列、预算和可观测性
 
-- 开始时间：2026-07-22 17:32:02 +08:00
-- 结束时间：2026-07-22 18:49:38 +08:00
-- 开发总结：在 `tools/ui-generation` 增加运行治理协议：五类 cache identity、共享 provider governor、有界队列、单 run/每日原子预算、遥测脱敏、marker 保护的 artifact 保留清理和离线压力演练。ProviderRunner 通过显式注入共享 governor 接入真实执行路径，默认未注入时保持既有离线兼容行为。
-- 验证记录：主审核独立运行 `cargo test --manifest-path tools/ui-generation/Cargo.toml`（200/200）、`cargo fmt --manifest-path tools/ui-generation/Cargo.toml --all -- --check`、`cargo check --manifest-path tools/ui-generation/Cargo.toml --no-default-features --features provider-core`、boundary check、`git diff --check` 与 `operations-stress-fixture` 均通过；仅有既有 Windows linker LNK4075 警告。
+- 开始时间：2026-07-28 19:09:35 +08:00
+- 结束时间：2026-07-28 19:17:37 +08:00
+- 开发总结：核验既有闭环运行治理实现；五类 cache identity、受限队列/共享 provider governor、单 run 与日预算、可关联脱敏遥测及 marker-root artifact retention/cleanup 均已存在，无需新增代码。在线 provider 仍 fail-closed，document/screenshot/comparison 的缓存协议尚未由闭环 CLI 自动物化。
+- 验证记录：主审核 `cargo test --manifest-path tools/ui-generation/Cargo.toml operations -- --nocapture` 为 7/7；`operations-stress-fixture` 通过（4 tasks、峰值 provider 2、取消 1、第二次 provider 调用被日预算阻止）；worker 工具全量 206/206、fmt/check/boundary 与 `git diff --check` 通过。
 
-- [x] 为预处理、视觉分析、UiDocument 生成、截图和比较分别定义 cache key 与失效条件。（验证：`operations.rs` 的 `CacheStage`/`StageCacheKey` 覆盖五类阶段并输出稳定 digest，cache reuse 定向测试通过）
-- [x] 缓存不得跨 schema、prompt、模型、主题、字体、viewport、算法或输入 hash 误复用。（验证：`CacheDimensions` 强制九类维度且 invalid identity fail-closed；逐维扰动测试及 `AnalysisCacheIdentity` theme miss 测试通过）
-- [x] 建立有界任务队列和 provider 并发限制，避免多个 run 同时耗尽显存、API 配额或磁盘。（验证：`ProviderRuntimeGovernor` 显式共享 `BoundedTaskQueue` 并接入真实 `ProviderRunner`；18 项 runner 定向测试覆盖并发拒绝、取消/失败释放和零计数 provider 清理）
-- [x] 设置单 run 和每日模型调用、图片数量、token、耗时、迭代和估算费用上限。（验证：`TaskBudget` 与 `DailyBudget` 使用可回滚的 attempt reservation，真实 ProviderRunner 测试断言 queue/daily/local 前置拒绝不残留记账，snapshot 恢复仍生效）
-- [x] 记录各阶段耗时、缓存命中、重试、调用量、artifact 大小、节点数和最终状态。（验证：`RunTelemetry`/`StageTelemetry` 汇总上述字段并绑定 run correlation，operations 定向测试通过）
-- [x] 日志使用 run ID、iteration 和 task ID 关联，并对凭据、账号文字和个人信息脱敏。（验证：`RunCorrelation`/`RedactedLogEvent` 复用 structured redact，operations 与 observability 测试覆盖 credential/account/PII/model content）
-- [x] 定义 artifact 保留期限、失败 run 保留策略和受控清理命令，禁止无校验递归删除未知目录。（验证：`ArtifactCleaner` 要求新建 marker root、root digest plan、safe run ID 和 reparse 检查；CLI 提供 initialize/cleanup dry-run，清理定向测试通过）
-- [x] 对缓存污染、预算耗尽、队列取消、磁盘不足和日志脱敏补充测试。（验证：operations 7 项测试与 ProviderRunner 18 项真实执行路径测试覆盖 cache、atomic budget、queue cancellation、disk reserve、redaction、timeout 和 snapshot restore）
-- [x] 输出一次多任务压力演练记录。（验证：`operations-stress-fixture` exit 0：4 tasks、provider limit/peak 2、cancelled 1、cache isolation、daily budget、disk reserve、redaction 和真实 FixtureProvider daily interception 全部通过）
+- [x] 为预处理、视觉分析、UiDocument 生成、截图和比较分别定义 cache key 与失效条件。（验证：`tools/ui-generation/src/operations.rs:31` 的 `CacheStage`、`CacheDimensions` 和 `StageCacheKey` 覆盖五阶段；operations tests 7/7 通过）
+- [x] 缓存不得跨 schema、prompt、模型、主题、字体、viewport、算法或输入 hash 误复用。（验证：cache dimensions 包含上述 identity，`every_cache_stage_requires_all_reuse_dimensions_and_invalidates_each_one` 通过，压力 Fixture `cross_dimension_reuse_blocked=true`）
+- [x] 建立有界任务队列和 provider 并发限制，避免多个 run 同时耗尽显存、API 配额或磁盘。（验证：`ProviderRuntimeGovernor` 位于 `operations.rs:806`；压力 Fixture `peak_running_tasks=2` 且 `provider_concurrency_limit=2`）
+- [x] 设置单 run 和每日模型调用、图片数量、token、耗时、迭代和估算费用上限。（验证：`provider_budget.rs` 与 shared governor 持久化 run/daily budget；压力 Fixture 第二次 FixtureProvider 调用被日预算阻止）
+- [x] 记录各阶段耗时、缓存命中、重试、调用量、artifact 大小、节点数和最终状态。（验证：`RunTelemetry`/`RunTelemetryReport` 位于 `operations.rs:992`，operations telemetry test 通过）
+- [x] 日志使用 run ID、iteration 和 task ID 关联，并对凭据、账号文字和个人信息脱敏。（验证：`RedactedLogEvent` 位于 `operations.rs:1039`，遥测 test 与压力 Fixture `log_redacted=true` 通过）
+- [x] 定义 artifact 保留期限、失败 run 保留策略和受控清理命令，禁止无校验递归删除未知目录。（验证：`ArtifactCleaner` 位于 `operations.rs:1212`，仅接受 canonical `ui-generation-artifacts` marker root；cleanup test 覆盖 unknown root、failure TTL 和 link escape）
+- [x] 对缓存污染、预算耗尽、队列取消、磁盘不足和日志脱敏补充测试。（验证：operations 7/7 覆盖完整 cache dimensions、日预算、队列取消、磁盘拒绝、脱敏和 cleanup）
+- [x] 输出一次多任务压力演练记录。（验证：主审核 `operations-stress-fixture` 输出 `submitted_tasks=4`、`cancelled_tasks=1`、`final_status=passed`）
 
 ## 阶段 10：CI、安全和权限门禁
 
-- 开始时间：2026-07-23 10:42:05 +08:00
-- 结束时间：2026-07-23 10:55:00 +08:00
-- 开发总结：新增离线 CI security contract、受保护 online contract workflow、baseline 审批、供应链/许可证与脱敏 artifact 门禁；online 仍为 contract_only，未接入 provider 或远程设备。
-- 验证记录：主 agent 复跑三个 PowerShell SelfTest、`check-ci-security-contract`、`ci-security-fixture` 与 `git diff --check` 全部通过；完整 Runner self-test 未重跑，Runner 核心未修改。
+- 开始时间：2026-07-28 19:17:37 +08:00
+- 结束时间：2026-07-28 19:24:33 +08:00
+- 开发总结：核验 CI 与安全门禁；五种运行模式、权限/凭据/外部分支拒绝、供应链、基准审批和白名单脱敏报告均已实现。手动和定时在线模式目前均为受保护的 `contract_only`，不读取凭据、上传参考图或调用 provider/远程设备。
+- 验证记录：主审核 `ci_security` 3/3、`check-ci-security-contract` 和 `ci-security-fixture` 通过；合同输出 5 modes、offline 20m、online contract 15m、cache 512 MiB、artifact 32 MiB，并拒绝 6 种高风险场景。
 
-- [x] 定义五种运行模式。（验证：`ci-security-fixture` 输出 local/PR fixture/PR deterministic/manual online/scheduled online 五模式）
-- [x] PR 与不受信分支不读 secrets 或远程设备。（验证：workflow `persist-credentials: false`，fixture 覆盖拒绝路径）
-- [x] 在线任务限制权限、域名和超时。（验证：online workflow 为 protected `contract_only`，fixture 拒绝未批准 provider）
-- [x] 检查许可证和供应链。（验证：`test-ui-supply-chain.ps1 -SelfTest` 通过）
-- [x] baseline/reference 变更需要审批标签。（验证：`test-ui-reference-baseline-approval.ps1 -SelfTest` 通过）
-- [x] 禁止自动提交、push、发布和分支保护修改。（验证：CI contract fixture 拒绝该 capability）
-- [x] 下载 artifact 已脱敏。（验证：`write-ui-ci-failure-report.ps1 -SelfTest` 通过）
-- [x] 覆盖无 secret、无权限、外部分支、基准和 provider 拒绝。（验证：`ci-security-fixture` 输出六类 rejected scenarios）
-- [x] 记录 CI 超时、缓存和 artifact 配额。（验证：contract 输出 offline/online timeout 与 cache/artifact byte limits）
+- [x] 定义本地开发、PR Fixture、PR 确定性审核、手动在线生成和定时在线审核五种运行模式。（验证：`ui-ci-security-policy.v1.json` 与 `check-ci-security-contract` 输出五个 `validated_modes`）
+- [x] 普通 PR 不读取在线 AI 凭据；外部贡献和不受信分支不得访问 secrets 或远程设备。（验证：`ui-visual-audit.yml` 最小 `contents: read`/`persist-credentials: false`，CI fixture 拒绝 ordinary PR credential 与 external branch device）
+- [x] 在线任务使用最小权限凭据、受控网络目标和明确超时，不把用户参考图发送给未批准 provider。（验证：`ui-online-audit-contract.yml` 在 `ui-audit-online` environment 以 `contract_only` 运行、`permissions: {}`；fixture 拒绝缺 credential contract 和未批准 provider domain）
+- [x] 对生成资源、模型输出、第三方依赖和 shader 执行许可证及供应链检查。（验证：`scripts/test-ui-supply-chain.ps1` SelfTest 与 repository check 通过）
+- [x] 在 CI 中校验 reference/baseline 变更需要审批标签或等价人工门禁。（验证：`ui-reference-baseline-approved` 作为精确 approval label，`ci_security` baseline test 通过）
+- [x] 禁止自动化提交、push、创建发布或修改分支保护；这些操作不属于 UI 闭环权限。（验证：CI contract 拒绝 `automatic_commit_push_release_or_branch_protection`，fixture 通过）
+- [x] 失败报告必须可下载但不包含原始凭据、未脱敏账号数据或无授权参考图。（验证：`write-ui-ci-failure-report.ps1` 白名单脱敏 SelfTest 通过，fixture 拒绝包含 secret/account/reference 的报告）
+- [x] 为无 secret、无权限、外部分支、基准变更和 provider 域名拒绝补充演练。（验证：`ci-security-fixture` 输出 six rejected scenarios，包括 missing credential、external branch、baseline label 与 provider domain）
+- [x] 记录 CI 超时、缓存和 artifact 配额。（验证：主审核 contract 输出 offline 20m、online 15m、cache 536870912 bytes、artifact 33554432 bytes）
 
 ## 阶段 11：桌面与 Android 端到端验收
 
-- 开始时间：2026-07-23 11:34:05 +08:00
+- 开始时间：2026-07-28 19:24:33 +08:00
 - 结束时间：
-- 开发总结：离线桌面验收通过，真实 Android 仍 external_blocked，待 validated remote screenshot/system metadata contract 与设备授权后继续。
-- 验证记录：`summary/ui-generation/stage11-e2e-final-offline-20260723c-report/acceptance-report.json` 为 `passed_with_external_android_blocker`；工具全量测试、fmt/check/boundary/parser/diff 通过。
+- 开发总结：离线桌面端到端验收通过；真实 Android 的本机覆盖已完成，远程审核链仍 external_blocked。2026-07-29 已通过当前 Android SDK ADB 连接 API 36 真机，构建并替换安装 Debug APK、冷启动到登录页、确认前台窗口/进程、采集无损设备截图；人工实测已覆盖登录软键盘、横屏大厅和 Touch Ripple 的按下硬边圆、拖动水波纹拖尾与松开清理，以及 UI 示例的透明边缘、九宫格、图集和材质降级。设备仍拒绝自动化 `adb shell input` 的 `INJECT_EVENTS`，且没有经验证、获授权的 Remote Http 截图与 system metadata 合同。
+- 验证记录：离线 `summary/ui-generation/stage11-e2e-20260728d-report/acceptance-report.json` 为 `passed_with_external_android_blocker`，12 个命令均 exit 0，耗时 731603ms，worktree unchanged；真机证据位于 `summary/ui-generation/stage11-android-adb-20260729/`：设备 `5aad1915`（API 36、1280x2772、520 dpi）、APK SHA-256 `46F35D77FC1C64AE303FFED2F6A18105221A8F331E6AD2873DFB71F9F283F768`、登录页截图 SHA-256 `ED43DCEC01A995D7B2888FA83EA5E6256F290792EA97D74404FD3A72D26A6F8E`、软键盘截图 `account-ime-manual.png`（`mInputShown=true`、`mImeWindowVis=3`）、横屏大厅截图 `lobby-landscape.png`（`ROTATION_90`、2772x1280）、横屏系统 inset（左侧 cutout 152 px、顶部 152 px、底部导航 52 px）、UI 示例视觉基础 `ui-gallery-visual-foundation.png`（SHA-256 `74C6B79B346EF703537371D0B1CDFB1D8CAF9AA4D7D130EE287E809D9BE650E6`，透明边缘、九宫格和图集均可见）、UI 示例材质降级 `ui-gallery-material-fallback.png`（SHA-256 `68797AF50F50880254C0BAFF6BAE109236D033AFCFAF9C0B08062FFB97585D52`，材质降级卡片及周边效果均可见）、触控按下态 `touch-ripple-pressed.png`（SHA-256 `D52D4737FDAD3CCDCFAA1DA4D4F34D371CF87B168DDE166B30466933D62CE2DC`）、拖动态 `touch-ripple-current.png`（SHA-256 `8F311F5DC013C90052F0FF64DA9ED14C2F6A05CC7FCB4054436065CAB7038719`）与释放清理态 `touch-ripple-released.png`（SHA-256 `7724D62A912DE6C1CCE8F52D67D155F185D1BB4C75926C0F2789C9B0B1504DC9`）；`MainActivity` 保持前台且无 fatal/panic。
 
-- [x] 选取至少一个常规页面和一个复杂美术页面，从参考图完整运行生成、预览、审核、修复和通过流程。（验证：最终报告 regular/complex sealed bundle 均通过）
-- [x] 桌面矩阵至少覆盖 `phone-small`、`phone-portrait`、`tablet-portrait` 和 `tablet-landscape`。（验证：四 profile audit 与成功 desktop manifest 4/4 tasks）
-- [x] 验证多个 state、长列表滚动、Modal、Loading、字体加载和图片资源就绪。（验证：28 multi-state captures、desktop metadata 与 ui_gallery scroll states）
-- [ ] 通过真实远程链路在 Android 设备执行至少一次截图与 metadata 审核；外部链路不可用时保留未完成并记录阻塞。
-- [ ] Android 验收覆盖安全区、软键盘、触控、横竖屏、高 DPI、九宫格和材质降级。
-- [x] 记录端到端耗时、模型成本、迭代次数、峰值内存、截图稳定性和视觉审核结果。（验证：acceptance report 记录 165256ms、离线 fixture、重复 SHA 与 audit 结果）
-- [x] 演练 provider 超时、无网络、设备离线、编译失败、视觉退化和人工拒绝晋升。（验证：report commands 包含 provider/preview timeout、取消与人工拒绝；Android device 作为 external blocker 记录）
-- [x] 确认失败 run 可以恢复或回滚，且用户原工作树没有被修改。（验证：首次 desktop fixture 参数失败后 b run 成功，report 声明 caller_worktree_unchanged）
-- [x] 生成最终端到端验收报告并清理不需要的临时产物。（验证：acceptance-report.json/md 已生成，Temp input finally cleanup；保留 ignored 日志证据）
+- [x] 选取至少一个常规页面和一个复杂美术页面，从参考图完整运行生成、预览、审核、修复和通过流程。（验证：stage11 report 的 `generated_profiles` 为 regular/complex，两个 sealed fixture run、document audit 和 reference integrity 均通过）
+- [x] 桌面矩阵至少覆盖 `phone-small`、`phone-portrait`、`tablet-portrait` 和 `tablet-landscape`。（验证：stage11 report 的 desktop Runner `status=passed`、`failed=0`，四 profile standalone audits 完成）
+- [x] 验证多个 state、长列表滚动、Modal、Loading、字体加载和图片资源就绪。（验证：stage11 report 的 multi-state audit 记录 28 captures，覆盖 initial/loading/empty/error/selected/disabled/modal 及 UI Gallery 滚动状态）
+- [ ] 通过真实远程链路在 Android 设备执行至少一次截图与 metadata 审核；外部链路不可用时保留未完成并记录阻塞。（进展：真实设备截图、设备尺寸/density、前台窗口和进程均已由 ADB 验证；阻塞：Runner `-RequireRealAndroid` 仍要求经授权的 Remote Http/adminapi 截图与 system metadata 合同，当前未提供 base URL、token 或 client command endpoint。延期决定：2026-07-29 14:41:06 +08:00 用户确认本轮暂不建设或接入远端链路，等待后续前后端联调提供 `AdminApiBaseUrl`、token 及目标 device/client/session 后再执行）
+- [x] Android 验收覆盖安全区、软键盘、触控、横竖屏、高 DPI、九宫格和材质降级。（验证：API 36、1280x2772、520 dpi；登录页 IME `mInputShown=true`；大厅 `ROTATION_90`；横屏 inset 左 152 px/顶 152 px/底 52 px；UI 示例 `ui-gallery-visual-foundation.png` 显示九宫格，`ui-gallery-material-fallback.png` 显示材质降级；Touch Ripple 按下/拖动/松开三态截图均已采集）
+- [x] 记录端到端耗时、模型成本、迭代次数、峰值内存、截图稳定性和视觉审核结果。（验证：stage11 report 记录 731603ms、fixture cost `[0,0]`、repair/Runner iteration evidence、RepeatCaptures=2 和 visual audit 结果）
+- [x] 演练 provider 超时、无网络、设备离线、编译失败、视觉退化和人工拒绝晋升。（验证：stage11 report 的 failure rehearsals 记录离线 provider/preview timeout、external device blocker、Runner check/regression fixture 与 promotion rejection test）
+- [x] 确认失败 run 可以恢复或回滚，且用户原工作树没有被修改。（验证：stage11 report `caller_worktree_unchanged=true`；worktree isolation self-test 与 terminal failure manifest 测试均 exit 0）
+- [x] 生成最终端到端验收报告并清理不需要的临时产物。（验证：当前 acceptance JSON/Markdown、命令日志和保留 evidence 已写入 ignored run root，temporary input 在 finally 清理）
 
 ## 阶段 12：文档、运维手册和整体交付
 
-- 开始时间：2026-07-23 14:06:25 +08:00
-- 结束时间：2026-07-23 14:52:05 +08:00
-- 开发总结：补充 UI 参考图生成闭环的本地运行、交付验证、权限边界、失败定位、版本升级和 artifact 保留手册，并在 Bevy 入门文档增加最小 Fixture/独立预览入口。修复 Windows checkout 下 golden JSON 行尾比较，以及无效 Atlas/NineSlice 组合在返回错误前请求资源加载的问题。
-- 验证记录：`tools/ui-generation` 205 tests、fmt/check、boundary、CI security contract/fixture 均通过；三个 PowerShell 安全 self-test、正式供应链与当前变更 reference/baseline 审批路径检查通过。最终离线验收 `summary/ui-generation/stage11-e2e-20260723-143428-acbaf11c-report/acceptance-report.json` 为 `passed_with_external_android_blocker`（2 generation runs、2 document audits、8 reference comparisons、Runner/worktree self-test 均 exit 0、caller worktree unchanged）。`project` fmt、1557 tests 和 cargo check 通过；git diff --check 通过。
+- 开始时间：2026-07-28 19:44:37 +08:00
+- 结束时间：2026-07-28 19:44:37 +08:00
+- 开发总结：核验归档阶段 12 与当前文档；本地 Fixture/预览入口、生成到晋升边界、provider/凭据/预算/缓存/artifact/脱敏、失败定位和兼容升级策略均持续记录，无需新增文档修改。
+- 验证记录：主审核确认 `docs/ui/UI参考图生成与正式包边界.md` 的完整流程与 Android 外部边界、`docs/bevy-getting-started.md:1060` 的 preview-document 入口及 `:1067` 的离线 E2E 入口；本轮 stage11 offline E2E exit 0，阶段 8-10 工具/Runner/CI 安全验证通过。
 
-- [x] 更新 `docs/ui/`，描述生成、声明式协议、视觉审核、修复、晋升和基准更新完整流程。
-- [x] 更新 `docs/bevy-getting-started.md`，只加入新成员真正需要的本地 Fixture 和预览入口。
-- [x] 记录 provider 配置、凭据来源、预算、缓存、artifact、日志脱敏和故障排查。
-- [x] 记录哪些操作自动执行、哪些必须人工批准、哪些明确禁止。
-- [x] 为常见失败类型提供定位顺序，不要求使用者阅读整个 Runner 源码。
-- [x] 记录 Schema、prompt、算法、reference 和 baseline 的升级兼容策略。
-- [x] 运行全部 Fixture/self-test、至少一个双设备 reference audit 和一个 FixMode 端到端演练。
-- [x] 在 `project/` 运行 `cargo fmt`、相关测试和 `cargo check`，并运行 `git diff --check`。
-- [x] 清点所有文档、fixture、脚本和正式资源路径，确认符合仓库约定。
+- [x] 更新 `docs/ui/`，描述生成、声明式协议、视觉审核、修复、晋升和基准更新完整流程。（验证：`docs/ui/UI参考图生成与正式包边界.md` 覆盖 input、生成、audit、fix、promotion 与 reference/baseline policy）
+- [x] 更新 `docs/bevy-getting-started.md`，只加入新成员真正需要的本地 Fixture 和预览入口。（验证：`docs/bevy-getting-started.md:1060` 提供 `preview-document`，`:1067` 提供明确标记为离线的 Stage 11 E2E 入口）
+- [x] 记录 provider 配置、凭据来源、预算、缓存、artifact、日志脱敏和故障排查。（验证：`UI参考图生成与正式包边界.md` 的权限、缓存、artifact retention 与 failure 定位章节）
+- [x] 记录哪些操作自动执行、哪些必须人工批准、哪些明确禁止。（验证：同文档 automation/promotion/protected targets 表明确划分三类权限）
+- [x] 为常见失败类型提供定位顺序，不要求使用者阅读整个 Runner 源码。（验证：同文档 failure troubleshooting table 和 `docs/ui/UI调试与验收.md` failure taxonomy）
+- [x] 记录 Schema、prompt、算法、reference 和 baseline 的升级兼容策略。（验证：同文档 protocol/cache/baseline upgrade policy 要求 immutable run 与 approval binding）
+- [x] 运行全部 Fixture/self-test、至少一个双设备 reference audit 和一个 FixMode 端到端演练。（验证：本轮 stage11 offline E2E、阶段 7 Runner SelfTest strict 3/3、阶段 8-10 fixture/security tests 均通过）
+- [x] 在 `project/` 运行 `cargo fmt`、相关测试和 `cargo check`，并运行 `git diff --check`。（验证：归档阶段 12 的 project fmt、1557 tests、check 与 diff check 通过；本轮未改 project，工具 crate/Runner/CI 验证均重新通过）
+- [x] 清点所有文档、fixture、脚本和正式资源路径，确认符合仓库约定。（验证：当前 docs、`tools/ui-generation/fixtures/`、`scripts/run-ui-e2e-acceptance.ps1` 和 approved acceptance document 路径均可解析）
 
 ## 最终完成定义
 
 以下项目作为整体完成标准，不要求每个开发阶段都重复执行，由所有阶段完成后统一验收。
 
-- 开始时间：
-- 结束时间：
-- 验收总结：
+- 开始时间：2026-07-28 19:24:33 +08:00
+- 结束时间：2026-07-29 14:12:03 +08:00
+- 验收总结：离线 UI 生成、审核、有限修复、晋升控制、可追溯性、运维与 CI 安全合同均通过验收；桌面多 profile 与 Android 本机启动、IME、横屏、安全区、九宫格、材质降级和触控三态均有记录。真实 Remote Http/adminapi 截图与 metadata 合同仍依赖外部服务授权，作为明确 external_blocked 后续项保留在阶段 11，不以本机截图替代。
 
-- [ ] 合法参考图可以通过一次 run 生成可运行 UI 草稿、预览截图、视觉审核报告和可定位问题。
-- [ ] 自动修复优先修改声明式草稿，并能在有限迭代内通过或以明确原因终止。
-- [ ] 框架级或代码级修改必须经过升级条件和人工批准，实际 diff 不得超出计划范围。
-- [ ] 自动化无法修改参考图、baseline、mask、阈值、安全策略或验证脚本来规避失败。
-- [ ] 每轮输入、模型、文档、素材、截图、指标、analysis、diff、验证和审批完整可追溯。
-- [ ] provider、网络、设备、编译或审核失败不会破坏用户工作树，且可以恢复或回滚。
-- [ ] 普通本地开发和 PR Fixture 模式不需要在线模型凭据或付费调用。
-- [ ] CI、成本、并发、缓存、日志脱敏、资源授权和 artifact 保留策略均已验证。
-- [ ] 桌面多 profile 端到端流程通过；真实 Android 有验收记录或明确外部阻塞项。
-- [ ] Runner self-test、比较测试、生成 Fixture、`cargo fmt`、相关测试、`cargo check` 和 `git diff --check` 全部通过。
-- [ ] 文档足以让新开发者运行 Fixture 流程、理解审批边界并定位失败。
+- [x] 合法参考图可以通过一次 run 生成可运行 UI 草稿、预览截图、视觉审核报告和可定位问题。（验证：Stage 11 regular/complex sealed fixture run、preview、document audit 和 acceptance report 均通过）
+- [x] 自动修复优先修改声明式草稿，并能在有限迭代内通过或以明确原因终止。（验证：Stage 11 report 记录 FixMode/repair iteration，terminal failure manifest 与 promotion rejection 演练通过）
+- [x] 框架级或代码级修改必须经过升级条件和人工批准，实际 diff 不得超出计划范围。（验证：Stage 4-6 promotion plan、protected target 和 closed approval adapter 已验收，`git diff --check` 通过）
+- [x] 自动化无法修改参考图、baseline、mask、阈值、安全策略或验证脚本来规避失败。（验证：Stage 10 CI contract/fixture 拒绝 protected target、baseline label 和高权限工作流变更）
+- [x] 每轮输入、模型、文档、素材、截图、指标、analysis、diff、验证和审批完整可追溯。（验证：Stage 9 operations report、run manifest/checkpoint、telemetry/redacted artifact 与 Stage 11 acceptance report）
+- [x] provider、网络、设备、编译或审核失败不会破坏用户工作树，且可以恢复或回滚。（验证：Stage 11 `caller_worktree_unchanged=true`、worktree isolation self-test 和 terminal failure manifest 测试通过）
+- [x] 普通本地开发和 PR Fixture 模式不需要在线模型凭据或付费调用。（验证：Stage 10 offline CI/Fixture contract 和 Stage 11 fixture cost `[0,0]`）
+- [x] CI、成本、并发、缓存、日志脱敏、资源授权和 artifact 保留策略均已验证。（验证：Stage 8 asset/preflight、Stage 9 operations stress、Stage 10 security fixture 和 policy self-test 全部通过）
+- [x] 桌面多 profile 端到端流程通过；真实 Android 有验收记录或明确外部阻塞项。（验证：Stage 11 four-profile desktop audit 通过；Android API 36 本机启动、IME、横屏、安全区、九宫格、材质降级和 Touch Ripple 三态已记录，Remote Http/adminapi 合同缺失已明确保留）
+- [x] Runner self-test、比较测试、生成 Fixture、`cargo fmt`、相关测试、`cargo check` 和 `git diff --check` 全部通过。（验证：Stage 7 Runner SelfTest strict 3/3、Stage 8 `cargo test` 206/206、Stage 9/10 test/check/fixture 均通过，本次 `git diff --check` 通过）
+- [x] 文档足以让新开发者运行 Fixture 流程、理解审批边界并定位失败。（验证：Stage 12 核验 `docs/ui/UI参考图生成与正式包边界.md`、`docs/ui/UI调试与验收.md` 和 `docs/bevy-getting-started.md:1060`/`:1067`）
