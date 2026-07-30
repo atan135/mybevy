@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{picking::Pickable, prelude::*};
 
 use crate::framework::ui::{
     core::{
@@ -8,7 +8,8 @@ use crate::framework::ui::{
     },
     i18n::UiI18n,
     style::{
-        UiFontAssets, UiTheme,
+        UiButtonStyleRole, UiFontAssets, UiInputStyleRole, UiStyleBinding, UiStyleScope,
+        UiTextStyleRole, UiTheme,
         theme::{
             UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole, UiThemeRootNodeRole,
             UiThemeTextColorRole, UiThemeTextStyleRole,
@@ -36,6 +37,12 @@ const LOGIN_SUBTITLE_FALLBACK: &str = "Account Login";
 const CHARACTER_SUBTITLE_BINDING_PATH: &str = "auth.character.subtitle";
 const CHARACTER_SUBTITLE_FALLBACK: &str = "Character Select";
 const DEFAULT_CHARACTER_NAME: &str = "";
+const LOGIN_BACKGROUND_PATH: &str = "ui/images/login_stillwater_background.png";
+const LOGIN_VISUAL_STYLE_VARIANT: &str = "login.stillwater";
+const LOGIN_REFERENCE_WIDTH: f32 = 1376.0;
+const LOGIN_REFERENCE_HEIGHT: f32 = 768.0;
+const LOGIN_REFERENCE_PANEL_WIDTH: f32 = 344.0;
+const LOGIN_REFERENCE_PANEL_HEIGHT: f32 = 496.0;
 
 #[derive(Component)]
 pub(super) struct LoginNameInput;
@@ -204,6 +211,7 @@ impl AuthErrorSnapshot {
 
 pub(super) fn setup_login_screen(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     theme: Res<UiTheme>,
     metrics: Res<UiMetrics>,
     viewport: Res<UiViewport>,
@@ -218,10 +226,11 @@ pub(super) fn setup_login_screen(
     let viewport = viewport.into_inner();
     let fonts = fonts.into_inner();
     let i18n = i18n.into_inner();
-    clear_color.0 = theme.colors.screen_background;
+    clear_color.0 = Color::srgb_u8(4, 15, 18);
     let subtitle = i18n.tr(LOGIN_SUBTITLE_BINDING_PATH, LOGIN_SUBTITLE_FALLBACK);
-    let panel_width = auth_panel_width(viewport, theme, metrics);
-    let panel_gap = auth_panel_gap(viewport, theme);
+    let background = asset_server.load(LOGIN_BACKGROUND_PATH);
+    let panel_size = login_visual_panel_size(viewport, metrics);
+    let panel_padding = login_visual_panel_padding(panel_size);
     binding_values.set_text(LOGIN_SUBTITLE_BINDING_PATH, subtitle.clone());
     commands
         .spawn((
@@ -233,42 +242,59 @@ pub(super) fn setup_login_screen(
             Node {
                 width: percent(100),
                 height: percent(100),
+                position_type: PositionType::Relative,
+                align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 padding: viewport.safe_area_padding(metrics.page_padding),
-                overflow: Overflow::scroll_y(),
+                overflow: Overflow::clip(),
                 ..default()
             },
-            BackgroundColor(theme.colors.screen_background),
-            UiThemeBackgroundRole::Screen,
+            BackgroundColor(Color::srgb_u8(4, 15, 18)),
             UiThemeRootNodeRole::Screen,
         ))
         .with_children(|root| {
             root.spawn((
-                UiThemePanelNodeRole::Standard,
+                Name::new("Stillwater login background"),
                 Node {
                     width: percent(100),
-                    max_width: px(panel_width),
-                    align_self: AlignSelf::FlexStart,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(panel_gap),
-                    padding: UiRect::all(px(auth_panel_padding(viewport, theme, metrics))),
-                    border: UiRect::all(px(theme.panel.border)),
-                    border_radius: BorderRadius::all(px(theme.panel.radius)),
+                    height: percent(100),
+                    position_type: PositionType::Absolute,
                     ..default()
                 },
-                BackgroundColor(theme.colors.panel_background),
-                BorderColor::all(theme.colors.panel_border),
-                UiThemeBackgroundRole::Panel,
-                UiThemeBorderRole::Panel,
+                ImageNode::new(background).with_mode(NodeImageMode::Stretch),
+                Pickable::IGNORE,
+                ZIndex(0),
+            ));
+            root.spawn((
+                Name::new("Stillwater account login"),
+                UiStyleScope::new(LOGIN_VISUAL_STYLE_VARIANT),
+                Node {
+                    width: px(panel_size.x),
+                    height: px(panel_size.y),
+                    max_width: percent(100),
+                    max_height: percent(100),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(login_visual_panel_gap(viewport)),
+                    padding: UiRect::all(px(panel_padding)),
+                    border: UiRect::vertical(px(1)),
+                    overflow: Overflow::scroll_y(),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.01, 0.06, 0.08, 0.80)),
+                BorderColor::all(Color::srgba(0.47, 0.79, 0.78, 0.30)),
+                ZIndex(10),
             ))
             .with_children(|panel| {
-                panel.spawn(screen_title_key(
-                    theme,
-                    fonts,
-                    i18n,
-                    "app.name",
-                    "MyBevy",
-                    UiThemeTextStyleRole::TitleLarge,
+                panel.spawn((
+                    screen_title_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "app.name",
+                        "MyBevy",
+                        UiThemeTextStyleRole::TitleLarge,
+                    ),
+                    UiStyleBinding::new().with_text(UiTextStyleRole::Primary),
                 ));
                 panel.spawn((
                     screen_label(
@@ -283,8 +309,19 @@ pub(super) fn setup_login_screen(
                         LOGIN_SUBTITLE_FALLBACK,
                     )
                     .unwrap(),
+                    UiStyleBinding::new().with_text(UiTextStyleRole::Muted),
                 ));
-                spawn_auth_form_section(panel, theme, metrics, fonts, i18n, &session);
+                panel.spawn((
+                    Name::new("Stillwater login header rule"),
+                    Node {
+                        width: percent(100),
+                        height: px(1),
+                        margin: UiRect::vertical(px(4)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.40, 0.74, 0.73, 0.38)),
+                ));
+                spawn_auth_form_section(panel, theme, metrics, viewport, fonts, i18n, &session);
                 panel.spawn((
                     AuthDynamicRoot,
                     Node {
@@ -416,12 +453,14 @@ fn spawn_auth_form_section(
     parent: &mut ChildSpawnerCommands,
     theme: &UiTheme,
     metrics: &UiMetrics,
+    viewport: &UiViewport,
     fonts: &UiFontAssets,
     i18n: &UiI18n,
     session: &MyServerSession,
 ) {
     let login_pending = login_request_pending(session);
     let logged_in = session.account_login_state == AccountLoginState::LoggedIn;
+    let use_landscape_control_grid = uses_landscape_login_control_grid(viewport);
 
     parent
         .spawn((Node {
@@ -431,68 +470,198 @@ fn spawn_auth_form_section(
             ..default()
         },))
         .with_children(|parent| {
-            parent.spawn(screen_label_key(
-                theme,
-                fonts,
-                i18n,
-                "auth.login.account_section",
-                "Account",
-                UiThemeTextStyleRole::SectionLabel,
-                UiThemeTextColorRole::Muted,
-            ));
             parent.spawn((
-                text_input(
+                screen_label_key(
                     theme,
-                    metrics,
                     fonts,
-                    i18n.tr("auth.login.account_placeholder", "Account"),
-                    session.login_name.clone().unwrap_or_default(),
+                    i18n,
+                    "auth.login.account_section",
+                    "Account",
+                    UiThemeTextStyleRole::SectionLabel,
+                    UiThemeTextColorRole::Muted,
                 ),
-                LoginNameInput,
+                UiStyleBinding::new().with_text(UiTextStyleRole::Muted),
             ));
-            parent.spawn((
-                text_input(
-                    theme,
-                    metrics,
-                    fonts,
-                    i18n.tr("auth.login.password_placeholder", "Password"),
-                    "",
-                ),
-                PasswordInput,
-            ));
-            parent
-                .spawn((Node {
-                    width: percent(100),
-                    column_gap: px(theme.layout.row_column_gap),
-                    row_gap: px(theme.layout.row_gap),
-                    flex_wrap: FlexWrap::Wrap,
-                    ..default()
-                },))
-                .with_children(|parent| {
-                    spawn_primary_button(
-                        parent,
+            if use_landscape_control_grid {
+                parent
+                    .spawn((login_control_row(theme),))
+                    .with_children(|parent| {
+                        spawn_login_input_cell(
+                            parent,
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n.tr("auth.login.account_placeholder", "Account"),
+                            session.login_name.clone().unwrap_or_default(),
+                            LoginNameInput,
+                        );
+                        spawn_login_input_cell(
+                            parent,
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n.tr("auth.login.password_placeholder", "Password"),
+                            "",
+                            PasswordInput,
+                        );
+                    });
+                parent
+                    .spawn((login_control_row(theme),))
+                    .with_children(|parent| {
+                        spawn_login_button_cell(parent, |button| {
+                            spawn_primary_button(
+                                button,
+                                theme,
+                                metrics,
+                                fonts,
+                                i18n,
+                                "auth.login.sign_in",
+                                "Login",
+                                login_pending || logged_in,
+                                (
+                                    AccountLoginButton,
+                                    UiStyleBinding::new().with_button(UiButtonStyleRole::Primary),
+                                ),
+                            );
+                        });
+                        spawn_login_button_cell(parent, |button| {
+                            spawn_secondary_button(
+                                button,
+                                theme,
+                                metrics,
+                                fonts,
+                                i18n,
+                                "auth.login.guest_login",
+                                "Guest Login",
+                                login_pending || logged_in,
+                                (
+                                    GuestLoginButton,
+                                    UiStyleBinding::new().with_button(UiButtonStyleRole::Secondary),
+                                ),
+                            );
+                        });
+                    });
+            } else {
+                parent.spawn((
+                    text_input(
                         theme,
                         metrics,
                         fonts,
-                        i18n,
-                        "auth.login.sign_in",
-                        "Login",
-                        login_pending || logged_in,
-                        AccountLoginButton,
-                    );
-                    spawn_secondary_button(
-                        parent,
+                        i18n.tr("auth.login.account_placeholder", "Account"),
+                        session.login_name.clone().unwrap_or_default(),
+                    ),
+                    LoginNameInput,
+                    UiStyleBinding::new().with_input(UiInputStyleRole::Standard),
+                ));
+                parent.spawn((
+                    text_input(
                         theme,
                         metrics,
                         fonts,
-                        i18n,
-                        "auth.login.guest_login",
-                        "Guest Login",
-                        login_pending || logged_in,
-                        GuestLoginButton,
-                    );
-                });
+                        i18n.tr("auth.login.password_placeholder", "Password"),
+                        "",
+                    ),
+                    PasswordInput,
+                    UiStyleBinding::new().with_input(UiInputStyleRole::Standard),
+                ));
+                parent
+                    .spawn((Node {
+                        width: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        column_gap: px(theme.layout.row_column_gap),
+                        row_gap: px(theme.layout.row_gap),
+                        align_items: AlignItems::Stretch,
+                        ..default()
+                    },))
+                    .with_children(|parent| {
+                        spawn_primary_button(
+                            parent,
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            "auth.login.sign_in",
+                            "Login",
+                            login_pending || logged_in,
+                            (
+                                AccountLoginButton,
+                                UiStyleBinding::new().with_button(UiButtonStyleRole::Primary),
+                            ),
+                        );
+                        spawn_secondary_button(
+                            parent,
+                            theme,
+                            metrics,
+                            fonts,
+                            i18n,
+                            "auth.login.guest_login",
+                            "Guest Login",
+                            login_pending || logged_in,
+                            (
+                                GuestLoginButton,
+                                UiStyleBinding::new().with_button(UiButtonStyleRole::Secondary),
+                            ),
+                        );
+                    });
+            }
         });
+}
+
+fn uses_landscape_login_control_grid(viewport: &UiViewport) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        viewport.orientation == UiOrientation::Landscape
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        viewport.orientation == UiOrientation::Landscape && viewport.device_scale >= 2.0
+    }
+}
+
+fn login_control_row(theme: &UiTheme) -> Node {
+    Node {
+        width: percent(100),
+        flex_direction: FlexDirection::Row,
+        column_gap: px(theme.layout.row_column_gap),
+        align_items: AlignItems::Stretch,
+        ..default()
+    }
+}
+
+fn login_control_cell() -> Node {
+    Node {
+        flex_grow: 1.0,
+        min_width: px(0),
+        ..default()
+    }
+}
+
+fn spawn_login_input_cell<T: Bundle>(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    metrics: &UiMetrics,
+    fonts: &UiFontAssets,
+    placeholder: impl Into<String>,
+    value: impl Into<String>,
+    marker: T,
+) {
+    parent.spawn((login_control_cell(),)).with_children(|cell| {
+        cell.spawn((
+            text_input(theme, metrics, fonts, placeholder, value),
+            marker,
+            UiStyleBinding::new().with_input(UiInputStyleRole::Standard),
+        ));
+    });
+}
+
+fn spawn_login_button_cell(
+    parent: &mut ChildSpawnerCommands,
+    spawn_button: impl FnOnce(&mut ChildSpawnerCommands),
+) {
+    parent
+        .spawn((login_control_cell(),))
+        .with_children(spawn_button);
 }
 
 fn auth_panel_width(viewport: &UiViewport, theme: &UiTheme, metrics: &UiMetrics) -> f32 {
@@ -519,16 +688,55 @@ fn auth_panel_padding(viewport: &UiViewport, theme: &UiTheme, metrics: &UiMetric
     }
 }
 
+fn login_visual_panel_size(viewport: &UiViewport, metrics: &UiMetrics) -> Vec2 {
+    let available_width = (viewport.logical_width - metrics.page_padding * 2.0).max(1.0);
+    let available_height = (viewport.logical_height - metrics.page_padding * 2.0).max(1.0);
+    let uses_reference_geometry = viewport.logical_width >= LOGIN_REFERENCE_WIDTH * 0.8
+        && viewport.logical_height >= LOGIN_REFERENCE_HEIGHT * 0.7;
+
+    if uses_reference_geometry {
+        return Vec2::new(
+            LOGIN_REFERENCE_PANEL_WIDTH.min(available_width),
+            LOGIN_REFERENCE_PANEL_HEIGHT.min(available_height),
+        );
+    }
+
+    let width_ratio = if viewport.orientation == UiOrientation::Landscape {
+        0.52
+    } else {
+        0.88
+    };
+    Vec2::new(
+        (viewport.logical_width * width_ratio)
+            .clamp(280.0, 420.0)
+            .min(available_width),
+        (viewport.logical_height * 0.82)
+            .clamp(320.0, LOGIN_REFERENCE_PANEL_HEIGHT)
+            .min(available_height),
+    )
+}
+
+fn login_visual_panel_padding(panel_size: Vec2) -> f32 {
+    (panel_size.x * 0.085)
+        .min(panel_size.y * 0.06)
+        .clamp(18.0, 30.0)
+}
+
+fn login_visual_panel_gap(viewport: &UiViewport) -> f32 {
+    if viewport.logical_height < 540.0 {
+        10.0
+    } else {
+        16.0
+    }
+}
+
 fn spawn_dynamic_auth_children(
     parent: &mut ChildSpawnerCommands,
     theme: &UiTheme,
-    metrics: &UiMetrics,
     fonts: &UiFontAssets,
-    i18n: &UiI18n,
     snapshot: &LoginUiSnapshot,
 ) {
     spawn_status_notice(parent, theme, fonts, snapshot);
-    spawn_development_section(parent, theme, metrics, fonts, i18n);
 }
 
 fn spawn_dynamic_character_select_children(
@@ -983,35 +1191,40 @@ fn spawn_development_section(
     fonts: &UiFontAssets,
     i18n: &UiI18n,
 ) {
-    parent.spawn((
-        Node {
+    parent
+        .spawn((Node {
             width: percent(100),
             flex_direction: FlexDirection::Column,
             row_gap: px(theme.layout.row_gap),
             padding: UiRect::top(px(theme.layout.row_padding_y)),
             ..default()
-        },
-        children![
-            screen_label_key(
-                theme,
-                fonts,
-                i18n,
-                "auth.login.dev_section",
-                "Development",
-                UiThemeTextStyleRole::SectionLabel,
-                UiThemeTextColorRole::Muted,
-            ),
-            secondary_route_button_key(
-                theme,
-                metrics,
-                fonts,
-                i18n,
-                "auth.login.dev_lobby",
-                "Open Lobby",
-                AppUiMode::Lobby,
-            ),
-        ],
-    ));
+        },))
+        .with_children(|section| {
+            section.spawn((
+                screen_label_key(
+                    theme,
+                    fonts,
+                    i18n,
+                    "auth.login.dev_section",
+                    "Development",
+                    UiThemeTextStyleRole::SectionLabel,
+                    UiThemeTextColorRole::Muted,
+                ),
+                UiStyleBinding::new().with_text(UiTextStyleRole::Muted),
+            ));
+            section.spawn((
+                secondary_route_button_key(
+                    theme,
+                    metrics,
+                    fonts,
+                    i18n,
+                    "auth.login.dev_lobby",
+                    "Open Lobby",
+                    AppUiMode::Lobby,
+                ),
+                UiStyleBinding::new().with_button(UiButtonStyleRole::Secondary),
+            ));
+        });
 }
 
 fn spawn_primary_button<T: Bundle>(
@@ -1311,7 +1524,6 @@ pub(super) fn follow_myserver_login_events(
 pub(super) fn sync_login_screen_state(
     mut commands: Commands,
     theme: Res<UiTheme>,
-    metrics: Res<UiMetrics>,
     fonts: Res<UiFontAssets>,
     i18n: Res<UiI18n>,
     session: Res<MyServerSession>,
@@ -1325,13 +1537,11 @@ pub(super) fn sync_login_screen_state(
     ui_state.rendered = Some(next_snapshot.clone());
 
     let theme = theme.into_inner();
-    let metrics = metrics.into_inner();
     let fonts = fonts.into_inner();
-    let i18n = i18n.into_inner();
     for root in &dynamic_roots {
         commands.entity(root).despawn_related::<Children>();
         commands.entity(root).with_children(|parent| {
-            spawn_dynamic_auth_children(parent, theme, metrics, fonts, i18n, &next_snapshot);
+            spawn_dynamic_auth_children(parent, theme, fonts, &next_snapshot);
         });
     }
 }
@@ -1834,6 +2044,19 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::time::SystemTime;
+
+    #[test]
+    fn landscape_login_control_grid_is_limited_to_high_density_devices() {
+        let mut viewport = UiViewport::default();
+
+        assert!(!uses_landscape_login_control_grid(&viewport));
+
+        viewport.device_scale = 2.0;
+        assert!(uses_landscape_login_control_grid(&viewport));
+
+        viewport.orientation = UiOrientation::Portrait;
+        assert!(!uses_landscape_login_control_grid(&viewport));
+    }
 
     #[test]
     fn character_detail_prefers_display_discriminator() {
