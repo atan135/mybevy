@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "document_id": "game.declarative_pilot",
+  "metadata": {
+    "title": "Declarative Pilot",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "root": {
+    "type": "container",
+    "id": "pilot.page",
+    "layout": {
+      "width": { "percent": 100 },
+      "height": { "percent": 100 },
+      "direction": "column",
+      "justify_content": "center",
+      "align_items": "center",
+      "padding": { "all": { "px": 32 } },
+      "gap": { "px": 16 }
+    },
+    "children": [
+      {
+        "type": "text",
+        "id": "pilot.title",
+        "content": { "literal": "Declarative UI pilot" }
+      },
+      {
+        "type": "text",
+        "id": "pilot.body",
+        "content": { "literal": "This presentation-only page is registered as data by the game host." }
+      }
+    ]
+  }
+}

@@ -40,6 +40,9 @@ pub enum UiDocumentSourceRoot {
     Approved,
     Fixture,
     Authoring,
+    /// A future verified content-cache generation. This is a logical source only: loading and
+    /// activation stay owned by the game host/update client rather than by filesystem watch.
+    ContentCache,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -60,6 +63,7 @@ impl UiDocumentSourcePath {
             UiDocumentSourceRoot::Approved => "ui/documents/approved",
             UiDocumentSourceRoot::Fixture => "ui/documents/fixtures",
             UiDocumentSourceRoot::Authoring => "ui-documents/source",
+            UiDocumentSourceRoot::ContentCache => "ui-documents/cache",
         };
         Ok(Self {
             logical: format!("{prefix}/{relative}"),
@@ -503,6 +507,12 @@ enum UiDocumentNodeState {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub enum UiDocumentPreviewSystems {
+    Commands,
+    FinishReloads,
+}
+
 pub struct UiDocumentPreviewPlugin;
 
 impl Plugin for UiDocumentPreviewPlugin {
@@ -512,17 +522,25 @@ impl Plugin for UiDocumentPreviewPlugin {
             .init_resource::<UiDocumentAuditRecipeRegistry>()
             .add_message::<UiDocumentPreviewCommand>()
             .add_message::<UiDocumentReloadEvent>()
+            .configure_sets(
+                Update,
+                UiDocumentPreviewSystems::Commands.before(UiDocumentRuntimeSystems::Commands),
+            )
+            .configure_sets(
+                Update,
+                UiDocumentPreviewSystems::FinishReloads
+                    .after(UiDocumentRuntimeSystems::Commit)
+                    .before(UiDocumentRuntimeSystems::Reconcile),
+            )
             .add_systems(
                 Update,
                 (poll_document_watch, handle_preview_commands)
                     .chain()
-                    .before(UiDocumentRuntimeSystems::Commands),
+                    .in_set(UiDocumentPreviewSystems::Commands),
             )
             .add_systems(
                 Update,
-                finish_preview_reloads
-                    .after(UiDocumentRuntimeSystems::Commit)
-                    .before(UiDocumentRuntimeSystems::Reconcile),
+                finish_preview_reloads.in_set(UiDocumentPreviewSystems::FinishReloads),
             );
     }
 }

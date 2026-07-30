@@ -13,9 +13,14 @@ use crate::framework::ui::{
     core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
     document::{
         UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema, UiActionParamType,
-        UiActionRegistry, UiBindingPath, UiBindingType, UiDocumentId, UiRegisteredActionKind,
+        UiActionRegistry, UiBindingPath, UiBindingType, UiDocumentId, UiDocumentRuntimeCommand,
+        UiRegisteredActionKind,
     },
     widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
+};
+use crate::game::declarative_screen::{
+    DeclarativeScreenHostCommand, DeclarativeScreenRegistry,
+    register_declarative_route_audit_entries,
 };
 use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_ANIMATIONS, ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES,
@@ -39,7 +44,9 @@ pub(super) struct NavigationPlugin;
 impl Plugin for NavigationPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppUiMode>()
+            .init_resource::<DeclarativeScreenRegistry>()
             .add_message::<GameRouteCommand>()
+            .add_message::<DeclarativeScreenHostCommand>()
             .add_systems(
                 Startup,
                 (
@@ -280,25 +287,40 @@ fn handle_route_buttons(
 fn handle_ui_audit_route_commands(
     mut audit_route_commands: MessageReader<UiAuditRouteCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
+    declarative_hosts: Res<DeclarativeScreenRegistry>,
+    mut declarative_commands: MessageWriter<DeclarativeScreenHostCommand>,
 ) {
     for command in audit_route_commands.read() {
-        let Some(mode) = parse_start_screen_mode(&command.screen) else {
-            warn!(
-                "ui audit route ignored unknown screen alias: {}",
-                command.screen
-            );
-            continue;
-        };
-        if mode.ui_owner() != command.owner {
-            warn!(
-                "ui audit route owner mismatch: screen={}, expected={}, actual={}",
-                command.screen,
-                command.owner,
-                mode.ui_owner()
-            );
+        if let Some(mode) = parse_start_screen_mode(&command.screen) {
+            if mode.ui_owner() != command.owner {
+                warn!(
+                    "ui audit route owner mismatch: screen={}, expected={}, actual={}",
+                    command.screen,
+                    command.owner,
+                    mode.ui_owner()
+                );
+                continue;
+            }
+            route_commands.write(GameRouteCommand::ChangeMode(mode));
             continue;
         }
-        route_commands.write(GameRouteCommand::ChangeMode(mode));
+        if let Some(host) = declarative_hosts.route(&command.screen) {
+            if host.owner != command.owner {
+                warn!(
+                    "ui audit declarative route owner mismatch: screen={}, expected={}, actual={}",
+                    command.screen, command.owner, host.owner
+                );
+                continue;
+            }
+            declarative_commands.write(DeclarativeScreenHostCommand::OpenRoute {
+                route: host.route.to_owned(),
+            });
+            continue;
+        }
+        warn!(
+            "ui audit route ignored unknown screen alias: {}",
+            command.screen
+        );
     }
 }
 
@@ -309,16 +331,21 @@ fn handle_game_route_commands(
     mut current_owner: ResMut<UiCurrentOwner>,
     mut binding_values: ResMut<UiBindingValues>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
+    mut runtime_commands: MessageWriter<UiDocumentRuntimeCommand>,
 ) {
-    current_owner.owner = Some(current_mode.get().ui_owner());
+    if current_owner.owner.is_none() {
+        current_owner.owner = Some(current_mode.get().ui_owner());
+    }
 
     for command in route_commands.read() {
         match command {
             GameRouteCommand::ChangeMode(mode) => {
-                binding_values.clear_owner(current_mode.get().ui_owner().as_str());
-                panel_commands.write(UiPanelCommand::CloseAllForOwner(
-                    current_mode.get().ui_owner(),
-                ));
+                let previous_owner = current_owner.owner.unwrap_or(current_mode.get().ui_owner());
+                binding_values.clear_owner(previous_owner.as_str());
+                panel_commands.write(UiPanelCommand::CloseAllForOwner(previous_owner));
+                runtime_commands.write(UiDocumentRuntimeCommand::SwitchOwner {
+                    previous_owner: previous_owner.as_str().to_owned(),
+                });
                 current_owner.owner = Some(mode.ui_owner());
                 next_mode.set(*mode);
             }
@@ -326,15 +353,24 @@ fn handle_game_route_commands(
     }
 }
 
-fn setup_start_mode(mut next_mode: ResMut<NextState<AppUiMode>>) {
+fn setup_start_mode(
+    mut next_mode: ResMut<NextState<AppUiMode>>,
+    declarative_hosts: Res<DeclarativeScreenRegistry>,
+    mut declarative_commands: MessageWriter<DeclarativeScreenHostCommand>,
+) {
     let Ok(value) = env::var("TOUCH_START_SCREEN") else {
         return;
     };
 
-    let Some(mode) = parse_start_screen_mode(&value) else {
+    if let Some(mode) = parse_start_screen_mode(&value) {
+        next_mode.set(mode);
         return;
-    };
-    next_mode.set(mode);
+    }
+    if let Some(host) = declarative_hosts.route(&value) {
+        declarative_commands.write(DeclarativeScreenHostCommand::OpenRoute {
+            route: host.route.to_owned(),
+        });
+    }
 }
 
 pub(crate) fn parse_start_screen_mode(value: &str) -> Option<AppUiMode> {
@@ -345,8 +381,12 @@ pub(crate) fn parse_start_screen_mode(value: &str) -> Option<AppUiMode> {
     })
 }
 
-fn register_ui_audit_screens(mut registry: ResMut<UiAuditScreenRegistry>) {
+fn register_ui_audit_screens(
+    mut registry: ResMut<UiAuditScreenRegistry>,
+    declarative_hosts: Res<DeclarativeScreenRegistry>,
+) {
     register_ui_audit_screen_entries(&mut registry);
+    register_declarative_route_audit_entries(&mut registry, &declarative_hosts);
 }
 
 fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {

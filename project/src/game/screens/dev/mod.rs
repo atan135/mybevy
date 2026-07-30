@@ -1,9 +1,7 @@
 mod ai_login_reference;
 mod audio_gallery;
 mod audio_monitor;
-mod ui_document_gallery;
 mod ui_gallery;
-mod ui_generated_acceptance;
 
 use bevy::prelude::*;
 
@@ -18,14 +16,6 @@ pub(super) struct DevScreensPlugin;
 impl Plugin for DevScreensPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppUiMode::UiGallery), ui_gallery::setup_ui_gallery)
-            .add_systems(
-                OnEnter(AppUiMode::UiDocumentGallery),
-                ui_document_gallery::setup_ui_document_gallery,
-            )
-            .add_systems(
-                OnEnter(AppUiMode::UiGeneratedAcceptance),
-                ui_generated_acceptance::setup_ui_generated_acceptance,
-            )
             .add_systems(
                 OnEnter(AppUiMode::AiLoginReference),
                 ai_login_reference::setup_ai_login_reference,
@@ -77,14 +67,6 @@ impl Plugin for DevScreensPlugin {
             .add_systems(
                 OnExit(AppUiMode::UiGallery),
                 ui_gallery::clear_ui_gallery_loading_preview,
-            )
-            .add_systems(
-                OnExit(AppUiMode::UiDocumentGallery),
-                ui_document_gallery::cleanup_ui_document_gallery,
-            )
-            .add_systems(
-                OnExit(AppUiMode::UiGeneratedAcceptance),
-                ui_generated_acceptance::cleanup_ui_generated_acceptance,
             )
             .add_systems(
                 Update,

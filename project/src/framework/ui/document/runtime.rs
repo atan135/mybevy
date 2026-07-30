@@ -92,7 +92,8 @@ impl UiDocumentSourceOrigin {
 fn safe_preview_source_path(value: &str) -> bool {
     let allowed_root = value.starts_with("ui/documents/approved/")
         || value.starts_with("ui/documents/fixtures/")
-        || value.starts_with("ui-documents/source/");
+        || value.starts_with("ui-documents/source/")
+        || value.starts_with("ui-documents/cache/");
     allowed_root
         && value.len() <= 280
         && value.is_ascii()
