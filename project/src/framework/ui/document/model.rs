@@ -461,6 +461,8 @@ pub struct UiStyle {
     pub text_role: Option<UiStyleId>,
     #[serde(default)]
     pub inline: UiStyleProperties,
+    #[serde(default, skip_serializing_if = "super::UiNodeBindings::is_empty")]
+    pub bindings: super::UiNodeBindings,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -55,6 +55,14 @@ const CONTENT_CANONICAL_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/content_protocol.v1.canonical.json"
 ));
+const TYPED_BINDING_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/binding_typed_values.v1.json"
+));
+const TYPED_BINDING_CANONICAL_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/binding_typed_values.v1.canonical.json"
+));
 const CONTENT_WRONG_ASSET_TYPE_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/invalid/content_wrong_asset_type.v1.json"
@@ -653,6 +661,29 @@ fn ui_document_canonical_json_matches_golden_and_round_trips() {
     assert_eq!(
         canonical_value["root"]["children"][0]["style"]["role"],
         Value::Null
+    );
+}
+
+#[test]
+fn ui_document_typed_binding_fixture_has_a_canonical_golden() {
+    let document = UiDocument::parse_and_validate_json(TYPED_BINDING_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let canonical = document.to_canonical_json_pretty().unwrap();
+    maybe_update_golden(
+        "UPDATE_UI_DOCUMENT_GOLDENS",
+        "assets/ui/documents/fixtures/binding_typed_values.v1.canonical.json",
+        &canonical,
+    );
+    assert_eq!(
+        canonical,
+        normalize_golden_line_endings(TYPED_BINDING_CANONICAL_DOCUMENT)
+    );
+    assert_eq!(
+        UiDocument::parse_and_validate_json(&canonical)
+            .unwrap()
+            .into_document(),
+        document
     );
 }
 

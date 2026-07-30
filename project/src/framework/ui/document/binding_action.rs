@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const UI_ACTION_STRING_MAX_BYTES: usize = 4 * 1024;
 pub const UI_BINDING_ENUM_MAX_VALUES: usize = 64;
+pub const UI_BINDING_RECORD_MAX_FIELDS: usize = 32;
+pub const UI_BINDING_LIST_MAX_ITEMS: usize = 128;
+pub const UI_BINDING_VALUE_MAX_DEPTH: usize = 4;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -16,6 +19,10 @@ pub enum UiBindingScope {
     Document,
     Owner,
     Local,
+    /// Reserved for the stable key of a future `Repeat` item. Item bindings are
+    /// deliberately not resolved by ordinary nodes before the collection protocol
+    /// is available.
+    Item,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -35,7 +42,16 @@ pub enum UiBindingType {
     Bool,
     Number,
     Visibility,
-    Enum { values: Vec<String> },
+    Enum {
+        values: Vec<String>,
+    },
+    Record {
+        fields: BTreeMap<String, UiBindingType>,
+    },
+    List {
+        item: Box<UiBindingType>,
+        max_items: u16,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -52,6 +68,8 @@ pub enum UiBindingValue {
     Number(f64),
     Visibility(UiBindingVisibility),
     Enum(String),
+    Record(BTreeMap<String, UiBindingValue>),
+    List(Vec<UiBindingValue>),
 }
 
 impl UiBindingValue {
@@ -62,7 +80,45 @@ impl UiBindingValue {
             Self::Number(_) => "number",
             Self::Visibility(_) => "visibility",
             Self::Enum(_) => "enum",
+            Self::Record(_) => "record",
+            Self::List(_) => "list",
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiBindingDirection {
+    #[default]
+    OneWay,
+    TwoWay,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UiControlValueBinding {
+    pub binding_path: UiBindingPath,
+    #[serde(default)]
+    pub direction: UiBindingDirection,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UiNodeBindings {
+    /// Accepts a bool (`true` is visible) or an explicit visibility value.
+    #[serde(default)]
+    pub visibility: Option<UiBindingPath>,
+    /// Accepts the closed enum values `flex`, `grid`, or `none`.
+    #[serde(default)]
+    pub display: Option<UiBindingPath>,
+}
+
+impl UiNodeBindings {
+    pub const fn is_empty(&self) -> bool {
+        self.visibility.is_none() && self.display.is_none()
     }
 }
 
@@ -370,19 +426,17 @@ fn validate_binding_declaration(
     path: &str,
     errors: &mut Vec<UiBindingActionError>,
 ) {
-    if let UiBindingType::Enum { values } = &declaration.value_type {
-        let unique = values.iter().collect::<BTreeSet<_>>();
-        if values.is_empty()
-            || values.len() > UI_BINDING_ENUM_MAX_VALUES
-            || unique.len() != values.len()
-            || values.iter().any(|value| !is_safe_identifier(value))
-        {
-            errors.push(UiBindingActionError::new(
-                "UI_BINDING_ENUM_INVALID",
-                format!("{path}.value_type.values"),
-                None,
-            ));
-        }
+    if !binding_type_schema_is_valid(&declaration.value_type) {
+        let code = if matches!(declaration.value_type, UiBindingType::Enum { .. }) {
+            "UI_BINDING_ENUM_INVALID"
+        } else {
+            "UI_BINDING_TYPE_INVALID"
+        };
+        errors.push(UiBindingActionError::new(
+            code,
+            format!("{path}.value_type"),
+            None,
+        ));
     }
     if declaration.missing == UiBindingMissingBehavior::UseDefault && declaration.default.is_none()
     {
@@ -409,6 +463,7 @@ fn validate_static_node(
     path: &str,
     errors: &mut Vec<UiBindingActionError>,
 ) {
+    validate_node_bindings(document, node, path, errors);
     visit_node_text_content(node, |content, content_path| {
         validate_bound_text(
             document,
@@ -705,8 +760,179 @@ pub fn binding_value_matches(value_type: &UiBindingType, value: &UiBindingValue)
         (UiBindingType::Number, UiBindingValue::Number(value)) => value.is_finite(),
         (UiBindingType::Visibility, UiBindingValue::Visibility(_)) => true,
         (UiBindingType::Enum { values }, UiBindingValue::Enum(value)) => values.contains(value),
+        (UiBindingType::Record { fields }, UiBindingValue::Record(values)) => {
+            values.len() == fields.len()
+                && fields.iter().all(|(field, value_type)| {
+                    values
+                        .get(field)
+                        .is_some_and(|value| binding_value_matches(value_type, value))
+                })
+        }
+        (UiBindingType::List { item, max_items }, UiBindingValue::List(values)) => {
+            values.len() <= usize::from(*max_items)
+                && values
+                    .iter()
+                    .all(|value| binding_value_matches(item, value))
+        }
         _ => false,
     }
+}
+
+fn validate_node_bindings(
+    document: &UiDocument,
+    node: &UiNode,
+    path: &str,
+    errors: &mut Vec<UiBindingActionError>,
+) {
+    let bindings = &node.style().bindings;
+    validate_binding_path_type(
+        document,
+        bindings.visibility.as_ref(),
+        |value_type| matches!(value_type, UiBindingType::Bool | UiBindingType::Visibility),
+        &format!("{path}.style.bindings.visibility"),
+        node.id(),
+        errors,
+    );
+    validate_binding_path_type(
+        document,
+        bindings.display.as_ref(),
+        |value_type| {
+            matches!(value_type, UiBindingType::Enum { values }
+                if values.iter().all(|value| matches!(value.as_str(), "flex" | "grid" | "none")))
+        },
+        &format!("{path}.style.bindings.display"),
+        node.id(),
+        errors,
+    );
+    let Some(component) = node.component() else {
+        return;
+    };
+    for (state, style) in &component.state_overrides {
+        if !style.bindings.is_empty() {
+            errors.push(UiBindingActionError::new(
+                "UI_BINDING_STATE_OVERRIDE_FORBIDDEN",
+                format!("{path}.component.state_overrides.{state}.bindings"),
+                Some(node.id().clone()),
+            ));
+        }
+    }
+    let bindings = &component.bindings;
+    for (field, binding) in [
+        ("disabled", bindings.disabled.as_ref()),
+        ("loading", bindings.loading.as_ref()),
+        ("selected", bindings.selected.as_ref()),
+    ] {
+        validate_binding_path_type(
+            document,
+            binding,
+            |value_type| matches!(value_type, UiBindingType::Bool),
+            &format!("{path}.component.bindings.{field}"),
+            node.id(),
+            errors,
+        );
+    }
+    validate_binding_path_type(
+        document,
+        bindings.variant.as_ref(),
+        |value_type| {
+            matches!(value_type, UiBindingType::Enum { values }
+                if values.iter().all(|value| ui_component_variant(value).is_some()))
+        },
+        &format!("{path}.component.bindings.variant"),
+        node.id(),
+        errors,
+    );
+    let Some(value) = &bindings.value else {
+        return;
+    };
+    let accepts_value = match node {
+        UiNode::TextInput { .. } => matches!(
+            document
+                .bindings
+                .get(&value.binding_path)
+                .map(|binding| &binding.value_type),
+            Some(UiBindingType::String)
+        ),
+        UiNode::Checkbox { .. } | UiNode::Toggle { .. } => matches!(
+            document
+                .bindings
+                .get(&value.binding_path)
+                .map(|binding| &binding.value_type),
+            Some(UiBindingType::Bool)
+        ),
+        UiNode::Segmented { .. } | UiNode::Select { .. } | UiNode::Tab { .. } => matches!(
+            document
+                .bindings
+                .get(&value.binding_path)
+                .map(|binding| &binding.value_type),
+            Some(UiBindingType::Enum { .. })
+        ),
+        UiNode::Slider { .. } | UiNode::Stepper { .. } | UiNode::Progress { .. } => matches!(
+            document
+                .bindings
+                .get(&value.binding_path)
+                .map(|binding| &binding.value_type),
+            Some(UiBindingType::Number)
+        ),
+        _ => false,
+    };
+    if !accepts_value {
+        let code = if document.bindings.contains_key(&value.binding_path) {
+            "UI_BINDING_CONTROL_VALUE_TYPE_MISMATCH"
+        } else {
+            "UI_BINDING_PATH_UNDECLARED"
+        };
+        errors.push(UiBindingActionError::new(
+            code,
+            format!("{path}.component.bindings.value.binding_path"),
+            Some(node.id().clone()),
+        ));
+    }
+}
+
+fn validate_binding_path_type(
+    document: &UiDocument,
+    binding: Option<&UiBindingPath>,
+    expected: impl FnOnce(&UiBindingType) -> bool,
+    path: &str,
+    node_id: &UiNodeId,
+    errors: &mut Vec<UiBindingActionError>,
+) {
+    let Some(binding) = binding else {
+        return;
+    };
+    let Some(declaration) = document.bindings.get(binding) else {
+        errors.push(UiBindingActionError::new(
+            "UI_BINDING_PATH_UNDECLARED",
+            path,
+            Some(node_id.clone()),
+        ));
+        return;
+    };
+    if !expected(&declaration.value_type) {
+        errors.push(UiBindingActionError::new(
+            "UI_BINDING_TYPE_MISMATCH",
+            path,
+            Some(node_id.clone()),
+        ));
+    }
+}
+
+pub(crate) fn ui_component_variant(value: &str) -> Option<super::UiComponentVariant> {
+    use super::UiComponentVariant;
+    Some(match value {
+        "default" => UiComponentVariant::Default,
+        "primary" => UiComponentVariant::Primary,
+        "secondary" => UiComponentVariant::Secondary,
+        "destructive" => UiComponentVariant::Destructive,
+        "subtle" => UiComponentVariant::Subtle,
+        "outline" => UiComponentVariant::Outline,
+        "info" => UiComponentVariant::Info,
+        "success" => UiComponentVariant::Success,
+        "warning" => UiComponentVariant::Warning,
+        "error" => UiComponentVariant::Error,
+        _ => return None,
+    })
 }
 
 fn binding_value_is_safe(value: &UiBindingValue) -> bool {
@@ -716,7 +942,40 @@ fn binding_value_is_safe(value: &UiBindingValue) -> bool {
         }
         UiBindingValue::Number(value) => value.is_finite(),
         UiBindingValue::Enum(value) => is_safe_identifier(value),
+        UiBindingValue::Record(values) => {
+            values.len() <= UI_BINDING_RECORD_MAX_FIELDS
+                && values.iter().all(|(field, value)| {
+                    is_safe_identifier(field) && binding_value_is_safe_at_depth(value, 1)
+                })
+        }
+        UiBindingValue::List(values) => {
+            values.len() <= UI_BINDING_LIST_MAX_ITEMS
+                && values
+                    .iter()
+                    .all(|value| binding_value_is_safe_at_depth(value, 1))
+        }
         UiBindingValue::Bool(_) | UiBindingValue::Visibility(_) => true,
+    }
+}
+
+fn binding_value_is_safe_at_depth(value: &UiBindingValue, depth: usize) -> bool {
+    if depth > UI_BINDING_VALUE_MAX_DEPTH {
+        return false;
+    }
+    match value {
+        UiBindingValue::Record(values) => {
+            values.len() <= UI_BINDING_RECORD_MAX_FIELDS
+                && values.iter().all(|(field, value)| {
+                    is_safe_identifier(field) && binding_value_is_safe_at_depth(value, depth + 1)
+                })
+        }
+        UiBindingValue::List(values) => {
+            values.len() <= UI_BINDING_LIST_MAX_ITEMS
+                && values
+                    .iter()
+                    .all(|value| binding_value_is_safe_at_depth(value, depth + 1))
+        }
+        _ => binding_value_is_safe(value),
     }
 }
 
@@ -785,6 +1044,13 @@ fn action_param_schema_is_valid(schema: &UiActionParamType) -> bool {
 }
 
 fn binding_type_schema_is_valid(value_type: &UiBindingType) -> bool {
+    binding_type_schema_is_valid_at_depth(value_type, 0)
+}
+
+fn binding_type_schema_is_valid_at_depth(value_type: &UiBindingType, depth: usize) -> bool {
+    if depth > UI_BINDING_VALUE_MAX_DEPTH {
+        return false;
+    }
     match value_type {
         UiBindingType::Enum { values } => {
             let unique = values.iter().collect::<BTreeSet<_>>();
@@ -792,6 +1058,18 @@ fn binding_type_schema_is_valid(value_type: &UiBindingType) -> bool {
                 && values.len() <= UI_BINDING_ENUM_MAX_VALUES
                 && unique.len() == values.len()
                 && values.iter().all(|value| is_safe_identifier(value))
+        }
+        UiBindingType::Record { fields } => {
+            !fields.is_empty()
+                && fields.len() <= UI_BINDING_RECORD_MAX_FIELDS
+                && fields.iter().all(|(field, value_type)| {
+                    is_safe_identifier(field)
+                        && binding_type_schema_is_valid_at_depth(value_type, depth + 1)
+                })
+        }
+        UiBindingType::List { item, max_items } => {
+            (1..=UI_BINDING_LIST_MAX_ITEMS as u16).contains(max_items)
+                && binding_type_schema_is_valid_at_depth(item, depth + 1)
         }
         _ => true,
     }
@@ -865,6 +1143,22 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/assets/ui/documents/fixtures/binding_actions.v1.json"
     ));
+    const TYPED_BINDING_DOCUMENT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/ui/documents/fixtures/binding_typed_values.v1.json"
+    ));
+    const INVALID_RECORD_BINDING_DOCUMENT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/ui/documents/fixtures/invalid/binding_record_invalid.v1.json"
+    ));
+    const CONTROL_BINDING_DOCUMENT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/ui/documents/fixtures/binding_controls.v1.json"
+    ));
+    const INVALID_CONTROL_BINDING_DOCUMENT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/ui/documents/fixtures/invalid/binding_control_value_type.v1.json"
+    ));
 
     #[test]
     fn ui_document_binding_protocol_covers_typed_values_scopes_defaults_and_missing_behavior() {
@@ -898,6 +1192,36 @@ mod tests {
             binding(bindings, "state.title").missing,
             UiBindingMissingBehavior::UseDefault
         );
+    }
+
+    #[test]
+    fn ui_document_binding_protocol_keeps_record_list_and_item_scope_closed() {
+        let validated = UiDocument::parse_and_validate_json(TYPED_BINDING_DOCUMENT).unwrap();
+        let row = binding(&validated.document().bindings, "state.row");
+        assert_eq!(row.scope, UiBindingScope::Item);
+        assert!(matches!(
+            row.value_type,
+            UiBindingType::Record { ref fields }
+                if fields.len() == 3 && fields["character_id"] == UiBindingType::String
+        ));
+        let rows = binding(&validated.document().bindings, "state.rows");
+        assert!(matches!(
+            rows.value_type,
+            UiBindingType::List { max_items: 16, .. }
+        ));
+
+        let error =
+            UiDocument::parse_and_validate_json(INVALID_RECORD_BINDING_DOCUMENT).unwrap_err();
+        assert_binding_error(error, "UI_BINDING_TYPE_INVALID");
+    }
+
+    #[test]
+    fn ui_document_control_binding_fixture_covers_closed_presentation_and_value_fields() {
+        let document = UiDocument::parse_and_validate_json(CONTROL_BINDING_DOCUMENT).unwrap();
+        assert_eq!(document.document().bindings.len(), 9);
+        let error =
+            UiDocument::parse_and_validate_json(INVALID_CONTROL_BINDING_DOCUMENT).unwrap_err();
+        assert_binding_error(error, "UI_BINDING_CONTROL_VALUE_TYPE_MISMATCH");
     }
 
     #[test]

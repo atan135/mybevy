@@ -407,6 +407,7 @@ fn resolved_patch_complexity(document: &UiDocument, patch: &UiStylePatch, path: 
         role: patch.role.clone(),
         text_role: patch.text_role.clone(),
         inline: patch.inline.clone().unwrap_or_default(),
+        bindings: Default::default(),
     };
     resolved_style_complexity(document, &style, path)
 }

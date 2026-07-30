@@ -1,6 +1,6 @@
 use super::{
-    UiAssetId, UiColor, UiImagePresentation, UiNode, UiNodeId, UiStyle, UiTextContent,
-    default_image_tint,
+    UiAssetId, UiBindingPath, UiColor, UiControlValueBinding, UiImagePresentation, UiNode,
+    UiNodeId, UiStyle, UiTextContent, default_image_tint,
 };
 use crate::framework::ui::{
     core::UiPanelKind,
@@ -111,6 +111,11 @@ pub struct UiComponentSpec {
     pub slots: BTreeMap<UiControlSlot, UiControlSlotContent>,
     #[serde(default)]
     pub children: Vec<UiNode>,
+    /// Closed presentation/value bindings. This intentionally names fields rather
+    /// than accepting a generic property map, so documents cannot target arbitrary
+    /// ECS components or widget internals.
+    #[serde(default, skip_serializing_if = "UiComponentBindings::is_empty")]
+    pub bindings: UiComponentBindings,
 }
 
 impl Default for UiComponentSpec {
@@ -122,7 +127,34 @@ impl Default for UiComponentSpec {
             state_overrides: BTreeMap::new(),
             slots: BTreeMap::new(),
             children: Vec::new(),
+            bindings: UiComponentBindings::default(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UiComponentBindings {
+    #[serde(default)]
+    pub disabled: Option<UiBindingPath>,
+    #[serde(default)]
+    pub loading: Option<UiBindingPath>,
+    #[serde(default)]
+    pub selected: Option<UiBindingPath>,
+    #[serde(default)]
+    pub value: Option<UiControlValueBinding>,
+    #[serde(default)]
+    pub variant: Option<UiBindingPath>,
+}
+
+impl UiComponentBindings {
+    pub const fn is_empty(&self) -> bool {
+        self.disabled.is_none()
+            && self.loading.is_none()
+            && self.selected.is_none()
+            && self.value.is_none()
+            && self.variant.is_none()
     }
 }
 

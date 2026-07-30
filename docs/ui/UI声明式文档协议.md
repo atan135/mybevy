@@ -377,15 +377,22 @@ loading、failed 和 ready 的状态机仍由现有 image widget/AssetServer 在
 
 ### 16.1 Typed binding 与生命周期
 
-`UiDocument.bindings` 是稳定 binding path 到声明的 closed table。每项必须显式给出 `scope` 和 `value_type`；值类型只允许 `string`、`bool`、有限 `number`、`visibility`（`inherited` / `visible` / `hidden`）以及声明自身 allowlist 的 `enum`。默认值使用同一 tagged typed value，必须与声明类型一致；`missing` 只允许由 consumer 使用其 fallback，或使用声明的 typed default，后者缺少 default 时文档无效。
+`UiDocument.bindings` 是稳定 binding path 到声明的 closed table。每项必须显式给出 `scope` 和 `value_type`；标量类型只允许 `string`、`bool`、有限 `number`、`visibility`（`inherited` / `visible` / `hidden`）以及声明自身 allowlist 的 `enum`。为阶段 5 collection 协议预留的 `record` 和 `list` 也是受限递归类型：record 必须声明全部 field，list 必须声明 item type 和 1 至 128 的最大项数，record 最多 32 field，嵌套不超过 4 层。它们不是任意 JSON、map 或表达式载体，普通节点在 Repeat 上线前不能读取 `item` scope。默认值使用同一 tagged typed value，必须与声明类型一致；`missing` 只允许由 consumer 使用其 fallback，或使用声明的 typed default，后者缺少 default 时文档无效。
 
-scope 只有以下三种：
+scope 只有以下四种，key 均由 runtime 构造而非 document 拼接：
 
-- `document`：在同一 document instance 内共享，不依赖当前 owner；document 销毁时清理。
-- `owner`：由宿主 owner 提供，同 owner 生命周期一致；owner 销毁时清理。
-- `local`：只属于当前 document + owner，动作只能更新当前实例已声明的 local path；owner 或 document 任一销毁时清理。
+| scope | 创建和更新 | reload 保留 | 清理 |
+| --- | --- | --- | --- |
+| `document` | 以 `(document_id, path)` 共享；所有存活 owner 可读取 | 同 document 的事务 replace 保留 | 最后一个 active/pending instance 消失时清理 |
+| `owner` | 以 `(document_id, owner, path)` 由 host 写入 | 同 owner reload 保留 | owner close/switch 时清理 |
+| `local` | 以 `(document_id, owner, path)` 创建；只有受注册 `update_local_state` 或控件 two-way binding 可写 | 同 owner reload 保留 | instance/owner close 时清理 |
+| `item` | 以 `(document_id, owner, stable_item_key, path)` 由 collection host 写入 | 只在相同 stable item key 下保留 | item 删除、owner close 或 collection 清理时清理 |
 
-现有 Rust 页面使用的 `UiBindingValues` text/bool API 保持可用，并扩展 number、visibility、restricted enum 与 scoped typed 存储。`UiBoundText`、`UiBoundVisibility` 和 `UiBoundDisabled` 仍由 framework 系统应用值；document builder 在阶段 10 只负责把已经验证的声明适配到这些公共能力，不复制更新系统。绑定 path 不是 ECS query、反射路径或全局资源路径，不能读取 entity/component、账号安全字段或其他 document/owner 数据。
+`owner` 和 `local` 绝不跨 document 继承；`item` 必须提供非空 stable key，不能用数组下标或 Entity。`UiBindingValues` 为每次实际变化分配单调 revision 和 `host` / `ui` / `reload_migration` 来源；相同值为去重，不产生第二次 revision。这样 runtime 可以阻止同帧 host apply 与 UI writeback 相互回声。
+
+现有 Rust 页面使用的 `UiBindingValues` text/bool API 保持可用，并扩展 number、visibility、restricted enum、record/list 与 scoped typed 存储。Text content、visibility、display、disabled、loading、selected、progress/value 和 component variant 都只通过 closed field binding 单向更新。`TextInput`、`Checkbox`、`Toggle`、`Segmented`、`Slider`、`Stepper`、`Select` 和 `Tab` 的 `component.bindings.value` 可以明确选择 `one_way` 或 `two_way`；two-way 只把已验证的同类型值写回既有 scope，首次静态文档值不当作用户输入。缺失值使用 document default 或 consumer fallback；非法类型、范围、option、未 ready host 或非法 item key 使用稳定 `UI_BINDING_*` diagnostic，页面继续显示最后有效值或 fallback。绑定 path 不是 ECS query、反射路径或全局资源路径，不能读取 entity/component、账号安全字段或其他 document/owner 数据。
+
+binding format 仍是 `plain`、`number`、`percent` 和 `bytes` 四个 closed enum。协议没有模板、插值、脚本、条件表达式、任意字符串格式化或 JSON 求值；任意扩展必须先增加 Rust enum、schema、validator、fixture 和 host contract。
 
 静态验证只判断 document 内可证明的事实，包括声明/default 类型、enum allowlist、text format 类型和 local target。它不会假装知道宿主有哪些 owner/document binding。宿主在构建前必须用 `UiDocumentHostValidationContext` 显式提供当前 owner、owner 存活状态、外部 binding schema 和 `UiActionRegistry`；未知外部 path 或类型不一致均拒绝构建。
 

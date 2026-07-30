@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "document_id": "binding.controls",
+  "bindings": {
+    "state.display": { "scope": "local", "value_type": { "kind": "enum", "values": ["flex", "none"] }, "default": { "kind": "enum", "value": "flex" }, "missing": "use_default" },
+    "state.visible": { "scope": "local", "value_type": { "kind": "bool" }, "default": { "kind": "bool", "value": true }, "missing": "use_default" },
+    "state.disabled": { "scope": "local", "value_type": { "kind": "bool" }, "default": { "kind": "bool", "value": false }, "missing": "use_default" },
+    "state.loading": { "scope": "local", "value_type": { "kind": "bool" }, "default": { "kind": "bool", "value": false }, "missing": "use_default" },
+    "state.selected": { "scope": "local", "value_type": { "kind": "bool" }, "default": { "kind": "bool", "value": true }, "missing": "use_default" },
+    "state.text": { "scope": "local", "value_type": { "kind": "string" }, "default": { "kind": "string", "value": "Ready" }, "missing": "use_default" },
+    "state.number": { "scope": "local", "value_type": { "kind": "number" }, "default": { "kind": "number", "value": 0.5 }, "missing": "use_default" },
+    "state.choice": { "scope": "local", "value_type": { "kind": "enum", "values": ["basic", "advanced"] }, "default": { "kind": "enum", "value": "basic" }, "missing": "use_default" },
+    "state.variant": { "scope": "local", "value_type": { "kind": "enum", "values": ["primary", "secondary"] }, "default": { "kind": "enum", "value": "primary" }, "missing": "use_default" }
+  },
+  "root": {
+    "type": "container",
+    "id": "binding.controls_root",
+    "style": { "bindings": { "visibility": "state.visible", "display": "state.display" } },
+    "children": [
+      {
+        "type": "text_input", "id": "binding.input", "value": "", "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Input" } } },
+          "bindings": { "disabled": "state.disabled", "value": { "binding_path": "state.text", "direction": "two_way" }, "variant": "state.variant" }
+        }
+      },
+      {
+        "type": "checkbox", "id": "binding.checkbox", "checked": false, "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Checkbox" } } },
+          "bindings": { "loading": "state.loading", "value": { "binding_path": "state.selected", "direction": "two_way" } }
+        }
+      },
+      {
+        "type": "toggle", "id": "binding.toggle", "on": false, "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Toggle" } } },
+          "bindings": { "value": { "binding_path": "state.selected", "direction": "two_way" } }
+        }
+      },
+      {
+        "type": "segmented", "id": "binding.segmented", "selected": "basic", "options": [
+          { "value": "basic", "label": { "literal": "Basic" } }, { "value": "advanced", "label": { "literal": "Advanced" } }
+        ], "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Mode" } } },
+          "bindings": { "value": { "binding_path": "state.choice", "direction": "two_way" } }
+        }
+      },
+      {
+        "type": "slider", "id": "binding.slider", "value": 0.0, "min": 0.0, "max": 1.0, "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Slider" } } },
+          "bindings": { "value": { "binding_path": "state.number", "direction": "two_way" } }
+        }
+      },
+      {
+        "type": "stepper", "id": "binding.stepper", "value": 0, "min": 0, "max": 2, "step": 1, "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Stepper" } } },
+          "bindings": { "value": { "binding_path": "state.number", "direction": "two_way" } }
+        }
+      },
+      {
+        "type": "select", "id": "binding.select", "options": [
+          { "value": "basic", "label": { "literal": "Basic" } }, { "value": "advanced", "label": { "literal": "Advanced" } }
+        ], "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Select" } } },
+          "bindings": { "value": { "binding_path": "state.choice", "direction": "two_way" } }
+        }
+      },
+      {
+        "type": "progress", "id": "binding.progress", "value": 0.0, "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Progress" } } },
+          "bindings": { "value": { "binding_path": "state.number" } }
+        }
+      },
+      {
+        "type": "tab", "id": "binding.tab", "value": "basic", "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Tab" } } },
+          "bindings": { "value": { "binding_path": "state.choice", "direction": "two_way" } }
+        }
+      }
+    ]
+  }
+}

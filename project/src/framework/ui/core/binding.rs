@@ -62,7 +62,28 @@ pub(crate) struct UiBindingValues {
     texts: HashMap<UiBindingPath, String>,
     bools: HashMap<UiBindingPath, bool>,
     typed_values: HashMap<UiBindingPath, UiBindingValue>,
-    scoped_values: HashMap<UiScopedBindingKey, UiBindingValue>,
+    scoped_values: HashMap<UiScopedBindingKey, UiStoredBindingValue>,
+    next_revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UiBindingWriteSource {
+    Host,
+    Ui,
+    ReloadMigration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct UiBindingWriteResult {
+    pub changed: bool,
+    pub revision: u64,
+}
+
+#[derive(Clone, Debug)]
+struct UiStoredBindingValue {
+    value: UiBindingValue,
+    revision: u64,
+    source: UiBindingWriteSource,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -70,10 +91,15 @@ struct UiScopedBindingKey {
     document_id: String,
     owner: String,
     scope: UiDocumentBindingScope,
+    item_key: Option<String>,
     path: UiBindingPath,
 }
 
 impl UiBindingValues {
+    pub(crate) const fn revision(&self) -> u64 {
+        self.next_revision
+    }
+
     pub(crate) fn set_text(&mut self, path: impl AsRef<str>, value: impl Into<String>) -> bool {
         let Some(path) = UiBindingPath::new(path) else {
             return false;
@@ -195,12 +221,62 @@ impl UiBindingValues {
         declaration: &UiBindingDeclaration,
         value: UiBindingValue,
     ) -> bool {
+        self.set_scoped_with_source(
+            document_id,
+            owner,
+            None,
+            path,
+            declaration,
+            value,
+            UiBindingWriteSource::Host,
+        )
+        .is_ok_and(|outcome| outcome.changed)
+    }
+
+    pub(crate) fn set_item_scoped(
+        &mut self,
+        document_id: &str,
+        owner: &str,
+        item_key: &str,
+        path: &crate::framework::ui::document::UiBindingPath,
+        declaration: &UiBindingDeclaration,
+        value: UiBindingValue,
+        source: UiBindingWriteSource,
+    ) -> Result<UiBindingWriteResult, &'static str> {
+        self.set_scoped_with_source(
+            document_id,
+            owner,
+            Some(item_key),
+            path,
+            declaration,
+            value,
+            source,
+        )
+    }
+
+    pub(crate) fn set_scoped_with_source(
+        &mut self,
+        document_id: &str,
+        owner: &str,
+        item_key: Option<&str>,
+        path: &crate::framework::ui::document::UiBindingPath,
+        declaration: &UiBindingDeclaration,
+        value: UiBindingValue,
+        source: UiBindingWriteSource,
+    ) -> Result<UiBindingWriteResult, &'static str> {
         if !binding_value_matches(&declaration.value_type, &value) {
-            return false;
+            return Err("UI_BINDING_VALUE_TYPE_MISMATCH");
         }
         let Some(path) = UiBindingPath::new(path.as_str()) else {
-            return false;
+            return Err("UI_BINDING_PATH_INVALID");
         };
+        let item_key = item_key.map(str::trim).filter(|key| !key.is_empty());
+        if declaration.scope == UiDocumentBindingScope::Item && item_key.is_none() {
+            return Err("UI_BINDING_ITEM_KEY_REQUIRED");
+        }
+        if declaration.scope != UiDocumentBindingScope::Item && item_key.is_some() {
+            return Err("UI_BINDING_ITEM_KEY_FORBIDDEN");
+        }
         let key = UiScopedBindingKey {
             document_id: document_id.to_owned(),
             owner: if declaration.scope == UiDocumentBindingScope::Document {
@@ -209,13 +285,33 @@ impl UiBindingValues {
                 owner.to_owned()
             },
             scope: declaration.scope,
+            item_key: item_key.map(str::to_owned),
             path,
         };
-        if self.scoped_values.get(&key) == Some(&value) {
-            return false;
+        if self
+            .scoped_values
+            .get(&key)
+            .is_some_and(|stored| stored.value == value)
+        {
+            return Ok(UiBindingWriteResult {
+                changed: false,
+                revision: self.scoped_values[&key].revision,
+            });
         }
-        self.scoped_values.insert(key, value);
-        true
+        self.next_revision = self.next_revision.wrapping_add(1).max(1);
+        let revision = self.next_revision;
+        self.scoped_values.insert(
+            key,
+            UiStoredBindingValue {
+                value,
+                revision,
+                source,
+            },
+        );
+        Ok(UiBindingWriteResult {
+            changed: true,
+            revision,
+        })
     }
 
     pub(crate) fn scoped_value(
@@ -234,13 +330,41 @@ impl UiBindingValues {
                 owner.to_owned()
             },
             scope: declaration.scope,
+            item_key: None,
             path,
         };
-        self.scoped_values.get(&key).cloned().or_else(|| {
-            (declaration.missing == UiBindingMissingBehavior::UseDefault)
-                .then_some(declaration.default.clone())
-                .flatten()
-        })
+        self.scoped_values
+            .get(&key)
+            .map(|stored| stored.value.clone())
+            .or_else(|| {
+                (declaration.missing == UiBindingMissingBehavior::UseDefault)
+                    .then_some(declaration.default.clone())
+                    .flatten()
+            })
+    }
+
+    pub(crate) fn scoped_revision(
+        &self,
+        document_id: &str,
+        owner: &str,
+        path: &crate::framework::ui::document::UiBindingPath,
+        declaration: &UiBindingDeclaration,
+    ) -> Option<(u64, UiBindingWriteSource)> {
+        let path = UiBindingPath::new(path.as_str())?;
+        let key = UiScopedBindingKey {
+            document_id: document_id.to_owned(),
+            owner: if declaration.scope == UiDocumentBindingScope::Document {
+                String::new()
+            } else {
+                owner.to_owned()
+            },
+            scope: declaration.scope,
+            item_key: None,
+            path,
+        };
+        self.scoped_values
+            .get(&key)
+            .map(|stored| (stored.revision, stored.source))
     }
 
     pub(crate) fn clear_owner(&mut self, owner: &str) -> usize {
@@ -490,6 +614,8 @@ fn normalize_binding_path(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::ui::document::{UiBindingPath as DocumentBindingPath, UiBindingType};
+    use std::str::FromStr;
 
     #[test]
     fn binding_path_normalizes_outer_and_segment_whitespace() {
@@ -567,6 +693,82 @@ mod tests {
         assert!(values.remove_text("gallery.shared"));
         assert_eq!(values.text("gallery.shared"), None);
         assert_eq!(values.bool("gallery.shared"), Some(true));
+    }
+
+    #[test]
+    fn scoped_bindings_keep_revision_source_and_item_identity_isolated() {
+        let path = DocumentBindingPath::from_str("state.value").unwrap();
+        let owner_declaration = UiBindingDeclaration {
+            scope: UiDocumentBindingScope::Owner,
+            value_type: UiBindingType::String,
+            default: None,
+            missing: UiBindingMissingBehavior::UseConsumerFallback,
+        };
+        let item_declaration = UiBindingDeclaration {
+            scope: UiDocumentBindingScope::Item,
+            value_type: UiBindingType::Number,
+            default: None,
+            missing: UiBindingMissingBehavior::UseConsumerFallback,
+        };
+        let mut values = UiBindingValues::default();
+
+        let first = values
+            .set_scoped_with_source(
+                "binding.scope",
+                "owner_a",
+                None,
+                &path,
+                &owner_declaration,
+                UiBindingValue::String("first".to_owned()),
+                UiBindingWriteSource::Host,
+            )
+            .unwrap();
+        assert!(first.changed);
+        let duplicate = values
+            .set_scoped_with_source(
+                "binding.scope",
+                "owner_a",
+                None,
+                &path,
+                &owner_declaration,
+                UiBindingValue::String("first".to_owned()),
+                UiBindingWriteSource::Ui,
+            )
+            .unwrap();
+        assert!(!duplicate.changed);
+        assert_eq!(duplicate.revision, first.revision);
+        assert_eq!(
+            values.scoped_revision("binding.scope", "owner_a", &path, &owner_declaration),
+            Some((first.revision, UiBindingWriteSource::Host))
+        );
+        assert_eq!(
+            values.set_item_scoped(
+                "binding.scope",
+                "owner_a",
+                "character_1",
+                &path,
+                &item_declaration,
+                UiBindingValue::Number(7.0),
+                UiBindingWriteSource::Host,
+            ),
+            Ok(UiBindingWriteResult {
+                changed: true,
+                revision: first.revision + 1,
+            })
+        );
+        assert_eq!(
+            values.set_scoped_with_source(
+                "binding.scope",
+                "owner_a",
+                None,
+                &path,
+                &item_declaration,
+                UiBindingValue::Number(7.0),
+                UiBindingWriteSource::Host,
+            ),
+            Err("UI_BINDING_ITEM_KEY_REQUIRED")
+        );
+        assert_eq!(values.clear_owner("owner_a"), 2);
     }
 
     #[test]

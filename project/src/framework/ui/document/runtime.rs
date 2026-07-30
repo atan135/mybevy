@@ -12,20 +12,21 @@ use serde::Serialize;
 
 use super::{
     UiActionDispatch, UiActionDispatchContext, UiActionId, UiActionRegistry, UiActionRejected,
-    UiActionValue, UiAssetEntry, UiAssetId, UiAssetKind, UiAssetSource, UiBindingPath,
-    UiBindingScope, UiBindingType, UiColor, UiComponentSize, UiComponentState, UiComponentVariant,
-    UiControlSlot, UiControlSlotContent, UiDocument, UiDocumentHostValidationContext, UiDocumentId,
-    UiDocumentMarker, UiHostBindingKey, UiImageContentState, UiImageFailurePresentation,
-    UiImagePresentation, UiNode, UiNodeId, UiNodeMarker, UiPageState, UiRegisteredActionKind,
-    UiResolvedBackground, UiResolvedImageFallback, UiResolvedMaterialParameters, UiResolvedStyle,
-    UiTargetProfile, UiTextContent, UiTextFormat, UiTextLineHeight, UiTextOverflow,
-    UiTextTypography, UiTooltipToneSpec, UiWidgetControlAdapter, UiWidgetVariantAdapter,
-    ValidatedUiDocument, resolve_image_fallback,
+    UiActionValue, UiAssetEntry, UiAssetId, UiAssetKind, UiAssetSource, UiBindingDirection,
+    UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue, UiColor, UiComponentBindings,
+    UiComponentSize, UiComponentState, UiComponentVariant, UiControlSlot, UiControlSlotContent,
+    UiDocument, UiDocumentHostValidationContext, UiDocumentId, UiDocumentMarker, UiHostBindingKey,
+    UiImageContentState, UiImageFailurePresentation, UiImagePresentation, UiNode, UiNodeBindings,
+    UiNodeId, UiNodeMarker, UiPageState, UiRegisteredActionKind, UiResolvedBackground,
+    UiResolvedImageFallback, UiResolvedMaterialParameters, UiResolvedStyle, UiTargetProfile,
+    UiTextContent, UiTextFormat, UiTextLineHeight, UiTextOverflow, UiTextTypography,
+    UiTooltipToneSpec, UiWidgetControlAdapter, UiWidgetVariantAdapter, ValidatedUiDocument,
+    resolve_image_fallback, ui_component_variant,
 };
 use crate::framework::ui::{
     core::{
         UiFocusSystems, UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot,
-        binding::UiBindingValues,
+        binding::{UiBindingValues, UiBindingWriteSource},
     },
     i18n::{UiI18n, UiI18nSystems, UiI18nText},
     style::{
@@ -33,10 +34,10 @@ use crate::framework::ui::{
         theme::ButtonColors, try_ui_styled_text,
     },
     widgets::{
-        DisabledButton, FocusableButton, FocusedButton, LoadingButton, ReadonlyTextInput,
-        SelectedButton, UiAdvancedImageSource, UiAdvancedImageSpec, UiBadge, UiButtonEvent,
-        UiButtonEventKind, UiControlFlags, UiControlId, UiControlKind, UiControlMeta,
-        UiControlState, UiDropdown, UiDropdownOption, UiImagePixelSize, UiImageSize,
+        DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
+        ReadonlyTextInput, SelectedButton, UiAdvancedImageSource, UiAdvancedImageSpec, UiBadge,
+        UiButtonEvent, UiButtonEventKind, UiControlFlags, UiControlId, UiControlKind,
+        UiControlMeta, UiControlState, UiDropdown, UiDropdownOption, UiImagePixelSize, UiImageSize,
         UiImageTextureSource, UiProgress, UiScrollViewConfig, UiSlider, UiStepper, UiTextInput,
         UiTextInputMaxChars, UiTextInputValue, UiTooltip, UiTooltipTone,
         controls::{
@@ -260,6 +261,17 @@ pub struct UiDocumentBuildRecord {
 
 #[derive(Clone, Debug, Message, PartialEq)]
 pub struct UiDocumentRuntimeEvent(pub UiDocumentBuildRecord);
+
+/// Stable diagnostics for rejected dynamic values. The document remains visible
+/// with its declared fallback rather than exposing a partially-applied value.
+#[derive(Clone, Debug, Message, PartialEq)]
+pub struct UiBindingDiagnostic {
+    pub code: &'static str,
+    pub document_id: UiDocumentId,
+    pub owner: String,
+    pub node_id: UiNodeId,
+    pub binding_path: UiBindingPath,
+}
 
 #[derive(Clone, Debug, Component, PartialEq)]
 pub struct UiDocumentRuntimeRoot {
@@ -579,6 +591,7 @@ impl Plugin for UiDocumentRuntimePlugin {
             .add_message::<UiButtonEvent>()
             .add_message::<UiActionDispatch>()
             .add_message::<UiActionRejected>()
+            .add_message::<UiBindingDiagnostic>()
             .configure_sets(
                 Update,
                 (
@@ -611,6 +624,8 @@ impl Plugin for UiDocumentRuntimePlugin {
                     reconcile_runtime_documents,
                     dispatch_document_actions,
                     update_document_bound_texts,
+                    update_document_node_bindings,
+                    capture_document_control_writebacks,
                     update_document_control_text_sources,
                     enforce_document_control_presentations,
                     update_document_runtime_images,
@@ -1490,6 +1505,27 @@ fn spawn_prepared_node(
     }
 
     spawn_node_content(world, entity, pending, prepared, instance_id)?;
+    let node_bindings = prepared.source.style().bindings.clone();
+    let control_bindings = prepared
+        .source
+        .component()
+        .map(|component| component.bindings.clone());
+    if !node_bindings.is_empty()
+        || control_bindings
+            .as_ref()
+            .is_some_and(|bindings| !bindings.is_empty())
+    {
+        world.entity_mut(entity).insert((
+            UiDocumentNodeBindings {
+                document_id: pending.request.document_id.clone(),
+                owner: pending.request.owner.clone(),
+                node_id: node_id.clone(),
+                node: node_bindings,
+                control: control_bindings.unwrap_or_default(),
+            },
+            UiDocumentControlBindingState::default(),
+        ));
+    }
     apply_text_constraints(world, entity, &prepared.source, &prepared.style);
     apply_resolved_style(world, entity, &prepared.style);
     if let Some(control) = prepared.control {
@@ -2714,6 +2750,25 @@ struct UiDocumentBoundText {
 }
 
 #[derive(Clone, Debug, Component)]
+struct UiDocumentNodeBindings {
+    document_id: UiDocumentId,
+    owner: String,
+    node_id: UiNodeId,
+    node: UiNodeBindings,
+    control: UiComponentBindings,
+}
+
+#[derive(Clone, Debug, Default, Component)]
+struct UiDocumentControlBindingState {
+    /// The last value set by either side. Comparing this before a two-way write
+    /// prevents the host update applied earlier in the same frame from echoing
+    /// straight back into the host binding store.
+    last_value: Option<UiBindingValue>,
+    last_host_revision: Option<u64>,
+    last_store_revision: u64,
+}
+
+#[derive(Clone, Debug, Component)]
 struct UiDocumentTextInputSource {
     control: Entity,
     plain_span: Option<Entity>,
@@ -3529,6 +3584,470 @@ fn update_document_bound_texts(
             text.0 = next;
         }
     }
+}
+
+/// Applies only values attached to document node markers. This is intentionally
+/// incremental: a binding update never recreates a document tree or re-runs the
+/// document preflight path.
+fn update_document_node_bindings(world: &mut World) {
+    let values_revision = world
+        .get_resource::<UiBindingValues>()
+        .map_or(0, UiBindingValues::revision);
+    let sources = {
+        let mut query = world.query::<(
+            Entity,
+            Ref<UiDocumentNodeBindings>,
+            &UiDocumentControlBindingState,
+        )>();
+        query
+            .iter(world)
+            .map(|(entity, source, state)| {
+                (
+                    entity,
+                    (*source).clone(),
+                    source.is_changed(),
+                    state.last_store_revision,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    for (entity, source, source_changed, last_store_revision) in sources {
+        if !source_changed && last_store_revision == values_revision {
+            continue;
+        }
+        if let Some((value, _)) =
+            resolve_document_binding_value(world, &source, &source.node.visibility)
+        {
+            let visibility = match value {
+                UiBindingValue::Bool(true) => Some(Visibility::Visible),
+                UiBindingValue::Bool(false) => Some(Visibility::Hidden),
+                UiBindingValue::Visibility(super::UiBindingVisibility::Inherited) => {
+                    Some(Visibility::Inherited)
+                }
+                UiBindingValue::Visibility(super::UiBindingVisibility::Visible) => {
+                    Some(Visibility::Visible)
+                }
+                UiBindingValue::Visibility(super::UiBindingVisibility::Hidden) => {
+                    Some(Visibility::Hidden)
+                }
+                _ => None,
+            };
+            if let Some(visibility) = visibility {
+                if world.get::<Visibility>(entity) != Some(&visibility) {
+                    world.entity_mut(entity).insert(visibility);
+                }
+            }
+        }
+        if let Some((UiBindingValue::Enum(display), _)) =
+            resolve_document_binding_value(world, &source, &source.node.display)
+            && let Some(display) = binding_display(&display)
+            && let Some(mut node) = world.get_mut::<Node>(entity)
+        {
+            if node.display != display {
+                node.display = display;
+            }
+        }
+
+        let control = &source.control;
+        let disabled = bool_document_binding_value(world, &source, &control.disabled);
+        let loading = bool_document_binding_value(world, &source, &control.loading);
+        let selected = bool_document_binding_value(world, &source, &control.selected);
+        if disabled.is_some() || loading.is_some() || selected.is_some() {
+            apply_document_bound_control_flags(world, entity, disabled, loading, selected);
+        }
+        if let Some((UiBindingValue::Enum(variant), _)) =
+            resolve_document_binding_value(world, &source, &control.variant)
+            && let Some(variant) = ui_component_variant(&variant)
+            && let Some(mut presentation) = world.get_mut::<UiDocumentControlPresentation>(entity)
+        {
+            if presentation.variant != variant {
+                presentation.variant = variant;
+            }
+        }
+        if let Some(value_binding) = &control.value
+            && let Some((value, revision)) = resolve_document_binding_value(
+                world,
+                &source,
+                &Some(value_binding.binding_path.clone()),
+            )
+            && !world
+                .get::<UiDocumentControlBindingState>(entity)
+                .is_some_and(|state| {
+                    state.last_value.is_some() && state.last_host_revision == revision
+                })
+        {
+            match apply_document_bound_control_value(world, entity, &value) {
+                Ok(applied) => {
+                    if let Some(mut state) = world.get_mut::<UiDocumentControlBindingState>(entity)
+                    {
+                        state.last_value = Some(applied);
+                        state.last_host_revision = revision;
+                    }
+                }
+                Err(code) => {
+                    emit_binding_diagnostic(world, code, &source, &value_binding.binding_path)
+                }
+            }
+        }
+        if let Some(mut state) = world.get_mut::<UiDocumentControlBindingState>(entity) {
+            state.last_store_revision = values_revision;
+        }
+    }
+}
+
+fn capture_document_control_writebacks(world: &mut World) {
+    let sources = {
+        let mut query = world.query::<(
+            Entity,
+            &UiDocumentNodeBindings,
+            &UiDocumentControlBindingState,
+        )>();
+        query
+            .iter(world)
+            .filter_map(|(entity, source, state)| {
+                (source
+                    .control
+                    .value
+                    .as_ref()
+                    .is_some_and(|binding| binding.direction == UiBindingDirection::TwoWay))
+                .then_some((entity, source.clone(), state.clone()))
+            })
+            .collect::<Vec<_>>()
+    };
+    for (entity, source, state) in sources {
+        let Some(value_binding) = &source.control.value else {
+            continue;
+        };
+        let Some(current) = document_control_value(world, entity) else {
+            continue;
+        };
+        if state.last_value.as_ref() == Some(&current) {
+            continue;
+        }
+        // A first frame with only a document literal is not a user edit. Wait for
+        // either a host value or an actual control change before writing back.
+        if state.last_value.is_none() {
+            if let Some(mut state) = world.get_mut::<UiDocumentControlBindingState>(entity) {
+                state.last_value = Some(current);
+            }
+            continue;
+        }
+        let declaration =
+            active_document_binding_declaration(world, &source, &value_binding.binding_path);
+        let Some(declaration) = declaration else {
+            emit_binding_diagnostic(
+                world,
+                "UI_BINDING_HOST_NOT_READY",
+                &source,
+                &value_binding.binding_path,
+            );
+            continue;
+        };
+        let outcome = world
+            .get_resource_mut::<UiBindingValues>()
+            .and_then(|mut values| {
+                values
+                    .set_scoped_with_source(
+                        source.document_id.as_str(),
+                        &source.owner,
+                        None,
+                        &value_binding.binding_path,
+                        &declaration,
+                        current.clone(),
+                        UiBindingWriteSource::Ui,
+                    )
+                    .ok()
+            });
+        let Some(outcome) = outcome else {
+            emit_binding_diagnostic(
+                world,
+                "UI_BINDING_WRITE_REJECTED",
+                &source,
+                &value_binding.binding_path,
+            );
+            continue;
+        };
+        if let Some(mut state) = world.get_mut::<UiDocumentControlBindingState>(entity) {
+            state.last_value = Some(current);
+            state.last_host_revision = Some(outcome.revision);
+        }
+    }
+}
+
+fn active_document_binding_declaration(
+    world: &World,
+    source: &UiDocumentNodeBindings,
+    path: &UiBindingPath,
+) -> Option<super::UiBindingDeclaration> {
+    let runtime = world.get_resource::<UiDocumentRuntime>()?;
+    let key = DocumentKey {
+        owner: source.owner.clone(),
+        document_id: source.document_id.clone(),
+    };
+    runtime
+        .active
+        .get(&key)
+        .and_then(|instance_id| runtime.instances.get(instance_id))
+        .and_then(|active| active.validated.document().bindings.get(path))
+        .cloned()
+}
+
+fn resolve_document_binding_value(
+    world: &World,
+    source: &UiDocumentNodeBindings,
+    path: &Option<UiBindingPath>,
+) -> Option<(UiBindingValue, Option<u64>)> {
+    let path = path.as_ref()?;
+    let declaration = active_document_binding_declaration(world, source, path)?;
+    let values = world.get_resource::<UiBindingValues>()?;
+    let value = values.scoped_value(
+        source.document_id.as_str(),
+        &source.owner,
+        path,
+        &declaration,
+    )?;
+    let revision = values
+        .scoped_revision(
+            source.document_id.as_str(),
+            &source.owner,
+            path,
+            &declaration,
+        )
+        .map(|(revision, _)| revision);
+    Some((value, revision))
+}
+
+fn bool_document_binding_value(
+    world: &World,
+    source: &UiDocumentNodeBindings,
+    path: &Option<UiBindingPath>,
+) -> Option<bool> {
+    matches!(
+        resolve_document_binding_value(world, source, path),
+        Some((UiBindingValue::Bool(value), _)) if value
+    )
+    .then_some(true)
+    .or_else(|| {
+        matches!(
+            resolve_document_binding_value(world, source, path),
+            Some((UiBindingValue::Bool(false), _))
+        )
+        .then_some(false)
+    })
+}
+
+fn binding_display(value: &str) -> Option<Display> {
+    Some(match value {
+        "flex" => Display::Flex,
+        "grid" => Display::Grid,
+        "none" => Display::None,
+        _ => return None,
+    })
+}
+
+fn apply_document_bound_control_flags(
+    world: &mut World,
+    entity: Entity,
+    disabled: Option<bool>,
+    loading: Option<bool>,
+    selected: Option<bool>,
+) {
+    let mut flags = world
+        .get::<UiControlFlags>(entity)
+        .copied()
+        .unwrap_or_default();
+    if let Some(disabled) = disabled {
+        flags.disabled = disabled;
+    }
+    if let Some(loading) = loading {
+        flags.loading = loading;
+    }
+    if let Some(selected) = selected {
+        flags.selected = selected;
+    }
+    let is_text_input = world.get::<UiTextInput>(entity).is_some();
+    let has_disabled = world.get::<DisabledButton>(entity).is_some();
+    let has_loading = world.get::<LoadingButton>(entity).is_some();
+    let has_selected = world.get::<SelectedButton>(entity).is_some();
+    let has_disabled_input = world.get::<DisabledTextInput>(entity).is_some();
+    let current_flags = world.get::<UiControlFlags>(entity).copied();
+    let markers_match = has_disabled == flags.disabled
+        && has_loading == flags.loading
+        && has_selected == flags.selected
+        && (!is_text_input || has_disabled_input == flags.disabled);
+    if current_flags == Some(flags) && markers_match {
+        return;
+    }
+    let mut entity_mut = world.entity_mut(entity);
+    if current_flags != Some(flags) {
+        entity_mut.insert(flags);
+    }
+    if flags.disabled {
+        if !has_disabled {
+            entity_mut.insert(DisabledButton);
+        }
+        if is_text_input && !has_disabled_input {
+            entity_mut.insert(DisabledTextInput);
+        }
+    } else if !flags.disabled {
+        if has_disabled {
+            entity_mut.remove::<DisabledButton>();
+        }
+        if is_text_input && has_disabled_input {
+            entity_mut.remove::<DisabledTextInput>();
+        }
+    }
+    if flags.loading && !has_loading {
+        entity_mut.insert(LoadingButton);
+    } else if !flags.loading && has_loading {
+        entity_mut.remove::<LoadingButton>();
+    }
+    if flags.selected && !has_selected {
+        entity_mut.insert(SelectedButton);
+    } else if !flags.selected && has_selected {
+        entity_mut.remove::<SelectedButton>();
+    }
+}
+
+fn apply_document_bound_control_value(
+    world: &mut World,
+    entity: Entity,
+    value: &UiBindingValue,
+) -> Result<UiBindingValue, &'static str> {
+    match value {
+        UiBindingValue::String(value) if world.get::<UiTextInput>(entity).is_some() => {
+            if let Some(mut input) = world.get_mut::<UiTextInputValue>(entity) {
+                input.0 = value.clone();
+                Ok(UiBindingValue::String(input.0.clone()))
+            } else {
+                Err("UI_BINDING_CONTROL_UNAVAILABLE")
+            }
+        }
+        UiBindingValue::Bool(value) if world.get::<UiControlFlags>(entity).is_some() => {
+            apply_document_bound_control_flags(world, entity, None, None, Some(*value));
+            Ok(UiBindingValue::Bool(*value))
+        }
+        UiBindingValue::Number(value) if world.get::<UiSlider>(entity).is_some() => {
+            let mut slider = world
+                .get_mut::<UiSlider>(entity)
+                .ok_or("UI_BINDING_CONTROL_UNAVAILABLE")?;
+            let next = (*value as f32).clamp(slider.min, slider.max);
+            slider.value = next;
+            Ok(UiBindingValue::Number(f64::from(next)))
+        }
+        UiBindingValue::Number(value) if world.get::<UiStepper>(entity).is_some() => {
+            let mut stepper = world
+                .get_mut::<UiStepper>(entity)
+                .ok_or("UI_BINDING_CONTROL_UNAVAILABLE")?;
+            let next = value
+                .round()
+                .clamp(f64::from(stepper.min), f64::from(stepper.max))
+                as i32;
+            stepper.value = next;
+            Ok(UiBindingValue::Number(f64::from(next)))
+        }
+        UiBindingValue::Number(value) if world.get::<UiProgress>(entity).is_some() => {
+            let mut progress = world
+                .get_mut::<UiProgress>(entity)
+                .ok_or("UI_BINDING_CONTROL_UNAVAILABLE")?;
+            let next = (*value as f32).clamp(0.0, 1.0);
+            progress.value = next;
+            Ok(UiBindingValue::Number(f64::from(next)))
+        }
+        UiBindingValue::Enum(value) if world.get::<UiDropdown>(entity).is_some() => {
+            let mut dropdown = world
+                .get_mut::<UiDropdown>(entity)
+                .ok_or("UI_BINDING_CONTROL_UNAVAILABLE")?;
+            let Some(index) = dropdown
+                .options
+                .iter()
+                .position(|option| option.value == *value && !option.disabled)
+            else {
+                return Err("UI_BINDING_VALUE_OUT_OF_RANGE");
+            };
+            dropdown.selected = Some(index);
+            Ok(UiBindingValue::Enum(value.clone()))
+        }
+        UiBindingValue::Enum(value) if world.get::<UiTab>(entity).is_some() => {
+            let mut tab = world
+                .get_mut::<UiTab>(entity)
+                .ok_or("UI_BINDING_CONTROL_UNAVAILABLE")?;
+            tab.value = value.clone();
+            Ok(UiBindingValue::Enum(value.clone()))
+        }
+        UiBindingValue::Enum(value) => {
+            let option_entities = find_internal_descendants_with::<UiSegmentOption>(world, entity);
+            if option_entities.is_empty() {
+                return Err("UI_BINDING_CONTROL_UNAVAILABLE");
+            }
+            let mut found = false;
+            for option_entity in option_entities {
+                let selected = world
+                    .get::<UiSegmentOption>(option_entity)
+                    .is_some_and(|option| option.value == *value);
+                found |= selected;
+                let mut option = world.entity_mut(option_entity);
+                if selected {
+                    option.insert((UiSegmentOptionSelected, SelectedButton));
+                } else {
+                    option
+                        .remove::<UiSegmentOptionSelected>()
+                        .remove::<SelectedButton>();
+                }
+            }
+            found
+                .then_some(UiBindingValue::Enum(value.clone()))
+                .ok_or("UI_BINDING_VALUE_OUT_OF_RANGE")
+        }
+        _ => Err("UI_BINDING_CONTROL_VALUE_TYPE_MISMATCH"),
+    }
+}
+
+fn document_control_value(world: &World, entity: Entity) -> Option<UiBindingValue> {
+    if let Some(input) = world.get::<UiTextInputValue>(entity) {
+        return Some(UiBindingValue::String(input.0.clone()));
+    }
+    if world.get::<UiSlider>(entity).is_some() {
+        return world
+            .get::<UiSlider>(entity)
+            .map(|slider| UiBindingValue::Number(f64::from(slider.value)));
+    }
+    if world.get::<UiStepper>(entity).is_some() {
+        return world
+            .get::<UiStepper>(entity)
+            .map(|stepper| UiBindingValue::Number(f64::from(stepper.value)));
+    }
+    if world.get::<UiProgress>(entity).is_some() {
+        return world
+            .get::<UiProgress>(entity)
+            .map(|progress| UiBindingValue::Number(f64::from(progress.value)));
+    }
+    if let Some(dropdown) = world.get::<UiDropdown>(entity) {
+        return dropdown
+            .selected_option()
+            .map(|option| UiBindingValue::Enum(option.value.clone()));
+    }
+    if let Some(tab) = world.get::<UiTab>(entity) {
+        return Some(UiBindingValue::Enum(tab.value.clone()));
+    }
+    world
+        .get::<UiControlFlags>(entity)
+        .map(|flags| UiBindingValue::Bool(flags.selected))
+}
+
+fn emit_binding_diagnostic(
+    world: &mut World,
+    code: &'static str,
+    source: &UiDocumentNodeBindings,
+    path: &UiBindingPath,
+) {
+    world.write_message(UiBindingDiagnostic {
+        code,
+        document_id: source.document_id.clone(),
+        owner: source.owner.clone(),
+        node_id: source.node_id.clone(),
+        binding_path: path.clone(),
+    });
 }
 
 fn update_document_control_text_sources(world: &mut World) {
@@ -4973,6 +5492,33 @@ mod tests {
       }
     }
     "#;
+    const TWO_WAY_TEXT_INPUT_DOCUMENT: &str = r#"
+    {
+      "schema_version": 1,
+      "document_id": "runtime.transaction",
+      "bindings": {
+        "state.input": {
+          "scope": "local",
+          "value_type": { "kind": "string" },
+          "default": { "kind": "string", "value": "Host value" },
+          "missing": "use_default"
+        }
+      },
+      "root": {
+        "type": "text_input",
+        "id": "binding.input",
+        "value": "Document literal",
+        "component": {
+          "slots": {
+            "label": { "kind": "text", "content": { "literal": "Input" } }
+          },
+          "bindings": {
+            "value": { "binding_path": "state.input", "direction": "two_way" }
+          }
+        }
+      }
+    }
+    "#;
     const CONTROL_FIELD_MAPPING_DOCUMENT: &str = r##"
     {
       "schema_version": 1,
@@ -6410,6 +6956,69 @@ mod tests {
         });
         app.update();
         assert_eq!(app.world().get::<Text>(text).unwrap().0, "After");
+    }
+
+    #[test]
+    fn ui_document_runtime_two_way_input_deduplicates_host_and_ui_revisions() {
+        let mut app = styled_test_app(&[]);
+        app.world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                46_001,
+                TWO_WAY_TEXT_INPUT_DOCUMENT,
+            )));
+        app.update();
+        assert_eq!(
+            state(&app, 46_001),
+            UiDocumentBuildState::Committed,
+            "{:?}",
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .record(UiDocumentRequestId(46_001))
+        );
+        let input = node_entity(&app, "binding.input");
+        let instance = active(&app);
+        assert_eq!(
+            app.world().get::<UiTextInputValue>(input).unwrap().0,
+            "Host value"
+        );
+
+        app.world_mut()
+            .get_mut::<UiTextInputValue>(input)
+            .unwrap()
+            .0 = "Edited".to_owned();
+        app.update();
+
+        let path = UiBindingPath::from_str("state.input").unwrap();
+        let declaration = UiDocument::parse_and_validate_json(TWO_WAY_TEXT_INPUT_DOCUMENT)
+            .unwrap()
+            .document()
+            .bindings[&path]
+            .clone();
+        let values = app.world().resource::<UiBindingValues>();
+        assert_eq!(
+            values.scoped_value(DOCUMENT_ID, "runtime_owner", &path, &declaration),
+            Some(UiBindingValue::String("Edited".to_owned()))
+        );
+        let revision = values
+            .scoped_revision(DOCUMENT_ID, "runtime_owner", &path, &declaration)
+            .unwrap();
+        assert_eq!(revision.1, UiBindingWriteSource::Ui);
+
+        app.update();
+        assert_eq!(
+            app.world().get::<UiTextInputValue>(input).unwrap().0,
+            "Edited"
+        );
+        assert_eq!(active(&app), instance);
+        assert_eq!(
+            app.world().resource::<UiBindingValues>().scoped_revision(
+                DOCUMENT_ID,
+                "runtime_owner",
+                &path,
+                &declaration
+            ),
+            Some(revision)
+        );
     }
 
     #[test]

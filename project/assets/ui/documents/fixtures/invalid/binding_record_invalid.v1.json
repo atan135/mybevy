@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "document_id": "binding.invalid_record",
+  "bindings": {
+    "state.row": {
+      "scope": "item",
+      "value_type": {
+        "kind": "record",
+        "fields": {}
+      }
+    }
+  },
+  "root": {
+    "type": "text",
+    "id": "binding.invalid_title",
+    "content": { "literal": "Invalid" }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "document_id": "binding.typed_values",
+  "bindings": {
+    "state.title": {
+      "scope": "local",
+      "value_type": { "kind": "string" },
+      "default": { "kind": "string", "value": "Ready" },
+      "missing": "use_default"
+    },
+    "state.row": {
+      "scope": "item",
+      "value_type": {
+        "kind": "record",
+        "fields": {
+          "character_id": { "kind": "string" },
+          "level": { "kind": "number" },
+          "online": { "kind": "bool" }
+        }
+      }
+    },
+    "state.rows": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "list",
+        "item": {
+          "kind": "record",
+          "fields": {
+            "character_id": { "kind": "string" },
+            "level": { "kind": "number" }
+          }
+        },
+        "max_items": 16
+      }
+    }
+  },
+  "root": {
+    "type": "text",
+    "id": "binding.typed_title",
+    "content": { "binding_path": "state.title", "fallback": "Missing" }
+  }
+}

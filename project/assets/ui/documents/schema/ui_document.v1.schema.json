@@ -473,6 +473,13 @@
       ],
       "type": "object"
     },
+    "UiBindingDirection": {
+      "enum": [
+        "one_way",
+        "two_way"
+      ],
+      "type": "string"
+    },
     "UiBindingMissingBehavior": {
       "enum": [
         "use_consumer_fallback",
@@ -487,12 +494,21 @@
       "type": "string"
     },
     "UiBindingScope": {
-      "enum": [
-        "document",
-        "owner",
-        "local"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "document",
+            "owner",
+            "local"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "item",
+          "description": "Reserved for the stable key of a future `Repeat` item. Item bindings are\ndeliberately not resolved by ordinary nodes before the collection protocol\nis available.",
+          "type": "string"
+        }
+      ]
     },
     "UiBindingTextSource": {
       "additionalProperties": false,
@@ -589,6 +605,50 @@
             "values"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fields": {
+              "additionalProperties": {
+                "$ref": "#/$defs/UiBindingType"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "record",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "fields"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "item": {
+              "$ref": "#/$defs/UiBindingType"
+            },
+            "kind": {
+              "const": "list",
+              "type": "string"
+            },
+            "max_items": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "item",
+            "max_items"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -672,6 +732,46 @@
             },
             "value": {
               "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "record",
+              "type": "string"
+            },
+            "value": {
+              "additionalProperties": {
+                "$ref": "#/$defs/UiBindingValue"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "list",
+              "type": "string"
+            },
+            "value": {
+              "items": {
+                "$ref": "#/$defs/UiBindingValue"
+              },
+              "type": "array"
             }
           },
           "required": [
@@ -773,6 +873,67 @@
         }
       ]
     },
+    "UiComponentBindings": {
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBindingPath"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "loading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBindingPath"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "selected": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBindingPath"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiControlValueBinding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBindingPath"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
     "UiComponentSize": {
       "enum": [
         "small",
@@ -784,6 +945,10 @@
     "UiComponentSpec": {
       "additionalProperties": false,
       "properties": {
+        "bindings": {
+          "$ref": "#/$defs/UiComponentBindings",
+          "description": "Closed presentation/value bindings. This intentionally names fields rather\nthan accepting a generic property map, so documents cannot target arbitrary\nECS components or widget internals."
+        },
         "children": {
           "default": [],
           "items": {
@@ -1012,6 +1177,22 @@
           "type": "object"
         }
       ]
+    },
+    "UiControlValueBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_path": {
+          "$ref": "#/$defs/UiBindingPath"
+        },
+        "direction": {
+          "$ref": "#/$defs/UiBindingDirection",
+          "default": "one_way"
+        }
+      },
+      "required": [
+        "binding_path"
+      ],
+      "type": "object"
     },
     "UiCornerRadii": {
       "additionalProperties": false,
@@ -4961,6 +5142,36 @@
         }
       ]
     },
+    "UiNodeBindings": {
+      "additionalProperties": false,
+      "properties": {
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBindingPath"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Accepts the closed enum values `flex`, `grid`, or `none`."
+        },
+        "visibility": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiBindingPath"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Accepts a bool (`true` is visible) or an explicit visibility value."
+        }
+      },
+      "type": "object"
+    },
     "UiNodeId": {
       "maxLength": 128,
       "minLength": 1,
@@ -5313,6 +5524,9 @@
     "UiStyle": {
       "additionalProperties": false,
       "properties": {
+        "bindings": {
+          "$ref": "#/$defs/UiNodeBindings"
+        },
         "component": {
           "anyOf": [
             {

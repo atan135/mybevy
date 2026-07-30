@@ -850,6 +850,7 @@ fn index_override_styles(
             role: patch.role.clone(),
             text_role: patch.text_role.clone(),
             inline: patch.inline.clone().unwrap_or_default(),
+            bindings: Default::default(),
         };
         let style_path = format!("{path}[{index}].set.style");
         if let Err(error) = document.resolve_style(&style, &style_path) {

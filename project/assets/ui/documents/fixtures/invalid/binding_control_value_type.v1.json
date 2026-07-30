@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "document_id": "binding.invalid_control",
+  "bindings": {
+    "state.not_text": { "scope": "local", "value_type": { "kind": "bool" } }
+  },
+  "root": {
+    "type": "text_input",
+    "id": "binding.invalid_input",
+    "component": {
+      "slots": { "label": { "kind": "text", "content": { "literal": "Input" } } },
+      "bindings": { "value": { "binding_path": "state.not_text", "direction": "two_way" } }
+    }
+  }
+}
