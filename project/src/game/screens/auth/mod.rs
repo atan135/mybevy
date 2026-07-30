@@ -24,6 +24,7 @@ impl Plugin for AuthScreensPlugin {
             .add_systems(
                 Update,
                 (
+                    login::handle_server_environment_buttons,
                     login::handle_login_buttons,
                     login::sync_login_screen_state,
                     login::sync_login_button_flags,

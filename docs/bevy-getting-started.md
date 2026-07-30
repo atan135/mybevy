@@ -974,7 +974,11 @@ MyServer 最新登录链路是账号身份和游戏角色身份分离的流程�
 5. `AuthRes.player_id` 是账号级 ID，仅保存到 `MyServerSession.player_id`；玩法、房间、输入、authority 本地主体、Touch Ripple 和 Robot Sync replay 都使用当前 ticket 绑定的 `character_id`。
 6. ticket 缺少 `character_id`、ticket 与当前选角不一致，或鉴权成功返回时本地没有选中角色，都按可诊断失败处理，不回退到账号 `player_id`。
 
-常用客户端环境变量：
+登录页顶部的服务器分段控件可选择 `本地服` 或 `正式服`，账号登录和游客登录共用上述链路。桌面 Debug 构建默认选择本地服；Release 构建和 Android 构建默认选择正式服。选择只在当前进程内有效，不持久化；登录请求发出后选择会锁定，切换账号回到登录页后可重新选择。切换到另一环境会清空当前 access token、角色、ticket、连接和输入框，避免串服。
+
+正式服默认认证地址为 `https://api.game.zergzerg.cn`，game proxy fallback 主机为 `api.game.zergzerg.cn`，默认 KCP `4000/UDP`、TCP fallback `14000/TCP`。登录和选角响应返回公网 game endpoint 时，客户端优先使用响应中的 host、port 和 transport。
+
+本地服常用客户端环境变量：
 
 ```powershell
 Set-Location project
@@ -987,10 +991,20 @@ $env:MYSERVER_AUTO_RECONNECT_WITH_FRESH_TICKET="true"
 $env:MYSERVER_DIAGNOSTIC_TRACE="true"
 ```
 
+正式服如需在部署或临时联调中覆盖默认 endpoint，使用独立变量，避免影响本地 profile：
+
+```powershell
+$env:MYSERVER_REMOTE_HTTP_BASE_URL="https://api.game.zergzerg.cn"
+$env:MYSERVER_REMOTE_GAME_HOST="api.game.zergzerg.cn"
+$env:MYSERVER_REMOTE_TRANSPORT="tcp"
+$env:MYSERVER_REMOTE_TCP_FALLBACK_PORT="14000"
+$env:MYSERVER_REMOTE_KCP_PORT="4000"
+```
+
 最小手工验收顺序：
 
 1. 启动 MyServer 完整本地栈，并确认 `auth-http`、`game-server`、`game-proxy`、Redis、NATS 和 PostgreSQL 均可达。
-2. 用登录页执行正式账号登录，或点击游客登录。
+2. 登录页选择 `本地服`，再执行正式账号登录或点击游客登录；正式服验收则选择 `正式服`。
 3. 拉取角色列表；如为空，创建角色。
 4. 选择当前角色，确认 ticket 签发请求体使用 `character_id`。
 5. 连接 game proxy，确认 `AuthReq` 后进入 `Authenticated`，authority local subject 显示为 `chr_*`。

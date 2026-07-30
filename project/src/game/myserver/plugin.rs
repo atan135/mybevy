@@ -16,11 +16,11 @@ use super::types::{
     CharacterProfileResponse, CharacterSelectResponse, ConnectPlan, DEFAULT_KEEPALIVE_INTERVAL,
     GameConnectionState, LoginResponse, MovementClientState, MyServerAutoClientConfig,
     MyServerAutoClientState, MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot,
-    MyServerDisplayError, MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerSession,
-    PendingHttpOperation, PendingHttpRequest, PendingRequest, ReconnectCause, ReconnectPlan,
-    RegisterPendingReviewResponse, RegisterResponse, SessionKickCategory, TicketResponse,
-    character_select_endpoint, classify_game_auth_failure, parse_character_bound_ticket,
-    redact_secret_fingerprint, ticket_endpoint,
+    MyServerDisplayError, MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerProfiles,
+    MyServerSession, PendingHttpOperation, PendingHttpRequest, PendingRequest, ReconnectCause,
+    ReconnectPlan, RegisterPendingReviewResponse, RegisterResponse, SessionKickCategory,
+    TicketResponse, character_select_endpoint, classify_game_auth_failure,
+    parse_character_bound_ticket, redact_secret_fingerprint, ticket_endpoint,
 };
 
 pub struct MyServerPlugin;
@@ -28,6 +28,7 @@ pub struct MyServerPlugin;
 impl Plugin for MyServerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MyServerConfig>()
+            .init_resource::<MyServerProfiles>()
             .init_resource::<MyServerSession>()
             .init_resource::<MyServerAutoClientConfig>()
             .init_resource::<MyServerAutoClientState>()

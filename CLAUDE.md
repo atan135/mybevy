@@ -13,6 +13,7 @@
 - 当前内置 `project/src/framework/network/` 网络框架模块，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
 - 当前内置 `project/src/game/authority/` 控制机会话模块，提供本地控制机、局域网控制机和远端 MyServer 控制机的统一命令/事件接口
 - MyServer 登录链路采用账号 `player_id` 和玩法 `character_id` 分离：账号 ID 只用于登录、安全和审计；房间、匹配、输入、移动、战斗、背包、transfer 和 authority MyServer endpoint 都以当前 character-bound ticket 绑定的 `character_id` 作为玩法主体
+- 登录页可在本地服和正式服之间选择 MyServer 环境；桌面 Debug 默认本地服，Release 和 Android 默认正式服 `https://api.game.zergzerg.cn`，环境切换不持久化并会清空当前账号、角色、ticket 和连接状态
 - `android/` 是 Android Gradle 壳工程，用于加载 Rust 产出的 `libproject.so` 并打包 APK
 
 ## 目录约定

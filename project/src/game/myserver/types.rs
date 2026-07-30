@@ -16,12 +16,35 @@ use super::protocol::{MessageType, PacketCodec, pb};
 
 pub const DEFAULT_AUTH_HTTP_BASE_URL: &str = "http://127.0.0.1:3000";
 pub const DEFAULT_GAME_PROXY_HOST: &str = "127.0.0.1";
+pub const PRODUCTION_AUTH_HTTP_BASE_URL: &str = "https://api.game.zergzerg.cn";
+pub const PRODUCTION_GAME_PROXY_HOST: &str = "api.game.zergzerg.cn";
 pub const DEFAULT_GAME_PROXY_KCP_PORT: u16 = 4000;
 pub const DEFAULT_GAME_PROXY_TCP_FALLBACK_PORT: u16 = 14000;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 pub const DEFAULT_TICKET_REFRESH_MARGIN: Duration = Duration::from_secs(30);
 pub const DIAGNOSTIC_FINGERPRINT_LEN: usize = 12;
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum MyServerEnvironment {
+    #[default]
+    Local,
+    Production,
+}
+
+impl MyServerEnvironment {
+    pub const fn default_for_build(debug_assertions: bool, android: bool) -> Self {
+        if debug_assertions && !android {
+            Self::Local
+        } else {
+            Self::Production
+        }
+    }
+
+    pub const fn current_build_default() -> Self {
+        Self::default_for_build(cfg!(debug_assertions), cfg!(target_os = "android"))
+    }
+}
 
 #[derive(Clone, Debug, Resource)]
 pub struct MyServerConfig {
@@ -40,44 +63,153 @@ pub struct MyServerConfig {
 
 impl Default for MyServerConfig {
     fn default() -> Self {
-        let forced_transport = env_transport("MYSERVER_TRANSPORT");
-        Self {
-            http_base_url: env_string("MYSERVER_HTTP_BASE_URL", DEFAULT_AUTH_HTTP_BASE_URL),
-            game_host: env_string("MYSERVER_GAME_HOST", DEFAULT_GAME_PROXY_HOST),
-            kcp_port: env_u16("MYSERVER_KCP_PORT", DEFAULT_GAME_PROXY_KCP_PORT),
-            tcp_fallback_port: env_u16(
-                "MYSERVER_TCP_FALLBACK_PORT",
-                DEFAULT_GAME_PROXY_TCP_FALLBACK_PORT,
-            ),
-            prefer_transport: forced_transport.unwrap_or(NetworkTransport::Tcp),
-            forced_transport,
-            request_timeout: Duration::from_millis(env_u64(
-                "MYSERVER_REQUEST_TIMEOUT_MS",
-                DEFAULT_REQUEST_TIMEOUT.as_millis() as u64,
-            )),
-            ticket_refresh_margin: Duration::from_millis(env_u64(
-                "MYSERVER_TICKET_REFRESH_MARGIN_MS",
-                DEFAULT_TICKET_REFRESH_MARGIN.as_millis() as u64,
-            )),
-            auto_reconnect_with_fresh_ticket: env_bool(
-                "MYSERVER_AUTO_RECONNECT_WITH_FRESH_TICKET",
-                false,
-            ),
-            keepalive_enabled: env_bool("MYSERVER_KEEPALIVE", true),
-            keepalive_interval: Duration::from_millis(env_u64(
-                "MYSERVER_KEEPALIVE_INTERVAL_MS",
-                DEFAULT_KEEPALIVE_INTERVAL.as_millis() as u64,
-            )),
-        }
+        Self::from_environment(MyServerEnvironment::current_build_default())
     }
 }
 
 impl MyServerConfig {
+    fn base_for_environment(environment: MyServerEnvironment) -> Self {
+        let (http_base_url, game_host) = match environment {
+            MyServerEnvironment::Local => (DEFAULT_AUTH_HTTP_BASE_URL, DEFAULT_GAME_PROXY_HOST),
+            MyServerEnvironment::Production => {
+                (PRODUCTION_AUTH_HTTP_BASE_URL, PRODUCTION_GAME_PROXY_HOST)
+            }
+        };
+
+        Self {
+            http_base_url: http_base_url.to_string(),
+            game_host: game_host.to_string(),
+            kcp_port: DEFAULT_GAME_PROXY_KCP_PORT,
+            tcp_fallback_port: DEFAULT_GAME_PROXY_TCP_FALLBACK_PORT,
+            prefer_transport: NetworkTransport::Tcp,
+            forced_transport: None,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            ticket_refresh_margin: DEFAULT_TICKET_REFRESH_MARGIN,
+            auto_reconnect_with_fresh_ticket: false,
+            keepalive_enabled: true,
+            keepalive_interval: DEFAULT_KEEPALIVE_INTERVAL,
+        }
+    }
+
+    fn from_environment(environment: MyServerEnvironment) -> Self {
+        let mut config = Self::base_for_environment(environment);
+        let (http_base_url_env, game_host_env, kcp_port_env, tcp_fallback_port_env, transport_env) =
+            match environment {
+                MyServerEnvironment::Local => (
+                    "MYSERVER_HTTP_BASE_URL",
+                    "MYSERVER_GAME_HOST",
+                    "MYSERVER_KCP_PORT",
+                    "MYSERVER_TCP_FALLBACK_PORT",
+                    "MYSERVER_TRANSPORT",
+                ),
+                MyServerEnvironment::Production => (
+                    "MYSERVER_REMOTE_HTTP_BASE_URL",
+                    "MYSERVER_REMOTE_GAME_HOST",
+                    "MYSERVER_REMOTE_KCP_PORT",
+                    "MYSERVER_REMOTE_TCP_FALLBACK_PORT",
+                    "MYSERVER_REMOTE_TRANSPORT",
+                ),
+            };
+
+        let http_base_url = env_string(http_base_url_env, &config.http_base_url);
+        config.http_base_url = match environment {
+            MyServerEnvironment::Production => production_https_url(&http_base_url),
+            MyServerEnvironment::Local => http_base_url,
+        };
+        config.game_host = env_string(game_host_env, &config.game_host);
+        config.kcp_port = env_u16(kcp_port_env, config.kcp_port);
+        config.tcp_fallback_port = env_u16(tcp_fallback_port_env, config.tcp_fallback_port);
+        config.forced_transport = env_transport(transport_env);
+        config.prefer_transport = config.forced_transport.unwrap_or(NetworkTransport::Tcp);
+        config.request_timeout = Duration::from_millis(env_u64(
+            "MYSERVER_REQUEST_TIMEOUT_MS",
+            DEFAULT_REQUEST_TIMEOUT.as_millis() as u64,
+        ));
+        config.ticket_refresh_margin = Duration::from_millis(env_u64(
+            "MYSERVER_TICKET_REFRESH_MARGIN_MS",
+            DEFAULT_TICKET_REFRESH_MARGIN.as_millis() as u64,
+        ));
+        config.auto_reconnect_with_fresh_ticket =
+            env_bool("MYSERVER_AUTO_RECONNECT_WITH_FRESH_TICKET", false);
+        config.keepalive_enabled = env_bool("MYSERVER_KEEPALIVE", true);
+        config.keepalive_interval = Duration::from_millis(env_u64(
+            "MYSERVER_KEEPALIVE_INTERVAL_MS",
+            DEFAULT_KEEPALIVE_INTERVAL.as_millis() as u64,
+        ));
+        config
+    }
+
     pub fn game_addr(&self, transport: NetworkTransport) -> String {
         match transport {
             NetworkTransport::Tcp => format!("{}:{}", self.game_host, self.tcp_fallback_port),
             NetworkTransport::Kcp => format!("{}:{}", self.game_host, self.kcp_port),
         }
+    }
+}
+
+#[derive(Clone, Debug, Resource)]
+pub struct MyServerProfiles {
+    selected: MyServerEnvironment,
+    local: MyServerConfig,
+    production: MyServerConfig,
+}
+
+impl Default for MyServerProfiles {
+    fn default() -> Self {
+        Self {
+            selected: MyServerEnvironment::current_build_default(),
+            local: MyServerConfig::from_environment(MyServerEnvironment::Local),
+            production: MyServerConfig::from_environment(MyServerEnvironment::Production),
+        }
+    }
+}
+
+impl MyServerProfiles {
+    pub const fn selected(&self) -> MyServerEnvironment {
+        self.selected
+    }
+
+    pub fn config(&self, environment: MyServerEnvironment) -> &MyServerConfig {
+        match environment {
+            MyServerEnvironment::Local => &self.local,
+            MyServerEnvironment::Production => &self.production,
+        }
+    }
+
+    pub fn selection_locked(session: &MyServerSession) -> bool {
+        matches!(
+            session.account_login_state,
+            AccountLoginState::LoggingIn | AccountLoginState::LoggedIn
+        ) || session.login_request.is_some()
+            || !session.pending_http.is_empty()
+            || session.connection_id.is_some()
+            || matches!(
+                session.game_connection_state,
+                GameConnectionState::Connecting
+                    | GameConnectionState::Connected
+                    | GameConnectionState::Authenticating
+                    | GameConnectionState::Authenticated
+                    | GameConnectionState::Reconnecting
+            )
+    }
+
+    pub fn try_activate(
+        &mut self,
+        environment: MyServerEnvironment,
+        active_config: &mut MyServerConfig,
+        session: &mut MyServerSession,
+    ) -> bool {
+        if Self::selection_locked(session) {
+            return false;
+        }
+        if self.selected == environment {
+            return true;
+        }
+
+        session.reset();
+        self.selected = environment;
+        *active_config = self.config(environment).clone();
+        true
     }
 }
 
@@ -2371,6 +2503,15 @@ fn env_string(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
+fn production_https_url(value: &str) -> String {
+    let value = value.trim();
+    if value.to_ascii_lowercase().starts_with("https://") {
+        value.to_string()
+    } else {
+        PRODUCTION_AUTH_HTTP_BASE_URL.to_string()
+    }
+}
+
 fn env_bool(name: &str, default: bool) -> bool {
     env::var(name)
         .ok()
@@ -2406,6 +2547,109 @@ fn env_transport(name: &str) -> Option<NetworkTransport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_environment_defaults_match_build_policy() {
+        assert_eq!(
+            MyServerEnvironment::default_for_build(true, false),
+            MyServerEnvironment::Local
+        );
+        assert_eq!(
+            MyServerEnvironment::default_for_build(false, false),
+            MyServerEnvironment::Production
+        );
+        assert_eq!(
+            MyServerEnvironment::default_for_build(true, true),
+            MyServerEnvironment::Production
+        );
+        assert_eq!(
+            MyServerEnvironment::default_for_build(false, true),
+            MyServerEnvironment::Production
+        );
+    }
+
+    #[test]
+    fn production_profile_uses_https_and_public_game_proxy_defaults() {
+        let config = MyServerConfig::base_for_environment(MyServerEnvironment::Production);
+
+        assert_eq!(config.http_base_url, PRODUCTION_AUTH_HTTP_BASE_URL);
+        assert!(config.http_base_url.starts_with("https://"));
+        assert_eq!(config.game_host, PRODUCTION_GAME_PROXY_HOST);
+        assert_eq!(config.kcp_port, 4000);
+        assert_eq!(config.tcp_fallback_port, 14000);
+        assert_eq!(
+            production_https_url("http://insecure.example.com"),
+            PRODUCTION_AUTH_HTTP_BASE_URL
+        );
+        assert_eq!(
+            production_https_url("https://secure.example.com"),
+            "https://secure.example.com"
+        );
+    }
+
+    #[test]
+    fn switching_server_environment_clears_account_character_and_connection_state() {
+        let local = MyServerConfig::base_for_environment(MyServerEnvironment::Local);
+        let production = MyServerConfig::base_for_environment(MyServerEnvironment::Production);
+        let mut profiles = MyServerProfiles {
+            selected: MyServerEnvironment::Local,
+            local: local.clone(),
+            production: production.clone(),
+        };
+        let mut active_config = local;
+        let mut session = MyServerSession {
+            account_login_state: AccountLoginState::LoginFailed,
+            access_token: Some("access-local".to_string()),
+            refresh_token: Some("refresh-local".to_string()),
+            ticket: Some("ticket-local".to_string()),
+            player_id: Some("player-local".to_string()),
+            character_id: Some("character-local".to_string()),
+            world_id: Some(7),
+            ..Default::default()
+        };
+
+        assert!(profiles.try_activate(
+            MyServerEnvironment::Production,
+            &mut active_config,
+            &mut session,
+        ));
+
+        assert_eq!(profiles.selected(), MyServerEnvironment::Production);
+        assert_eq!(active_config.http_base_url, PRODUCTION_AUTH_HTTP_BASE_URL);
+        assert_eq!(active_config.game_host, PRODUCTION_GAME_PROXY_HOST);
+        assert_eq!(session.account_login_state, AccountLoginState::NotLoggedIn);
+        assert!(session.access_token.is_none());
+        assert!(session.refresh_token.is_none());
+        assert!(session.ticket.is_none());
+        assert!(session.player_id.is_none());
+        assert!(session.character_id.is_none());
+        assert!(session.world_id.is_none());
+    }
+
+    #[test]
+    fn switching_server_environment_is_locked_during_login() {
+        let local = MyServerConfig::base_for_environment(MyServerEnvironment::Local);
+        let production = MyServerConfig::base_for_environment(MyServerEnvironment::Production);
+        let mut profiles = MyServerProfiles {
+            selected: MyServerEnvironment::Local,
+            local: local.clone(),
+            production,
+        };
+        let mut active_config = local;
+        let mut session = MyServerSession {
+            account_login_state: AccountLoginState::LoggingIn,
+            ..Default::default()
+        };
+
+        assert!(!profiles.try_activate(
+            MyServerEnvironment::Production,
+            &mut active_config,
+            &mut session,
+        ));
+        assert_eq!(profiles.selected(), MyServerEnvironment::Local);
+        assert_eq!(active_config.http_base_url, DEFAULT_AUTH_HTTP_BASE_URL);
+        assert_eq!(session.account_login_state, AccountLoginState::LoggingIn);
+    }
 
     #[test]
     fn parses_account_login_without_game_ticket() {

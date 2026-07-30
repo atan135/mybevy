@@ -19,14 +19,16 @@ use crate::framework::ui::{
         DisabledButton, LoadingButton, UiButtonEvent, UiButtonEventKind, UiTextInputValue,
         disabled_primary_action_button_key, disabled_secondary_action_button_key,
         primary_action_button_key, screen_label, screen_label_key, screen_title_key,
-        secondary_action_button_key, text_input,
+        secondary_action_button_key, segment_option_key, segmented_control,
+        selected_segment_option_key, text_input,
     },
 };
 use crate::game::{
     myserver::{
         AccountLoginState, CharacterSelectionState, CharacterSummary, ElementValues,
-        GameConnectionState, MyServerCommand, MyServerDisplayError, MyServerErrorKind,
-        MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerSession,
+        GameConnectionState, MyServerCommand, MyServerConfig, MyServerDisplayError,
+        MyServerEnvironment, MyServerErrorKind, MyServerErrorSource, MyServerEvent,
+        MyServerOperation, MyServerProfiles, MyServerSession,
     },
     navigation::{AppUiMode, GameRouteCommand, game_panel_root, secondary_route_button_key},
     ui_ids::{OWNER_CHARACTER_SELECT, OWNER_LOGIN, PANEL_CHARACTER_SELECT, PANEL_LOGIN},
@@ -57,6 +59,9 @@ pub(super) struct AccountLoginButton;
 
 #[derive(Component)]
 pub(super) struct GuestLoginButton;
+
+#[derive(Clone, Copy, Debug, Component)]
+pub(super) struct ServerEnvironmentButton(MyServerEnvironment);
 
 #[derive(Component)]
 pub(super) struct LoadCharactersButton;
@@ -218,6 +223,7 @@ pub(super) fn setup_login_screen(
     i18n: Res<UiI18n>,
     mut binding_values: ResMut<UiBindingValues>,
     session: Res<MyServerSession>,
+    profiles: Res<MyServerProfiles>,
     mut clear_color: ResMut<ClearColor>,
 ) {
     let theme = theme.into_inner();
@@ -320,6 +326,7 @@ pub(super) fn setup_login_screen(
                     },
                     BackgroundColor(Color::srgba(0.40, 0.74, 0.73, 0.38)),
                 ));
+                spawn_server_environment_section(panel, theme, viewport, fonts, i18n, &profiles);
                 spawn_auth_form_section(panel, theme, metrics, viewport, fonts, i18n, &session);
                 panel.spawn((
                     AuthDynamicRoot,
@@ -331,6 +338,130 @@ pub(super) fn setup_login_screen(
                     },
                 ));
             });
+        });
+}
+
+fn spawn_server_environment_section(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    viewport: &UiViewport,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    profiles: &MyServerProfiles,
+) {
+    let compact_row = uses_landscape_login_control_grid(viewport);
+    parent
+        .spawn((Node {
+            width: percent(100),
+            flex_direction: if compact_row {
+                FlexDirection::Row
+            } else {
+                FlexDirection::Column
+            },
+            align_items: if compact_row {
+                AlignItems::Center
+            } else {
+                AlignItems::Stretch
+            },
+            column_gap: px(theme.layout.row_column_gap),
+            row_gap: px(theme.layout.row_gap),
+            ..default()
+        },))
+        .with_children(|parent| {
+            parent.spawn((
+                screen_label_key(
+                    theme,
+                    fonts,
+                    i18n,
+                    "auth.login.server_section",
+                    "Server",
+                    UiThemeTextStyleRole::SectionLabel,
+                    UiThemeTextColorRole::Muted,
+                ),
+                UiStyleBinding::new().with_text(UiTextStyleRole::Muted),
+                Node {
+                    width: if compact_row { px(72) } else { auto() },
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+            ));
+            if compact_row {
+                parent
+                    .spawn((Node {
+                        flex_grow: 1.0,
+                        min_width: px(0),
+                        ..default()
+                    },))
+                    .with_children(|container| {
+                        spawn_server_environment_control(container, theme, fonts, i18n, profiles);
+                    });
+            } else {
+                spawn_server_environment_control(parent, theme, fonts, i18n, profiles);
+            }
+        });
+}
+
+fn spawn_server_environment_control(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    i18n: &UiI18n,
+    profiles: &MyServerProfiles,
+) {
+    parent
+        .spawn(segmented_control(theme))
+        .with_children(|segments| {
+            if profiles.selected() == MyServerEnvironment::Local {
+                segments.spawn((
+                    selected_segment_option_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "local",
+                        "auth.login.server.local",
+                        "Local",
+                    ),
+                    ServerEnvironmentButton(MyServerEnvironment::Local),
+                ));
+            } else {
+                segments.spawn((
+                    segment_option_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "local",
+                        "auth.login.server.local",
+                        "Local",
+                    ),
+                    ServerEnvironmentButton(MyServerEnvironment::Local),
+                ));
+            }
+
+            if profiles.selected() == MyServerEnvironment::Production {
+                segments.spawn((
+                    selected_segment_option_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "production",
+                        "auth.login.server.production",
+                        "Production",
+                    ),
+                    ServerEnvironmentButton(MyServerEnvironment::Production),
+                ));
+            } else {
+                segments.spawn((
+                    segment_option_key(
+                        theme,
+                        fonts,
+                        i18n,
+                        "production",
+                        "auth.login.server.production",
+                        "Production",
+                    ),
+                    ServerEnvironmentButton(MyServerEnvironment::Production),
+                ));
+            }
         });
 }
 
@@ -1286,7 +1417,7 @@ fn loading_label(theme: &UiTheme, fonts: &UiFontAssets, text: String) -> impl Bu
 
 pub(super) fn handle_login_buttons(
     mut myserver_commands: MessageWriter<MyServerCommand>,
-    session: Res<MyServerSession>,
+    mut session: ResMut<MyServerSession>,
     mut ui_state: ResMut<LoginUiState>,
     mut input_values: ParamSet<(
         Query<&mut UiTextInputValue, With<LoginNameInput>>,
@@ -1320,6 +1451,7 @@ pub(super) fn handle_login_buttons(
                 continue;
             }
             login_request_sent = true;
+            session.begin_login();
             ui_state.last_error = None;
             ui_state.notice = None;
             myserver_commands.write(MyServerCommand::Login {
@@ -1332,6 +1464,7 @@ pub(super) fn handle_login_buttons(
                 continue;
             }
             login_request_sent = true;
+            session.begin_login();
             ui_state.last_error = None;
             ui_state.notice = None;
             myserver_commands.write(MyServerCommand::GuestLogin {
@@ -1391,6 +1524,41 @@ pub(super) fn handle_login_buttons(
                 connect_game: true,
             });
         }
+    }
+}
+
+pub(super) fn handle_server_environment_buttons(
+    mut config: ResMut<MyServerConfig>,
+    mut profiles: ResMut<MyServerProfiles>,
+    mut session: ResMut<MyServerSession>,
+    mut ui_state: ResMut<LoginUiState>,
+    mut focus_state: ResMut<UiFocusState>,
+    mut input_values: ParamSet<(
+        Query<&mut UiTextInputValue, With<LoginNameInput>>,
+        Query<&mut UiTextInputValue, With<PasswordInput>>,
+        Query<&mut UiTextInputValue, With<CharacterNameInput>>,
+    )>,
+    environment_buttons: Query<&ServerEnvironmentButton>,
+    mut button_events: MessageReader<UiButtonEvent>,
+) {
+    for event in button_events.read() {
+        if event.kind != UiButtonEventKind::Click {
+            continue;
+        }
+        let Ok(button) = environment_buttons.get(event.entity) else {
+            continue;
+        };
+        if button.0 == profiles.selected() {
+            continue;
+        }
+        if !profiles.try_activate(button.0, config.as_mut(), session.as_mut()) {
+            continue;
+        }
+
+        clear_all_text_input_values(&mut input_values);
+        focus_state.focused_entity = None;
+        ui_state.clear_runtime_state();
+        info!(environment = ?button.0, "MyServer login environment selected");
     }
 }
 
@@ -1583,6 +1751,7 @@ pub(super) fn sync_character_select_screen_state(
 pub(super) fn sync_login_button_flags(
     mut commands: Commands,
     session: Res<MyServerSession>,
+    environment_buttons: Query<Entity, With<ServerEnvironmentButton>>,
     login_buttons: Query<Entity, With<AccountLoginButton>>,
     guest_buttons: Query<Entity, With<GuestLoginButton>>,
     load_buttons: Query<Entity, With<LoadCharactersButton>>,
@@ -1591,6 +1760,7 @@ pub(super) fn sync_login_button_flags(
     switch_account_buttons: Query<Entity, With<SwitchAccountButton>>,
     change_character_buttons: Query<Entity, With<ChangeCharacterButton>>,
 ) {
+    let environment_locked = MyServerProfiles::selection_locked(&session);
     let login_disabled = login_request_pending(&session)
         || session.account_login_state == AccountLoginState::LoggedIn;
     let load_disabled = !can_send_character_request(&session)
@@ -1604,6 +1774,10 @@ pub(super) fn sync_login_button_flags(
             CharacterSelectionState::Creating
         );
     let switch_disabled = login_request_pending(&session);
+
+    for entity in &environment_buttons {
+        set_button_disabled(&mut commands, entity, environment_locked);
+    }
 
     for entity in &login_buttons {
         set_button_disabled(&mut commands, entity, login_disabled);
@@ -2299,6 +2473,12 @@ mod tests {
                 connect_game: false,
             } if login_name == "alice" && password == "secret"
         )));
+        assert_eq!(
+            app.world()
+                .resource::<MyServerSession>()
+                .account_login_state,
+            AccountLoginState::LoggingIn
+        );
     }
 
     #[test]
@@ -2317,6 +2497,90 @@ mod tests {
                 connect_game: false,
             }
         )));
+    }
+
+    #[test]
+    fn auth_server_environment_switch_updates_config_and_clears_identity_inputs() {
+        let mut session = MyServerSession {
+            account_login_state: AccountLoginState::LoginFailed,
+            access_token: Some("stale-access".to_string()),
+            character_id: Some("stale-character".to_string()),
+            ticket: Some("stale-ticket".to_string()),
+            ..Default::default()
+        };
+        session.game_connection_state = GameConnectionState::Disconnected;
+        let mut app = server_environment_test_app(session);
+        let selected = app.world().resource::<MyServerProfiles>().selected();
+        let target = match selected {
+            MyServerEnvironment::Local => MyServerEnvironment::Production,
+            MyServerEnvironment::Production => MyServerEnvironment::Local,
+        };
+        let expected_base_url = app
+            .world()
+            .resource::<MyServerProfiles>()
+            .config(target)
+            .http_base_url
+            .clone();
+        let button = app.world_mut().spawn(ServerEnvironmentButton(target)).id();
+        let login = app
+            .world_mut()
+            .spawn((LoginNameInput, UiTextInputValue("alice".to_string())))
+            .id();
+        let password = app
+            .world_mut()
+            .spawn((PasswordInput, UiTextInputValue("secret".to_string())))
+            .id();
+
+        click(&mut app, button);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MyServerProfiles>().selected(),
+            target
+        );
+        assert_eq!(
+            app.world().resource::<MyServerConfig>().http_base_url,
+            expected_base_url
+        );
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.account_login_state, AccountLoginState::NotLoggedIn);
+        assert!(session.access_token.is_none());
+        assert!(session.character_id.is_none());
+        assert!(session.ticket.is_none());
+        assert_eq!(app.world().get::<UiTextInputValue>(login).unwrap().0, "");
+        assert_eq!(app.world().get::<UiTextInputValue>(password).unwrap().0, "");
+    }
+
+    #[test]
+    fn auth_server_environment_switch_is_ignored_while_login_is_pending() {
+        let session = MyServerSession {
+            account_login_state: AccountLoginState::LoggingIn,
+            ..Default::default()
+        };
+        let mut app = server_environment_test_app(session);
+        let selected = app.world().resource::<MyServerProfiles>().selected();
+        let target = match selected {
+            MyServerEnvironment::Local => MyServerEnvironment::Production,
+            MyServerEnvironment::Production => MyServerEnvironment::Local,
+        };
+        let original_base_url = app
+            .world()
+            .resource::<MyServerConfig>()
+            .http_base_url
+            .clone();
+        let button = app.world_mut().spawn(ServerEnvironmentButton(target)).id();
+
+        click(&mut app, button);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MyServerProfiles>().selected(),
+            selected
+        );
+        assert_eq!(
+            app.world().resource::<MyServerConfig>().http_base_url,
+            original_base_url
+        );
     }
 
     #[test]
@@ -2574,6 +2838,19 @@ mod tests {
             .insert_resource(session)
             .init_resource::<LoginUiState>()
             .add_systems(Update, handle_login_buttons);
+        app
+    }
+
+    fn server_environment_test_app(session: MyServerSession) -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_message::<UiButtonEvent>()
+            .insert_resource(session)
+            .init_resource::<MyServerConfig>()
+            .init_resource::<MyServerProfiles>()
+            .init_resource::<LoginUiState>()
+            .init_resource::<UiFocusState>()
+            .add_systems(Update, handle_server_environment_buttons);
         app
     }
 
