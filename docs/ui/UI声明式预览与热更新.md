@@ -1,5 +1,7 @@
 # UI 声明式预览与热更新
 
+本文的“热更新”仅指已实现的 desktop Debug document preview/reload。它不是 Release 或 Android 的用户端生产内容更新：当前没有受信远端 manifest、签名、版本化缓存、generation 原子激活或回滚。生产目标、术语和页面迁移边界见 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md)。
+
 本文记录 `UiDocumentPreviewPlugin` 的来源注册、开发期 watch、显式 reload、差异分类、状态迁移、审核入口和人工页面协作边界。底层解析、验证、资源预检、实体生成和清理仍由 `UiDocumentRuntimePlugin` 完成。
 
 ## 目录与来源

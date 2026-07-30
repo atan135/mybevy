@@ -43,6 +43,8 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 - `project/src/framework/ui/style/`：主题 token、主题刷新、字体资源、作用域样式、受限视觉效果和材质降级策略。
 - `project/assets/ui/`：UI 字体、主题、国际化和示例图片等首包资源。
 
+`UiDocument` 已提供 schema、验证、事务 runtime 和桌面开发期 preview/reload；它将逐步成为正式页面的 View 描述，而不是业务 Rust 的替代品。游戏层仍拥有 route、owner、权限、action/binding 宿主、生命周期和 fallback；document 只能引用这些预注册的闭合契约。目标业务宿主、纯 document route、生产更新 bundle/client 与现有页面迁移清单见 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md)。当前业务页面仍主要在本目录直接生成 Bevy UI 实体。
+
 业务页面可以组合 `widgets` 和 `core` 提供的资源、命令、组件，但不应绕过 Panel Manager 自行管理全局 Loading 或 Confirm。
 
 ## 核心数据流
@@ -78,3 +80,5 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 新增页面优先放入 `project/src/game/screens/`，并在对应 `OnEnter(AppUiMode)` 通过游戏层 helper 创建 `UiPanelRoot`。新增玩法优先放入 `project/src/game/features/`。新增可复用控件优先放入 `project/src/framework/ui/widgets/`。新增框架级能力才放入 `project/src/framework/ui/core/`，例如新的输入仲裁、焦点策略或绑定机制。新增游戏路由或页面 helper 应放在 `project/src/game/navigation/`，不要放回 UI framework。
 
 新增 UI 资源应放在 `project/assets/ui/` 下的合适子目录；后续下载资源不要放入首包 assets。
+
+开发期 file watch 只服务 desktop Debug，不能当作 Release/Android 的用户端热更新。生产更新需要独立的受信 manifest、完整下载校验、generation 原子激活和首包 fallback；这些能力当前尚未实现。
