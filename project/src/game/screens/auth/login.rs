@@ -40,7 +40,6 @@ const DEFAULT_CHARACTER_NAME: &str = "";
 const LOGIN_BACKGROUND_PATH: &str = "ui/images/login_stillwater_background.png";
 const LOGIN_VISUAL_STYLE_VARIANT: &str = "login.stillwater";
 const LOGIN_REFERENCE_WIDTH: f32 = 1376.0;
-const LOGIN_REFERENCE_HEIGHT: f32 = 768.0;
 const LOGIN_REFERENCE_PANEL_WIDTH: f32 = 344.0;
 const LOGIN_REFERENCE_PANEL_HEIGHT: f32 = 496.0;
 
@@ -632,6 +631,7 @@ fn login_control_row(theme: &UiTheme) -> Node {
 fn login_control_cell() -> Node {
     Node {
         flex_grow: 1.0,
+        flex_basis: px(0),
         min_width: px(0),
         ..default()
     }
@@ -691,8 +691,7 @@ fn auth_panel_padding(viewport: &UiViewport, theme: &UiTheme, metrics: &UiMetric
 fn login_visual_panel_size(viewport: &UiViewport, metrics: &UiMetrics) -> Vec2 {
     let available_width = (viewport.logical_width - metrics.page_padding * 2.0).max(1.0);
     let available_height = (viewport.logical_height - metrics.page_padding * 2.0).max(1.0);
-    let uses_reference_geometry = viewport.logical_width >= LOGIN_REFERENCE_WIDTH * 0.8
-        && viewport.logical_height >= LOGIN_REFERENCE_HEIGHT * 0.7;
+    let uses_reference_geometry = viewport.logical_width >= LOGIN_REFERENCE_WIDTH * 0.8;
 
     if uses_reference_geometry {
         return Vec2::new(
@@ -2056,6 +2055,30 @@ mod tests {
 
         viewport.orientation = UiOrientation::Portrait;
         assert!(!uses_landscape_login_control_grid(&viewport));
+    }
+
+    #[test]
+    fn login_reference_panel_width_survives_keyboard_viewport_resize() {
+        let metrics = UiMetrics::default();
+        let full_viewport = UiViewport::default();
+        let mut keyboard_viewport = full_viewport;
+        keyboard_viewport.logical_height = 320.0;
+
+        let full_size = login_visual_panel_size(&full_viewport, &metrics);
+        let keyboard_size = login_visual_panel_size(&keyboard_viewport, &metrics);
+
+        assert_eq!(full_size.x, LOGIN_REFERENCE_PANEL_WIDTH);
+        assert_eq!(keyboard_size.x, LOGIN_REFERENCE_PANEL_WIDTH);
+        assert!(keyboard_size.y < full_size.y);
+    }
+
+    #[test]
+    fn login_control_cells_have_content_independent_flex_bases() {
+        let cell = login_control_cell();
+
+        assert_eq!(cell.flex_grow, 1.0);
+        assert_eq!(cell.flex_basis, px(0));
+        assert_eq!(cell.min_width, px(0));
     }
 
     #[test]
