@@ -8,7 +8,7 @@ use crate::framework::ui::{
         viewport::UiViewportPlugin,
     },
     debug::UiDebugPlugin,
-    document::{UiDocumentPreviewPlugin, UiDocumentRuntimePlugin},
+    document::{UiDocumentPreviewPlugin, UiDocumentRuntimePlugin, UiUpdateClientPlugin},
     i18n::UiI18nPlugin,
     overlays::UiOverlayPlugin,
     style::{UiFontPlugin, UiThemePlugin},
@@ -36,6 +36,10 @@ impl Plugin for UiFrameworkPlugin {
             UiDebugPlugin,
             UiAuditPlugin,
         ))
-        .add_plugins((UiDocumentRuntimePlugin, UiDocumentPreviewPlugin));
+        .add_plugins((
+            UiDocumentRuntimePlugin,
+            UiDocumentPreviewPlugin,
+            UiUpdateClientPlugin,
+        ));
     }
 }

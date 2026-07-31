@@ -81,4 +81,4 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 
 新增 UI 资源应放在 `project/assets/ui/` 下的合适子目录；后续下载资源不要放入首包 assets。
 
-开发期 file watch 只服务 desktop Debug，不能当作 Release/Android 的用户端热更新。生产更新需要独立的受信 manifest、完整下载校验、generation 原子激活和首包 fallback；这些能力当前尚未实现。
+开发期 file watch 只服务 desktop Debug，不能当作 Release/Android 的用户端热更新。生产更新由 `UiUpdateClient` 独立处理固定受信 manifest、Ed25519 签名、完整下载校验、generation 原子激活和首包 fallback；实际游戏只有在提供 app-private cache root、二进制 trust roots 与显式检查时机后才会启用它。

@@ -1,6 +1,6 @@
 # UI 声明式预览与热更新
 
-本文的“热更新”仅指已实现的 desktop Debug document preview/reload。它不是 Release 或 Android 的用户端生产内容更新：当前没有受信远端 manifest、签名、版本化缓存、generation 原子激活或回滚。生产目标、术语和页面迁移边界见 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md)。
+本文的“热更新”主要指 desktop Debug document preview/reload。独立的生产 `UiUpdateClient` 已提供固定受信 endpoint、签名 release、版本化 cache generation 与原子激活，但实际 Release/Android 启用仍必须由游戏提供 app-private cache root、二进制 trust roots 和显式检查时机；preview/watch 绝不是该生产通道。生产目标、术语和页面迁移边界见 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md)。
 
 本文记录 `UiDocumentPreviewPlugin` 的来源注册、开发期 watch、显式 reload、差异分类、状态迁移、审核入口和人工页面协作边界。底层解析、验证、资源预检、实体生成和清理仍由 `UiDocumentRuntimePlugin` 完成。
 
@@ -11,6 +11,7 @@
 - `Approved`：`project/assets/ui/documents/approved/`，用于首包批准页面。
 - `Fixture`：`project/assets/ui/documents/fixtures/`，只用于开发和测试。
 - `Authoring`：`project/ui-documents/source/`，只用于人工 authoring，不进入生产加载。
+- `ContentCache`：已通过 `UiUpdateCache` 验证的 immutable generation；只记录逻辑 source，不能被 preview watch 读取或由 document 指定实际路径。
 
 路径拒绝绝对路径、盘符、反斜杠、URI、空 segment、`.`、`..`、换行和非 JSON 扩展名。每次实际 watch 读取前还会分别 canonicalize 项目根、允许根和候选文件，要求允许根仍位于项目根内、候选真实路径仍位于允许根内；symlink、junction 或 reparse point 不能把整个 source root 或字符串合法的候选路径重定向到项目外。F3、reload report 和 audit metadata 只记录逻辑路径，不记录解析后的本机绝对路径。
 

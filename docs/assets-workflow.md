@@ -313,7 +313,11 @@ Set-Location ..\android
 
 Android 上下载内容放应用私有 `files` 或 `cache` 目录，通常不需要外部存储权限。当前项目已有 `reqwest` 和后台 `tokio` runtime，下载、校验和写文件应在后台任务执行，不要阻塞 Bevy 主线程。
 
-UI 声明式页面的本地 generation cache 位于 `project/src/framework/ui/document/update.rs`。`UiUpdateCache` 只接受完整的内存 import，并在调用方提供的应用私有根下分隔 `staging`、`generations`、`active`、`previous` 和 `quarantine`；它拒绝仓库目录作为缓存根，Android 调用方必须传入应用私有 `files` 或 `cache` 目录，不能把 APK assets 当作可写源。manifest 对 document、approved registration 和资源分别校验 byte length/SHA-256，并复用 `UiDocument`、approved host contract、资源 metadata、授权 metadata 与预算验证；完整通过后才创建 active commit。它尚不负责 HTTP 下载、签名或默认 app 启动接线。
+UI 声明式页面的 generation cache 位于 `project/src/framework/ui/document/update.rs`，远端客户端位于 `remote.rs`。`UiUpdateCache` 只接受完整 import，并在调用方提供的应用私有根下分隔 `staging`、`generations`、`active`、`previous`、`quarantine` 和可恢复的下载临时目录；它拒绝仓库目录，Android 必须传入应用私有 `files` 或 `cache` 目录，不能把 APK assets 当作可写源。`UiUpdateClient` 通过已有 `NetworkCommand::Http` 接口请求固定受信 endpoint，使用 ETag、最大响应体、取消、有限重试、最多四个并发下载和 Range 临时文件续传；远端 response 不能提供 endpoint、信任根或宿主契约。
+
+远端 manifest 是 Ed25519 签名的 release envelope。客户端只接受二进制内预置且未撤销的 key ID，支持同时保留旧/新 key 轮换；SHA-256 仍用于每个文件完整性校验，不能代替签名的来源认证。release version 使用三段数字版本，低于 active generation 的版本需 envelope 中显式签署 `downgrade_authorized`，并受 client compatibility 范围约束。文件、manifest、签名、版本或下载任一失败都会保留当前有效 generation；没有有效 generation 时继续使用首包 approved 页面。
+
+下载完成后仍先由 `UiUpdateCache::stage` 重做 manifest/hash/schema/budget/approved host contract/资源授权校验，成功才在安全点 `activate`。文本输入、阻断弹窗或游戏层 `UiUpdateActivationGate::critical_request_in_flight` 为真时，切换被延后；成功后才更新 `UiDocumentContentCacheAssets` catalog。客户端 telemetry 只保留稳定结果码、HTTP status 和 retry 次数，不记录账号输入、token、原始 response、URL 或本机路径。
 
 ### 6.3 从缓存加载
 
@@ -340,7 +344,17 @@ pub fn run() {
     let mut app = App::new();
 
     #[cfg(not(target_arch = "wasm32"))]
-    register_content_cache_source(&mut app, content_cache_root());
+    let ui_updates = UiUpdateClient::open(
+        UiUpdateCacheConfig::new(app_private_cache_root(), "game-ui", "stable")?,
+        UiHttpUpdateProvider::new(UiUpdateEndpoint::production("game-ui", "stable")?),
+        compiled_ui_update_trust_roots(),
+        UiUpdateClientPolicy::default(),
+    )?;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    ui_updates.register_asset_source(&mut app);
+
+    app.insert_resource(ui_updates);
 
     app.add_plugins(DefaultPlugins.set(project_asset_plugin()))
         .add_plugins(network::NetworkPlugin)
@@ -350,6 +364,10 @@ pub fn run() {
         .run();
 }
 ```
+
+示例中的 `app_private_cache_root()` 和 `compiled_ui_update_trust_roots()` 必须由平台/发布配置提供：桌面 Release 和 Android 只能提供 production HTTPS endpoint 与编译进二进制的公钥；desktop Debug 的 local endpoint 仅接受 `127.0.0.1` 或 `localhost`。`UiUpdateClientPlugin` 已由 UI framework 注册，但不会自行创建 cache root、trust root 或发起检查；游戏层通过 `UiUpdateClientCommand::CheckNow` 显式开始，因而默认构建不会意外启用开发 watch 或任意远端加载。
+
+发布使用 `cargo run --bin ui-update-publish -- ...`。工具要求 bundle channel/version 与命令行一致，复用 runtime cache 验证 canonical release hash、文件 hash、license、路径和 no-clobber 版本目录，并在复制全部文件后最后写入签名 manifest。发布私钥只通过 `--signing-key-env <变量名>` 指定的环境变量读取，不进入命令行参数、日志或 release manifest。
 
 不要用 `AssetSourceBuilder::platform_default(...)` 注册 Android 下载缓存源；Android 上 platform default 会走 APK `AssetManager`，不是应用私有缓存目录。
 

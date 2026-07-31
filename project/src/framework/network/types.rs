@@ -104,6 +104,9 @@ pub struct HttpRequest {
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
     pub timeout: Duration,
+    /// Rejects a response before it can grow beyond this many bytes. `None` retains the
+    /// historical unrestricted behavior for callers that already enforce their own limits.
+    pub max_response_bytes: Option<usize>,
 }
 
 impl HttpRequest {
@@ -115,6 +118,7 @@ impl HttpRequest {
             headers: Vec::new(),
             body: None,
             timeout: Duration::from_secs(15),
+            max_response_bytes: None,
         }
     }
 
@@ -143,6 +147,11 @@ impl HttpRequest {
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    pub fn with_max_response_bytes(mut self, max_response_bytes: usize) -> Self {
+        self.max_response_bytes = Some(max_response_bytes);
         self
     }
 }
@@ -350,6 +359,9 @@ impl KcpListenConfig {
 #[derive(Clone, Debug, Message)]
 pub enum NetworkCommand {
     Http(HttpRequest),
+    CancelHttp {
+        request_id: RequestId,
+    },
     ConnectTcp(TcpConnectConfig),
     ConnectKcp(KcpConnectConfig),
     ListenTcp(TcpListenConfig),

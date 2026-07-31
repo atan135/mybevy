@@ -17,11 +17,16 @@ name = "ui-document-preview"
 path = "src/bin/ui_document_preview.rs"
 required-features = ["ui-document-preview-tool"]
 
+[[bin]]
+name = "ui-update-publish"
+path = "src/bin/ui_update_publish.rs"
+
 [dependencies]
 accesskit = "0.21.1"
 bevy = { version = "0.18.1", features = ["wav"] }
 authority-core = { path = "../../MyServer/packages/authority-core" }
 csv = "1"
+ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
 futures-util = "0.3"
 prost = "0.14"
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }

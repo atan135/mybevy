@@ -8,7 +8,7 @@ use tokio::{
 
 use super::{
     http, kcp, tcp,
-    types::{ConnectionId, ListenerId, NetworkCommand, NetworkEvent, NetworkTransport},
+    types::{ConnectionId, ListenerId, NetworkCommand, NetworkEvent, NetworkTransport, RequestId},
 };
 
 const COMMAND_CHANNEL_SIZE: usize = 256;
@@ -80,6 +80,10 @@ pub(super) enum WorkerCommand {
     ListenerClosed {
         listener_id: ListenerId,
     },
+    HttpFinished {
+        request_id: RequestId,
+        generation: u64,
+    },
     Shutdown,
 }
 
@@ -95,6 +99,11 @@ struct ListenerHandle {
     shutdown_tx: mpsc::Sender<()>,
 }
 
+struct HttpHandle {
+    generation: u64,
+    abort: tokio::task::AbortHandle,
+}
+
 async fn run_worker(
     mut command_rx: mpsc::UnboundedReceiver<WorkerCommand>,
     command_tx: mpsc::UnboundedSender<WorkerCommand>,
@@ -103,6 +112,7 @@ async fn run_worker(
     let http_client = reqwest::Client::new();
     let mut connections = HashMap::<ConnectionId, ConnectionHandle>::new();
     let mut listeners = HashMap::<ListenerId, ListenerHandle>::new();
+    let mut http_requests = HashMap::<RequestId, HttpHandle>::new();
     let mut next_generation = 1_u64;
 
     while let Some(command) = command_rx.recv().await {
@@ -113,6 +123,7 @@ async fn run_worker(
                     &http_client,
                     &mut connections,
                     &mut listeners,
+                    &mut http_requests,
                     &event_tx,
                     &command_tx,
                     &mut next_generation,
@@ -132,6 +143,17 @@ async fn run_worker(
             }
             WorkerCommand::ListenerClosed { listener_id } => {
                 listeners.remove(&listener_id);
+            }
+            WorkerCommand::HttpFinished {
+                request_id,
+                generation,
+            } => {
+                if http_requests
+                    .get(&request_id)
+                    .is_some_and(|request| request.generation == generation)
+                {
+                    http_requests.remove(&request_id);
+                }
             }
             WorkerCommand::AcceptedTcp(accepted) => {
                 let connection_id = accepted.connection_id;
@@ -201,6 +223,9 @@ async fn run_worker(
     for (_, listener) in listeners {
         let _ = listener.shutdown_tx.try_send(());
     }
+    for (_, request) in http_requests {
+        request.abort.abort();
+    }
 }
 
 async fn handle_network_command(
@@ -208,13 +233,31 @@ async fn handle_network_command(
     http_client: &reqwest::Client,
     connections: &mut HashMap<ConnectionId, ConnectionHandle>,
     listeners: &mut HashMap<ListenerId, ListenerHandle>,
+    http_requests: &mut HashMap<RequestId, HttpHandle>,
     event_tx: &mpsc::UnboundedSender<NetworkEvent>,
     command_tx: &mpsc::UnboundedSender<WorkerCommand>,
     next_generation: &mut u64,
 ) {
     match command {
         NetworkCommand::Http(request) => {
-            http::spawn_http_request(http_client.clone(), request, event_tx.clone());
+            let request_id = request.request_id;
+            if let Some(previous) = http_requests.remove(&request_id) {
+                previous.abort.abort();
+            }
+            let generation = reserve_generation(next_generation);
+            let abort = http::spawn_http_request(
+                http_client.clone(),
+                request,
+                event_tx.clone(),
+                command_tx.clone(),
+                generation,
+            );
+            http_requests.insert(request_id, HttpHandle { generation, abort });
+        }
+        NetworkCommand::CancelHttp { request_id } => {
+            if let Some(request) = http_requests.remove(&request_id) {
+                request.abort.abort();
+            }
         }
         NetworkCommand::ConnectTcp(config) => {
             let connection_id = config.connection_id;

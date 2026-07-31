@@ -88,6 +88,7 @@ fn report_command_error(
                 error,
             });
         }
+        NetworkCommand::CancelHttp { .. } => {}
         NetworkCommand::ConnectTcp(config) => {
             events.write(NetworkEvent::ConnectionFailed {
                 connection_id: config.connection_id,
