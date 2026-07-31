@@ -14,7 +14,7 @@ use crate::framework::ui::{
     document::{
         UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema, UiActionParamType,
         UiActionRegistry, UiBindingPath, UiBindingType, UiDocumentId, UiDocumentRuntimeCommand,
-        UiRegisteredActionKind,
+        UiNodeId, UiRegisteredActionKind,
     },
     widgets::{UiButtonEvent, UiButtonEventKind, UiScrollAuditPosition},
 };
@@ -79,17 +79,21 @@ const DECLARATIVE_LOBBY_ROUTE: &str = "game.route_lobby";
 const DECLARATIVE_CONTINUE_NODE: &str = "page.continue";
 pub(in crate::game) const UI_DOCUMENT_GALLERY_DOCUMENT: &str = "gallery.declarative";
 const UI_DOCUMENT_GALLERY_ACTION: &str = "gallery.set_status";
+const UI_DOCUMENT_GALLERY_CONTROL_ACTION: &str = "gallery.control_changed";
 
 fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
     registry
-        .register(UiActionDescriptor::new(
-            UiActionId::from_str(DECLARATIVE_CONTINUE_ACTION).unwrap(),
-            UiDocumentId::from_str(DECLARATIVE_MINIMAL_DOCUMENT).unwrap(),
-            OWNER_LOGIN.as_str(),
-            UiRegisteredActionKind::Route {
-                target: DECLARATIVE_LOBBY_ROUTE.to_owned(),
-            },
-        ))
+        .register(
+            UiActionDescriptor::new(
+                UiActionId::from_str(DECLARATIVE_CONTINUE_ACTION).unwrap(),
+                UiDocumentId::from_str(DECLARATIVE_MINIMAL_DOCUMENT).unwrap(),
+                OWNER_LOGIN.as_str(),
+                UiRegisteredActionKind::Route {
+                    target: DECLARATIVE_LOBBY_ROUTE.to_owned(),
+                },
+            )
+            .with_source(UiNodeId::from_str(DECLARATIVE_CONTINUE_NODE).unwrap()),
+        )
         .expect("declarative UI action registration must be valid and unique");
     registry
         .register(
@@ -102,12 +106,40 @@ fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
                     value_param: "value".to_owned(),
                 },
             )
+            .with_source(UiNodeId::from_str("gallery.action").unwrap())
             .with_param(
                 "value",
                 UiActionParamSchema::required(UiActionParamType::Binding(UiBindingType::String)),
             ),
         )
         .expect("declarative Gallery local action registration must be valid and unique");
+    registry
+        .register(
+            UiActionDescriptor::new(
+                UiActionId::from_str(UI_DOCUMENT_GALLERY_CONTROL_ACTION).unwrap(),
+                UiDocumentId::from_str(UI_DOCUMENT_GALLERY_DOCUMENT).unwrap(),
+                OWNER_UI_DOCUMENT_GALLERY.as_str(),
+                UiRegisteredActionKind::BusinessCommand {
+                    target: "game.gallery_control_changed".to_owned(),
+                },
+            )
+            .with_sources(
+                [
+                    "gallery.input",
+                    "gallery.checkbox",
+                    "gallery.toggle",
+                    "gallery.segmented",
+                    "gallery.slider",
+                    "gallery.stepper",
+                    "gallery.tab_overview",
+                    "gallery.tab_details",
+                    "gallery.select",
+                ]
+                .into_iter()
+                .map(|node| UiNodeId::from_str(node).unwrap()),
+            ),
+        )
+        .expect("declarative Gallery control action registration must be valid and unique");
 }
 
 fn handle_declarative_ui_actions(

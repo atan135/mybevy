@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "document_id": "actions.controls",
+  "assets": {
+    "icon": {
+      "kind": "image",
+      "source": { "kind": "packaged", "path": "ui/fixtures/visual-foundation/non-square-2x1.png" }
+    }
+  },
+  "bindings": {
+    "state.host_title": { "scope": "owner", "value_type": { "kind": "string" } },
+    "state.item_name": { "scope": "item", "value_type": { "kind": "string" } },
+    "state.input": { "scope": "local", "value_type": { "kind": "string" }, "default": { "kind": "string", "value": "Draft" }, "missing": "use_default" }
+  },
+  "root": {
+    "type": "container",
+    "id": "actions.root",
+    "children": [
+      { "type": "button", "id": "actions.button", "label": { "literal": "Button" }, "on_click": { "action": "actions.button" } },
+      { "type": "image_button", "id": "actions.image", "asset": "icon", "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Image" } } } }, "on_click": { "action": "actions.image" } },
+      {
+        "type": "text_input", "id": "actions.input", "value": "Draft",
+        "component": {
+          "slots": { "label": { "kind": "text", "content": { "literal": "Input" } } },
+          "bindings": { "value": { "binding_path": "state.input", "direction": "two_way" } }
+        },
+        "on_submit": {
+          "action": "actions.text_submit",
+          "params": {
+            "value": { "kind": "current_control_value" },
+            "host": { "kind": "host_binding", "value": "state.host_title" }
+          }
+        },
+        "on_change": { "action": "actions.text_change", "params": { "value": { "kind": "current_control_value" } } }
+      },
+      { "type": "checkbox", "id": "actions.checkbox", "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Checkbox" } } } }, "on_change": { "action": "actions.checkbox", "params": { "value": { "kind": "current_control_value" } } } },
+      { "type": "toggle", "id": "actions.toggle", "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Toggle" } } } }, "on_change": { "action": "actions.toggle", "params": { "value": { "kind": "current_control_value" } } } },
+      { "type": "segmented", "id": "actions.segmented", "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Segmented" } } } }, "options": [{ "value": "one", "label": { "literal": "One" } }, { "value": "two", "label": { "literal": "Two" } }], "on_change": { "action": "actions.segmented", "params": { "value": { "kind": "current_control_value" } } } },
+      { "type": "slider", "id": "actions.slider", "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Slider" } } } }, "value": 0.5, "on_change": { "action": "actions.slider", "params": { "value": { "kind": "current_control_value" } } } },
+      { "type": "stepper", "id": "actions.stepper", "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Stepper" } } } }, "value": 1, "on_change": { "action": "actions.stepper", "params": { "value": { "kind": "current_control_value" } } } },
+      { "type": "select", "id": "actions.select", "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Select" } } } }, "options": [{ "value": "one", "label": { "literal": "One" } }], "on_change": { "action": "actions.select", "params": { "value": { "kind": "current_control_value" } } } },
+      { "type": "tab", "id": "actions.tab", "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Tab" } } } }, "value": "overview", "on_change": { "action": "actions.tab", "params": { "value": { "kind": "current_control_value" } } } },
+      { "type": "button", "id": "actions.item", "label": { "literal": "Item" }, "on_click": { "action": "actions.item", "params": { "item": { "kind": "item_binding", "value": "state.item_name" } } } }
+    ]
+  }
+}

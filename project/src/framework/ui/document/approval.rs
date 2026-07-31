@@ -250,7 +250,7 @@ fn reject_business_fields(value: &Value) -> Result<(), UiApprovedDocumentRegistr
             for (key, child) in object {
                 if matches!(
                     key.as_str(),
-                    "action" | "on_click" | "binding_path" | "i18n_key"
+                    "action" | "on_click" | "on_change" | "on_submit" | "binding_path" | "i18n_key"
                 ) || (key == "bindings"
                     && child.as_object().is_some_and(|value| !value.is_empty()))
                 {

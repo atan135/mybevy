@@ -407,7 +407,15 @@ document 的 `UiActionInvocation` 只包含稳定 action ID 和 `params`。参�
 - `business_command`：目标是 game 层注册的稳定业务 command ID。
 - `update_local_state`：目标必须是当前 document + owner 已声明的 local binding，值必须匹配其类型。
 
-每个 descriptor 同时绑定 action ID、允许的 document ID 和 owner。runtime dispatch 只接收 source node，并从 validated document 的该节点读取 invocation，不接受调用者另行传入 action 来伪造来源。dispatch 重新检查 source node、document、owner 和 owner 存活状态，因此旧页面延迟事件、跨 owner action、跨 document node 或 owner 销毁后的请求都不会转成业务命令。route target 的字符串是 game 注册 ID，不是 `AppUiMode` Rust variant 名；framework 只产出通用 `UiActionDispatch`，不 import 或决定游戏路由、面板策略和业务消息。
+每个 descriptor 同时绑定 action ID、允许的 document ID、owner，且 game 注册的新 action 必须显式声明允许的 source node。runtime dispatch 只接收 source node，并从 validated document 的该节点读取 invocation，不接受调用者另行传入 action 来伪造来源。dispatch 重新检查 source node、document、owner 和 owner 存活状态，因此旧页面延迟事件、跨 owner action、跨 document node 或 owner 销毁后的请求都不会转成业务命令。route target 的字符串是 game 注册 ID，不是 `AppUiMode` Rust variant 名；framework 只产出通用 `UiActionDispatch`，不 import 或决定游戏路由、面板策略和业务消息。
+
+### 16.3 控件动作与动态参数
+
+`button` 与 `image_button` 使用可选的 `on_click`。`text_input` 使用 `on_submit`，并只在声明了受控 value binding 时使用 `on_change`；IME composition 期间收到的 submit 被拒绝，不能把候选词提交误当成业务提交。`checkbox`、`toggle`、`segmented`、`slider`、`stepper`、`select` 与 `tab` 使用类型化的 `on_change`。所有 action 字段都是可选的，未声明时控件保留原有交互但不会产生 document dispatch。
+
+`params` 只接受 literal scalar/node/typed binding value，以及三个显式延迟来源：`{ "kind": "current_control_value" }`、`{ "kind": "host_binding", "value": "state.path" }` 和 `{ "kind": "item_binding", "value": "state.path" }`。host binding 只能引用本 document 声明的 `document` 或 `owner` scope；item binding 只能引用 `item` scope，并在尚无 repeat item key 的节点上以 `UI_ACTION_ITEM_BINDING_UNAVAILABLE` 拒绝。运行时在 descriptor 参数 schema 下把当前值和 binding 值转换为最终 typed dispatch 参数，record/list 不能作为 document 内嵌 action payload，因此没有任意 JSON blob 通道。
+
+同一 active instance 的相同 click/change/submit 在同一帧只会分发一次。正在 replacement preflight 的 document 拒绝新的动作；instance 不再 active、owner 不符、source entity 不属于 indexed node 或 composition 中的 submit 分别产生稳定 rejection。framework 只写入 `UiActionDispatch` / `UiActionRejected`，route、MyServer 和其他业务消息仍只能由 game adapter 消费通过验证的 dispatch 后产生。
 
 游戏层当前示例在 `NavigationPlugin` 注册 `example.continue`，仅当 dispatch 的 action ID、document ID、owner、source node 和 allowlisted `game.route_lobby` target 全部匹配时，才适配为 `GameRouteCommand::ChangeMode(AppUiMode::Lobby)`。这条转换位于 game 层；新增业务 action 必须以相同方式显式注册和适配。
 

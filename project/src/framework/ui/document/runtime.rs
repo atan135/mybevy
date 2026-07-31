@@ -12,16 +12,17 @@ use serde::Serialize;
 
 use super::{
     UiActionDispatch, UiActionDispatchContext, UiActionId, UiActionRegistry, UiActionRejected,
-    UiActionValue, UiAssetEntry, UiAssetId, UiAssetKind, UiAssetSource, UiBindingDirection,
-    UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue, UiColor, UiComponentBindings,
-    UiComponentSize, UiComponentState, UiComponentVariant, UiControlSlot, UiControlSlotContent,
-    UiDocument, UiDocumentHostValidationContext, UiDocumentId, UiDocumentMarker, UiHostBindingKey,
+    UiActionTrigger, UiActionValue, UiAssetEntry, UiAssetId, UiAssetKind, UiAssetSource,
+    UiBindingActionError, UiBindingDirection, UiBindingPath, UiBindingScope, UiBindingType,
+    UiBindingValue, UiColor, UiComponentBindings, UiComponentSize, UiComponentState,
+    UiComponentVariant, UiControlSlot, UiControlSlotContent, UiDocument,
+    UiDocumentHostValidationContext, UiDocumentId, UiDocumentMarker, UiHostBindingKey,
     UiImageContentState, UiImageFailurePresentation, UiImagePresentation, UiNode, UiNodeBindings,
     UiNodeId, UiNodeMarker, UiPageState, UiRegisteredActionKind, UiResolvedBackground,
     UiResolvedImageFallback, UiResolvedMaterialParameters, UiResolvedStyle, UiTargetProfile,
     UiTextContent, UiTextFormat, UiTextLineHeight, UiTextOverflow, UiTextTypography,
     UiTooltipToneSpec, UiWidgetControlAdapter, UiWidgetVariantAdapter, ValidatedUiDocument,
-    resolve_image_fallback, ui_component_variant,
+    document_node_action, node_action, resolve_image_fallback, ui_component_variant,
 };
 use crate::framework::ui::{
     core::{
@@ -36,10 +37,11 @@ use crate::framework::ui::{
     widgets::{
         DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
         ReadonlyTextInput, SelectedButton, UiAdvancedImageSource, UiAdvancedImageSpec, UiBadge,
-        UiButtonEvent, UiButtonEventKind, UiControlFlags, UiControlId, UiControlKind,
-        UiControlMeta, UiControlState, UiDropdown, UiDropdownOption, UiImagePixelSize, UiImageSize,
-        UiImageTextureSource, UiProgress, UiScrollViewConfig, UiSlider, UiStepper, UiTextInput,
-        UiTextInputMaxChars, UiTextInputValue, UiTooltip, UiTooltipTone,
+        UiButtonEvent, UiButtonEventKind, UiControlEvent, UiControlEventKind, UiControlFlags,
+        UiControlId, UiControlKind, UiControlMeta, UiControlState, UiControlValue, UiDropdown,
+        UiDropdownOption, UiImagePixelSize, UiImageSize, UiImageTextureSource, UiProgress,
+        UiScrollViewConfig, UiSlider, UiStepper, UiTextInput, UiTextInputMaxChars,
+        UiTextInputSubmitted, UiTextInputValue, UiTooltip, UiTooltipTone,
         controls::{
             SelectionVisualState, UiBadgeLabel, UiButtonStyleLabel, UiDropdownLabel,
             UiNumericControlLabel, UiProgressLabel, UiSegmentOption, UiSegmentOptionSelected,
@@ -309,7 +311,19 @@ pub struct UiDocumentResolvedStyleMarker(pub UiResolvedStyle);
 pub struct UiDocumentActionMarker {
     pub instance_id: UiDocumentInstanceId,
     pub node_id: UiNodeId,
-    pub action_id: UiActionId,
+    pub on_click: Option<UiActionId>,
+    pub on_change: Option<UiActionId>,
+    pub on_submit: Option<UiActionId>,
+}
+
+impl UiDocumentActionMarker {
+    fn action_id(&self, trigger: UiActionTrigger) -> Option<&UiActionId> {
+        match trigger {
+            UiActionTrigger::Click => self.on_click.as_ref(),
+            UiActionTrigger::Change => self.on_change.as_ref(),
+            UiActionTrigger::Submit => self.on_submit.as_ref(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -589,9 +603,12 @@ impl Plugin for UiDocumentRuntimePlugin {
             .add_message::<UiDocumentRuntimeCommand>()
             .add_message::<UiDocumentRuntimeEvent>()
             .add_message::<UiButtonEvent>()
+            .add_message::<UiControlEvent>()
+            .add_message::<UiTextInputSubmitted>()
             .add_message::<UiActionDispatch>()
             .add_message::<UiActionRejected>()
             .add_message::<UiBindingDiagnostic>()
+            .init_resource::<UiDocumentActionDispatchState>()
             .configure_sets(
                 Update,
                 (
@@ -1505,6 +1522,22 @@ fn spawn_prepared_node(
     }
 
     spawn_node_content(world, entity, pending, prepared, instance_id)?;
+    let action_marker = UiDocumentActionMarker {
+        instance_id,
+        node_id: node_id.clone(),
+        on_click: node_action(&prepared.source, UiActionTrigger::Click)
+            .map(|action| action.action.clone()),
+        on_change: node_action(&prepared.source, UiActionTrigger::Change)
+            .map(|action| action.action.clone()),
+        on_submit: node_action(&prepared.source, UiActionTrigger::Submit)
+            .map(|action| action.action.clone()),
+    };
+    if action_marker.on_click.is_some()
+        || action_marker.on_change.is_some()
+        || action_marker.on_submit.is_some()
+    {
+        world.entity_mut(entity).insert(action_marker);
+    }
     let node_bindings = prepared.source.style().bindings.clone();
     let control_bindings = prepared
         .source
@@ -1529,6 +1562,13 @@ fn spawn_prepared_node(
     apply_text_constraints(world, entity, &prepared.source, &prepared.style);
     apply_resolved_style(world, entity, &prepared.style);
     if let Some(control) = prepared.control {
+        // Widget helpers require a control ID for their local events. This is a
+        // static helper ID, not the public document node identity; action
+        // dispatch resolves identity through UiDocumentActionMarker instead.
+        world.entity_mut(entity).insert(UiControlMeta::new(
+            UiControlId::new("document.action"),
+            control.kind,
+        ));
         apply_control_state(world, entity, control);
     }
 
@@ -1580,10 +1620,7 @@ fn spawn_node_content(
             *tint,
         )?,
         UiNode::Button {
-            component,
-            label,
-            on_click,
-            ..
+            component, label, ..
         } => {
             let label = label
                 .as_ref()
@@ -1628,11 +1665,6 @@ fn spawn_node_content(
                     );
                 }
             }
-            world.entity_mut(entity).insert(UiDocumentActionMarker {
-                instance_id,
-                node_id: prepared.source.id().clone(),
-                action_id: on_click.action.clone(),
-            });
         }
         UiNode::TextInput {
             component,
@@ -1842,6 +1874,10 @@ fn spawn_node_content(
                     let label = spawn_plain_text_child(world, option_entity, text);
                     configure_generated_text(world, label, pending, &option.label, &prepared.style);
                 }
+                world.entity_mut(option_entity).insert(UiControlMeta::new(
+                    UiControlId::new("document.segmented"),
+                    UiControlKind::Segmented,
+                ));
                 world.entity_mut(entity).add_child(option_entity);
                 if let Some(label) = find_descendant_with::<UiSelectionText>(world, option_entity) {
                     configure_generated_text(world, label, pending, &option.label, &prepared.style);
@@ -4738,47 +4774,359 @@ fn enforce_document_text_constraints(
     }
 }
 
+#[derive(Default, Resource)]
+struct UiDocumentActionDispatchState {
+    frame: u64,
+    seen: BTreeSet<String>,
+    text_values: BTreeMap<(UiDocumentInstanceId, UiNodeId), String>,
+}
+
+#[derive(Clone, Debug)]
+struct UiDocumentActionInput {
+    entity: Entity,
+    trigger: UiActionTrigger,
+    control_value: Option<UiBindingValue>,
+    owner: Option<String>,
+    is_composing: bool,
+}
+
 fn dispatch_document_actions(
     mut button_events: MessageReader<UiButtonEvent>,
+    mut control_events: MessageReader<UiControlEvent>,
+    mut submissions: MessageReader<UiTextInputSubmitted>,
+    changed_text_inputs: Query<(Entity, &UiTextInputValue), Changed<UiTextInputValue>>,
     markers: Query<(Entity, &UiDocumentActionMarker)>,
+    parents: Query<&ChildOf>,
     runtime: Res<UiDocumentRuntime>,
     registry: Res<UiActionRegistry>,
     mut binding_values: ResMut<UiBindingValues>,
+    mut state: ResMut<UiDocumentActionDispatchState>,
     mut dispatches: MessageWriter<UiActionDispatch>,
     mut rejected: MessageWriter<UiActionRejected>,
 ) {
+    state.frame = state.frame.wrapping_add(1).max(1);
+    state.seen.clear();
+    let mut inputs = Vec::new();
     for event in button_events.read() {
-        if event.kind != UiButtonEventKind::Click {
+        if event.kind == UiButtonEventKind::Click {
+            inputs.push(UiDocumentActionInput {
+                entity: event.entity,
+                trigger: UiActionTrigger::Click,
+                control_value: None,
+                owner: None,
+                is_composing: false,
+            });
+        }
+    }
+    for event in control_events.read() {
+        if event.kind != UiControlEventKind::ValueChanged {
             continue;
         }
-        let Ok((entity, marker)) = markers.get(event.entity) else {
+        let value = match &event.value {
+            UiControlValue::None => None,
+            UiControlValue::Bool(value) => Some(UiBindingValue::Bool(*value)),
+            UiControlValue::Number(value) => Some(UiBindingValue::Number(*value)),
+            UiControlValue::Text(value) => Some(UiBindingValue::String(value.clone())),
+        };
+        inputs.push(UiDocumentActionInput {
+            entity: event.entity,
+            trigger: UiActionTrigger::Change,
+            control_value: value,
+            owner: event.owner.map(|owner| owner.as_str().to_owned()),
+            is_composing: false,
+        });
+    }
+    for event in submissions.read() {
+        inputs.push(UiDocumentActionInput {
+            entity: event.entity,
+            trigger: UiActionTrigger::Submit,
+            control_value: Some(UiBindingValue::String(event.value.clone())),
+            owner: None,
+            is_composing: event.is_composing,
+        });
+    }
+    for (entity, value) in &changed_text_inputs {
+        let Some((_, marker)) = action_marker_for_entity(entity, &markers, &parents) else {
             continue;
         };
-        let Some(active) = runtime.instances.get(&marker.instance_id) else {
-            continue;
-        };
-        if active.index.nodes.get(&marker.node_id) != Some(&entity) {
-            continue;
+        let key = (marker.instance_id, marker.node_id.clone());
+        let previous = state.text_values.insert(key, value.0.clone());
+        if previous.is_some_and(|previous| previous != value.0) {
+            inputs.push(UiDocumentActionInput {
+                entity,
+                trigger: UiActionTrigger::Change,
+                control_value: Some(UiBindingValue::String(value.0.clone())),
+                owner: None,
+                is_composing: false,
+            });
         }
-        match registry.dispatch(
+    }
+
+    for input in inputs {
+        dispatch_document_action_input(
+            input,
+            &markers,
+            &parents,
+            &runtime,
+            &registry,
+            &mut binding_values,
+            &mut state,
+            &mut dispatches,
+            &mut rejected,
+        );
+    }
+}
+
+fn action_marker_for_entity(
+    entity: Entity,
+    markers: &Query<(Entity, &UiDocumentActionMarker)>,
+    parents: &Query<&ChildOf>,
+) -> Option<(Entity, UiDocumentActionMarker)> {
+    markers
+        .get(entity)
+        .ok()
+        .map(|(entity, marker)| (entity, marker.clone()))
+        .or_else(|| {
+            parents.iter_ancestors(entity).find_map(|ancestor| {
+                markers
+                    .get(ancestor)
+                    .ok()
+                    .map(|(entity, marker)| (entity, marker.clone()))
+            })
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_document_action_input(
+    input: UiDocumentActionInput,
+    markers: &Query<(Entity, &UiDocumentActionMarker)>,
+    parents: &Query<&ChildOf>,
+    runtime: &UiDocumentRuntime,
+    registry: &UiActionRegistry,
+    binding_values: &mut UiBindingValues,
+    state: &mut UiDocumentActionDispatchState,
+    dispatches: &mut MessageWriter<UiActionDispatch>,
+    rejected: &mut MessageWriter<UiActionRejected>,
+) {
+    let Some((marker_entity, marker)) = action_marker_for_entity(input.entity, markers, parents)
+    else {
+        return;
+    };
+    let Some(action) = marker.action_id(input.trigger).cloned() else {
+        return;
+    };
+    let rejection = |code, path| UiActionRejected {
+        action: action.clone(),
+        error: UiBindingActionError::new(code, path, Some(marker.node_id.clone())),
+    };
+    let Some(active) = runtime.instances.get(&marker.instance_id) else {
+        rejected.write(rejection("UI_ACTION_INSTANCE_STALE", "$.runtime.instance"));
+        return;
+    };
+    if active.index.nodes.get(&marker.node_id) != Some(&marker_entity)
+        || runtime.active.get(&DocumentKey {
+            owner: active.index.owner.clone(),
+            document_id: active.index.document_id.clone(),
+        }) != Some(&marker.instance_id)
+    {
+        rejected.write(rejection("UI_ACTION_INSTANCE_STALE", "$.runtime.instance"));
+        return;
+    }
+    if runtime.pending.values().any(|pending| {
+        pending.key.owner == active.index.owner
+            && pending.key.document_id == active.index.document_id
+    }) {
+        rejected.write(rejection(
+            "UI_ACTION_INSTANCE_PENDING",
+            "$.runtime.instance",
+        ));
+        return;
+    }
+    if input
+        .owner
+        .as_deref()
+        .is_some_and(|owner| owner != active.index.owner)
+    {
+        rejected.write(rejection("UI_ACTION_OWNER_FORBIDDEN", "$.runtime.owner"));
+        return;
+    }
+    if input.is_composing {
+        rejected.write(rejection(
+            "UI_ACTION_IME_COMPOSING",
+            "$.runtime.composition",
+        ));
+        return;
+    }
+    // A control can produce multiple low-level events in one frame. Keep the
+    // first valid action for its stable document source and trigger so a burst
+    // cannot create repeated business requests with competing values.
+    let dedup_key = format!(
+        "{}:{}:{:?}",
+        marker.instance_id.0, marker.node_id, input.trigger
+    );
+    if !state.seen.insert(dedup_key) {
+        return;
+    }
+    let Some(invocation) = document_node_action(
+        &active.validated.document().root,
+        &marker.node_id,
+        input.trigger,
+    ) else {
+        rejected.write(rejection(
+            "UI_ACTION_SOURCE_HAS_NO_ACTION",
+            "$.runtime.source_node",
+        ));
+        return;
+    };
+    let result = registry
+        .dispatch_invocation(
             &active.validated,
+            invocation,
             &UiActionDispatchContext {
                 owner: active.index.owner.clone(),
                 owner_alive: true,
                 source_node: marker.node_id.clone(),
             },
-        ) {
-            Ok(dispatch) => {
-                apply_local_state_dispatch(active, &dispatch, &mut binding_values);
-                dispatches.write(dispatch);
-            }
-            Err(error) => {
-                rejected.write(UiActionRejected {
-                    action: marker.action_id.clone(),
-                    error,
-                });
-            }
+            "$.runtime.action",
+        )
+        .and_then(|dispatch| {
+            resolve_document_action_params(
+                active,
+                registry,
+                dispatch,
+                input.control_value.as_ref(),
+                binding_values,
+            )
+        });
+    match result {
+        Ok(dispatch) => {
+            apply_local_state_dispatch(active, &dispatch, binding_values);
+            dispatches.write(dispatch);
         }
+        Err(error) => {
+            rejected.write(UiActionRejected { action, error });
+        }
+    }
+}
+
+fn resolve_document_action_params(
+    active: &ActiveDocument,
+    registry: &UiActionRegistry,
+    mut dispatch: UiActionDispatch,
+    control_value: Option<&UiBindingValue>,
+    binding_values: &UiBindingValues,
+) -> Result<UiActionDispatch, UiBindingActionError> {
+    let descriptor = registry
+        .descriptor(&dispatch.action)
+        .expect("dispatch was created from a registered descriptor");
+    for (name, value) in &mut dispatch.params {
+        let schema = descriptor
+            .params
+            .get(name)
+            .expect("dispatch only contains registered parameters");
+        let resolved = match &*value {
+            UiActionValue::CurrentControlValue => {
+                let value = control_value.ok_or_else(|| {
+                    UiBindingActionError::new(
+                        "UI_ACTION_CONTROL_VALUE_MISSING",
+                        format!("$.runtime.action.params.{name}"),
+                        Some(dispatch.source_node.clone()),
+                    )
+                })?;
+                action_value_from_binding(value, &schema.value_type)
+            }
+            UiActionValue::HostBinding(path) => {
+                let declaration =
+                    active
+                        .validated
+                        .document()
+                        .bindings
+                        .get(path)
+                        .ok_or_else(|| {
+                            UiBindingActionError::new(
+                                "UI_ACTION_HOST_BINDING_FORBIDDEN",
+                                format!("$.runtime.action.params.{name}"),
+                                Some(dispatch.source_node.clone()),
+                            )
+                        })?;
+                if !matches!(
+                    declaration.scope,
+                    UiBindingScope::Document | UiBindingScope::Owner
+                ) {
+                    return Err(UiBindingActionError::new(
+                        "UI_ACTION_HOST_BINDING_FORBIDDEN",
+                        format!("$.runtime.action.params.{name}"),
+                        Some(dispatch.source_node.clone()),
+                    ));
+                }
+                let value = binding_values
+                    .scoped_value(
+                        active.index.document_id.as_str(),
+                        &active.index.owner,
+                        path,
+                        declaration,
+                    )
+                    .ok_or_else(|| {
+                        UiBindingActionError::new(
+                            "UI_ACTION_HOST_BINDING_MISSING",
+                            format!("$.runtime.action.params.{name}"),
+                            Some(dispatch.source_node.clone()),
+                        )
+                    })?;
+                action_value_from_binding(&value, &schema.value_type)
+            }
+            UiActionValue::ItemBinding(_) => {
+                return Err(UiBindingActionError::new(
+                    "UI_ACTION_ITEM_BINDING_UNAVAILABLE",
+                    format!("$.runtime.action.params.{name}"),
+                    Some(dispatch.source_node.clone()),
+                ));
+            }
+            value => Some(value.clone()),
+        }
+        .ok_or_else(|| {
+            UiBindingActionError::new(
+                "UI_ACTION_PARAM_TYPE_MISMATCH",
+                format!("$.runtime.action.params.{name}"),
+                Some(dispatch.source_node.clone()),
+            )
+        })?;
+        if !super::action_value_matches(&active.validated, &schema.value_type, &resolved) {
+            return Err(UiBindingActionError::new(
+                "UI_ACTION_PARAM_TYPE_MISMATCH",
+                format!("$.runtime.action.params.{name}"),
+                Some(dispatch.source_node.clone()),
+            ));
+        }
+        *value = resolved;
+    }
+    Ok(dispatch)
+}
+
+fn action_value_from_binding(
+    value: &UiBindingValue,
+    schema: &super::UiActionParamType,
+) -> Option<UiActionValue> {
+    match (value, schema) {
+        (UiBindingValue::String(value), super::UiActionParamType::String { .. }) => {
+            Some(UiActionValue::String(value.clone()))
+        }
+        (UiBindingValue::Bool(value), super::UiActionParamType::Bool) => {
+            Some(UiActionValue::Bool(*value))
+        }
+        (UiBindingValue::Number(value), super::UiActionParamType::Number { .. }) => {
+            Some(UiActionValue::Number(*value))
+        }
+        (UiBindingValue::String(value), super::UiActionParamType::Enum { .. }) => {
+            Some(UiActionValue::Enum(value.clone()))
+        }
+        (UiBindingValue::Enum(value), super::UiActionParamType::Enum { .. }) => {
+            Some(UiActionValue::Enum(value.clone()))
+        }
+        (value, super::UiActionParamType::Binding(_)) => {
+            Some(UiActionValue::Binding(value.clone()))
+        }
+        _ => None,
     }
 }
 
@@ -5119,7 +5467,7 @@ mod tests {
 
     use super::*;
     use crate::framework::ui::{
-        core::{UiCurrentOwner, UiMetrics},
+        core::{UiCurrentOwner, UiMetrics, UiOwnerId},
         document::{
             UiActionDescriptor, UiActionParamSchema, UiActionParamType, UiBindingValue,
             UiDocumentInputMode, UiDocumentPlatform, UiSafeAreaClass,
@@ -5129,8 +5477,8 @@ mod tests {
             controls::{
                 UiBadgeLabel, UiCheckbox, UiProgressFill, UiProgressLabel, UiSegmentIndicator,
                 UiSliderFill, UiSliderTrack, UiSliderValueText, UiStepperValueText, UiTabIndicator,
-                UiTabList, UiToggle, update_selection_control_interactions,
-                update_stepper_interactions,
+                UiTabList, UiToggle, update_component_control_interactions,
+                update_selection_control_interactions, update_stepper_interactions,
             },
         },
     };
@@ -5188,6 +5536,78 @@ mod tests {
         "id": "runtime.button",
         "label": { "literal": "Continue" },
         "on_click": { "action": "runtime.continue" }
+      }
+    }
+    "#;
+    const TEXT_SUBMIT_ACTION_DOCUMENT: &str = r#"
+    {
+      "schema_version": 1,
+      "document_id": "runtime.transaction",
+      "root": {
+        "type": "text_input",
+        "id": "runtime.input",
+        "component": {
+          "slots": {
+            "label": { "kind": "text", "content": { "literal": "Input" } }
+          }
+        },
+        "on_submit": { "action": "runtime.continue" }
+      }
+    }
+    "#;
+    const ACTION_REFERENCE_DOCUMENT: &str = r#"
+    {
+      "schema_version": 1,
+      "document_id": "runtime.transaction",
+      "bindings": {
+        "state.host": {
+          "scope": "owner",
+          "value_type": { "kind": "string" }
+        },
+        "state.item": {
+          "scope": "item",
+          "value_type": { "kind": "string" }
+        }
+      },
+      "root": {
+        "type": "container",
+        "id": "runtime.action_root",
+        "children": [
+          {
+            "type": "slider",
+            "id": "runtime.slider",
+            "value": 0.5,
+            "min": 0.0,
+            "max": 1.0,
+            "component": {
+              "slots": {
+                "label": { "kind": "text", "content": { "literal": "Value" } }
+              }
+            },
+            "on_change": {
+              "action": "runtime.control",
+              "params": { "value": { "kind": "current_control_value" } }
+            }
+          },
+          {
+            "type": "button",
+            "id": "runtime.host",
+            "label": { "literal": "Host" },
+            "on_click": {
+              "action": "runtime.host",
+              "params": { "value": { "kind": "host_binding", "value": "state.host" } }
+            }
+          },
+          {
+            "type": "button",
+            "id": "runtime.item",
+            "label": { "literal": "Item" },
+            "on_click": {
+              "action": "runtime.item",
+              "params": { "value": { "kind": "item_binding", "value": "state.item" } }
+            }
+          }
+        ]
       }
     }
     "#;
@@ -5268,6 +5688,7 @@ mod tests {
           {
             "type": "text_input",
             "id": "controls.text_input",
+            "on_submit": { "action": "runtime.continue" },
             "component": { "slots": {
               "label": { "kind": "text", "content": { "literal": "Input" } },
               "placeholder": { "kind": "text", "content": { "literal": "Type" } }
@@ -5276,16 +5697,19 @@ mod tests {
           {
             "type": "checkbox",
             "id": "controls.checkbox",
+            "on_change": { "action": "runtime.continue" },
             "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Check" } } } }
           },
           {
             "type": "toggle",
             "id": "controls.toggle",
+            "on_change": { "action": "runtime.continue" },
             "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Toggle" } } } }
           },
           {
             "type": "segmented",
             "id": "controls.segmented",
+            "on_change": { "action": "runtime.continue" },
             "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Segment" } } } },
             "options": [
               { "value": "one", "label": { "literal": "One" } },
@@ -5296,6 +5720,7 @@ mod tests {
           {
             "type": "slider",
             "id": "controls.slider",
+            "on_change": { "action": "runtime.continue" },
             "value": 0.4,
             "min": 0.0,
             "max": 1.0,
@@ -5304,6 +5729,7 @@ mod tests {
           {
             "type": "stepper",
             "id": "controls.stepper",
+            "on_change": { "action": "runtime.continue" },
             "value": 2,
             "min": 0,
             "max": 8,
@@ -5323,6 +5749,7 @@ mod tests {
             "type": "image_button",
             "id": "controls.image_button",
             "asset": "control_image",
+            "on_click": { "action": "runtime.continue" },
             "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Image" } } } }
           },
           {
@@ -5340,6 +5767,7 @@ mod tests {
             "type": "tab",
             "id": "controls.tab",
             "value": "overview",
+            "on_change": { "action": "runtime.continue" },
             "component": { "slots": { "label": { "kind": "text", "content": { "literal": "Overview" } } } }
           },
           {
@@ -5353,6 +5781,7 @@ mod tests {
           {
             "type": "select",
             "id": "controls.select",
+            "on_change": { "action": "runtime.continue" },
             "component": { "slots": {
               "label": { "kind": "text", "content": { "literal": "Choice" } },
               "placeholder": { "kind": "text", "content": { "literal": "Select" } }
@@ -5508,6 +5937,7 @@ mod tests {
         "type": "text_input",
         "id": "binding.input",
         "value": "Document literal",
+        "on_change": { "action": "runtime.continue" },
         "component": {
           "slots": {
             "label": { "kind": "text", "content": { "literal": "Input" } }
@@ -5886,14 +6316,39 @@ mod tests {
     fn register_route_action(app: &mut App) {
         app.world_mut()
             .resource_mut::<UiActionRegistry>()
-            .register(UiActionDescriptor::new(
-                UiActionId::from_str("runtime.continue").unwrap(),
-                document_id(),
-                "runtime_owner",
-                UiRegisteredActionKind::Route {
-                    target: "game.runtime_continue".to_owned(),
-                },
-            ))
+            .register(
+                UiActionDescriptor::new(
+                    UiActionId::from_str("runtime.continue").unwrap(),
+                    document_id(),
+                    "runtime_owner",
+                    UiRegisteredActionKind::Route {
+                        target: "game.runtime_continue".to_owned(),
+                    },
+                )
+                .with_sources(
+                    [
+                        "runtime.button",
+                        "runtime.input",
+                        "controls.button",
+                        "controls.image_button",
+                        "controls.text_input",
+                        "controls.checkbox",
+                        "controls.toggle",
+                        "controls.segmented",
+                        "controls.slider",
+                        "controls.stepper",
+                        "controls.tab",
+                        "controls.select",
+                        "dynamic.button",
+                        "mapping.button",
+                        "state.button",
+                        "budget.button",
+                        "binding.input",
+                    ]
+                    .into_iter()
+                    .map(|node| UiNodeId::from_str(node).unwrap()),
+                ),
+            )
             .unwrap();
     }
 
@@ -6409,14 +6864,17 @@ mod tests {
         let mut app = test_app();
         app.world_mut()
             .resource_mut::<UiActionRegistry>()
-            .register(UiActionDescriptor::new(
-                UiActionId::from_str("runtime.continue").unwrap(),
-                document_id(),
-                "runtime_owner",
-                UiRegisteredActionKind::Route {
-                    target: "game.runtime_continue".to_owned(),
-                },
-            ))
+            .register(
+                UiActionDescriptor::new(
+                    UiActionId::from_str("runtime.continue").unwrap(),
+                    document_id(),
+                    "runtime_owner",
+                    UiRegisteredActionKind::Route {
+                        target: "game.runtime_continue".to_owned(),
+                    },
+                )
+                .with_source(UiNodeId::from_str("runtime.button").unwrap()),
+            )
             .unwrap();
         app.world_mut()
             .write_message(UiDocumentRuntimeCommand::Open(request(13, ACTION_DOCUMENT)));
@@ -6445,6 +6903,404 @@ mod tests {
             dispatches[0].kind,
             UiRegisteredActionKind::Route { .. }
         ));
+    }
+
+    #[test]
+    fn ui_document_runtime_rejects_invalid_action_contracts_before_commit() {
+        let mut unknown = test_app();
+        unknown
+            .world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                13_001,
+                &ACTION_DOCUMENT.replacen("runtime.continue", "runtime.unknown", 1),
+            )));
+        unknown.update();
+        assert_eq!(
+            unknown
+                .world()
+                .resource::<UiDocumentRuntime>()
+                .record(UiDocumentRequestId(13_001))
+                .unwrap()
+                .failure_code
+                .as_deref(),
+            Some("UI_ACTION_UNKNOWN")
+        );
+
+        let mut forbidden_source = test_app();
+        forbidden_source
+            .world_mut()
+            .resource_mut::<UiActionRegistry>()
+            .register(
+                UiActionDescriptor::new(
+                    UiActionId::from_str("runtime.continue").unwrap(),
+                    document_id(),
+                    "runtime_owner",
+                    UiRegisteredActionKind::Route {
+                        target: "game.runtime_continue".to_owned(),
+                    },
+                )
+                .with_source(UiNodeId::from_str("runtime.forged_source").unwrap()),
+            )
+            .unwrap();
+        forbidden_source
+            .world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                13_002,
+                ACTION_DOCUMENT,
+            )));
+        forbidden_source.update();
+        assert_eq!(
+            forbidden_source
+                .world()
+                .resource::<UiDocumentRuntime>()
+                .record(UiDocumentRequestId(13_002))
+                .unwrap()
+                .failure_code
+                .as_deref(),
+            Some("UI_ACTION_SOURCE_FORBIDDEN")
+        );
+
+        let register_number_action = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<UiActionRegistry>()
+                .register(
+                    UiActionDescriptor::new(
+                        UiActionId::from_str("runtime.number").unwrap(),
+                        document_id(),
+                        "runtime_owner",
+                        UiRegisteredActionKind::BusinessCommand {
+                            target: "game.runtime_number".to_owned(),
+                        },
+                    )
+                    .with_source(UiNodeId::from_str("runtime.button").unwrap())
+                    .with_param(
+                        "value",
+                        UiActionParamSchema::required(UiActionParamType::Number {
+                            min: Some(0.0),
+                            max: Some(1.0),
+                        }),
+                    ),
+                )
+                .unwrap();
+        };
+
+        let mut missing_param = test_app();
+        register_number_action(&mut missing_param);
+        missing_param
+            .world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                13_003,
+                &ACTION_DOCUMENT.replacen("runtime.continue", "runtime.number", 1),
+            )));
+        missing_param.update();
+        assert_eq!(
+            missing_param
+                .world()
+                .resource::<UiDocumentRuntime>()
+                .record(UiDocumentRequestId(13_003))
+                .unwrap()
+                .failure_code
+                .as_deref(),
+            Some("UI_ACTION_PARAM_REQUIRED")
+        );
+
+        let mut wrong_param = test_app();
+        register_number_action(&mut wrong_param);
+        wrong_param
+            .world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                13_004,
+                &ACTION_DOCUMENT.replace(
+                    "\"action\": \"runtime.continue\"",
+                    "\"action\": \"runtime.number\", \"params\": { \"value\": { \"kind\": \"bool\", \"value\": true } }",
+                ),
+            )));
+        wrong_param.update();
+        assert_eq!(
+            wrong_param
+                .world()
+                .resource::<UiDocumentRuntime>()
+                .record(UiDocumentRequestId(13_004))
+                .unwrap()
+                .failure_code
+                .as_deref(),
+            Some("UI_ACTION_PARAM_TYPE_MISMATCH")
+        );
+    }
+
+    #[test]
+    fn ui_document_runtime_rejects_untrusted_and_unresolvable_action_inputs() {
+        use bevy::ecs::message::MessageCursor;
+
+        let mut app = styled_test_app(&[]);
+        let mut registry = app.world_mut().resource_mut::<UiActionRegistry>();
+        for (action, source, target, value_type) in [
+            (
+                "runtime.control",
+                "runtime.slider",
+                "game.runtime_control",
+                UiActionParamType::Number {
+                    min: Some(0.0),
+                    max: Some(1.0),
+                },
+            ),
+            (
+                "runtime.host",
+                "runtime.host",
+                "game.runtime_host",
+                UiActionParamType::String { max_bytes: 64 },
+            ),
+            (
+                "runtime.item",
+                "runtime.item",
+                "game.runtime_item",
+                UiActionParamType::String { max_bytes: 64 },
+            ),
+        ] {
+            registry
+                .register(
+                    UiActionDescriptor::new(
+                        UiActionId::from_str(action).unwrap(),
+                        document_id(),
+                        "runtime_owner",
+                        UiRegisteredActionKind::BusinessCommand {
+                            target: target.to_owned(),
+                        },
+                    )
+                    .with_source(UiNodeId::from_str(source).unwrap())
+                    .with_param("value", UiActionParamSchema::required(value_type)),
+                )
+                .unwrap();
+        }
+        drop(registry);
+
+        let host_path = UiBindingPath::from_str("state.host").unwrap();
+        let item_path = UiBindingPath::from_str("state.item").unwrap();
+        let mut open = request(13_005, ACTION_REFERENCE_DOCUMENT);
+        open.host_bindings = BTreeMap::from([
+            (
+                UiHostBindingKey::new(UiBindingScope::Owner, host_path),
+                UiBindingType::String,
+            ),
+            (
+                UiHostBindingKey::new(UiBindingScope::Item, item_path),
+                UiBindingType::String,
+            ),
+        ]);
+        app.world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(open));
+        app.update();
+        let action_record = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .record(UiDocumentRequestId(13_005))
+            .unwrap();
+        assert_eq!(
+            action_record.state,
+            UiDocumentBuildState::Committed,
+            "{action_record:?}"
+        );
+
+        let slider = node_entity(&app, "runtime.slider");
+        let host = node_entity(&app, "runtime.host");
+        let item = node_entity(&app, "runtime.item");
+        let mut rejected = MessageCursor::<UiActionRejected>::default();
+        let mut dispatches = MessageCursor::<UiActionDispatch>::default();
+
+        app.world_mut().write_message(UiControlEvent {
+            entity: slider,
+            owner: Some(UiOwnerId::new("forged_owner")),
+            control_id: UiControlId::new("forged.control"),
+            control_kind: UiControlKind::Slider,
+            kind: UiControlEventKind::ValueChanged,
+            value: UiControlValue::Number(0.25),
+            reason: crate::framework::ui::widgets::UiControlEventReason::Keyboard,
+        });
+        app.update();
+        assert_eq!(
+            rejected
+                .read(app.world().resource::<Messages<UiActionRejected>>())
+                .map(|event| event.error.code)
+                .collect::<Vec<_>>(),
+            vec!["UI_ACTION_OWNER_FORBIDDEN"]
+        );
+
+        app.world_mut().write_message(UiControlEvent {
+            entity: slider,
+            owner: None,
+            control_id: UiControlId::new("runtime.slider"),
+            control_kind: UiControlKind::Slider,
+            kind: UiControlEventKind::ValueChanged,
+            value: UiControlValue::None,
+            reason: crate::framework::ui::widgets::UiControlEventReason::Keyboard,
+        });
+        app.update();
+        assert_eq!(
+            rejected
+                .read(app.world().resource::<Messages<UiActionRejected>>())
+                .map(|event| event.error.code)
+                .collect::<Vec<_>>(),
+            vec!["UI_ACTION_CONTROL_VALUE_MISSING"]
+        );
+
+        app.world_mut().write_message(UiControlEvent {
+            entity: slider,
+            owner: None,
+            control_id: UiControlId::new("runtime.slider"),
+            control_kind: UiControlKind::Slider,
+            kind: UiControlEventKind::ValueChanged,
+            value: UiControlValue::Bool(true),
+            reason: crate::framework::ui::widgets::UiControlEventReason::Keyboard,
+        });
+        app.update();
+        assert_eq!(
+            rejected
+                .read(app.world().resource::<Messages<UiActionRejected>>())
+                .map(|event| event.error.code)
+                .collect::<Vec<_>>(),
+            vec!["UI_ACTION_PARAM_TYPE_MISMATCH"]
+        );
+
+        for entity in [host, item] {
+            app.world_mut().write_message(UiButtonEvent {
+                entity,
+                kind: UiButtonEventKind::Click,
+                button: None,
+            });
+            app.update();
+        }
+        assert_eq!(
+            rejected
+                .read(app.world().resource::<Messages<UiActionRejected>>())
+                .map(|event| event.error.code)
+                .collect::<Vec<_>>(),
+            vec![
+                "UI_ACTION_HOST_BINDING_MISSING",
+                "UI_ACTION_ITEM_BINDING_UNAVAILABLE",
+            ]
+        );
+
+        for value in [0.25, 0.75] {
+            app.world_mut().write_message(UiControlEvent {
+                entity: slider,
+                owner: None,
+                control_id: UiControlId::new("runtime.slider"),
+                control_kind: UiControlKind::Slider,
+                kind: UiControlEventKind::ValueChanged,
+                value: UiControlValue::Number(value),
+                reason: crate::framework::ui::widgets::UiControlEventReason::Keyboard,
+            });
+        }
+        app.update();
+        let dispatches = dispatches
+            .read(app.world().resource::<Messages<UiActionDispatch>>())
+            .collect::<Vec<_>>();
+        assert_eq!(dispatches.len(), 1);
+        assert_eq!(
+            dispatches[0].params.get("value"),
+            Some(&UiActionValue::Number(0.25))
+        );
+    }
+
+    #[test]
+    fn ui_document_runtime_rejects_stale_pending_and_composing_action_events() {
+        use bevy::ecs::message::MessageCursor;
+
+        let mut stale = test_app();
+        register_route_action(&mut stale);
+        stale
+            .world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                13_006,
+                ACTION_DOCUMENT,
+            )));
+        stale.update();
+        let stale_instance = active(&stale);
+        let stale_button = node_entity(&stale, "runtime.button");
+        stale
+            .world_mut()
+            .resource_mut::<UiDocumentRuntime>()
+            .instances
+            .remove(&stale_instance);
+        let mut stale_rejections = MessageCursor::<UiActionRejected>::default();
+        stale.world_mut().write_message(UiButtonEvent {
+            entity: stale_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        stale.update();
+        assert_eq!(
+            stale_rejections
+                .read(stale.world().resource::<Messages<UiActionRejected>>())
+                .map(|event| event.error.code)
+                .collect::<Vec<_>>(),
+            vec!["UI_ACTION_INSTANCE_STALE"]
+        );
+
+        let mut pending = test_app();
+        register_route_action(&mut pending);
+        pending
+            .world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                13_007,
+                ACTION_DOCUMENT,
+            )));
+        pending.update();
+        let pending_button = node_entity(&pending, "runtime.button");
+        pending
+            .world_mut()
+            .resource_mut::<UiDocumentAssetPreflightOverrides>()
+            .set(
+                document_id(),
+                asset_id(),
+                UiDocumentAssetPreflightStatus::Pending,
+            );
+        let mut pending_rejections = MessageCursor::<UiActionRejected>::default();
+        pending
+            .world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                13_008,
+                ASSET_DOCUMENT,
+            )));
+        pending.world_mut().write_message(UiButtonEvent {
+            entity: pending_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        pending.update();
+        assert_eq!(state(&pending, 13_008), UiDocumentBuildState::Preflighting);
+        assert_eq!(
+            pending_rejections
+                .read(pending.world().resource::<Messages<UiActionRejected>>())
+                .map(|event| event.error.code)
+                .collect::<Vec<_>>(),
+            vec!["UI_ACTION_INSTANCE_PENDING"]
+        );
+
+        let mut composing = test_app();
+        register_route_action(&mut composing);
+        composing
+            .world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                13_009,
+                TEXT_SUBMIT_ACTION_DOCUMENT,
+            )));
+        composing.update();
+        let input = node_entity(&composing, "runtime.input");
+        let mut composing_rejections = MessageCursor::<UiActionRejected>::default();
+        composing.world_mut().write_message(UiTextInputSubmitted {
+            entity: input,
+            value: "composing".to_owned(),
+            is_composing: true,
+        });
+        composing.update();
+        assert_eq!(
+            composing_rejections
+                .read(composing.world().resource::<Messages<UiActionRejected>>())
+                .map(|event| event.error.code)
+                .collect::<Vec<_>>(),
+            vec!["UI_ACTION_IME_COMPOSING"]
+        );
     }
 
     #[test]
@@ -6768,6 +7624,123 @@ mod tests {
     }
 
     #[test]
+    fn declarative_controls_dispatch_typed_actions_from_interactions() {
+        use crate::framework::ui::core::UiPanelCommand;
+        use bevy::ecs::message::MessageCursor;
+
+        let mut app = styled_test_app(&[]);
+        app.init_resource::<UiCurrentOwner>()
+            .add_message::<UiPanelCommand>()
+            .add_systems(
+                Update,
+                (
+                    update_selection_control_interactions,
+                    update_stepper_interactions,
+                    update_component_control_interactions,
+                )
+                    .before(UiDocumentRuntimeSystems::Reconcile),
+            );
+        register_route_action(&mut app);
+        let control_image = test_image_handle(&mut app, 1, 1);
+        app.world_mut()
+            .resource_mut::<UiDocumentAssetPreflightOverrides>()
+            .set(
+                document_id(),
+                UiAssetId::from_str("control_image").unwrap(),
+                UiDocumentAssetPreflightStatus::Ready {
+                    asset: UiDocumentResolvedAsset::Image(control_image),
+                },
+            );
+        app.world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(request(
+                41_001,
+                FULL_CONTROL_DOCUMENT,
+            )));
+        app.update();
+
+        let button = node_entity(&app, "controls.button");
+        let image_button = node_entity(&app, "controls.image_button");
+        let checkbox = node_entity(&app, "controls.checkbox");
+        let toggle = node_entity(&app, "controls.toggle");
+        let segmented = node_entity(&app, "controls.segmented");
+        let segment = find_descendants_with::<UiSegmentOption>(app.world(), segmented)
+            .into_iter()
+            .find(|entity| app.world().get::<UiSegmentOption>(*entity).unwrap().value == "two")
+            .unwrap();
+        let stepper = node_entity(&app, "controls.stepper");
+        let increment =
+            find_descendant_with::<UiStepperIncrementButton>(app.world(), stepper).unwrap();
+        let tab = node_entity(&app, "controls.tab");
+        let input = node_entity(&app, "controls.text_input");
+        let slider = node_entity(&app, "controls.slider");
+        let select = node_entity(&app, "controls.select");
+        let mut cursor = MessageCursor::<UiActionDispatch>::default();
+
+        for entity in [
+            button,
+            image_button,
+            checkbox,
+            toggle,
+            segment,
+            increment,
+            tab,
+        ] {
+            app.world_mut().write_message(UiButtonEvent {
+                entity,
+                kind: UiButtonEventKind::Click,
+                button: None,
+            });
+        }
+        app.world_mut().write_message(UiTextInputSubmitted {
+            entity: input,
+            value: "Committed".to_owned(),
+            is_composing: false,
+        });
+        for (entity, value, kind) in [
+            (slider, UiControlValue::Number(0.75), UiControlKind::Slider),
+            (
+                select,
+                UiControlValue::Text("b".to_owned()),
+                UiControlKind::Dropdown,
+            ),
+        ] {
+            app.world_mut().write_message(UiControlEvent {
+                entity,
+                owner: None,
+                control_id: UiControlId::new("test.action"),
+                control_kind: kind,
+                kind: UiControlEventKind::ValueChanged,
+                value,
+                reason: crate::framework::ui::widgets::UiControlEventReason::Keyboard,
+            });
+        }
+        app.update();
+
+        let sources = cursor
+            .read(app.world().resource::<Messages<UiActionDispatch>>())
+            .map(|dispatch| dispatch.source_node.as_str().to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            sources,
+            [
+                "controls.button",
+                "controls.image_button",
+                "controls.text_input",
+                "controls.checkbox",
+                "controls.toggle",
+                "controls.segmented",
+                "controls.slider",
+                "controls.stepper",
+                "controls.tab",
+                "controls.select",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        );
+    }
+
+    #[test]
     fn ui_document_runtime_control_labels_refresh_typed_sources_and_resolved_style() {
         let mut app = styled_test_app(&[
             ("runtime.dynamic_button", "Button one"),
@@ -6914,6 +7887,7 @@ mod tests {
                         value_param: "value".to_owned(),
                     },
                 )
+                .with_source(UiNodeId::from_str("local.button").unwrap())
                 .with_param(
                     "value",
                     UiActionParamSchema::required(UiActionParamType::Binding(
@@ -6960,7 +7934,10 @@ mod tests {
 
     #[test]
     fn ui_document_runtime_two_way_input_deduplicates_host_and_ui_revisions() {
+        use bevy::ecs::message::MessageCursor;
+
         let mut app = styled_test_app(&[]);
+        register_route_action(&mut app);
         app.world_mut()
             .write_message(UiDocumentRuntimeCommand::Open(request(
                 46_001,
@@ -6982,11 +7959,17 @@ mod tests {
             "Host value"
         );
 
+        let mut dispatches = MessageCursor::<UiActionDispatch>::default();
         app.world_mut()
             .get_mut::<UiTextInputValue>(input)
             .unwrap()
             .0 = "Edited".to_owned();
         app.update();
+        let dispatches = dispatches
+            .read(app.world().resource::<Messages<UiActionDispatch>>())
+            .collect::<Vec<_>>();
+        assert_eq!(dispatches.len(), 1);
+        assert_eq!(dispatches[0].source_node.as_str(), "binding.input");
 
         let path = UiBindingPath::from_str("state.input").unwrap();
         let declaration = UiDocument::parse_and_validate_json(TWO_WAY_TEXT_INPUT_DOCUMENT)
@@ -7083,6 +8066,7 @@ mod tests {
                         value_param: "value".to_owned(),
                     },
                 )
+                .with_source(UiNodeId::from_str("local.button").unwrap())
                 .with_param(
                     "value",
                     UiActionParamSchema::required(UiActionParamType::Binding(

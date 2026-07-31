@@ -123,7 +123,8 @@ pub enum UiNode {
         component: UiComponentSpec,
         #[serde(default)]
         label: Option<UiTextContent>,
-        on_click: UiActionInvocation,
+        #[serde(default)]
+        on_click: Option<UiActionInvocation>,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
@@ -140,6 +141,10 @@ pub enum UiNode {
         #[serde(default)]
         readonly: bool,
         #[serde(default)]
+        on_submit: Option<UiActionInvocation>,
+        #[serde(default)]
+        on_change: Option<UiActionInvocation>,
+        #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
         style: UiStyle,
@@ -151,6 +156,8 @@ pub enum UiNode {
         #[serde(default)]
         checked: bool,
         #[serde(default)]
+        on_change: Option<UiActionInvocation>,
+        #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
         style: UiStyle,
@@ -161,6 +168,8 @@ pub enum UiNode {
         component: UiComponentSpec,
         #[serde(default)]
         on: bool,
+        #[serde(default)]
+        on_change: Option<UiActionInvocation>,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
@@ -174,6 +183,8 @@ pub enum UiNode {
         options: Vec<UiControlOption>,
         #[serde(default)]
         selected: Option<String>,
+        #[serde(default)]
+        on_change: Option<UiActionInvocation>,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
@@ -189,6 +200,8 @@ pub enum UiNode {
         min: f32,
         #[serde(default = "default_slider_max")]
         max: f32,
+        #[serde(default)]
+        on_change: Option<UiActionInvocation>,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
@@ -206,6 +219,8 @@ pub enum UiNode {
         max: i32,
         #[serde(default = "default_stepper_step")]
         step: i32,
+        #[serde(default)]
+        on_change: Option<UiActionInvocation>,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
@@ -247,6 +262,8 @@ pub enum UiNode {
         #[serde(default = "default_image_tint")]
         tint: UiColor,
         #[serde(default)]
+        on_click: Option<UiActionInvocation>,
+        #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
         style: UiStyle,
@@ -278,6 +295,8 @@ pub enum UiNode {
         #[serde(default)]
         value: String,
         #[serde(default)]
+        on_change: Option<UiActionInvocation>,
+        #[serde(default)]
         layout: UiLayout,
         #[serde(default)]
         style: UiStyle,
@@ -301,6 +320,8 @@ pub enum UiNode {
         options: Vec<UiControlOption>,
         #[serde(default)]
         selected: Option<String>,
+        #[serde(default)]
+        on_change: Option<UiActionInvocation>,
         #[serde(default)]
         layout: UiLayout,
         #[serde(default)]

@@ -178,6 +178,7 @@ pub(crate) struct UiControlOwner(pub UiOwnerId);
 pub(crate) enum UiControlValue {
     None,
     Bool(bool),
+    Number(f64),
     Text(String),
 }
 

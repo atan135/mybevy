@@ -136,6 +136,9 @@ pub(crate) struct UiTextInputNativeState {
 pub(crate) struct UiTextInputSubmitted {
     pub entity: Entity,
     pub value: String,
+    /// Native IME bridges must keep composition commits separate from explicit
+    /// submit. Dispatchers ignore a submission while composition is active.
+    pub is_composing: bool,
 }
 pub(crate) fn text_input(
     theme: &UiTheme,
@@ -622,6 +625,7 @@ pub(crate) fn handle_text_input_keyboard(
                 submissions.write(UiTextInputSubmitted {
                     entity: focused_entity,
                     value: value.0.clone(),
+                    is_composing: false,
                 });
             }
             UiTextInputEditEvent::Copy => {

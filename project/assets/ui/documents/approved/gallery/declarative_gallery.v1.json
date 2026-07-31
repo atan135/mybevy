@@ -20,6 +20,12 @@
       "value_type": { "kind": "string" },
       "default": { "kind": "string", "value": "Ready for review" },
       "missing": "use_default"
+    },
+    "gallery.input_value": {
+      "scope": "local",
+      "value_type": { "kind": "string" },
+      "default": { "kind": "string", "value": "Editable state survives reload" },
+      "missing": "use_default"
     }
   },
   "root": {
@@ -105,7 +111,10 @@
           "id": "gallery.input",
           "value": "Editable state survives reload",
           "max_chars": 64,
+          "on_submit": { "action": "gallery.control_changed" },
+          "on_change": { "action": "gallery.control_changed" },
           "component": {
+            "bindings": { "value": { "binding_path": "gallery.input_value", "direction": "two_way" } },
             "slots": {
               "label": { "kind": "text", "content": { "literal": "Preview note" } },
               "placeholder": { "kind": "text", "content": { "literal": "Enter a note" } },
@@ -126,6 +135,7 @@
               "type": "checkbox",
               "id": "gallery.checkbox",
               "checked": true,
+              "on_change": { "action": "gallery.control_changed" },
               "component": {
                 "states": ["selected"],
                 "slots": {
@@ -137,6 +147,7 @@
               "type": "toggle",
               "id": "gallery.toggle",
               "on": true,
+              "on_change": { "action": "gallery.control_changed" },
               "component": {
                 "states": ["selected"],
                 "slots": {
@@ -150,6 +161,7 @@
           "type": "segmented",
           "id": "gallery.segmented",
           "selected": "design",
+          "on_change": { "action": "gallery.control_changed" },
           "options": [
             { "value": "design", "label": { "literal": "Design" } },
             { "value": "runtime", "label": { "literal": "Runtime" } },
@@ -167,6 +179,7 @@
           "value": 0.68,
           "min": 0,
           "max": 1,
+          "on_change": { "action": "gallery.control_changed" },
           "component": {
             "slots": {
               "label": { "kind": "text", "content": { "literal": "Preview scale" } }
@@ -180,6 +193,7 @@
           "min": 1,
           "max": 8,
           "step": 1,
+          "on_change": { "action": "gallery.control_changed" },
           "component": {
             "slots": {
               "label": { "kind": "text", "content": { "literal": "Variants" } }
@@ -209,6 +223,7 @@
               "type": "tab",
               "id": "gallery.tab_overview",
               "value": "overview",
+              "on_change": { "action": "gallery.control_changed" },
               "component": {
                 "states": ["selected"],
                 "slots": {
@@ -220,6 +235,7 @@
               "type": "tab",
               "id": "gallery.tab_details",
               "value": "details",
+              "on_change": { "action": "gallery.control_changed" },
               "component": {
                 "slots": {
                   "label": { "kind": "text", "content": { "literal": "Details" } }
@@ -232,6 +248,7 @@
           "type": "select",
           "id": "gallery.select",
           "selected": "phone",
+          "on_change": { "action": "gallery.control_changed" },
           "options": [
             { "value": "phone", "label": { "literal": "Phone" } },
             { "value": "tablet", "label": { "literal": "Tablet" } }

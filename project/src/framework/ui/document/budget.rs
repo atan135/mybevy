@@ -1,7 +1,7 @@
 use super::{
-    UiBackgroundStyle, UiDocument, UiLayout, UiLayoutPatch, UiLayoutPosition, UiLength, UiNode,
-    UiNodeId, UiResolvedBackground, UiResolvedStyleProperties, UiStyle, UiStylePatch,
-    UiStyleProperties, UiValidationPhase,
+    UiBackgroundStyle, UiDocument, UiLayout, UiLayoutPatch, UiLayoutPosition, UiLength, UiNodeId,
+    UiResolvedBackground, UiResolvedStyleProperties, UiStyle, UiStylePatch, UiStyleProperties,
+    UiValidationPhase,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -259,17 +259,23 @@ fn analyze_nodes(document: &UiDocument, analysis: &mut UiBudgetAnalysis) {
         analysis.usage.nodes = analysis.usage.nodes.saturating_add(1);
         analysis.usage.max_tree_depth = analysis.usage.max_tree_depth.max(depth);
         analysis.usage.max_children = analysis.usage.max_children.max(node.children().len());
-        if let UiNode::Button { on_click, .. } = node {
+        for (trigger, field) in [
+            (super::UiActionTrigger::Click, "on_click"),
+            (super::UiActionTrigger::Change, "on_change"),
+            (super::UiActionTrigger::Submit, "on_submit"),
+        ] {
+            let Some(action) = super::node_action(node, trigger) else {
+                continue;
+            };
             analysis.usage.action_references = analysis.usage.action_references.saturating_add(1);
-            let bytes =
-                serde_json::to_vec(&on_click.params).map_or(usize::MAX, |value| value.len());
+            let bytes = serde_json::to_vec(&action.params).map_or(usize::MAX, |value| value.len());
             analysis.usage.max_action_param_bytes =
                 analysis.usage.max_action_param_bytes.max(bytes);
             if bytes > UI_DOCUMENT_MAX_ACTION_PARAM_BYTES {
                 push(
                     analysis,
                     "UI_DOCUMENT_ACTION_PARAM_BUDGET_EXCEEDED",
-                    &format!("{path}.on_click.params"),
+                    &format!("{path}.{field}.params"),
                     Some(node.id().clone()),
                 );
             }

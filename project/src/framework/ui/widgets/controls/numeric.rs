@@ -518,6 +518,8 @@ pub(crate) fn update_slider_interactions(
         With<UiSliderTrack>,
     >,
     parents: Query<&ChildOf>,
+    metas: Query<&UiControlMeta>,
+    mut control_events: Option<ResMut<Messages<UiControlEvent>>>,
 ) {
     for (
         slider_entity,
@@ -566,6 +568,19 @@ pub(crate) fn update_slider_interactions(
         let next_value = slider_value_from_normalized_x(normalized_track_x, slider.min, slider.max);
         if slider.value != next_value {
             slider.value = next_value;
+            if let (Ok(meta), Some(control_events)) =
+                (metas.get(slider_entity), control_events.as_deref_mut())
+            {
+                control_events.write(UiControlEvent {
+                    entity: slider_entity,
+                    owner: None,
+                    control_id: meta.id,
+                    control_kind: meta.kind,
+                    kind: UiControlEventKind::ValueChanged,
+                    value: UiControlValue::Number(f64::from(next_value)),
+                    reason: UiControlEventReason::Pointer,
+                });
+            }
         }
     }
 }
@@ -582,6 +597,8 @@ pub(crate) fn update_stepper_interactions(
         ),
     >,
     mut button_events: MessageReader<UiButtonEvent>,
+    metas: Query<&UiControlMeta>,
+    mut control_events: Option<ResMut<Messages<UiControlEvent>>>,
 ) {
     for event in button_events.read() {
         if event.kind != UiButtonEventKind::Click {
@@ -613,6 +630,19 @@ pub(crate) fn update_stepper_interactions(
         };
         if stepper.value != next_value {
             stepper.value = next_value;
+            if let (Ok(meta), Some(control_events)) =
+                (metas.get(stepper_entity), control_events.as_deref_mut())
+            {
+                control_events.write(UiControlEvent {
+                    entity: stepper_entity,
+                    owner: None,
+                    control_id: meta.id,
+                    control_kind: meta.kind,
+                    kind: UiControlEventKind::ValueChanged,
+                    value: UiControlValue::Number(f64::from(next_value)),
+                    reason: control_event_reason(event),
+                });
+            }
         }
     }
 }

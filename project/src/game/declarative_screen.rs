@@ -710,8 +710,14 @@ fn collect_document_actions(
     node: &crate::framework::ui::document::UiNode,
     actions: &mut BTreeSet<UiActionId>,
 ) {
-    if let crate::framework::ui::document::UiNode::Button { on_click, .. } = node {
-        actions.insert(on_click.action.clone());
+    for trigger in [
+        crate::framework::ui::document::UiActionTrigger::Click,
+        crate::framework::ui::document::UiActionTrigger::Change,
+        crate::framework::ui::document::UiActionTrigger::Submit,
+    ] {
+        if let Some(action) = crate::framework::ui::document::node_action(node, trigger) {
+            actions.insert(action.action.clone());
+        }
     }
     for child in node.children() {
         collect_document_actions(child, actions);

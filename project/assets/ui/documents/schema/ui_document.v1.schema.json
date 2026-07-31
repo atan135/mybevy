@@ -189,6 +189,56 @@
             "value"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Resolves to the user-visible value produced by the control that emitted\nthe action. It cannot name an ECS entity or another node.",
+          "properties": {
+            "kind": {
+              "const": "current_control_value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Resolves a declared document/owner binding at dispatch time.",
+          "properties": {
+            "kind": {
+              "const": "host_binding",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/UiBindingPath"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Resolves the current repeat item binding. The runtime rejects this until\na repeat instance supplies a stable item key.",
+          "properties": {
+            "kind": {
+              "const": "item_binding",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/UiBindingPath"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3235,7 +3285,15 @@
               }
             },
             "on_click": {
-              "$ref": "#/$defs/UiActionInvocation"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "style": {
               "$ref": "#/$defs/UiStyle",
@@ -3272,8 +3330,7 @@
           },
           "required": [
             "type",
-            "id",
-            "on_click"
+            "id"
           ],
           "type": "object"
         },
@@ -3380,6 +3437,28 @@
                 "integer",
                 "null"
               ]
+            },
+            "on_change": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "on_submit": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "readonly": {
               "default": false,
@@ -3516,6 +3595,17 @@
                 "z_index": 0
               }
             },
+            "on_change": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
@@ -3643,6 +3733,17 @@
               "default": false,
               "type": "boolean"
             },
+            "on_change": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
@@ -3765,6 +3866,17 @@
                 "wrap": "no_wrap",
                 "z_index": 0
               }
+            },
+            "on_change": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "options": {
               "default": [],
@@ -3913,6 +4025,17 @@
               "format": "float",
               "type": "number"
             },
+            "on_change": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
@@ -4050,6 +4173,17 @@
               "default": 0,
               "format": "int32",
               "type": "integer"
+            },
+            "on_change": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "step": {
               "default": 1,
@@ -4454,6 +4588,17 @@
                 "z_index": 0
               }
             },
+            "on_click": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "presentation": {
               "$ref": "#/$defs/UiImagePresentation",
               "default": {
@@ -4844,6 +4989,17 @@
                 "z_index": 0
               }
             },
+            "on_change": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
@@ -5097,6 +5253,17 @@
                 "wrap": "no_wrap",
                 "z_index": 0
               }
+            },
+            "on_change": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiActionInvocation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "options": {
               "default": [],

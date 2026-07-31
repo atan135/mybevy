@@ -158,6 +158,65 @@ pub enum UiActionValue {
     Enum(String),
     Node(UiNodeId),
     Binding(UiBindingValue),
+    /// Resolves to the user-visible value produced by the control that emitted
+    /// the action. It cannot name an ECS entity or another node.
+    CurrentControlValue,
+    /// Resolves a declared document/owner binding at dispatch time.
+    HostBinding(UiBindingPath),
+    /// Resolves the current repeat item binding. The runtime rejects this until
+    /// a repeat instance supplies a stable item key.
+    ItemBinding(UiBindingPath),
+}
+
+/// The closed interaction that can invoke a declaration. The document model
+/// never maps an action directly to a system, message type, or callback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UiActionTrigger {
+    Click,
+    Change,
+    Submit,
+}
+
+pub(crate) fn node_action(node: &UiNode, trigger: UiActionTrigger) -> Option<&UiActionInvocation> {
+    match (node, trigger) {
+        (
+            UiNode::Button { on_click, .. } | UiNode::ImageButton { on_click, .. },
+            UiActionTrigger::Click,
+        ) => on_click.as_ref(),
+        (UiNode::TextInput { on_change, .. }, UiActionTrigger::Change)
+        | (UiNode::Checkbox { on_change, .. }, UiActionTrigger::Change)
+        | (UiNode::Toggle { on_change, .. }, UiActionTrigger::Change)
+        | (UiNode::Segmented { on_change, .. }, UiActionTrigger::Change)
+        | (UiNode::Slider { on_change, .. }, UiActionTrigger::Change)
+        | (UiNode::Stepper { on_change, .. }, UiActionTrigger::Change)
+        | (UiNode::Tab { on_change, .. }, UiActionTrigger::Change)
+        | (UiNode::Select { on_change, .. }, UiActionTrigger::Change) => on_change.as_ref(),
+        (UiNode::TextInput { on_submit, .. }, UiActionTrigger::Submit) => on_submit.as_ref(),
+        _ => None,
+    }
+}
+
+pub(crate) fn document_node_action<'a>(
+    root: &'a UiNode,
+    id: &UiNodeId,
+    trigger: UiActionTrigger,
+) -> Option<&'a UiActionInvocation> {
+    find_node(root, id).and_then(|node| node_action(node, trigger))
+}
+
+fn visit_node_actions(
+    node: &UiNode,
+    mut visitor: impl FnMut(UiActionTrigger, &UiActionInvocation, &str),
+) {
+    for (trigger, field_path) in [
+        (UiActionTrigger::Click, "on_click"),
+        (UiActionTrigger::Change, "on_change"),
+        (UiActionTrigger::Submit, "on_submit"),
+    ] {
+        if let Some(invocation) = node_action(node, trigger) {
+            visitor(trigger, invocation, field_path);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -217,6 +276,8 @@ pub struct UiActionDescriptor {
     pub id: UiActionId,
     pub document_id: UiDocumentId,
     pub owner: String,
+    /// Closed allowlist of document nodes that may invoke this action.
+    pub sources: BTreeSet<UiNodeId>,
     pub kind: UiRegisteredActionKind,
     pub params: BTreeMap<String, UiActionParamSchema>,
 }
@@ -232,6 +293,7 @@ impl UiActionDescriptor {
             id,
             document_id,
             owner: owner.into(),
+            sources: BTreeSet::new(),
             kind,
             params: BTreeMap::new(),
         }
@@ -239,6 +301,16 @@ impl UiActionDescriptor {
 
     pub fn with_param(mut self, name: impl Into<String>, schema: UiActionParamSchema) -> Self {
         self.params.insert(name.into(), schema);
+        self
+    }
+
+    pub fn with_source(mut self, node_id: UiNodeId) -> Self {
+        self.sources.insert(node_id);
+        self
+    }
+
+    pub fn with_sources(mut self, node_ids: impl IntoIterator<Item = UiNodeId>) -> Self {
+        self.sources.extend(node_ids);
         self
     }
 }
@@ -302,13 +374,30 @@ impl UiActionRegistry {
                     Some(context.source_node.clone()),
                 )
             })?;
+        self.dispatch_invocation(document, invocation, context, "$.runtime.action")
+    }
+
+    pub(crate) fn dispatch_invocation(
+        &self,
+        document: &ValidatedUiDocument,
+        invocation: &UiActionInvocation,
+        context: &UiActionDispatchContext,
+        path: &str,
+    ) -> Result<UiActionDispatch, UiBindingActionError> {
+        if !context.owner_alive {
+            return Err(UiBindingActionError::new(
+                "UI_ACTION_OWNER_DESTROYED",
+                "$.runtime.owner",
+                Some(context.source_node.clone()),
+            ));
+        }
         validate_invocation(
             document,
             invocation,
             context.source_node.clone(),
             &context.owner,
             self,
-            "$.runtime.action",
+            path,
         )
     }
 }
@@ -317,6 +406,7 @@ impl UiActionRegistry {
 pub enum UiActionRegistryError {
     DuplicateAction(UiActionId),
     InvalidOwner,
+    MissingSources,
     InvalidTarget,
     InvalidParameterName,
     InvalidParameterSchema,
@@ -355,7 +445,11 @@ pub struct UiBindingActionError {
 }
 
 impl UiBindingActionError {
-    fn new(code: &'static str, path: impl Into<String>, node_id: Option<UiNodeId>) -> Self {
+    pub(crate) fn new(
+        code: &'static str,
+        path: impl Into<String>,
+        node_id: Option<UiNodeId>,
+    ) -> Self {
         Self {
             code,
             path: path.into(),
@@ -473,8 +567,27 @@ fn validate_static_node(
             errors,
         )
     });
-    if let UiNode::Button { on_click, .. } = node {
-        validate_action_values(on_click, node.id(), &format!("{path}.on_click"), errors);
+    visit_node_actions(node, |_, invocation, field| {
+        validate_action_values(
+            document,
+            node,
+            invocation,
+            &format!("{path}.{field}"),
+            errors,
+        );
+    });
+    if matches!(node, UiNode::TextInput { .. })
+        && node_action(node, UiActionTrigger::Change).is_some()
+        && node
+            .component()
+            .and_then(|component| component.bindings.value.as_ref())
+            .is_none_or(|binding| binding.direction != UiBindingDirection::TwoWay)
+    {
+        errors.push(UiBindingActionError::new(
+            "UI_ACTION_TEXT_INPUT_CHANGE_UNCONTROLLED",
+            format!("{path}.on_change"),
+            Some(node.id().clone()),
+        ));
     }
     for (index, child) in node.children().iter().enumerate() {
         validate_static_node(document, child, &node.child_path(path, index), errors);
@@ -541,8 +654,9 @@ fn visit_node_text_content(node: &UiNode, mut visitor: impl FnMut(&UiTextContent
 }
 
 fn validate_action_values(
+    document: &UiDocument,
+    node: &UiNode,
     invocation: &UiActionInvocation,
-    node_id: &UiNodeId,
     path: &str,
     errors: &mut Vec<UiBindingActionError>,
 ) {
@@ -551,15 +665,53 @@ fn validate_action_values(
             errors.push(UiBindingActionError::new(
                 "UI_ACTION_PARAM_NAME_INVALID",
                 format!("{path}.params.{name}"),
-                Some(node_id.clone()),
+                Some(node.id().clone()),
             ));
         }
         if !action_value_is_intrinsically_safe(value) {
             errors.push(UiBindingActionError::new(
                 "UI_ACTION_PARAM_FORBIDDEN",
                 format!("{path}.params.{name}"),
-                Some(node_id.clone()),
+                Some(node.id().clone()),
             ));
+        }
+        match value {
+            UiActionValue::HostBinding(binding) => {
+                let valid = document.bindings.get(binding).is_some_and(|declaration| {
+                    matches!(
+                        declaration.scope,
+                        UiBindingScope::Document | UiBindingScope::Owner
+                    )
+                });
+                if !valid {
+                    errors.push(UiBindingActionError::new(
+                        "UI_ACTION_HOST_BINDING_FORBIDDEN",
+                        format!("{path}.params.{name}"),
+                        Some(node.id().clone()),
+                    ));
+                }
+            }
+            UiActionValue::ItemBinding(binding) => {
+                let valid = document
+                    .bindings
+                    .get(binding)
+                    .is_some_and(|declaration| declaration.scope == UiBindingScope::Item);
+                if !valid {
+                    errors.push(UiBindingActionError::new(
+                        "UI_ACTION_ITEM_BINDING_FORBIDDEN",
+                        format!("{path}.params.{name}"),
+                        Some(node.id().clone()),
+                    ));
+                }
+            }
+            UiActionValue::CurrentControlValue if control_action_value_type(node).is_none() => {
+                errors.push(UiBindingActionError::new(
+                    "UI_ACTION_CONTROL_VALUE_FORBIDDEN",
+                    format!("{path}.params.{name}"),
+                    Some(node.id().clone()),
+                ));
+            }
+            _ => {}
         }
     }
 }
@@ -571,18 +723,18 @@ fn validate_host_node(
     context: &UiDocumentHostValidationContext<'_>,
     errors: &mut Vec<UiBindingActionError>,
 ) {
-    if let UiNode::Button { on_click, .. } = node
-        && let Err(error) = validate_invocation(
+    visit_node_actions(node, |_, invocation, field| {
+        if let Err(error) = validate_invocation(
             document,
-            on_click,
+            invocation,
             node.id().clone(),
             context.owner,
             context.action_registry,
-            &format!("{path}.on_click"),
-        )
-    {
-        errors.push(error);
-    }
+            &format!("{path}.{field}"),
+        ) {
+            errors.push(error);
+        }
+    });
     for (index, child) in node.children().iter().enumerate() {
         validate_host_node(
             document,
@@ -596,10 +748,9 @@ fn validate_host_node(
 
 fn find_node_action<'a>(node: &'a UiNode, id: &UiNodeId) -> Option<&'a UiActionInvocation> {
     if node.id() == id {
-        return match node {
-            UiNode::Button { on_click, .. } => Some(on_click),
-            _ => None,
-        };
+        return node_action(node, UiActionTrigger::Click)
+            .or_else(|| node_action(node, UiActionTrigger::Change))
+            .or_else(|| node_action(node, UiActionTrigger::Submit));
     }
     node.children()
         .iter()
@@ -642,6 +793,13 @@ fn validate_invocation(
             Some(source_node),
         ));
     }
+    if !descriptor.sources.contains(&source_node) {
+        return Err(UiBindingActionError::new(
+            "UI_ACTION_SOURCE_FORBIDDEN",
+            format!("{path}.action"),
+            Some(source_node),
+        ));
+    }
     let mut params = BTreeMap::new();
     for name in invocation.params.keys() {
         if !descriptor.params.contains_key(name) {
@@ -664,7 +822,9 @@ fn validate_invocation(
             }
             continue;
         };
-        if !action_value_matches(document, &schema.value_type, value) {
+        if !action_value_matches(document, &schema.value_type, value)
+            && !action_reference_matches(document, &source_node, &schema.value_type, value)
+        {
             return Err(UiBindingActionError::new(
                 "UI_ACTION_PARAM_TYPE_MISMATCH",
                 format!("{path}.params.{name}"),
@@ -713,7 +873,7 @@ fn validate_invocation(
     })
 }
 
-fn action_value_matches(
+pub(crate) fn action_value_matches(
     document: &ValidatedUiDocument,
     schema: &UiActionParamType,
     value: &UiActionValue,
@@ -739,6 +899,66 @@ fn action_value_matches(
     }
 }
 
+fn action_reference_matches(
+    document: &ValidatedUiDocument,
+    source_node: &UiNodeId,
+    schema: &UiActionParamType,
+    value: &UiActionValue,
+) -> bool {
+    match value {
+        UiActionValue::HostBinding(path) | UiActionValue::ItemBinding(path) => document
+            .document()
+            .bindings
+            .get(path)
+            .is_some_and(|declaration| {
+                binding_type_matches_action_schema(&declaration.value_type, schema)
+            }),
+        UiActionValue::CurrentControlValue => find_node(&document.document().root, source_node)
+            .and_then(control_action_value_type)
+            .is_some_and(|value_type| binding_type_matches_action_schema(&value_type, schema)),
+        _ => false,
+    }
+}
+
+fn binding_type_matches_action_schema(
+    value_type: &UiBindingType,
+    schema: &UiActionParamType,
+) -> bool {
+    match schema {
+        UiActionParamType::String { .. } => matches!(value_type, UiBindingType::String),
+        UiActionParamType::Bool => matches!(value_type, UiBindingType::Bool),
+        UiActionParamType::Number { .. } => matches!(value_type, UiBindingType::Number),
+        UiActionParamType::Enum { values } => {
+            matches!(value_type, UiBindingType::Enum { values: declared } if declared.iter().all(|value| values.contains(value)))
+        }
+        UiActionParamType::Binding(expected) => value_type == expected,
+        UiActionParamType::Node { .. } => false,
+    }
+}
+
+pub(crate) fn find_node<'a>(node: &'a UiNode, id: &UiNodeId) -> Option<&'a UiNode> {
+    (node.id() == id).then_some(node).or_else(|| {
+        node.children()
+            .iter()
+            .find_map(|child| find_node(child, id))
+    })
+}
+
+fn control_action_value_type(node: &UiNode) -> Option<UiBindingType> {
+    Some(match node {
+        UiNode::TextInput { .. } => UiBindingType::String,
+        UiNode::Checkbox { .. } | UiNode::Toggle { .. } => UiBindingType::Bool,
+        UiNode::Segmented { options, .. } | UiNode::Select { options, .. } => UiBindingType::Enum {
+            values: options.iter().map(|option| option.value.clone()).collect(),
+        },
+        UiNode::Tab { value, .. } => UiBindingType::Enum {
+            values: vec![value.clone()],
+        },
+        UiNode::Slider { .. } | UiNode::Stepper { .. } => UiBindingType::Number,
+        _ => return None,
+    })
+}
+
 fn action_value_is_intrinsically_safe(value: &UiActionValue) -> bool {
     match value {
         UiActionValue::String(value) => {
@@ -746,8 +966,16 @@ fn action_value_is_intrinsically_safe(value: &UiActionValue) -> bool {
         }
         UiActionValue::Number(value) => value.is_finite(),
         UiActionValue::Enum(value) => is_safe_identifier(value),
-        UiActionValue::Binding(value) => binding_value_is_safe(value),
-        UiActionValue::Bool(_) | UiActionValue::Node(_) => true,
+        UiActionValue::Binding(value) => {
+            !matches!(value, UiBindingValue::Record(_) | UiBindingValue::List(_))
+                && binding_value_is_safe(value)
+        }
+        UiActionValue::HostBinding(path) | UiActionValue::ItemBinding(path) => {
+            UiBindingPath::new(path.as_str()).is_ok()
+        }
+        UiActionValue::Bool(_) | UiActionValue::Node(_) | UiActionValue::CurrentControlValue => {
+            true
+        }
     }
 }
 
@@ -983,6 +1211,9 @@ fn validate_descriptor(descriptor: &UiActionDescriptor) -> Result<(), UiActionRe
     if !is_safe_identifier(&descriptor.owner) {
         return Err(UiActionRegistryError::InvalidOwner);
     }
+    if descriptor.sources.is_empty() {
+        return Err(UiActionRegistryError::MissingSources);
+    }
     let target_is_safe = match &descriptor.kind {
         UiRegisteredActionKind::Route { target }
         | UiRegisteredActionKind::ClosePanel { target }
@@ -1159,6 +1390,10 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/assets/ui/documents/fixtures/invalid/binding_control_value_type.v1.json"
     ));
+    const ACTION_CONTROL_DOCUMENT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/ui/documents/fixtures/action_controls.v1.json"
+    ));
 
     #[test]
     fn ui_document_binding_protocol_covers_typed_values_scopes_defaults_and_missing_behavior() {
@@ -1222,6 +1457,37 @@ mod tests {
         let error =
             UiDocument::parse_and_validate_json(INVALID_CONTROL_BINDING_DOCUMENT).unwrap_err();
         assert_binding_error(error, "UI_BINDING_CONTROL_VALUE_TYPE_MISMATCH");
+    }
+
+    #[test]
+    fn action_control_fixture_covers_all_closed_triggers_and_dynamic_sources() {
+        let document = UiDocument::parse_and_validate_json(ACTION_CONTROL_DOCUMENT).unwrap();
+        let root = document.document().root.children();
+        assert_eq!(root.len(), 11);
+        assert!(node_action(&root[0], UiActionTrigger::Click).is_some());
+        assert!(node_action(&root[1], UiActionTrigger::Click).is_some());
+        assert!(node_action(&root[2], UiActionTrigger::Submit).is_some());
+        assert!(node_action(&root[2], UiActionTrigger::Change).is_some());
+        for node in &root[3..10] {
+            assert!(node_action(node, UiActionTrigger::Change).is_some());
+        }
+
+        let mut uncontrolled: Value = serde_json::from_str(ACTION_CONTROL_DOCUMENT).unwrap();
+        uncontrolled["root"]["children"][2]["component"]["bindings"] = json!({});
+        assert_binding_error(
+            UiDocument::parse_and_validate_json(&uncontrolled.to_string()).unwrap_err(),
+            "UI_ACTION_TEXT_INPUT_CHANGE_UNCONTROLLED",
+        );
+
+        let mut opaque_payload: Value = serde_json::from_str(ACTION_CONTROL_DOCUMENT).unwrap();
+        opaque_payload["root"]["children"][2]["on_submit"]["params"]["value"] = json!({
+            "kind": "binding",
+            "value": { "kind": "record", "value": { "unexpected": { "kind": "string", "value": "payload" } } }
+        });
+        assert_binding_error(
+            UiDocument::parse_and_validate_json(&opaque_payload.to_string()).unwrap_err(),
+            "UI_ACTION_PARAM_FORBIDDEN",
+        );
     }
 
     #[test]
@@ -1402,14 +1668,17 @@ mod tests {
 
         let mut cross_document = UiActionRegistry::default();
         cross_document
-            .register(UiActionDescriptor::new(
-                UiActionId::from_str("binding.route").unwrap(),
-                UiDocumentId::from_str("other.document").unwrap(),
-                "binding_owner",
-                UiRegisteredActionKind::Route {
-                    target: "game.route_lobby".to_owned(),
-                },
-            ))
+            .register(
+                UiActionDescriptor::new(
+                    UiActionId::from_str("binding.route").unwrap(),
+                    UiDocumentId::from_str("other.document").unwrap(),
+                    "binding_owner",
+                    UiRegisteredActionKind::Route {
+                        target: "game.route_lobby".to_owned(),
+                    },
+                )
+                .with_source(UiNodeId::from_str("binding.route").unwrap()),
+            )
             .unwrap();
         assert_dispatch_error(
             dispatch(
@@ -1450,6 +1719,7 @@ mod tests {
                         value_param: "value".to_owned(),
                     },
                 )
+                .with_source(UiNodeId::from_str("binding.update").unwrap())
                 .with_param(
                     "value",
                     UiActionParamSchema::required(UiActionParamType::Binding(UiBindingType::Bool)),
@@ -1532,6 +1802,28 @@ mod tests {
 
     #[test]
     fn ui_document_action_registry_rejects_invalid_descriptor_schemas() {
+        assert_registration_error(
+            UiActionDescriptor::new(
+                UiActionId::from_str("registry.missing_sources").unwrap(),
+                UiDocumentId::from_str("binding.actions").unwrap(),
+                "binding_owner",
+                UiRegisteredActionKind::Route {
+                    target: "game.registry_test".to_owned(),
+                },
+            ),
+            UiActionRegistryError::MissingSources,
+        );
+
+        assert_registration_error(
+            descriptor_for_registry_test(
+                "registry.invalid_target",
+                UiRegisteredActionKind::BusinessCommand {
+                    target: "invalid target".to_owned(),
+                },
+            ),
+            UiActionRegistryError::InvalidTarget,
+        );
+
         let update_without_value = descriptor_for_registry_test(
             "registry.update_missing",
             UiRegisteredActionKind::UpdateLocalState {
@@ -1677,7 +1969,8 @@ mod tests {
                 UiRegisteredActionKind::Route {
                     target: "game.route_lobby".to_owned(),
                 },
-            ),
+            )
+            .with_source(UiNodeId::from_str("binding.route").unwrap()),
             UiActionDescriptor::new(
                 UiActionId::from_str("binding.close").unwrap(),
                 document_id.clone(),
@@ -1685,7 +1978,8 @@ mod tests {
                 UiRegisteredActionKind::ClosePanel {
                     target: "ui.panel_dialog".to_owned(),
                 },
-            ),
+            )
+            .with_source(UiNodeId::from_str("binding.close").unwrap()),
             UiActionDescriptor::new(
                 UiActionId::from_str("binding.business").unwrap(),
                 document_id.clone(),
@@ -1694,6 +1988,7 @@ mod tests {
                     target: "game.submit_profile".to_owned(),
                 },
             )
+            .with_source(UiNodeId::from_str("binding.business").unwrap())
             .with_param(
                 "mode",
                 UiActionParamSchema::required(UiActionParamType::Enum {
@@ -1719,6 +2014,7 @@ mod tests {
                     value_param: "value".to_owned(),
                 },
             )
+            .with_source(UiNodeId::from_str("binding.update").unwrap())
             .with_param(
                 "value",
                 UiActionParamSchema::required(UiActionParamType::Binding(UiBindingType::Enum {
@@ -1757,6 +2053,7 @@ mod tests {
             "binding_owner",
             kind,
         )
+        .with_source(UiNodeId::from_str("binding.route").unwrap())
     }
 
     fn assert_registration_error(descriptor: UiActionDescriptor, expected: UiActionRegistryError) {
