@@ -16,6 +16,7 @@ mod runtime;
 mod standalone_preview;
 mod style;
 pub mod tooling;
+mod update;
 mod validation;
 
 pub use approval::*;
@@ -34,6 +35,7 @@ pub use runtime::*;
 #[cfg(all(not(target_os = "android"), feature = "ui-document-preview-tool"))]
 pub use standalone_preview::*;
 pub use style::*;
+pub use update::*;
 pub use validation::*;
 
 #[cfg(test)]

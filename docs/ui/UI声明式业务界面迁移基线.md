@@ -10,8 +10,8 @@
 | --- | --- | --- | --- |
 | `UiDocument View` | 只描述稳定 node ID、结构、布局、主题/资源引用、响应式变体、允许的表现状态和受限控件声明；所有来源均先经 schema、语义、权限、路径和预算验证。 | `framework/ui` 的公开协议、已注册资源/token、由宿主注入的 typed binding/action ID。 | Rust type/system/message/function、URL、真实文件系统路径、脚本、任意命令、网络访问、路由决策、权限决策和玩法状态机。 |
 | Game Host（后续 `DeclarativeScreenHost` 或等价物） | 游戏层显式注册 document ID、route、owner、panel/layer、生命周期、action allowlist、binding schema、audit profile 与 fallback；把 framework 通用 dispatch 映射为游戏命令。 | `framework/ui/document`、`game/navigation`、业务资源/消息。 | 反射或执行 document 指定的 Rust 名称；自行建立第二套 panel/input/focus 管理；依赖 AI 工具 crate。 |
-| `UiUpdateBundle`（后续生产数据包） | 一个 immutable generation 的 manifest、document、资源引用、版本/兼容信息、hash、签名和预算声明；安装前可完整验证。 | 已批准 document/asset 产物和签名元数据。 | 业务 Rust、可执行代码、未批准 draft、任意 URL/path、权限扩大字段。 |
-| `UiUpdateClient`（后续客户端能力） | 拉取 manifest，下载到临时 generation，校验签名/hash/schema/budget/资源，原子激活，并保留当前 generation 与首包 fallback。 | `UiUpdateBundle`、平台私有缓存、网络框架和 `UiDocumentRuntime` 的受控 reload 入口。 | 绕过 validation/host contract；在主线程阻塞下载；就地覆盖 active generation；让远端包指定宿主或业务动作。 |
+| `UiUpdateBundle`（本地 generation 数据包） | 一个 immutable generation 的 manifest、document、approved registration、资源引用、版本/兼容信息、hash、授权与预算声明；安装前完整验证。签名仍由远端发布阶段补齐。 | 已批准 document/asset 产物和游戏二进制内的 host contract。 | 业务 Rust、可执行代码、未批准 draft、任意 URL/path、权限扩大字段。 |
+| `UiUpdateClient`（后续远端客户端能力） | 后续拉取已签名 manifest 和文件；本阶段已有本地 `UiUpdateCache` 将完整 import 写入 staging、校验并原子激活，保留 current/previous generation。 | `UiUpdateBundle`、平台私有缓存、网络框架和 `UiDocumentRuntime` 的受控 reload 入口。 | 绕过 validation/host contract；在主线程阻塞下载；就地覆盖 active generation；让远端包指定宿主或业务动作。 |
 | AI authoring / promotion | `tools/ui-generation/` 在独立 Cargo 根生成不可信 draft、证据和 promotion plan；人工批准的 `promote` 才能写 approved JSON、授权资源、catalog 与 closed registration。 | `project::framework::ui::document::tooling` 单向 facade、受限仓库资源。 | 进入正式游戏依赖图、生成/改写业务 Rust、自动发布给用户、直接获得 action/binding 权限。 |
 
 目标依赖方向固定如下；箭头表示允许的依赖或数据交付：
@@ -26,7 +26,7 @@ AI authoring/promotion -> approved UiDocument/resources -> UiUpdateBundle -> UiU
                                                   game route / typed commands
 ```
 
-`UiUpdateBundle` 和 `UiUpdateClient` 是本改造的目标术语，当前尚未有对应 Rust module 或 Release/Android production implementation。正式 approved adapter 采用版本化、默认拒绝的 host contract：legacy registration 仍只允许展示字段；v2 只有与游戏层预注册的 document/owner/route、binding schema、action ID/source node、资源清单和 audit profile 精确一致时才可引用既有业务能力，见 `project/src/framework/ui/document/approval.rs`。它不接受 Rust 类型、handler/system/message、URL、真实文件路径或执行字符串。
+`project/src/framework/ui/document/update.rs` 已实现版本化 `UiUpdateBundle` 与 `UiUpdateCache` 的本地事务闭环：调用方只能把完整 import 写入应用私有缓存的 `staging`，通过 manifest/hash/schema/budget、approved registration/host contract、资源 metadata 和授权 metadata 后，immutable generation 才会写入 `active` 提交记录；损坏 active 会回退到上一个有效提交。它拒绝项目目录作为缓存根，且 document 只以 logical asset ID 经 verified `content_cache://<generation>/...` catalog 获取 typed handle。远端 manifest、下载、签名、channel 发布策略和默认应用接线仍未实现。正式 approved adapter 采用版本化、默认拒绝的 host contract：legacy registration 仍只允许展示字段；v2 只有与游戏层预注册的 document/owner/route、binding schema、action ID/source node、资源清单和 audit profile 精确一致时才可引用既有业务能力，见 `project/src/framework/ui/document/approval.rs`。它不接受 Rust 类型、handler/system/message、URL、真实文件路径或执行字符串。
 
 ## 2. 资源改动与 Rust 改动判定
 
@@ -126,15 +126,15 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | --- | --- | --- | --- |
 | 开发期 preview/reload | 已实现：安全 source root、显式 reload、事务 replace、状态迁移报告。 | 桌面 Debug；watch 还需 `MYBEVY_UI_DOCUMENT_WATCH=1`。 | 不是网络分发、签名、缓存 generation 或生产热更新。 |
 | 开发期 file watch | 已实现但默认关闭；Release/Android 强制关闭。 | desktop Debug。 | 不是用户端热更新，也不能通过运行时命令绕过平台门。 |
-| 生产用户端 UI 热更新 | 未实现。目标由 `UiUpdateBundle` + `UiUpdateClient` 定义。 | Release、Android。 | 不能把直接 HTTPS asset loading 或本地文件 watch 称为完成。 |
-| approved 首包 fallback | 已有 approved document 与 closed registration 样例。 | 桌面/Android 包内。 | 目前不等于有远端 manifest、签名、缓存、原子激活或回滚。 |
+| 生产用户端 UI 热更新 | 本地 cache generation 已实现；远端 provider、签名和发布流程未实现。 | 未来 Release、Android。 | 不能把直接 HTTPS asset loading 或本地文件 watch 称为完成。 |
+| approved 首包 fallback | 已有 approved document 与 closed registration 样例；`UiUpdateCache` 无有效 active 时仍应由宿主保留首包。 | 桌面/Android 包内。 | 本阶段没有把缓存自动接入默认路由，也没有远端 manifest 或签名。 |
 
-生产实现前，对于 `UiDocument` 来源，Release/Android 只加载首包 approved 文档；现有 Rust View 仍照常由游戏路由创建。远端不可用、缓存损坏、签名失败或版本不兼容的最终降级契约将在阶段 7-8 实现，且必须回退到首包而非阻断登录/核心玩法。
+当前默认应用尚未创建平台私有 cache root、注册 `content_cache` Bevy asset source 或向游戏 route 安装 active generation，因此 Release/Android 仍只加载首包 approved 文档；现有 Rust View 仍照常由游戏路由创建。`UiUpdateCache` 已覆盖缓存损坏到 previous generation 的本地恢复；远端不可用、签名失败与版本发布策略将在阶段 8 实现，且最终均必须回退到首包而非阻断登录/核心玩法。
 
 ## 9. 阶段 1 审计方法
 
 - 页面和 owner/panel：比对 `project/src/game/navigation/mod.rs` 的 `AppUiMode`、`project/src/game/ui_ids.rs` 和本页 15 行。
 - Rust View/action/binding：检查 `project/src/game/screens/` 相应 setup/handler 与 `UiBindingValues` 使用处。
 - 声明式基线：检查 `project/src/game/screens/dev/ui_document_gallery.rs`、`ui_generated_acceptance.rs`、`project/assets/ui/documents/approved/` 与 `approval.rs` 的 closed-field rejection。
-- 生产更新缺口：检查 `project/src/framework/ui/document/`、`project/src/framework/network/` 和 Android 工程；当前未发现 `UiUpdateBundle`/`UiUpdateClient`、远端 manifest/cache/rollback 实现。
+- 生产更新缺口：检查 `project/src/framework/ui/document/update.rs`、`project/src/framework/network/` 和 Android 工程；本地 cache/rollback 已有，尚无远端 manifest provider、签名、下载、平台默认 cache root 或应用启动接线。
 - 本阶段只允许本文及现有 UI 架构/限制/索引文档变更；提交前由主流程运行 `git diff --check` 并确认没有 Rust、资源、Cargo、Android 或 `summary/` 改动。

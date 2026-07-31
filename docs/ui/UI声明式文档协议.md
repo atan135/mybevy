@@ -171,7 +171,7 @@ draft 不得通过重命名或复制自动升级为 approved。批准步骤至�
 生产 loader 只允许显式 source enum，不接受裸操作系统路径：
 
 - `packaged`: 相对 `project/assets/` 的 `ui/documents/approved/...`。
-- `content_cache`: 已通过内容 manifest、大小和 hash 校验的 `ui/documents/approved/...`；该 source 接入前保持禁用。
+- `content_cache`: `UiUpdateCache` 已验证并激活的 immutable generation 中的 document；source path 只记录 `ui-documents/cache/<generation>/documents/...` logical path。默认应用尚未安装 cache client，因此没有 active generation 时保持不可用。
 - `fixture`: 相对 `project/assets/` 的 `ui/documents/fixtures/...`，只在 dev/test build 启用。
 
 生产构建默认不 watch 本地目录。开发期 watch 也只能 watch 由启动配置选择的 authoring 根，不能由 document 自己指定路径。
@@ -519,7 +519,7 @@ approved promotion registration 也有独立的默认拒绝边界。protocol/tem
 
 构建状态是 closed enum：`queued -> validating -> preflighting -> ready -> committed`。`failed`、`cancelled` 和 `cleaned` 是显式终态或生命周期记录。验证与 preflight 阶段只保存 Rust 构建计划和资源 handle，不创建 ECS 实体；所有必需资源 ready 后，builder 才在独占 World 阶段生成隐藏树，完整成功后切为 visible。commit 内部适配失败会清理该次生成的全部实体，旧 active instance 继续显示。
 
-资源预检只遍历已经静态验证的 asset table。`packaged` source 按 kind 交给 Bevy `AssetServer` 并轮询 typed handle 的 `LoadState`；`built_in_material` 只接受既有 allowlist；`content_cache` 必须由宿主内容系统通过 typed preflight 状态和已解析 handle 接入，document 仍不能提供缓存路径或 URL。测试使用 `UiDocumentAssetPreflightOverrides` 确定性注入 pending、ready 和 stable failure code，不依赖磁盘、GPU 或异步时序；override 返回的 typed image handle 仍必须存在于 `Assets<Image>` 并经过相同 metadata 复核，不能绕过生产检查。
+资源预检只遍历已经静态验证的 asset table。`packaged` source 按 kind 交给 Bevy `AssetServer` 并轮询 typed handle 的 `LoadState`；`built_in_material` 只接受既有 allowlist；`content_cache` 只能由 `UiDocumentContentCacheAssets` 从已验证 active generation 的 logical asset ID 映射为 `content_cache://<generation>/...`，再按 kind 请求 typed image/font handle。未知 logical ID、kind 漂移、缺少 active catalog 或缺少 named asset source 均以稳定 preflight code 拒绝，document 仍不能提供缓存路径或 URL。测试使用 `UiDocumentAssetPreflightOverrides` 确定性注入 pending、ready 和 stable failure code，不依赖磁盘、GPU 或异步时序；override 返回的 typed image handle 仍必须存在于 `Assets<Image>` 并经过相同 metadata 复核，不能绕过生产检查。
 
 字体、icon、atlas、ImageButton、control slot 图像，以及 Image 节点引用的 placeholder/failure asset 都是 commit 必需资源；它们 pending 时 request 保持 preflighting，失败时终止 generation 且不生成实体。只有 Image 节点的主图可由协议自带 presentation 恢复：主图 pending 时，placeholder ready 后使用 placeholder，否则使用确定性 loading 色块并允许事务提交；主图失败时按 `error_color`、`placeholder`、`asset` 或 `hide` 提交 fallback；主图之后 ready 且 metadata 合法时原实体切回主图。fallback asset 自身仍是必需资源，不存在二级静默降级。
 

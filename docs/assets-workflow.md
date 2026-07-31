@@ -313,6 +313,8 @@ Set-Location ..\android
 
 Android 上下载内容放应用私有 `files` 或 `cache` 目录，通常不需要外部存储权限。当前项目已有 `reqwest` 和后台 `tokio` runtime，下载、校验和写文件应在后台任务执行，不要阻塞 Bevy 主线程。
 
+UI 声明式页面的本地 generation cache 位于 `project/src/framework/ui/document/update.rs`。`UiUpdateCache` 只接受完整的内存 import，并在调用方提供的应用私有根下分隔 `staging`、`generations`、`active`、`previous` 和 `quarantine`；它拒绝仓库目录作为缓存根，Android 调用方必须传入应用私有 `files` 或 `cache` 目录，不能把 APK assets 当作可写源。manifest 对 document、approved registration 和资源分别校验 byte length/SHA-256，并复用 `UiDocument`、approved host contract、资源 metadata、授权 metadata 与预算验证；完整通过后才创建 active commit。它尚不负责 HTTP 下载、签名或默认 app 启动接线。
+
 ### 6.3 从缓存加载
 
 Bevy 的默认 Android asset source 读的是 APK assets。要从下载缓存读资源，应注册单独的命名 `AssetSource`，且必须在 `DefaultPlugins` 中的 `AssetPlugin` 完成构建前注册。

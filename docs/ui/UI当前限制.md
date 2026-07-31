@@ -98,7 +98,7 @@
 
 - 声明式 diff 能稳定区分原位字段、子树和整页重建，但当前实际 commit 统一使用隐藏新树 + 原子 replace；尚未开放绕过完整校验的 ECS 局部 patch。
 - 本地 document watch 只在 desktop debug 构建中可显式启用，release/Android 默认且强制关闭；它不是生产内容更新通道。
-- `UiUpdateBundle`、`UiUpdateClient`、远端 manifest、签名验证、版本化缓存、完整下载后的 generation 原子激活和失败回滚当前均未实现。Release/Android 不能将 preview/reload、`content_cache://` 资源约定或 HTTPS 原型加载宣称为用户端 UI 热更新。
+- `UiUpdateBundle` 和 `UiUpdateCache` 已实现本地完整 import 的 manifest/hash/schema/budget/approved host contract/资源授权校验、staging 到 immutable generation 的提交、active/previous 记录、损坏 active 回退、磁盘预算和 leased generation 删除保护。调用方必须提供应用私有缓存根；该模块拒绝仓库目录，且尚未由默认应用创建 root 或注册 asset source。远端 manifest、下载、签名验证、信任根、发布 channel、平台默认 cache root 与启动接线仍未实现。Release/Android 不能将 preview/reload、单独的 `content_cache://` 约定或 HTTPS 原型加载宣称为已完成用户端 UI 热更新。
 - approved adapter 保持默认拒绝：legacy registration 只能加载无 action/binding 的展示页。v2 registration 只有在 action ID、允许 source node、document/owner binding 类型、资源集合、route/owner/profile 与游戏层显式 host contract 全量精确一致时才可引用既有业务能力；它仍拒绝 Rust 类型、handler/system/message、URL、文件路径和执行字符串。`project/assets/ui/documents/host_contracts.v1.json` 仅供 promotion 复验预注册契约，不能替代游戏 Rust 注册或扩大运行时权限。
 - reload 状态迁移覆盖 ID/kind/owner 兼容的 focus、输入值/光标/selection、scroll、数值与选择控件状态；不迁移 IME composition、native keyboard session、动画播放头或任意业务 component，未迁移的已识别状态会写入 decision reason。
 - 自动生成的 document audit recipe 按 `(document_id, owner)` 隔离且只来自 preview registration；直接 Stage 10 `Open` 不生成 recipe，页面能否由审计 runner 进入仍需要游戏层路由注册。

@@ -16,14 +16,14 @@ use super::{
     UiActionValue, UiAssetEntry, UiAssetId, UiAssetKind, UiAssetSource, UiBindingActionError,
     UiBindingDirection, UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue, UiColor,
     UiComponentBindings, UiComponentSize, UiComponentState, UiComponentVariant, UiControlSlot,
-    UiControlSlotContent, UiDocument, UiDocumentHostValidationContext, UiDocumentId,
-    UiDocumentMarker, UiHostBindingKey, UiImageContentState, UiImageFailurePresentation,
-    UiImagePresentation, UiNode, UiNodeBindings, UiNodeId, UiNodeMarker, UiPageState,
-    UiRegisteredActionKind, UiRepeat, UiResolvedBackground, UiResolvedImageFallback,
-    UiResolvedMaterialParameters, UiResolvedStyle, UiTargetProfile, UiTextContent, UiTextFormat,
-    UiTextLineHeight, UiTextOverflow, UiTextTypography, UiTooltipToneSpec, UiWidgetControlAdapter,
-    UiWidgetVariantAdapter, ValidatedUiDocument, document_node_action, node_action,
-    resolve_image_fallback, ui_component_variant,
+    UiControlSlotContent, UiDocument, UiDocumentContentCacheAssets,
+    UiDocumentHostValidationContext, UiDocumentId, UiDocumentMarker, UiHostBindingKey,
+    UiImageContentState, UiImageFailurePresentation, UiImagePresentation, UiNode, UiNodeBindings,
+    UiNodeId, UiNodeMarker, UiPageState, UiRegisteredActionKind, UiRepeat, UiResolvedBackground,
+    UiResolvedImageFallback, UiResolvedMaterialParameters, UiResolvedStyle, UiTargetProfile,
+    UiTextContent, UiTextFormat, UiTextLineHeight, UiTextOverflow, UiTextTypography,
+    UiTooltipToneSpec, UiWidgetControlAdapter, UiWidgetVariantAdapter, ValidatedUiDocument,
+    document_node_action, node_action, resolve_image_fallback, ui_component_variant,
 };
 use crate::framework::ui::{
     core::{
@@ -641,6 +641,7 @@ impl Plugin for UiDocumentRuntimePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiDocumentRuntime>()
             .init_resource::<UiDocumentAssetPreflightOverrides>()
+            .init_resource::<UiDocumentContentCacheAssets>()
             .init_resource::<UiActionRegistry>()
             .init_resource::<UiBindingValues>()
             .add_message::<UiDocumentRuntimeCommand>()
@@ -1181,6 +1182,7 @@ fn poll_runtime_assets(
     asset_server: Option<Res<AssetServer>>,
     images: Option<Res<Assets<Image>>>,
     overrides: Res<UiDocumentAssetPreflightOverrides>,
+    content_cache_assets: Res<UiDocumentContentCacheAssets>,
     mut runtime: ResMut<UiDocumentRuntime>,
     mut events: MessageWriter<UiDocumentRuntimeEvent>,
 ) {
@@ -1246,9 +1248,71 @@ fn poll_runtime_assets(
                         asset.handle = Some(UiDocumentResolvedAsset::BuiltInMaterial);
                         asset.ready = true;
                     }
-                    UiAssetSource::ContentCache { .. } => {
-                        failure = Some("UI_DOCUMENT_CONTENT_CACHE_UNRESOLVED".to_owned());
-                        break;
+                    UiAssetSource::ContentCache { logical_id } => {
+                        let Some(path) =
+                            content_cache_assets.asset_path(logical_id, asset.entry.kind)
+                        else {
+                            failure = Some("UI_DOCUMENT_CONTENT_CACHE_UNRESOLVED".to_owned());
+                            break;
+                        };
+                        let Some(asset_server) = asset_server.as_deref() else {
+                            failure = Some("UI_DOCUMENT_ASSET_SERVER_UNAVAILABLE".to_owned());
+                            break;
+                        };
+                        if asset.handle.is_none() {
+                            asset.handle = Some(match asset.entry.kind {
+                                UiAssetKind::Image | UiAssetKind::Icon | UiAssetKind::Atlas => {
+                                    UiDocumentResolvedAsset::Image(
+                                        asset_server.load(path.to_owned()),
+                                    )
+                                }
+                                UiAssetKind::Font => UiDocumentResolvedAsset::Font(
+                                    asset_server.load(path.to_owned()),
+                                ),
+                                UiAssetKind::Material => UiDocumentResolvedAsset::BuiltInMaterial,
+                            });
+                        }
+                        let state = match asset.handle.as_ref() {
+                            Some(UiDocumentResolvedAsset::Image(handle)) => {
+                                asset_server.get_load_state(handle.id())
+                            }
+                            Some(UiDocumentResolvedAsset::Font(handle)) => {
+                                asset_server.get_load_state(handle.id())
+                            }
+                            Some(UiDocumentResolvedAsset::BuiltInMaterial) => {
+                                Some(LoadState::Loaded)
+                            }
+                            None => None,
+                        };
+                        match state {
+                            Some(LoadState::Loaded) => {
+                                let resolved = asset.handle.as_ref().expect("asset handle exists");
+                                match validate_resolved_asset_metadata(
+                                    &asset.entry,
+                                    resolved,
+                                    images.as_deref(),
+                                ) {
+                                    Ok(actual_bytes) => {
+                                        asset.ready = true;
+                                        asset.failed = false;
+                                        asset.actual_decoded_bytes = actual_bytes;
+                                    }
+                                    Err(_) if !asset.commit_required => asset.failed = true,
+                                    Err(code) => {
+                                        failure = Some(code.to_owned());
+                                        break;
+                                    }
+                                }
+                            }
+                            Some(LoadState::Failed(_)) => {
+                                if asset.commit_required {
+                                    failure = Some("UI_DOCUMENT_ASSET_LOAD_FAILED".to_owned());
+                                    break;
+                                }
+                                asset.failed = true;
+                            }
+                            Some(LoadState::NotLoaded | LoadState::Loading) | None => {}
+                        }
                     }
                     UiAssetSource::Packaged { path } => {
                         let Some(asset_server) = asset_server.as_deref() else {
