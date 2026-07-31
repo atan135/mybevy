@@ -2,7 +2,13 @@ $ErrorActionPreference = "Stop"
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Resolve-Path (Join-Path $scriptRoot "..\project")
-$gameArguments = @($args)
+$defaultGameArguments = @(
+    "--device-scale"
+    "3.25"
+    "--window-scale"
+    "50%"
+)
+$gameArguments = @($defaultGameArguments) + @($args)
 
 Push-Location $projectRoot
 try {
