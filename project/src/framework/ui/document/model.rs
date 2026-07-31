@@ -58,6 +58,29 @@ fn default_budget_profile() -> String {
     "mobile_baseline_v1".to_owned()
 }
 
+/// A closed, data-driven collection declaration. A repeat owns the children of
+/// its container as a row template; the document never supplies executable
+/// expressions or uses an array position as an item identity.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UiRepeat {
+    /// Declared document/owner binding whose value is a bounded list of records.
+    pub source: UiBindingPath,
+    /// Stable string field in each source record.
+    pub key: String,
+    /// Maps declared `item` bindings to fields in each source record.
+    pub item_bindings: BTreeMap<UiBindingPath, String>,
+    /// Declared document/owner enum binding with `loading`, `ready`, or `error`.
+    pub state: UiBindingPath,
+    #[serde(default)]
+    pub loading: Option<UiTextContent>,
+    #[serde(default)]
+    pub empty: Option<UiTextContent>,
+    #[serde(default)]
+    pub error: Option<UiTextContent>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -68,6 +91,8 @@ pub enum UiNode {
         layout: UiLayout,
         #[serde(default)]
         style: UiStyle,
+        #[serde(default)]
+        repeat: Option<UiRepeat>,
         #[serde(default)]
         children: Vec<UiNode>,
     },
@@ -374,6 +399,13 @@ impl UiNode {
             | Self::Tooltip { component, .. }
             | Self::Select { component, .. } => &component.children,
             _ => &[],
+        }
+    }
+
+    pub fn repeat(&self) -> Option<&UiRepeat> {
+        match self {
+            Self::Container { repeat, .. } => repeat.as_ref(),
+            _ => None,
         }
     }
 

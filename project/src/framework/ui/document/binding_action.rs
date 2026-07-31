@@ -1,6 +1,6 @@
 use super::{
     UiActionId, UiActionInvocation, UiBindingPath, UiDocument, UiDocumentId, UiNode, UiNodeId,
-    UiTextContent, UiTextFormat, ValidatedUiDocument,
+    UiRepeat, UiTextContent, UiTextFormat, ValidatedUiDocument,
 };
 use bevy::prelude::{Message, Resource};
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,11 @@ pub const UI_BINDING_ENUM_MAX_VALUES: usize = 64;
 pub const UI_BINDING_RECORD_MAX_FIELDS: usize = 32;
 pub const UI_BINDING_LIST_MAX_ITEMS: usize = 128;
 pub const UI_BINDING_VALUE_MAX_DEPTH: usize = 4;
+pub const UI_REPEAT_MAX_ITEMS: usize = 64;
+pub const UI_REPEAT_MAX_TEMPLATE_DEPTH: usize = 6;
+pub const UI_REPEAT_MAX_EXPANDED_NODES: usize = 512;
+pub const UI_REPEAT_MAX_ITEM_FIELDS: usize = 16;
+pub const UI_REPEAT_MAX_ITEM_STRING_BYTES: usize = 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -511,7 +516,7 @@ pub(crate) fn validate_binding_action_document(document: &UiDocument) -> Vec<UiB
         let field_path = format!("$.bindings.{path}");
         validate_binding_declaration(declaration, &field_path, &mut errors);
     }
-    validate_static_node(document, &document.root, "$.root", &mut errors);
+    validate_static_node(document, &document.root, "$.root", false, &mut errors);
     errors
 }
 
@@ -555,15 +560,17 @@ fn validate_static_node(
     document: &UiDocument,
     node: &UiNode,
     path: &str,
+    in_repeat: bool,
     errors: &mut Vec<UiBindingActionError>,
 ) {
-    validate_node_bindings(document, node, path, errors);
+    validate_node_bindings(document, node, path, in_repeat, errors);
     visit_node_text_content(node, |content, content_path| {
         validate_bound_text(
             document,
             node.id(),
             content,
             &format!("{path}{content_path}"),
+            in_repeat,
             errors,
         )
     });
@@ -573,9 +580,14 @@ fn validate_static_node(
             node,
             invocation,
             &format!("{path}.{field}"),
+            in_repeat,
             errors,
         );
     });
+    let is_repeat = node.repeat().is_some();
+    if let Some(repeat) = node.repeat() {
+        validate_repeat(document, node, repeat, path, in_repeat, errors);
+    }
     if matches!(node, UiNode::TextInput { .. })
         && node_action(node, UiActionTrigger::Change).is_some()
         && node
@@ -590,8 +602,192 @@ fn validate_static_node(
         ));
     }
     for (index, child) in node.children().iter().enumerate() {
-        validate_static_node(document, child, &node.child_path(path, index), errors);
+        validate_static_node(
+            document,
+            child,
+            &node.child_path(path, index),
+            in_repeat || is_repeat,
+            errors,
+        );
     }
+}
+
+fn validate_repeat(
+    document: &UiDocument,
+    node: &UiNode,
+    repeat: &UiRepeat,
+    path: &str,
+    in_repeat: bool,
+    errors: &mut Vec<UiBindingActionError>,
+) {
+    if in_repeat {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_RECURSION_FORBIDDEN",
+            format!("{path}.repeat"),
+            Some(node.id().clone()),
+        ));
+    }
+    if !is_safe_identifier(&repeat.key) {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_KEY_FIELD_INVALID",
+            format!("{path}.repeat.key"),
+            Some(node.id().clone()),
+        ));
+    }
+    let Some(source) = document.bindings.get(&repeat.source) else {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_SOURCE_UNDECLARED",
+            format!("{path}.repeat.source"),
+            Some(node.id().clone()),
+        ));
+        return;
+    };
+    let UiBindingType::List { item, max_items } = &source.value_type else {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_SOURCE_NOT_LIST",
+            format!("{path}.repeat.source"),
+            Some(node.id().clone()),
+        ));
+        return;
+    };
+    if !matches!(
+        source.scope,
+        UiBindingScope::Document | UiBindingScope::Owner
+    ) {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_SOURCE_SCOPE_FORBIDDEN",
+            format!("{path}.repeat.source"),
+            Some(node.id().clone()),
+        ));
+    }
+    if usize::from(*max_items) > UI_REPEAT_MAX_ITEMS {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_ITEM_BUDGET_EXCEEDED",
+            format!("{path}.repeat.source"),
+            Some(node.id().clone()),
+        ));
+    }
+    let UiBindingType::Record { fields } = item.as_ref() else {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_ITEM_NOT_RECORD",
+            format!("{path}.repeat.source"),
+            Some(node.id().clone()),
+        ));
+        return;
+    };
+    if fields.len() > UI_REPEAT_MAX_ITEM_FIELDS {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_FIELD_BUDGET_EXCEEDED",
+            format!("{path}.repeat.source"),
+            Some(node.id().clone()),
+        ));
+    }
+    if !matches!(fields.get(&repeat.key), Some(UiBindingType::String)) {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_KEY_NOT_STABLE_STRING",
+            format!("{path}.repeat.key"),
+            Some(node.id().clone()),
+        ));
+    }
+    if repeat.item_bindings.is_empty() || repeat.item_bindings.len() > UI_REPEAT_MAX_ITEM_FIELDS {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_ITEM_BINDINGS_INVALID",
+            format!("{path}.repeat.item_bindings"),
+            Some(node.id().clone()),
+        ));
+    }
+    if !repeat
+        .item_bindings
+        .values()
+        .any(|field| field == &repeat.key)
+    {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_KEY_NOT_EXPOSED",
+            format!("{path}.repeat.item_bindings"),
+            Some(node.id().clone()),
+        ));
+    }
+    for (binding, field) in &repeat.item_bindings {
+        let Some(declaration) = document.bindings.get(binding) else {
+            errors.push(UiBindingActionError::new(
+                "UI_REPEAT_ITEM_BINDING_UNDECLARED",
+                format!("{path}.repeat.item_bindings.{binding}"),
+                Some(node.id().clone()),
+            ));
+            continue;
+        };
+        if declaration.scope != UiBindingScope::Item {
+            errors.push(UiBindingActionError::new(
+                "UI_REPEAT_ITEM_BINDING_SCOPE_FORBIDDEN",
+                format!("{path}.repeat.item_bindings.{binding}"),
+                Some(node.id().clone()),
+            ));
+        }
+        if !is_safe_identifier(field)
+            || fields
+                .get(field)
+                .is_none_or(|value_type| value_type != &declaration.value_type)
+        {
+            errors.push(UiBindingActionError::new(
+                "UI_REPEAT_ITEM_FIELD_MISMATCH",
+                format!("{path}.repeat.item_bindings.{binding}"),
+                Some(node.id().clone()),
+            ));
+        }
+    }
+    let state_valid = document.bindings.get(&repeat.state).is_some_and(|declaration| {
+        matches!(declaration.scope, UiBindingScope::Document | UiBindingScope::Owner)
+            && matches!(
+                &declaration.value_type,
+                UiBindingType::Enum { values }
+                    if values.iter().all(|value| matches!(value.as_str(), "loading" | "ready" | "error"))
+                        && values.iter().any(|value| value == "loading")
+                        && values.iter().any(|value| value == "ready")
+                        && values.iter().any(|value| value == "error")
+            )
+    });
+    if !state_valid {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_STATE_INVALID",
+            format!("{path}.repeat.state"),
+            Some(node.id().clone()),
+        ));
+    }
+    let (template_nodes, template_depth) = repeat_template_metrics(node);
+    if template_depth > UI_REPEAT_MAX_TEMPLATE_DEPTH {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_TEMPLATE_DEPTH_EXCEEDED",
+            format!("{path}.children"),
+            Some(node.id().clone()),
+        ));
+    }
+    if template_nodes.saturating_mul(usize::from(*max_items)) > UI_REPEAT_MAX_EXPANDED_NODES {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_EXPANDED_NODE_BUDGET_EXCEEDED",
+            format!("{path}.children"),
+            Some(node.id().clone()),
+        ));
+    }
+}
+
+fn repeat_template_metrics(node: &UiNode) -> (usize, usize) {
+    let mut nodes = 0usize;
+    let mut depth = 0usize;
+    let mut pending = node
+        .children()
+        .iter()
+        .map(|child| (child, 1usize))
+        .collect::<Vec<_>>();
+    while let Some((node, current_depth)) = pending.pop() {
+        nodes = nodes.saturating_add(1);
+        depth = depth.max(current_depth);
+        pending.extend(
+            node.children()
+                .iter()
+                .map(|child| (child, current_depth.saturating_add(1))),
+        );
+    }
+    (nodes, depth)
 }
 
 fn validate_bound_text(
@@ -599,6 +795,7 @@ fn validate_bound_text(
     node_id: &UiNodeId,
     content: &UiTextContent,
     path: &str,
+    in_repeat: bool,
     errors: &mut Vec<UiBindingActionError>,
 ) {
     let UiTextContent::Binding(source) = content else {
@@ -631,6 +828,13 @@ fn validate_bound_text(
             Some(node_id.clone()),
         ));
     }
+    if declaration.scope == UiBindingScope::Item && !in_repeat {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_ITEM_BINDING_OUTSIDE_TEMPLATE",
+            format!("{path}.binding_path"),
+            Some(node_id.clone()),
+        ));
+    }
 }
 
 fn visit_node_text_content(node: &UiNode, mut visitor: impl FnMut(&UiTextContent, &str)) {
@@ -658,6 +862,7 @@ fn validate_action_values(
     node: &UiNode,
     invocation: &UiActionInvocation,
     path: &str,
+    in_repeat: bool,
     errors: &mut Vec<UiBindingActionError>,
 ) {
     for (name, value) in &invocation.params {
@@ -699,6 +904,13 @@ fn validate_action_values(
                 if !valid {
                     errors.push(UiBindingActionError::new(
                         "UI_ACTION_ITEM_BINDING_FORBIDDEN",
+                        format!("{path}.params.{name}"),
+                        Some(node.id().clone()),
+                    ));
+                }
+                if !in_repeat {
+                    errors.push(UiBindingActionError::new(
+                        "UI_REPEAT_ITEM_BINDING_OUTSIDE_TEMPLATE",
                         format!("{path}.params.{name}"),
                         Some(node.id().clone()),
                     ));
@@ -1010,6 +1222,7 @@ fn validate_node_bindings(
     document: &UiDocument,
     node: &UiNode,
     path: &str,
+    in_repeat: bool,
     errors: &mut Vec<UiBindingActionError>,
 ) {
     let bindings = &node.style().bindings;
@@ -1028,6 +1241,22 @@ fn validate_node_bindings(
             matches!(value_type, UiBindingType::Enum { values }
                 if values.iter().all(|value| matches!(value.as_str(), "flex" | "grid" | "none")))
         },
+        &format!("{path}.style.bindings.display"),
+        node.id(),
+        errors,
+    );
+    validate_item_binding_context(
+        document,
+        bindings.visibility.as_ref(),
+        in_repeat,
+        &format!("{path}.style.bindings.visibility"),
+        node.id(),
+        errors,
+    );
+    validate_item_binding_context(
+        document,
+        bindings.display.as_ref(),
+        in_repeat,
         &format!("{path}.style.bindings.display"),
         node.id(),
         errors,
@@ -1058,6 +1287,14 @@ fn validate_node_bindings(
             node.id(),
             errors,
         );
+        validate_item_binding_context(
+            document,
+            binding,
+            in_repeat,
+            &format!("{path}.component.bindings.{field}"),
+            node.id(),
+            errors,
+        );
     }
     validate_binding_path_type(
         document,
@@ -1066,6 +1303,14 @@ fn validate_node_bindings(
             matches!(value_type, UiBindingType::Enum { values }
                 if values.iter().all(|value| ui_component_variant(value).is_some()))
         },
+        &format!("{path}.component.bindings.variant"),
+        node.id(),
+        errors,
+    );
+    validate_item_binding_context(
+        document,
+        bindings.variant.as_ref(),
+        in_repeat,
         &format!("{path}.component.bindings.variant"),
         node.id(),
         errors,
@@ -1114,6 +1359,34 @@ fn validate_node_bindings(
             code,
             format!("{path}.component.bindings.value.binding_path"),
             Some(node.id().clone()),
+        ));
+    }
+    validate_item_binding_context(
+        document,
+        Some(&value.binding_path),
+        in_repeat,
+        &format!("{path}.component.bindings.value.binding_path"),
+        node.id(),
+        errors,
+    );
+}
+
+fn validate_item_binding_context(
+    document: &UiDocument,
+    binding: Option<&UiBindingPath>,
+    in_repeat: bool,
+    path: &str,
+    node_id: &UiNodeId,
+    errors: &mut Vec<UiBindingActionError>,
+) {
+    if binding
+        .and_then(|binding| document.bindings.get(binding))
+        .is_some_and(|declaration| declaration.scope == UiBindingScope::Item && !in_repeat)
+    {
+        errors.push(UiBindingActionError::new(
+            "UI_REPEAT_ITEM_BINDING_OUTSIDE_TEMPLATE",
+            path,
+            Some(node_id.clone()),
         ));
     }
 }

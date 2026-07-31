@@ -1,7 +1,8 @@
 use super::{
-    UiBackgroundStyle, UiDocument, UiLayout, UiLayoutPatch, UiLayoutPosition, UiLength, UiNodeId,
-    UiResolvedBackground, UiResolvedStyleProperties, UiStyle, UiStylePatch, UiStyleProperties,
-    UiValidationPhase,
+    UI_REPEAT_MAX_EXPANDED_NODES, UI_REPEAT_MAX_ITEMS, UI_REPEAT_MAX_TEMPLATE_DEPTH,
+    UiBackgroundStyle, UiBindingType, UiDocument, UiLayout, UiLayoutPatch, UiLayoutPosition,
+    UiLength, UiNodeId, UiResolvedBackground, UiResolvedStyleProperties, UiStyle, UiStylePatch,
+    UiStyleProperties, UiValidationPhase,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +45,9 @@ pub struct UiDocumentBudgetUsage {
     pub max_action_param_bytes: usize,
     pub animations: usize,
     pub effect_complexity: usize,
+    pub repeat_collections: usize,
+    pub repeat_expanded_nodes: usize,
+    pub repeat_max_template_depth: usize,
 }
 
 impl UiDocumentBudgetUsage {
@@ -58,6 +62,8 @@ impl UiDocumentBudgetUsage {
             && self.state_responsive_overrides <= UI_DOCUMENT_MAX_OVERRIDES
             && self.animations <= UI_DOCUMENT_MAX_ANIMATIONS
             && self.effect_complexity <= UI_DOCUMENT_MAX_EFFECT_COMPLEXITY
+            && self.repeat_expanded_nodes <= UI_REPEAT_MAX_EXPANDED_NODES
+            && self.repeat_max_template_depth <= UI_REPEAT_MAX_TEMPLATE_DEPTH
     }
 }
 
@@ -286,6 +292,48 @@ fn analyze_nodes(document: &UiDocument, analysis: &mut UiBudgetAnalysis) {
             node.id(),
             analysis,
         );
+        if let Some(repeat) = node.repeat() {
+            analysis.usage.repeat_collections = analysis.usage.repeat_collections.saturating_add(1);
+            let (template_nodes, template_depth) = repeat_template_metrics(node);
+            analysis.usage.repeat_max_template_depth =
+                analysis.usage.repeat_max_template_depth.max(template_depth);
+            let max_items = document
+                .bindings
+                .get(&repeat.source)
+                .and_then(|declaration| match &declaration.value_type {
+                    UiBindingType::List { max_items, .. } => Some(usize::from(*max_items)),
+                    _ => None,
+                })
+                .unwrap_or(usize::MAX);
+            analysis.usage.repeat_expanded_nodes = analysis
+                .usage
+                .repeat_expanded_nodes
+                .saturating_add(template_nodes.saturating_mul(max_items));
+            if max_items > UI_REPEAT_MAX_ITEMS {
+                push(
+                    analysis,
+                    "UI_REPEAT_ITEM_BUDGET_EXCEEDED",
+                    &format!("{path}.repeat.source"),
+                    Some(node.id().clone()),
+                );
+            }
+            if template_depth > UI_REPEAT_MAX_TEMPLATE_DEPTH {
+                push(
+                    analysis,
+                    "UI_REPEAT_TEMPLATE_DEPTH_EXCEEDED",
+                    &format!("{path}.children"),
+                    Some(node.id().clone()),
+                );
+            }
+            if template_nodes.saturating_mul(max_items) > UI_REPEAT_MAX_EXPANDED_NODES {
+                push(
+                    analysis,
+                    "UI_REPEAT_EXPANDED_NODE_BUDGET_EXCEEDED",
+                    &format!("{path}.children"),
+                    Some(node.id().clone()),
+                );
+            }
+        }
         for (index, child) in node.children().iter().enumerate().rev() {
             pending.push((
                 child,
@@ -318,6 +366,26 @@ fn analyze_nodes(document: &UiDocument, analysis: &mut UiBudgetAnalysis) {
             }
         }
     }
+}
+
+fn repeat_template_metrics(node: &super::UiNode) -> (usize, usize) {
+    let mut nodes = 0usize;
+    let mut max_depth = 0usize;
+    let mut pending = node
+        .children()
+        .iter()
+        .map(|child| (child, 1usize))
+        .collect::<Vec<_>>();
+    while let Some((node, depth)) = pending.pop() {
+        nodes = nodes.saturating_add(1);
+        max_depth = max_depth.max(depth);
+        pending.extend(
+            node.children()
+                .iter()
+                .map(|child| (child, depth.saturating_add(1))),
+        );
+    }
+    (nodes, max_depth)
 }
 
 fn analyze_effects(document: &UiDocument, analysis: &mut UiBudgetAnalysis) {

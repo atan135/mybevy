@@ -224,6 +224,10 @@ document 节点不能直接写图片、字体、图标、图集或材质路径�
 | 单个 literal text | 16 KiB UTF-8 |
 | action 参数 canonical JSON | 4 KiB |
 | metadata annotations | 8 KiB canonical JSON |
+| Repeat 列表项 | 64 |
+| Repeat 单项字段 | 16 |
+| Repeat 模板深度 | 6 |
+| 单个 Repeat 展开协议节点 | 512 |
 | 单张图片声明宽或高 | 4096 px |
 | 单张图片声明 decoded bytes | 16 MiB |
 | 全 document 图片声明 decoded bytes | 64 MiB |
@@ -420,6 +424,16 @@ document 的 `UiActionInvocation` 只包含稳定 action ID 和 `params`。参�
 游戏层当前示例在 `NavigationPlugin` 注册 `example.continue`，仅当 dispatch 的 action ID、document ID、owner、source node 和 allowlisted `game.route_lobby` target 全部匹配时，才适配为 `GameRouteCommand::ChangeMode(AppUiMode::Lobby)`。这条转换位于 game 层；新增业务 action 必须以相同方式显式注册和适配。
 
 所有 action object、typed value 和 document object 都启用 unknown-field rejection。action string 额外拒绝 URL、网络 scheme、绝对/父目录路径、反斜杠路径、NUL/换行、shell metacharacter 和命令行；普通 bounded string 是不执行的 opaque 业务数据，因此 `Alice`、`SaveCommand` 等 PascalCase 内容本身合法。文档不能通过 `system`、`function`、`message`、`kind` 或 `target` selector 指定 Rust type、system/function/message 名；这些选择能力只存在于游戏层构造的 closed registry descriptor。
+
+### 16.4 Keyed Repeat collection
+
+`container.repeat` 是唯一的 collection 展开能力。它把该 Container 的 `children` 定义为 item template，并显式声明 `source`、记录内的稳定 `key` 字段、`item_bindings` 字段映射，以及由宿主写入的 `state` binding。source 只能是 `document` 或 `owner` scope 的 `list<record>`；每个 template 字段必须映射到已声明的 `item` scope binding，不能使用数组下标、显示名称、Entity 或任意 JSON path 作为业务身份。key 只能是受限 string，缺失、非法或重复 key 以稳定 `UI_REPEAT_KEY_*` diagnostic 拒绝本次 ready 数据，不做 index fallback。
+
+state 只能由声明为 `loading` / `ready` / `error` 的 closed enum binding 驱动。`ready` 且 source 为空时显示 `empty`；其他状态分别使用 repeat 的 `loading` 或 `error` 文本。文档不包含条件表达式。host 通过同一 typed binding API 明确切换状态和 list snapshot，framework 不读取业务网络、角色、账号或匹配状态。
+
+运行时按 `(document_id, owner, repeat node, stable key)` keyed reconcile：insert 创建 row，字段 update 只更新 item scope binding，move 只调整 sibling order，remove 只销毁对应 row 并清理该 key 的 item scope。未变化 key 的 ECS row、TextInput、焦点、选择和局部控件状态必须保留，承载滚动的祖先不会被重建，因此 scroll offset 保持。若 focused item 被删除，runtime 先清除失效焦点，再由既有 focus repair 选择下一个可聚焦控件；已删除 item 的 selected marker 与 item binding 随 row 一并消失。
+
+v1 Repeat 硬限制为最多 64 项、每项最多 16 个字段、模板深度最多 6、展开最多 512 个协议节点；item 字符串总量也受限。嵌套 Repeat 被拒绝，record/list 仍不得作为 action payload。`project/assets/ui/documents/fixtures/collection_character_list.v1.json` 固定了角色列表形态：业务 action 只接收稳定 `character_id`，而不接收显示名或 ECS Entity。
 
 ## 17. v1 响应式变体与页面状态冻结项
 

@@ -343,6 +343,50 @@ impl UiBindingValues {
             })
     }
 
+    pub(crate) fn scoped_item_value(
+        &self,
+        document_id: &str,
+        owner: &str,
+        item_key: &str,
+        path: &crate::framework::ui::document::UiBindingPath,
+        declaration: &UiBindingDeclaration,
+    ) -> Option<UiBindingValue> {
+        if declaration.scope != UiDocumentBindingScope::Item {
+            return None;
+        }
+        let path = UiBindingPath::new(path.as_str())?;
+        let item_key = item_key.trim();
+        if item_key.is_empty() {
+            return None;
+        }
+        let key = UiScopedBindingKey {
+            document_id: document_id.to_owned(),
+            owner: owner.to_owned(),
+            scope: UiDocumentBindingScope::Item,
+            item_key: Some(item_key.to_owned()),
+            path,
+        };
+        self.scoped_values
+            .get(&key)
+            .map(|stored| stored.value.clone())
+            .or_else(|| {
+                (declaration.missing == UiBindingMissingBehavior::UseDefault)
+                    .then_some(declaration.default.clone())
+                    .flatten()
+            })
+    }
+
+    pub(crate) fn clear_item(&mut self, document_id: &str, owner: &str, item_key: &str) -> usize {
+        let before = self.scoped_values.len();
+        self.scoped_values.retain(|key, _| {
+            key.scope != UiDocumentBindingScope::Item
+                || key.document_id != document_id
+                || key.owner != owner
+                || key.item_key.as_deref() != Some(item_key)
+        });
+        before - self.scoped_values.len()
+    }
+
     pub(crate) fn scoped_revision(
         &self,
         document_id: &str,

@@ -16,6 +16,8 @@ use crate::{
 
 const GALLERY_SOURCE: &str =
     include_str!("../../../../assets/ui/documents/approved/gallery/declarative_gallery.v1.json");
+const COLLECTION_GALLERY_FIXTURE: &str =
+    include_str!("../../../../assets/ui/documents/fixtures/collection_character_list.v1.json");
 
 pub(super) fn setup_ui_document_gallery(
     viewport: Res<UiViewport>,
@@ -132,5 +134,22 @@ mod tests {
         ] {
             assert!(kinds.contains(&expected), "missing {expected}");
         }
+    }
+
+    #[test]
+    fn declarative_gallery_collection_fixture_keeps_character_ids_as_item_keys() {
+        let validation = UiDocument::validate_json(COLLECTION_GALLERY_FIXTURE);
+        assert!(validation.report.valid, "{:?}", validation.report.diagnostics);
+        let document = validation.validated().unwrap().document();
+        let Some(repeat) = document.root.children()[0].repeat() else {
+            panic!("collection gallery fixture must contain a repeat");
+        };
+        assert_eq!(repeat.key, "character_id");
+        assert!(
+            repeat
+                .item_bindings
+                .values()
+                .any(|field| field == "character_id")
+        );
     }
 }

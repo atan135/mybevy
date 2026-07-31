@@ -2647,6 +2647,17 @@
                 "z_index": 0
               }
             },
+            "repeat": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiRepeat"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
@@ -5423,6 +5434,74 @@
       "minLength": 3,
       "pattern": "^(initial|loading|empty|error|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+)$",
       "type": "string"
+    },
+    "UiRepeat": {
+      "additionalProperties": false,
+      "description": "A closed, data-driven collection declaration. A repeat owns the children of\nits container as a row template; the document never supplies executable\nexpressions or uses an array position as an item identity.",
+      "properties": {
+        "empty": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiTextContent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiTextContent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "item_bindings": {
+          "additionalProperties": false,
+          "description": "Maps declared `item` bindings to fields in each source record.",
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "key": {
+          "description": "Stable string field in each source record.",
+          "type": "string"
+        },
+        "loading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiTextContent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "$ref": "#/$defs/UiBindingPath",
+          "description": "Declared document/owner binding whose value is a bounded list of records."
+        },
+        "state": {
+          "$ref": "#/$defs/UiBindingPath",
+          "description": "Declared document/owner enum binding with `loading`, `ready`, or `error`."
+        }
+      },
+      "required": [
+        "source",
+        "key",
+        "item_bindings",
+        "state"
+      ],
+      "type": "object"
     },
     "UiResponsiveCondition": {
       "additionalProperties": false,

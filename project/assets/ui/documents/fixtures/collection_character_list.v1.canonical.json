@@ -1,0 +1,555 @@
+{
+  "assets": {},
+  "bindings": {
+    "characters.items": {
+      "default": null,
+      "missing": "use_consumer_fallback",
+      "scope": "owner",
+      "value_type": {
+        "item": {
+          "fields": {
+            "character_id": {
+              "kind": "string"
+            },
+            "display_name": {
+              "kind": "string"
+            },
+            "level": {
+              "kind": "number"
+            },
+            "online": {
+              "kind": "bool"
+            },
+            "selected": {
+              "kind": "bool"
+            }
+          },
+          "kind": "record"
+        },
+        "kind": "list",
+        "max_items": 16
+      }
+    },
+    "characters.state": {
+      "default": null,
+      "missing": "use_consumer_fallback",
+      "scope": "owner",
+      "value_type": {
+        "kind": "enum",
+        "values": [
+          "loading",
+          "ready",
+          "error"
+        ]
+      }
+    },
+    "item.character_id": {
+      "default": null,
+      "missing": "use_consumer_fallback",
+      "scope": "item",
+      "value_type": {
+        "kind": "string"
+      }
+    },
+    "item.display_name": {
+      "default": null,
+      "missing": "use_consumer_fallback",
+      "scope": "item",
+      "value_type": {
+        "kind": "string"
+      }
+    },
+    "item.level": {
+      "default": null,
+      "missing": "use_consumer_fallback",
+      "scope": "item",
+      "value_type": {
+        "kind": "number"
+      }
+    },
+    "item.online": {
+      "default": null,
+      "missing": "use_consumer_fallback",
+      "scope": "item",
+      "value_type": {
+        "kind": "bool"
+      }
+    },
+    "item.selected": {
+      "default": null,
+      "missing": "use_consumer_fallback",
+      "scope": "item",
+      "value_type": {
+        "kind": "bool"
+      }
+    }
+  },
+  "document_id": "collection.character_list",
+  "metadata": {
+    "budget_profile": "mobile_baseline_v1",
+    "title": ""
+  },
+  "responsive": [],
+  "root": {
+    "children": [
+      {
+        "children": [
+          {
+            "component": {
+              "bindings": {
+                "disabled": null,
+                "loading": null,
+                "selected": "item.selected",
+                "value": null,
+                "variant": null
+              },
+              "children": [],
+              "size": "medium",
+              "slots": {},
+              "state_overrides": {},
+              "states": [
+                "normal"
+              ],
+              "variant": "default"
+            },
+            "id": "characters.row",
+            "label": {
+              "binding_path": "item.display_name",
+              "fallback": "Character",
+              "format": {
+                "kind": "plain"
+              }
+            },
+            "layout": {
+              "align_content": "start",
+              "align_items": "stretch",
+              "align_self": "auto",
+              "aspect_ratio": null,
+              "border": {
+                "all": {
+                  "px": 0.0
+                },
+                "bottom": null,
+                "left": null,
+                "right": null,
+                "top": null
+              },
+              "column_gap": null,
+              "direction": "column",
+              "display": "flex",
+              "flex_basis": "auto",
+              "flex_grow": 0.0,
+              "flex_shrink": 1.0,
+              "gap": {
+                "px": 0.0
+              },
+              "grid_auto_columns": [],
+              "grid_auto_flow": "row",
+              "grid_auto_rows": [],
+              "grid_column": {
+                "span": 1,
+                "start": null
+              },
+              "grid_columns": [],
+              "grid_row": {
+                "span": 1,
+                "start": null
+              },
+              "grid_rows": [],
+              "height": "auto",
+              "justify_content": "start",
+              "justify_items": "stretch",
+              "justify_self": "auto",
+              "margin": {
+                "all": {
+                  "px": 0.0
+                },
+                "bottom": null,
+                "left": null,
+                "right": null,
+                "top": null
+              },
+              "max_height": "auto",
+              "max_width": "auto",
+              "min_height": "auto",
+              "min_width": "auto",
+              "overflow": {
+                "x": "visible",
+                "y": "visible"
+              },
+              "padding": {
+                "all": {
+                  "px": 0.0
+                },
+                "bottom": null,
+                "left": null,
+                "right": null,
+                "top": null
+              },
+              "position": "relative",
+              "row_gap": null,
+              "scrollbar_width": 0.0,
+              "width": "auto",
+              "wrap": "no_wrap",
+              "z_index": 0
+            },
+            "on_click": {
+              "action": "characters.choose",
+              "params": {
+                "character_id": {
+                  "kind": "item_binding",
+                  "value": "item.character_id"
+                }
+              }
+            },
+            "style": {
+              "bindings": {
+                "display": null,
+                "visibility": "item.online"
+              },
+              "component": null,
+              "inline": {
+                "background": null,
+                "border": null,
+                "corner_radius": null,
+                "material": null,
+                "opacity": null,
+                "shadows": null,
+                "text": null
+              },
+              "role": null,
+              "text_role": null
+            },
+            "type": "button",
+            "variant": null
+          },
+          {
+            "content": {
+              "binding_path": "item.level",
+              "fallback": "0",
+              "format": {
+                "grouping": false,
+                "kind": "number",
+                "max_fraction_digits": 0,
+                "min_fraction_digits": 0
+              }
+            },
+            "id": "characters.level",
+            "layout": {
+              "align_content": "start",
+              "align_items": "stretch",
+              "align_self": "auto",
+              "aspect_ratio": null,
+              "border": {
+                "all": {
+                  "px": 0.0
+                },
+                "bottom": null,
+                "left": null,
+                "right": null,
+                "top": null
+              },
+              "column_gap": null,
+              "direction": "column",
+              "display": "flex",
+              "flex_basis": "auto",
+              "flex_grow": 0.0,
+              "flex_shrink": 1.0,
+              "gap": {
+                "px": 0.0
+              },
+              "grid_auto_columns": [],
+              "grid_auto_flow": "row",
+              "grid_auto_rows": [],
+              "grid_column": {
+                "span": 1,
+                "start": null
+              },
+              "grid_columns": [],
+              "grid_row": {
+                "span": 1,
+                "start": null
+              },
+              "grid_rows": [],
+              "height": "auto",
+              "justify_content": "start",
+              "justify_items": "stretch",
+              "justify_self": "auto",
+              "margin": {
+                "all": {
+                  "px": 0.0
+                },
+                "bottom": null,
+                "left": null,
+                "right": null,
+                "top": null
+              },
+              "max_height": "auto",
+              "max_width": "auto",
+              "min_height": "auto",
+              "min_width": "auto",
+              "overflow": {
+                "x": "visible",
+                "y": "visible"
+              },
+              "padding": {
+                "all": {
+                  "px": 0.0
+                },
+                "bottom": null,
+                "left": null,
+                "right": null,
+                "top": null
+              },
+              "position": "relative",
+              "row_gap": null,
+              "scrollbar_width": 0.0,
+              "width": "auto",
+              "wrap": "no_wrap",
+              "z_index": 0
+            },
+            "style": {
+              "component": null,
+              "inline": {
+                "background": null,
+                "border": null,
+                "corner_radius": null,
+                "material": null,
+                "opacity": null,
+                "shadows": null,
+                "text": null
+              },
+              "role": null,
+              "text_role": null
+            },
+            "type": "text",
+            "typography": {
+              "alignment": "left",
+              "font_role": "body",
+              "line_height": {
+                "kind": "normal"
+              },
+              "max_lines": null,
+              "overflow": "visible",
+              "weight": "regular",
+              "wrap": "word_or_character"
+            }
+          }
+        ],
+        "id": "characters.repeat",
+        "layout": {
+          "align_content": "start",
+          "align_items": "stretch",
+          "align_self": "auto",
+          "aspect_ratio": null,
+          "border": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "column_gap": null,
+          "direction": "column",
+          "display": "flex",
+          "flex_basis": "auto",
+          "flex_grow": 0.0,
+          "flex_shrink": 1.0,
+          "gap": {
+            "px": 0.0
+          },
+          "grid_auto_columns": [],
+          "grid_auto_flow": "row",
+          "grid_auto_rows": [],
+          "grid_column": {
+            "span": 1,
+            "start": null
+          },
+          "grid_columns": [],
+          "grid_row": {
+            "span": 1,
+            "start": null
+          },
+          "grid_rows": [],
+          "height": "auto",
+          "justify_content": "start",
+          "justify_items": "stretch",
+          "justify_self": "auto",
+          "margin": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "max_height": "auto",
+          "max_width": "auto",
+          "min_height": "auto",
+          "min_width": "auto",
+          "overflow": {
+            "x": "visible",
+            "y": "visible"
+          },
+          "padding": {
+            "all": {
+              "px": 0.0
+            },
+            "bottom": null,
+            "left": null,
+            "right": null,
+            "top": null
+          },
+          "position": "relative",
+          "row_gap": null,
+          "scrollbar_width": 0.0,
+          "width": "auto",
+          "wrap": "no_wrap",
+          "z_index": 0
+        },
+        "repeat": {
+          "empty": {
+            "format": {
+              "kind": "plain"
+            },
+            "literal": "No characters"
+          },
+          "error": {
+            "format": {
+              "kind": "plain"
+            },
+            "literal": "Characters unavailable"
+          },
+          "item_bindings": {
+            "item.character_id": "character_id",
+            "item.display_name": "display_name",
+            "item.level": "level",
+            "item.online": "online",
+            "item.selected": "selected"
+          },
+          "key": "character_id",
+          "loading": {
+            "format": {
+              "kind": "plain"
+            },
+            "literal": "Loading characters"
+          },
+          "source": "characters.items",
+          "state": "characters.state"
+        },
+        "style": {
+          "component": null,
+          "inline": {
+            "background": null,
+            "border": null,
+            "corner_radius": null,
+            "material": null,
+            "opacity": null,
+            "shadows": null,
+            "text": null
+          },
+          "role": null,
+          "text_role": null
+        },
+        "type": "container"
+      }
+    ],
+    "id": "characters.root",
+    "layout": {
+      "align_content": "start",
+      "align_items": "stretch",
+      "align_self": "auto",
+      "aspect_ratio": null,
+      "border": {
+        "all": {
+          "px": 0.0
+        },
+        "bottom": null,
+        "left": null,
+        "right": null,
+        "top": null
+      },
+      "column_gap": null,
+      "direction": "column",
+      "display": "flex",
+      "flex_basis": "auto",
+      "flex_grow": 0.0,
+      "flex_shrink": 1.0,
+      "gap": {
+        "px": 0.0
+      },
+      "grid_auto_columns": [],
+      "grid_auto_flow": "row",
+      "grid_auto_rows": [],
+      "grid_column": {
+        "span": 1,
+        "start": null
+      },
+      "grid_columns": [],
+      "grid_row": {
+        "span": 1,
+        "start": null
+      },
+      "grid_rows": [],
+      "height": "auto",
+      "justify_content": "start",
+      "justify_items": "stretch",
+      "justify_self": "auto",
+      "margin": {
+        "all": {
+          "px": 0.0
+        },
+        "bottom": null,
+        "left": null,
+        "right": null,
+        "top": null
+      },
+      "max_height": "auto",
+      "max_width": "auto",
+      "min_height": "auto",
+      "min_width": "auto",
+      "overflow": {
+        "x": "visible",
+        "y": "visible"
+      },
+      "padding": {
+        "all": {
+          "px": 0.0
+        },
+        "bottom": null,
+        "left": null,
+        "right": null,
+        "top": null
+      },
+      "position": "relative",
+      "row_gap": null,
+      "scrollbar_width": 0.0,
+      "width": "auto",
+      "wrap": "no_wrap",
+      "z_index": 0
+    },
+    "repeat": null,
+    "style": {
+      "component": null,
+      "inline": {
+        "background": null,
+        "border": null,
+        "corner_radius": null,
+        "material": null,
+        "opacity": null,
+        "shadows": null,
+        "text": null
+      },
+      "role": null,
+      "text_role": null
+    },
+    "type": "container"
+  },
+  "schema_version": 1,
+  "states": [],
+  "styles": {},
+  "tokens": {}
+}

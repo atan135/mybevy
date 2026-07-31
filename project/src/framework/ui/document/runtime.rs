@@ -11,23 +11,25 @@ use bevy::{
 use serde::Serialize;
 
 use super::{
-    UiActionDispatch, UiActionDispatchContext, UiActionId, UiActionRegistry, UiActionRejected,
-    UiActionTrigger, UiActionValue, UiAssetEntry, UiAssetId, UiAssetKind, UiAssetSource,
-    UiBindingActionError, UiBindingDirection, UiBindingPath, UiBindingScope, UiBindingType,
-    UiBindingValue, UiColor, UiComponentBindings, UiComponentSize, UiComponentState,
-    UiComponentVariant, UiControlSlot, UiControlSlotContent, UiDocument,
-    UiDocumentHostValidationContext, UiDocumentId, UiDocumentMarker, UiHostBindingKey,
-    UiImageContentState, UiImageFailurePresentation, UiImagePresentation, UiNode, UiNodeBindings,
-    UiNodeId, UiNodeMarker, UiPageState, UiRegisteredActionKind, UiResolvedBackground,
-    UiResolvedImageFallback, UiResolvedMaterialParameters, UiResolvedStyle, UiTargetProfile,
-    UiTextContent, UiTextFormat, UiTextLineHeight, UiTextOverflow, UiTextTypography,
-    UiTooltipToneSpec, UiWidgetControlAdapter, UiWidgetVariantAdapter, ValidatedUiDocument,
-    document_node_action, node_action, resolve_image_fallback, ui_component_variant,
+    UI_REPEAT_MAX_ITEM_STRING_BYTES, UI_REPEAT_MAX_ITEMS, UiActionDispatch,
+    UiActionDispatchContext, UiActionId, UiActionRegistry, UiActionRejected, UiActionTrigger,
+    UiActionValue, UiAssetEntry, UiAssetId, UiAssetKind, UiAssetSource, UiBindingActionError,
+    UiBindingDirection, UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue, UiColor,
+    UiComponentBindings, UiComponentSize, UiComponentState, UiComponentVariant, UiControlSlot,
+    UiControlSlotContent, UiDocument, UiDocumentHostValidationContext, UiDocumentId,
+    UiDocumentMarker, UiHostBindingKey, UiImageContentState, UiImageFailurePresentation,
+    UiImagePresentation, UiNode, UiNodeBindings, UiNodeId, UiNodeMarker, UiPageState,
+    UiRegisteredActionKind, UiRepeat, UiResolvedBackground, UiResolvedImageFallback,
+    UiResolvedMaterialParameters, UiResolvedStyle, UiTargetProfile, UiTextContent, UiTextFormat,
+    UiTextLineHeight, UiTextOverflow, UiTextTypography, UiTooltipToneSpec, UiWidgetControlAdapter,
+    UiWidgetVariantAdapter, ValidatedUiDocument, document_node_action, node_action,
+    resolve_image_fallback, ui_component_variant,
 };
 use crate::framework::ui::{
     core::{
         UiFocusSystems, UiLayer, UiLayerRoot, UiPanelId, UiPanelKind, UiPanelRoot,
         binding::{UiBindingValues, UiBindingWriteSource},
+        focus::UiFocusState,
     },
     i18n::{UiI18n, UiI18nSystems, UiI18nText},
     style::{
@@ -311,10 +313,51 @@ pub struct UiDocumentResolvedStyleMarker(pub UiResolvedStyle);
 pub struct UiDocumentActionMarker {
     pub instance_id: UiDocumentInstanceId,
     pub node_id: UiNodeId,
+    pub item_key: Option<String>,
     pub on_click: Option<UiActionId>,
     pub on_change: Option<UiActionId>,
     pub on_submit: Option<UiActionId>,
 }
+
+#[derive(Clone, Debug, Component, Eq, PartialEq)]
+struct UiDocumentRepeatItemMarker {
+    instance_id: UiDocumentInstanceId,
+    item_key: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UiDocumentRepeatState {
+    Loading,
+    Empty,
+    Ready,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+struct UiDocumentRepeatItem {
+    roots: Vec<Entity>,
+    fields: BTreeMap<String, UiBindingValue>,
+}
+
+#[derive(Clone, Component)]
+struct UiDocumentRepeat {
+    instance_id: UiDocumentInstanceId,
+    document_id: UiDocumentId,
+    owner: String,
+    node_id: UiNodeId,
+    declaration: UiRepeat,
+    templates: Vec<PreparedNode>,
+    spawn_context: Box<PendingBuild>,
+    items: BTreeMap<String, UiDocumentRepeatItem>,
+    state: UiDocumentRepeatState,
+    status_entity: Option<Entity>,
+    last_state_revision: Option<u64>,
+    last_source_revision: Option<u64>,
+    initialized: bool,
+}
+
+#[derive(Component)]
+struct UiDocumentRepeatStatusMarker;
 
 impl UiDocumentActionMarker {
     fn action_id(&self, trigger: UiActionTrigger) -> Option<&UiActionId> {
@@ -639,6 +682,7 @@ impl Plugin for UiDocumentRuntimePlugin {
                 Update,
                 (
                     reconcile_runtime_documents,
+                    reconcile_document_repeats,
                     dispatch_document_actions,
                     update_document_bound_texts,
                     update_document_node_bindings,
@@ -1416,6 +1460,8 @@ fn spawn_document(
         &pending.prepared.root,
         instance_id,
         &mut nodes,
+        None,
+        true,
     ) {
         Ok(root) => root,
         Err(error) => {
@@ -1483,6 +1529,8 @@ fn spawn_prepared_node(
     prepared: &PreparedNode,
     instance_id: UiDocumentInstanceId,
     nodes: &mut BTreeMap<UiNodeId, Entity>,
+    item_key: Option<&str>,
+    indexed: bool,
 ) -> Result<Entity, &'static str> {
     let entity = world.spawn_empty().id();
     let node_id = prepared.source.id().clone();
@@ -1510,7 +1558,15 @@ fn spawn_prepared_node(
     if let Some(z_index) = prepared.layout.z_index {
         world.entity_mut(entity).insert(z_index);
     }
-    nodes.insert(node_id.clone(), entity);
+    if indexed {
+        nodes.insert(node_id.clone(), entity);
+    }
+    if let Some(item_key) = item_key {
+        world.entity_mut(entity).insert(UiDocumentRepeatItemMarker {
+            instance_id,
+            item_key: item_key.to_owned(),
+        });
+    }
 
     if prepared
         .children
@@ -1525,6 +1581,7 @@ fn spawn_prepared_node(
     let action_marker = UiDocumentActionMarker {
         instance_id,
         node_id: node_id.clone(),
+        item_key: item_key.map(str::to_owned),
         on_click: node_action(&prepared.source, UiActionTrigger::Click)
             .map(|action| action.action.clone()),
         on_change: node_action(&prepared.source, UiActionTrigger::Change)
@@ -1553,6 +1610,7 @@ fn spawn_prepared_node(
                 document_id: pending.request.document_id.clone(),
                 owner: pending.request.owner.clone(),
                 node_id: node_id.clone(),
+                item_key: item_key.map(str::to_owned),
                 node: node_bindings,
                 control: control_bindings.unwrap_or_default(),
             },
@@ -1572,9 +1630,28 @@ fn spawn_prepared_node(
         apply_control_state(world, entity, control);
     }
 
-    for child in &prepared.children {
-        let child_entity = spawn_prepared_node(world, pending, child, instance_id, nodes)?;
-        world.entity_mut(entity).add_child(child_entity);
+    if let Some(repeat) = prepared.source.repeat() {
+        world.entity_mut(entity).insert(UiDocumentRepeat {
+            instance_id,
+            document_id: pending.request.document_id.clone(),
+            owner: pending.request.owner.clone(),
+            node_id: node_id.clone(),
+            declaration: repeat.clone(),
+            templates: prepared.children.clone(),
+            spawn_context: Box::new(pending.clone()),
+            items: BTreeMap::new(),
+            state: UiDocumentRepeatState::Loading,
+            status_entity: None,
+            last_state_revision: None,
+            last_source_revision: None,
+            initialized: false,
+        });
+    } else {
+        for child in &prepared.children {
+            let child_entity =
+                spawn_prepared_node(world, pending, child, instance_id, nodes, item_key, indexed)?;
+            world.entity_mut(entity).add_child(child_entity);
+        }
     }
     Ok(entity)
 }
@@ -2634,6 +2711,7 @@ fn configure_generated_text(
             world.entity_mut(entity).insert(UiDocumentBoundText {
                 document_id: pending.request.document_id.clone(),
                 owner: pending.request.owner.clone(),
+                item_key: None,
                 path: source.binding_path.clone(),
                 format: source.format.clone(),
                 fallback: source.fallback.clone(),
@@ -2767,6 +2845,7 @@ fn insert_text(
             world.entity_mut(entity).insert(UiDocumentBoundText {
                 document_id: pending.request.document_id.clone(),
                 owner: pending.request.owner.clone(),
+                item_key: None,
                 path: source.binding_path.clone(),
                 format: source.format.clone(),
                 fallback: source.fallback.clone(),
@@ -2780,6 +2859,7 @@ fn insert_text(
 struct UiDocumentBoundText {
     document_id: UiDocumentId,
     owner: String,
+    item_key: Option<String>,
     path: UiBindingPath,
     format: UiTextFormat,
     fallback: String,
@@ -2790,6 +2870,7 @@ struct UiDocumentNodeBindings {
     document_id: UiDocumentId,
     owner: String,
     node_id: UiNodeId,
+    item_key: Option<String>,
     node: UiNodeBindings,
     control: UiComponentBindings,
 }
@@ -3588,6 +3669,565 @@ fn reconcile_runtime_documents(
     }
 }
 
+/// Reconciles repeat containers by their declared stable record key. Existing
+/// rows are never rebuilt for a field update or a move, so text input, focus,
+/// selection, and scroll state remain attached to the same ECS entities.
+fn reconcile_document_repeats(world: &mut World) {
+    let repeats = {
+        let mut query = world.query::<(Entity, &UiDocumentRepeat)>();
+        query
+            .iter(world)
+            .map(|(entity, repeat)| (entity, repeat.clone()))
+            .collect::<Vec<_>>()
+    };
+    for (host, mut repeat) in repeats {
+        if world.get_entity(host).is_err() || !repeat_instance_is_active(world, &repeat) {
+            continue;
+        }
+        let (state_revision, source_revision) = repeat_input_revisions(world, &repeat);
+        if repeat.initialized
+            && repeat.last_state_revision == state_revision
+            && repeat.last_source_revision == source_revision
+        {
+            continue;
+        }
+        let (state, records, diagnostic) = resolve_repeat_records(world, &repeat);
+        if let Some((code, path)) = diagnostic {
+            emit_repeat_diagnostic(world, code, &repeat, path);
+        }
+        let keys = records
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<BTreeSet<_>>();
+        if state != UiDocumentRepeatState::Ready {
+            clear_repeat_items(world, &mut repeat, &keys);
+            replace_repeat_status(world, host, &mut repeat, state);
+            repeat.state = state;
+            repeat.last_state_revision = state_revision;
+            repeat.last_source_revision = source_revision;
+            repeat.initialized = true;
+            if let Some(mut current) = world.get_mut::<UiDocumentRepeat>(host) {
+                *current = repeat;
+            }
+            refresh_repeat_entity_count(world, host);
+            continue;
+        }
+
+        replace_repeat_status(world, host, &mut repeat, UiDocumentRepeatState::Ready);
+        clear_repeat_items(world, &mut repeat, &keys);
+        let mut ordered = Vec::new();
+        for (key, fields) in records {
+            let fields_changed = repeat
+                .items
+                .get(&key)
+                .is_none_or(|item| item.fields != fields);
+            if fields_changed && !write_repeat_item_bindings(world, &repeat, &key, &fields) {
+                emit_repeat_diagnostic(
+                    world,
+                    "UI_REPEAT_ITEM_VALUE_INVALID",
+                    &repeat,
+                    format!("$.runtime.repeat.{}", repeat.node_id),
+                );
+                continue;
+            }
+            let item = if let Some(item) = repeat.items.get(&key) {
+                item.clone()
+            } else {
+                let mut nodes = BTreeMap::new();
+                let mut roots = Vec::new();
+                let mut failed = false;
+                for template in &repeat.templates {
+                    match spawn_prepared_node(
+                        world,
+                        &repeat.spawn_context,
+                        template,
+                        repeat.instance_id,
+                        &mut nodes,
+                        Some(&key),
+                        false,
+                    ) {
+                        Ok(entity) => roots.push(entity),
+                        Err(_) => {
+                            failed = true;
+                            break;
+                        }
+                    }
+                }
+                if failed {
+                    for entity in roots {
+                        if world.get_entity(entity).is_ok() {
+                            world.entity_mut(entity).despawn();
+                        }
+                    }
+                    emit_repeat_diagnostic(
+                        world,
+                        "UI_REPEAT_TEMPLATE_SPAWN_FAILED",
+                        &repeat,
+                        format!("$.runtime.repeat.{}", repeat.node_id),
+                    );
+                    continue;
+                }
+                for root in &roots {
+                    set_repeat_item_key(world, *root, &key);
+                }
+                let item = UiDocumentRepeatItem {
+                    roots,
+                    fields: fields.clone(),
+                };
+                repeat.items.insert(key.clone(), item.clone());
+                item
+            };
+            if fields_changed && let Some(item) = repeat.items.get_mut(&key) {
+                item.fields = fields;
+            }
+            ordered.extend(item.roots);
+        }
+        if !ordered.is_empty() {
+            // This only reorders existing children or inserts newly-created rows;
+            // it does not despawn/recreate matched keys.
+            world.entity_mut(host).insert_children(0, &ordered);
+        }
+        repeat.state = UiDocumentRepeatState::Ready;
+        repeat.last_state_revision = state_revision;
+        repeat.last_source_revision = source_revision;
+        repeat.initialized = true;
+        if let Some(mut current) = world.get_mut::<UiDocumentRepeat>(host) {
+            *current = repeat;
+        }
+        refresh_repeat_entity_count(world, host);
+    }
+}
+
+fn refresh_repeat_entity_count(world: &mut World, host: Entity) {
+    let Some(marker) = world.get::<UiDocumentNodeMarker>(host).cloned() else {
+        return;
+    };
+    let root = world
+        .get_resource::<UiDocumentRuntime>()
+        .and_then(|runtime| runtime.instances.get(&marker.instance_id))
+        .map(|active| active.index.root);
+    let Some(root) = root else {
+        return;
+    };
+    let count = count_entity_tree(world, root);
+    if let Some(mut runtime) = world.get_resource_mut::<UiDocumentRuntime>()
+        && let Some(active) = runtime.instances.get_mut(&marker.instance_id)
+    {
+        active.index.ecs_entity_count = count;
+    }
+}
+
+fn repeat_instance_is_active(world: &World, repeat: &UiDocumentRepeat) -> bool {
+    let Some(runtime) = world.get_resource::<UiDocumentRuntime>() else {
+        return false;
+    };
+    runtime.active.get(&DocumentKey {
+        owner: repeat.owner.clone(),
+        document_id: repeat.document_id.clone(),
+    }) == Some(&repeat.instance_id)
+}
+
+fn repeat_input_revisions(world: &World, repeat: &UiDocumentRepeat) -> (Option<u64>, Option<u64>) {
+    let Some(runtime) = world.get_resource::<UiDocumentRuntime>() else {
+        return (None, None);
+    };
+    let Some(active) = runtime.instances.get(&repeat.instance_id) else {
+        return (None, None);
+    };
+    let Some(values) = world.get_resource::<UiBindingValues>() else {
+        return (None, None);
+    };
+    let revision_for = |path: &UiBindingPath| {
+        active
+            .validated
+            .document()
+            .bindings
+            .get(path)
+            .and_then(|declaration| {
+                values
+                    .scoped_revision(
+                        repeat.document_id.as_str(),
+                        &repeat.owner,
+                        path,
+                        declaration,
+                    )
+                    .map(|(revision, _)| revision)
+            })
+    };
+    (
+        revision_for(&repeat.declaration.state),
+        revision_for(&repeat.declaration.source),
+    )
+}
+
+fn resolve_repeat_records(
+    world: &World,
+    repeat: &UiDocumentRepeat,
+) -> (
+    UiDocumentRepeatState,
+    Vec<(String, BTreeMap<String, UiBindingValue>)>,
+    Option<(&'static str, String)>,
+) {
+    let Some(runtime) = world.get_resource::<UiDocumentRuntime>() else {
+        return (
+            UiDocumentRepeatState::Error,
+            Vec::new(),
+            Some((
+                "UI_REPEAT_RUNTIME_UNAVAILABLE",
+                "$.runtime.repeat".to_owned(),
+            )),
+        );
+    };
+    let Some(active) = runtime.instances.get(&repeat.instance_id) else {
+        return (
+            UiDocumentRepeatState::Error,
+            Vec::new(),
+            Some(("UI_REPEAT_INSTANCE_STALE", "$.runtime.repeat".to_owned())),
+        );
+    };
+    let document = active.validated.document();
+    let Some(state_declaration) = document.bindings.get(&repeat.declaration.state) else {
+        return (
+            UiDocumentRepeatState::Error,
+            Vec::new(),
+            Some(("UI_REPEAT_STATE_INVALID", "$.repeat.state".to_owned())),
+        );
+    };
+    let state = world.get_resource::<UiBindingValues>().and_then(|values| {
+        values.scoped_value(
+            repeat.document_id.as_str(),
+            &repeat.owner,
+            &repeat.declaration.state,
+            state_declaration,
+        )
+    });
+    let state = match state {
+        Some(UiBindingValue::Enum(value)) if value == "ready" => UiDocumentRepeatState::Ready,
+        Some(UiBindingValue::Enum(value)) if value == "error" => UiDocumentRepeatState::Error,
+        Some(UiBindingValue::Enum(value)) if value == "loading" => UiDocumentRepeatState::Loading,
+        _ => {
+            return (
+                UiDocumentRepeatState::Error,
+                Vec::new(),
+                Some(("UI_REPEAT_STATE_VALUE_INVALID", "$.repeat.state".to_owned())),
+            );
+        }
+    };
+    if state != UiDocumentRepeatState::Ready {
+        return (state, Vec::new(), None);
+    }
+    let Some(source_declaration) = document.bindings.get(&repeat.declaration.source) else {
+        return (
+            UiDocumentRepeatState::Error,
+            Vec::new(),
+            Some(("UI_REPEAT_SOURCE_UNDECLARED", "$.repeat.source".to_owned())),
+        );
+    };
+    let values = world.get_resource::<UiBindingValues>();
+    let source = values.and_then(|values| {
+        values.scoped_value(
+            repeat.document_id.as_str(),
+            &repeat.owner,
+            &repeat.declaration.source,
+            source_declaration,
+        )
+    });
+    let Some(UiBindingValue::List(items)) = source else {
+        return (
+            UiDocumentRepeatState::Error,
+            Vec::new(),
+            Some((
+                "UI_REPEAT_SOURCE_VALUE_MISSING",
+                "$.repeat.source".to_owned(),
+            )),
+        );
+    };
+    if items.len() > UI_REPEAT_MAX_ITEMS {
+        return (
+            UiDocumentRepeatState::Error,
+            Vec::new(),
+            Some((
+                "UI_REPEAT_ITEM_BUDGET_EXCEEDED",
+                "$.repeat.source".to_owned(),
+            )),
+        );
+    }
+    let mut keys = BTreeSet::new();
+    let mut records = Vec::new();
+    let mut strings = 0usize;
+    for item in items {
+        let UiBindingValue::Record(fields) = item else {
+            return (
+                UiDocumentRepeatState::Error,
+                Vec::new(),
+                Some(("UI_REPEAT_ITEM_VALUE_INVALID", "$.repeat.source".to_owned())),
+            );
+        };
+        let Some(UiBindingValue::String(key)) = fields.get(&repeat.declaration.key) else {
+            return (
+                UiDocumentRepeatState::Error,
+                Vec::new(),
+                Some(("UI_REPEAT_KEY_MISSING", "$.repeat.key".to_owned())),
+            );
+        };
+        if !safe_repeat_key(key) {
+            return (
+                UiDocumentRepeatState::Error,
+                Vec::new(),
+                Some(("UI_REPEAT_KEY_INVALID", "$.repeat.key".to_owned())),
+            );
+        }
+        if !keys.insert(key.clone()) {
+            return (
+                UiDocumentRepeatState::Error,
+                Vec::new(),
+                Some(("UI_REPEAT_KEY_DUPLICATE", "$.repeat.key".to_owned())),
+            );
+        }
+        strings = strings.saturating_add(record_string_bytes(&fields));
+        if strings > UI_REPEAT_MAX_ITEM_STRING_BYTES.saturating_mul(UI_REPEAT_MAX_ITEMS) {
+            return (
+                UiDocumentRepeatState::Error,
+                Vec::new(),
+                Some((
+                    "UI_REPEAT_STRING_BUDGET_EXCEEDED",
+                    "$.repeat.source".to_owned(),
+                )),
+            );
+        }
+        records.push((key.clone(), fields));
+    }
+    if records.is_empty() {
+        (UiDocumentRepeatState::Empty, records, None)
+    } else {
+        (UiDocumentRepeatState::Ready, records, None)
+    }
+}
+
+fn safe_repeat_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn record_string_bytes(fields: &BTreeMap<String, UiBindingValue>) -> usize {
+    fields.values().fold(0usize, |total, value| {
+        total.saturating_add(match value {
+            UiBindingValue::String(value) | UiBindingValue::Enum(value) => value.len(),
+            UiBindingValue::Record(record) => record_string_bytes(record),
+            UiBindingValue::List(values) => values.iter().fold(0usize, |sum, value| {
+                sum.saturating_add(match value {
+                    UiBindingValue::String(value) | UiBindingValue::Enum(value) => value.len(),
+                    UiBindingValue::Record(record) => record_string_bytes(record),
+                    UiBindingValue::List(_)
+                    | UiBindingValue::Bool(_)
+                    | UiBindingValue::Number(_)
+                    | UiBindingValue::Visibility(_) => 0,
+                })
+            }),
+            UiBindingValue::Bool(_) | UiBindingValue::Number(_) | UiBindingValue::Visibility(_) => {
+                0
+            }
+        })
+    })
+}
+
+fn write_repeat_item_bindings(
+    world: &mut World,
+    repeat: &UiDocumentRepeat,
+    item_key: &str,
+    fields: &BTreeMap<String, UiBindingValue>,
+) -> bool {
+    let Some(runtime) = world.get_resource::<UiDocumentRuntime>() else {
+        return false;
+    };
+    let Some(active) = runtime.instances.get(&repeat.instance_id) else {
+        return false;
+    };
+    let declarations = repeat
+        .declaration
+        .item_bindings
+        .iter()
+        .filter_map(|(path, field)| {
+            Some((
+                path.clone(),
+                active.validated.document().bindings.get(path)?.clone(),
+                fields.get(field)?.clone(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    if declarations.len() != repeat.declaration.item_bindings.len() {
+        return false;
+    }
+    let Some(mut values) = world.get_resource_mut::<UiBindingValues>() else {
+        return false;
+    };
+    declarations.into_iter().all(|(path, declaration, value)| {
+        values
+            .set_item_scoped(
+                repeat.document_id.as_str(),
+                &repeat.owner,
+                item_key,
+                &path,
+                &declaration,
+                value,
+                UiBindingWriteSource::Host,
+            )
+            .is_ok()
+    })
+}
+
+fn clear_repeat_items(
+    world: &mut World,
+    repeat: &mut UiDocumentRepeat,
+    desired: &BTreeSet<String>,
+) {
+    let removed = repeat
+        .items
+        .keys()
+        .filter(|key| !desired.contains(*key))
+        .cloned()
+        .collect::<Vec<_>>();
+    for key in removed {
+        let Some(item) = repeat.items.remove(&key) else {
+            continue;
+        };
+        clear_focus_for_repeat_roots(world, &item.roots);
+        for root in item.roots {
+            if world.get_entity(root).is_ok() {
+                world.entity_mut(root).despawn();
+            }
+        }
+        if let Some(mut values) = world.get_resource_mut::<UiBindingValues>() {
+            values.clear_item(repeat.document_id.as_str(), &repeat.owner, &key);
+        }
+    }
+}
+
+fn clear_focus_for_repeat_roots(world: &mut World, roots: &[Entity]) {
+    let focused = world
+        .get_resource::<UiFocusState>()
+        .and_then(|focus| focus.focused_entity);
+    let Some(focused) = focused else {
+        return;
+    };
+    if roots
+        .iter()
+        .copied()
+        .any(|root| entity_is_or_descends_from(world, focused, root))
+        && let Some(mut focus) = world.get_resource_mut::<UiFocusState>()
+    {
+        // The standard focus repair system selects the next visible focusable
+        // control on its next pass. Clearing here prevents a removed row from
+        // retaining a stale focused entity for the intervening frame.
+        focus.focused_entity = None;
+    }
+}
+
+fn entity_is_or_descends_from(world: &World, entity: Entity, root: Entity) -> bool {
+    if entity == root {
+        return true;
+    }
+    let mut current = entity;
+    while let Some(parent) = world.get::<ChildOf>(current) {
+        current = parent.parent();
+        if current == root {
+            return true;
+        }
+    }
+    false
+}
+
+fn replace_repeat_status(
+    world: &mut World,
+    host: Entity,
+    repeat: &mut UiDocumentRepeat,
+    state: UiDocumentRepeatState,
+) {
+    if state == UiDocumentRepeatState::Ready {
+        if let Some(status) = repeat.status_entity.take()
+            && world.get_entity(status).is_ok()
+        {
+            world.entity_mut(status).despawn();
+        }
+        return;
+    }
+    if repeat.state == state
+        && repeat
+            .status_entity
+            .is_some_and(|entity| world.get_entity(entity).is_ok())
+    {
+        return;
+    }
+    if let Some(status) = repeat.status_entity.take()
+        && world.get_entity(status).is_ok()
+    {
+        world.entity_mut(status).despawn();
+    }
+    let content = match state {
+        UiDocumentRepeatState::Loading => repeat.declaration.loading.as_ref(),
+        UiDocumentRepeatState::Empty => repeat.declaration.empty.as_ref(),
+        UiDocumentRepeatState::Error => repeat.declaration.error.as_ref(),
+        UiDocumentRepeatState::Ready => None,
+    };
+    let fallback = match state {
+        UiDocumentRepeatState::Loading => "Loading",
+        UiDocumentRepeatState::Empty => "No items",
+        UiDocumentRepeatState::Error => "Unable to load items",
+        UiDocumentRepeatState::Ready => "",
+    };
+    let entity = world
+        .spawn((
+            Text::new(content.map_or_else(
+                || fallback.to_owned(),
+                |content| render_text(world, &repeat.spawn_context, content),
+            )),
+            UiDocumentRepeatStatusMarker,
+        ))
+        .id();
+    world.entity_mut(host).add_child(entity);
+    repeat.status_entity = Some(entity);
+}
+
+fn set_repeat_item_key(world: &mut World, root: Entity, item_key: &str) {
+    let mut pending = vec![root];
+    while let Some(entity) = pending.pop() {
+        if let Some(mut marker) = world.get_mut::<UiDocumentRepeatItemMarker>(entity) {
+            marker.item_key = item_key.to_owned();
+        }
+        if let Some(mut marker) = world.get_mut::<UiDocumentActionMarker>(entity) {
+            marker.item_key = Some(item_key.to_owned());
+        }
+        if let Some(mut binding) = world.get_mut::<UiDocumentNodeBindings>(entity) {
+            binding.item_key = Some(item_key.to_owned());
+        }
+        if let Some(mut binding) = world.get_mut::<UiDocumentBoundText>(entity) {
+            binding.item_key = Some(item_key.to_owned());
+        }
+        if let Some(children) = world.get::<Children>(entity) {
+            pending.extend(children.iter());
+        }
+    }
+}
+
+fn emit_repeat_diagnostic(
+    world: &mut World,
+    code: &'static str,
+    repeat: &UiDocumentRepeat,
+    path: String,
+) {
+    world.write_message(UiBindingDiagnostic {
+        code,
+        document_id: repeat.document_id.clone(),
+        owner: repeat.owner.clone(),
+        node_id: repeat.node_id.clone(),
+        binding_path: repeat.declaration.source.clone(),
+    });
+    let _ = path;
+}
+
 fn update_document_bound_texts(
     values: Option<Res<UiBindingValues>>,
     runtime: Res<UiDocumentRuntime>,
@@ -3607,12 +4247,24 @@ fn update_document_bound_texts(
             .and_then(|instance_id| runtime.instances.get(instance_id))
             .and_then(|active| active.validated.document().bindings.get(&binding.path))
             .and_then(|declaration| {
-                values.scoped_value(
-                    binding.document_id.as_str(),
-                    &binding.owner,
-                    &binding.path,
-                    declaration,
-                )
+                if declaration.scope == UiBindingScope::Item {
+                    binding.item_key.as_deref().and_then(|item_key| {
+                        values.scoped_item_value(
+                            binding.document_id.as_str(),
+                            &binding.owner,
+                            item_key,
+                            &binding.path,
+                            declaration,
+                        )
+                    })
+                } else {
+                    values.scoped_value(
+                        binding.document_id.as_str(),
+                        &binding.owner,
+                        &binding.path,
+                        declaration,
+                    )
+                }
             })
             .map(|value| format_binding_value(&value, &binding.format))
             .unwrap_or_else(|| binding.fallback.clone());
@@ -3786,7 +4438,7 @@ fn capture_document_control_writebacks(world: &mut World) {
                     .set_scoped_with_source(
                         source.document_id.as_str(),
                         &source.owner,
-                        None,
+                        source.item_key.as_deref(),
                         &value_binding.binding_path,
                         &declaration,
                         current.clone(),
@@ -3836,20 +4488,34 @@ fn resolve_document_binding_value(
     let path = path.as_ref()?;
     let declaration = active_document_binding_declaration(world, source, path)?;
     let values = world.get_resource::<UiBindingValues>()?;
-    let value = values.scoped_value(
-        source.document_id.as_str(),
-        &source.owner,
-        path,
-        &declaration,
-    )?;
-    let revision = values
-        .scoped_revision(
+    let value = if declaration.scope == UiBindingScope::Item {
+        values.scoped_item_value(
+            source.document_id.as_str(),
+            &source.owner,
+            source.item_key.as_deref()?,
+            path,
+            &declaration,
+        )?
+    } else {
+        values.scoped_value(
             source.document_id.as_str(),
             &source.owner,
             path,
             &declaration,
-        )
-        .map(|(revision, _)| revision);
+        )?
+    };
+    let revision = if declaration.scope == UiBindingScope::Item {
+        None
+    } else {
+        values
+            .scoped_revision(
+                source.document_id.as_str(),
+                &source.owner,
+                path,
+                &declaration,
+            )
+            .map(|(revision, _)| revision)
+    };
     Some((value, revision))
 }
 
@@ -4923,7 +5589,8 @@ fn dispatch_document_action_input(
         rejected.write(rejection("UI_ACTION_INSTANCE_STALE", "$.runtime.instance"));
         return;
     };
-    if active.index.nodes.get(&marker.node_id) != Some(&marker_entity)
+    if (marker.item_key.is_none()
+        && active.index.nodes.get(&marker.node_id) != Some(&marker_entity))
         || runtime.active.get(&DocumentKey {
             owner: active.index.owner.clone(),
             document_id: active.index.document_id.clone(),
@@ -4961,8 +5628,11 @@ fn dispatch_document_action_input(
     // first valid action for its stable document source and trigger so a burst
     // cannot create repeated business requests with competing values.
     let dedup_key = format!(
-        "{}:{}:{:?}",
-        marker.instance_id.0, marker.node_id, input.trigger
+        "{}:{}:{}:{:?}",
+        marker.instance_id.0,
+        marker.node_id,
+        marker.item_key.as_deref().unwrap_or_default(),
+        input.trigger
     );
     if !state.seen.insert(dedup_key) {
         return;
@@ -4995,6 +5665,7 @@ fn dispatch_document_action_input(
                 registry,
                 dispatch,
                 input.control_value.as_ref(),
+                marker.item_key.as_deref(),
                 binding_values,
             )
         });
@@ -5014,6 +5685,7 @@ fn resolve_document_action_params(
     registry: &UiActionRegistry,
     mut dispatch: UiActionDispatch,
     control_value: Option<&UiBindingValue>,
+    item_key: Option<&str>,
     binding_values: &UiBindingValues,
 ) -> Result<UiActionDispatch, UiBindingActionError> {
     let descriptor = registry
@@ -5075,12 +5747,43 @@ fn resolve_document_action_params(
                     })?;
                 action_value_from_binding(&value, &schema.value_type)
             }
-            UiActionValue::ItemBinding(_) => {
-                return Err(UiBindingActionError::new(
-                    "UI_ACTION_ITEM_BINDING_UNAVAILABLE",
-                    format!("$.runtime.action.params.{name}"),
-                    Some(dispatch.source_node.clone()),
-                ));
+            UiActionValue::ItemBinding(path) => {
+                let item_key = item_key.ok_or_else(|| {
+                    UiBindingActionError::new(
+                        "UI_ACTION_ITEM_BINDING_UNAVAILABLE",
+                        format!("$.runtime.action.params.{name}"),
+                        Some(dispatch.source_node.clone()),
+                    )
+                })?;
+                let declaration = active
+                    .validated
+                    .document()
+                    .bindings
+                    .get(path)
+                    .filter(|declaration| declaration.scope == UiBindingScope::Item)
+                    .ok_or_else(|| {
+                        UiBindingActionError::new(
+                            "UI_ACTION_ITEM_BINDING_FORBIDDEN",
+                            format!("$.runtime.action.params.{name}"),
+                            Some(dispatch.source_node.clone()),
+                        )
+                    })?;
+                let value = binding_values
+                    .scoped_item_value(
+                        active.index.document_id.as_str(),
+                        &active.index.owner,
+                        item_key,
+                        path,
+                        declaration,
+                    )
+                    .ok_or_else(|| {
+                        UiBindingActionError::new(
+                            "UI_ACTION_ITEM_BINDING_MISSING",
+                            format!("$.runtime.action.params.{name}"),
+                            Some(dispatch.source_node.clone()),
+                        )
+                    })?;
+                action_value_from_binding(&value, &schema.value_type)
             }
             value => Some(value.clone()),
         }
@@ -5469,8 +6172,8 @@ mod tests {
     use crate::framework::ui::{
         core::{UiCurrentOwner, UiMetrics, UiOwnerId},
         document::{
-            UiActionDescriptor, UiActionParamSchema, UiActionParamType, UiBindingValue,
-            UiDocumentInputMode, UiDocumentPlatform, UiSafeAreaClass,
+            UiActionDescriptor, UiActionParamSchema, UiActionParamType, UiBindingDeclaration,
+            UiBindingValue, UiDocumentInputMode, UiDocumentPlatform, UiSafeAreaClass,
         },
         widgets::{
             UiScrollView,
@@ -6387,6 +7090,93 @@ mod tests {
             owner_alive: true,
             host_bindings: BTreeMap::new(),
         }
+    }
+
+    fn repeat_document_id() -> UiDocumentId {
+        UiDocumentId::from_str("collection.character_list").unwrap()
+    }
+
+    fn repeat_source() -> &'static str {
+        include_str!("../../../../assets/ui/documents/fixtures/collection_character_list.v1.json")
+    }
+
+    fn repeat_request(id: u64) -> UiDocumentOpenRequest {
+        let document = UiDocument::parse_and_validate_json(repeat_source()).unwrap();
+        let bindings = document.document().bindings.clone();
+        let host_bindings = bindings
+            .iter()
+            .filter(|(_, declaration)| declaration.scope != UiBindingScope::Local)
+            .map(|(path, declaration)| {
+                (
+                    UiHostBindingKey::new(declaration.scope, path.clone()),
+                    declaration.value_type.clone(),
+                )
+            })
+            .collect();
+        UiDocumentOpenRequest {
+            request_id: UiDocumentRequestId(id),
+            document_id: repeat_document_id(),
+            owner: "repeat_owner".to_owned(),
+            source: UiDocumentOpenSource::Json(repeat_source().to_owned()),
+            origin: UiDocumentSourceOrigin::Fixture {
+                fixture_id: "collection_character_list".to_owned(),
+            },
+            panel: UiDocumentPanel::Page,
+            layer: UiDocumentLayer::Page,
+            target_profile: UiTargetProfile::new(
+                800.0,
+                600.0,
+                UiSafeAreaClass::None,
+                UiDocumentInputMode::MouseKeyboard,
+                UiDocumentPlatform::Windows,
+            )
+            .unwrap(),
+            page_state: UiPageState::initial(),
+            owner_alive: true,
+            host_bindings,
+        }
+    }
+
+    fn repeat_declaration(path: &str) -> (UiBindingPath, UiBindingDeclaration) {
+        let document = UiDocument::parse_and_validate_json(repeat_source()).unwrap();
+        let path = UiBindingPath::from_str(path).unwrap();
+        let declaration = document.document().bindings[&path].clone();
+        (path, declaration)
+    }
+
+    fn set_repeat_binding(app: &mut App, path: &str, value: UiBindingValue) {
+        let (path, declaration) = repeat_declaration(path);
+        app.world_mut()
+            .resource_mut::<UiBindingValues>()
+            .set_scoped(
+                repeat_document_id().as_str(),
+                "repeat_owner",
+                &path,
+                &declaration,
+                value,
+            );
+    }
+
+    fn repeat_record(
+        character_id: &str,
+        display_name: &str,
+        level: f64,
+        online: bool,
+        selected: bool,
+    ) -> UiBindingValue {
+        UiBindingValue::Record(BTreeMap::from([
+            (
+                "character_id".to_owned(),
+                UiBindingValue::String(character_id.to_owned()),
+            ),
+            (
+                "display_name".to_owned(),
+                UiBindingValue::String(display_name.to_owned()),
+            ),
+            ("level".to_owned(), UiBindingValue::Number(level)),
+            ("online".to_owned(), UiBindingValue::Bool(online)),
+            ("selected".to_owned(), UiBindingValue::Bool(selected)),
+        ]))
     }
 
     fn state(app: &App, request_id: u64) -> UiDocumentBuildState {
@@ -8978,5 +9768,247 @@ mod tests {
             Some(&Visibility::Hidden)
         );
         assert!(hide_app.world().get::<ImageNode>(entity).is_none());
+    }
+
+    #[test]
+    fn repeat_reconciles_keyed_rows_preserves_entities_and_dispatches_item_ids() {
+        use bevy::ecs::message::MessageCursor;
+
+        let mut app = test_app();
+        register_repeat_action(&mut app);
+        set_repeat_binding(
+            &mut app,
+            "characters.state",
+            UiBindingValue::Enum("ready".to_owned()),
+        );
+        set_repeat_binding(
+            &mut app,
+            "characters.items",
+            UiBindingValue::List(vec![
+                repeat_record("char_alpha", "Alpha", 12.0, true, true),
+                repeat_record("char_beta", "Beta", 7.0, true, false),
+            ]),
+        );
+        app.world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(repeat_request(91)));
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .record(UiDocumentRequestId(91))
+                .unwrap()
+                .state,
+            UiDocumentBuildState::Committed
+        );
+
+        let rows = repeat_row_entities(&mut app);
+        assert_eq!(rows.len(), 2);
+        let alpha = rows["char_alpha"];
+        let beta = rows["char_beta"];
+        assert!(app.world().entity(alpha).contains::<SelectedButton>());
+
+        set_repeat_binding(
+            &mut app,
+            "characters.items",
+            UiBindingValue::List(vec![
+                repeat_record("char_beta", "Beta", 8.0, true, false),
+                repeat_record("char_alpha", "Alicia", 12.0, true, true),
+            ]),
+        );
+        app.update();
+        let reordered = repeat_row_entities(&mut app);
+        assert_eq!(reordered["char_alpha"], alpha);
+        assert_eq!(reordered["char_beta"], beta);
+        assert_eq!(
+            repeat_item_text(&mut app, "char_alpha", "item.display_name"),
+            "Alicia"
+        );
+
+        let repeat_host = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .node_entity(
+                app.world()
+                    .resource::<UiDocumentRuntime>()
+                    .active_instance("repeat_owner", &repeat_document_id())
+                    .unwrap(),
+                &UiNodeId::from_str("characters.repeat").unwrap(),
+            )
+            .unwrap();
+        let row_order = app
+            .world()
+            .get::<Children>(repeat_host)
+            .unwrap()
+            .iter()
+            .filter_map(|entity| {
+                app.world()
+                    .get::<UiDocumentActionMarker>(entity)
+                    .and_then(|marker| marker.item_key.clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(row_order, vec!["char_beta", "char_alpha"]);
+
+        let mut dispatches = MessageCursor::<UiActionDispatch>::default();
+        app.world_mut().write_message(UiButtonEvent {
+            entity: alpha,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+        let dispatch = dispatches
+            .read(app.world().resource::<Messages<UiActionDispatch>>())
+            .next()
+            .unwrap();
+        assert_eq!(dispatch.source_node.as_str(), "characters.row");
+        assert_eq!(
+            dispatch.params.get("character_id"),
+            Some(&UiActionValue::String("char_alpha".to_owned()))
+        );
+
+        set_repeat_binding(
+            &mut app,
+            "characters.items",
+            UiBindingValue::List(vec![repeat_record("char_beta", "Beta", 8.0, true, false)]),
+        );
+        app.update();
+        assert!(!repeat_row_entities(&mut app).contains_key("char_alpha"));
+        let (path, declaration) = repeat_declaration("item.character_id");
+        assert!(
+            app.world()
+                .resource::<UiBindingValues>()
+                .scoped_item_value(
+                    repeat_document_id().as_str(),
+                    "repeat_owner",
+                    "char_alpha",
+                    &path,
+                    &declaration,
+                )
+                .is_none()
+        );
+
+        app.world_mut()
+            .write_message(UiDocumentRuntimeCommand::CloseAllForOwner {
+                owner: "repeat_owner".to_owned(),
+            });
+        app.update();
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance("repeat_owner", &repeat_document_id())
+                .is_none()
+        );
+        assert!(
+            app.world()
+                .resource::<UiBindingValues>()
+                .scoped_item_value(
+                    repeat_document_id().as_str(),
+                    "repeat_owner",
+                    "char_beta",
+                    &path,
+                    &declaration,
+                )
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn repeat_reports_loading_empty_error_and_duplicate_keys_deterministically() {
+        use bevy::ecs::message::MessageCursor;
+
+        let mut app = test_app();
+        register_repeat_action(&mut app);
+        set_repeat_binding(
+            &mut app,
+            "characters.state",
+            UiBindingValue::Enum("loading".to_owned()),
+        );
+        app.world_mut()
+            .write_message(UiDocumentRuntimeCommand::Open(repeat_request(92)));
+        app.update();
+        assert_eq!(repeat_status_text(&mut app), "Loading characters");
+
+        set_repeat_binding(
+            &mut app,
+            "characters.state",
+            UiBindingValue::Enum("ready".to_owned()),
+        );
+        set_repeat_binding(
+            &mut app,
+            "characters.items",
+            UiBindingValue::List(Vec::new()),
+        );
+        app.update();
+        assert_eq!(repeat_status_text(&mut app), "No characters");
+
+        let mut diagnostics = MessageCursor::<UiBindingDiagnostic>::default();
+        set_repeat_binding(
+            &mut app,
+            "characters.items",
+            UiBindingValue::List(vec![
+                repeat_record("char_same", "First", 1.0, true, false),
+                repeat_record("char_same", "Second", 2.0, true, false),
+            ]),
+        );
+        app.update();
+        assert_eq!(repeat_status_text(&mut app), "Characters unavailable");
+        assert_eq!(
+            diagnostics
+                .read(app.world().resource::<Messages<UiBindingDiagnostic>>())
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec!["UI_REPEAT_KEY_DUPLICATE"]
+        );
+    }
+
+    fn repeat_row_entities(app: &mut App) -> BTreeMap<String, Entity> {
+        let mut query = app.world_mut().query::<(Entity, &UiDocumentActionMarker)>();
+        query
+            .iter(app.world())
+            .filter_map(|(entity, marker)| {
+                (marker.node_id.as_str() == "characters.row")
+                    .then(|| marker.item_key.clone().map(|key| (key, entity)))
+                    .flatten()
+            })
+            .collect()
+    }
+
+    fn register_repeat_action(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<UiActionRegistry>()
+            .register(
+                UiActionDescriptor::new(
+                    UiActionId::from_str("characters.choose").unwrap(),
+                    repeat_document_id(),
+                    "repeat_owner",
+                    UiRegisteredActionKind::BusinessCommand {
+                        target: "game.choose_character".to_owned(),
+                    },
+                )
+                .with_source(UiNodeId::from_str("characters.row").unwrap())
+                .with_param(
+                    "character_id",
+                    UiActionParamSchema::required(UiActionParamType::String { max_bytes: 128 }),
+                ),
+            )
+            .unwrap();
+    }
+
+    fn repeat_item_text(app: &mut App, item_key: &str, path: &str) -> String {
+        let path = UiBindingPath::from_str(path).unwrap();
+        let mut query = app.world_mut().query::<(&UiDocumentBoundText, &Text)>();
+        query
+            .iter(app.world())
+            .find_map(|(binding, text)| {
+                (binding.item_key.as_deref() == Some(item_key) && binding.path == path)
+                    .then(|| text.0.clone())
+            })
+            .unwrap()
+    }
+
+    fn repeat_status_text(app: &mut App) -> String {
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&Text, With<UiDocumentRepeatStatusMarker>>();
+        query.iter(app.world()).next().unwrap().0.clone()
     }
 }

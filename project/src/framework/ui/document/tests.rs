@@ -63,6 +63,14 @@ const TYPED_BINDING_CANONICAL_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/binding_typed_values.v1.canonical.json"
 ));
+const COLLECTION_CHARACTER_LIST_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/collection_character_list.v1.json"
+));
+const COLLECTION_CHARACTER_LIST_CANONICAL_DOCUMENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/ui/documents/fixtures/collection_character_list.v1.canonical.json"
+));
 const CONTENT_WRONG_ASSET_TYPE_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/invalid/content_wrong_asset_type.v1.json"
@@ -685,6 +693,48 @@ fn ui_document_typed_binding_fixture_has_a_canonical_golden() {
             .into_document(),
         document
     );
+}
+
+#[test]
+fn ui_document_collection_character_fixture_has_a_canonical_golden() {
+    let document = UiDocument::parse_and_validate_json(COLLECTION_CHARACTER_LIST_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let UiNode::Container {
+        children: root_children,
+        ..
+    } = &document.root
+    else {
+        panic!("collection fixture root must be a container");
+    };
+    let Some(repeat) = root_children.first().and_then(UiNode::repeat) else {
+        panic!("collection fixture must declare a repeat container");
+    };
+    assert_eq!(repeat.key, "character_id");
+    assert_eq!(repeat.item_bindings.len(), 5);
+    let canonical = document.to_canonical_json_pretty().unwrap();
+    maybe_update_golden(
+        "UPDATE_UI_DOCUMENT_GOLDENS",
+        "assets/ui/documents/fixtures/collection_character_list.v1.canonical.json",
+        &canonical,
+    );
+    assert_eq!(
+        canonical,
+        normalize_golden_line_endings(COLLECTION_CHARACTER_LIST_CANONICAL_DOCUMENT)
+    );
+}
+
+#[test]
+fn ui_document_collection_repeat_budget_is_reported_before_runtime() {
+    let mut value: Value = serde_json::from_str(COLLECTION_CHARACTER_LIST_DOCUMENT).unwrap();
+    value["bindings"]["characters.items"]["value_type"]["max_items"] =
+        json!(UI_REPEAT_MAX_ITEMS + 1);
+    let validation = UiDocument::validate_json(&value.to_string());
+    assert!(!validation.report.valid);
+    assert!(validation.report.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "UI_REPEAT_ITEM_BUDGET_EXCEEDED"
+            && diagnostic.field_path == "$.root.children[0].repeat.source"
+    }));
 }
 
 #[test]
@@ -2264,6 +2314,25 @@ fn generated_schema() -> String {
     let mut output = serde_json::to_string_pretty(&schema).unwrap();
     output.push('\n');
     output
+}
+
+#[test]
+#[ignore = "writes checked-in protocol goldens; run only when the Rust model changes"]
+fn regenerate_repeat_protocol_goldens() {
+    let document = UiDocument::parse_and_validate_json(COLLECTION_CHARACTER_LIST_DOCUMENT)
+        .unwrap()
+        .into_document();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fs::write(
+        root.join("assets/ui/documents/fixtures/collection_character_list.v1.canonical.json"),
+        document.to_canonical_json_pretty().unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        root.join("assets/ui/documents/schema/ui_document.v1.schema.json"),
+        generated_schema(),
+    )
+    .unwrap();
 }
 
 fn maybe_update_golden(variable: &str, relative_path: &str, contents: &str) {
