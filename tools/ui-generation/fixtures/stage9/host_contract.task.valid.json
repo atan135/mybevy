@@ -1,0 +1,56 @@
+{
+  "contract_version": 1,
+  "run_id": "stage9-host-contract-valid",
+  "page_purpose": {
+    "summary": "Exercise a pre-registered approved host without adding game code",
+    "audience": "UI developers",
+    "required_actions": ["continue through the registered action"]
+  },
+  "primary_reference": {
+    "reference_id": "primary",
+    "path": "../acceptance/reference.png",
+    "metadata": {
+      "original_size": { "width": 128, "height": 64 },
+      "orientation": "normal",
+      "color_space": "srgb",
+      "sha256": "3e6e037d35969b3e4413d35077cb81e142c9610e9ec09f5875e3e6ba361aa7db",
+      "provenance": {
+        "source": "Repository-authored fixture",
+        "authorization": "analysis_only",
+        "license_reference": "tools/ui-generation/fixtures/README.md"
+      }
+    }
+  },
+  "target_viewport": { "logical_width": 128.0, "logical_height": 64.0, "device_scale": 1.0 },
+  "visible_text": [{ "text": "Continue" }],
+  "must_preserve": [{ "description": "registered continuation action" }],
+  "allowed_changes": {
+    "areas": ["layout", "spacing", "decoration"],
+    "text_changes_allowed": false,
+    "protected_regions": ["continue control"]
+  },
+  "host_contract": {
+    "document_id": "approved.business_acceptance",
+    "owner": "approved_business_acceptance",
+    "route": "ui_approved_business_acceptance",
+    "version": 1,
+    "allowed_actions": ["approved.acceptance_continue"],
+    "allowed_bindings": [{
+      "scope": "owner",
+      "path": "acceptance.status",
+      "value_type": { "kind": "string" }
+    }],
+    "target_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+    "resource_catalog": "tools/ui-generation/assets/ui_asset_catalog.v1.json",
+    "forbidden_capabilities": [
+      "rust_code",
+      "scripts",
+      "arbitrary_actions",
+      "arbitrary_bindings",
+      "arbitrary_resources",
+      "business_protocol",
+      "cargo_configuration",
+      "android_configuration"
+    ]
+  }
+}

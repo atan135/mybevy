@@ -1,8 +1,13 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use ui_generation::{
-    audit::{AuditVisualExpectation, parse_page_states, run_document_audit_command},
-    boundary::verify_dependency_boundary,
+    audit::{
+        AuditVisualExpectation, parse_page_states, run_document_audit_command_with_host_contract,
+    },
+    boundary::{UiOnlyChangeManifest, verify_dependency_boundary, verify_ui_only_change_manifest},
     ci_security::{check_ci_security_contract, run_ci_security_fixture},
     closed_loop_apply::{apply_closed_loop_patches, preview_closed_loop_apply},
     closed_loop_fix_plan::{
@@ -10,7 +15,9 @@ use ui_generation::{
         write_closed_loop_fix_plan,
     },
     closed_loop_generation::{GenerationMode, run_closed_loop_generation},
+    contract::GenerationTask,
     evaluation::run_fixture_evaluation,
+    host_contract::{ResolvedGenerationHostContract, resolve_repository_host_contract},
     inspect_task,
     lifecycle::CancellationToken,
     offline::{OfflineFixtureProfile, run_offline_fixture_generation},
@@ -18,7 +25,10 @@ use ui_generation::{
         ArtifactCleaner, ArtifactRetentionInventory, run_offline_operations_stress_fixture,
     },
     preprocess::preprocess_task,
-    preview::{CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command, run_preview},
+    preview::{
+        CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command_with_host_contract,
+        run_preview,
+    },
     promotion::{
         create_promotion_decision_template, create_promotion_plan, promote,
         record_promotion_decisions,
@@ -59,6 +69,12 @@ enum Command {
         #[arg(long)]
         repository_root: PathBuf,
     },
+    /// Rejects a declared UI-only diff that reaches Rust, Cargo, Android, protocol, or other
+    /// non-promotion paths.
+    CheckUiOnlyChanges {
+        #[arg(long)]
+        changes: PathBuf,
+    },
     /// Verifies the repository CI workflow and five-mode security contract without using secrets.
     CheckCiSecurityContract {
         #[arg(long)]
@@ -77,6 +93,9 @@ enum Command {
         output_directory: PathBuf,
         #[arg(long)]
         repository_root: PathBuf,
+        /// Generation task selecting the production host contract for this staging document.
+        #[arg(long)]
+        host_contract_task: Option<PathBuf>,
         #[arg(long, default_value_t = 390)]
         width: u32,
         #[arg(long, default_value_t = 844)]
@@ -90,6 +109,9 @@ enum Command {
         output_directory: PathBuf,
         #[arg(long)]
         repository_root: PathBuf,
+        /// Generation task selecting the production host contract for this staging document.
+        #[arg(long)]
+        host_contract_task: Option<PathBuf>,
         /// Comma-separated closed page-state IDs. Defaults to `initial`.
         #[arg(long)]
         states: Option<String>,
@@ -267,6 +289,25 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             serde_json::to_value(verify_dependency_boundary(&repository_root)?)
                 .expect("dependency boundary report is serializable")
         }
+        Command::CheckUiOnlyChanges { changes } => {
+            let bytes = fs::read(&changes).map_err(|_| {
+                ui_generation::lifecycle::TaskFailure::invalid(
+                    "UI-only change manifest cannot be read",
+                )
+            })?;
+            if bytes.is_empty() || bytes.len() > 1024 * 1024 {
+                return Err(ui_generation::lifecycle::TaskFailure::invalid(
+                    "UI-only change manifest must be a bounded nonempty JSON file",
+                ));
+            }
+            let manifest: UiOnlyChangeManifest = serde_json::from_slice(&bytes).map_err(|_| {
+                ui_generation::lifecycle::TaskFailure::invalid(
+                    "UI-only change manifest must match the strict schema",
+                )
+            })?;
+            serde_json::to_value(verify_ui_only_change_manifest(&manifest)?)
+                .expect("UI-only change boundary report is serializable")
+        }
         Command::CheckCiSecurityContract { repository_root } => {
             serde_json::to_value(check_ci_security_contract(&repository_root)?)
                 .expect("CI security contract report is serializable")
@@ -279,15 +320,19 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             document,
             output_directory,
             repository_root,
+            host_contract_task,
             width,
             height,
         } => {
-            let plan = prepare_preview_command(
+            let host_contract =
+                resolve_host_contract_task(host_contract_task.as_deref(), &repository_root)?;
+            let plan = prepare_preview_command_with_host_contract(
                 &repository_root,
                 &document,
                 &output_directory,
                 width,
                 height,
+                host_contract.as_ref(),
             )?;
             let result = run_preview(plan, &CommandPreviewExecutor, &CancellationToken::default());
             if result.status == PreviewRunStatus::Failed {
@@ -306,6 +351,7 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             document,
             output_directory,
             repository_root,
+            host_contract_task,
             states,
             require_distinct_from_initial,
         } => {
@@ -316,12 +362,15 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
                     AuditVisualExpectation::distinct_from_initial(parse_page_states(Some(&input))?)
                 },
             )?;
-            let result = run_document_audit_command(
+            let host_contract =
+                resolve_host_contract_task(host_contract_task.as_deref(), &repository_root)?;
+            let result = run_document_audit_command_with_host_contract(
                 &repository_root,
                 &document,
                 &output_directory,
                 &states,
                 &visual_expectation,
+                host_contract.as_ref(),
             )?;
             if matches!(
                 result.status,
@@ -495,6 +544,22 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
         serde_json::to_string_pretty(&output).expect("CLI report is serializable")
     );
     Ok(())
+}
+
+fn resolve_host_contract_task(
+    task_path: Option<&Path>,
+    repository_root: &Path,
+) -> Result<Option<ResolvedGenerationHostContract>, ui_generation::lifecycle::TaskFailure> {
+    let Some(task_path) = task_path else {
+        return Ok(None);
+    };
+    let task = GenerationTask::load_json(task_path)?;
+    let request = task.host_contract.ok_or_else(|| {
+        ui_generation::lifecycle::TaskFailure::invalid(
+            "preview host contract task must declare $.host_contract",
+        )
+    })?;
+    resolve_repository_host_contract(repository_root, &request).map(Some)
 }
 
 fn parse_generation_mode(value: &str) -> Result<GenerationMode, String> {

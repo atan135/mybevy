@@ -3192,7 +3192,7 @@ mod tests {
     #[test]
     fn repository_catalog_is_complete_and_searches_by_stable_id_metadata() {
         let catalog = AssetCatalog::load_repository(&repository_root()).unwrap();
-        assert_eq!(catalog.assets.len(), 25);
+        assert_eq!(catalog.assets.len(), 26);
         assert!(catalog.resolve("ui.icon.close").is_some());
         assert!(catalog.resolve("ui/icons/close.png").is_none());
         let matches = catalog

@@ -2438,6 +2438,7 @@ mod tests {
                 screenshot_path: directory.join("preview.png"),
                 result_path: directory.join("preview-result.json"),
                 log_path: directory.join("preview.log"),
+                approved_registration_path: None,
                 width: 390,
                 height: 844,
                 page_state: "initial".to_owned(),
@@ -2445,6 +2446,8 @@ mod tests {
                 stable_frames: 30,
                 process_timeout_ms: 120_000,
                 canonical_document_sha256: "c".repeat(64),
+                host_contract_version: None,
+                approved_registration_json: None,
             },
             process: PreviewProcessRecord {
                 exit_code: Some(0),
@@ -2497,6 +2500,7 @@ mod tests {
                 screenshot_path,
                 result_path,
                 log_path,
+                approved_registration_path: None,
                 width: 390,
                 height: 844,
                 page_state: "initial".to_owned(),
@@ -2504,6 +2508,8 @@ mod tests {
                 stable_frames: 30,
                 process_timeout_ms: 120_000,
                 canonical_document_sha256,
+                host_contract_version: None,
+                approved_registration_json: None,
             },
             process: PreviewProcessRecord {
                 exit_code: Some(0),

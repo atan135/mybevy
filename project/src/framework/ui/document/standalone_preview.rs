@@ -16,12 +16,14 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
-    UI_DOCUMENT_MAX_BYTES, UiAssetKind, UiAssetSource, UiDocument, UiDocumentBuildState,
-    UiDocumentId, UiDocumentInputMode, UiDocumentLayer, UiDocumentPanel, UiDocumentPlatform,
+    UI_DOCUMENT_MAX_BYTES, UiActionDescriptor, UiActionId, UiActionRegistry, UiAssetKind,
+    UiAssetSource, UiBindingType, UiDocument, UiDocumentBuildState, UiDocumentId,
+    UiDocumentInputMode, UiDocumentLayer, UiDocumentPanel, UiDocumentPlatform,
     UiDocumentPreviewCommand, UiDocumentPreviewRegistration, UiDocumentReloadEvent,
     UiDocumentReloadStatus, UiDocumentRequestId, UiDocumentRuntime, UiDocumentRuntimeSystems,
-    UiDocumentSourcePath, UiDocumentSourceRoot, UiPageState, UiSafeAreaClass, UiTargetProfile,
-    ValidatedUiDocument,
+    UiDocumentSourcePath, UiDocumentSourceRoot, UiHostBindingKey, UiNodeId, UiPageState,
+    UiRegisteredActionKind, UiSafeAreaClass, UiTargetProfile, ValidatedUiDocument,
+    parse_approved_document_registration,
 };
 use crate::framework::ui::{
     audit::{UiScreenshotCommand, UiScreenshotEvent, UiScreenshotFailureReason},
@@ -46,6 +48,7 @@ pub struct UiDocumentStandalonePreviewOptions {
     pub page_state: UiPageState,
     pub timeout_frames: u32,
     pub stable_frames: u32,
+    pub approved_registration_path: Option<PathBuf>,
 }
 
 impl UiDocumentStandalonePreviewOptions {
@@ -65,6 +68,7 @@ impl UiDocumentStandalonePreviewOptions {
         let mut page_state = UiPageState::initial();
         let mut timeout_frames = 1200;
         let mut stable_frames = DEFAULT_STABLE_FRAMES;
+        let mut approved_registration_path = None;
         while let Some(flag) = arguments.next() {
             let flag = flag.to_str().ok_or_else(|| {
                 setup_error(
@@ -108,6 +112,9 @@ impl UiDocumentStandalonePreviewOptions {
                 }
                 "--timeout-frames" => timeout_frames = parse_u32(value, "timeout frames")?,
                 "--stable-frames" => stable_frames = parse_u32(value, "stable frames")?,
+                "--approved-registration" => {
+                    approved_registration_path = Some(PathBuf::from(value))
+                }
                 _ => {
                     return Err(setup_error(
                         UiDocumentStandalonePreviewFailureKind::ConfigurationInvalid,
@@ -126,6 +133,7 @@ impl UiDocumentStandalonePreviewOptions {
             page_state,
             timeout_frames,
             stable_frames,
+            approved_registration_path,
         };
         options.validate()?;
         Ok(options)
@@ -217,6 +225,8 @@ struct PreviewResult {
     stable_frames: u32,
     screenshot_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    host_contract_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     captured_size: Option<(u32, u32)>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure: Option<UiDocumentStandalonePreviewError>,
@@ -229,6 +239,18 @@ struct PreviewConfig {
     validated: ValidatedUiDocument,
     document_id: UiDocumentId,
     canonical_document_sha256: String,
+    owner: String,
+    host_bindings: std::collections::BTreeMap<UiHostBindingKey, UiBindingType>,
+    host_actions: Vec<(UiActionId, std::collections::BTreeSet<UiNodeId>)>,
+    host_contract_version: Option<u32>,
+}
+
+#[derive(Default)]
+struct PreviewHostContract {
+    owner: String,
+    bindings: std::collections::BTreeMap<UiHostBindingKey, UiBindingType>,
+    actions: Vec<(UiActionId, std::collections::BTreeSet<UiNodeId>)>,
+    version: Option<u32>,
 }
 
 #[derive(Default, Resource)]
@@ -250,6 +272,8 @@ pub fn run_ui_document_standalone_preview(
     let (source_json, validated, document_id, canonical_document_sha256) =
         load_preview_document(&options.document_path)?;
     validate_packaged_resources(validated.document())?;
+    let host_contract =
+        load_preview_host_contract(options.approved_registration_path.as_deref(), &source_json)?;
 
     let asset_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
     let mut app = App::new();
@@ -277,6 +301,14 @@ pub fn run_ui_document_standalone_preview(
         validated,
         document_id,
         canonical_document_sha256,
+        owner: host_contract
+            .owner
+            .is_empty()
+            .then_some(PREVIEW_OWNER.to_owned())
+            .unwrap_or(host_contract.owner),
+        host_bindings: host_contract.bindings,
+        host_actions: host_contract.actions,
+        host_contract_version: host_contract.version,
     })
     .init_resource::<PreviewDriver>()
     .init_resource::<PreviewAssetHandles>()
@@ -287,6 +319,69 @@ pub fn run_ui_document_standalone_preview(
     );
     app.run();
     Ok(())
+}
+
+fn load_preview_host_contract(
+    registration_path: Option<&Path>,
+    source_json: &str,
+) -> Result<PreviewHostContract, UiDocumentStandalonePreviewError> {
+    let Some(path) = registration_path else {
+        return Ok(PreviewHostContract::default());
+    };
+    let metadata = fs::metadata(path).map_err(|_| {
+        setup_error(
+            UiDocumentStandalonePreviewFailureKind::ConfigurationInvalid,
+            "UI_DOCUMENT_PREVIEW_APPROVED_REGISTRATION_UNREADABLE",
+            "approved preview registration is unavailable",
+        )
+    })?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > UI_DOCUMENT_MAX_BYTES as u64 {
+        return Err(setup_error(
+            UiDocumentStandalonePreviewFailureKind::ConfigurationInvalid,
+            "UI_DOCUMENT_PREVIEW_APPROVED_REGISTRATION_INVALID",
+            "approved preview registration must be a bounded regular file",
+        ));
+    }
+    let source = fs::read_to_string(path).map_err(|_| {
+        setup_error(
+            UiDocumentStandalonePreviewFailureKind::ConfigurationInvalid,
+            "UI_DOCUMENT_PREVIEW_APPROVED_REGISTRATION_UNREADABLE",
+            "approved preview registration is not UTF-8 JSON",
+        )
+    })?;
+    let registration = parse_approved_document_registration(&source).map_err(|error| {
+        setup_error(
+            UiDocumentStandalonePreviewFailureKind::ConfigurationInvalid,
+            error.code(),
+            "approved preview registration failed the production parser",
+        )
+    })?;
+    registration
+        .validate_document_source_contract(source_json)
+        .map_err(|error| {
+            setup_error(
+                UiDocumentStandalonePreviewFailureKind::DocumentInvalid,
+                error.code(),
+                "preview document violates its approved production host contract",
+            )
+        })?;
+    let contract = registration.host_contract().ok_or_else(|| {
+        setup_error(
+            UiDocumentStandalonePreviewFailureKind::ConfigurationInvalid,
+            "UI_DOCUMENT_PREVIEW_APPROVED_HOST_REQUIRED",
+            "approved preview registration must include a production host contract",
+        )
+    })?;
+    Ok(PreviewHostContract {
+        owner: registration.owner().to_owned(),
+        bindings: contract.bindings().clone(),
+        actions: contract
+            .actions()
+            .iter()
+            .map(|(id, sources)| (id.clone(), sources.clone()))
+            .collect(),
+        version: Some(contract.version()),
+    })
 }
 
 fn load_preview_document(
@@ -391,6 +486,7 @@ fn setup_preview(
     mut commands: Commands,
     config: Res<PreviewConfig>,
     asset_server: Res<AssetServer>,
+    mut action_registry: ResMut<UiActionRegistry>,
     mut preview_commands: MessageWriter<UiDocumentPreviewCommand>,
 ) {
     commands.spawn((
@@ -421,10 +517,25 @@ fn setup_preview(
         platform(),
     )
     .expect("validated preview dimensions are positive");
+    for (id, sources) in &config.host_actions {
+        action_registry
+            .register(
+                UiActionDescriptor::new(
+                    id.clone(),
+                    config.document_id.clone(),
+                    config.owner.clone(),
+                    UiRegisteredActionKind::BusinessCommand {
+                        target: "standalone.preview".to_owned(),
+                    },
+                )
+                .with_sources(sources.iter().cloned()),
+            )
+            .expect("the production-approved standalone preview action contract is unique");
+    }
     preview_commands.write(UiDocumentPreviewCommand::Register(
         UiDocumentPreviewRegistration {
             document_id: config.document_id.clone(),
-            owner: PREVIEW_OWNER.to_owned(),
+            owner: config.owner.clone(),
             source_path: UiDocumentSourcePath::new(
                 UiDocumentSourceRoot::Authoring,
                 "stage8/standalone-preview.json",
@@ -438,7 +549,7 @@ fn setup_preview(
             // flows through the normal declarative effective-document merge.
             page_state: config.options.page_state.clone(),
             owner_alive: true,
-            host_bindings: default(),
+            host_bindings: config.host_bindings.clone(),
             watch: false,
             open_on_register: true,
             audit_profiles: vec!["standalone".to_owned()],
@@ -466,7 +577,7 @@ fn drive_preview(
     driver.elapsed_frames = driver.elapsed_frames.saturating_add(1);
 
     for event in reload_events.read() {
-        if event.0.document_id != config.document_id || event.0.owner != PREVIEW_OWNER {
+        if event.0.document_id != config.document_id || event.0.owner != config.owner {
             continue;
         }
         if let Some(request_id) = event.0.request_id {
@@ -666,6 +777,7 @@ fn finish_preview(
             .screenshot_path
             .to_string_lossy()
             .into_owned(),
+        host_contract_version: config.host_contract_version,
         captured_size,
         failure,
     };
@@ -881,6 +993,7 @@ mod tests {
             elapsed_frames: 60,
             stable_frames: 30,
             screenshot_path: "preview.png".to_owned(),
+            host_contract_version: None,
             captured_size: Some((390, 844)),
             failure: None,
         };

@@ -1,0 +1,8 @@
+{
+  "paths": [
+    "project/src/game/screens/auth/login.rs",
+    "project/Cargo.toml",
+    "android/app/build.gradle.kts",
+    "project/src/game/myserver/protocol.rs"
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "document_id": "stage9.over_budget_list",
+  "bindings": {
+    "characters.items": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "list",
+        "item": {
+          "kind": "record",
+          "fields": {
+            "character_id": { "kind": "string" },
+            "display_name": { "kind": "string" },
+            "level": { "kind": "number" },
+            "online": { "kind": "bool" },
+            "selected": { "kind": "bool" }
+          }
+        },
+        "max_items": 65535
+      }
+    },
+    "characters.state": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "enum",
+        "values": ["loading", "ready", "error"]
+      }
+    },
+    "item.character_id": { "scope": "item", "value_type": { "kind": "string" } },
+    "item.display_name": { "scope": "item", "value_type": { "kind": "string" } },
+    "item.level": { "scope": "item", "value_type": { "kind": "number" } },
+    "item.online": { "scope": "item", "value_type": { "kind": "bool" } },
+    "item.selected": { "scope": "item", "value_type": { "kind": "bool" } }
+  },
+  "root": {
+    "type": "container",
+    "id": "characters.root",
+    "children": [
+      {
+        "type": "container",
+        "id": "characters.repeat",
+        "repeat": {
+          "source": "characters.items",
+          "key": "character_id",
+          "item_bindings": {
+            "item.character_id": "character_id",
+            "item.display_name": "display_name",
+            "item.level": "level",
+            "item.online": "online",
+            "item.selected": "selected"
+          },
+          "state": "characters.state",
+          "loading": { "literal": "Loading characters" },
+          "empty": { "literal": "No characters" },
+          "error": { "literal": "Characters unavailable" }
+        },
+        "children": [
+          {
+            "type": "button",
+            "id": "characters.row",
+            "label": { "binding_path": "item.display_name", "fallback": "Character" },
+            "style": { "bindings": { "visibility": "item.online" } },
+            "component": { "bindings": { "selected": "item.selected" } },
+            "on_click": {
+              "action": "characters.choose",
+              "params": { "character_id": { "kind": "item_binding", "value": "item.character_id" } }
+            }
+          },
+          {
+            "type": "text",
+            "id": "characters.level",
+            "content": {
+              "binding_path": "item.level",
+              "fallback": "0",
+              "format": { "kind": "number", "min_fraction_digits": 0, "max_fraction_digits": 0, "grouping": false }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

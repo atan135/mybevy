@@ -12,10 +12,14 @@ use crate::{
     asset_strategy::{AssetCatalog, build_asset_strategy},
     contract::GenerationTask,
     generation::{GenerationConfiguration, GenerationParameters, prepare_generation_request},
+    host_contract::resolve_repository_host_contract,
     lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
     planning::plan_analysis,
     preprocess::{ArtifactKind, ReferencePreprocessManifest, preprocess_task},
-    preview::{CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command, run_preview},
+    preview::{
+        CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command_with_host_contract,
+        run_preview,
+    },
     provider::{
         FixtureProvider, Provider, ProviderExecution, ProviderExecutionPolicy, ProviderId,
         ProviderImage, ProviderRegistry, ProviderRunner,
@@ -231,17 +235,23 @@ pub fn run_offline_fixture_generation(
     write_json_new(&asset_strategy_path, &asset_strategy)?;
 
     let generation_parameters = GenerationParameters::new(0, 262_144, Some(7))?;
+    let mut generation_configuration = GenerationConfiguration::new(
+        document_id,
+        GENERATION_MODEL_ID,
+        GENERATION_PROMPT_VERSION,
+        generation_parameters,
+    )?;
+    if let Some(host_request) = &task.host_contract {
+        generation_configuration = generation_configuration.with_host_contract(
+            resolve_repository_host_contract(&repository_root, host_request)?,
+        )?;
+    }
     let prepared = prepare_generation_request(
         &analysis,
         &plan,
         &asset_strategy,
         &catalog,
-        GenerationConfiguration::new(
-            document_id,
-            GENERATION_MODEL_ID,
-            GENERATION_PROMPT_VERSION,
-            generation_parameters,
-        )?,
+        generation_configuration,
     )?;
     let generation_provider_path = repository_root
         .join("tools/ui-generation/fixtures/providers")
@@ -313,12 +323,13 @@ pub fn run_offline_fixture_generation(
 
     let preview_width = viewport_dimension(viewport.logical_width, "logical_width")?;
     let preview_height = viewport_dimension(viewport.logical_height, "logical_height")?;
-    let preview_plan = prepare_preview_command(
+    let preview_plan = prepare_preview_command_with_host_contract(
         &repository_root,
         &document_path,
         &run_root.join("preview/process"),
         preview_width,
         preview_height,
+        prepared.host_contract(),
     )?;
     let preview = run_preview(preview_plan, &CommandPreviewExecutor, cancellation);
 

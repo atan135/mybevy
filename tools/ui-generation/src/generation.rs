@@ -8,6 +8,7 @@ use crate::{
         CatalogAssetKind, MAX_ASSET_ENTRIES,
     },
     contract::GenerationTask,
+    host_contract::ResolvedGenerationHostContract,
     lifecycle::{TaskFailure, TaskFailureKind},
     planning::{
         MAX_PLAN_COMPONENTS, MAX_PLAN_TOKENS, PLANNING_PROTOCOL_VERSION, RecommendationScope,
@@ -85,6 +86,7 @@ pub struct GenerationConfiguration {
     model_id: String,
     prompt_version: String,
     parameters: GenerationParameters,
+    host_contract: Option<ResolvedGenerationHostContract>,
 }
 
 impl GenerationConfiguration {
@@ -129,7 +131,23 @@ impl GenerationConfiguration {
             model_id,
             prompt_version,
             parameters,
+            host_contract: None,
         })
+    }
+
+    /// Attaches a contract already resolved from the game-owned catalog. There is deliberately no
+    /// constructor that accepts model-provided action/binding names.
+    pub fn with_host_contract(
+        mut self,
+        host_contract: ResolvedGenerationHostContract,
+    ) -> Result<Self, TaskFailure> {
+        if self.document_id != host_contract.document_id {
+            return Err(TaskFailure::invalid(
+                "generation configuration document_id must match its resolved host contract",
+            ));
+        }
+        self.host_contract = Some(host_contract);
+        Ok(self)
     }
 }
 
@@ -141,6 +159,8 @@ pub struct SourceMapEntry {
     pub reference_id: String,
     pub evidence_ids: Vec<String>,
     pub document_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_contract_version: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -221,6 +241,8 @@ pub struct GenerationRepairPolicySnapshot {
     pub allow_hidden_states: bool,
     pub allow_responsive_variants: bool,
     pub budget_profile: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_contract: Option<ResolvedGenerationHostContract>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -235,6 +257,8 @@ pub struct GenerationTrace {
     pub parameters: GenerationParameters,
     pub server_request_id: String,
     pub canonical_document_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_contract_version: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -272,6 +296,8 @@ struct GenerationPolicy<'a> {
     allow_visible_states: bool,
     allow_responsive_variants: bool,
     protocol_fields_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_contract: Option<&'a ResolvedGenerationHostContract>,
 }
 
 #[derive(Serialize)]
@@ -340,18 +366,23 @@ impl PreparedGenerationRequest {
                 .iter()
                 .map(|asset| (asset.asset_id.clone(), asset.path.clone()))
                 .collect(),
-            allow_actions: false,
-            allow_bindings: false,
+            allow_actions: self.configuration.host_contract.is_some(),
+            allow_bindings: self.configuration.host_contract.is_some(),
             allow_i18n_keys: false,
             allow_hidden_states: self.visible_series.is_some(),
             allow_responsive_variants: self.visible_series.is_some(),
             budget_profile: project::framework::ui::document::tooling::UI_DOCUMENT_BUDGET_PROFILE
                 .to_owned(),
+            host_contract: self.configuration.host_contract.clone(),
         }
     }
 
     pub(crate) fn run_id(&self) -> &str {
         &self.analysis.run_id
+    }
+
+    pub(crate) fn host_contract(&self) -> Option<&ResolvedGenerationHostContract> {
+        self.configuration.host_contract.as_ref()
     }
 }
 
@@ -434,12 +465,13 @@ fn prepare_generation_request_with_series(
             source_map: &source_map,
             text_decisions: &text_decisions,
             allowed_assets: &allowed_assets,
-            allow_actions: false,
-            allow_bindings: false,
+            allow_actions: configuration.host_contract.is_some(),
+            allow_bindings: configuration.host_contract.is_some(),
             allow_i18n_keys: false,
             allow_visible_states: visible_series.is_some(),
             allow_responsive_variants: visible_series.is_some(),
             protocol_fields_only: true,
+            host_contract: configuration.host_contract.as_ref(),
         },
         parameters: &configuration.parameters,
     };
@@ -641,6 +673,11 @@ pub(crate) fn finalize_staging_generation(
         .iter()
         .map(|entry| SourceMapEntry {
             document_path: document_paths[&entry.node_id].clone(),
+            host_contract_version: prepared
+                .configuration
+                .host_contract
+                .as_ref()
+                .map(|contract| contract.version),
             ..entry.clone()
         })
         .collect();
@@ -671,6 +708,11 @@ pub(crate) fn finalize_staging_generation(
             parameters: prepared.configuration.parameters.clone(),
             server_request_id,
             canonical_document_sha256,
+            host_contract_version: prepared
+                .configuration
+                .host_contract
+                .as_ref()
+                .map(|contract| contract.version),
         },
         validation_report: validation.formal_report,
         visible_series,
@@ -798,6 +840,7 @@ fn derive_source_map(
             reference_id: element.bounding_box.reference_id.clone(),
             evidence_ids: element.evidence_ids.clone(),
             document_path: String::new(),
+            host_contract_version: None,
         })
         .collect::<Vec<_>>();
     entries.sort();
@@ -934,7 +977,14 @@ fn validate_document_policy(
             "generation cannot infer hidden states or responsive variants from one visible state",
         ));
     }
-    reject_business_fields(document)?;
+    match &prepared.configuration.host_contract {
+        Some(host_contract) => {
+            let source = serde_json::to_string(document)
+                .map_err(|_| malformed("host-contracted document cannot be serialized"))?;
+            host_contract.validate_document_source(&source)?;
+        }
+        None => reject_business_fields(document)?,
+    }
     validate_assets(object, prepared)?;
     let root = object
         .get("root")

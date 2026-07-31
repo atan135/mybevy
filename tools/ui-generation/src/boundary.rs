@@ -18,6 +18,20 @@ pub struct DependencyBoundaryReport {
     pub tool_lock_contains_project_package: bool,
     pub crates_are_independent_workspaces: bool,
     pub standalone_preview_target_is_feature_gated: bool,
+    pub ui_only_generation_write_scope_is_closed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiOnlyChangeManifest {
+    pub paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiOnlyChangeBoundaryReport {
+    pub allowed_paths: Vec<String>,
+    pub blocked_paths: Vec<String>,
 }
 
 pub fn verify_dependency_boundary(
@@ -45,6 +59,7 @@ pub fn verify_dependency_boundary(
     let crates_are_independent_workspaces = project_workspace != tool_workspace;
     let standalone_preview_target_is_feature_gated =
         preview_target_is_feature_gated(&parse_toml_file(&project_manifest)?);
+    let ui_only_generation_write_scope_is_closed = ui_only_generation_write_scope_is_closed();
 
     validate_boundary_flags(
         project_dependency_graph_excludes_tool,
@@ -53,6 +68,7 @@ pub fn verify_dependency_boundary(
         tool_lock_contains_project_package,
         crates_are_independent_workspaces,
         standalone_preview_target_is_feature_gated,
+        ui_only_generation_write_scope_is_closed,
     )?;
 
     Ok(DependencyBoundaryReport {
@@ -64,6 +80,44 @@ pub fn verify_dependency_boundary(
         tool_lock_contains_project_package,
         crates_are_independent_workspaces,
         standalone_preview_target_is_feature_gated,
+        ui_only_generation_write_scope_is_closed,
+    })
+}
+
+/// Validates a reviewable list of files produced by a UI-only task or promotion dry-run.
+/// It rejects source, Cargo, Android, protocol, and unapproved asset destinations by default.
+pub fn verify_ui_only_change_manifest(
+    manifest: &UiOnlyChangeManifest,
+) -> Result<UiOnlyChangeBoundaryReport, TaskFailure> {
+    if manifest.paths.is_empty() || manifest.paths.len() > 512 {
+        return Err(boundary_failure(
+            "UI-only change manifest must contain 1-512 changed paths",
+        ));
+    }
+    let mut paths = BTreeSet::new();
+    let mut allowed_paths = Vec::new();
+    let mut blocked_paths = Vec::new();
+    for path in &manifest.paths {
+        if !safe_repository_relative_path(path) || !paths.insert(path.as_str()) {
+            return Err(boundary_failure(
+                "UI-only change manifest contains an unsafe or duplicate path",
+            ));
+        }
+        if is_ui_only_generation_path(path) {
+            allowed_paths.push(path.clone());
+        } else {
+            blocked_paths.push(path.clone());
+        }
+    }
+    if !blocked_paths.is_empty() {
+        return Err(boundary_failure(format!(
+            "UI-only generation may not modify protected files: {}",
+            blocked_paths.join(", ")
+        )));
+    }
+    Ok(UiOnlyChangeBoundaryReport {
+        allowed_paths,
+        blocked_paths,
     })
 }
 
@@ -296,6 +350,7 @@ fn validate_boundary_flags(
     tool_lock_contains_project_package: bool,
     crates_are_independent_workspaces: bool,
     standalone_preview_target_is_feature_gated: bool,
+    ui_only_generation_write_scope_is_closed: bool,
 ) -> Result<(), TaskFailure> {
     if project_dependency_graph_excludes_tool
         && tool_dependency_graph_reaches_project
@@ -303,13 +358,88 @@ fn validate_boundary_flags(
         && tool_lock_contains_project_package
         && crates_are_independent_workspaces
         && standalone_preview_target_is_feature_gated
+        && ui_only_generation_write_scope_is_closed
     {
         Ok(())
     } else {
         Err(boundary_failure(format!(
-            "dependency direction must be ui-generation -> project with independent Cargo roots and a feature-gated preview target (project_graph_excludes_tool={project_dependency_graph_excludes_tool}, tool_graph_reaches_project={tool_dependency_graph_reaches_project}, project_lock_excludes_tool={project_lock_excludes_tool_package}, tool_lock_contains_project={tool_lock_contains_project_package}, independent={crates_are_independent_workspaces}, preview_feature_gated={standalone_preview_target_is_feature_gated})"
+            "dependency direction must be ui-generation -> project with independent Cargo roots, a feature-gated preview target, and a closed UI-only write scope (project_graph_excludes_tool={project_dependency_graph_excludes_tool}, tool_graph_reaches_project={tool_dependency_graph_reaches_project}, project_lock_excludes_tool={project_lock_excludes_tool_package}, tool_lock_contains_project={tool_lock_contains_project_package}, independent={crates_are_independent_workspaces}, preview_feature_gated={standalone_preview_target_is_feature_gated}, ui_only_write_scope={ui_only_generation_write_scope_is_closed})"
         )))
     }
+}
+
+fn ui_only_generation_write_scope_is_closed() -> bool {
+    [
+        "project/assets/ui/documents/approved/example/document.v1.json",
+        "project/assets/ui/documents/approved/example/promotion.v1.json",
+        "project/assets/ui/documents/approved/example/catalog.v1.json",
+        "project/assets/ui/documents/approved/example/LICENSES.md",
+        "project/assets/ui/documents/approved/example/assets/generated.png",
+        "tools/ui-generation/fixtures/stage9/reflow.valid.json",
+    ]
+    .into_iter()
+    .all(is_ui_only_generation_path)
+        && [
+            "project/src/game/screens/auth/login.rs",
+            "project/Cargo.toml",
+            "android/app/build.gradle.kts",
+            "project/src/game/myserver/protocol.rs",
+        ]
+        .into_iter()
+        .all(|path| !is_ui_only_generation_path(path))
+}
+
+fn is_ui_only_generation_path(path: &str) -> bool {
+    path.starts_with("tools/ui-generation/fixtures/stage9/") || is_approved_promotion_path(path)
+}
+
+fn is_approved_promotion_path(path: &str) -> bool {
+    let Some(relative) = path.strip_prefix("project/assets/ui/documents/approved/") else {
+        return false;
+    };
+    let mut parts = relative.split('/');
+    let Some(folder) = parts.next() else {
+        return false;
+    };
+    if !safe_label(folder) {
+        return false;
+    }
+    let remainder = parts.collect::<Vec<_>>();
+    match remainder.as_slice() {
+        ["document.v1.json" | "promotion.v1.json" | "catalog.v1.json" | "LICENSES.md"] => true,
+        ["assets", file] => safe_resource_file_name(file),
+        _ => false,
+    }
+}
+
+fn safe_repository_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.is_ascii()
+        && !path.contains(['\\', ':', '\0'])
+        && !path.contains("//")
+        && Path::new(path)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn safe_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn safe_resource_file_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_uppercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'.' | b'_' | b'-')
+        })
+        && !value.starts_with('.')
 }
 
 fn preview_target_is_feature_gated(document: &Value) -> bool {
@@ -402,6 +532,7 @@ mod tests {
             true,
             true,
             true,
+            true,
         )
         .unwrap_err();
         assert_eq!(failure.kind(), TaskFailureKind::DependencyBoundaryViolation);
@@ -462,5 +593,33 @@ mod tests {
             .status()
             .unwrap();
         assert!(output.success());
+    }
+
+    #[test]
+    fn ui_only_change_manifest_allows_only_promotable_resources_and_fixture_evidence() {
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/stage9");
+        let valid: UiOnlyChangeManifest = serde_json::from_slice(
+            &fs::read(fixture_root.join("reflow.ui_only_changes.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            verify_ui_only_change_manifest(&valid)
+                .unwrap()
+                .allowed_paths,
+            valid.paths
+        );
+
+        let protected: UiOnlyChangeManifest = serde_json::from_slice(
+            &fs::read(fixture_root.join("failure.protected_paths.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(verify_ui_only_change_manifest(&protected).is_err());
+
+        assert!(
+            verify_ui_only_change_manifest(&UiOnlyChangeManifest {
+                paths: vec!["tools/ui-generation/fixtures/stage9//reflow.valid.json".to_owned()],
+            })
+            .is_err()
+        );
     }
 }

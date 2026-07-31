@@ -23,6 +23,8 @@ pub mod directory;
 pub mod evaluation;
 #[cfg(feature = "full")]
 pub mod generation;
+#[cfg(feature = "full")]
+pub mod host_contract;
 pub mod lifecycle;
 #[cfg(feature = "full")]
 pub mod observability;

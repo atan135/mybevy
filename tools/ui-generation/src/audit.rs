@@ -6,10 +6,11 @@
 //! the game plugin or Android library build.
 
 use crate::{
+    host_contract::ResolvedGenerationHostContract,
     lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
     preview::{
         CommandPreviewExecutor, PreviewExecutor, PreviewFailureKind, PreviewRunResult,
-        PreviewRunStatus, prepare_preview_command_for_state, run_preview,
+        PreviewRunStatus, prepare_preview_command_for_state_with_host_contract, run_preview,
     },
 };
 use project::framework::ui::document::tooling::validate_json_bytes;
@@ -177,6 +178,8 @@ pub struct AuditMatrixResult {
     pub manifest_path: PathBuf,
     pub visual_expectation: AuditVisualExpectation,
     pub visual_expectation_failures: Vec<AuditVisualExpectationFailure>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_contract_version: Option<u32>,
     pub captures: Vec<AuditCapture>,
 }
 
@@ -208,12 +211,13 @@ pub fn run_document_audit(
     executor: &dyn PreviewExecutor,
     cancellation: &CancellationToken,
 ) -> Result<AuditMatrixResult, TaskFailure> {
-    run_document_audit_with_expectation(
+    run_document_audit_with_host_contract(
         repository_root,
         document_path,
         output_directory,
         states,
         &AuditVisualExpectation::default(),
+        None,
         executor,
         cancellation,
     )
@@ -228,6 +232,30 @@ pub fn run_document_audit_with_expectation(
     executor: &dyn PreviewExecutor,
     cancellation: &CancellationToken,
 ) -> Result<AuditMatrixResult, TaskFailure> {
+    run_document_audit_with_host_contract(
+        repository_root,
+        document_path,
+        output_directory,
+        states,
+        visual_expectation,
+        None,
+        executor,
+        cancellation,
+    )
+}
+
+/// Captures an audit matrix through the production-approved host contract when one was selected
+/// by the generation task. The ordinary audit APIs remain visual-only for existing fixtures.
+pub fn run_document_audit_with_host_contract(
+    repository_root: &Path,
+    document_path: &Path,
+    output_directory: &Path,
+    states: &[UiPageState],
+    visual_expectation: &AuditVisualExpectation,
+    host_contract: Option<&ResolvedGenerationHostContract>,
+    executor: &dyn PreviewExecutor,
+    cancellation: &CancellationToken,
+) -> Result<AuditMatrixResult, TaskFailure> {
     if states.is_empty() || output_directory.exists() || output_directory.as_os_str().is_empty() {
         return Err(invalid(
             "audit output directory must be new and audit states must be nonempty",
@@ -235,6 +263,11 @@ pub fn run_document_audit_with_expectation(
     }
     visual_expectation.validate(states)?;
     validate_audit_states(document_path, states)?;
+    if let Some(host_contract) = host_contract {
+        let source = fs::read_to_string(document_path)
+            .map_err(|_| invalid("host-contracted audit document cannot be read"))?;
+        host_contract.validate_document_source(&source)?;
+    }
     fs::create_dir(output_directory)
         .map_err(|_| invalid("audit output directory could not be created"))?;
 
@@ -251,13 +284,14 @@ pub fn run_document_audit_with_expectation(
             for number in 1..=MAX_AUDIT_CAPTURE_ATTEMPTS {
                 cancellation.checkpoint()?;
                 let attempt_directory = capture_directory.join(format!("attempt-{number:02}"));
-                let plan = prepare_preview_command_for_state(
+                let plan = prepare_preview_command_for_state_with_host_contract(
                     repository_root,
                     document_path,
                     &attempt_directory,
                     device.width,
                     device.height,
                     state,
+                    host_contract,
                 )?;
                 let preview = run_preview(plan, executor, cancellation);
                 let cancelled = preview.process.cancelled
@@ -314,6 +348,7 @@ pub fn run_document_audit_with_expectation(
         manifest_path: manifest_path.clone(),
         visual_expectation: visual_expectation.clone(),
         visual_expectation_failures,
+        host_contract_version: host_contract.map(|contract| contract.version),
         captures,
     };
     write_new_json(&manifest_path, &result)?;
@@ -347,12 +382,33 @@ pub fn run_document_audit_command(
     states: &[UiPageState],
     visual_expectation: &AuditVisualExpectation,
 ) -> Result<AuditMatrixResult, TaskFailure> {
-    run_document_audit_with_expectation(
+    run_document_audit_with_host_contract(
         repository_root,
         document_path,
         output_directory,
         states,
         visual_expectation,
+        None,
+        &CommandPreviewExecutor,
+        &CancellationToken::default(),
+    )
+}
+
+pub fn run_document_audit_command_with_host_contract(
+    repository_root: &Path,
+    document_path: &Path,
+    output_directory: &Path,
+    states: &[UiPageState],
+    visual_expectation: &AuditVisualExpectation,
+    host_contract: Option<&ResolvedGenerationHostContract>,
+) -> Result<AuditMatrixResult, TaskFailure> {
+    run_document_audit_with_host_contract(
+        repository_root,
+        document_path,
+        output_directory,
+        states,
+        visual_expectation,
+        host_contract,
         &CommandPreviewExecutor,
         &CancellationToken::default(),
     )
@@ -519,7 +575,8 @@ mod tests {
                 "protocol_version": 1, "status": "passed", "document_id": "audit.fixture",
                 "canonical_document_sha256": plan.canonical_document_sha256, "width": plan.width, "height": plan.height,
                 "page_state": plan.page_state, "elapsed_frames": 60, "stable_frames": 30,
-                "screenshot_path": plan.screenshot_path.to_string_lossy(), "captured_size": [plan.width, plan.height], "failure": null
+                "screenshot_path": plan.screenshot_path.to_string_lossy(), "host_contract_version": plan.host_contract_version,
+                "captured_size": [plan.width, plan.height], "failure": null
             });
             fs::write(&plan.result_path, serde_json::to_vec(&result).unwrap()).unwrap();
             Ok(PreviewProcessRecord {
@@ -599,7 +656,8 @@ mod tests {
                 "protocol_version": 1, "status": "passed", "document_id": "audit.fixture",
                 "canonical_document_sha256": plan.canonical_document_sha256, "width": width, "height": plan.height,
                 "page_state": plan.page_state, "elapsed_frames": 60, "stable_frames": 30,
-                "screenshot_path": plan.screenshot_path.to_string_lossy(), "captured_size": [plan.width, plan.height], "failure": null
+                "screenshot_path": plan.screenshot_path.to_string_lossy(), "host_contract_version": plan.host_contract_version,
+                "captured_size": [plan.width, plan.height], "failure": null
             });
             fs::write(&plan.result_path, serde_json::to_vec(&result).unwrap()).unwrap();
             Ok(fixture_process_record())
@@ -736,7 +794,56 @@ mod tests {
                 assert_ne!(state_hash, initial_hash, "{} / {state}", device.name);
             }
         }
+
         assert_eq!(executor.captures.lock().unwrap().len(), 28);
+    }
+
+    #[test]
+    fn host_contracted_audit_captures_production_registration_evidence() {
+        use crate::{contract::GenerationTask, host_contract::resolve_repository_host_contract};
+
+        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let task = GenerationTask::load_json(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("fixtures/stage9/host_contract.task.valid.json"),
+        )
+        .unwrap();
+        let host_contract = resolve_repository_host_contract(
+            &repository_root,
+            task.host_contract.as_ref().unwrap(),
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let document = repository_root.join(
+            "project/assets/ui/documents/approved/business_acceptance_fixture/document.v1.json",
+        );
+        let result = run_document_audit_with_host_contract(
+            &repository_root,
+            &document,
+            &directory.path().join("audit"),
+            &[UiPageState::initial()],
+            &AuditVisualExpectation::default(),
+            Some(&host_contract),
+            &FixtureExecutor::state_specific(),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+        assert_eq!(result.status, AuditMatrixStatus::Passed);
+        assert_eq!(result.host_contract_version, Some(1));
+        assert_eq!(result.captures.len(), DEFAULT_AUDIT_DEVICES.len());
+        assert!(result.captures.iter().all(|capture| {
+            capture.selected_preview().is_some_and(|preview| {
+                preview.command.host_contract_version == Some(1)
+                    && preview
+                        .command
+                        .approved_registration_path
+                        .as_ref()
+                        .is_some_and(|path| path.is_file())
+            })
+        }));
     }
 
     #[test]

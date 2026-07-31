@@ -1,4 +1,7 @@
-use crate::lifecycle::{CancellationToken, TaskFailure, TaskFailureKind};
+use crate::{
+    host_contract::ResolvedGenerationHostContract,
+    lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
+};
 use image::{ColorType, ImageDecoder, Limits, codecs::png::PngDecoder};
 use project::framework::ui::document::UiPageState;
 use project::framework::ui::document::tooling::{
@@ -56,6 +59,8 @@ pub struct PreviewCommandPlan {
     pub screenshot_path: PathBuf,
     pub result_path: PathBuf,
     pub log_path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_registration_path: Option<PathBuf>,
     pub width: u32,
     pub height: u32,
     pub page_state: String,
@@ -63,6 +68,10 @@ pub struct PreviewCommandPlan {
     pub stable_frames: u32,
     pub process_timeout_ms: u64,
     pub canonical_document_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_contract_version: Option<u32>,
+    #[serde(skip_serializing)]
+    pub approved_registration_json: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -114,6 +123,7 @@ struct StandalonePreviewResult {
     elapsed_frames: u32,
     stable_frames: u32,
     screenshot_path: String,
+    host_contract_version: Option<u32>,
     captured_size: Option<(u32, u32)>,
     failure: Option<StandalonePreviewFailure>,
 }
@@ -279,13 +289,33 @@ pub fn prepare_preview_command(
     width: u32,
     height: u32,
 ) -> Result<PreviewCommandPlan, TaskFailure> {
-    prepare_preview_command_for_state(
+    prepare_preview_command_for_state_with_host_contract(
         repository_root,
         document_path,
         output_directory,
         width,
         height,
         &UiPageState::initial(),
+        None,
+    )
+}
+
+pub fn prepare_preview_command_with_host_contract(
+    repository_root: &Path,
+    document_path: &Path,
+    output_directory: &Path,
+    width: u32,
+    height: u32,
+    host_contract: Option<&ResolvedGenerationHostContract>,
+) -> Result<PreviewCommandPlan, TaskFailure> {
+    prepare_preview_command_for_state_with_host_contract(
+        repository_root,
+        document_path,
+        output_directory,
+        width,
+        height,
+        &UiPageState::initial(),
+        host_contract,
     )
 }
 
@@ -299,6 +329,26 @@ pub fn prepare_preview_command_for_state(
     width: u32,
     height: u32,
     page_state: &UiPageState,
+) -> Result<PreviewCommandPlan, TaskFailure> {
+    prepare_preview_command_for_state_with_host_contract(
+        repository_root,
+        document_path,
+        output_directory,
+        width,
+        height,
+        page_state,
+        None,
+    )
+}
+
+pub fn prepare_preview_command_for_state_with_host_contract(
+    repository_root: &Path,
+    document_path: &Path,
+    output_directory: &Path,
+    width: u32,
+    height: u32,
+    page_state: &UiPageState,
+    host_contract: Option<&ResolvedGenerationHostContract>,
 ) -> Result<PreviewCommandPlan, TaskFailure> {
     if output_directory.exists() || output_directory.as_os_str().is_empty() {
         return Err(TaskFailure::new(
@@ -323,15 +373,23 @@ pub fn prepare_preview_command_for_state(
     let document_path = fs::canonicalize(document_path)
         .map_err(|_| TaskFailure::invalid("preview document path cannot be resolved"))?;
     let canonical_document_sha256 = validate_preview_document(&repository_root, &document_path)?;
+    if let Some(host_contract) = host_contract {
+        let source = fs::read_to_string(&document_path)
+            .map_err(|_| TaskFailure::invalid("preview host document cannot be read"))?;
+        host_contract.validate_document_source(&source)?;
+    }
     let output_directory = absolute_new_path(output_directory)?;
     validate_preview_output_location(&repository_root, &output_directory)?;
     let screenshot_path = output_directory.join("preview.png");
     let result_path = output_directory.join("preview-result.json");
     let log_path = output_directory.join("preview.log");
+    let approved_registration_path = host_contract
+        .as_ref()
+        .map(|_| output_directory.join("approved-registration.v1.json"));
     let process_manifest = process_path(&project_manifest);
     let process_document = process_path(&document_path);
     let process_working_directory = process_path(&repository_root);
-    let arguments = vec![
+    let mut arguments = vec![
         "run".to_owned(),
         "--quiet".to_owned(),
         "--manifest-path".to_owned(),
@@ -358,6 +416,12 @@ pub fn prepare_preview_command_for_state(
         "--stable-frames".to_owned(),
         "30".to_owned(),
     ];
+    if let Some(path) = &approved_registration_path {
+        arguments.extend([
+            "--approved-registration".to_owned(),
+            path.to_string_lossy().into_owned(),
+        ]);
+    }
     Ok(PreviewCommandPlan {
         program: "cargo".to_owned(),
         arguments,
@@ -366,6 +430,7 @@ pub fn prepare_preview_command_for_state(
         screenshot_path,
         result_path,
         log_path,
+        approved_registration_path,
         width,
         height,
         page_state: page_state.to_string(),
@@ -375,6 +440,10 @@ pub fn prepare_preview_command_for_state(
         // callers receive a durable timeout record instead of a parent process hanging forever.
         process_timeout_ms: 300_000,
         canonical_document_sha256,
+        host_contract_version: host_contract.map(|contract| contract.version),
+        approved_registration_json: host_contract
+            .map(ResolvedGenerationHostContract::preview_registration_json)
+            .transpose()?,
     })
 }
 
@@ -403,6 +472,46 @@ pub fn run_preview(
                 &format!("preview output directory could not be created: {error}"),
             ),
         );
+    }
+    match (
+        plan.approved_registration_path.as_ref(),
+        plan.approved_registration_json.as_ref(),
+    ) {
+        (Some(path), Some(source)) => {
+            if let Err(error) = write_new_preview_registration(path, source.as_bytes()) {
+                return failed_preview(
+                    plan,
+                    PreviewProcessRecord {
+                        exit_code: None,
+                        timed_out: false,
+                        cancelled: false,
+                        elapsed_ms: 0,
+                    },
+                    preview_failure(
+                        PreviewFailureKind::ConfigurationInvalid,
+                        "UI_GENERATION_PREVIEW_APPROVED_REGISTRATION_WRITE_FAILED",
+                        &format!("approved preview registration could not be written: {error}"),
+                    ),
+                );
+            }
+        }
+        (None, None) => {}
+        _ => {
+            return failed_preview(
+                plan,
+                PreviewProcessRecord {
+                    exit_code: None,
+                    timed_out: false,
+                    cancelled: false,
+                    elapsed_ms: 0,
+                },
+                preview_failure(
+                    PreviewFailureKind::ConfigurationInvalid,
+                    "UI_GENERATION_PREVIEW_APPROVED_REGISTRATION_INCOMPLETE",
+                    "approved preview registration path and source must be supplied together",
+                ),
+            );
+        }
     }
     let process = match executor.execute(&plan, cancellation) {
         Ok(process) => process,
@@ -598,6 +707,7 @@ fn validate_preview_evidence_at(
         || result.height != plan.height
         || result.page_state != plan.page_state
         || result.canonical_document_sha256 != plan.canonical_document_sha256
+        || result.host_contract_version != plan.host_contract_version
         || result.screenshot_path != plan.screenshot_path.to_string_lossy()
         || result.elapsed_frames > plan.timeout_frames
         || result.stable_frames > result.elapsed_frames
@@ -648,6 +758,13 @@ fn validate_preview_evidence_at(
         ));
     }
     Ok(screenshot)
+}
+
+fn write_new_preview_registration(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = OpenOptions::new().create_new(true).write(true).open(path)?;
+    file.write_all(bytes)?;
+    file.write_all(b"\n")?;
+    file.sync_all()
 }
 
 fn read_screenshot(
@@ -1005,6 +1122,7 @@ mod tests {
                 "elapsed_frames": 60,
                 "stable_frames": 30,
                 "screenshot_path": plan.screenshot_path.to_string_lossy(),
+                "host_contract_version": plan.host_contract_version,
                 "captured_size": [plan.width, plan.height]
             });
             fs::write(&plan.result_path, serde_json::to_vec(&result).unwrap()).unwrap();
@@ -1125,6 +1243,89 @@ mod tests {
         assert_eq!(result.status, PreviewRunStatus::Passed);
         assert!(result.screenshot_sha256.is_some());
         assert!(*executor.structured_inputs_seen.lock().unwrap());
+    }
+
+    #[test]
+    fn host_aware_preview_writes_production_registration_before_process() {
+        use crate::{
+            contract::{
+                GenerationForbiddenCapability, GenerationHostBindingRequest,
+                GenerationHostContractRequest,
+            },
+            host_contract::{
+                REQUIRED_AUDIT_PROFILES, TRUSTED_RESOURCE_CATALOG_PATH,
+                resolve_repository_host_contract,
+            },
+        };
+
+        let host = resolve_repository_host_contract(
+            &repository_root(),
+            &GenerationHostContractRequest {
+                document_id: "approved.business_acceptance".to_owned(),
+                owner: "approved_business_acceptance".to_owned(),
+                route: "ui_approved_business_acceptance".to_owned(),
+                version: 1,
+                allowed_actions: vec!["approved.acceptance_continue".to_owned()],
+                allowed_bindings: vec![GenerationHostBindingRequest {
+                    scope: "owner".to_owned(),
+                    path: "acceptance.status".to_owned(),
+                    value_type: serde_json::json!({"kind": "string"}),
+                }],
+                target_profiles: REQUIRED_AUDIT_PROFILES.map(str::to_owned).to_vec(),
+                resource_catalog: TRUSTED_RESOURCE_CATALOG_PATH.to_owned(),
+                forbidden_capabilities: vec![
+                    GenerationForbiddenCapability::RustCode,
+                    GenerationForbiddenCapability::Scripts,
+                    GenerationForbiddenCapability::ArbitraryActions,
+                    GenerationForbiddenCapability::ArbitraryBindings,
+                    GenerationForbiddenCapability::ArbitraryResources,
+                    GenerationForbiddenCapability::BusinessProtocol,
+                    GenerationForbiddenCapability::CargoConfiguration,
+                    GenerationForbiddenCapability::AndroidConfiguration,
+                ],
+            },
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let document = repository_root().join(
+            "project/assets/ui/documents/approved/business_acceptance_fixture/document.v1.json",
+        );
+        let plan = prepare_preview_command_with_host_contract(
+            &repository_root(),
+            &document,
+            &directory.path().join("preview"),
+            390,
+            844,
+            Some(&host),
+        )
+        .unwrap();
+        assert_eq!(plan.host_contract_version, Some(1));
+        assert!(
+            plan.arguments
+                .windows(2)
+                .any(|pair| pair[0] == "--approved-registration")
+        );
+
+        let result = run_preview(
+            plan,
+            &FixtureExecutor {
+                mode: FixtureMode::Success,
+                structured_inputs_seen: Mutex::new(false),
+            },
+            &CancellationToken::default(),
+        );
+        assert_eq!(result.status, PreviewRunStatus::Passed);
+        let registration_path = result.command.approved_registration_path.unwrap();
+        let registration = fs::read_to_string(registration_path).unwrap();
+        let parsed = project::framework::ui::document::parse_approved_document_registration(
+            registration.trim(),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.document_id().as_str(),
+            "approved.business_acceptance"
+        );
+        assert_eq!(parsed.host_contract().unwrap().version(), 1);
     }
 
     #[test]

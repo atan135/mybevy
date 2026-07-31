@@ -3,6 +3,7 @@ use crate::{
     lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
@@ -34,6 +35,48 @@ pub struct GenerationTask {
     pub allowed_changes: Option<AllowedModificationScope>,
     #[serde(default)]
     pub visual_preferences: VisualPreferences,
+    /// A task may request an already registered production host. The task repeats the exact
+    /// document-facing allowlist so it is reviewable, but the tool resolves and verifies that
+    /// declaration against the game-owned catalog before generation starts.
+    #[serde(default)]
+    pub host_contract: Option<GenerationHostContractRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationHostContractRequest {
+    pub document_id: String,
+    pub owner: String,
+    pub route: String,
+    pub version: u32,
+    #[serde(default)]
+    pub allowed_actions: Vec<String>,
+    #[serde(default)]
+    pub allowed_bindings: Vec<GenerationHostBindingRequest>,
+    pub target_profiles: Vec<String>,
+    pub resource_catalog: String,
+    pub forbidden_capabilities: Vec<GenerationForbiddenCapability>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationHostBindingRequest {
+    pub scope: String,
+    pub path: String,
+    pub value_type: Value,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GenerationForbiddenCapability {
+    RustCode,
+    Scripts,
+    ArbitraryActions,
+    ArbitraryBindings,
+    ArbitraryResources,
+    BusinessProtocol,
+    CargoConfiguration,
+    AndroidConfiguration,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -388,6 +431,9 @@ impl GenerationTask {
                 )?;
             }
         }
+        if let Some(host_contract) = &self.host_contract {
+            validate_host_contract_request(host_contract)?;
+        }
         Ok(())
     }
 
@@ -737,6 +783,116 @@ fn validate_nonempty(value: &str, path: &str) -> Result<(), TaskFailure> {
     } else {
         Ok(())
     }
+}
+
+fn validate_host_contract_request(
+    request: &GenerationHostContractRequest,
+) -> Result<(), TaskFailure> {
+    for (field, value) in [
+        ("document_id", request.document_id.as_str()),
+        ("owner", request.owner.as_str()),
+        ("route", request.route.as_str()),
+    ] {
+        if !is_safe_host_label(value) {
+            return Err(TaskFailure::invalid(format!(
+                "$.host_contract.{field} must be a bounded stable registration label"
+            )));
+        }
+    }
+    if request.version == 0
+        || request.target_profiles.is_empty()
+        || !is_safe_relative_catalog_path(&request.resource_catalog)
+    {
+        return Err(TaskFailure::invalid(
+            "$.host_contract requires a nonzero version, target profiles, and a safe resource catalog path",
+        ));
+    }
+    let actions = request
+        .allowed_actions
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if actions.len() != request.allowed_actions.len()
+        || request
+            .allowed_actions
+            .iter()
+            .any(|action| !is_safe_host_label(action))
+    {
+        return Err(TaskFailure::invalid(
+            "$.host_contract.allowed_actions must be unique stable action labels",
+        ));
+    }
+    let mut bindings = BTreeSet::new();
+    for (index, binding) in request.allowed_bindings.iter().enumerate() {
+        if !matches!(binding.scope.as_str(), "owner" | "document")
+            || !is_safe_host_label(&binding.path)
+            || !binding.value_type.is_object()
+            || !bindings.insert((binding.scope.as_str(), binding.path.as_str()))
+        {
+            return Err(TaskFailure::invalid(format!(
+                "$.host_contract.allowed_bindings[{index}] must be a unique owner/document binding with a value_type object"
+            )));
+        }
+    }
+    let profiles = request
+        .target_profiles
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if profiles.len() != request.target_profiles.len()
+        || request
+            .target_profiles
+            .iter()
+            .any(|profile| !is_safe_host_label(profile))
+    {
+        return Err(TaskFailure::invalid(
+            "$.host_contract.target_profiles must be unique stable profile labels",
+        ));
+    }
+    let forbidden = request
+        .forbidden_capabilities
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if forbidden.len() != request.forbidden_capabilities.len()
+        || ![
+            GenerationForbiddenCapability::RustCode,
+            GenerationForbiddenCapability::Scripts,
+            GenerationForbiddenCapability::ArbitraryActions,
+            GenerationForbiddenCapability::ArbitraryBindings,
+            GenerationForbiddenCapability::ArbitraryResources,
+            GenerationForbiddenCapability::BusinessProtocol,
+            GenerationForbiddenCapability::CargoConfiguration,
+            GenerationForbiddenCapability::AndroidConfiguration,
+        ]
+        .into_iter()
+        .all(|capability| forbidden.contains(&capability))
+    {
+        return Err(TaskFailure::invalid(
+            "$.host_contract.forbidden_capabilities must explicitly forbid code, scripts, arbitrary capabilities, and protected project configuration",
+        ));
+    }
+    Ok(())
+}
+
+fn is_safe_host_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_uppercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'.' | b'_' | b'-')
+        })
+}
+
+fn is_safe_relative_catalog_path(value: &str) -> bool {
+    !value.is_empty()
+        && value.is_ascii()
+        && !value.contains(['\\', ':', '\0'])
+        && Path::new(value)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
 fn question(code: &str, field_path: &str, prompt: &str) -> InputQuestion {

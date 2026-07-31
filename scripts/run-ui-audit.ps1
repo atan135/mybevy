@@ -5970,9 +5970,9 @@ function Invoke-UiAuditStrictReferenceSelfTest {
     $savedClosedLoopGeneration = $script:UiAuditClosedLoopGeneration
     try {
         $profiles = @(
-            [pscustomobject]@{ device = "phone-small"; state = "initial"; color = [System.Drawing.Color]::SteelBlue },
-            [pscustomobject]@{ device = "phone-small"; state = "bottom"; color = [System.Drawing.Color]::DarkSlateBlue },
-            [pscustomobject]@{ device = "tablet-portrait"; state = "initial"; color = [System.Drawing.Color]::DarkOliveGreen }
+            [pscustomobject]@{ device = "phone-landscape"; state = "initial"; color = [System.Drawing.Color]::SteelBlue },
+            [pscustomobject]@{ device = "phone-landscape"; state = "bottom"; color = [System.Drawing.Color]::DarkSlateBlue },
+            [pscustomobject]@{ device = "tablet-landscape"; state = "initial"; color = [System.Drawing.Color]::DarkOliveGreen }
         )
         $references = New-Object System.Collections.Generic.List[object]
         $results = New-Object System.Collections.Generic.List[object]
@@ -5994,7 +5994,7 @@ function Invoke-UiAuditStrictReferenceSelfTest {
                         logical_size = [ordered]@{ width = [double]$deviceProfile.logical_width; height = [double]$deviceProfile.logical_height }
                         physical_size = [ordered]@{ width = [int]$deviceProfile.physical_width; height = [int]$deviceProfile.physical_height }
                         device_scale = [double]$deviceProfile.device_scale
-                        orientation = "portrait"
+                        orientation = "landscape"
                     }
                     image = [ordered]@{ storage = "temporary_local"; relative_path = "$suffix/$fileName"; sha256 = $hash }
                     metadata = [ordered]@{ original_size = [ordered]@{ width = [int]$deviceProfile.physical_width; height = [int]$deviceProfile.physical_height }; color_space = "srgb" }
@@ -7680,7 +7680,7 @@ function Invoke-UiAuditSelfTest {
         $fixPassManifest = Read-JsonFile (Join-FullPath $fixPassRoot "manifest.json")
         Assert-SelfTest ($exitFixPass -eq 0 -and $fixPassManifest.fix_loop.status -eq "passed" -and $fixPassManifest.status -eq "passed") "mock fix loop clears blocking issue"
         Assert-SelfTest ((Test-Path (Join-FullPath $fixPassRoot "iterations/00-before/snapshot.json")) -and (Test-Path (Join-FullPath $fixPassRoot "iterations/01-after-fix/snapshot.json"))) "fix loop writes before and after snapshots"
-        Assert-SelfTest (@($fixPassManifest.fix_loop.iterations[0].rerun_plan.devices).Count -eq 6) "local fix rerun plan uses full device matrix"
+        Assert-SelfTest ((@($fixPassManifest.fix_loop.iterations[0].rerun_plan.devices) -join ",") -eq (@($script:BasicDevices) -join ",")) "local fix rerun plan uses full device matrix"
         Assert-SelfTest ((Test-Path (Join-FullPath $fixPassRoot "iterations/01-after-fix/checks/cargo-fmt.stdout.log")) -and (Test-Path (Join-FullPath $fixPassRoot "iterations/01-after-fix/checks/cargo-check.stdout.log"))) "fix loop preserves check logs"
         $documentValidationPlan = New-UiAuditValidationPlan -RepositoryRoot $repoRoot -ProjectRoot $projectRoot -ChangedPaths @("project/assets/ui/documents/approved/gallery/declarative_gallery.v1.json")
         Assert-SelfTest ([bool]$documentValidationPlan.scope.document -and -not [bool]$documentValidationPlan.scope.rust -and (@($documentValidationPlan.commands.id) -join ",") -eq "document_schema_semantic,document_declarative_runtime") "UiDocument-only change selects schema semantic resource and declarative runtime tests without project cargo check"
