@@ -22,6 +22,7 @@ accesskit = "0.21.1"
 bevy = { version = "0.18.1", features = ["wav"] }
 authority-core = { path = "../../MyServer/packages/authority-core" }
 csv = "1"
+futures-util = "0.3"
 prost = "0.14"
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
 ron = "0.12.1"
@@ -31,6 +32,7 @@ sha2 = "0.10"
 sim-core = { path = "../../MyServer/packages/sim-core" }
 tokio = { version = "1.37", features = ["rt-multi-thread", "net", "io-util", "sync", "time"] }
 tokio_kcp = "0.9.8"
+tokio-tungstenite = { version = "0.28.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 unicode-segmentation = "1.13.2"
 
 [dev-dependencies]

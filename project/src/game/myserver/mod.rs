@@ -1,3 +1,4 @@
+pub mod chat;
 mod plugin;
 pub mod protocol;
 mod types;

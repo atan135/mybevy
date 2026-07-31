@@ -9,6 +9,7 @@ fn main() {
         .map(|path| path.join("MyServer").join("packages").join("proto"))
         .expect("failed to resolve workspace parent");
     let game_proto = proto_dir.join("game.proto");
+    let chat_proto = proto_dir.join("chat.proto");
 
     if !game_proto.exists() {
         panic!(
@@ -18,6 +19,7 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed={}", game_proto.display());
+    println!("cargo:rerun-if-changed={}", chat_proto.display());
 
     let protoc = protoc_bin_vendored::protoc_bin_path().expect("failed to locate vendored protoc");
     unsafe {
@@ -25,6 +27,6 @@ fn main() {
     }
 
     prost_build::Config::new()
-        .compile_protos(&[game_proto], &[proto_dir])
-        .expect("failed to compile MyServer game.proto");
+        .compile_protos(&[game_proto, chat_proto], &[proto_dir])
+        .expect("failed to compile MyServer game/chat proto files");
 }

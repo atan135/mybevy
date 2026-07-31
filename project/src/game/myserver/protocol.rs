@@ -6,6 +6,12 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/myserver.game.rs"));
 }
 
+pub mod chat_pb {
+    #![allow(dead_code)]
+
+    include!(concat!(env!("OUT_DIR"), "/myserver.chat.rs"));
+}
+
 pub const MAGIC: u16 = 0xCAFE;
 pub const VERSION: u8 = 1;
 pub const HEADER_LEN: usize = 14;
@@ -241,11 +247,17 @@ where
 }
 
 pub fn encode_raw_packet(message_type: MessageType, seq: u32, body: &[u8]) -> Vec<u8> {
+    encode_raw_packet_type(message_type.raw(), seq, body)
+}
+
+/// Encode an existing packet header for an independently versioned protocol such as chat.
+/// The header format remains shared even when the message type is not part of game.proto.
+pub fn encode_raw_packet_type(message_type: u16, seq: u32, body: &[u8]) -> Vec<u8> {
     let mut packet = Vec::with_capacity(HEADER_LEN + body.len());
     packet.extend_from_slice(&MAGIC.to_be_bytes());
     packet.push(VERSION);
     packet.push(0);
-    packet.extend_from_slice(&message_type.raw().to_be_bytes());
+    packet.extend_from_slice(&message_type.to_be_bytes());
     packet.extend_from_slice(&seq.to_be_bytes());
     packet.extend_from_slice(&(body.len() as u32).to_be_bytes());
     packet.extend_from_slice(body);
