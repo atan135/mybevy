@@ -209,7 +209,7 @@ Stage 7 的单图生成请求继续拒绝非空 `states` 和 `responsive`，不�
 
 `promotion-plan` 是纯读取命令，输出待写入的 document JSON、资源、registration 审阅声明、空或显式的 i18n/theme/action/binding 改动以及所有 ownership conflict。`promote` 必须收到该计划的精确 `plan_sha256`，执行时会重新生成计划和目标检查；计划 hash 不匹配、批准被拒绝、需要重新生成的替换/文字/约束决定、未保持占位的未知业务/框架能力、未知 action/binding/i18n 字段或不兼容 schema 都会阻止写入。
 
-每个新页面占用唯一的 `project/assets/ui/documents/approved/<document_id>/` 目录，包含 canonical `document.v1.json` 和封闭 `promotion.v1.json` registration 审阅声明。声明只含 approved source root、相对路径、document ID、owner、route、page/layer、initial page state 和固定 audit profile；i18n/theme/action/binding 列表必须显式为空，不能借字符串生成 Rust 类型、系统、网络调用或业务行为。owner、route、document ID、目标目录和既有 approved registration 均会在写入前扫描，任何冲突均 no-clobber 失败。
+每个新页面占用唯一的 `project/assets/ui/documents/approved/<document_id>/` 目录，包含 canonical `document.v1.json` 和封闭 `promotion.v1.json` registration 审阅声明。没有业务能力的 legacy registration 只含 approved source root、相对路径、document ID、owner、route、page/layer、initial page state 和固定 audit profile；i18n/theme/action/binding 列表必须显式为空。需要引用既有业务能力时，先由游戏层完成并测试 Rust host/action 注册，再由人工维护 `project/assets/ui/documents/host_contracts.v1.json` 中相同 document/owner/route 的 v1 contract；promotion 只在 document 的 binding schema、action ID/source node 与资源集合精确匹配该 contract 时生成 v2 registration。catalog 只是工具复验输入，不能替代 Rust 注册或提升权限。任何路径都不能借字符串生成 Rust 类型、系统、网络调用或业务行为。owner、route、document ID、目标目录和既有 approved registration 均会在写入前扫描，任何冲突均 no-clobber 失败。
 
 需要正式二进制资源时，人工提交的资源声明必须精确引用 sealed run 的 `draft_assets` artifact，匹配授权裁切或明确许可的生成策略、源 hash/大小、Android 质量规格与 document 内唯一的 `ui/documents/approved/<document_id>/assets/...` packaged path。目标扩展名必须被根 `.gitattributes` 的 `project/assets/**` Git LFS 规则覆盖。工具将资源、`catalog.v1.json` fragment 和 `LICENSES.md` 记录一并写入同一 approved 页面目录；Stage 6 catalog 会加载并验证每个 fragment，继续保持完整路径、hash、license、尺寸和 alpha 覆盖。页面包从同卷 staging 以单次目录 rename 原子提交，失败不会留下部分 document、资源、catalog 或 license record，也永不覆盖已有页面或资源。
 
@@ -233,7 +233,7 @@ Stage 7 的单图生成请求继续拒绝非空 `states` 和 `responsive`，不�
 
 ## Rust 适配边界
 
-页面结构、样式和控件树由 `UiDocument` JSON 表达。当前晋升仅从封闭、版本化模板产生 owner、route 和 registration 审阅声明；正式 `project` 的 `document::tooling::parse_approved_document_registration` 会以只读闭合 schema 解析该声明，并拒绝 i18n、theme、action 和 binding 注册。游戏层需要在自身 route lifecycle 中显式调用 `to_preview_registration` 才会把声明转换为现有的运行时/预览注册；`route` 只是供人工审阅的标签，adapter 不会执行它。该 adapter 保持在默认 `project --lib` 内，不依赖工具 crate；游戏接入仍必须作为正常、可审阅的人工 Rust 改动完成，不能由工具或模型写出任意业务代码。
+页面结构、样式和控件树由 `UiDocument` JSON 表达。正式 `project` 的 `document::tooling::parse_approved_document_registration` 以只读闭合 schema 解析该声明：v1 保持 action/binding 零权限，v2 的 host contract 只列稳定 action ID、source node、外部 binding 类型与 resource ID。游戏层需要在自身 route lifecycle 中显式调用 `to_preview_registration_with_contract`，并传入其独立注册的精确 contract；缺失、版本不符、owner/route 漂移、未知/多余 action 或 binding、source node 漂移或资源漂移都会拒绝。`route` 仍只是审阅标签，adapter 不会执行它。该 adapter 保持在默认 `project --lib` 内，不依赖工具 crate；游戏接入仍必须作为正常、可审阅的人工 Rust 改动完成，不能由工具或模型写出任意业务代码。
 
 工具和模型不得：
 

@@ -143,6 +143,15 @@ pub struct UiDocumentPreviewRegistration {
     pub watch: bool,
     pub open_on_register: bool,
     pub audit_profiles: Vec<String>,
+    pub approval_audit: Option<UiDocumentApprovalAuditMetadata>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct UiDocumentApprovalAuditMetadata {
+    pub host_contract_version: Option<u32>,
+    pub actions: Vec<String>,
+    pub bindings: Vec<String>,
+    pub canonical_document_sha256: String,
 }
 
 #[derive(Clone, Debug, Message)]
@@ -269,6 +278,7 @@ pub struct UiDocumentAuditRecipeEntry {
     pub owner: String,
     pub source_path: String,
     pub profiles: Vec<String>,
+    pub approval_audit: Option<UiDocumentApprovalAuditMetadata>,
 }
 
 #[derive(Clone, Debug, Default, Resource)]
@@ -711,6 +721,7 @@ fn handle_preview_commands(
                         owner: registration.owner.clone(),
                         source_path: registration.source_path.as_str().to_owned(),
                         profiles: normalized_audit_profiles(&registration.audit_profiles),
+                        approval_audit: registration.approval_audit.clone(),
                     },
                 );
                 let open = registration.open_on_register;
@@ -2254,6 +2265,7 @@ mod tests {
             watch: false,
             open_on_register: true,
             audit_profiles: Vec::new(),
+            approval_audit: None,
         }
     }
 

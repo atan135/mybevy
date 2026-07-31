@@ -16,6 +16,8 @@ pub(in crate::game) const OWNER_UI_DOCUMENT_GALLERY: UiOwnerId =
     UiOwnerId::new("ui_document_gallery");
 pub(in crate::game) const OWNER_UI_GENERATED_ACCEPTANCE: UiOwnerId =
     UiOwnerId::new("generated_acceptance_approved");
+pub(in crate::game) const OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE: UiOwnerId =
+    UiOwnerId::new("approved_business_acceptance");
 pub(in crate::game) const OWNER_DECLARATIVE_DOCUMENT_ROUTE: UiOwnerId =
     UiOwnerId::new("declarative_document_route");
 pub(in crate::game) const OWNER_AI_LOGIN_REFERENCE: UiOwnerId =

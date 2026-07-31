@@ -38,6 +38,7 @@ const MAX_PROMOTION_RESOURCE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DECISIONS: usize = 16;
 const MAX_TEXT_BYTES: usize = 1_024;
 const MAX_APPROVED_DOCUMENTS: usize = 512;
+const HOST_CONTRACT_CATALOG_PATH: &str = "project/assets/ui/documents/host_contracts.v1.json";
 static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -183,6 +184,8 @@ pub struct PromotionRegistrationChange {
     pub i18n_keys: Vec<String>,
     pub theme_tokens: Vec<String>,
     pub action_or_binding_registration: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_contract: Option<Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -357,6 +360,13 @@ pub fn create_promotion_plan(
     )?;
     let resources = validate_document_assets(&trusted, &decisions.resources, &folder)?;
     ensure_resource_target_is_available(&trusted.repository_root, &folder, &resources)?;
+    let host_contract = resolve_promotion_host_contract(
+        &trusted.repository_root,
+        &trusted.document_json,
+        &trusted.document_id,
+        owner,
+        route,
+    )?;
 
     let document = PromotionDocumentChange {
         target_relative_path: document_relative.clone(),
@@ -365,7 +375,7 @@ pub fn create_promotion_plan(
     };
     let registration = PromotionRegistrationChange {
         target_relative_path: registration_relative,
-        template_version: 1,
+        template_version: host_contract.as_ref().map_or(1, |_| 2),
         document_id: trusted.document_id.clone(),
         source_root: "approved".to_owned(),
         source_relative_path: document_relative,
@@ -380,11 +390,12 @@ pub fn create_promotion_plan(
             "phone-1080p-landscape".to_owned(),
             "tablet-landscape".to_owned(),
         ],
-        // Stage 7 refuses generated i18n/action/binding fields. Page-local JSON tokens stay in
-        // the document and are not silently promoted into the global theme.
+        // Promotion never invents i18n, theme, action, or binding capabilities. A pre-registered
+        // host contract, when required by the document, is selected and verified separately.
         i18n_keys: Vec::new(),
         theme_tokens: Vec::new(),
         action_or_binding_registration: Vec::new(),
+        host_contract,
     };
     let material = PromotionPlanMaterial {
         protocol_version: PROMOTION_PROTOCOL_VERSION,
@@ -636,9 +647,6 @@ fn load_trusted_run(repository_root: &Path, run_id: &str) -> Result<TrustedRun, 
             "promotion document schema version is not the current formal runtime version",
         ));
     }
-    reject_business_fields(&serde_json::from_str::<Value>(&document_json).map_err(|_| {
-        invalid("committed final document cannot be decoded for promotion policy validation")
-    })?)?;
     let canonical_document_sha256 = hash_bytes(document_json.as_bytes());
     let trace_value: Value = serde_json::from_slice(&read_bundle_artifact(&bundle_root, trace)?)
         .map_err(|_| invalid("committed generation trace is not JSON"))?;
@@ -1583,8 +1591,13 @@ fn discover_approved_ownership(root: &Path) -> Result<ApprovedOwnership, TaskFai
 }
 
 fn registration_json(registration: &PromotionRegistrationChange) -> Result<Vec<u8>, TaskFailure> {
+    let protocol_version = if registration.host_contract.is_some() {
+        2
+    } else {
+        PROMOTION_PROTOCOL_VERSION
+    };
     let bytes = pretty_json_bytes(&serde_json::json!({
-        "protocol_version": PROMOTION_PROTOCOL_VERSION,
+        "protocol_version": protocol_version,
         "kind": "ui_document_promotion_registration",
         "template_version": registration.template_version,
         "document_id": registration.document_id,
@@ -1601,6 +1614,7 @@ fn registration_json(registration: &PromotionRegistrationChange) -> Result<Vec<u
         "i18n_keys": registration.i18n_keys,
         "theme_tokens": registration.theme_tokens,
         "action_or_binding_registration": registration.action_or_binding_registration,
+        "host_contract": registration.host_contract,
     }))?;
     let source = std::str::from_utf8(&bytes)
         .map_err(|_| invalid("promotion registration JSON is not valid UTF-8"))?;
@@ -1734,38 +1748,122 @@ fn read_relative_regular_file(
     read_regular_file(&canonical, maximum, label)
 }
 
-fn reject_business_fields(value: &Value) -> Result<(), TaskFailure> {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PromotionHostContractCatalog {
+    schema_version: u32,
+    contracts: Vec<PromotionHostContractCatalogEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PromotionHostContractCatalogEntry {
+    document_id: String,
+    owner: String,
+    route: String,
+    host_contract: Value,
+}
+
+fn resolve_promotion_host_contract(
+    repository_root: &Path,
+    document_json: &str,
+    document_id: &str,
+    owner: &str,
+    route: &str,
+) -> Result<Option<Value>, TaskFailure> {
+    let document: Value = serde_json::from_str(document_json).map_err(|_| {
+        invalid("committed final document cannot be decoded for promotion policy validation")
+    })?;
+    if !document_requires_host_contract(&document) {
+        return Ok(None);
+    }
+    let catalog_path = repository_root.join(HOST_CONTRACT_CATALOG_PATH);
+    let catalog_bytes = read_regular_file(
+        &catalog_path,
+        MAX_PROMOTION_FILE_BYTES,
+        "promotion host contract catalog",
+    )?;
+    let catalog: PromotionHostContractCatalog = serde_json::from_slice(&catalog_bytes)
+        .map_err(|_| invalid("promotion host contract catalog is invalid"))?;
+    if catalog.schema_version != 1 || catalog.contracts.len() > MAX_APPROVED_DOCUMENTS {
+        return Err(invalid(
+            "promotion host contract catalog version or contract count is invalid",
+        ));
+    }
+    let entries: Vec<_> = catalog
+        .contracts
+        .iter()
+        .filter(|entry| {
+            entry.document_id == document_id && entry.owner == owner && entry.route == route
+        })
+        .collect();
+    if entries.len() != 1 {
+        return Err(invalid(
+            "promotion document capabilities require exactly one pre-registered game host contract",
+        ));
+    }
+    let entry = entries[0];
+    if !safe_label(&entry.document_id)
+        || !safe_label(&entry.owner)
+        || !safe_label(&entry.route)
+        || !entry.host_contract.is_object()
+    {
+        return Err(invalid(
+            "promotion host contract catalog has unsafe registration metadata",
+        ));
+    }
+    let registration = serde_json::json!({
+        "protocol_version": 2,
+        "kind": "ui_document_promotion_registration",
+        "template_version": 2,
+        "document_id": document_id,
+        "source": {
+            "root": "approved",
+            "relative_path": format!("{}/document.v1.json", document_id.replace('.', "_")),
+        },
+        "owner": owner,
+        "route": route,
+        "panel": "page",
+        "layer": "page",
+        "page_state": "initial",
+        "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+        "i18n_keys": [],
+        "theme_tokens": [],
+        "action_or_binding_registration": [],
+        "host_contract": entry.host_contract,
+    });
+    let registration = serde_json::to_string(&registration)
+        .map_err(|_| invalid("promotion host contract cannot be serialized"))?;
+    let registration = parse_approved_document_registration(&registration).map_err(|error| {
+        invalid(format!(
+            "promotion host contract is rejected by the formal project adapter: {}",
+            error.code()
+        ))
+    })?;
+    registration
+        .validate_document_source_contract(document_json)
+        .map_err(|error| {
+            invalid(format!(
+                "promotion document does not exactly match the pre-registered game host contract: {}",
+                error.code()
+            ))
+        })?;
+    Ok(Some(entry.host_contract.clone()))
+}
+
+fn document_requires_host_contract(value: &Value) -> bool {
     match value {
         Value::Object(object) => {
-            for (key, child) in object {
-                if matches!(
-                    key.as_str(),
-                    "action" | "on_click" | "binding_path" | "i18n_key"
-                ) {
-                    return Err(invalid(
-                        "promotion refuses documents with action, binding, or i18n business fields",
-                    ));
-                }
-                if key == "bindings"
-                    && child
-                        .as_object()
-                        .is_some_and(|bindings| !bindings.is_empty())
-                {
-                    return Err(invalid(
-                        "promotion refuses documents with binding declarations",
-                    ));
-                }
-                reject_business_fields(child)?;
-            }
+            object
+                .get("bindings")
+                .and_then(Value::as_object)
+                .is_some_and(|bindings| !bindings.is_empty())
+                || object.contains_key("action")
+                || object.values().any(document_requires_host_contract)
         }
-        Value::Array(values) => {
-            for child in values {
-                reject_business_fields(child)?;
-            }
-        }
-        _ => {}
+        Value::Array(values) => values.iter().any(document_requires_host_contract),
+        _ => false,
     }
-    Ok(())
 }
 
 fn validate_owner_and_route(owner: &str, route: &str) -> Result<(), TaskFailure> {
@@ -2218,6 +2316,98 @@ mod tests {
             .write_image(&[12, 34, 56, 200], 1, 1, ExtendedColorType::Rgba8)
             .unwrap();
         output
+    }
+
+    #[test]
+    fn promotion_requires_an_exact_pre_registered_host_contract_for_business_documents() {
+        let repository = tempfile::tempdir().unwrap();
+        let catalog = repository
+            .path()
+            .join("project/assets/ui/documents/host_contracts.v1.json");
+        fs::create_dir_all(catalog.parent().unwrap()).unwrap();
+        fs::write(
+            &catalog,
+            json_bytes(serde_json::json!({
+                "schema_version": 1,
+                "contracts": [{
+                    "document_id": "promotion.business",
+                    "owner": "promotion_business_owner",
+                    "route": "promotion_business_route",
+                    "host_contract": {
+                        "version": 1,
+                        "bindings": [{
+                            "scope": "owner",
+                            "path": "business.message",
+                            "value_type": { "kind": "string" }
+                        }],
+                        "actions": [{
+                            "id": "business.accept",
+                            "sources": ["business.submit"]
+                        }],
+                        "resources": []
+                    }
+                }]
+            })),
+        )
+        .unwrap();
+        let document = canonicalize_json(
+            r#"{
+              "schema_version": 1,
+              "document_id": "promotion.business",
+              "bindings": {
+                "business.message": {
+                  "scope": "owner",
+                  "value_type": { "kind": "string" },
+                  "default": { "kind": "string", "value": "Ready" },
+                  "missing": "use_default"
+                }
+              },
+              "root": {
+                "type": "container",
+                "id": "business.root",
+                "children": [
+                  {
+                    "type": "text",
+                    "id": "business.message",
+                    "content": { "binding_path": "business.message", "fallback": "Unavailable" }
+                  },
+                  {
+                    "type": "button",
+                    "id": "business.submit",
+                    "label": { "literal": "Continue" },
+                    "on_click": { "action": "business.accept" }
+                  }
+                ]
+              }
+            }"#,
+        )
+        .unwrap();
+        let contract = resolve_promotion_host_contract(
+            repository.path(),
+            &document,
+            "promotion.business",
+            "promotion_business_owner",
+            "promotion_business_route",
+        )
+        .unwrap()
+        .expect("business document should require the catalog contract");
+        assert_eq!(contract["version"], 1);
+
+        let mut action_drift: Value = serde_json::from_str(&document).unwrap();
+        action_drift["root"]["children"][1]["id"] = serde_json::json!("business.other");
+        let error = resolve_promotion_host_contract(
+            repository.path(),
+            &action_drift.to_string(),
+            "promotion.business",
+            "promotion_business_owner",
+            "promotion_business_route",
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("UI_APPROVED_REGISTRATION_ACTION_CONTRACT_MISMATCH")
+        );
     }
 
     #[test]

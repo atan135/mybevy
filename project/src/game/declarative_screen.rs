@@ -13,18 +13,19 @@ use crate::{
         },
         core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, binding::UiBindingValues},
         document::{
-            UiActionId, UiActionRegistry, UiBindingType, UiDocument, UiDocumentId, UiDocumentLayer,
+            UiActionId, UiActionRegistry, UiBindingScope, UiBindingType, UiDocument,
+            UiDocumentHostValidationContext, UiDocumentId, UiDocumentLayer,
             UiDocumentPreviewCommand, UiDocumentPreviewRegistration, UiDocumentPreviewSystems,
             UiDocumentReloadEvent, UiDocumentReloadStatus, UiDocumentRuntime,
             UiDocumentRuntimeCommand, UiDocumentSourcePath, UiDocumentSourceRoot, UiHostBindingKey,
-            UiPageState, UiTargetProfile, target_profile_from_viewport,
+            UiNodeId, UiPageState, UiTargetProfile, target_profile_from_viewport,
         },
     },
     game::{
         navigation::AppUiMode,
         ui_ids::{
-            OWNER_DECLARATIVE_DOCUMENT_ROUTE, OWNER_UI_DOCUMENT_GALLERY,
-            OWNER_UI_GENERATED_ACCEPTANCE,
+            OWNER_DECLARATIVE_DOCUMENT_ROUTE, OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE,
+            OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GENERATED_ACCEPTANCE,
         },
     },
 };
@@ -36,6 +37,8 @@ const GENERATED_ACCEPTANCE_SOURCE: &str = include_str!(
 );
 const DECLARATIVE_PILOT_SOURCE: &str =
     include_str!("../../assets/ui/documents/approved/pilot/declarative_pilot.v1.json");
+const APPROVED_BUSINESS_ACCEPTANCE_SOURCE: &str =
+    include_str!("../../assets/ui/documents/approved/business_acceptance_fixture/document.v1.json");
 
 const DEFAULT_AUDIT_PROFILES: [&str; 4] = [
     "desktop",
@@ -163,6 +166,7 @@ impl DeclarativeScreenHost {
             watch: source.watch,
             open_on_register: true,
             audit_profiles: self.audit_profiles.clone(),
+            approval_audit: None,
         }
     }
 }
@@ -351,7 +355,9 @@ impl Default for DeclarativeScreenRegistry {
                 initial_state: UiPageState::initial(),
                 binding_schema: BTreeMap::new(),
                 action_allowlist: [
-                    UiActionId::from_str("gallery.set_status").expect("static action ID is valid")
+                    UiActionId::from_str("gallery.set_status").expect("static action ID is valid"),
+                    UiActionId::from_str("gallery.control_changed")
+                        .expect("static action ID is valid"),
                 ]
                 .into_iter()
                 .collect(),
@@ -383,6 +389,42 @@ impl Default for DeclarativeScreenRegistry {
                 source: DeclarativeScreenSource::approved(
                     "generated_acceptance_fixture/document.v1.json",
                     GENERATED_ACCEPTANCE_SOURCE,
+                ),
+                fallback_source: None,
+                failure_policy: DeclarativeScreenFailurePolicy::RetainPrevious,
+            },
+            DeclarativeScreenHost {
+                document_id: UiDocumentId::from_str("approved.business_acceptance")
+                    .expect("static document ID is valid"),
+                route: "ui_approved_business_acceptance",
+                route_aliases: &[
+                    "ui_approved_business_acceptance",
+                    "ui-approved-business-acceptance",
+                    "approved_business_acceptance",
+                ],
+                mode: None,
+                owner: OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE,
+                panel: crate::framework::ui::document::UiDocumentPanel::Page,
+                layer: UiDocumentLayer::Page,
+                initial_state: UiPageState::initial(),
+                binding_schema: BTreeMap::from([(
+                    UiHostBindingKey::new(
+                        UiBindingScope::Owner,
+                        crate::framework::ui::document::UiBindingPath::from_str(
+                            "acceptance.status",
+                        )
+                        .expect("static binding path is valid"),
+                    ),
+                    UiBindingType::String,
+                )]),
+                action_allowlist: [UiActionId::from_str("approved.acceptance_continue")
+                    .expect("static action ID is valid")]
+                .into_iter()
+                .collect(),
+                audit_profiles: DEFAULT_AUDIT_PROFILES.map(str::to_owned).to_vec(),
+                source: DeclarativeScreenSource::approved(
+                    "business_acceptance_fixture/document.v1.json",
+                    APPROVED_BUSINESS_ACCEPTANCE_SOURCE,
                 ),
                 fallback_source: None,
                 failure_policy: DeclarativeScreenFailurePolicy::RetainPrevious,
@@ -690,25 +732,60 @@ fn validate_host_source(
     if validated.document().document_id != host.document_id {
         return Err("UI_DECLARATIVE_SCREEN_DOCUMENT_ID_MISMATCH".to_owned());
     }
-    let mut document_actions = BTreeSet::new();
+    let mut document_actions = BTreeMap::<UiActionId, BTreeSet<UiNodeId>>::new();
     collect_document_actions(&validated.document().root, &mut document_actions);
-    if document_actions != host.action_allowlist {
+    if document_actions.keys().cloned().collect::<BTreeSet<_>>() != host.action_allowlist {
         return Err("UI_DECLARATIVE_SCREEN_ACTION_ALLOWLIST_MISMATCH".to_owned());
     }
-    for action in &host.action_allowlist {
+    for (action, sources) in &document_actions {
         let Some(descriptor) = actions.descriptor(action) else {
             return Err("UI_DECLARATIVE_SCREEN_ACTION_UNREGISTERED".to_owned());
         };
-        if descriptor.document_id != host.document_id || descriptor.owner != host.owner.as_str() {
+        if descriptor.document_id != host.document_id
+            || descriptor.owner != host.owner.as_str()
+            || descriptor.sources != *sources
+        {
             return Err("UI_DECLARATIVE_SCREEN_ACTION_CONTRACT_MISMATCH".to_owned());
         }
+    }
+    let document_bindings = validated
+        .document()
+        .bindings
+        .iter()
+        .filter(|(_, declaration)| {
+            matches!(
+                declaration.scope,
+                UiBindingScope::Document | UiBindingScope::Owner
+            )
+        })
+        .map(|(path, declaration)| {
+            (
+                UiHostBindingKey::new(declaration.scope, path.clone()),
+                declaration.value_type.clone(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    if document_bindings != host.binding_schema {
+        return Err("UI_DECLARATIVE_SCREEN_BINDING_CONTRACT_MISMATCH".to_owned());
+    }
+    if let Some(error) = validated
+        .validate_with_host(&UiDocumentHostValidationContext {
+            owner: host.owner.as_str(),
+            owner_alive: true,
+            action_registry: actions,
+            bindings: &host.binding_schema,
+        })
+        .into_iter()
+        .next()
+    {
+        return Err(error.code.to_owned());
     }
     Ok(())
 }
 
 fn collect_document_actions(
     node: &crate::framework::ui::document::UiNode,
-    actions: &mut BTreeSet<UiActionId>,
+    actions: &mut BTreeMap<UiActionId, BTreeSet<UiNodeId>>,
 ) {
     for trigger in [
         crate::framework::ui::document::UiActionTrigger::Click,
@@ -716,7 +793,10 @@ fn collect_document_actions(
         crate::framework::ui::document::UiActionTrigger::Submit,
     ] {
         if let Some(action) = crate::framework::ui::document::node_action(node, trigger) {
-            actions.insert(action.action.clone());
+            actions
+                .entry(action.action.clone())
+                .or_default()
+                .insert(node.id().clone());
         }
     }
     for child in node.children() {
@@ -1242,6 +1322,72 @@ mod tests {
                 "game.declarative_pilot"
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn approved_business_fixture_matches_the_game_owned_host_contract() {
+        const REGISTRATION_SOURCE: &str = include_str!(
+            "../../assets/ui/documents/approved/business_acceptance_fixture/promotion.v1.json"
+        );
+        let registry = DeclarativeScreenRegistry::default();
+        let host = registry
+            .route("ui_approved_business_acceptance")
+            .expect("business acceptance route should be data-registered");
+        let mut actions = UiActionRegistry::default();
+        let action = UiActionId::from_str("approved.acceptance_continue").unwrap();
+        actions
+            .register(
+                crate::framework::ui::document::UiActionDescriptor::new(
+                    action.clone(),
+                    host.document_id.clone(),
+                    host.owner.as_str(),
+                    crate::framework::ui::document::UiRegisteredActionKind::BusinessCommand {
+                        target: "game.approved_business_acceptance".to_owned(),
+                    },
+                )
+                .with_source(UiNodeId::from_str("acceptance.continue").unwrap()),
+            )
+            .unwrap();
+        validate_host_source(host, &host.source.source_json, &actions).unwrap();
+
+        let contract = crate::framework::ui::document::UiApprovedDocumentHostContract::new(
+            crate::framework::ui::document::UI_APPROVED_DOCUMENT_HOST_CONTRACT_VERSION,
+            host.document_id.clone(),
+            host.owner.as_str(),
+            host.route,
+            host.panel,
+            host.layer,
+            host.initial_state.clone(),
+            host.audit_profiles.clone(),
+            host.binding_schema.clone(),
+            BTreeMap::from([(
+                action,
+                [UiNodeId::from_str("acceptance.continue").unwrap()]
+                    .into_iter()
+                    .collect(),
+            )]),
+            BTreeSet::new(),
+        )
+        .unwrap();
+        let registration = crate::framework::ui::document::parse_approved_document_registration(
+            REGISTRATION_SOURCE,
+        )
+        .unwrap();
+        let preview = registration
+            .to_preview_registration_with_contract(
+                host.source.source_json.clone(),
+                target_profile_from_viewport(&crate::framework::ui::core::UiViewport::default()),
+                Some(&contract),
+            )
+            .unwrap();
+        assert_eq!(preview.host_bindings, host.binding_schema);
+        assert_eq!(
+            registration
+                .audit_report(&host.source.source_json)
+                .unwrap()
+                .actions,
+            ["approved.acceptance_continue"]
         );
     }
 

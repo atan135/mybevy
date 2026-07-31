@@ -4,16 +4,26 @@
 //! explicitly choose when to register the resulting declarative page with its own route lifecycle.
 
 use super::{
-    UiDocument, UiDocumentId, UiDocumentLayer, UiDocumentPanel, UiDocumentPreviewRegistration,
-    UiDocumentSourcePath, UiDocumentSourceRoot, UiPageState, UiTargetProfile,
+    UiActionId, UiActionTrigger, UiAssetId, UiBindingScope, UiBindingType, UiDocument,
+    UiDocumentId, UiDocumentLayer, UiDocumentPanel, UiDocumentPreviewRegistration,
+    UiDocumentSourcePath, UiDocumentSourceRoot, UiHostBindingKey, UiNode, UiNodeId, UiPageState,
+    UiTargetProfile,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, fmt, str::FromStr};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    str::FromStr,
+};
 
-pub const UI_APPROVED_DOCUMENT_REGISTRATION_PROTOCOL_VERSION: u32 = 1;
+pub const UI_APPROVED_DOCUMENT_REGISTRATION_PROTOCOL_VERSION: u32 = 2;
+pub const UI_APPROVED_DOCUMENT_HOST_CONTRACT_VERSION: u32 = 1;
+const LEGACY_REGISTRATION_PROTOCOL_VERSION: u32 = 1;
 const REGISTRATION_KIND: &str = "ui_document_promotion_registration";
-const REGISTRATION_TEMPLATE_VERSION: u32 = 1;
+const LEGACY_REGISTRATION_TEMPLATE_VERSION: u32 = 1;
+const REGISTRATION_TEMPLATE_VERSION: u32 = 2;
 const REQUIRED_AUDIT_PROFILES: [&str; 4] = [
     "desktop",
     "phone-landscape",
@@ -21,7 +31,106 @@ const REQUIRED_AUDIT_PROFILES: [&str; 4] = [
     "tablet-landscape",
 ];
 
+/// Closed, game-owned capabilities that an approved document may reference.
+///
+/// The contract intentionally contains document-facing names only. It cannot name a Rust type,
+/// handler, system, message, URL, filesystem path, or executable command.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiApprovedDocumentHostContract {
+    version: u32,
+    document_id: UiDocumentId,
+    owner: String,
+    route: String,
+    panel: UiDocumentPanel,
+    layer: UiDocumentLayer,
+    page_state: UiPageState,
+    audit_profiles: Vec<String>,
+    bindings: BTreeMap<UiHostBindingKey, UiBindingType>,
+    actions: BTreeMap<UiActionId, BTreeSet<UiNodeId>>,
+    resources: BTreeSet<UiAssetId>,
+}
+
+impl UiApprovedDocumentHostContract {
+    pub fn new(
+        version: u32,
+        document_id: UiDocumentId,
+        owner: impl Into<String>,
+        route: impl Into<String>,
+        panel: UiDocumentPanel,
+        layer: UiDocumentLayer,
+        page_state: UiPageState,
+        audit_profiles: Vec<String>,
+        bindings: BTreeMap<UiHostBindingKey, UiBindingType>,
+        actions: BTreeMap<UiActionId, BTreeSet<UiNodeId>>,
+        resources: BTreeSet<UiAssetId>,
+    ) -> Result<Self, UiApprovedDocumentRegistrationError> {
+        let owner = owner.into();
+        let route = route.into();
+        if version != UI_APPROVED_DOCUMENT_HOST_CONTRACT_VERSION
+            || !safe_registration_label(&owner)
+            || !safe_registration_label(&route)
+            || panel != UiDocumentPanel::Page
+            || layer != UiDocumentLayer::Page
+            || page_state != UiPageState::initial()
+            || normalized_profiles(&audit_profiles).is_none()
+            || actions.values().any(BTreeSet::is_empty)
+        {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                "approved host contract identity, version, audit profiles, or action sources are invalid",
+            ));
+        }
+        Ok(Self {
+            version,
+            document_id,
+            owner,
+            route,
+            panel,
+            layer,
+            page_state,
+            audit_profiles: REQUIRED_AUDIT_PROFILES.map(str::to_owned).to_vec(),
+            bindings,
+            actions,
+            resources,
+        })
+    }
+
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    pub fn bindings(&self) -> &BTreeMap<UiHostBindingKey, UiBindingType> {
+        &self.bindings
+    }
+
+    pub fn actions(&self) -> &BTreeMap<UiActionId, BTreeSet<UiNodeId>> {
+        &self.actions
+    }
+
+    pub fn resources(&self) -> &BTreeSet<UiAssetId> {
+        &self.resources
+    }
+
+    fn matches_registration(&self, registration: &UiApprovedDocumentRegistration) -> bool {
+        self.document_id == registration.document_id
+            && self.owner == registration.owner
+            && self.route == registration.route
+            && self.panel == UiDocumentPanel::Page
+            && self.layer == UiDocumentLayer::Page
+            && self.page_state == registration.page_state
+            && self.audit_profiles == registration.audit_profiles
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiApprovedDocumentAuditReport {
+    pub host_contract_version: Option<u32>,
+    pub actions: Vec<String>,
+    pub bindings: Vec<String>,
+    pub canonical_document_sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct UiApprovedDocumentRegistration {
     document_id: UiDocumentId,
     source_path: UiDocumentSourcePath,
@@ -29,6 +138,7 @@ pub struct UiApprovedDocumentRegistration {
     route: String,
     page_state: UiPageState,
     audit_profiles: Vec<String>,
+    host_contract: Option<UiApprovedDocumentHostContract>,
 }
 
 impl UiApprovedDocumentRegistration {
@@ -57,6 +167,10 @@ impl UiApprovedDocumentRegistration {
         &self.audit_profiles
     }
 
+    pub fn host_contract(&self) -> Option<&UiApprovedDocumentHostContract> {
+        self.host_contract.as_ref()
+    }
+
     /// Converts a reviewed declaration into the existing formal preview/runtime registration.
     /// A game-owned route adapter must call this explicitly during its own lifecycle.
     pub fn to_preview_registration(
@@ -64,6 +178,68 @@ impl UiApprovedDocumentRegistration {
         source_json: String,
         target_profile: UiTargetProfile,
     ) -> Result<UiDocumentPreviewRegistration, UiApprovedDocumentRegistrationError> {
+        self.to_preview_registration_with_contract(source_json, target_profile, None)
+    }
+
+    /// Converts a reviewed declaration only after the game passes the exact contract it owns.
+    /// Older registrations have no contract and therefore retain their zero-business-capability
+    /// behavior even when a newer host exists.
+    pub fn to_preview_registration_with_contract(
+        &self,
+        source_json: String,
+        target_profile: UiTargetProfile,
+        game_contract: Option<&UiApprovedDocumentHostContract>,
+    ) -> Result<UiDocumentPreviewRegistration, UiApprovedDocumentRegistrationError> {
+        self.validate_document_source_contract(&source_json)?;
+        if let Some(registration_contract) = &self.host_contract {
+            let Some(game_contract) = game_contract else {
+                return Err(UiApprovedDocumentRegistrationError::new(
+                    "UI_APPROVED_REGISTRATION_HOST_CONTRACT_REQUIRED",
+                    "approved registration with business capabilities requires an explicit game host contract",
+                ));
+            };
+            if registration_contract != game_contract || !game_contract.matches_registration(self) {
+                return Err(UiApprovedDocumentRegistrationError::new(
+                    "UI_APPROVED_REGISTRATION_HOST_CONTRACT_MISMATCH",
+                    "approved registration contract does not exactly match the game host",
+                ));
+            }
+        }
+        let audit = self.audit_report(&source_json)?;
+        Ok(UiDocumentPreviewRegistration {
+            document_id: self.document_id.clone(),
+            owner: self.owner.clone(),
+            source_path: self.source_path.clone(),
+            source_json,
+            panel: UiDocumentPanel::Page,
+            layer: UiDocumentLayer::Page,
+            target_profile,
+            page_state: self.page_state.clone(),
+            owner_alive: true,
+            host_bindings: self
+                .host_contract
+                .as_ref()
+                .map(|contract| contract.bindings.clone())
+                .unwrap_or_default(),
+            watch: false,
+            open_on_register: true,
+            audit_profiles: self.audit_profiles.clone(),
+            approval_audit: Some(super::UiDocumentApprovalAuditMetadata {
+                host_contract_version: audit.host_contract_version,
+                actions: audit.actions,
+                bindings: audit.bindings,
+                canonical_document_sha256: audit.canonical_document_sha256,
+            }),
+        })
+    }
+
+    /// Validates the document-facing part of the registration contract without supplying a game
+    /// host. Development tooling uses this before it writes a registration; the game still must
+    /// pass its independently registered contract before runtime registration is allowed.
+    pub fn validate_document_source_contract(
+        &self,
+        source_json: &str,
+    ) -> Result<(), UiApprovedDocumentRegistrationError> {
         let validation = UiDocument::validate_json(&source_json);
         let document = validation.validated().ok_or_else(|| {
             UiApprovedDocumentRegistrationError::new(
@@ -77,26 +253,64 @@ impl UiApprovedDocumentRegistration {
                 "approved registration document_id differs from its source document",
             ));
         }
-        reject_business_fields(&serde_json::from_str::<Value>(&source_json).map_err(|_| {
+        match &self.host_contract {
+            Some(contract) => validate_document_contract(document.document(), contract)?,
+            None => reject_business_fields(&serde_json::from_str::<Value>(&source_json).map_err(
+                |_| {
+                    UiApprovedDocumentRegistrationError::new(
+                        "UI_APPROVED_REGISTRATION_DOCUMENT_INVALID",
+                        "approved registration source cannot be decoded as JSON",
+                    )
+                },
+            )?)?,
+        }
+        Ok(())
+    }
+
+    pub fn audit_report(
+        &self,
+        source_json: &str,
+    ) -> Result<UiApprovedDocumentAuditReport, UiApprovedDocumentRegistrationError> {
+        self.validate_document_source_contract(source_json)?;
+        let validation = UiDocument::validate_json(source_json);
+        let document = validation.validated().ok_or_else(|| {
             UiApprovedDocumentRegistrationError::new(
                 "UI_APPROVED_REGISTRATION_DOCUMENT_INVALID",
-                "approved registration source cannot be decoded as JSON",
+                "approved registration source does not pass formal UiDocument validation",
             )
-        })?)?;
-        Ok(UiDocumentPreviewRegistration {
-            document_id: self.document_id.clone(),
-            owner: self.owner.clone(),
-            source_path: self.source_path.clone(),
-            source_json,
-            panel: UiDocumentPanel::Page,
-            layer: UiDocumentLayer::Page,
-            target_profile,
-            page_state: self.page_state.clone(),
-            owner_alive: true,
-            host_bindings: BTreeMap::new(),
-            watch: false,
-            open_on_register: true,
-            audit_profiles: self.audit_profiles.clone(),
+        })?;
+        if document.document().document_id != self.document_id {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_DOCUMENT_ID_MISMATCH",
+                "approved registration document_id differs from its source document",
+            ));
+        }
+        let canonical = document
+            .document()
+            .to_canonical_json_pretty()
+            .map_err(|_| {
+                UiApprovedDocumentRegistrationError::new(
+                    "UI_APPROVED_REGISTRATION_DOCUMENT_INVALID",
+                    "approved registration source cannot be canonicalized",
+                )
+            })?;
+        let (actions, bindings) = if let Some(contract) = &self.host_contract {
+            (
+                contract
+                    .actions
+                    .keys()
+                    .map(|id| id.as_str().to_owned())
+                    .collect(),
+                contract.bindings.keys().map(binding_key_label).collect(),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        Ok(UiApprovedDocumentAuditReport {
+            host_contract_version: self.host_contract.as_ref().map(|contract| contract.version),
+            actions,
+            bindings,
+            canonical_document_sha256: format!("{:x}", Sha256::digest(canonical.as_bytes())),
         })
     }
 }
@@ -144,7 +358,10 @@ struct RegistrationFile {
     audit_profiles: Vec<String>,
     i18n_keys: Vec<String>,
     theme_tokens: Vec<String>,
+    #[serde(default)]
     action_or_binding_registration: Vec<String>,
+    #[serde(default)]
+    host_contract: Option<RegistrationHostContract>,
 }
 
 #[derive(Deserialize)]
@@ -152,6 +369,30 @@ struct RegistrationFile {
 struct RegistrationSource {
     root: String,
     relative_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegistrationHostContract {
+    version: u32,
+    bindings: Vec<RegistrationBinding>,
+    actions: Vec<RegistrationAction>,
+    resources: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegistrationBinding {
+    scope: UiBindingScope,
+    path: String,
+    value_type: UiBindingType,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegistrationAction {
+    id: String,
+    sources: Vec<String>,
 }
 
 /// Parses only the closed promotion declaration emitted by the development tool.
@@ -164,9 +405,25 @@ pub fn parse_approved_document_registration(
             "approved registration must match the closed JSON schema",
         )
     })?;
-    if file.protocol_version != UI_APPROVED_DOCUMENT_REGISTRATION_PROTOCOL_VERSION
-        || file.kind != REGISTRATION_KIND
-        || file.template_version != REGISTRATION_TEMPLATE_VERSION
+    let registration_contract = match (
+        file.protocol_version,
+        file.template_version,
+        file.host_contract,
+    ) {
+        (LEGACY_REGISTRATION_PROTOCOL_VERSION, LEGACY_REGISTRATION_TEMPLATE_VERSION, None) => None,
+        (
+            UI_APPROVED_DOCUMENT_REGISTRATION_PROTOCOL_VERSION,
+            REGISTRATION_TEMPLATE_VERSION,
+            Some(contract),
+        ) => Some(contract),
+        _ => {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_VERSION_UNSUPPORTED",
+                "approved registration protocol/template version is unsupported",
+            ));
+        }
+    };
+    if file.kind != REGISTRATION_KIND
         || file.source.root != "approved"
         || file.panel != "page"
         || file.layer != "page"
@@ -211,14 +468,123 @@ pub fn parse_approved_document_registration(
             "approved registration page state or audit profiles differ from the closed template",
         ));
     }
+    let audit_profiles = REQUIRED_AUDIT_PROFILES.map(str::to_owned).to_vec();
+    let host_contract = registration_contract
+        .map(|contract| {
+            parse_host_contract(
+                contract,
+                document_id.clone(),
+                file.owner.clone(),
+                file.route.clone(),
+                page_state.clone(),
+                audit_profiles.clone(),
+            )
+        })
+        .transpose()?;
     Ok(UiApprovedDocumentRegistration {
         document_id,
         source_path,
         owner: file.owner,
         route: file.route,
         page_state,
-        audit_profiles: REQUIRED_AUDIT_PROFILES.map(str::to_owned).to_vec(),
+        audit_profiles,
+        host_contract,
     })
+}
+
+fn parse_host_contract(
+    contract: RegistrationHostContract,
+    document_id: UiDocumentId,
+    owner: String,
+    route: String,
+    page_state: UiPageState,
+    audit_profiles: Vec<String>,
+) -> Result<UiApprovedDocumentHostContract, UiApprovedDocumentRegistrationError> {
+    let mut bindings = BTreeMap::new();
+    for binding in contract.bindings {
+        if matches!(binding.scope, UiBindingScope::Local | UiBindingScope::Item) {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                "approved host contract may only declare document or owner bindings",
+            ));
+        }
+        let path = super::UiBindingPath::from_str(&binding.path).map_err(|_| {
+            UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                "approved host contract binding path is invalid",
+            )
+        })?;
+        if bindings
+            .insert(
+                UiHostBindingKey::new(binding.scope, path),
+                binding.value_type,
+            )
+            .is_some()
+        {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                "approved host contract has duplicate bindings",
+            ));
+        }
+    }
+    let mut actions = BTreeMap::new();
+    for action in contract.actions {
+        let id = UiActionId::from_str(&action.id).map_err(|_| {
+            UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                "approved host contract action ID is invalid",
+            )
+        })?;
+        let mut sources = BTreeSet::new();
+        for source in action.sources {
+            let source = UiNodeId::from_str(&source).map_err(|_| {
+                UiApprovedDocumentRegistrationError::new(
+                    "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                    "approved host contract action source is invalid",
+                )
+            })?;
+            if !sources.insert(source) {
+                return Err(UiApprovedDocumentRegistrationError::new(
+                    "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                    "approved host contract action has duplicate sources",
+                ));
+            }
+        }
+        if actions.insert(id, sources).is_some() {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                "approved host contract has duplicate action IDs",
+            ));
+        }
+    }
+    let mut resources = BTreeSet::new();
+    for resource in contract.resources {
+        let resource = UiAssetId::from_str(&resource).map_err(|_| {
+            UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                "approved host contract resource ID is invalid",
+            )
+        })?;
+        if !resources.insert(resource) {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_HOST_CONTRACT_INVALID",
+                "approved host contract has duplicate resource IDs",
+            ));
+        }
+    }
+    UiApprovedDocumentHostContract::new(
+        contract.version,
+        document_id,
+        owner,
+        route,
+        UiDocumentPanel::Page,
+        UiDocumentLayer::Page,
+        page_state,
+        audit_profiles,
+        bindings,
+        actions,
+        resources,
+    )
 }
 
 fn normalized_profiles(values: &[String]) -> Option<Vec<String>> {
@@ -242,6 +608,74 @@ fn safe_registration_label(value: &str) -> bool {
                 || byte.is_ascii_digit()
                 || matches!(byte, b'.' | b'_' | b'-')
         })
+}
+
+fn validate_document_contract(
+    document: &UiDocument,
+    contract: &UiApprovedDocumentHostContract,
+) -> Result<(), UiApprovedDocumentRegistrationError> {
+    let mut bindings = BTreeMap::new();
+    for (path, declaration) in &document.bindings {
+        if matches!(
+            declaration.scope,
+            UiBindingScope::Document | UiBindingScope::Owner
+        ) {
+            bindings.insert(
+                UiHostBindingKey::new(declaration.scope, path.clone()),
+                declaration.value_type.clone(),
+            );
+        }
+    }
+    if bindings != contract.bindings {
+        return Err(UiApprovedDocumentRegistrationError::new(
+            "UI_APPROVED_REGISTRATION_BINDING_CONTRACT_MISMATCH",
+            "approved document bindings differ from the registered game host contract",
+        ));
+    }
+    let mut actions = BTreeMap::<UiActionId, BTreeSet<UiNodeId>>::new();
+    collect_document_actions(&document.root, &mut actions);
+    if actions != contract.actions {
+        return Err(UiApprovedDocumentRegistrationError::new(
+            "UI_APPROVED_REGISTRATION_ACTION_CONTRACT_MISMATCH",
+            "approved document actions or source nodes differ from the registered game host contract",
+        ));
+    }
+    let resources: BTreeSet<UiAssetId> = document.assets.keys().cloned().collect();
+    if resources != contract.resources {
+        return Err(UiApprovedDocumentRegistrationError::new(
+            "UI_APPROVED_REGISTRATION_RESOURCE_CONTRACT_MISMATCH",
+            "approved document resources differ from the registration resource contract",
+        ));
+    }
+    Ok(())
+}
+
+fn collect_document_actions(node: &UiNode, actions: &mut BTreeMap<UiActionId, BTreeSet<UiNodeId>>) {
+    for trigger in [
+        UiActionTrigger::Click,
+        UiActionTrigger::Change,
+        UiActionTrigger::Submit,
+    ] {
+        if let Some(action) = super::node_action(node, trigger) {
+            actions
+                .entry(action.action.clone())
+                .or_default()
+                .insert(node.id().clone());
+        }
+    }
+    for child in node.children() {
+        collect_document_actions(child, actions);
+    }
+}
+
+fn binding_key_label(key: &UiHostBindingKey) -> String {
+    let scope = match key.scope {
+        UiBindingScope::Document => "document",
+        UiBindingScope::Owner => "owner",
+        UiBindingScope::Local => "local",
+        UiBindingScope::Item => "item",
+    };
+    format!("{scope}:{}", key.path)
 }
 
 fn reject_business_fields(value: &Value) -> Result<(), UiApprovedDocumentRegistrationError> {
@@ -302,6 +736,36 @@ mod tests {
       "action_or_binding_registration": []
     }"#;
 
+    const BUSINESS_REGISTRATION_JSON: &str = r#"{
+      "protocol_version": 2,
+      "kind": "ui_document_promotion_registration",
+      "template_version": 2,
+      "document_id": "promotion.business",
+      "source": { "root": "approved", "relative_path": "promotion_business/document.v1.json" },
+      "owner": "promotion_business_owner",
+      "route": "promotion_business_route",
+      "panel": "page",
+      "layer": "page",
+      "page_state": "initial",
+      "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+      "i18n_keys": [],
+      "theme_tokens": [],
+      "action_or_binding_registration": [],
+      "host_contract": {
+        "version": 1,
+        "bindings": [{
+          "scope": "owner",
+          "path": "business.message",
+          "value_type": { "kind": "string" }
+        }],
+        "actions": [{
+          "id": "business.accept",
+          "sources": ["business.submit"]
+        }],
+        "resources": []
+      }
+    }"#;
+
     fn target_profile() -> UiTargetProfile {
         UiTargetProfile::new(
             390.0,
@@ -354,6 +818,67 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    fn business_document() -> String {
+        serde_json::json!({
+            "schema_version": 1,
+            "document_id": "promotion.business",
+            "bindings": {
+                "business.message": {
+                    "scope": "owner",
+                    "value_type": { "kind": "string" },
+                    "default": { "kind": "string", "value": "Ready" },
+                    "missing": "use_default"
+                }
+            },
+            "root": {
+                "type": "container",
+                "id": "business.root",
+                "children": [
+                    {
+                        "type": "text",
+                        "id": "business.message",
+                        "content": { "binding_path": "business.message", "fallback": "Unavailable" }
+                    },
+                    {
+                        "type": "button",
+                        "id": "business.submit",
+                        "label": { "literal": "Continue" },
+                        "on_click": { "action": "business.accept" }
+                    }
+                ]
+            }
+        })
+        .to_string()
+    }
+
+    fn business_contract() -> UiApprovedDocumentHostContract {
+        UiApprovedDocumentHostContract::new(
+            UI_APPROVED_DOCUMENT_HOST_CONTRACT_VERSION,
+            UiDocumentId::from_str("promotion.business").unwrap(),
+            "promotion_business_owner",
+            "promotion_business_route",
+            UiDocumentPanel::Page,
+            UiDocumentLayer::Page,
+            UiPageState::initial(),
+            REQUIRED_AUDIT_PROFILES.map(str::to_owned).to_vec(),
+            BTreeMap::from([(
+                UiHostBindingKey::new(
+                    UiBindingScope::Owner,
+                    super::super::UiBindingPath::from_str("business.message").unwrap(),
+                ),
+                UiBindingType::String,
+            )]),
+            BTreeMap::from([(
+                UiActionId::from_str("business.accept").unwrap(),
+                [UiNodeId::from_str("business.submit").unwrap()]
+                    .into_iter()
+                    .collect(),
+            )]),
+            BTreeSet::new(),
+        )
+        .unwrap()
     }
 
     fn test_image_handle(app: &mut App) -> bevy::prelude::Handle<Image> {
@@ -442,6 +967,116 @@ mod tests {
     }
 
     #[test]
+    fn approved_business_registration_requires_an_exact_game_contract_and_reports_evidence() {
+        let registration =
+            parse_approved_document_registration(BUSINESS_REGISTRATION_JSON).unwrap();
+        let contract = business_contract();
+        assert_eq!(registration.host_contract(), Some(&contract));
+
+        let preview = registration
+            .to_preview_registration_with_contract(
+                business_document(),
+                target_profile(),
+                Some(&contract),
+            )
+            .unwrap();
+        assert_eq!(preview.host_bindings, contract.bindings);
+
+        let report = registration.audit_report(&business_document()).unwrap();
+        assert_eq!(report.host_contract_version, Some(1));
+        assert_eq!(report.actions, ["business.accept"]);
+        assert_eq!(report.bindings, ["owner:business.message"]);
+        assert_eq!(report.canonical_document_sha256.len(), 64);
+
+        let error = registration
+            .to_preview_registration(business_document(), target_profile())
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            "UI_APPROVED_REGISTRATION_HOST_CONTRACT_REQUIRED"
+        );
+
+        let mut mismatched = contract.clone();
+        mismatched.actions.insert(
+            UiActionId::from_str("business.accept").unwrap(),
+            [UiNodeId::from_str("business.other_source").unwrap()]
+                .into_iter()
+                .collect(),
+        );
+        let error = registration
+            .to_preview_registration_with_contract(
+                business_document(),
+                target_profile(),
+                Some(&mismatched),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            "UI_APPROVED_REGISTRATION_HOST_CONTRACT_MISMATCH"
+        );
+    }
+
+    #[test]
+    fn approved_business_registration_rejects_action_binding_and_resource_drift() {
+        let registration =
+            parse_approved_document_registration(BUSINESS_REGISTRATION_JSON).unwrap();
+        let contract = business_contract();
+
+        let mut action_drift: Value = serde_json::from_str(&business_document()).unwrap();
+        action_drift["root"]["children"][1]["id"] = serde_json::json!("business.other_source");
+        let error = registration
+            .to_preview_registration_with_contract(
+                action_drift.to_string(),
+                target_profile(),
+                Some(&contract),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            "UI_APPROVED_REGISTRATION_ACTION_CONTRACT_MISMATCH"
+        );
+
+        let mut binding_drift: Value = serde_json::from_str(&business_document()).unwrap();
+        binding_drift["bindings"]["business.message"]["value_type"] =
+            serde_json::json!({ "kind": "bool" });
+        binding_drift["bindings"]["business.message"]["default"] =
+            serde_json::json!({ "kind": "bool", "value": true });
+        let error = registration
+            .to_preview_registration_with_contract(
+                binding_drift.to_string(),
+                target_profile(),
+                Some(&contract),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            "UI_APPROVED_REGISTRATION_BINDING_CONTRACT_MISMATCH"
+        );
+
+        let mut resource_drift: Value = serde_json::from_str(&business_document()).unwrap();
+        resource_drift["assets"] = serde_json::json!({
+            "business_icon": {
+                "kind": "icon",
+                "source": {
+                    "kind": "packaged",
+                    "path": "ui/fixtures/visual-foundation/non-square-2x1.png"
+                }
+            }
+        });
+        let error = registration
+            .to_preview_registration_with_contract(
+                resource_drift.to_string(),
+                target_profile(),
+                Some(&contract),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            "UI_APPROVED_REGISTRATION_RESOURCE_CONTRACT_MISMATCH"
+        );
+    }
+
+    #[test]
     fn approved_document_registration_requires_explicit_lifecycle_registration() {
         let registration = parse_approved_document_registration(REGISTRATION_JSON).unwrap();
         let source_json = approved_image_document();
@@ -504,6 +1139,14 @@ mod tests {
                 "tablet-landscape"
             ]
         );
+        let approval_audit = recipe
+            .approval_audit
+            .as_ref()
+            .expect("approved registration should attach audit evidence");
+        assert_eq!(approval_audit.host_contract_version, None);
+        assert!(approval_audit.actions.is_empty());
+        assert!(approval_audit.bindings.is_empty());
+        assert_eq!(approval_audit.canonical_document_sha256.len(), 64);
 
         app.world_mut()
             .write_message(super::super::UiDocumentPreviewCommand::Unregister {

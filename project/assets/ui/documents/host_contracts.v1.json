@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "contracts": [
+    {
+      "document_id": "approved.business_acceptance",
+      "owner": "approved_business_acceptance",
+      "route": "ui_approved_business_acceptance",
+      "host_contract": {
+        "version": 1,
+        "bindings": [
+          {
+            "scope": "owner",
+            "path": "acceptance.status",
+            "value_type": {
+              "kind": "string"
+            }
+          }
+        ],
+        "actions": [
+          {
+            "id": "approved.acceptance_continue",
+            "sources": [
+              "acceptance.continue"
+            ]
+          }
+        ],
+        "resources": []
+      }
+    }
+  ]
+}

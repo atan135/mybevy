@@ -1,0 +1,73 @@
+{
+  "assets": {},
+  "bindings": {
+    "acceptance.status": {
+      "default": {
+        "kind": "string",
+        "value": "The game host has registered this contract."
+      },
+      "missing": "use_default",
+      "scope": "owner",
+      "value_type": {
+        "kind": "string"
+      }
+    }
+  },
+  "document_id": "approved.business_acceptance",
+  "metadata": {
+    "budget_profile": "mobile_baseline_v1",
+    "title": "Approved business contract acceptance"
+  },
+  "responsive": [],
+  "root": {
+    "children": [
+      {
+        "content": {
+          "binding_path": "acceptance.status",
+          "fallback": "Status unavailable"
+        },
+        "id": "acceptance.status",
+        "style": {
+          "text_role": "body"
+        },
+        "type": "text"
+      },
+      {
+        "id": "acceptance.continue",
+        "label": {
+          "literal": "Dispatch registered action"
+        },
+        "on_click": {
+          "action": "approved.acceptance_continue"
+        },
+        "type": "button",
+        "variant": "primary"
+      }
+    ],
+    "id": "acceptance.root",
+    "layout": {
+      "gap": {
+        "px": 16.0
+      },
+      "height": {
+        "percent": 100.0
+      },
+      "padding": {
+        "all": {
+          "px": 28.0
+        }
+      },
+      "width": {
+        "percent": 100.0
+      }
+    },
+    "style": {
+      "role": "page"
+    },
+    "type": "container"
+  },
+  "schema_version": 1,
+  "states": [],
+  "styles": {},
+  "tokens": {}
+}

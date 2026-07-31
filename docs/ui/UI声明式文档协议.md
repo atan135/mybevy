@@ -515,6 +515,8 @@ v1 node 不是独立 node table：除 root 外的每个协议节点只能作为�
 
 `UiDocumentRuntimePlugin` 接收显式 `UiDocumentRuntimeCommand`。`Open` 必须携带 request ID、预期 document ID、owner、panel、layer、source origin、target profile、page state、owner 存活状态和宿主 binding schema。运行时先执行完整静态验证与 effective document 合并，再使用 `UiDocumentHostValidationContext` 校验 action registry 和外部 binding；宿主已安装 `UiI18n` 时还会用当前 locale 及框架 fallback catalog 执行内容 key 校验。预期 document ID 与文档内容不一致时使用 `UI_DOCUMENT_ID_MISMATCH` 拒绝，不能让不可信 source 改写宿主选择的生命周期 key。
 
+approved promotion registration 也有独立的默认拒绝边界。protocol/template v1 是兼容展示页格式，document 不能声明 action、binding 或 i18n 业务字段。v2 必须附带 host contract version；其 `bindings` 只允许 `document`/`owner` scope 的 typed schema，`actions` 必须列出每个稳定 action ID 与完整 source node 集合，`resources` 必须完整列出 asset ID。adapter 先比较 registration 与游戏传入的独立 contract，再比较 document 的 action/source、外部 binding 与资源集合；任一未知、缺失、类型、版本或 source 漂移均拒绝。contract 只描述协议 ID，永不承载 Rust 类型、handler、system、message、URL、真实路径、脚本或命令；v1 registration 不会因游戏后来新增的能力自动升级权限。
+
 构建状态是 closed enum：`queued -> validating -> preflighting -> ready -> committed`。`failed`、`cancelled` 和 `cleaned` 是显式终态或生命周期记录。验证与 preflight 阶段只保存 Rust 构建计划和资源 handle，不创建 ECS 实体；所有必需资源 ready 后，builder 才在独占 World 阶段生成隐藏树，完整成功后切为 visible。commit 内部适配失败会清理该次生成的全部实体，旧 active instance 继续显示。
 
 资源预检只遍历已经静态验证的 asset table。`packaged` source 按 kind 交给 Bevy `AssetServer` 并轮询 typed handle 的 `LoadState`；`built_in_material` 只接受既有 allowlist；`content_cache` 必须由宿主内容系统通过 typed preflight 状态和已解析 handle 接入，document 仍不能提供缓存路径或 URL。测试使用 `UiDocumentAssetPreflightOverrides` 确定性注入 pending、ready 和 stable failure code，不依赖磁盘、GPU 或异步时序；override 返回的 typed image handle 仍必须存在于 `Assets<Image>` 并经过相同 metadata 复核，不能绕过生产检查。

@@ -33,8 +33,8 @@ use crate::game::ui_ids::{
     OWNER_AI_LOGIN_REFERENCE, OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS,
     OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY,
     OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
-    OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GALLERY, OWNER_UI_GENERATED_ACCEPTANCE,
-    SCROLL_UI_GALLERY_MAIN,
+    OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE, OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GALLERY,
+    OWNER_UI_GENERATED_ACCEPTANCE, SCROLL_UI_GALLERY_MAIN,
 };
 
 pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
@@ -80,6 +80,8 @@ const DECLARATIVE_CONTINUE_NODE: &str = "page.continue";
 pub(in crate::game) const UI_DOCUMENT_GALLERY_DOCUMENT: &str = "gallery.declarative";
 const UI_DOCUMENT_GALLERY_ACTION: &str = "gallery.set_status";
 const UI_DOCUMENT_GALLERY_CONTROL_ACTION: &str = "gallery.control_changed";
+const APPROVED_BUSINESS_ACCEPTANCE_DOCUMENT: &str = "approved.business_acceptance";
+const APPROVED_BUSINESS_ACCEPTANCE_ACTION: &str = "approved.acceptance_continue";
 
 fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
     registry
@@ -140,6 +142,19 @@ fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
             ),
         )
         .expect("declarative Gallery control action registration must be valid and unique");
+    registry
+        .register(
+            UiActionDescriptor::new(
+                UiActionId::from_str(APPROVED_BUSINESS_ACCEPTANCE_ACTION).unwrap(),
+                UiDocumentId::from_str(APPROVED_BUSINESS_ACCEPTANCE_DOCUMENT).unwrap(),
+                OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE.as_str(),
+                UiRegisteredActionKind::BusinessCommand {
+                    target: "game.approved_business_acceptance".to_owned(),
+                },
+            )
+            .with_source(UiNodeId::from_str("acceptance.continue").unwrap()),
+        )
+        .expect("approved business acceptance action registration must be valid and unique");
 }
 
 fn handle_declarative_ui_actions(
@@ -857,6 +872,24 @@ mod tests {
             .expect("game action should be registered");
         assert_eq!(descriptor.document_id.as_str(), "example.minimal_page");
         assert_eq!(descriptor.owner, OWNER_LOGIN.as_str());
+
+        let business_action = registry
+            .descriptor(&UiActionId::from_str(APPROVED_BUSINESS_ACCEPTANCE_ACTION).unwrap())
+            .expect("approved business action should be registered");
+        assert_eq!(
+            business_action.document_id.as_str(),
+            APPROVED_BUSINESS_ACCEPTANCE_DOCUMENT
+        );
+        assert_eq!(
+            business_action.owner,
+            OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE.as_str()
+        );
+        assert_eq!(
+            business_action.sources,
+            [UiNodeId::from_str("acceptance.continue").unwrap()]
+                .into_iter()
+                .collect()
+        );
 
         let dispatch = UiActionDispatch {
             action: action_id,

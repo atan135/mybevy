@@ -442,6 +442,7 @@ fn setup_preview(
             watch: false,
             open_on_register: true,
             audit_profiles: vec!["standalone".to_owned()],
+            approval_audit: None,
         },
     ));
 }

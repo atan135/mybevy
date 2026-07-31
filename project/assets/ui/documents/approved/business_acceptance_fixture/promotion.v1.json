@@ -1,0 +1,45 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": [
+    "desktop",
+    "phone-landscape",
+    "phone-1080p-landscape",
+    "tablet-landscape"
+  ],
+  "document_id": "approved.business_acceptance",
+  "host_contract": {
+    "actions": [
+      {
+        "id": "approved.acceptance_continue",
+        "sources": [
+          "acceptance.continue"
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "path": "acceptance.status",
+        "scope": "owner",
+        "value_type": {
+          "kind": "string"
+        }
+      }
+    ],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "approved_business_acceptance",
+  "page_state": "initial",
+  "panel": "page",
+  "protocol_version": 2,
+  "route": "ui_approved_business_acceptance",
+  "source": {
+    "relative_path": "business_acceptance_fixture/document.v1.json",
+    "root": "approved"
+  },
+  "template_version": 2,
+  "theme_tokens": []
+}

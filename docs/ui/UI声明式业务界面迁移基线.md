@@ -26,7 +26,7 @@ AI authoring/promotion -> approved UiDocument/resources -> UiUpdateBundle -> UiU
                                                   game route / typed commands
 ```
 
-`UiUpdateBundle` 和 `UiUpdateClient` 是本改造的目标术语，当前尚未有对应 Rust module 或 Release/Android production implementation。当前正式 approved adapter 还会拒绝 action、binding 与 i18n 字段，见 `project/src/framework/ui/document/approval.rs`；阶段 6 才能在闭合 Game Host contract 下开放业务字段。
+`UiUpdateBundle` 和 `UiUpdateClient` 是本改造的目标术语，当前尚未有对应 Rust module 或 Release/Android production implementation。正式 approved adapter 采用版本化、默认拒绝的 host contract：legacy registration 仍只允许展示字段；v2 只有与游戏层预注册的 document/owner/route、binding schema、action ID/source node、资源清单和 audit profile 精确一致时才可引用既有业务能力，见 `project/src/framework/ui/document/approval.rs`。它不接受 Rust 类型、handler/system/message、URL、真实文件路径或执行字符串。
 
 ## 2. 资源改动与 Rust 改动判定
 

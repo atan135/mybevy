@@ -48,6 +48,7 @@ pub(super) fn setup_ui_document_gallery(
                 "phone-1080p-landscape".to_owned(),
                 "tablet-landscape".to_owned(),
             ],
+            approval_audit: None,
         },
     ));
 }
