@@ -453,6 +453,7 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
             mode,
             AppUiMode::Login
                 | AppUiMode::CharacterSelect
+                | AppUiMode::Lobby
                 | AppUiMode::UiDocumentGallery
                 | AppUiMode::UiGeneratedAcceptance
         ) {
@@ -900,6 +901,19 @@ mod tests {
         ] {
             assert_eq!(target(state), Some(anchor.as_str()));
         }
+    }
+
+    #[test]
+    fn lobby_audit_recipe_waits_for_owner_document() {
+        let mut registry = UiAuditScreenRegistry::default();
+        register_ui_audit_screen_entries(&mut registry);
+
+        let screen = registry
+            .resolve("lobby")
+            .expect("Lobby should be registered for audit");
+        let recipe = screen.recipe.expect("Lobby should use a document recipe");
+
+        assert_eq!(recipe.ready, Some(UiAuditReadyCondition::OwnerDocument));
     }
 
     #[test]

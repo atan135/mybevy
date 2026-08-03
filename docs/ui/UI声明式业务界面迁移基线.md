@@ -55,7 +55,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | --- | --- | --- | --- | --- | --- | --- |
 | `login`，正式业务已声明式 | `login` / document `auth.login` page | `auth/host.rs` 注册固定 `DeclarativeScreenHost` 与 adapter，View 是 `approved/auth/login.v1.json`。 | 登录、游客登录、环境切换及状态 binding；密码由敏感 ECS 输入直接交给闭合 host，不进入 action/binding。 | 普通账号输入、敏感 password、分段环境选择。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
 | `character_select`，正式业务已声明式 | `character_select` / document `auth.character_select` page | `auth/host.rs` 注册独立 fixed host 与闭合 adapter，View 是 `approved/auth/character_select.v1.json`；角色行由 keyed repeat 增量协调。 | 加载/创建/选择角色、切换账号/角色、角色与连接状态 binding；稳定 key/action identity 均为完整 `character_id`。 | local 角色名输入、owner `list<record>`、item-scope 行状态。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
-| `lobby`，普通业务待迁移 | `lobby` / `game_list_page` | `lobby/game_list.rs::setup_game_list_screen` | 启动 Touch Ripple、场景切换、选角、退出账号、确认 modal；无 binding；固定玩法入口集合。 | 按钮、confirm modal。 | 主题/i18n/font。 | A0 |
+| `lobby`，正式业务已声明式 | `lobby` / document `game.lobby` page | `lobby/host.rs` 注册 fixed host 与闭合 adapter，View 是 `approved/lobby/lobby.v1.json`；玩法入口由 keyed repeat 增量协调。 | 选择/进入玩法、列表重载、固定导航、选角与退出账号；完整 `entry_id` 经 bounded opaque action 参数传回并由 host 对当前 `list<record>` 复验；Touch Ripple 与场景进入分别复用公共 Confirm/Loading。 | 标准按钮与 scroll；Confirm/Loading 生命周期仍由 Panel Manager 持有。 | `ui/images/login_stillwater_background.png`；Image 节点声明稳定 error-color fallback，Debug 非 Android 内容审计对该真实节点注入确定性加载失败并与正常加载档对照。 | A1 |
 | `audio_settings`，普通业务待迁移 | `audio_settings` / `audio_settings_page` | `settings/audio.rs::setup_audio_settings` | 各音频 bus 音量、master mute、回大厅；无 document binding；按固定 audio bus 生成控制行。 | Slider、toggle。 | 主题/i18n/font。 | A0 |
 | `wanfa_touch_ripple`，玩法 HUD 待迁移 | `wanfa_touch_ripple` / `touch_ripple_hud` | `gameplay/touch_ripple.rs::setup_touch_ripple_overlay` | 仅路由回大厅；无 binding/list。 | 玩法触控/鼠标输入在 feature 层；HUD 本身仅按钮。 | 主题/i18n/font。 | A0 |
 | `sample_scene`，玩法 HUD 待迁移 | `sample_scene` / `sample_scene_hud` | `gameplay/sample_scene.rs::setup_sample_scene_hud` | 请求 scene exit 后回大厅；无 binding/list。 | HUD 按钮；场景退出事件回退路由。 | 主题/i18n/font。 | A0 |
@@ -69,7 +69,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | `audio_gallery`，开发工具页 | `audio_gallery` / `audio_gallery_page` | `dev/audio_gallery.rs::setup_audio_gallery` | 大量 `AudioCommand`（cue/music/instance/bus/spatial）、状态/诊断刷新；固定测试 catalog，不是 UI data list。 | 文本输入、按钮和音频空间辅助交互。 | 音频 catalog/首包音频、主题/i18n/font。 | A0 |
 | `audio_monitor`，开发工具页 | `audio_monitor` / `audio_monitor_page` | `dev/audio_monitor.rs::setup_audio_monitor` | 只读 audio debug 快照；无 binding/list。 | 无特殊 gesture。 | 主题/i18n/font。 | A0 |
 
-分类总数当前为：已声明式 4、普通业务待迁移 2、玩法 HUD 待迁移 5、开发工具页 4、已批准 Rust View 例外 0，共 15。其中正式业务页面已声明式 2 个（`login` 与 `character_select`），另外两份声明式页面是开发/验收页面。
+分类总数当前为：已声明式 5、普通业务待迁移 1、玩法 HUD 待迁移 5、开发工具页 4、已批准 Rust View 例外 0，共 15。其中正式业务页面已声明式 3 个（`login`、`character_select` 与 `lobby`），另外两份声明式页面是开发/验收页面。
 
 ## 4. 受控 Rust View 例外
 

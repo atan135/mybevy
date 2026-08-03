@@ -548,6 +548,11 @@ impl UiAuditConfig {
             })
     }
 
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    pub(crate) fn stable_fixture_id(&self) -> Option<&str> {
+        self.determinism.stable_fixture_id.as_deref()
+    }
+
     fn from_env() -> Self {
         Self::from_env_reader(|key| env::var(key).ok(), current_unix_timestamp_seconds())
     }

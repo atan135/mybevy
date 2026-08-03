@@ -1,0 +1,508 @@
+{
+  "schema_version": 1,
+  "document_id": "game.lobby",
+  "metadata": {
+    "title": "MyBevy Lobby",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {
+    "lobby_background": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/images/login_stillwater_background.png"
+      }
+    }
+  },
+  "bindings": {
+    "lobby.games.items": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "list",
+        "item": {
+          "kind": "record",
+          "fields": {
+            "entry_id": { "kind": "string" },
+            "title": { "kind": "string" },
+            "description": { "kind": "string" },
+            "badge": { "kind": "string" },
+            "selected": { "kind": "bool" },
+            "disabled": { "kind": "bool" },
+            "loading": { "kind": "bool" }
+          }
+        },
+        "max_items": 24
+      }
+    },
+    "lobby.games.collection_state": {
+      "scope": "owner",
+      "value_type": { "kind": "enum", "values": ["loading", "ready", "error"] }
+    },
+    "lobby.games.view_state": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "enum",
+        "values": ["loading", "empty", "ready", "error", "disconnected", "confirming"]
+      }
+    },
+    "lobby.games.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.connection.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.games.selected_id": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.games.selected_title": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.games.selected_detail": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.games.selected_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "lobby.games.error_title": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.games.error_detail": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.games.error_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "lobby.resources.title": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.resources.detail": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lobby.resources.notice_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "lobby.games.reload_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "lobby.games.reload_loading": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "lobby.games.item.entry_id": { "scope": "item", "value_type": { "kind": "string" } },
+    "lobby.games.item.title": { "scope": "item", "value_type": { "kind": "string" } },
+    "lobby.games.item.description": { "scope": "item", "value_type": { "kind": "string" } },
+    "lobby.games.item.badge": { "scope": "item", "value_type": { "kind": "string" } },
+    "lobby.games.item.selected": { "scope": "item", "value_type": { "kind": "bool" } },
+    "lobby.games.item.disabled": { "scope": "item", "value_type": { "kind": "bool" } },
+    "lobby.games.item.loading": { "scope": "item", "value_type": { "kind": "bool" } }
+  },
+  "styles": {
+    "lobby_panel": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#071116f2" } },
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#7e9c9799" }
+        },
+        "corner_radius": {
+          "top_left": { "kind": "literal", "value": 6.0 },
+          "top_right": { "kind": "literal", "value": 6.0 },
+          "bottom_right": { "kind": "literal", "value": 6.0 },
+          "bottom_left": { "kind": "literal", "value": 6.0 }
+        },
+        "shadows": [
+          {
+            "color": { "kind": "literal", "value": "#00000099" },
+            "x_offset": { "kind": "literal", "value": 0.0 },
+            "y_offset": { "kind": "literal", "value": 8.0 },
+            "blur": { "kind": "literal", "value": 22.0 },
+            "spread": { "kind": "literal", "value": 0.0 }
+          }
+        ]
+      }
+    },
+    "lobby_entry": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#0d1a20e8" } },
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#526b68b3" }
+        },
+        "corner_radius": {
+          "top_left": { "kind": "literal", "value": 4.0 },
+          "top_right": { "kind": "literal", "value": 4.0 },
+          "bottom_right": { "kind": "literal", "value": 4.0 },
+          "bottom_left": { "kind": "literal", "value": 4.0 }
+        }
+      }
+    },
+    "lobby_error": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#38191dcc" } },
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#d45a61cc" }
+        }
+      }
+    },
+    "lobby_notice": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#162a2be6" } },
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#55a89dcc" }
+        }
+      }
+    },
+    "lobby_rule": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#7e9c9799" } }
+      }
+    }
+  },
+  "root": {
+    "type": "container",
+    "id": "lobby.root",
+    "layout": {
+      "width": { "percent": 100.0 },
+      "height": { "percent": 100.0 },
+      "direction": "column"
+    },
+    "style": {
+      "inline": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#05090d" } }
+      }
+    },
+    "children": [
+      {
+        "type": "image",
+        "id": "lobby.background",
+        "asset": "lobby_background",
+        "presentation": { "kind": "fit", "fit": "cover", "focus": { "x": 0.5, "y": 0.5 } },
+        "failure": { "kind": "error_color", "color": "#7a2930ff" },
+        "layout": {
+          "position": { "absolute": { "left": { "px": 0.0 }, "top": { "px": 0.0 } } },
+          "width": { "percent": 100.0 },
+          "height": { "percent": 100.0 },
+          "z_index": 0
+        }
+      },
+      {
+        "type": "container",
+        "id": "lobby.veil",
+        "layout": {
+          "position": { "absolute": { "left": { "px": 0.0 }, "top": { "px": 0.0 } } },
+          "width": { "percent": 100.0 },
+          "height": { "percent": 100.0 },
+          "z_index": 1
+        },
+        "style": {
+          "inline": {
+            "background": { "kind": "solid", "color": { "kind": "literal", "value": "#0206088c" } }
+          }
+        }
+      },
+      {
+        "type": "scroll",
+        "id": "lobby.scroll",
+        "block_lower": true,
+        "max_height": 2400.0,
+        "layout": {
+          "position": { "absolute": { "left": { "px": 0.0 }, "top": { "px": 0.0 } } },
+          "width": { "percent": 100.0 },
+          "height": { "percent": 100.0 },
+          "padding": { "all": { "px": 20.0 } },
+          "align_items": "center",
+          "justify_content": "center",
+          "z_index": 2
+        },
+        "component": {
+          "children": [
+            {
+              "type": "container",
+              "id": "lobby.panel",
+              "layout": {
+                "width": { "percent": 100.0 },
+                "max_width": { "px": 1080.0 },
+                "min_width": { "px": 320.0 },
+                "padding": { "all": { "px": 22.0 } },
+                "gap": { "px": 12.0 },
+                "direction": "column",
+                "flex_shrink": 0.0
+              },
+              "style": { "component": "lobby_panel" },
+              "children": [
+                {
+                  "type": "container",
+                  "id": "lobby.header",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "row",
+                    "wrap": "wrap",
+                    "align_items": "center",
+                    "justify_content": "space_between",
+                    "gap": { "px": 10.0 }
+                  },
+                  "children": [
+                    {
+                      "type": "container",
+                      "id": "lobby.heading",
+                      "layout": {
+                        "direction": "column",
+                        "gap": { "px": 2.0 },
+                        "flex_grow": 1.0,
+                        "min_width": { "px": 190.0 }
+                      },
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "lobby.title",
+                          "content": { "literal": "GAME LOBBY" },
+                          "style": { "text_role": "title" }
+                        },
+                        {
+                          "type": "text",
+                          "id": "lobby.subtitle",
+                          "content": { "literal": "Choose an experience or open a development tool" },
+                          "style": { "text_role": "caption" }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "container",
+                      "id": "lobby.account_actions",
+                      "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 8.0 } },
+                      "children": [
+                        {
+                          "type": "button",
+                          "id": "lobby.change_character",
+                          "variant": "secondary",
+                          "label": { "literal": "Change Character" },
+                          "on_click": { "action": "lobby.change_character" }
+                        },
+                        {
+                          "type": "button",
+                          "id": "lobby.logout",
+                          "variant": "secondary",
+                          "label": { "literal": "Logout" },
+                          "on_click": { "action": "lobby.logout" }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "lobby.navigation",
+                  "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "gap": { "px": 8.0 } },
+                  "children": [
+                    {
+                      "type": "button",
+                      "id": "lobby.nav.audio_settings",
+                      "variant": "secondary",
+                      "label": { "literal": "Audio Settings" },
+                      "on_click": { "action": "lobby.navigate", "params": { "destination": { "kind": "enum", "value": "audio_settings" } } }
+                    },
+                    {
+                      "type": "button",
+                      "id": "lobby.nav.audio_monitor",
+                      "variant": "secondary",
+                      "label": { "literal": "Audio Monitor" },
+                      "on_click": { "action": "lobby.navigate", "params": { "destination": { "kind": "enum", "value": "audio_monitor" } } }
+                    },
+                    {
+                      "type": "button",
+                      "id": "lobby.nav.audio_gallery",
+                      "variant": "secondary",
+                      "label": { "literal": "Audio Gallery" },
+                      "on_click": { "action": "lobby.navigate", "params": { "destination": { "kind": "enum", "value": "audio_gallery" } } }
+                    },
+                    {
+                      "type": "button",
+                      "id": "lobby.nav.ui_gallery",
+                      "variant": "secondary",
+                      "label": { "literal": "UI Gallery" },
+                      "on_click": { "action": "lobby.navigate", "params": { "destination": { "kind": "enum", "value": "ui_gallery" } } }
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "id": "lobby.rule",
+                  "layout": { "width": { "percent": 100.0 }, "height": { "px": 1.0 } },
+                  "style": { "component": "lobby_rule" }
+                },
+                {
+                  "type": "container",
+                  "id": "lobby.summary",
+                  "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "gap": { "px": 12.0 } },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lobby.status",
+                      "content": { "binding_path": "lobby.games.status", "fallback": "Loading available games" },
+                      "style": { "text_role": "body" }
+                    },
+                    {
+                      "type": "text",
+                      "id": "lobby.connection",
+                      "content": { "binding_path": "lobby.connection.status", "fallback": "Game services offline" },
+                      "style": { "text_role": "caption" }
+                    },
+                    {
+                      "type": "text",
+                      "id": "lobby.view_state",
+                      "content": { "binding_path": "lobby.games.view_state", "fallback": "loading" },
+                      "style": { "text_role": "caption" }
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "lobby.error",
+                  "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 4.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
+                  "style": { "component": "lobby_error", "bindings": { "visibility": "lobby.games.error_visibility" } },
+                  "children": [
+                    { "type": "text", "id": "lobby.error_title", "content": { "binding_path": "lobby.games.error_title", "fallback": "" }, "style": { "text_role": "body" } },
+                    { "type": "text", "id": "lobby.error_detail", "content": { "binding_path": "lobby.games.error_detail", "fallback": "" }, "style": { "text_role": "caption" } }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "lobby.resource_notice",
+                  "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 4.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
+                  "style": { "component": "lobby_notice", "bindings": { "visibility": "lobby.resources.notice_visibility" } },
+                  "children": [
+                    { "type": "text", "id": "lobby.resource_title", "content": { "binding_path": "lobby.resources.title", "fallback": "Packaged UI ready" }, "style": { "text_role": "body" } },
+                    { "type": "text", "id": "lobby.resource_detail", "content": { "binding_path": "lobby.resources.detail", "fallback": "" }, "style": { "text_role": "caption" } }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "lobby.list_header",
+                  "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 10.0 } },
+                  "children": [
+                    { "type": "text", "id": "lobby.list_title", "content": { "literal": "AVAILABLE" }, "style": { "text_role": "caption" } },
+                    {
+                      "type": "button",
+                      "id": "lobby.reload",
+                      "variant": "secondary",
+                      "label": { "literal": "Reload" },
+                      "on_click": { "action": "lobby.reload_games" },
+                      "component": { "bindings": { "disabled": "lobby.games.reload_disabled", "loading": "lobby.games.reload_loading" } }
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "lobby.entries",
+                  "repeat": {
+                    "source": "lobby.games.items",
+                    "key": "entry_id",
+                    "item_bindings": {
+                      "lobby.games.item.entry_id": "entry_id",
+                      "lobby.games.item.title": "title",
+                      "lobby.games.item.description": "description",
+                      "lobby.games.item.badge": "badge",
+                      "lobby.games.item.selected": "selected",
+                      "lobby.games.item.disabled": "disabled",
+                      "lobby.games.item.loading": "loading"
+                    },
+                    "state": "lobby.games.collection_state",
+                    "loading": { "literal": "Loading game catalog..." },
+                    "empty": { "literal": "No games available. Reload to check again." },
+                    "error": { "literal": "Game catalog unavailable. Reload to retry." }
+                  },
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "display": "grid",
+                    "grid_columns": [
+                      { "repeat": 1, "size": { "fr": 1.0 } },
+                      { "repeat": 1, "size": { "fr": 1.0 } },
+                      { "repeat": 1, "size": { "fr": 1.0 } }
+                    ],
+                    "column_gap": { "px": 10.0 },
+                    "row_gap": { "px": 10.0 }
+                  },
+                  "children": [
+                    {
+                      "type": "container",
+                      "id": "lobby.entry_card",
+                      "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 6.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
+                      "style": { "component": "lobby_entry" },
+                      "children": [
+                        {
+                          "type": "container",
+                          "id": "lobby.entry_heading",
+                          "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "justify_content": "space_between", "gap": { "px": 6.0 } },
+                          "children": [
+                            { "type": "text", "id": "lobby.entry_title", "content": { "binding_path": "lobby.games.item.title", "fallback": "Game" }, "style": { "text_role": "body" } },
+                            { "type": "text", "id": "lobby.entry_badge", "content": { "binding_path": "lobby.games.item.badge", "fallback": "GAME" }, "style": { "text_role": "caption" } }
+                          ]
+                        },
+                        { "type": "text", "id": "lobby.entry_description", "content": { "binding_path": "lobby.games.item.description", "fallback": "Description unavailable" }, "style": { "text_role": "caption" } },
+                        {
+                          "type": "container",
+                          "id": "lobby.entry_actions",
+                          "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "justify_content": "end", "gap": { "px": 8.0 } },
+                          "children": [
+                            {
+                              "type": "button",
+                              "id": "lobby.entry.select",
+                              "variant": "secondary",
+                              "label": { "literal": "Select" },
+                              "on_click": { "action": "lobby.select_game", "params": { "entry_id": { "kind": "item_binding", "value": "lobby.games.item.entry_id" } } },
+                              "component": { "bindings": { "selected": "lobby.games.item.selected", "disabled": "lobby.games.item.disabled" } }
+                            },
+                            {
+                              "type": "button",
+                              "id": "lobby.entry.enter",
+                              "variant": "primary",
+                              "label": { "literal": "Enter" },
+                              "on_click": { "action": "lobby.enter_game", "params": { "entry_id": { "kind": "item_binding", "value": "lobby.games.item.entry_id" } } },
+                              "component": { "bindings": { "disabled": "lobby.games.item.disabled", "loading": "lobby.games.item.loading" } }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "lobby.selection",
+                  "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 3.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
+                  "style": { "component": "lobby_entry", "bindings": { "visibility": "lobby.games.selected_visibility" } },
+                  "children": [
+                    { "type": "text", "id": "lobby.selection_title", "content": { "binding_path": "lobby.games.selected_title", "fallback": "Selected game" }, "style": { "text_role": "body" } },
+                    { "type": "text", "id": "lobby.selection_detail", "content": { "binding_path": "lobby.games.selected_detail", "fallback": "" }, "style": { "text_role": "caption" } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "states": [],
+  "responsive": [
+    {
+      "id": "short_landscape",
+      "priority": 100,
+      "when": { "height_class": "short", "orientation": "landscape" },
+      "overrides": [
+        { "node_id": "lobby.scroll", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "justify_content": "start" } } },
+        { "node_id": "lobby.panel", "set": { "layout": { "max_width": { "px": 1100.0 }, "padding": { "all": { "px": 12.0 } }, "gap": { "px": 7.0 } } } },
+        { "node_id": "lobby.entries", "set": { "layout": { "grid_columns": [ { "repeat": 1, "size": { "fr": 1.0 } }, { "repeat": 1, "size": { "fr": 1.0 } } ], "column_gap": { "px": 8.0 }, "row_gap": { "px": 7.0 } } } },
+        { "node_id": "lobby.entry_card", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "gap": { "px": 4.0 } } } }
+      ]
+    },
+    {
+      "id": "compact_width",
+      "priority": 50,
+      "when": { "width_class": "compact" },
+      "overrides": [
+        {
+          "node_id": "lobby.scroll",
+          "set": {
+            "layout": {
+              "padding": { "all": { "px": 10.0 } },
+              "justify_content": "start"
+            }
+          }
+        },
+        {
+          "node_id": "lobby.panel",
+          "set": {
+            "layout": {
+              "min_width": { "px": 280.0 },
+              "padding": { "all": { "px": 14.0 } }
+            }
+          }
+        },
+        {
+          "node_id": "lobby.entries",
+          "set": {
+            "layout": {
+              "grid_columns": [
+                { "repeat": 1, "size": { "fr": 1.0 } }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

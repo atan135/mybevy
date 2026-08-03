@@ -1,0 +1,55 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": [
+    "desktop",
+    "phone-landscape",
+    "phone-1080p-landscape",
+    "tablet-landscape"
+  ],
+  "document_id": "game.lobby",
+  "host_contract": {
+    "actions": [
+      { "id": "lobby.select_game", "sources": ["lobby.entry.select"] },
+      { "id": "lobby.enter_game", "sources": ["lobby.entry.enter"] },
+      { "id": "lobby.reload_games", "sources": ["lobby.reload"] },
+      { "id": "lobby.navigate", "sources": ["lobby.nav.audio_settings", "lobby.nav.audio_monitor", "lobby.nav.audio_gallery", "lobby.nav.ui_gallery"] },
+      { "id": "lobby.change_character", "sources": ["lobby.change_character"] },
+      { "id": "lobby.logout", "sources": ["lobby.logout"] }
+    ],
+    "bindings": [
+      { "path": "lobby.connection.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lobby.games.collection_state", "scope": "owner", "value_type": { "kind": "enum", "values": ["loading", "ready", "error"] } },
+      { "path": "lobby.games.error_detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lobby.games.error_title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lobby.games.error_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "lobby.games.items", "scope": "owner", "value_type": { "kind": "list", "item": { "kind": "record", "fields": { "entry_id": { "kind": "string" }, "title": { "kind": "string" }, "description": { "kind": "string" }, "badge": { "kind": "string" }, "selected": { "kind": "bool" }, "disabled": { "kind": "bool" }, "loading": { "kind": "bool" } } }, "max_items": 24 } },
+      { "path": "lobby.games.reload_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "lobby.games.reload_loading", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "lobby.games.selected_detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lobby.games.selected_id", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lobby.games.selected_title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lobby.games.selected_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "lobby.games.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lobby.games.view_state", "scope": "owner", "value_type": { "kind": "enum", "values": ["loading", "empty", "ready", "error", "disconnected", "confirming"] } },
+      { "path": "lobby.resources.detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lobby.resources.notice_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "lobby.resources.title", "scope": "owner", "value_type": { "kind": "string" } }
+    ],
+    "resources": ["lobby_background"],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "lobby",
+  "page_state": "initial",
+  "panel": "page",
+  "protocol_version": 2,
+  "route": "lobby",
+  "source": {
+    "relative_path": "lobby/lobby.v1.json",
+    "root": "approved"
+  },
+  "template_version": 2,
+  "theme_tokens": []
+}
