@@ -2985,7 +2985,15 @@ mod tests {
         let audit_registry = app.world().resource::<UiDocumentAuditRecipeRegistry>();
         let audit_entry = audit_registry.entry(&document_id, "preview_owner").unwrap();
         assert_eq!(audit_entry.screen, "document_preview_runtime");
-        assert!(audit_entry.profiles.contains(&"phone-small".to_owned()));
+        assert_eq!(
+            audit_entry.profiles,
+            vec![
+                "desktop",
+                "phone-landscape",
+                "phone-1080p-landscape",
+                "tablet-landscape",
+            ]
+        );
         let old_instance = app
             .world()
             .resource::<UiDocumentRuntime>()

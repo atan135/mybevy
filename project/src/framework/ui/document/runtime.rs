@@ -6330,10 +6330,6 @@ mod tests {
         "state.host": {
           "scope": "owner",
           "value_type": { "kind": "string" }
-        },
-        "state.item": {
-          "scope": "item",
-          "value_type": { "kind": "string" }
         }
       },
       "root": {
@@ -6363,15 +6359,6 @@ mod tests {
             "on_click": {
               "action": "runtime.host",
               "params": { "value": { "kind": "host_binding", "value": "state.host" } }
-            }
-          },
-          {
-            "type": "button",
-            "id": "runtime.item",
-            "label": { "literal": "Item" },
-            "on_click": {
-              "action": "runtime.item",
-              "params": { "value": { "kind": "item_binding", "value": "state.item" } }
             }
           }
         ]
@@ -7904,12 +7891,6 @@ mod tests {
                 "game.runtime_host",
                 UiActionParamType::String { max_bytes: 64 },
             ),
-            (
-                "runtime.item",
-                "runtime.item",
-                "game.runtime_item",
-                UiActionParamType::String { max_bytes: 64 },
-            ),
         ] {
             registry
                 .register(
@@ -7928,19 +7909,19 @@ mod tests {
         }
         drop(registry);
 
-        let host_path = UiBindingPath::from_str("state.host").unwrap();
-        let item_path = UiBindingPath::from_str("state.item").unwrap();
+        let document = UiDocument::parse_and_validate_json(ACTION_REFERENCE_DOCUMENT).unwrap();
+        let bindings = document.document().bindings.clone();
         let mut open = request(13_005, ACTION_REFERENCE_DOCUMENT);
-        open.host_bindings = BTreeMap::from([
-            (
-                UiHostBindingKey::new(UiBindingScope::Owner, host_path),
-                UiBindingType::String,
-            ),
-            (
-                UiHostBindingKey::new(UiBindingScope::Item, item_path),
-                UiBindingType::String,
-            ),
-        ]);
+        open.host_bindings = bindings
+            .iter()
+            .filter(|(_, declaration)| declaration.scope != UiBindingScope::Local)
+            .map(|(path, declaration)| {
+                (
+                    UiHostBindingKey::new(declaration.scope, path.clone()),
+                    declaration.value_type.clone(),
+                )
+            })
+            .collect();
         app.world_mut()
             .write_message(UiDocumentRuntimeCommand::Open(open));
         app.update();
@@ -7957,7 +7938,6 @@ mod tests {
 
         let slider = node_entity(&app, "runtime.slider");
         let host = node_entity(&app, "runtime.host");
-        let item = node_entity(&app, "runtime.item");
         let mut rejected = MessageCursor::<UiActionRejected>::default();
         let mut dispatches = MessageCursor::<UiActionDispatch>::default();
 
@@ -8015,23 +7995,18 @@ mod tests {
             vec!["UI_ACTION_PARAM_TYPE_MISMATCH"]
         );
 
-        for entity in [host, item] {
-            app.world_mut().write_message(UiButtonEvent {
-                entity,
-                kind: UiButtonEventKind::Click,
-                button: None,
-            });
-            app.update();
-        }
+        app.world_mut().write_message(UiButtonEvent {
+            entity: host,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
         assert_eq!(
             rejected
                 .read(app.world().resource::<Messages<UiActionRejected>>())
                 .map(|event| event.error.code)
                 .collect::<Vec<_>>(),
-            vec![
-                "UI_ACTION_HOST_BINDING_MISSING",
-                "UI_ACTION_ITEM_BINDING_UNAVAILABLE",
-            ]
+            vec!["UI_ACTION_HOST_BINDING_MISSING"]
         );
 
         for value in [0.25, 0.75] {

@@ -209,6 +209,7 @@
           "wrap": "no_wrap",
           "z_index": 0
         },
+        "repeat": null,
         "style": {
           "component": null,
           "inline": {
@@ -334,6 +335,7 @@
       "wrap": "no_wrap",
       "z_index": 7
     },
+    "repeat": null,
     "style": {
       "component": null,
       "inline": {

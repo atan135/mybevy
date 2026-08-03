@@ -1744,6 +1744,7 @@ mod tests {
         for node in &root[3..10] {
             assert!(node_action(node, UiActionTrigger::Change).is_some());
         }
+        assert!(node_action(&root[10].children()[0], UiActionTrigger::Click).is_some());
 
         let mut uncontrolled: Value = serde_json::from_str(ACTION_CONTROL_DOCUMENT).unwrap();
         uncontrolled["root"]["children"][2]["component"]["bindings"] = json!({});

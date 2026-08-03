@@ -588,6 +588,7 @@
       "wrap": "no_wrap",
       "z_index": 0
     },
+    "repeat": null,
     "style": {
       "component": "panel_frosted",
       "inline": {
