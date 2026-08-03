@@ -1,0 +1,873 @@
+{
+  "schema_version": 1,
+  "document_id": "auth.character_select",
+  "metadata": {
+    "title": "MyBevy Character Select",
+    "budget_profile": "mobile_baseline_v1"
+  },
+  "assets": {
+    "character_background": {
+      "kind": "image",
+      "source": {
+        "kind": "packaged",
+        "path": "ui/images/login_stillwater_background.png"
+      }
+    }
+  },
+  "bindings": {
+    "auth.character.new_name": {
+      "scope": "local",
+      "value_type": { "kind": "string" },
+      "default": { "kind": "string", "value": "" },
+      "missing": "use_default"
+    },
+    "auth.account.player_id": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.account.summary": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.character_id": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.pending_character_id": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.items": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "list",
+        "item": {
+          "kind": "record",
+          "fields": {
+            "character_id": { "kind": "string" },
+            "display_name": { "kind": "string" },
+            "detail": { "kind": "string" },
+            "selected": { "kind": "bool" },
+            "pending": { "kind": "bool" },
+            "disabled": { "kind": "bool" },
+            "loading": { "kind": "bool" }
+          }
+        },
+        "max_items": 64
+      }
+    },
+    "auth.character.collection_state": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "enum",
+        "values": ["loading", "ready", "error"]
+      }
+    },
+    "auth.character.view_state": {
+      "scope": "owner",
+      "value_type": {
+        "kind": "enum",
+        "values": ["loading", "empty", "ready", "error", "creating", "selecting", "current"]
+      }
+    },
+    "auth.character.status": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.connection_status": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.request_pending": {
+      "scope": "owner",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.load_disabled": {
+      "scope": "owner",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.load_loading": {
+      "scope": "owner",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.create_disabled": {
+      "scope": "owner",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.create_loading": {
+      "scope": "owner",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.switch_account_disabled": {
+      "scope": "owner",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.switch_character_disabled": {
+      "scope": "owner",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.switch_character_visibility": {
+      "scope": "owner",
+      "value_type": { "kind": "visibility" }
+    },
+    "auth.character.error_title": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.error_detail": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.error_visibility": {
+      "scope": "owner",
+      "value_type": { "kind": "visibility" }
+    },
+    "auth.character.notice_title": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.notice_detail": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.notice_visibility": {
+      "scope": "owner",
+      "value_type": { "kind": "visibility" }
+    },
+    "auth.character.profile_visibility": {
+      "scope": "owner",
+      "value_type": { "kind": "visibility" }
+    },
+    "auth.character.profile_title": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.affinity": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.mastery": {
+      "scope": "owner",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.item.character_id": {
+      "scope": "item",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.item.display_name": {
+      "scope": "item",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.item.detail": {
+      "scope": "item",
+      "value_type": { "kind": "string" }
+    },
+    "auth.character.item.selected": {
+      "scope": "item",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.item.pending": {
+      "scope": "item",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.item.disabled": {
+      "scope": "item",
+      "value_type": { "kind": "bool" }
+    },
+    "auth.character.item.loading": {
+      "scope": "item",
+      "value_type": { "kind": "bool" }
+    }
+  },
+  "styles": {
+    "character_panel": {
+      "properties": {
+        "background": {
+          "kind": "solid",
+          "color": { "kind": "literal", "value": "#071116f2" }
+        },
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#7e9c9799" }
+        },
+        "corner_radius": {
+          "top_left": { "kind": "literal", "value": 6.0 },
+          "top_right": { "kind": "literal", "value": 6.0 },
+          "bottom_right": { "kind": "literal", "value": 6.0 },
+          "bottom_left": { "kind": "literal", "value": 6.0 }
+        },
+        "shadows": [
+          {
+            "color": { "kind": "literal", "value": "#00000099" },
+            "x_offset": { "kind": "literal", "value": 0.0 },
+            "y_offset": { "kind": "literal", "value": 8.0 },
+            "blur": { "kind": "literal", "value": 22.0 },
+            "spread": { "kind": "literal", "value": 0.0 }
+          }
+        ]
+      }
+    },
+    "character_rule": {
+      "properties": {
+        "background": {
+          "kind": "solid",
+          "color": { "kind": "literal", "value": "#8da9a566" }
+        }
+      }
+    },
+    "character_row": {
+      "properties": {
+        "background": {
+          "kind": "solid",
+          "color": { "kind": "literal", "value": "#0d1a20d9" }
+        },
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#526b6880" }
+        },
+        "corner_radius": {
+          "top_left": { "kind": "literal", "value": 4.0 },
+          "top_right": { "kind": "literal", "value": 4.0 },
+          "bottom_right": { "kind": "literal", "value": 4.0 },
+          "bottom_left": { "kind": "literal", "value": 4.0 }
+        }
+      }
+    },
+    "character_error": {
+      "properties": {
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#d45a61cc" }
+        }
+      }
+    },
+    "character_notice": {
+      "properties": {
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#b29a5ecc" }
+        }
+      }
+    }
+  },
+  "root": {
+    "type": "container",
+    "id": "character.root",
+    "layout": {
+      "width": { "percent": 100.0 },
+      "height": { "percent": 100.0 },
+      "min_width": { "px": 280.0 },
+      "min_height": { "px": 240.0 }
+    },
+    "style": {
+      "inline": {
+        "background": {
+          "kind": "solid",
+          "color": { "kind": "literal", "value": "#05090d" }
+        }
+      }
+    },
+    "children": [
+      {
+        "type": "image",
+        "id": "character.background",
+        "asset": "character_background",
+        "presentation": {
+          "kind": "fit",
+          "fit": "cover",
+          "focus": { "x": 0.5, "y": 0.5 }
+        },
+        "layout": {
+          "position": {
+            "absolute": {
+              "left": { "px": 0.0 },
+              "top": { "px": 0.0 }
+            }
+          },
+          "width": { "percent": 100.0 },
+          "height": { "percent": 100.0 },
+          "z_index": 0
+        }
+      },
+      {
+        "type": "container",
+        "id": "character.veil",
+        "layout": {
+          "position": {
+            "absolute": {
+              "left": { "px": 0.0 },
+              "top": { "px": 0.0 }
+            }
+          },
+          "width": { "percent": 100.0 },
+          "height": { "percent": 100.0 },
+          "z_index": 1
+        },
+        "style": {
+          "inline": {
+            "background": {
+              "kind": "solid",
+              "color": { "kind": "literal", "value": "#02060880" }
+            }
+          }
+        }
+      },
+      {
+        "type": "scroll",
+        "id": "character.scroll",
+        "block_lower": true,
+        "max_height": 1400.0,
+        "layout": {
+          "position": {
+            "absolute": {
+              "left": { "px": 0.0 },
+              "top": { "px": 0.0 }
+            }
+          },
+          "width": { "percent": 100.0 },
+          "height": { "percent": 100.0 },
+          "padding": { "all": { "px": 20.0 } },
+          "align_items": "center",
+          "justify_content": "center",
+          "z_index": 2
+        },
+        "component": {
+          "children": [
+            {
+              "type": "container",
+              "id": "character.panel",
+              "layout": {
+                "width": { "percent": 100.0 },
+                "max_width": { "px": 760.0 },
+                "min_width": { "px": 320.0 },
+                "padding": { "all": { "px": 22.0 } },
+                "gap": { "px": 12.0 },
+                "direction": "column",
+                "flex_shrink": 0.0
+              },
+              "style": { "component": "character_panel" },
+              "children": [
+                {
+                  "type": "container",
+                  "id": "character.header",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "row",
+                    "wrap": "wrap",
+                    "align_items": "center",
+                    "justify_content": "space_between",
+                    "gap": { "px": 10.0 }
+                  },
+                  "children": [
+                    {
+                      "type": "container",
+                      "id": "character.heading",
+                      "layout": {
+                        "direction": "column",
+                        "gap": { "px": 2.0 },
+                        "flex_grow": 1.0,
+                        "min_width": { "px": 180.0 }
+                      },
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "character.title",
+                          "content": { "literal": "CHOOSE CHARACTER" },
+                          "style": { "text_role": "title" }
+                        },
+                        {
+                          "type": "text",
+                          "id": "character.subtitle",
+                          "content": {
+                            "binding_path": "auth.account.summary",
+                            "fallback": "Account ready"
+                          },
+                          "style": { "text_role": "caption" }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "container",
+                      "id": "character.account_actions",
+                      "layout": {
+                        "direction": "row",
+                        "wrap": "wrap",
+                        "gap": { "px": 8.0 }
+                      },
+                      "children": [
+                        {
+                          "type": "button",
+                          "id": "character.switch_account",
+                          "variant": "secondary",
+                          "label": { "literal": "Switch Account" },
+                          "on_click": { "action": "auth.switch_account" },
+                          "component": {
+                            "bindings": {
+                              "disabled": "auth.character.switch_account_disabled"
+                            }
+                          }
+                        },
+                        {
+                          "type": "button",
+                          "id": "character.switch_character",
+                          "variant": "secondary",
+                          "label": { "literal": "Change Character" },
+                          "on_click": { "action": "auth.switch_character" },
+                          "style": {
+                            "bindings": {
+                              "visibility": "auth.character.switch_character_visibility"
+                            }
+                          },
+                          "component": {
+                            "bindings": {
+                              "disabled": "auth.character.switch_character_disabled"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "id": "character.rule",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "height": { "px": 1.0 }
+                  },
+                  "style": { "component": "character_rule" }
+                },
+                {
+                  "type": "container",
+                  "id": "character.summary",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "row",
+                    "wrap": "wrap",
+                    "gap": { "px": 12.0 }
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "character.status",
+                      "content": {
+                        "binding_path": "auth.character.status",
+                        "fallback": "Characters not loaded"
+                      },
+                      "style": { "text_role": "body" }
+                    },
+                    {
+                      "type": "text",
+                      "id": "character.connection",
+                      "content": {
+                        "binding_path": "auth.character.connection_status",
+                        "fallback": "Game server not connected"
+                      },
+                      "style": { "text_role": "caption" }
+                    },
+                    {
+                      "type": "text",
+                      "id": "character.view_state",
+                      "content": {
+                        "binding_path": "auth.character.view_state",
+                        "fallback": "loading"
+                      },
+                      "style": { "text_role": "caption" }
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "character.error",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "column",
+                    "gap": { "px": 4.0 },
+                    "padding": { "all": { "px": 10.0 } },
+                    "border": { "all": { "px": 1.0 } }
+                  },
+                  "style": {
+                    "component": "character_error",
+                    "bindings": {
+                      "visibility": "auth.character.error_visibility"
+                    }
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "character.error_title",
+                      "content": {
+                        "binding_path": "auth.character.error_title",
+                        "fallback": ""
+                      },
+                      "style": { "text_role": "body" }
+                    },
+                    {
+                      "type": "text",
+                      "id": "character.error_detail",
+                      "content": {
+                        "binding_path": "auth.character.error_detail",
+                        "fallback": ""
+                      },
+                      "style": { "text_role": "caption" }
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "character.notice",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "column",
+                    "gap": { "px": 4.0 },
+                    "padding": { "all": { "px": 10.0 } },
+                    "border": { "all": { "px": 1.0 } }
+                  },
+                  "style": {
+                    "component": "character_notice",
+                    "bindings": {
+                      "visibility": "auth.character.notice_visibility"
+                    }
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "character.notice_title",
+                      "content": {
+                        "binding_path": "auth.character.notice_title",
+                        "fallback": ""
+                      },
+                      "style": { "text_role": "body" }
+                    },
+                    {
+                      "type": "text",
+                      "id": "character.notice_detail",
+                      "content": {
+                        "binding_path": "auth.character.notice_detail",
+                        "fallback": ""
+                      },
+                      "style": { "text_role": "caption" }
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "character.list_header",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "row",
+                    "wrap": "wrap",
+                    "align_items": "center",
+                    "justify_content": "space_between",
+                    "gap": { "px": 10.0 }
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "character.list_title",
+                      "content": { "literal": "CHARACTERS" },
+                      "style": { "text_role": "caption" }
+                    },
+                    {
+                      "type": "button",
+                      "id": "character.reload",
+                      "variant": "secondary",
+                      "label": { "literal": "Reload" },
+                      "on_click": { "action": "auth.load_characters" },
+                      "component": {
+                        "bindings": {
+                          "disabled": "auth.character.load_disabled",
+                          "loading": "auth.character.load_loading"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "character.repeat",
+                  "repeat": {
+                    "source": "auth.character.items",
+                    "key": "character_id",
+                    "item_bindings": {
+                      "auth.character.item.character_id": "character_id",
+                      "auth.character.item.display_name": "display_name",
+                      "auth.character.item.detail": "detail",
+                      "auth.character.item.selected": "selected",
+                      "auth.character.item.pending": "pending",
+                      "auth.character.item.disabled": "disabled",
+                      "auth.character.item.loading": "loading"
+                    },
+                    "state": "auth.character.collection_state",
+                    "loading": { "literal": "Loading characters..." },
+                    "empty": { "literal": "No characters yet. Create one to continue." },
+                    "error": { "literal": "Characters unavailable. Reload to retry." }
+                  },
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "column",
+                    "gap": { "px": 8.0 }
+                  },
+                  "children": [
+                    {
+                      "type": "container",
+                      "id": "character.row_card",
+                      "layout": {
+                        "width": { "percent": 100.0 },
+                        "direction": "row",
+                        "wrap": "wrap",
+                        "align_items": "center",
+                        "justify_content": "space_between",
+                        "gap": { "px": 10.0 },
+                        "padding": { "all": { "px": 10.0 } },
+                        "border": { "all": { "px": 1.0 } }
+                      },
+                      "style": { "component": "character_row" },
+                      "children": [
+                        {
+                          "type": "container",
+                          "id": "character.row_copy",
+                          "layout": {
+                            "direction": "column",
+                            "gap": { "px": 2.0 },
+                            "flex_grow": 1.0,
+                            "min_width": { "px": 180.0 }
+                          },
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "character.row_name",
+                              "content": {
+                                "binding_path": "auth.character.item.display_name",
+                                "fallback": "Character"
+                              },
+                              "style": { "text_role": "body" }
+                            },
+                            {
+                              "type": "text",
+                              "id": "character.row_detail",
+                              "content": {
+                                "binding_path": "auth.character.item.detail",
+                                "fallback": "Character details unavailable"
+                              },
+                              "style": { "text_role": "caption" }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "button",
+                          "id": "character.row.select",
+                          "variant": "primary",
+                          "label": { "literal": "Select" },
+                          "on_click": {
+                            "action": "auth.select_character",
+                            "params": {
+                              "character_id": {
+                                "kind": "item_binding",
+                                "value": "auth.character.item.character_id"
+                              }
+                            }
+                          },
+                          "component": {
+                            "bindings": {
+                              "selected": "auth.character.item.selected",
+                              "disabled": "auth.character.item.disabled",
+                              "loading": "auth.character.item.loading"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "character.create_group",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "row",
+                    "wrap": "wrap",
+                    "align_items": "end",
+                    "gap": { "px": 10.0 }
+                  },
+                  "children": [
+                    {
+                      "type": "text_input",
+                      "id": "character.create_name",
+                      "value": "",
+                      "max_chars": 256,
+                      "layout": {
+                        "flex_grow": 1.0,
+                        "min_width": { "px": 220.0 }
+                      },
+                      "component": {
+                        "bindings": {
+                          "disabled": "auth.character.create_disabled",
+                          "value": {
+                            "binding_path": "auth.character.new_name",
+                            "direction": "two_way"
+                          }
+                        },
+                        "slots": {
+                          "label": {
+                            "kind": "text",
+                            "content": { "literal": "New character" }
+                          },
+                          "placeholder": {
+                            "kind": "text",
+                            "content": { "literal": "Character name" }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "type": "button",
+                      "id": "character.create",
+                      "variant": "primary",
+                      "label": { "literal": "Create" },
+                      "on_click": { "action": "auth.create_character" },
+                      "component": {
+                        "bindings": {
+                          "disabled": "auth.character.create_disabled",
+                          "loading": "auth.character.create_loading"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "container",
+                  "id": "character.profile",
+                  "layout": {
+                    "width": { "percent": 100.0 },
+                    "direction": "column",
+                    "gap": { "px": 4.0 },
+                    "padding": { "all": { "px": 10.0 } },
+                    "border": { "all": { "px": 1.0 } }
+                  },
+                  "style": {
+                    "component": "character_row",
+                    "bindings": {
+                      "visibility": "auth.character.profile_visibility"
+                    }
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "character.profile_title",
+                      "content": {
+                        "binding_path": "auth.character.profile_title",
+                        "fallback": "Character profile"
+                      },
+                      "style": { "text_role": "body" }
+                    },
+                    {
+                      "type": "text",
+                      "id": "character.affinity",
+                      "content": {
+                        "binding_path": "auth.character.affinity",
+                        "fallback": ""
+                      },
+                      "style": { "text_role": "caption" }
+                    },
+                    {
+                      "type": "text",
+                      "id": "character.mastery",
+                      "content": {
+                        "binding_path": "auth.character.mastery",
+                        "fallback": ""
+                      },
+                      "style": { "text_role": "caption" }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "states": [],
+  "responsive": [
+    {
+      "id": "short_landscape",
+      "priority": 100,
+      "when": {
+        "height_class": "short",
+        "orientation": "landscape"
+      },
+      "overrides": [
+        {
+          "node_id": "character.scroll",
+          "set": {
+            "layout": {
+              "padding": { "all": { "px": 8.0 } },
+              "justify_content": "start"
+            }
+          }
+        },
+        {
+          "node_id": "character.panel",
+          "set": {
+            "layout": {
+              "max_width": { "px": 940.0 },
+              "padding": { "all": { "px": 12.0 } },
+              "gap": { "px": 7.0 }
+            }
+          }
+        },
+        {
+          "node_id": "character.repeat",
+          "set": {
+            "layout": {
+              "display": "grid",
+              "grid_columns": [
+                { "repeat": 1, "size": { "fr": 1.0 } },
+                { "repeat": 1, "size": { "fr": 1.0 } }
+              ],
+              "column_gap": { "px": 8.0 },
+              "row_gap": { "px": 7.0 }
+            }
+          }
+        },
+        {
+          "node_id": "character.row_card",
+          "set": {
+            "layout": {
+              "padding": { "all": { "px": 8.0 } },
+              "gap": { "px": 6.0 }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "compact_width",
+      "priority": 50,
+      "when": {
+        "width_class": "compact"
+      },
+      "overrides": [
+        {
+          "node_id": "character.scroll",
+          "set": {
+            "layout": {
+              "padding": { "all": { "px": 10.0 } },
+              "justify_content": "start"
+            }
+          }
+        },
+        {
+          "node_id": "character.panel",
+          "set": {
+            "layout": {
+              "min_width": { "px": 280.0 },
+              "padding": { "all": { "px": 14.0 } }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

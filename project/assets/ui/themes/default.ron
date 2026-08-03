@@ -57,7 +57,6 @@
         row_gap: 6.0,
         row_padding_y: 8.0,
         row_column_gap: 16.0,
-        auth_panel_width: 420.0,
         content_width: 760.0,
     ),
     button: (

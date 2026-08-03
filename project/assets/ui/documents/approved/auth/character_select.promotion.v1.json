@@ -1,0 +1,64 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": [
+    "desktop",
+    "phone-landscape",
+    "phone-1080p-landscape",
+    "tablet-landscape"
+  ],
+  "document_id": "auth.character_select",
+  "host_contract": {
+    "actions": [
+      { "id": "auth.load_characters", "sources": ["character.reload"] },
+      { "id": "auth.create_character", "sources": ["character.create"] },
+      { "id": "auth.select_character", "sources": ["character.row.select"] },
+      { "id": "auth.switch_account", "sources": ["character.switch_account"] },
+      { "id": "auth.switch_character", "sources": ["character.switch_character"] }
+    ],
+    "bindings": [
+      { "path": "auth.account.player_id", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.account.summary", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.affinity", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.character_id", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.collection_state", "scope": "owner", "value_type": { "kind": "enum", "values": ["loading", "ready", "error"] } },
+      { "path": "auth.character.connection_status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.create_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.character.create_loading", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.character.error_detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.error_title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.error_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "auth.character.items", "scope": "owner", "value_type": { "kind": "list", "item": { "kind": "record", "fields": { "character_id": { "kind": "string" }, "display_name": { "kind": "string" }, "detail": { "kind": "string" }, "selected": { "kind": "bool" }, "pending": { "kind": "bool" }, "disabled": { "kind": "bool" }, "loading": { "kind": "bool" } } }, "max_items": 64 } },
+      { "path": "auth.character.load_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.character.load_loading", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.character.mastery", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.notice_detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.notice_title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.notice_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "auth.character.pending_character_id", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.profile_title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.profile_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "auth.character.request_pending", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.character.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.character.switch_account_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.character.switch_character_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.character.switch_character_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "auth.character.view_state", "scope": "owner", "value_type": { "kind": "enum", "values": ["loading", "empty", "ready", "error", "creating", "selecting", "current"] } }
+    ],
+    "resources": ["character_background"],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "character_select",
+  "page_state": "initial",
+  "panel": "page",
+  "protocol_version": 2,
+  "route": "character_select",
+  "source": {
+    "relative_path": "auth/character_select.v1.json",
+    "root": "approved"
+  },
+  "template_version": 2,
+  "theme_tokens": []
+}

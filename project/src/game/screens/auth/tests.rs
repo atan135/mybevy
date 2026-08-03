@@ -5,16 +5,16 @@ use crate::framework::ui::{
     document::{
         UiActionDispatch, UiActionId, UiActionValue, UiBindingPath, UiBindingScope, UiBindingType,
         UiBindingValue, UiBindingVisibility, UiDocument, UiDocumentAssetPreflightOverrides,
-        UiDocumentAssetPreflightStatus, UiDocumentInputMode, UiDocumentLayer, UiDocumentNodeMarker,
-        UiDocumentOpenRequest, UiDocumentOpenSource, UiDocumentPanel, UiDocumentPlatform,
-        UiDocumentPreviewPlugin, UiDocumentReloadEvent, UiDocumentRequestId, UiDocumentRuntime,
-        UiDocumentRuntimeCommand, UiDocumentRuntimePlugin, UiDocumentRuntimeSystems,
-        UiDocumentSourceOrigin, UiNode, UiNodeId, UiPageState, UiRegisteredActionKind,
-        UiSafeAreaClass, UiTargetProfile, UiTextInputSecurity,
+        UiDocumentAssetPreflightStatus, UiDocumentId, UiDocumentInputMode, UiDocumentLayer,
+        UiDocumentNodeMarker, UiDocumentOpenRequest, UiDocumentOpenSource, UiDocumentPanel,
+        UiDocumentPlatform, UiDocumentPreviewPlugin, UiDocumentReloadEvent, UiDocumentRequestId,
+        UiDocumentRuntime, UiDocumentRuntimeCommand, UiDocumentRuntimePlugin,
+        UiDocumentRuntimeSystems, UiDocumentSourceOrigin, UiNode, UiNodeId, UiPageState,
+        UiRegisteredActionKind, UiSafeAreaClass, UiTargetProfile, UiTextInputSecurity,
         parse_approved_document_registration,
     },
     style::{UiFontAssets, UiTheme},
-    widgets::{UiButtonEvent, UiButtonEventKind, UiSensitiveTextInput, UiTextInputValue},
+    widgets::{UiSensitiveTextInput, UiTextInputValue},
 };
 use crate::game::{
     declarative_screen::DeclarativeScreenHostPlugin,
@@ -80,6 +80,58 @@ fn login_document_is_valid_and_keeps_password_out_of_contract_surfaces() {
 }
 
 #[test]
+fn character_select_document_is_valid_and_uses_closed_identity_contracts() {
+    let parsed: Result<UiDocument, _> = serde_json::from_str(CHARACTER_SELECT_DOCUMENT_SOURCE);
+    assert!(parsed.is_ok(), "{:#?}", parsed.unwrap_err());
+    let result = UiDocument::validate_json(CHARACTER_SELECT_DOCUMENT_SOURCE);
+    assert!(result.report.valid, "{:#?}", result.report.diagnostics);
+    let document = result.validated().unwrap().document();
+    let repeat = find_document_node(&document.root, "character.repeat")
+        .unwrap()
+        .repeat()
+        .unwrap();
+    assert_eq!(repeat.source.as_str(), "auth.character.items");
+    assert_eq!(repeat.key, "character_id");
+    assert_eq!(
+        repeat
+            .item_bindings
+            .get(&UiBindingPath::from_str("auth.character.item.character_id").unwrap())
+            .map(String::as_str),
+        Some("character_id")
+    );
+
+    let create_input = find_document_node(&document.root, CHARACTER_CREATE_NAME_NODE).unwrap();
+    let UiNode::TextInput { component, .. } = create_input else {
+        panic!("character.create_name must remain a text input");
+    };
+    assert_eq!(
+        component
+            .bindings
+            .value
+            .as_ref()
+            .unwrap()
+            .binding_path
+            .as_str(),
+        "auth.character.new_name"
+    );
+    assert_eq!(
+        document.bindings[&UiBindingPath::from_str("auth.character.new_name").unwrap()].scope,
+        UiBindingScope::Local
+    );
+
+    let create = find_document_node(&document.root, "character.create").unwrap();
+    let UiNode::Button {
+        on_click: Some(action),
+        ..
+    } = create
+    else {
+        panic!("character.create must remain an action button");
+    };
+    assert_eq!(action.action.as_str(), ACTION_CREATE_CHARACTER);
+    assert!(action.params.is_empty());
+}
+
+#[test]
 fn login_document_resolves_reference_and_keyboard_height_layouts() {
     let validated = UiDocument::validate_json(LOGIN_DOCUMENT_SOURCE)
         .into_validated()
@@ -138,7 +190,7 @@ fn auth_page_baselines_freeze_owner_panel_source_and_states() {
     assert_eq!(CHARACTER_SELECT_PAGE_BASELINE.panel, PANEL_CHARACTER_SELECT);
     assert_eq!(
         CHARACTER_SELECT_PAGE_BASELINE.action_source,
-        AuthActionSource::RustView
+        AuthActionSource::UiDocument
     );
     assert!(CHARACTER_SELECT_PAGE_BASELINE.states.contains(&"selecting"));
 }
@@ -215,6 +267,29 @@ fn login_approved_registration_matches_fixed_host_contract() {
 }
 
 #[test]
+fn character_select_approved_registration_matches_fixed_host_contract() {
+    const REGISTRATION_SOURCE: &str = include_str!(
+        "../../../../assets/ui/documents/approved/auth/character_select.promotion.v1.json"
+    );
+    let contracts = AuthHostContracts::default();
+    let host = character_select_declarative_screen_host(&contracts);
+    let registration = parse_approved_document_registration(REGISTRATION_SOURCE).unwrap();
+    let audit = registration
+        .audit_report(CHARACTER_SELECT_DOCUMENT_SOURCE)
+        .unwrap();
+
+    assert_eq!(host.document_id.as_str(), CHARACTER_SELECT_DOCUMENT_ID);
+    assert_eq!(host.mode, Some(AppUiMode::CharacterSelect));
+    assert_eq!(host.owner, OWNER_CHARACTER_SELECT);
+    assert_eq!(host.action_allowlist.len(), 5);
+    assert_eq!(registration.owner(), OWNER_CHARACTER_SELECT.as_str());
+    assert_eq!(audit.actions.len(), 5);
+    assert!(!host.binding_schema.keys().any(|key| {
+        key.path.as_str() == "auth.character.new_name" || key.scope == UiBindingScope::Item
+    }));
+}
+
+#[test]
 fn login_startup_registration_mounts_initial_mode_document() {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, StatesPlugin))
@@ -262,6 +337,55 @@ fn login_startup_registration_mounts_initial_mode_document() {
 }
 
 #[test]
+fn character_select_startup_registration_mounts_document_with_item_bindings() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<AppUiMode>()
+        .insert_resource(UiTheme::default())
+        .insert_resource(UiMetrics::default())
+        .insert_resource(UiFontAssets::test_registry())
+        .init_resource::<UiFocusState>()
+        .init_resource::<UiViewport>()
+        .init_resource::<AuthHostContracts>()
+        .add_plugins((
+            UiDocumentRuntimePlugin,
+            UiDocumentPreviewPlugin,
+            DeclarativeScreenHostPlugin,
+        ))
+        .add_systems(Startup, register_auth_contracts);
+    app.world_mut()
+        .resource_mut::<UiDocumentAssetPreflightOverrides>()
+        .set(
+            UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID).unwrap(),
+            crate::framework::ui::document::UiAssetId::from_str("character_background").unwrap(),
+            UiDocumentAssetPreflightStatus::Failed {
+                code: "UI_DOCUMENT_TEST_OPTIONAL_BACKGROUND_FAILED".to_owned(),
+            },
+        );
+    app.world_mut()
+        .resource_mut::<NextState<AppUiMode>>()
+        .set(AppUiMode::CharacterSelect);
+
+    for _ in 0..8 {
+        app.update();
+    }
+
+    let document_id = UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID).unwrap();
+    let runtime = app.world().resource::<UiDocumentRuntime>();
+    if runtime
+        .active_instance(OWNER_CHARACTER_SELECT.as_str(), &document_id)
+        .is_none()
+    {
+        let messages = app.world().resource::<Messages<UiDocumentReloadEvent>>();
+        let mut cursor = MessageCursor::<UiDocumentReloadEvent>::default();
+        panic!(
+            "CharacterSelect document did not commit: {:#?}",
+            cursor.read(messages).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn auth_binding_schemas_keep_account_and_character_identity_separate() {
     let login = login_binding_schema();
     let player_id = UiBindingPath::from_str("auth.account.player_id").unwrap();
@@ -280,7 +404,9 @@ fn auth_binding_schemas_keep_account_and_character_identity_separate() {
         panic!("character items must use typed records");
     };
     assert!(fields.contains_key("character_id"));
-    assert!(fields.contains_key("name"));
+    assert!(fields.contains_key("display_name"));
+    assert!(fields.contains_key("selected"));
+    assert!(fields.contains_key("pending"));
 }
 
 #[test]
@@ -332,6 +458,7 @@ fn character_select_audit_fixture_uses_distinct_business_ids() {
             .all(|character| character.character_id.starts_with("chr_audit_"))
     );
     assert!(session.character_id.is_none());
+    assert!(!character_select_requires_login(&session));
 }
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
@@ -346,6 +473,12 @@ fn character_select_audit_fixture_does_not_replace_real_login() {
 
     assert_eq!(session.player_id.as_deref(), Some("plr_real"));
     assert!(session.characters.is_empty());
+}
+
+#[test]
+fn character_select_guard_requires_an_authenticated_account() {
+    assert!(character_select_requires_login(&MyServerSession::default()));
+    assert!(!character_select_requires_login(&logged_in_session()));
 }
 
 #[test]
@@ -406,6 +539,52 @@ fn snapshot_uses_character_id_not_name_as_identity() {
     assert_eq!(snapshot.characters[0].character_id, "chr_first");
     assert_eq!(snapshot.characters[1].character_id, "chr_second");
     assert_ne!(snapshot.characters[0].detail, snapshot.characters[1].detail);
+}
+
+#[test]
+fn character_document_bindings_keep_account_current_and_pending_ids_separate() {
+    let first_id = "character:region/first:0000000000001";
+    let second_id = "character:区域/second:0000000000002";
+    let mut session = logged_in_session();
+    session.player_id = Some("player_account_only".to_owned());
+    session.character_selection_state = CharacterSelectionState::Selecting;
+    session.character_id = Some(first_id.to_owned());
+    session.pending_character_id = Some(second_id.to_owned());
+    session.characters = vec![
+        test_character(first_id, "SameName"),
+        test_character(second_id, "SameName"),
+    ];
+    let mut app = character_binding_test_app(session, LoginUiState::default());
+    app.update();
+
+    assert_eq!(
+        character_binding_value(&app, "auth.account.player_id"),
+        UiBindingValue::String("player_account_only".to_owned())
+    );
+    assert_eq!(
+        character_binding_value(&app, "auth.character.character_id"),
+        UiBindingValue::String(first_id.to_owned())
+    );
+    assert_eq!(
+        character_binding_value(&app, "auth.character.pending_character_id"),
+        UiBindingValue::String(second_id.to_owned())
+    );
+    assert_eq!(
+        character_binding_value(&app, "auth.character.view_state"),
+        UiBindingValue::Enum("selecting".to_owned())
+    );
+    let UiBindingValue::List(items) = character_binding_value(&app, "auth.character.items") else {
+        panic!("character items binding must remain a list");
+    };
+    let UiBindingValue::Record(second) = &items[1] else {
+        panic!("character rows must remain records");
+    };
+    assert_eq!(
+        second.get("character_id"),
+        Some(&UiBindingValue::String(second_id.to_owned()))
+    );
+    assert_eq!(second.get("pending"), Some(&UiBindingValue::Bool(true)));
+    assert_eq!(second.get("loading"), Some(&UiBindingValue::Bool(true)));
 }
 
 #[test]
@@ -960,16 +1139,25 @@ fn auth_server_environment_switch_is_ignored_with_an_in_flight_request() {
 }
 
 #[test]
-fn auth_create_button_sends_create_character_from_input_when_logged_in() {
-    let mut app = character_button_test_app(logged_in_session());
-    let button = app.world_mut().spawn(CreateCharacterButton).id();
+fn auth_create_document_action_reads_only_the_active_fixed_input() {
+    let mut app = character_document_test_app(logged_in_session());
+    set_character_document_name(&mut app, "  WindRunner  ");
+    let instance_id = character_document_instance(&app);
     app.world_mut().spawn((
-        CharacterNameInput,
-        UiTextInputValue("WindRunner".to_string()),
+        UiDocumentNodeMarker {
+            instance_id,
+            node_id: UiNodeId::from_str(CHARACTER_CREATE_NAME_NODE).unwrap(),
+        },
+        UiTextInputValue("ForgedName".to_owned()),
     ));
-
-    click(&mut app, button);
-    app.update();
+    app.world_mut().write_message(character_document_dispatch(
+        ACTION_CREATE_CHARACTER,
+        "character.create",
+        BTreeMap::new(),
+    ));
+    app.world_mut()
+        .run_system_once(handle_character_select_document_actions)
+        .expect("character document action handler should run");
 
     let commands = read_messages::<MyServerCommand>(&app);
     assert!(commands.iter().any(|command| matches!(
@@ -982,16 +1170,22 @@ fn auth_create_button_sends_create_character_from_input_when_logged_in() {
 }
 
 #[test]
-fn auth_select_button_sends_character_id_not_name() {
-    let mut app = character_button_test_app(logged_in_session());
-    let button = app
-        .world_mut()
-        .spawn(SelectCharacterButton {
-            character_id: "chr_selected".to_string(),
-        })
-        .id();
-
-    click(&mut app, button);
+fn auth_select_document_action_sends_full_character_id_not_display_name() {
+    let full_id = "character:区域/opaque:00000000000000000000000000000001";
+    let mut session = logged_in_session();
+    session.characters = vec![
+        test_character(full_id, "SameName"),
+        test_character("character:other", "SameName"),
+    ];
+    let mut app = character_document_test_app(session);
+    app.world_mut().write_message(character_document_dispatch(
+        ACTION_SELECT_CHARACTER,
+        "character.row.select",
+        BTreeMap::from([(
+            "character_id".to_owned(),
+            UiActionValue::String(full_id.to_owned()),
+        )]),
+    ));
     app.update();
 
     let commands = read_messages::<MyServerCommand>(&app);
@@ -1000,27 +1194,29 @@ fn auth_select_button_sends_character_id_not_name() {
         MyServerCommand::SelectCharacter {
             character_id,
             connect_game: true,
-        } if character_id == "chr_selected"
+        } if character_id == full_id
     )));
 }
 
 #[test]
-fn auth_character_request_clicks_are_deduplicated_per_frame() {
-    let mut app = character_button_test_app(logged_in_session());
-    let create = app.world_mut().spawn(CreateCharacterButton).id();
-    let select = app
-        .world_mut()
-        .spawn(SelectCharacterButton {
-            character_id: "chr_selected".to_string(),
-        })
-        .id();
-    app.world_mut().spawn((
-        CharacterNameInput,
-        UiTextInputValue("WindRunner".to_string()),
+fn auth_character_document_actions_are_deduplicated_per_frame() {
+    let mut session = logged_in_session();
+    session.characters = vec![test_character("chr_selected", "WindRunner")];
+    let mut app = character_document_test_app(session);
+    set_character_document_name(&mut app, "WindRunner");
+    app.world_mut().write_message(character_document_dispatch(
+        ACTION_CREATE_CHARACTER,
+        "character.create",
+        BTreeMap::new(),
     ));
-
-    click(&mut app, create);
-    click(&mut app, select);
+    app.world_mut().write_message(character_document_dispatch(
+        ACTION_SELECT_CHARACTER,
+        "character.row.select",
+        BTreeMap::from([(
+            "character_id".to_owned(),
+            UiActionValue::String("chr_selected".to_owned()),
+        )]),
+    ));
     app.update();
 
     let role_commands = read_messages::<MyServerCommand>(&app)
@@ -1045,14 +1241,13 @@ fn auth_character_request_clicks_are_deduplicated_per_frame() {
 fn auth_pending_character_state_blocks_character_requests() {
     let mut session = logged_in_session();
     session.character_selection_state = CharacterSelectionState::Creating;
-    let mut app = character_button_test_app(session);
-    let button = app.world_mut().spawn(CreateCharacterButton).id();
-    app.world_mut().spawn((
-        CharacterNameInput,
-        UiTextInputValue("WindRunner".to_string()),
+    let mut app = character_document_test_app(session);
+    set_character_document_name(&mut app, "WindRunner");
+    app.world_mut().write_message(character_document_dispatch(
+        ACTION_CREATE_CHARACTER,
+        "character.create",
+        BTreeMap::new(),
     ));
-
-    click(&mut app, button);
     app.update();
 
     assert!(read_messages::<MyServerCommand>(&app).is_empty());
@@ -1060,18 +1255,27 @@ fn auth_pending_character_state_blocks_character_requests() {
 
 #[test]
 fn auth_switch_account_clears_inputs_and_sends_logout() {
-    let mut app = character_button_test_app(logged_in_session());
-    let button = app.world_mut().spawn(SwitchAccountButton).id();
-    let character_name = app
+    let mut app = character_document_test_app(logged_in_session());
+    set_character_document_name(&mut app, "WindRunner");
+    let instance_id = character_document_instance(&app);
+    let forged = app
         .world_mut()
         .spawn((
-            CharacterNameInput,
-            UiTextInputValue("WindRunner".to_string()),
+            UiDocumentNodeMarker {
+                instance_id,
+                node_id: UiNodeId::from_str(CHARACTER_CREATE_NAME_NODE).unwrap(),
+            },
+            UiTextInputValue("KeepForged".to_string()),
         ))
         .id();
-
-    click(&mut app, button);
-    app.update();
+    app.world_mut().write_message(character_document_dispatch(
+        ACTION_SWITCH_ACCOUNT,
+        "character.switch_account",
+        BTreeMap::new(),
+    ));
+    app.world_mut()
+        .run_system_once(handle_character_select_document_actions)
+        .expect("character document action handler should run");
 
     let commands = read_messages::<MyServerCommand>(&app);
     assert!(
@@ -1079,12 +1283,10 @@ fn auth_switch_account_clears_inputs_and_sends_logout() {
             .iter()
             .any(|command| matches!(command, MyServerCommand::Logout))
     );
+    assert_eq!(active_character_input_value(&app), "");
     assert_eq!(
-        app.world()
-            .get::<UiTextInputValue>(character_name)
-            .unwrap()
-            .0,
-        ""
+        app.world().get::<UiTextInputValue>(forged).unwrap().0,
+        "KeepForged"
     );
 }
 
@@ -1094,17 +1296,13 @@ fn auth_change_character_keeps_account_and_sends_switch_character() {
     session.character_selection_state = CharacterSelectionState::Selected;
     session.character_id = Some("chr_selected".to_string());
     session.characters = vec![test_character("chr_selected", "WindRunner")];
-    let mut app = character_button_test_app(session);
-    let button = app.world_mut().spawn(ChangeCharacterButton).id();
-    let character_name = app
-        .world_mut()
-        .spawn((
-            CharacterNameInput,
-            UiTextInputValue("WindRunner".to_string()),
-        ))
-        .id();
-
-    click(&mut app, button);
+    let mut app = character_document_test_app(session);
+    set_character_document_name(&mut app, "WindRunner");
+    app.world_mut().write_message(character_document_dispatch(
+        ACTION_SWITCH_CHARACTER,
+        "character.switch_character",
+        BTreeMap::new(),
+    ));
     app.update();
 
     let commands = read_messages::<MyServerCommand>(&app);
@@ -1113,13 +1311,7 @@ fn auth_change_character_keeps_account_and_sends_switch_character() {
             .iter()
             .any(|command| matches!(command, MyServerCommand::SwitchCharacter))
     );
-    assert_eq!(
-        app.world()
-            .get::<UiTextInputValue>(character_name)
-            .unwrap()
-            .0,
-        ""
-    );
+    assert_eq!(active_character_input_value(&app), "");
 }
 
 #[test]
@@ -1196,15 +1388,143 @@ impl CharacterTestExt for CharacterSummary {
     }
 }
 
-fn character_button_test_app(session: MyServerSession) -> App {
+fn character_document_test_app(session: MyServerSession) -> App {
+    const TEST_DOCUMENT: &str = r#"{
+        "schema_version": 1,
+        "document_id": "auth.character_select",
+        "root": {
+            "type": "container",
+            "id": "character.test_root",
+            "children": [
+                {
+                    "type": "text_input",
+                    "id": "character.create_name",
+                    "value": "",
+                    "max_chars": 256,
+                    "component": {
+                        "slots": {
+                            "label": {
+                                "kind": "text",
+                                "content": { "literal": "Character name" }
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    }"#;
+    let validation = UiDocument::validate_json(TEST_DOCUMENT);
+    assert!(
+        validation.report.valid,
+        "{:#?}",
+        validation.report.diagnostics
+    );
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
-        .add_message::<UiButtonEvent>()
+    app.insert_resource(UiTheme::default())
+        .insert_resource(UiMetrics::default())
+        .insert_resource(UiFontAssets::test_registry())
+        .init_resource::<UiFocusState>()
+        .init_resource::<UiViewport>()
+        .add_plugins(UiDocumentRuntimePlugin)
         .add_message::<MyServerCommand>()
         .insert_resource(session)
         .init_resource::<LoginUiState>()
-        .add_systems(Update, handle_character_select_buttons);
+        .add_systems(
+            Update,
+            handle_character_select_document_actions.after(UiDocumentRuntimeSystems::Reconcile),
+        );
+    app.world_mut()
+        .write_message(UiDocumentRuntimeCommand::Open(UiDocumentOpenRequest {
+            request_id: UiDocumentRequestId(12),
+            document_id: UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID).unwrap(),
+            owner: OWNER_CHARACTER_SELECT.as_str().to_owned(),
+            source: UiDocumentOpenSource::Json(TEST_DOCUMENT.to_owned()),
+            origin: UiDocumentSourceOrigin::Fixture {
+                fixture_id: "auth_character_handler".to_owned(),
+            },
+            panel: UiDocumentPanel::Page,
+            layer: UiDocumentLayer::Page,
+            target_profile: UiTargetProfile::new(
+                390.0,
+                844.0,
+                UiSafeAreaClass::None,
+                UiDocumentInputMode::Touch,
+                UiDocumentPlatform::Android,
+            )
+            .unwrap(),
+            page_state: UiPageState::initial(),
+            owner_alive: true,
+            host_bindings: BTreeMap::new(),
+        }));
+    for _ in 0..3 {
+        app.update();
+    }
+    assert!(
+        app.world()
+            .resource::<UiDocumentRuntime>()
+            .active_instance(
+                OWNER_CHARACTER_SELECT.as_str(),
+                &UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID).unwrap()
+            )
+            .is_some(),
+        "{:#?}",
+        app.world()
+            .resource::<UiDocumentRuntime>()
+            .record(UiDocumentRequestId(12))
+    );
     app
+}
+
+fn character_document_instance(app: &App) -> crate::framework::ui::document::UiDocumentInstanceId {
+    app.world()
+        .resource::<UiDocumentRuntime>()
+        .active_instance(
+            OWNER_CHARACTER_SELECT.as_str(),
+            &UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID).unwrap(),
+        )
+        .unwrap()
+}
+
+fn active_character_input_entity(app: &App) -> Entity {
+    app.world()
+        .resource::<UiDocumentRuntime>()
+        .node_entity(
+            character_document_instance(app),
+            &UiNodeId::from_str(CHARACTER_CREATE_NAME_NODE).unwrap(),
+        )
+        .unwrap()
+}
+
+fn set_character_document_name(app: &mut App, name: &str) {
+    let entity = active_character_input_entity(app);
+    app.world_mut()
+        .get_mut::<UiTextInputValue>(entity)
+        .unwrap()
+        .0 = name.to_owned();
+}
+
+fn active_character_input_value(app: &App) -> &str {
+    &app.world()
+        .get::<UiTextInputValue>(active_character_input_entity(app))
+        .unwrap()
+        .0
+}
+
+fn character_document_dispatch(
+    action: &str,
+    source: &str,
+    params: BTreeMap<String, UiActionValue>,
+) -> UiActionDispatch {
+    UiActionDispatch {
+        action: UiActionId::from_str(action).unwrap(),
+        document_id: UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID).unwrap(),
+        owner: OWNER_CHARACTER_SELECT.as_str().to_owned(),
+        source_node: UiNodeId::from_str(source).unwrap(),
+        kind: UiRegisteredActionKind::BusinessCommand {
+            target: action.to_owned(),
+        },
+        params,
+    }
 }
 
 fn login_document_test_app(session: MyServerSession) -> App {
@@ -1318,6 +1638,36 @@ fn login_binding_test_app(session: MyServerSession, ui_state: LoginUiState) -> A
         .insert_resource(ui_state)
         .add_systems(Update, sync_login_document_bindings);
     app
+}
+
+fn character_binding_test_app(session: MyServerSession, ui_state: LoginUiState) -> App {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<UiBindingValues>()
+        .init_resource::<AuthHostContracts>()
+        .insert_resource(session)
+        .insert_resource(ui_state)
+        .add_systems(Update, sync_character_select_document_bindings);
+    app
+}
+
+fn character_binding_value(app: &App, path: &str) -> UiBindingValue {
+    let path = UiBindingPath::from_str(path).unwrap();
+    let declaration = app
+        .world()
+        .resource::<AuthHostContracts>()
+        .character_select_bindings
+        .get(&path)
+        .unwrap();
+    app.world()
+        .resource::<UiBindingValues>()
+        .scoped_value(
+            CHARACTER_SELECT_DOCUMENT_ID,
+            OWNER_CHARACTER_SELECT.as_str(),
+            &path,
+            declaration,
+        )
+        .unwrap()
 }
 
 fn login_binding_value(app: &App, path: &str) -> UiBindingValue {
@@ -1439,6 +1789,7 @@ fn auth_event_test_app() -> App {
         .insert_resource(MyServerSession::default())
         .init_resource::<LoginUiState>()
         .init_resource::<UiFocusState>()
+        .init_resource::<UiDocumentRuntime>()
         .add_systems(Update, follow_myserver_login_events);
     app
 }
@@ -1461,14 +1812,6 @@ fn test_login_session() -> crate::game::myserver::LoginSession {
         game_port: None,
         game_transport: None,
     }
-}
-
-fn click(app: &mut App, entity: Entity) {
-    app.world_mut().write_message(UiButtonEvent {
-        entity,
-        kind: UiButtonEventKind::Click,
-        button: None,
-    });
 }
 
 fn read_messages<M>(app: &App) -> Vec<M>

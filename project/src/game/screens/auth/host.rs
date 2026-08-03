@@ -7,6 +7,8 @@ use bevy::prelude::*;
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 use crate::framework::ui::audit::UiAuditConfig;
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+use crate::framework::ui::core::UiViewport;
 use crate::framework::ui::{
     core::{binding::UiBindingValues, focus::UiFocusState},
     document::{
@@ -16,16 +18,19 @@ use crate::framework::ui::{
         UiDocumentId, UiDocumentLayer, UiDocumentNodeMarker, UiDocumentPanel, UiDocumentRuntime,
         UiHostBindingKey, UiNodeId, UiPageState, UiRegisteredActionKind,
     },
-    widgets::{UiButtonEvent, UiButtonEventKind, UiSensitiveTextInput, UiTextInputValue},
+    widgets::{UiSensitiveTextInput, UiTextInputValue},
 };
 #[cfg(all(debug_assertions, not(target_os = "android")))]
-use crate::game::myserver::{AccountLoginState, CharacterSelectionState, CharacterSummary};
+use crate::game::myserver::{CharacterSelectionState, CharacterSummary};
 use crate::game::{
     declarative_screen::{
         DeclarativeScreenFailurePolicy, DeclarativeScreenHost, DeclarativeScreenRegistry,
         DeclarativeScreenSource,
     },
-    myserver::{MyServerCommand, MyServerConfig, MyServerEvent, MyServerProfiles, MyServerSession},
+    myserver::{
+        AccountLoginState, MyServerCommand, MyServerConfig, MyServerEvent, MyServerProfiles,
+        MyServerSession,
+    },
     navigation::{AppUiMode, GameRouteCommand},
     ui_ids::{OWNER_CHARACTER_SELECT, OWNER_LOGIN, PANEL_CHARACTER_SELECT, PANEL_LOGIN},
 };
@@ -37,8 +42,15 @@ pub(super) const CHARACTER_SELECT_DOCUMENT_ID: &str = "auth.character_select";
 pub(super) const LOGIN_DOCUMENT_SOURCE: &str =
     include_str!("../../../../assets/ui/documents/approved/auth/login.v1.json");
 pub(super) const LOGIN_DOCUMENT_SOURCE_PATH: &str = "auth/login.v1.json";
+pub(super) const CHARACTER_SELECT_DOCUMENT_SOURCE: &str =
+    include_str!("../../../../assets/ui/documents/approved/auth/character_select.v1.json");
+pub(super) const CHARACTER_SELECT_DOCUMENT_SOURCE_PATH: &str = "auth/character_select.v1.json";
 pub(super) const LOGIN_ACCOUNT_NODE: &str = "login.account";
 pub(super) const LOGIN_PASSWORD_NODE: &str = "login.password";
+pub(super) const CHARACTER_CREATE_NAME_NODE: &str = "character.create_name";
+const CHARACTER_NAME_MAX_BYTES: usize = 256;
+const CHARACTER_ID_MAX_BYTES: usize =
+    crate::framework::ui::document::UI_REPEAT_MAX_ITEM_STRING_BYTES;
 
 pub(super) const ACTION_ACCOUNT_LOGIN: &str = "auth.account_login";
 pub(super) const ACTION_GUEST_LOGIN: &str = "auth.guest_login";
@@ -51,7 +63,6 @@ pub(super) const ACTION_SWITCH_CHARACTER: &str = "auth.switch_character";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AuthActionSource {
-    RustView,
     UiDocument,
 }
 
@@ -84,7 +95,7 @@ pub(super) const CHARACTER_SELECT_PAGE_BASELINE: AuthPageBaseline = AuthPageBase
     mode: AppUiMode::CharacterSelect,
     owner: OWNER_CHARACTER_SELECT,
     panel: PANEL_CHARACTER_SELECT,
-    action_source: AuthActionSource::RustView,
+    action_source: AuthActionSource::UiDocument,
     states: &[
         "not_loaded",
         "loading",
@@ -194,8 +205,12 @@ pub(super) fn character_select_binding_schema() -> BTreeMap<UiBindingPath, UiBin
     let character_item = UiBindingType::Record {
         fields: BTreeMap::from([
             ("character_id".to_owned(), UiBindingType::String),
-            ("name".to_owned(), UiBindingType::String),
+            ("display_name".to_owned(), UiBindingType::String),
             ("detail".to_owned(), UiBindingType::String),
+            ("selected".to_owned(), UiBindingType::Bool),
+            ("pending".to_owned(), UiBindingType::Bool),
+            ("disabled".to_owned(), UiBindingType::Bool),
+            ("loading".to_owned(), UiBindingType::Bool),
         ]),
     };
     binding_schema([
@@ -206,6 +221,11 @@ pub(super) fn character_select_binding_schema() -> BTreeMap<UiBindingPath, UiBin
         ),
         (
             "auth.account.player_id",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.account.summary",
             UiBindingScope::Owner,
             UiBindingType::String,
         ),
@@ -228,6 +248,30 @@ pub(super) fn character_select_binding_schema() -> BTreeMap<UiBindingPath, UiBin
             },
         ),
         (
+            "auth.character.collection_state",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: vec!["loading".to_owned(), "ready".to_owned(), "error".to_owned()],
+            },
+        ),
+        (
+            "auth.character.view_state",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: [
+                    "loading",
+                    "empty",
+                    "ready",
+                    "error",
+                    "creating",
+                    "selecting",
+                    "current",
+                ]
+                .map(str::to_owned)
+                .to_vec(),
+            },
+        ),
+        (
             "auth.character.status",
             UiBindingScope::Owner,
             UiBindingType::String,
@@ -240,6 +284,126 @@ pub(super) fn character_select_binding_schema() -> BTreeMap<UiBindingPath, UiBin
         (
             "auth.character.request_pending",
             UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.load_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.load_loading",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.create_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.create_loading",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.switch_account_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.switch_character_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.switch_character_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "auth.character.error_title",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.error_detail",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.error_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "auth.character.notice_title",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.notice_detail",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.notice_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "auth.character.profile_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "auth.character.profile_title",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.affinity",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.mastery",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.item.character_id",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.item.display_name",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.item.detail",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "auth.character.item.selected",
+            UiBindingScope::Item,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.item.pending",
+            UiBindingScope::Item,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.item.disabled",
+            UiBindingScope::Item,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.character.item.loading",
+            UiBindingScope::Item,
             UiBindingType::Bool,
         ),
     ])
@@ -284,6 +448,9 @@ pub(super) fn register_auth_contracts(
     screens
         .register(login_declarative_screen_host(&contracts))
         .expect("Login declarative screen registration must be valid and unique");
+    screens
+        .register(character_select_declarative_screen_host(&contracts))
+        .expect("CharacterSelect declarative screen registration must be valid and unique");
 }
 
 pub(super) fn login_declarative_screen_host(
@@ -340,6 +507,66 @@ pub(super) fn login_declarative_screen_host(
     }
 }
 
+pub(super) fn character_select_declarative_screen_host(
+    contracts: &AuthHostContracts,
+) -> DeclarativeScreenHost {
+    let binding_schema = contracts
+        .character_select_bindings
+        .iter()
+        .filter(|(_, declaration)| {
+            matches!(
+                declaration.scope,
+                UiBindingScope::Document | UiBindingScope::Owner
+            )
+        })
+        .map(|(path, declaration)| {
+            (
+                UiHostBindingKey::new(declaration.scope, path.clone()),
+                declaration.value_type.clone(),
+            )
+        })
+        .collect();
+    let source = DeclarativeScreenSource::approved(
+        CHARACTER_SELECT_DOCUMENT_SOURCE_PATH,
+        CHARACTER_SELECT_DOCUMENT_SOURCE,
+    );
+    DeclarativeScreenHost {
+        document_id: UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID)
+            .expect("CharacterSelect document ID is static and valid"),
+        route: "character_select",
+        route_aliases: &["character_select"],
+        mode: Some(AppUiMode::CharacterSelect),
+        owner: OWNER_CHARACTER_SELECT,
+        panel: UiDocumentPanel::Page,
+        layer: UiDocumentLayer::Page,
+        initial_state: UiPageState::initial(),
+        binding_schema,
+        action_allowlist: [
+            ACTION_LOAD_CHARACTERS,
+            ACTION_CREATE_CHARACTER,
+            ACTION_SELECT_CHARACTER,
+            ACTION_SWITCH_ACCOUNT,
+            ACTION_SWITCH_CHARACTER,
+        ]
+        .into_iter()
+        .map(|action| {
+            UiActionId::from_str(action).expect("CharacterSelect action IDs are static and valid")
+        })
+        .collect(),
+        audit_profiles: [
+            "desktop",
+            "phone-landscape",
+            "phone-1080p-landscape",
+            "tablet-landscape",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+        source: source.clone(),
+        fallback_source: Some(source),
+        failure_policy: DeclarativeScreenFailurePolicy::PackagedFallback,
+    }
+}
+
 pub(super) fn auth_action_descriptors() -> Vec<UiActionDescriptor> {
     vec![
         business_action(
@@ -379,10 +606,6 @@ pub(super) fn auth_action_descriptors() -> Vec<UiActionDescriptor> {
             CHARACTER_SELECT_DOCUMENT_ID,
             OWNER_CHARACTER_SELECT.as_str(),
             "character.create",
-        )
-        .with_param(
-            "name",
-            UiActionParamSchema::required(UiActionParamType::String { max_bytes: 256 }),
         ),
         business_action(
             ACTION_SELECT_CHARACTER,
@@ -392,7 +615,9 @@ pub(super) fn auth_action_descriptors() -> Vec<UiActionDescriptor> {
         )
         .with_param(
             "character_id",
-            UiActionParamSchema::required(UiActionParamType::String { max_bytes: 256 }),
+            UiActionParamSchema::required(UiActionParamType::OpaqueId {
+                max_bytes: CHARACTER_ID_MAX_BYTES,
+            }),
         ),
         business_action(
             ACTION_SWITCH_ACCOUNT,
@@ -424,12 +649,51 @@ fn business_action(action: &str, document: &str, owner: &str, source: &str) -> U
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 pub(super) fn prepare_character_select_audit_fixture(
     audit_config: Res<UiAuditConfig>,
+    viewport: Res<UiViewport>,
     mut session: ResMut<MyServerSession>,
+    mut ui_state: ResMut<LoginUiState>,
 ) {
-    maybe_seed_character_select_audit_session(
-        audit_config.targets_screen("character_select"),
-        &mut session,
-    );
+    if !audit_config.targets_screen("character_select") {
+        return;
+    }
+    if session.account_login_state == AccountLoginState::LoggedIn {
+        return;
+    }
+    maybe_seed_character_select_audit_session(true, &mut session);
+    ui_state.clear_runtime_state();
+
+    if viewport.logical_width >= 1100.0 && viewport.logical_height <= 740.0 {
+        session.characters.clear();
+        session.character_selection_state = CharacterSelectionState::NoCharacters;
+    } else if viewport.logical_width < 900.0 && viewport.device_scale < 2.5 {
+        session.characters = vec![audit_character(
+            "chr:audit/long-unicode-角色-0000000000000001",
+            "WindRunnerWithAnIntentionallyLongDisplayName",
+            "1042",
+            1,
+        )];
+    } else if viewport.logical_width < 900.0 {
+        session.characters = (0..6)
+            .map(|index| {
+                audit_character(
+                    &format!("chr:audit:multi:{index:02}"),
+                    if index % 2 == 0 {
+                        "WindRunner"
+                    } else {
+                        "StoneSong"
+                    },
+                    &format!("{:04}", 1042 + index),
+                    i64::from(index + 1),
+                )
+            })
+            .collect();
+    } else {
+        session.character_selection_state = CharacterSelectionState::SelectionFailed;
+        ui_state.notice = Some(AuthStatusNotice::generic_failure(
+            "Character request failed",
+            Some("Audit fixture: character service unavailable.".to_owned()),
+        ));
+    }
 }
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
@@ -480,34 +744,32 @@ fn audit_character(
     }
 }
 
-#[derive(Component)]
-pub(super) struct CharacterNameInput;
-
-#[derive(Component)]
-pub(super) struct LoadCharactersButton;
-
-#[derive(Component)]
-pub(super) struct CreateCharacterButton;
-
-#[derive(Component)]
-pub(super) struct SwitchAccountButton;
-
-#[derive(Component)]
-pub(super) struct ChangeCharacterButton;
-
-#[derive(Clone, Debug, Component)]
-pub(super) struct SelectCharacterButton {
-    pub(super) character_id: String,
-}
-
-#[derive(Component)]
-pub(super) struct AuthDynamicRoot;
-
 #[derive(Clone, Debug, Default, Resource)]
 pub(super) struct LoginUiState {
     pub(super) rendered: Option<LoginUiSnapshot>,
     pub(super) last_error: Option<crate::game::myserver::MyServerDisplayError>,
     pub(super) notice: Option<AuthStatusNotice>,
+}
+
+pub(super) fn guard_character_select_session(
+    session: Res<MyServerSession>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
+) {
+    if character_select_requires_login(&session) {
+        route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
+    }
+}
+
+pub(super) fn character_select_requires_login(session: &MyServerSession) -> bool {
+    session.account_login_state != AccountLoginState::LoggedIn
+}
+
+pub(super) fn cleanup_login_screen_state(
+    mut ui_state: ResMut<LoginUiState>,
+    mut focus_state: ResMut<UiFocusState>,
+) {
+    ui_state.clear_runtime_state();
+    focus_state.focused_entity = None;
 }
 
 impl LoginUiState {
@@ -805,76 +1067,446 @@ pub(super) fn sync_login_document_bindings(
     ui_state.rendered = Some(snapshot);
 }
 
-pub(super) fn handle_character_select_buttons(
-    mut myserver_commands: MessageWriter<MyServerCommand>,
+pub(super) fn handle_character_select_document_actions(
+    mut actions: MessageReader<UiActionDispatch>,
+    runtime: Res<UiDocumentRuntime>,
+    mut input_values: Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
     session: Res<MyServerSession>,
     mut ui_state: ResMut<LoginUiState>,
-    mut input_values: Query<&mut UiTextInputValue, With<CharacterNameInput>>,
-    load_buttons: Query<(), With<LoadCharactersButton>>,
-    create_buttons: Query<(), With<CreateCharacterButton>>,
-    switch_account_buttons: Query<(), With<SwitchAccountButton>>,
-    change_character_buttons: Query<(), With<ChangeCharacterButton>>,
-    select_buttons: Query<&SelectCharacterButton>,
-    mut button_events: MessageReader<UiButtonEvent>,
+    mut focus_state: ResMut<UiFocusState>,
+    mut myserver_commands: MessageWriter<MyServerCommand>,
 ) {
-    let mut character_request_sent = false;
+    let Some(instance_id) = runtime.active_instance(
+        OWNER_CHARACTER_SELECT.as_str(),
+        &UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID)
+            .expect("CharacterSelect document ID is static and valid"),
+    ) else {
+        for _ in actions.read() {}
+        return;
+    };
+    let mut request_sent = false;
 
-    for event in button_events.read() {
-        if event.kind != UiButtonEventKind::Click {
+    for action in actions.read() {
+        if request_sent || !is_character_select_business_action(action) {
             continue;
         }
 
-        if load_buttons.contains(event.entity) {
-            if character_request_sent || !can_send_character_request(&session) {
-                continue;
+        match action.action.as_str() {
+            ACTION_LOAD_CHARACTERS
+                if action.source_node.as_str() == "character.reload"
+                    && action.params.is_empty()
+                    && can_send_character_request(&session) =>
+            {
+                request_sent = true;
+                clear_character_feedback(&mut ui_state);
+                myserver_commands.write(MyServerCommand::LoadCharacterList);
             }
-            character_request_sent = true;
-            ui_state.last_error = None;
-            ui_state.notice = None;
-            myserver_commands.write(MyServerCommand::LoadCharacterList);
-        } else if create_buttons.contains(event.entity) {
-            if character_request_sent || !can_send_character_request(&session) {
-                continue;
+            ACTION_CREATE_CHARACTER
+                if action.source_node.as_str() == "character.create"
+                    && action.params.is_empty()
+                    && can_send_character_request(&session) =>
+            {
+                let Some(name) = document_character_name(instance_id, &runtime, &mut input_values)
+                else {
+                    continue;
+                };
+                if name.is_empty() || name.len() > CHARACTER_NAME_MAX_BYTES {
+                    continue;
+                }
+                request_sent = true;
+                clear_character_feedback(&mut ui_state);
+                myserver_commands.write(MyServerCommand::CreateCharacter {
+                    name,
+                    appearance_json: None,
+                });
             }
-            let name = text_input_value(&input_values);
-            if name.is_empty() {
-                continue;
+            ACTION_SELECT_CHARACTER
+                if action.source_node.as_str() == "character.row.select"
+                    && can_send_character_request(&session) =>
+            {
+                let Some(character_id) = selected_character_id(action) else {
+                    continue;
+                };
+                if !session
+                    .characters
+                    .iter()
+                    .any(|character| character.character_id == character_id)
+                {
+                    continue;
+                }
+                request_sent = true;
+                clear_character_feedback(&mut ui_state);
+                myserver_commands.write(MyServerCommand::SelectCharacter {
+                    character_id,
+                    connect_game: true,
+                });
             }
-            character_request_sent = true;
-            ui_state.last_error = None;
-            ui_state.notice = None;
-            myserver_commands.write(MyServerCommand::CreateCharacter {
-                name,
-                appearance_json: None,
-            });
-        } else if switch_account_buttons.contains(event.entity) {
-            if login_request_pending(&session) {
-                continue;
+            ACTION_SWITCH_ACCOUNT
+                if action.source_node.as_str() == "character.switch_account"
+                    && action.params.is_empty()
+                    && !login_request_pending(&session) =>
+            {
+                request_sent = true;
+                clear_character_document_input(instance_id, &runtime, &mut input_values);
+                focus_state.focused_entity = None;
+                ui_state.clear_runtime_state();
+                myserver_commands.write(MyServerCommand::Logout);
             }
-            clear_text_input_values(&mut input_values);
-            ui_state.clear_runtime_state();
-            myserver_commands.write(MyServerCommand::Logout);
-        } else if change_character_buttons.contains(event.entity) {
-            if character_request_sent || !can_change_character(&session) {
-                continue;
+            ACTION_SWITCH_CHARACTER
+                if action.source_node.as_str() == "character.switch_character"
+                    && action.params.is_empty()
+                    && can_change_character(&session) =>
+            {
+                request_sent = true;
+                clear_character_document_input(instance_id, &runtime, &mut input_values);
+                clear_character_feedback(&mut ui_state);
+                myserver_commands.write(MyServerCommand::SwitchCharacter);
             }
-            character_request_sent = true;
-            clear_text_input_values(&mut input_values);
-            ui_state.last_error = None;
-            ui_state.notice = None;
-            myserver_commands.write(MyServerCommand::SwitchCharacter);
-        } else if let Ok(button) = select_buttons.get(event.entity) {
-            if character_request_sent || !can_send_character_request(&session) {
-                continue;
-            }
-            character_request_sent = true;
-            ui_state.last_error = None;
-            ui_state.notice = None;
-            myserver_commands.write(MyServerCommand::SelectCharacter {
-                character_id: button.character_id.clone(),
-                connect_game: true,
-            });
+            _ => {}
         }
+    }
+}
+
+fn is_character_select_business_action(action: &UiActionDispatch) -> bool {
+    action.document_id.as_str() == CHARACTER_SELECT_DOCUMENT_ID
+        && action.owner == OWNER_CHARACTER_SELECT.as_str()
+        && matches!(
+            &action.kind,
+            UiRegisteredActionKind::BusinessCommand { target }
+                if target == action.action.as_str()
+        )
+}
+
+fn selected_character_id(action: &UiActionDispatch) -> Option<String> {
+    if action.params.len() != 1 {
+        return None;
+    }
+    match action.params.get("character_id") {
+        Some(UiActionValue::String(character_id))
+            if !character_id.is_empty() && character_id.len() <= CHARACTER_ID_MAX_BYTES =>
+        {
+            Some(character_id.clone())
+        }
+        _ => None,
+    }
+}
+
+fn document_character_name(
+    instance_id: crate::framework::ui::document::UiDocumentInstanceId,
+    runtime: &UiDocumentRuntime,
+    input_values: &mut Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
+) -> Option<String> {
+    let node_id = UiNodeId::from_str(CHARACTER_CREATE_NAME_NODE).ok()?;
+    let entity = runtime.node_entity(instance_id, &node_id)?;
+    let (marker, value, is_sensitive) = input_values.get_mut(entity).ok()?;
+    if marker.instance_id != instance_id || marker.node_id != node_id || is_sensitive {
+        return None;
+    }
+    Some(value.0.trim().to_owned())
+}
+
+fn clear_character_document_input(
+    instance_id: crate::framework::ui::document::UiDocumentInstanceId,
+    runtime: &UiDocumentRuntime,
+    input_values: &mut Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
+) {
+    let Ok(node_id) = UiNodeId::from_str(CHARACTER_CREATE_NAME_NODE) else {
+        return;
+    };
+    let Some(entity) = runtime.node_entity(instance_id, &node_id) else {
+        return;
+    };
+    let Ok((marker, mut value, is_sensitive)) = input_values.get_mut(entity) else {
+        return;
+    };
+    if marker.instance_id == instance_id && marker.node_id == node_id && !is_sensitive {
+        value.0.clear();
+    }
+}
+
+fn clear_character_feedback(ui_state: &mut LoginUiState) {
+    ui_state.last_error = None;
+    ui_state.notice = None;
+}
+
+pub(super) fn sync_character_select_document_bindings(
+    session: Res<MyServerSession>,
+    mut ui_state: ResMut<LoginUiState>,
+    contracts: Res<AuthHostContracts>,
+    mut binding_values: ResMut<UiBindingValues>,
+) {
+    let snapshot = LoginUiSnapshot::from_session(
+        &session,
+        ui_state.last_error.as_ref(),
+        ui_state.notice.as_ref(),
+    );
+    let request_pending = character_request_pending(&session);
+    let selecting = session.character_selection_state
+        == crate::game::myserver::CharacterSelectionState::Selecting;
+    let items = snapshot
+        .characters
+        .iter()
+        .map(|character| {
+            let selected =
+                snapshot.character_id.as_deref() == Some(character.character_id.as_str());
+            let pending = selecting
+                && snapshot.pending_character_id.as_deref()
+                    == Some(character.character_id.as_str());
+            UiBindingValue::Record(BTreeMap::from([
+                (
+                    "character_id".to_owned(),
+                    UiBindingValue::String(character.character_id.clone()),
+                ),
+                (
+                    "display_name".to_owned(),
+                    UiBindingValue::String(character.name.clone()),
+                ),
+                (
+                    "detail".to_owned(),
+                    UiBindingValue::String(character.detail.clone()),
+                ),
+                ("selected".to_owned(), UiBindingValue::Bool(selected)),
+                ("pending".to_owned(), UiBindingValue::Bool(pending)),
+                (
+                    "disabled".to_owned(),
+                    UiBindingValue::Bool(request_pending || selected),
+                ),
+                ("loading".to_owned(), UiBindingValue::Bool(pending)),
+            ]))
+        })
+        .collect();
+    let error_title = snapshot
+        .last_error
+        .as_ref()
+        .map(auth_error_title)
+        .unwrap_or_default();
+    let error_detail = snapshot
+        .last_error
+        .as_ref()
+        .and_then(auth_error_detail)
+        .unwrap_or_default();
+    let notice_title = snapshot
+        .notice
+        .as_ref()
+        .map(|notice| notice.title.clone())
+        .unwrap_or_default();
+    let notice_detail = snapshot
+        .notice
+        .as_ref()
+        .and_then(|notice| notice.detail.clone())
+        .unwrap_or_default();
+    let element_snapshot = snapshot.element_snapshot;
+    let profile_visible = session.character_selection_state
+        == crate::game::myserver::CharacterSelectionState::Selected;
+
+    for (path, value) in [
+        (
+            "auth.account.player_id",
+            UiBindingValue::String(snapshot.player_id.clone().unwrap_or_default()),
+        ),
+        (
+            "auth.account.summary",
+            UiBindingValue::String(account_summary_text(&snapshot)),
+        ),
+        (
+            "auth.character.character_id",
+            UiBindingValue::String(snapshot.character_id.clone().unwrap_or_default()),
+        ),
+        (
+            "auth.character.pending_character_id",
+            UiBindingValue::String(snapshot.pending_character_id.clone().unwrap_or_default()),
+        ),
+        ("auth.character.items", UiBindingValue::List(items)),
+        (
+            "auth.character.collection_state",
+            UiBindingValue::Enum(character_collection_state(&snapshot).to_owned()),
+        ),
+        (
+            "auth.character.view_state",
+            UiBindingValue::Enum(character_view_state(&snapshot).to_owned()),
+        ),
+        (
+            "auth.character.status",
+            UiBindingValue::String(character_status_text(&snapshot)),
+        ),
+        (
+            "auth.character.connection_status",
+            UiBindingValue::String(connection_status_text(&snapshot)),
+        ),
+        (
+            "auth.character.request_pending",
+            UiBindingValue::Bool(request_pending),
+        ),
+        (
+            "auth.character.load_disabled",
+            UiBindingValue::Bool(!can_send_character_request(&session)),
+        ),
+        (
+            "auth.character.load_loading",
+            UiBindingValue::Bool(
+                session.character_selection_state
+                    == crate::game::myserver::CharacterSelectionState::Loading,
+            ),
+        ),
+        (
+            "auth.character.create_disabled",
+            UiBindingValue::Bool(!can_send_character_request(&session)),
+        ),
+        (
+            "auth.character.create_loading",
+            UiBindingValue::Bool(
+                session.character_selection_state
+                    == crate::game::myserver::CharacterSelectionState::Creating,
+            ),
+        ),
+        (
+            "auth.character.switch_account_disabled",
+            UiBindingValue::Bool(login_request_pending(&session)),
+        ),
+        (
+            "auth.character.switch_character_disabled",
+            UiBindingValue::Bool(!can_change_character(&session)),
+        ),
+        (
+            "auth.character.switch_character_visibility",
+            UiBindingValue::Visibility(if profile_visible {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "auth.character.error_title",
+            UiBindingValue::String(error_title),
+        ),
+        (
+            "auth.character.error_detail",
+            UiBindingValue::String(error_detail),
+        ),
+        (
+            "auth.character.error_visibility",
+            UiBindingValue::Visibility(if snapshot.last_error.is_some() {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "auth.character.notice_title",
+            UiBindingValue::String(notice_title),
+        ),
+        (
+            "auth.character.notice_detail",
+            UiBindingValue::String(notice_detail),
+        ),
+        (
+            "auth.character.notice_visibility",
+            UiBindingValue::Visibility(if snapshot.notice.is_some() {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "auth.character.profile_visibility",
+            UiBindingValue::Visibility(if profile_visible {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "auth.character.profile_title",
+            UiBindingValue::String(
+                snapshot
+                    .selected_character_name
+                    .as_ref()
+                    .map(|name| format!("{name} profile"))
+                    .unwrap_or_else(|| "Character profile".to_owned()),
+            ),
+        ),
+        (
+            "auth.character.affinity",
+            UiBindingValue::String(
+                element_snapshot
+                    .map(|elements| {
+                        format!("Affinity: {}", format_element_values(elements.affinity))
+                    })
+                    .unwrap_or_else(|| "Affinity data unavailable".to_owned()),
+            ),
+        ),
+        (
+            "auth.character.mastery",
+            UiBindingValue::String(
+                element_snapshot
+                    .map(|elements| format!("Mastery: {}", format_element_values(elements.mastery)))
+                    .unwrap_or_else(|| "Mastery data unavailable".to_owned()),
+            ),
+        ),
+    ] {
+        let path = UiBindingPath::from_str(path)
+            .expect("CharacterSelect binding paths are static and valid");
+        let declaration = contracts
+            .character_select_bindings
+            .get(&path)
+            .expect("CharacterSelect binding schema contains every synchronized value");
+        binding_values.set_scoped(
+            CHARACTER_SELECT_DOCUMENT_ID,
+            OWNER_CHARACTER_SELECT.as_str(),
+            &path,
+            declaration,
+            value,
+        );
+    }
+    ui_state.rendered = Some(snapshot);
+}
+
+fn account_summary_text(snapshot: &LoginUiSnapshot) -> String {
+    if let Some(login_name) = snapshot.login_name.as_deref() {
+        format!("Account {login_name}")
+    } else if let Some(guest_id) = snapshot.guest_id.as_deref() {
+        format!("Guest {guest_id}")
+    } else if let Some(player_id) = snapshot.player_id.as_deref() {
+        format!("Player {player_id}")
+    } else {
+        "Account unavailable".to_owned()
+    }
+}
+
+fn character_collection_state(snapshot: &LoginUiSnapshot) -> &'static str {
+    use crate::game::myserver::CharacterSelectionState;
+    match snapshot.character_state {
+        CharacterSelectionState::NotLoaded | CharacterSelectionState::Loading => "loading",
+        CharacterSelectionState::Blocked | CharacterSelectionState::SelectionFailed => "error",
+        _ => "ready",
+    }
+}
+
+fn character_view_state(snapshot: &LoginUiSnapshot) -> &'static str {
+    use crate::game::myserver::CharacterSelectionState;
+    match snapshot.character_state {
+        CharacterSelectionState::NotLoaded
+        | CharacterSelectionState::Loading
+        | CharacterSelectionState::LoadingProfile => "loading",
+        CharacterSelectionState::NoCharacters => "empty",
+        CharacterSelectionState::Creating => "creating",
+        CharacterSelectionState::Selecting => "selecting",
+        CharacterSelectionState::Selected => "current",
+        CharacterSelectionState::Blocked | CharacterSelectionState::SelectionFailed => "error",
+        CharacterSelectionState::AwaitingSelection if snapshot.characters.is_empty() => "empty",
+        CharacterSelectionState::AwaitingSelection => "ready",
     }
 }
 
@@ -882,9 +1514,14 @@ pub(super) fn follow_myserver_login_events(
     mut events: MessageReader<MyServerEvent>,
     mut commands: MessageWriter<MyServerCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
+    runtime: Res<UiDocumentRuntime>,
     mut ui_state: ResMut<LoginUiState>,
     mut focus_state: ResMut<UiFocusState>,
-    mut input_values: Query<&mut UiTextInputValue, With<CharacterNameInput>>,
+    mut input_values: Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
 ) {
     for event in events.read() {
         match event {
@@ -922,13 +1559,13 @@ pub(super) fn follow_myserver_login_events(
                 });
             }
             MyServerEvent::CharacterSelected { .. } | MyServerEvent::Authenticated { .. } => {
-                clear_text_input_values(&mut input_values);
+                clear_active_character_document_input(&runtime, &mut input_values);
                 focus_state.focused_entity = None;
                 ui_state.clear_runtime_state();
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
             }
             MyServerEvent::LogoutSucceeded => {
-                clear_text_input_values(&mut input_values);
+                clear_active_character_document_input(&runtime, &mut input_values);
                 focus_state.focused_entity = None;
                 ui_state.clear_runtime_state();
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
@@ -1000,16 +1637,20 @@ pub(super) fn follow_myserver_login_events(
     }
 }
 
-fn text_input_value<T: Component>(inputs: &Query<&mut UiTextInputValue, With<T>>) -> String {
-    inputs
-        .iter()
-        .next()
-        .map(|value| value.0.trim().to_string())
-        .unwrap_or_default()
-}
-
-fn clear_text_input_values<T: Component>(inputs: &mut Query<&mut UiTextInputValue, With<T>>) {
-    for mut value in inputs.iter_mut() {
-        value.0.clear();
-    }
+fn clear_active_character_document_input(
+    runtime: &UiDocumentRuntime,
+    input_values: &mut Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
+) {
+    let Ok(document_id) = UiDocumentId::from_str(CHARACTER_SELECT_DOCUMENT_ID) else {
+        return;
+    };
+    let Some(instance_id) = runtime.active_instance(OWNER_CHARACTER_SELECT.as_str(), &document_id)
+    else {
+        return;
+    };
+    clear_character_document_input(instance_id, runtime, input_values);
 }

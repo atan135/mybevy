@@ -125,23 +125,9 @@ pub(super) fn login_request_pending(session: &MyServerSession) -> bool {
         || session.login_request.is_some()
 }
 
-pub(super) fn login_request_pending_snapshot(snapshot: &LoginUiSnapshot) -> bool {
-    matches!(snapshot.account_state, AccountLoginState::LoggingIn)
-}
-
 pub(super) fn character_request_pending(session: &MyServerSession) -> bool {
     matches!(
         session.character_selection_state,
-        CharacterSelectionState::Loading
-            | CharacterSelectionState::Creating
-            | CharacterSelectionState::LoadingProfile
-            | CharacterSelectionState::Selecting
-    )
-}
-
-pub(super) fn character_request_pending_snapshot(snapshot: &LoginUiSnapshot) -> bool {
-    matches!(
-        snapshot.character_state,
         CharacterSelectionState::Loading
             | CharacterSelectionState::Creating
             | CharacterSelectionState::LoadingProfile
@@ -391,17 +377,6 @@ impl AuthStatusNotice {
             title: title.into(),
             detail,
         }
-    }
-
-    pub(super) fn is_blocking(&self) -> bool {
-        matches!(
-            self.kind,
-            AuthNoticeKind::Maintenance
-                | AuthNoticeKind::Banned
-                | AuthNoticeKind::PendingReview
-                | AuthNoticeKind::VersionIncompatible
-                | AuthNoticeKind::Kicked
-        )
     }
 }
 

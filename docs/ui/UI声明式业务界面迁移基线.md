@@ -39,7 +39,7 @@ AI authoring/promotion -> approved UiDocument/resources -> UiUpdateBundle -> UiU
 | 已有动作的重排 | 只复用同 document/owner/source node 已注册的 action，参数 shape 不变。 | 新 action ID、允许 source、target、权限、去重或参数 schema。 |
 | 绑定的展示位置/格式 | 只复用已注册 binding，类型、scope、format 和只读/回写规则不变。 | 新 binding path、类型、scope、写回能力、loading/error 行为或业务状态。 |
 | 新控件 | 用当前 runtime 已支持的控件及既有公共 interaction。 | 新控件种类、事件、输入语义、无障碍、focus 或资源预检。 |
-| 动态列表 | 不适用：当前 schema/runtime 没有受限 Repeat/collection 协议。 | 增加稳定 key、item scope、模板预算、keyed diff 和状态迁移。 |
+| 动态列表 | 在既有受限 Repeat 契约内，只调整布局、样式、文案和模板组合。 | 新增 collection 字段或类型、key 语义、模板预算、状态迁移或 runtime 能力。 |
 | 手势/输入 | 只使用已有 click、文本输入、scroll、选择/数值控件的已注册语义。 | 拖拽、长按、双指、gameplay 竞争输入或新的 IME/gesture 语义。 |
 | 业务状态 | 已有宿主 binding 的纯表现更新。 | 新网络数据、权限、路由、场景/authority/MyServer 命令、持久化或业务状态机。 |
 
@@ -53,8 +53,8 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 
 | Screen / 分类 | owner / panel 或 document layer | 当前 Rust View | action / binding / 动态列表 | 特殊手势或输入 | 直接资源 | 审计 recipe |
 | --- | --- | --- | --- | --- | --- | --- |
-| `login`，正式业务已声明式 | `login` / document `auth.login` page | `auth/host.rs` 注册固定 `DeclarativeScreenHost` 与 adapter，View 是 `approved/auth/login.v1.json`；`auth/view.rs` 不再生成 Login 树。 | 登录、游客登录、环境切换及状态 binding；密码由敏感 ECS 输入直接交给闭合 host，不进入 action/binding。 | 普通账号输入、敏感 password、分段环境选择。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
-| `character_select`，普通业务待迁移 | `character_select` / `character_select_page` | `auth/view.rs::setup_character_select_screen`，`auth/host.rs` 负责 action 与 binding contract | 加载/创建/选择角色、切换账号；`auth.character.subtitle`；当前 Rust 逐行生成角色列表。 | 角色名文本输入、可变数量角色行。 | 主题/i18n/font。 | A0 |
+| `login`，正式业务已声明式 | `login` / document `auth.login` page | `auth/host.rs` 注册固定 `DeclarativeScreenHost` 与 adapter，View 是 `approved/auth/login.v1.json`。 | 登录、游客登录、环境切换及状态 binding；密码由敏感 ECS 输入直接交给闭合 host，不进入 action/binding。 | 普通账号输入、敏感 password、分段环境选择。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
+| `character_select`，正式业务已声明式 | `character_select` / document `auth.character_select` page | `auth/host.rs` 注册独立 fixed host 与闭合 adapter，View 是 `approved/auth/character_select.v1.json`；角色行由 keyed repeat 增量协调。 | 加载/创建/选择角色、切换账号/角色、角色与连接状态 binding；稳定 key/action identity 均为完整 `character_id`。 | local 角色名输入、owner `list<record>`、item-scope 行状态。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
 | `lobby`，普通业务待迁移 | `lobby` / `game_list_page` | `lobby/game_list.rs::setup_game_list_screen` | 启动 Touch Ripple、场景切换、选角、退出账号、确认 modal；无 binding；固定玩法入口集合。 | 按钮、confirm modal。 | 主题/i18n/font。 | A0 |
 | `audio_settings`，普通业务待迁移 | `audio_settings` / `audio_settings_page` | `settings/audio.rs::setup_audio_settings` | 各音频 bus 音量、master mute、回大厅；无 document binding；按固定 audio bus 生成控制行。 | Slider、toggle。 | 主题/i18n/font。 | A0 |
 | `wanfa_touch_ripple`，玩法 HUD 待迁移 | `wanfa_touch_ripple` / `touch_ripple_hud` | `gameplay/touch_ripple.rs::setup_touch_ripple_overlay` | 仅路由回大厅；无 binding/list。 | 玩法触控/鼠标输入在 feature 层；HUD 本身仅按钮。 | 主题/i18n/font。 | A0 |
@@ -69,7 +69,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | `audio_gallery`，开发工具页 | `audio_gallery` / `audio_gallery_page` | `dev/audio_gallery.rs::setup_audio_gallery` | 大量 `AudioCommand`（cue/music/instance/bus/spatial）、状态/诊断刷新；固定测试 catalog，不是 UI data list。 | 文本输入、按钮和音频空间辅助交互。 | 音频 catalog/首包音频、主题/i18n/font。 | A0 |
 | `audio_monitor`，开发工具页 | `audio_monitor` / `audio_monitor_page` | `dev/audio_monitor.rs::setup_audio_monitor` | 只读 audio debug 快照；无 binding/list。 | 无特殊 gesture。 | 主题/i18n/font。 | A0 |
 
-分类总数当前为：已声明式 3、普通业务待迁移 3、玩法 HUD 待迁移 5、开发工具页 4、已批准 Rust View 例外 0，共 15。其中正式业务页面已声明式 1 个，另外两份声明式页面是开发/验收页面。
+分类总数当前为：已声明式 4、普通业务待迁移 2、玩法 HUD 待迁移 5、开发工具页 4、已批准 Rust View 例外 0，共 15。其中正式业务页面已声明式 2 个（`login` 与 `character_select`），另外两份声明式页面是开发/验收页面。
 
 ## 4. 受控 Rust View 例外
 

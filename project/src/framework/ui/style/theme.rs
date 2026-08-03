@@ -113,7 +113,6 @@ pub(crate) struct UiLayoutTheme {
     pub row_gap: f32,
     pub row_padding_y: f32,
     pub row_column_gap: f32,
-    pub auth_panel_width: f32,
     pub content_width: f32,
 }
 
@@ -369,7 +368,6 @@ impl Default for UiTheme {
                 row_gap: 6.0,
                 row_padding_y: 8.0,
                 row_column_gap: 16.0,
-                auth_panel_width: 420.0,
                 content_width: 760.0,
             },
             button: UiButtonTheme {
@@ -975,7 +973,6 @@ mod tests {
         row_gap: 6.0,
         row_padding_y: 8.0,
         row_column_gap: 16.0,
-        auth_panel_width: 420.0,
         content_width: 760.0,
     ),
     button: (

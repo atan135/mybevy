@@ -1100,7 +1100,7 @@ fn likely_files(
 
 fn panel_likely_files(panel: &UiPanelRoot) -> Vec<String> {
     let path = match panel.id.as_str() {
-        "login_page" | "character_select_page" => "project/src/game/screens/auth/view.rs",
+        "login_page" | "character_select_page" => "project/src/game/screens/auth/host.rs",
         "game_list_page" => "project/src/game/screens/lobby/game_list.rs",
         "audio_settings_page" => "project/src/game/screens/settings/audio.rs",
         "audio_monitor_page" => "project/src/game/screens/dev/audio_monitor.rs",

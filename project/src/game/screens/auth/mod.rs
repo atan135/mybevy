@@ -1,6 +1,5 @@
 mod host;
 mod model;
-mod view;
 
 #[cfg(test)]
 mod tests;
@@ -23,7 +22,7 @@ impl Plugin for AuthScreensPlugin {
             OnEnter(AppUiMode::CharacterSelect),
             (
                 host::prepare_character_select_audit_fixture,
-                view::setup_character_select_screen,
+                host::guard_character_select_session,
             )
                 .chain(),
         );
@@ -31,13 +30,13 @@ impl Plugin for AuthScreensPlugin {
         #[cfg(not(all(debug_assertions, not(target_os = "android"))))]
         app.add_systems(
             OnEnter(AppUiMode::CharacterSelect),
-            view::setup_character_select_screen,
+            host::guard_character_select_session,
         );
 
-        app.add_systems(OnExit(AppUiMode::Login), view::cleanup_login_screen_state)
+        app.add_systems(OnExit(AppUiMode::Login), host::cleanup_login_screen_state)
             .add_systems(
                 OnExit(AppUiMode::CharacterSelect),
-                view::cleanup_login_screen_state,
+                host::cleanup_login_screen_state,
             )
             .add_systems(Update, host::follow_myserver_login_events)
             .add_systems(
@@ -52,9 +51,9 @@ impl Plugin for AuthScreensPlugin {
             .add_systems(
                 Update,
                 (
-                    host::handle_character_select_buttons,
-                    view::sync_character_select_screen_state,
-                    view::sync_character_select_button_flags,
+                    host::handle_character_select_document_actions
+                        .after(UiDocumentRuntimeSystems::Reconcile),
+                    host::sync_character_select_document_bindings.before(UiBindingSystems::Apply),
                 )
                     .chain()
                     .run_if(in_state(AppUiMode::CharacterSelect)),

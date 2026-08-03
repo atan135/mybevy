@@ -227,6 +227,7 @@ fn visit_node_actions(
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiActionParamType {
     String { max_bytes: usize },
+    OpaqueId { max_bytes: usize },
     Bool,
     Number { min: Option<f64>, max: Option<f64> },
     Enum { values: BTreeSet<String> },
@@ -485,7 +486,10 @@ impl ValidatedUiDocument {
             return errors;
         }
         for (path, declaration) in &self.document().bindings {
-            if declaration.scope == UiBindingScope::Local {
+            if !matches!(
+                declaration.scope,
+                UiBindingScope::Document | UiBindingScope::Owner
+            ) {
                 continue;
             }
             let key = UiHostBindingKey::new(declaration.scope, path.clone());
@@ -1094,6 +1098,9 @@ pub(crate) fn action_value_matches(
         (UiActionParamType::String { max_bytes }, UiActionValue::String(value)) => {
             value.len() <= *max_bytes && safe_action_string(value)
         }
+        (UiActionParamType::OpaqueId { max_bytes }, UiActionValue::String(value)) => {
+            value.len() <= *max_bytes && safe_opaque_id(value)
+        }
         (UiActionParamType::Bool, UiActionValue::Bool(_)) => true,
         (UiActionParamType::Number { min, max }, UiActionValue::Number(value)) => {
             value.is_finite()
@@ -1137,7 +1144,9 @@ fn binding_type_matches_action_schema(
     schema: &UiActionParamType,
 ) -> bool {
     match schema {
-        UiActionParamType::String { .. } => matches!(value_type, UiBindingType::String),
+        UiActionParamType::String { .. } | UiActionParamType::OpaqueId { .. } => {
+            matches!(value_type, UiBindingType::String)
+        }
         UiActionParamType::Bool => matches!(value_type, UiBindingType::Bool),
         UiActionParamType::Number { .. } => matches!(value_type, UiBindingType::Number),
         UiActionParamType::Enum { values } => {
@@ -1526,7 +1535,7 @@ fn validate_descriptor(descriptor: &UiActionDescriptor) -> Result<(), UiActionRe
 
 fn action_param_schema_is_valid(schema: &UiActionParamType) -> bool {
     match schema {
-        UiActionParamType::String { max_bytes } => {
+        UiActionParamType::String { max_bytes } | UiActionParamType::OpaqueId { max_bytes } => {
             (1..=UI_ACTION_STRING_MAX_BYTES).contains(max_bytes)
         }
         UiActionParamType::Bool => true,
@@ -1584,6 +1593,9 @@ fn action_default_matches(schema: &UiActionParamType, value: &UiActionValue) -> 
         (UiActionParamType::String { max_bytes }, UiActionValue::String(value)) => {
             value.len() <= *max_bytes && safe_action_string(value)
         }
+        (UiActionParamType::OpaqueId { max_bytes }, UiActionValue::String(value)) => {
+            value.len() <= *max_bytes && safe_opaque_id(value)
+        }
         (UiActionParamType::Bool, UiActionValue::Bool(_)) => true,
         (UiActionParamType::Number { min, max }, UiActionValue::Number(value)) => {
             value.is_finite()
@@ -1637,6 +1649,10 @@ fn safe_action_string(value: &str) -> bool {
         && !value.contains("--")
 }
 
+fn safe_opaque_id(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|character| !character.is_control())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1667,6 +1683,29 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/assets/ui/documents/fixtures/action_controls.v1.json"
     ));
+
+    #[test]
+    fn opaque_id_params_accept_bounded_non_control_utf8_without_weakening_strings() {
+        let validated = UiDocument::parse_and_validate_json(BINDING_ACTION_DOCUMENT).unwrap();
+        let opaque = UiActionParamType::OpaqueId { max_bytes: 1024 };
+        let value = UiActionValue::String("character:区域/opaque:0001".to_owned());
+        assert!(action_value_matches(&validated, &opaque, &value));
+        assert!(!action_value_matches(
+            &validated,
+            &UiActionParamType::String { max_bytes: 1024 },
+            &value
+        ));
+        assert!(!action_value_matches(
+            &validated,
+            &opaque,
+            &UiActionValue::String("character\nforged".to_owned())
+        ));
+        assert!(!action_value_matches(
+            &validated,
+            &opaque,
+            &UiActionValue::String("x".repeat(1025))
+        ));
+    }
 
     #[test]
     fn ui_document_binding_protocol_covers_typed_values_scopes_defaults_and_missing_behavior() {

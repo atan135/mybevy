@@ -451,7 +451,10 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
             ));
         } else if matches!(
             mode,
-            AppUiMode::Login | AppUiMode::UiDocumentGallery | AppUiMode::UiGeneratedAcceptance
+            AppUiMode::Login
+                | AppUiMode::CharacterSelect
+                | AppUiMode::UiDocumentGallery
+                | AppUiMode::UiGeneratedAcceptance
         ) {
             registry.register_recipe(UiAuditScreenRecipe::new(
                 screen.with_recipe(

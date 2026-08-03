@@ -984,7 +984,8 @@ function Get-UiAuditLikelyFiles {
         }
         "login" {
             return @(
-                "project/src/game/screens/auth/view.rs",
+                "project/assets/ui/documents/approved/auth/login.v1.json",
+                "project/assets/ui/documents/approved/auth/promotion.v1.json",
                 "project/src/game/screens/auth/host.rs",
                 "project/src/game/screens/auth/model.rs",
                 "project/src/game/screens/auth/mod.rs",
@@ -993,7 +994,8 @@ function Get-UiAuditLikelyFiles {
         }
         "character_select" {
             return @(
-                "project/src/game/screens/auth/view.rs",
+                "project/assets/ui/documents/approved/auth/character_select.v1.json",
+                "project/assets/ui/documents/approved/auth/character_select.promotion.v1.json",
                 "project/src/game/screens/auth/host.rs",
                 "project/src/game/screens/auth/model.rs",
                 "project/src/game/screens/auth/mod.rs",
@@ -7240,7 +7242,7 @@ function Invoke-UiAuditSelfTest {
             [pscustomobject]@{ path = "project/assets/ui/documents/fixtures/page.json"; type = "layout"; expected = "document_layout" },
             [pscustomobject]@{ path = "project/assets/ui/documents/fixtures/page.json"; type = "style"; expected = "document_style" },
             [pscustomobject]@{ path = "summary/ui-generation/test/draft/icon.png"; type = "imagery"; expected = "draft_asset" },
-            [pscustomobject]@{ path = "project/src/game/screens/auth/view.rs"; type = "content"; expected = "business_content" },
+            [pscustomobject]@{ path = "project/src/game/screens/auth/host.rs"; type = "content"; expected = "business_content" },
             [pscustomobject]@{ path = "project/src/framework/ui/widgets/controls/button.rs"; type = "layout"; expected = "common_widget" },
             [pscustomobject]@{ path = "project/src/framework/ui/style/theme.rs"; type = "color"; expected = "theme" },
             [pscustomobject]@{ path = "project/src/framework/ui/core.rs"; type = "layout"; expected = "framework" },

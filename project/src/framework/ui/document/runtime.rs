@@ -4074,10 +4074,8 @@ fn resolve_repeat_records(
 
 fn safe_repeat_key(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        && value.len() <= UI_REPEAT_MAX_ITEM_STRING_BYTES
+        && value.chars().all(|character| !character.is_control())
 }
 
 fn record_string_bytes(fields: &BTreeMap<String, UiBindingValue>) -> usize {
@@ -5511,8 +5509,16 @@ fn enforce_document_text_constraints(
 #[derive(Default, Resource)]
 struct UiDocumentActionDispatchState {
     frame: u64,
-    seen: BTreeSet<String>,
+    seen: BTreeSet<UiDocumentActionDedupeKey>,
     text_values: BTreeMap<(UiDocumentInstanceId, UiNodeId), String>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct UiDocumentActionDedupeKey {
+    instance_id: UiDocumentInstanceId,
+    node_id: UiNodeId,
+    item_key: Option<String>,
+    trigger: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -5701,13 +5707,16 @@ fn dispatch_document_action_input(
     // A control can produce multiple low-level events in one frame. Keep the
     // first valid action for its stable document source and trigger so a burst
     // cannot create repeated business requests with competing values.
-    let dedup_key = format!(
-        "{}:{}:{}:{:?}",
-        marker.instance_id.0,
-        marker.node_id,
-        marker.item_key.as_deref().unwrap_or_default(),
-        input.trigger
-    );
+    let dedup_key = UiDocumentActionDedupeKey {
+        instance_id: marker.instance_id,
+        node_id: marker.node_id.clone(),
+        item_key: marker.item_key.clone(),
+        trigger: match input.trigger {
+            UiActionTrigger::Click => 0,
+            UiActionTrigger::Change => 1,
+            UiActionTrigger::Submit => 2,
+        },
+    };
     if !state.seen.insert(dedup_key) {
         return;
     }
@@ -5886,6 +5895,9 @@ fn action_value_from_binding(
 ) -> Option<UiActionValue> {
     match (value, schema) {
         (UiBindingValue::String(value), super::UiActionParamType::String { .. }) => {
+            Some(UiActionValue::String(value.clone()))
+        }
+        (UiBindingValue::String(value), super::UiActionParamType::OpaqueId { .. }) => {
             Some(UiActionValue::String(value.clone()))
         }
         (UiBindingValue::Bool(value), super::UiActionParamType::Bool) => {
@@ -9824,6 +9836,7 @@ mod tests {
         use bevy::ecs::message::MessageCursor;
 
         let mut app = test_app();
+        app.init_resource::<UiFocusState>();
         register_repeat_action(&mut app);
         set_repeat_binding(
             &mut app,
@@ -9834,8 +9847,8 @@ mod tests {
             &mut app,
             "characters.items",
             UiBindingValue::List(vec![
-                repeat_record("char_alpha", "Alpha", 12.0, true, true),
-                repeat_record("char_beta", "Beta", 7.0, true, false),
+                repeat_record("char:region/alpha", "Alpha", 12.0, true, true),
+                repeat_record("角色:beta/二区", "Beta", 7.0, true, false),
             ]),
         );
         app.world_mut()
@@ -9852,27 +9865,9 @@ mod tests {
 
         let rows = repeat_row_entities(&mut app);
         assert_eq!(rows.len(), 2);
-        let alpha = rows["char_alpha"];
-        let beta = rows["char_beta"];
+        let alpha = rows["char:region/alpha"];
+        let beta = rows["角色:beta/二区"];
         assert!(app.world().entity(alpha).contains::<SelectedButton>());
-
-        set_repeat_binding(
-            &mut app,
-            "characters.items",
-            UiBindingValue::List(vec![
-                repeat_record("char_beta", "Beta", 8.0, true, false),
-                repeat_record("char_alpha", "Alicia", 12.0, true, true),
-            ]),
-        );
-        app.update();
-        let reordered = repeat_row_entities(&mut app);
-        assert_eq!(reordered["char_alpha"], alpha);
-        assert_eq!(reordered["char_beta"], beta);
-        assert_eq!(
-            repeat_item_text(&mut app, "char_alpha", "item.display_name"),
-            "Alicia"
-        );
-
         let repeat_host = app
             .world()
             .resource::<UiDocumentRuntime>()
@@ -9884,6 +9879,40 @@ mod tests {
                 &UiNodeId::from_str("characters.repeat").unwrap(),
             )
             .unwrap();
+        app.world_mut()
+            .entity_mut(repeat_host)
+            .insert(ScrollPosition(Vec2::new(0.0, 42.0)));
+        app.world_mut()
+            .resource_mut::<UiFocusState>()
+            .focused_entity = Some(alpha);
+
+        set_repeat_binding(
+            &mut app,
+            "characters.items",
+            UiBindingValue::List(vec![
+                repeat_record("角色:beta/二区", "Beta", 8.0, true, false),
+                repeat_record("char:region/gamma", "Gamma", 3.0, true, false),
+                repeat_record("char:region/alpha", "Alicia", 12.0, true, true),
+            ]),
+        );
+        app.update();
+        let reordered = repeat_row_entities(&mut app);
+        assert_eq!(reordered["char:region/alpha"], alpha);
+        assert_eq!(reordered["角色:beta/二区"], beta);
+        assert!(reordered.contains_key("char:region/gamma"));
+        assert_eq!(
+            app.world().resource::<UiFocusState>().focused_entity,
+            Some(alpha)
+        );
+        assert_eq!(
+            app.world().get::<ScrollPosition>(repeat_host).unwrap().0,
+            Vec2::new(0.0, 42.0)
+        );
+        assert_eq!(
+            repeat_item_text(&mut app, "char:region/alpha", "item.display_name"),
+            "Alicia"
+        );
+
         let row_order = app
             .world()
             .get::<Children>(repeat_host)
@@ -9895,9 +9924,13 @@ mod tests {
                     .and_then(|marker| marker.item_key.clone())
             })
             .collect::<Vec<_>>();
-        assert_eq!(row_order, vec!["char_beta", "char_alpha"]);
+        assert_eq!(
+            row_order,
+            vec!["角色:beta/二区", "char:region/gamma", "char:region/alpha"]
+        );
 
         let mut dispatches = MessageCursor::<UiActionDispatch>::default();
+        let mut rejections = MessageCursor::<UiActionRejected>::default();
         app.world_mut().write_message(UiButtonEvent {
             entity: alpha,
             kind: UiButtonEventKind::Click,
@@ -9906,21 +9939,37 @@ mod tests {
         app.update();
         let dispatch = dispatches
             .read(app.world().resource::<Messages<UiActionDispatch>>())
-            .next()
-            .unwrap();
+            .next();
+        let rejected = rejections
+            .read(app.world().resource::<Messages<UiActionRejected>>())
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(dispatch.is_some(), "{rejected:#?}");
+        let dispatch = dispatch.unwrap();
         assert_eq!(dispatch.source_node.as_str(), "characters.row");
         assert_eq!(
             dispatch.params.get("character_id"),
-            Some(&UiActionValue::String("char_alpha".to_owned()))
+            Some(&UiActionValue::String("char:region/alpha".to_owned()))
         );
 
         set_repeat_binding(
             &mut app,
             "characters.items",
-            UiBindingValue::List(vec![repeat_record("char_beta", "Beta", 8.0, true, false)]),
+            UiBindingValue::List(vec![repeat_record(
+                "角色:beta/二区",
+                "Beta",
+                8.0,
+                true,
+                false,
+            )]),
         );
         app.update();
-        assert!(!repeat_row_entities(&mut app).contains_key("char_alpha"));
+        assert!(!repeat_row_entities(&mut app).contains_key("char:region/alpha"));
+        assert_eq!(app.world().resource::<UiFocusState>().focused_entity, None);
+        assert_eq!(
+            app.world().get::<ScrollPosition>(repeat_host).unwrap().0,
+            Vec2::new(0.0, 42.0)
+        );
         let (path, declaration) = repeat_declaration("item.character_id");
         assert!(
             app.world()
@@ -9928,7 +9977,7 @@ mod tests {
                 .scoped_item_value(
                     repeat_document_id().as_str(),
                     "repeat_owner",
-                    "char_alpha",
+                    "char:region/alpha",
                     &path,
                     &declaration,
                 )
@@ -9952,7 +10001,7 @@ mod tests {
                 .scoped_item_value(
                     repeat_document_id().as_str(),
                     "repeat_owner",
-                    "char_beta",
+                    "角色:beta/二区",
                     &path,
                     &declaration,
                 )
@@ -10009,6 +10058,52 @@ mod tests {
         );
     }
 
+    #[test]
+    fn repeat_keys_accept_bounded_opaque_utf8_and_reject_unsafe_values() {
+        assert!(safe_repeat_key("character:region/opaque:value"));
+        assert!(safe_repeat_key("角色:一区:0001"));
+        assert!(safe_repeat_key(
+            &"x".repeat(UI_REPEAT_MAX_ITEM_STRING_BYTES)
+        ));
+        assert!(!safe_repeat_key(""));
+        assert!(!safe_repeat_key("character\nforged"));
+        assert!(!safe_repeat_key("character\u{0000}forged"));
+        assert!(!safe_repeat_key(
+            &"x".repeat(UI_REPEAT_MAX_ITEM_STRING_BYTES + 1)
+        ));
+    }
+
+    #[test]
+    fn action_dedupe_keys_do_not_collide_on_item_key_delimiters() {
+        let instance_id = UiDocumentInstanceId(1);
+        let first = UiDocumentActionDedupeKey {
+            instance_id,
+            node_id: UiNodeId::from_str("characters.row").unwrap(),
+            item_key: Some("alpha:beta".to_owned()),
+            trigger: 0,
+        };
+        let second = UiDocumentActionDedupeKey {
+            instance_id,
+            node_id: UiNodeId::from_str("characters.row").unwrap(),
+            item_key: Some("alpha".to_owned()),
+            trigger: 0,
+        };
+        let root = UiDocumentActionDedupeKey {
+            instance_id,
+            node_id: UiNodeId::from_str("characters.row").unwrap(),
+            item_key: None,
+            trigger: 0,
+        };
+        let empty_item = UiDocumentActionDedupeKey {
+            instance_id,
+            node_id: UiNodeId::from_str("characters.row").unwrap(),
+            item_key: Some(String::new()),
+            trigger: 0,
+        };
+        let keys = BTreeSet::from([first, second, root, empty_item]);
+        assert_eq!(keys.len(), 4);
+    }
+
     fn repeat_row_entities(app: &mut App) -> BTreeMap<String, Entity> {
         let mut query = app.world_mut().query::<(Entity, &UiDocumentActionMarker)>();
         query
@@ -10036,7 +10131,9 @@ mod tests {
                 .with_source(UiNodeId::from_str("characters.row").unwrap())
                 .with_param(
                     "character_id",
-                    UiActionParamSchema::required(UiActionParamType::String { max_bytes: 128 }),
+                    UiActionParamSchema::required(UiActionParamType::OpaqueId {
+                        max_bytes: UI_REPEAT_MAX_ITEM_STRING_BYTES,
+                    }),
                 ),
             )
             .unwrap();
