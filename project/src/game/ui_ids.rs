@@ -31,7 +31,6 @@ pub(in crate::game) const OWNER_FANGYUAN_PLAYER_PREVIEW: UiOwnerId =
 pub(in crate::game) const PANEL_LOGIN: UiPanelId = UiPanelId::new("login_page");
 pub(in crate::game) const PANEL_CHARACTER_SELECT: UiPanelId =
     UiPanelId::new("character_select_page");
-pub(in crate::game) const PANEL_AUDIO_SETTINGS: UiPanelId = UiPanelId::new("audio_settings_page");
 pub(in crate::game) const PANEL_AUDIO_MONITOR: UiPanelId = UiPanelId::new("audio_monitor_page");
 pub(in crate::game) const PANEL_AUDIO_GALLERY: UiPanelId = UiPanelId::new("audio_gallery_page");
 pub(in crate::game) const PANEL_UI_GALLERY: UiPanelId = UiPanelId::new("ui_gallery_page");
@@ -39,6 +38,9 @@ pub(in crate::game) const PANEL_AI_LOGIN_REFERENCE: UiPanelId =
     UiPanelId::new("ai_login_reference_page");
 pub(in crate::game) const SCROLL_UI_GALLERY_MAIN: UiScrollAuditId =
     UiScrollAuditId::new("ui_gallery.main");
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+pub(in crate::game) const SCROLL_AUDIO_SETTINGS_MAIN: UiScrollAuditId =
+    UiScrollAuditId::new("audio_settings.main");
 pub(in crate::game) const ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE: UiScrollAuditAnchorId =
     UiScrollAuditAnchorId::new("ui_gallery.visual_acceptance");
 pub(in crate::game) const ANCHOR_UI_GALLERY_IMAGE_MODES: UiScrollAuditAnchorId =

@@ -137,6 +137,8 @@ Dropdown option 是稳定 value + 展示 label，不允许业务读取内部 opt
 
 当前已有 slider 从 normalized x 映射 value 的 helper，以及 stepper 加减 helper。Slider 在按下/拖动中持续更新；Stepper 在 `Click` 时单步加减。完整拖拽、长按连续加减和业务事件协议仍属于轻量实现，业务使用前应在 UI Gallery 和目标窗口尺寸下验证交互。
 
+正式 `audio_settings` 页面使用 UiDocument 的标准 Slider/Toggle、`current_control_value` action 参数和 owner binding，不再创建页面私有 Rust 控件。该页面的值由 `AudioMixer` 每帧回读并即时生效；没有 save/dirty/default 事务。数值范围、外部状态、unavailable/error、热更新状态与 JSON-only 变更边界见 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md#31-audio-settings-宿主语义)。
+
 ## 输入框
 
 输入框相关组件：

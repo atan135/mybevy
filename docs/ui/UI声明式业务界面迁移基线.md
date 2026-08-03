@@ -56,7 +56,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | `login`，正式业务已声明式 | `login` / document `auth.login` page | `auth/host.rs` 注册固定 `DeclarativeScreenHost` 与 adapter，View 是 `approved/auth/login.v1.json`。 | 登录、游客登录、环境切换及状态 binding；密码由敏感 ECS 输入直接交给闭合 host，不进入 action/binding。 | 普通账号输入、敏感 password、分段环境选择。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
 | `character_select`，正式业务已声明式 | `character_select` / document `auth.character_select` page | `auth/host.rs` 注册独立 fixed host 与闭合 adapter，View 是 `approved/auth/character_select.v1.json`；角色行由 keyed repeat 增量协调。 | 加载/创建/选择角色、切换账号/角色、角色与连接状态 binding；稳定 key/action identity 均为完整 `character_id`。 | local 角色名输入、owner `list<record>`、item-scope 行状态。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
 | `lobby`，正式业务已声明式 | `lobby` / document `game.lobby` page | `lobby/host.rs` 注册 fixed host 与闭合 adapter，View 是 `approved/lobby/lobby.v1.json`；玩法入口由 keyed repeat 增量协调。 | 选择/进入玩法、列表重载、固定导航、选角与退出账号；完整 `entry_id` 经 bounded opaque action 参数传回并由 host 对当前 `list<record>` 复验；Touch Ripple 与场景进入分别复用公共 Confirm/Loading。 | 标准按钮与 scroll；Confirm/Loading 生命周期仍由 Panel Manager 持有。 | `ui/images/login_stillwater_background.png`；Image 节点声明稳定 error-color fallback，Debug 非 Android 内容审计对该真实节点注入确定性加载失败并与正常加载档对照。 | A1 |
-| `audio_settings`，普通业务待迁移 | `audio_settings` / `audio_settings_page` | `settings/audio.rs::setup_audio_settings` | 各音频 bus 音量、master mute、回大厅；无 document binding；按固定 audio bus 生成控制行。 | Slider、toggle。 | 主题/i18n/font。 | A0 |
+| `audio_settings`，正式业务已声明式 | `audio_settings` / document `game.audio_settings` page | `settings/audio/host.rs` 注册 fixed host 与闭合 adapter，View 是 `approved/audio_settings/audio_settings.v1.json`。 | 5 个固定 bus 音量、master mute 和回大厅；owner binding 每帧以 `AudioMixer` 为权威源，action source 与 bus 映射由 host 复验。 | 标准 Slider、Toggle、scroll 和 focus；无页面私有控件 helper。 | approved document、主题/font。 | A1 |
 | `wanfa_touch_ripple`，玩法 HUD 待迁移 | `wanfa_touch_ripple` / `touch_ripple_hud` | `gameplay/touch_ripple.rs::setup_touch_ripple_overlay` | 仅路由回大厅；无 binding/list。 | 玩法触控/鼠标输入在 feature 层；HUD 本身仅按钮。 | 主题/i18n/font。 | A0 |
 | `sample_scene`，玩法 HUD 待迁移 | `sample_scene` / `sample_scene_hud` | `gameplay/sample_scene.rs::setup_sample_scene_hud` | 请求 scene exit 后回大厅；无 binding/list。 | HUD 按钮；场景退出事件回退路由。 | 主题/i18n/font。 | A0 |
 | `robot_sync_scene`，玩法 HUD 待迁移 | `robot_sync_scene` / `robot_sync_scene_hud` | `gameplay/robot_sync_scene.rs::setup_robot_sync_scene_hud` | authority leave、scene exit、回大厅；实时 authority/session 状态文本；无列表。 | HUD 按钮；authority/scene 生命周期。 | 主题/i18n/font。 | A0 |
@@ -69,7 +69,15 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | `audio_gallery`，开发工具页 | `audio_gallery` / `audio_gallery_page` | `dev/audio_gallery.rs::setup_audio_gallery` | 大量 `AudioCommand`（cue/music/instance/bus/spatial）、状态/诊断刷新；固定测试 catalog，不是 UI data list。 | 文本输入、按钮和音频空间辅助交互。 | 音频 catalog/首包音频、主题/i18n/font。 | A0 |
 | `audio_monitor`，开发工具页 | `audio_monitor` / `audio_monitor_page` | `dev/audio_monitor.rs::setup_audio_monitor` | 只读 audio debug 快照；无 binding/list。 | 无特殊 gesture。 | 主题/i18n/font。 | A0 |
 
-分类总数当前为：已声明式 5、普通业务待迁移 1、玩法 HUD 待迁移 5、开发工具页 4、已批准 Rust View 例外 0，共 15。其中正式业务页面已声明式 3 个（`login`、`character_select` 与 `lobby`），另外两份声明式页面是开发/验收页面。
+分类总数当前为：已声明式 6、普通业务待迁移 0、玩法 HUD 待迁移 5、开发工具页 4、已批准 Rust View 例外 0，共 15。其中正式业务页面已声明式 4 个（`login`、`character_select`、`lobby` 与 `audio_settings`），另外两份声明式页面是开发/验收页面。
+
+### 3.1 Audio Settings 宿主语义
+
+`game.audio_settings` 的业务 contract 固定为 5 个 `Slider`、1 个 master mute `Toggle` 和 1 个返回按钮。`audio_settings.set_volume` 只允许 5 个稳定 slider node，并要求 node、`bus` 枚举和实际 `AudioBus` 一一对应；`audio_settings.set_master_muted` 只允许 master toggle。数值 action 经 registry 的 `0..100` schema 和 host 的 finite/clamp 复验后转换为 `0..1` 音量。控件的 keyboard/focus、pointer、touch 与 drag 行为复用 framework 控件管线；仓库当前没有独立的 gamepad 输入 adapter，因此只验证共享 focus/activation 语义，不宣称额外的手柄按键映射。
+
+页面采用即时生效：action 在 `AudioSystemSet::Commands` 前写入 `AudioCommand`，随后 owner binding 在音频命令处理后从 `AudioMixer` 回读。外部系统修改 bus、热更新重建 View 或文档中的旧静态值都不能覆盖 mixer；显示值始终 finite 且限制在 `0..100`。缺少 mixer 时进入 `unavailable`，所有设置控件 disabled 并显示 error；返回大厅仍可用。
+
+该产品没有设置草稿或持久化事务，因此 stepper、segmented、select、tab、保存、取消恢复、dirty、validation、恢复默认值、配置加载、保存失败和 loading 状态均不适用，文档不得自行实现这些业务表达式。热更新只迁移兼容 node 的 Slider/Toggle 局部状态、focus 与 scroll；下一次 owner binding apply 仍以 mixer 当前值为准。调整设置项排列、分组、说明文本、响应式布局和视觉只修改 approved JSON/资源；新增 bus、action、binding、持久化或状态语义必须修改 Rust host contract 与测试。
 
 ## 4. 受控 Rust View 例外
 
@@ -129,7 +137,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | 生产用户端 UI 热更新 | 已实现为显式配置的 `UiUpdateClient`：固定 endpoint、签名、下载约束、cache generation 与安全点激活。 | 可由桌面 Release、Android 配置启用。 | 不能把直接 HTTPS asset loading 或本地文件 watch 称为完成端到端发布。 |
 | approved 首包 fallback | 已有 approved document 与 closed registration 样例；remote/cache 失败或没有 active generation 时仍由宿主保留首包。 | 桌面/Android 包内。 | 不代表默认游戏已绑定真实 cache root、公钥或远端检查时机。 |
 
-当前默认应用尚未创建平台私有 cache root、注册实际 `content_cache` Bevy asset source、提供生产公钥或向游戏 route 安装 active generation，因此 Release/Android 仍只加载首包 approved 文档。Login 已通过固定业务 host 加载 `auth.login` 首包文档，其 fallback 不依赖远端；其余未迁移页面仍由游戏路由创建 Rust View。`UiUpdateCache` 已覆盖缓存损坏到 previous generation 的本地恢复；远端不可用、签名失败与版本发布策略也会保留 current generation 或回退首包，不会阻断登录/核心玩法。
+当前默认应用尚未创建平台私有 cache root、注册实际 `content_cache` Bevy asset source、提供生产公钥或向游戏 route 安装 active generation，因此 Release/Android 仍只加载首包 approved 文档。Login、Character Select、Lobby 与 Audio Settings 已通过固定业务 host 加载各自首包文档，其 fallback 不依赖远端；其余未迁移页面仍由游戏路由创建 Rust View。`UiUpdateCache` 已覆盖缓存损坏到 previous generation 的本地恢复；远端不可用、签名失败与版本发布策略也会保留 current generation 或回退首包，不会阻断登录/核心玩法。
 
 ## 9. 阶段 1 审计方法
 

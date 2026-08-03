@@ -1,0 +1,62 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": [
+    "desktop",
+    "phone-landscape",
+    "phone-1080p-landscape",
+    "tablet-landscape"
+  ],
+  "document_id": "game.audio_settings",
+  "host_contract": {
+    "actions": [
+      {
+        "id": "audio_settings.set_volume",
+        "sources": [
+          "audio_settings.volume.master",
+          "audio_settings.volume.music",
+          "audio_settings.volume.sfx",
+          "audio_settings.volume.ui",
+          "audio_settings.volume.battle"
+        ]
+      },
+      {
+        "id": "audio_settings.set_master_muted",
+        "sources": ["audio_settings.master.muted"]
+      },
+      {
+        "id": "audio_settings.return_lobby",
+        "sources": ["audio_settings.return_lobby"]
+      }
+    ],
+    "bindings": [
+      { "path": "audio_settings.controls.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "audio_settings.error.detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "audio_settings.error.title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "audio_settings.error.visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "audio_settings.master.muted", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "audio_settings.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "audio_settings.view_state", "scope": "owner", "value_type": { "kind": "enum", "values": ["ready", "unavailable"] } },
+      { "path": "audio_settings.volume.battle", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "audio_settings.volume.master", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "audio_settings.volume.music", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "audio_settings.volume.sfx", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "audio_settings.volume.ui", "scope": "owner", "value_type": { "kind": "number" } }
+    ],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "audio_settings",
+  "page_state": "initial",
+  "panel": "page",
+  "protocol_version": 2,
+  "route": "audio_settings",
+  "source": {
+    "relative_path": "audio_settings/audio_settings.v1.json",
+    "root": "approved"
+  },
+  "template_version": 2,
+  "theme_tokens": []
+}

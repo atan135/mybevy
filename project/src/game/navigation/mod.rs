@@ -22,6 +22,8 @@ use crate::game::declarative_screen::{
     DeclarativeScreenHostCommand, DeclarativeScreenRegistry,
     register_declarative_route_audit_entries,
 };
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+use crate::game::ui_ids::SCROLL_AUDIO_SETTINGS_MAIN;
 use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_ANIMATIONS, ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES,
     ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN, ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED,
@@ -442,6 +444,17 @@ fn register_ui_audit_screens(
 fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
     for mode in all_app_ui_modes() {
         let screen = UiAuditScreen::new(mode.canonical_screen(), mode.aliases(), mode.ui_owner());
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
+        if mode == AppUiMode::AudioSettings {
+            registry.register_recipe(UiAuditScreenRecipe::new(
+                screen.with_recipe(
+                    UiAuditRecipe::new(AUDIO_SETTINGS_AUDIT_CAPTURES)
+                        .with_reference(DEFAULT_REFERENCE_AUDIT_RECIPE)
+                        .with_ready(UiAuditReadyCondition::OwnerDocument),
+                ),
+            ));
+            continue;
+        }
         if mode == AppUiMode::UiGallery {
             registry.register_recipe(UiAuditScreenRecipe::new(
                 screen.with_recipe(
@@ -454,6 +467,7 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
             AppUiMode::Login
                 | AppUiMode::CharacterSelect
                 | AppUiMode::Lobby
+                | AppUiMode::AudioSettings
                 | AppUiMode::UiDocumentGallery
                 | AppUiMode::UiGeneratedAcceptance
         ) {
@@ -482,6 +496,16 @@ const DEFAULT_REFERENCE_AUDIT_RECIPE: UiAuditReferenceRecipe = UiAuditReferenceR
     ));
 
 const DOCUMENT_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[UiAuditCaptureRecipe::initial()];
+
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+const AUDIO_SETTINGS_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
+    UiAuditCaptureRecipe::initial(),
+    UiAuditCaptureRecipe::scroll(
+        UiAuditCaptureState::Bottom,
+        SCROLL_AUDIO_SETTINGS_MAIN,
+        UiScrollAuditPosition::Bottom,
+    ),
+];
 
 const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     UiAuditCaptureRecipe::scroll(
@@ -914,6 +938,30 @@ mod tests {
         let recipe = screen.recipe.expect("Lobby should use a document recipe");
 
         assert_eq!(recipe.ready, Some(UiAuditReadyCondition::OwnerDocument));
+    }
+
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    #[test]
+    fn audio_settings_audit_recipe_captures_initial_and_bottom() {
+        let mut registry = UiAuditScreenRegistry::default();
+        register_ui_audit_screen_entries(&mut registry);
+
+        let recipe = registry
+            .resolve("audio_settings")
+            .and_then(|screen| screen.recipe)
+            .expect("Audio Settings should use its document audit recipe");
+        assert_eq!(
+            recipe
+                .captures
+                .iter()
+                .map(|capture| capture.state)
+                .collect::<Vec<_>>(),
+            vec![UiAuditCaptureState::Initial, UiAuditCaptureState::Bottom]
+        );
+        assert_eq!(
+            recipe.captures[1].scroll.unwrap().target_id,
+            SCROLL_AUDIO_SETTINGS_MAIN
+        );
     }
 
     #[test]
