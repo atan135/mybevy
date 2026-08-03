@@ -10,6 +10,7 @@ use crate::framework::network::{
     NetworkEvent, NetworkTransport, RequestId, TcpConnectConfig,
 };
 
+use super::mail::MailPlugin;
 use super::protocol::{MessageType, Packet, encode_proto_packet, pb};
 use super::types::{
     ApiErrorResponse, CharacterCreateResponse, CharacterLifecycleResponse, CharacterListResponse,
@@ -35,6 +36,7 @@ impl Plugin for MyServerPlugin {
             .init_resource::<MyServerKeepaliveState>()
             .add_message::<MyServerCommand>()
             .add_message::<MyServerEvent>()
+            .add_plugins(MailPlugin)
             .add_systems(Startup, auto_client_startup)
             .add_systems(
                 Update,

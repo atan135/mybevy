@@ -12,7 +12,10 @@ use serde_json::Value;
 
 use crate::framework::network::{ConnectionId, NetworkTransport, RequestId};
 
-use super::protocol::{MessageType, PacketCodec, pb};
+use super::{
+    mail::MailHttpEndpoint,
+    protocol::{MessageType, PacketCodec, pb},
+};
 
 pub const DEFAULT_AUTH_HTTP_BASE_URL: &str = "http://127.0.0.1:3000";
 pub const DEFAULT_GAME_PROXY_HOST: &str = "127.0.0.1";
@@ -289,6 +292,8 @@ pub struct MyServerSession {
     pub current_character: Option<CharacterSummary>,
     pub character_profile: Option<CharacterProfile>,
     pub game_endpoint: Option<GameServiceEndpoint>,
+    pub mail_endpoint: Option<MailHttpEndpoint>,
+    pub mail_endpoint_error: Option<String>,
     pub character_elements: CharacterElementsCache,
     pub connection_id: Option<ConnectionId>,
     pub transport: Option<NetworkTransport>,
@@ -652,6 +657,7 @@ impl MyServerSession {
             response.game_proxy_port,
             response.services.as_ref(),
         );
+        self.apply_mail_endpoint(response.services.as_ref());
         login_session_from_response(response)
     }
 
@@ -707,6 +713,7 @@ impl MyServerSession {
             response.game_proxy_port,
             response.services.as_ref(),
         );
+        self.apply_mail_endpoint(response.services.as_ref());
         self.character_elements
             .clear_for_character(response.character.character_id.clone());
         self.character_selection_state = CharacterSelectionState::Selected;
@@ -725,6 +732,20 @@ impl MyServerSession {
             response.game_proxy_port,
             response.services.as_ref(),
         );
+        self.apply_mail_endpoint(response.services.as_ref());
+    }
+
+    fn apply_mail_endpoint(&mut self, services: Option<&ClientServices>) {
+        match MailHttpEndpoint::from_services(services) {
+            Ok(endpoint) => {
+                self.mail_endpoint = endpoint;
+                self.mail_endpoint_error = None;
+            }
+            Err(error) => {
+                self.mail_endpoint = None;
+                self.mail_endpoint_error = Some(error);
+            }
+        }
     }
 
     pub fn apply_character_profile_response(&mut self, response: &CharacterProfileResponse) {

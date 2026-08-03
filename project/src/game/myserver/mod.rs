@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod mail;
 mod plugin;
 pub mod protocol;
 mod types;
