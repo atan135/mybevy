@@ -1,6 +1,6 @@
 # UI 声明式业务界面迁移基线
 
-本文冻结 `UiDocument` 成为正式业务 View 与用户端 UI 内容更新载体前的架构边界、页面盘点和验收口径。它记录 2026-07-30 以来的实现基线和后续阶段约束；已实现的受信远端更新能力与尚未实现的业务宿主迁移明确分开记录。
+本文冻结 `UiDocument` 成为正式业务 View 与用户端 UI 内容更新载体的架构边界、页面盘点和验收口径。它记录 2026-07-30 以来的实现基线和后续阶段约束；已实现的受信远端更新能力与逐页业务宿主迁移进度明确分开记录。
 
 相关协议和已实现的桌面开发预览见 [UI声明式文档协议.md](UI声明式文档协议.md) 与 [UI声明式预览与热更新.md](UI声明式预览与热更新.md)。资源首包和通用内容缓存约定见 [../assets-workflow.md](../assets-workflow.md)。
 
@@ -47,13 +47,13 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 
 ## 3. 页面盘点
 
-盘点范围是 `project/src/game/screens/` 下、由 `AppUiMode` 路由的全部 15 个 screen。所有 owner 常量和 Rust View 的 conventional panel 常量定义在 `project/src/game/ui_ids.rs`；两个声明式页面使用 registration 中的 document panel/layer，而没有对应的 `UiPanelId` 常量。所有 screen 已由 `project/src/game/navigation/mod.rs` 注册到 `UiAuditScreenRegistry`。
+盘点范围是 `project/src/game/screens/` 下、由 `AppUiMode` 路由的全部 15 个 screen。所有 owner 常量和 Rust View 的 conventional panel 常量定义在 `project/src/game/ui_ids.rs`；声明式页面使用 host/registration 中的 document panel/layer。所有 screen 已由 `project/src/game/navigation/mod.rs` 注册到 `UiAuditScreenRegistry`。
 
 审计 recipe 缩写：`A0` 为该 screen 的默认 route capture；`A1` 为 document owner-ready 的 initial capture 和默认 reference recipe；`A2` 为 `ui_gallery` 的多状态、scroll 与 anchor capture。`A0` 并不等于已经完成目标设备人工验收。
 
 | Screen / 分类 | owner / panel 或 document layer | 当前 Rust View | action / binding / 动态列表 | 特殊手势或输入 | 直接资源 | 审计 recipe |
 | --- | --- | --- | --- | --- | --- | --- |
-| `login`，普通业务待迁移 | `login` / `login_page` | `auth/view.rs::setup_login_screen`，`auth/host.rs` 负责 action 与 binding contract | 登录、游客登录、环境切换、加载角色；`auth.login.subtitle`；无列表。 | 两个文本输入、password、分段环境选择。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A0 |
+| `login`，正式业务已声明式 | `login` / document `auth.login` page | `auth/host.rs` 注册固定 `DeclarativeScreenHost` 与 adapter，View 是 `approved/auth/login.v1.json`；`auth/view.rs` 不再生成 Login 树。 | 登录、游客登录、环境切换及状态 binding；密码由敏感 ECS 输入直接交给闭合 host，不进入 action/binding。 | 普通账号输入、敏感 password、分段环境选择。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
 | `character_select`，普通业务待迁移 | `character_select` / `character_select_page` | `auth/view.rs::setup_character_select_screen`，`auth/host.rs` 负责 action 与 binding contract | 加载/创建/选择角色、切换账号；`auth.character.subtitle`；当前 Rust 逐行生成角色列表。 | 角色名文本输入、可变数量角色行。 | 主题/i18n/font。 | A0 |
 | `lobby`，普通业务待迁移 | `lobby` / `game_list_page` | `lobby/game_list.rs::setup_game_list_screen` | 启动 Touch Ripple、场景切换、选角、退出账号、确认 modal；无 binding；固定玩法入口集合。 | 按钮、confirm modal。 | 主题/i18n/font。 | A0 |
 | `audio_settings`，普通业务待迁移 | `audio_settings` / `audio_settings_page` | `settings/audio.rs::setup_audio_settings` | 各音频 bus 音量、master mute、回大厅；无 document binding；按固定 audio bus 生成控制行。 | Slider、toggle。 | 主题/i18n/font。 | A0 |
@@ -69,7 +69,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | `audio_gallery`，开发工具页 | `audio_gallery` / `audio_gallery_page` | `dev/audio_gallery.rs::setup_audio_gallery` | 大量 `AudioCommand`（cue/music/instance/bus/spatial）、状态/诊断刷新；固定测试 catalog，不是 UI data list。 | 文本输入、按钮和音频空间辅助交互。 | 音频 catalog/首包音频、主题/i18n/font。 | A0 |
 | `audio_monitor`，开发工具页 | `audio_monitor` / `audio_monitor_page` | `dev/audio_monitor.rs::setup_audio_monitor` | 只读 audio debug 快照；无 binding/list。 | 无特殊 gesture。 | 主题/i18n/font。 | A0 |
 
-分类总数固定为：已声明式 2、普通业务待迁移 4、玩法 HUD 待迁移 5、开发工具页 4、已批准 Rust View 例外 0，共 15。前两份声明式页面均是开发/验收页面，正式业务页面当前为 0；不能把它们计入业务迁移完成数。
+分类总数当前为：已声明式 3、普通业务待迁移 3、玩法 HUD 待迁移 5、开发工具页 4、已批准 Rust View 例外 0，共 15。其中正式业务页面已声明式 1 个，另外两份声明式页面是开发/验收页面。
 
 ## 4. 受控 Rust View 例外
 
@@ -99,12 +99,12 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | 指标 | 阶段 1 基线 | 完成定义 |
 | --- | ---: | --- |
 | 全部 routable screen | 15 | 清单与 `AppUiMode`/route registry 无遗漏。 |
-| 正式业务 View 已声明式 | 0 / 9 | 9 / 9，或每个剩余项登记为受控、未过期的例外。 |
-| 所有声明式 screen | 2 / 15 | 业务和展示页面都由 source registration/host 生命周期打开、关闭和审计。 |
-| 直接 Rust View screen | 13 / 15 | 业务目标为 0；只剩受控例外和明确标记的开发工具页。统计按 route setup 是否直接构建 `Node`/widget 实体，而非 `commands.spawn` 的代码行数。 |
+| 正式业务 View 已声明式 | 1 / 9 | 9 / 9，或每个剩余项登记为受控、未过期的例外。 |
+| 所有声明式 screen | 3 / 15 | 业务和展示页面都由 source registration/host 生命周期打开、关闭和审计。 |
+| 直接 Rust View screen | 12 / 15 | 业务目标为 0；只剩受控例外和明确标记的开发工具页。统计按 route setup 是否直接构建 `Node`/widget 实体，而非 `commands.spawn` 的代码行数。 |
 | 受控 Rust View 例外 | 0 | 每项有 owner、原因、影响和复审条件；例外总数不能因“复杂”增加。 |
 | UI-only diff 门禁 | 未实现 | 对每个候选 UI-only 变更产出 pass/fail 与违规路径；业务 View 文案/布局/资源改动应通过且无 `.rs` 改动。 |
-| 宿主契约覆盖 | 当前业务 action/binding 为 0 | 每份业务 document 的 document/owner/source node/action param/binding type/audit profile 都由游戏层闭合注册并有拒绝测试。 |
+| 宿主契约覆盖 | Login 已闭合注册 3 个 action、owner/local bindings、资源与四档 audit profile | 每份业务 document 的 document/owner/source node/action param/binding type/audit profile 都由游戏层闭合注册并有拒绝测试。 |
 | 更新可靠性 | 不适用，尚无生产 client | Release 和 Android 均证明：完整验证后原子切换、失败保持旧 generation、缓存不可用回退首包 approved。 |
 
 ## 7. Schema 决策
@@ -129,7 +129,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | 生产用户端 UI 热更新 | 已实现为显式配置的 `UiUpdateClient`：固定 endpoint、签名、下载约束、cache generation 与安全点激活。 | 可由桌面 Release、Android 配置启用。 | 不能把直接 HTTPS asset loading 或本地文件 watch 称为完成端到端发布。 |
 | approved 首包 fallback | 已有 approved document 与 closed registration 样例；remote/cache 失败或没有 active generation 时仍由宿主保留首包。 | 桌面/Android 包内。 | 不代表默认游戏已绑定真实 cache root、公钥或远端检查时机。 |
 
-当前默认应用尚未创建平台私有 cache root、注册实际 `content_cache` Bevy asset source、提供生产公钥或向游戏 route 安装 active generation，因此 Release/Android 仍只加载首包 approved 文档；现有 Rust View 仍照常由游戏路由创建。`UiUpdateCache` 已覆盖缓存损坏到 previous generation 的本地恢复；远端不可用、签名失败与版本发布策略也会保留 current generation 或回退首包，不会阻断登录/核心玩法。
+当前默认应用尚未创建平台私有 cache root、注册实际 `content_cache` Bevy asset source、提供生产公钥或向游戏 route 安装 active generation，因此 Release/Android 仍只加载首包 approved 文档。Login 已通过固定业务 host 加载 `auth.login` 首包文档，其 fallback 不依赖远端；其余未迁移页面仍由游戏路由创建 Rust View。`UiUpdateCache` 已覆盖缓存损坏到 previous generation 的本地恢复；远端不可用、签名失败与版本发布策略也会保留 current generation 或回退首包，不会阻断登录/核心玩法。
 
 ## 9. 阶段 1 审计方法
 

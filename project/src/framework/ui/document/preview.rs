@@ -19,8 +19,8 @@ use super::{
 use crate::framework::ui::{
     core::{UiInputMode, UiViewport, focus::UiFocusState},
     widgets::{
-        FocusableButton, SelectedButton, UiControlFlags, UiDropdown, UiSlider, UiStepper,
-        UiTextInputMaxChars, UiTextInputValue,
+        FocusableButton, SelectedButton, UiControlFlags, UiDropdown, UiSensitiveTextInput,
+        UiSlider, UiStepper, UiTextInputMaxChars, UiTextInputValue,
         controls::{
             UiCheckboxChecked, UiSegmentOption, UiSegmentOptionSelected, UiTab, UiTextInputCursor,
             UiTextInputNativeState, UiToggleOn, apply_native_text_input_state,
@@ -682,6 +682,7 @@ fn handle_preview_commands(
         &super::UiDocumentNodeMarker,
         Option<&UiTextInputValue>,
         Option<&UiTextInputCursor>,
+        Has<UiSensitiveTextInput>,
         Option<&ScrollPosition>,
         Option<&UiSlider>,
         Option<&UiStepper>,
@@ -889,6 +890,7 @@ fn start_reload(
         &super::UiDocumentNodeMarker,
         Option<&UiTextInputValue>,
         Option<&UiTextInputCursor>,
+        Has<UiSensitiveTextInput>,
         Option<&ScrollPosition>,
         Option<&UiSlider>,
         Option<&UiStepper>,
@@ -1127,6 +1129,7 @@ fn snapshot_document_state(
         &super::UiDocumentNodeMarker,
         Option<&UiTextInputValue>,
         Option<&UiTextInputCursor>,
+        Has<UiSensitiveTextInput>,
         Option<&ScrollPosition>,
         Option<&UiSlider>,
         Option<&UiStepper>,
@@ -1164,6 +1167,7 @@ fn snapshot_document_state(
         marker,
         text_input,
         text_cursor,
+        sensitive_text_input,
         scroll,
         slider,
         stepper,
@@ -1183,7 +1187,12 @@ fn snapshot_document_state(
         let mut saved = Vec::new();
         match protocol_node {
             Some(UiNode::TextInput { .. }) => {
-                if let Some(value) = text_input {
+                if sensitive_text_input {
+                    saved.push(UiDocumentNodeState::Unsupported {
+                        state: "sensitive_text_input",
+                        reason: "sensitive_value_not_migrated",
+                    });
+                } else if let Some(value) = text_input {
                     let native = text_cursor.map_or_else(
                         || UiTextInputNativeState {
                             text: value.0.clone(),
@@ -3105,6 +3114,68 @@ mod tests {
                 .map(|error| error.stage),
             Some(UiDocumentReloadStage::HostValidation)
         );
+    }
+
+    #[test]
+    fn sensitive_text_input_reload_report_never_serializes_value() {
+        const SENTINEL: &str = "stage11-preview-sensitive-sentinel";
+        fn sensitive_document(width: u32) -> String {
+            format!(
+                r#"{{
+                  "schema_version": 1,
+                  "document_id": "preview.runtime",
+                  "root": {{
+                    "type": "text_input",
+                    "id": "preview.password",
+                    "security": "sensitive",
+                    "value": "",
+                    "component": {{
+                      "slots": {{
+                        "label": {{
+                          "kind": "text",
+                          "content": {{"literal": "Password"}}
+                        }}
+                      }}
+                    }},
+                    "layout": {{"width": {{"px": {width}}}}}
+                  }}
+                }}"#
+            )
+        }
+
+        let mut app = stateful_preview_app(sensitive_document(200));
+
+        let document_id = UiDocumentId::from_str("preview.runtime").unwrap();
+        let instance = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .active_instance("preview_owner", &document_id)
+            .unwrap();
+        let entity = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .node_entity(instance, &UiNodeId::from_str("preview.password").unwrap())
+            .unwrap();
+        app.world_mut()
+            .get_mut::<UiTextInputValue>(entity)
+            .unwrap()
+            .0 = SENTINEL.to_owned();
+
+        app.world_mut()
+            .write_message(UiDocumentPreviewCommand::ReloadSource {
+                reload_id: UiDocumentReloadId(404),
+                document_id,
+                owner: "preview_owner".to_owned(),
+                source_json: sensitive_document(240),
+            });
+        app.update();
+
+        let reports = app.world().resource::<Messages<UiDocumentReloadEvent>>();
+        let mut cursor = MessageCursor::<UiDocumentReloadEvent>::default();
+        let report = cursor.read(reports).last().unwrap();
+        let serialized = serde_json::to_string(&report.0).unwrap();
+        assert!(!serialized.contains(SENTINEL));
+        assert!(serialized.contains("sensitive_value_not_migrated"));
     }
 
     #[test]

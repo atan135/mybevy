@@ -477,11 +477,17 @@ fn sync_mode_host(
         return;
     };
     let current_mode = *state.get();
-    if host_runtime.observed_mode == Some(current_mode) {
+    let current_host = registry.mode(current_mode).cloned();
+    if host_runtime.observed_mode == Some(current_mode)
+        && current_host
+            .as_ref()
+            .is_none_or(|host| host_runtime.open.contains_key(&host.key()))
+    {
         return;
     }
 
-    if let Some(previous_mode) = host_runtime.observed_mode
+    if host_runtime.observed_mode != Some(current_mode)
+        && let Some(previous_mode) = host_runtime.observed_mode
         && let Some(host) = registry.mode(previous_mode).cloned()
     {
         close_host(
@@ -492,9 +498,10 @@ fn sync_mode_host(
             &mut host_events,
         );
     }
-    if let Some(host) = registry.mode(current_mode).cloned()
-        && let Some(viewport) = viewport.as_deref()
-    {
+    if let Some(host) = current_host {
+        let Some(viewport) = viewport.as_deref() else {
+            return;
+        };
         open_host(
             &host,
             false,
@@ -914,6 +921,14 @@ fn report_host_failure(
     } else {
         DeclarativeScreenFailureDecision::NoFallbackAvailable
     };
+    warn!(
+        route = host.route,
+        document_id = host.document_id.as_str(),
+        owner = host.owner.as_str(),
+        cause,
+        ?decision,
+        "declarative screen load failed"
+    );
     host_events.write(DeclarativeScreenHostEvent::LoadFailed {
         code: "UI_DECLARATIVE_SCREEN_LOAD_FAILED".to_owned(),
         cause,
@@ -1067,6 +1082,23 @@ mod tests {
             owner.as_str(),
             &UiDocumentId::from_str(document_id).unwrap(),
         )
+    }
+
+    #[test]
+    fn mode_host_registered_after_initial_observation_still_opens() {
+        let owner = UiOwnerId::new("host_late_owner");
+        let mut app = host_app([]);
+        app.update();
+
+        let mut host = test_host("host_late", owner, "host.late");
+        host.mode = Some(AppUiMode::Login);
+        app.world_mut()
+            .resource_mut::<DeclarativeScreenRegistry>()
+            .register(host)
+            .unwrap();
+        update_until_idle(&mut app);
+
+        assert!(active_instance(&app, owner, "host.late").is_some());
     }
 
     #[test]

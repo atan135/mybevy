@@ -625,7 +625,13 @@ fn validate_control_values(
 ) {
     match node {
         UiNode::TextInput {
-            value, max_chars, ..
+            value,
+            security,
+            max_chars,
+            on_submit,
+            on_change,
+            component,
+            ..
         } => {
             if max_chars.is_some_and(|value| value == 0 || value > UI_CONTROL_MAX_TEXT_INPUT_CHARS)
             {
@@ -643,6 +649,34 @@ fn validate_control_values(
                     &format!("{path}.value"),
                     node_id,
                 );
+            }
+            if *security == super::UiTextInputSecurity::Sensitive {
+                if !value.is_empty() {
+                    push_error(
+                        errors,
+                        "UI_CONTROL_SENSITIVE_VALUE_FORBIDDEN",
+                        &format!("{path}.value"),
+                        node_id,
+                    );
+                }
+                if component.bindings.value.is_some() {
+                    push_error(
+                        errors,
+                        "UI_CONTROL_SENSITIVE_BINDING_FORBIDDEN",
+                        &format!("{path}.component.bindings.value"),
+                        node_id,
+                    );
+                }
+                for (field, action) in [("on_change", on_change), ("on_submit", on_submit)] {
+                    if action.is_some() {
+                        push_error(
+                            errors,
+                            "UI_CONTROL_SENSITIVE_ACTION_FORBIDDEN",
+                            &format!("{path}.{field}"),
+                            node_id,
+                        );
+                    }
+                }
             }
         }
         UiNode::Checkbox {

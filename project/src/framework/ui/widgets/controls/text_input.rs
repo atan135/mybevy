@@ -3,8 +3,22 @@ use super::*;
 #[derive(Component)]
 pub(crate) struct UiTextInput;
 
-#[derive(Clone, Debug, Default, Component)]
+#[derive(Clone, Default, Component)]
 pub(crate) struct UiTextInputValue(pub String);
+
+impl fmt::Debug for UiTextInputValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("UiTextInputValue")
+            .field(&"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Marks a text input whose value must stay outside bindings, action payloads,
+/// reload snapshots, audit metadata, and diagnostics.
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub(crate) struct UiSensitiveTextInput;
 
 #[derive(Clone, Debug, Default, Component)]
 pub(crate) struct UiTextInputCursor {
@@ -124,7 +138,7 @@ pub(crate) struct UiTextInputDiagnostics {
     missing_pointer_position_logged: HashSet<Entity>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub(crate) struct UiTextInputNativeState {
     pub(crate) text: String,
@@ -132,13 +146,35 @@ pub(crate) struct UiTextInputNativeState {
     pub(crate) selection_end: usize,
 }
 
-#[derive(Clone, Debug, Message)]
+impl fmt::Debug for UiTextInputNativeState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UiTextInputNativeState")
+            .field("text", &"[REDACTED]")
+            .field("selection_start", &self.selection_start)
+            .field("selection_end", &self.selection_end)
+            .finish()
+    }
+}
+
+#[derive(Clone, Message)]
 pub(crate) struct UiTextInputSubmitted {
     pub entity: Entity,
     pub value: String,
     /// Native IME bridges must keep composition commits separate from explicit
     /// submit. Dispatchers ignore a submission while composition is active.
     pub is_composing: bool,
+}
+
+impl fmt::Debug for UiTextInputSubmitted {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UiTextInputSubmitted")
+            .field("entity", &self.entity)
+            .field("value", &"[REDACTED]")
+            .field("is_composing", &self.is_composing)
+            .finish()
+    }
 }
 pub(crate) fn text_input(
     theme: &UiTheme,
@@ -376,6 +412,7 @@ pub(crate) fn sync_android_text_input(
             Option<&UiTextInputMaxChars>,
             Has<ReadonlyTextInput>,
             Has<DisabledTextInput>,
+            Has<UiSensitiveTextInput>,
         ),
         With<UiTextInput>,
     >,
@@ -384,7 +421,7 @@ pub(crate) fn sync_android_text_input(
         text_inputs
             .get(entity)
             .ok()
-            .and_then(|(_, _, _, _, is_disabled)| (!is_disabled).then_some(entity))
+            .and_then(|(_, _, _, _, is_disabled, _)| (!is_disabled).then_some(entity))
     });
 
     let Some(android_app) = bevy::android::ANDROID_APP.get() else {
@@ -396,7 +433,7 @@ pub(crate) fn sync_android_text_input(
 
     if diagnostics.android_text_input_entity != focused_text_input {
         if let Some(entity) = focused_text_input {
-            let Ok((value, cursor, _, _, _)) = text_inputs.get(entity) else {
+            let Ok((value, cursor, _, _, _, is_sensitive)) = text_inputs.get(entity) else {
                 return;
             };
             let state = ui_text_input_native_state_from_value(&value.0, cursor);
@@ -411,16 +448,23 @@ pub(crate) fn sync_android_text_input(
 
             diagnostics.android_soft_keyboard_visible = true;
             diagnostics.android_text_input_entity = Some(entity);
-            diagnostics.android_text_input_snapshot = Some(state.clone());
+            diagnostics.android_text_input_snapshot = (!is_sensitive).then(|| state.clone());
             diagnostics.android_text_input_skip_pull_until_tick =
                 diagnostics.tick.saturating_add(1);
-            debug!(
-                ?entity,
-                text = %state.text,
-                selection_start = state.selection_start,
-                selection_end = state.selection_end,
-                "initialized Android text input state for focused field"
-            );
+            if is_sensitive {
+                debug!(
+                    ?entity,
+                    "initialized Android text input state for sensitive field"
+                );
+            } else {
+                debug!(
+                    ?entity,
+                    text = %state.text,
+                    selection_start = state.selection_start,
+                    selection_end = state.selection_end,
+                    "initialized Android text input state for focused field"
+                );
+            }
         } else {
             if diagnostics.android_soft_keyboard_visible {
                 android_app.hide_soft_input(false);
@@ -441,7 +485,7 @@ pub(crate) fn sync_android_text_input(
         == Some(entity)
         && diagnostics.android_text_input_pressed_tick == diagnostics.tick;
 
-    let Ok((mut value, mut cursor, max_chars, is_readonly, is_disabled)) =
+    let Ok((mut value, mut cursor, max_chars, is_readonly, is_disabled, is_sensitive)) =
         text_inputs.get_mut(entity)
     else {
         return;
@@ -451,6 +495,45 @@ pub(crate) fn sync_android_text_input(
     }
 
     let app_state = ui_text_input_native_state_from_value(&value.0, &cursor);
+    if is_sensitive {
+        diagnostics.android_text_input_snapshot = None;
+        if text_input_pressed_this_tick {
+            android_app.show_soft_input(true);
+            diagnostics.android_soft_keyboard_visible = true;
+        }
+        if diagnostics.tick <= diagnostics.android_text_input_skip_pull_until_tick {
+            return;
+        }
+        let native_state =
+            UiTextInputNativeState::from_android_text_input_state(android_app.text_input_state());
+        if is_readonly {
+            android_app.set_text_input_state(app_state.to_android_text_input_state());
+            diagnostics.android_text_input_skip_pull_until_tick =
+                diagnostics.tick.saturating_add(1);
+            debug!(
+                ?entity,
+                "rejected Android IME edit for sensitive readonly field"
+            );
+            return;
+        }
+        apply_native_text_input_state(
+            &mut value.0,
+            &mut cursor,
+            native_state,
+            max_chars.map(|max_chars| max_chars.0),
+        );
+        let applied_state = ui_text_input_native_state_from_value(&value.0, &cursor);
+        if applied_state
+            != UiTextInputNativeState::from_android_text_input_state(android_app.text_input_state())
+        {
+            android_app.set_text_input_state(applied_state.to_android_text_input_state());
+        }
+        debug!(
+            ?entity,
+            "synchronized Android IME state for sensitive field"
+        );
+        return;
+    }
     if diagnostics.android_text_input_snapshot.as_ref() != Some(&app_state) {
         android_app.set_text_input_state(app_state.to_android_text_input_state());
         diagnostics.android_text_input_snapshot = Some(app_state.clone());
@@ -548,6 +631,7 @@ pub(crate) fn handle_text_input_keyboard(
             Option<&UiTextInputMaxChars>,
             Has<ReadonlyTextInput>,
             Has<DisabledTextInput>,
+            Has<UiSensitiveTextInput>,
         ),
         With<UiTextInput>,
     >,
@@ -582,7 +666,7 @@ pub(crate) fn handle_text_input_keyboard(
         return;
     };
 
-    let Ok((mut value, mut cursor, max_chars, is_readonly, is_disabled)) =
+    let Ok((mut value, mut cursor, max_chars, is_readonly, is_disabled, is_sensitive)) =
         text_inputs.get_mut(focused_entity)
     else {
         for _ in keyboard_inputs.read() {}
@@ -605,20 +689,28 @@ pub(crate) fn handle_text_input_keyboard(
         let before_selection = cursor.selection;
         let edit_event = ui_text_input_edit_event(keyboard_input, &key_codes);
         if should_skip_keyboard_text_edit_for_native_ime(&edit_event) {
-            debug!(
-                tick = diagnostics.tick,
-                ?focused_entity,
-                key_code = ?keyboard_input.key_code,
-                logical_key = ?keyboard_input.logical_key,
-                text = ?keyboard_input.text.as_deref(),
-                "skipped keyboard text edit while Android IME state is authoritative"
-            );
+            if is_sensitive {
+                debug!(
+                    tick = diagnostics.tick,
+                    ?focused_entity,
+                    "skipped keyboard edit for sensitive Android IME field"
+                );
+            } else {
+                debug!(
+                    tick = diagnostics.tick,
+                    ?focused_entity,
+                    key_code = ?keyboard_input.key_code,
+                    logical_key = ?keyboard_input.logical_key,
+                    text = ?keyboard_input.text.as_deref(),
+                    "skipped keyboard text edit while Android IME state is authoritative"
+                );
+            }
             continue;
         }
 
         match edit_event {
             UiTextInputEditEvent::Submit => {
-                if is_readonly || is_disabled {
+                if is_readonly || is_disabled || is_sensitive {
                     continue;
                 }
 
@@ -629,7 +721,7 @@ pub(crate) fn handle_text_input_keyboard(
                 });
             }
             UiTextInputEditEvent::Copy => {
-                if is_disabled {
+                if is_disabled || is_sensitive {
                     continue;
                 }
 
@@ -654,7 +746,18 @@ pub(crate) fn handle_text_input_keyboard(
             UiTextInputEditEvent::None => {}
         }
 
-        if should_log_text_input_keyboard_event(
+        if is_sensitive
+            && (before_value != value.0
+                || before_cursor != cursor.position
+                || before_selection != cursor.selection)
+        {
+            debug!(
+                tick = diagnostics.tick,
+                ?focused_entity,
+                focus_ticks_ago,
+                "sensitive text input keyboard state changed"
+            );
+        } else if should_log_text_input_keyboard_event(
             keyboard_input,
             focus_ticks_ago,
             &before_value,
@@ -694,6 +797,7 @@ pub(crate) fn sync_text_input_display(
             &UiTextInputPlaceholder,
             &UiTextInputCursor,
             Has<DisabledTextInput>,
+            Has<UiSensitiveTextInput>,
             Option<&UiResolvedInputStyle>,
         ),
         With<UiTextInput>,
@@ -718,7 +822,7 @@ pub(crate) fn sync_text_input_display(
             continue;
         };
 
-        let Ok((value, placeholder, cursor, is_disabled, scoped_style)) =
+        let Ok((value, placeholder, cursor, is_disabled, is_sensitive, scoped_style)) =
             text_inputs.get(input_entity)
         else {
             continue;
@@ -726,12 +830,21 @@ pub(crate) fn sync_text_input_display(
 
         let is_focused = focus_state.focused_entity == Some(input_entity);
         let (display, focused_caret_prefix) = if is_focused && !is_disabled {
-            let segments = text_input_segments(&value.0, cursor);
+            let segments = if is_sensitive {
+                sensitive_text_input_segments(&value.0, cursor)
+            } else {
+                text_input_segments(&value.0, cursor)
+            };
             (segments.display, Some(segments.caret_prefix))
         } else if value.0.is_empty() && !is_focused {
             (UiTextInputDisplay::placeholder(placeholder.0.clone()), None)
         } else {
-            (UiTextInputDisplay::plain(value.0.clone()), None)
+            let display = if is_sensitive {
+                sensitive_text(&value.0)
+            } else {
+                value.0.clone()
+            };
+            (UiTextInputDisplay::plain(display), None)
         };
         let color = if is_disabled || value.0.is_empty() && !is_focused {
             scoped_style.map_or(theme.colors.text_muted, |style| style.placeholder)
@@ -756,9 +869,13 @@ pub(crate) fn sync_text_input_display(
             let Ok(mut measure_text) = measures.get_mut(child) else {
                 continue;
             };
-            let next_measure = focused_caret_prefix
-                .clone()
-                .unwrap_or_else(|| text_input_caret_prefix(&value.0, cursor));
+            let next_measure = focused_caret_prefix.clone().unwrap_or_else(|| {
+                if is_sensitive {
+                    sensitive_text_input_segments(&value.0, cursor).caret_prefix
+                } else {
+                    text_input_caret_prefix(&value.0, cursor)
+                }
+            });
             if measure_text.0 != next_measure {
                 measure_text.0 = next_measure;
             }
@@ -1592,6 +1709,22 @@ pub(crate) fn text_input_segments(value: &str, cursor: &UiTextInputCursor) -> Ui
 
 pub(crate) fn text_input_caret_prefix(value: &str, cursor: &UiTextInputCursor) -> String {
     text_input_segments(value, cursor).caret_prefix
+}
+
+fn sensitive_text(value: &str) -> String {
+    "*".repeat(value.chars().count())
+}
+
+pub(crate) fn sensitive_text_input_segments(
+    value: &str,
+    cursor: &UiTextInputCursor,
+) -> UiTextInputSegments {
+    let mut segments = text_input_segments(value, cursor);
+    segments.display.plain = sensitive_text(&segments.display.plain);
+    segments.display.selected = sensitive_text(&segments.display.selected);
+    segments.display.tail = sensitive_text(&segments.display.tail);
+    segments.caret_prefix = sensitive_text(&segments.caret_prefix);
+    segments
 }
 
 pub(crate) fn is_printable_char(chr: char) -> bool {

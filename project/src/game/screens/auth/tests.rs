@@ -1,11 +1,23 @@
-use super::{host::*, model::*, view::*};
+use super::{host::*, model::*};
 use crate::framework::network::RequestId;
 use crate::framework::ui::{
-    core::{UiMetrics, UiOrientation, UiViewport, focus::UiFocusState},
-    document::{UiActionId, UiBindingPath, UiBindingScope, UiBindingType},
-    widgets::{UiButtonEvent, UiButtonEventKind, UiTextInputValue},
+    core::{UiMetrics, UiViewport, binding::UiBindingValues, focus::UiFocusState},
+    document::{
+        UiActionDispatch, UiActionId, UiActionValue, UiBindingPath, UiBindingScope, UiBindingType,
+        UiBindingValue, UiBindingVisibility, UiDocument, UiDocumentAssetPreflightOverrides,
+        UiDocumentAssetPreflightStatus, UiDocumentInputMode, UiDocumentLayer, UiDocumentNodeMarker,
+        UiDocumentOpenRequest, UiDocumentOpenSource, UiDocumentPanel, UiDocumentPlatform,
+        UiDocumentPreviewPlugin, UiDocumentReloadEvent, UiDocumentRequestId, UiDocumentRuntime,
+        UiDocumentRuntimeCommand, UiDocumentRuntimePlugin, UiDocumentRuntimeSystems,
+        UiDocumentSourceOrigin, UiNode, UiNodeId, UiPageState, UiRegisteredActionKind,
+        UiSafeAreaClass, UiTargetProfile, UiTextInputSecurity,
+        parse_approved_document_registration,
+    },
+    style::{UiFontAssets, UiTheme},
+    widgets::{UiButtonEvent, UiButtonEventKind, UiSensitiveTextInput, UiTextInputValue},
 };
 use crate::game::{
+    declarative_screen::DeclarativeScreenHostPlugin,
     myserver::{
         AccountLoginState, CharacterSelectionState, CharacterSummary, ElementValues,
         GameConnectionState, MyServerCommand, MyServerConfig, MyServerDisplayError,
@@ -15,45 +27,96 @@ use crate::game::{
     navigation::{AppUiMode, GameRouteCommand},
     ui_ids::{OWNER_CHARACTER_SELECT, OWNER_LOGIN, PANEL_CHARACTER_SELECT, PANEL_LOGIN},
 };
-use bevy::{ecs::message::MessageCursor, prelude::*};
+use bevy::{
+    ecs::{message::MessageCursor, system::RunSystemOnce},
+    prelude::*,
+    state::app::StatesPlugin,
+};
 use std::time::SystemTime;
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{BTreeMap, HashMap},
+    str::FromStr,
+};
 
 #[test]
-fn landscape_login_control_grid_is_limited_to_high_density_devices() {
-    let mut viewport = UiViewport::default();
+fn login_document_is_valid_and_keeps_password_out_of_contract_surfaces() {
+    let result = UiDocument::validate_json(LOGIN_DOCUMENT_SOURCE);
+    assert!(result.report.valid, "{:#?}", result.report.diagnostics);
+    let document = result.validated().unwrap().document();
+    let account = find_document_node(&document.root, LOGIN_ACCOUNT_NODE).unwrap();
+    let password = find_document_node(&document.root, LOGIN_PASSWORD_NODE).unwrap();
 
-    assert!(!uses_landscape_login_control_grid(&viewport));
+    let UiNode::TextInput {
+        component,
+        security,
+        value,
+        on_change,
+        on_submit,
+        ..
+    } = password
+    else {
+        panic!("password must remain a text input");
+    };
+    assert_eq!(*security, UiTextInputSecurity::Sensitive);
+    assert!(value.is_empty());
+    assert!(component.bindings.value.is_none());
+    assert!(on_change.is_none());
+    assert!(on_submit.is_none());
 
-    viewport.device_scale = 2.0;
-    assert!(uses_landscape_login_control_grid(&viewport));
-
-    viewport.orientation = UiOrientation::Portrait;
-    assert!(!uses_landscape_login_control_grid(&viewport));
+    let UiNode::TextInput { component, .. } = account else {
+        panic!("account must remain a text input");
+    };
+    assert_eq!(
+        component
+            .bindings
+            .value
+            .as_ref()
+            .unwrap()
+            .binding_path
+            .as_str(),
+        "auth.login.login_name"
+    );
+    assert!(!LOGIN_DOCUMENT_SOURCE.contains("auth.login.password"));
 }
 
 #[test]
-fn login_reference_panel_width_survives_keyboard_viewport_resize() {
-    let metrics = UiMetrics::default();
-    let full_viewport = UiViewport::default();
-    let mut keyboard_viewport = full_viewport;
-    keyboard_viewport.logical_height = 320.0;
+fn login_document_resolves_reference_and_keyboard_height_layouts() {
+    let validated = UiDocument::validate_json(LOGIN_DOCUMENT_SOURCE)
+        .into_validated()
+        .unwrap();
+    let regular = UiTargetProfile::new(
+        1376.0,
+        768.0,
+        UiSafeAreaClass::None,
+        UiDocumentInputMode::MouseKeyboard,
+        UiDocumentPlatform::Windows,
+    )
+    .unwrap();
+    let keyboard = UiTargetProfile::new(
+        1376.0,
+        320.0,
+        UiSafeAreaClass::Inset,
+        UiDocumentInputMode::Touch,
+        UiDocumentPlatform::Android,
+    )
+    .unwrap();
+    let regular = validated
+        .effective_document(&regular, &UiPageState::initial())
+        .unwrap();
+    let keyboard = validated
+        .effective_document(&keyboard, &UiPageState::initial())
+        .unwrap();
+    let regular_panel = find_document_node(&regular.document.root, "login.panel").unwrap();
+    let keyboard_panel = find_document_node(&keyboard.document.root, "login.panel").unwrap();
 
-    let full_size = login_visual_panel_size(&full_viewport, &metrics);
-    let keyboard_size = login_visual_panel_size(&keyboard_viewport, &metrics);
-
-    assert_eq!(full_size.x, LOGIN_REFERENCE_PANEL_WIDTH);
-    assert_eq!(keyboard_size.x, LOGIN_REFERENCE_PANEL_WIDTH);
-    assert!(keyboard_size.y < full_size.y);
-}
-
-#[test]
-fn login_control_cells_have_content_independent_flex_bases() {
-    let cell = login_control_cell();
-
-    assert_eq!(cell.flex_grow, 1.0);
-    assert_eq!(cell.flex_basis, px(0));
-    assert_eq!(cell.min_width, px(0));
+    assert_eq!(regular_panel.layout().max_width, px_length(384.0));
+    assert_eq!(keyboard_panel.layout().max_width, px_length(760.0));
+    assert!(
+        keyboard
+            .applied_overrides
+            .iter()
+            .any(|item| item.source_id == "short_landscape")
+    );
 }
 
 #[test]
@@ -63,7 +126,7 @@ fn auth_page_baselines_freeze_owner_panel_source_and_states() {
     assert_eq!(LOGIN_PAGE_BASELINE.panel, PANEL_LOGIN);
     assert_eq!(
         LOGIN_PAGE_BASELINE.action_source,
-        AuthActionSource::RustView
+        AuthActionSource::UiDocument
     );
     assert!(LOGIN_PAGE_BASELINE.states.contains(&"logging_in"));
 
@@ -78,6 +141,19 @@ fn auth_page_baselines_freeze_owner_panel_source_and_states() {
         AuthActionSource::RustView
     );
     assert!(CHARACTER_SELECT_PAGE_BASELINE.states.contains(&"selecting"));
+}
+
+fn find_document_node<'a>(node: &'a UiNode, id: &str) -> Option<&'a UiNode> {
+    if node.id().as_str() == id {
+        return Some(node);
+    }
+    node.children()
+        .iter()
+        .find_map(|child| find_document_node(child, id))
+}
+
+fn px_length(value: f32) -> crate::framework::ui::document::UiLength {
+    crate::framework::ui::document::UiLength::Px(value)
 }
 
 #[test]
@@ -108,6 +184,81 @@ fn auth_host_declares_all_closed_business_actions() {
     assert_eq!(select.owner, OWNER_CHARACTER_SELECT.as_str());
     assert!(select.params.contains_key("character_id"));
     assert!(!select.params.contains_key("name"));
+
+    let account_login = descriptors
+        .iter()
+        .find(|descriptor| descriptor.id.as_str() == ACTION_ACCOUNT_LOGIN)
+        .unwrap();
+    assert!(account_login.params.is_empty());
+    let descriptor_debug = format!("{account_login:?}");
+    assert!(!descriptor_debug.contains("password"));
+    assert!(!descriptor_debug.contains("login_name"));
+}
+
+#[test]
+fn login_approved_registration_matches_fixed_host_contract() {
+    const REGISTRATION_SOURCE: &str =
+        include_str!("../../../../assets/ui/documents/approved/auth/promotion.v1.json");
+    let contracts = AuthHostContracts::default();
+    let host = login_declarative_screen_host(&contracts);
+    let registration = parse_approved_document_registration(REGISTRATION_SOURCE).unwrap();
+    let audit = registration.audit_report(LOGIN_DOCUMENT_SOURCE).unwrap();
+
+    assert_eq!(host.document_id.as_str(), LOGIN_DOCUMENT_ID);
+    assert_eq!(host.mode, Some(AppUiMode::Login));
+    assert_eq!(host.owner, OWNER_LOGIN);
+    assert_eq!(host.binding_schema.len(), 12);
+    assert_eq!(host.action_allowlist.len(), 3);
+    assert_eq!(registration.owner(), OWNER_LOGIN.as_str());
+    assert_eq!(audit.actions.len(), 3);
+    assert!(!REGISTRATION_SOURCE.contains("password"));
+}
+
+#[test]
+fn login_startup_registration_mounts_initial_mode_document() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<AppUiMode>()
+        .insert_resource(UiTheme::default())
+        .insert_resource(UiMetrics::default())
+        .insert_resource(UiFontAssets::test_registry())
+        .init_resource::<UiFocusState>()
+        .init_resource::<UiViewport>()
+        .init_resource::<AuthHostContracts>()
+        .add_plugins((
+            UiDocumentRuntimePlugin,
+            UiDocumentPreviewPlugin,
+            DeclarativeScreenHostPlugin,
+        ))
+        .add_systems(Startup, register_auth_contracts);
+    app.world_mut()
+        .resource_mut::<UiDocumentAssetPreflightOverrides>()
+        .set(
+            crate::framework::ui::document::UiDocumentId::from_str(LOGIN_DOCUMENT_ID).unwrap(),
+            crate::framework::ui::document::UiAssetId::from_str("login_background").unwrap(),
+            UiDocumentAssetPreflightStatus::Failed {
+                code: "UI_DOCUMENT_TEST_OPTIONAL_BACKGROUND_FAILED".to_owned(),
+            },
+        );
+
+    for _ in 0..6 {
+        app.update();
+    }
+
+    let document_id =
+        crate::framework::ui::document::UiDocumentId::from_str(LOGIN_DOCUMENT_ID).unwrap();
+    let runtime = app.world().resource::<UiDocumentRuntime>();
+    if runtime
+        .active_instance(OWNER_LOGIN.as_str(), &document_id)
+        .is_none()
+    {
+        let messages = app.world().resource::<Messages<UiDocumentReloadEvent>>();
+        let mut cursor = MessageCursor::<UiDocumentReloadEvent>::default();
+        panic!(
+            "initial Login document did not commit: {:#?}",
+            cursor.read(messages).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]
@@ -403,15 +554,15 @@ fn auth_account_status_notice_classifies_pending_review_kick_and_blocked() {
 }
 
 #[test]
-fn auth_login_button_sends_account_login_command_from_inputs() {
-    let mut app = login_button_test_app(MyServerSession::default());
-    let button = app.world_mut().spawn(AccountLoginButton).id();
-    app.world_mut()
-        .spawn((LoginNameInput, UiTextInputValue("alice".to_string())));
-    app.world_mut()
-        .spawn((PasswordInput, UiTextInputValue("secret".to_string())));
-
-    click(&mut app, button);
+fn auth_login_document_sends_account_login_only_from_sensitive_ecs_input() {
+    const SENTINEL: &str = "stage11-unique-password-sentinel";
+    let mut app = login_document_test_app(MyServerSession::default());
+    set_login_document_inputs(&mut app, "alice", SENTINEL);
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_ACCOUNT_LOGIN,
+        "login.submit",
+        BTreeMap::new(),
+    ));
     app.update();
 
     let commands = read_messages::<MyServerCommand>(&app);
@@ -421,8 +572,9 @@ fn auth_login_button_sends_account_login_command_from_inputs() {
             login_name,
             password,
             connect_game: false,
-        } if login_name == "alice" && password == "secret"
+        } if login_name == "alice" && password == SENTINEL
     )));
+    assert!(!format!("{commands:?}").contains(SENTINEL));
     assert_eq!(
         app.world()
             .resource::<MyServerSession>()
@@ -432,11 +584,122 @@ fn auth_login_button_sends_account_login_command_from_inputs() {
 }
 
 #[test]
-fn auth_guest_button_sends_guest_login_command() {
-    let mut app = login_button_test_app(MyServerSession::default());
-    let button = app.world_mut().spawn(GuestLoginButton).id();
+fn forged_duplicate_login_markers_cannot_override_or_clear_active_inputs() {
+    const REAL_PASSWORD: &str = "stage11-real-password-sentinel";
+    let mut login_app = login_document_test_app(MyServerSession::default());
+    set_login_document_inputs(&mut login_app, "real-account", REAL_PASSWORD);
+    let instance_id = login_document_instance(&login_app);
+    login_app.world_mut().spawn((
+        UiDocumentNodeMarker {
+            instance_id,
+            node_id: UiNodeId::from_str(LOGIN_ACCOUNT_NODE).unwrap(),
+        },
+        UiTextInputValue("forged-account".to_owned()),
+    ));
+    login_app.world_mut().spawn((
+        UiDocumentNodeMarker {
+            instance_id,
+            node_id: UiNodeId::from_str(LOGIN_PASSWORD_NODE).unwrap(),
+        },
+        UiTextInputValue("forged-password".to_owned()),
+        UiSensitiveTextInput,
+    ));
+    login_app.world_mut().write_message(login_document_dispatch(
+        ACTION_ACCOUNT_LOGIN,
+        "login.submit",
+        BTreeMap::new(),
+    ));
+    login_app
+        .world_mut()
+        .run_system_once(handle_login_document_actions)
+        .expect("login document action handler should run");
+    assert!(
+        read_messages::<MyServerCommand>(&login_app)
+            .iter()
+            .any(|command| {
+                matches!(
+                    command,
+                    MyServerCommand::Login {
+                        login_name,
+                        password,
+                        connect_game: false,
+                    } if login_name == "real-account" && password == REAL_PASSWORD
+                )
+            })
+    );
 
-    click(&mut app, button);
+    let mut clear_app = login_document_test_app(MyServerSession::default());
+    set_login_document_inputs(&mut clear_app, "clear-account", "clear-password");
+    let instance_id = login_document_instance(&clear_app);
+    let forged_account = clear_app
+        .world_mut()
+        .spawn((
+            UiDocumentNodeMarker {
+                instance_id,
+                node_id: UiNodeId::from_str(LOGIN_ACCOUNT_NODE).unwrap(),
+            },
+            UiTextInputValue("keep-forged-account".to_owned()),
+        ))
+        .id();
+    let forged_password = clear_app
+        .world_mut()
+        .spawn((
+            UiDocumentNodeMarker {
+                instance_id,
+                node_id: UiNodeId::from_str(LOGIN_PASSWORD_NODE).unwrap(),
+            },
+            UiTextInputValue("keep-forged-password".to_owned()),
+            UiSensitiveTextInput,
+        ))
+        .id();
+    let next_environment = match clear_app.world().resource::<MyServerProfiles>().selected() {
+        MyServerEnvironment::Local => "production",
+        MyServerEnvironment::Production => "local",
+    };
+    clear_app.world_mut().write_message(login_document_dispatch(
+        ACTION_SWITCH_ENVIRONMENT,
+        "login.environment",
+        BTreeMap::from([(
+            "environment".to_owned(),
+            UiActionValue::Enum(next_environment.to_owned()),
+        )]),
+    ));
+    clear_app
+        .world_mut()
+        .run_system_once(handle_login_document_actions)
+        .expect("login document action handler should run");
+
+    assert_eq!(active_login_input_value(&clear_app, LOGIN_ACCOUNT_NODE), "");
+    assert_eq!(
+        active_login_input_value(&clear_app, LOGIN_PASSWORD_NODE),
+        ""
+    );
+    assert_eq!(
+        clear_app
+            .world()
+            .get::<UiTextInputValue>(forged_account)
+            .unwrap()
+            .0,
+        "keep-forged-account"
+    );
+    assert_eq!(
+        clear_app
+            .world()
+            .get::<UiTextInputValue>(forged_password)
+            .unwrap()
+            .0,
+        "keep-forged-password"
+    );
+}
+
+#[test]
+fn auth_guest_document_action_sends_guest_login_command() {
+    let mut app = login_document_test_app(MyServerSession::default());
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_GUEST_LOGIN,
+        "login.guest",
+        BTreeMap::new(),
+    ));
     app.update();
 
     let commands = read_messages::<MyServerCommand>(&app);
@@ -447,6 +710,125 @@ fn auth_guest_button_sends_guest_login_command() {
             connect_game: false,
         }
     )));
+}
+
+#[test]
+fn auth_login_document_deduplicates_account_actions_per_frame() {
+    let mut app = login_document_test_app(MyServerSession::default());
+    set_login_document_inputs(&mut app, "alice", "same-frame-secret");
+    for _ in 0..2 {
+        app.world_mut().write_message(login_document_dispatch(
+            ACTION_ACCOUNT_LOGIN,
+            "login.submit",
+            BTreeMap::new(),
+        ));
+    }
+    app.update();
+
+    let commands = read_messages::<MyServerCommand>(&app);
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| matches!(command, MyServerCommand::Login { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn auth_login_document_bindings_cover_pending_notice_and_error_states() {
+    let pending_session = MyServerSession {
+        account_login_state: AccountLoginState::LoggingIn,
+        ..Default::default()
+    };
+    let mut pending = login_binding_test_app(pending_session, LoginUiState::default());
+    pending.update();
+    assert_eq!(
+        login_binding_value(&pending, "auth.login.request_pending"),
+        UiBindingValue::Bool(true)
+    );
+    assert_eq!(
+        login_binding_value(&pending, "auth.login.disabled"),
+        UiBindingValue::Bool(true)
+    );
+    assert_eq!(
+        login_binding_value(&pending, "auth.login.environment_locked"),
+        UiBindingValue::Bool(true)
+    );
+
+    for (kind, title) in [
+        (AuthNoticeKind::Maintenance, "Server maintenance"),
+        (AuthNoticeKind::Banned, "Account banned"),
+        (AuthNoticeKind::PendingReview, "Account requires review"),
+        (AuthNoticeKind::VersionIncompatible, "Version incompatible"),
+        (AuthNoticeKind::Kicked, "Signed out elsewhere"),
+        (AuthNoticeKind::Network, "Network unavailable"),
+    ] {
+        let state = LoginUiState {
+            notice: Some(AuthStatusNotice {
+                kind,
+                title: title.to_owned(),
+                detail: Some("stable detail".to_owned()),
+            }),
+            ..Default::default()
+        };
+        let mut app = login_binding_test_app(MyServerSession::default(), state);
+        app.update();
+        assert_eq!(
+            login_binding_value(&app, "auth.login.notice_visibility"),
+            UiBindingValue::Visibility(UiBindingVisibility::Visible)
+        );
+        assert_eq!(
+            login_binding_value(&app, "auth.login.notice_title"),
+            UiBindingValue::String(title.to_owned())
+        );
+        assert_eq!(
+            login_binding_value(&app, "auth.login.notice_detail"),
+            UiBindingValue::String("stable detail".to_owned())
+        );
+        assert_eq!(
+            login_binding_value(&app, "auth.login.error_visibility"),
+            UiBindingValue::Visibility(UiBindingVisibility::Hidden)
+        );
+    }
+
+    let error = MyServerDisplayError {
+        kind: MyServerErrorKind::TransportFailed,
+        source: MyServerErrorSource::Client,
+        operation: None,
+        message_type: None,
+        seq: None,
+        http_status: None,
+        error_code: Some("NETWORK_FAILURE".to_owned()),
+        message_key: MyServerErrorKind::TransportFailed.message_key(),
+        retryable: MyServerErrorKind::TransportFailed.retryable(),
+        blocking: MyServerErrorKind::TransportFailed.blocking(),
+        detail: Some("connection refused".to_owned()),
+    };
+    let state = LoginUiState {
+        last_error: Some(error),
+        ..Default::default()
+    };
+    let mut app = login_binding_test_app(MyServerSession::default(), state);
+    app.update();
+    assert_eq!(
+        login_binding_value(&app, "auth.login.error_visibility"),
+        UiBindingValue::Visibility(UiBindingVisibility::Visible)
+    );
+    assert_eq!(
+        login_binding_value(&app, "auth.login.error_title"),
+        UiBindingValue::String("Network unavailable".to_owned())
+    );
+    assert_eq!(
+        login_binding_value(&app, "auth.login.error_detail"),
+        UiBindingValue::String(
+            "connection refused Code NETWORK_FAILURE. You can retry this operation.".to_owned()
+        )
+    );
+    assert_eq!(
+        login_binding_value(&app, "auth.login.notice_visibility"),
+        UiBindingValue::Visibility(UiBindingVisibility::Hidden)
+    );
 }
 
 #[test]
@@ -462,7 +844,7 @@ fn auth_server_environment_switch_updates_config_and_clears_identity_inputs() {
         ..Default::default()
     };
     session.game_connection_state = GameConnectionState::Disconnected;
-    let mut app = server_environment_test_app(session);
+    let mut app = login_document_test_app(session);
     let selected = app.world().resource::<MyServerProfiles>().selected();
     let target = match selected {
         MyServerEnvironment::Local => MyServerEnvironment::Production,
@@ -474,17 +856,15 @@ fn auth_server_environment_switch_updates_config_and_clears_identity_inputs() {
         .config(target)
         .http_base_url
         .clone();
-    let button = app.world_mut().spawn(ServerEnvironmentButton(target)).id();
-    let login = app
-        .world_mut()
-        .spawn((LoginNameInput, UiTextInputValue("alice".to_string())))
-        .id();
-    let password = app
-        .world_mut()
-        .spawn((PasswordInput, UiTextInputValue("secret".to_string())))
-        .id();
-
-    click(&mut app, button);
+    set_login_document_inputs(&mut app, "alice", "stage11-switch-secret");
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_SWITCH_ENVIRONMENT,
+        "login.environment",
+        BTreeMap::from([(
+            "environment".to_owned(),
+            UiActionValue::Enum(environment_value(target).to_owned()),
+        )]),
+    ));
     app.update();
 
     assert_eq!(
@@ -507,8 +887,7 @@ fn auth_server_environment_switch_updates_config_and_clears_identity_inputs() {
     );
     assert!(!session.connected);
     assert!(!session.authenticated);
-    assert_eq!(app.world().get::<UiTextInputValue>(login).unwrap().0, "");
-    assert_eq!(app.world().get::<UiTextInputValue>(password).unwrap().0, "");
+    assert_login_document_inputs_empty(&mut app);
 }
 
 #[test]
@@ -517,7 +896,7 @@ fn auth_server_environment_switch_is_ignored_while_login_is_pending() {
         account_login_state: AccountLoginState::LoggingIn,
         ..Default::default()
     };
-    let mut app = server_environment_test_app(session);
+    let mut app = login_document_test_app(session);
     let selected = app.world().resource::<MyServerProfiles>().selected();
     let target = match selected {
         MyServerEnvironment::Local => MyServerEnvironment::Production,
@@ -528,9 +907,14 @@ fn auth_server_environment_switch_is_ignored_while_login_is_pending() {
         .resource::<MyServerConfig>()
         .http_base_url
         .clone();
-    let button = app.world_mut().spawn(ServerEnvironmentButton(target)).id();
-
-    click(&mut app, button);
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_SWITCH_ENVIRONMENT,
+        "login.environment",
+        BTreeMap::from([(
+            "environment".to_owned(),
+            UiActionValue::Enum(environment_value(target).to_owned()),
+        )]),
+    ));
     app.update();
 
     assert_eq!(
@@ -549,15 +933,20 @@ fn auth_server_environment_switch_is_ignored_with_an_in_flight_request() {
         login_request: Some(RequestId::from_raw(99)),
         ..Default::default()
     };
-    let mut app = server_environment_test_app(session);
+    let mut app = login_document_test_app(session);
     let selected = app.world().resource::<MyServerProfiles>().selected();
     let target = match selected {
         MyServerEnvironment::Local => MyServerEnvironment::Production,
         MyServerEnvironment::Production => MyServerEnvironment::Local,
     };
-    let button = app.world_mut().spawn(ServerEnvironmentButton(target)).id();
-
-    click(&mut app, button);
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_SWITCH_ENVIRONMENT,
+        "login.environment",
+        BTreeMap::from([(
+            "environment".to_owned(),
+            UiActionValue::Enum(environment_value(target).to_owned()),
+        )]),
+    ));
     app.update();
 
     assert_eq!(
@@ -572,7 +961,7 @@ fn auth_server_environment_switch_is_ignored_with_an_in_flight_request() {
 
 #[test]
 fn auth_create_button_sends_create_character_from_input_when_logged_in() {
-    let mut app = login_button_test_app(logged_in_session());
+    let mut app = character_button_test_app(logged_in_session());
     let button = app.world_mut().spawn(CreateCharacterButton).id();
     app.world_mut().spawn((
         CharacterNameInput,
@@ -594,7 +983,7 @@ fn auth_create_button_sends_create_character_from_input_when_logged_in() {
 
 #[test]
 fn auth_select_button_sends_character_id_not_name() {
-    let mut app = login_button_test_app(logged_in_session());
+    let mut app = character_button_test_app(logged_in_session());
     let button = app
         .world_mut()
         .spawn(SelectCharacterButton {
@@ -617,7 +1006,7 @@ fn auth_select_button_sends_character_id_not_name() {
 
 #[test]
 fn auth_character_request_clicks_are_deduplicated_per_frame() {
-    let mut app = login_button_test_app(logged_in_session());
+    let mut app = character_button_test_app(logged_in_session());
     let create = app.world_mut().spawn(CreateCharacterButton).id();
     let select = app
         .world_mut()
@@ -656,7 +1045,7 @@ fn auth_character_request_clicks_are_deduplicated_per_frame() {
 fn auth_pending_character_state_blocks_character_requests() {
     let mut session = logged_in_session();
     session.character_selection_state = CharacterSelectionState::Creating;
-    let mut app = login_button_test_app(session);
+    let mut app = character_button_test_app(session);
     let button = app.world_mut().spawn(CreateCharacterButton).id();
     app.world_mut().spawn((
         CharacterNameInput,
@@ -671,16 +1060,8 @@ fn auth_pending_character_state_blocks_character_requests() {
 
 #[test]
 fn auth_switch_account_clears_inputs_and_sends_logout() {
-    let mut app = login_button_test_app(logged_in_session());
+    let mut app = character_button_test_app(logged_in_session());
     let button = app.world_mut().spawn(SwitchAccountButton).id();
-    let login = app
-        .world_mut()
-        .spawn((LoginNameInput, UiTextInputValue("alice".to_string())))
-        .id();
-    let password = app
-        .world_mut()
-        .spawn((PasswordInput, UiTextInputValue("secret".to_string())))
-        .id();
     let character_name = app
         .world_mut()
         .spawn((
@@ -698,8 +1079,6 @@ fn auth_switch_account_clears_inputs_and_sends_logout() {
             .iter()
             .any(|command| matches!(command, MyServerCommand::Logout))
     );
-    assert_eq!(app.world().get::<UiTextInputValue>(login).unwrap().0, "");
-    assert_eq!(app.world().get::<UiTextInputValue>(password).unwrap().0, "");
     assert_eq!(
         app.world()
             .get::<UiTextInputValue>(character_name)
@@ -715,7 +1094,7 @@ fn auth_change_character_keeps_account_and_sends_switch_character() {
     session.character_selection_state = CharacterSelectionState::Selected;
     session.character_id = Some("chr_selected".to_string());
     session.characters = vec![test_character("chr_selected", "WindRunner")];
-    let mut app = login_button_test_app(session);
+    let mut app = character_button_test_app(session);
     let button = app.world_mut().spawn(ChangeCharacterButton).id();
     let character_name = app
         .world_mut()
@@ -817,28 +1196,238 @@ impl CharacterTestExt for CharacterSummary {
     }
 }
 
-fn login_button_test_app(session: MyServerSession) -> App {
+fn character_button_test_app(session: MyServerSession) -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_message::<UiButtonEvent>()
         .add_message::<MyServerCommand>()
         .insert_resource(session)
         .init_resource::<LoginUiState>()
-        .add_systems(Update, handle_login_buttons);
+        .add_systems(Update, handle_character_select_buttons);
     app
 }
 
-fn server_environment_test_app(session: MyServerSession) -> App {
+fn login_document_test_app(session: MyServerSession) -> App {
+    const TEST_DOCUMENT: &str = r#"{
+        "schema_version": 1,
+        "document_id": "auth.login",
+        "root": {
+            "type": "container",
+            "id": "login.test_root",
+            "children": [
+                {
+                    "type": "text_input",
+                    "id": "login.account",
+                    "value": "",
+                    "component": {
+                        "slots": {
+                            "label": {
+                                "kind": "text",
+                                "content": { "literal": "Account" }
+                            }
+                        }
+                    }
+                },
+                {
+                    "type": "text_input",
+                    "id": "login.password",
+                    "value": "",
+                    "security": "sensitive",
+                    "component": {
+                        "slots": {
+                            "label": {
+                                "kind": "text",
+                                "content": { "literal": "Password" }
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    }"#;
+    let validation = UiDocument::validate_json(TEST_DOCUMENT);
+    assert!(
+        validation.report.valid,
+        "{:#?}",
+        validation.report.diagnostics
+    );
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
-        .add_message::<UiButtonEvent>()
+    app.insert_resource(UiTheme::default())
+        .insert_resource(UiMetrics::default())
+        .insert_resource(UiFontAssets::test_registry())
+        .init_resource::<UiFocusState>()
+        .init_resource::<UiViewport>()
+        .add_plugins(UiDocumentRuntimePlugin)
+        .add_message::<MyServerCommand>()
         .insert_resource(session)
         .init_resource::<MyServerConfig>()
         .init_resource::<MyServerProfiles>()
         .init_resource::<LoginUiState>()
-        .init_resource::<UiFocusState>()
-        .add_systems(Update, handle_server_environment_buttons);
+        .add_systems(
+            Update,
+            handle_login_document_actions.after(UiDocumentRuntimeSystems::Reconcile),
+        );
+    app.world_mut()
+        .write_message(UiDocumentRuntimeCommand::Open(UiDocumentOpenRequest {
+            request_id: UiDocumentRequestId(11),
+            document_id: crate::framework::ui::document::UiDocumentId::from_str(LOGIN_DOCUMENT_ID)
+                .unwrap(),
+            owner: OWNER_LOGIN.as_str().to_owned(),
+            source: UiDocumentOpenSource::Json(TEST_DOCUMENT.to_owned()),
+            origin: UiDocumentSourceOrigin::Fixture {
+                fixture_id: "auth_login_handler".to_owned(),
+            },
+            panel: UiDocumentPanel::Page,
+            layer: UiDocumentLayer::Page,
+            target_profile: UiTargetProfile::new(
+                390.0,
+                844.0,
+                UiSafeAreaClass::None,
+                UiDocumentInputMode::Touch,
+                UiDocumentPlatform::Android,
+            )
+            .unwrap(),
+            page_state: UiPageState::initial(),
+            owner_alive: true,
+            host_bindings: BTreeMap::new(),
+        }));
+    for _ in 0..3 {
+        app.update();
+    }
+    let runtime = app.world().resource::<UiDocumentRuntime>();
+    assert!(
+        runtime
+            .active_instance(
+                OWNER_LOGIN.as_str(),
+                &crate::framework::ui::document::UiDocumentId::from_str(LOGIN_DOCUMENT_ID).unwrap()
+            )
+            .is_some(),
+        "{:#?}",
+        runtime.record(UiDocumentRequestId(11))
+    );
     app
+}
+
+fn login_binding_test_app(session: MyServerSession, ui_state: LoginUiState) -> App {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<UiBindingValues>()
+        .init_resource::<MyServerProfiles>()
+        .init_resource::<AuthHostContracts>()
+        .insert_resource(session)
+        .insert_resource(ui_state)
+        .add_systems(Update, sync_login_document_bindings);
+    app
+}
+
+fn login_binding_value(app: &App, path: &str) -> UiBindingValue {
+    let path = UiBindingPath::from_str(path).unwrap();
+    let declaration = app
+        .world()
+        .resource::<AuthHostContracts>()
+        .login_bindings
+        .get(&path)
+        .unwrap();
+    app.world()
+        .resource::<UiBindingValues>()
+        .scoped_value(LOGIN_DOCUMENT_ID, OWNER_LOGIN.as_str(), &path, declaration)
+        .unwrap()
+}
+
+fn set_login_document_inputs(app: &mut App, account: &str, password: &str) {
+    let mut query = app.world_mut().query::<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>();
+    let mut account_found = false;
+    let mut password_found = false;
+    for (marker, mut value, is_sensitive) in query.iter_mut(app.world_mut()) {
+        match marker.node_id.as_str() {
+            LOGIN_ACCOUNT_NODE => {
+                assert!(!is_sensitive);
+                value.0 = account.to_owned();
+                account_found = true;
+            }
+            LOGIN_PASSWORD_NODE => {
+                assert!(is_sensitive);
+                value.0 = password.to_owned();
+                password_found = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(account_found && password_found);
+}
+
+fn login_document_instance(app: &App) -> crate::framework::ui::document::UiDocumentInstanceId {
+    app.world()
+        .resource::<UiDocumentRuntime>()
+        .active_instance(
+            OWNER_LOGIN.as_str(),
+            &crate::framework::ui::document::UiDocumentId::from_str(LOGIN_DOCUMENT_ID).unwrap(),
+        )
+        .unwrap()
+}
+
+fn active_login_input_entity(app: &App, node: &str) -> Entity {
+    app.world()
+        .resource::<UiDocumentRuntime>()
+        .node_entity(
+            login_document_instance(app),
+            &UiNodeId::from_str(node).unwrap(),
+        )
+        .unwrap()
+}
+
+fn active_login_input_value<'a>(app: &'a App, node: &str) -> &'a str {
+    &app.world()
+        .get::<UiTextInputValue>(active_login_input_entity(app, node))
+        .unwrap()
+        .0
+}
+
+fn assert_login_document_inputs_empty(app: &mut App) {
+    let mut query = app
+        .world_mut()
+        .query::<(&UiDocumentNodeMarker, &UiTextInputValue)>();
+    let values = query
+        .iter(app.world())
+        .filter(|(marker, _)| {
+            matches!(
+                marker.node_id.as_str(),
+                LOGIN_ACCOUNT_NODE | LOGIN_PASSWORD_NODE
+            )
+        })
+        .map(|(_, value)| value.0.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), 2);
+    assert!(values.into_iter().all(str::is_empty));
+}
+
+fn login_document_dispatch(
+    action: &str,
+    source: &str,
+    params: BTreeMap<String, UiActionValue>,
+) -> UiActionDispatch {
+    UiActionDispatch {
+        action: UiActionId::from_str(action).unwrap(),
+        document_id: crate::framework::ui::document::UiDocumentId::from_str(LOGIN_DOCUMENT_ID)
+            .unwrap(),
+        owner: OWNER_LOGIN.as_str().to_owned(),
+        source_node: crate::framework::ui::document::UiNodeId::from_str(source).unwrap(),
+        kind: UiRegisteredActionKind::BusinessCommand {
+            target: action.to_owned(),
+        },
+        params,
+    }
+}
+
+fn environment_value(environment: MyServerEnvironment) -> &'static str {
+    match environment {
+        MyServerEnvironment::Local => "local",
+        MyServerEnvironment::Production => "production",
+    }
 }
 
 fn auth_event_test_app() -> App {

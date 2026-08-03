@@ -1453,6 +1453,7 @@ fn drive_local_ui_audit(
                 runtime.plan.as_ref(),
                 current_capture_plan(&runtime),
                 screenshot_status,
+                readiness,
             );
             runtime.result = Some(UiAuditCaptureResult {
                 status: UiAuditRunStatus::Failed,
@@ -2431,6 +2432,7 @@ fn failure_detail(
     plan: Option<&UiAuditRunPlan>,
     capture: Option<&UiAuditCapturePlan>,
     screenshot_status: UiAuditScreenshotStatus,
+    readiness: UiAuditReadiness,
 ) -> Option<String> {
     match failure {
         UiAuditFailureKind::PanelNotReady => plan.map(|plan| {
@@ -2441,8 +2443,18 @@ fn failure_detail(
         }),
         UiAuditFailureKind::DocumentNotReady => plan.map(|plan| {
             format!(
-                "target owner '{}' did not finish declarative document construction before timeout",
-                plan.screen.owner
+                "target owner '{}' did not finish declarative document construction before timeout \
+                 (target_root={}, document_ready={}, locale_ready={}, theme_ready={}, \
+                 fonts_ready={}, images_ready={}, animations_ready={}, viewport_ready={})",
+                plan.screen.owner,
+                readiness.target_root.is_some(),
+                readiness.document_ready,
+                readiness.locale_ready,
+                readiness.theme_ready,
+                readiness.fonts_ready,
+                readiness.images_ready,
+                readiness.animations_ready,
+                readiness.viewport_ready,
             )
         }),
         UiAuditFailureKind::LocaleNotReady => plan.map(|plan| {

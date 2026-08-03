@@ -42,8 +42,8 @@ use crate::framework::ui::{
         UiButtonEvent, UiButtonEventKind, UiControlEvent, UiControlEventKind, UiControlFlags,
         UiControlId, UiControlKind, UiControlMeta, UiControlState, UiControlValue, UiDropdown,
         UiDropdownOption, UiImagePixelSize, UiImageSize, UiImageTextureSource, UiProgress,
-        UiScrollViewConfig, UiSlider, UiStepper, UiTextInput, UiTextInputMaxChars,
-        UiTextInputSubmitted, UiTextInputValue, UiTooltip, UiTooltipTone,
+        UiScrollViewConfig, UiSensitiveTextInput, UiSlider, UiStepper, UiTextInput,
+        UiTextInputMaxChars, UiTextInputSubmitted, UiTextInputValue, UiTooltip, UiTooltipTone,
         controls::{
             SelectionVisualState, UiBadgeLabel, UiButtonStyleLabel, UiDropdownLabel,
             UiNumericControlLabel, UiProgressLabel, UiSegmentOption, UiSegmentOptionSelected,
@@ -1810,6 +1810,7 @@ fn spawn_node_content(
         UiNode::TextInput {
             component,
             value,
+            security,
             max_chars,
             readonly,
             ..
@@ -1842,6 +1843,9 @@ fn spawn_node_content(
             }
             if *readonly {
                 world.entity_mut(entity).insert(ReadonlyTextInput);
+            }
+            if *security == super::UiTextInputSecurity::Sensitive {
+                world.entity_mut(entity).insert(UiSensitiveTextInput);
             }
             if let Some(content) = placeholder_content
                 && let Some(text_entity) = find_descendant_with::<UiTextInputText>(world, entity)
@@ -5524,7 +5528,10 @@ fn dispatch_document_actions(
     mut button_events: MessageReader<UiButtonEvent>,
     mut control_events: MessageReader<UiControlEvent>,
     mut submissions: MessageReader<UiTextInputSubmitted>,
-    changed_text_inputs: Query<(Entity, &UiTextInputValue), Changed<UiTextInputValue>>,
+    changed_text_inputs: Query<
+        (Entity, &UiTextInputValue, Has<UiSensitiveTextInput>),
+        Changed<UiTextInputValue>,
+    >,
     markers: Query<(Entity, &UiDocumentActionMarker)>,
     parents: Query<&ChildOf>,
     runtime: Res<UiDocumentRuntime>,
@@ -5575,7 +5582,10 @@ fn dispatch_document_actions(
             is_composing: event.is_composing,
         });
     }
-    for (entity, value) in &changed_text_inputs {
+    for (entity, value, is_sensitive) in &changed_text_inputs {
+        if is_sensitive {
+            continue;
+        }
         let Some((_, marker)) = action_marker_for_entity(entity, &markers, &parents) else {
             continue;
         };

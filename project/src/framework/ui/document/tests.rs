@@ -3,6 +3,40 @@ use bevy::prelude::*;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf, str::FromStr};
 
+#[test]
+fn sensitive_text_input_rejects_literal_binding_and_actions() {
+    let literal = UiDocument::validate_json(
+        r#"{"schema_version":1,"document_id":"security.literal","root":{"type":"text_input","id":"security.password","security":"sensitive","value":"must-not-serialize"}}"#,
+    );
+    assert!(
+        literal
+            .report
+            .has_code("UI_CONTROL_SENSITIVE_VALUE_FORBIDDEN")
+    );
+
+    let binding = UiDocument::validate_json(
+        r#"{"schema_version":1,"document_id":"security.binding","bindings":{"security.value":{"scope":"local","value_type":{"kind":"string"}}},"root":{"type":"text_input","id":"security.password","security":"sensitive","component":{"bindings":{"value":{"binding_path":"security.value","direction":"two_way"}}}}}"#,
+    );
+    assert!(
+        binding
+            .report
+            .has_code("UI_CONTROL_SENSITIVE_BINDING_FORBIDDEN")
+    );
+
+    let action = UiDocument::validate_json(
+        r#"{"schema_version":1,"document_id":"security.action","root":{"type":"text_input","id":"security.password","security":"sensitive","on_change":{"action":"security.changed"},"on_submit":{"action":"security.submit"}}}"#,
+    );
+    assert!(
+        action
+            .report
+            .diagnostics
+            .iter()
+            .filter(|item| item.code == "UI_CONTROL_SENSITIVE_ACTION_FORBIDDEN")
+            .count()
+            >= 2
+    );
+}
+
 const MINIMAL_DOCUMENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/ui/documents/fixtures/minimal_page.v1.json"

@@ -396,6 +396,8 @@ scope 只有以下四种，key 均由 runtime 构造而非 document 拼接：
 
 现有 Rust 页面使用的 `UiBindingValues` text/bool API 保持可用，并扩展 number、visibility、restricted enum、record/list 与 scoped typed 存储。Text content、visibility、display、disabled、loading、selected、progress/value 和 component variant 都只通过 closed field binding 单向更新。`TextInput`、`Checkbox`、`Toggle`、`Segmented`、`Slider`、`Stepper`、`Select` 和 `Tab` 的 `component.bindings.value` 可以明确选择 `one_way` 或 `two_way`；two-way 只把已验证的同类型值写回既有 scope，首次静态文档值不当作用户输入。缺失值使用 document default 或 consumer fallback；非法类型、范围、option、未 ready host 或非法 item key 使用稳定 `UI_BINDING_*` diagnostic，页面继续显示最后有效值或 fallback。绑定 path 不是 ECS query、反射路径或全局资源路径，不能读取 entity/component、账号安全字段或其他 document/owner 数据。
 
+`TextInput.security` 只允许 `plain`（默认）和 `sensitive`。敏感输入必须使用空的静态 `value`，不得声明 value binding、`on_change` 或 `on_submit`；违反任一项都会在静态验证阶段以 `UI_CONTROL_SENSITIVE_*` 拒绝。runtime 只在当前 ECS 输入组件中保留明文供闭合业务 host 读取，画面始终使用等字符数 `*` 掩码，并禁用复制。输入值、native IME state、submit message 和携带密码/ticket 的 MyServer command 的 `Debug` 输出均脱敏；敏感值不得进入 binding、action 参数、audit metadata、reload/cache、注册信息、序列化或 AI authoring 输入。
+
 binding format 仍是 `plain`、`number`、`percent` 和 `bytes` 四个 closed enum。协议没有模板、插值、脚本、条件表达式、任意字符串格式化或 JSON 求值；任意扩展必须先增加 Rust enum、schema、validator、fixture 和 host contract。
 
 静态验证只判断 document 内可证明的事实，包括声明/default 类型、enum allowlist、text format 类型和 local target。它不会假装知道宿主有哪些 owner/document binding。宿主在构建前必须用 `UiDocumentHostValidationContext` 显式提供当前 owner、owner 存活状态、外部 binding schema 和 `UiActionRegistry`；未知外部 path 或类型不一致均拒绝构建。
@@ -543,6 +545,6 @@ reload 在发送 `Open` 前完成 source 静态校验和 effective document 解�
 
 diff 以 validated/effective document 的稳定 node ID 为索引，不依赖 Entity 顺序或 Rust debug 字符串。ID、kind、parent 和 sibling order 不变且只有 layout/style 变化时归为 `in_place`；内容、控件语义、增删/移动节点归为 `rebuild_subtrees`；schema/root、asset/token/style/binding table 或 metadata 变化归为 `rebuild_page`。当前所有实际变更仍采用事务 replace，分类作为安全迁移和审核协议，不授予局部更新绕过完整校验的能力。
 
-状态只在同 document/owner 的新 instance 上按相同 node ID 和 kind 恢复。当前允许 focus、TextInput value/cursor/selection、ScrollPosition、Slider、Stepper、Select、Checkbox、Toggle、Segmented 和 Tab；长度、范围、option、Tab value 或 focusability 不兼容时拒绝并记录稳定 reason。IME composition/native keyboard session 不迁移，并作为独立失败 decision 报告。local binding 继续遵循 runtime replace 的既有保留语义，任何状态都不能跨 owner/document 迁移。
+状态只在同 document/owner 的新 instance 上按相同 node ID 和 kind 恢复。当前允许 focus、普通 TextInput value/cursor/selection、ScrollPosition、Slider、Stepper、Select、Checkbox、Toggle、Segmented 和 Tab；敏感 TextInput 的值、光标和 selection 不进入 snapshot，report 只记录 `sensitive_value_not_migrated`。长度、范围、option、Tab value 或 focusability 不兼容时拒绝并记录稳定 reason。IME composition/native keyboard session 不迁移，并作为独立失败 decision 报告。local binding 继续遵循 runtime replace 的既有保留语义，任何状态都不能跨 owner/document 迁移。
 
 每个协议节点的 F3/audit metadata 包含 document ID、schema version、node ID、JSON field path、安全逻辑 source path 和完整 effective style。每次 preview 注册按 `(document_id, owner)` 自动生成 document audit recipe 元数据；直接 Stage 10 `Open` 不生成 recipe，实际路由仍由 game 层注册。完整批准示例是 `assets/ui/documents/approved/gallery/declarative_gallery.v1.json`，游戏入口是 `ui_document_gallery`。实现、命令、迁移和人工 Rust 页面协作边界详见 `docs/ui/UI声明式预览与热更新.md`。

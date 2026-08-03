@@ -162,6 +162,8 @@ pub enum UiNode {
         #[serde(default)]
         value: String,
         #[serde(default)]
+        security: UiTextInputSecurity,
+        #[serde(default)]
         max_chars: Option<u32>,
         #[serde(default)]
         readonly: bool,
@@ -482,6 +484,15 @@ fn default_stepper_step() -> i32 {
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiTextInputSecurity {
+    #[default]
+    Plain,
+    Sensitive,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

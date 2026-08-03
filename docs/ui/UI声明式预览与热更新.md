@@ -57,12 +57,12 @@ release、Android 和未设置环境变量的开发启动不会监控本地路�
 reload 发出前按旧 instance 的稳定 node ID 快照，commit 后只向同 document/owner 的新 instance 恢复。当前支持：
 
 - 可聚焦协议控件的焦点。
-- TextInput 值、UTF-8 边界安全的光标和 selection。
+- 普通 TextInput 值、UTF-8 边界安全的光标和 selection；`security: sensitive` 的输入不快照、不迁移。
 - ScrollPosition。
 - Slider、Stepper 和 Select 当前值。
 - Checkbox、Toggle、Segmented 和 Tab 选择状态。
 
-新节点必须 ID 和 kind 一致，且输入长度、数值范围、Select/Segmented option、Tab value、Focusable marker 等约束仍兼容。缺失、改 kind、max chars 收紧、越界、option 删除或 Tab value 变化会拒绝迁移，并在 `state_decisions` 写入稳定 reason。IME composition 和 native keyboard session 不迁移，并作为独立的 `preserved=false` decision 明确报告，不能被 TextInput 值迁移的成功结果掩盖。状态不会跨 owner、document 或旧 instance 泄漏；local binding 继续由 runtime replace 语义保留。
+新节点必须 ID 和 kind 一致，且输入长度、数值范围、Select/Segmented option、Tab value、Focusable marker 等约束仍兼容。缺失、改 kind、max chars 收紧、越界、option 删除或 Tab value 变化会拒绝迁移，并在 `state_decisions` 写入稳定 reason。敏感 TextInput 只写入 `sensitive_value_not_migrated` 决定，report 不包含实际值；IME composition 和 native keyboard session 也不迁移，并作为独立的 `preserved=false` decision 明确报告。状态不会跨 owner、document 或旧 instance 泄漏；local binding 继续由 runtime replace 语义保留。
 
 ## F3、audit 与 Gallery
 
@@ -109,7 +109,7 @@ standalone 进程等待 runtime commit、文档声明图片/字体就绪、稳�
 
 - diff 已冻结分类和测试，但实际 ECS commit 仍采用整页事务 replace，没有开放局部实体 patch API。
 - watch 使用文件 metadata 变化检测，面向单进程开发预览，不是跨进程编辑协议或生产内容分发机制。
-- TextInput 当前保留值、焦点、光标和 selection；IME composition 与 native keyboard session 不迁移，但会在 reload report 中单独记录拒绝原因。
+- 普通 TextInput 当前保留值、焦点、光标和 selection；敏感 TextInput 不迁移值，IME composition 与 native keyboard session 也不迁移，reload report 只记录稳定拒绝原因而不记录输入内容。
 - Scroll offset 在 commit 时先恢复非负有限值，后续 Bevy layout 会按新内容范围约束；结构显著缩短时应结合 report 和截图复核。
 - 自动 recipe registry 是 framework 元数据；实际 audit screen 的可路由性仍由游戏层注册。
 - 正式 preview plugin 没有参考图分析、模型 provider、生成/修复或草稿晋升能力；独立工具只能以 feature-gated 外部 producer 身份复用 preview。

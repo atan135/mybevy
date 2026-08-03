@@ -1,0 +1,56 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": [
+    "desktop",
+    "phone-landscape",
+    "phone-1080p-landscape",
+    "tablet-landscape"
+  ],
+  "document_id": "auth.login",
+  "host_contract": {
+    "actions": [
+      {
+        "id": "auth.account_login",
+        "sources": ["login.submit"]
+      },
+      {
+        "id": "auth.guest_login",
+        "sources": ["login.guest"]
+      },
+      {
+        "id": "auth.switch_environment",
+        "sources": ["login.environment"]
+      }
+    ],
+    "bindings": [
+      { "path": "auth.account.player_id", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.login.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.login.environment", "scope": "owner", "value_type": { "kind": "enum", "values": ["local", "production"] } },
+      { "path": "auth.login.environment_locked", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.login.error_detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.login.error_title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.login.error_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "auth.login.notice_detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.login.notice_title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.login.notice_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "auth.login.request_pending", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.login.status", "scope": "owner", "value_type": { "kind": "string" } }
+    ],
+    "resources": ["login_background"],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "login",
+  "page_state": "initial",
+  "panel": "page",
+  "protocol_version": 2,
+  "route": "login",
+  "source": {
+    "relative_path": "auth/login.v1.json",
+    "root": "approved"
+  },
+  "template_version": 2,
+  "theme_tokens": []
+}

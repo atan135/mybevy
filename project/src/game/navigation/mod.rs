@@ -388,6 +388,9 @@ fn handle_game_route_commands(
         match command {
             GameRouteCommand::ChangeMode(mode) => {
                 let previous_owner = current_owner.owner.unwrap_or(current_mode.get().ui_owner());
+                if mode == current_mode.get() && previous_owner == mode.ui_owner() {
+                    continue;
+                }
                 binding_values.clear_owner(previous_owner.as_str());
                 panel_commands.write(UiPanelCommand::CloseAllForOwner(previous_owner));
                 runtime_commands.write(UiDocumentRuntimeCommand::SwitchOwner {
@@ -448,7 +451,7 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
             ));
         } else if matches!(
             mode,
-            AppUiMode::UiDocumentGallery | AppUiMode::UiGeneratedAcceptance
+            AppUiMode::Login | AppUiMode::UiDocumentGallery | AppUiMode::UiGeneratedAcceptance
         ) {
             registry.register_recipe(UiAuditScreenRecipe::new(
                 screen.with_recipe(
@@ -616,7 +619,45 @@ mod tests {
         OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
         OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE, OWNER_UI_GENERATED_ACCEPTANCE,
     };
+    use bevy::{ecs::message::MessageCursor, state::app::StatesPlugin};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn same_mode_and_owner_route_is_idempotent() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, StatesPlugin))
+            .init_state::<AppUiMode>()
+            .init_resource::<UiCurrentOwner>()
+            .init_resource::<UiBindingValues>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<UiPanelCommand>()
+            .add_message::<UiDocumentRuntimeCommand>()
+            .add_systems(Update, handle_game_route_commands);
+        app.update();
+
+        app.world_mut()
+            .write_message(GameRouteCommand::ChangeMode(AppUiMode::Login));
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<UiCurrentOwner>().owner,
+            Some(OWNER_LOGIN)
+        );
+        let mut panel_cursor = MessageCursor::<UiPanelCommand>::default();
+        assert_eq!(
+            panel_cursor
+                .read(app.world().resource::<Messages<UiPanelCommand>>())
+                .count(),
+            0
+        );
+        let mut runtime_cursor = MessageCursor::<UiDocumentRuntimeCommand>::default();
+        assert_eq!(
+            runtime_cursor
+                .read(app.world().resource::<Messages<UiDocumentRuntimeCommand>>(),)
+                .count(),
+            0
+        );
+    }
 
     #[test]
     fn audio_settings_mode_uses_dedicated_owner() {

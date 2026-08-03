@@ -3475,6 +3475,10 @@
               "default": false,
               "type": "boolean"
             },
+            "security": {
+              "$ref": "#/$defs/UiTextInputSecurity",
+              "default": "plain"
+            },
             "style": {
               "$ref": "#/$defs/UiStyle",
               "default": {
@@ -6118,6 +6122,13 @@
           "type": "object"
         }
       ]
+    },
+    "UiTextInputSecurity": {
+      "enum": [
+        "plain",
+        "sensitive"
+      ],
+      "type": "string"
     },
     "UiTextLineHeight": {
       "oneOf": [

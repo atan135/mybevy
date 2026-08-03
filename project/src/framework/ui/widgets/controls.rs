@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt};
 
 use accesskit::{Node as AccessKitNode, Role as AccessKitRole};
 use bevy::{
@@ -49,7 +49,7 @@ pub(crate) use text_input::*;
 #[cfg(test)]
 mod tests {
     use accesskit::Role;
-    use bevy::asset::AssetPlugin;
+    use bevy::{asset::AssetPlugin, ecs::message::MessageCursor};
 
     use super::*;
     use crate::framework::ui::core::UiCurrentOwner;
@@ -225,6 +225,106 @@ mod tests {
                 tail: "d".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn sensitive_text_input_masks_display_and_redacts_all_debug_carriers() {
+        const SENTINEL: &str = "stage11-sensitive-debug-sentinel";
+        let cursor = UiTextInputCursor {
+            position: SENTINEL.len(),
+            selection: None,
+        };
+        let segments = sensitive_text_input_segments(SENTINEL, &cursor);
+        assert_eq!(segments.display.plain, "*".repeat(SENTINEL.chars().count()));
+        assert!(!segments.display.plain.contains(SENTINEL));
+
+        let value = UiTextInputValue(SENTINEL.to_owned());
+        let native = UiTextInputNativeState {
+            text: SENTINEL.to_owned(),
+            selection_start: 0,
+            selection_end: SENTINEL.len(),
+        };
+        let submission = UiTextInputSubmitted {
+            entity: Entity::PLACEHOLDER,
+            value: SENTINEL.to_owned(),
+            is_composing: false,
+        };
+        for debug in [
+            format!("{value:?}"),
+            format!("{native:?}"),
+            format!("{submission:?}"),
+        ] {
+            assert!(!debug.contains(SENTINEL));
+            assert!(debug.contains("[REDACTED]"));
+        }
+    }
+
+    #[test]
+    fn sensitive_enter_is_swallowed_while_plain_input_still_submits() {
+        const SENTINEL: &str = "stage11-sensitive-submit-sentinel";
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_message::<KeyboardInput>()
+            .add_message::<UiTextInputSubmitted>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<UiFocusState>()
+            .init_resource::<UiTextInputDiagnostics>()
+            .init_resource::<UiTextInputClipboard>()
+            .add_systems(Update, handle_text_input_keyboard);
+        let sensitive = app
+            .world_mut()
+            .spawn((
+                UiTextInput,
+                UiTextInputValue(SENTINEL.to_owned()),
+                cursor(SENTINEL.len()),
+                UiSensitiveTextInput,
+            ))
+            .id();
+        let plain = app
+            .world_mut()
+            .spawn((
+                UiTextInput,
+                UiTextInputValue("plain-value".to_owned()),
+                cursor("plain-value".len()),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<UiFocusState>()
+            .focused_entity = Some(sensitive);
+        app.world_mut().write_message(enter_keyboard_input());
+        app.update();
+        let mut cursor = MessageCursor::<UiTextInputSubmitted>::default();
+        assert_eq!(
+            cursor
+                .read(app.world().resource::<Messages<UiTextInputSubmitted>>())
+                .count(),
+            0
+        );
+
+        app.world_mut()
+            .resource_mut::<UiFocusState>()
+            .focused_entity = Some(plain);
+        app.world_mut().write_message(enter_keyboard_input());
+        app.update();
+        let submissions = cursor
+            .read(app.world().resource::<Messages<UiTextInputSubmitted>>())
+            .collect::<Vec<_>>();
+        assert_eq!(submissions.len(), 1);
+        assert_eq!(submissions[0].entity, plain);
+        assert_eq!(submissions[0].value, "plain-value");
+        assert!(!format!("{submissions:?}").contains(SENTINEL));
+    }
+
+    fn enter_keyboard_input() -> KeyboardInput {
+        KeyboardInput {
+            key_code: KeyCode::Enter,
+            logical_key: Key::Enter,
+            state: bevy::input::ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        }
     }
 
     #[test]

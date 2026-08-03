@@ -8,17 +8,23 @@ use bevy::prelude::*;
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 use crate::framework::ui::audit::UiAuditConfig;
 use crate::framework::ui::{
-    core::focus::UiFocusState,
+    core::{binding::UiBindingValues, focus::UiFocusState},
     document::{
-        UiActionDescriptor, UiActionId, UiActionParamSchema, UiActionParamType, UiActionRegistry,
-        UiBindingDeclaration, UiBindingMissingBehavior, UiBindingPath, UiBindingScope,
-        UiBindingType, UiDocumentId, UiNodeId, UiRegisteredActionKind,
+        UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema, UiActionParamType,
+        UiActionRegistry, UiActionValue, UiBindingDeclaration, UiBindingMissingBehavior,
+        UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue, UiBindingVisibility,
+        UiDocumentId, UiDocumentLayer, UiDocumentNodeMarker, UiDocumentPanel, UiDocumentRuntime,
+        UiHostBindingKey, UiNodeId, UiPageState, UiRegisteredActionKind,
     },
-    widgets::{UiButtonEvent, UiButtonEventKind, UiTextInputValue},
+    widgets::{UiButtonEvent, UiButtonEventKind, UiSensitiveTextInput, UiTextInputValue},
 };
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 use crate::game::myserver::{AccountLoginState, CharacterSelectionState, CharacterSummary};
 use crate::game::{
+    declarative_screen::{
+        DeclarativeScreenFailurePolicy, DeclarativeScreenHost, DeclarativeScreenRegistry,
+        DeclarativeScreenSource,
+    },
     myserver::{MyServerCommand, MyServerConfig, MyServerEvent, MyServerProfiles, MyServerSession},
     navigation::{AppUiMode, GameRouteCommand},
     ui_ids::{OWNER_CHARACTER_SELECT, OWNER_LOGIN, PANEL_CHARACTER_SELECT, PANEL_LOGIN},
@@ -28,6 +34,11 @@ use super::model::*;
 
 pub(super) const LOGIN_DOCUMENT_ID: &str = "auth.login";
 pub(super) const CHARACTER_SELECT_DOCUMENT_ID: &str = "auth.character_select";
+pub(super) const LOGIN_DOCUMENT_SOURCE: &str =
+    include_str!("../../../../assets/ui/documents/approved/auth/login.v1.json");
+pub(super) const LOGIN_DOCUMENT_SOURCE_PATH: &str = "auth/login.v1.json";
+pub(super) const LOGIN_ACCOUNT_NODE: &str = "login.account";
+pub(super) const LOGIN_PASSWORD_NODE: &str = "login.password";
 
 pub(super) const ACTION_ACCOUNT_LOGIN: &str = "auth.account_login";
 pub(super) const ACTION_GUEST_LOGIN: &str = "auth.guest_login";
@@ -41,6 +52,7 @@ pub(super) const ACTION_SWITCH_CHARACTER: &str = "auth.switch_character";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AuthActionSource {
     RustView,
+    UiDocument,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,7 +68,7 @@ pub(super) const LOGIN_PAGE_BASELINE: AuthPageBaseline = AuthPageBaseline {
     mode: AppUiMode::Login,
     owner: OWNER_LOGIN,
     panel: PANEL_LOGIN,
-    action_source: AuthActionSource::RustView,
+    action_source: AuthActionSource::UiDocument,
     states: &[
         "not_logged_in",
         "logging_in",
@@ -114,11 +126,6 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::String,
         ),
         (
-            "auth.login.password",
-            UiBindingScope::Local,
-            UiBindingType::String,
-        ),
-        (
             "auth.account.player_id",
             UiBindingScope::Owner,
             UiBindingType::String,
@@ -127,6 +134,21 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             "auth.login.status",
             UiBindingScope::Owner,
             UiBindingType::String,
+        ),
+        (
+            "auth.login.error_title",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.login.error_detail",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.login.error_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
         ),
         (
             "auth.login.notice_title",
@@ -139,7 +161,22 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::String,
         ),
         (
+            "auth.login.notice_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
             "auth.login.request_pending",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.login.disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.login.environment_locked",
             UiBindingScope::Owner,
             UiBindingType::Bool,
         ),
@@ -230,6 +267,7 @@ fn binding_schema<const N: usize>(
 pub(super) fn register_auth_contracts(
     contracts: Res<AuthHostContracts>,
     mut registry: ResMut<UiActionRegistry>,
+    mut screens: ResMut<DeclarativeScreenRegistry>,
 ) {
     debug_assert_eq!(contracts.login_page.owner, OWNER_LOGIN);
     debug_assert_eq!(
@@ -243,6 +281,63 @@ pub(super) fn register_auth_contracts(
             .register(descriptor)
             .expect("Auth action registration must be valid and unique");
     }
+    screens
+        .register(login_declarative_screen_host(&contracts))
+        .expect("Login declarative screen registration must be valid and unique");
+}
+
+pub(super) fn login_declarative_screen_host(
+    contracts: &AuthHostContracts,
+) -> DeclarativeScreenHost {
+    let binding_schema = contracts
+        .login_bindings
+        .iter()
+        .filter(|(_, declaration)| {
+            matches!(
+                declaration.scope,
+                UiBindingScope::Document | UiBindingScope::Owner
+            )
+        })
+        .map(|(path, declaration)| {
+            (
+                UiHostBindingKey::new(declaration.scope, path.clone()),
+                declaration.value_type.clone(),
+            )
+        })
+        .collect();
+    let source =
+        DeclarativeScreenSource::approved(LOGIN_DOCUMENT_SOURCE_PATH, LOGIN_DOCUMENT_SOURCE);
+    DeclarativeScreenHost {
+        document_id: UiDocumentId::from_str(LOGIN_DOCUMENT_ID)
+            .expect("Login document ID is static and valid"),
+        route: "login",
+        route_aliases: &["login"],
+        mode: Some(AppUiMode::Login),
+        owner: OWNER_LOGIN,
+        panel: UiDocumentPanel::Page,
+        layer: UiDocumentLayer::Page,
+        initial_state: UiPageState::initial(),
+        binding_schema,
+        action_allowlist: [
+            ACTION_ACCOUNT_LOGIN,
+            ACTION_GUEST_LOGIN,
+            ACTION_SWITCH_ENVIRONMENT,
+        ]
+        .into_iter()
+        .map(|action| UiActionId::from_str(action).expect("Login action IDs are static and valid"))
+        .collect(),
+        audit_profiles: [
+            "desktop",
+            "phone-landscape",
+            "phone-1080p-landscape",
+            "tablet-landscape",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+        source: source.clone(),
+        fallback_source: Some(source),
+        failure_policy: DeclarativeScreenFailurePolicy::PackagedFallback,
+    }
 }
 
 pub(super) fn auth_action_descriptors() -> Vec<UiActionDescriptor> {
@@ -252,14 +347,6 @@ pub(super) fn auth_action_descriptors() -> Vec<UiActionDescriptor> {
             LOGIN_DOCUMENT_ID,
             OWNER_LOGIN.as_str(),
             "login.submit",
-        )
-        .with_param(
-            "login_name",
-            UiActionParamSchema::required(UiActionParamType::String { max_bytes: 256 }),
-        )
-        .with_param(
-            "password",
-            UiActionParamSchema::required(UiActionParamType::String { max_bytes: 4096 }),
         ),
         business_action(
             ACTION_GUEST_LOGIN,
@@ -394,22 +481,7 @@ fn audit_character(
 }
 
 #[derive(Component)]
-pub(super) struct LoginNameInput;
-
-#[derive(Component)]
-pub(super) struct PasswordInput;
-
-#[derive(Component)]
 pub(super) struct CharacterNameInput;
-
-#[derive(Component)]
-pub(super) struct AccountLoginButton;
-
-#[derive(Component)]
-pub(super) struct GuestLoginButton;
-
-#[derive(Clone, Copy, Debug, Component)]
-pub(super) struct ServerEnvironmentButton(pub(super) crate::game::myserver::MyServerEnvironment);
 
 #[derive(Component)]
 pub(super) struct LoadCharactersButton;
@@ -446,17 +518,298 @@ impl LoginUiState {
     }
 }
 
-pub(super) fn handle_login_buttons(
-    mut myserver_commands: MessageWriter<MyServerCommand>,
+pub(super) fn handle_login_document_actions(
+    mut actions: MessageReader<UiActionDispatch>,
+    runtime: Res<UiDocumentRuntime>,
+    mut input_values: Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
+    mut config: ResMut<MyServerConfig>,
+    mut profiles: ResMut<MyServerProfiles>,
     mut session: ResMut<MyServerSession>,
     mut ui_state: ResMut<LoginUiState>,
-    mut input_values: ParamSet<(
-        Query<&mut UiTextInputValue, With<LoginNameInput>>,
-        Query<&mut UiTextInputValue, With<PasswordInput>>,
-        Query<&mut UiTextInputValue, With<CharacterNameInput>>,
+    mut focus_state: ResMut<UiFocusState>,
+    mut myserver_commands: MessageWriter<MyServerCommand>,
+) {
+    let Some(instance_id) = runtime.active_instance(
+        OWNER_LOGIN.as_str(),
+        &UiDocumentId::from_str(LOGIN_DOCUMENT_ID).expect("Login document ID is static and valid"),
+    ) else {
+        for _ in actions.read() {}
+        return;
+    };
+    let mut login_request_sent = false;
+
+    for action in actions.read() {
+        if !is_login_business_action(action) {
+            continue;
+        }
+
+        match action.action.as_str() {
+            ACTION_ACCOUNT_LOGIN
+                if action.source_node.as_str() == "login.submit" && action.params.is_empty() =>
+            {
+                if login_request_sent || login_request_pending(&session) {
+                    continue;
+                }
+                let Some((login_name, password)) =
+                    document_login_credentials(instance_id, &runtime, &mut input_values)
+                else {
+                    continue;
+                };
+                if login_name.is_empty() || password.is_empty() {
+                    continue;
+                }
+                login_request_sent = true;
+                session.begin_login();
+                ui_state.last_error = None;
+                ui_state.notice = None;
+                myserver_commands.write(MyServerCommand::Login {
+                    login_name,
+                    password,
+                    connect_game: false,
+                });
+            }
+            ACTION_GUEST_LOGIN
+                if action.source_node.as_str() == "login.guest" && action.params.is_empty() =>
+            {
+                if login_request_sent || login_request_pending(&session) {
+                    continue;
+                }
+                login_request_sent = true;
+                session.begin_login();
+                ui_state.last_error = None;
+                ui_state.notice = None;
+                myserver_commands.write(MyServerCommand::GuestLogin {
+                    guest_id: None,
+                    connect_game: false,
+                });
+            }
+            ACTION_SWITCH_ENVIRONMENT if action.source_node.as_str() == "login.environment" => {
+                let Some(environment) = login_environment_param(action) else {
+                    continue;
+                };
+                if environment == profiles.selected()
+                    || !profiles.try_activate(environment, config.as_mut(), session.as_mut())
+                {
+                    continue;
+                }
+                clear_login_document_inputs(instance_id, &runtime, &mut input_values);
+                focus_state.focused_entity = None;
+                ui_state.clear_runtime_state();
+                info!(?environment, "MyServer login environment selected");
+            }
+            _ => {}
+        }
+    }
+}
+
+fn is_login_business_action(action: &UiActionDispatch) -> bool {
+    action.document_id.as_str() == LOGIN_DOCUMENT_ID
+        && action.owner == OWNER_LOGIN.as_str()
+        && matches!(
+            &action.kind,
+            UiRegisteredActionKind::BusinessCommand { target }
+                if target == action.action.as_str()
+        )
+}
+
+fn login_environment_param(
+    action: &UiActionDispatch,
+) -> Option<crate::game::myserver::MyServerEnvironment> {
+    if action.params.len() != 1 {
+        return None;
+    }
+    match action.params.get("environment") {
+        Some(UiActionValue::Enum(value)) if value == "local" => {
+            Some(crate::game::myserver::MyServerEnvironment::Local)
+        }
+        Some(UiActionValue::Enum(value)) if value == "production" => {
+            Some(crate::game::myserver::MyServerEnvironment::Production)
+        }
+        _ => None,
+    }
+}
+
+fn document_login_credentials(
+    instance_id: crate::framework::ui::document::UiDocumentInstanceId,
+    runtime: &UiDocumentRuntime,
+    input_values: &mut Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
     )>,
-    login_buttons: Query<(), With<AccountLoginButton>>,
-    guest_buttons: Query<(), With<GuestLoginButton>>,
+) -> Option<(String, String)> {
+    let account_id = UiNodeId::from_str(LOGIN_ACCOUNT_NODE).ok()?;
+    let password_id = UiNodeId::from_str(LOGIN_PASSWORD_NODE).ok()?;
+    let account_entity = runtime.node_entity(instance_id, &account_id)?;
+    let password_entity = runtime.node_entity(instance_id, &password_id)?;
+
+    let login_name = {
+        let (marker, value, is_sensitive) = input_values.get_mut(account_entity).ok()?;
+        if marker.instance_id != instance_id || marker.node_id != account_id || is_sensitive {
+            return None;
+        }
+        value.0.trim().to_owned()
+    };
+    let password = {
+        let (marker, value, is_sensitive) = input_values.get_mut(password_entity).ok()?;
+        if marker.instance_id != instance_id || marker.node_id != password_id || !is_sensitive {
+            return None;
+        }
+        value.0.trim().to_owned()
+    };
+    Some((login_name, password))
+}
+
+fn clear_login_document_inputs(
+    instance_id: crate::framework::ui::document::UiDocumentInstanceId,
+    runtime: &UiDocumentRuntime,
+    input_values: &mut Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
+) {
+    for (node, expected_sensitive) in [(LOGIN_ACCOUNT_NODE, false), (LOGIN_PASSWORD_NODE, true)] {
+        let Ok(node_id) = UiNodeId::from_str(node) else {
+            continue;
+        };
+        let Some(entity) = runtime.node_entity(instance_id, &node_id) else {
+            continue;
+        };
+        let Ok((marker, mut value, is_sensitive)) = input_values.get_mut(entity) else {
+            continue;
+        };
+        if marker.instance_id == instance_id
+            && marker.node_id == node_id
+            && is_sensitive == expected_sensitive
+        {
+            value.0.clear();
+        }
+    }
+}
+
+pub(super) fn sync_login_document_bindings(
+    session: Res<MyServerSession>,
+    profiles: Res<MyServerProfiles>,
+    mut ui_state: ResMut<LoginUiState>,
+    contracts: Res<AuthHostContracts>,
+    mut binding_values: ResMut<UiBindingValues>,
+) {
+    let snapshot = LoginUiSnapshot::from_session(
+        &session,
+        ui_state.last_error.as_ref(),
+        ui_state.notice.as_ref(),
+    );
+    let error_title = snapshot
+        .last_error
+        .as_ref()
+        .map(auth_error_title)
+        .unwrap_or_default();
+    let error_detail = snapshot
+        .last_error
+        .as_ref()
+        .and_then(auth_error_detail)
+        .unwrap_or_default();
+    let notice_title = snapshot
+        .notice
+        .as_ref()
+        .map(|notice| notice.title.clone())
+        .unwrap_or_default();
+    let notice_detail = snapshot
+        .notice
+        .as_ref()
+        .and_then(|notice| notice.detail.clone())
+        .unwrap_or_default();
+    let request_pending = login_request_pending(&session);
+    let disabled = request_pending
+        || session.account_login_state == crate::game::myserver::AccountLoginState::LoggedIn;
+
+    for (path, value) in [
+        (
+            "auth.account.player_id",
+            UiBindingValue::String(snapshot.player_id.clone().unwrap_or_default()),
+        ),
+        (
+            "auth.login.status",
+            UiBindingValue::String(login_status_text(&snapshot)),
+        ),
+        (
+            "auth.login.error_title",
+            UiBindingValue::String(error_title),
+        ),
+        (
+            "auth.login.error_detail",
+            UiBindingValue::String(error_detail),
+        ),
+        (
+            "auth.login.error_visibility",
+            UiBindingValue::Visibility(if snapshot.last_error.is_some() {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "auth.login.notice_title",
+            UiBindingValue::String(notice_title),
+        ),
+        (
+            "auth.login.notice_detail",
+            UiBindingValue::String(notice_detail),
+        ),
+        (
+            "auth.login.notice_visibility",
+            UiBindingValue::Visibility(if snapshot.notice.is_some() {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "auth.login.request_pending",
+            UiBindingValue::Bool(request_pending),
+        ),
+        ("auth.login.disabled", UiBindingValue::Bool(disabled)),
+        (
+            "auth.login.environment_locked",
+            UiBindingValue::Bool(MyServerProfiles::selection_locked(&session)),
+        ),
+        (
+            "auth.login.environment",
+            UiBindingValue::Enum(
+                match profiles.selected() {
+                    crate::game::myserver::MyServerEnvironment::Local => "local",
+                    crate::game::myserver::MyServerEnvironment::Production => "production",
+                }
+                .to_owned(),
+            ),
+        ),
+    ] {
+        let path = UiBindingPath::from_str(path).expect("Login binding paths are static and valid");
+        let declaration = contracts
+            .login_bindings
+            .get(&path)
+            .expect("Login binding schema contains every synchronized value");
+        binding_values.set_scoped(
+            LOGIN_DOCUMENT_ID,
+            OWNER_LOGIN.as_str(),
+            &path,
+            declaration,
+            value,
+        );
+    }
+    ui_state.rendered = Some(snapshot);
+}
+
+pub(super) fn handle_character_select_buttons(
+    mut myserver_commands: MessageWriter<MyServerCommand>,
+    session: Res<MyServerSession>,
+    mut ui_state: ResMut<LoginUiState>,
+    mut input_values: Query<&mut UiTextInputValue, With<CharacterNameInput>>,
     load_buttons: Query<(), With<LoadCharactersButton>>,
     create_buttons: Query<(), With<CreateCharacterButton>>,
     switch_account_buttons: Query<(), With<SwitchAccountButton>>,
@@ -464,7 +817,6 @@ pub(super) fn handle_login_buttons(
     select_buttons: Query<&SelectCharacterButton>,
     mut button_events: MessageReader<UiButtonEvent>,
 ) {
-    let mut login_request_sent = false;
     let mut character_request_sent = false;
 
     for event in button_events.read() {
@@ -472,37 +824,7 @@ pub(super) fn handle_login_buttons(
             continue;
         }
 
-        if login_buttons.contains(event.entity) {
-            if login_request_sent || login_request_pending(&session) {
-                continue;
-            }
-            let login_name = text_input_value(&input_values.p0());
-            let password = text_input_value(&input_values.p1());
-            if login_name.is_empty() || password.is_empty() {
-                continue;
-            }
-            login_request_sent = true;
-            session.begin_login();
-            ui_state.last_error = None;
-            ui_state.notice = None;
-            myserver_commands.write(MyServerCommand::Login {
-                login_name,
-                password,
-                connect_game: false,
-            });
-        } else if guest_buttons.contains(event.entity) {
-            if login_request_sent || login_request_pending(&session) {
-                continue;
-            }
-            login_request_sent = true;
-            session.begin_login();
-            ui_state.last_error = None;
-            ui_state.notice = None;
-            myserver_commands.write(MyServerCommand::GuestLogin {
-                guest_id: None,
-                connect_game: false,
-            });
-        } else if load_buttons.contains(event.entity) {
+        if load_buttons.contains(event.entity) {
             if character_request_sent || !can_send_character_request(&session) {
                 continue;
             }
@@ -514,7 +836,7 @@ pub(super) fn handle_login_buttons(
             if character_request_sent || !can_send_character_request(&session) {
                 continue;
             }
-            let name = text_input_value(&input_values.p2());
+            let name = text_input_value(&input_values);
             if name.is_empty() {
                 continue;
             }
@@ -529,9 +851,7 @@ pub(super) fn handle_login_buttons(
             if login_request_pending(&session) {
                 continue;
             }
-            clear_text_input_values(&mut input_values.p0());
-            clear_text_input_values(&mut input_values.p1());
-            clear_text_input_values(&mut input_values.p2());
+            clear_text_input_values(&mut input_values);
             ui_state.clear_runtime_state();
             myserver_commands.write(MyServerCommand::Logout);
         } else if change_character_buttons.contains(event.entity) {
@@ -539,7 +859,7 @@ pub(super) fn handle_login_buttons(
                 continue;
             }
             character_request_sent = true;
-            clear_text_input_values(&mut input_values.p2());
+            clear_text_input_values(&mut input_values);
             ui_state.last_error = None;
             ui_state.notice = None;
             myserver_commands.write(MyServerCommand::SwitchCharacter);
@@ -558,52 +878,13 @@ pub(super) fn handle_login_buttons(
     }
 }
 
-pub(super) fn handle_server_environment_buttons(
-    mut config: ResMut<MyServerConfig>,
-    mut profiles: ResMut<MyServerProfiles>,
-    mut session: ResMut<MyServerSession>,
-    mut ui_state: ResMut<LoginUiState>,
-    mut focus_state: ResMut<UiFocusState>,
-    mut input_values: ParamSet<(
-        Query<&mut UiTextInputValue, With<LoginNameInput>>,
-        Query<&mut UiTextInputValue, With<PasswordInput>>,
-        Query<&mut UiTextInputValue, With<CharacterNameInput>>,
-    )>,
-    environment_buttons: Query<&ServerEnvironmentButton>,
-    mut button_events: MessageReader<UiButtonEvent>,
-) {
-    for event in button_events.read() {
-        if event.kind != UiButtonEventKind::Click {
-            continue;
-        }
-        let Ok(button) = environment_buttons.get(event.entity) else {
-            continue;
-        };
-        if button.0 == profiles.selected() {
-            continue;
-        }
-        if !profiles.try_activate(button.0, config.as_mut(), session.as_mut()) {
-            continue;
-        }
-
-        clear_all_text_input_values(&mut input_values);
-        focus_state.focused_entity = None;
-        ui_state.clear_runtime_state();
-        info!(environment = ?button.0, "MyServer login environment selected");
-    }
-}
-
 pub(super) fn follow_myserver_login_events(
     mut events: MessageReader<MyServerEvent>,
     mut commands: MessageWriter<MyServerCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
     mut ui_state: ResMut<LoginUiState>,
     mut focus_state: ResMut<UiFocusState>,
-    mut input_values: ParamSet<(
-        Query<&mut UiTextInputValue, With<LoginNameInput>>,
-        Query<&mut UiTextInputValue, With<PasswordInput>>,
-        Query<&mut UiTextInputValue, With<CharacterNameInput>>,
-    )>,
+    mut input_values: Query<&mut UiTextInputValue, With<CharacterNameInput>>,
 ) {
     for event in events.read() {
         match event {
@@ -641,13 +922,13 @@ pub(super) fn follow_myserver_login_events(
                 });
             }
             MyServerEvent::CharacterSelected { .. } | MyServerEvent::Authenticated { .. } => {
-                clear_all_text_input_values(&mut input_values);
+                clear_text_input_values(&mut input_values);
                 focus_state.focused_entity = None;
                 ui_state.clear_runtime_state();
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
             }
             MyServerEvent::LogoutSucceeded => {
-                clear_all_text_input_values(&mut input_values);
+                clear_text_input_values(&mut input_values);
                 focus_state.focused_entity = None;
                 ui_state.clear_runtime_state();
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
@@ -731,16 +1012,4 @@ fn clear_text_input_values<T: Component>(inputs: &mut Query<&mut UiTextInputValu
     for mut value in inputs.iter_mut() {
         value.0.clear();
     }
-}
-
-fn clear_all_text_input_values(
-    input_values: &mut ParamSet<(
-        Query<&mut UiTextInputValue, With<LoginNameInput>>,
-        Query<&mut UiTextInputValue, With<PasswordInput>>,
-        Query<&mut UiTextInputValue, With<CharacterNameInput>>,
-    )>,
-) {
-    clear_text_input_values(&mut input_values.p0());
-    clear_text_input_values(&mut input_values.p1());
-    clear_text_input_values(&mut input_values.p2());
 }

@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    env,
+    env, fmt,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -1050,7 +1050,7 @@ pub struct ReconnectPlan {
     pub cause: ReconnectCause,
 }
 
-#[derive(Clone, Debug, Message)]
+#[derive(Clone, Message)]
 pub enum MyServerCommand {
     Login {
         login_name: String,
@@ -1135,6 +1135,84 @@ pub enum MyServerCommand {
         dir_y: f32,
         client_state: Option<MovementClientState>,
     },
+}
+
+impl fmt::Debug for MyServerCommand {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Login {
+                login_name,
+                connect_game,
+                ..
+            } => formatter
+                .debug_struct("Login")
+                .field("login_name", login_name)
+                .field("password", &"[REDACTED]")
+                .field("connect_game", connect_game)
+                .finish(),
+            Self::Register {
+                login_name,
+                connect_game,
+                ..
+            } => formatter
+                .debug_struct("Register")
+                .field("login_name", login_name)
+                .field("password", &"[REDACTED]")
+                .field("connect_game", connect_game)
+                .finish(),
+            Self::ConnectWithTicket {
+                transport,
+                host,
+                port,
+                ..
+            } => formatter
+                .debug_struct("ConnectWithTicket")
+                .field("ticket", &"[REDACTED]")
+                .field("transport", transport)
+                .field("host", host)
+                .field("port", port)
+                .finish(),
+            Self::ReconnectWithTicket {
+                transport,
+                host,
+                port,
+                ..
+            } => formatter
+                .debug_struct("ReconnectWithTicket")
+                .field("ticket", &"[REDACTED]")
+                .field("transport", transport)
+                .field("host", host)
+                .field("port", port)
+                .finish(),
+            other => formatter.write_str(match other {
+                Self::GuestLogin { .. } => "GuestLogin",
+                Self::LoadCharacterList => "LoadCharacterList",
+                Self::CreateCharacter { .. } => "CreateCharacter",
+                Self::LoadCharacterProfile { .. } => "LoadCharacterProfile",
+                Self::SelectCharacter { .. } => "SelectCharacter",
+                Self::DeleteCharacter { .. } => "DeleteCharacter",
+                Self::RestoreCharacter { .. } => "RestoreCharacter",
+                Self::IssueTicket { .. } => "IssueTicket",
+                Self::RefreshTicket { .. } => "RefreshTicket",
+                Self::Disconnect => "Disconnect",
+                Self::SwitchCharacter => "SwitchCharacter",
+                Self::Logout => "Logout",
+                Self::Ping { .. } => "Ping",
+                Self::JoinRoom { .. } => "JoinRoom",
+                Self::JoinRoomAsObserver { .. } => "JoinRoomAsObserver",
+                Self::LeaveRoom => "LeaveRoom",
+                Self::SetReady { .. } => "SetReady",
+                Self::StartRoom => "StartRoom",
+                Self::EndRoom { .. } => "EndRoom",
+                Self::SendPlayerInput { .. } => "SendPlayerInput",
+                Self::SendMoveInput { .. } => "SendMoveInput",
+                Self::Login { .. }
+                | Self::Register { .. }
+                | Self::ConnectWithTicket { .. }
+                | Self::ReconnectWithTicket { .. } => unreachable!(),
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
