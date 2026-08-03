@@ -53,8 +53,8 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 
 | Screen / 分类 | owner / panel 或 document layer | 当前 Rust View | action / binding / 动态列表 | 特殊手势或输入 | 直接资源 | 审计 recipe |
 | --- | --- | --- | --- | --- | --- | --- |
-| `login`，普通业务待迁移 | `login` / `login_page` | `auth/login.rs::setup_login_screen` | 登录、游客登录、环境切换、加载角色；`auth.login.subtitle`；无列表。 | 两个文本输入、password、分段环境选择。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A0 |
-| `character_select`，普通业务待迁移 | `character_select` / `character_select_page` | `auth/login.rs::setup_character_select_screen` | 加载/创建/选择角色、切换账号；`auth.character.subtitle`；当前 Rust 逐行生成角色列表。 | 角色名文本输入、可变数量角色行。 | 主题/i18n/font。 | A0 |
+| `login`，普通业务待迁移 | `login` / `login_page` | `auth/view.rs::setup_login_screen`，`auth/host.rs` 负责 action 与 binding contract | 登录、游客登录、环境切换、加载角色；`auth.login.subtitle`；无列表。 | 两个文本输入、password、分段环境选择。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A0 |
+| `character_select`，普通业务待迁移 | `character_select` / `character_select_page` | `auth/view.rs::setup_character_select_screen`，`auth/host.rs` 负责 action 与 binding contract | 加载/创建/选择角色、切换账号；`auth.character.subtitle`；当前 Rust 逐行生成角色列表。 | 角色名文本输入、可变数量角色行。 | 主题/i18n/font。 | A0 |
 | `lobby`，普通业务待迁移 | `lobby` / `game_list_page` | `lobby/game_list.rs::setup_game_list_screen` | 启动 Touch Ripple、场景切换、选角、退出账号、确认 modal；无 binding；固定玩法入口集合。 | 按钮、confirm modal。 | 主题/i18n/font。 | A0 |
 | `audio_settings`，普通业务待迁移 | `audio_settings` / `audio_settings_page` | `settings/audio.rs::setup_audio_settings` | 各音频 bus 音量、master mute、回大厅；无 document binding；按固定 audio bus 生成控制行。 | Slider、toggle。 | 主题/i18n/font。 | A0 |
 | `wanfa_touch_ripple`，玩法 HUD 待迁移 | `wanfa_touch_ripple` / `touch_ripple_hud` | `gameplay/touch_ripple.rs::setup_touch_ripple_overlay` | 仅路由回大厅；无 binding/list。 | 玩法触控/鼠标输入在 feature 层；HUD 本身仅按钮。 | 主题/i18n/font。 | A0 |

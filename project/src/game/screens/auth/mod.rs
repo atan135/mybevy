@@ -1,4 +1,9 @@
-mod login;
+mod host;
+mod model;
+mod view;
+
+#[cfg(test)]
+mod tests;
 
 use bevy::prelude::*;
 
@@ -9,26 +14,41 @@ pub(super) struct AuthScreensPlugin;
 
 impl Plugin for AuthScreensPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<login::LoginUiState>()
-            .add_systems(OnEnter(AppUiMode::Login), login::setup_login_screen)
-            .add_systems(
-                OnEnter(AppUiMode::CharacterSelect),
-                login::setup_character_select_screen,
+        app.init_resource::<host::LoginUiState>()
+            .init_resource::<host::AuthHostContracts>()
+            .add_systems(Startup, host::register_auth_contracts)
+            .add_systems(OnEnter(AppUiMode::Login), view::setup_login_screen);
+
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
+        app.add_systems(
+            OnEnter(AppUiMode::CharacterSelect),
+            (
+                host::prepare_character_select_audit_fixture,
+                view::setup_character_select_screen,
             )
-            .add_systems(OnExit(AppUiMode::Login), login::cleanup_login_screen_state)
+                .chain(),
+        );
+
+        #[cfg(not(all(debug_assertions, not(target_os = "android"))))]
+        app.add_systems(
+            OnEnter(AppUiMode::CharacterSelect),
+            view::setup_character_select_screen,
+        );
+
+        app.add_systems(OnExit(AppUiMode::Login), view::cleanup_login_screen_state)
             .add_systems(
                 OnExit(AppUiMode::CharacterSelect),
-                login::cleanup_login_screen_state,
+                view::cleanup_login_screen_state,
             )
-            .add_systems(Update, login::follow_myserver_login_events)
+            .add_systems(Update, host::follow_myserver_login_events)
             .add_systems(
                 Update,
                 (
-                    login::handle_server_environment_buttons,
-                    login::handle_login_buttons,
-                    login::sync_login_screen_state,
-                    login::sync_login_button_flags,
-                    login::sync_login_binding_values.before(UiBindingSystems::Apply),
+                    host::handle_server_environment_buttons,
+                    host::handle_login_buttons,
+                    view::sync_login_screen_state,
+                    view::sync_login_button_flags,
+                    view::sync_login_binding_values.before(UiBindingSystems::Apply),
                 )
                     .chain()
                     .run_if(in_state(AppUiMode::Login)),
@@ -36,9 +56,9 @@ impl Plugin for AuthScreensPlugin {
             .add_systems(
                 Update,
                 (
-                    login::handle_login_buttons,
-                    login::sync_character_select_screen_state,
-                    login::sync_login_button_flags,
+                    host::handle_login_buttons,
+                    view::sync_character_select_screen_state,
+                    view::sync_login_button_flags,
                 )
                     .chain()
                     .run_if(in_state(AppUiMode::CharacterSelect)),

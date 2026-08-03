@@ -2,6 +2,8 @@ mod local;
 pub(crate) mod screenshot;
 mod semantic;
 
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+pub(crate) use local::UiAuditConfig;
 pub(crate) use local::{
     UiAuditCaptureRecipe, UiAuditCaptureState, UiAuditCaptureStateApplied,
     UiAuditDynamicContentRecipe, UiAuditPlugin, UiAuditReadyCondition, UiAuditRecipe,

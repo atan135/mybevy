@@ -513,7 +513,7 @@ impl Default for UiAuditDeterminismConfig {
 }
 
 #[derive(Clone, Debug, Resource)]
-struct UiAuditConfig {
+pub(crate) struct UiAuditConfig {
     enabled: bool,
     screen: Option<String>,
     output_root: PathBuf,
@@ -540,6 +540,14 @@ impl Default for UiAuditConfig {
 }
 
 impl UiAuditConfig {
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    pub(crate) fn targets_screen(&self, screen: &str) -> bool {
+        self.enabled
+            && self.screen.as_deref().is_some_and(|target| {
+                normalize_screen_alias(target) == normalize_screen_alias(screen)
+            })
+    }
+
     fn from_env() -> Self {
         Self::from_env_reader(|key| env::var(key).ok(), current_unix_timestamp_seconds())
     }
@@ -3876,6 +3884,7 @@ mod tests {
         let config = UiAuditConfig::from_env_reader(env_reader(&[]), 100);
 
         assert!(!config.enabled);
+        assert!(!config.targets_screen("character_select"));
         assert_eq!(
             config.output_root,
             PathBuf::from(DEFAULT_AUDIT_OUTPUT_ROOT).join("100")
@@ -3908,6 +3917,8 @@ mod tests {
         assert!(config.states_from_env);
         assert!(config.exit_on_finish);
         assert!(config.config_error.is_none());
+        assert!(config.targets_screen("ui_gallery"));
+        assert!(!config.targets_screen("character_select"));
     }
 
     #[test]
