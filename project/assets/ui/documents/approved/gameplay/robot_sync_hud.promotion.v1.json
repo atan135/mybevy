@@ -1,0 +1,32 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+  "document_id": "game.robot_sync_hud",
+  "host_contract": {
+    "actions": [
+      { "id": "robot_sync.hide_hud", "sources": ["robot_sync.hide_hud"] },
+      { "id": "robot_sync.show_hud", "sources": ["robot_sync.show_hud"] },
+      { "id": "robot_sync.return_lobby", "sources": ["robot_sync.return_lobby"] }
+    ],
+    "bindings": [
+      { "path": "robot_sync.details_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "robot_sync.hide_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "robot_sync.show_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "robot_sync.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "robot_sync.title", "scope": "owner", "value_type": { "kind": "string" } }
+    ],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "robot_sync_scene",
+  "page_state": "initial",
+  "panel": "hud",
+  "protocol_version": 2,
+  "route": "robot_sync_hud",
+  "source": { "relative_path": "gameplay/robot_sync_hud.v1.json", "root": "approved" },
+  "template_version": 2,
+  "theme_tokens": []
+}

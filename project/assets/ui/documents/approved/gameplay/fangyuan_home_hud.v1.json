@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "document_id": "game.fangyuan_home_hud",
+  "metadata": { "title": "Fangyuan Home HUD", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {
+    "fangyuan_home.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "fangyuan_home.debug.text": { "scope": "owner", "value_type": { "kind": "string" } },
+    "fangyuan_home.debug.visibility": { "scope": "owner", "value_type": { "kind": "visibility" } }
+  },
+  "styles": {
+    "hud_panel": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#11191ee8" } },
+        "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#6f858799" } },
+        "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } }
+      }
+    }
+  },
+  "root": {
+    "type": "container",
+    "id": "fangyuan_home.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "direction": "row", "wrap": "no_wrap", "align_items": "start", "justify_content": "space_between", "gap": { "px": 12.0 } },
+    "children": [
+      {
+        "type": "scroll",
+        "id": "fangyuan_home.status_panel",
+        "max_height": 2400.0,
+        "block_lower": true,
+        "layout": { "max_width": { "px": 420.0 }, "max_height": { "percent": 100.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 6.0 }, "overflow": { "x": "clip", "y": "scroll" } },
+        "style": { "component": "hud_panel" },
+        "component": {
+          "children": [
+            { "type": "text", "id": "fangyuan_home.title", "content": { "literal": "方圆灵构家园" }, "style": { "text_role": "title" } },
+            { "type": "text", "id": "fangyuan_home.scene", "content": { "literal": "原型预览" }, "style": { "text_role": "caption" } },
+            { "type": "text", "id": "fangyuan_home.status", "content": { "binding_path": "fangyuan_home.status", "fallback": "scene pending" }, "style": { "text_role": "caption" }, "layout": { "width": { "percent": 100.0 }, "flex_shrink": 0.0 } }
+          ]
+        }
+      },
+      {
+        "type": "container",
+        "id": "fangyuan_home.actions",
+        "layout": { "direction": "column", "wrap": "wrap", "align_items": "stretch", "gap": { "px": 7.0 } },
+        "children": [
+          { "type": "button", "id": "fangyuan_home.reload", "variant": "secondary", "label": { "literal": "重新加载" }, "on_click": { "action": "fangyuan_home.reload" } },
+          { "type": "button", "id": "fangyuan_home.clear", "variant": "secondary", "label": { "literal": "清空" }, "on_click": { "action": "fangyuan_home.clear" } },
+          { "type": "button", "id": "fangyuan_home.rerun_trial_audit", "variant": "secondary", "label": { "literal": "重审" }, "on_click": { "action": "fangyuan_home.rerun_trial_audit" } },
+          { "type": "button", "id": "fangyuan_home.switch_trial_budget", "variant": "secondary", "label": { "literal": "预算" }, "on_click": { "action": "fangyuan_home.switch_trial_budget" } },
+          { "type": "button", "id": "fangyuan_home.toggle_debug", "variant": "secondary", "label": { "literal": "调试" }, "on_click": { "action": "fangyuan_home.toggle_debug" } },
+          { "type": "button", "id": "fangyuan_home.return_lobby", "variant": "secondary", "label": { "literal": "大厅" }, "on_click": { "action": "fangyuan_home.return_lobby" } }
+        ]
+      },
+      {
+        "type": "scroll",
+        "id": "fangyuan_home.debug_panel",
+        "max_height": 2400.0,
+        "block_lower": true,
+        "layout": { "width": { "px": 520.0 }, "max_width": { "percent": 100.0 }, "max_height": { "percent": 72.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 7.0 }, "overflow": { "x": "clip", "y": "scroll" } },
+        "style": { "component": "hud_panel", "bindings": { "visibility": "fangyuan_home.debug.visibility" } },
+        "component": {
+          "children": [
+            { "type": "text", "id": "fangyuan_home.debug.title", "content": { "literal": "Fangyuan Debug" }, "style": { "text_role": "subtitle" } },
+            {
+              "type": "container",
+              "id": "fangyuan_home.modules",
+              "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 }, "flex_shrink": 0.0 },
+              "children": [
+                { "type": "button", "id": "fangyuan_home.module.render", "variant": "secondary", "label": { "literal": "render" }, "on_click": { "action": "fangyuan_home.toggle_debug_module", "params": { "module": { "kind": "enum", "value": "render" } } } },
+                { "type": "button", "id": "fangyuan_home.module.lod", "variant": "secondary", "label": { "literal": "lod" }, "on_click": { "action": "fangyuan_home.toggle_debug_module", "params": { "module": { "kind": "enum", "value": "lod" } } } },
+                { "type": "button", "id": "fangyuan_home.module.cache", "variant": "secondary", "label": { "literal": "cache" }, "on_click": { "action": "fangyuan_home.toggle_debug_module", "params": { "module": { "kind": "enum", "value": "cache" } } } },
+                { "type": "button", "id": "fangyuan_home.module.bake", "variant": "secondary", "label": { "literal": "bake" }, "on_click": { "action": "fangyuan_home.toggle_debug_module", "params": { "module": { "kind": "enum", "value": "bake" } } } },
+                { "type": "button", "id": "fangyuan_home.module.audit", "variant": "secondary", "label": { "literal": "audit" }, "on_click": { "action": "fangyuan_home.toggle_debug_module", "params": { "module": { "kind": "enum", "value": "audit" } } } },
+                { "type": "button", "id": "fangyuan_home.module.trial", "variant": "secondary", "label": { "literal": "trial" }, "on_click": { "action": "fangyuan_home.toggle_debug_module", "params": { "module": { "kind": "enum", "value": "trial" } } } }
+              ]
+            },
+            { "type": "text", "id": "fangyuan_home.debug.text", "content": { "binding_path": "fangyuan_home.debug.text", "fallback": "fangyuan debug pending" }, "style": { "text_role": "caption" }, "layout": { "width": { "percent": 100.0 }, "flex_shrink": 0.0 } }
+          ]
+        }
+      }
+    ]
+  },
+  "states": [],
+  "responsive": [
+    { "id": "short_landscape", "priority": 100, "when": { "height_class": "short", "orientation": "landscape" }, "overrides": [
+      { "node_id": "fangyuan_home.root", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "gap": { "px": 7.0 }, "justify_content": "start" } } },
+      { "node_id": "fangyuan_home.status_panel", "set": { "layout": { "width": { "percent": 38.0 }, "height": { "percent": 100.0 }, "max_height": { "percent": 100.0 }, "padding": { "all": { "px": 8.0 } }, "flex_shrink": 0.0 } } },
+      { "node_id": "fangyuan_home.actions", "set": { "layout": { "direction": "column", "flex_shrink": 0.0 } } },
+      { "node_id": "fangyuan_home.debug_panel", "set": { "layout": { "width": { "percent": 43.0 }, "height": { "percent": 100.0 }, "max_height": { "percent": 100.0 }, "padding": { "all": { "px": 8.0 } }, "flex_shrink": 0.0 } } }
+    ] },
+    { "id": "compact_width", "priority": 50, "when": { "width_class": "compact" }, "overrides": [
+      { "node_id": "fangyuan_home.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } }, "direction": "column", "justify_content": "start" } } },
+      { "node_id": "fangyuan_home.status_panel", "set": { "layout": { "width": { "percent": 100.0 } } } },
+      { "node_id": "fangyuan_home.actions", "set": { "layout": { "direction": "row" } } },
+      { "node_id": "fangyuan_home.debug_panel", "set": { "layout": { "width": { "percent": 100.0 }, "max_height": { "percent": 38.0 } } } }
+    ] }
+  ]
+}

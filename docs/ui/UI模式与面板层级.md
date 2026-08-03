@@ -34,13 +34,7 @@ pub struct UiPanelRoot {
 
 `UiPanelId` 是通用字符串 ID 类型。框架层只固定内置覆盖层 ID，游戏层具体 ID 集中在 `project/src/game/ui_ids.rs`。
 
-游戏层当前常用 panel ID 常量包括：
-
-- `PANEL_LOGIN`
-- `PANEL_GAME_LIST`
-- `PANEL_UI_GALLERY`
-- `PANEL_GALLERY_FLOATING`
-- `PANEL_TOUCH_RIPPLE_HUD`
+游戏层当前显式 panel ID 主要用于四个受控 Rust View 开发工具和全局覆盖层，例如 `PANEL_UI_GALLERY`、`PANEL_GALLERY_FLOATING`。正式 Login、Lobby、Settings 和 gameplay HUD 由 fixed `DeclarativeScreenHost` 声明 `UiDocumentPanel::Page` 或 `UiDocumentPanel::Hud`，不再为每页保留 Rust panel 常量。
 
 框架层内置覆盖层 ID 包括：
 

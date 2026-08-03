@@ -22,8 +22,6 @@ use crate::game::declarative_screen::{
     DeclarativeScreenHostCommand, DeclarativeScreenRegistry,
     register_declarative_route_audit_entries,
 };
-#[cfg(all(debug_assertions, not(target_os = "android")))]
-use crate::game::ui_ids::SCROLL_AUDIO_SETTINGS_MAIN;
 use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_ANIMATIONS, ANCHOR_UI_GALLERY_COMPONENT_CHECKBOXES,
     ANCHOR_UI_GALLERY_COMPONENT_DROPDOWN, ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED,
@@ -38,6 +36,8 @@ use crate::game::ui_ids::{
     OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE, OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GALLERY,
     OWNER_UI_GENERATED_ACCEPTANCE, SCROLL_UI_GALLERY_MAIN,
 };
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+use crate::game::ui_ids::{SCROLL_AUDIO_SETTINGS_MAIN, SCROLL_FANGYUAN_HOME_MAIN};
 
 pub(in crate::game) use widgets::{game_panel_root, secondary_route_button_key};
 
@@ -455,6 +455,17 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
             ));
             continue;
         }
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
+        if mode == AppUiMode::FangyuanHome {
+            registry.register_recipe(UiAuditScreenRecipe::new(
+                screen.with_recipe(
+                    UiAuditRecipe::new(FANGYUAN_HOME_AUDIT_CAPTURES)
+                        .with_reference(DEFAULT_REFERENCE_AUDIT_RECIPE)
+                        .with_ready(UiAuditReadyCondition::OwnerDocument),
+                ),
+            ));
+            continue;
+        }
         if mode == AppUiMode::UiGallery {
             registry.register_recipe(UiAuditScreenRecipe::new(
                 screen.with_recipe(
@@ -468,6 +479,11 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
                 | AppUiMode::CharacterSelect
                 | AppUiMode::Lobby
                 | AppUiMode::AudioSettings
+                | AppUiMode::WanfaTouchRipple
+                | AppUiMode::SampleScene
+                | AppUiMode::RobotSyncScene
+                | AppUiMode::FangyuanHome
+                | AppUiMode::FangyuanPlayerPreview
                 | AppUiMode::UiDocumentGallery
                 | AppUiMode::UiGeneratedAcceptance
         ) {
@@ -503,6 +519,16 @@ const AUDIO_SETTINGS_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::Bottom,
         SCROLL_AUDIO_SETTINGS_MAIN,
+        UiScrollAuditPosition::Bottom,
+    ),
+];
+
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+const FANGYUAN_HOME_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
+    UiAuditCaptureRecipe::initial(),
+    UiAuditCaptureRecipe::scroll(
+        UiAuditCaptureState::Bottom,
+        SCROLL_FANGYUAN_HOME_MAIN,
         UiScrollAuditPosition::Bottom,
     ),
 ];
@@ -938,6 +964,50 @@ mod tests {
         let recipe = screen.recipe.expect("Lobby should use a document recipe");
 
         assert_eq!(recipe.ready, Some(UiAuditReadyCondition::OwnerDocument));
+    }
+
+    #[test]
+    fn gameplay_hud_audit_recipes_wait_for_owner_documents() {
+        let mut registry = UiAuditScreenRegistry::default();
+        register_ui_audit_screen_entries(&mut registry);
+
+        for screen_id in [
+            "wanfa_touch_ripple",
+            "sample_scene",
+            "robot_sync_scene",
+            "fangyuan_home",
+            "fangyuan_player_preview",
+        ] {
+            let recipe = registry
+                .resolve(screen_id)
+                .and_then(|screen| screen.recipe)
+                .unwrap_or_else(|| panic!("{screen_id} should use a document audit recipe"));
+            assert_eq!(recipe.ready, Some(UiAuditReadyCondition::OwnerDocument));
+        }
+    }
+
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    #[test]
+    fn fangyuan_home_audit_recipe_reaches_scroll_bottom() {
+        let mut registry = UiAuditScreenRegistry::default();
+        register_ui_audit_screen_entries(&mut registry);
+
+        let recipe = registry
+            .resolve("fangyuan_home")
+            .and_then(|screen| screen.recipe)
+            .expect("Fangyuan Home should use its document audit recipe");
+        assert_eq!(
+            recipe
+                .captures
+                .iter()
+                .map(|capture| capture.state)
+                .collect::<Vec<_>>(),
+            vec![UiAuditCaptureState::Initial, UiAuditCaptureState::Bottom]
+        );
+        assert_eq!(
+            recipe.captures[1].scroll.unwrap().target_id,
+            SCROLL_FANGYUAN_HOME_MAIN
+        );
     }
 
     #[cfg(all(debug_assertions, not(target_os = "android")))]

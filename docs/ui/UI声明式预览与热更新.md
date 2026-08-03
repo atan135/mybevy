@@ -89,7 +89,7 @@ F3 的 `declarative documents` 区域和每份 audit metadata 的 `document_node
 
 preview 不提供另一套 schema migration。旧版本先按 `UI声明式文档协议.md` 的相邻版本纯数据迁移生成当前模型，再进入相同 validation/reload 流程。迁移工具不能直接覆盖 approved 文件，输出仍需经过批准流程。
 
-声明式页面适合结构稳定、白名单控件足够、需要 AI/人工共同编辑和批量审核的页面。复杂业务状态机、特殊手势、3D/场景绑定或协议暂不支持的组件继续放在 `game/screens/` 的 Rust 页面。Rust 适配层拥有 owner、路由、action registry、host binding 和生命周期；framework document 不导入业务 enum、system 或命令实现。
+声明式页面适合结构稳定、白名单控件足够、需要 AI/人工共同编辑和批量审核的页面。复杂业务状态机、特殊手势、3D/场景实体或协议暂不支持的组件继续放在 Rust owner/system，但其可分离的 Page/HUD View 仍使用 document。Rust 适配层拥有 owner、路由、action registry、host binding 和生命周期；framework document 不导入 Fangyuan、Robot Sync 等业务 enum、system 或命令实现。approved registration 的闭合集允许 `page` 和 `hud` panel，当前 layer 仍固定为 `page`，其他 panel/layer 默认拒绝。
 
 ## 参考图生成工具的独立预览边界
 

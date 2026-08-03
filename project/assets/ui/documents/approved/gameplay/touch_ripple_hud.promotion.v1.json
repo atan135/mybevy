@@ -1,0 +1,22 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+  "document_id": "game.touch_ripple_hud",
+  "host_contract": {
+    "actions": [{ "id": "touch_ripple.return_lobby", "sources": ["touch_ripple.return_lobby"] }],
+    "bindings": [],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "wanfa_touch_ripple",
+  "page_state": "initial",
+  "panel": "hud",
+  "protocol_version": 2,
+  "route": "touch_ripple_hud",
+  "source": { "relative_path": "gameplay/touch_ripple_hud.v1.json", "root": "approved" },
+  "template_version": 2,
+  "theme_tokens": []
+}

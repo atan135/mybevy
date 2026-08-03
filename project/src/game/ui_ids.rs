@@ -41,6 +41,9 @@ pub(in crate::game) const SCROLL_UI_GALLERY_MAIN: UiScrollAuditId =
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 pub(in crate::game) const SCROLL_AUDIO_SETTINGS_MAIN: UiScrollAuditId =
     UiScrollAuditId::new("audio_settings.main");
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+pub(in crate::game) const SCROLL_FANGYUAN_HOME_MAIN: UiScrollAuditId =
+    UiScrollAuditId::new("fangyuan_home.main");
 pub(in crate::game) const ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE: UiScrollAuditAnchorId =
     UiScrollAuditAnchorId::new("ui_gallery.visual_acceptance");
 pub(in crate::game) const ANCHOR_UI_GALLERY_IMAGE_MODES: UiScrollAuditAnchorId =
@@ -76,15 +79,6 @@ pub(in crate::game) const ANCHOR_UI_GALLERY_COMPONENT_TOGGLES: UiScrollAuditAnch
 pub(in crate::game) const ANCHOR_UI_GALLERY_COMPONENT_SEGMENTED: UiScrollAuditAnchorId =
     UiScrollAuditAnchorId::new("ui_gallery.components.segmented");
 pub(in crate::game) const PANEL_GALLERY_FLOATING: UiPanelId = UiPanelId::new("gallery_floating");
-pub(in crate::game) const PANEL_TOUCH_RIPPLE_HUD: UiPanelId = UiPanelId::new("touch_ripple_hud");
-#[allow(dead_code)]
-pub(in crate::game) const PANEL_SAMPLE_SCENE_HUD: UiPanelId = UiPanelId::new("sample_scene_hud");
-pub(in crate::game) const PANEL_ROBOT_SYNC_SCENE_HUD: UiPanelId =
-    UiPanelId::new("robot_sync_scene_hud");
-pub(in crate::game) const PANEL_FANGYUAN_HOME_HUD: UiPanelId = UiPanelId::new("fangyuan_home_hud");
-pub(in crate::game) const PANEL_FANGYUAN_PLAYER_PREVIEW_HUD: UiPanelId =
-    UiPanelId::new("fangyuan_player_preview_hud");
-
 pub(in crate::game) const MODAL_TOUCH_RIPPLE_LAUNCH: UiModalId =
     UiModalId::new("touch_ripple_launch");
 pub(in crate::game) const MODAL_GALLERY_CONFIRM: UiModalId = UiModalId::new("gallery_confirm");

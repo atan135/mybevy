@@ -36,7 +36,7 @@
 - `project/src/framework/ui/`：UI 框架能力，包含核心系统、通用控件、覆盖层、主题和国际化
 - `project/src/game/`：游戏层插件、页面、玩法和框架适配模块
 - `project/src/game/authority/`：本地联机/远端联机的控制机会话接口和轻量 authority 协议
-- `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等具体页面
+- `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等页面；正式业务 View 使用 fixed host + approved `UiDocument`，Rust 只保留业务 adapter、生命周期、玩法/场景/3D 逻辑，四个开发工具页使用受控 Rust View 例外
 - `project/src/game/features/`：Touch Ripple、Fangyuan Player Preview 等具体玩法功能模块
 - `project/src/game/scenes/`：具体游戏场景 ID、场景注册适配和场景专属组合逻辑
 - `project/src/game/navigation/`：游戏层页面模式、路由命令和路由按钮适配

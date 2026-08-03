@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "document_id": "game.touch_ripple_hud",
+  "metadata": { "title": "Touch Ripple HUD", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {},
+  "styles": {},
+  "root": {
+    "type": "container",
+    "id": "touch_ripple.root",
+    "layout": {
+      "width": { "percent": 100.0 },
+      "height": { "percent": 100.0 },
+      "padding": { "all": { "px": 20.0 } },
+      "direction": "row",
+      "align_items": "start",
+      "justify_content": "end"
+    },
+    "children": [
+      {
+        "type": "button",
+        "id": "touch_ripple.return_lobby",
+        "variant": "secondary",
+        "label": { "literal": "Lobby" },
+        "on_click": { "action": "touch_ripple.return_lobby" }
+      }
+    ]
+  },
+  "states": [],
+  "responsive": [
+    {
+      "id": "short_landscape",
+      "priority": 100,
+      "when": { "height_class": "short", "orientation": "landscape" },
+      "overrides": [
+        { "node_id": "touch_ripple.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } } } } }
+      ]
+    }
+  ]
+}

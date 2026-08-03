@@ -120,6 +120,7 @@ $script:KnownScreens = @(
     [pscustomobject]@{ Canonical = "sample_scene"; Aliases = @("sample_scene", "sample-scene", "sample") },
     [pscustomobject]@{ Canonical = "robot_sync_scene"; Aliases = @("robot_sync_scene", "robot-sync-scene", "robot") },
     [pscustomobject]@{ Canonical = "fangyuan_home"; Aliases = @("fangyuan_home", "fangyuan-home", "fangyuan") }
+    [pscustomobject]@{ Canonical = "fangyuan_player_preview"; Aliases = @("fangyuan_player_preview", "fangyuan-player-preview", "player_preview", "player-preview") }
 )
 
 $script:RemoteTaskStates = @(

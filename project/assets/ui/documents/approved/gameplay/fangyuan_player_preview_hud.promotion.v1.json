@@ -1,0 +1,22 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+  "document_id": "game.fangyuan_player_preview_hud",
+  "host_contract": {
+    "actions": [{ "id": "fangyuan_player_preview.return_lobby", "sources": ["fangyuan_player_preview.return_lobby"] }],
+    "bindings": [],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "fangyuan_player_preview",
+  "page_state": "initial",
+  "panel": "hud",
+  "protocol_version": 2,
+  "route": "fangyuan_player_preview_hud",
+  "source": { "relative_path": "gameplay/fangyuan_player_preview_hud.v1.json", "root": "approved" },
+  "template_version": 2,
+  "theme_tokens": []
+}

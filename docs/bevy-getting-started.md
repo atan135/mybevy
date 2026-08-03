@@ -1081,6 +1081,8 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --rep
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- generate-fixture --task tools/ui-generation/fixtures/acceptance/task.valid.json --repository-root . --document-id generated.acceptance_fixture
 ```
 
+`check-boundary` 除依赖方向和 UI-only write scope 外，还会验证 9 个正式业务 route 都有 approved document/promotion、15 个 screen 均已分类，且直接 Rust UI View 只存在于四个固定开发工具例外。新增正式业务 screen 时必须先建立 fixed host 和 registration，不能把它加入例外清单绕过。
+
 如果只需检查正式已批准的验收页面能否在独立声明式预览中打开，可运行：
 
 ```powershell

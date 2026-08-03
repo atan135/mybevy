@@ -36,14 +36,14 @@ app.add_plugins((NavigationPlugin, UiFrameworkPlugin))
 
 - `project/src/game/navigation/`：主流程状态 `AppUiMode`、`GameRouteCommand`、路由按钮数据和 `game_panel_root` 适配 helper。
 - `project/src/game/ui_ids.rs`：游戏层 panel、owner、modal 和 action ID 常量。
-- `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等业务页面。声明式页面注册固定 host 并由通用生命周期挂载 approved document；尚未迁移的页面仍在 `OnEnter(AppUiMode)` 生成 Page/HUD 根节点。
+- `project/src/game/screens/`：登录、大厅、玩法 HUD、UI Gallery 等页面。9 个正式业务 route 都注册 fixed host 并由通用生命周期挂载 approved document；只有四个受控开发工具页仍在 `OnEnter(AppUiMode)` 生成 Rust View。
 - `project/src/framework/ui/core/`：框架核心能力，包含 viewport、panel、layer、input、focus、binding、animation、stats。
 - `project/src/framework/ui/widgets/`：可复用 UI 控件和布局 helper。
 - `project/src/framework/ui/overlays/`：Toast、Loading、Confirm modal 等顶层 UI 实现和覆盖层命令处理。
 - `project/src/framework/ui/style/`：主题 token、主题刷新、字体资源、作用域样式、受限视觉效果和材质降级策略。
 - `project/assets/ui/`：UI 字体、主题、国际化和示例图片等首包资源。
 
-`UiDocument` 已提供 schema、验证、事务 runtime 和桌面开发期 preview/reload，并已用于正式 Login View；它是 View 描述，不是业务 Rust 的替代品。游戏层仍拥有 route、owner、权限、action/binding 宿主、生命周期和 fallback；document 只能引用这些预注册的闭合契约。目标业务宿主、纯 document route、生产更新 bundle/client 与现有页面迁移清单见 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md)。尚未迁移的业务页面继续在本目录直接生成 Bevy UI 实体。
+`UiDocument` 已提供 schema、验证、事务 runtime 和桌面开发期 preview/reload，并用于 Login、Character Select、Lobby、Audio Settings 和五个 gameplay HUD；它是 View 描述，不是业务 Rust 的替代品。游戏层仍拥有 route、owner、权限、action/binding 宿主、生命周期、玩法模拟和 fallback；document 只能引用这些预注册的闭合契约。`tools/ui-generation ... check-boundary` 会拒绝缺少 approved registration 的正式业务 route，以及闭合例外清单之外的新 Rust View。目标业务宿主、纯 document route、生产更新 bundle/client 与页面清单见 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md)。
 
 业务页面可以组合 `widgets` 和 `core` 提供的资源、命令、组件，但不应绕过 Panel Manager 自行管理全局 Loading 或 Confirm。
 

@@ -1,0 +1,34 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+  "document_id": "game.fangyuan_home_hud",
+  "host_contract": {
+    "actions": [
+      { "id": "fangyuan_home.reload", "sources": ["fangyuan_home.reload"] },
+      { "id": "fangyuan_home.clear", "sources": ["fangyuan_home.clear"] },
+      { "id": "fangyuan_home.rerun_trial_audit", "sources": ["fangyuan_home.rerun_trial_audit"] },
+      { "id": "fangyuan_home.switch_trial_budget", "sources": ["fangyuan_home.switch_trial_budget"] },
+      { "id": "fangyuan_home.toggle_debug", "sources": ["fangyuan_home.toggle_debug"] },
+      { "id": "fangyuan_home.toggle_debug_module", "sources": ["fangyuan_home.module.render", "fangyuan_home.module.lod", "fangyuan_home.module.cache", "fangyuan_home.module.bake", "fangyuan_home.module.audit", "fangyuan_home.module.trial"] },
+      { "id": "fangyuan_home.return_lobby", "sources": ["fangyuan_home.return_lobby"] }
+    ],
+    "bindings": [
+      { "path": "fangyuan_home.debug.text", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "fangyuan_home.debug.visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "fangyuan_home.status", "scope": "owner", "value_type": { "kind": "string" } }
+    ],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "page",
+  "owner": "fangyuan_home",
+  "page_state": "initial",
+  "panel": "hud",
+  "protocol_version": 2,
+  "route": "fangyuan_home_hud",
+  "source": { "relative_path": "gameplay/fangyuan_home_hud.v1.json", "root": "approved" },
+  "template_version": 2,
+  "theme_tokens": []
+}

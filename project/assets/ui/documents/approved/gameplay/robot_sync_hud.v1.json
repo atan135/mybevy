@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "document_id": "game.robot_sync_hud",
+  "metadata": { "title": "Robot Sync HUD", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {
+    "robot_sync.title": { "scope": "owner", "value_type": { "kind": "string" } },
+    "robot_sync.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "robot_sync.details_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "robot_sync.hide_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "robot_sync.show_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } }
+  },
+  "styles": {
+    "hud_panel": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#11191ee8" } },
+        "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#6f858799" } },
+        "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } }
+      }
+    }
+  },
+  "root": {
+    "type": "container",
+    "id": "robot_sync.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "direction": "row", "align_items": "start", "justify_content": "space_between", "gap": { "px": 14.0 } },
+    "children": [
+      {
+        "type": "container",
+        "id": "robot_sync.details",
+        "layout": { "width": { "px": 440.0 }, "max_width": { "percent": 100.0 }, "min_height": { "px": 280.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 7.0 } },
+        "style": { "component": "hud_panel", "bindings": { "visibility": "robot_sync.details_visibility" } },
+        "children": [
+          { "type": "text", "id": "robot_sync.title", "content": { "binding_path": "robot_sync.title", "fallback": "Robot Sync" }, "style": { "text_role": "title" } },
+          { "type": "text", "id": "robot_sync.status", "content": { "binding_path": "robot_sync.status", "fallback": "room=pending player=pending authority=pending frame=pending robots=0 local: pending" }, "style": { "text_role": "caption" }, "layout": { "width": { "percent": 100.0 } } }
+        ]
+      },
+      {
+        "type": "container",
+        "id": "robot_sync.actions",
+        "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 7.0 } },
+        "children": [
+          { "type": "button", "id": "robot_sync.hide_hud", "variant": "secondary", "label": { "literal": "Hide HUD" }, "style": { "bindings": { "visibility": "robot_sync.hide_visibility" } }, "on_click": { "action": "robot_sync.hide_hud" } },
+          { "type": "button", "id": "robot_sync.show_hud", "variant": "secondary", "label": { "literal": "Show HUD" }, "style": { "bindings": { "visibility": "robot_sync.show_visibility" } }, "on_click": { "action": "robot_sync.show_hud" } },
+          { "type": "button", "id": "robot_sync.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "on_click": { "action": "robot_sync.return_lobby" } }
+        ]
+      }
+    ]
+  },
+  "states": [],
+  "responsive": [
+    { "id": "compact_width", "priority": 50, "when": { "width_class": "compact" }, "overrides": [
+      { "node_id": "robot_sync.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } }, "direction": "column" } } },
+      { "node_id": "robot_sync.details", "set": { "layout": { "width": { "percent": 100.0 }, "min_height": { "px": 220.0 } } } },
+      { "node_id": "robot_sync.actions", "set": { "layout": { "direction": "row", "wrap": "wrap" } } }
+    ] }
+  ]
+}

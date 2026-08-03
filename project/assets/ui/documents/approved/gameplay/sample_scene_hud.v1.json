@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "document_id": "game.sample_scene_hud",
+  "metadata": { "title": "Sample Scene HUD", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {},
+  "styles": {
+    "hud_panel": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#11191ee8" } },
+        "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#6f858799" } },
+        "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } }
+      }
+    }
+  },
+  "root": {
+    "type": "container",
+    "id": "sample_scene.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "direction": "row", "align_items": "start", "justify_content": "space_between", "gap": { "px": 14.0 } },
+    "children": [
+      {
+        "type": "container",
+        "id": "sample_scene.panel",
+        "layout": { "max_width": { "px": 360.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 6.0 } },
+        "style": { "component": "hud_panel" },
+        "children": [
+          { "type": "text", "id": "sample_scene.title", "content": { "literal": "Sample Scene" }, "style": { "text_role": "title" } },
+          { "type": "text", "id": "sample_scene.status", "content": { "literal": "Scene running" }, "style": { "text_role": "caption" } }
+        ]
+      },
+      { "type": "button", "id": "sample_scene.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "on_click": { "action": "sample_scene.return_lobby" } }
+    ]
+  },
+  "states": [],
+  "responsive": [
+    { "id": "compact_width", "priority": 50, "when": { "width_class": "compact" }, "overrides": [
+      { "node_id": "sample_scene.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } }, "direction": "column" } } },
+      { "node_id": "sample_scene.panel", "set": { "layout": { "width": { "percent": 100.0 } } } }
+    ] }
+  ]
+}

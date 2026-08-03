@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "document_id": "game.fangyuan_player_preview_hud",
+  "metadata": { "title": "Fangyuan Player Preview HUD", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {},
+  "styles": {
+    "hud_panel": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#11191ee8" } },
+        "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#6f858799" } },
+        "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } }
+      }
+    }
+  },
+  "root": {
+    "type": "container",
+    "id": "fangyuan_player_preview.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "direction": "row", "align_items": "start", "justify_content": "space_between", "gap": { "px": 14.0 } },
+    "children": [
+      {
+        "type": "container",
+        "id": "fangyuan_player_preview.panel",
+        "layout": { "max_width": { "px": 420.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 6.0 } },
+        "style": { "component": "hud_panel" },
+        "children": [
+          { "type": "text", "id": "fangyuan_player_preview.title", "content": { "literal": "方圆玩家预览" }, "style": { "text_role": "title" } },
+          { "type": "text", "id": "fangyuan_player_preview.status", "content": { "literal": "最小玩家 Entity" }, "style": { "text_role": "caption" } }
+        ]
+      },
+      { "type": "button", "id": "fangyuan_player_preview.return_lobby", "variant": "secondary", "label": { "literal": "大厅" }, "on_click": { "action": "fangyuan_player_preview.return_lobby" } }
+    ]
+  },
+  "states": [],
+  "responsive": [
+    { "id": "compact_width", "priority": 50, "when": { "width_class": "compact" }, "overrides": [
+      { "node_id": "fangyuan_player_preview.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } }, "direction": "column" } } },
+      { "node_id": "fangyuan_player_preview.panel", "set": { "layout": { "width": { "percent": 100.0 } } } }
+    ] }
+  ]
+}

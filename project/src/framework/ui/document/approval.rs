@@ -1,4 +1,4 @@
-//! Closed, read-only contract for a promoted approved-page registration declaration.
+//! Closed, read-only contract for a promoted approved document registration declaration.
 //!
 //! This adapter deliberately does not route a page or generate game code. A game screen must
 //! explicitly choose when to register the resulting declarative page with its own route lifecycle.
@@ -69,7 +69,7 @@ impl UiApprovedDocumentHostContract {
         if version != UI_APPROVED_DOCUMENT_HOST_CONTRACT_VERSION
             || !safe_registration_label(&owner)
             || !safe_registration_label(&route)
-            || panel != UiDocumentPanel::Page
+            || !matches!(panel, UiDocumentPanel::Page | UiDocumentPanel::Hud)
             || layer != UiDocumentLayer::Page
             || page_state != UiPageState::initial()
             || normalized_profiles(&audit_profiles).is_none()
@@ -115,8 +115,8 @@ impl UiApprovedDocumentHostContract {
         self.document_id == registration.document_id
             && self.owner == registration.owner
             && self.route == registration.route
-            && self.panel == UiDocumentPanel::Page
-            && self.layer == UiDocumentLayer::Page
+            && self.panel == registration.panel
+            && self.layer == registration.layer
             && self.page_state == registration.page_state
             && self.audit_profiles == registration.audit_profiles
     }
@@ -136,6 +136,8 @@ pub struct UiApprovedDocumentRegistration {
     source_path: UiDocumentSourcePath,
     owner: String,
     route: String,
+    panel: UiDocumentPanel,
+    layer: UiDocumentLayer,
     page_state: UiPageState,
     audit_profiles: Vec<String>,
     host_contract: Option<UiApprovedDocumentHostContract>,
@@ -157,6 +159,14 @@ impl UiApprovedDocumentRegistration {
     /// A review-only route label. The adapter never dispatches a game route from this string.
     pub fn route(&self) -> &str {
         &self.route
+    }
+
+    pub fn panel(&self) -> UiDocumentPanel {
+        self.panel
+    }
+
+    pub fn layer(&self) -> UiDocumentLayer {
+        self.layer
     }
 
     pub fn page_state(&self) -> &UiPageState {
@@ -211,8 +221,8 @@ impl UiApprovedDocumentRegistration {
             owner: self.owner.clone(),
             source_path: self.source_path.clone(),
             source_json,
-            panel: UiDocumentPanel::Page,
-            layer: UiDocumentLayer::Page,
+            panel: self.panel,
+            layer: self.layer,
             target_profile,
             page_state: self.page_state.clone(),
             owner_alive: true,
@@ -425,7 +435,6 @@ pub fn parse_approved_document_registration(
     };
     if file.kind != REGISTRATION_KIND
         || file.source.root != "approved"
-        || file.panel != "page"
         || file.layer != "page"
         || !file.i18n_keys.is_empty()
         || !file.theme_tokens.is_empty()
@@ -442,6 +451,17 @@ pub fn parse_approved_document_registration(
             "approved registration document_id is invalid",
         )
     })?;
+    let panel = match file.panel.as_str() {
+        "page" => UiDocumentPanel::Page,
+        "hud" => UiDocumentPanel::Hud,
+        _ => {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_CLOSED_FIELD_REJECTED",
+                "approved registration panel is outside the closed page/HUD set",
+            ));
+        }
+    };
+    let layer = UiDocumentLayer::Page;
     let source_path =
         UiDocumentSourcePath::new(UiDocumentSourceRoot::Approved, file.source.relative_path)
             .map_err(|_| {
@@ -476,6 +496,8 @@ pub fn parse_approved_document_registration(
                 document_id.clone(),
                 file.owner.clone(),
                 file.route.clone(),
+                panel,
+                layer,
                 page_state.clone(),
                 audit_profiles.clone(),
             )
@@ -486,6 +508,8 @@ pub fn parse_approved_document_registration(
         source_path,
         owner: file.owner,
         route: file.route,
+        panel,
+        layer,
         page_state,
         audit_profiles,
         host_contract,
@@ -497,6 +521,8 @@ fn parse_host_contract(
     document_id: UiDocumentId,
     owner: String,
     route: String,
+    panel: UiDocumentPanel,
+    layer: UiDocumentLayer,
     page_state: UiPageState,
     audit_profiles: Vec<String>,
 ) -> Result<UiApprovedDocumentHostContract, UiApprovedDocumentRegistrationError> {
@@ -577,8 +603,8 @@ fn parse_host_contract(
         document_id,
         owner,
         route,
-        UiDocumentPanel::Page,
-        UiDocumentLayer::Page,
+        panel,
+        layer,
         page_state,
         audit_profiles,
         bindings,
@@ -916,6 +942,27 @@ mod tests {
                 "phone-1080p-landscape",
                 "tablet-landscape"
             ]
+        );
+    }
+
+    #[test]
+    fn approved_document_registration_allows_hud_and_rejects_other_panels() {
+        let mut registration: Value = serde_json::from_str(BUSINESS_REGISTRATION_JSON).unwrap();
+        registration["panel"] = serde_json::json!("hud");
+        let registration = parse_approved_document_registration(&registration.to_string()).unwrap();
+        assert_eq!(registration.panel(), UiDocumentPanel::Hud);
+        assert_eq!(registration.layer(), UiDocumentLayer::Page);
+        assert_eq!(
+            registration.host_contract().unwrap().panel,
+            UiDocumentPanel::Hud
+        );
+
+        let mut registration: Value = serde_json::from_str(BUSINESS_REGISTRATION_JSON).unwrap();
+        registration["panel"] = serde_json::json!("modal");
+        let error = parse_approved_document_registration(&registration.to_string()).unwrap_err();
+        assert_eq!(
+            error.code(),
+            "UI_APPROVED_REGISTRATION_CLOSED_FIELD_REJECTED"
         );
     }
 

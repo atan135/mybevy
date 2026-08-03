@@ -4,448 +4,53 @@ use bevy::{
 };
 
 use crate::framework::{
-    audio::prelude::UiAudioCueOverride,
     fangyuan::{
         FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH,
         FangyuanAoiDebugMetrics, FangyuanAuditDebugMetrics, FangyuanBakeDebugMetrics,
         FangyuanCacheDebugMetrics, FangyuanChunkDebugSummary, FangyuanChunkRuntime,
         FangyuanDebugMetricModule, FangyuanDebugMetricsSnapshot, FangyuanDebugModuleStatus,
-        FangyuanDebugPanelModule, FangyuanDebugPanelState, FangyuanLodDebugMetrics,
-        FangyuanPressureDebugMetrics, FangyuanPrimitiveDebugMetrics, FangyuanRenderDebugMetrics,
-        fangyuan_debug_panel_snapshot,
+        FangyuanDebugPanelState, FangyuanLodDebugMetrics, FangyuanPressureDebugMetrics,
+        FangyuanPrimitiveDebugMetrics, FangyuanRenderDebugMetrics, fangyuan_debug_panel_snapshot,
     },
-    scene::prelude::{SceneCommand, SceneEvent, SceneExitRequest},
+    scene::prelude::SceneEvent,
     ui::{
-        core::{UiLayer, UiLayerRoot, UiMetrics, UiPanelKind, UiViewport, UiWidthClass},
-        i18n::UiI18n,
-        style::{
-            UiFontAssets, UiTheme,
-            theme::{
-                UiThemeBackgroundRole, UiThemeBorderRole, UiThemePanelNodeRole,
-                UiThemeRootNodeRole, UiThemeTextColorRole, UiThemeTextStyleRole,
-            },
-        },
-        widgets::{
-            UiButtonEvent, UiButtonEventKind, screen_label, screen_label_key, screen_title_key,
-            secondary_action_button_key,
-        },
+        core::{UiViewport, UiWidthClass, binding::UiBindingValues},
+        document::{UiBindingValue, UiBindingVisibility},
     },
 };
 use crate::game::{
-    audio::UI_CONFIRM_CUE_ID,
-    navigation::{AppUiMode, GameRouteCommand, game_panel_root},
-    scenes::{FANGYUAN_HOME_SCENE_ID, FangyuanHomeBlueprintCommand, FangyuanHomeBlueprintStats},
-    ui_ids::{OWNER_FANGYUAN_HOME, PANEL_FANGYUAN_HOME_HUD},
+    navigation::{AppUiMode, GameRouteCommand},
+    scenes::{FANGYUAN_HOME_SCENE_ID, FangyuanHomeBlueprintStats},
+    ui_ids::OWNER_FANGYUAN_HOME,
 };
 
+use super::host::{FANGYUAN_HOME_DOCUMENT_ID, GameplayHudHostContract, set_binding};
+
 const FANGYUAN_HOME_PRIMITIVE_LIMIT: usize = 1000;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeReloadButton;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeClearButton;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeTrialRerunAuditButton;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeTrialBudgetButton;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeLobbyButton;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeDebugToggleButton;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeDebugPanelRoot;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeDebugPanelText;
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeDebugModuleButton {
-    module: FangyuanDebugPanelModule,
-}
-
-#[derive(Component)]
-pub(super) struct FangyuanHomeHudStatusText;
-
-pub(super) fn setup_fangyuan_home_hud(
-    mut commands: Commands,
-    mut debug_panel_state: ResMut<FangyuanDebugPanelState>,
-    theme: Res<UiTheme>,
-    metrics: Res<UiMetrics>,
-    viewport: Res<UiViewport>,
-    fonts: Res<UiFontAssets>,
-    i18n: Res<UiI18n>,
-) {
-    let theme = theme.into_inner();
-    let metrics = metrics.into_inner();
-    let viewport = *viewport;
-    let fonts = fonts.into_inner();
-    let i18n = i18n.into_inner();
-    debug_panel_state.set_compact(fangyuan_home_debug_panel_is_compact(&viewport));
-
-    commands.spawn((
-        DespawnOnExit(AppUiMode::FangyuanHome),
-        game_panel_root(
-            PANEL_FANGYUAN_HOME_HUD,
-            UiPanelKind::Hud,
-            OWNER_FANGYUAN_HOME,
-        ),
-        UiLayerRoot {
-            layer: UiLayer::Page,
-        },
-        fangyuan_home_hud_root_node(&viewport, metrics, theme),
-        UiThemeRootNodeRole::Overlay,
-        children![
-            (
-                UiThemePanelNodeRole::Content,
-                fangyuan_home_status_panel_node(&viewport, theme),
-                BackgroundColor(theme.colors.panel_background),
-                BorderColor::all(theme.colors.panel_border),
-                UiThemeBackgroundRole::Panel,
-                UiThemeBorderRole::Panel,
-                children![
-                    screen_title_key(
-                        theme,
-                        fonts,
-                        i18n,
-                        "fangyuan_home.hud.title",
-                        "方圆灵构家园",
-                        UiThemeTextStyleRole::Title,
-                    ),
-                    screen_label_key(
-                        theme,
-                        fonts,
-                        i18n,
-                        "fangyuan_home.hud.scene",
-                        "原型预览",
-                        UiThemeTextStyleRole::Caption,
-                        UiThemeTextColorRole::Muted,
-                    ),
-                    (
-                        screen_label(
-                            theme,
-                            fonts,
-                            fangyuan_home_hud_status_text(None, None),
-                            UiThemeTextStyleRole::Caption,
-                            UiThemeTextColorRole::Muted,
-                        ),
-                        FangyuanHomeHudStatusText,
-                    ),
-                ],
-            ),
-            (
-                fangyuan_home_button_column_node(&viewport, theme),
-                children![
-                    (
-                        secondary_action_button_key(
-                            theme,
-                            metrics,
-                            fonts,
-                            i18n,
-                            "fangyuan_home.hud.reload",
-                            "重新加载",
-                        ),
-                        FangyuanHomeReloadButton,
-                    ),
-                    (
-                        secondary_action_button_key(
-                            theme,
-                            metrics,
-                            fonts,
-                            i18n,
-                            "fangyuan_home.hud.clear",
-                            "清空",
-                        ),
-                        FangyuanHomeClearButton,
-                    ),
-                    (
-                        secondary_action_button_key(
-                            theme,
-                            metrics,
-                            fonts,
-                            i18n,
-                            "fangyuan_home.hud.trial_rerun",
-                            "重审",
-                        ),
-                        FangyuanHomeTrialRerunAuditButton,
-                    ),
-                    (
-                        secondary_action_button_key(
-                            theme,
-                            metrics,
-                            fonts,
-                            i18n,
-                            "fangyuan_home.hud.trial_budget",
-                            "预算",
-                        ),
-                        FangyuanHomeTrialBudgetButton,
-                    ),
-                    (
-                        secondary_action_button_key(
-                            theme,
-                            metrics,
-                            fonts,
-                            i18n,
-                            "fangyuan_home.hud.debug",
-                            "调试",
-                        ),
-                        FangyuanHomeDebugToggleButton,
-                    ),
-                    (
-                        secondary_action_button_key(
-                            theme,
-                            metrics,
-                            fonts,
-                            i18n,
-                            "nav.lobby",
-                            "大厅",
-                        ),
-                        fangyuan_home_lobby_button_audio_override(),
-                        FangyuanHomeLobbyButton,
-                    ),
-                ],
-            ),
-            (
-                UiThemePanelNodeRole::Debug,
-                fangyuan_home_debug_panel_node(&viewport, theme),
-                Visibility::Hidden,
-                BackgroundColor(theme.colors.panel_background),
-                BorderColor::all(theme.colors.panel_border),
-                UiThemeBackgroundRole::Panel,
-                UiThemeBorderRole::Panel,
-                FangyuanHomeDebugPanelRoot,
-                children![
-                    screen_label_key(
-                        theme,
-                        fonts,
-                        i18n,
-                        "fangyuan_home.debug.title",
-                        "Fangyuan Debug",
-                        UiThemeTextStyleRole::Subtitle,
-                        UiThemeTextColorRole::Primary,
-                    ),
-                    (
-                        fangyuan_home_debug_module_row_node(theme),
-                        children![
-                            fangyuan_home_debug_module_button(
-                                theme,
-                                metrics,
-                                fonts,
-                                i18n,
-                                FangyuanDebugPanelModule::Render,
-                                "fangyuan_home.debug.render",
-                                "render",
-                            ),
-                            fangyuan_home_debug_module_button(
-                                theme,
-                                metrics,
-                                fonts,
-                                i18n,
-                                FangyuanDebugPanelModule::Lod,
-                                "fangyuan_home.debug.lod",
-                                "lod",
-                            ),
-                            fangyuan_home_debug_module_button(
-                                theme,
-                                metrics,
-                                fonts,
-                                i18n,
-                                FangyuanDebugPanelModule::Cache,
-                                "fangyuan_home.debug.cache",
-                                "cache",
-                            ),
-                            fangyuan_home_debug_module_button(
-                                theme,
-                                metrics,
-                                fonts,
-                                i18n,
-                                FangyuanDebugPanelModule::Bake,
-                                "fangyuan_home.debug.bake",
-                                "bake",
-                            ),
-                            fangyuan_home_debug_module_button(
-                                theme,
-                                metrics,
-                                fonts,
-                                i18n,
-                                FangyuanDebugPanelModule::Audit,
-                                "fangyuan_home.debug.audit",
-                                "audit",
-                            ),
-                            fangyuan_home_debug_module_button(
-                                theme,
-                                metrics,
-                                fonts,
-                                i18n,
-                                FangyuanDebugPanelModule::Trial,
-                                "fangyuan_home.debug.trial",
-                                "trial",
-                            ),
-                        ],
-                    ),
-                    (
-                        screen_label(
-                            theme,
-                            fonts,
-                            fangyuan_home_debug_panel_text(None, None, debug_panel_state.as_ref()),
-                            UiThemeTextStyleRole::Caption,
-                            UiThemeTextColorRole::Muted,
-                        ),
-                        FangyuanHomeDebugPanelText,
-                    ),
-                ],
-            ),
-        ],
-    ));
-}
-
-fn fangyuan_home_hud_root_node(
-    viewport: &UiViewport,
-    metrics: &UiMetrics,
-    theme: &UiTheme,
-) -> Node {
-    let compact = viewport.width_class == UiWidthClass::Compact;
-    Node {
-        width: percent(100),
-        height: percent(100),
-        padding: viewport.safe_area_padding(metrics.page_padding),
-        align_items: AlignItems::FlexStart,
-        justify_content: if compact {
-            JustifyContent::FlexStart
-        } else {
-            JustifyContent::SpaceBetween
-        },
-        flex_direction: if compact {
-            FlexDirection::Column
-        } else {
-            FlexDirection::Row
-        },
-        row_gap: px(theme.layout.row_gap),
-        column_gap: px(theme.layout.header_gap),
-        ..default()
-    }
-}
-
-fn fangyuan_home_status_panel_node(viewport: &UiViewport, theme: &UiTheme) -> Node {
-    let compact = viewport.width_class == UiWidthClass::Compact;
-    Node {
-        width: if compact { percent(100) } else { auto() },
-        max_width: px(if compact { 360.0 } else { 420.0 }),
-        flex_direction: FlexDirection::Column,
-        overflow: Overflow::clip(),
-        row_gap: px(theme.layout.row_gap),
-        padding: UiRect::all(px(theme.layout.panel_gap)),
-        border: UiRect::all(px(theme.panel.border)),
-        border_radius: BorderRadius::all(px(theme.panel.radius)),
-        ..default()
-    }
-}
-
-fn fangyuan_home_button_column_node(viewport: &UiViewport, theme: &UiTheme) -> Node {
-    let compact = viewport.width_class == UiWidthClass::Compact;
-    Node {
-        flex_direction: if compact {
-            FlexDirection::Row
-        } else {
-            FlexDirection::Column
-        },
-        flex_wrap: FlexWrap::Wrap,
-        row_gap: px(theme.layout.row_gap),
-        column_gap: px(theme.layout.row_column_gap),
-        align_items: AlignItems::Stretch,
-        align_self: if compact {
-            AlignSelf::FlexStart
-        } else {
-            AlignSelf::Auto
-        },
-        ..default()
-    }
-}
-
-fn fangyuan_home_debug_panel_node(viewport: &UiViewport, theme: &UiTheme) -> Node {
-    let compact = fangyuan_home_debug_panel_is_compact(viewport);
-    Node {
-        width: if compact { percent(100) } else { px(520.0) },
-        max_width: px(if compact { 360.0 } else { 520.0 }),
-        max_height: if compact { percent(38) } else { percent(72) },
-        flex_direction: FlexDirection::Column,
-        overflow: Overflow::clip(),
-        row_gap: px(theme.layout.row_gap),
-        padding: UiRect::all(px(theme.layout.panel_gap)),
-        border: UiRect::all(px(theme.panel.border)),
-        border_radius: BorderRadius::all(px(theme.panel.radius)),
-        align_self: if compact {
-            AlignSelf::Stretch
-        } else {
-            AlignSelf::FlexStart
-        },
-        ..default()
-    }
-}
-
-fn fangyuan_home_debug_module_row_node(theme: &UiTheme) -> Node {
-    Node {
-        flex_direction: FlexDirection::Row,
-        flex_wrap: FlexWrap::Wrap,
-        row_gap: px(theme.layout.row_gap),
-        column_gap: px(theme.layout.row_column_gap),
-        align_items: AlignItems::Stretch,
-        ..default()
-    }
-}
-
-fn fangyuan_home_debug_module_button(
-    theme: &UiTheme,
-    metrics: &UiMetrics,
-    fonts: &UiFontAssets,
-    i18n: &UiI18n,
-    module: FangyuanDebugPanelModule,
-    key: &'static str,
-    fallback: &'static str,
-) -> impl Bundle {
-    (
-        secondary_action_button_key(theme, metrics, fonts, i18n, key, fallback),
-        FangyuanHomeDebugModuleButton { module },
-    )
-}
 
 fn fangyuan_home_debug_panel_is_compact(viewport: &UiViewport) -> bool {
     viewport.width_class == UiWidthClass::Compact || viewport.logical_height < 700.0
 }
 
-fn fangyuan_home_debug_panel_visibility(state: &FangyuanDebugPanelState) -> Visibility {
-    if state.visible {
-        Visibility::Visible
-    } else {
-        Visibility::Hidden
-    }
-}
-
-fn fangyuan_home_lobby_button_audio_override() -> UiAudioCueOverride {
-    UiAudioCueOverride::try_from(UI_CONFIRM_CUE_ID)
-        .expect("fangyuan home lobby button UI audio cue id must be valid")
-}
-
 pub(super) fn update_fangyuan_home_hud_status(
     stats: Res<FangyuanHomeBlueprintStats>,
     chunk_runtime: Option<Res<FangyuanChunkRuntime>>,
-    mut status_texts: Query<&mut Text, With<FangyuanHomeHudStatusText>>,
+    contract: Res<GameplayHudHostContract>,
+    mut values: ResMut<UiBindingValues>,
 ) {
     let chunk_summary = chunk_runtime
         .as_deref()
         .map(FangyuanChunkRuntime::debug_summary)
         .unwrap_or_default();
     let status = fangyuan_home_hud_status_text(Some(&stats), Some(&chunk_summary));
-    for mut text in &mut status_texts {
-        if text.0 != status {
-            text.0 = status.clone();
-        }
-    }
+    set_binding(
+        &contract,
+        &mut values,
+        FANGYUAN_HOME_DOCUMENT_ID,
+        OWNER_FANGYUAN_HOME.as_str(),
+        "fangyuan_home.status",
+        UiBindingValue::String(status),
+    );
 }
 
 pub(super) fn update_fangyuan_home_debug_panel(
@@ -453,21 +58,23 @@ pub(super) fn update_fangyuan_home_debug_panel(
     chunk_runtime: Option<Res<FangyuanChunkRuntime>>,
     viewport: Res<UiViewport>,
     mut debug_panel_state: ResMut<FangyuanDebugPanelState>,
-    mut panel_roots: Query<&mut Visibility, With<FangyuanHomeDebugPanelRoot>>,
-    mut panel_texts: Query<&mut Text, With<FangyuanHomeDebugPanelText>>,
+    contract: Res<GameplayHudHostContract>,
+    mut values: ResMut<UiBindingValues>,
 ) {
     let compact = fangyuan_home_debug_panel_is_compact(&viewport);
     debug_panel_state.set_compact(compact);
-    let visibility = fangyuan_home_debug_panel_visibility(&debug_panel_state);
-    for mut panel_visibility in &mut panel_roots {
-        if *panel_visibility != visibility {
-            *panel_visibility = visibility;
-        }
-    }
-
-    if !debug_panel_state.visible {
-        return;
-    }
+    set_binding(
+        &contract,
+        &mut values,
+        FANGYUAN_HOME_DOCUMENT_ID,
+        OWNER_FANGYUAN_HOME.as_str(),
+        "fangyuan_home.debug.visibility",
+        UiBindingValue::Visibility(if debug_panel_state.visible {
+            UiBindingVisibility::Visible
+        } else {
+            UiBindingVisibility::Hidden
+        }),
+    );
 
     let chunk_summary = chunk_runtime
         .as_deref()
@@ -475,11 +82,14 @@ pub(super) fn update_fangyuan_home_debug_panel(
         .unwrap_or_default();
     let panel_text =
         fangyuan_home_debug_panel_text(Some(&stats), Some(&chunk_summary), &debug_panel_state);
-    for mut text in &mut panel_texts {
-        if text.0 != panel_text {
-            text.0 = panel_text.clone();
-        }
-    }
+    set_binding(
+        &contract,
+        &mut values,
+        FANGYUAN_HOME_DOCUMENT_ID,
+        OWNER_FANGYUAN_HOME.as_str(),
+        "fangyuan_home.debug.text",
+        UiBindingValue::String(panel_text),
+    );
 }
 
 fn fangyuan_home_debug_panel_text(
@@ -790,44 +400,6 @@ fn compact_fangyuan_home_layout_path(path: &str, fallback: &str) -> String {
     format!("...{tail}")
 }
 
-pub(super) fn handle_fangyuan_home_hud_buttons(
-    mut debug_panel_state: ResMut<FangyuanDebugPanelState>,
-    mut blueprint_commands: MessageWriter<FangyuanHomeBlueprintCommand>,
-    mut scene_commands: MessageWriter<SceneCommand>,
-    mut route_commands: MessageWriter<GameRouteCommand>,
-    reload_buttons: Query<(), With<FangyuanHomeReloadButton>>,
-    clear_buttons: Query<(), With<FangyuanHomeClearButton>>,
-    trial_rerun_buttons: Query<(), With<FangyuanHomeTrialRerunAuditButton>>,
-    trial_budget_buttons: Query<(), With<FangyuanHomeTrialBudgetButton>>,
-    debug_toggle_buttons: Query<(), With<FangyuanHomeDebugToggleButton>>,
-    debug_module_buttons: Query<&FangyuanHomeDebugModuleButton>,
-    lobby_buttons: Query<(), With<FangyuanHomeLobbyButton>>,
-    mut button_events: MessageReader<UiButtonEvent>,
-) {
-    for event in button_events.read() {
-        if event.kind != UiButtonEventKind::Click {
-            continue;
-        }
-
-        if reload_buttons.contains(event.entity) {
-            blueprint_commands.write(FangyuanHomeBlueprintCommand::Reload);
-        } else if clear_buttons.contains(event.entity) {
-            blueprint_commands.write(FangyuanHomeBlueprintCommand::Clear);
-        } else if trial_rerun_buttons.contains(event.entity) {
-            blueprint_commands.write(FangyuanHomeBlueprintCommand::RerunTrialAudit);
-        } else if trial_budget_buttons.contains(event.entity) {
-            blueprint_commands.write(FangyuanHomeBlueprintCommand::SwitchTrialBudget);
-        } else if debug_toggle_buttons.contains(event.entity) {
-            debug_panel_state.toggle_visible();
-        } else if let Ok(module_button) = debug_module_buttons.get(event.entity) {
-            debug_panel_state.toggle_module(module_button.module);
-        } else if lobby_buttons.contains(event.entity) {
-            scene_commands.write(SceneCommand::Exit(SceneExitRequest::default()));
-            route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
-        }
-    }
-}
-
 pub(super) fn route_to_lobby_on_fangyuan_home_exit(
     mut scene_events: MessageReader<SceneEvent>,
     current_mode: Res<State<AppUiMode>>,
@@ -882,137 +454,12 @@ mod tests {
                 FangyuanSceneLayoutCompileReport,
             },
             scene::prelude::{SceneExited, SceneId, SceneSessionId},
-            ui::widgets::UiButtonEvent,
         },
         game::scenes::FangyuanHomeBlueprintStats,
     };
 
     #[test]
-    fn hud_buttons_write_reload_clear_and_lobby_exit_route() {
-        let mut app = App::new();
-        app.init_resource::<FangyuanDebugPanelState>()
-            .add_message::<FangyuanHomeBlueprintCommand>()
-            .add_message::<SceneCommand>()
-            .add_message::<GameRouteCommand>()
-            .add_message::<UiButtonEvent>()
-            .add_systems(Update, handle_fangyuan_home_hud_buttons);
-
-        let reload_button = app.world_mut().spawn(FangyuanHomeReloadButton).id();
-        let clear_button = app.world_mut().spawn(FangyuanHomeClearButton).id();
-        let trial_rerun_button = app
-            .world_mut()
-            .spawn(FangyuanHomeTrialRerunAuditButton)
-            .id();
-        let trial_budget_button = app.world_mut().spawn(FangyuanHomeTrialBudgetButton).id();
-        let debug_button = app.world_mut().spawn(FangyuanHomeDebugToggleButton).id();
-        let lobby_button = app.world_mut().spawn(FangyuanHomeLobbyButton).id();
-        let ignored_button = app.world_mut().spawn_empty().id();
-
-        app.world_mut().write_message(UiButtonEvent {
-            entity: ignored_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.world_mut().write_message(UiButtonEvent {
-            entity: reload_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.world_mut().write_message(UiButtonEvent {
-            entity: clear_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.world_mut().write_message(UiButtonEvent {
-            entity: trial_rerun_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.world_mut().write_message(UiButtonEvent {
-            entity: trial_budget_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.world_mut().write_message(UiButtonEvent {
-            entity: debug_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.world_mut().write_message(UiButtonEvent {
-            entity: lobby_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.update();
-
-        assert_eq!(
-            read_messages::<FangyuanHomeBlueprintCommand>(app.world()),
-            vec![
-                FangyuanHomeBlueprintCommand::Reload,
-                FangyuanHomeBlueprintCommand::Clear,
-                FangyuanHomeBlueprintCommand::RerunTrialAudit,
-                FangyuanHomeBlueprintCommand::SwitchTrialBudget
-            ]
-        );
-        assert_eq!(
-            read_messages::<SceneCommand>(app.world()),
-            vec![SceneCommand::Exit(SceneExitRequest::default())]
-        );
-        let route_commands = read_messages::<GameRouteCommand>(app.world());
-        assert_eq!(route_commands.len(), 1);
-        assert!(matches!(
-            route_commands[0],
-            GameRouteCommand::ChangeMode(AppUiMode::Lobby)
-        ));
-        assert!(app.world().resource::<FangyuanDebugPanelState>().visible);
-    }
-
-    #[test]
-    fn fangyuan_trial_hud_buttons_write_rerun_budget_and_lobby_return_commands() {
-        let mut app = App::new();
-        app.init_resource::<FangyuanDebugPanelState>()
-            .add_message::<FangyuanHomeBlueprintCommand>()
-            .add_message::<SceneCommand>()
-            .add_message::<GameRouteCommand>()
-            .add_message::<UiButtonEvent>()
-            .add_systems(Update, handle_fangyuan_home_hud_buttons);
-
-        let rerun_button = app
-            .world_mut()
-            .spawn(FangyuanHomeTrialRerunAuditButton)
-            .id();
-        let budget_button = app.world_mut().spawn(FangyuanHomeTrialBudgetButton).id();
-        let lobby_button = app.world_mut().spawn(FangyuanHomeLobbyButton).id();
-
-        for entity in [rerun_button, budget_button, lobby_button] {
-            app.world_mut().write_message(UiButtonEvent {
-                entity,
-                kind: UiButtonEventKind::Click,
-                button: None,
-            });
-        }
-        app.update();
-
-        assert_eq!(
-            read_messages::<FangyuanHomeBlueprintCommand>(app.world()),
-            vec![
-                FangyuanHomeBlueprintCommand::RerunTrialAudit,
-                FangyuanHomeBlueprintCommand::SwitchTrialBudget
-            ]
-        );
-        assert_eq!(
-            read_messages::<SceneCommand>(app.world()),
-            vec![SceneCommand::Exit(SceneExitRequest::default())]
-        );
-        assert!(matches!(
-            read_messages::<GameRouteCommand>(app.world()).as_slice(),
-            [GameRouteCommand::ChangeMode(AppUiMode::Lobby)]
-        ));
-    }
-
-    #[test]
     fn hud_status_text_updates_from_blueprint_stats() {
-        let mut app = App::new();
         let session_id = SceneSessionId::from("fangyuan-session");
         let compile_report = hud_test_layout_compile_report();
         let mut stats = FangyuanHomeBlueprintStats::default();
@@ -1024,56 +471,11 @@ mod tests {
             &compile_report,
             Default::default(),
         );
-        app.insert_resource(stats)
-            .add_systems(Update, update_fangyuan_home_hud_status);
-        let status_text = app
-            .world_mut()
-            .spawn((Text::new("pending"), FangyuanHomeHudStatusText))
-            .id();
-
-        app.update();
-
-        let text = app.world().get::<Text>(status_text).unwrap();
+        let text = fangyuan_home_hud_status_text(Some(&stats), None);
         assert_eq!(
-            text.0,
+            text,
             "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
-    }
-
-    #[test]
-    fn fangyuan_debug_panel_buttons_toggle_visibility_and_modules() {
-        let mut app = App::new();
-        app.init_resource::<FangyuanDebugPanelState>()
-            .add_message::<FangyuanHomeBlueprintCommand>()
-            .add_message::<SceneCommand>()
-            .add_message::<GameRouteCommand>()
-            .add_message::<UiButtonEvent>()
-            .add_systems(Update, handle_fangyuan_home_hud_buttons);
-
-        let debug_button = app.world_mut().spawn(FangyuanHomeDebugToggleButton).id();
-        let cache_button = app
-            .world_mut()
-            .spawn(FangyuanHomeDebugModuleButton {
-                module: FangyuanDebugPanelModule::Cache,
-            })
-            .id();
-
-        app.world_mut().write_message(UiButtonEvent {
-            entity: debug_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.world_mut().write_message(UiButtonEvent {
-            entity: cache_button,
-            kind: UiButtonEventKind::Click,
-            button: None,
-        });
-        app.update();
-
-        let state = app.world().resource::<FangyuanDebugPanelState>();
-        assert!(state.visible);
-        assert!(!state.toggles.cache);
-        assert!(state.toggles.render);
     }
 
     #[test]
@@ -1135,36 +537,6 @@ mod tests {
         assert!(debug_text.contains("trial route fangyuan.object_trial"));
         assert!(!hud_text.contains("fangyuan debug panel"));
         assert!(!hud_text.contains("cache missing hit/miss pending"));
-    }
-
-    #[test]
-    fn fangyuan_debug_panel_compact_mobile_layout_has_bounded_overlay() {
-        let theme = UiTheme::default();
-        let phone_viewport = UiViewport::from_device_logical_size(
-            390.0,
-            640.0,
-            crate::framework::ui::core::UiInputMode::Touch,
-            Default::default(),
-        );
-        let desktop_viewport = UiViewport::from_device_logical_size(
-            1280.0,
-            720.0,
-            crate::framework::ui::core::UiInputMode::MouseKeyboard,
-            Default::default(),
-        );
-
-        let phone_node = fangyuan_home_debug_panel_node(&phone_viewport, &theme);
-        let desktop_node = fangyuan_home_debug_panel_node(&desktop_viewport, &theme);
-
-        assert!(fangyuan_home_debug_panel_is_compact(&phone_viewport));
-        assert!(!fangyuan_home_debug_panel_is_compact(&desktop_viewport));
-        assert_eq!(phone_node.width, percent(100));
-        assert_eq!(phone_node.max_width, px(360.0));
-        assert_eq!(phone_node.max_height, percent(38));
-        assert_eq!(phone_node.align_self, AlignSelf::Stretch);
-        assert_eq!(desktop_node.width, px(520.0));
-        assert_eq!(desktop_node.max_height, percent(72));
-        assert_eq!(desktop_node.align_self, AlignSelf::FlexStart);
     }
 
     #[test]
@@ -1311,14 +683,6 @@ mod tests {
             route_commands.last(),
             Some(GameRouteCommand::ChangeMode(AppUiMode::Lobby))
         ));
-    }
-
-    #[test]
-    fn lobby_button_uses_confirm_audio_override() {
-        assert_eq!(
-            fangyuan_home_lobby_button_audio_override().cue_id.as_str(),
-            UI_CONFIRM_CUE_ID
-        );
     }
 
     fn read_messages<M>(world: &World) -> Vec<M>
