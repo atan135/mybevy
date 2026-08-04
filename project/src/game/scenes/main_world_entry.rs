@@ -3,7 +3,7 @@
 //! This coordinator owns request generations and authority admission. Scene
 //! loading and RoomReady remain separate later-stage responsibilities.
 
-use bevy::prelude::*;
+use bevy::{input::keyboard::Key, prelude::*};
 
 use crate::{
     framework::{
@@ -17,7 +17,7 @@ use crate::{
         myserver::{
             AccountLoginState, CharacterSelectionState, GameConnectionState, MyServerCommand,
             MyServerEnvironment, MyServerErrorKind, MyServerEvent, MyServerProfiles,
-            MyServerSession,
+            MyServerSession, MyServerUpdateSet,
         },
         navigation::{AppUiMode, GameRouteCommand},
         scenes::{FANGYUAN_HOME_SCENE_ID, main_world_contract::MAIN_WORLD_AUTHORITY_CONTRACT},
@@ -29,6 +29,7 @@ pub(in crate::game) struct MainWorldEntryPlugin;
 impl Plugin for MainWorldEntryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MainWorldEntryState>()
+            .init_resource::<MainWorldEntryDebugConfig>()
             .add_message::<MainWorldEntryIntent>()
             .add_message::<MainWorldEntrySignal>()
             .add_message::<MainWorldEntryEvent>()
@@ -36,6 +37,8 @@ impl Plugin for MainWorldEntryPlugin {
                 Update,
                 (
                     abort_invalidated_entry,
+                    trigger_debug_auto_enter,
+                    adapt_main_world_return_input,
                     handle_entry_intents,
                     dispatch_main_world_join_requests,
                     consume_main_world_authority_events,
@@ -44,9 +47,46 @@ impl Plugin for MainWorldEntryPlugin {
                     handle_entry_signals,
                 )
                     .chain()
+                    .after(MyServerUpdateSet::NetworkEvents)
+                    .before(MyServerUpdateSet::CommandDispatch)
                     .run_if(resource_exists::<MyServerProfiles>)
                     .run_if(resource_exists::<MyServerSession>),
             );
+    }
+}
+
+const ENV_MAIN_WORLD_AUTO_ENTER: &str = "MYBEVY_MAIN_WORLD_AUTO_ENTER";
+
+/// Explicit desktop Debug-only hook for exercising the authority entry flow
+/// without relying on UI coordinate automation.
+#[derive(Clone, Copy, Debug, Resource)]
+struct MainWorldEntryDebugConfig {
+    auto_enter: bool,
+    auto_enter_sent: bool,
+}
+
+impl MainWorldEntryDebugConfig {
+    fn from_env() -> Self {
+        Self::from_env_reader(|key| std::env::var(key).ok())
+    }
+
+    fn from_env_reader(mut read: impl FnMut(&str) -> Option<String>) -> Self {
+        Self {
+            auto_enter: cfg!(debug_assertions)
+                && read(ENV_MAIN_WORLD_AUTO_ENTER).is_some_and(|value| {
+                    matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "on" | "yes" | "enabled"
+                    )
+                }),
+            auto_enter_sent: false,
+        }
+    }
+}
+
+impl Default for MainWorldEntryDebugConfig {
+    fn default() -> Self {
+        Self::from_env()
     }
 }
 
@@ -96,6 +136,7 @@ pub(in crate::game) struct MainWorldEntryState {
     pub position: Option<Vec3>,
     pub snapshot_generation: u32,
     pub join_acknowledged: bool,
+    pub room_start_requested: bool,
     pub scene_session_id: Option<SceneSessionId>,
     pub scene_ready: bool,
     pub room_ready_requested: bool,
@@ -123,6 +164,7 @@ impl Default for MainWorldEntryState {
             position: None,
             snapshot_generation: 0,
             join_acknowledged: false,
+            room_start_requested: false,
             scene_session_id: None,
             scene_ready: false,
             room_ready_requested: false,
@@ -176,6 +218,7 @@ impl MainWorldEntryState {
         self.position = None;
         self.snapshot_generation = 0;
         self.join_acknowledged = false;
+        self.room_start_requested = false;
         self.scene_session_id = None;
         self.scene_ready = false;
         self.room_ready_requested = false;
@@ -200,6 +243,7 @@ impl MainWorldEntryState {
         self.position = None;
         self.snapshot_generation = 0;
         self.join_acknowledged = false;
+        self.room_start_requested = false;
         self.scene_session_id = None;
         self.scene_ready = false;
         self.room_ready_requested = false;
@@ -315,6 +359,48 @@ pub(in crate::game) enum MainWorldEntryFailure {
     JoinTimedOut,
     SceneLoadFailed,
     ReconnectUnavailable,
+}
+
+fn trigger_debug_auto_enter(
+    profiles: Res<MyServerProfiles>,
+    session: Res<MyServerSession>,
+    registry: Res<SceneRegistry>,
+    state: Res<MainWorldEntryState>,
+    mut debug: ResMut<MainWorldEntryDebugConfig>,
+    mut intents: MessageWriter<MainWorldEntryIntent>,
+) {
+    if !debug.auto_enter
+        || debug.auto_enter_sent
+        || state.phase != MainWorldEntryPhase::LobbyIdle
+        || validate_entry(&profiles, &session, &registry).is_err()
+    {
+        return;
+    }
+
+    debug.auto_enter_sent = true;
+    info!("main world debug auto-enter requested after authority authentication");
+    intents.write(MainWorldEntryIntent::Enter);
+}
+
+fn adapt_main_world_return_input(
+    key_codes: Option<Res<ButtonInput<KeyCode>>>,
+    keys: Option<Res<ButtonInput<Key>>>,
+    state: Res<MainWorldEntryState>,
+    mut intents: MessageWriter<MainWorldEntryIntent>,
+) {
+    if state.phase != MainWorldEntryPhase::Active {
+        return;
+    }
+
+    let return_requested = key_codes
+        .as_deref()
+        .is_some_and(|input| input.just_pressed(KeyCode::Escape))
+        || keys
+            .as_deref()
+            .is_some_and(|input| input.just_pressed(Key::BrowserBack));
+    if return_requested {
+        intents.write(MainWorldEntryIntent::ExitToLobby);
+    }
 }
 
 fn handle_entry_intents(
@@ -502,6 +588,17 @@ fn consume_main_world_authority_events(
                     state.room_membership = MainWorldRoomMembership::Joined;
                     state.room_id = Some(response.room_id.clone());
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
+                    // The fixed public room is created in the server's waiting
+                    // phase. Its first authority entry must start the movement
+                    // policy before a snapshot can establish the scene spawn.
+                    if !state.room_start_requested {
+                        state.room_start_requested = true;
+                        info!(
+                            room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
+                            "main world public room start requested"
+                        );
+                        commands.write(MyServerCommand::StartRoom);
+                    }
                 } else {
                     fail_authority_entry(
                         &mut state,
@@ -546,8 +643,6 @@ fn consume_main_world_authority_events(
                     state.room_membership = MainWorldRoomMembership::Joined;
                     state.room_id = Some(snapshot.room_id.clone());
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
-                    state.snapshot_generation =
-                        state.snapshot_generation.max(snapshot.current_frame_id);
                 }
             }
             MyServerEvent::MovementSnapshotPush(push)
@@ -592,6 +687,12 @@ fn consume_main_world_authority_events(
                 state.snapshot_generation = push.frame_id;
                 match state.phase {
                     MainWorldEntryPhase::JoiningRoom => {
+                        info!(
+                            room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
+                            scene_id = entity.scene_id,
+                            frame_id = push.frame_id,
+                            "main world authoritative snapshot accepted"
+                        );
                         begin_ready_or_scene_load_after_snapshot(&mut state, &mut commands);
                     }
                     MainWorldEntryPhase::Recovering => {
@@ -609,7 +710,11 @@ fn consume_main_world_authority_events(
                     && state.room_ready_requested =>
             {
                 state.room_ready_acknowledged = true;
-                activate_when_ready(&mut state);
+                info!(
+                    room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
+                    "main world room ready acknowledged"
+                );
+                activate_when_ready(&mut state, &mut route_commands);
             }
             MyServerEvent::Disconnected { .. } | MyServerEvent::ConnectionFailed { .. }
                 if state.phase == MainWorldEntryPhase::Active =>
@@ -937,6 +1042,11 @@ fn dispatch_authority_confirmed_scene_enter(
     let mut request = SceneEnterRequest::new(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene());
     request.session_id = Some(session_id.clone());
     scene_commands.write(SceneCommand::Enter(request));
+    info!(
+        scene_id = MAIN_WORLD_AUTHORITY_CONTRACT.client_scene().as_str(),
+        session_id = %session_id,
+        "main world SceneCommand::Enter dispatched"
+    );
     state.scene_session_id = Some(session_id);
     state.phase = MainWorldEntryPhase::WaitingSceneReady;
 }
@@ -960,8 +1070,13 @@ fn consume_main_world_scene_ready(
             {
                 state.scene_ready = true;
                 state.room_ready_requested = true;
+                info!(
+                    scene_id = ready.scene_id.as_str(),
+                    session_id = %ready.session_id,
+                    "main world SceneEvent::Ready received; requesting room ready"
+                );
                 commands.write(MyServerCommand::SetReady { ready: true });
-                activate_when_ready(&mut state);
+                activate_when_ready(&mut state, &mut route_commands);
             }
             SceneEvent::Failed(failure)
                 if state.phase == MainWorldEntryPhase::WaitingSceneReady
@@ -1029,11 +1144,20 @@ fn consume_main_world_scene_ready(
     }
 }
 
-fn activate_when_ready(state: &mut MainWorldEntryState) {
+fn activate_when_ready(
+    state: &mut MainWorldEntryState,
+    route_commands: &mut MessageWriter<GameRouteCommand>,
+) {
     if state.scene_ready && state.room_ready_acknowledged && state.authoritative_scene_id.is_some()
     {
         state.phase = MainWorldEntryPhase::Active;
         state.input_frozen = false;
+        route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::MainWorld));
+        info!(
+            room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
+            scene_id = ?state.authoritative_scene_id,
+            "main world entry active"
+        );
     }
 }
 
@@ -1241,6 +1365,119 @@ mod tests {
         (app, session_id)
     }
 
+    #[test]
+    fn debug_auto_enter_only_enables_for_explicit_truthy_values() {
+        assert!(
+            MainWorldEntryDebugConfig::from_env_reader(|key| {
+                (key == ENV_MAIN_WORLD_AUTO_ENTER).then_some("enabled".to_owned())
+            })
+            .auto_enter
+        );
+        assert!(
+            !MainWorldEntryDebugConfig::from_env_reader(|key| {
+                (key == ENV_MAIN_WORLD_AUTO_ENTER).then_some("no".to_owned())
+            })
+            .auto_enter
+        );
+    }
+
+    #[test]
+    fn debug_auto_enter_waits_for_authority_preconditions_then_joins_once() {
+        let mut app = ready_app();
+        app.world_mut().insert_resource(MainWorldEntryDebugConfig {
+            auto_enter: true,
+            auto_enter_sent: false,
+        });
+
+        app.update();
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<MainWorldEntryDebugConfig>()
+                .auto_enter_sent
+        );
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::JoiningRoom
+        );
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, MyServerCommand::JoinRoom { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn room_state_frame_does_not_discard_a_late_join_recovery_snapshot() {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                error_code: String::new(),
+            }));
+        app.world_mut()
+            .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
+                event: "joined".to_owned(),
+                snapshot: Some(pb::RoomSnapshot {
+                    room_id: "main-world-public".to_owned(),
+                    owner_character_id: "chr_other".to_owned(),
+                    state: "in_game".to_owned(),
+                    members: Vec::new(),
+                    current_frame_id: 120,
+                    game_state: r#"{"scene_id":1}"#.to_owned(),
+                }),
+            }));
+        app.world_mut()
+            .write_message(movement_snapshot(0, 2.0, 3.0));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::WaitingSceneReady);
+        assert_eq!(state.snapshot_generation, 0);
+        assert_eq!(state.position, Some(Vec3::new(2.0, 0.0, 3.0)));
+        assert!(state.scene_session_id.is_some());
+    }
+
+    #[test]
+    fn successful_public_room_join_starts_the_movement_policy_once() {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                error_code: String::new(),
+            }));
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                error_code: String::new(),
+            }));
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<MainWorldEntryState>()
+                .room_start_requested
+        );
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, MyServerCommand::StartRoom))
+                .count(),
+            1
+        );
+    }
+
     fn movement_snapshot(frame_id: u32, x: f32, y: f32) -> MyServerEvent {
         MyServerEvent::MovementSnapshotPush(pb::MovementSnapshotPush {
             room_id: "main-world-public".to_owned(),
@@ -1409,6 +1646,9 @@ mod tests {
             app.world().resource::<MainWorldEntryState>().phase,
             MainWorldEntryPhase::Active
         );
+        assert!(messages::<GameRouteCommand>(&app).iter().any(|command| {
+            matches!(command, GameRouteCommand::ChangeMode(AppUiMode::MainWorld))
+        }));
     }
 
     #[test]
@@ -1515,6 +1755,31 @@ mod tests {
         assert_eq!(state.phase, MainWorldEntryPhase::LobbyIdle);
         assert_eq!(state.last_departure, MainWorldRoomDeparture::Confirmed);
         assert!(!state.allows_gameplay_input());
+    }
+
+    #[test]
+    fn active_escape_input_requests_a_single_room_leave() {
+        let (mut app, _) = active_app();
+        app.world_mut()
+            .insert_resource(ButtonInput::<KeyCode>::default());
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, MyServerCommand::LeaveRoom))
+                .count(),
+            1
+        );
     }
 
     #[test]

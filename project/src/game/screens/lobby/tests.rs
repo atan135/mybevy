@@ -32,6 +32,7 @@ use crate::game::{
     declarative_screen::DeclarativeScreenHostPlugin,
     features::touch_ripple::TouchLaunchMode,
     myserver::{GameConnectionState, MyServerCommand, MyServerSession},
+    scenes::main_world_entry::{MainWorldEntryIntent, MainWorldEntryState},
     ui_ids::{ACTION_TOUCH_RIPPLE_SINGLE_PLAYER, MODAL_TOUCH_RIPPLE_LAUNCH, OWNER_LOBBY},
 };
 
@@ -538,7 +539,9 @@ fn lobby_cleanup_clears_focus_transient_state_and_public_overlays() {
     app.add_plugins(MinimalPlugins)
         .insert_resource(state)
         .init_resource::<UiFocusState>()
+        .init_resource::<MainWorldEntryState>()
         .add_message::<UiPanelCommand>()
+        .add_message::<MainWorldEntryIntent>()
         .add_systems(Update, cleanup_lobby_screen);
     let focused = app.world_mut().spawn_empty().id();
     app.world_mut()
@@ -562,6 +565,45 @@ fn lobby_cleanup_clears_focus_transient_state_and_public_overlays() {
     assert!(panels.iter().any(|command| {
         matches!(command, UiPanelCommand::Close(id) if *id == UI_PANEL_GLOBAL_LOADING)
     }));
+}
+
+#[test]
+fn lobby_cleanup_does_not_cancel_an_active_main_world_transition() {
+    let mut entry = MainWorldEntryState::default();
+    entry.phase = crate::game::scenes::main_world_entry::MainWorldEntryPhase::Active;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<LobbyUiState>()
+        .init_resource::<UiFocusState>()
+        .insert_resource(entry)
+        .add_message::<UiPanelCommand>()
+        .add_message::<MainWorldEntryIntent>()
+        .add_systems(Update, cleanup_lobby_screen);
+
+    app.update();
+
+    assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
+}
+
+#[test]
+fn lobby_cleanup_cancels_an_in_flight_main_world_transition() {
+    let mut entry = MainWorldEntryState::default();
+    entry.phase = crate::game::scenes::main_world_entry::MainWorldEntryPhase::JoiningRoom;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<LobbyUiState>()
+        .init_resource::<UiFocusState>()
+        .insert_resource(entry)
+        .add_message::<UiPanelCommand>()
+        .add_message::<MainWorldEntryIntent>()
+        .add_systems(Update, cleanup_lobby_screen);
+
+    app.update();
+
+    assert_eq!(
+        read_messages::<MainWorldEntryIntent>(&app),
+        vec![MainWorldEntryIntent::Cancel]
+    );
 }
 
 fn find_document_node<'a>(node: &'a UiNode, id: &str) -> Option<&'a UiNode> {

@@ -39,10 +39,25 @@ impl GameSceneCatalog {
         Self { entries }
     }
 
+    fn embedded_first_package_catalog() -> Result<Self, GameSceneCatalogParseError> {
+        Self::from_csv_str(include_str!("../../../assets/game/scenes.csv"))
+    }
+
     pub(crate) fn load_first_package_csv(
         catalog_path: impl AsRef<str>,
     ) -> Result<Self, GameSceneCatalogLoadError> {
         let catalog_path = catalog_path.as_ref();
+        #[cfg(target_os = "android")]
+        {
+            if catalog_path == GAME_SCENE_CATALOG_PATH {
+                return Self::embedded_first_package_catalog().map_err(|source| {
+                    GameSceneCatalogLoadError::ParseFailed {
+                        path: PathBuf::from(catalog_path),
+                        source,
+                    }
+                });
+            }
+        }
         let fs_path = first_package_catalog_fs_path(catalog_path)
             .ok_or_else(|| GameSceneCatalogLoadError::CatalogNotFound(catalog_path.to_string()))?;
 
@@ -649,6 +664,17 @@ mod tests {
             .unwrap();
         assert_eq!(robot_sync_entry.ui_mode, GameSceneUiMode::RobotSyncScene);
         assert_eq!(robot_sync_entry.music, None);
+    }
+
+    #[test]
+    fn embedded_first_package_catalog_contains_main_world() {
+        let catalog = GameSceneCatalog::embedded_first_package_catalog().unwrap();
+
+        let main_world = catalog
+            .find_enabled(&SceneId::from("world.main"))
+            .expect("embedded Android first-package catalog must register world.main");
+        assert_eq!(main_world.ui_mode, GameSceneUiMode::MainWorld);
+        assert_eq!(main_world.manifest_path, "scenes/main_world/scene.ron");
     }
 
     #[test]

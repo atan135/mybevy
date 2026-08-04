@@ -909,13 +909,20 @@ pub(super) fn cleanup_lobby_screen(
     mut ui_state: ResMut<LobbyUiState>,
     mut focus_state: ResMut<UiFocusState>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
+    main_world_entry: Res<MainWorldEntryState>,
     mut main_world_intents: MessageWriter<MainWorldEntryIntent>,
 ) {
     ui_state.clear_transient();
     focus_state.focused_entity = None;
     panel_commands.write(UiPanelCommand::Close(UI_PANEL_CONFIRM_MODAL));
     panel_commands.write(UiPanelCommand::Close(UI_PANEL_GLOBAL_LOADING));
-    main_world_intents.write(MainWorldEntryIntent::Cancel);
+    if !matches!(
+        main_world_entry.phase,
+        crate::game::scenes::main_world_entry::MainWorldEntryPhase::Active
+            | crate::game::scenes::main_world_entry::MainWorldEntryPhase::HomeActive
+    ) {
+        main_world_intents.write(MainWorldEntryIntent::Cancel);
+    }
 }
 
 pub(super) fn close_lobby_loading(

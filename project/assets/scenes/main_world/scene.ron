@@ -15,8 +15,8 @@
     loading_policy: "blocking_required_assets",
   ),
   layers: [
-    (id: SceneLayerId("terrain"), required: true, assets: []),
-    (id: SceneLayerId("landmarks"), required: true, assets: []),
+    (id: SceneLayerId("terrain"), required: false, assets: []),
+    (id: SceneLayerId("landmarks"), required: false, assets: []),
   ],
   spawn_points: [
     (

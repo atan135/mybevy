@@ -4,7 +4,7 @@ mod plugin;
 pub mod protocol;
 mod types;
 
-pub(crate) use plugin::MyServerPlugin;
+pub(crate) use plugin::{MyServerPlugin, MyServerUpdateSet};
 #[cfg(test)]
 pub(crate) use types::CharacterElements;
 #[cfg(test)]

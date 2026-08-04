@@ -1398,7 +1398,9 @@ impl Default for MyServerAutoClientConfig {
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
             ping_after_auth: env_bool("MYSERVER_AUTO_PING", true),
-            join_after_auth: env_bool("MYSERVER_AUTO_JOIN", true),
+            // Entering a room belongs to a gameplay flow. Keeping this opt-in
+            // prevents the login helper from racing a scene's authority entry.
+            join_after_auth: env_bool("MYSERVER_AUTO_JOIN", false),
             room_id: env_string("MYSERVER_AUTO_JOIN_ROOM", "room-default"),
             policy_id: env_string("MYSERVER_AUTO_JOIN_POLICY", "movement_demo"),
         }

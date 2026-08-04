@@ -26,6 +26,14 @@ use super::types::{
 
 pub struct MyServerPlugin;
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, SystemSet)]
+pub(crate) enum MyServerUpdateSet {
+    NetworkEvents,
+    AutoClient,
+    CommandDispatch,
+    Keepalive,
+}
+
 impl Plugin for MyServerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MyServerConfig>()
@@ -38,15 +46,23 @@ impl Plugin for MyServerPlugin {
             .add_message::<MyServerEvent>()
             .add_plugins(MailPlugin)
             .add_systems(Startup, auto_client_startup)
+            .configure_sets(
+                Update,
+                (
+                    MyServerUpdateSet::NetworkEvents,
+                    MyServerUpdateSet::AutoClient.after(MyServerUpdateSet::NetworkEvents),
+                    MyServerUpdateSet::CommandDispatch.after(MyServerUpdateSet::AutoClient),
+                    MyServerUpdateSet::Keepalive.after(MyServerUpdateSet::CommandDispatch),
+                ),
+            )
             .add_systems(
                 Update,
                 (
-                    handle_myserver_commands,
-                    handle_network_events,
-                    keepalive_myserver_connection,
-                    auto_client_follow_events,
-                )
-                    .chain(),
+                    handle_network_events.in_set(MyServerUpdateSet::NetworkEvents),
+                    auto_client_follow_events.in_set(MyServerUpdateSet::AutoClient),
+                    handle_myserver_commands.in_set(MyServerUpdateSet::CommandDispatch),
+                    keepalive_myserver_connection.in_set(MyServerUpdateSet::Keepalive),
+                ),
             );
     }
 }
@@ -640,14 +656,17 @@ fn handle_myserver_commands(
                 MessageType::RoomReadyRes,
                 &pb::RoomReadyReq { ready: *ready },
             ),
-            MyServerCommand::StartRoom => send_request(
-                &mut session,
-                &mut network_commands,
-                &mut events,
-                MessageType::RoomStartReq,
-                MessageType::RoomStartRes,
-                &pb::RoomStartReq {},
-            ),
+            MyServerCommand::StartRoom => {
+                info!("MyServer dispatching room start request");
+                send_request(
+                    &mut session,
+                    &mut network_commands,
+                    &mut events,
+                    MessageType::RoomStartReq,
+                    MessageType::RoomStartRes,
+                    &pb::RoomStartReq {},
+                )
+            }
             MyServerCommand::EndRoom { reason } => send_request(
                 &mut session,
                 &mut network_commands,
@@ -3825,6 +3844,70 @@ mod tests {
             .add_plugins(MyServerPlugin)
             .insert_resource(test_config());
         app
+    }
+
+    #[test]
+    fn auto_client_does_not_join_a_room_without_explicit_opt_in() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(MyServerAutoClientConfig {
+                enabled: true,
+                guest_id: None,
+                ping_after_auth: false,
+                join_after_auth: false,
+                room_id: "main-world-public".to_owned(),
+                policy_id: "movement_demo".to_owned(),
+            })
+            .init_resource::<MyServerAutoClientState>()
+            .init_resource::<MyServerSession>()
+            .add_message::<MyServerCommand>()
+            .add_message::<MyServerEvent>()
+            .add_systems(Update, auto_client_follow_events);
+
+        app.world_mut().write_message(MyServerEvent::Authenticated {
+            player_id: "chr_1".to_owned(),
+        });
+        app.update();
+
+        assert!(
+            !read_messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::JoinRoom { .. }))
+        );
+    }
+
+    #[test]
+    fn auto_client_joins_only_when_explicitly_enabled() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(MyServerAutoClientConfig {
+                enabled: true,
+                guest_id: None,
+                ping_after_auth: false,
+                join_after_auth: true,
+                room_id: "dev-room".to_owned(),
+                policy_id: "movement_demo".to_owned(),
+            })
+            .init_resource::<MyServerAutoClientState>()
+            .init_resource::<MyServerSession>()
+            .add_message::<MyServerCommand>()
+            .add_message::<MyServerEvent>()
+            .add_systems(Update, auto_client_follow_events);
+
+        app.world_mut().write_message(MyServerEvent::Authenticated {
+            player_id: "chr_1".to_owned(),
+        });
+        app.update();
+
+        assert!(
+            read_messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    MyServerCommand::JoinRoom { room_id, policy_id }
+                        if room_id == "dev-room" && policy_id == "movement_demo"
+                ))
+        );
     }
 
     fn read_messages<M>(app: &App) -> Vec<M>

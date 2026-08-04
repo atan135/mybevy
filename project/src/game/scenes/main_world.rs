@@ -125,6 +125,12 @@ fn instantiate_main_world_content(
             &mut meshes,
             &mut materials,
         );
+        info!(
+            scene_id = MAIN_WORLD_SCENE_ID,
+            session_id = %session_id,
+            objects = 3,
+            "main world visuals instantiated: terrain, landmark, directional light"
+        );
         instantiated_sessions.push(session_id);
     }
 }
@@ -250,7 +256,10 @@ fn first_package_asset_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::scene::prelude::{SceneEntered, SceneRuntimeRoot};
+    use crate::framework::scene::prelude::{
+        SceneCommand, SceneDefinition, SceneEntered, SceneExitRequest, SceneKind, ScenePlugin,
+        SceneRegistry, SceneRuntime, SceneRuntimeRoot,
+    };
     use bevy::asset::AssetPlugin;
 
     #[test]
@@ -315,6 +324,65 @@ mod tests {
                 .iter(app.world())
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn framework_manifest_entry_spawns_and_exit_cleans_main_world_content() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin))
+            .add_plugins(MainWorldScenePlugin);
+        app.world_mut()
+            .resource_mut::<SceneRegistry>()
+            .register(SceneDefinition::first_package_manifest(
+                MAIN_WORLD_SCENE_ID,
+                SceneKind::World,
+                "scenes/main_world/scene.ron",
+            ))
+            .unwrap();
+
+        let session_id = SceneSessionId::from("main-world-framework-integration");
+        let mut request =
+            crate::framework::scene::prelude::SceneEnterRequest::new(MAIN_WORLD_SCENE_ID);
+        request.session_id = Some(session_id.clone());
+        app.world_mut().write_message(SceneCommand::Enter(request));
+        app.update();
+        app.update();
+
+        let runtime = app.world().resource::<SceneRuntime>();
+        let active = runtime.active().unwrap_or_else(|| {
+            panic!(
+                "main world framework entry did not activate: state={:?}, error={:?}",
+                runtime.state(),
+                runtime.last_error
+            )
+        });
+        assert_eq!(active.scene_id.as_str(), MAIN_WORLD_SCENE_ID);
+        assert_eq!(active.session_id, session_id);
+        assert_eq!(
+            app.world_mut()
+                .query::<&MainWorldContent>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+
+        app.world_mut()
+            .write_message(SceneCommand::Exit(SceneExitRequest {
+                scene_id: Some(MAIN_WORLD_SCENE_ID.into()),
+                session_id: Some(session_id),
+                ..SceneExitRequest::default()
+            }));
+        app.update();
+        app.update();
+
+        assert!(app.world().resource::<SceneRuntime>().active().is_none());
+        assert_eq!(
+            app.world_mut()
+                .query::<&MainWorldContent>()
+                .iter(app.world())
+                .count(),
+            0
         );
     }
 }

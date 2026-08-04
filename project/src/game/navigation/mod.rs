@@ -32,7 +32,7 @@ use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE,
     OWNER_AI_LOGIN_REFERENCE, OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS,
     OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY,
-    OWNER_LOGIN, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
+    OWNER_LOGIN, OWNER_MAIN_WORLD, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
     OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE, OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GALLERY,
     OWNER_UI_GENERATED_ACCEPTANCE, SCROLL_UI_GALLERY_MAIN,
 };
@@ -191,6 +191,7 @@ pub(super) enum AppUiMode {
     Login,
     CharacterSelect,
     Lobby,
+    MainWorld,
     AudioSettings,
     AudioMonitor,
     AudioGallery,
@@ -211,6 +212,7 @@ impl AppUiMode {
             Self::Login => OWNER_LOGIN,
             Self::CharacterSelect => OWNER_CHARACTER_SELECT,
             Self::Lobby => OWNER_LOBBY,
+            Self::MainWorld => OWNER_MAIN_WORLD,
             Self::AudioSettings => OWNER_AUDIO_SETTINGS,
             Self::AudioMonitor => OWNER_AUDIO_MONITOR,
             Self::AudioGallery => OWNER_AUDIO_GALLERY,
@@ -231,6 +233,7 @@ impl AppUiMode {
             Self::Login => "login",
             Self::CharacterSelect => "character_select",
             Self::Lobby => "lobby",
+            Self::MainWorld => "main_world",
             Self::AudioSettings => "audio_settings",
             Self::AudioMonitor => "audio_monitor",
             Self::AudioGallery => "audio_gallery",
@@ -257,6 +260,7 @@ impl AppUiMode {
                 "select-character",
             ],
             Self::Lobby => &["lobby", "game_list", "game-list", "list"],
+            Self::MainWorld => &["main_world", "main-world"],
             Self::AudioSettings => &["audio_settings", "audio-settings", "audio", "settings"],
             Self::AudioMonitor => &[
                 "audio_monitor",
@@ -646,11 +650,12 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
     ),
 ];
 
-fn all_app_ui_modes() -> [AppUiMode; 15] {
+fn all_app_ui_modes() -> [AppUiMode; 16] {
     [
         AppUiMode::Login,
         AppUiMode::CharacterSelect,
         AppUiMode::Lobby,
+        AppUiMode::MainWorld,
         AppUiMode::AudioSettings,
         AppUiMode::AudioMonitor,
         AppUiMode::AudioGallery,
@@ -716,6 +721,15 @@ mod tests {
     #[test]
     fn audio_settings_mode_uses_dedicated_owner() {
         assert_eq!(AppUiMode::AudioSettings.ui_owner(), OWNER_AUDIO_SETTINGS);
+    }
+
+    #[test]
+    fn main_world_mode_closes_lobby_ui_under_a_dedicated_owner() {
+        assert_eq!(AppUiMode::MainWorld.ui_owner(), OWNER_MAIN_WORLD);
+        assert_eq!(
+            parse_start_screen_mode("main-world"),
+            Some(AppUiMode::MainWorld)
+        );
     }
 
     #[test]
