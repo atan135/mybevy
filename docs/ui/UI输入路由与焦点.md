@@ -85,6 +85,7 @@ Dropdown option 列表复用同一 `UiScrollView`，而 Dropdown 的全屏 dismi
 - `DisabledTextInput` 不编辑也不移动光标。
 - `UiTextInputSubmitted` 消息。
 - Android 下的 native text input 同步路径。
+- 文档输入声明 `security: "sensitive"` 时，运行时标记为 `UiSensitiveTextInput`；敏感值必须保留在受控 ECS 输入组件，不能配置 value binding、on-change/on-submit action、reload snapshot、audit metadata 或诊断输出。业务 host 只在固定节点读取后按其生命周期清理。
 
 ## 当前边界
 
