@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::game::myserver::GameConnectionState;
 
 pub(super) const ENTRY_TOUCH_RIPPLE: &str = "game:touch_ripple";
+pub(super) const ENTRY_MAIN_WORLD: &str = "world:main";
 pub(super) const ENTRY_LOCKSTEP_SIM: &str = "scene:lockstep_sim_arena";
 pub(super) const ENTRY_SAMPLE_DUNGEON: &str = "scene:sample_dungeon_room";
 pub(super) const ENTRY_ROBOT_SYNC: &str = "scene:robot_sync_arena";
@@ -12,6 +13,7 @@ pub(super) const LOBBY_MAX_ENTRIES: u16 = 24;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LobbyEntryTarget {
+    MainWorld,
     TouchRipple,
     LockstepSim,
     SampleDungeon,
@@ -53,6 +55,13 @@ impl LobbyEntry {
 
 pub(super) fn built_in_lobby_entries() -> Vec<LobbyEntry> {
     vec![
+        LobbyEntry::built_in(
+            ENTRY_MAIN_WORLD,
+            "Main World",
+            "Enter the fixed public grassland world",
+            "WORLD",
+            LobbyEntryTarget::MainWorld,
+        ),
         LobbyEntry::built_in(
             ENTRY_TOUCH_RIPPLE,
             "Touch Ripple",

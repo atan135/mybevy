@@ -10,6 +10,7 @@ mod lockstep_sim_arena;
 mod main_world;
 #[allow(dead_code)]
 pub(in crate::game) mod main_world_contract;
+pub(in crate::game) mod main_world_entry;
 mod robot_sync_arena;
 mod sample_dungeon_room;
 
@@ -42,6 +43,7 @@ impl Plugin for GameScenesPlugin {
             catalog::GameSceneCatalogPlugin,
             fangyuan_home::FangyuanHomePlugin,
             lockstep_sim_arena::LockstepSimArenaPlugin,
+            main_world_entry::MainWorldEntryPlugin,
             main_world::MainWorldScenePlugin,
             robot_sync_arena::RobotSyncArenaPlugin,
             sample_dungeon_room::SampleDungeonRoomPlugin,

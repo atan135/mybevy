@@ -43,6 +43,7 @@ use crate::game::{
     scenes::{
         FANGYUAN_HOME_SCENE_ID, LOCKSTEP_SIM_ARENA_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID,
         SAMPLE_DUNGEON_ROOM_SCENE_ID,
+        main_world_entry::{MainWorldEntryIntent, MainWorldEntryState},
     },
     ui_ids::{
         ACTION_CANCEL, ACTION_CONFIRM, ACTION_TOUCH_RIPPLE_NETWORKED,
@@ -408,6 +409,7 @@ pub(super) fn handle_lobby_document_actions(
     mut overlay_commands: MessageWriter<UiOverlayCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
     mut myserver_commands: MessageWriter<MyServerCommand>,
+    mut main_world_intents: MessageWriter<MainWorldEntryIntent>,
 ) {
     let mut command_sent = false;
     for action in actions.read() {
@@ -439,6 +441,7 @@ pub(super) fn handle_lobby_document_actions(
                     &mut scene_commands,
                     &mut panel_commands,
                     &mut route_commands,
+                    &mut main_world_intents,
                 );
             }
             ACTION_RELOAD_GAMES
@@ -462,6 +465,7 @@ pub(super) fn handle_lobby_document_actions(
                     && action.params.is_empty() =>
             {
                 command_sent = true;
+                main_world_intents.write(MainWorldEntryIntent::CharacterChanged);
                 myserver_commands.write(MyServerCommand::SwitchCharacter);
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::CharacterSelect));
             }
@@ -471,6 +475,7 @@ pub(super) fn handle_lobby_document_actions(
                     && action.params.is_empty() =>
             {
                 command_sent = true;
+                main_world_intents.write(MainWorldEntryIntent::LoggedOut);
                 myserver_commands.write(MyServerCommand::Logout);
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Login));
             }
@@ -573,9 +578,14 @@ fn enter_lobby_entry(
     scene_commands: &mut MessageWriter<SceneCommand>,
     panel_commands: &mut MessageWriter<UiPanelCommand>,
     route_commands: &mut MessageWriter<GameRouteCommand>,
+    main_world_intents: &mut MessageWriter<MainWorldEntryIntent>,
 ) -> bool {
     ui_state.selected_entry_id = Some(entry.entry_id.clone());
     match entry.target {
+        LobbyEntryTarget::MainWorld => {
+            main_world_intents.write(MainWorldEntryIntent::Enter);
+            true
+        }
         LobbyEntryTarget::TouchRipple => {
             ui_state.confirming_entry_id = Some(ENTRY_TOUCH_RIPPLE.to_owned());
             panel_commands.write(UiPanelCommand::Open(UiPanelRequest::Confirm(
@@ -663,6 +673,7 @@ pub(super) fn finish_lobby_reload(mut ui_state: ResMut<LobbyUiState>) {
 pub(super) fn sync_lobby_document_bindings(
     session: Res<MyServerSession>,
     ui_state: Res<LobbyUiState>,
+    main_world_entry: Res<MainWorldEntryState>,
     contract: Res<LobbyHostContract>,
     mut values: ResMut<UiBindingValues>,
 ) {
@@ -678,7 +689,10 @@ pub(super) fn sync_lobby_document_bindings(
         .iter()
         .map(|entry| {
             let selected = ui_state.selected_entry_id.as_deref() == Some(entry.entry_id.as_str());
-            let loading = ui_state.pending_entry_id.as_deref() == Some(entry.entry_id.as_str());
+            let main_world_loading = matches!(entry.target, LobbyEntryTarget::MainWorld)
+                && main_world_entry.is_in_flight();
+            let loading = main_world_loading
+                || ui_state.pending_entry_id.as_deref() == Some(entry.entry_id.as_str());
             UiBindingValue::Record(BTreeMap::from([
                 (
                     "entry_id".to_owned(),
@@ -699,7 +713,11 @@ pub(super) fn sync_lobby_document_bindings(
                 ("selected".to_owned(), UiBindingValue::Bool(selected)),
                 (
                     "disabled".to_owned(),
-                    UiBindingValue::Bool(!entry.enabled || ui_state.pending_entry_id.is_some()),
+                    UiBindingValue::Bool(
+                        !entry.enabled
+                            || ui_state.pending_entry_id.is_some()
+                            || main_world_entry.is_in_flight(),
+                    ),
                 ),
                 ("loading".to_owned(), UiBindingValue::Bool(loading)),
             ]))
@@ -899,11 +917,13 @@ pub(super) fn cleanup_lobby_screen(
     mut ui_state: ResMut<LobbyUiState>,
     mut focus_state: ResMut<UiFocusState>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
+    mut main_world_intents: MessageWriter<MainWorldEntryIntent>,
 ) {
     ui_state.clear_transient();
     focus_state.focused_entity = None;
     panel_commands.write(UiPanelCommand::Close(UI_PANEL_CONFIRM_MODAL));
     panel_commands.write(UiPanelCommand::Close(UI_PANEL_GLOBAL_LOADING));
+    main_world_intents.write(MainWorldEntryIntent::Cancel);
 }
 
 pub(super) fn close_lobby_loading(
