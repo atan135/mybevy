@@ -7,6 +7,8 @@
 mod catalog;
 mod fangyuan_home;
 mod lockstep_sim_arena;
+#[allow(dead_code)]
+pub(in crate::game) mod main_world_contract;
 mod robot_sync_arena;
 mod sample_dungeon_room;
 
