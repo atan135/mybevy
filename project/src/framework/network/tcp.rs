@@ -228,28 +228,9 @@ async fn run_tcp_stream(
 
     loop {
         tokio::select! {
-            read_result = reader.read(&mut read_buffer) => {
-                match read_result {
-                    Ok(0) => {
-                        reason = Some("remote closed".to_string());
-                        break;
-                    }
-                    Ok(bytes) => {
-                        send_event(
-                            &event_tx,
-                            NetworkEvent::Packet {
-                                connection_id,
-                                transport: NetworkTransport::Tcp,
-                                payload: read_buffer[..bytes].to_vec(),
-                            },
-                        );
-                    }
-                    Err(err) => {
-                        reason = Some(err.to_string());
-                        break;
-                    }
-                }
-            }
+            biased;
+            // Authority peers can keep reads continuously ready with snapshots.
+            // Prioritize queued control requests so reconnect/leave cannot starve.
             payload = send_rx.recv() => {
                 let Some(payload) = payload else {
                     reason = Some("send queue closed".to_string());
@@ -281,6 +262,28 @@ async fn run_tcp_stream(
             _ = shutdown_rx.recv() => {
                 break;
             }
+            read_result = reader.read(&mut read_buffer) => {
+                match read_result {
+                    Ok(0) => {
+                        reason = Some("remote closed".to_string());
+                        break;
+                    }
+                    Ok(bytes) => {
+                        send_event(
+                            &event_tx,
+                            NetworkEvent::Packet {
+                                connection_id,
+                                transport: NetworkTransport::Tcp,
+                                payload: read_buffer[..bytes].to_vec(),
+                            },
+                        );
+                    }
+                    Err(err) => {
+                        reason = Some(err.to_string());
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -293,4 +296,64 @@ async fn run_tcp_stream(
         },
     );
     send_connection_closed(&command_tx, connection_id, generation);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::{runtime::Runtime, time::timeout};
+
+    use super::*;
+
+    #[test]
+    fn queued_payload_is_prioritized_when_inbound_data_is_already_ready() {
+        Runtime::new().unwrap().block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let remote_addr = listener.local_addr().unwrap();
+            let client = TcpStream::connect(remote_addr).await.unwrap();
+            let (mut server, _) = listener.accept().await.unwrap();
+
+            server.write_all(b"inbound-snapshot").await.unwrap();
+            let expected = b"room-reconnect-request".to_vec();
+            let (send_tx, send_rx) = mpsc::channel(1);
+            send_tx.send(expected.clone()).await.unwrap();
+            let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
+            let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+            let (command_tx, _command_rx) = mpsc::unbounded_channel();
+            let connection_id = ConnectionId::from_raw(1);
+
+            tokio::spawn(run_tcp_stream(
+                connection_id,
+                client,
+                remote_addr.to_string(),
+                1024,
+                send_rx,
+                shutdown_rx,
+                event_tx,
+                command_tx,
+                1,
+            ));
+
+            let first_event = timeout(Duration::from_secs(2), event_rx.recv())
+                .await
+                .expect("TCP worker must make progress")
+                .expect("TCP worker event channel must remain open");
+            assert!(matches!(
+                first_event,
+                NetworkEvent::DataSent {
+                    connection_id: sent_connection_id,
+                    transport: NetworkTransport::Tcp,
+                    bytes,
+                } if sent_connection_id == connection_id && bytes == expected.len()
+            ));
+
+            let mut received = vec![0; expected.len()];
+            timeout(Duration::from_secs(2), server.read_exact(&mut received))
+                .await
+                .expect("queued TCP payload must not starve behind inbound snapshots")
+                .unwrap();
+            assert_eq!(received, expected);
+        });
+    }
 }
