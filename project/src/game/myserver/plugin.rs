@@ -4479,6 +4479,44 @@ mod tests {
     }
 
     #[test]
+    fn late_register_response_after_session_reset_is_ignored_by_request_identity() {
+        let mut app = test_app();
+        app.world_mut().write_message(MyServerCommand::Register {
+            login_name: "alice".to_string(),
+            password: "secret!".to_string(),
+            connect_game: false,
+        });
+        app.update();
+        let request = latest_http_request(&app).expect("register must issue an HTTP request");
+
+        app.world_mut().resource_mut::<MyServerSession>().reset();
+        app.world_mut()
+            .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                request_id: request.request_id,
+                status: 200,
+                headers: Vec::new(),
+                body: br#"{
+                    "ok": true,
+                    "playerId": "plr_late",
+                    "accessToken": "late-access"
+                }"#
+                .to_vec(),
+            }));
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.account_login_state, AccountLoginState::NotLoggedIn);
+        assert_eq!(session.registration_state, RegistrationState::Idle);
+        assert!(session.access_token.is_none());
+        assert!(session.characters.is_empty());
+        assert!(
+            !read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::LoginSucceeded(_)))
+        );
+    }
+
+    #[test]
     fn builds_guest_login_request() {
         let request = build_json_request(
             &test_config(),

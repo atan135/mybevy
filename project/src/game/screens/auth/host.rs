@@ -1486,8 +1486,7 @@ fn registration_error_bindings(ui_state: &LoginUiState) -> (String, String, bool
         .as_deref()
         .and_then(RegistrationServerError::from_error_code)
         .map(|error| error.message_key().to_owned())
-        .or_else(|| error.detail.clone())
-        .unwrap_or_default();
+        .unwrap_or_else(|| error.message_key.to_owned());
     ("Registration failed".to_owned(), detail, true)
 }
 
@@ -2004,6 +2003,7 @@ pub(super) fn follow_myserver_login_events(
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
             }
             MyServerEvent::LogoutSucceeded => {
+                clear_active_login_document_inputs(&runtime, &mut input_values);
                 clear_active_character_document_input(&runtime, &mut input_values);
                 focus_state.focused_entity = None;
                 ui_state.clear_runtime_state();

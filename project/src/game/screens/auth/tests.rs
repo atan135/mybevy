@@ -1197,6 +1197,42 @@ fn auth_registration_bindings_expose_mode_and_feedback_without_sensitive_values(
         login_binding_value(&app, "auth.register.error_display"),
         UiBindingValue::Enum("flex".to_owned())
     );
+
+    for (code, expected_key) in [
+        (
+            "LOGIN_NAME_EXISTS",
+            "myserver.registration.login_name_exists",
+        ),
+        (
+            "PASSWORD_REGISTER_UNAVAILABLE",
+            "myserver.registration.unavailable",
+        ),
+        ("ACCOUNT_BLOCKED", "myserver.error.account_blocked"),
+        ("IP_BLOCKED", "myserver.error.ip_blocked"),
+        ("MAINTENANCE", "myserver.error.maintenance"),
+        ("RATE_LIMIT", "myserver.error.message_rate_exceeded"),
+    ] {
+        let error = MyServerDisplayError::from_error_code(
+            MyServerErrorSource::Http,
+            Some(MyServerOperation::Register),
+            None,
+            None,
+            Some(429),
+            code,
+            Some("server detail".to_owned()),
+        );
+        let state = LoginUiState {
+            last_error: Some(error),
+            ..Default::default()
+        };
+        let mut app = login_binding_test_app(MyServerSession::default(), state);
+        app.update();
+        assert_eq!(
+            login_binding_value(&app, "auth.register.error_detail"),
+            UiBindingValue::String(expected_key.to_owned()),
+            "{code}"
+        );
+    }
 }
 
 #[test]
