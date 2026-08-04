@@ -267,6 +267,7 @@ impl KcpSessionOptions {
             interval: 10,
             resend: 2,
             no_congestion_control: true,
+            session_expire: Duration::from_secs(15),
             flush_write: true,
             flush_acks_input: true,
             ..Default::default()

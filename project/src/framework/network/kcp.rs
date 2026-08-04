@@ -1,7 +1,7 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::mpsc,
     time,
 };
@@ -21,6 +21,7 @@ pub(super) struct AcceptedKcpConnection {
     pub stream: KcpStream,
     pub remote_addr: String,
     pub read_buffer_size: usize,
+    pub outbound_timeout: Duration,
 }
 
 pub(super) fn spawn_kcp_connection(
@@ -63,6 +64,7 @@ pub(super) fn spawn_accepted_kcp_connection(
         accepted.stream,
         accepted.remote_addr,
         accepted.read_buffer_size,
+        accepted.outbound_timeout,
         send_rx,
         shutdown_rx,
         event_tx,
@@ -100,6 +102,7 @@ async fn run_kcp_connection(
     };
 
     let kcp_config = to_kcp_config(&config.session);
+    let outbound_timeout = config.session.session_expire;
     let connect_future = async {
         match config.conv {
             Some(conv) => KcpStream::connect_with_conv(&kcp_config, conv, socket_addr).await,
@@ -152,6 +155,7 @@ async fn run_kcp_connection(
         stream,
         remote_addr,
         config.read_buffer_size,
+        outbound_timeout,
         send_rx,
         shutdown_rx,
         event_tx,
@@ -170,6 +174,7 @@ async fn run_kcp_listener(
     let listener_id = config.listener_id;
     let bind_addr = config.addr.clone();
     let kcp_config = to_kcp_config(&config.session);
+    let outbound_timeout = config.session.session_expire;
     let mut listener = match KcpListener::bind(kcp_config, &bind_addr).await {
         Ok(listener) => listener,
         Err(err) => {
@@ -209,6 +214,7 @@ async fn run_kcp_listener(
                             stream,
                             remote_addr: remote_addr.to_string(),
                             read_buffer_size: config.read_buffer_size,
+                            outbound_timeout,
                         }));
                     }
                     Err(err) => {
@@ -240,6 +246,7 @@ async fn run_kcp_stream(
     mut stream: KcpStream,
     _remote_addr: String,
     read_buffer_size: usize,
+    outbound_timeout: Duration,
     mut send_rx: mpsc::Receiver<Vec<u8>>,
     mut shutdown_rx: mpsc::Receiver<()>,
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
@@ -261,29 +268,16 @@ async fn run_kcp_stream(
                     break;
                 };
 
-                if let Err(err) = stream.write_all(&payload).await {
+                if let Err(error) = write_kcp_payload(&mut stream, &payload, outbound_timeout).await {
                     send_event(
                         &event_tx,
                         NetworkEvent::SendFailed {
                             connection_id,
                             transport: Some(NetworkTransport::Kcp),
-                            error: err.to_string(),
+                            error: error.clone(),
                         },
                     );
-                    reason = Some(err.to_string());
-                    break;
-                }
-
-                if let Err(err) = stream.flush().await {
-                    send_event(
-                        &event_tx,
-                        NetworkEvent::SendFailed {
-                            connection_id,
-                            transport: Some(NetworkTransport::Kcp),
-                            error: err.to_string(),
-                        },
-                    );
-                    reason = Some(err.to_string());
+                    reason = Some(error);
                     break;
                 }
 
@@ -353,12 +347,34 @@ fn to_kcp_config(options: &KcpSessionOptions) -> KcpConfig {
     }
 }
 
+async fn write_kcp_payload(
+    stream: &mut KcpStream,
+    payload: &[u8],
+    outbound_timeout: Duration,
+) -> Result<(), String> {
+    write_payload_with_timeout(stream, payload, outbound_timeout).await
+}
+
+async fn write_payload_with_timeout(
+    stream: &mut (impl AsyncWrite + Unpin),
+    payload: &[u8],
+    outbound_timeout: Duration,
+) -> Result<(), String> {
+    time::timeout(outbound_timeout, async {
+        stream.write_all(payload).await?;
+        stream.flush().await
+    })
+    .await
+    .map_err(|_| format!("KCP outbound write timed out after {outbound_timeout:?}"))?
+    .map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use tokio::{
-        io::AsyncReadExt,
+        io::{AsyncReadExt, duplex},
         runtime::Runtime,
         sync::mpsc,
         time::{self, timeout},
@@ -391,6 +407,7 @@ mod tests {
                 stream,
                 remote_addr.to_string(),
                 1024,
+                Duration::from_secs(1),
                 send_rx,
                 shutdown_rx,
                 event_tx,
@@ -415,6 +432,20 @@ mod tests {
 
             // Give the worker one scheduling turn before the test runtime drops it.
             time::sleep(Duration::from_millis(1)).await;
+        });
+    }
+
+    #[test]
+    fn stalled_outbound_write_fails_within_the_session_deadline() {
+        Runtime::new().unwrap().block_on(async {
+            let (mut writer, _reader) = duplex(1);
+            let timeout = Duration::from_millis(10);
+
+            let error = write_payload_with_timeout(&mut writer, b"blocked", timeout)
+                .await
+                .expect_err("a blackhole peer must not stall the worker indefinitely");
+
+            assert_eq!(error, "KCP outbound write timed out after 10ms");
         });
     }
 }
