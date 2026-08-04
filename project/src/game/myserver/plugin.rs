@@ -19,8 +19,8 @@ use super::types::{
     MyServerAutoClientState, MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot,
     MyServerDisplayError, MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerProfiles,
     MyServerSession, PendingHttpOperation, PendingHttpRequest, PendingRequest, ReconnectCause,
-    ReconnectPlan, RegisterPendingReviewResponse, RegisterResponse, SessionKickCategory,
-    TicketResponse, character_select_endpoint, classify_game_auth_failure,
+    ReconnectPlan, RegisterPendingReviewResponse, RegisterResponse, RegistrationState,
+    SessionKickCategory, TicketResponse, character_select_endpoint, classify_game_auth_failure,
     parse_character_bound_ticket, redact_secret_fingerprint, ticket_endpoint,
 };
 
@@ -478,6 +478,7 @@ fn handle_myserver_commands(
                 password,
                 *connect_game,
             ),
+            MyServerCommand::DismissRegistrationReview => session.dismiss_registration_review(),
             MyServerCommand::GuestLogin {
                 guest_id,
                 connect_game,
@@ -2271,13 +2272,13 @@ fn handle_register_response(
             handle_login_success(config, session, network_commands, events, response);
         }
         RegisterResponse::PendingReview(response) => {
-            session.account_blocked();
-            session.connect_after_login = None;
             let code = register_pending_review_code(&response);
             let message = response
                 .message
                 .filter(|message| !message.trim().is_empty())
                 .unwrap_or_else(|| "Registration submitted for review".to_string());
+            let login_name = response.login_name.clone();
+            session.registration_pending_review();
             write_display_error(
                 events,
                 display_error_from_http_operation(
@@ -2287,7 +2288,10 @@ fn handle_register_response(
                     Some(message.clone()),
                 ),
             );
-            events.write(MyServerEvent::AccountStatusBlocked { code, message });
+            events.write(MyServerEvent::RegistrationPendingReview {
+                login_name,
+                message,
+            });
         }
     }
 }
@@ -4417,6 +4421,61 @@ mod tests {
         assert_eq!(header(&request, "Accept"), Some("application/json"));
         assert_eq!(body_json(&request)["loginName"], "alice");
         assert_eq!(body_json(&request)["password"], "secret");
+    }
+
+    #[test]
+    fn register_request_uses_public_auth_contract_and_pending_review_stays_logged_out() {
+        let mut app = test_app();
+        app.world_mut().write_message(MyServerCommand::Register {
+            login_name: "alice".to_string(),
+            password: "secret!".to_string(),
+            connect_game: true,
+        });
+        app.update();
+
+        let request = latest_http_request(&app).expect("register must issue an HTTP request");
+        assert_eq!(request.url, "http://auth.test/root/api/v1/auth/register");
+        let body = body_json(&request);
+        assert_eq!(body["loginName"], "alice");
+        assert_eq!(body["password"], "secret!");
+        assert_eq!(body.as_object().map(|value| value.len()), Some(2));
+        assert_eq!(
+            app.world().resource::<MyServerSession>().registration_state,
+            RegistrationState::Registering
+        );
+
+        respond_http_ok(
+            &mut app,
+            &request,
+            r#"{
+                "ok": true,
+                "playerId": "plr_pending",
+                "loginName": "alice",
+                "status": "pending_review",
+                "pendingReview": true,
+                "message": "Registration submitted for review"
+            }"#,
+        );
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.registration_state, RegistrationState::PendingReview);
+        assert_eq!(session.account_login_state, AccountLoginState::NotLoggedIn);
+        assert!(session.access_token.is_none());
+        assert!(session.characters.is_empty());
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::RegistrationPendingReview { message, .. }
+                        if message == "Registration submitted for review"
+                ))
+        );
+        assert!(
+            !read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::AccountStatusBlocked { .. }))
+        );
     }
 
     #[test]

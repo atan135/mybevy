@@ -15,3 +15,10 @@ pub(crate) use types::{
     MyServerDisplayError, MyServerEnvironment, MyServerErrorKind, MyServerErrorSource,
     MyServerEvent, MyServerOperation, MyServerProfiles, MyServerSession, ReconnectCause,
 };
+// Registration contracts are intentionally re-exported for the auth host,
+// which owns sensitive form inputs without exposing the underlying types module.
+#[allow(unused_imports)]
+pub(crate) use types::{
+    RegistrationServerError, RegistrationState, RegistrationValidationError,
+    normalize_registration_login_name, validate_registration_request,
+};

@@ -1541,6 +1541,13 @@ pub(super) fn follow_myserver_login_events(
                     Some(error.clone()),
                 ));
             }
+            MyServerEvent::RegistrationPendingReview { message, .. } => {
+                ui_state.notice = Some(AuthStatusNotice {
+                    kind: AuthNoticeKind::PendingReview,
+                    title: "Registration requires review".to_string(),
+                    detail: Some(message.clone()),
+                });
+            }
             MyServerEvent::CharacterListFailed { error }
             | MyServerEvent::CharacterCreateFailed { error }
             | MyServerEvent::CharacterProfileFailed { error }

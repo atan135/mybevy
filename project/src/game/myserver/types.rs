@@ -233,6 +233,126 @@ impl Default for AccountLoginState {
     }
 }
 
+/// Client-visible registration lifecycle. This is deliberately independent from
+/// account login: a pending review is not an authenticated account session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RegistrationState {
+    #[default]
+    Idle,
+    Registering,
+    PendingReview,
+    Failed,
+}
+
+pub const REGISTRATION_LOGIN_NAME_MIN_LENGTH: usize = 3;
+pub const REGISTRATION_LOGIN_NAME_MAX_LENGTH: usize = 32;
+pub const REGISTRATION_PASSWORD_MIN_LENGTH: usize = 6;
+pub const REGISTRATION_PASSWORD_MAX_LENGTH: usize = 128;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RegistrationValidationError {
+    InvalidLoginName,
+    InvalidPasswordLength,
+    PasswordConfirmationMismatch,
+}
+
+impl RegistrationValidationError {
+    pub const fn message_key(&self) -> &'static str {
+        match self {
+            Self::InvalidLoginName => "myserver.registration.invalid_login_name",
+            Self::InvalidPasswordLength => "myserver.registration.invalid_password",
+            Self::PasswordConfirmationMismatch => {
+                "myserver.registration.password_confirmation_mismatch"
+            }
+        }
+    }
+}
+
+/// Validated data accepted by the register command. Its Debug implementation
+/// intentionally redacts the password so it remains safe in diagnostics.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RegistrationRequest {
+    pub login_name: String,
+    pub password: String,
+}
+
+impl fmt::Debug for RegistrationRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RegistrationRequest")
+            .field("login_name", &self.login_name)
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegistrationServerError {
+    InvalidLoginName,
+    InvalidPassword,
+    LoginNameExists,
+    RegistrationUnavailable,
+}
+
+impl RegistrationServerError {
+    pub fn from_error_code(code: &str) -> Option<Self> {
+        match normalize_error_code(code).as_str() {
+            "INVALID_LOGIN_NAME" => Some(Self::InvalidLoginName),
+            "INVALID_PASSWORD" => Some(Self::InvalidPassword),
+            "LOGIN_NAME_EXISTS" => Some(Self::LoginNameExists),
+            "PASSWORD_REGISTER_UNAVAILABLE" => Some(Self::RegistrationUnavailable),
+            _ => None,
+        }
+    }
+
+    pub const fn message_key(self) -> &'static str {
+        match self {
+            Self::InvalidLoginName => "myserver.registration.invalid_login_name",
+            Self::InvalidPassword => "myserver.registration.invalid_password",
+            Self::LoginNameExists => "myserver.registration.login_name_exists",
+            Self::RegistrationUnavailable => "myserver.registration.unavailable",
+        }
+    }
+}
+
+pub fn normalize_registration_login_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+pub fn validate_registration_request(
+    login_name: &str,
+    password: &str,
+    password_confirmation: &str,
+) -> Result<RegistrationRequest, RegistrationValidationError> {
+    let login_name = normalize_registration_login_name(login_name);
+    let valid_login_name = (REGISTRATION_LOGIN_NAME_MIN_LENGTH
+        ..=REGISTRATION_LOGIN_NAME_MAX_LENGTH)
+        .contains(&login_name.len())
+        && login_name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    if !valid_login_name {
+        return Err(RegistrationValidationError::InvalidLoginName);
+    }
+
+    // auth-http validates JavaScript string length, which is UTF-16 code-unit
+    // length. Match that contract instead of Rust's UTF-8 byte length.
+    if !(REGISTRATION_PASSWORD_MIN_LENGTH..=REGISTRATION_PASSWORD_MAX_LENGTH)
+        .contains(&password.encode_utf16().count())
+    {
+        return Err(RegistrationValidationError::InvalidPasswordLength);
+    }
+
+    if password != password_confirmation {
+        return Err(RegistrationValidationError::PasswordConfirmationMismatch);
+    }
+
+    Ok(RegistrationRequest {
+        login_name,
+        password: password.to_owned(),
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CharacterSelectionState {
     NotLoaded,
@@ -274,6 +394,7 @@ impl Default for GameConnectionState {
 #[derive(Clone, Debug, Default, Resource)]
 pub struct MyServerSession {
     pub account_login_state: AccountLoginState,
+    pub registration_state: RegistrationState,
     pub character_selection_state: CharacterSelectionState,
     pub game_connection_state: GameConnectionState,
     pub access_token: Option<String>,
@@ -443,7 +564,39 @@ impl MyServerSession {
     }
 
     pub fn begin_login(&mut self) {
+        self.registration_state = RegistrationState::Idle;
         self.account_login_state = AccountLoginState::LoggingIn;
+    }
+
+    pub fn begin_registration(&mut self) {
+        self.registration_state = RegistrationState::Registering;
+    }
+
+    pub fn registration_failed(&mut self) {
+        self.registration_state = RegistrationState::Failed;
+        self.account_login_state = AccountLoginState::NotLoggedIn;
+    }
+
+    pub fn registration_pending_review(&mut self) {
+        self.reset_connection_state();
+        self.clear_account_state();
+        self.account_login_state = AccountLoginState::NotLoggedIn;
+        self.character_selection_state = CharacterSelectionState::NotLoaded;
+        self.login_request = None;
+        self.ticket_request = None;
+        self.connect_after_login = None;
+        self.reconnect_after_auth = None;
+        self.reconnect_blocked = false;
+        self.pending_http.clear();
+        self.registration_state = RegistrationState::PendingReview;
+    }
+
+    /// Stable local-only exit for the registration-review screen. It does not
+    /// contact auth-http because pending review never created a client session.
+    pub fn dismiss_registration_review(&mut self) {
+        if self.registration_state == RegistrationState::PendingReview {
+            self.registration_state = RegistrationState::Idle;
+        }
     }
 
     pub fn login_failed(&mut self) {
@@ -569,9 +722,10 @@ impl MyServerSession {
 
     pub fn begin_http_operation(&mut self, operation: &PendingHttpOperation) {
         match operation {
-            PendingHttpOperation::Login { .. }
-            | PendingHttpOperation::Register { .. }
-            | PendingHttpOperation::GuestLogin { .. } => self.begin_login(),
+            PendingHttpOperation::Login { .. } | PendingHttpOperation::GuestLogin { .. } => {
+                self.begin_login()
+            }
+            PendingHttpOperation::Register { .. } => self.begin_registration(),
             PendingHttpOperation::CharacterList => self.begin_character_list(),
             PendingHttpOperation::CharacterCreate => self.begin_character_create(),
             PendingHttpOperation::CharacterProfile { .. } => self.begin_character_profile(),
@@ -589,9 +743,10 @@ impl MyServerSession {
 
     pub fn http_operation_failed(&mut self, operation: &PendingHttpOperation) {
         match operation {
-            PendingHttpOperation::Login { .. }
-            | PendingHttpOperation::Register { .. }
-            | PendingHttpOperation::GuestLogin { .. } => self.login_failed(),
+            PendingHttpOperation::Login { .. } | PendingHttpOperation::GuestLogin { .. } => {
+                self.login_failed()
+            }
+            PendingHttpOperation::Register { .. } => self.registration_failed(),
             PendingHttpOperation::CharacterList => self.character_list_failed(),
             PendingHttpOperation::CharacterCreate => self.character_create_failed(),
             PendingHttpOperation::CharacterProfile { .. } => self.character_profile_failed(),
@@ -640,6 +795,7 @@ impl MyServerSession {
         self.reset_connection_state();
         self.clear_selected_character_state();
         self.characters.clear();
+        self.registration_state = RegistrationState::Idle;
         self.account_login_state = AccountLoginState::LoggedIn;
         self.character_selection_state = CharacterSelectionState::NotLoaded;
         self.reconnect_blocked = false;
@@ -1062,6 +1218,7 @@ pub enum MyServerCommand {
         password: String,
         connect_game: bool,
     },
+    DismissRegistrationReview,
     GuestLogin {
         guest_id: Option<String>,
         connect_game: bool,
@@ -1186,6 +1343,7 @@ impl fmt::Debug for MyServerCommand {
                 .finish(),
             other => formatter.write_str(match other {
                 Self::GuestLogin { .. } => "GuestLogin",
+                Self::DismissRegistrationReview => "DismissRegistrationReview",
                 Self::LoadCharacterList => "LoadCharacterList",
                 Self::CreateCharacter { .. } => "CreateCharacter",
                 Self::LoadCharacterProfile { .. } => "LoadCharacterProfile",
@@ -1276,6 +1434,10 @@ pub enum MyServerEvent {
     LoginSucceeded(LoginSession),
     LoginFailed {
         error: String,
+    },
+    RegistrationPendingReview {
+        login_name: Option<String>,
+        message: String,
     },
     TicketRefreshed {
         ticket_expires_at: String,
@@ -2646,6 +2808,113 @@ fn env_transport(name: &str) -> Option<NetworkTransport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_validation_normalizes_login_name_and_keeps_password_private() {
+        let request = validate_registration_request("  Alice_01  ", "secret!", "secret!")
+            .expect("valid registration input must be accepted");
+
+        assert_eq!(request.login_name, "alice_01");
+        assert_eq!(request.password, "secret!");
+        assert!(!format!("{request:?}").contains("secret!"));
+    }
+
+    #[test]
+    fn registration_validation_matches_auth_http_boundaries_and_confirmation() {
+        assert!(matches!(
+            validate_registration_request("ab", "secret!", "secret!"),
+            Err(RegistrationValidationError::InvalidLoginName)
+        ));
+        assert!(matches!(
+            validate_registration_request("alice-name", "secret!", "secret!"),
+            Err(RegistrationValidationError::InvalidLoginName)
+        ));
+        assert!(matches!(
+            validate_registration_request("alice", "short", "short"),
+            Err(RegistrationValidationError::InvalidPasswordLength)
+        ));
+        assert!(matches!(
+            validate_registration_request("alice", &"a".repeat(129), &"a".repeat(129)),
+            Err(RegistrationValidationError::InvalidPasswordLength)
+        ));
+        assert!(matches!(
+            validate_registration_request("alice", "secret!", "different"),
+            Err(RegistrationValidationError::PasswordConfirmationMismatch)
+        ));
+    }
+
+    #[test]
+    fn registration_server_error_codes_have_stable_client_mappings() {
+        let cases = [
+            (
+                "INVALID_LOGIN_NAME",
+                RegistrationServerError::InvalidLoginName,
+                "myserver.registration.invalid_login_name",
+            ),
+            (
+                "INVALID_PASSWORD",
+                RegistrationServerError::InvalidPassword,
+                "myserver.registration.invalid_password",
+            ),
+            (
+                "LOGIN_NAME_EXISTS",
+                RegistrationServerError::LoginNameExists,
+                "myserver.registration.login_name_exists",
+            ),
+            (
+                "PASSWORD_REGISTER_UNAVAILABLE",
+                RegistrationServerError::RegistrationUnavailable,
+                "myserver.registration.unavailable",
+            ),
+        ];
+
+        for (code, expected, message_key) in cases {
+            let actual = RegistrationServerError::from_error_code(code)
+                .expect("auth-http registration error must have a client mapping");
+            assert_eq!(actual, expected);
+            assert_eq!(actual.message_key(), message_key);
+        }
+        assert!(RegistrationServerError::from_error_code("UNRECOGNIZED").is_none());
+    }
+
+    #[test]
+    fn pending_registration_review_has_no_usable_session_and_can_return_to_login() {
+        let mut session = MyServerSession {
+            access_token: Some("access".to_string()),
+            refresh_token: Some("refresh".to_string()),
+            player_id: Some("plr_pending".to_string()),
+            character_id: Some("chr_not_allowed".to_string()),
+            ticket: Some("ticket".to_string()),
+            characters: vec![test_character("chr_not_allowed", "Not Allowed")],
+            account_login_state: AccountLoginState::LoggingIn,
+            character_selection_state: CharacterSelectionState::Loading,
+            connect_after_login: Some(ConnectPlan {
+                transport: NetworkTransport::Tcp,
+                host: None,
+                port: None,
+            }),
+            ..Default::default()
+        };
+
+        session.registration_pending_review();
+
+        assert_eq!(session.registration_state, RegistrationState::PendingReview);
+        assert_eq!(session.account_login_state, AccountLoginState::NotLoggedIn);
+        assert_eq!(
+            session.character_selection_state,
+            CharacterSelectionState::NotLoaded
+        );
+        assert!(session.access_token.is_none());
+        assert!(session.player_id.is_none());
+        assert!(session.character_id.is_none());
+        assert!(session.ticket.is_none());
+        assert!(session.characters.is_empty());
+        assert!(session.connect_after_login.is_none());
+
+        session.dismiss_registration_review();
+        assert_eq!(session.registration_state, RegistrationState::Idle);
+        assert_eq!(session.account_login_state, AccountLoginState::NotLoggedIn);
+    }
 
     #[test]
     fn server_environment_defaults_match_build_policy() {
