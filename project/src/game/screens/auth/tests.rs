@@ -1705,6 +1705,52 @@ fn auth_logout_success_routes_to_login() {
     );
 }
 
+#[test]
+fn auth_login_events_clear_active_login_and_registration_inputs() {
+    let mut app = login_document_test_app(MyServerSession::default());
+    app.add_message::<MyServerEvent>()
+        .add_message::<GameRouteCommand>()
+        .add_systems(Update, follow_myserver_login_events);
+
+    set_login_document_inputs(&mut app, "alice", "login-password-sentinel");
+    set_registration_document_inputs(
+        &mut app,
+        "registration-alice",
+        "registration-password-sentinel",
+        "registration-confirmation-sentinel",
+    );
+    app.world_mut()
+        .write_message(MyServerEvent::LoginSucceeded(test_login_session()));
+    app.update();
+    assert_login_document_inputs_empty(&mut app);
+    for node in [
+        REGISTRATION_ACCOUNT_NODE,
+        REGISTRATION_PASSWORD_NODE,
+        REGISTRATION_PASSWORD_CONFIRMATION_NODE,
+    ] {
+        assert_eq!(active_login_input_value(&app, node), "");
+    }
+
+    set_login_document_inputs(&mut app, "alice", "logout-password-sentinel");
+    set_registration_document_inputs(
+        &mut app,
+        "registration-alice",
+        "registration-password-sentinel",
+        "registration-confirmation-sentinel",
+    );
+    app.world_mut()
+        .write_message(MyServerEvent::LogoutSucceeded);
+    app.update();
+    assert_login_document_inputs_empty(&mut app);
+    for node in [
+        REGISTRATION_ACCOUNT_NODE,
+        REGISTRATION_PASSWORD_NODE,
+        REGISTRATION_PASSWORD_CONFIRMATION_NODE,
+    ] {
+        assert_eq!(active_login_input_value(&app, node), "");
+    }
+}
+
 trait CharacterTestExt {
     fn with_discriminator(self, value: &str) -> Self;
     fn with_short(self, value: &str) -> Self;

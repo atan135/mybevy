@@ -4479,6 +4479,104 @@ mod tests {
     }
 
     #[test]
+    fn register_direct_login_response_establishes_an_account_session() {
+        let mut app = test_app();
+        app.world_mut().write_message(MyServerCommand::Register {
+            login_name: "alice".to_string(),
+            password: "secret!".to_string(),
+            connect_game: false,
+        });
+        app.update();
+        let request = latest_http_request(&app).expect("register must issue an HTTP request");
+
+        respond_http_ok(
+            &mut app,
+            &request,
+            r#"{
+                "ok": true,
+                "playerId": "plr_registered",
+                "accessToken": "registered-access"
+            }"#,
+        );
+
+        let session = app.world().resource::<MyServerSession>();
+        assert_eq!(session.registration_state, RegistrationState::Idle);
+        assert_eq!(session.account_login_state, AccountLoginState::LoggedIn);
+        assert_eq!(session.player_id.as_deref(), Some("plr_registered"));
+        assert_eq!(session.access_token.as_deref(), Some("registered-access"));
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::LoginSucceeded(login)
+                    if login.player_id == "plr_registered"))
+        );
+    }
+
+    #[test]
+    fn register_failures_keep_the_operation_recoverable_and_classified() {
+        for (status, code, message) in [
+            (409, "LOGIN_NAME_EXISTS", "Account already exists"),
+            (
+                503,
+                "PASSWORD_REGISTER_UNAVAILABLE",
+                "Password registration is unavailable",
+            ),
+        ] {
+            let mut app = test_app();
+            app.world_mut().write_message(MyServerCommand::Register {
+                login_name: "alice".to_string(),
+                password: "secret!".to_string(),
+                connect_game: false,
+            });
+            app.update();
+            let request = latest_http_request(&app).expect("register must issue an HTTP request");
+            app.world_mut()
+                .write_message(NetworkEvent::HttpResponse(HttpResponse {
+                    request_id: request.request_id,
+                    status,
+                    headers: Vec::new(),
+                    body: format!(r#"{{"ok":false,"error":"{code}","message":"{message}"}}"#)
+                        .into_bytes(),
+                }));
+            app.update();
+
+            assert_eq!(
+                app.world().resource::<MyServerSession>().registration_state,
+                RegistrationState::Failed,
+                "{code}"
+            );
+            assert!(display_errors(&app).iter().any(|error| {
+                error.operation == Some(MyServerOperation::Register)
+                    && error.error_code.as_deref() == Some(code)
+            }));
+        }
+
+        let mut app = test_app();
+        app.world_mut().write_message(MyServerCommand::Register {
+            login_name: "alice".to_string(),
+            password: "secret!".to_string(),
+            connect_game: false,
+        });
+        app.update();
+        let request = latest_http_request(&app).expect("register must issue an HTTP request");
+        app.world_mut().write_message(NetworkEvent::HttpError {
+            request_id: request.request_id,
+            error: "request timeout".to_string(),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MyServerSession>().registration_state,
+            RegistrationState::Failed
+        );
+        assert!(display_errors(&app).iter().any(|error| {
+            error.operation == Some(MyServerOperation::Register)
+                && error.kind == MyServerErrorKind::ConnectionTimeout
+                && error.retryable
+        }));
+    }
+
+    #[test]
     fn late_register_response_after_session_reset_is_ignored_by_request_identity() {
         let mut app = test_app();
         app.world_mut().write_message(MyServerCommand::Register {
