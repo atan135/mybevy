@@ -5105,6 +5105,84 @@ mod tests {
     }
 
     #[test]
+    fn transport_reauth_sends_room_reconnect_across_stale_disconnect_frames() {
+        let mut app = test_app();
+        let old_connection_id = ConnectionId::from_raw(8891);
+        let ticket = ticket_for_test("plr_1", "chr_1", "4102444800");
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.ticket = Some(ticket.clone());
+            session.player_id = Some("plr_1".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.connection_id = Some(old_connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.room_id = Some("main-world-public".to_string());
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut().write_message(NetworkEvent::Disconnected {
+            connection_id: old_connection_id,
+            transport: NetworkTransport::Tcp,
+            reason: Some("relay closed".to_string()),
+        });
+        app.update();
+        app.world_mut()
+            .write_message(MyServerCommand::ReconnectWithTicket {
+                ticket,
+                transport: NetworkTransport::Tcp,
+                host: Some("127.0.0.1".to_string()),
+                port: Some(15000),
+            });
+        app.update();
+
+        let (new_connection_id, transport, remote_addr) = latest_connect_command(&app).unwrap();
+        assert_ne!(new_connection_id, old_connection_id);
+
+        // A late close from the old worker may arrive before or beside new
+        // connection events. It must not clear the new reconnect plan.
+        app.world_mut().write_message(NetworkEvent::Disconnected {
+            connection_id: old_connection_id,
+            transport: NetworkTransport::Tcp,
+            reason: Some("late old close".to_string()),
+        });
+        app.update();
+        app.world_mut().write_message(NetworkEvent::Connected {
+            connection_id: new_connection_id,
+            transport,
+            remote_addr,
+        });
+        app.update();
+        let auth_seq = latest_sent_packet(&app).unwrap().1.header.seq;
+
+        app.world_mut().write_message(NetworkEvent::Disconnected {
+            connection_id: old_connection_id,
+            transport: NetworkTransport::Tcp,
+            reason: Some("late old close beside auth".to_string()),
+        });
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id: new_connection_id,
+            transport,
+            payload: auth_response_packet(auth_seq, true, "plr_1", ""),
+        });
+        app.update();
+
+        assert!(matches!(
+            app.world()
+                .resource::<MyServerSession>()
+                .reconnect_after_auth,
+            Some(ReconnectPlan {
+                cause: ReconnectCause::TransportRecovery
+            })
+        ));
+        assert!(
+            decoded_sent_packets(&app).iter().any(|(_, packet)| {
+                packet.message_type() == Some(MessageType::RoomReconnectReq)
+            })
+        );
+    }
+
+    #[test]
     fn observer_join_command_uses_observer_protocol_message() {
         let mut app = test_app();
         let connection_id = ConnectionId::from_raw(890);

@@ -9,8 +9,8 @@ use crate::{
     framework::{
         network::NetworkTransport,
         scene::prelude::{
-            SceneCommand, SceneEnterRequest, SceneEvent, SceneExitRequest, SceneRegistry,
-            SceneSessionId,
+            SceneCommand, SceneEnterRequest, SceneEvent, SceneExitRequest, SceneOwned,
+            SceneRegistry, SceneSessionId,
         },
     },
     game::{
@@ -45,6 +45,7 @@ impl Plugin for MainWorldEntryPlugin {
                     dispatch_authority_confirmed_scene_enter,
                     consume_main_world_scene_ready,
                     handle_entry_signals,
+                    trigger_debug_auto_exit_after_recovery,
                 )
                     .chain()
                     .after(MyServerUpdateSet::NetworkEvents)
@@ -56,6 +57,10 @@ impl Plugin for MainWorldEntryPlugin {
 }
 
 const ENV_MAIN_WORLD_AUTO_ENTER: &str = "MYBEVY_MAIN_WORLD_AUTO_ENTER";
+const ENV_MAIN_WORLD_AUTO_EXIT: &str = "MYBEVY_MAIN_WORLD_AUTO_EXIT";
+const ENV_MAIN_WORLD_AUTO_EXIT_AFTER_RECOVERY: &str = "MYBEVY_MAIN_WORLD_AUTO_EXIT_AFTER_RECOVERY";
+const ENV_MAIN_WORLD_ACCEPTANCE_METRICS: &str = "MYBEVY_MAIN_WORLD_ACCEPTANCE_METRICS";
+const MAIN_WORLD_ACCEPTANCE_SAMPLE_SECONDS: f64 = 5.0;
 
 /// Explicit desktop Debug-only hook for exercising the authority entry flow
 /// without relying on UI coordinate automation.
@@ -63,6 +68,13 @@ const ENV_MAIN_WORLD_AUTO_ENTER: &str = "MYBEVY_MAIN_WORLD_AUTO_ENTER";
 struct MainWorldEntryDebugConfig {
     auto_enter: bool,
     auto_enter_sent: bool,
+    auto_exit: bool,
+    auto_exit_after_recovery: bool,
+    auto_exit_sent: bool,
+    acceptance_metrics: bool,
+    metrics_elapsed_seconds: f64,
+    metrics_frames: u64,
+    metrics_reported: bool,
 }
 
 impl MainWorldEntryDebugConfig {
@@ -72,15 +84,32 @@ impl MainWorldEntryDebugConfig {
 
     fn from_env_reader(mut read: impl FnMut(&str) -> Option<String>) -> Self {
         Self {
-            auto_enter: cfg!(debug_assertions)
-                && read(ENV_MAIN_WORLD_AUTO_ENTER).is_some_and(|value| {
-                    matches!(
-                        value.trim().to_ascii_lowercase().as_str(),
-                        "1" | "true" | "on" | "yes" | "enabled"
-                    )
-                }),
+            auto_enter: Self::enabled_from_env(&mut read, ENV_MAIN_WORLD_AUTO_ENTER),
             auto_enter_sent: false,
+            auto_exit: Self::enabled_from_env(&mut read, ENV_MAIN_WORLD_AUTO_EXIT),
+            auto_exit_after_recovery: Self::enabled_from_env(
+                &mut read,
+                ENV_MAIN_WORLD_AUTO_EXIT_AFTER_RECOVERY,
+            ),
+            auto_exit_sent: false,
+            acceptance_metrics: Self::enabled_from_env(
+                &mut read,
+                ENV_MAIN_WORLD_ACCEPTANCE_METRICS,
+            ),
+            metrics_elapsed_seconds: 0.0,
+            metrics_frames: 0,
+            metrics_reported: false,
         }
+    }
+
+    fn enabled_from_env(read: &mut impl FnMut(&str) -> Option<String>, key: &str) -> bool {
+        cfg!(debug_assertions)
+            && read(key).is_some_and(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "on" | "yes" | "enabled"
+                )
+            })
     }
 }
 
@@ -380,6 +409,60 @@ fn trigger_debug_auto_enter(
     debug.auto_enter_sent = true;
     info!("main world debug auto-enter requested after authority authentication");
     intents.write(MainWorldEntryIntent::Enter);
+}
+
+fn trigger_debug_auto_exit_after_recovery(
+    time: Res<Time<Real>>,
+    state: Res<MainWorldEntryState>,
+    entities: Query<(Entity, Option<&SceneOwned>)>,
+    mut debug_config: ResMut<MainWorldEntryDebugConfig>,
+    mut intents: MessageWriter<MainWorldEntryIntent>,
+) {
+    let recovered_active = state.reconnect_requested
+        && state.reconnect_room_acknowledged
+        && state.room_ready_acknowledged;
+    let exit_enabled =
+        debug_config.auto_exit || (debug_config.auto_exit_after_recovery && recovered_active);
+    if !exit_enabled || debug_config.auto_exit_sent || state.phase != MainWorldEntryPhase::Active {
+        return;
+    }
+
+    if debug_config.acceptance_metrics && !debug_config.metrics_reported {
+        debug_config.metrics_frames += 1;
+        debug_config.metrics_elapsed_seconds += time.delta_secs_f64();
+        if debug_config.metrics_elapsed_seconds < MAIN_WORLD_ACCEPTANCE_SAMPLE_SECONDS {
+            return;
+        }
+
+        let session_id = state.scene_session_id.as_ref();
+        let mut ecs_entity_count = 0usize;
+        let mut scene_owned_entity_count = 0usize;
+        for (_, owned) in &entities {
+            ecs_entity_count += 1;
+            if session_id.is_some_and(|session_id| {
+                owned.is_some_and(|owned| owned.session_id == *session_id)
+            }) {
+                scene_owned_entity_count += 1;
+            }
+        }
+        let sample_seconds = debug_config.metrics_elapsed_seconds;
+        let application_update_fps = debug_config.metrics_frames as f64 / sample_seconds;
+        info!(
+            sample_seconds,
+            application_update_fps,
+            ecs_entity_count,
+            scene_owned_entity_count,
+            "main world debug acceptance metrics (application updates, not GPU presents)"
+        );
+        debug_config.metrics_reported = true;
+    }
+
+    debug_config.auto_exit_sent = true;
+    info!(
+        recovered = recovered_active,
+        "main world debug automatic lobby exit requested"
+    );
+    intents.write(MainWorldEntryIntent::ExitToLobby);
 }
 
 fn adapt_main_world_return_input(
@@ -760,6 +843,7 @@ fn consume_main_world_authority_events(
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
                     state.room_membership = MainWorldRoomMembership::Joined;
                     state.reconnect_room_acknowledged = true;
+                    info!("main world recovery room reconnect accepted");
                     resume_after_reconnect_snapshot(&mut state, &mut commands);
                 } else {
                     state.room_membership = MainWorldRoomMembership::None;
@@ -833,6 +917,8 @@ fn begin_exit(
     state.reconnect_requested = false;
     state.reconnect_room_acknowledged = false;
 
+    info!(destination = ?destination, "main world exit requested");
+
     if state.room_membership == MainWorldRoomMembership::Joined
         && session.authenticated
         && session.game_connection_state == GameConnectionState::Authenticated
@@ -872,6 +958,7 @@ fn complete_exit(
         state.last_departure = MainWorldRoomDeparture::Unknown;
     }
     state.reset();
+    info!(destination = ?destination, "main world exit completed");
     route_commands.write(GameRouteCommand::ChangeMode(match destination {
         MainWorldExitDestination::Lobby => AppUiMode::Lobby,
         MainWorldExitDestination::Login => AppUiMode::Login,
@@ -944,6 +1031,7 @@ fn begin_recovery(
     state.room_ready_acknowledged = false;
     state.reconnect_requested = true;
     state.reconnect_room_acknowledged = false;
+    info!("main world recovery requested after connection loss");
     commands.write(MyServerCommand::ReconnectWithTicket {
         ticket,
         transport: session.transport.unwrap_or(NetworkTransport::Tcp),
@@ -962,6 +1050,7 @@ fn resume_after_reconnect_snapshot(
     {
         return;
     }
+    info!("main world recovery snapshot accepted");
     if state.scene_session_id.is_none() {
         state.phase = MainWorldEntryPhase::LoadingScene;
         return;
@@ -1150,14 +1239,15 @@ fn activate_when_ready(
 ) {
     if state.scene_ready && state.room_ready_acknowledged && state.authoritative_scene_id.is_some()
     {
+        let recovered = state.reconnect_requested;
         state.phase = MainWorldEntryPhase::Active;
         state.input_frozen = false;
         route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::MainWorld));
-        info!(
-            room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
-            scene_id = ?state.authoritative_scene_id,
-            "main world entry active"
-        );
+        if recovered {
+            info!("main world entry recovered active");
+        } else {
+            info!("main world entry active");
+        }
     }
 }
 
@@ -1379,6 +1469,24 @@ mod tests {
             })
             .auto_enter
         );
+        assert!(
+            MainWorldEntryDebugConfig::from_env_reader(|key| {
+                (key == ENV_MAIN_WORLD_AUTO_EXIT_AFTER_RECOVERY).then_some("on".to_owned())
+            })
+            .auto_exit_after_recovery
+        );
+        assert!(
+            MainWorldEntryDebugConfig::from_env_reader(|key| {
+                (key == ENV_MAIN_WORLD_AUTO_EXIT).then_some("true".to_owned())
+            })
+            .auto_exit
+        );
+        assert!(
+            MainWorldEntryDebugConfig::from_env_reader(|key| {
+                (key == ENV_MAIN_WORLD_ACCEPTANCE_METRICS).then_some("yes".to_owned())
+            })
+            .acceptance_metrics
+        );
     }
 
     #[test]
@@ -1387,6 +1495,13 @@ mod tests {
         app.world_mut().insert_resource(MainWorldEntryDebugConfig {
             auto_enter: true,
             auto_enter_sent: false,
+            auto_exit: false,
+            auto_exit_after_recovery: false,
+            auto_exit_sent: false,
+            acceptance_metrics: false,
+            metrics_elapsed_seconds: 0.0,
+            metrics_frames: 0,
+            metrics_reported: false,
         });
 
         app.update();
@@ -1405,6 +1520,59 @@ mod tests {
             messages::<MyServerCommand>(&app)
                 .iter()
                 .filter(|command| matches!(command, MyServerCommand::JoinRoom { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn debug_auto_exit_only_runs_once_after_a_recovered_active_state() {
+        let (mut app, session_id) = active_app();
+        {
+            let mut state = app.world_mut().resource_mut::<MainWorldEntryState>();
+            state.reconnect_requested = true;
+            state.reconnect_room_acknowledged = true;
+        }
+        app.world_mut().insert_resource(MainWorldEntryDebugConfig {
+            auto_enter: false,
+            auto_enter_sent: false,
+            auto_exit: false,
+            auto_exit_after_recovery: true,
+            auto_exit_sent: false,
+            acceptance_metrics: false,
+            metrics_elapsed_seconds: 0.0,
+            metrics_frames: 0,
+            metrics_reported: false,
+        });
+
+        app.update();
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<MainWorldEntryDebugConfig>()
+                .auto_exit_sent
+        );
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, MyServerCommand::LeaveRoom))
+                .count(),
+            1
+        );
+        assert_eq!(
+            messages::<SceneCommand>(&app)
+                .iter()
+                .filter(|command| matches!(
+                    command,
+                    SceneCommand::Exit(request)
+                        if request.scene_id == Some(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
+                            && request.session_id.as_ref() == Some(&session_id)
+                ))
                 .count(),
             1
         );
@@ -1473,6 +1641,37 @@ mod tests {
             messages::<MyServerCommand>(&app)
                 .iter()
                 .filter(|command| matches!(command, MyServerCommand::StartRoom))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn debug_auto_exit_can_leave_an_initial_active_state_once() {
+        let (mut app, _) = active_app();
+        app.world_mut().insert_resource(MainWorldEntryDebugConfig {
+            auto_enter: false,
+            auto_enter_sent: false,
+            auto_exit: true,
+            auto_exit_after_recovery: false,
+            auto_exit_sent: false,
+            acceptance_metrics: false,
+            metrics_elapsed_seconds: 0.0,
+            metrics_frames: 0,
+            metrics_reported: false,
+        });
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, MyServerCommand::LeaveRoom))
                 .count(),
             1
         );
