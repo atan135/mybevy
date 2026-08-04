@@ -251,28 +251,10 @@ async fn run_kcp_stream(
 
     loop {
         tokio::select! {
-            read_result = stream.read(&mut read_buffer) => {
-                match read_result {
-                    Ok(0) => {
-                        reason = Some("remote closed".to_string());
-                        break;
-                    }
-                    Ok(bytes) => {
-                        send_event(
-                            &event_tx,
-                            NetworkEvent::Packet {
-                                connection_id,
-                                transport: NetworkTransport::Kcp,
-                                payload: read_buffer[..bytes].to_vec(),
-                            },
-                        );
-                    }
-                    Err(err) => {
-                        reason = Some(err.to_string());
-                        break;
-                    }
-                }
-            }
+            biased;
+            // `tokio_kcp` keeps an internal pending read waker. Prioritize control
+            // and outbound work so that a quiet peer cannot keep a queued payload
+            // behind repeated read wakeups.
             payload = send_rx.recv() => {
                 let Some(payload) = payload else {
                     reason = Some("send queue closed".to_string());
@@ -317,6 +299,28 @@ async fn run_kcp_stream(
             _ = shutdown_rx.recv() => {
                 break;
             }
+            read_result = stream.read(&mut read_buffer) => {
+                match read_result {
+                    Ok(0) => {
+                        reason = Some("remote closed".to_string());
+                        break;
+                    }
+                    Ok(bytes) => {
+                        send_event(
+                            &event_tx,
+                            NetworkEvent::Packet {
+                                connection_id,
+                                transport: NetworkTransport::Kcp,
+                                payload: read_buffer[..bytes].to_vec(),
+                            },
+                        );
+                    }
+                    Err(err) => {
+                        reason = Some(err.to_string());
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -346,5 +350,71 @@ fn to_kcp_config(options: &KcpSessionOptions) -> KcpConfig {
         flush_acks_input: options.flush_acks_input,
         stream: options.stream,
         allow_recv_empty_packet: options.allow_recv_empty_packet,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::{
+        io::AsyncReadExt,
+        runtime::Runtime,
+        sync::mpsc,
+        time::{self, timeout},
+    };
+
+    use super::*;
+
+    #[test]
+    fn queued_payload_is_written_before_any_inbound_packet_arrives() {
+        Runtime::new().unwrap().block_on(async {
+            let mut config = KcpConfig::default();
+            config.nodelay = KcpNoDelayConfig::fastest();
+            config.flush_write = true;
+            config.flush_acks_input = true;
+            config.stream = true;
+
+            let mut listener = KcpListener::bind(config.clone(), "127.0.0.1:0")
+                .await
+                .unwrap();
+            let remote_addr = listener.local_addr().unwrap();
+            let stream = KcpStream::connect(&config, remote_addr).await.unwrap();
+            let (send_tx, send_rx) = mpsc::channel(1);
+            let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
+            let (event_tx, _event_rx) = mpsc::unbounded_channel();
+            let (command_tx, _command_rx) = mpsc::unbounded_channel();
+            let connection_id = ConnectionId::from_raw(1);
+
+            tokio::spawn(run_kcp_stream(
+                connection_id,
+                stream,
+                remote_addr.to_string(),
+                1024,
+                send_rx,
+                shutdown_rx,
+                event_tx,
+                command_tx,
+                1,
+            ));
+
+            let expected = b"queued-kcp-payload".to_vec();
+            send_tx.send(expected.clone()).await.unwrap();
+
+            let (mut server_stream, _) = timeout(Duration::from_secs(2), listener.accept())
+                .await
+                .expect("KCP listener must accept the queued client payload")
+                .unwrap();
+            let mut received = vec![0; expected.len()];
+            let read = timeout(Duration::from_secs(2), server_stream.read(&mut received))
+                .await
+                .expect("queued KCP payload must be written without server-first traffic")
+                .unwrap();
+
+            assert_eq!(&received[..read], expected.as_slice());
+
+            // Give the worker one scheduling turn before the test runtime drops it.
+            time::sleep(Duration::from_millis(1)).await;
+        });
     }
 }
