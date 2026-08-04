@@ -159,6 +159,7 @@ pub(in crate::game) struct MainWorldEntryState {
     pub phase: MainWorldEntryPhase,
     pub environment: Option<MyServerEnvironment>,
     pub character_id: Option<String>,
+    pub authority_transport: Option<NetworkTransport>,
     pub room_id: Option<String>,
     pub policy_id: Option<String>,
     pub authoritative_scene_id: Option<i32>,
@@ -187,6 +188,7 @@ impl Default for MainWorldEntryState {
             phase: MainWorldEntryPhase::LobbyIdle,
             environment: None,
             character_id: None,
+            authority_transport: None,
             room_id: None,
             policy_id: None,
             authoritative_scene_id: None,
@@ -235,11 +237,17 @@ impl MainWorldEntryState {
         )
     }
 
-    fn begin(&mut self, environment: MyServerEnvironment, character_id: String) {
+    fn begin(
+        &mut self,
+        environment: MyServerEnvironment,
+        character_id: String,
+        authority_transport: Option<NetworkTransport>,
+    ) {
         self.generation = self.generation.wrapping_add(1).max(1);
         self.phase = MainWorldEntryPhase::Validating;
         self.environment = Some(environment);
         self.character_id = Some(character_id);
+        self.authority_transport = authority_transport;
         self.failure = None;
         self.room_id = None;
         self.policy_id = None;
@@ -265,6 +273,7 @@ impl MainWorldEntryState {
         self.phase = MainWorldEntryPhase::LobbyIdle;
         self.environment = None;
         self.character_id = None;
+        self.authority_transport = None;
         self.failure = None;
         self.room_id = None;
         self.policy_id = None;
@@ -290,6 +299,7 @@ impl MainWorldEntryState {
         self.input_frozen = true;
         self.environment = None;
         self.character_id = None;
+        self.authority_transport = None;
         self.failure = Some(failure);
     }
 }
@@ -507,6 +517,7 @@ fn handle_entry_intents(
             state.begin(
                 profiles.selected(),
                 session.character_id.clone().unwrap_or_default(),
+                session.transport,
             );
             if let Err(failure) = validate_entry(&profiles, &session, &registry) {
                 let generation = state.generation;
@@ -923,6 +934,7 @@ fn begin_exit(
         && session.authenticated
         && session.game_connection_state == GameConnectionState::Authenticated
     {
+        info!("main world dispatching LeaveRoom before scene exit");
         myserver_commands.write(MyServerCommand::LeaveRoom);
     } else if state.room_membership != MainWorldRoomMembership::None {
         state.last_departure = MainWorldRoomDeparture::Unknown;
@@ -1023,6 +1035,12 @@ fn begin_recovery(
         );
         return;
     };
+    let Some(transport) = state.authority_transport else {
+        state.fail(MainWorldEntryFailure::ReconnectUnavailable);
+        error!("main world recovery unavailable because authority transport was not retained");
+        route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+        return;
+    };
     state.phase = MainWorldEntryPhase::Recovering;
     state.input_frozen = true;
     state.room_membership = MainWorldRoomMembership::Unknown;
@@ -1034,7 +1052,7 @@ fn begin_recovery(
     info!("main world recovery requested after connection loss");
     commands.write(MyServerCommand::ReconnectWithTicket {
         ticket,
-        transport: session.transport.unwrap_or(NetworkTransport::Tcp),
+        transport,
         host: None,
         port: None,
     });
@@ -1184,6 +1202,11 @@ fn consume_main_world_scene_ready(
                     && exited.scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
                     && state.scene_session_id.as_ref() == Some(&exited.session_id) =>
             {
+                info!(
+                    scene_id = exited.scene_id.as_str(),
+                    session_id = %exited.session_id,
+                    "main world SceneEvent::Exited received during exit"
+                );
                 if state.exit_destination == Some(MainWorldExitDestination::Home) {
                     state.reset();
                     begin_home_enter(&mut state, &mut scene_commands);
@@ -1342,6 +1365,7 @@ mod tests {
         session.ticket = Some("character-bound-ticket".to_owned());
         session.authenticated = true;
         session.game_connection_state = GameConnectionState::Authenticated;
+        session.transport = Some(NetworkTransport::Tcp);
         app.world_mut()
             .resource_mut::<SceneRegistry>()
             .register(SceneDefinition::new(
@@ -2021,9 +2045,55 @@ mod tests {
                 .iter()
                 .any(|command| matches!(
                     command,
-                    MyServerCommand::ReconnectWithTicket { ticket, .. }
+                    MyServerCommand::ReconnectWithTicket { ticket, transport: NetworkTransport::Tcp, .. }
                         if ticket == "character-bound-ticket"
                 ))
+        );
+    }
+
+    #[test]
+    fn recovery_reuses_the_authority_kcp_transport_after_session_cleanup() {
+        let (mut app, _) = active_app();
+        app.world_mut()
+            .resource_mut::<MainWorldEntryState>()
+            .authority_transport = Some(NetworkTransport::Kcp);
+        app.world_mut().write_message(MyServerEvent::Disconnected {
+            reason: Some("KCP peer loss".to_owned()),
+        });
+        app.update();
+
+        assert!(messages::<MyServerCommand>(&app).iter().any(|command| {
+            matches!(
+                command,
+                MyServerCommand::ReconnectWithTicket {
+                    transport: NetworkTransport::Kcp,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn recovery_without_a_retained_transport_fails_without_tcp_fallback() {
+        let (mut app, _) = active_app();
+        app.world_mut()
+            .resource_mut::<MainWorldEntryState>()
+            .authority_transport = None;
+        app.world_mut().write_message(MyServerEvent::Disconnected {
+            reason: Some("missing transport".to_owned()),
+        });
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Failed);
+        assert_eq!(
+            state.failure,
+            Some(MainWorldEntryFailure::ReconnectUnavailable)
+        );
+        assert!(
+            !messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::ReconnectWithTicket { .. }))
         );
     }
 

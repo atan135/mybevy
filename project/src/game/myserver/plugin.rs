@@ -71,6 +71,14 @@ impl Plugin for MyServerPlugin {
 struct MyServerKeepaliveState {
     timer: Timer,
     interval: Duration,
+    ping_watchdog: Option<MyServerPingWatchdog>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MyServerPingWatchdog {
+    connection_id: ConnectionId,
+    seq: u32,
+    elapsed: Duration,
 }
 
 impl Default for MyServerKeepaliveState {
@@ -78,6 +86,7 @@ impl Default for MyServerKeepaliveState {
         Self {
             timer: Timer::new(DEFAULT_KEEPALIVE_INTERVAL, TimerMode::Repeating),
             interval: DEFAULT_KEEPALIVE_INTERVAL,
+            ping_watchdog: None,
         }
     }
 }
@@ -992,7 +1001,27 @@ fn keepalive_myserver_connection(
 
     if !session.connected || !session.authenticated {
         state.timer.reset();
+        state.ping_watchdog = None;
         return;
+    }
+
+    if let Some(watchdog) = state.ping_watchdog.as_mut() {
+        if session.connection_id != Some(watchdog.connection_id)
+            || !session.pending.contains_key(&watchdog.seq)
+        {
+            state.ping_watchdog = None;
+        } else {
+            watchdog.elapsed += time.delta();
+            if watchdog.elapsed >= config.request_timeout {
+                let connection_id = watchdog.connection_id;
+                let seq = watchdog.seq;
+                state.ping_watchdog = None;
+                session.pending.remove(&seq);
+                info!("MyServer keepalive ping timed out; disconnecting current transport");
+                network_commands.write(NetworkCommand::Disconnect { connection_id });
+                return;
+            }
+        }
     }
 
     state.timer.tick(time.delta());
@@ -1016,11 +1045,11 @@ fn keepalive_myserver_connection(
         return;
     }
 
-    if !config.keepalive_enabled {
+    if !config.keepalive_enabled || state.ping_watchdog.is_some() {
         return;
     }
 
-    send_request(
+    let Some(seq) = send_request_with_seq(
         &mut session,
         &mut network_commands,
         &mut events,
@@ -1029,7 +1058,16 @@ fn keepalive_myserver_connection(
         &pb::PingReq {
             client_time: current_unix_ms(),
         },
-    );
+    ) else {
+        return;
+    };
+    state.ping_watchdog = session
+        .connection_id
+        .map(|connection_id| MyServerPingWatchdog {
+            connection_id,
+            seq,
+            elapsed: Duration::ZERO,
+        });
 }
 
 fn send_login(
@@ -3343,6 +3381,12 @@ fn handle_response_packet(
                 if response.ok {
                     session.room_id = None;
                 }
+                info!(
+                    ok = response.ok,
+                    room_id = %response.room_id,
+                    error_code = %response.error_code,
+                    "MyServer room leave response"
+                );
                 events.write(MyServerEvent::RoomLeft(response));
             }
             Err(error) => {
@@ -4991,6 +5035,225 @@ mod tests {
 
         assert!(latest_http_request(&app).is_none());
         assert!(sent_packets(&app).is_empty());
+    }
+
+    #[test]
+    fn matching_keepalive_pong_clears_the_current_ping_watchdog() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(451);
+        {
+            let mut config = app.world_mut().resource_mut::<MyServerConfig>();
+            config.keepalive_interval = Duration::from_secs(1);
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+        prime_keepalive_timer(&mut app, Duration::from_secs(1));
+        app.update();
+        let (_, ping) = latest_sent_packet(&app).expect("keepalive must send a ping");
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: encode_proto_packet(
+                MessageType::PingRes,
+                ping.header.seq,
+                &pb::PingRes { server_time: 1 },
+            ),
+        });
+        app.update();
+
+        assert!(app.world().resource::<MyServerSession>().pending.is_empty());
+        assert!(
+            app.world()
+                .resource::<MyServerKeepaliveState>()
+                .ping_watchdog
+                .is_none()
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::Pong(_)))
+        );
+    }
+
+    #[test]
+    fn timed_out_keepalive_ping_disconnects_once_then_uses_normal_cleanup() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(452);
+        {
+            let mut config = app.world_mut().resource_mut::<MyServerConfig>();
+            config.keepalive_interval = Duration::from_secs(1);
+            config.request_timeout = Duration::from_millis(1);
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+        prime_keepalive_timer(&mut app, Duration::from_secs(1));
+        app.update();
+        app.world_mut()
+            .resource_mut::<MyServerKeepaliveState>()
+            .ping_watchdog
+            .as_mut()
+            .unwrap()
+            .elapsed = Duration::from_millis(1);
+        app.update();
+
+        assert_eq!(disconnect_commands(&app), vec![connection_id]);
+        assert!(
+            app.world()
+                .resource::<MyServerKeepaliveState>()
+                .ping_watchdog
+                .is_none()
+        );
+
+        app.world_mut().write_message(NetworkEvent::Disconnected {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            reason: Some("keepalive timeout".to_owned()),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<MyServerSession>()
+                .game_connection_state,
+            GameConnectionState::Disconnected
+        );
+        assert_eq!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .filter(|event| matches!(event, MyServerEvent::Disconnected { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn keepalive_uses_one_inflight_ping_until_its_timeout() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(455);
+        {
+            let mut config = app.world_mut().resource_mut::<MyServerConfig>();
+            config.keepalive_interval = Duration::from_secs(1);
+            config.request_timeout = Duration::from_secs(30);
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        prime_keepalive_timer(&mut app, Duration::from_secs(1));
+        app.update();
+        let (_, first_ping) = latest_sent_packet(&app).expect("keepalive must send a ping");
+        let ping_seq = first_ping.header.seq;
+
+        for expected_elapsed_seconds in 1..=29 {
+            app.world_mut()
+                .resource_mut::<MyServerKeepaliveState>()
+                .ping_watchdog
+                .as_mut()
+                .expect("the first ping must remain in flight")
+                .elapsed = Duration::from_secs(expected_elapsed_seconds);
+            prime_keepalive_timer(&mut app, Duration::from_secs(1));
+            app.update();
+            let watchdog = app
+                .world()
+                .resource::<MyServerKeepaliveState>()
+                .ping_watchdog
+                .expect("the first ping must remain in flight until timeout");
+            assert_eq!(watchdog.connection_id, connection_id);
+            assert_eq!(watchdog.seq, ping_seq);
+            assert!(watchdog.elapsed >= Duration::from_secs(expected_elapsed_seconds));
+            assert_eq!(
+                decoded_sent_packets(&app)
+                    .iter()
+                    .filter(|(_, packet)| packet.header.msg_type == MessageType::PingReq as u16)
+                    .count(),
+                1
+            );
+            assert!(disconnect_commands(&app).is_empty());
+        }
+
+        app.world_mut()
+            .resource_mut::<MyServerKeepaliveState>()
+            .ping_watchdog
+            .as_mut()
+            .expect("the first ping must remain in flight")
+            .elapsed = Duration::from_secs(30);
+        prime_keepalive_timer(&mut app, Duration::from_secs(1));
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<MyServerKeepaliveState>()
+                .ping_watchdog
+                .is_none()
+        );
+        assert_eq!(disconnect_commands(&app), vec![connection_id]);
+        assert_eq!(
+            decoded_sent_packets(&app)
+                .iter()
+                .filter(|(_, packet)| packet.header.msg_type == MessageType::PingReq as u16)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn stale_keepalive_watchdog_cannot_disconnect_a_reconnected_session() {
+        let mut app = test_app();
+        let old_connection_id = ConnectionId::from_raw(453);
+        let current_connection_id = ConnectionId::from_raw(454);
+        {
+            let mut config = app.world_mut().resource_mut::<MyServerConfig>();
+            config.keepalive_enabled = false;
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(current_connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+            session.pending.insert(
+                7,
+                PendingRequest {
+                    response_type: MessageType::PingRes,
+                },
+            );
+        }
+        app.world_mut()
+            .resource_mut::<MyServerKeepaliveState>()
+            .ping_watchdog = Some(MyServerPingWatchdog {
+            connection_id: old_connection_id,
+            seq: 7,
+            elapsed: Duration::from_secs(60),
+        });
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<MyServerKeepaliveState>()
+                .ping_watchdog
+                .is_none()
+        );
+        assert!(disconnect_commands(&app).is_empty());
+        assert_eq!(
+            app.world().resource::<MyServerSession>().connection_id,
+            Some(current_connection_id)
+        );
     }
 
     #[test]
