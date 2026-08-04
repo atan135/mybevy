@@ -1,7 +1,7 @@
 //! Generation-bound entry intent coordinator for the fixed public main world.
 //!
-//! This stage validates prerequisites and exposes a typed join boundary only.
-//! It intentionally does not send `JoinRoom` or request a scene transition.
+//! This coordinator owns request generations and authority admission. Scene
+//! loading and RoomReady remain separate later-stage responsibilities.
 
 use bevy::prelude::*;
 
@@ -9,8 +9,8 @@ use crate::{
     framework::scene::prelude::{SceneEvent, SceneRegistry},
     game::{
         myserver::{
-            AccountLoginState, CharacterSelectionState, GameConnectionState, MyServerEnvironment,
-            MyServerProfiles, MyServerSession,
+            AccountLoginState, CharacterSelectionState, GameConnectionState, MyServerCommand,
+            MyServerEnvironment, MyServerEvent, MyServerProfiles, MyServerSession,
         },
         scenes::main_world_contract::MAIN_WORLD_AUTHORITY_CONTRACT,
     },
@@ -29,6 +29,8 @@ impl Plugin for MainWorldEntryPlugin {
                 (
                     abort_invalidated_entry,
                     handle_entry_intents,
+                    dispatch_main_world_join_requests,
+                    consume_main_world_authority_events,
                     ignore_unbound_scene_events,
                     handle_entry_signals,
                 )
@@ -71,6 +73,12 @@ pub(in crate::game) struct MainWorldEntryState {
     pub phase: MainWorldEntryPhase,
     pub environment: Option<MyServerEnvironment>,
     pub character_id: Option<String>,
+    pub room_id: Option<String>,
+    pub policy_id: Option<String>,
+    pub authoritative_scene_id: Option<i32>,
+    pub position: Option<Vec3>,
+    pub snapshot_generation: u32,
+    pub join_acknowledged: bool,
     pub failure: Option<MainWorldEntryFailure>,
 }
 
@@ -81,6 +89,12 @@ impl Default for MainWorldEntryState {
             phase: MainWorldEntryPhase::LobbyIdle,
             environment: None,
             character_id: None,
+            room_id: None,
+            policy_id: None,
+            authoritative_scene_id: None,
+            position: None,
+            snapshot_generation: 0,
+            join_acknowledged: false,
             failure: None,
         }
     }
@@ -101,6 +115,12 @@ impl MainWorldEntryState {
         self.environment = Some(environment);
         self.character_id = Some(character_id);
         self.failure = None;
+        self.room_id = None;
+        self.policy_id = None;
+        self.authoritative_scene_id = None;
+        self.position = None;
+        self.snapshot_generation = 0;
+        self.join_acknowledged = false;
     }
 
     fn reset(&mut self) {
@@ -108,6 +128,12 @@ impl MainWorldEntryState {
         self.environment = None;
         self.character_id = None;
         self.failure = None;
+        self.room_id = None;
+        self.policy_id = None;
+        self.authoritative_scene_id = None;
+        self.position = None;
+        self.snapshot_generation = 0;
+        self.join_acknowledged = false;
     }
 
     fn fail(&mut self, failure: MainWorldEntryFailure) {
@@ -178,6 +204,13 @@ pub(in crate::game) enum MainWorldEntryFailure {
     TicketUnavailable,
     GameAuthUnavailable,
     SceneMappingUnavailable,
+    RoomFull,
+    RoomPolicyRejected,
+    RoomUnavailable,
+    JoinRejected,
+    AuthoritativeSceneMismatch,
+    InvalidAuthoritativePosition,
+    JoinTimedOut,
 }
 
 fn handle_entry_intents(
@@ -238,6 +271,153 @@ fn abort_invalidated_entry(
             MainWorldEntryAbortReason::PreconditionsInvalidated,
         );
     }
+}
+
+fn dispatch_main_world_join_requests(
+    mut entry_events: MessageReader<MainWorldEntryEvent>,
+    mut commands: MessageWriter<MyServerCommand>,
+) {
+    for event in entry_events.read() {
+        let MainWorldEntryEvent::JoinRequested {
+            room_id, policy_id, ..
+        } = event
+        else {
+            continue;
+        };
+        commands.write(MyServerCommand::JoinRoom {
+            room_id: (*room_id).to_owned(),
+            policy_id: (*policy_id).to_owned(),
+        });
+    }
+}
+
+fn consume_main_world_authority_events(
+    mut myserver_events: MessageReader<MyServerEvent>,
+    mut state: ResMut<MainWorldEntryState>,
+    mut entry_events: MessageWriter<MainWorldEntryEvent>,
+) {
+    if !state.is_in_flight() {
+        return;
+    }
+    let character_id = state.character_id.clone().unwrap_or_default();
+    for event in myserver_events.read() {
+        match event {
+            MyServerEvent::RoomJoined(response)
+                if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
+            {
+                if response.ok {
+                    state.join_acknowledged = true;
+                    state.room_id = Some(response.room_id.clone());
+                    state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
+                } else {
+                    fail_authority_entry(
+                        &mut state,
+                        &mut entry_events,
+                        room_join_failure(&response.error_code),
+                    );
+                }
+            }
+            MyServerEvent::RoomStatePush(push) => {
+                let Some(snapshot) = push.snapshot.as_ref() else {
+                    continue;
+                };
+                if snapshot.room_id != MAIN_WORLD_AUTHORITY_CONTRACT.room_id {
+                    continue;
+                }
+                if MAIN_WORLD_AUTHORITY_CONTRACT
+                    .validate_room_game_state(&snapshot.game_state)
+                    .is_err()
+                {
+                    fail_authority_entry(
+                        &mut state,
+                        &mut entry_events,
+                        MainWorldEntryFailure::AuthoritativeSceneMismatch,
+                    );
+                } else {
+                    state.room_id = Some(snapshot.room_id.clone());
+                    state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
+                    state.snapshot_generation =
+                        state.snapshot_generation.max(snapshot.current_frame_id);
+                }
+            }
+            MyServerEvent::MovementSnapshotPush(push)
+                if push.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
+            {
+                if push.frame_id < state.snapshot_generation {
+                    continue;
+                }
+                let Some(entity) = push
+                    .entities
+                    .iter()
+                    .find(|entity| entity.character_id == character_id)
+                else {
+                    continue;
+                };
+                if !MAIN_WORLD_AUTHORITY_CONTRACT.is_authoritative_entity_scene(entity.scene_id) {
+                    fail_authority_entry(
+                        &mut state,
+                        &mut entry_events,
+                        MainWorldEntryFailure::AuthoritativeSceneMismatch,
+                    );
+                    continue;
+                }
+                let Ok(position) = main_world_bevy_position(entity.x, entity.y) else {
+                    fail_authority_entry(
+                        &mut state,
+                        &mut entry_events,
+                        MainWorldEntryFailure::InvalidAuthoritativePosition,
+                    );
+                    continue;
+                };
+                state.room_id = Some(push.room_id.clone());
+                state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
+                state.authoritative_scene_id = Some(entity.scene_id);
+                state.position = Some(position);
+                state.snapshot_generation = push.frame_id;
+                state.phase = MainWorldEntryPhase::LoadingScene;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn fail_authority_entry(
+    state: &mut MainWorldEntryState,
+    events: &mut MessageWriter<MainWorldEntryEvent>,
+    failure: MainWorldEntryFailure,
+) {
+    let generation = state.generation;
+    state.fail(failure);
+    events.write(MainWorldEntryEvent::Failed {
+        generation,
+        failure,
+    });
+}
+
+fn room_join_failure(error_code: &str) -> MainWorldEntryFailure {
+    match error_code.trim() {
+        "ROOM_FULL" => MainWorldEntryFailure::RoomFull,
+        "ROOM_POLICY_MISMATCH" | "ROOM_POLICY_UNSUPPORTED" => {
+            MainWorldEntryFailure::RoomPolicyRejected
+        }
+        "ROOM_UNAVAILABLE" | "ROOM_NOT_FOUND" | "SERVER_DRAINING_REJECT_NEW_ROOM" => {
+            MainWorldEntryFailure::RoomUnavailable
+        }
+        "JOIN_TIMEOUT" => MainWorldEntryFailure::JoinTimedOut,
+        _ => MainWorldEntryFailure::JoinRejected,
+    }
+}
+
+pub(in crate::game) fn main_world_bevy_position(
+    x: f32,
+    y: f32,
+) -> Result<Vec3, MainWorldEntryFailure> {
+    const MIN: f32 = 0.0;
+    const MAX: f32 = 16.0;
+    if !x.is_finite() || !y.is_finite() || !(MIN..=MAX).contains(&x) || !(MIN..=MAX).contains(&y) {
+        return Err(MainWorldEntryFailure::InvalidAuthoritativePosition);
+    }
+    Ok(Vec3::new(x, 0.0, y))
 }
 
 fn handle_entry_signals(
@@ -337,6 +517,8 @@ mod tests {
             .init_resource::<MyServerSession>()
             .init_resource::<SceneRegistry>()
             .add_message::<SceneEvent>()
+            .add_message::<MyServerCommand>()
+            .add_message::<MyServerEvent>()
             .add_plugins(MainWorldEntryPlugin);
         let session = &mut *app.world_mut().resource_mut::<MyServerSession>();
         session.account_login_state = AccountLoginState::LoggedIn;
@@ -421,5 +603,21 @@ mod tests {
             event,
             MainWorldEntryEvent::IgnoredStaleSignal { generation: 0 }
         )));
+    }
+
+    #[test]
+    fn coordinate_conversion_rejects_non_finite_and_out_of_bounds_values() {
+        assert_eq!(
+            main_world_bevy_position(2.0, 3.0),
+            Ok(Vec3::new(2.0, 0.0, 3.0))
+        );
+        assert_eq!(
+            main_world_bevy_position(f32::NAN, 1.0),
+            Err(MainWorldEntryFailure::InvalidAuthoritativePosition)
+        );
+        assert_eq!(
+            main_world_bevy_position(16.1, 1.0),
+            Err(MainWorldEntryFailure::InvalidAuthoritativePosition)
+        );
     }
 }
