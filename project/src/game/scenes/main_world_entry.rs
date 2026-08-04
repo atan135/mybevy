@@ -20,7 +20,7 @@ use crate::{
             MyServerSession,
         },
         navigation::{AppUiMode, GameRouteCommand},
-        scenes::main_world_contract::MAIN_WORLD_AUTHORITY_CONTRACT,
+        scenes::{FANGYUAN_HOME_SCENE_ID, main_world_contract::MAIN_WORLD_AUTHORITY_CONTRACT},
     },
 };
 
@@ -43,7 +43,9 @@ impl Plugin for MainWorldEntryPlugin {
                     consume_main_world_scene_ready,
                     handle_entry_signals,
                 )
-                    .chain(),
+                    .chain()
+                    .run_if(resource_exists::<MyServerProfiles>)
+                    .run_if(resource_exists::<MyServerSession>),
             );
     }
 }
@@ -59,6 +61,9 @@ pub(in crate::game) enum MainWorldEntryPhase {
     Active,
     Exiting,
     Recovering,
+    HomeLoading,
+    HomeActive,
+    ReturningFromHome,
     Failed,
 }
 
@@ -72,6 +77,9 @@ impl MainWorldEntryPhase {
                 | Self::WaitingSceneReady
                 | Self::Exiting
                 | Self::Recovering
+                | Self::HomeLoading
+                | Self::HomeActive
+                | Self::ReturningFromHome
         )
     }
 }
@@ -98,6 +106,7 @@ pub(in crate::game) struct MainWorldEntryState {
     pub exit_destination: Option<MainWorldExitDestination>,
     pub reconnect_requested: bool,
     pub reconnect_room_acknowledged: bool,
+    pub home_session_id: Option<SceneSessionId>,
     pub failure: Option<MainWorldEntryFailure>,
 }
 
@@ -124,6 +133,7 @@ impl Default for MainWorldEntryState {
             exit_destination: None,
             reconnect_requested: false,
             reconnect_room_acknowledged: false,
+            home_session_id: None,
             failure: None,
         }
     }
@@ -176,6 +186,7 @@ impl MainWorldEntryState {
         self.exit_destination = None;
         self.reconnect_requested = false;
         self.reconnect_room_acknowledged = false;
+        self.home_session_id = None;
     }
 
     fn reset(&mut self) {
@@ -198,6 +209,7 @@ impl MainWorldEntryState {
         self.exit_destination = None;
         self.reconnect_requested = false;
         self.reconnect_room_acknowledged = false;
+        self.home_session_id = None;
     }
 
     fn fail(&mut self, failure: MainWorldEntryFailure) {
@@ -229,6 +241,7 @@ pub(in crate::game) enum MainWorldRoomDeparture {
 pub(in crate::game) enum MainWorldExitDestination {
     Lobby,
     Login,
+    Home,
 }
 
 #[derive(Clone, Debug, Message, PartialEq, Eq)]
@@ -241,6 +254,8 @@ pub(in crate::game) enum MainWorldEntryIntent {
     CharacterChanged,
     LoggedOut,
     ApplicationExit,
+    EnterHome,
+    ReturnFromHome,
 }
 
 #[derive(Clone, Debug, Message, PartialEq, Eq)]
@@ -343,6 +358,32 @@ fn handle_entry_intents(
             continue;
         }
         match intent {
+            MainWorldEntryIntent::EnterHome if state.owns_authority_session() => {
+                begin_exit(
+                    &mut state,
+                    MainWorldExitDestination::Home,
+                    &session,
+                    &mut myserver_commands,
+                    &mut scene_commands,
+                    &mut route_commands,
+                );
+            }
+            MainWorldEntryIntent::EnterHome
+                if matches!(
+                    state.phase,
+                    MainWorldEntryPhase::LobbyIdle | MainWorldEntryPhase::Failed
+                ) =>
+            {
+                begin_home_enter(&mut state, &mut scene_commands);
+            }
+            MainWorldEntryIntent::ReturnFromHome
+                if matches!(
+                    state.phase,
+                    MainWorldEntryPhase::HomeLoading | MainWorldEntryPhase::HomeActive
+                ) =>
+            {
+                begin_home_return(&mut state, &mut scene_commands);
+            }
             MainWorldEntryIntent::ExitToLobby | MainWorldEntryIntent::Cancel
                 if state.owns_authority_session() =>
             {
@@ -378,10 +419,16 @@ fn abort_invalidated_entry(
     mut state: ResMut<MainWorldEntryState>,
     mut events: MessageWriter<MainWorldEntryEvent>,
 ) {
-    if state.is_in_flight()
-        && (state.environment != Some(profiles.selected())
-            || state.character_id.as_deref() != session.character_id.as_deref()
-            || !matches!(session.account_login_state, AccountLoginState::LoggedIn))
+    if matches!(
+        state.phase,
+        MainWorldEntryPhase::Validating
+            | MainWorldEntryPhase::JoiningRoom
+            | MainWorldEntryPhase::LoadingScene
+            | MainWorldEntryPhase::WaitingSceneReady
+            | MainWorldEntryPhase::Recovering
+    ) && (state.environment != Some(profiles.selected())
+        || state.character_id.as_deref() != session.character_id.as_deref()
+        || !matches!(session.account_login_state, AccountLoginState::LoggedIn))
     {
         abort_entry(
             &mut state,
@@ -723,6 +770,43 @@ fn complete_exit(
     route_commands.write(GameRouteCommand::ChangeMode(match destination {
         MainWorldExitDestination::Lobby => AppUiMode::Lobby,
         MainWorldExitDestination::Login => AppUiMode::Login,
+        MainWorldExitDestination::Home => AppUiMode::Lobby,
+    }));
+}
+
+fn begin_home_enter(
+    state: &mut MainWorldEntryState,
+    scene_commands: &mut MessageWriter<SceneCommand>,
+) {
+    if matches!(
+        state.phase,
+        MainWorldEntryPhase::HomeLoading | MainWorldEntryPhase::HomeActive
+    ) {
+        return;
+    }
+    state.generation = state.generation.wrapping_add(1).max(1);
+    let session_id = SceneSessionId::from(format!("fangyuan-home-{}", state.generation));
+    let mut request = SceneEnterRequest::new(FANGYUAN_HOME_SCENE_ID);
+    request.session_id = Some(session_id.clone());
+    scene_commands.write(SceneCommand::Enter(request));
+    state.home_session_id = Some(session_id);
+    state.phase = MainWorldEntryPhase::HomeLoading;
+    state.input_frozen = true;
+}
+
+fn begin_home_return(
+    state: &mut MainWorldEntryState,
+    scene_commands: &mut MessageWriter<SceneCommand>,
+) {
+    let Some(session_id) = state.home_session_id.clone() else {
+        return;
+    };
+    state.phase = MainWorldEntryPhase::ReturningFromHome;
+    state.input_frozen = true;
+    scene_commands.write(SceneCommand::Exit(SceneExitRequest {
+        scene_id: Some(FANGYUAN_HOME_SCENE_ID.into()),
+        session_id: Some(session_id),
+        ..SceneExitRequest::default()
     }));
 }
 
@@ -863,6 +947,8 @@ fn consume_main_world_scene_ready(
     mut commands: MessageWriter<MyServerCommand>,
     mut entry_events: MessageWriter<MainWorldEntryEvent>,
     mut route_commands: MessageWriter<GameRouteCommand>,
+    mut scene_commands: MessageWriter<SceneCommand>,
+    mut intents: MessageWriter<MainWorldEntryIntent>,
 ) {
     for event in scene_events.read() {
         match event {
@@ -894,7 +980,12 @@ fn consume_main_world_scene_ready(
                     && exited.scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
                     && state.scene_session_id.as_ref() == Some(&exited.session_id) =>
             {
-                complete_exit(&mut state, &mut route_commands);
+                if state.exit_destination == Some(MainWorldExitDestination::Home) {
+                    state.reset();
+                    begin_home_enter(&mut state, &mut scene_commands);
+                } else {
+                    complete_exit(&mut state, &mut route_commands);
+                }
             }
             SceneEvent::Failed(failure)
                 if state.phase == MainWorldEntryPhase::Exiting
@@ -903,6 +994,35 @@ fn consume_main_world_scene_ready(
                     && failure.session_id.as_ref() == state.scene_session_id.as_ref() =>
             {
                 complete_exit(&mut state, &mut route_commands);
+            }
+            SceneEvent::Ready(ready)
+                if state.phase == MainWorldEntryPhase::HomeLoading
+                    && ready.scene_id.as_str() == FANGYUAN_HOME_SCENE_ID
+                    && state.home_session_id.as_ref() == Some(&ready.session_id) =>
+            {
+                state.phase = MainWorldEntryPhase::HomeActive;
+                route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::FangyuanHome));
+            }
+            SceneEvent::Failed(failure)
+                if matches!(
+                    state.phase,
+                    MainWorldEntryPhase::HomeLoading | MainWorldEntryPhase::ReturningFromHome
+                ) && failure
+                    .scene_id
+                    .as_ref()
+                    .is_some_and(|scene_id| scene_id.as_str() == FANGYUAN_HOME_SCENE_ID)
+                    && failure.session_id.as_ref() == state.home_session_id.as_ref() =>
+            {
+                state.reset();
+                route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+            }
+            SceneEvent::Exited(exited)
+                if state.phase == MainWorldEntryPhase::ReturningFromHome
+                    && exited.scene_id.as_str() == FANGYUAN_HOME_SCENE_ID
+                    && state.home_session_id.as_ref() == Some(&exited.session_id) =>
+            {
+                state.reset();
+                intents.write(MainWorldEntryIntent::Enter);
             }
             _ => {}
         }
@@ -929,7 +1049,10 @@ fn abort_for_intent(
         MainWorldEntryIntent::CharacterChanged => MainWorldEntryAbortReason::CharacterChanged,
         MainWorldEntryIntent::LoggedOut => MainWorldEntryAbortReason::LoggedOut,
         MainWorldEntryIntent::ApplicationExit => MainWorldEntryAbortReason::ApplicationExit,
-        MainWorldEntryIntent::Enter | MainWorldEntryIntent::Recover => return,
+        MainWorldEntryIntent::Enter
+        | MainWorldEntryIntent::Recover
+        | MainWorldEntryIntent::EnterHome
+        | MainWorldEntryIntent::ReturnFromHome => return,
     };
     abort_entry(state, events, reason);
 }
@@ -1562,6 +1685,202 @@ mod tests {
             cursor
                 .read(route_messages)
                 .any(|command| matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Login)))
+        );
+    }
+
+    #[test]
+    fn home_transition_leaves_the_public_room_and_return_restarts_main_world_entry() {
+        let (mut app, main_world_session) = active_app();
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::EnterHome);
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        assert!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| matches!(command, MyServerCommand::LeaveRoom))
+        );
+
+        app.world_mut().write_message(SceneEvent::Exited(
+            crate::framework::scene::prelude::SceneExited {
+                scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+                session_id: main_world_session,
+            },
+        ));
+        app.update();
+        let home_session = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .home_session_id
+            .clone()
+            .unwrap();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::HomeLoading
+        );
+
+        app.world_mut().write_message(SceneEvent::Ready(
+            crate::framework::scene::prelude::SceneReady {
+                scene_id: FANGYUAN_HOME_SCENE_ID.into(),
+                session_id: home_session.clone(),
+                content_version: None,
+                authority_mode: Default::default(),
+                seed: None,
+            },
+        ));
+        app.update();
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::ReturnFromHome);
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::ReturningFromHome
+        );
+
+        app.world_mut().write_message(SceneEvent::Exited(
+            crate::framework::scene::prelude::SceneExited {
+                scene_id: FANGYUAN_HOME_SCENE_ID.into(),
+                session_id: home_session,
+            },
+        ));
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::JoiningRoom
+        );
+    }
+
+    #[test]
+    fn repeated_home_and_return_intents_emit_one_scene_command_each() {
+        let (mut app, main_world_session) = active_app();
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::EnterHome);
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::EnterHome);
+        app.update();
+        assert_eq!(
+            messages::<SceneCommand>(&app)
+                .iter()
+                .filter(|command| matches!(
+                    command,
+                    SceneCommand::Exit(request)
+                        if request.scene_id.as_ref() == Some(&MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
+                ))
+                .count(),
+            1
+        );
+
+        app.world_mut().write_message(SceneEvent::Exited(
+            crate::framework::scene::prelude::SceneExited {
+                scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+                session_id: main_world_session,
+            },
+        ));
+        app.update();
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::EnterHome);
+        app.update();
+        let home_session = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .home_session_id
+            .clone()
+            .unwrap();
+        assert_eq!(
+            messages::<SceneCommand>(&app)
+                .iter()
+                .filter(|command| matches!(
+                    command,
+                    SceneCommand::Enter(request) if request.scene_id.as_str() == FANGYUAN_HOME_SCENE_ID
+                ))
+                .count(),
+            1
+        );
+
+        app.world_mut().write_message(SceneEvent::Ready(
+            crate::framework::scene::prelude::SceneReady {
+                scene_id: FANGYUAN_HOME_SCENE_ID.into(),
+                session_id: home_session.clone(),
+                content_version: None,
+                authority_mode: Default::default(),
+                seed: None,
+            },
+        ));
+        app.update();
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::ReturnFromHome);
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::ReturnFromHome);
+        app.update();
+        assert_eq!(
+            messages::<SceneCommand>(&app)
+                .iter()
+                .filter(|command| matches!(
+                    command,
+                    SceneCommand::Exit(request)
+                        if request.scene_id.as_ref().is_some_and(|scene_id| scene_id.as_str() == FANGYUAN_HOME_SCENE_ID)
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn disconnect_during_public_room_exit_still_enters_local_home() {
+        let (mut app, main_world_session) = active_app();
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::EnterHome);
+        app.update();
+        app.world_mut().write_message(MyServerEvent::Disconnected {
+            reason: Some("transport closed during room leave".to_owned()),
+        });
+        app.world_mut().write_message(SceneEvent::Exited(
+            crate::framework::scene::prelude::SceneExited {
+                scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+                session_id: main_world_session,
+            },
+        ));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::HomeLoading);
+        assert!(state.home_session_id.is_some());
+        assert_eq!(state.last_departure, MainWorldRoomDeparture::Unknown);
+        assert!(
+            messages::<GameRouteCommand>(&app)
+                .iter()
+                .all(|command| !matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Lobby)))
+        );
+    }
+
+    #[test]
+    fn home_load_failure_uses_the_lobby_fallback() {
+        let mut app = ready_app();
+        app.world_mut()
+            .write_message(MainWorldEntryIntent::EnterHome);
+        app.update();
+        let home_session = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .home_session_id
+            .clone()
+            .unwrap();
+        app.world_mut().write_message(SceneEvent::Failed(
+            crate::framework::scene::prelude::SceneFailure::new(
+                crate::framework::scene::prelude::SceneFailureKind::RequiredAssetMissing,
+                crate::framework::scene::prelude::SceneLifecycleState::LoadingAssets,
+            )
+            .with_scene(FANGYUAN_HOME_SCENE_ID)
+            .with_session(home_session),
+        ));
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::LobbyIdle
         );
     }
 }

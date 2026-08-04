@@ -41,8 +41,7 @@ use crate::game::{
     myserver::{GameConnectionState, MyServerCommand, MyServerSession},
     navigation::{AppUiMode, GameRouteCommand},
     scenes::{
-        FANGYUAN_HOME_SCENE_ID, LOCKSTEP_SIM_ARENA_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID,
-        SAMPLE_DUNGEON_ROOM_SCENE_ID,
+        LOCKSTEP_SIM_ARENA_SCENE_ID, ROBOT_SYNC_ARENA_SCENE_ID, SAMPLE_DUNGEON_ROOM_SCENE_ID,
         main_world_entry::{MainWorldEntryIntent, MainWorldEntryState},
     },
     ui_ids::{
@@ -627,14 +626,7 @@ fn enter_lobby_entry(
             true
         }
         LobbyEntryTarget::FangyuanHome => {
-            begin_scene_entry(
-                entry,
-                FANGYUAN_HOME_SCENE_ID,
-                ui_state,
-                i18n,
-                scene_commands,
-                panel_commands,
-            );
+            main_world_intents.write(MainWorldEntryIntent::EnterHome);
             true
         }
         LobbyEntryTarget::FangyuanPlayerPreview => {

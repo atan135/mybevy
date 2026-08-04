@@ -20,7 +20,10 @@ use crate::framework::{
 };
 use crate::game::{
     navigation::{AppUiMode, GameRouteCommand},
-    scenes::{FANGYUAN_HOME_SCENE_ID, FangyuanHomeBlueprintStats},
+    scenes::{
+        FANGYUAN_HOME_SCENE_ID, FangyuanHomeBlueprintStats,
+        main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
+    },
     ui_ids::OWNER_FANGYUAN_HOME,
 };
 
@@ -403,6 +406,7 @@ fn compact_fangyuan_home_layout_path(path: &str, fallback: &str) -> String {
 pub(super) fn route_to_lobby_on_fangyuan_home_exit(
     mut scene_events: MessageReader<SceneEvent>,
     current_mode: Res<State<AppUiMode>>,
+    main_world_entry: Option<Res<MainWorldEntryState>>,
     mut route_cursor: Local<MessageCursor<GameRouteCommand>>,
     mut route_messages: ResMut<Messages<GameRouteCommand>>,
 ) {
@@ -424,7 +428,10 @@ pub(super) fn route_to_lobby_on_fangyuan_home_exit(
         break;
     }
 
-    if should_route_fangyuan_home_exit_to_lobby(*current_mode.get(), already_routing_to_lobby)
+    let returning_to_main_world =
+        main_world_entry.is_some_and(|state| state.phase == MainWorldEntryPhase::ReturningFromHome);
+    if !returning_to_main_world
+        && should_route_fangyuan_home_exit_to_lobby(*current_mode.get(), already_routing_to_lobby)
         && fangyuan_home_exited
     {
         route_messages.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));

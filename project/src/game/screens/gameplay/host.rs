@@ -29,7 +29,7 @@ use crate::game::{
         DeclarativeScreenSource,
     },
     navigation::{AppUiMode, GameRouteCommand},
-    scenes::FangyuanHomeBlueprintCommand,
+    scenes::{FangyuanHomeBlueprintCommand, main_world_entry::MainWorldEntryIntent},
     ui_ids::{
         OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE,
         OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
@@ -429,6 +429,7 @@ pub(super) fn handle_gameplay_hud_document_actions(
     mut blueprint_commands: MessageWriter<FangyuanHomeBlueprintCommand>,
     mut scene_commands: MessageWriter<SceneCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
+    mut main_world_intents: MessageWriter<MainWorldEntryIntent>,
     mut actions: MessageReader<UiActionDispatch>,
 ) {
     for dispatch in actions.read() {
@@ -443,11 +444,12 @@ pub(super) fn handle_gameplay_hud_document_actions(
             ACTION_TOUCH_RIPPLE_RETURN_LOBBY | ACTION_FANGYUAN_PREVIEW_RETURN_LOBBY => {
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
             }
-            ACTION_SAMPLE_SCENE_RETURN_LOBBY
-            | ACTION_ROBOT_SYNC_RETURN_LOBBY
-            | ACTION_FANGYUAN_HOME_RETURN_LOBBY => {
+            ACTION_SAMPLE_SCENE_RETURN_LOBBY | ACTION_ROBOT_SYNC_RETURN_LOBBY => {
                 scene_commands.write(SceneCommand::Exit(SceneExitRequest::default()));
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+            }
+            ACTION_FANGYUAN_HOME_RETURN_LOBBY => {
+                main_world_intents.write(MainWorldEntryIntent::ReturnFromHome);
             }
             ACTION_ROBOT_SYNC_HIDE => robot_visibility.show_details = false,
             ACTION_ROBOT_SYNC_SHOW => robot_visibility.show_details = true,
