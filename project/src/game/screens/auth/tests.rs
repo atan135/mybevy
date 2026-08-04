@@ -22,7 +22,8 @@ use crate::game::{
         AccountLoginState, CharacterSelectionState, CharacterSummary, ElementValues,
         GameConnectionState, MyServerCommand, MyServerConfig, MyServerDisplayError,
         MyServerEnvironment, MyServerErrorKind, MyServerErrorSource, MyServerEvent,
-        MyServerOperation, MyServerProfiles, MyServerSession,
+        MyServerOperation, MyServerProfiles, MyServerSession, RegistrationState,
+        RegistrationValidationError,
     },
     navigation::{AppUiMode, GameRouteCommand},
     ui_ids::{OWNER_CHARACTER_SELECT, OWNER_LOGIN, PANEL_CHARACTER_SELECT, PANEL_LOGIN},
@@ -218,6 +219,10 @@ fn auth_host_declares_all_closed_business_actions() {
     let expected = [
         ACTION_ACCOUNT_LOGIN,
         ACTION_GUEST_LOGIN,
+        ACTION_SHOW_REGISTRATION,
+        ACTION_SHOW_LOGIN,
+        ACTION_REGISTER,
+        ACTION_DISMISS_REGISTRATION_REVIEW,
         ACTION_SWITCH_ENVIRONMENT,
         ACTION_LOAD_CHARACTERS,
         ACTION_CREATE_CHARACTER,
@@ -242,9 +247,16 @@ fn auth_host_declares_all_closed_business_actions() {
         .find(|descriptor| descriptor.id.as_str() == ACTION_ACCOUNT_LOGIN)
         .unwrap();
     assert!(account_login.params.is_empty());
+    let register = descriptors
+        .iter()
+        .find(|descriptor| descriptor.id.as_str() == ACTION_REGISTER)
+        .unwrap();
+    assert_eq!(register.owner, OWNER_LOGIN.as_str());
+    assert!(register.params.is_empty());
     let descriptor_debug = format!("{account_login:?}");
     assert!(!descriptor_debug.contains("password"));
     assert!(!descriptor_debug.contains("login_name"));
+    assert!(!format!("{register:?}").contains("password"));
 }
 
 #[test]
@@ -259,8 +271,8 @@ fn login_approved_registration_matches_fixed_host_contract() {
     assert_eq!(host.document_id.as_str(), LOGIN_DOCUMENT_ID);
     assert_eq!(host.mode, Some(AppUiMode::Login));
     assert_eq!(host.owner, OWNER_LOGIN);
-    assert_eq!(host.binding_schema.len(), 12);
-    assert_eq!(host.action_allowlist.len(), 3);
+    assert_eq!(host.binding_schema.len(), 21);
+    assert_eq!(host.action_allowlist.len(), 7);
     assert_eq!(registration.owner(), OWNER_LOGIN.as_str());
     assert_eq!(audit.actions.len(), 3);
     assert!(!REGISTRATION_SOURCE.contains("password"));
@@ -407,6 +419,22 @@ fn auth_binding_schemas_keep_account_and_character_identity_separate() {
     assert!(fields.contains_key("display_name"));
     assert!(fields.contains_key("selected"));
     assert!(fields.contains_key("pending"));
+
+    let register_name = UiBindingPath::from_str("auth.register.login_name").unwrap();
+    assert_eq!(login[&register_name].scope, UiBindingScope::Local);
+    assert_eq!(
+        login[&UiBindingPath::from_str("auth.login.mode").unwrap()].scope,
+        UiBindingScope::Owner
+    );
+    assert_eq!(
+        login[&UiBindingPath::from_str("auth.register.state").unwrap()].scope,
+        UiBindingScope::Owner
+    );
+    assert!(
+        !login.keys().any(
+            |path| path.as_str().contains("password") || path.as_str().contains("confirmation")
+        )
+    );
 }
 
 #[test]
@@ -915,6 +943,165 @@ fn auth_login_document_deduplicates_account_actions_per_frame() {
 }
 
 #[test]
+fn auth_register_document_reads_only_expected_sensitive_inputs_and_deduplicates_conflicts() {
+    const PASSWORD: &str = "stage12-register-password-sentinel";
+    let mut app = login_document_test_app(MyServerSession::default());
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_SHOW_REGISTRATION,
+        "login.mode.register",
+        BTreeMap::new(),
+    ));
+    app.update();
+    set_registration_document_inputs(&mut app, "  Alice_01 ", PASSWORD, PASSWORD);
+
+    for action in [ACTION_REGISTER, ACTION_REGISTER, ACTION_GUEST_LOGIN] {
+        let source = match action {
+            ACTION_REGISTER => "login.register.submit",
+            ACTION_GUEST_LOGIN => "login.guest",
+            _ => unreachable!(),
+        };
+        app.world_mut()
+            .write_message(login_document_dispatch(action, source, BTreeMap::new()));
+    }
+    app.update();
+
+    let commands = read_messages::<MyServerCommand>(&app);
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| matches!(command, MyServerCommand::Register { .. }))
+            .count(),
+        1
+    );
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        MyServerCommand::Register {
+            login_name,
+            password,
+            connect_game: false,
+        } if login_name == "alice_01" && password == PASSWORD
+    )));
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, MyServerCommand::GuestLogin { .. }))
+    );
+    assert!(!format!("{commands:?}").contains(PASSWORD));
+    assert_eq!(
+        app.world().resource::<MyServerSession>().registration_state,
+        RegistrationState::Registering
+    );
+
+    let selected_environment = app.world().resource::<MyServerProfiles>().selected();
+    let next_environment = match selected_environment {
+        MyServerEnvironment::Local => "production",
+        MyServerEnvironment::Production => "local",
+    };
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_ACCOUNT_LOGIN,
+        "login.submit",
+        BTreeMap::new(),
+    ));
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_SWITCH_ENVIRONMENT,
+        "login.environment",
+        BTreeMap::from([(
+            "environment".to_owned(),
+            UiActionValue::Enum(next_environment.to_owned()),
+        )]),
+    ));
+    app.update();
+    assert_eq!(
+        read_messages::<MyServerCommand>(&app)
+            .iter()
+            .filter(|command| matches!(command, MyServerCommand::Login { .. }))
+            .count(),
+        0
+    );
+    assert_eq!(
+        app.world().resource::<MyServerProfiles>().selected(),
+        selected_environment
+    );
+}
+
+#[test]
+fn auth_register_document_rejects_forged_actions_and_keeps_validation_local() {
+    let mut app = login_document_test_app(MyServerSession::default());
+    set_registration_document_inputs(&mut app, "alice", "secret!", "different");
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_REGISTER,
+        "login.submit",
+        BTreeMap::new(),
+    ));
+    app.update();
+    assert!(read_messages::<MyServerCommand>(&app).is_empty());
+
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_SHOW_REGISTRATION,
+        "login.mode.register",
+        BTreeMap::new(),
+    ));
+    app.update();
+    app.world_mut().write_message(login_document_dispatch(
+        ACTION_REGISTER,
+        "login.register.submit",
+        BTreeMap::new(),
+    ));
+    app.update();
+    assert!(read_messages::<MyServerCommand>(&app).is_empty());
+    assert_eq!(
+        app.world()
+            .resource::<LoginUiState>()
+            .registration_validation_error,
+        Some(RegistrationValidationError::PasswordConfirmationMismatch)
+    );
+
+    set_registration_document_inputs(&mut app, "alice", "secret!", "secret!");
+    let mut forged =
+        login_document_dispatch(ACTION_REGISTER, "login.register.submit", BTreeMap::new());
+    forged.owner = "forged_owner".to_owned();
+    app.world_mut().write_message(forged);
+    app.update();
+    assert!(read_messages::<MyServerCommand>(&app).is_empty());
+}
+
+#[test]
+fn auth_registration_bindings_expose_mode_and_feedback_without_sensitive_values() {
+    let session = MyServerSession {
+        registration_state: RegistrationState::PendingReview,
+        ..Default::default()
+    };
+    let state = LoginUiState {
+        entry_mode: AuthEntryMode::Register,
+        registration_validation_error: Some(RegistrationValidationError::InvalidPasswordLength),
+        ..Default::default()
+    };
+    let mut app = login_binding_test_app(session, state);
+    app.update();
+
+    assert_eq!(
+        login_binding_value(&app, "auth.login.mode"),
+        UiBindingValue::Enum("register".to_owned())
+    );
+    assert_eq!(
+        login_binding_value(&app, "auth.register.state"),
+        UiBindingValue::Enum("pending_review".to_owned())
+    );
+    assert_eq!(
+        login_binding_value(&app, "auth.register.review_visibility"),
+        UiBindingValue::Visibility(UiBindingVisibility::Visible)
+    );
+    assert_eq!(
+        login_binding_value(&app, "auth.register.error_detail"),
+        UiBindingValue::String("myserver.registration.invalid_password".to_owned())
+    );
+    assert_eq!(
+        login_binding_value(&app, "auth.register.error_visibility"),
+        UiBindingValue::Visibility(UiBindingVisibility::Visible)
+    );
+}
+
+#[test]
 fn auth_login_document_bindings_cover_pending_notice_and_error_states() {
     let pending_session = MyServerSession {
         account_login_state: AccountLoginState::LoggingIn,
@@ -1036,6 +1223,12 @@ fn auth_server_environment_switch_updates_config_and_clears_identity_inputs() {
         .http_base_url
         .clone();
     set_login_document_inputs(&mut app, "alice", "stage11-switch-secret");
+    set_registration_document_inputs(
+        &mut app,
+        "register_alice",
+        "stage12-switch-secret",
+        "stage12-switch-secret",
+    );
     app.world_mut().write_message(login_document_dispatch(
         ACTION_SWITCH_ENVIRONMENT,
         "login.environment",
@@ -1067,6 +1260,13 @@ fn auth_server_environment_switch_updates_config_and_clears_identity_inputs() {
     assert!(!session.connected);
     assert!(!session.authenticated);
     assert_login_document_inputs_empty(&mut app);
+    for node in [
+        REGISTRATION_ACCOUNT_NODE,
+        REGISTRATION_PASSWORD_NODE,
+        REGISTRATION_PASSWORD_CONFIRMATION_NODE,
+    ] {
+        assert_eq!(active_login_input_value(&app, node), "");
+    }
 }
 
 #[test]
@@ -1561,6 +1761,47 @@ fn login_document_test_app(session: MyServerSession) -> App {
                             }
                         }
                     }
+                },
+                {
+                    "type": "text_input",
+                    "id": "login.register.account",
+                    "value": "",
+                    "component": {
+                        "slots": {
+                            "label": {
+                                "kind": "text",
+                                "content": { "literal": "Registration account" }
+                            }
+                        }
+                    }
+                },
+                {
+                    "type": "text_input",
+                    "id": "login.register.password",
+                    "value": "",
+                    "security": "sensitive",
+                    "component": {
+                        "slots": {
+                            "label": {
+                                "kind": "text",
+                                "content": { "literal": "Registration password" }
+                            }
+                        }
+                    }
+                },
+                {
+                    "type": "text_input",
+                    "id": "login.register.password_confirmation",
+                    "value": "",
+                    "security": "sensitive",
+                    "component": {
+                        "slots": {
+                            "label": {
+                                "kind": "text",
+                                "content": { "literal": "Confirm registration password" }
+                            }
+                        }
+                    }
                 }
             ]
         }
@@ -1708,6 +1949,34 @@ fn set_login_document_inputs(app: &mut App, account: &str, password: &str) {
         }
     }
     assert!(account_found && password_found);
+}
+
+fn set_registration_document_inputs(
+    app: &mut App,
+    account: &str,
+    password: &str,
+    password_confirmation: &str,
+) {
+    for (node, expected_sensitive, value) in [
+        (REGISTRATION_ACCOUNT_NODE, false, account),
+        (REGISTRATION_PASSWORD_NODE, true, password),
+        (
+            REGISTRATION_PASSWORD_CONFIRMATION_NODE,
+            true,
+            password_confirmation,
+        ),
+    ] {
+        let entity = active_login_input_entity(app, node);
+        let is_sensitive = app
+            .world()
+            .entity(entity)
+            .contains::<UiSensitiveTextInput>();
+        assert_eq!(is_sensitive, expected_sensitive);
+        app.world_mut()
+            .get_mut::<UiTextInputValue>(entity)
+            .unwrap()
+            .0 = value.to_owned();
+    }
 }
 
 fn login_document_instance(app: &App) -> crate::framework::ui::document::UiDocumentInstanceId {

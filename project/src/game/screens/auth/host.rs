@@ -29,7 +29,8 @@ use crate::game::{
     },
     myserver::{
         AccountLoginState, MyServerCommand, MyServerConfig, MyServerEvent, MyServerProfiles,
-        MyServerSession,
+        MyServerSession, RegistrationServerError, RegistrationState, RegistrationValidationError,
+        validate_registration_request,
     },
     navigation::{AppUiMode, GameRouteCommand},
     ui_ids::{OWNER_CHARACTER_SELECT, OWNER_LOGIN, PANEL_CHARACTER_SELECT, PANEL_LOGIN},
@@ -47,6 +48,10 @@ pub(super) const CHARACTER_SELECT_DOCUMENT_SOURCE: &str =
 pub(super) const CHARACTER_SELECT_DOCUMENT_SOURCE_PATH: &str = "auth/character_select.v1.json";
 pub(super) const LOGIN_ACCOUNT_NODE: &str = "login.account";
 pub(super) const LOGIN_PASSWORD_NODE: &str = "login.password";
+pub(super) const REGISTRATION_ACCOUNT_NODE: &str = "login.register.account";
+pub(super) const REGISTRATION_PASSWORD_NODE: &str = "login.register.password";
+pub(super) const REGISTRATION_PASSWORD_CONFIRMATION_NODE: &str =
+    "login.register.password_confirmation";
 pub(super) const CHARACTER_CREATE_NAME_NODE: &str = "character.create_name";
 const CHARACTER_NAME_MAX_BYTES: usize = 256;
 const CHARACTER_ID_MAX_BYTES: usize =
@@ -54,6 +59,10 @@ const CHARACTER_ID_MAX_BYTES: usize =
 
 pub(super) const ACTION_ACCOUNT_LOGIN: &str = "auth.account_login";
 pub(super) const ACTION_GUEST_LOGIN: &str = "auth.guest_login";
+pub(super) const ACTION_SHOW_REGISTRATION: &str = "auth.show_registration";
+pub(super) const ACTION_SHOW_LOGIN: &str = "auth.show_login";
+pub(super) const ACTION_REGISTER: &str = "auth.register";
+pub(super) const ACTION_DISMISS_REGISTRATION_REVIEW: &str = "auth.dismiss_registration_review";
 pub(super) const ACTION_SWITCH_ENVIRONMENT: &str = "auth.switch_environment";
 pub(super) const ACTION_LOAD_CHARACTERS: &str = "auth.load_characters";
 pub(super) const ACTION_CREATE_CHARACTER: &str = "auth.create_character";
@@ -81,6 +90,8 @@ pub(super) const LOGIN_PAGE_BASELINE: AuthPageBaseline = AuthPageBaseline {
     panel: PANEL_LOGIN,
     action_source: AuthActionSource::UiDocument,
     states: &[
+        "login",
+        "register",
         "not_logged_in",
         "logging_in",
         "logged_in",
@@ -133,6 +144,11 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
     binding_schema([
         (
             "auth.login.login_name",
+            UiBindingScope::Local,
+            UiBindingType::String,
+        ),
+        (
+            "auth.register.login_name",
             UiBindingScope::Local,
             UiBindingType::String,
         ),
@@ -197,6 +213,63 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::Enum {
                 values: vec!["local".to_owned(), "production".to_owned()],
             },
+        ),
+        (
+            "auth.login.mode",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: vec!["login".to_owned(), "register".to_owned()],
+            },
+        ),
+        (
+            "auth.register.state",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: [
+                    "idle",
+                    "registering",
+                    "failed",
+                    "pending_review",
+                    "succeeded",
+                ]
+                .map(str::to_owned)
+                .to_vec(),
+            },
+        ),
+        (
+            "auth.register.request_pending",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.register.disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "auth.register.error_title",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.register.error_detail",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "auth.register.error_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "auth.register.review_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "auth.register.success_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
         ),
     ])
 }
@@ -488,6 +561,10 @@ pub(super) fn login_declarative_screen_host(
         action_allowlist: [
             ACTION_ACCOUNT_LOGIN,
             ACTION_GUEST_LOGIN,
+            ACTION_SHOW_REGISTRATION,
+            ACTION_SHOW_LOGIN,
+            ACTION_REGISTER,
+            ACTION_DISMISS_REGISTRATION_REVIEW,
             ACTION_SWITCH_ENVIRONMENT,
         ]
         .into_iter()
@@ -580,6 +657,30 @@ pub(super) fn auth_action_descriptors() -> Vec<UiActionDescriptor> {
             LOGIN_DOCUMENT_ID,
             OWNER_LOGIN.as_str(),
             "login.guest",
+        ),
+        business_action(
+            ACTION_SHOW_REGISTRATION,
+            LOGIN_DOCUMENT_ID,
+            OWNER_LOGIN.as_str(),
+            "login.mode.register",
+        ),
+        business_action(
+            ACTION_SHOW_LOGIN,
+            LOGIN_DOCUMENT_ID,
+            OWNER_LOGIN.as_str(),
+            "login.mode.login",
+        ),
+        business_action(
+            ACTION_REGISTER,
+            LOGIN_DOCUMENT_ID,
+            OWNER_LOGIN.as_str(),
+            "login.register.submit",
+        ),
+        business_action(
+            ACTION_DISMISS_REGISTRATION_REVIEW,
+            LOGIN_DOCUMENT_ID,
+            OWNER_LOGIN.as_str(),
+            "login.registration.back",
         ),
         business_action(
             ACTION_SWITCH_ENVIRONMENT,
@@ -744,11 +845,30 @@ fn audit_character(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum AuthEntryMode {
+    #[default]
+    Login,
+    Register,
+}
+
+impl AuthEntryMode {
+    const fn binding_value(self) -> &'static str {
+        match self {
+            Self::Login => "login",
+            Self::Register => "register",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Resource)]
 pub(super) struct LoginUiState {
     pub(super) rendered: Option<LoginUiSnapshot>,
     pub(super) last_error: Option<crate::game::myserver::MyServerDisplayError>,
     pub(super) notice: Option<AuthStatusNotice>,
+    pub(super) entry_mode: AuthEntryMode,
+    pub(super) registration_validation_error: Option<RegistrationValidationError>,
+    pub(super) registration_succeeded: bool,
 }
 
 pub(super) fn guard_character_select_session(
@@ -767,7 +887,14 @@ pub(super) fn character_select_requires_login(session: &MyServerSession) -> bool
 pub(super) fn cleanup_login_screen_state(
     mut ui_state: ResMut<LoginUiState>,
     mut focus_state: ResMut<UiFocusState>,
+    runtime: Res<UiDocumentRuntime>,
+    mut input_values: Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
 ) {
+    clear_active_login_document_inputs(&runtime, &mut input_values);
     ui_state.clear_runtime_state();
     focus_state.focused_entity = None;
 }
@@ -777,6 +904,9 @@ impl LoginUiState {
         self.rendered = None;
         self.last_error = None;
         self.notice = None;
+        self.entry_mode = AuthEntryMode::Login;
+        self.registration_validation_error = None;
+        self.registration_succeeded = false;
     }
 }
 
@@ -802,10 +932,10 @@ pub(super) fn handle_login_document_actions(
         for _ in actions.read() {}
         return;
     };
-    let mut login_request_sent = false;
+    let mut auth_request_sent = false;
 
     for action in actions.read() {
-        if !is_login_business_action(action) {
+        if auth_request_sent || !is_login_business_action(action) {
             continue;
         }
 
@@ -813,7 +943,7 @@ pub(super) fn handle_login_document_actions(
             ACTION_ACCOUNT_LOGIN
                 if action.source_node.as_str() == "login.submit" && action.params.is_empty() =>
             {
-                if login_request_sent || login_request_pending(&session) {
+                if login_request_pending(&session) {
                     continue;
                 }
                 let Some((login_name, password)) =
@@ -824,10 +954,12 @@ pub(super) fn handle_login_document_actions(
                 if login_name.is_empty() || password.is_empty() {
                     continue;
                 }
-                login_request_sent = true;
+                auth_request_sent = true;
                 session.begin_login();
                 ui_state.last_error = None;
                 ui_state.notice = None;
+                ui_state.registration_validation_error = None;
+                ui_state.registration_succeeded = false;
                 myserver_commands.write(MyServerCommand::Login {
                     login_name,
                     password,
@@ -837,28 +969,94 @@ pub(super) fn handle_login_document_actions(
             ACTION_GUEST_LOGIN
                 if action.source_node.as_str() == "login.guest" && action.params.is_empty() =>
             {
-                if login_request_sent || login_request_pending(&session) {
+                if login_request_pending(&session) {
                     continue;
                 }
-                login_request_sent = true;
+                auth_request_sent = true;
                 session.begin_login();
                 ui_state.last_error = None;
                 ui_state.notice = None;
+                ui_state.registration_validation_error = None;
+                ui_state.registration_succeeded = false;
                 myserver_commands.write(MyServerCommand::GuestLogin {
                     guest_id: None,
                     connect_game: false,
                 });
             }
+            ACTION_SHOW_REGISTRATION
+                if action.source_node.as_str() == "login.mode.register"
+                    && action.params.is_empty()
+                    && !login_request_pending(&session) =>
+            {
+                ui_state.entry_mode = AuthEntryMode::Register;
+                clear_registration_feedback(&mut ui_state);
+            }
+            ACTION_SHOW_LOGIN
+                if action.source_node.as_str() == "login.mode.login"
+                    && action.params.is_empty()
+                    && !login_request_pending(&session) =>
+            {
+                ui_state.entry_mode = AuthEntryMode::Login;
+                clear_registration_feedback(&mut ui_state);
+            }
+            ACTION_REGISTER
+                if action.source_node.as_str() == "login.register.submit"
+                    && action.params.is_empty()
+                    && ui_state.entry_mode == AuthEntryMode::Register
+                    && !login_request_pending(&session) =>
+            {
+                let Some((login_name, password, password_confirmation)) =
+                    document_registration_credentials(instance_id, &runtime, &mut input_values)
+                else {
+                    continue;
+                };
+                let registration = match validate_registration_request(
+                    &login_name,
+                    &password,
+                    &password_confirmation,
+                ) {
+                    Ok(registration) => registration,
+                    Err(error) => {
+                        ui_state.registration_validation_error = Some(error);
+                        ui_state.last_error = None;
+                        ui_state.notice = None;
+                        continue;
+                    }
+                };
+                auth_request_sent = true;
+                session.begin_registration();
+                ui_state.last_error = None;
+                ui_state.notice = None;
+                ui_state.registration_validation_error = None;
+                ui_state.registration_succeeded = false;
+                myserver_commands.write(MyServerCommand::Register {
+                    login_name: registration.login_name,
+                    password: registration.password,
+                    connect_game: false,
+                });
+            }
+            ACTION_DISMISS_REGISTRATION_REVIEW
+                if action.source_node.as_str() == "login.registration.back"
+                    && action.params.is_empty()
+                    && session.registration_state == RegistrationState::PendingReview =>
+            {
+                clear_auth_document_inputs(instance_id, &runtime, &mut input_values);
+                focus_state.focused_entity = None;
+                ui_state.entry_mode = AuthEntryMode::Login;
+                clear_registration_feedback(&mut ui_state);
+                myserver_commands.write(MyServerCommand::DismissRegistrationReview);
+            }
             ACTION_SWITCH_ENVIRONMENT if action.source_node.as_str() == "login.environment" => {
                 let Some(environment) = login_environment_param(action) else {
                     continue;
                 };
-                if environment == profiles.selected()
+                if login_request_pending(&session)
+                    || environment == profiles.selected()
                     || !profiles.try_activate(environment, config.as_mut(), session.as_mut())
                 {
                     continue;
                 }
-                clear_login_document_inputs(instance_id, &runtime, &mut input_values);
+                clear_auth_document_inputs(instance_id, &runtime, &mut input_values);
                 focus_state.focused_entity = None;
                 ui_state.clear_runtime_state();
                 info!(?environment, "MyServer login environment selected");
@@ -926,7 +1124,76 @@ fn document_login_credentials(
     Some((login_name, password))
 }
 
-fn clear_login_document_inputs(
+fn document_registration_credentials(
+    instance_id: crate::framework::ui::document::UiDocumentInstanceId,
+    runtime: &UiDocumentRuntime,
+    input_values: &mut Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
+) -> Option<(String, String, String)> {
+    let account_id = UiNodeId::from_str(REGISTRATION_ACCOUNT_NODE).ok()?;
+    let password_id = UiNodeId::from_str(REGISTRATION_PASSWORD_NODE).ok()?;
+    let confirmation_id = UiNodeId::from_str(REGISTRATION_PASSWORD_CONFIRMATION_NODE).ok()?;
+    let account_entity = runtime.node_entity(instance_id, &account_id)?;
+    let password_entity = runtime.node_entity(instance_id, &password_id)?;
+    let confirmation_entity = runtime.node_entity(instance_id, &confirmation_id)?;
+
+    let login_name = read_document_input(
+        instance_id,
+        account_id,
+        account_entity,
+        false,
+        input_values,
+        true,
+    )?;
+    let password = read_document_input(
+        instance_id,
+        password_id,
+        password_entity,
+        true,
+        input_values,
+        false,
+    )?;
+    let password_confirmation = read_document_input(
+        instance_id,
+        confirmation_id,
+        confirmation_entity,
+        true,
+        input_values,
+        false,
+    )?;
+    Some((login_name, password, password_confirmation))
+}
+
+fn read_document_input(
+    instance_id: crate::framework::ui::document::UiDocumentInstanceId,
+    node_id: UiNodeId,
+    entity: Entity,
+    expected_sensitive: bool,
+    input_values: &mut Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
+    trim: bool,
+) -> Option<String> {
+    let (marker, value, is_sensitive) = input_values.get_mut(entity).ok()?;
+    if marker.instance_id != instance_id
+        || marker.node_id != node_id
+        || is_sensitive != expected_sensitive
+    {
+        return None;
+    }
+    Some(if trim {
+        value.0.trim().to_owned()
+    } else {
+        value.0.clone()
+    })
+}
+
+fn clear_auth_document_inputs(
     instance_id: crate::framework::ui::document::UiDocumentInstanceId,
     runtime: &UiDocumentRuntime,
     input_values: &mut Query<(
@@ -935,7 +1202,13 @@ fn clear_login_document_inputs(
         Has<UiSensitiveTextInput>,
     )>,
 ) {
-    for (node, expected_sensitive) in [(LOGIN_ACCOUNT_NODE, false), (LOGIN_PASSWORD_NODE, true)] {
+    for (node, expected_sensitive) in [
+        (LOGIN_ACCOUNT_NODE, false),
+        (LOGIN_PASSWORD_NODE, true),
+        (REGISTRATION_ACCOUNT_NODE, false),
+        (REGISTRATION_PASSWORD_NODE, true),
+        (REGISTRATION_PASSWORD_CONFIRMATION_NODE, true),
+    ] {
         let Ok(node_id) = UiNodeId::from_str(node) else {
             continue;
         };
@@ -952,6 +1225,13 @@ fn clear_login_document_inputs(
             value.0.clear();
         }
     }
+}
+
+fn clear_registration_feedback(ui_state: &mut LoginUiState) {
+    ui_state.last_error = None;
+    ui_state.notice = None;
+    ui_state.registration_validation_error = None;
+    ui_state.registration_succeeded = false;
 }
 
 pub(super) fn sync_login_document_bindings(
@@ -989,6 +1269,9 @@ pub(super) fn sync_login_document_bindings(
     let request_pending = login_request_pending(&session);
     let disabled = request_pending
         || session.account_login_state == crate::game::myserver::AccountLoginState::LoggedIn;
+    let (registration_error_title, registration_error_detail, registration_error_visible) =
+        registration_error_bindings(&ui_state);
+    let registration_state = registration_state_binding(&session, &ui_state);
 
     for (path, value) in [
         (
@@ -1050,6 +1333,53 @@ pub(super) fn sync_login_document_bindings(
                 .to_owned(),
             ),
         ),
+        (
+            "auth.login.mode",
+            UiBindingValue::Enum(ui_state.entry_mode.binding_value().to_owned()),
+        ),
+        (
+            "auth.register.state",
+            UiBindingValue::Enum(registration_state.to_owned()),
+        ),
+        (
+            "auth.register.request_pending",
+            UiBindingValue::Bool(request_pending),
+        ),
+        ("auth.register.disabled", UiBindingValue::Bool(disabled)),
+        (
+            "auth.register.error_title",
+            UiBindingValue::String(registration_error_title),
+        ),
+        (
+            "auth.register.error_detail",
+            UiBindingValue::String(registration_error_detail),
+        ),
+        (
+            "auth.register.error_visibility",
+            UiBindingValue::Visibility(if registration_error_visible {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "auth.register.review_visibility",
+            UiBindingValue::Visibility(
+                if session.registration_state == RegistrationState::PendingReview {
+                    UiBindingVisibility::Visible
+                } else {
+                    UiBindingVisibility::Hidden
+                },
+            ),
+        ),
+        (
+            "auth.register.success_visibility",
+            UiBindingValue::Visibility(if ui_state.registration_succeeded {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
     ] {
         let path = UiBindingPath::from_str(path).expect("Login binding paths are static and valid");
         let declaration = contracts
@@ -1065,6 +1395,41 @@ pub(super) fn sync_login_document_bindings(
         );
     }
     ui_state.rendered = Some(snapshot);
+}
+
+fn registration_state_binding(session: &MyServerSession, ui_state: &LoginUiState) -> &'static str {
+    match session.registration_state {
+        RegistrationState::Registering => "registering",
+        RegistrationState::Failed => "failed",
+        RegistrationState::PendingReview => "pending_review",
+        RegistrationState::Idle if ui_state.registration_validation_error.is_some() => "failed",
+        RegistrationState::Idle if ui_state.registration_succeeded => "succeeded",
+        RegistrationState::Idle => "idle",
+    }
+}
+
+fn registration_error_bindings(ui_state: &LoginUiState) -> (String, String, bool) {
+    if let Some(error) = ui_state.registration_validation_error.as_ref() {
+        return (
+            "Registration failed".to_owned(),
+            error.message_key().to_owned(),
+            true,
+        );
+    }
+
+    let Some(error) = ui_state.last_error.as_ref().filter(|error| {
+        error.operation == Some(crate::game::myserver::MyServerOperation::Register)
+    }) else {
+        return (String::new(), String::new(), false);
+    };
+    let detail = error
+        .error_code
+        .as_deref()
+        .and_then(RegistrationServerError::from_error_code)
+        .map(|error| error.message_key().to_owned())
+        .or_else(|| error.detail.clone())
+        .unwrap_or_default();
+    ("Registration failed".to_owned(), detail, true)
 }
 
 pub(super) fn handle_character_select_document_actions(
@@ -1526,12 +1891,18 @@ pub(super) fn follow_myserver_login_events(
     for event in events.read() {
         match event {
             MyServerEvent::DisplayError { error } => {
+                if error.operation == Some(crate::game::myserver::MyServerOperation::Register) {
+                    ui_state.registration_succeeded = false;
+                }
                 ui_state.last_error = Some(error.clone());
                 ui_state.notice = None;
             }
             MyServerEvent::LoginSucceeded(_) => {
+                ui_state.registration_succeeded = ui_state.entry_mode == AuthEntryMode::Register;
                 ui_state.last_error = None;
                 ui_state.notice = None;
+                ui_state.registration_validation_error = None;
+                clear_active_login_document_inputs(&runtime, &mut input_values);
                 commands.write(MyServerCommand::LoadCharacterList);
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::CharacterSelect));
             }
@@ -1542,6 +1913,8 @@ pub(super) fn follow_myserver_login_events(
                 ));
             }
             MyServerEvent::RegistrationPendingReview { message, .. } => {
+                ui_state.entry_mode = AuthEntryMode::Register;
+                ui_state.registration_succeeded = false;
                 ui_state.notice = Some(AuthStatusNotice {
                     kind: AuthNoticeKind::PendingReview,
                     title: "Registration requires review".to_string(),
@@ -1660,4 +2033,21 @@ fn clear_active_character_document_input(
         return;
     };
     clear_character_document_input(instance_id, runtime, input_values);
+}
+
+fn clear_active_login_document_inputs(
+    runtime: &UiDocumentRuntime,
+    input_values: &mut Query<(
+        &UiDocumentNodeMarker,
+        &mut UiTextInputValue,
+        Has<UiSensitiveTextInput>,
+    )>,
+) {
+    let Some(instance_id) = runtime.active_instance(
+        OWNER_LOGIN.as_str(),
+        &UiDocumentId::from_str(LOGIN_DOCUMENT_ID).expect("Login document ID is static and valid"),
+    ) else {
+        return;
+    };
+    clear_auth_document_inputs(instance_id, runtime, input_values);
 }

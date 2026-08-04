@@ -19,8 +19,8 @@ use super::types::{
     MyServerAutoClientState, MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot,
     MyServerDisplayError, MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerProfiles,
     MyServerSession, PendingHttpOperation, PendingHttpRequest, PendingRequest, ReconnectCause,
-    ReconnectPlan, RegisterPendingReviewResponse, RegisterResponse, RegistrationState,
-    SessionKickCategory, TicketResponse, character_select_endpoint, classify_game_auth_failure,
+    ReconnectPlan, RegisterPendingReviewResponse, RegisterResponse, SessionKickCategory,
+    TicketResponse, character_select_endpoint, classify_game_auth_failure,
     parse_character_bound_ticket, redact_secret_fingerprint, ticket_endpoint,
 };
 
@@ -3794,7 +3794,7 @@ mod tests {
     use crate::framework::network::{HttpMethod, HttpResponse};
     use crate::game::myserver::types::{
         AccountLoginState, CharacterSelectionState, CharacterSummary, GameAuthFailureReason,
-        GameConnectionState, MyServerErrorKind, MyServerErrorSource,
+        GameConnectionState, MyServerErrorKind, MyServerErrorSource, RegistrationState,
     };
 
     fn test_config() -> MyServerConfig {

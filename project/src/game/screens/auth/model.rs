@@ -1,7 +1,7 @@
 use crate::game::myserver::{
     AccountLoginState, CharacterSelectionState, CharacterSummary, ElementValues,
     GameConnectionState, MyServerDisplayError, MyServerErrorKind, MyServerErrorSource,
-    MyServerOperation, MyServerSession,
+    MyServerOperation, MyServerSession, RegistrationState,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,6 +122,7 @@ impl AuthErrorSnapshot {
 
 pub(super) fn login_request_pending(session: &MyServerSession) -> bool {
     matches!(session.account_login_state, AccountLoginState::LoggingIn)
+        || session.registration_state == RegistrationState::Registering
         || session.login_request.is_some()
 }
 
