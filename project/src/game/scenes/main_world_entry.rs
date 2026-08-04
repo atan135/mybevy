@@ -6,7 +6,9 @@
 use bevy::prelude::*;
 
 use crate::{
-    framework::scene::prelude::{SceneEvent, SceneRegistry},
+    framework::scene::prelude::{
+        SceneCommand, SceneEnterRequest, SceneEvent, SceneRegistry, SceneSessionId,
+    },
     game::{
         myserver::{
             AccountLoginState, CharacterSelectionState, GameConnectionState, MyServerCommand,
@@ -31,7 +33,8 @@ impl Plugin for MainWorldEntryPlugin {
                     handle_entry_intents,
                     dispatch_main_world_join_requests,
                     consume_main_world_authority_events,
-                    ignore_unbound_scene_events,
+                    dispatch_authority_confirmed_scene_enter,
+                    consume_main_world_scene_ready,
                     handle_entry_signals,
                 )
                     .chain(),
@@ -79,6 +82,10 @@ pub(in crate::game) struct MainWorldEntryState {
     pub position: Option<Vec3>,
     pub snapshot_generation: u32,
     pub join_acknowledged: bool,
+    pub scene_session_id: Option<SceneSessionId>,
+    pub scene_ready: bool,
+    pub room_ready_requested: bool,
+    pub room_ready_acknowledged: bool,
     pub failure: Option<MainWorldEntryFailure>,
 }
 
@@ -95,6 +102,10 @@ impl Default for MainWorldEntryState {
             position: None,
             snapshot_generation: 0,
             join_acknowledged: false,
+            scene_session_id: None,
+            scene_ready: false,
+            room_ready_requested: false,
+            room_ready_acknowledged: false,
             failure: None,
         }
     }
@@ -121,6 +132,10 @@ impl MainWorldEntryState {
         self.position = None;
         self.snapshot_generation = 0;
         self.join_acknowledged = false;
+        self.scene_session_id = None;
+        self.scene_ready = false;
+        self.room_ready_requested = false;
+        self.room_ready_acknowledged = false;
     }
 
     fn reset(&mut self) {
@@ -134,6 +149,10 @@ impl MainWorldEntryState {
         self.position = None;
         self.snapshot_generation = 0;
         self.join_acknowledged = false;
+        self.scene_session_id = None;
+        self.scene_ready = false;
+        self.room_ready_requested = false;
+        self.room_ready_acknowledged = false;
     }
 
     fn fail(&mut self, failure: MainWorldEntryFailure) {
@@ -211,6 +230,7 @@ pub(in crate::game) enum MainWorldEntryFailure {
     AuthoritativeSceneMismatch,
     InvalidAuthoritativePosition,
     JoinTimedOut,
+    SceneLoadFailed,
 }
 
 fn handle_entry_intents(
@@ -376,6 +396,17 @@ fn consume_main_world_authority_events(
                 state.snapshot_generation = push.frame_id;
                 state.phase = MainWorldEntryPhase::LoadingScene;
             }
+            MyServerEvent::ReadyChanged(response)
+                if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id
+                    && response.ok
+                    && response.ready
+                    && state.phase == MainWorldEntryPhase::WaitingSceneReady
+                    && state.scene_ready
+                    && state.room_ready_requested =>
+            {
+                state.room_ready_acknowledged = true;
+                activate_when_ready(&mut state);
+            }
             _ => {}
         }
     }
@@ -436,10 +467,62 @@ fn handle_entry_signals(
     }
 }
 
-// No SceneCommand is issued in this stage. Reading the stream makes the rule
-// explicit: unbound/old SceneEvent values cannot transition this coordinator.
-fn ignore_unbound_scene_events(mut scene_events: MessageReader<SceneEvent>) {
-    for _ in scene_events.read() {}
+fn dispatch_authority_confirmed_scene_enter(
+    mut state: ResMut<MainWorldEntryState>,
+    mut scene_commands: MessageWriter<SceneCommand>,
+) {
+    if state.phase != MainWorldEntryPhase::LoadingScene || state.scene_session_id.is_some() {
+        return;
+    }
+    let session_id = SceneSessionId::from(format!("main-world-{}", state.generation));
+    let mut request = SceneEnterRequest::new(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene());
+    request.session_id = Some(session_id.clone());
+    scene_commands.write(SceneCommand::Enter(request));
+    state.scene_session_id = Some(session_id);
+    state.phase = MainWorldEntryPhase::WaitingSceneReady;
+}
+
+fn consume_main_world_scene_ready(
+    mut scene_events: MessageReader<SceneEvent>,
+    mut state: ResMut<MainWorldEntryState>,
+    mut commands: MessageWriter<MyServerCommand>,
+    mut entry_events: MessageWriter<MainWorldEntryEvent>,
+) {
+    for event in scene_events.read() {
+        match event {
+            SceneEvent::Ready(ready)
+                if state.phase == MainWorldEntryPhase::WaitingSceneReady
+                    && ready.scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
+                    && state.scene_session_id.as_ref() == Some(&ready.session_id)
+                    && !state.scene_ready =>
+            {
+                state.scene_ready = true;
+                state.room_ready_requested = true;
+                commands.write(MyServerCommand::SetReady { ready: true });
+                activate_when_ready(&mut state);
+            }
+            SceneEvent::Failed(failure)
+                if state.phase == MainWorldEntryPhase::WaitingSceneReady
+                    && failure.scene_id.as_ref()
+                        == Some(&MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
+                    && failure.session_id.as_ref() == state.scene_session_id.as_ref() =>
+            {
+                fail_authority_entry(
+                    &mut state,
+                    &mut entry_events,
+                    MainWorldEntryFailure::SceneLoadFailed,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+fn activate_when_ready(state: &mut MainWorldEntryState) {
+    if state.scene_ready && state.room_ready_acknowledged && state.authoritative_scene_id.is_some()
+    {
+        state.phase = MainWorldEntryPhase::Active;
+    }
 }
 
 fn abort_for_intent(
@@ -508,6 +591,7 @@ fn validate_entry(
 mod tests {
     use super::*;
     use crate::framework::scene::prelude::{SceneDefinition, SceneKind};
+    use crate::game::myserver::protocol::pb;
     use bevy::ecs::message::{MessageCursor, Messages};
 
     fn ready_app() -> App {
@@ -517,6 +601,7 @@ mod tests {
             .init_resource::<MyServerSession>()
             .init_resource::<SceneRegistry>()
             .add_message::<SceneEvent>()
+            .add_message::<SceneCommand>()
             .add_message::<MyServerCommand>()
             .add_message::<MyServerEvent>()
             .add_plugins(MainWorldEntryPlugin);
@@ -541,6 +626,80 @@ mod tests {
         let messages = app.world().resource::<Messages<MainWorldEntryEvent>>();
         let mut cursor = MessageCursor::default();
         cursor.read(messages).cloned().collect()
+    }
+
+    fn messages<M: Message + Clone>(app: &App) -> Vec<M> {
+        let mut cursor = MessageCursor::default();
+        cursor
+            .read(app.world().resource::<Messages<M>>())
+            .cloned()
+            .collect()
+    }
+
+    fn app_waiting_scene_ready() -> (App, SceneSessionId) {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                error_code: String::new(),
+            }));
+        app.world_mut()
+            .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
+                event: "joined".to_owned(),
+                snapshot: Some(pb::RoomSnapshot {
+                    room_id: "main-world-public".to_owned(),
+                    owner_character_id: "chr_1".to_owned(),
+                    state: "in_game".to_owned(),
+                    members: Vec::new(),
+                    current_frame_id: 7,
+                    game_state: r#"{"scene_id":1}"#.to_owned(),
+                }),
+            }));
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(
+                pb::MovementSnapshotPush {
+                    room_id: "main-world-public".to_owned(),
+                    frame_id: 8,
+                    entities: vec![pb::EntityTransform {
+                        entity_id: 1,
+                        character_id: "chr_1".to_owned(),
+                        scene_id: 1,
+                        x: 2.0,
+                        y: 3.0,
+                        dir_x: 0.0,
+                        dir_y: 1.0,
+                        moving: false,
+                        last_input_frame: 8,
+                    }],
+                    full_sync: true,
+                    reason: String::new(),
+                    correction_kind: 0,
+                    reason_code: 0,
+                    target_character_ids: Vec::new(),
+                    reference_frame_id: 8,
+                },
+            ));
+        app.update();
+        let session_id = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .scene_session_id
+            .clone()
+            .unwrap();
+        (app, session_id)
+    }
+
+    fn scene_ready(session_id: SceneSessionId) -> SceneEvent {
+        SceneEvent::Ready(crate::framework::scene::prelude::SceneReady {
+            scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+            session_id,
+            content_version: None,
+            authority_mode: Default::default(),
+            seed: None,
+        })
     }
 
     #[test]
@@ -619,5 +778,120 @@ mod tests {
             main_world_bevy_position(16.1, 1.0),
             Err(MainWorldEntryFailure::InvalidAuthoritativePosition)
         );
+    }
+
+    #[test]
+    fn authority_snapshot_scene_ready_and_room_ack_form_the_only_active_path() {
+        let (mut app, session_id) = app_waiting_scene_ready();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::WaitingSceneReady
+        );
+        assert_eq!(
+            messages::<SceneCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, SceneCommand::Enter(_)))
+                .count(),
+            1
+        );
+
+        app.world_mut().write_message(SceneEvent::Entered(
+            crate::framework::scene::prelude::SceneEntered {
+                scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+                session_id: session_id.clone(),
+                content_version: None,
+            },
+        ));
+        app.update();
+        assert!(!app.world().resource::<MainWorldEntryState>().scene_ready);
+
+        app.world_mut()
+            .write_message(scene_ready(SceneSessionId::from("main-world-0")));
+        app.update();
+        assert!(!app.world().resource::<MainWorldEntryState>().scene_ready);
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, MyServerCommand::SetReady { ready: true }))
+                .count(),
+            0
+        );
+
+        app.world_mut()
+            .write_message(scene_ready(session_id.clone()));
+        app.world_mut()
+            .write_message(scene_ready(session_id.clone()));
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::WaitingSceneReady
+        );
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, MyServerCommand::SetReady { ready: true }))
+                .count(),
+            1
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::ReadyChanged(pb::RoomReadyRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                ready: true,
+                error_code: String::new(),
+            }));
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Active
+        );
+    }
+
+    #[test]
+    fn scene_failure_returns_the_entry_coordinator_to_an_operable_lobby_state() {
+        let (mut app, session_id) = app_waiting_scene_ready();
+        app.world_mut().write_message(SceneEvent::Failed(
+            crate::framework::scene::prelude::SceneFailure::new(
+                crate::framework::scene::prelude::SceneFailureKind::RequiredAssetMissing,
+                crate::framework::scene::prelude::SceneLifecycleState::LoadingAssets,
+            )
+            .with_scene(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
+            .with_session(session_id),
+        ));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Failed);
+        assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
+        assert!(!state.is_in_flight());
+        assert!(events(&app).iter().any(|event| matches!(
+            event,
+            MainWorldEntryEvent::Failed {
+                generation: 1,
+                failure: MainWorldEntryFailure::SceneLoadFailed,
+            }
+        )));
+    }
+
+    #[test]
+    fn cancelled_entry_ignores_a_late_room_ready_ack() {
+        let (mut app, session_id) = app_waiting_scene_ready();
+        app.world_mut().write_message(scene_ready(session_id));
+        app.update();
+        app.world_mut().write_message(MainWorldEntryIntent::Cancel);
+        app.world_mut()
+            .write_message(MyServerEvent::ReadyChanged(pb::RoomReadyRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                ready: true,
+                error_code: String::new(),
+            }));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::LobbyIdle);
+        assert!(!state.room_ready_acknowledged);
+        assert!(!state.scene_ready);
     }
 }
