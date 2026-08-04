@@ -1,0 +1,39 @@
+(
+  version: "1",
+  scene_id: SceneId("world.main"),
+  kind: "world",
+  entry: (
+    default_spawn: Some(SceneSpawnPointId("spawn.grassland_01")),
+    camera: Some((
+      id: Some("camera.main_world_overview"),
+      mode: "fixed3d",
+      position: Some((15.0, 18.0, 22.0)),
+      rotation: Some((-32.0, 34.0, 0.0)),
+      projection: Some((kind: "perspective3d", fov_y: 0.82, near: 0.1, far: 120.0)),
+      target: Some("anchor.main_world_center"),
+    )),
+    loading_policy: "blocking_required_assets",
+  ),
+  layers: [
+    (id: SceneLayerId("terrain"), required: true, assets: []),
+    (id: SceneLayerId("landmarks"), required: true, assets: []),
+  ],
+  spawn_points: [
+    (
+      id: SceneSpawnPointId("spawn.grassland_01"),
+      position: (2.0, 0.0, 2.0),
+      rotation: (0.0, 0.0, 0.0),
+      tags: ["default", "server_spawn_1001"],
+    ),
+  ],
+  anchors: [
+    (
+      id: SceneAnchorId("anchor.main_world_center"),
+      position: (0.0, 0.0, 0.0),
+      rotation: (0.0, 0.0, 0.0),
+      tags: ["camera", "target"],
+    ),
+  ],
+  triggers: [],
+  chunks: [],
+)

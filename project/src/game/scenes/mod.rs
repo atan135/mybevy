@@ -7,6 +7,7 @@
 mod catalog;
 mod fangyuan_home;
 mod lockstep_sim_arena;
+mod main_world;
 #[allow(dead_code)]
 pub(in crate::game) mod main_world_contract;
 mod robot_sync_arena;
@@ -41,6 +42,7 @@ impl Plugin for GameScenesPlugin {
             catalog::GameSceneCatalogPlugin,
             fangyuan_home::FangyuanHomePlugin,
             lockstep_sim_arena::LockstepSimArenaPlugin,
+            main_world::MainWorldScenePlugin,
             robot_sync_arena::RobotSyncArenaPlugin,
             sample_dungeon_room::SampleDungeonRoomPlugin,
         ))
@@ -285,6 +287,31 @@ mod tests {
             definition.content_source,
             SceneContentSource::FirstPackage {
                 manifest_path: "scenes/fangyuan_home/scene.ron".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn scene_plugins_register_main_world_from_first_package_catalog() {
+        let mut app = app_with_scene_registration_plugins();
+
+        app.update();
+
+        let registry = app.world().resource::<SceneRegistry>();
+        let scene_id = SceneId::from(main_world_contract::MAIN_WORLD_CLIENT_SCENE_ID);
+        let definition = registry.get(&scene_id).unwrap();
+
+        assert_eq!(definition.scene_id, scene_id);
+        assert_eq!(definition.kind, SceneKind::World);
+        assert!(definition.has_world_root);
+        assert_eq!(
+            definition.manifest_path.as_deref(),
+            Some("scenes/main_world/scene.ron")
+        );
+        assert_eq!(
+            definition.content_source,
+            SceneContentSource::FirstPackage {
+                manifest_path: "scenes/main_world/scene.ron".to_string()
             }
         );
     }

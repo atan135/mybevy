@@ -1,0 +1,18 @@
+(
+  version: "1",
+  scene_id: "world.main",
+  terrain: (
+    size: [32.0, 0.4, 32.0],
+    color: [0.18, 0.42, 0.24],
+  ),
+  landmark: (
+    position: [0.0, 3.0, 0.0],
+    radius: 1.5,
+    color: [0.18, 0.64, 0.92],
+  ),
+  light: (
+    rotation_degrees: [-48.0, -28.0, 0.0],
+    color: [1.0, 0.96, 0.86],
+    illuminance: 7000.0,
+  ),
+)

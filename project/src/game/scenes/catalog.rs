@@ -115,6 +115,7 @@ pub(crate) struct GameSceneMusicConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum GameSceneUiMode {
+    MainWorld,
     SampleScene,
     RobotSyncScene,
 }
@@ -423,6 +424,7 @@ fn parse_scene_kind(row: usize, value: &str) -> Result<SceneKind, GameSceneCatal
 
 fn parse_ui_mode(row: usize, value: &str) -> Result<GameSceneUiMode, GameSceneCatalogParseError> {
     match normalize_catalog_token(value).as_str() {
+        "mainworld" => Ok(GameSceneUiMode::MainWorld),
         "samplescene" => Ok(GameSceneUiMode::SampleScene),
         "robotsyncscene" => Ok(GameSceneUiMode::RobotSyncScene),
         _ => Err(GameSceneCatalogParseError::InvalidUiMode {
