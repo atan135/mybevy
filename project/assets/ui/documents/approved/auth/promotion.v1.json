@@ -18,6 +18,22 @@
         "sources": ["login.guest"]
       },
       {
+        "id": "auth.show_registration",
+        "sources": ["login.mode.register"]
+      },
+      {
+        "id": "auth.show_login",
+        "sources": ["login.mode.login"]
+      },
+      {
+        "id": "auth.register",
+        "sources": ["login.register.submit"]
+      },
+      {
+        "id": "auth.dismiss_registration_review",
+        "sources": ["login.registration.back"]
+      },
+      {
         "id": "auth.switch_environment",
         "sources": ["login.environment"]
       }
@@ -29,12 +45,23 @@
       { "path": "auth.login.environment_locked", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "auth.login.error_detail", "scope": "owner", "value_type": { "kind": "string" } },
       { "path": "auth.login.error_title", "scope": "owner", "value_type": { "kind": "string" } },
-      { "path": "auth.login.error_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "auth.login.error_display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+      { "path": "auth.login.login_display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+      { "path": "auth.login.mode", "scope": "owner", "value_type": { "kind": "enum", "values": ["login", "register"] } },
       { "path": "auth.login.notice_detail", "scope": "owner", "value_type": { "kind": "string" } },
       { "path": "auth.login.notice_title", "scope": "owner", "value_type": { "kind": "string" } },
-      { "path": "auth.login.notice_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "auth.login.notice_display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
       { "path": "auth.login.request_pending", "scope": "owner", "value_type": { "kind": "bool" } },
-      { "path": "auth.login.status", "scope": "owner", "value_type": { "kind": "string" } }
+      { "path": "auth.login.register_display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+      { "path": "auth.login.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.register.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.register.error_detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.register.error_title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "auth.register.error_display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+      { "path": "auth.register.request_pending", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "auth.register.review_display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+      { "path": "auth.register.state", "scope": "owner", "value_type": { "kind": "enum", "values": ["idle", "registering", "failed", "pending_review", "succeeded"] } },
+      { "path": "auth.register.success_display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } }
     ],
     "resources": ["login_background"],
     "version": 1

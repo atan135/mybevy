@@ -4,7 +4,7 @@ use crate::framework::ui::{
     core::{UiMetrics, UiViewport, binding::UiBindingValues, focus::UiFocusState},
     document::{
         UiActionDispatch, UiActionId, UiActionValue, UiBindingPath, UiBindingScope, UiBindingType,
-        UiBindingValue, UiBindingVisibility, UiDocument, UiDocumentAssetPreflightOverrides,
+        UiBindingValue, UiDocument, UiDocumentAssetPreflightOverrides,
         UiDocumentAssetPreflightStatus, UiDocumentId, UiDocumentInputMode, UiDocumentLayer,
         UiDocumentNodeMarker, UiDocumentOpenRequest, UiDocumentOpenSource, UiDocumentPanel,
         UiDocumentPlatform, UiDocumentPreviewPlugin, UiDocumentReloadEvent, UiDocumentRequestId,
@@ -46,6 +46,12 @@ fn login_document_is_valid_and_keeps_password_out_of_contract_surfaces() {
     let document = result.validated().unwrap().document();
     let account = find_document_node(&document.root, LOGIN_ACCOUNT_NODE).unwrap();
     let password = find_document_node(&document.root, LOGIN_PASSWORD_NODE).unwrap();
+    let registration_account =
+        find_document_node(&document.root, REGISTRATION_ACCOUNT_NODE).unwrap();
+    let registration_password =
+        find_document_node(&document.root, REGISTRATION_PASSWORD_NODE).unwrap();
+    let registration_confirmation =
+        find_document_node(&document.root, REGISTRATION_PASSWORD_CONFIRMATION_NODE).unwrap();
 
     let UiNode::TextInput {
         component,
@@ -64,6 +70,25 @@ fn login_document_is_valid_and_keeps_password_out_of_contract_surfaces() {
     assert!(on_change.is_none());
     assert!(on_submit.is_none());
 
+    for input in [registration_password, registration_confirmation] {
+        let UiNode::TextInput {
+            component,
+            security,
+            value,
+            on_change,
+            on_submit,
+            ..
+        } = input
+        else {
+            panic!("registration passwords must remain text inputs");
+        };
+        assert_eq!(*security, UiTextInputSecurity::Sensitive);
+        assert!(value.is_empty());
+        assert!(component.bindings.value.is_none());
+        assert!(on_change.is_none());
+        assert!(on_submit.is_none());
+    }
+
     let UiNode::TextInput { component, .. } = account else {
         panic!("account must remain a text input");
     };
@@ -77,7 +102,26 @@ fn login_document_is_valid_and_keeps_password_out_of_contract_surfaces() {
             .as_str(),
         "auth.login.login_name"
     );
+    let UiNode::TextInput {
+        component: registration_component,
+        ..
+    } = registration_account
+    else {
+        panic!("registration account must remain a text input");
+    };
+    assert_eq!(
+        registration_component
+            .bindings
+            .value
+            .as_ref()
+            .unwrap()
+            .binding_path
+            .as_str(),
+        "auth.register.login_name"
+    );
     assert!(!LOGIN_DOCUMENT_SOURCE.contains("auth.login.password"));
+    assert!(!LOGIN_DOCUMENT_SOURCE.contains("auth.register.password"));
+    assert!(!LOGIN_DOCUMENT_SOURCE.contains("auth.register.password_confirmation"));
 }
 
 #[test]
@@ -170,6 +214,52 @@ fn login_document_resolves_reference_and_keyboard_height_layouts() {
             .iter()
             .any(|item| item.source_id == "short_landscape")
     );
+
+    for profile in [
+        UiTargetProfile::new(
+            1376.0,
+            768.0,
+            UiSafeAreaClass::None,
+            UiDocumentInputMode::MouseKeyboard,
+            UiDocumentPlatform::Windows,
+        ),
+        UiTargetProfile::new(
+            844.0,
+            390.0,
+            UiSafeAreaClass::None,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        ),
+        UiTargetProfile::new(
+            1920.0,
+            1080.0,
+            UiSafeAreaClass::None,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        ),
+        UiTargetProfile::new(
+            1280.0,
+            800.0,
+            UiSafeAreaClass::None,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        ),
+    ] {
+        let effective = validated
+            .effective_document(&profile.unwrap(), &UiPageState::initial())
+            .unwrap();
+        for node in [
+            "login.mode.login",
+            "login.mode.register",
+            REGISTRATION_ACCOUNT_NODE,
+            REGISTRATION_PASSWORD_NODE,
+            REGISTRATION_PASSWORD_CONFIRMATION_NODE,
+            "login.register.submit",
+            "login.registration.back",
+        ] {
+            assert!(find_document_node(&effective.document.root, node).is_some());
+        }
+    }
 }
 
 #[test]
@@ -271,10 +361,10 @@ fn login_approved_registration_matches_fixed_host_contract() {
     assert_eq!(host.document_id.as_str(), LOGIN_DOCUMENT_ID);
     assert_eq!(host.mode, Some(AppUiMode::Login));
     assert_eq!(host.owner, OWNER_LOGIN);
-    assert_eq!(host.binding_schema.len(), 21);
+    assert_eq!(host.binding_schema.len(), 23);
     assert_eq!(host.action_allowlist.len(), 7);
     assert_eq!(registration.owner(), OWNER_LOGIN.as_str());
-    assert_eq!(audit.actions.len(), 3);
+    assert_eq!(audit.actions.len(), 7);
     assert!(!REGISTRATION_SOURCE.contains("password"));
 }
 
@@ -1084,20 +1174,28 @@ fn auth_registration_bindings_expose_mode_and_feedback_without_sensitive_values(
         UiBindingValue::Enum("register".to_owned())
     );
     assert_eq!(
+        login_binding_value(&app, "auth.login.login_display"),
+        UiBindingValue::Enum("none".to_owned())
+    );
+    assert_eq!(
+        login_binding_value(&app, "auth.login.register_display"),
+        UiBindingValue::Enum("flex".to_owned())
+    );
+    assert_eq!(
         login_binding_value(&app, "auth.register.state"),
         UiBindingValue::Enum("pending_review".to_owned())
     );
     assert_eq!(
-        login_binding_value(&app, "auth.register.review_visibility"),
-        UiBindingValue::Visibility(UiBindingVisibility::Visible)
+        login_binding_value(&app, "auth.register.review_display"),
+        UiBindingValue::Enum("flex".to_owned())
     );
     assert_eq!(
         login_binding_value(&app, "auth.register.error_detail"),
         UiBindingValue::String("myserver.registration.invalid_password".to_owned())
     );
     assert_eq!(
-        login_binding_value(&app, "auth.register.error_visibility"),
-        UiBindingValue::Visibility(UiBindingVisibility::Visible)
+        login_binding_value(&app, "auth.register.error_display"),
+        UiBindingValue::Enum("flex".to_owned())
     );
 }
 
@@ -1141,8 +1239,8 @@ fn auth_login_document_bindings_cover_pending_notice_and_error_states() {
         let mut app = login_binding_test_app(MyServerSession::default(), state);
         app.update();
         assert_eq!(
-            login_binding_value(&app, "auth.login.notice_visibility"),
-            UiBindingValue::Visibility(UiBindingVisibility::Visible)
+            login_binding_value(&app, "auth.login.notice_display"),
+            UiBindingValue::Enum("flex".to_owned())
         );
         assert_eq!(
             login_binding_value(&app, "auth.login.notice_title"),
@@ -1153,8 +1251,8 @@ fn auth_login_document_bindings_cover_pending_notice_and_error_states() {
             UiBindingValue::String("stable detail".to_owned())
         );
         assert_eq!(
-            login_binding_value(&app, "auth.login.error_visibility"),
-            UiBindingValue::Visibility(UiBindingVisibility::Hidden)
+            login_binding_value(&app, "auth.login.error_display"),
+            UiBindingValue::Enum("none".to_owned())
         );
     }
 
@@ -1178,8 +1276,8 @@ fn auth_login_document_bindings_cover_pending_notice_and_error_states() {
     let mut app = login_binding_test_app(MyServerSession::default(), state);
     app.update();
     assert_eq!(
-        login_binding_value(&app, "auth.login.error_visibility"),
-        UiBindingValue::Visibility(UiBindingVisibility::Visible)
+        login_binding_value(&app, "auth.login.error_display"),
+        UiBindingValue::Enum("flex".to_owned())
     );
     assert_eq!(
         login_binding_value(&app, "auth.login.error_title"),
@@ -1192,8 +1290,8 @@ fn auth_login_document_bindings_cover_pending_notice_and_error_states() {
         )
     );
     assert_eq!(
-        login_binding_value(&app, "auth.login.notice_visibility"),
-        UiBindingValue::Visibility(UiBindingVisibility::Hidden)
+        login_binding_value(&app, "auth.login.notice_display"),
+        UiBindingValue::Enum("none".to_owned())
     );
 }
 

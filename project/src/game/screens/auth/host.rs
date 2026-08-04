@@ -173,9 +173,11 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::String,
         ),
         (
-            "auth.login.error_visibility",
+            "auth.login.error_display",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
         (
             "auth.login.notice_title",
@@ -188,9 +190,11 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::String,
         ),
         (
-            "auth.login.notice_visibility",
+            "auth.login.notice_display",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
         (
             "auth.login.request_pending",
@@ -219,6 +223,20 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingScope::Owner,
             UiBindingType::Enum {
                 values: vec!["login".to_owned(), "register".to_owned()],
+            },
+        ),
+        (
+            "auth.login.login_display",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
+        ),
+        (
+            "auth.login.register_display",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
             },
         ),
         (
@@ -257,19 +275,25 @@ pub(super) fn login_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::String,
         ),
         (
-            "auth.register.error_visibility",
+            "auth.register.error_display",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
         (
-            "auth.register.review_visibility",
+            "auth.register.review_display",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
         (
-            "auth.register.success_visibility",
+            "auth.register.success_display",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
     ])
 }
@@ -1291,12 +1315,15 @@ pub(super) fn sync_login_document_bindings(
             UiBindingValue::String(error_detail),
         ),
         (
-            "auth.login.error_visibility",
-            UiBindingValue::Visibility(if snapshot.last_error.is_some() {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            "auth.login.error_display",
+            UiBindingValue::Enum(
+                if snapshot.last_error.is_some() {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
         ),
         (
             "auth.login.notice_title",
@@ -1307,12 +1334,15 @@ pub(super) fn sync_login_document_bindings(
             UiBindingValue::String(notice_detail),
         ),
         (
-            "auth.login.notice_visibility",
-            UiBindingValue::Visibility(if snapshot.notice.is_some() {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            "auth.login.notice_display",
+            UiBindingValue::Enum(
+                if snapshot.notice.is_some() {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
         ),
         (
             "auth.login.request_pending",
@@ -1338,6 +1368,28 @@ pub(super) fn sync_login_document_bindings(
             UiBindingValue::Enum(ui_state.entry_mode.binding_value().to_owned()),
         ),
         (
+            "auth.login.login_display",
+            UiBindingValue::Enum(
+                if ui_state.entry_mode == AuthEntryMode::Login {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
+        ),
+        (
+            "auth.login.register_display",
+            UiBindingValue::Enum(
+                if ui_state.entry_mode == AuthEntryMode::Register {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
+        ),
+        (
             "auth.register.state",
             UiBindingValue::Enum(registration_state.to_owned()),
         ),
@@ -1355,30 +1407,37 @@ pub(super) fn sync_login_document_bindings(
             UiBindingValue::String(registration_error_detail),
         ),
         (
-            "auth.register.error_visibility",
-            UiBindingValue::Visibility(if registration_error_visible {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
-        ),
-        (
-            "auth.register.review_visibility",
-            UiBindingValue::Visibility(
-                if session.registration_state == RegistrationState::PendingReview {
-                    UiBindingVisibility::Visible
+            "auth.register.error_display",
+            UiBindingValue::Enum(
+                if registration_error_visible {
+                    "flex"
                 } else {
-                    UiBindingVisibility::Hidden
-                },
+                    "none"
+                }
+                .to_owned(),
             ),
         ),
         (
-            "auth.register.success_visibility",
-            UiBindingValue::Visibility(if ui_state.registration_succeeded {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            "auth.register.review_display",
+            UiBindingValue::Enum(
+                if session.registration_state == RegistrationState::PendingReview {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
+        ),
+        (
+            "auth.register.success_display",
+            UiBindingValue::Enum(
+                if ui_state.registration_succeeded {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
         ),
     ] {
         let path = UiBindingPath::from_str(path).expect("Login binding paths are static and valid");
