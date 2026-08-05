@@ -660,6 +660,67 @@ impl MailClientState {
         })
     }
 
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    pub(crate) fn main_world_mail_audit_fixture() -> Self {
+        let mail_id = "audit_mail_long_content";
+        let mut summary = MailSummary {
+            mail_id: mail_id.to_owned(),
+            sender: MailSender {
+                r#type: Some("system".to_owned()),
+                id: Some("audit-system".to_owned()),
+                name: Some("World Operations and Reward Delivery Center".to_owned()),
+            },
+            title: "A deliberately long reward title that must remain readable without overlapping adjacent controls or leaving the mail panel".to_owned(),
+            mail_type: "system_reward".to_owned(),
+            status: "unread".to_owned(),
+            has_attachments: true,
+            created_at: Some("2026-08-05T12:00:00Z".to_owned()),
+            read_at: None,
+            claimed_at: None,
+            expires_at: Some("2099-12-31T23:59:59Z".to_owned()),
+        };
+        let attachments = (0..MAIL_MAX_DETAIL_ATTACHMENTS)
+            .map(|index| MailAttachment {
+                r#type: if index % 2 == 0 { "item" } else { "currency" }.to_owned(),
+                id: Some(10_000 + index as i64),
+                count: 9_999 + index as i64,
+                binded: index % 3 == 0,
+            })
+            .collect::<Vec<_>>();
+        let detail = MailDetail {
+            summary: summary.clone(),
+            content: "This audit fixture intentionally uses a long body to verify wrapping, scrolling, and reachability across short phone landscape, 1080p phone landscape, tablet landscape, and a 1600 by 720 desktop window. The text must stay inside the detail surface while the complete attachment list remains reachable and the error presentation does not cover navigation or claim controls. ".repeat(8),
+            attachments,
+            claim: MailClaimSummary::default(),
+        };
+        summary.has_attachments = true;
+        let error = MailClientError {
+            operation: MailOperation::Detail,
+            status: Some(503),
+            code: "MAIL_HTTP_503".to_owned(),
+        };
+        let mut state = Self {
+            availability: MailAvailability::Ready,
+            mails: vec![summary],
+            unread_count: Some(1),
+            pagination: Some(MailPagination {
+                limit: 50,
+                offset: 0,
+                next_offset: Some(50),
+            }),
+            selected_mail_id: Some(mail_id.to_owned()),
+            selected_mail: Some(detail.clone()),
+            detail_load_state: MailDetailLoadState::Ready,
+            detail_error: Some(error.clone()),
+            list_load_state: MailListLoadState::Ready,
+            last_error: Some(error),
+            active_list_query: Some(MailListQuery::default()),
+            ..default()
+        };
+        state.claim_workflow = Some(claim_workflow_from_detail(&detail, false));
+        state
+    }
+
     #[cfg(test)]
     fn list_generation(&self) -> u64 {
         self.desired_list_generation
@@ -4381,5 +4442,20 @@ mod tests {
             classify_mail_network_error("private socket failure"),
             "MAIL_NETWORK_UNAVAILABLE"
         );
+    }
+
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    #[test]
+    fn main_world_mail_audit_fixture_stresses_bounded_public_content() {
+        let state = MailClientState::main_world_mail_audit_fixture();
+        let detail = state.selected_mail.as_ref().unwrap();
+        assert!(state.is_available());
+        assert!(detail.summary.title.chars().count() > 96);
+        assert!(detail.content.chars().count() > 2_000);
+        assert!(detail_response_is_within_budget(detail));
+        assert_eq!(detail.attachments.len(), MAIL_MAX_DETAIL_ATTACHMENTS);
+        assert_eq!(state.pagination.as_ref().unwrap().next_offset, Some(50));
+        assert_eq!(state.detail_error.as_ref().unwrap().status, Some(503));
+        assert!(state.can_submit_claim(detail.summary.mail_id.as_str()));
     }
 }

@@ -412,6 +412,11 @@ fn main_world_mail_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclarat
             UiBindingType::Visibility,
         ),
         (
+            "main_world_mail.list_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
             "main_world_mail.load_more_disabled",
             UiBindingScope::Owner,
             UiBindingType::Bool,
@@ -1751,10 +1756,18 @@ pub(super) fn sync_main_world_mail_bindings(
         ("main_world_mail.has_more", UiBindingValue::Bool(has_more)),
         (
             "main_world_mail.load_more_visibility",
-            UiBindingValue::Visibility(if has_more {
+            UiBindingValue::Visibility(if has_more && !detail_open {
                 UiBindingVisibility::Visible
             } else {
                 UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "main_world_mail.list_visibility",
+            UiBindingValue::Visibility(if detail_open {
+                UiBindingVisibility::Hidden
+            } else {
+                UiBindingVisibility::Visible
             }),
         ),
         (
@@ -2231,6 +2244,27 @@ pub(super) fn reset_robot_sync_hud_visibility(
 
 pub(super) fn cleanup_gameplay_hud_focus(mut focus: ResMut<UiFocusState>) {
     focus.focused_entity = None;
+}
+
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+pub(super) fn prepare_main_world_mail_audit_fixture(
+    audit: Res<UiAuditConfig>,
+    mut mail: ResMut<MailClientState>,
+    mut screen_commands: MessageWriter<DeclarativeScreenHostCommand>,
+    mut opened: Local<bool>,
+) {
+    if !audit.targets_screen("main_world")
+        || audit.stable_fixture_id() != Some("stage18_main_world_mail")
+    {
+        return;
+    }
+    *mail = MailClientState::main_world_mail_audit_fixture();
+    if !*opened {
+        screen_commands.write(DeclarativeScreenHostCommand::OpenDetachedRoute {
+            route: MainWorldDocumentPanel::Mail.route().to_owned(),
+        });
+        *opened = true;
+    }
 }
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
@@ -3367,6 +3401,10 @@ mod tests {
             main_world_mail_binding_value(&app, "main_world_mail.load_more_visibility"),
             UiBindingValue::Visibility(UiBindingVisibility::Visible)
         );
+        assert_eq!(
+            main_world_mail_binding_value(&app, "main_world_mail.list_visibility"),
+            UiBindingValue::Visibility(UiBindingVisibility::Visible)
+        );
     }
 
     #[test]
@@ -3391,6 +3429,14 @@ mod tests {
         assert_eq!(
             main_world_mail_binding_value(&app, "main_world_mail.view_mode"),
             UiBindingValue::Enum("detail".to_owned())
+        );
+        assert_eq!(
+            main_world_mail_binding_value(&app, "main_world_mail.list_visibility"),
+            UiBindingValue::Visibility(UiBindingVisibility::Hidden)
+        );
+        assert_eq!(
+            main_world_mail_binding_value(&app, "main_world_mail.load_more_visibility"),
+            UiBindingValue::Visibility(UiBindingVisibility::Hidden)
         );
         assert!(matches!(
             main_world_mail_binding_value(&app, "main_world_mail.detail.content"),
@@ -4473,5 +4519,54 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    #[test]
+    fn main_world_mail_audit_fixture_opens_once_with_stress_content() {
+        let mut app = App::new();
+        app.init_resource::<MailClientState>()
+            .add_message::<DeclarativeScreenHostCommand>()
+            .insert_resource(UiAuditConfig::from_test_env(&[
+                ("MYBEVY_UI_AUDIT", "1"),
+                ("MYBEVY_UI_AUDIT_SCREEN", "main_world"),
+                (
+                    "MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID",
+                    "stage18_main_world_mail",
+                ),
+            ]))
+            .add_systems(Update, prepare_main_world_mail_audit_fixture);
+        let mut cursor = MessageCursor::<DeclarativeScreenHostCommand>::default();
+
+        app.update();
+        let commands = cursor
+            .read(
+                app.world()
+                    .resource::<Messages<DeclarativeScreenHostCommand>>(),
+            )
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            commands.as_slice(),
+            [DeclarativeScreenHostCommand::OpenDetachedRoute { route }]
+                if route == MainWorldDocumentPanel::Mail.route()
+        ));
+        let mail = app.world().resource::<MailClientState>();
+        assert!(mail.detail_is_open());
+        assert_eq!(
+            mail.selected_mail.as_ref().unwrap().attachments.len(),
+            MAIL_MAX_DETAIL_ATTACHMENTS
+        );
+
+        app.update();
+        assert_eq!(
+            cursor
+                .read(
+                    app.world()
+                        .resource::<Messages<DeclarativeScreenHostCommand>>(),
+                )
+                .count(),
+            0
+        );
     }
 }

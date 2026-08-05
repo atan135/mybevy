@@ -12,6 +12,7 @@
     "main_world_mail.count": { "scope": "owner", "value_type": { "kind": "string" } },
     "main_world_mail.has_more": { "scope": "owner", "value_type": { "kind": "bool" } },
     "main_world_mail.load_more_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "main_world_mail.list_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
     "main_world_mail.load_more_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
     "main_world_mail.load_more_loading": { "scope": "owner", "value_type": { "kind": "bool" } },
     "main_world_mail.selected.mail_id": { "scope": "owner", "value_type": { "kind": "string" } },
@@ -50,16 +51,39 @@
     "main_world_mail.attachment.item.count": { "scope": "item", "value_type": { "kind": "string" } },
     "main_world_mail.attachment.item.bind_status": { "scope": "item", "value_type": { "kind": "string" } }
   },
-  "styles": {},
+  "styles": {
+    "mail_panel": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#11191eff" } },
+        "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#6f8587cc" } },
+        "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } }
+      }
+    },
+    "mail_section": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#182328ff" } },
+        "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#43575bcc" } },
+        "corner_radius": { "top_left": { "kind": "literal", "value": 4.0 }, "top_right": { "kind": "literal", "value": 4.0 }, "bottom_right": { "kind": "literal", "value": 4.0 }, "bottom_left": { "kind": "literal", "value": 4.0 } }
+      }
+    },
+    "mail_error": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#39191dff" } },
+        "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#d45a61dd" } }
+      }
+    }
+  },
   "root": {
     "type": "container",
     "id": "main_world_mail.root",
     "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 18.0 } }, "align_items": "center", "justify_content": "center" },
+    "style": { "inline": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#05090dff" } } } },
     "children": [
       {
         "type": "scroll",
         "id": "main_world_mail.panel",
         "layout": { "width": { "percent": 94.0 }, "max_width": { "px": 980.0 }, "max_height": { "percent": 94.0 }, "padding": { "all": { "px": 16.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 10.0 }, "overflow": { "x": "clip", "y": "scroll" } },
+        "style": { "component": "mail_panel" },
         "component": {
           "children": [
           {
@@ -85,7 +109,7 @@
             "type": "container",
             "id": "main_world_mail.error_panel",
             "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 8.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
-            "style": { "bindings": { "visibility": "main_world_mail.error_visibility" } },
+            "style": { "component": "mail_error", "bindings": { "visibility": "main_world_mail.error_visibility" } },
             "children": [
               { "type": "text", "id": "main_world_mail.error_text", "layout": { "flex_grow": 1.0, "min_width": { "px": 180.0 } }, "content": { "binding_path": "main_world_mail.error.message", "fallback": "Mail request could not be completed." }, "style": { "text_role": "caption" } },
               { "type": "button", "id": "main_world_mail.retry", "variant": "secondary", "label": { "literal": "Retry" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.retry_disabled", "loading": "main_world_mail.retry_loading" } }, "on_click": { "action": "main_world_mail.retry" } }
@@ -100,6 +124,7 @@
                 "type": "container",
                 "id": "main_world_mail.list_pane",
                 "layout": { "width": { "percent": 100.0 }, "min_width": { "px": 260.0 }, "direction": "column", "gap": { "px": 8.0 }, "flex_grow": 1.0 },
+                "style": { "bindings": { "visibility": "main_world_mail.list_visibility" } },
                 "children": [
                   {
                     "type": "container",
@@ -130,6 +155,7 @@
                         "type": "container",
                         "id": "main_world_mail.item.row",
                         "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 8.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
+                        "style": { "component": "mail_section" },
                         "children": [
                           {
                             "type": "container",
@@ -162,7 +188,7 @@
                 "type": "container",
                 "id": "main_world_mail.detail",
                 "layout": { "width": { "percent": 100.0 }, "min_width": { "px": 260.0 }, "direction": "column", "gap": { "px": 8.0 }, "flex_grow": 1.0, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
-                "style": { "bindings": { "visibility": "main_world_mail.detail_visibility" } },
+                "style": { "component": "mail_section", "bindings": { "visibility": "main_world_mail.detail_visibility" } },
                 "children": [
                   { "type": "text", "id": "main_world_mail.detail.title_text", "content": { "binding_path": "main_world_mail.detail.title", "fallback": "Mail detail" }, "style": { "text_role": "subtitle" } },
                   { "type": "text", "id": "main_world_mail.detail.sender_text", "content": { "binding_path": "main_world_mail.detail.sender", "fallback": "" }, "style": { "text_role": "caption" } },

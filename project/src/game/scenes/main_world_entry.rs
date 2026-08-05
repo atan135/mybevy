@@ -80,6 +80,8 @@ const MAIN_WORLD_ACCEPTANCE_SAMPLE_SECONDS: f64 = 5.0;
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 const MAIN_WORLD_HUD_AUDIT_FIXTURE_ID: &str = "stage16_main_world_hud";
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+const MAIN_WORLD_MAIL_AUDIT_FIXTURE_ID: &str = "stage18_main_world_mail";
 
 /// Prepares the fixed HUD route for a local deterministic visual capture. This
 /// intentionally supplies no account, ticket, authority connection, or scene.
@@ -110,7 +112,12 @@ pub(in crate::game) fn apply_main_world_hud_audit_fixture(
     state: &mut MainWorldEntryState,
     next_mode: &mut NextState<AppUiMode>,
 ) {
-    if targets_main_world && stable_fixture_id == Some(MAIN_WORLD_HUD_AUDIT_FIXTURE_ID) {
+    if targets_main_world
+        && matches!(
+            stable_fixture_id,
+            Some(MAIN_WORLD_HUD_AUDIT_FIXTURE_ID | MAIN_WORLD_MAIL_AUDIT_FIXTURE_ID)
+        )
+    {
         activate_main_world_hud_audit_fixture(state);
         next_mode.set(AppUiMode::MainWorld);
     }
@@ -1908,24 +1915,24 @@ mod tests {
     #[cfg(all(debug_assertions, not(target_os = "android")))]
     #[test]
     fn hud_audit_fixture_is_active_without_session_or_authority_data() {
-        let mut state = MainWorldEntryState::default();
-        let mut next_mode = NextState::default();
+        for fixture_id in [
+            MAIN_WORLD_HUD_AUDIT_FIXTURE_ID,
+            MAIN_WORLD_MAIL_AUDIT_FIXTURE_ID,
+        ] {
+            let mut state = MainWorldEntryState::default();
+            let mut next_mode = NextState::default();
 
-        apply_main_world_hud_audit_fixture(
-            true,
-            Some(MAIN_WORLD_HUD_AUDIT_FIXTURE_ID),
-            &mut state,
-            &mut next_mode,
-        );
+            apply_main_world_hud_audit_fixture(true, Some(fixture_id), &mut state, &mut next_mode);
 
-        assert_eq!(state.generation, 1);
-        assert_eq!(state.phase, MainWorldEntryPhase::Active);
-        assert!(state.environment.is_none());
-        assert!(state.character_id.is_none());
-        assert!(state.authority_transport.is_none());
-        assert!(state.scene_session_id.is_none());
-        assert_eq!(state.room_membership, MainWorldRoomMembership::None);
-        assert!(state.input_frozen);
+            assert_eq!(state.generation, 1);
+            assert_eq!(state.phase, MainWorldEntryPhase::Active);
+            assert!(state.environment.is_none());
+            assert!(state.character_id.is_none());
+            assert!(state.authority_transport.is_none());
+            assert!(state.scene_session_id.is_none());
+            assert_eq!(state.room_membership, MainWorldRoomMembership::None);
+            assert!(state.input_frozen);
+        }
     }
 
     #[cfg(all(debug_assertions, not(target_os = "android")))]

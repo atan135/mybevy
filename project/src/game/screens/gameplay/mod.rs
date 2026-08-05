@@ -103,6 +103,12 @@ impl Plugin for GameplayScreensPlugin {
 
         #[cfg(all(debug_assertions, not(target_os = "android")))]
         app.add_systems(
+            Update,
+            host::prepare_main_world_mail_audit_fixture
+                .before(host::sync_main_world_mail_bindings)
+                .run_if(in_state(AppUiMode::MainWorld)),
+        )
+        .add_systems(
             OnEnter(AppUiMode::RobotSyncScene),
             host::prepare_gameplay_hud_audit_fixture.after(host::reset_robot_sync_hud_visibility),
         )

@@ -36,6 +36,7 @@
       { "path": "main_world_mail.load_more_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "main_world_mail.load_more_loading", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "main_world_mail.load_more_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "main_world_mail.list_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
       { "path": "main_world_mail.mark_read_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "main_world_mail.mark_read_loading", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "main_world_mail.refresh_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
