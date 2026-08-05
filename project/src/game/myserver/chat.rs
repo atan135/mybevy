@@ -28,7 +28,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WebSocketMessage}
 use super::{
     protocol::{HEADER_LEN, Packet, PacketCodec, chat_pb, encode_raw_packet_type, parse_header},
     types::{
-        ClientServiceEndpoint, ClientServices, MyServerCommand, MyServerSession,
+        ClientServiceEndpoint, ClientServices, MyServerCommand, MyServerEvent, MyServerSession,
         redact_secret_fingerprint,
     },
 };
@@ -427,6 +427,7 @@ struct ActiveChatRuntime {
     router: ChatPacketRouter,
     pending_deadlines: HashMap<ChatRequestKey, Instant>,
     preauth_queue: VecDeque<ChatOutboundRequest>,
+    refresh_requested: bool,
 }
 
 struct ChatOutboundRequest {
@@ -465,6 +466,8 @@ impl Plugin for ChatPlugin {
             .init_resource::<ChatRuntimeOwner>()
             .add_message::<ChatCommand>()
             .add_message::<ChatEvent>()
+            .add_message::<MyServerCommand>()
+            .add_message::<MyServerEvent>()
             .add_message::<AppExit>()
             .add_systems(
                 Update,
@@ -472,6 +475,7 @@ impl Plugin for ChatPlugin {
                     apply_chat_commands,
                     reconcile_chat_runtime,
                     drain_chat_runtime_events,
+                    handle_chat_ticket_refresh_result,
                     shutdown_chat_runtime_on_exit,
                 )
                     .chain(),
@@ -613,6 +617,15 @@ fn apply_chat_commands(
                 if let Some(active) = owner.active.as_ref() {
                     let _ = active.runtime.set_foreground(*foreground);
                 }
+                if !foreground {
+                    if let Some(active) = owner.active.as_mut() {
+                        cancel_chat_requests(
+                            active,
+                            &mut events,
+                            "CHAT_REQUEST_CANCELLED_BACKGROUND",
+                        );
+                    }
+                }
             }
             ChatCommand::SendRequest {
                 request_message_type,
@@ -735,6 +748,7 @@ fn reconcile_chat_runtime(
                     router: ChatPacketRouter::default(),
                     pending_deadlines: HashMap::new(),
                     preauth_queue: VecDeque::new(),
+                    refresh_requested: false,
                 });
                 set_chat_state(
                     &mut state,
@@ -773,6 +787,7 @@ fn drain_chat_runtime_events(
     mut state: ResMut<ChatClientState>,
     mut owner: ResMut<ChatRuntimeOwner>,
     mut events: MessageWriter<ChatEvent>,
+    mut myserver_commands: MessageWriter<MyServerCommand>,
 ) {
     let Some(active) = owner.active.as_ref() else {
         return;
@@ -832,7 +847,14 @@ fn drain_chat_runtime_events(
                 );
             }
             ChatRuntimeEvent::TicketRefreshRequired => {
-                events.write(ChatEvent::TicketRefreshRequired { generation });
+                let Some(active) = owner.active.as_mut() else {
+                    continue;
+                };
+                if !active.refresh_requested {
+                    active.refresh_requested = true;
+                    events.write(ChatEvent::TicketRefreshRequired { generation });
+                    myserver_commands.write(ticket_refresh_command());
+                }
             }
             ChatRuntimeEvent::Packet(packet) => {
                 let Some(active) = owner.active.as_mut() else {
@@ -858,6 +880,30 @@ fn drain_chat_runtime_events(
             None,
         );
     }
+}
+
+fn handle_chat_ticket_refresh_result(
+    mut myserver_events: MessageReader<MyServerEvent>,
+    mut state: ResMut<ChatClientState>,
+    mut owner: ResMut<ChatRuntimeOwner>,
+    mut events: MessageWriter<ChatEvent>,
+) {
+    if !myserver_events
+        .read()
+        .any(|event| matches!(event, MyServerEvent::TicketRefreshFailed { .. }))
+    {
+        return;
+    }
+    let generation = state.endpoint_generation;
+    owner.shutdown();
+    set_chat_state(
+        &mut state,
+        &mut events,
+        ChatClientStatus::Failed,
+        generation,
+        Some("CHAT_TICKET_REFRESH_FAILED".to_string()),
+        None,
+    );
 }
 
 fn handle_chat_packet(
@@ -1022,6 +1068,36 @@ fn expire_chat_requests(active: &mut ActiveChatRuntime, events: &mut MessageWrit
             request_message_type,
             seq: Some(key.seq),
             error_code: "CHAT_RESPONSE_TIMEOUT".to_string(),
+        });
+    }
+}
+
+fn cancel_chat_requests(
+    active: &mut ActiveChatRuntime,
+    events: &mut MessageWriter<ChatEvent>,
+    error_code: &str,
+) {
+    while let Some(request) = active.preauth_queue.pop_front() {
+        events.write(ChatEvent::RequestFailed {
+            generation: active.generation,
+            request_message_type: request.request_message_type,
+            seq: None,
+            error_code: error_code.to_string(),
+        });
+    }
+
+    let pending: Vec<_> = active
+        .pending_deadlines
+        .drain()
+        .map(|(key, _)| key)
+        .collect();
+    for key in pending {
+        let request_message_type = active.router.cancel(key).unwrap_or(0);
+        events.write(ChatEvent::RequestFailed {
+            generation: active.generation,
+            request_message_type,
+            seq: Some(key.seq),
+            error_code: error_code.to_string(),
         });
     }
 }
@@ -1315,6 +1391,7 @@ fn encode_chat_packet(message_type: u16, seq: u32, body: &[u8]) -> Result<Vec<u8
 #[cfg(test)]
 mod tests {
     use bevy::app::AppExit;
+    use bevy::ecs::message::{MessageCursor, Messages};
     use bevy::prelude::{App, MinimalPlugins};
 
     use super::*;
@@ -1334,6 +1411,12 @@ mod tests {
             .insert_resource(session)
             .add_plugins(ChatPlugin);
         app
+    }
+
+    fn read_myserver_commands(app: &App) -> Vec<MyServerCommand> {
+        let messages = app.world().resource::<Messages<MyServerCommand>>();
+        let mut cursor = MessageCursor::default();
+        cursor.read(messages).cloned().collect()
     }
 
     #[test]
@@ -1559,6 +1642,7 @@ mod tests {
             router: ChatPacketRouter::default(),
             pending_deadlines: HashMap::new(),
             preauth_queue: VecDeque::new(),
+            refresh_requested: false,
         });
 
         app.update();
@@ -1569,6 +1653,138 @@ mod tests {
             Some("CHAT_RUNTIME_EVENT_CHANNEL_CLOSED")
         );
         assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
+    }
+
+    #[test]
+    fn expired_ticket_refresh_is_deduplicated_and_failure_stops_chat_runtime() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 10,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (command_tx, _command_rx) = mpsc::channel(1);
+        let (event_tx, event_rx) = std_mpsc::channel();
+        app.world_mut().resource_mut::<ChatRuntimeOwner>().active = Some(ActiveChatRuntime {
+            runtime: ChatRuntime {
+                command_tx,
+                event_rx: Mutex::new(event_rx),
+            },
+            generation: 10,
+            authenticated: false,
+            router: ChatPacketRouter::default(),
+            pending_deadlines: HashMap::new(),
+            preauth_queue: VecDeque::new(),
+            refresh_requested: false,
+        });
+
+        event_tx
+            .send(ChatRuntimeEvent::TicketRefreshRequired)
+            .unwrap();
+        event_tx
+            .send(ChatRuntimeEvent::TicketRefreshRequired)
+            .unwrap();
+        app.update();
+
+        assert_eq!(
+            read_myserver_commands(&app)
+                .iter()
+                .filter(|command| matches!(
+                    command,
+                    MyServerCommand::RefreshTicket {
+                        reconnect_game: false
+                    }
+                ))
+                .count(),
+            1
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::TicketRefreshFailed {
+                error: "ticket refresh failed".to_string(),
+            });
+        app.update();
+
+        let state = app.world().resource::<ChatClientState>();
+        assert_eq!(state.status, ChatClientStatus::Failed);
+        assert_eq!(
+            state.last_error_code.as_deref(),
+            Some("CHAT_TICKET_REFRESH_FAILED")
+        );
+        assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
+    }
+
+    #[test]
+    fn background_cancels_queued_requests_before_the_next_authentication() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 12,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (command_tx, mut command_rx) = mpsc::channel(4);
+        let (event_tx, event_rx) = std_mpsc::channel();
+        app.world_mut().resource_mut::<ChatRuntimeOwner>().active = Some(ActiveChatRuntime {
+            runtime: ChatRuntime {
+                command_tx,
+                event_rx: Mutex::new(event_rx),
+            },
+            generation: 12,
+            authenticated: false,
+            router: ChatPacketRouter::default(),
+            pending_deadlines: HashMap::new(),
+            preauth_queue: VecDeque::from([ChatOutboundRequest {
+                request_message_type: CHAT_PRIVATE_REQ,
+                response_message_type: CHAT_PRIVATE_RES,
+                body: vec![1],
+            }]),
+            refresh_requested: false,
+        });
+
+        app.world_mut()
+            .write_message(ChatCommand::SetForeground { foreground: false });
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<ChatRuntimeOwner>()
+                .active
+                .as_ref()
+                .unwrap()
+                .preauth_queue
+                .len(),
+            0
+        );
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ChatRuntimeCommand::SetForeground(false))
+        ));
+
+        app.world_mut()
+            .write_message(ChatCommand::SetForeground { foreground: true });
+        app.update();
+        let mut auth_body = Vec::new();
+        chat_pb::ChatAuthRes {
+            ok: true,
+            error_code: String::new(),
+        }
+        .encode(&mut auth_body)
+        .unwrap();
+        event_tx
+            .send(ChatRuntimeEvent::Packet(
+                decode_chat_binary_frame(
+                    &encode_chat_packet(CHAT_AUTH_RES, 1, &auth_body).unwrap(),
+                    DEFAULT_CHAT_MAX_BODY_LEN,
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        app.update();
+
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ChatRuntimeCommand::SetForeground(true))
+        ));
+        assert!(command_rx.try_recv().is_err());
     }
 
     #[test]
@@ -1591,6 +1807,7 @@ mod tests {
             router: ChatPacketRouter::default(),
             pending_deadlines: HashMap::new(),
             preauth_queue: VecDeque::new(),
+            refresh_requested: false,
         });
 
         app.world_mut().write_message(AppExit::Success);
@@ -1618,6 +1835,7 @@ mod tests {
             router: ChatPacketRouter::default(),
             pending_deadlines: HashMap::new(),
             preauth_queue: VecDeque::new(),
+            refresh_requested: false,
         });
 
         app.world_mut().write_message(ChatCommand::SendRequest {
