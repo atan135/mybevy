@@ -1143,6 +1143,8 @@ impl MyServerSession {
 
     fn clear_selected_character_state(&mut self) {
         self.invalidate_chat_endpoint();
+        self.mail_endpoint = None;
+        self.mail_endpoint_error = None;
         self.ticket = None;
         self.ticket_expires_at = None;
         self.character_id = None;

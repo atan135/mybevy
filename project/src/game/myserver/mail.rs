@@ -467,6 +467,7 @@ pub struct MailClientState {
     identity: Option<MailIdentity>,
     desired_list_generation: u64,
     active_list_query: Option<MailListQuery>,
+    list_refresh_queued: bool,
     desired_detail_generation: u64,
 }
 
@@ -492,6 +493,7 @@ impl Default for MailClientState {
             identity: None,
             desired_list_generation: 0,
             active_list_query: None,
+            list_refresh_queued: false,
             desired_detail_generation: 0,
         }
     }
@@ -708,6 +710,7 @@ impl MailClientState {
         self.identity = Some(identity);
         self.desired_list_generation = 0;
         self.active_list_query = None;
+        self.list_refresh_queued = false;
         self.desired_detail_generation = 0;
     }
 }
@@ -827,6 +830,7 @@ impl Plugin for MailPlugin {
                     forward_chat_mail_notifications,
                     handle_mail_commands,
                     handle_mail_network_events,
+                    drive_queued_list_refresh,
                     drive_claim_reconciliation,
                 )
                     .chain(),
@@ -853,13 +857,15 @@ fn forward_chat_mail_notifications(
     mut mail_commands: MessageWriter<MailClientCommand>,
 ) {
     let current_generation = chat_state.map(|state| state.endpoint_generation);
-    if chat_events.read().any(|event| {
-        matches!(
+    let mut refresh_required = false;
+    for event in chat_events.read() {
+        refresh_required |= matches!(
             event,
             ChatEvent::MailNotifyPush { generation }
                 if current_generation.is_none_or(|current| *generation == current)
-        )
-    }) {
+        );
+    }
+    if refresh_required {
         mail_commands.write(MailClientCommand::MailNotifyPush);
     }
 }
@@ -1078,6 +1084,7 @@ fn handle_mail_commands(
             }
             MailClientCommand::MailNotifyPush => {
                 events.write(MailClientEvent::RefreshRequired);
+                state.list_stale = true;
                 let query = state.refresh_query();
                 start_list_request(
                     &session,
@@ -1565,6 +1572,31 @@ fn drive_claim_reconciliation(
     }
 }
 
+fn drive_queued_list_refresh(
+    session: Res<MyServerSession>,
+    mut state: ResMut<MailClientState>,
+    mut network_commands: MessageWriter<NetworkCommand>,
+    mut events: MessageWriter<MailClientEvent>,
+) {
+    if !state.list_refresh_queued
+        || state
+            .pending
+            .values()
+            .any(|pending| matches!(pending, PendingMailRequest::List { .. }))
+    {
+        return;
+    }
+    state.list_refresh_queued = false;
+    let query = state.refresh_query();
+    start_list_request(
+        &session,
+        &mut state,
+        query,
+        &mut network_commands,
+        &mut events,
+    );
+}
+
 fn start_list_request(
     session: &MyServerSession,
     state: &mut MailClientState,
@@ -1582,6 +1614,16 @@ fn start_list_request(
         );
         return;
     };
+    if offset == 0
+        && state
+            .pending
+            .values()
+            .any(|pending| matches!(pending, PendingMailRequest::List { .. }))
+    {
+        state.list_stale = true;
+        state.list_refresh_queued = true;
+        return;
+    }
     let (generation, query) = if offset == 0 {
         state.desired_list_generation = state.desired_list_generation.wrapping_add(1);
         state.list_stale = true;
@@ -2278,7 +2320,7 @@ mod tests {
     use crate::{
         framework::network::{HttpResponse, NetworkCommand, NetworkEvent},
         game::myserver::{
-            chat::{ChatClientState, ChatEvent, MAIL_NOTIFY_PUSH},
+            chat::{ChatClientState, ChatClientStatus, ChatEvent, MAIL_NOTIFY_PUSH},
             protocol::{Packet, PacketHeader},
         },
     };
@@ -2644,7 +2686,7 @@ mod tests {
     }
 
     #[test]
-    fn latest_list_generation_discards_late_refresh_without_overwriting_authority() {
+    fn overlapping_list_refresh_is_coalesced_and_followed_by_one_latest_request() {
         let mut app = test_app(session_with_mail());
         app.world_mut().write_message(MailClientCommand::LoadList {
             query: MailListQuery::default(),
@@ -2655,31 +2697,44 @@ mod tests {
             query: MailListQuery::default(),
         });
         app.update();
-        let second = http_requests(&app).pop().unwrap();
+        assert_eq!(http_requests(&app).len(), 1);
+        assert_eq!(
+            app.world().resource::<MailClientState>().list_generation(),
+            1
+        );
+        assert!(
+            app.world()
+                .resource::<MailClientState>()
+                .list_refresh_queued
+        );
+
+        respond(
+            &mut app,
+            &first,
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_before_latest","title":"Before"}],
+                "unread_count":1,"pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        let requests = http_requests(&app);
+        assert_eq!(requests.len(), 2);
+        let second = requests.last().unwrap();
         assert_ne!(first.request_id, second.request_id);
         assert_eq!(
             app.world().resource::<MailClientState>().list_generation(),
             2
         );
-
         respond(
             &mut app,
-            &second,
+            second,
             200,
-            r#"{"ok":true,"mails":[{"mail_id":"mail_new","title":"New"}],
+            r#"{"ok":true,"mails":[{"mail_id":"mail_latest","title":"Latest"}],
                 "unread_count":1,"pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
-        );
-        respond(
-            &mut app,
-            &first,
-            200,
-            r#"{"ok":true,"mails":[{"mail_id":"mail_old","title":"Old"}],
-                "unread_count":9,"pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
         );
         let state = app.world().resource::<MailClientState>();
         assert_eq!(state.mails.len(), 1);
-        assert_eq!(state.mails[0].mail_id, "mail_new");
+        assert_eq!(state.mails[0].mail_id, "mail_latest");
         assert_eq!(state.authoritative_unread_count(), Some(1));
+        assert_eq!(http_requests(&app).len(), 2);
     }
 
     #[test]
@@ -3413,6 +3468,7 @@ mod tests {
     fn chat_mail_notifications_are_coalesced_and_ignore_stale_generations() {
         let mut app = test_app(session_with_mail());
         app.insert_resource(ChatClientState {
+            status: ChatClientStatus::Ready,
             endpoint_generation: 8,
             ..Default::default()
         });
@@ -3432,6 +3488,220 @@ mod tests {
             "https://api.game.zergzerg.cn/api/v1/mails?limit=50&offset=0"
         );
         assert!(app.world().resource::<MailClientState>().list_stale);
+
+        app.world_mut()
+            .write_message(ChatEvent::MailNotifyPush { generation: 8 });
+        app.world_mut()
+            .write_message(ChatEvent::MailNotifyPush { generation: 8 });
+        app.update();
+        assert_eq!(http_requests(&app).len(), 1);
+        assert!(
+            app.world()
+                .resource::<MailClientState>()
+                .list_refresh_queued
+        );
+
+        respond(
+            &mut app,
+            &requests[0],
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_before_latest"}],"unread_count":1,
+                "pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        let requests = http_requests(&app);
+        assert_eq!(requests.len(), 2);
+        assert_ne!(requests[0].request_id, requests[1].request_id);
+        assert!(app.world().resource::<MailClientState>().list_stale);
+        assert!(
+            !app.world()
+                .resource::<MailClientState>()
+                .list_refresh_queued
+        );
+
+        respond(
+            &mut app,
+            &requests[1],
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_latest"}],"unread_count":1,
+                "pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.mails[0].mail_id, "mail_latest");
+        assert!(!state.list_stale);
+        assert_eq!(http_requests(&app).len(), 2);
+    }
+
+    #[test]
+    fn ticket_rotation_cancels_old_list_and_uses_the_latest_ticket() {
+        let mut app = test_app(session_with_mail());
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let old = http_requests(&app).pop().unwrap();
+        assert_eq!(
+            header(&old, "X-Game-Ticket"),
+            Some("character-bound-ticket")
+        );
+
+        app.world_mut().resource_mut::<MyServerSession>().ticket =
+            Some("rotated-character-ticket".to_owned());
+        app.update();
+        assert!(messages::<NetworkCommand>(&app).iter().any(|command| {
+            matches!(command, NetworkCommand::CancelHttp { request_id } if *request_id == old.request_id)
+        }));
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let latest = http_requests(&app).pop().unwrap();
+        assert_ne!(latest.request_id, old.request_id);
+        assert_eq!(
+            header(&latest, "X-Game-Ticket"),
+            Some("rotated-character-ticket")
+        );
+
+        respond(
+            &mut app,
+            &old,
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_old_ticket"}],"unread_count":9,
+                "pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        assert!(app.world().resource::<MailClientState>().mails.is_empty());
+        respond(
+            &mut app,
+            &latest,
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_latest_ticket"}],"unread_count":1,
+                "pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        assert_eq!(
+            app.world().resource::<MailClientState>().mails[0].mail_id,
+            "mail_latest_ticket"
+        );
+    }
+
+    #[test]
+    fn account_character_and_environment_resets_cancel_and_clear_mail_state() {
+        for cause in ["logout", "account", "character", "environment"] {
+            let mut app = test_app(session_with_mail());
+            app.world_mut().write_message(MailClientCommand::LoadList {
+                query: MailListQuery::default(),
+            });
+            app.update();
+            let pending = http_requests(&app).pop().unwrap();
+            {
+                let mut state = app.world_mut().resource_mut::<MailClientState>();
+                let detail = MailDetail {
+                    summary: summary("mail_cached", "unread"),
+                    content: "cached body".to_owned(),
+                    attachments: Vec::new(),
+                    claim: MailClaimSummary::default(),
+                };
+                state.mails = vec![detail.summary.clone()];
+                state.unread_count = Some(1);
+                state.selected_mail_id = Some("mail_cached".to_owned());
+                state.selected_mail = Some(detail);
+                state.detail_load_state = MailDetailLoadState::Failed;
+                state.detail_error = Some(MailClientError {
+                    operation: MailOperation::Detail,
+                    status: Some(503),
+                    code: "MAIL_HTTP_503".to_owned(),
+                });
+                state.last_error = state.detail_error.clone();
+                state.list_refresh_queued = true;
+            }
+            {
+                let mut session = app.world_mut().resource_mut::<MyServerSession>();
+                match cause {
+                    "logout" => session.logout(),
+                    "account" => session.switch_account(),
+                    "character" => session.switch_character(),
+                    "environment" => session.reset(),
+                    _ => unreachable!(),
+                }
+                assert!(session.mail_endpoint.is_none(), "cause {cause}");
+                assert!(session.mail_endpoint_error.is_none(), "cause {cause}");
+            }
+            app.update();
+            assert!(messages::<NetworkCommand>(&app).iter().any(|command| {
+                matches!(command, NetworkCommand::CancelHttp { request_id } if *request_id == pending.request_id)
+            }));
+            let state = app.world().resource::<MailClientState>();
+            assert!(state.mails.is_empty(), "cause {cause}");
+            assert!(state.unread_count.is_none(), "cause {cause}");
+            assert!(state.selected_mail.is_none(), "cause {cause}");
+            assert!(state.detail_error.is_none(), "cause {cause}");
+            assert!(state.last_error.is_none(), "cause {cause}");
+            assert!(!state.list_refresh_queued, "cause {cause}");
+            assert!(matches!(
+                state.availability,
+                MailAvailability::Unavailable { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn unavailable_or_unreachable_mail_does_not_mutate_chat_state() {
+        for session in [
+            MyServerSession {
+                player_id: Some("player_1".to_owned()),
+                character_id: Some("character_1".to_owned()),
+                ticket: Some("ticket".to_owned()),
+                ..Default::default()
+            },
+            MyServerSession {
+                player_id: Some("player_1".to_owned()),
+                character_id: Some("character_1".to_owned()),
+                ticket: Some("ticket".to_owned()),
+                mail_endpoint_error: Some("invalid mail descriptor".to_owned()),
+                ..Default::default()
+            },
+        ] {
+            let mut app = test_app(session);
+            app.insert_resource(ChatClientState {
+                status: ChatClientStatus::Ready,
+                endpoint_generation: 11,
+                ..Default::default()
+            });
+            app.world_mut()
+                .write_message(ChatEvent::MailNotifyPush { generation: 11 });
+            app.update();
+            assert!(http_requests(&app).is_empty());
+            assert!(matches!(
+                app.world().resource::<MailClientState>().availability,
+                MailAvailability::Unavailable { .. }
+            ));
+            let chat = app.world().resource::<ChatClientState>();
+            assert_eq!(chat.status, ChatClientStatus::Ready);
+            assert_eq!(chat.endpoint_generation, 11);
+        }
+
+        let mut app = test_app(session_with_mail());
+        app.insert_resource(ChatClientState {
+            status: ChatClientStatus::Ready,
+            endpoint_generation: 12,
+            ..Default::default()
+        });
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let request = http_requests(&app).pop().unwrap();
+        app.world_mut().write_message(NetworkEvent::HttpError {
+            request_id: request.request_id,
+            error: "connection refused".to_owned(),
+        });
+        app.update();
+        assert_eq!(
+            app.world().resource::<MailClientState>().list_load_state,
+            MailListLoadState::Failed
+        );
+        assert_eq!(
+            app.world().resource::<ChatClientState>().status,
+            ChatClientStatus::Ready
+        );
     }
 
     #[test]
