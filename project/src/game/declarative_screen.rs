@@ -23,6 +23,7 @@ use crate::{
     },
     game::{
         navigation::AppUiMode,
+        scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
         ui_ids::{
             OWNER_DECLARATIVE_DOCUMENT_ROUTE, OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE,
             OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GENERATED_ACCEPTANCE,
@@ -464,6 +465,7 @@ impl Default for DeclarativeScreenRegistry {
 
 fn sync_mode_host(
     state: Option<Res<State<AppUiMode>>>,
+    main_world_entry: Option<Res<MainWorldEntryState>>,
     registry: Res<DeclarativeScreenRegistry>,
     actions: Res<UiActionRegistry>,
     runtime: Res<UiDocumentRuntime>,
@@ -477,11 +479,14 @@ fn sync_mode_host(
         return;
     };
     let current_mode = *state.get();
-    let current_host = registry.mode(current_mode).cloned();
+    let registered_current_host = registry.mode(current_mode).cloned();
+    let current_host = mode_host_is_eligible(current_mode, main_world_entry.as_deref())
+        .then_some(registered_current_host.clone())
+        .flatten();
     if host_runtime.observed_mode == Some(current_mode)
         && current_host
             .as_ref()
-            .is_none_or(|host| host_runtime.open.contains_key(&host.key()))
+            .is_some_and(|host| host_runtime.open.contains_key(&host.key()))
     {
         return;
     }
@@ -489,6 +494,16 @@ fn sync_mode_host(
     if host_runtime.observed_mode != Some(current_mode)
         && let Some(previous_mode) = host_runtime.observed_mode
         && let Some(host) = registry.mode(previous_mode).cloned()
+    {
+        close_host(
+            &host,
+            &mut host_runtime,
+            &mut preview_commands,
+            &mut runtime_commands,
+            &mut host_events,
+        );
+    } else if current_host.is_none()
+        && let Some(host) = registered_current_host
     {
         close_host(
             &host,
@@ -515,6 +530,11 @@ fn sync_mode_host(
         );
     }
     host_runtime.observed_mode = Some(current_mode);
+}
+
+fn mode_host_is_eligible(mode: AppUiMode, main_world_entry: Option<&MainWorldEntryState>) -> bool {
+    mode != AppUiMode::MainWorld
+        || main_world_entry.is_some_and(|entry| entry.phase == MainWorldEntryPhase::Active)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -25,11 +25,14 @@ use crate::framework::{
 use crate::game::ui_ids::SCROLL_FANGYUAN_HOME_MAIN;
 use crate::game::{
     declarative_screen::{
-        DeclarativeScreenFailurePolicy, DeclarativeScreenHost, DeclarativeScreenRegistry,
-        DeclarativeScreenSource,
+        DeclarativeScreenFailureDecision, DeclarativeScreenFailurePolicy, DeclarativeScreenHost,
+        DeclarativeScreenHostEvent, DeclarativeScreenRegistry, DeclarativeScreenSource,
     },
     navigation::{AppUiMode, GameRouteCommand},
-    scenes::{FangyuanHomeBlueprintCommand, main_world_entry::MainWorldEntryIntent},
+    scenes::{
+        FangyuanHomeBlueprintCommand,
+        main_world_entry::{MainWorldEntryIntent, MainWorldEntryPhase, MainWorldEntryState},
+    },
     ui_ids::{
         OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_MAIN_WORLD,
         OWNER_MAIN_WORLD_MAIL_PANEL, OWNER_MAIN_WORLD_SETTINGS_PANEL, OWNER_ROBOT_SYNC_SCENE,
@@ -47,6 +50,10 @@ pub(in crate::game) const MAIN_WORLD_HUD_DOCUMENT_ID: &str = "game.main_world_hu
 pub(in crate::game) const MAIN_WORLD_HUD_ROUTE: &str = "main_world";
 pub(in crate::game) const MAIN_WORLD_HUD_ROUTE_ALIASES: &[&str] = &["main_world", "main-world"];
 pub(in crate::game) const MAIN_WORLD_HUD_SOURCE_PATH: &str = "gameplay/main_world_hud.v1.json";
+pub(super) const ACTION_MAIN_WORLD_OPEN_SETTINGS: &str = "main_world.open_settings";
+pub(super) const ACTION_MAIN_WORLD_OPEN_MAIL: &str = "main_world.open_mail";
+pub(super) const ACTION_MAIN_WORLD_ENTER_HOME: &str = "main_world.enter_home";
+pub(super) const ACTION_MAIN_WORLD_RETURN_LOBBY: &str = "main_world.return_lobby";
 /// Deferred from this checklist: developer tool pages, the production chat window,
 /// and a complete character status bar remain outside the main-world HUD contract.
 pub(in crate::game) const MAIN_WORLD_HUD_NON_GOALS: &[&str] = &[
@@ -164,7 +171,13 @@ const FANGYUAN_PREVIEW_SOURCE: &str = include_str!(
 );
 const FANGYUAN_HOME_SOURCE: &str =
     include_str!("../../../../assets/ui/documents/approved/gameplay/fangyuan_home_hud.v1.json");
+const MAIN_WORLD_HUD_SOURCE: &str =
+    include_str!("../../../../assets/ui/documents/approved/gameplay/main_world_hud.v1.json");
 
+const MAIN_WORLD_SETTINGS_NODE: &str = "main_world.settings";
+const MAIN_WORLD_MAIL_NODE: &str = "main_world.mail";
+const MAIN_WORLD_HOME_NODE: &str = "main_world.home";
+const MAIN_WORLD_RETURN_LOBBY_NODE: &str = "main_world.return_lobby";
 const TOUCH_RETURN_NODE: &str = "touch_ripple.return_lobby";
 const SAMPLE_RETURN_NODE: &str = "sample_scene.return_lobby";
 const ROBOT_HIDE_NODE: &str = "robot_sync.hide_hud";
@@ -208,6 +221,7 @@ impl Default for GameplayHudHostContract {
     fn default() -> Self {
         Self {
             bindings: BTreeMap::from([
+                (MAIN_WORLD_HUD_DOCUMENT_ID, BTreeMap::new()),
                 (TOUCH_RIPPLE_DOCUMENT_ID, BTreeMap::new()),
                 (SAMPLE_SCENE_DOCUMENT_ID, BTreeMap::new()),
                 (
@@ -274,6 +288,22 @@ pub(super) fn gameplay_declarative_screen_hosts(
     contract: &GameplayHudHostContract,
 ) -> Vec<DeclarativeScreenHost> {
     vec![
+        host(
+            contract,
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            MAIN_WORLD_HUD_ROUTE,
+            MAIN_WORLD_HUD_ROUTE_ALIASES,
+            AppUiMode::MainWorld,
+            OWNER_MAIN_WORLD,
+            MAIN_WORLD_HUD_SOURCE_PATH,
+            MAIN_WORLD_HUD_SOURCE,
+            &[
+                ACTION_MAIN_WORLD_OPEN_SETTINGS,
+                ACTION_MAIN_WORLD_OPEN_MAIL,
+                ACTION_MAIN_WORLD_ENTER_HOME,
+                ACTION_MAIN_WORLD_RETURN_LOBBY,
+            ],
+        ),
         host(
             contract,
             TOUCH_RIPPLE_DOCUMENT_ID,
@@ -393,6 +423,30 @@ fn host(
 pub(super) fn gameplay_action_descriptors() -> Vec<UiActionDescriptor> {
     let mut descriptors = vec![
         action(
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            OWNER_MAIN_WORLD.as_str(),
+            ACTION_MAIN_WORLD_OPEN_SETTINGS,
+            MAIN_WORLD_SETTINGS_NODE,
+        ),
+        action(
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            OWNER_MAIN_WORLD.as_str(),
+            ACTION_MAIN_WORLD_OPEN_MAIL,
+            MAIN_WORLD_MAIL_NODE,
+        ),
+        action(
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            OWNER_MAIN_WORLD.as_str(),
+            ACTION_MAIN_WORLD_ENTER_HOME,
+            MAIN_WORLD_HOME_NODE,
+        ),
+        action(
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            OWNER_MAIN_WORLD.as_str(),
+            ACTION_MAIN_WORLD_RETURN_LOBBY,
+            MAIN_WORLD_RETURN_LOBBY_NODE,
+        ),
+        action(
             TOUCH_RIPPLE_DOCUMENT_ID,
             OWNER_TOUCH_RIPPLE.as_str(),
             ACTION_TOUCH_RIPPLE_RETURN_LOBBY,
@@ -506,6 +560,30 @@ fn business_command(target: &str) -> UiRegisteredActionKind {
     }
 }
 
+/// The fixed HUD already has a packaged fallback. If that fallback cannot load for
+/// the active generation, delegate the controlled exit to the entry coordinator.
+pub(super) fn recover_from_main_world_hud_failure(
+    entry: Option<Res<MainWorldEntryState>>,
+    mut host_events: MessageReader<DeclarativeScreenHostEvent>,
+    mut intents: MessageWriter<MainWorldEntryIntent>,
+) {
+    let fallback_failed = host_events.read().any(|event| {
+        matches!(
+            event,
+            DeclarativeScreenHostEvent::LoadFailed {
+                document_id,
+                owner,
+                decision: DeclarativeScreenFailureDecision::NoFallbackAvailable,
+                ..
+            } if document_id.as_str() == MAIN_WORLD_HUD_DOCUMENT_ID
+                && owner == OWNER_MAIN_WORLD.as_str()
+        )
+    });
+    if entry.is_some_and(|entry| entry.phase == MainWorldEntryPhase::Active) && fallback_failed {
+        intents.write(MainWorldEntryIntent::ExitToLobby);
+    }
+}
+
 pub(super) fn handle_gameplay_hud_document_actions(
     mut debug_panel_state: ResMut<FangyuanDebugPanelState>,
     mut robot_visibility: ResMut<super::robot_sync_scene::RobotSyncHudVisibility>,
@@ -568,6 +646,26 @@ fn zero_param_action_matches_contract(action: &UiActionDispatch) -> bool {
             action.source_node.as_str(),
         ),
         (
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            "main_world",
+            ACTION_MAIN_WORLD_OPEN_SETTINGS,
+            MAIN_WORLD_SETTINGS_NODE,
+        ) | (
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            "main_world",
+            ACTION_MAIN_WORLD_OPEN_MAIL,
+            MAIN_WORLD_MAIL_NODE,
+        ) | (
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            "main_world",
+            ACTION_MAIN_WORLD_ENTER_HOME,
+            MAIN_WORLD_HOME_NODE,
+        ) | (
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            "main_world",
+            ACTION_MAIN_WORLD_RETURN_LOBBY,
+            MAIN_WORLD_RETURN_LOBBY_NODE,
+        ) | (
             TOUCH_RIPPLE_DOCUMENT_ID,
             "wanfa_touch_ripple",
             ACTION_TOUCH_RIPPLE_RETURN_LOBBY,
@@ -747,7 +845,8 @@ mod tests {
         state::app::StatesPlugin,
     };
 
-    const DOCUMENTS: [(&str, &str); 5] = [
+    const DOCUMENTS: [(&str, &str); 6] = [
+        (MAIN_WORLD_HUD_DOCUMENT_ID, MAIN_WORLD_HUD_SOURCE),
         (TOUCH_RIPPLE_DOCUMENT_ID, TOUCH_RIPPLE_SOURCE),
         (SAMPLE_SCENE_DOCUMENT_ID, SAMPLE_SCENE_SOURCE),
         (ROBOT_SYNC_DOCUMENT_ID, ROBOT_SYNC_SOURCE),
@@ -755,7 +854,10 @@ mod tests {
         (FANGYUAN_HOME_DOCUMENT_ID, FANGYUAN_HOME_SOURCE),
     ];
 
-    const REGISTRATIONS: [&str; 5] = [
+    const REGISTRATIONS: [&str; 6] = [
+        include_str!(
+            "../../../../assets/ui/documents/approved/gameplay/main_world_hud.promotion.v1.json"
+        ),
         include_str!(
             "../../../../assets/ui/documents/approved/gameplay/touch_ripple_hud.promotion.v1.json"
         ),
@@ -777,7 +879,7 @@ mod tests {
     fn approved_gameplay_hud_documents_and_promotions_match_fixed_hosts() {
         let contract = GameplayHudHostContract::default();
         let hosts = gameplay_declarative_screen_hosts(&contract);
-        assert_eq!(hosts.len(), 5);
+        assert_eq!(hosts.len(), 6);
 
         for ((document_id, source), registration_source) in DOCUMENTS.into_iter().zip(REGISTRATIONS)
         {
@@ -855,11 +957,22 @@ mod tests {
     #[test]
     fn gameplay_actions_are_closed_to_exact_sources_and_module_values() {
         let descriptors = gameplay_action_descriptors();
-        assert_eq!(descriptors.len(), 13);
+        assert_eq!(descriptors.len(), 17);
         assert!(
             descriptors
                 .iter()
                 .all(|descriptor| !descriptor.sources.is_empty())
+        );
+
+        let main_world_actions = descriptors
+            .iter()
+            .filter(|descriptor| descriptor.document_id.as_str() == MAIN_WORLD_HUD_DOCUMENT_ID)
+            .collect::<Vec<_>>();
+        assert_eq!(main_world_actions.len(), 4);
+        assert!(
+            main_world_actions
+                .iter()
+                .all(|descriptor| descriptor.params.is_empty())
         );
 
         let module = descriptors
@@ -1088,6 +1201,112 @@ mod tests {
     }
 
     #[test]
+    fn main_world_hud_exposes_only_its_four_buttons_without_blocking_gameplay() {
+        let mut app = main_world_hud_runtime_app();
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::MainWorld);
+        update_frames(&mut app, 6);
+
+        let document_id = UiDocumentId::from_str(MAIN_WORLD_HUD_DOCUMENT_ID).unwrap();
+        let runtime = app.world().resource::<UiDocumentRuntime>();
+        let instance = runtime
+            .active_instance(OWNER_MAIN_WORLD.as_str(), &document_id)
+            .unwrap();
+        let root = runtime
+            .node_entity(instance, &UiNodeId::from_str("main_world.root").unwrap())
+            .unwrap();
+        assert!(app.world().get::<Pickable>(root).is_none());
+        assert!(!MAIN_WORLD_HUD_SOURCE.contains("\"block_lower\": true"));
+        for node_id in [
+            MAIN_WORLD_SETTINGS_NODE,
+            MAIN_WORLD_MAIL_NODE,
+            MAIN_WORLD_HOME_NODE,
+            MAIN_WORLD_RETURN_LOBBY_NODE,
+        ] {
+            let button = runtime
+                .node_entity(instance, &UiNodeId::from_str(node_id).unwrap())
+                .unwrap();
+            assert!(app.world().get::<Button>(button).is_some());
+        }
+    }
+
+    #[test]
+    fn main_world_hud_waits_for_the_active_entry_generation() {
+        let mut app = main_world_hud_runtime_app();
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::MainWorld);
+        update_frames(&mut app, 6);
+
+        let document_id = UiDocumentId::from_str(MAIN_WORLD_HUD_DOCUMENT_ID).unwrap();
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance(OWNER_MAIN_WORLD.as_str(), &document_id)
+                .is_none()
+        );
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        update_frames(&mut app, 6);
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance(OWNER_MAIN_WORLD.as_str(), &document_id)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn main_world_hud_fallback_exits_only_for_the_active_generation() {
+        let mut app = App::new();
+        app.init_resource::<MainWorldEntryState>()
+            .add_message::<DeclarativeScreenHostEvent>()
+            .add_message::<MainWorldEntryIntent>()
+            .add_systems(Update, recover_from_main_world_hud_failure);
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.world_mut()
+            .write_message(DeclarativeScreenHostEvent::LoadFailed {
+                code: "UI_DECLARATIVE_SCREEN_LOAD_FAILED".to_owned(),
+                cause: "fallback unavailable".to_owned(),
+                route: MAIN_WORLD_HUD_ROUTE.to_owned(),
+                document_id: UiDocumentId::from_str(MAIN_WORLD_HUD_DOCUMENT_ID).unwrap(),
+                owner: OWNER_MAIN_WORLD.as_str().to_owned(),
+                decision: DeclarativeScreenFailureDecision::NoFallbackAvailable,
+            });
+        app.update();
+        assert_eq!(
+            read_messages::<MainWorldEntryIntent>(&app),
+            [MainWorldEntryIntent::ExitToLobby]
+        );
+    }
+
+    #[test]
+    fn inactive_main_world_hud_failure_is_drained_before_a_later_generation_activates() {
+        let mut app = App::new();
+        app.init_resource::<MainWorldEntryState>()
+            .add_message::<DeclarativeScreenHostEvent>()
+            .add_message::<MainWorldEntryIntent>()
+            .add_systems(Update, recover_from_main_world_hud_failure);
+        app.world_mut()
+            .write_message(DeclarativeScreenHostEvent::LoadFailed {
+                code: "UI_DECLARATIVE_SCREEN_LOAD_FAILED".to_owned(),
+                cause: "stale fallback unavailable".to_owned(),
+                route: MAIN_WORLD_HUD_ROUTE.to_owned(),
+                document_id: UiDocumentId::from_str(MAIN_WORLD_HUD_DOCUMENT_ID).unwrap(),
+                owner: OWNER_MAIN_WORLD.as_str().to_owned(),
+                decision: DeclarativeScreenFailureDecision::NoFallbackAvailable,
+            });
+        app.update();
+        assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.update();
+        assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
+    }
+
+    #[test]
     fn fangyuan_home_status_and_debug_panels_are_runtime_scroll_views() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, StatesPlugin))
@@ -1140,6 +1359,26 @@ mod tests {
             .add_message::<SceneCommand>()
             .add_message::<GameRouteCommand>()
             .add_systems(Update, handle_gameplay_hud_document_actions);
+        app
+    }
+
+    fn main_world_hud_runtime_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, StatesPlugin))
+            .init_state::<AppUiMode>()
+            .init_resource::<MainWorldEntryState>()
+            .insert_resource(UiTheme::default())
+            .insert_resource(UiMetrics::default())
+            .insert_resource(UiFontAssets::test_registry())
+            .init_resource::<UiFocusState>()
+            .init_resource::<UiViewport>()
+            .init_resource::<GameplayHudHostContract>()
+            .add_plugins((
+                UiDocumentRuntimePlugin,
+                UiDocumentPreviewPlugin,
+                crate::game::declarative_screen::DeclarativeScreenHostPlugin,
+            ))
+            .add_systems(Startup, register_gameplay_hud_contracts);
         app
     }
 

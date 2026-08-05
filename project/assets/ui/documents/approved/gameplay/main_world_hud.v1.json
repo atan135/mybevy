@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "document_id": "game.main_world_hud",
+  "metadata": { "title": "Main World HUD", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {},
+  "styles": {},
+  "root": {
+    "type": "container",
+    "id": "main_world.root",
+    "layout": {
+      "width": { "percent": 100.0 },
+      "height": { "percent": 100.0 },
+      "padding": { "all": { "px": 20.0 } },
+      "direction": "row",
+      "align_items": "start",
+      "justify_content": "end"
+    },
+    "children": [
+      {
+        "type": "container",
+        "id": "main_world.actions",
+        "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 8.0 } },
+        "children": [
+          { "type": "button", "id": "main_world.settings", "variant": "secondary", "label": { "literal": "Settings" }, "on_click": { "action": "main_world.open_settings" } },
+          { "type": "button", "id": "main_world.mail", "variant": "secondary", "label": { "literal": "Mail" }, "on_click": { "action": "main_world.open_mail" } },
+          { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "literal": "Home" }, "on_click": { "action": "main_world.enter_home" } },
+          { "type": "button", "id": "main_world.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "on_click": { "action": "main_world.return_lobby" } }
+        ]
+      }
+    ]
+  },
+  "states": [],
+  "responsive": [
+    {
+      "id": "short_landscape",
+      "priority": 100,
+      "when": { "height_class": "short", "orientation": "landscape" },
+      "overrides": [
+        { "node_id": "main_world.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } } } } },
+        { "node_id": "main_world.actions", "set": { "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 } } } }
+      ]
+    }
+  ]
+}

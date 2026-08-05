@@ -53,6 +53,10 @@ impl Plugin for GameplayScreensPlugin {
         )
         .add_systems(
             Update,
+            host::recover_from_main_world_hud_failure.after(UiDocumentRuntimeSystems::Reconcile),
+        )
+        .add_systems(
+            Update,
             sample_scene::route_to_lobby_on_sample_scene_exit
                 .run_if(in_state(AppUiMode::SampleScene)),
         )
