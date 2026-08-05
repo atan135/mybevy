@@ -7,11 +7,19 @@
 use std::{
     collections::HashMap,
     net::Ipv6Addr,
-    sync::{Mutex, mpsc as std_mpsc},
+    sync::{
+        Mutex,
+        mpsc::{self as std_mpsc, TryRecvError},
+    },
     thread,
     time::Duration,
 };
 
+use bevy::{
+    app::AppExit,
+    ecs::message::{MessageReader, MessageWriter},
+    prelude::{App, IntoScheduleConfigs, Plugin, Res, ResMut, Resource, Update},
+};
 use futures_util::{SinkExt, StreamExt};
 use prost::Message;
 use tokio::sync::mpsc;
@@ -19,7 +27,10 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WebSocketMessage}
 
 use super::{
     protocol::{HEADER_LEN, Packet, PacketCodec, chat_pb, encode_raw_packet_type, parse_header},
-    types::{ClientServiceEndpoint, ClientServices, MyServerCommand},
+    types::{
+        ClientServiceEndpoint, ClientServices, MyServerCommand, MyServerSession,
+        redact_secret_fingerprint,
+    },
 };
 
 pub const CHAT_AUTH_REQ: u16 = 20_001;
@@ -48,6 +59,7 @@ pub const ERROR_RES: u16 = 9_000;
 /// configured limit only when the application-level session owns that policy.
 pub const DEFAULT_CHAT_MAX_BODY_LEN: usize = 4_096;
 pub const DEFAULT_CHAT_MAX_FRAME_LEN: usize = HEADER_LEN + DEFAULT_CHAT_MAX_BODY_LEN;
+pub const MAX_CHAT_RUNTIME_EVENTS_PER_UPDATE: usize = 32;
 
 pub const CHAT_PROTOCOL_MESSAGE_TYPES: &[(u16, &str)] = &[
     (CHAT_AUTH_REQ, "ChatAuthReq"),
@@ -308,6 +320,120 @@ pub enum ChatRuntimeEvent {
     TicketRefreshRequired,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChatClientStatus {
+    Unavailable,
+    Disconnected,
+    Connecting,
+    Authenticating,
+    Ready,
+    Backoff { attempt: u32 },
+    Paused,
+    Failed,
+}
+
+#[derive(Clone, Debug, Resource)]
+pub struct ChatClientState {
+    pub status: ChatClientStatus,
+    pub endpoint_generation: u64,
+    pub endpoint_fingerprint: Option<String>,
+    pub last_error_code: Option<String>,
+    pub foreground: bool,
+    pub reconnect_attempt: Option<u32>,
+}
+
+impl Default for ChatClientState {
+    fn default() -> Self {
+        Self {
+            status: ChatClientStatus::Unavailable,
+            endpoint_generation: 0,
+            endpoint_fingerprint: None,
+            last_error_code: None,
+            foreground: true,
+            reconnect_attempt: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, bevy::prelude::Message)]
+pub enum ChatCommand {
+    SetForeground { foreground: bool },
+}
+
+#[derive(Clone, Debug, bevy::prelude::Message)]
+pub enum ChatEvent {
+    StateChanged {
+        status: ChatClientStatus,
+        generation: u64,
+        error_code: Option<String>,
+    },
+    RuntimeDisconnected {
+        generation: u64,
+        error_code: String,
+    },
+    ProtocolError {
+        generation: u64,
+        error_code: String,
+    },
+    TicketRefreshRequired {
+        generation: u64,
+    },
+}
+
+#[derive(Resource, Default)]
+pub struct ChatRuntimeOwner {
+    active: Option<ActiveChatRuntime>,
+}
+
+struct ActiveChatRuntime {
+    runtime: ChatRuntime,
+    generation: u64,
+}
+
+impl ChatRuntimeOwner {
+    pub fn is_active(&self) -> bool {
+        self.active.is_some()
+    }
+
+    pub fn active_generation(&self) -> Option<u64> {
+        self.active.as_ref().map(|active| active.generation)
+    }
+
+    fn shutdown(&mut self) {
+        if let Some(active) = self.active.take() {
+            let _ = active.runtime.disconnect();
+        }
+    }
+}
+
+impl Drop for ChatRuntimeOwner {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+pub struct ChatPlugin;
+
+impl Plugin for ChatPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ChatClientState>()
+            .init_resource::<ChatRuntimeOwner>()
+            .add_message::<ChatCommand>()
+            .add_message::<ChatEvent>()
+            .add_message::<AppExit>()
+            .add_systems(
+                Update,
+                (
+                    apply_chat_commands,
+                    reconcile_chat_runtime,
+                    drain_chat_runtime_events,
+                    shutdown_chat_runtime_on_exit,
+                )
+                    .chain(),
+            );
+    }
+}
+
 enum ChatRuntimeCommand {
     Send(Vec<u8>),
     ReplaceTicket(String),
@@ -321,6 +447,12 @@ enum ChatRuntimeCommand {
 pub struct ChatRuntime {
     command_tx: mpsc::Sender<ChatRuntimeCommand>,
     event_rx: Mutex<std_mpsc::Receiver<ChatRuntimeEvent>>,
+}
+
+#[derive(Debug)]
+pub struct ChatRuntimeDrain {
+    pub events: Vec<ChatRuntimeEvent>,
+    pub channel_closed: bool,
 }
 
 impl ChatRuntime {
@@ -393,6 +525,277 @@ impl ChatRuntime {
         };
         event_rx.try_iter().collect()
     }
+
+    pub fn drain_events_up_to(&self, limit: usize) -> ChatRuntimeDrain {
+        let Ok(event_rx) = self.event_rx.lock() else {
+            return ChatRuntimeDrain {
+                events: Vec::new(),
+                channel_closed: true,
+            };
+        };
+        let mut events = Vec::with_capacity(limit);
+        let mut channel_closed = false;
+        for _ in 0..limit {
+            match event_rx.try_recv() {
+                Ok(event) => events.push(event),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    channel_closed = true;
+                    break;
+                }
+            }
+        }
+        ChatRuntimeDrain {
+            events,
+            channel_closed,
+        }
+    }
+}
+
+fn apply_chat_commands(
+    mut commands: MessageReader<ChatCommand>,
+    mut state: ResMut<ChatClientState>,
+    owner: ResMut<ChatRuntimeOwner>,
+) {
+    for command in commands.read() {
+        let ChatCommand::SetForeground { foreground } = command;
+        if state.foreground == *foreground {
+            continue;
+        }
+        state.foreground = *foreground;
+        if let Some(active) = owner.active.as_ref() {
+            let _ = active.runtime.set_foreground(*foreground);
+        }
+    }
+}
+
+fn reconcile_chat_runtime(
+    session: Res<MyServerSession>,
+    mut state: ResMut<ChatClientState>,
+    mut owner: ResMut<ChatRuntimeOwner>,
+    mut events: MessageWriter<ChatEvent>,
+) {
+    let endpoint_fingerprint = session
+        .chat_endpoint
+        .as_ref()
+        .map(|endpoint| redact_chat_endpoint(endpoint));
+    state.endpoint_generation = session.chat_endpoint_generation;
+    state.endpoint_fingerprint = endpoint_fingerprint;
+
+    let active_generation = owner.active_generation();
+    if active_generation.is_some_and(|generation| generation != session.chat_endpoint_generation) {
+        owner.shutdown();
+    }
+
+    if !state.foreground {
+        set_chat_state(
+            &mut state,
+            &mut events,
+            ChatClientStatus::Paused,
+            session.chat_endpoint_generation,
+            None,
+            None,
+        );
+        return;
+    }
+
+    let Some(endpoint) = session.chat_endpoint.clone() else {
+        owner.shutdown();
+        set_chat_state(
+            &mut state,
+            &mut events,
+            ChatClientStatus::Unavailable,
+            session.chat_endpoint_generation,
+            session
+                .chat_endpoint_error
+                .as_ref()
+                .map(|_| "CHAT_ENDPOINT_UNAVAILABLE".to_string()),
+            None,
+        );
+        return;
+    };
+    let Some(ticket) = session
+        .ticket
+        .as_deref()
+        .map(str::trim)
+        .filter(|ticket| !ticket.is_empty())
+    else {
+        owner.shutdown();
+        set_chat_state(
+            &mut state,
+            &mut events,
+            ChatClientStatus::Disconnected,
+            session.chat_endpoint_generation,
+            Some("CHAT_CHARACTER_TICKET_REQUIRED".to_string()),
+            None,
+        );
+        return;
+    };
+
+    if owner.active.is_none() {
+        match ChatRuntime::start(
+            endpoint,
+            ticket.to_string(),
+            DEFAULT_CHAT_MAX_BODY_LEN,
+            ChatReconnectPolicy::default(),
+        ) {
+            Ok(runtime) => {
+                owner.active = Some(ActiveChatRuntime {
+                    runtime,
+                    generation: session.chat_endpoint_generation,
+                });
+                set_chat_state(
+                    &mut state,
+                    &mut events,
+                    ChatClientStatus::Connecting,
+                    session.chat_endpoint_generation,
+                    None,
+                    None,
+                );
+            }
+            Err(_) => {
+                set_chat_state(
+                    &mut state,
+                    &mut events,
+                    ChatClientStatus::Failed,
+                    session.chat_endpoint_generation,
+                    Some("CHAT_RUNTIME_START_FAILED".to_string()),
+                    None,
+                );
+            }
+        }
+    } else if state.status == ChatClientStatus::Paused {
+        set_chat_state(
+            &mut state,
+            &mut events,
+            ChatClientStatus::Connecting,
+            session.chat_endpoint_generation,
+            None,
+            None,
+        );
+    }
+}
+
+fn drain_chat_runtime_events(
+    session: Res<MyServerSession>,
+    mut state: ResMut<ChatClientState>,
+    mut owner: ResMut<ChatRuntimeOwner>,
+    mut events: MessageWriter<ChatEvent>,
+) {
+    let Some(active) = owner.active.as_ref() else {
+        return;
+    };
+    if active.generation != session.chat_endpoint_generation {
+        return;
+    }
+    let generation = active.generation;
+    let drained = active
+        .runtime
+        .drain_events_up_to(MAX_CHAT_RUNTIME_EVENTS_PER_UPDATE);
+
+    for event in drained.events {
+        match event {
+            ChatRuntimeEvent::Connected { .. } => set_chat_state(
+                &mut state,
+                &mut events,
+                ChatClientStatus::Authenticating,
+                generation,
+                None,
+                None,
+            ),
+            ChatRuntimeEvent::Disconnected { .. } => {
+                events.write(ChatEvent::RuntimeDisconnected {
+                    generation,
+                    error_code: "CHAT_TRANSPORT_DISCONNECTED".to_string(),
+                });
+                set_chat_state(
+                    &mut state,
+                    &mut events,
+                    ChatClientStatus::Disconnected,
+                    generation,
+                    Some("CHAT_TRANSPORT_DISCONNECTED".to_string()),
+                    None,
+                );
+            }
+            ChatRuntimeEvent::ReconnectScheduled { attempt, .. } => set_chat_state(
+                &mut state,
+                &mut events,
+                ChatClientStatus::Backoff { attempt },
+                generation,
+                None,
+                Some(attempt),
+            ),
+            ChatRuntimeEvent::ProtocolError { .. } => {
+                events.write(ChatEvent::ProtocolError {
+                    generation,
+                    error_code: "CHAT_PROTOCOL_ERROR".to_string(),
+                });
+                set_chat_state(
+                    &mut state,
+                    &mut events,
+                    ChatClientStatus::Failed,
+                    generation,
+                    Some("CHAT_PROTOCOL_ERROR".to_string()),
+                    None,
+                );
+            }
+            ChatRuntimeEvent::TicketRefreshRequired => {
+                events.write(ChatEvent::TicketRefreshRequired { generation });
+            }
+            // Stage 4 owns auth-response validation and packet-to-business-event routing.
+            ChatRuntimeEvent::Packet(_) => {}
+        }
+    }
+
+    if drained.channel_closed {
+        owner.shutdown();
+        set_chat_state(
+            &mut state,
+            &mut events,
+            ChatClientStatus::Failed,
+            generation,
+            Some("CHAT_RUNTIME_EVENT_CHANNEL_CLOSED".to_string()),
+            None,
+        );
+    }
+}
+
+fn shutdown_chat_runtime_on_exit(
+    mut app_exit: MessageReader<AppExit>,
+    mut owner: ResMut<ChatRuntimeOwner>,
+) {
+    if app_exit.read().next().is_some() {
+        owner.shutdown();
+    }
+}
+
+fn set_chat_state(
+    state: &mut ChatClientState,
+    events: &mut MessageWriter<ChatEvent>,
+    status: ChatClientStatus,
+    generation: u64,
+    error_code: Option<String>,
+    reconnect_attempt: Option<u32>,
+) {
+    let changed = state.status != status
+        || state.endpoint_generation != generation
+        || state.last_error_code != error_code
+        || state.reconnect_attempt != reconnect_attempt;
+    state.status = status.clone();
+    state.endpoint_generation = generation;
+    state.last_error_code = error_code.clone();
+    state.reconnect_attempt = reconnect_attempt;
+    if changed {
+        events.write(ChatEvent::StateChanged {
+            status,
+            generation,
+            error_code,
+        });
+    }
+}
+
+fn redact_chat_endpoint(endpoint: &ChatWebSocketEndpoint) -> String {
+    format!("endpoint_fp={}", redact_secret_fingerprint(endpoint.url()))
 }
 
 /// Reuse the established HTTP ticket issue flow when chat authentication reports a stale ticket.
@@ -600,7 +1003,27 @@ fn encode_chat_packet(message_type: u16, seq: u32, body: &[u8]) -> Result<Vec<u8
 
 #[cfg(test)]
 mod tests {
+    use bevy::app::AppExit;
+    use bevy::prelude::{App, MinimalPlugins};
+
     use super::*;
+
+    fn chat_endpoint() -> ChatWebSocketEndpoint {
+        ChatWebSocketEndpoint::from_service(&ClientServiceEndpoint {
+            host: Some("chat.game.zergzerg.cn".to_string()),
+            port: Some(443),
+            protocol: Some("wss".to_string()),
+        })
+        .unwrap()
+    }
+
+    fn chat_test_app(session: MyServerSession) -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(session)
+            .add_plugins(ChatPlugin);
+        app
+    }
 
     #[test]
     fn builds_public_wss_endpoint_from_auth_descriptor() {
@@ -750,5 +1173,109 @@ mod tests {
         assert!(delay > Duration::ZERO);
         assert!(ticket_error_requires_refresh("ticket_expired"));
         assert!(!ticket_error_requires_refresh("PLAYER_BLOCKED"));
+    }
+
+    #[test]
+    fn chat_plugin_exposes_unavailable_and_ticket_required_states_without_runtime() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint_error: Some("invalid descriptor detail".to_string()),
+            chat_endpoint_generation: 4,
+            ..Default::default()
+        });
+        app.update();
+        let state = app.world().resource::<ChatClientState>();
+        assert_eq!(state.status, ChatClientStatus::Unavailable);
+        assert_eq!(
+            state.last_error_code.as_deref(),
+            Some("CHAT_ENDPOINT_UNAVAILABLE")
+        );
+        assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
+
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.chat_endpoint = Some(chat_endpoint());
+            session.chat_endpoint_error = None;
+            session.chat_endpoint_generation = 5;
+        }
+        app.update();
+        let state = app.world().resource::<ChatClientState>();
+        assert_eq!(state.status, ChatClientStatus::Disconnected);
+        assert_eq!(
+            state.last_error_code.as_deref(),
+            Some("CHAT_CHARACTER_TICKET_REQUIRED")
+        );
+        assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
+    }
+
+    #[test]
+    fn chat_plugin_pauses_without_exposing_ticket_in_debug_state() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 7,
+            ticket: Some("character-bound-ticket-secret".to_string()),
+            ..Default::default()
+        });
+        app.world_mut()
+            .write_message(ChatCommand::SetForeground { foreground: false });
+        app.update();
+
+        let state = app.world().resource::<ChatClientState>();
+        assert_eq!(state.status, ChatClientStatus::Paused);
+        assert!(!state.foreground);
+        assert!(state.endpoint_fingerprint.is_some());
+        assert!(!format!("{state:?}").contains("character-bound-ticket-secret"));
+        assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
+    }
+
+    #[test]
+    fn closed_worker_event_channel_becomes_a_stable_failed_state() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 9,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (command_tx, _command_rx) = mpsc::channel(1);
+        let (event_tx, event_rx) = std_mpsc::channel();
+        drop(event_tx);
+        app.world_mut().resource_mut::<ChatRuntimeOwner>().active = Some(ActiveChatRuntime {
+            runtime: ChatRuntime {
+                command_tx,
+                event_rx: Mutex::new(event_rx),
+            },
+            generation: 9,
+        });
+
+        app.update();
+        let state = app.world().resource::<ChatClientState>();
+        assert_eq!(state.status, ChatClientStatus::Failed);
+        assert_eq!(
+            state.last_error_code.as_deref(),
+            Some("CHAT_RUNTIME_EVENT_CHANNEL_CLOSED")
+        );
+        assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
+    }
+
+    #[test]
+    fn app_exit_releases_the_controlled_runtime_owner() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 11,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (command_tx, _command_rx) = mpsc::channel(1);
+        let (_event_tx, event_rx) = std_mpsc::channel();
+        app.world_mut().resource_mut::<ChatRuntimeOwner>().active = Some(ActiveChatRuntime {
+            runtime: ChatRuntime {
+                command_tx,
+                event_rx: Mutex::new(event_rx),
+            },
+            generation: 11,
+        });
+
+        app.world_mut().write_message(AppExit::Success);
+        app.update();
+        assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
     }
 }

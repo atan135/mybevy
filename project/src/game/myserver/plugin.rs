@@ -10,7 +10,6 @@ use crate::framework::network::{
     NetworkEvent, NetworkTransport, RequestId, TcpConnectConfig,
 };
 
-use super::mail::MailPlugin;
 use super::protocol::{MessageType, Packet, encode_proto_packet, pb};
 use super::types::{
     ApiErrorResponse, CharacterCreateResponse, CharacterLifecycleResponse, CharacterListResponse,
@@ -23,6 +22,7 @@ use super::types::{
     TicketResponse, character_select_endpoint, classify_game_auth_failure,
     parse_character_bound_ticket, redact_secret_fingerprint, ticket_endpoint,
 };
+use super::{chat::ChatPlugin, mail::MailPlugin};
 
 pub struct MyServerPlugin;
 
@@ -45,6 +45,7 @@ impl Plugin for MyServerPlugin {
             .add_message::<MyServerCommand>()
             .add_message::<MyServerEvent>()
             .add_plugins(MailPlugin)
+            .add_plugins(ChatPlugin)
             .add_systems(Startup, auto_client_startup)
             .configure_sets(
                 Update,
