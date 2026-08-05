@@ -65,6 +65,12 @@ impl Plugin for GameplayScreensPlugin {
         )
         .add_systems(
             Update,
+            host::sync_main_world_mail_bindings
+                .before(UiBindingSystems::Apply)
+                .run_if(in_state(AppUiMode::MainWorld)),
+        )
+        .add_systems(
+            Update,
             sample_scene::route_to_lobby_on_sample_scene_exit
                 .run_if(in_state(AppUiMode::SampleScene)),
         )

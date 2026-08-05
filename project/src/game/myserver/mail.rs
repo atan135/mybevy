@@ -334,8 +334,26 @@ impl MailClientState {
 
     #[cfg(test)]
     pub(crate) fn ready_for_test() -> Self {
+        Self::with_availability_for_test(MailAvailability::Ready)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_availability_for_test(availability: MailAvailability) -> Self {
+        Self {
+            availability,
+            ..default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ready_with_reconciliation_for_test(mail_id: impl Into<String>) -> Self {
         Self {
             availability: MailAvailability::Ready,
+            claim_reconciliation: Some(MailClaimReconciliation {
+                mail_id: mail_id.into(),
+                polls_completed: 1,
+                next_poll: None,
+            }),
             ..default()
         }
     }

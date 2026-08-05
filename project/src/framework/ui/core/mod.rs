@@ -23,8 +23,9 @@ pub(crate) use input::{UiInputState, UiInputSystems};
 pub(crate) use layer::{UiLayer, UiLayerRoot};
 pub(crate) use panel::{
     UI_PANEL_CONFIRM_MODAL, UI_PANEL_DROPDOWN, UI_PANEL_GLOBAL_LOADING, UI_PANEL_TOOLTIP,
-    UiBlockingOverlay, UiCurrentOwner, UiFloatingPanel, UiOwnerId, UiPanelCommand, UiPanelId,
-    UiPanelKind, UiPanelRequest, UiPanelRoot, UiPanelStack, UiPanelSystems, close_top_target_id,
+    UiBlockingOverlay, UiCurrentOwner, UiDocumentCloseTopRequest, UiFloatingPanel, UiOwnerId,
+    UiPanelCommand, UiPanelId, UiPanelKind, UiPanelRequest, UiPanelRoot, UiPanelStack,
+    UiPanelSystems, close_top_target_id,
 };
 pub(crate) use safe_area::UiSafeAreaStatus;
 #[allow(unused_imports)]

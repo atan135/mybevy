@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "document_id": "game.main_world_mail",
+  "metadata": { "title": "Mail", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {
+    "main_world_mail.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "main_world_mail.count": { "scope": "owner", "value_type": { "kind": "string" } },
+    "main_world_mail.error": { "scope": "owner", "value_type": { "kind": "string" } },
+    "main_world_mail.error_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "main_world_mail.refresh_disabled": { "scope": "owner", "value_type": { "kind": "bool" } }
+  },
+  "styles": {},
+  "root": {
+    "type": "container",
+    "id": "main_world_mail.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "align_items": "center", "justify_content": "center" },
+    "children": [
+      {
+        "type": "container",
+        "id": "main_world_mail.panel",
+        "layout": { "width": { "percent": 86.0 }, "max_width": { "px": 620.0 }, "padding": { "all": { "px": 16.0 } }, "direction": "column", "gap": { "px": 10.0 } },
+        "children": [
+          { "type": "text", "id": "main_world_mail.title", "content": { "literal": "Mail" }, "style": { "text_role": "subtitle" } },
+          { "type": "text", "id": "main_world_mail.status_text", "content": { "binding_path": "main_world_mail.status", "fallback": "Mail unavailable" }, "style": { "text_role": "body" } },
+          { "type": "text", "id": "main_world_mail.count_text", "content": { "binding_path": "main_world_mail.count", "fallback": "" }, "style": { "text_role": "caption" } },
+          { "type": "text", "id": "main_world_mail.error_text", "content": { "binding_path": "main_world_mail.error", "fallback": "" }, "style": { "text_role": "caption", "bindings": { "visibility": "main_world_mail.error_visibility" } } },
+          {
+            "type": "container",
+            "id": "main_world_mail.actions",
+            "layout": { "direction": "row", "gap": { "px": 8.0 }, "justify_content": "end" },
+            "children": [
+              { "type": "button", "id": "main_world_mail.refresh", "variant": "secondary", "label": { "literal": "Refresh" }, "component": { "bindings": { "disabled": "main_world_mail.refresh_disabled" } }, "on_click": { "action": "main_world_mail.refresh" } },
+              { "type": "button", "id": "main_world_mail.close", "variant": "secondary", "label": { "literal": "Close" }, "on_click": { "action": "main_world_mail.close" } }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "states": [],
+  "responsive": []
+}

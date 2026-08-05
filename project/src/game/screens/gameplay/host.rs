@@ -30,7 +30,10 @@ use crate::game::{
         DeclarativeScreenHostCommand, DeclarativeScreenHostEvent, DeclarativeScreenRegistry,
         DeclarativeScreenSource,
     },
-    myserver::{GameConnectionState, MyServerSession, mail::MailClientState},
+    myserver::{
+        GameConnectionState, MyServerSession,
+        mail::{MailAvailability, MailClientCommand, MailClientState, MailListQuery},
+    },
     navigation::{AppUiMode, GameRouteCommand},
     scenes::{
         FangyuanHomeBlueprintCommand,
@@ -49,6 +52,7 @@ pub(super) const ROBOT_SYNC_DOCUMENT_ID: &str = "game.robot_sync_hud";
 pub(super) const FANGYUAN_PLAYER_PREVIEW_DOCUMENT_ID: &str = "game.fangyuan_player_preview_hud";
 pub(super) const FANGYUAN_HOME_DOCUMENT_ID: &str = "game.fangyuan_home_hud";
 pub(in crate::game) const MAIN_WORLD_HUD_DOCUMENT_ID: &str = "game.main_world_hud";
+pub(in crate::game) const MAIN_WORLD_MAIL_DOCUMENT_ID: &str = "game.main_world_mail";
 
 pub(in crate::game) const MAIN_WORLD_HUD_ROUTE: &str = "main_world";
 pub(in crate::game) const MAIN_WORLD_HUD_ROUTE_ALIASES: &[&str] = &["main_world", "main-world"];
@@ -57,6 +61,8 @@ pub(super) const ACTION_MAIN_WORLD_OPEN_SETTINGS: &str = "main_world.open_settin
 pub(super) const ACTION_MAIN_WORLD_OPEN_MAIL: &str = "main_world.open_mail";
 pub(super) const ACTION_MAIN_WORLD_ENTER_HOME: &str = "main_world.enter_home";
 pub(super) const ACTION_MAIN_WORLD_RETURN_LOBBY: &str = "main_world.return_lobby";
+pub(super) const ACTION_MAIN_WORLD_MAIL_REFRESH: &str = "main_world_mail.refresh";
+pub(super) const ACTION_MAIN_WORLD_MAIL_CLOSE: &str = "main_world_mail.close";
 /// Deferred from this checklist: developer tool pages, the production chat window,
 /// and a complete character status bar remain outside the main-world HUD contract.
 pub(in crate::game) const MAIN_WORLD_HUD_NON_GOALS: &[&str] = &[
@@ -176,11 +182,15 @@ const FANGYUAN_HOME_SOURCE: &str =
     include_str!("../../../../assets/ui/documents/approved/gameplay/fangyuan_home_hud.v1.json");
 const MAIN_WORLD_HUD_SOURCE: &str =
     include_str!("../../../../assets/ui/documents/approved/gameplay/main_world_hud.v1.json");
+const MAIN_WORLD_MAIL_SOURCE: &str =
+    include_str!("../../../../assets/ui/documents/approved/gameplay/main_world_mail.v1.json");
 
 const MAIN_WORLD_SETTINGS_NODE: &str = "main_world.settings";
 const MAIN_WORLD_MAIL_NODE: &str = "main_world.mail";
 const MAIN_WORLD_HOME_NODE: &str = "main_world.home";
 const MAIN_WORLD_RETURN_LOBBY_NODE: &str = "main_world.return_lobby";
+const MAIN_WORLD_MAIL_REFRESH_NODE: &str = "main_world_mail.refresh";
+const MAIN_WORLD_MAIL_CLOSE_NODE: &str = "main_world_mail.close";
 const TOUCH_RETURN_NODE: &str = "touch_ripple.return_lobby";
 const SAMPLE_RETURN_NODE: &str = "sample_scene.return_lobby";
 const ROBOT_HIDE_NODE: &str = "robot_sync.hide_hud";
@@ -240,6 +250,19 @@ impl Default for GameplayHudHostContract {
                         ("main_world.return_lobby.disabled", UiBindingType::Bool),
                         ("main_world.transition.loading", UiBindingType::Bool),
                         ("main_world.transition.status", UiBindingType::String),
+                    ]),
+                ),
+                (
+                    MAIN_WORLD_MAIL_DOCUMENT_ID,
+                    binding_schema([
+                        ("main_world_mail.status", UiBindingType::String),
+                        ("main_world_mail.count", UiBindingType::String),
+                        ("main_world_mail.error", UiBindingType::String),
+                        (
+                            "main_world_mail.error_visibility",
+                            UiBindingType::Visibility,
+                        ),
+                        ("main_world_mail.refresh_disabled", UiBindingType::Bool),
                     ]),
                 ),
                 (TOUCH_RIPPLE_DOCUMENT_ID, BTreeMap::new()),
@@ -329,6 +352,7 @@ pub(super) fn gameplay_declarative_screen_hosts(
                 ACTION_MAIN_WORLD_RETURN_LOBBY,
             ],
         ),
+        main_world_mail_declarative_screen_host(contract),
         host(
             contract,
             TOUCH_RIPPLE_DOCUMENT_ID,
@@ -399,6 +423,45 @@ pub(super) fn gameplay_declarative_screen_hosts(
     ]
 }
 
+fn main_world_mail_declarative_screen_host(
+    contract: &GameplayHudHostContract,
+) -> DeclarativeScreenHost {
+    let source = DeclarativeScreenSource::approved(
+        "gameplay/main_world_mail.v1.json",
+        MAIN_WORLD_MAIL_SOURCE,
+    );
+    DeclarativeScreenHost {
+        document_id: UiDocumentId::from_str(MAIN_WORLD_MAIL_DOCUMENT_ID)
+            .expect("main world mail document ID is static"),
+        route: MainWorldDocumentPanel::Mail.route(),
+        route_aliases: MainWorldDocumentPanel::Mail.aliases(),
+        mode: None,
+        owner: MainWorldDocumentPanel::Mail.owner(),
+        panel: MainWorldDocumentPanel::Mail.panel(),
+        layer: MainWorldDocumentPanel::Mail.layer(),
+        initial_state: UiPageState::initial(),
+        binding_schema: contract.bindings[MAIN_WORLD_MAIL_DOCUMENT_ID]
+            .iter()
+            .map(|(path, declaration)| {
+                (
+                    UiHostBindingKey::new(declaration.scope, path.clone()),
+                    declaration.value_type.clone(),
+                )
+            })
+            .collect(),
+        action_allowlist: [ACTION_MAIN_WORLD_MAIL_REFRESH, ACTION_MAIN_WORLD_MAIL_CLOSE]
+            .into_iter()
+            .map(|action| {
+                UiActionId::from_str(action).expect("main world mail action ID is static")
+            })
+            .collect(),
+        audit_profiles: DEFAULT_AUDIT_PROFILES.map(str::to_owned).to_vec(),
+        source: source.clone(),
+        fallback_source: Some(source),
+        failure_policy: DeclarativeScreenFailurePolicy::PackagedFallback,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn host(
     contract: &GameplayHudHostContract,
@@ -452,6 +515,18 @@ pub(super) fn gameplay_action_descriptors() -> Vec<UiActionDescriptor> {
             OWNER_MAIN_WORLD.as_str(),
             ACTION_MAIN_WORLD_OPEN_SETTINGS,
             MAIN_WORLD_SETTINGS_NODE,
+        ),
+        action(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_REFRESH,
+            MAIN_WORLD_MAIL_REFRESH_NODE,
+        ),
+        action(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_CLOSE,
+            MAIN_WORLD_MAIL_CLOSE_NODE,
         ),
         action(
             MAIN_WORLD_HUD_DOCUMENT_ID,
@@ -616,6 +691,10 @@ pub(super) fn handle_gameplay_hud_document_actions(
     mut scene_commands: MessageWriter<SceneCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
     mut screen_commands: MessageWriter<DeclarativeScreenHostCommand>,
+    entry: Option<Res<MainWorldEntryState>>,
+    mail: Option<Res<MailClientState>>,
+    mut mail_commands: MessageWriter<MailClientCommand>,
+    mut focus: Option<ResMut<UiFocusState>>,
     mut main_world_intents: MessageWriter<MainWorldEntryIntent>,
     mut actions: MessageReader<UiActionDispatch>,
 ) {
@@ -631,6 +710,33 @@ pub(super) fn handle_gameplay_hud_document_actions(
             ACTION_MAIN_WORLD_OPEN_SETTINGS => {
                 screen_commands.write(DeclarativeScreenHostCommand::OpenDetachedRoute {
                     route: crate::game::screens::settings::MAIN_WORLD_SETTINGS_ROUTE.to_owned(),
+                });
+            }
+            ACTION_MAIN_WORLD_OPEN_MAIL
+                if main_world_actions_are_active(entry.as_deref())
+                    && mail.as_deref().is_some_and(MailClientState::is_available) =>
+            {
+                screen_commands.write(DeclarativeScreenHostCommand::OpenDetachedRoute {
+                    route: MainWorldDocumentPanel::Mail.route().to_owned(),
+                });
+                mail_commands.write(MailClientCommand::LoadList {
+                    query: MailListQuery::default(),
+                });
+            }
+            ACTION_MAIN_WORLD_MAIL_REFRESH
+                if main_world_actions_are_active(entry.as_deref())
+                    && mail.as_deref().is_some_and(MailClientState::is_available) =>
+            {
+                mail_commands.write(MailClientCommand::LoadList {
+                    query: MailListQuery::default(),
+                });
+            }
+            ACTION_MAIN_WORLD_MAIL_CLOSE if main_world_actions_are_active(entry.as_deref()) => {
+                if let Some(focus) = focus.as_deref_mut() {
+                    focus.focused_entity = None;
+                }
+                screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
+                    route: MainWorldDocumentPanel::Mail.route().to_owned(),
                 });
             }
             ACTION_TOUCH_RIPPLE_RETURN_LOBBY | ACTION_FANGYUAN_PREVIEW_RETURN_LOBBY => {
@@ -665,6 +771,10 @@ pub(super) fn handle_gameplay_hud_document_actions(
     }
 }
 
+fn main_world_actions_are_active(entry: Option<&MainWorldEntryState>) -> bool {
+    entry.is_some_and(|entry| entry.phase == MainWorldEntryPhase::Active)
+}
+
 fn zero_param_action_matches_contract(action: &UiActionDispatch) -> bool {
     if !action.params.is_empty() || !business_target_matches_action(action) {
         return false;
@@ -686,6 +796,16 @@ fn zero_param_action_matches_contract(action: &UiActionDispatch) -> bool {
             "main_world",
             ACTION_MAIN_WORLD_OPEN_MAIL,
             MAIN_WORLD_MAIL_NODE,
+        ) | (
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            "main_world_mail_panel",
+            ACTION_MAIN_WORLD_MAIL_REFRESH,
+            MAIN_WORLD_MAIL_REFRESH_NODE,
+        ) | (
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            "main_world_mail_panel",
+            ACTION_MAIN_WORLD_MAIL_CLOSE,
+            MAIN_WORLD_MAIL_CLOSE_NODE,
         ) | (
             MAIN_WORLD_HUD_DOCUMENT_ID,
             "main_world",
@@ -886,6 +1006,77 @@ pub(super) fn sync_main_world_hud_bindings(
     }
 }
 
+pub(super) fn sync_main_world_mail_bindings(
+    mail: Option<Res<MailClientState>>,
+    contract: Res<GameplayHudHostContract>,
+    mut values: ResMut<UiBindingValues>,
+) {
+    let (status, count, error, refresh_disabled) = match mail.as_deref() {
+        Some(mail) => {
+            let status = match &mail.availability {
+                MailAvailability::Ready if mail.list_stale => "Refreshing mail".to_owned(),
+                MailAvailability::Ready => "Mail ready".to_owned(),
+                MailAvailability::AwaitingCharacterTicket => {
+                    "Waiting for character session".to_owned()
+                }
+                MailAvailability::Unavailable { .. } => "Mail unavailable".to_owned(),
+            };
+            let count = if mail.mails.is_empty() {
+                String::new()
+            } else {
+                format!("{} cached messages", mail.mails.len())
+            };
+            let error = match &mail.availability {
+                MailAvailability::Unavailable { reason } => reason.clone(),
+                MailAvailability::AwaitingCharacterTicket => {
+                    "Character session is not ready".to_owned()
+                }
+                _ => mail
+                    .last_error
+                    .as_ref()
+                    .map(|error| error.code.clone())
+                    .unwrap_or_default(),
+            };
+            (status, count, error, !mail.is_available())
+        }
+        None => (
+            "Mail unavailable".to_owned(),
+            String::new(),
+            "Mail service is unavailable".to_owned(),
+            true,
+        ),
+    };
+    for (path, value) in [
+        ("main_world_mail.status", UiBindingValue::String(status)),
+        ("main_world_mail.count", UiBindingValue::String(count)),
+        (
+            "main_world_mail.error",
+            UiBindingValue::String(error.clone()),
+        ),
+        (
+            "main_world_mail.error_visibility",
+            UiBindingValue::Visibility(if error.is_empty() {
+                UiBindingVisibility::Hidden
+            } else {
+                UiBindingVisibility::Visible
+            }),
+        ),
+        (
+            "main_world_mail.refresh_disabled",
+            UiBindingValue::Bool(refresh_disabled),
+        ),
+    ] {
+        set_binding(
+            &contract,
+            &mut values,
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            path,
+            value,
+        );
+    }
+}
+
 fn main_world_connection_status_text(state: GameConnectionState) -> String {
     match state {
         GameConnectionState::NotConnected => "Game services offline".to_owned(),
@@ -981,6 +1172,7 @@ pub(super) fn mark_fangyuan_home_audit_scroll(
 mod tests {
     use super::*;
     use crate::framework::{
+        network::NetworkCommand,
         scene::prelude::SceneCommand,
         ui::{
             core::{UiMetrics, UiViewport},
@@ -997,8 +1189,9 @@ mod tests {
         state::app::StatesPlugin,
     };
 
-    const DOCUMENTS: [(&str, &str); 6] = [
+    const DOCUMENTS: [(&str, &str); 7] = [
         (MAIN_WORLD_HUD_DOCUMENT_ID, MAIN_WORLD_HUD_SOURCE),
+        (MAIN_WORLD_MAIL_DOCUMENT_ID, MAIN_WORLD_MAIL_SOURCE),
         (TOUCH_RIPPLE_DOCUMENT_ID, TOUCH_RIPPLE_SOURCE),
         (SAMPLE_SCENE_DOCUMENT_ID, SAMPLE_SCENE_SOURCE),
         (ROBOT_SYNC_DOCUMENT_ID, ROBOT_SYNC_SOURCE),
@@ -1006,9 +1199,12 @@ mod tests {
         (FANGYUAN_HOME_DOCUMENT_ID, FANGYUAN_HOME_SOURCE),
     ];
 
-    const REGISTRATIONS: [&str; 6] = [
+    const REGISTRATIONS: [&str; 7] = [
         include_str!(
             "../../../../assets/ui/documents/approved/gameplay/main_world_hud.promotion.v1.json"
+        ),
+        include_str!(
+            "../../../../assets/ui/documents/approved/gameplay/main_world_mail.promotion.v1.json"
         ),
         include_str!(
             "../../../../assets/ui/documents/approved/gameplay/touch_ripple_hud.promotion.v1.json"
@@ -1031,7 +1227,7 @@ mod tests {
     fn approved_gameplay_hud_documents_and_promotions_match_fixed_hosts() {
         let contract = GameplayHudHostContract::default();
         let hosts = gameplay_declarative_screen_hosts(&contract);
-        assert_eq!(hosts.len(), 6);
+        assert_eq!(hosts.len(), 7);
 
         for ((document_id, source), registration_source) in DOCUMENTS.into_iter().zip(REGISTRATIONS)
         {
@@ -1048,11 +1244,16 @@ mod tests {
                 .find(|host| host.document_id.as_str() == document_id)
                 .unwrap();
 
-            assert_eq!(host.panel, UiDocumentPanel::Hud);
-            assert_eq!(host.layer, UiDocumentLayer::Page);
+            let (panel, layer) = if document_id == MAIN_WORLD_MAIL_DOCUMENT_ID {
+                (UiDocumentPanel::Floating, UiDocumentLayer::Floating)
+            } else {
+                (UiDocumentPanel::Hud, UiDocumentLayer::Page)
+            };
+            assert_eq!(host.panel, panel);
+            assert_eq!(host.layer, layer);
             assert_eq!(host.audit_profiles, DEFAULT_AUDIT_PROFILES);
-            assert_eq!(registration.panel(), UiDocumentPanel::Hud);
-            assert_eq!(registration.layer(), UiDocumentLayer::Page);
+            assert_eq!(registration.panel(), panel);
+            assert_eq!(registration.layer(), layer);
             assert_eq!(registration.owner(), host.owner.as_str());
             assert_eq!(registration.route(), host.route);
             assert_eq!(audit.actions.len(), host.action_allowlist.len());
@@ -1109,7 +1310,7 @@ mod tests {
     #[test]
     fn gameplay_actions_are_closed_to_exact_sources_and_module_values() {
         let descriptors = gameplay_action_descriptors();
-        assert_eq!(descriptors.len(), 17);
+        assert_eq!(descriptors.len(), 19);
         assert!(
             descriptors
                 .iter()
@@ -1123,6 +1324,17 @@ mod tests {
         assert_eq!(main_world_actions.len(), 4);
         assert!(
             main_world_actions
+                .iter()
+                .all(|descriptor| descriptor.params.is_empty())
+        );
+
+        let mail_actions = descriptors
+            .iter()
+            .filter(|descriptor| descriptor.document_id.as_str() == MAIN_WORLD_MAIL_DOCUMENT_ID)
+            .collect::<Vec<_>>();
+        assert_eq!(mail_actions.len(), 2);
+        assert!(
+            mail_actions
                 .iter()
                 .all(|descriptor| descriptor.params.is_empty())
         );
@@ -1176,6 +1388,177 @@ mod tests {
             read_messages::<GameRouteCommand>(&app).as_slice(),
             [GameRouteCommand::ChangeMode(AppUiMode::Lobby)]
         ));
+    }
+
+    #[test]
+    fn active_main_world_mail_open_uses_only_the_host_and_mail_adapters() {
+        let mut app = action_test_app();
+        app.world_mut()
+            .insert_resource(MailClientState::ready_for_test());
+        app.world_mut().write_message(dispatch(
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            OWNER_MAIN_WORLD.as_str(),
+            ACTION_MAIN_WORLD_OPEN_MAIL,
+            MAIN_WORLD_MAIL_NODE,
+            BTreeMap::new(),
+        ));
+        app.update();
+
+        assert!(matches!(
+            read_messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+            [DeclarativeScreenHostCommand::OpenDetachedRoute { route }]
+                if route == MainWorldDocumentPanel::Mail.route()
+        ));
+        assert!(matches!(
+            read_messages::<MailClientCommand>(&app).as_slice(),
+            [MailClientCommand::LoadList { query }] if query == &MailListQuery::default()
+        ));
+        assert!(read_messages::<NetworkCommand>(&app).is_empty());
+        assert!(read_messages::<SceneCommand>(&app).is_empty());
+        assert!(read_messages::<GameRouteCommand>(&app).is_empty());
+        assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
+    }
+
+    #[test]
+    fn main_world_mail_close_only_closes_its_route_and_preserves_mail_state() {
+        let mut app = action_test_app();
+        app.world_mut()
+            .insert_resource(MailClientState::ready_with_reconciliation_for_test(
+                "mail-42",
+            ));
+        let focused = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<UiFocusState>()
+            .focused_entity = Some(focused);
+        app.world_mut().write_message(dispatch(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_CLOSE,
+            MAIN_WORLD_MAIL_CLOSE_NODE,
+            BTreeMap::new(),
+        ));
+        app.update();
+
+        assert!(matches!(
+            read_messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+            [DeclarativeScreenHostCommand::CloseRoute { route }]
+                if route == MainWorldDocumentPanel::Mail.route()
+        ));
+        assert_eq!(app.world().resource::<UiFocusState>().focused_entity, None);
+        let reconciliation = app
+            .world()
+            .resource::<MailClientState>()
+            .claim_reconciliation
+            .as_ref()
+            .unwrap();
+        assert_eq!(reconciliation.mail_id, "mail-42");
+        assert_eq!(reconciliation.polls_completed, 1);
+        assert!(read_messages::<MailClientCommand>(&app).is_empty());
+        assert!(read_messages::<NetworkCommand>(&app).is_empty());
+        assert!(read_messages::<SceneCommand>(&app).is_empty());
+        assert!(read_messages::<GameRouteCommand>(&app).is_empty());
+        assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
+    }
+
+    #[test]
+    fn unavailable_main_world_mail_actions_leave_the_adapters_idle_and_show_errors() {
+        for (availability, expected_status, expected_error) in [
+            (
+                MailAvailability::Unavailable {
+                    reason: "Mail endpoint is unavailable".to_owned(),
+                },
+                "Mail unavailable",
+                "Mail endpoint is unavailable",
+            ),
+            (
+                MailAvailability::AwaitingCharacterTicket,
+                "Waiting for character session",
+                "Character session is not ready",
+            ),
+        ] {
+            let mail = MailClientState::with_availability_for_test(availability);
+            let mut actions = action_test_app();
+            actions.world_mut().insert_resource(mail.clone());
+            actions.world_mut().write_message(dispatch(
+                MAIN_WORLD_HUD_DOCUMENT_ID,
+                OWNER_MAIN_WORLD.as_str(),
+                ACTION_MAIN_WORLD_OPEN_MAIL,
+                MAIN_WORLD_MAIL_NODE,
+                BTreeMap::new(),
+            ));
+            actions.world_mut().write_message(dispatch(
+                MAIN_WORLD_MAIL_DOCUMENT_ID,
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                ACTION_MAIN_WORLD_MAIL_REFRESH,
+                MAIN_WORLD_MAIL_REFRESH_NODE,
+                BTreeMap::new(),
+            ));
+            actions.update();
+
+            assert!(read_messages::<DeclarativeScreenHostCommand>(&actions).is_empty());
+            assert!(read_messages::<MailClientCommand>(&actions).is_empty());
+            assert!(read_messages::<NetworkCommand>(&actions).is_empty());
+
+            let mut bindings = main_world_mail_binding_test_app(mail);
+            bindings.update();
+            assert_eq!(
+                main_world_mail_binding_value(&bindings, "main_world_mail.status"),
+                UiBindingValue::String(expected_status.to_owned())
+            );
+            assert_eq!(
+                main_world_mail_binding_value(&bindings, "main_world_mail.refresh_disabled"),
+                UiBindingValue::Bool(true)
+            );
+            assert_eq!(
+                main_world_mail_binding_value(&bindings, "main_world_mail.error"),
+                UiBindingValue::String(expected_error.to_owned())
+            );
+            assert_eq!(
+                main_world_mail_binding_value(&bindings, "main_world_mail.error_visibility"),
+                UiBindingValue::Visibility(UiBindingVisibility::Visible)
+            );
+        }
+    }
+
+    #[test]
+    fn stale_main_world_mail_actions_are_ignored_after_the_generation_stops_being_active() {
+        let mut app = action_test_app();
+        app.world_mut()
+            .insert_resource(MailClientState::ready_for_test());
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Exiting;
+        for (document_id, owner, action, source) in [
+            (
+                MAIN_WORLD_HUD_DOCUMENT_ID,
+                OWNER_MAIN_WORLD.as_str(),
+                ACTION_MAIN_WORLD_OPEN_MAIL,
+                MAIN_WORLD_MAIL_NODE,
+            ),
+            (
+                MAIN_WORLD_MAIL_DOCUMENT_ID,
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                ACTION_MAIN_WORLD_MAIL_REFRESH,
+                MAIN_WORLD_MAIL_REFRESH_NODE,
+            ),
+            (
+                MAIN_WORLD_MAIL_DOCUMENT_ID,
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                ACTION_MAIN_WORLD_MAIL_CLOSE,
+                MAIN_WORLD_MAIL_CLOSE_NODE,
+            ),
+        ] {
+            app.world_mut().write_message(dispatch(
+                document_id,
+                owner,
+                action,
+                source,
+                BTreeMap::new(),
+            ));
+        }
+        app.update();
+
+        assert!(read_messages::<DeclarativeScreenHostCommand>(&app).is_empty());
+        assert!(read_messages::<MailClientCommand>(&app).is_empty());
+        assert!(read_messages::<NetworkCommand>(&app).is_empty());
     }
 
     #[test]
@@ -1618,11 +2001,18 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<FangyuanDebugPanelState>()
             .init_resource::<super::super::robot_sync_scene::RobotSyncHudVisibility>()
+            .init_resource::<MainWorldEntryState>()
+            .init_resource::<UiFocusState>()
             .add_message::<UiActionDispatch>()
             .add_message::<FangyuanHomeBlueprintCommand>()
             .add_message::<SceneCommand>()
             .add_message::<GameRouteCommand>()
+            .add_message::<DeclarativeScreenHostCommand>()
+            .add_message::<MailClientCommand>()
+            .add_message::<NetworkCommand>()
+            .add_message::<MainWorldEntryIntent>()
             .add_systems(Update, handle_gameplay_hud_document_actions);
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
         app
     }
 
@@ -1650,6 +2040,34 @@ mod tests {
             .scoped_value(
                 MAIN_WORLD_HUD_DOCUMENT_ID,
                 OWNER_MAIN_WORLD.as_str(),
+                &path,
+                declaration,
+            )
+            .unwrap()
+    }
+
+    fn main_world_mail_binding_test_app(mail: MailClientState) -> App {
+        let mut app = App::new();
+        app.init_resource::<GameplayHudHostContract>()
+            .init_resource::<UiBindingValues>()
+            .insert_resource(mail)
+            .add_systems(Update, sync_main_world_mail_bindings);
+        app
+    }
+
+    fn main_world_mail_binding_value(app: &App, path: &str) -> UiBindingValue {
+        let path = UiBindingPath::from_str(path).unwrap();
+        let contract = app.world().resource::<GameplayHudHostContract>();
+        let declaration = contract
+            .bindings
+            .get(MAIN_WORLD_MAIL_DOCUMENT_ID)
+            .and_then(|bindings| bindings.get(&path))
+            .unwrap();
+        app.world()
+            .resource::<UiBindingValues>()
+            .scoped_value(
+                MAIN_WORLD_MAIL_DOCUMENT_ID,
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
                 &path,
                 declaration,
             )
