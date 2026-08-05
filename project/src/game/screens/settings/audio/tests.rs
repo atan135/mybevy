@@ -13,8 +13,9 @@ use crate::framework::{
         core::{UiMetrics, UiViewport, binding::UiBindingValues, focus::UiFocusState},
         document::{
             UiActionDispatch, UiActionId, UiActionValue, UiBindingPath, UiBindingScope,
-            UiBindingValue, UiDocument, UiDocumentId, UiDocumentPreviewPlugin, UiDocumentRuntime,
-            UiDocumentRuntimePlugin, UiNode, UiNodeId, UiRegisteredActionKind,
+            UiBindingValue, UiDocument, UiDocumentId, UiDocumentInputMode, UiDocumentPlatform,
+            UiDocumentPreviewPlugin, UiDocumentRuntime, UiDocumentRuntimePlugin, UiNode, UiNodeId,
+            UiPageState, UiRegisteredActionKind, UiSafeAreaClass, UiTargetProfile,
             parse_approved_document_registration,
         },
         style::{UiFontAssets, UiTheme},
@@ -118,6 +119,48 @@ fn main_world_audio_settings_reuses_the_schema_as_a_floating_scene_panel() {
     assert_eq!(
         registration.panel(),
         crate::framework::ui::document::UiDocumentPanel::Floating
+    );
+}
+
+#[test]
+fn main_world_audio_settings_stays_scrollable_and_actionable_in_audit_profiles() {
+    let validated =
+        UiDocument::parse_and_validate_json(MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_SOURCE).unwrap();
+    for profile in main_world_audit_profiles() {
+        let effective = validated
+            .effective_document(&profile, &UiPageState::initial())
+            .unwrap();
+        for node in [
+            "audio_settings.scroll",
+            "audio_settings.return_lobby",
+            "audio_settings.master.muted",
+            "audio_settings.volume.master",
+            "audio_settings.volume.music",
+            "audio_settings.volume.sfx",
+            "audio_settings.volume.ui",
+            "audio_settings.volume.battle",
+        ] {
+            assert!(
+                find_document_node(&effective.document.root, node).is_some(),
+                "{node}"
+            );
+        }
+    }
+}
+
+#[test]
+fn main_world_audio_settings_short_landscape_uses_its_compact_scroll_layout() {
+    let profile = main_world_short_landscape_stress_profile();
+    let effective = UiDocument::parse_and_validate_json(MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_SOURCE)
+        .unwrap()
+        .effective_document(&profile, &UiPageState::initial())
+        .unwrap();
+
+    assert!(
+        effective
+            .applied_overrides
+            .iter()
+            .any(|item| item.source_id == "short_landscape")
     );
 }
 
@@ -564,6 +607,65 @@ fn runtime_nodes(app: &App) -> (Entity, Entity, Entity) {
         node("audio_settings.master.muted"),
         node("audio_settings.volume.music"),
     )
+}
+
+fn main_world_audit_profiles() -> [UiTargetProfile; 4] {
+    // UiTargetProfile stores runner logical geometry only. The two 800x360
+    // phone captures differ by physical scale (2x and 3x) in run-ui-audit.
+    [
+        UiTargetProfile::new(
+            1280.0,
+            720.0,
+            UiSafeAreaClass::None,
+            UiDocumentInputMode::MouseKeyboard,
+            UiDocumentPlatform::Windows,
+        )
+        .unwrap(),
+        UiTargetProfile::new(
+            800.0,
+            360.0,
+            UiSafeAreaClass::Inset,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        )
+        .unwrap(),
+        UiTargetProfile::new(
+            800.0,
+            360.0,
+            UiSafeAreaClass::Inset,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        )
+        .unwrap(),
+        UiTargetProfile::new(
+            1280.0,
+            800.0,
+            UiSafeAreaClass::Inset,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        )
+        .unwrap(),
+    ]
+}
+
+fn main_world_short_landscape_stress_profile() -> UiTargetProfile {
+    UiTargetProfile::new(
+        800.0,
+        360.0,
+        UiSafeAreaClass::Inset,
+        UiDocumentInputMode::Touch,
+        UiDocumentPlatform::Android,
+    )
+    .unwrap()
+}
+
+fn find_document_node<'a>(node: &'a UiNode, id: &str) -> Option<&'a UiNode> {
+    if node.id().as_str() == id {
+        return Some(node);
+    }
+    node.children()
+        .iter()
+        .find_map(|child| find_document_node(child, id))
 }
 
 fn update_frames(app: &mut App, count: usize) {

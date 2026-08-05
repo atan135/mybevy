@@ -33,21 +33,35 @@
         "id": "main_world.actions",
         "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 8.0 } },
         "children": [
-          { "type": "text", "id": "main_world.character_summary", "content": { "binding_path": "main_world.character.summary", "fallback": "Character unavailable" }, "style": { "text_role": "caption" } },
-          { "type": "text", "id": "main_world.connection_status", "content": { "binding_path": "main_world.connection.status", "fallback": "Game services offline" }, "style": { "text_role": "caption" } },
-          { "type": "text", "id": "main_world.transition_status", "content": { "binding_path": "main_world.transition.status", "fallback": "" }, "style": { "text_role": "caption" } },
-          { "type": "button", "id": "main_world.settings", "variant": "secondary", "label": { "literal": "Settings" }, "component": { "bindings": { "disabled": "main_world.settings.disabled" } }, "on_click": { "action": "main_world.open_settings" } },
           {
             "type": "container",
-            "id": "main_world.mail_entry",
-            "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 2.0 } },
+            "id": "main_world.status",
+            "layout": { "direction": "column", "align_items": "start", "gap": { "px": 2.0 } },
             "children": [
-              { "type": "button", "id": "main_world.mail", "variant": "secondary", "label": { "literal": "Mail" }, "component": { "bindings": { "disabled": "main_world.mail.disabled" } }, "on_click": { "action": "main_world.open_mail" } },
-              { "type": "text", "id": "main_world.mail_unread", "content": { "binding_path": "main_world.mail.unread", "fallback": "" }, "style": { "text_role": "caption", "bindings": { "visibility": "main_world.mail.unread_visibility" } } }
+              { "type": "text", "id": "main_world.character_summary", "content": { "binding_path": "main_world.character.summary", "fallback": "Character unavailable" }, "style": { "text_role": "caption" } },
+              { "type": "text", "id": "main_world.connection_status", "content": { "binding_path": "main_world.connection.status", "fallback": "Game services offline" }, "style": { "text_role": "caption" } },
+              { "type": "text", "id": "main_world.transition_status", "content": { "binding_path": "main_world.transition.status", "fallback": "" }, "style": { "text_role": "caption" } }
             ]
           },
-          { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "literal": "Home" }, "component": { "bindings": { "disabled": "main_world.home.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.enter_home" } },
-          { "type": "button", "id": "main_world.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "component": { "bindings": { "disabled": "main_world.return_lobby.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.return_lobby" } }
+          {
+            "type": "container",
+            "id": "main_world.buttons",
+            "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 8.0 } },
+            "children": [
+              { "type": "button", "id": "main_world.settings", "variant": "secondary", "label": { "literal": "Settings" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.settings.disabled" } }, "on_click": { "action": "main_world.open_settings" } },
+              {
+                "type": "container",
+                "id": "main_world.mail_entry",
+                "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 2.0 } },
+                "children": [
+                  { "type": "button", "id": "main_world.mail", "variant": "secondary", "label": { "literal": "Mail" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.mail.disabled" } }, "on_click": { "action": "main_world.open_mail" } },
+                  { "type": "text", "id": "main_world.mail_unread", "content": { "binding_path": "main_world.mail.unread", "fallback": "" }, "style": { "text_role": "caption", "bindings": { "visibility": "main_world.mail.unread_visibility" } } }
+                ]
+              },
+              { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "literal": "Home" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.home.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.enter_home" } },
+              { "type": "button", "id": "main_world.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.return_lobby.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.return_lobby" } }
+            ]
+          }
         ]
       }
     ]
@@ -60,7 +74,9 @@
       "when": { "height_class": "short", "orientation": "landscape" },
       "overrides": [
         { "node_id": "main_world.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } } } } },
-        { "node_id": "main_world.actions", "set": { "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 } } } }
+        { "node_id": "main_world.actions", "set": { "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 }, "justify_content": "end" } } },
+        { "node_id": "main_world.buttons", "set": { "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 } } } },
+        { "node_id": "main_world.mail_entry", "set": { "layout": { "gap": { "px": 0.0 } } } }
       ]
     }
   ]

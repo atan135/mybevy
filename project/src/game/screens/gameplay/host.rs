@@ -1214,14 +1214,17 @@ pub(super) fn mark_fangyuan_home_audit_scroll(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    use crate::framework::ui::audit::UiAuditConfig;
     use crate::framework::{
         network::NetworkCommand,
         scene::prelude::SceneCommand,
         ui::{
-            core::{UiMetrics, UiViewport},
+            core::{UiInputMode, UiMetrics, UiSafeArea, UiViewport},
             document::{
-                UiDocument, UiDocumentPreviewPlugin, UiDocumentRuntime, UiDocumentRuntimePlugin,
-                parse_approved_document_registration,
+                UiDocument, UiDocumentInputMode, UiDocumentPlatform, UiDocumentPreviewPlugin,
+                UiDocumentRuntime, UiDocumentRuntimePlugin, UiNode, UiSafeAreaClass,
+                UiTargetProfile, parse_approved_document_registration,
             },
             style::{UiFontAssets, UiTheme},
         },
@@ -1973,6 +1976,200 @@ mod tests {
     }
 
     #[test]
+    fn main_world_hud_and_mail_keep_accessible_controls_in_all_audit_profiles() {
+        let profiles = main_world_audit_profiles();
+        assert_eq!(
+            profiles
+                .iter()
+                .filter(|profile| profile.safe_area() == UiSafeAreaClass::Inset)
+                .count(),
+            3
+        );
+        let hud = UiDocument::parse_and_validate_json(MAIN_WORLD_HUD_SOURCE).unwrap();
+        let mail = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE).unwrap();
+
+        for (profile, (width, height)) in profiles.into_iter().zip([
+            (1280.0, 720.0),
+            (800.0, 360.0),
+            (800.0, 360.0),
+            (1280.0, 800.0),
+        ]) {
+            assert_eq!(profile.logical_width(), width);
+            assert_eq!(profile.logical_height(), height);
+            let hud = hud
+                .effective_document(&profile, &UiPageState::initial())
+                .unwrap();
+            let mail = mail
+                .effective_document(&profile, &UiPageState::initial())
+                .unwrap();
+            for node in [
+                MAIN_WORLD_SETTINGS_NODE,
+                MAIN_WORLD_MAIL_NODE,
+                MAIN_WORLD_HOME_NODE,
+                MAIN_WORLD_RETURN_LOBBY_NODE,
+            ] {
+                assert!(
+                    find_document_node(&hud.document.root, node).is_some(),
+                    "{node}"
+                );
+            }
+            for node in [MAIN_WORLD_MAIL_REFRESH_NODE, MAIN_WORLD_MAIL_CLOSE_NODE] {
+                assert!(
+                    find_document_node(&mail.document.root, node).is_some(),
+                    "{node}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn main_world_dynamic_status_and_mail_error_stay_outside_action_groups() {
+        let hud = UiDocument::parse_and_validate_json(MAIN_WORLD_HUD_SOURCE).unwrap();
+        let hud = hud.document();
+        let status = find_document_node(&hud.root, "main_world.status").unwrap();
+        let buttons = find_document_node(&hud.root, "main_world.buttons").unwrap();
+        assert_eq!(status.children().len(), 3);
+        assert_eq!(buttons.children().len(), 4);
+
+        let mail = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE).unwrap();
+        let mail = mail.document();
+        let panel = find_document_node(&mail.root, "main_world_mail.panel").unwrap();
+        let error = find_document_node(&mail.root, "main_world_mail.error_text").unwrap();
+        let actions = find_document_node(&mail.root, "main_world_mail.actions").unwrap();
+        assert!(
+            panel
+                .children()
+                .iter()
+                .any(|node| node.id().as_str() == "main_world_mail.error_text")
+        );
+        assert_eq!(
+            error.layout().width,
+            crate::framework::ui::document::UiLength::Percent(100.0)
+        );
+        assert!(actions.children().iter().all(|node| matches!(
+            node.id().as_str(),
+            MAIN_WORLD_MAIL_REFRESH_NODE | MAIN_WORLD_MAIL_CLOSE_NODE
+        )));
+    }
+
+    #[test]
+    fn main_world_short_landscape_documents_compact_without_hiding_controls() {
+        let profile = main_world_short_landscape_stress_profile();
+        let hud = UiDocument::parse_and_validate_json(MAIN_WORLD_HUD_SOURCE)
+            .unwrap()
+            .effective_document(&profile, &UiPageState::initial())
+            .unwrap();
+        let mail = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE)
+            .unwrap()
+            .effective_document(&profile, &UiPageState::initial())
+            .unwrap();
+
+        assert!(
+            hud.applied_overrides
+                .iter()
+                .any(|item| item.source_id == "short_landscape")
+        );
+        assert!(
+            mail.applied_overrides
+                .iter()
+                .any(|item| item.source_id == "short_landscape")
+        );
+        assert_eq!(
+            find_document_node(&mail.document.root, "main_world_mail.panel")
+                .unwrap()
+                .layout()
+                .width,
+            crate::framework::ui::document::UiLength::Percent(100.0)
+        );
+    }
+
+    #[test]
+    fn main_world_documents_exclude_development_and_connection_diagnostics() {
+        for source in [MAIN_WORLD_HUD_SOURCE, MAIN_WORLD_MAIL_SOURCE] {
+            for forbidden in ["ticket", "endpoint", "room_id", "developer", "debug"] {
+                assert!(
+                    !source.to_ascii_lowercase().contains(forbidden),
+                    "document must not expose {forbidden}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn main_world_hud_touch_controls_keep_the_framework_minimum_on_short_landscape() {
+        let viewport = main_world_short_landscape_touch_viewport();
+        let metrics = UiMetrics::from_viewport_and_theme(&viewport, &UiTheme::default());
+        let mut app = main_world_hud_runtime_app();
+        app.world_mut().insert_resource(viewport);
+        app.world_mut().insert_resource(metrics);
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::MainWorld);
+        update_frames(&mut app, 6);
+
+        let runtime = app.world().resource::<UiDocumentRuntime>();
+        let instance = runtime
+            .active_instance(
+                OWNER_MAIN_WORLD.as_str(),
+                &UiDocumentId::from_str(MAIN_WORLD_HUD_DOCUMENT_ID).unwrap(),
+            )
+            .unwrap();
+        let touch_target_min = app.world().resource::<UiMetrics>().touch_target_min;
+        for node_id in [
+            MAIN_WORLD_SETTINGS_NODE,
+            MAIN_WORLD_MAIL_NODE,
+            MAIN_WORLD_HOME_NODE,
+            MAIN_WORLD_RETURN_LOBBY_NODE,
+        ] {
+            let entity = runtime
+                .node_entity(instance, &UiNodeId::from_str(node_id).unwrap())
+                .unwrap();
+            assert!(matches!(
+                app.world().get::<Node>(entity).unwrap().height,
+                Val::Px(height) if height >= touch_target_min
+            ));
+        }
+    }
+
+    #[test]
+    fn main_world_mail_touch_controls_keep_the_framework_minimum_on_short_landscape() {
+        let viewport = main_world_short_landscape_touch_viewport();
+        let metrics = UiMetrics::from_viewport_and_theme(&viewport, &UiTheme::default());
+        let mut app = main_world_hud_runtime_app();
+        app.world_mut().insert_resource(viewport);
+        app.world_mut().insert_resource(metrics);
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::MainWorld);
+        update_frames(&mut app, 6);
+        app.world_mut()
+            .write_message(DeclarativeScreenHostCommand::OpenDetachedRoute {
+                route: MainWorldDocumentPanel::Mail.route().to_owned(),
+            });
+        update_frames(&mut app, 6);
+
+        let runtime = app.world().resource::<UiDocumentRuntime>();
+        let instance = runtime
+            .active_instance(
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                &UiDocumentId::from_str(MAIN_WORLD_MAIL_DOCUMENT_ID).unwrap(),
+            )
+            .unwrap();
+        let touch_target_min = app.world().resource::<UiMetrics>().touch_target_min;
+        for node_id in [MAIN_WORLD_MAIL_REFRESH_NODE, MAIN_WORLD_MAIL_CLOSE_NODE] {
+            let entity = runtime
+                .node_entity(instance, &UiNodeId::from_str(node_id).unwrap())
+                .unwrap();
+            assert!(matches!(
+                app.world().get::<Node>(entity).unwrap().height,
+                Val::Px(height) if height >= touch_target_min
+            ));
+        }
+    }
+
+    #[test]
     fn main_world_hud_waits_for_the_active_entry_generation() {
         let mut app = main_world_hud_runtime_app();
         app.world_mut()
@@ -2185,6 +2382,79 @@ mod tests {
             ))
             .add_systems(Startup, register_gameplay_hud_contracts);
         app
+    }
+
+    fn main_world_audit_profiles() -> [UiTargetProfile; 4] {
+        // UiTargetProfile stores runner logical geometry only. The two 800x360
+        // phone captures differ by physical scale (2x and 3x) in run-ui-audit.
+        [
+            UiTargetProfile::new(
+                1280.0,
+                720.0,
+                UiSafeAreaClass::None,
+                UiDocumentInputMode::MouseKeyboard,
+                UiDocumentPlatform::Windows,
+            )
+            .unwrap(),
+            UiTargetProfile::new(
+                800.0,
+                360.0,
+                UiSafeAreaClass::Inset,
+                UiDocumentInputMode::Touch,
+                UiDocumentPlatform::Android,
+            )
+            .unwrap(),
+            UiTargetProfile::new(
+                800.0,
+                360.0,
+                UiSafeAreaClass::Inset,
+                UiDocumentInputMode::Touch,
+                UiDocumentPlatform::Android,
+            )
+            .unwrap(),
+            UiTargetProfile::new(
+                1280.0,
+                800.0,
+                UiSafeAreaClass::Inset,
+                UiDocumentInputMode::Touch,
+                UiDocumentPlatform::Android,
+            )
+            .unwrap(),
+        ]
+    }
+
+    fn main_world_short_landscape_stress_profile() -> UiTargetProfile {
+        UiTargetProfile::new(
+            800.0,
+            360.0,
+            UiSafeAreaClass::Inset,
+            UiDocumentInputMode::Touch,
+            UiDocumentPlatform::Android,
+        )
+        .unwrap()
+    }
+
+    fn main_world_short_landscape_touch_viewport() -> UiViewport {
+        UiViewport::from_device_logical_size(
+            800.0,
+            360.0,
+            UiInputMode::Touch,
+            UiSafeArea {
+                left: 12.0,
+                right: 12.0,
+                top: 10.0,
+                bottom: 10.0,
+            },
+        )
+    }
+
+    fn find_document_node<'a>(node: &'a UiNode, id: &str) -> Option<&'a UiNode> {
+        if node.id().as_str() == id {
+            return Some(node);
+        }
+        node.children()
+            .iter()
+            .find_map(|child| find_document_node(child, id))
     }
 
     fn dispatch(

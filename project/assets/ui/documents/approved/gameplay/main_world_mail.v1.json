@@ -24,14 +24,14 @@
           { "type": "text", "id": "main_world_mail.title", "content": { "literal": "Mail" }, "style": { "text_role": "subtitle" } },
           { "type": "text", "id": "main_world_mail.status_text", "content": { "binding_path": "main_world_mail.status", "fallback": "Mail unavailable" }, "style": { "text_role": "body" } },
           { "type": "text", "id": "main_world_mail.count_text", "content": { "binding_path": "main_world_mail.count", "fallback": "" }, "style": { "text_role": "caption" } },
-          { "type": "text", "id": "main_world_mail.error_text", "content": { "binding_path": "main_world_mail.error", "fallback": "" }, "style": { "text_role": "caption", "bindings": { "visibility": "main_world_mail.error_visibility" } } },
+          { "type": "text", "id": "main_world_mail.error_text", "layout": { "width": { "percent": 100.0 } }, "content": { "binding_path": "main_world_mail.error", "fallback": "" }, "style": { "text_role": "caption", "bindings": { "visibility": "main_world_mail.error_visibility" } } },
           {
             "type": "container",
             "id": "main_world_mail.actions",
             "layout": { "direction": "row", "gap": { "px": 8.0 }, "justify_content": "end" },
             "children": [
-              { "type": "button", "id": "main_world_mail.refresh", "variant": "secondary", "label": { "literal": "Refresh" }, "component": { "bindings": { "disabled": "main_world_mail.refresh_disabled" } }, "on_click": { "action": "main_world_mail.refresh" } },
-              { "type": "button", "id": "main_world_mail.close", "variant": "secondary", "label": { "literal": "Close" }, "on_click": { "action": "main_world_mail.close" } }
+              { "type": "button", "id": "main_world_mail.refresh", "variant": "secondary", "label": { "literal": "Refresh" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.refresh_disabled" } }, "on_click": { "action": "main_world_mail.refresh" } },
+              { "type": "button", "id": "main_world_mail.close", "variant": "secondary", "label": { "literal": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.close" } }
             ]
           }
         ]
@@ -39,5 +39,16 @@
     ]
   },
   "states": [],
-  "responsive": []
+  "responsive": [
+    {
+      "id": "short_landscape",
+      "priority": 100,
+      "when": { "height_class": "short", "orientation": "landscape" },
+      "overrides": [
+        { "node_id": "main_world_mail.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } } } } },
+        { "node_id": "main_world_mail.panel", "set": { "layout": { "width": { "percent": 100.0 }, "max_width": { "px": 760.0 }, "padding": { "all": { "px": 12.0 } }, "gap": { "px": 8.0 } } } },
+        { "node_id": "main_world_mail.actions", "set": { "layout": { "wrap": "wrap", "gap": { "px": 6.0 } } } }
+      ]
+    }
+  ]
 }
