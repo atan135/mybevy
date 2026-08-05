@@ -1,4 +1,9 @@
-use std::{collections::HashMap, net::Ipv6Addr, str::FromStr, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    net::Ipv6Addr,
+    str::FromStr,
+    time::Duration,
+};
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -329,6 +334,18 @@ pub enum MailOperation {
     Claim,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MailListLoadState {
+    #[default]
+    Idle,
+    InitialLoading,
+    Refreshing,
+    LoadingMore,
+    Ready,
+    Empty,
+    Failed,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MailClientError {
     pub operation: MailOperation,
@@ -352,11 +369,13 @@ pub struct MailClientState {
     pub pagination: Option<MailPagination>,
     pub selected_mail: Option<MailDetail>,
     pub list_stale: bool,
+    pub list_load_state: MailListLoadState,
     pub claim_reconciliation: Option<MailClaimReconciliation>,
     pub last_error: Option<MailClientError>,
     pending: HashMap<RequestId, PendingMailRequest>,
     identity: Option<MailIdentity>,
     desired_list_generation: u64,
+    active_list_query: Option<MailListQuery>,
 }
 
 impl Default for MailClientState {
@@ -369,11 +388,13 @@ impl Default for MailClientState {
             pagination: None,
             selected_mail: None,
             list_stale: false,
+            list_load_state: MailListLoadState::Idle,
             claim_reconciliation: None,
             last_error: None,
             pending: HashMap::new(),
             identity: None,
             desired_list_generation: 0,
+            active_list_query: None,
         }
     }
 }
@@ -381,6 +402,56 @@ impl Default for MailClientState {
 impl MailClientState {
     pub fn is_available(&self) -> bool {
         matches!(self.availability, MailAvailability::Ready)
+    }
+
+    pub fn authoritative_unread_count(&self) -> Option<u32> {
+        (self.is_available()
+            && !self.list_stale
+            && matches!(
+                self.list_load_state,
+                MailListLoadState::Ready
+                    | MailListLoadState::Empty
+                    | MailListLoadState::LoadingMore
+            ))
+        .then_some(self.unread_count)
+        .flatten()
+    }
+
+    pub fn contains_authoritative_mail(&self, mail_id: &str) -> bool {
+        self.mails.iter().any(|mail| mail.mail_id == mail_id)
+    }
+
+    pub fn refresh_query(&self) -> MailListQuery {
+        self.active_list_query
+            .as_ref()
+            .map(|query| MailListQuery {
+                status: query.status,
+                limit: query.limit,
+                offset: Some(0),
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn next_page_query(&self) -> Option<MailListQuery> {
+        let active = self.active_list_query.as_ref()?;
+        let next_offset = self.pagination.as_ref()?.next_offset?;
+        (!self.list_stale
+            && !matches!(
+                self.list_load_state,
+                MailListLoadState::InitialLoading
+                    | MailListLoadState::Refreshing
+                    | MailListLoadState::LoadingMore
+            ))
+        .then_some(MailListQuery {
+            status: active.status,
+            limit: active.limit,
+            offset: Some(next_offset),
+        })
+    }
+
+    #[cfg(test)]
+    fn list_generation(&self) -> u64 {
+        self.desired_list_generation
     }
 
     #[cfg(test)]
@@ -409,6 +480,37 @@ impl MailClientState {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn ready_with_list_for_test(
+        mails: Vec<MailSummary>,
+        unread_count: u32,
+        pagination: MailPagination,
+    ) -> Self {
+        let limit = if pagination.limit == 0 {
+            50
+        } else {
+            pagination.limit
+        };
+        let list_load_state = if mails.is_empty() {
+            MailListLoadState::Empty
+        } else {
+            MailListLoadState::Ready
+        };
+        Self {
+            availability: MailAvailability::Ready,
+            mails,
+            unread_count: Some(unread_count),
+            pagination: Some(pagination),
+            list_load_state,
+            active_list_query: Some(MailListQuery {
+                status: None,
+                limit: Some(limit),
+                offset: Some(0),
+            }),
+            ..default()
+        }
+    }
+
     fn reset_for_identity(&mut self, identity: MailIdentity, availability: MailAvailability) {
         self.availability = availability;
         self.endpoint = identity.endpoint.clone();
@@ -417,11 +519,13 @@ impl MailClientState {
         self.pagination = None;
         self.selected_mail = None;
         self.list_stale = false;
+        self.list_load_state = MailListLoadState::Idle;
         self.claim_reconciliation = None;
         self.last_error = None;
         self.pending.clear();
         self.identity = Some(identity);
         self.desired_list_generation = 0;
+        self.active_list_query = None;
     }
 }
 
@@ -438,6 +542,7 @@ enum PendingMailRequest {
     List {
         query: MailListQuery,
         generation: u64,
+        identity: Option<MailIdentity>,
     },
     Detail {
         mail_id: String,
@@ -629,9 +734,7 @@ fn handle_mail_commands(
     for command in commands.read() {
         match command {
             MailClientCommand::LoadList { query } => {
-                state.desired_list_generation = state.desired_list_generation.wrapping_add(1);
-                state.list_stale = true;
-                start_latest_list_request(
+                start_list_request(
                     &session,
                     &mut state,
                     query.clone(),
@@ -734,13 +837,12 @@ fn handle_mail_commands(
                 );
             }
             MailClientCommand::MailNotifyPush => {
-                state.desired_list_generation = state.desired_list_generation.wrapping_add(1);
-                state.list_stale = true;
                 events.write(MailClientEvent::RefreshRequired);
-                start_latest_list_request(
+                let query = state.refresh_query();
+                start_list_request(
                     &session,
                     &mut state,
-                    MailListQuery::default(),
+                    query,
                     &mut network_commands,
                     &mut events,
                 );
@@ -795,16 +897,29 @@ fn handle_mail_network_events(
                 let Some(pending) = state.pending.remove(request_id) else {
                     continue;
                 };
-                if let PendingMailRequest::Claim { mail_id } = pending {
-                    begin_claim_reconciliation(&mut state, mail_id, &mut events);
-                } else {
-                    let error = MailClientError {
-                        operation: pending.operation(),
-                        status: None,
-                        code: "MAIL_NETWORK_UNAVAILABLE".to_string(),
-                    };
-                    state.last_error = Some(error.clone());
-                    events.write(MailClientEvent::RequestFailed { error });
+                match pending {
+                    PendingMailRequest::Claim { mail_id } => {
+                        begin_claim_reconciliation(&mut state, mail_id, &mut events);
+                    }
+                    PendingMailRequest::List {
+                        generation,
+                        identity,
+                        ..
+                    } if generation != state.desired_list_generation
+                        || identity != state.identity => {}
+                    pending => {
+                        if matches!(pending, PendingMailRequest::List { .. }) {
+                            state.list_stale = true;
+                            state.list_load_state = MailListLoadState::Failed;
+                        }
+                        let error = MailClientError {
+                            operation: pending.operation(),
+                            status: None,
+                            code: "MAIL_NETWORK_UNAVAILABLE".to_string(),
+                        };
+                        state.last_error = Some(error.clone());
+                        events.write(MailClientEvent::RequestFailed { error });
+                    }
                 }
             }
             _ => {}
@@ -822,28 +937,45 @@ fn handle_mail_response(
     events: &mut MessageWriter<MailClientEvent>,
 ) {
     match pending {
-        PendingMailRequest::List { query, generation } => {
+        PendingMailRequest::List {
+            query,
+            generation,
+            identity,
+        } => {
+            if generation != state.desired_list_generation || identity != state.identity {
+                return;
+            }
             let Some(response) =
                 parse_success::<MailListResponse>(state, MailOperation::List, status, body, events)
             else {
+                state.list_stale = true;
+                state.list_load_state = MailListLoadState::Failed;
                 return;
             };
-            if !response.ok {
+            if !response.ok || !list_response_matches_request(&query, &response) {
+                state.list_stale = true;
+                state.list_load_state = MailListLoadState::Failed;
                 reject_request(state, events, MailOperation::List, "MAIL_LIST_REJECTED");
                 return;
             }
-            state.mails = response.mails;
+            let offset = query.offset.unwrap_or(0);
+            if offset == 0 {
+                state.mails = deduplicate_mail_page(response.mails);
+            } else {
+                merge_mail_page(&mut state.mails, response.mails);
+            }
             state.unread_count = Some(response.unread_count);
             state.pagination = Some(response.pagination);
             state.last_error = None;
+            state.list_stale = false;
+            state.list_load_state = if state.mails.is_empty() {
+                MailListLoadState::Empty
+            } else {
+                MailListLoadState::Ready
+            };
             events.write(MailClientEvent::ListLoaded {
                 unread_count: response.unread_count,
             });
-            if generation < state.desired_list_generation {
-                start_latest_list_request(session, state, query, network_commands, events);
-            } else {
-                state.list_stale = false;
-            }
         }
         PendingMailRequest::Detail {
             mail_id,
@@ -906,19 +1038,12 @@ fn handle_mail_response(
             }
             apply_read_to_cache(state, &mail_id, response.read_at);
             state.last_error = None;
-            state.desired_list_generation = state.desired_list_generation.wrapping_add(1);
-            state.list_stale = true;
+            let query = state.refresh_query();
             events.write(MailClientEvent::MailRead {
                 mail_id: mail_id.clone(),
                 already_read: response.already_read,
             });
-            start_latest_list_request(
-                session,
-                state,
-                MailListQuery::default(),
-                network_commands,
-                events,
-            );
+            start_list_request(session, state, query, network_commands, events);
         }
         PendingMailRequest::Claim { mail_id } => {
             if status == 202 {
@@ -962,6 +1087,46 @@ fn handle_mail_response(
     }
 }
 
+fn list_response_matches_request(query: &MailListQuery, response: &MailListResponse) -> bool {
+    let Ok((_, limit, offset)) = query.normalized() else {
+        return false;
+    };
+    response.pagination.limit == limit
+        && response.pagination.offset == offset
+        && response.mails.len() <= usize::from(limit)
+        && response
+            .mails
+            .iter()
+            .all(|mail| valid_mail_id(&mail.mail_id))
+        && response.pagination.next_offset.is_none_or(|next_offset| {
+            next_offset > offset && next_offset <= 10_000 && !response.mails.is_empty()
+        })
+}
+
+fn deduplicate_mail_page(mails: Vec<MailSummary>) -> Vec<MailSummary> {
+    let mut seen = HashSet::with_capacity(mails.len());
+    mails
+        .into_iter()
+        .filter(|mail| seen.insert(mail.mail_id.clone()))
+        .collect()
+}
+
+fn merge_mail_page(current: &mut Vec<MailSummary>, page: Vec<MailSummary>) {
+    let mut indices = current
+        .iter()
+        .enumerate()
+        .map(|(index, mail)| (mail.mail_id.clone(), index))
+        .collect::<HashMap<_, _>>();
+    for mail in deduplicate_mail_page(page) {
+        if let Some(index) = indices.get(&mail.mail_id).copied() {
+            current[index] = mail;
+        } else {
+            indices.insert(mail.mail_id.clone(), current.len());
+            current.push(mail);
+        }
+    }
+}
+
 fn drive_claim_reconciliation(
     time: Res<Time>,
     session: Res<MyServerSession>,
@@ -994,21 +1159,15 @@ fn drive_claim_reconciliation(
     }
 }
 
-fn start_latest_list_request(
+fn start_list_request(
     session: &MyServerSession,
     state: &mut MailClientState,
     query: MailListQuery,
     network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MailClientEvent>,
 ) {
-    if state
-        .pending
-        .values()
-        .any(|pending| matches!(pending, PendingMailRequest::List { .. }))
-    {
-        return;
-    }
     let Ok((status, limit, offset)) = query.normalized() else {
+        state.list_load_state = MailListLoadState::Failed;
         reject_request(
             state,
             events,
@@ -1017,8 +1176,78 @@ fn start_latest_list_request(
         );
         return;
     };
+    let (generation, query) = if offset == 0 {
+        state.desired_list_generation = state.desired_list_generation.wrapping_add(1);
+        state.list_stale = true;
+        state.list_load_state = if state.mails.is_empty() {
+            MailListLoadState::InitialLoading
+        } else {
+            MailListLoadState::Refreshing
+        };
+        state.last_error = None;
+        let query = MailListQuery {
+            status,
+            limit: Some(limit),
+            offset: Some(0),
+        };
+        state.active_list_query = Some(query.clone());
+        (state.desired_list_generation, query)
+    } else {
+        let Some(active) = state.active_list_query.as_ref() else {
+            reject_request(
+                state,
+                events,
+                MailOperation::List,
+                "MAIL_LIST_PAGE_CONTEXT_REQUIRED",
+            );
+            return;
+        };
+        let active_status = active.status;
+        let active_limit = active.limit.unwrap_or(50);
+        let expected_offset = state
+            .pagination
+            .as_ref()
+            .and_then(|pagination| pagination.next_offset);
+        if state.list_stale
+            || active_status != status
+            || active_limit != limit
+            || expected_offset != Some(offset)
+        {
+            reject_request(
+                state,
+                events,
+                MailOperation::List,
+                "MAIL_LIST_PAGE_OUT_OF_SEQUENCE",
+            );
+            return;
+        }
+        state.list_load_state = MailListLoadState::LoadingMore;
+        state.last_error = None;
+        (
+            state.desired_list_generation,
+            MailListQuery {
+                status,
+                limit: Some(limit),
+                offset: Some(offset),
+            },
+        )
+    };
+    if state.pending.values().any(|pending| {
+        matches!(
+            pending,
+            PendingMailRequest::List {
+                query: pending_query,
+                generation: pending_generation,
+                ..
+            } if *pending_generation == generation
+                && pending_query.offset.unwrap_or(0) == offset
+        )
+    }) {
+        return;
+    }
     let Some((endpoint, ticket)) = request_context(state, session, MailOperation::List, events)
     else {
+        state.list_load_state = MailListLoadState::Failed;
         return;
     };
     let mut query_parts = Vec::with_capacity(3);
@@ -1032,7 +1261,8 @@ fn start_latest_list_request(
         state,
         PendingMailRequest::List {
             query,
-            generation: state.desired_list_generation,
+            generation,
+            identity: state.identity.clone(),
         },
         request,
         network_commands,
@@ -1608,6 +1838,274 @@ mod tests {
         assert_eq!(header(&request, "Authorization"), None);
         assert!(!request.url.contains("player_1"));
         assert!(request.body.is_none());
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.list_load_state, MailListLoadState::InitialLoading);
+        assert!(state.authoritative_unread_count().is_none());
+    }
+
+    #[test]
+    fn list_query_supports_status_limit_and_stable_paginated_merge() {
+        let mut app = test_app(session_with_mail());
+        let first_query = MailListQuery {
+            status: Some(MailListStatus::Unread),
+            limit: Some(2),
+            offset: Some(0),
+        };
+        app.world_mut()
+            .write_message(MailClientCommand::LoadList { query: first_query });
+        app.update();
+        let first = http_requests(&app).pop().unwrap();
+        assert_eq!(
+            first.url,
+            "https://api.game.zergzerg.cn/api/v1/mails?status=unread&limit=2&offset=0"
+        );
+        respond(
+            &mut app,
+            &first,
+            200,
+            r#"{"ok":true,"mails":[
+                {"mail_id":"mail_a","title":"A","status":"unread"},
+                {"mail_id":"mail_b","title":"B","status":"unread"}],
+                "unread_count":3,"pagination":{"limit":2,"offset":0,"next_offset":2}}"#,
+        );
+        {
+            let state = app.world().resource::<MailClientState>();
+            assert_eq!(state.list_load_state, MailListLoadState::Ready);
+            assert_eq!(state.authoritative_unread_count(), Some(3));
+            assert_eq!(
+                state
+                    .mails
+                    .iter()
+                    .map(|mail| mail.mail_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["mail_a", "mail_b"]
+            );
+        }
+
+        let next_query = app
+            .world()
+            .resource::<MailClientState>()
+            .next_page_query()
+            .unwrap();
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: next_query.clone(),
+        });
+        app.update();
+        let second = http_requests(&app).pop().unwrap();
+        assert_eq!(
+            second.url,
+            "https://api.game.zergzerg.cn/api/v1/mails?status=unread&limit=2&offset=2"
+        );
+        assert_eq!(
+            app.world().resource::<MailClientState>().list_load_state,
+            MailListLoadState::LoadingMore
+        );
+
+        let request_count = http_requests(&app).len();
+        app.world_mut()
+            .write_message(MailClientCommand::LoadList { query: next_query });
+        app.update();
+        assert_eq!(http_requests(&app).len(), request_count);
+
+        respond(
+            &mut app,
+            &second,
+            200,
+            r#"{"ok":true,"mails":[
+                {"mail_id":"mail_b","title":"B updated","status":"read"},
+                {"mail_id":"mail_c","title":"C","status":"unread"}],
+                "unread_count":2,"pagination":{"limit":2,"offset":2,"next_offset":null}}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.list_load_state, MailListLoadState::Ready);
+        assert_eq!(state.authoritative_unread_count(), Some(2));
+        assert_eq!(
+            state
+                .mails
+                .iter()
+                .map(|mail| mail.mail_id.as_str())
+                .collect::<Vec<_>>(),
+            ["mail_a", "mail_b", "mail_c"]
+        );
+        assert_eq!(state.mails[1].title, "B updated");
+        assert!(state.next_page_query().is_none());
+    }
+
+    #[test]
+    fn latest_list_generation_discards_late_refresh_without_overwriting_authority() {
+        let mut app = test_app(session_with_mail());
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let first = http_requests(&app).pop().unwrap();
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let second = http_requests(&app).pop().unwrap();
+        assert_ne!(first.request_id, second.request_id);
+        assert_eq!(
+            app.world().resource::<MailClientState>().list_generation(),
+            2
+        );
+
+        respond(
+            &mut app,
+            &second,
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_new","title":"New"}],
+                "unread_count":1,"pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        respond(
+            &mut app,
+            &first,
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_old","title":"Old"}],
+                "unread_count":9,"pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.mails.len(), 1);
+        assert_eq!(state.mails[0].mail_id, "mail_new");
+        assert_eq!(state.authoritative_unread_count(), Some(1));
+    }
+
+    #[test]
+    fn identity_change_cancels_and_discards_the_old_list_response() {
+        let mut app = test_app(session_with_mail());
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let old_request = http_requests(&app).pop().unwrap();
+
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.character_id = Some("character_2".to_owned());
+            session.ticket = Some("character-2-ticket".to_owned());
+        }
+        app.update();
+        assert!(messages::<NetworkCommand>(&app).iter().any(|command| {
+            matches!(command, NetworkCommand::CancelHttp { request_id } if *request_id == old_request.request_id)
+        }));
+        respond(
+            &mut app,
+            &old_request,
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_old_identity"}],
+                "unread_count":1,"pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert!(state.mails.is_empty());
+        assert_eq!(state.unread_count, None);
+        assert_eq!(state.list_load_state, MailListLoadState::Idle);
+    }
+
+    #[test]
+    fn list_rejects_out_of_sequence_page_and_invalid_pagination() {
+        let mut app = test_app(session_with_mail());
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery {
+                status: Some(MailListStatus::Read),
+                limit: Some(2),
+                offset: Some(2),
+            },
+        });
+        app.update();
+        assert!(http_requests(&app).is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<MailClientState>()
+                .last_error
+                .as_ref()
+                .map(|error| error.code.as_str()),
+            Some("MAIL_LIST_PAGE_CONTEXT_REQUIRED")
+        );
+
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let request = http_requests(&app).pop().unwrap();
+        respond(
+            &mut app,
+            &request,
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_a"}],"unread_count":1,
+                "pagination":{"limit":50,"offset":0,"next_offset":0}}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.list_load_state, MailListLoadState::Failed);
+        assert!(state.authoritative_unread_count().is_none());
+    }
+
+    #[test]
+    fn list_moves_through_empty_error_and_authoritative_retry_states() {
+        let mut app = test_app(session_with_mail());
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let initial = http_requests(&app).pop().unwrap();
+        assert_eq!(
+            app.world().resource::<MailClientState>().list_load_state,
+            MailListLoadState::InitialLoading
+        );
+        respond(
+            &mut app,
+            &initial,
+            200,
+            r#"{"ok":true,"mails":[],"unread_count":0,
+                "pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        assert_eq!(
+            app.world().resource::<MailClientState>().list_load_state,
+            MailListLoadState::Empty
+        );
+        assert_eq!(
+            app.world()
+                .resource::<MailClientState>()
+                .authoritative_unread_count(),
+            Some(0)
+        );
+
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let failed = http_requests(&app).pop().unwrap();
+        app.world_mut().write_message(NetworkEvent::HttpError {
+            request_id: failed.request_id,
+            error: "request timeout".to_owned(),
+        });
+        app.update();
+        assert_eq!(
+            app.world().resource::<MailClientState>().list_load_state,
+            MailListLoadState::Failed
+        );
+        assert!(
+            app.world()
+                .resource::<MailClientState>()
+                .authoritative_unread_count()
+                .is_none()
+        );
+
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let retry = http_requests(&app).pop().unwrap();
+        respond(
+            &mut app,
+            &retry,
+            200,
+            r#"{"ok":true,"mails":[{"mail_id":"mail_after_retry"}],"unread_count":1,
+                "pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.list_load_state, MailListLoadState::Ready);
+        assert_eq!(state.mails[0].mail_id, "mail_after_retry");
+        assert_eq!(state.authoritative_unread_count(), Some(1));
     }
 
     #[test]
