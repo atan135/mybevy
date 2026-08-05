@@ -23,9 +23,54 @@ use super::{
 
 pub const CHAT_AUTH_REQ: u16 = 20_001;
 pub const CHAT_AUTH_RES: u16 = 20_002;
+pub const CHAT_PRIVATE_REQ: u16 = 20_101;
+pub const CHAT_PRIVATE_RES: u16 = 20_102;
+pub const CHAT_GROUP_REQ: u16 = 20_103;
+pub const CHAT_GROUP_RES: u16 = 20_104;
 pub const CHAT_PUSH: u16 = 20_105;
+pub const GROUP_CREATE_REQ: u16 = 20_201;
+pub const GROUP_CREATE_RES: u16 = 20_202;
+pub const GROUP_JOIN_REQ: u16 = 20_203;
+pub const GROUP_JOIN_RES: u16 = 20_204;
+pub const GROUP_LEAVE_REQ: u16 = 20_205;
+pub const GROUP_LEAVE_RES: u16 = 20_206;
+pub const GROUP_DISMISS_REQ: u16 = 20_207;
+pub const GROUP_DISMISS_RES: u16 = 20_208;
+pub const GROUP_LIST_REQ: u16 = 20_209;
+pub const GROUP_LIST_RES: u16 = 20_210;
+pub const CHAT_HISTORY_REQ: u16 = 20_211;
+pub const CHAT_HISTORY_RES: u16 = 20_212;
 pub const MAIL_NOTIFY_PUSH: u16 = 20_301;
-pub const DEFAULT_CHAT_MAX_BODY_LEN: usize = 64 * 1024;
+pub const ERROR_RES: u16 = 9_000;
+
+/// Matches the server's default `MAX_BODY_LEN`. A deployment can negotiate a different
+/// configured limit only when the application-level session owns that policy.
+pub const DEFAULT_CHAT_MAX_BODY_LEN: usize = 4_096;
+pub const DEFAULT_CHAT_MAX_FRAME_LEN: usize = HEADER_LEN + DEFAULT_CHAT_MAX_BODY_LEN;
+
+pub const CHAT_PROTOCOL_MESSAGE_TYPES: &[(u16, &str)] = &[
+    (CHAT_AUTH_REQ, "ChatAuthReq"),
+    (CHAT_AUTH_RES, "ChatAuthRes"),
+    (CHAT_PRIVATE_REQ, "ChatPrivateReq"),
+    (CHAT_PRIVATE_RES, "ChatPrivateRes"),
+    (CHAT_GROUP_REQ, "ChatGroupReq"),
+    (CHAT_GROUP_RES, "ChatGroupRes"),
+    (CHAT_PUSH, "ChatPush"),
+    (GROUP_CREATE_REQ, "GroupCreateReq"),
+    (GROUP_CREATE_RES, "GroupCreateRes"),
+    (GROUP_JOIN_REQ, "GroupJoinReq"),
+    (GROUP_JOIN_RES, "GroupJoinRes"),
+    (GROUP_LEAVE_REQ, "GroupLeaveReq"),
+    (GROUP_LEAVE_RES, "GroupLeaveRes"),
+    (GROUP_DISMISS_REQ, "GroupDismissReq"),
+    (GROUP_DISMISS_RES, "GroupDismissRes"),
+    (GROUP_LIST_REQ, "GroupListReq"),
+    (GROUP_LIST_RES, "GroupListRes"),
+    (CHAT_HISTORY_REQ, "ChatHistoryReq"),
+    (CHAT_HISTORY_RES, "ChatHistoryRes"),
+    (MAIL_NOTIFY_PUSH, "MailNotifyPush"),
+    (ERROR_RES, "ErrorRes"),
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatWebSocketEndpoint {
@@ -161,6 +206,15 @@ impl ChatPacketRouter {
 
 /// A WebSocket logical binary message must contain exactly one existing packet.
 pub fn decode_chat_binary_frame(frame: &[u8], max_body_len: usize) -> Result<Packet, String> {
+    let max_frame_len = HEADER_LEN
+        .checked_add(max_body_len)
+        .ok_or_else(|| "chat maximum frame length overflow".to_string())?;
+    if frame.len() > max_frame_len {
+        return Err(format!(
+            "chat WebSocket binary message exceeds frame limit: {} > {max_frame_len}",
+            frame.len()
+        ));
+    }
     let header = parse_header(frame)?;
     let body_len = usize::try_from(header.body_len)
         .map_err(|_| "chat packet body length does not fit this platform".to_string())?;
@@ -536,6 +590,32 @@ mod tests {
     }
 
     #[test]
+    fn absent_chat_descriptor_is_unavailable_without_an_internal_fallback() {
+        assert_eq!(ChatWebSocketEndpoint::from_services(None).unwrap(), None);
+        assert_eq!(
+            ChatWebSocketEndpoint::from_services(Some(&ClientServices {
+                game: None,
+                chat: None,
+                mail: None,
+                announce: None,
+            }))
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn local_ws_descriptor_remains_explicit() {
+        let endpoint = ChatWebSocketEndpoint::from_service(&ClientServiceEndpoint {
+            host: Some("127.0.0.1".to_string()),
+            port: Some(9001),
+            protocol: Some("ws".to_string()),
+        })
+        .unwrap();
+        assert_eq!(endpoint.url(), "ws://127.0.0.1:9001/");
+    }
+
+    #[test]
     fn rejects_non_websocket_or_non_public_chat_descriptor() {
         assert!(
             ChatWebSocketEndpoint::from_service(&ClientServiceEndpoint {
@@ -565,18 +645,53 @@ mod tests {
         let mut multiple = packet.clone();
         multiple.extend_from_slice(&encode_chat_packet(CHAT_PUSH, 0, &[]).unwrap());
         assert!(decode_chat_binary_frame(&multiple, 64).is_err());
+
+        let oversized = encode_chat_packet(CHAT_PUSH, 0, &[0; 65]).unwrap();
+        assert!(decode_chat_binary_frame(&oversized, 64).is_err());
+    }
+
+    #[test]
+    fn chat_protocol_message_numbers_and_default_frame_limit_match_the_contract() {
+        assert_eq!(DEFAULT_CHAT_MAX_FRAME_LEN, HEADER_LEN + 4_096);
+        assert_eq!(
+            CHAT_PROTOCOL_MESSAGE_TYPES,
+            [
+                (20_001, "ChatAuthReq"),
+                (20_002, "ChatAuthRes"),
+                (20_101, "ChatPrivateReq"),
+                (20_102, "ChatPrivateRes"),
+                (20_103, "ChatGroupReq"),
+                (20_104, "ChatGroupRes"),
+                (20_105, "ChatPush"),
+                (20_201, "GroupCreateReq"),
+                (20_202, "GroupCreateRes"),
+                (20_203, "GroupJoinReq"),
+                (20_204, "GroupJoinRes"),
+                (20_205, "GroupLeaveReq"),
+                (20_206, "GroupLeaveRes"),
+                (20_207, "GroupDismissReq"),
+                (20_208, "GroupDismissRes"),
+                (20_209, "GroupListReq"),
+                (20_210, "GroupListRes"),
+                (20_211, "ChatHistoryReq"),
+                (20_212, "ChatHistoryRes"),
+                (20_301, "MailNotifyPush"),
+                (9_000, "ErrorRes"),
+            ]
+        );
     }
 
     #[test]
     fn response_router_uses_message_type_and_sequence_without_consuming_pushes() {
         let mut router = ChatPacketRouter::default();
-        let (seq, _) = router.encode_request(20_101, 20_102, &[]);
+        let (seq, _) = router.encode_request(CHAT_PRIVATE_REQ, CHAT_PRIVATE_RES, &[]);
         let push = decode_chat_binary_frame(&encode_chat_packet(CHAT_PUSH, seq, &[]).unwrap(), 64)
             .unwrap();
         assert!(matches!(router.route(push), ChatInbound::ChatPush(_)));
 
         let response =
-            decode_chat_binary_frame(&encode_chat_packet(20_102, seq, &[]).unwrap(), 64).unwrap();
+            decode_chat_binary_frame(&encode_chat_packet(CHAT_PRIVATE_RES, seq, &[]).unwrap(), 64)
+                .unwrap();
         assert!(matches!(router.route(response), ChatInbound::Response(_)));
     }
 
