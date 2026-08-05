@@ -5,14 +5,14 @@
 //! The public API is intentionally not bound to UI in this migration stage.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     net::Ipv6Addr,
     sync::{
         Mutex,
         mpsc::{self as std_mpsc, TryRecvError},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bevy::{
@@ -60,6 +60,8 @@ pub const ERROR_RES: u16 = 9_000;
 pub const DEFAULT_CHAT_MAX_BODY_LEN: usize = 4_096;
 pub const DEFAULT_CHAT_MAX_FRAME_LEN: usize = HEADER_LEN + DEFAULT_CHAT_MAX_BODY_LEN;
 pub const MAX_CHAT_RUNTIME_EVENTS_PER_UPDATE: usize = 32;
+pub const MAX_PREAUTH_CHAT_REQUESTS: usize = 16;
+pub const CHAT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub const CHAT_PROTOCOL_MESSAGE_TYPES: &[(u16, &str)] = &[
     (CHAT_AUTH_REQ, "ChatAuthReq"),
@@ -238,6 +240,10 @@ impl ChatPacketRouter {
             _ => ChatInbound::Unknown(packet),
         }
     }
+
+    pub fn cancel(&mut self, key: ChatRequestKey) -> Option<u16> {
+        self.pending.remove(&key)
+    }
 }
 
 /// A WebSocket logical binary message must contain exactly one existing packet.
@@ -355,9 +361,16 @@ impl Default for ChatClientState {
     }
 }
 
-#[derive(Clone, Debug, bevy::prelude::Message)]
+#[derive(Clone, bevy::prelude::Message)]
 pub enum ChatCommand {
-    SetForeground { foreground: bool },
+    SetForeground {
+        foreground: bool,
+    },
+    SendRequest {
+        request_message_type: u16,
+        response_message_type: u16,
+        body: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Debug, bevy::prelude::Message)]
@@ -378,6 +391,28 @@ pub enum ChatEvent {
     TicketRefreshRequired {
         generation: u64,
     },
+    AuthenticationFailed {
+        generation: u64,
+        error_code: String,
+    },
+    Response {
+        generation: u64,
+        message_type: u16,
+        seq: u32,
+    },
+    ChatPush {
+        generation: u64,
+        seq: u32,
+    },
+    MailNotifyPush {
+        generation: u64,
+    },
+    RequestFailed {
+        generation: u64,
+        request_message_type: u16,
+        seq: Option<u32>,
+        error_code: String,
+    },
 }
 
 #[derive(Resource, Default)]
@@ -388,6 +423,16 @@ pub struct ChatRuntimeOwner {
 struct ActiveChatRuntime {
     runtime: ChatRuntime,
     generation: u64,
+    authenticated: bool,
+    router: ChatPacketRouter,
+    pending_deadlines: HashMap<ChatRequestKey, Instant>,
+    preauth_queue: VecDeque<ChatOutboundRequest>,
+}
+
+struct ChatOutboundRequest {
+    request_message_type: u16,
+    response_message_type: u16,
+    body: Vec<u8>,
 }
 
 impl ChatRuntimeOwner {
@@ -555,16 +600,59 @@ impl ChatRuntime {
 fn apply_chat_commands(
     mut commands: MessageReader<ChatCommand>,
     mut state: ResMut<ChatClientState>,
-    owner: ResMut<ChatRuntimeOwner>,
+    mut owner: ResMut<ChatRuntimeOwner>,
+    mut events: MessageWriter<ChatEvent>,
 ) {
     for command in commands.read() {
-        let ChatCommand::SetForeground { foreground } = command;
-        if state.foreground == *foreground {
-            continue;
-        }
-        state.foreground = *foreground;
-        if let Some(active) = owner.active.as_ref() {
-            let _ = active.runtime.set_foreground(*foreground);
+        match command {
+            ChatCommand::SetForeground { foreground } => {
+                if state.foreground == *foreground {
+                    continue;
+                }
+                state.foreground = *foreground;
+                if let Some(active) = owner.active.as_ref() {
+                    let _ = active.runtime.set_foreground(*foreground);
+                }
+            }
+            ChatCommand::SendRequest {
+                request_message_type,
+                response_message_type,
+                body,
+            } => {
+                let Some(active) = owner.active.as_mut() else {
+                    events.write(ChatEvent::RequestFailed {
+                        generation: state.endpoint_generation,
+                        request_message_type: *request_message_type,
+                        seq: None,
+                        error_code: "CHAT_RUNTIME_UNAVAILABLE".to_string(),
+                    });
+                    continue;
+                };
+                if !active.authenticated {
+                    if active.preauth_queue.len() >= MAX_PREAUTH_CHAT_REQUESTS {
+                        events.write(ChatEvent::RequestFailed {
+                            generation: active.generation,
+                            request_message_type: *request_message_type,
+                            seq: None,
+                            error_code: "CHAT_AUTH_PENDING_QUEUE_FULL".to_string(),
+                        });
+                    } else {
+                        active.preauth_queue.push_back(ChatOutboundRequest {
+                            request_message_type: *request_message_type,
+                            response_message_type: *response_message_type,
+                            body: body.clone(),
+                        });
+                    }
+                    continue;
+                }
+                queue_chat_request(
+                    active,
+                    *request_message_type,
+                    *response_message_type,
+                    body,
+                    &mut events,
+                );
+            }
         }
     }
 }
@@ -643,6 +731,10 @@ fn reconcile_chat_runtime(
                 owner.active = Some(ActiveChatRuntime {
                     runtime,
                     generation: session.chat_endpoint_generation,
+                    authenticated: false,
+                    router: ChatPacketRouter::default(),
+                    pending_deadlines: HashMap::new(),
+                    preauth_queue: VecDeque::new(),
                 });
                 set_chat_state(
                     &mut state,
@@ -742,9 +834,17 @@ fn drain_chat_runtime_events(
             ChatRuntimeEvent::TicketRefreshRequired => {
                 events.write(ChatEvent::TicketRefreshRequired { generation });
             }
-            // Stage 4 owns auth-response validation and packet-to-business-event routing.
-            ChatRuntimeEvent::Packet(_) => {}
+            ChatRuntimeEvent::Packet(packet) => {
+                let Some(active) = owner.active.as_mut() else {
+                    continue;
+                };
+                handle_chat_packet(active, packet, &mut state, &mut events);
+            }
         }
+    }
+
+    if let Some(active) = owner.active.as_mut() {
+        expire_chat_requests(active, &mut events);
     }
 
     if drained.channel_closed {
@@ -758,6 +858,217 @@ fn drain_chat_runtime_events(
             None,
         );
     }
+}
+
+fn handle_chat_packet(
+    active: &mut ActiveChatRuntime,
+    packet: Packet,
+    state: &mut ChatClientState,
+    events: &mut MessageWriter<ChatEvent>,
+) {
+    if packet.header.msg_type == CHAT_AUTH_RES {
+        let auth = match chat_pb::ChatAuthRes::decode(packet.body.as_slice()) {
+            Ok(auth) => auth,
+            Err(_) => {
+                fail_chat_protocol(
+                    active.generation,
+                    state,
+                    events,
+                    "CHAT_AUTH_RESPONSE_INVALID",
+                );
+                return;
+            }
+        };
+        if !auth.ok {
+            let error_code = classify_chat_auth_failure(&auth.error_code);
+            active.preauth_queue.clear();
+            events.write(ChatEvent::AuthenticationFailed {
+                generation: active.generation,
+                error_code: error_code.clone(),
+            });
+            set_chat_state(
+                state,
+                events,
+                ChatClientStatus::Failed,
+                active.generation,
+                Some(error_code),
+                None,
+            );
+            return;
+        }
+        active.authenticated = true;
+        set_chat_state(
+            state,
+            events,
+            ChatClientStatus::Ready,
+            active.generation,
+            None,
+            None,
+        );
+        while let Some(request) = active.preauth_queue.pop_front() {
+            queue_chat_request(
+                active,
+                request.request_message_type,
+                request.response_message_type,
+                &request.body,
+                events,
+            );
+        }
+        return;
+    }
+
+    if !active.authenticated {
+        fail_chat_protocol(
+            active.generation,
+            state,
+            events,
+            "CHAT_PREAUTH_PACKET_NOT_ALLOWED",
+        );
+        return;
+    }
+
+    if packet.header.msg_type == ERROR_RES {
+        let error_code = chat_pb::ErrorRes::decode(packet.body.as_slice())
+            .ok()
+            .map(|error| classify_chat_server_error(&error.error_code))
+            .unwrap_or_else(|| "CHAT_ERROR_RESPONSE_INVALID".to_string());
+        events.write(ChatEvent::ProtocolError {
+            generation: active.generation,
+            error_code: error_code.clone(),
+        });
+        set_chat_state(
+            state,
+            events,
+            ChatClientStatus::Failed,
+            active.generation,
+            Some(error_code),
+            None,
+        );
+        return;
+    }
+
+    match active.router.route(packet) {
+        ChatInbound::Response(packet) => {
+            let key = ChatRequestKey {
+                message_type: packet.header.msg_type,
+                seq: packet.header.seq,
+            };
+            active.pending_deadlines.remove(&key);
+            events.write(ChatEvent::Response {
+                generation: active.generation,
+                message_type: packet.header.msg_type,
+                seq: packet.header.seq,
+            });
+        }
+        ChatInbound::ChatPush(packet) => {
+            events.write(ChatEvent::ChatPush {
+                generation: active.generation,
+                seq: packet.header.seq,
+            });
+        }
+        ChatInbound::MailNotifyPush(_) => {
+            events.write(ChatEvent::MailNotifyPush {
+                generation: active.generation,
+            });
+        }
+        ChatInbound::Unknown(_) => {
+            fail_chat_protocol(active.generation, state, events, "CHAT_PACKET_UNKNOWN");
+        }
+    }
+}
+
+fn queue_chat_request(
+    active: &mut ActiveChatRuntime,
+    request_message_type: u16,
+    response_message_type: u16,
+    body: &[u8],
+    events: &mut MessageWriter<ChatEvent>,
+) {
+    let (seq, packet) =
+        active
+            .router
+            .encode_request(request_message_type, response_message_type, body);
+    let key = ChatRequestKey {
+        message_type: response_message_type,
+        seq,
+    };
+    if active.runtime.send_packet(packet).is_err() {
+        active.router.cancel(key);
+        events.write(ChatEvent::RequestFailed {
+            generation: active.generation,
+            request_message_type,
+            seq: Some(seq),
+            error_code: "CHAT_SEND_QUEUE_UNAVAILABLE".to_string(),
+        });
+        return;
+    }
+    active
+        .pending_deadlines
+        .insert(key, Instant::now() + CHAT_REQUEST_TIMEOUT);
+}
+
+fn expire_chat_requests(active: &mut ActiveChatRuntime, events: &mut MessageWriter<ChatEvent>) {
+    let now = Instant::now();
+    let expired: Vec<_> = active
+        .pending_deadlines
+        .iter()
+        .filter_map(|(key, deadline)| (*deadline <= now).then_some(*key))
+        .collect();
+    for key in expired {
+        active.pending_deadlines.remove(&key);
+        let request_message_type = active.router.cancel(key).unwrap_or(0);
+        events.write(ChatEvent::RequestFailed {
+            generation: active.generation,
+            request_message_type,
+            seq: Some(key.seq),
+            error_code: "CHAT_RESPONSE_TIMEOUT".to_string(),
+        });
+    }
+}
+
+fn fail_chat_protocol(
+    generation: u64,
+    state: &mut ChatClientState,
+    events: &mut MessageWriter<ChatEvent>,
+    error_code: &str,
+) {
+    events.write(ChatEvent::ProtocolError {
+        generation,
+        error_code: error_code.to_string(),
+    });
+    set_chat_state(
+        state,
+        events,
+        ChatClientStatus::Failed,
+        generation,
+        Some(error_code.to_string()),
+        None,
+    );
+}
+
+fn classify_chat_auth_failure(error_code: &str) -> String {
+    match error_code.trim().to_ascii_uppercase().as_str() {
+        "TICKET_EXPIRED" => "CHAT_AUTH_TICKET_EXPIRED",
+        "TICKET_REVOKED" | "INVALID_TICKET" | "AUTH_TICKET_INVALID" => "CHAT_AUTH_TICKET_REVOKED",
+        "TICKET_OWNERSHIP_MISMATCH"
+        | "TICKET_VERSION_MISMATCH"
+        | "PLAYER_TICKET_VERSION_MISMATCH" => "CHAT_AUTH_TICKET_OWNERSHIP",
+        "PLAYER_BLOCKED" | "PLAYER_BANNED" => "CHAT_AUTH_PLAYER_BLOCKED",
+        "MSG_RATE_EXCEEDED" => "CHAT_AUTH_RATE_LIMITED",
+        "SERVICE_UNAVAILABLE" | "BLOCKLIST_UNAVAILABLE" => "CHAT_AUTH_SERVICE_UNAVAILABLE",
+        _ => "CHAT_AUTH_REJECTED",
+    }
+    .to_string()
+}
+
+fn classify_chat_server_error(error_code: &str) -> String {
+    match error_code.trim().to_ascii_uppercase().as_str() {
+        "MSG_RATE_EXCEEDED" => "CHAT_RATE_LIMITED",
+        "PREAUTH_MESSAGE_NOT_ALLOWED" => "CHAT_PREAUTH_PACKET_NOT_ALLOWED",
+        "OUTBOUND_QUEUE_FULL" => "CHAT_OUTBOUND_QUEUE_FULL",
+        _ => "CHAT_SERVER_ERROR",
+    }
+    .to_string()
 }
 
 fn shutdown_chat_runtime_on_exit(
@@ -1244,6 +1555,10 @@ mod tests {
                 event_rx: Mutex::new(event_rx),
             },
             generation: 9,
+            authenticated: false,
+            router: ChatPacketRouter::default(),
+            pending_deadlines: HashMap::new(),
+            preauth_queue: VecDeque::new(),
         });
 
         app.update();
@@ -1272,10 +1587,75 @@ mod tests {
                 event_rx: Mutex::new(event_rx),
             },
             generation: 11,
+            authenticated: false,
+            router: ChatPacketRouter::default(),
+            pending_deadlines: HashMap::new(),
+            preauth_queue: VecDeque::new(),
         });
 
         app.world_mut().write_message(AppExit::Success);
         app.update();
         assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
+    }
+
+    #[test]
+    fn chat_auth_response_gates_requests_until_ready() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 13,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (command_tx, mut command_rx) = mpsc::channel(4);
+        let (event_tx, event_rx) = std_mpsc::channel();
+        app.world_mut().resource_mut::<ChatRuntimeOwner>().active = Some(ActiveChatRuntime {
+            runtime: ChatRuntime {
+                command_tx,
+                event_rx: Mutex::new(event_rx),
+            },
+            generation: 13,
+            authenticated: false,
+            router: ChatPacketRouter::default(),
+            pending_deadlines: HashMap::new(),
+            preauth_queue: VecDeque::new(),
+        });
+
+        app.world_mut().write_message(ChatCommand::SendRequest {
+            request_message_type: CHAT_PRIVATE_REQ,
+            response_message_type: CHAT_PRIVATE_RES,
+            body: vec![1],
+        });
+        app.update();
+        assert!(command_rx.try_recv().is_err());
+        assert_ne!(
+            app.world().resource::<ChatClientState>().status,
+            ChatClientStatus::Ready
+        );
+
+        let mut auth_body = Vec::new();
+        chat_pb::ChatAuthRes {
+            ok: true,
+            error_code: String::new(),
+        }
+        .encode(&mut auth_body)
+        .unwrap();
+        event_tx
+            .send(ChatRuntimeEvent::Packet(
+                decode_chat_binary_frame(
+                    &encode_chat_packet(CHAT_AUTH_RES, 1, &auth_body).unwrap(),
+                    DEFAULT_CHAT_MAX_BODY_LEN,
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world().resource::<ChatClientState>().status,
+            ChatClientStatus::Ready
+        );
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ChatRuntimeCommand::Send(_))
+        ));
     }
 }
