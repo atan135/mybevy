@@ -1419,6 +1419,46 @@ mod tests {
         cursor.read(messages).cloned().collect()
     }
 
+    fn read_chat_events(app: &App) -> Vec<ChatEvent> {
+        let messages = app.world().resource::<Messages<ChatEvent>>();
+        let mut cursor = MessageCursor::default();
+        cursor.read(messages).cloned().collect()
+    }
+
+    fn install_fake_runtime(
+        app: &mut App,
+        generation: u64,
+        authenticated: bool,
+        command_capacity: usize,
+    ) -> (
+        std_mpsc::Sender<ChatRuntimeEvent>,
+        mpsc::Receiver<ChatRuntimeCommand>,
+    ) {
+        let (command_tx, command_rx) = mpsc::channel(command_capacity);
+        let (event_tx, event_rx) = std_mpsc::channel();
+        app.world_mut().resource_mut::<ChatRuntimeOwner>().active = Some(ActiveChatRuntime {
+            runtime: ChatRuntime {
+                command_tx,
+                event_rx: Mutex::new(event_rx),
+            },
+            generation,
+            authenticated,
+            router: ChatPacketRouter::default(),
+            pending_deadlines: HashMap::new(),
+            preauth_queue: VecDeque::new(),
+            refresh_requested: false,
+        });
+        (event_tx, command_rx)
+    }
+
+    fn packet(message_type: u16, seq: u32, body: &[u8]) -> Packet {
+        decode_chat_binary_frame(
+            &encode_chat_packet(message_type, seq, body).unwrap(),
+            DEFAULT_CHAT_MAX_BODY_LEN,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn builds_public_wss_endpoint_from_auth_descriptor() {
         let endpoint = ChatWebSocketEndpoint::from_service(&ClientServiceEndpoint {
@@ -1875,5 +1915,227 @@ mod tests {
             command_rx.try_recv(),
             Ok(ChatRuntimeCommand::Send(_))
         ));
+    }
+
+    #[test]
+    fn rejected_chat_authentication_enters_a_typed_failed_state() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 14,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (event_tx, _command_rx) = install_fake_runtime(&mut app, 14, false, 1);
+        let mut auth_body = Vec::new();
+        chat_pb::ChatAuthRes {
+            ok: false,
+            error_code: "PLAYER_BLOCKED".to_string(),
+        }
+        .encode(&mut auth_body)
+        .unwrap();
+        event_tx
+            .send(ChatRuntimeEvent::Packet(packet(
+                CHAT_AUTH_RES,
+                1,
+                &auth_body,
+            )))
+            .unwrap();
+
+        app.update();
+
+        let state = app.world().resource::<ChatClientState>();
+        assert_eq!(state.status, ChatClientStatus::Failed);
+        assert_eq!(
+            state.last_error_code.as_deref(),
+            Some("CHAT_AUTH_PLAYER_BLOCKED")
+        );
+        assert!(read_chat_events(&app).iter().any(|event| matches!(
+            event,
+            ChatEvent::AuthenticationFailed {
+                generation: 14,
+                error_code,
+            } if error_code == "CHAT_AUTH_PLAYER_BLOCKED"
+        )));
+    }
+
+    #[test]
+    fn preauth_queue_is_bounded_before_the_runtime_is_ready() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 15,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (_event_tx, _command_rx) = install_fake_runtime(&mut app, 15, false, 1);
+        for _ in 0..=MAX_PREAUTH_CHAT_REQUESTS {
+            app.world_mut().write_message(ChatCommand::SendRequest {
+                request_message_type: CHAT_PRIVATE_REQ,
+                response_message_type: CHAT_PRIVATE_RES,
+                body: vec![1],
+            });
+        }
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<ChatRuntimeOwner>()
+                .active
+                .as_ref()
+                .unwrap()
+                .preauth_queue
+                .len(),
+            MAX_PREAUTH_CHAT_REQUESTS
+        );
+        assert_eq!(
+            read_chat_events(&app)
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    ChatEvent::RequestFailed { error_code, .. }
+                        if error_code == "CHAT_AUTH_PENDING_QUEUE_FULL"
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn send_queue_backpressure_and_response_timeout_are_typed_failures() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 16,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (_event_tx, mut command_rx) = install_fake_runtime(&mut app, 16, true, 1);
+        for _ in 0..2 {
+            app.world_mut().write_message(ChatCommand::SendRequest {
+                request_message_type: CHAT_PRIVATE_REQ,
+                response_message_type: CHAT_PRIVATE_RES,
+                body: vec![1],
+            });
+        }
+
+        app.update();
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ChatRuntimeCommand::Send(_))
+        ));
+        assert!(read_chat_events(&app).iter().any(|event| matches!(
+            event,
+            ChatEvent::RequestFailed { error_code, .. }
+                if error_code == "CHAT_SEND_QUEUE_UNAVAILABLE"
+        )));
+
+        {
+            let mut owner = app.world_mut().resource_mut::<ChatRuntimeOwner>();
+            let active = owner.active.as_mut().unwrap();
+            for deadline in active.pending_deadlines.values_mut() {
+                *deadline = Instant::now() - Duration::from_secs(1);
+            }
+        }
+        app.update();
+
+        assert!(read_chat_events(&app).iter().any(|event| matches!(
+            event,
+            ChatEvent::RequestFailed { error_code, .. }
+                if error_code == "CHAT_RESPONSE_TIMEOUT"
+        )));
+    }
+
+    #[test]
+    fn interleaved_response_and_pushes_remain_independent() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 17,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (event_tx, mut command_rx) = install_fake_runtime(&mut app, 17, true, 4);
+        app.world_mut().write_message(ChatCommand::SendRequest {
+            request_message_type: CHAT_PRIVATE_REQ,
+            response_message_type: CHAT_PRIVATE_RES,
+            body: vec![1],
+        });
+        app.update();
+        let ChatRuntimeCommand::Send(request) = command_rx.try_recv().unwrap() else {
+            panic!("expected a chat request packet");
+        };
+        let seq = packet(CHAT_PRIVATE_REQ, 1, &[]).header.seq;
+        let request_seq = decode_chat_binary_frame(&request, DEFAULT_CHAT_MAX_BODY_LEN)
+            .unwrap()
+            .header
+            .seq;
+        assert_eq!(request_seq, seq);
+
+        event_tx
+            .send(ChatRuntimeEvent::Packet(packet(CHAT_PUSH, 0, &[])))
+            .unwrap();
+        event_tx
+            .send(ChatRuntimeEvent::Packet(packet(MAIL_NOTIFY_PUSH, 0, &[])))
+            .unwrap();
+        event_tx
+            .send(ChatRuntimeEvent::Packet(packet(
+                CHAT_PRIVATE_RES,
+                request_seq,
+                &[],
+            )))
+            .unwrap();
+        app.update();
+
+        let events = read_chat_events(&app);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ChatEvent::ChatPush {
+                generation: 17,
+                seq: 0
+            }
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ChatEvent::MailNotifyPush { generation: 17 }))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ChatEvent::Response {
+                generation: 17,
+                message_type: CHAT_PRIVATE_RES,
+                seq,
+            } if *seq == request_seq
+        )));
+    }
+
+    #[test]
+    fn logout_invalidates_the_runtime_before_old_generation_events_are_drained() {
+        let mut app = chat_test_app(MyServerSession {
+            chat_endpoint: Some(chat_endpoint()),
+            chat_endpoint_generation: 18,
+            ticket: Some("ticket".to_string()),
+            ..Default::default()
+        });
+        let (event_tx, mut command_rx) = install_fake_runtime(&mut app, 18, true, 1);
+        event_tx
+            .send(ChatRuntimeEvent::Packet(packet(CHAT_PUSH, 0, &[])))
+            .unwrap();
+        app.world_mut().resource_mut::<MyServerSession>().logout();
+
+        app.update();
+
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ChatRuntimeCommand::Disconnect)
+        ));
+        assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
+        assert_eq!(
+            app.world().resource::<ChatClientState>().status,
+            ChatClientStatus::Unavailable
+        );
+        assert!(
+            !read_chat_events(&app)
+                .iter()
+                .any(|event| matches!(event, ChatEvent::ChatPush { .. }))
+        );
     }
 }
