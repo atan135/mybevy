@@ -38,9 +38,9 @@ use crate::game::{
     myserver::{
         GameConnectionState, MyServerSession,
         mail::{
-            MAIL_MAX_DETAIL_ATTACHMENTS, MailAttachment, MailAvailability, MailClientCommand,
-            MailClientError, MailClientState, MailDetailLoadState, MailListLoadState,
-            MailListQuery, MailMarkReadState, MailSummary,
+            MAIL_MAX_DETAIL_ATTACHMENTS, MailAttachment, MailAvailability, MailClaimWorkflow,
+            MailClientCommand, MailClientError, MailClientState, MailDetailLoadState,
+            MailListLoadState, MailListQuery, MailMarkReadState, MailSummary,
         },
     },
     navigation::{AppUiMode, GameRouteCommand},
@@ -1162,6 +1162,34 @@ pub(super) fn handle_gameplay_hud_document_actions(
             }
             continue;
         }
+        if dispatch.action.as_str() == ACTION_MAIN_WORLD_MAIL_CLAIM {
+            if main_world_actions_are_active(entry.as_deref())
+                && let Some(mail) = mail.as_deref()
+                && let Some(mail_id) = main_world_mail_id_action(
+                    dispatch,
+                    ACTION_MAIN_WORLD_MAIL_CLAIM,
+                    MAIN_WORLD_MAIL_CLAIM_NODE,
+                )
+                && mail.can_submit_claim(mail_id)
+                && !mail.selected_mail.as_ref().is_some_and(|detail| {
+                    detail
+                        .summary
+                        .expires_at
+                        .as_deref()
+                        .and_then(rfc3339_unix_seconds)
+                        .is_some_and(|expires_at| {
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .is_ok_and(|now| expires_at <= now.as_secs() as i64)
+                        })
+                })
+            {
+                mail_commands.write(MailClientCommand::Claim {
+                    mail_id: mail_id.to_owned(),
+                });
+            }
+            continue;
+        }
         if !zero_param_action_matches_contract(dispatch) {
             continue;
         }
@@ -1684,6 +1712,21 @@ pub(super) fn sync_main_world_mail_bindings(
         || detail_expired
         || mark_read_loading
         || detail.is_none_or(|detail| !detail.summary.status.eq_ignore_ascii_case("unread"));
+    let claim_workflow = mail.and_then(MailClientState::selected_claim_workflow);
+    let claim_state = if !is_available {
+        "unavailable"
+    } else if detail_expired {
+        "expired"
+    } else {
+        claim_workflow
+            .map(|workflow| workflow.state.binding_value())
+            .unwrap_or("idle")
+    };
+    let claim_loading = claim_state == "submitting";
+    let claim_disabled = !is_available
+        || detail_expired
+        || claim_workflow.is_none_or(|workflow| workflow.state.binding_value() != "available");
+    let claim_label = main_world_mail_claim_label(claim_workflow, detail_expired);
     let error_visible = !error_message.is_empty();
     for (path, value) in vec![
         (
@@ -1778,15 +1821,11 @@ pub(super) fn sync_main_world_mail_bindings(
         ),
         (
             "main_world_mail.claim.state",
-            UiBindingValue::Enum(if availability == "ready" {
-                "idle".to_owned()
-            } else {
-                "unavailable".to_owned()
-            }),
+            UiBindingValue::Enum(claim_state.to_owned()),
         ),
         (
             "main_world_mail.claim.label",
-            UiBindingValue::String(String::new()),
+            UiBindingValue::String(claim_label),
         ),
         (
             "main_world_mail.mark_read_disabled",
@@ -1796,8 +1835,14 @@ pub(super) fn sync_main_world_mail_bindings(
             "main_world_mail.mark_read_loading",
             UiBindingValue::Bool(mark_read_loading),
         ),
-        ("main_world_mail.claim_disabled", UiBindingValue::Bool(true)),
-        ("main_world_mail.claim_loading", UiBindingValue::Bool(false)),
+        (
+            "main_world_mail.claim_disabled",
+            UiBindingValue::Bool(claim_disabled),
+        ),
+        (
+            "main_world_mail.claim_loading",
+            UiBindingValue::Bool(claim_loading),
+        ),
         (
             "main_world_mail.error.code",
             UiBindingValue::String(error_code),
@@ -1944,6 +1989,38 @@ fn main_world_mail_error_message(error: &MailClientError) -> String {
         Some(404) => "This mail is no longer available".to_owned(),
         Some(410) => "This mail has expired".to_owned(),
         _ => "Mail request could not be completed".to_owned(),
+    }
+}
+
+fn main_world_mail_claim_label(workflow: Option<&MailClaimWorkflow>, expired: bool) -> String {
+    if expired {
+        return "Attachments expired".to_owned();
+    }
+    let Some(workflow) = workflow else {
+        return String::new();
+    };
+    match workflow.state.binding_value() {
+        "available" => "Attachments available".to_owned(),
+        "submitting" => "Submitting claim".to_owned(),
+        "processing" | "reconciliation_pending" => "Confirming claim result".to_owned(),
+        "claimed" => "Attachments claimed".to_owned(),
+        "already_claimed" => "Attachments were already claimed".to_owned(),
+        "expired" => "Attachments expired".to_owned(),
+        "retryable_failure" if workflow.player_retryable => {
+            "Claim was not completed; retry is allowed later".to_owned()
+        }
+        "retryable_failure" => "Claim retry requires server confirmation".to_owned(),
+        "blocked_capacity" if workflow.player_retryable => {
+            "Free inventory space, then retry later".to_owned()
+        }
+        "blocked_capacity" => "Inventory capacity blocked this claim".to_owned(),
+        "permanent_failure" => "Claim could not be completed".to_owned(),
+        "manual_review" if workflow.exhausted => {
+            "Claim result is unknown and needs confirmation".to_owned()
+        }
+        "manual_review" => "Claim is under manual review".to_owned(),
+        "unavailable" => "Attachment claiming is temporarily unavailable".to_owned(),
+        _ => String::new(),
     }
 }
 
@@ -2201,6 +2278,7 @@ mod tests {
             style::{UiFontAssets, UiTheme},
         },
     };
+    use crate::game::myserver::mail::MailClaimWorkflowState;
     use bevy::{
         ecs::message::{MessageCursor, Messages},
         picking::Pickable,
@@ -2736,6 +2814,105 @@ mod tests {
     }
 
     #[test]
+    fn main_world_mail_claim_revalidates_authoritative_attachment_and_expiry() {
+        let mut detail = mail_detail_for_test("mail_1", "unread", "Reward");
+        detail.summary.has_attachments = true;
+        detail.attachments = vec![MailAttachment {
+            r#type: "item".to_owned(),
+            id: Some(1001),
+            count: 2,
+            binded: true,
+        }];
+        let mut app = action_test_app();
+        app.world_mut()
+            .insert_resource(MailClientState::ready_with_detail_for_test(
+                vec![detail.summary.clone()],
+                1,
+                crate::game::myserver::mail::MailPagination::default(),
+                detail,
+            ));
+        for (document, owner, source, candidate) in [
+            (
+                MAIN_WORLD_MAIL_DOCUMENT_ID,
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                MAIN_WORLD_MAIL_CLAIM_NODE,
+                "mail_1",
+            ),
+            (
+                MAIN_WORLD_MAIL_DOCUMENT_ID,
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                MAIN_WORLD_MAIL_CLAIM_NODE,
+                "mail_stale",
+            ),
+            (
+                MAIN_WORLD_HUD_DOCUMENT_ID,
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                MAIN_WORLD_MAIL_CLAIM_NODE,
+                "mail_1",
+            ),
+            (
+                MAIN_WORLD_MAIL_DOCUMENT_ID,
+                OWNER_MAIN_WORLD.as_str(),
+                MAIN_WORLD_MAIL_CLAIM_NODE,
+                "mail_1",
+            ),
+            (
+                MAIN_WORLD_MAIL_DOCUMENT_ID,
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                MAIN_WORLD_MAIL_SELECT_NODE,
+                "mail_1",
+            ),
+        ] {
+            app.world_mut().write_message(dispatch(
+                document,
+                owner,
+                ACTION_MAIN_WORLD_MAIL_CLAIM,
+                source,
+                BTreeMap::from([(
+                    "mail_id".to_owned(),
+                    UiActionValue::String(candidate.to_owned()),
+                )]),
+            ));
+        }
+        app.update();
+        assert!(matches!(
+            read_messages::<MailClientCommand>(&app).as_slice(),
+            [MailClientCommand::Claim { mail_id }] if mail_id == "mail_1"
+        ));
+
+        let mut expired = mail_detail_for_test("mail_expired", "unread", "Reward");
+        expired.summary.has_attachments = true;
+        expired.summary.expires_at = Some("2000-01-01T00:00:00Z".to_owned());
+        expired.attachments = vec![MailAttachment {
+            r#type: "item".to_owned(),
+            id: Some(1002),
+            count: 1,
+            binded: true,
+        }];
+        let mut expired_app = action_test_app();
+        expired_app
+            .world_mut()
+            .insert_resource(MailClientState::ready_with_detail_for_test(
+                vec![expired.summary.clone()],
+                1,
+                crate::game::myserver::mail::MailPagination::default(),
+                expired,
+            ));
+        expired_app.world_mut().write_message(dispatch(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_CLAIM,
+            MAIN_WORLD_MAIL_CLAIM_NODE,
+            BTreeMap::from([(
+                "mail_id".to_owned(),
+                UiActionValue::String("mail_expired".to_owned()),
+            )]),
+        ));
+        expired_app.update();
+        assert!(read_messages::<MailClientCommand>(&expired_app).is_empty());
+    }
+
+    #[test]
     fn main_world_home_and_lobby_actions_submit_one_coordinator_intent_without_direct_exit_work() {
         for (action, source, expected_intent) in [
             (
@@ -3224,6 +3401,125 @@ mod tests {
             main_world_mail_binding_value(&app, "main_world_mail.mark_read_disabled"),
             UiBindingValue::Bool(false)
         );
+    }
+
+    #[test]
+    fn main_world_mail_claim_bindings_restore_workflow_states() {
+        let mut detail = mail_detail_for_test("mail_1", "unread", "Reward");
+        detail.summary.has_attachments = true;
+        detail.attachments = vec![MailAttachment {
+            r#type: "item".to_owned(),
+            id: Some(1001),
+            count: 2,
+            binded: true,
+        }];
+        let mail = MailClientState::ready_with_detail_for_test(
+            vec![detail.summary.clone()],
+            1,
+            crate::game::myserver::mail::MailPagination::default(),
+            detail,
+        );
+        let mut app = main_world_mail_binding_test_app(mail);
+        app.update();
+        assert_eq!(
+            main_world_mail_binding_value(&app, "main_world_mail.claim.state"),
+            UiBindingValue::Enum("available".to_owned())
+        );
+        assert_eq!(
+            main_world_mail_binding_value(&app, "main_world_mail.claim_disabled"),
+            UiBindingValue::Bool(false)
+        );
+
+        for (state, player_retryable, exhausted, expected_label, loading) in [
+            (
+                MailClaimWorkflowState::Submitting,
+                false,
+                false,
+                "Submitting claim",
+                true,
+            ),
+            (
+                MailClaimWorkflowState::Processing,
+                false,
+                false,
+                "Confirming claim result",
+                false,
+            ),
+            (
+                MailClaimWorkflowState::Claimed,
+                false,
+                false,
+                "Attachments claimed",
+                false,
+            ),
+            (
+                MailClaimWorkflowState::AlreadyClaimed,
+                false,
+                false,
+                "Attachments were already claimed",
+                false,
+            ),
+            (
+                MailClaimWorkflowState::RetryableFailure,
+                true,
+                false,
+                "Claim was not completed; retry is allowed later",
+                false,
+            ),
+            (
+                MailClaimWorkflowState::BlockedCapacity,
+                true,
+                false,
+                "Free inventory space, then retry later",
+                false,
+            ),
+            (
+                MailClaimWorkflowState::PermanentFailure,
+                false,
+                false,
+                "Claim could not be completed",
+                false,
+            ),
+            (
+                MailClaimWorkflowState::ManualReview,
+                false,
+                true,
+                "Claim result is unknown and needs confirmation",
+                false,
+            ),
+            (
+                MailClaimWorkflowState::Unavailable,
+                false,
+                false,
+                "Attachment claiming is temporarily unavailable",
+                false,
+            ),
+        ] {
+            {
+                let mut mail = app.world_mut().resource_mut::<MailClientState>();
+                let workflow = mail.claim_workflow.as_mut().unwrap();
+                workflow.state = state;
+                workflow.player_retryable = player_retryable;
+                workflow.exhausted = exhausted;
+            }
+            app.update();
+            assert_eq!(
+                main_world_mail_binding_value(&app, "main_world_mail.claim.state"),
+                UiBindingValue::Enum(state.binding_value().to_owned())
+            );
+            assert_eq!(
+                main_world_mail_binding_value(&app, "main_world_mail.claim.label"),
+                UiBindingValue::String(expected_label.to_owned())
+            );
+            assert_eq!(
+                main_world_mail_binding_value(&app, "main_world_mail.claim_loading"),
+                UiBindingValue::Bool(loading)
+            );
+            assert_eq!(
+                main_world_mail_binding_value(&app, "main_world_mail.claim_disabled"),
+                UiBindingValue::Bool(true)
+            );
+        }
     }
 
     #[test]

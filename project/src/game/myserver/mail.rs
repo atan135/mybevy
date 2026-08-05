@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    hash::{DefaultHasher, Hash, Hasher},
     net::Ipv6Addr,
     str::FromStr,
     time::Duration,
@@ -396,6 +397,55 @@ pub struct MailClaimReconciliation {
     next_poll: Option<Timer>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MailClaimWorkflowState {
+    #[default]
+    Idle,
+    Available,
+    Submitting,
+    Processing,
+    ReconciliationPending,
+    Claimed,
+    AlreadyClaimed,
+    Expired,
+    RetryableFailure,
+    BlockedCapacity,
+    PermanentFailure,
+    ManualReview,
+    Unavailable,
+}
+
+impl MailClaimWorkflowState {
+    pub const fn binding_value(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Available => "available",
+            Self::Submitting => "submitting",
+            Self::Processing => "processing",
+            Self::ReconciliationPending => "reconciliation_pending",
+            Self::Claimed => "claimed",
+            Self::AlreadyClaimed => "already_claimed",
+            Self::Expired => "expired",
+            Self::RetryableFailure => "retryable_failure",
+            Self::BlockedCapacity => "blocked_capacity",
+            Self::PermanentFailure => "permanent_failure",
+            Self::ManualReview => "manual_review",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailClaimWorkflow {
+    pub mail_id: String,
+    pub state: MailClaimWorkflowState,
+    pub player_retryable: bool,
+    pub exhausted: bool,
+    pub result_state: Option<String>,
+    pub error_code: Option<String>,
+    post_attempted: bool,
+}
+
 #[derive(Clone, Debug, Resource)]
 pub struct MailClientState {
     pub availability: MailAvailability,
@@ -411,6 +461,7 @@ pub struct MailClientState {
     pub list_stale: bool,
     pub list_load_state: MailListLoadState,
     pub claim_reconciliation: Option<MailClaimReconciliation>,
+    pub claim_workflow: Option<MailClaimWorkflow>,
     pub last_error: Option<MailClientError>,
     pending: HashMap<RequestId, PendingMailRequest>,
     identity: Option<MailIdentity>,
@@ -435,6 +486,7 @@ impl Default for MailClientState {
             list_stale: false,
             list_load_state: MailListLoadState::Idle,
             claim_reconciliation: None,
+            claim_workflow: None,
             last_error: None,
             pending: HashMap::new(),
             identity: None,
@@ -473,6 +525,35 @@ impl MailClientState {
 
     pub fn selected_mail_id(&self) -> Option<&str> {
         self.selected_mail_id.as_deref()
+    }
+
+    pub fn selected_claim_workflow(&self) -> Option<&MailClaimWorkflow> {
+        let selected = self.selected_mail_id()?;
+        self.claim_workflow
+            .as_ref()
+            .filter(|workflow| workflow.mail_id == selected)
+    }
+
+    pub fn can_submit_claim(&self, mail_id: &str) -> bool {
+        self.is_available()
+            && self.selected_mail_id() == Some(mail_id)
+            && self.contains_authoritative_mail(mail_id)
+            && self.selected_mail.as_ref().is_some_and(|detail| {
+                detail.summary.mail_id == mail_id
+                    && !detail.attachments.is_empty()
+                    && !detail.summary.status.eq_ignore_ascii_case("expired")
+                    && !detail.summary.status.eq_ignore_ascii_case("claimed")
+                    && !detail.claim.already_claimed
+            })
+            && self.claim_workflow.as_ref().is_some_and(|workflow| {
+                workflow.mail_id == mail_id
+                    && workflow.state == MailClaimWorkflowState::Available
+                    && !workflow.post_attempted
+            })
+            && self.claim_reconciliation.is_none()
+            && !self.pending.values().any(|pending| {
+                matches!(pending, PendingMailRequest::Claim { mail_id: pending_id, .. } if pending_id == mail_id)
+            })
     }
 
     pub fn dismiss_detail(&mut self) {
@@ -590,6 +671,7 @@ impl MailClientState {
         detail: MailDetail,
     ) -> Self {
         let mut state = Self::ready_with_list_for_test(mails, unread_count, pagination);
+        state.claim_workflow = Some(claim_workflow_from_detail(&detail, false));
         state.selected_mail_id = Some(detail.summary.mail_id.clone());
         state.selected_mail = Some(detail);
         state.detail_load_state = MailDetailLoadState::Ready;
@@ -598,6 +680,7 @@ impl MailClientState {
 
     #[cfg(test)]
     pub(crate) fn show_detail_for_test(&mut self, detail: MailDetail) {
+        self.claim_workflow = Some(claim_workflow_from_detail(&detail, false));
         self.selected_mail_id = Some(detail.summary.mail_id.clone());
         self.selected_mail = Some(detail);
         self.detail_load_state = MailDetailLoadState::Ready;
@@ -619,6 +702,7 @@ impl MailClientState {
         self.list_stale = false;
         self.list_load_state = MailListLoadState::Idle;
         self.claim_reconciliation = None;
+        self.claim_workflow = None;
         self.last_error = None;
         self.pending.clear();
         self.identity = Some(identity);
@@ -634,6 +718,7 @@ struct MailIdentity {
     character_id: Option<String>,
     endpoint: Option<MailHttpEndpoint>,
     endpoint_error: Option<String>,
+    ticket_fingerprint: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -656,6 +741,7 @@ enum PendingMailRequest {
     },
     Claim {
         mail_id: String,
+        identity: Option<MailIdentity>,
     },
 }
 
@@ -789,6 +875,7 @@ fn sync_mail_session(
         character_id: session.character_id.clone(),
         endpoint: session.mail_endpoint.clone(),
         endpoint_error: session.mail_endpoint_error.clone(),
+        ticket_fingerprint: session.ticket.as_deref().map(ticket_fingerprint),
     };
     let availability = mail_availability(&identity, &session);
     if state.identity.as_ref() != Some(&identity) {
@@ -803,6 +890,12 @@ fn sync_mail_session(
         state.availability = availability.clone();
         events.write(MailClientEvent::AvailabilityChanged { availability });
     }
+}
+
+fn ticket_fingerprint(ticket: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    ticket.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn mail_availability(identity: &MailIdentity, session: &MyServerSession) -> MailAvailability {
@@ -913,35 +1006,57 @@ fn handle_mail_commands(
             }
             MailClientCommand::DismissDetail => state.dismiss_detail(),
             MailClientCommand::Claim { mail_id } => {
-                if !valid_mail_id(mail_id) {
+                if state
+                    .claim_workflow
+                    .as_ref()
+                    .is_some_and(|workflow| {
+                        workflow.mail_id == *mail_id
+                            && (workflow.post_attempted
+                                || matches!(
+                                    workflow.state,
+                                    MailClaimWorkflowState::Submitting
+                                        | MailClaimWorkflowState::Processing
+                                        | MailClaimWorkflowState::ReconciliationPending
+                                ))
+                    })
+                    || state.pending.values().any(|pending| {
+                        matches!(pending, PendingMailRequest::Claim { mail_id: pending_id, .. } if pending_id == mail_id)
+                    })
+                    || state
+                        .claim_reconciliation
+                        .as_ref()
+                        .is_some_and(|reconciliation| reconciliation.mail_id == *mail_id)
+                {
+                    continue;
+                }
+                if !valid_mail_id(mail_id) || !state.can_submit_claim(mail_id) {
                     reject_request(
                         &mut state,
                         &mut events,
                         MailOperation::Claim,
-                        "INVALID_MAIL_ID",
+                        "MAIL_CLAIM_NOT_AVAILABLE",
                     );
-                    continue;
-                }
-                if state
-                    .claim_reconciliation
-                    .as_ref()
-                    .is_some_and(|reconciliation| reconciliation.mail_id == *mail_id)
-                {
-                    events.write(MailClientEvent::ClaimReconciliationStarted {
-                        mail_id: mail_id.clone(),
-                    });
-                    continue;
-                }
-                if state.pending.values().any(|pending| {
-                    matches!(pending, PendingMailRequest::Claim { mail_id: pending_id } if pending_id == mail_id)
-                }) {
                     continue;
                 }
                 let Some((endpoint, ticket)) =
                     request_context(&state, &session, MailOperation::Claim, &mut events)
                 else {
+                    set_claim_workflow_state(
+                        &mut state,
+                        mail_id,
+                        MailClaimWorkflowState::Unavailable,
+                    );
                     continue;
                 };
+                if let Some(workflow) = state
+                    .claim_workflow
+                    .as_mut()
+                    .filter(|workflow| workflow.mail_id == *mail_id)
+                {
+                    workflow.state = MailClaimWorkflowState::Submitting;
+                    workflow.post_attempted = true;
+                    workflow.error_code = None;
+                }
                 let request = build_mutation_request(
                     &endpoint,
                     &ticket,
@@ -950,10 +1065,12 @@ fn handle_mail_commands(
                     HttpMethod::Post,
                     MAIL_CLAIM_TIMEOUT,
                 );
+                let identity = state.identity.clone();
                 queue_request(
                     &mut state,
                     PendingMailRequest::Claim {
                         mail_id: mail_id.clone(),
+                        identity,
                     },
                     request,
                     &mut network_commands,
@@ -1017,8 +1134,25 @@ fn handle_mail_network_events(
                     continue;
                 };
                 match pending {
-                    PendingMailRequest::Claim { mail_id } => {
-                        begin_claim_reconciliation(&mut state, mail_id, &mut events);
+                    PendingMailRequest::Claim { mail_id, identity } => {
+                        if identity == state.identity {
+                            begin_claim_reconciliation(
+                                &mut state,
+                                mail_id,
+                                MailClaimWorkflowState::ReconciliationPending,
+                                &mut events,
+                            );
+                        }
+                    }
+                    PendingMailRequest::Detail {
+                        mail_id,
+                        reconciliation_poll: true,
+                        identity,
+                        ..
+                    } => {
+                        if identity == state.identity {
+                            continue_claim_reconciliation(&mut state, &mail_id, &mut events);
+                        }
                     }
                     PendingMailRequest::List {
                         generation,
@@ -1162,7 +1296,9 @@ fn handle_mail_response(
                     MailOperation::Detail,
                     "MAIL_DETAIL_LIMIT_EXCEEDED",
                 );
-                if !reconciliation_poll {
+                if reconciliation_poll {
+                    continue_claim_reconciliation(state, &mail_id, events);
+                } else {
                     set_detail_failure_from_last_error(state);
                 }
                 return;
@@ -1178,10 +1314,22 @@ fn handle_mail_response(
                     MailOperation::Detail,
                     "MAIL_RESPONSE_INVALID",
                 );
-                if !reconciliation_poll {
+                if reconciliation_poll {
+                    continue_claim_reconciliation(state, &mail_id, events);
+                } else {
                     set_detail_failure_from_last_error(state);
                 }
                 return;
+            }
+            if reconciliation_poll {
+                apply_reconciled_claim_detail(state, &mail_id, &response.mail);
+            } else {
+                let post_attempted = state
+                    .claim_workflow
+                    .as_ref()
+                    .is_some_and(|workflow| workflow.mail_id == mail_id && workflow.post_attempted);
+                state.claim_workflow =
+                    Some(claim_workflow_from_detail(&response.mail, post_attempted));
             }
             if !reconciliation_poll || state.selected_mail_id.as_deref() == Some(&mail_id) {
                 let expired = response.mail.summary.status.eq_ignore_ascii_case("expired");
@@ -1201,6 +1349,16 @@ fn handle_mail_response(
             });
             if reconciliation_poll {
                 apply_reconciled_claim_status(state, mail_id, claim_status, events);
+            } else if matches!(
+                claim_status.as_deref(),
+                Some("processing" | "reconciliation_pending")
+            ) {
+                let workflow_state = if claim_status.as_deref() == Some("processing") {
+                    MailClaimWorkflowState::Processing
+                } else {
+                    MailClaimWorkflowState::ReconciliationPending
+                };
+                begin_claim_reconciliation(state, mail_id, workflow_state, events);
             }
         }
         PendingMailRequest::MarkRead {
@@ -1240,9 +1398,17 @@ fn handle_mail_response(
                 already_read: response.already_read,
             });
         }
-        PendingMailRequest::Claim { mail_id } => {
+        PendingMailRequest::Claim { mail_id, identity } => {
+            if identity != state.identity {
+                return;
+            }
             if status == 202 {
-                begin_claim_reconciliation(state, mail_id, events);
+                begin_claim_reconciliation(
+                    state,
+                    mail_id,
+                    MailClaimWorkflowState::ReconciliationPending,
+                    events,
+                );
                 return;
             }
             let Some(response) = parse_success::<MailClaimResponse>(
@@ -1252,15 +1418,52 @@ fn handle_mail_response(
                 body,
                 events,
             ) else {
+                let error = state.last_error.clone();
+                if error.as_ref().is_some_and(claim_entry_is_paused) {
+                    update_claim_workflow_error(
+                        state,
+                        &mail_id,
+                        MailClaimWorkflowState::Unavailable,
+                        error.as_ref(),
+                    );
+                } else if status >= 500 {
+                    begin_claim_reconciliation(
+                        state,
+                        mail_id,
+                        MailClaimWorkflowState::ReconciliationPending,
+                        events,
+                    );
+                } else {
+                    update_claim_workflow_error(
+                        state,
+                        &mail_id,
+                        MailClaimWorkflowState::PermanentFailure,
+                        error.as_ref(),
+                    );
+                }
                 return;
             };
             if !response.ok || (!response.mail_id.is_empty() && response.mail_id != mail_id) {
                 reject_request(state, events, MailOperation::Claim, "MAIL_CLAIM_REJECTED");
+                let error = state.last_error.clone();
+                update_claim_workflow_error(
+                    state,
+                    &mail_id,
+                    MailClaimWorkflowState::PermanentFailure,
+                    error.as_ref(),
+                );
                 return;
             }
             let claim_status = response.claim_status.clone();
             if !claim_status.as_deref().is_some_and(valid_claim_status) {
                 reject_request(state, events, MailOperation::Claim, "MAIL_RESPONSE_INVALID");
+                let error = state.last_error.clone();
+                update_claim_workflow_error(
+                    state,
+                    &mail_id,
+                    MailClaimWorkflowState::ManualReview,
+                    error.as_ref(),
+                );
                 return;
             }
             if response.processing
@@ -1269,10 +1472,18 @@ fn handle_mail_response(
                     Some("processing" | "reconciliation_pending")
                 )
             {
-                begin_claim_reconciliation(state, mail_id, events);
+                let workflow_state = if claim_status.as_deref() == Some("processing") {
+                    MailClaimWorkflowState::Processing
+                } else {
+                    MailClaimWorkflowState::ReconciliationPending
+                };
+                apply_claim_response_to_detail(state, &mail_id, &response);
+                begin_claim_reconciliation(state, mail_id, workflow_state, events);
                 return;
             }
             apply_claim_to_cache(state, &mail_id, &response);
+            apply_claim_response_to_detail(state, &mail_id, &response);
+            set_claim_workflow_from_response(state, &mail_id, &response);
             state.last_error = None;
             events.write(MailClientEvent::ClaimUpdated {
                 mail_id,
@@ -1714,9 +1925,178 @@ fn reject_request(
     events.write(MailClientEvent::RequestFailed { error });
 }
 
+fn claim_workflow_from_detail(detail: &MailDetail, post_attempted: bool) -> MailClaimWorkflow {
+    let state = if detail.summary.status.eq_ignore_ascii_case("expired") {
+        MailClaimWorkflowState::Expired
+    } else if detail.claim.already_claimed {
+        MailClaimWorkflowState::AlreadyClaimed
+    } else {
+        match detail.claim.claim_status.as_deref() {
+            Some("claimed") => MailClaimWorkflowState::Claimed,
+            Some("processing") => MailClaimWorkflowState::Processing,
+            Some("reconciliation_pending") => MailClaimWorkflowState::ReconciliationPending,
+            Some("retryable_failure") => MailClaimWorkflowState::RetryableFailure,
+            Some("blocked_capacity") => MailClaimWorkflowState::BlockedCapacity,
+            Some("permanent_failure") => MailClaimWorkflowState::PermanentFailure,
+            Some("manual_review") => MailClaimWorkflowState::ManualReview,
+            _ if detail.attachments.is_empty() => MailClaimWorkflowState::Idle,
+            _ => MailClaimWorkflowState::Available,
+        }
+    };
+    MailClaimWorkflow {
+        mail_id: detail.summary.mail_id.clone(),
+        state,
+        player_retryable: detail.claim.player_retryable,
+        exhausted: false,
+        result_state: public_result_state(detail.claim.result_state.as_deref()),
+        error_code: public_claim_error(detail.claim.error.as_deref()),
+        post_attempted,
+    }
+}
+
+fn set_claim_workflow_state(
+    state: &mut MailClientState,
+    mail_id: &str,
+    workflow_state: MailClaimWorkflowState,
+) {
+    if let Some(workflow) = state
+        .claim_workflow
+        .as_mut()
+        .filter(|workflow| workflow.mail_id == mail_id)
+    {
+        workflow.state = workflow_state;
+        return;
+    }
+    state.claim_workflow = Some(MailClaimWorkflow {
+        mail_id: mail_id.to_owned(),
+        state: workflow_state,
+        player_retryable: false,
+        exhausted: false,
+        result_state: None,
+        error_code: None,
+        post_attempted: true,
+    });
+}
+
+fn update_claim_workflow_error(
+    state: &mut MailClientState,
+    mail_id: &str,
+    workflow_state: MailClaimWorkflowState,
+    error: Option<&MailClientError>,
+) {
+    set_claim_workflow_state(state, mail_id, workflow_state);
+    if let Some(workflow) = state.claim_workflow.as_mut() {
+        workflow.error_code = error.map(|error| error.code.clone());
+        workflow.player_retryable = false;
+    }
+}
+
+fn claim_entry_is_paused(error: &MailClientError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "MAIL_CLAIM_DISABLED"
+            | "MAIL_CLAIM_PAUSED"
+            | "MAIL_CLAIM_ENTRY_PAUSED"
+            | "MAIL_CLAIM_UNAVAILABLE"
+    )
+}
+
+fn public_result_state(value: Option<&str>) -> Option<String> {
+    value
+        .filter(|value| matches!(*value, "success" | "failure" | "unknown" | "pending"))
+        .map(str::to_owned)
+}
+
+fn public_claim_error(value: Option<&str>) -> Option<String> {
+    value
+        .filter(|value| valid_public_error_code(value))
+        .map(str::to_owned)
+}
+
+fn set_claim_workflow_from_response(
+    state: &mut MailClientState,
+    mail_id: &str,
+    response: &MailClaimResponse,
+) {
+    let workflow_state = if response.already_claimed {
+        MailClaimWorkflowState::AlreadyClaimed
+    } else {
+        match response.claim_status.as_deref() {
+            Some("claimed") => MailClaimWorkflowState::Claimed,
+            Some("processing") => MailClaimWorkflowState::Processing,
+            Some("reconciliation_pending") => MailClaimWorkflowState::ReconciliationPending,
+            Some("retryable_failure") => MailClaimWorkflowState::RetryableFailure,
+            Some("blocked_capacity") => MailClaimWorkflowState::BlockedCapacity,
+            Some("permanent_failure") => MailClaimWorkflowState::PermanentFailure,
+            Some("manual_review") => MailClaimWorkflowState::ManualReview,
+            _ => MailClaimWorkflowState::ManualReview,
+        }
+    };
+    set_claim_workflow_state(state, mail_id, workflow_state);
+    if let Some(workflow) = state.claim_workflow.as_mut() {
+        workflow.player_retryable = response.player_retryable;
+        workflow.result_state = public_result_state(response.result_state.as_deref());
+        workflow.error_code = public_claim_error(response.error.as_deref());
+        workflow.exhausted = false;
+    }
+}
+
+fn apply_claim_response_to_detail(
+    state: &mut MailClientState,
+    mail_id: &str,
+    response: &MailClaimResponse,
+) {
+    let Some(detail) = state
+        .selected_mail
+        .as_mut()
+        .filter(|detail| detail.summary.mail_id == mail_id)
+    else {
+        return;
+    };
+    if let Some(status) = response.status.as_ref() {
+        detail.summary.status = status.clone();
+    }
+    detail.summary.read_at = response.read_at.clone().or(detail.summary.read_at.take());
+    detail.summary.claimed_at = response
+        .claimed_at
+        .clone()
+        .or(detail.summary.claimed_at.take());
+    if !response.attachments.is_empty() {
+        detail.attachments = response.attachments.clone();
+    }
+    detail.claim.claim_status = response.claim_status.clone();
+    detail.claim.already_claimed = response.already_claimed;
+    detail.claim.processing = response.processing;
+    detail.claim.retryable = response.retryable;
+    detail.claim.player_retryable = response.player_retryable;
+    detail.claim.attempts = response.attempts;
+    detail.claim.result_state = public_result_state(response.result_state.as_deref());
+    detail.claim.error = public_claim_error(response.error.as_deref());
+}
+
+fn apply_reconciled_claim_detail(state: &mut MailClientState, mail_id: &str, detail: &MailDetail) {
+    let was_unread = state
+        .mails
+        .iter()
+        .find(|summary| summary.mail_id == mail_id)
+        .is_some_and(|summary| summary.status.eq_ignore_ascii_case("unread"));
+    if let Some(summary) = state
+        .mails
+        .iter_mut()
+        .find(|summary| summary.mail_id == mail_id)
+    {
+        *summary = detail.summary.clone();
+    }
+    if was_unread && !detail.summary.status.eq_ignore_ascii_case("unread") {
+        state.unread_count = state.unread_count.map(|count| count.saturating_sub(1));
+    }
+    state.claim_workflow = Some(claim_workflow_from_detail(detail, true));
+}
+
 fn begin_claim_reconciliation(
     state: &mut MailClientState,
     mail_id: String,
+    workflow_state: MailClaimWorkflowState,
     events: &mut MessageWriter<MailClientEvent>,
 ) {
     if state
@@ -1724,6 +2104,7 @@ fn begin_claim_reconciliation(
         .as_ref()
         .is_some_and(|reconciliation| reconciliation.mail_id == mail_id)
     {
+        set_claim_workflow_state(state, &mail_id, workflow_state);
         return;
     }
     state.claim_reconciliation = Some(MailClaimReconciliation {
@@ -1731,6 +2112,7 @@ fn begin_claim_reconciliation(
         polls_completed: 0,
         next_poll: Some(Timer::new(Duration::from_secs(1), TimerMode::Once)),
     });
+    set_claim_workflow_state(state, &mail_id, workflow_state);
     state.last_error = None;
     events.write(MailClientEvent::ClaimReconciliationStarted { mail_id });
 }
@@ -1764,14 +2146,21 @@ fn continue_claim_reconciliation(
         return;
     }
     if reconciliation.polls_completed >= MAX_RECONCILIATION_POLLS {
-        let claim_status = state
-            .selected_mail
-            .as_ref()
-            .and_then(|mail| mail.claim.claim_status.clone());
         state.claim_reconciliation = None;
+        if let Some(workflow) = state
+            .claim_workflow
+            .as_mut()
+            .filter(|workflow| workflow.mail_id == mail_id)
+        {
+            workflow.state = MailClaimWorkflowState::ManualReview;
+            workflow.exhausted = true;
+            workflow.player_retryable = false;
+            workflow.result_state = Some("unknown".to_owned());
+            workflow.error_code = Some("MAIL_CLAIM_RECONCILIATION_EXHAUSTED".to_owned());
+        }
         events.write(MailClientEvent::ClaimReconciliationSettled {
             mail_id: mail_id.to_string(),
-            claim_status,
+            claim_status: Some("manual_review".to_owned()),
         });
         return;
     }
@@ -1832,6 +2221,11 @@ fn apply_claim_to_cache(state: &mut MailClientState, mail_id: &str, response: &M
     if !claimed {
         return;
     }
+    let was_unread = state
+        .mails
+        .iter()
+        .find(|mail| mail.mail_id == mail_id)
+        .is_some_and(|mail| mail.status.eq_ignore_ascii_case("unread"));
     if let Some(summary) = state.mails.iter_mut().find(|mail| mail.mail_id == mail_id) {
         summary.status = response
             .status
@@ -1856,6 +2250,9 @@ fn apply_claim_to_cache(state: &mut MailClientState, mail_id: &str, response: &M
         detail.claim.processing = false;
         detail.claim.retryable = response.retryable;
         detail.claim.player_retryable = response.player_retryable;
+    }
+    if was_unread {
+        state.unread_count = state.unread_count.map(|count| count.saturating_sub(1));
     }
 }
 
@@ -1973,6 +2370,39 @@ mod tests {
             claimed_at: None,
             expires_at: None,
         }
+    }
+
+    fn seed_claimable_mail(app: &mut App, mail_id: &str) {
+        app.update();
+        let mut mail = summary(mail_id, "unread");
+        mail.has_attachments = true;
+        let detail = MailDetail {
+            summary: mail.clone(),
+            content: "Reward".to_owned(),
+            attachments: vec![MailAttachment {
+                r#type: "item".to_owned(),
+                id: Some(1001),
+                count: 2,
+                binded: true,
+            }],
+            claim: MailClaimSummary::default(),
+        };
+        let mut state = app.world_mut().resource_mut::<MailClientState>();
+        state.mails = vec![mail];
+        state.unread_count = Some(1);
+        state.list_load_state = MailListLoadState::Ready;
+        state.selected_mail_id = Some(mail_id.to_owned());
+        state.selected_mail = Some(detail.clone());
+        state.detail_load_state = MailDetailLoadState::Ready;
+        state.claim_workflow = Some(claim_workflow_from_detail(&detail, false));
+    }
+
+    fn submit_claim(app: &mut App, mail_id: &str) -> HttpRequest {
+        app.world_mut().write_message(MailClientCommand::Claim {
+            mail_id: mail_id.to_owned(),
+        });
+        app.update();
+        http_requests(app).pop().unwrap()
     }
 
     #[test]
@@ -2631,11 +3061,8 @@ mod tests {
     #[test]
     fn unknown_claim_converges_through_detail_without_another_claim_post() {
         let mut app = test_app(session_with_mail());
-        app.world_mut().write_message(MailClientCommand::Claim {
-            mail_id: "mail_1".to_string(),
-        });
-        app.update();
-        let claim = http_requests(&app).pop().unwrap();
+        seed_claimable_mail(&mut app, "mail_1");
+        let claim = submit_claim(&mut app, "mail_1");
         assert!(matches!(claim.method, HttpMethod::Post));
 
         respond(
@@ -2689,6 +3116,267 @@ mod tests {
                 .claim_reconciliation
                 .is_none()
         );
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(
+            state.claim_workflow.as_ref().map(|workflow| workflow.state),
+            Some(MailClaimWorkflowState::AlreadyClaimed)
+        );
+        assert_eq!(state.mails[0].status, "claimed");
+        assert_eq!(state.unread_count, Some(0));
+    }
+
+    #[test]
+    fn claim_requires_ready_authoritative_attachment_and_posts_only_once() {
+        let mut app = test_app(session_with_mail());
+        app.update();
+        {
+            let detail = MailDetail {
+                summary: summary("mail_1", "unread"),
+                content: String::new(),
+                attachments: Vec::new(),
+                claim: MailClaimSummary::default(),
+            };
+            let mut state = app.world_mut().resource_mut::<MailClientState>();
+            state.mails = vec![detail.summary.clone()];
+            state.selected_mail_id = Some("mail_1".to_owned());
+            state.selected_mail = Some(detail.clone());
+            state.detail_load_state = MailDetailLoadState::Ready;
+            state.claim_workflow = Some(claim_workflow_from_detail(&detail, false));
+        }
+        assert!(
+            !app.world()
+                .resource::<MailClientState>()
+                .can_submit_claim("mail_1")
+        );
+        app.world_mut().write_message(MailClientCommand::Claim {
+            mail_id: "mail_1".to_owned(),
+        });
+        app.update();
+        assert!(http_requests(&app).is_empty());
+
+        seed_claimable_mail(&mut app, "mail_1");
+        assert!(
+            app.world()
+                .resource::<MailClientState>()
+                .can_submit_claim("mail_1")
+        );
+        let claim = submit_claim(&mut app, "mail_1");
+        assert!(matches!(claim.method, HttpMethod::Post));
+        assert_eq!(
+            app.world()
+                .resource::<MailClientState>()
+                .claim_workflow
+                .as_ref()
+                .map(|workflow| workflow.state),
+            Some(MailClaimWorkflowState::Submitting)
+        );
+        app.world_mut().write_message(MailClientCommand::Claim {
+            mail_id: "mail_1".to_owned(),
+        });
+        app.update();
+        assert_eq!(
+            http_requests(&app)
+                .iter()
+                .filter(|request| matches!(request.method, HttpMethod::Post))
+                .count(),
+            1
+        );
+
+        app.world_mut().write_message(NetworkEvent::HttpError {
+            request_id: claim.request_id,
+            error: "connection reset".to_owned(),
+        });
+        app.update();
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(
+            state.claim_workflow.as_ref().map(|workflow| workflow.state),
+            Some(MailClaimWorkflowState::ReconciliationPending)
+        );
+        assert!(state.claim_reconciliation.is_some());
+    }
+
+    #[test]
+    fn claim_terminal_states_preserve_server_retryability_and_distinguish_already_claimed() {
+        for (status, extra, expected) in [
+            (
+                "claimed",
+                r#""claimed":true"#,
+                MailClaimWorkflowState::Claimed,
+            ),
+            (
+                "claimed",
+                r#""already_claimed":true"#,
+                MailClaimWorkflowState::AlreadyClaimed,
+            ),
+            (
+                "retryable_failure",
+                r#""player_retryable":true,"result_state":"failure","error":"MAIL_INVENTORY_BUSY""#,
+                MailClaimWorkflowState::RetryableFailure,
+            ),
+            (
+                "blocked_capacity",
+                r#""player_retryable":true,"result_state":"failure","error":"MAIL_INVENTORY_CAPACITY""#,
+                MailClaimWorkflowState::BlockedCapacity,
+            ),
+            (
+                "permanent_failure",
+                r#""result_state":"failure","error":"MAIL_REWARD_INVALID""#,
+                MailClaimWorkflowState::PermanentFailure,
+            ),
+            (
+                "manual_review",
+                r#""result_state":"unknown","error":"MAIL_CLAIM_REVIEW_REQUIRED""#,
+                MailClaimWorkflowState::ManualReview,
+            ),
+        ] {
+            let mut app = test_app(session_with_mail());
+            seed_claimable_mail(&mut app, "mail_1");
+            let claim = submit_claim(&mut app, "mail_1");
+            let body =
+                format!(r#"{{"ok":true,"mail_id":"mail_1","claim_status":"{status}",{extra}}}"#);
+            respond(&mut app, &claim, 200, &body);
+            let workflow = app
+                .world()
+                .resource::<MailClientState>()
+                .claim_workflow
+                .as_ref()
+                .unwrap();
+            assert_eq!(workflow.state, expected, "claim status {status}");
+            if matches!(
+                expected,
+                MailClaimWorkflowState::RetryableFailure | MailClaimWorkflowState::BlockedCapacity
+            ) {
+                assert!(workflow.player_retryable);
+            }
+        }
+    }
+
+    #[test]
+    fn claim_entry_pause_is_unavailable_without_starting_reconciliation() {
+        let mut app = test_app(session_with_mail());
+        seed_claimable_mail(&mut app, "mail_1");
+        let claim = submit_claim(&mut app, "mail_1");
+        respond(
+            &mut app,
+            &claim,
+            503,
+            r#"{"ok":false,"error":"MAIL_CLAIM_PAUSED","message":"paused"}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(
+            state.claim_workflow.as_ref().map(|workflow| workflow.state),
+            Some(MailClaimWorkflowState::Unavailable)
+        );
+        assert!(state.claim_reconciliation.is_none());
+    }
+
+    #[test]
+    fn reconciliation_survives_detail_dismiss_and_exhausts_after_three_gets() {
+        let mut app = test_app(session_with_mail());
+        seed_claimable_mail(&mut app, "mail_1");
+        let claim = submit_claim(&mut app, "mail_1");
+        respond(&mut app, &claim, 202, "");
+        app.world_mut()
+            .write_message(MailClientCommand::DismissDetail);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<MailClientState>()
+                .claim_reconciliation
+                .is_some()
+        );
+
+        for poll in 1..=3 {
+            app.world_mut()
+                .write_message(MailClientCommand::PollClaimReconciliation {
+                    mail_id: "mail_1".to_owned(),
+                });
+            app.update();
+            let detail = http_requests(&app).pop().unwrap();
+            assert!(matches!(detail.method, HttpMethod::Get));
+            respond(
+                &mut app,
+                &detail,
+                200,
+                r#"{"ok":true,"mail":{"mail_id":"mail_1","status":"claiming","claim":{"claim_status":"reconciliation_pending"}}}"#,
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<MailClientState>()
+                    .claim_reconciliation
+                    .is_some(),
+                poll < 3
+            );
+        }
+        let state = app.world().resource::<MailClientState>();
+        let workflow = state.claim_workflow.as_ref().unwrap();
+        assert_eq!(workflow.state, MailClaimWorkflowState::ManualReview);
+        assert!(workflow.exhausted);
+        assert_eq!(workflow.result_state.as_deref(), Some("unknown"));
+        assert_eq!(
+            workflow.error_code.as_deref(),
+            Some("MAIL_CLAIM_RECONCILIATION_EXHAUSTED")
+        );
+    }
+
+    #[test]
+    fn reconciliation_get_network_error_schedules_the_next_bounded_poll() {
+        let mut app = test_app(session_with_mail());
+        seed_claimable_mail(&mut app, "mail_1");
+        let claim = submit_claim(&mut app, "mail_1");
+        respond(&mut app, &claim, 202, "");
+        app.world_mut()
+            .write_message(MailClientCommand::PollClaimReconciliation {
+                mail_id: "mail_1".to_owned(),
+            });
+        app.update();
+        let detail = http_requests(&app).pop().unwrap();
+        app.world_mut().write_message(NetworkEvent::HttpError {
+            request_id: detail.request_id,
+            error: "connection reset".to_owned(),
+        });
+        app.update();
+        let reconciliation = app
+            .world()
+            .resource::<MailClientState>()
+            .claim_reconciliation
+            .as_ref()
+            .unwrap();
+        assert_eq!(reconciliation.polls_completed, 1);
+        assert!(reconciliation.next_poll.is_some());
+        assert_eq!(
+            app.world()
+                .resource::<MailClientState>()
+                .claim_workflow
+                .as_ref()
+                .map(|workflow| workflow.state),
+            Some(MailClaimWorkflowState::ReconciliationPending)
+        );
+    }
+
+    #[test]
+    fn ticket_change_clears_claim_workflow_and_discards_late_claim_response() {
+        let mut app = test_app(session_with_mail());
+        seed_claimable_mail(&mut app, "mail_1");
+        let claim = submit_claim(&mut app, "mail_1");
+        app.world_mut().resource_mut::<MyServerSession>().ticket =
+            Some("rotated-character-ticket".to_owned());
+        app.update();
+        {
+            let state = app.world().resource::<MailClientState>();
+            assert!(state.claim_workflow.is_none());
+            assert!(state.claim_reconciliation.is_none());
+            assert!(state.mails.is_empty());
+        }
+        respond(
+            &mut app,
+            &claim,
+            200,
+            r#"{"ok":true,"mail_id":"mail_1","claim_status":"claimed","claimed":true}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert!(state.claim_workflow.is_none());
+        assert!(state.mails.is_empty());
     }
 
     #[test]
