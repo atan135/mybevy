@@ -346,6 +346,9 @@ pub struct ChatClientState {
     pub last_error_code: Option<String>,
     pub foreground: bool,
     pub reconnect_attempt: Option<u32>,
+    pub pending_request_count: usize,
+    pub preauth_queue_depth: usize,
+    pub ticket_refresh_in_flight: bool,
 }
 
 impl Default for ChatClientState {
@@ -357,6 +360,9 @@ impl Default for ChatClientState {
             last_error_code: None,
             foreground: true,
             reconnect_attempt: None,
+            pending_request_count: 0,
+            preauth_queue_depth: 0,
+            ticket_refresh_in_flight: false,
         }
     }
 }
@@ -476,6 +482,7 @@ impl Plugin for ChatPlugin {
                     reconcile_chat_runtime,
                     drain_chat_runtime_events,
                     handle_chat_ticket_refresh_result,
+                    sync_chat_diagnostics,
                     shutdown_chat_runtime_on_exit,
                 )
                     .chain(),
@@ -810,17 +817,18 @@ fn drain_chat_runtime_events(
                 None,
                 None,
             ),
-            ChatRuntimeEvent::Disconnected { .. } => {
+            ChatRuntimeEvent::Disconnected { reason } => {
+                let error_code = classify_chat_transport_failure(&reason);
                 events.write(ChatEvent::RuntimeDisconnected {
                     generation,
-                    error_code: "CHAT_TRANSPORT_DISCONNECTED".to_string(),
+                    error_code: error_code.to_string(),
                 });
                 set_chat_state(
                     &mut state,
                     &mut events,
                     ChatClientStatus::Disconnected,
                     generation,
-                    Some("CHAT_TRANSPORT_DISCONNECTED".to_string()),
+                    Some(error_code.to_string()),
                     None,
                 );
             }
@@ -904,6 +912,18 @@ fn handle_chat_ticket_refresh_result(
         Some("CHAT_TICKET_REFRESH_FAILED".to_string()),
         None,
     );
+}
+
+fn sync_chat_diagnostics(mut state: ResMut<ChatClientState>, owner: Res<ChatRuntimeOwner>) {
+    let Some(active) = owner.active.as_ref() else {
+        state.pending_request_count = 0;
+        state.preauth_queue_depth = 0;
+        state.ticket_refresh_in_flight = false;
+        return;
+    };
+    state.pending_request_count = active.pending_deadlines.len();
+    state.preauth_queue_depth = active.preauth_queue.len();
+    state.ticket_refresh_in_flight = active.refresh_requested;
 }
 
 fn handle_chat_packet(
@@ -1135,6 +1155,15 @@ fn classify_chat_auth_failure(error_code: &str) -> String {
         _ => "CHAT_AUTH_REJECTED",
     }
     .to_string()
+}
+
+fn classify_chat_transport_failure(reason: &str) -> &'static str {
+    let reason = reason.to_ascii_lowercase();
+    if reason.contains("tls") || reason.contains("certificate") || reason.contains("handshake") {
+        "CHAT_TLS_FAILED"
+    } else {
+        "CHAT_TRANSPORT_DISCONNECTED"
+    }
 }
 
 fn classify_chat_server_error(error_code: &str) -> String {
@@ -1607,6 +1636,14 @@ mod tests {
         assert!(delay > Duration::ZERO);
         assert!(ticket_error_requires_refresh("ticket_expired"));
         assert!(!ticket_error_requires_refresh("PLAYER_BLOCKED"));
+        assert_eq!(
+            classify_chat_transport_failure("TLS certificate verification failed"),
+            "CHAT_TLS_FAILED"
+        );
+        assert_eq!(
+            classify_chat_transport_failure("connection reset"),
+            "CHAT_TRANSPORT_DISCONNECTED"
+        );
     }
 
     #[test]
@@ -1738,6 +1775,11 @@ mod tests {
                 .count(),
             1
         );
+        assert!(
+            app.world()
+                .resource::<ChatClientState>()
+                .ticket_refresh_in_flight
+        );
 
         app.world_mut()
             .write_message(MyServerEvent::TicketRefreshFailed {
@@ -1751,6 +1793,7 @@ mod tests {
             state.last_error_code.as_deref(),
             Some("CHAT_TICKET_REFRESH_FAILED")
         );
+        assert!(!state.ticket_refresh_in_flight);
         assert!(!app.world().resource::<ChatRuntimeOwner>().is_active());
     }
 
@@ -1988,6 +2031,18 @@ mod tests {
             MAX_PREAUTH_CHAT_REQUESTS
         );
         assert_eq!(
+            app.world()
+                .resource::<ChatClientState>()
+                .preauth_queue_depth,
+            MAX_PREAUTH_CHAT_REQUESTS
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ChatClientState>()
+                .pending_request_count,
+            0
+        );
+        assert_eq!(
             read_chat_events(&app)
                 .iter()
                 .filter(|event| matches!(
@@ -2027,6 +2082,12 @@ mod tests {
             ChatEvent::RequestFailed { error_code, .. }
                 if error_code == "CHAT_SEND_QUEUE_UNAVAILABLE"
         )));
+        assert_eq!(
+            app.world()
+                .resource::<ChatClientState>()
+                .pending_request_count,
+            1
+        );
 
         {
             let mut owner = app.world_mut().resource_mut::<ChatRuntimeOwner>();
@@ -2042,6 +2103,12 @@ mod tests {
             ChatEvent::RequestFailed { error_code, .. }
                 if error_code == "CHAT_RESPONSE_TIMEOUT"
         )));
+        assert_eq!(
+            app.world()
+                .resource::<ChatClientState>()
+                .pending_request_count,
+            0
+        );
     }
 
     #[test]
