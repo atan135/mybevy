@@ -1588,6 +1588,8 @@ pub(super) fn sync_main_world_mail_bindings(
     };
     let list_load_state = mail.map_or(MailListLoadState::Failed, |mail| mail.list_load_state);
     let is_available = mail.is_some_and(MailClientState::is_available);
+    let read_is_rate_limited = mail.is_some_and(MailClientState::is_read_rate_limited);
+    let claim_is_rate_limited = mail.is_some_and(MailClientState::is_claim_rate_limited);
     let detail_open = mail.is_some_and(MailClientState::detail_is_open);
     let detail_load_state = mail.map_or(MailDetailLoadState::Idle, |mail| mail.detail_load_state);
     let mark_read_state = mail.map_or(MailMarkReadState::Idle, |mail| mail.mark_read_state);
@@ -1705,9 +1707,10 @@ pub(super) fn sync_main_world_mail_bindings(
             "Mail service is unavailable".to_owned(),
         ),
     };
-    let refresh_disabled = !is_available || list_is_busy;
+    let refresh_disabled = !is_available || read_is_rate_limited || list_is_busy;
     let mark_read_loading = matches!(mark_read_state, MailMarkReadState::Submitting);
     let mark_read_disabled = !is_available
+        || read_is_rate_limited
         || !matches!(detail_load_state, MailDetailLoadState::Ready)
         || detail_expired
         || mark_read_loading
@@ -1724,6 +1727,7 @@ pub(super) fn sync_main_world_mail_bindings(
     };
     let claim_loading = claim_state == "submitting";
     let claim_disabled = !is_available
+        || claim_is_rate_limited
         || detail_expired
         || claim_workflow.is_none_or(|workflow| workflow.state.binding_value() != "available");
     let claim_label = main_world_mail_claim_label(claim_workflow, detail_expired);
@@ -1755,7 +1759,7 @@ pub(super) fn sync_main_world_mail_bindings(
         ),
         (
             "main_world_mail.load_more_disabled",
-            UiBindingValue::Bool(!can_load_more),
+            UiBindingValue::Bool(!can_load_more || read_is_rate_limited),
         ),
         (
             "main_world_mail.load_more_loading",
@@ -1863,6 +1867,7 @@ pub(super) fn sync_main_world_mail_bindings(
             "main_world_mail.retry_disabled",
             UiBindingValue::Bool(
                 !is_available
+                    || read_is_rate_limited
                     || if detail_open {
                         matches!(detail_load_state, MailDetailLoadState::Loading)
                             || mark_read_loading
@@ -1984,10 +1989,21 @@ fn main_world_mail_attachment(index: usize, attachment: &MailAttachment) -> UiBi
 }
 
 fn main_world_mail_error_message(error: &MailClientError) -> String {
+    match error.code.as_str() {
+        "MAIL_REQUEST_TIMEOUT" => return "Mail request timed out; try again later".to_owned(),
+        "MAIL_RESPONSE_TOO_LARGE" => return "Mail response was too large to display".to_owned(),
+        "MAIL_RESPONSE_INVALID" => return "Mail service returned an invalid response".to_owned(),
+        _ => {}
+    }
     match error.status {
+        Some(400) => "Mail request was rejected".to_owned(),
+        Some(401) => "Mail session expired; sign in again".to_owned(),
         Some(403) => "You no longer have access to this mail".to_owned(),
         Some(404) => "This mail is no longer available".to_owned(),
+        Some(409) => "Mail state changed; refresh and try again".to_owned(),
         Some(410) => "This mail has expired".to_owned(),
+        Some(429) => "Mail requests are limited; try again shortly".to_owned(),
+        Some(503) => "Mail service is temporarily unavailable".to_owned(),
         _ => "Mail request could not be completed".to_owned(),
     }
 }
@@ -4408,6 +4424,54 @@ mod tests {
     fn update_frames(app: &mut App, frames: usize) {
         for _ in 0..frames {
             app.update();
+        }
+    }
+
+    #[test]
+    fn main_world_mail_errors_have_stable_actionable_messages() {
+        use crate::game::myserver::mail::MailOperation;
+
+        for (status, expected) in [
+            (400, "Mail request was rejected"),
+            (401, "Mail session expired; sign in again"),
+            (403, "You no longer have access to this mail"),
+            (404, "This mail is no longer available"),
+            (409, "Mail state changed; refresh and try again"),
+            (410, "This mail has expired"),
+            (429, "Mail requests are limited; try again shortly"),
+            (503, "Mail service is temporarily unavailable"),
+        ] {
+            assert_eq!(
+                main_world_mail_error_message(&MailClientError {
+                    operation: MailOperation::List,
+                    status: Some(status),
+                    code: format!("MAIL_HTTP_{status}"),
+                }),
+                expected
+            );
+        }
+        for (code, expected) in [
+            (
+                "MAIL_REQUEST_TIMEOUT",
+                "Mail request timed out; try again later",
+            ),
+            (
+                "MAIL_RESPONSE_TOO_LARGE",
+                "Mail response was too large to display",
+            ),
+            (
+                "MAIL_RESPONSE_INVALID",
+                "Mail service returned an invalid response",
+            ),
+        ] {
+            assert_eq!(
+                main_world_mail_error_message(&MailClientError {
+                    operation: MailOperation::Detail,
+                    status: None,
+                    code: code.to_owned(),
+                }),
+                expected
+            );
         }
     }
 }

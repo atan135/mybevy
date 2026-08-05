@@ -13,7 +13,7 @@ use crate::framework::network::{HttpMethod, HttpRequest, NetworkCommand, Network
 
 use super::{
     chat::{ChatClientState, ChatEvent, ChatInbound},
-    types::{ClientServiceEndpoint, ClientServices, MyServerSession},
+    types::{ClientServiceEndpoint, ClientServices, MyServerSession, redact_secret_fingerprint},
 };
 
 pub const MAIL_API_PATH: &str = "/api/v1/mails";
@@ -36,6 +36,8 @@ const MAIL_MAX_DETAIL_CONTENT_BYTES: usize = 32 * 1024;
 const MAIL_MAX_DETAIL_CONTENT_CHARS: usize = 8 * 1024;
 pub const MAIL_MAX_DETAIL_ATTACHMENTS: usize = 32;
 const MAX_RECONCILIATION_POLLS: u8 = 3;
+const MAIL_DEFAULT_RETRY_AFTER_SECONDS: u64 = 2;
+const MAIL_MAX_RETRY_AFTER_SECONDS: u64 = 300;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MailHttpEndpoint {
@@ -350,6 +352,38 @@ pub enum MailOperation {
     Claim,
 }
 
+impl MailOperation {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::Detail => "detail",
+            Self::MarkRead => "mark_read",
+            Self::Claim => "claim",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailRequestDiagnostic {
+    pub operation: MailOperation,
+    pub status: Option<u16>,
+    pub error_code: Option<String>,
+    pub request_generation: u64,
+    pub endpoint_fingerprint: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Resource)]
+pub struct MailDiagnostics {
+    pub list_refresh_started: u64,
+    pub list_refresh_completed: u64,
+    pub list_refresh_failed: u64,
+    pub unread_updates: u64,
+    pub claim_reconciliation_started: u64,
+    pub claim_reconciliation_completed: u64,
+    pub claim_reconciliation_exhausted: u64,
+    pub last_request: Option<MailRequestDiagnostic>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MailListLoadState {
     #[default]
@@ -446,6 +480,12 @@ pub struct MailClaimWorkflow {
     post_attempted: bool,
 }
 
+#[derive(Clone, Debug)]
+struct MailRateLimit {
+    timer: Timer,
+    retry_after_seconds: u64,
+}
+
 #[derive(Clone, Debug, Resource)]
 pub struct MailClientState {
     pub availability: MailAvailability,
@@ -469,6 +509,8 @@ pub struct MailClientState {
     active_list_query: Option<MailListQuery>,
     list_refresh_queued: bool,
     desired_detail_generation: u64,
+    read_rate_limit: Option<MailRateLimit>,
+    claim_rate_limit: Option<MailRateLimit>,
 }
 
 impl Default for MailClientState {
@@ -495,6 +537,8 @@ impl Default for MailClientState {
             active_list_query: None,
             list_refresh_queued: false,
             desired_detail_generation: 0,
+            read_rate_limit: None,
+            claim_rate_limit: None,
         }
     }
 }
@@ -502,6 +546,18 @@ impl Default for MailClientState {
 impl MailClientState {
     pub fn is_available(&self) -> bool {
         matches!(self.availability, MailAvailability::Ready)
+    }
+
+    pub fn is_read_rate_limited(&self) -> bool {
+        self.read_rate_limit.is_some()
+    }
+
+    pub fn is_claim_rate_limited(&self) -> bool {
+        self.claim_rate_limit.is_some()
+    }
+
+    fn read_retry_after_seconds(&self) -> Option<u64> {
+        remaining_rate_limit_seconds(self.read_rate_limit.as_ref())
     }
 
     pub fn authoritative_unread_count(&self) -> Option<u32> {
@@ -538,6 +594,7 @@ impl MailClientState {
 
     pub fn can_submit_claim(&self, mail_id: &str) -> bool {
         self.is_available()
+            && !self.is_claim_rate_limited()
             && self.selected_mail_id() == Some(mail_id)
             && self.contains_authoritative_mail(mail_id)
             && self.selected_mail.as_ref().is_some_and(|detail| {
@@ -712,6 +769,8 @@ impl MailClientState {
         self.active_list_query = None;
         self.list_refresh_queued = false;
         self.desired_detail_generation = 0;
+        self.read_rate_limit = None;
+        self.claim_rate_limit = None;
     }
 }
 
@@ -744,6 +803,7 @@ enum PendingMailRequest {
     },
     Claim {
         mail_id: String,
+        generation: u64,
         identity: Option<MailIdentity>,
     },
 }
@@ -755,6 +815,15 @@ impl PendingMailRequest {
             Self::Detail { .. } => MailOperation::Detail,
             Self::MarkRead { .. } => MailOperation::MarkRead,
             Self::Claim { .. } => MailOperation::Claim,
+        }
+    }
+
+    fn generation(&self) -> u64 {
+        match self {
+            Self::List { generation, .. }
+            | Self::Detail { generation, .. }
+            | Self::MarkRead { generation, .. }
+            | Self::Claim { generation, .. } => *generation,
         }
     }
 }
@@ -788,6 +857,10 @@ pub enum MailClientEvent {
     },
     ListLoaded {
         unread_count: u32,
+        unread_changed: bool,
+    },
+    ListRefreshStarted {
+        generation: u64,
     },
     MailLoaded {
         mail_id: String,
@@ -806,6 +879,7 @@ pub enum MailClientEvent {
     ClaimReconciliationSettled {
         mail_id: String,
         claim_status: Option<String>,
+        exhausted: bool,
     },
     RefreshRequired,
     RequestFailed {
@@ -818,6 +892,7 @@ pub(crate) struct MailPlugin;
 impl Plugin for MailPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MailClientState>()
+            .init_resource::<MailDiagnostics>()
             .add_message::<NetworkCommand>()
             .add_message::<NetworkEvent>()
             .add_message::<ChatEvent>()
@@ -827,14 +902,92 @@ impl Plugin for MailPlugin {
                 PostUpdate,
                 (
                     sync_mail_session,
+                    drive_mail_rate_limit,
                     forward_chat_mail_notifications,
                     handle_mail_commands,
                     handle_mail_network_events,
                     drive_queued_list_refresh,
                     drive_claim_reconciliation,
+                    observe_mail_events,
                 )
                     .chain(),
             );
+    }
+}
+
+fn drive_mail_rate_limit(time: Res<Time>, mut state: ResMut<MailClientState>) {
+    let read_finished = tick_mail_rate_limit(&mut state.read_rate_limit, time.delta());
+    if read_finished {
+        state.read_rate_limit = None;
+    }
+    let claim_finished = tick_mail_rate_limit(&mut state.claim_rate_limit, time.delta());
+    if claim_finished {
+        state.claim_rate_limit = None;
+        release_rate_limited_claim(&mut state);
+    }
+}
+
+fn tick_mail_rate_limit(rate_limit: &mut Option<MailRateLimit>, delta: Duration) -> bool {
+    let Some(rate_limit) = rate_limit.as_mut() else {
+        return false;
+    };
+    rate_limit.timer.tick(delta);
+    rate_limit.timer.just_finished()
+}
+
+fn release_rate_limited_claim(state: &mut MailClientState) {
+    if let Some(workflow) = state.claim_workflow.as_mut().filter(|workflow| {
+        (workflow.state == MailClaimWorkflowState::RetryableFailure
+            && workflow.error_code.as_deref() == Some("MAIL_RATE_LIMITED"))
+            || (workflow.state == MailClaimWorkflowState::Available && workflow.post_attempted)
+    }) {
+        workflow.state = MailClaimWorkflowState::Available;
+        workflow.player_retryable = true;
+        workflow.error_code = None;
+        workflow.post_attempted = false;
+    }
+    if state.last_error.as_ref().is_some_and(|error| {
+        error.operation == MailOperation::Claim && error.code == "MAIL_RATE_LIMITED"
+    }) {
+        state.last_error = None;
+    }
+}
+
+fn observe_mail_events(
+    mut events: MessageReader<MailClientEvent>,
+    mut diagnostics: ResMut<MailDiagnostics>,
+) {
+    for event in events.read() {
+        match event {
+            MailClientEvent::ListRefreshStarted { .. } => {
+                diagnostics.list_refresh_started =
+                    diagnostics.list_refresh_started.saturating_add(1);
+            }
+            MailClientEvent::ListLoaded { unread_changed, .. } => {
+                diagnostics.list_refresh_completed =
+                    diagnostics.list_refresh_completed.saturating_add(1);
+                if *unread_changed {
+                    diagnostics.unread_updates = diagnostics.unread_updates.saturating_add(1);
+                }
+            }
+            MailClientEvent::ClaimReconciliationStarted { .. } => {
+                diagnostics.claim_reconciliation_started =
+                    diagnostics.claim_reconciliation_started.saturating_add(1);
+            }
+            MailClientEvent::ClaimReconciliationSettled { exhausted, .. } => {
+                if *exhausted {
+                    diagnostics.claim_reconciliation_exhausted =
+                        diagnostics.claim_reconciliation_exhausted.saturating_add(1);
+                } else {
+                    diagnostics.claim_reconciliation_completed =
+                        diagnostics.claim_reconciliation_completed.saturating_add(1);
+                }
+            }
+            MailClientEvent::RequestFailed { error } if error.operation == MailOperation::List => {
+                diagnostics.list_refresh_failed = diagnostics.list_refresh_failed.saturating_add(1);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -956,6 +1109,9 @@ fn handle_mail_commands(
                 );
             }
             MailClientCommand::MarkRead { mail_id } => {
+                if state.is_read_rate_limited() {
+                    continue;
+                }
                 let selected_is_authoritative = state.selected_mail_id.as_deref() == Some(mail_id)
                     && state.contains_authoritative_mail(mail_id)
                     && state
@@ -1012,6 +1168,9 @@ fn handle_mail_commands(
             }
             MailClientCommand::DismissDetail => state.dismiss_detail(),
             MailClientCommand::Claim { mail_id } => {
+                if state.is_claim_rate_limited() {
+                    continue;
+                }
                 if state
                     .claim_workflow
                     .as_ref()
@@ -1072,10 +1231,12 @@ fn handle_mail_commands(
                     MAIL_CLAIM_TIMEOUT,
                 );
                 let identity = state.identity.clone();
+                let generation = state.desired_detail_generation;
                 queue_request(
                     &mut state,
                     PendingMailRequest::Claim {
                         mail_id: mail_id.clone(),
+                        generation,
                         identity,
                     },
                     request,
@@ -1119,6 +1280,7 @@ fn handle_mail_commands(
 
 fn handle_mail_network_events(
     mut state: ResMut<MailClientState>,
+    mut diagnostics: ResMut<MailDiagnostics>,
     mut network_events: MessageReader<NetworkEvent>,
     mut events: MessageWriter<MailClientEvent>,
 ) {
@@ -1128,6 +1290,14 @@ fn handle_mail_network_events(
                 let Some(pending) = state.pending.remove(&response.request_id) else {
                     continue;
                 };
+                let operation = pending.operation();
+                let generation = pending.generation();
+                let endpoint_fingerprint = diagnostic_endpoint_fingerprint(&state);
+                let http_error = (!(200..300).contains(&response.status))
+                    .then(|| public_http_error(operation, response.status, &response.body).code);
+                if response.status == 429 {
+                    apply_mail_rate_limit(&mut state, operation, &response.headers);
+                }
                 handle_mail_response(
                     &mut state,
                     pending,
@@ -1135,13 +1305,34 @@ fn handle_mail_network_events(
                     &response.body,
                     &mut events,
                 );
+                let error_code = http_error.or_else(|| {
+                    state
+                        .last_error
+                        .as_ref()
+                        .filter(|error| error.operation == operation)
+                        .map(|error| error.code.clone())
+                });
+                record_mail_request(
+                    &mut diagnostics,
+                    operation,
+                    Some(response.status),
+                    error_code,
+                    generation,
+                    endpoint_fingerprint,
+                );
             }
-            NetworkEvent::HttpError { request_id, .. } => {
+            NetworkEvent::HttpError { request_id, error } => {
                 let Some(pending) = state.pending.remove(request_id) else {
                     continue;
                 };
+                let operation = pending.operation();
+                let generation = pending.generation();
+                let endpoint_fingerprint = diagnostic_endpoint_fingerprint(&state);
+                let error_code = classify_mail_network_error(error).to_owned();
                 match pending {
-                    PendingMailRequest::Claim { mail_id, identity } => {
+                    PendingMailRequest::Claim {
+                        mail_id, identity, ..
+                    } => {
                         if identity == state.identity {
                             begin_claim_reconciliation(
                                 &mut state,
@@ -1188,7 +1379,7 @@ fn handle_mail_network_events(
                         let error = MailClientError {
                             operation: pending.operation(),
                             status: None,
-                            code: "MAIL_NETWORK_UNAVAILABLE".to_string(),
+                            code: error_code.clone(),
                         };
                         match pending {
                             PendingMailRequest::Detail {
@@ -1208,6 +1399,14 @@ fn handle_mail_network_events(
                         events.write(MailClientEvent::RequestFailed { error });
                     }
                 }
+                record_mail_request(
+                    &mut diagnostics,
+                    operation,
+                    None,
+                    Some(error_code),
+                    generation,
+                    endpoint_fingerprint,
+                );
             }
             _ => {}
         }
@@ -1244,6 +1443,7 @@ fn handle_mail_response(
                 return;
             }
             let offset = query.offset.unwrap_or(0);
+            let previous_unread_count = state.unread_count;
             if offset == 0 {
                 state.mails = deduplicate_mail_page(response.mails);
             } else {
@@ -1260,6 +1460,8 @@ fn handle_mail_response(
             };
             events.write(MailClientEvent::ListLoaded {
                 unread_count: response.unread_count,
+                unread_changed: previous_unread_count
+                    .is_some_and(|previous| previous != response.unread_count),
             });
         }
         PendingMailRequest::Detail {
@@ -1405,7 +1607,9 @@ fn handle_mail_response(
                 already_read: response.already_read,
             });
         }
-        PendingMailRequest::Claim { mail_id, identity } => {
+        PendingMailRequest::Claim {
+            mail_id, identity, ..
+        } => {
             if identity != state.identity {
                 return;
             }
@@ -1431,6 +1635,13 @@ fn handle_mail_response(
                         state,
                         &mail_id,
                         MailClaimWorkflowState::Unavailable,
+                        error.as_ref(),
+                    );
+                } else if status == 429 {
+                    update_claim_workflow_error(
+                        state,
+                        &mail_id,
+                        MailClaimWorkflowState::RetryableFailure,
                         error.as_ref(),
                     );
                 } else if status >= 500 {
@@ -1579,6 +1790,7 @@ fn drive_queued_list_refresh(
     mut events: MessageWriter<MailClientEvent>,
 ) {
     if !state.list_refresh_queued
+        || state.is_read_rate_limited()
         || state
             .pending
             .values()
@@ -1614,6 +1826,13 @@ fn start_list_request(
         );
         return;
     };
+    if state.is_read_rate_limited() {
+        if offset == 0 {
+            state.list_stale = true;
+            state.list_refresh_queued = true;
+        }
+        return;
+    }
     if offset == 0
         && state
             .pending
@@ -1715,6 +1934,9 @@ fn start_list_request(
         request,
         network_commands,
     );
+    if offset == 0 {
+        events.write(MailClientEvent::ListRefreshStarted { generation });
+    }
 }
 
 fn start_detail_request(
@@ -1727,6 +1949,19 @@ fn start_detail_request(
 ) {
     if !valid_mail_id(mail_id) {
         reject_request(state, events, MailOperation::Detail, "INVALID_MAIL_ID");
+        return;
+    }
+    if state.is_read_rate_limited() {
+        if reconciliation_poll {
+            let delay = Duration::from_secs(state.read_retry_after_seconds().unwrap_or(1));
+            if let Some(reconciliation) = state
+                .claim_reconciliation
+                .as_mut()
+                .filter(|reconciliation| reconciliation.mail_id == mail_id)
+            {
+                reconciliation.next_poll = Some(Timer::new(delay, TimerMode::Once));
+            }
+        }
         return;
     }
     let generation = if reconciliation_poll {
@@ -1905,17 +2140,109 @@ where
     }
 }
 
+fn apply_mail_rate_limit(
+    state: &mut MailClientState,
+    operation: MailOperation,
+    headers: &[(String, String)],
+) {
+    let retry_after_seconds = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+        .and_then(|(_, value)| value.trim().parse::<u64>().ok())
+        .unwrap_or(MAIL_DEFAULT_RETRY_AFTER_SECONDS)
+        .clamp(1, MAIL_MAX_RETRY_AFTER_SECONDS);
+    let rate_limit = Some(MailRateLimit {
+        timer: Timer::new(Duration::from_secs(retry_after_seconds), TimerMode::Once),
+        retry_after_seconds,
+    });
+    match operation {
+        MailOperation::Claim => state.claim_rate_limit = rate_limit,
+        MailOperation::List | MailOperation::Detail | MailOperation::MarkRead => {
+            state.read_rate_limit = rate_limit;
+        }
+    }
+}
+
+fn remaining_rate_limit_seconds(rate_limit: Option<&MailRateLimit>) -> Option<u64> {
+    let rate_limit = rate_limit?;
+    Some(
+        ((rate_limit.timer.remaining_secs() as f64).ceil().max(1.0) as u64)
+            .min(rate_limit.retry_after_seconds),
+    )
+}
+
+fn classify_mail_network_error(error: &str) -> &'static str {
+    if error.starts_with("HTTP_RESPONSE_BODY_LIMIT_EXCEEDED:") {
+        "MAIL_RESPONSE_TOO_LARGE"
+    } else if error.to_ascii_lowercase().contains("timed out")
+        || error.to_ascii_lowercase().contains("timeout")
+    {
+        "MAIL_REQUEST_TIMEOUT"
+    } else {
+        "MAIL_NETWORK_UNAVAILABLE"
+    }
+}
+
+fn diagnostic_endpoint_fingerprint(state: &MailClientState) -> Option<String> {
+    state
+        .endpoint
+        .as_ref()
+        .map(|endpoint| redact_secret_fingerprint(endpoint.base_url()))
+}
+
+fn record_mail_request(
+    diagnostics: &mut MailDiagnostics,
+    operation: MailOperation,
+    status: Option<u16>,
+    error_code: Option<String>,
+    request_generation: u64,
+    endpoint_fingerprint: Option<String>,
+) {
+    let status_code = status.unwrap_or_default();
+    let public_error_code = error_code.as_deref().unwrap_or_default();
+    let endpoint_fp = endpoint_fingerprint.as_deref().unwrap_or_default();
+    if error_code.is_some() {
+        warn!(
+            operation = operation.as_str(),
+            status = status_code,
+            error_code = public_error_code,
+            request_generation,
+            endpoint_fp,
+            "Mail HTTP request failed"
+        );
+    } else {
+        info!(
+            operation = operation.as_str(),
+            status = status_code,
+            request_generation,
+            endpoint_fp,
+            "Mail HTTP request completed"
+        );
+    }
+    diagnostics.last_request = Some(MailRequestDiagnostic {
+        operation,
+        status,
+        error_code,
+        request_generation,
+        endpoint_fingerprint,
+    });
+}
+
 fn public_http_error(operation: MailOperation, status: u16, body: &[u8]) -> MailClientError {
     #[derive(Deserialize)]
     struct PublicError {
         #[serde(default)]
         error: Option<String>,
     }
-    let code = serde_json::from_slice::<PublicError>(body)
-        .ok()
-        .and_then(|error| error.error)
-        .filter(|code| valid_public_error_code(code))
-        .unwrap_or_else(|| format!("MAIL_HTTP_{status}"));
+    let code = if status == 429 {
+        "MAIL_RATE_LIMITED".to_owned()
+    } else {
+        serde_json::from_slice::<PublicError>(body)
+            .ok()
+            .and_then(|error| error.error)
+            .filter(|code| valid_public_error_code(code))
+            .unwrap_or_else(|| format!("MAIL_HTTP_{status}"))
+    };
     MailClientError {
         operation,
         status: Some(status),
@@ -2036,7 +2363,8 @@ fn update_claim_workflow_error(
 fn claim_entry_is_paused(error: &MailClientError) -> bool {
     matches!(
         error.code.as_str(),
-        "MAIL_CLAIM_DISABLED"
+        "MAIL_CLAIM_INTAKE_DISABLED"
+            | "MAIL_CLAIM_DISABLED"
             | "MAIL_CLAIM_PAUSED"
             | "MAIL_CLAIM_ENTRY_PAUSED"
             | "MAIL_CLAIM_UNAVAILABLE"
@@ -2170,6 +2498,7 @@ fn apply_reconciled_claim_status(
         events.write(MailClientEvent::ClaimReconciliationSettled {
             mail_id,
             claim_status,
+            exhausted: false,
         });
     } else {
         continue_claim_reconciliation(state, &mail_id, events);
@@ -2203,6 +2532,7 @@ fn continue_claim_reconciliation(
         events.write(MailClientEvent::ClaimReconciliationSettled {
             mail_id: mail_id.to_string(),
             claim_status: Some("manual_review".to_owned()),
+            exhausted: true,
         });
         return;
     }
@@ -2389,11 +2719,21 @@ mod tests {
     }
 
     fn respond(app: &mut App, request: &HttpRequest, status: u16, body: &str) {
+        respond_with_headers(app, request, status, Vec::new(), body);
+    }
+
+    fn respond_with_headers(
+        app: &mut App,
+        request: &HttpRequest,
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: &str,
+    ) {
         app.world_mut()
             .write_message(NetworkEvent::HttpResponse(HttpResponse {
                 request_id: request.request_id,
                 status,
-                headers: Vec::new(),
+                headers,
                 body: body.as_bytes().to_vec(),
             }));
         app.update();
@@ -3039,6 +3379,74 @@ mod tests {
     }
 
     #[test]
+    fn list_http_and_invalid_json_failures_reach_stable_states() {
+        for status in [400, 401, 403, 404, 409, 429, 503] {
+            let mut app = test_app(session_with_mail());
+            app.update();
+            app.world_mut().write_message(MailClientCommand::LoadList {
+                query: MailListQuery::default(),
+            });
+            app.update();
+            let request = http_requests(&app).pop().unwrap();
+            respond(&mut app, &request, status, "{}");
+            let state = app.world().resource::<MailClientState>();
+            assert_eq!(state.list_load_state, MailListLoadState::Failed);
+            let error = state.last_error.as_ref().unwrap();
+            assert_eq!(error.status, Some(status));
+            assert_eq!(
+                error.code,
+                if status == 429 {
+                    "MAIL_RATE_LIMITED".to_owned()
+                } else {
+                    format!("MAIL_HTTP_{status}")
+                }
+            );
+        }
+
+        let mut app = test_app(session_with_mail());
+        app.update();
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let request = http_requests(&app).pop().unwrap();
+        respond(&mut app, &request, 200, "not json");
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.list_load_state, MailListLoadState::Failed);
+        assert_eq!(
+            state.last_error.as_ref().unwrap().code,
+            "MAIL_RESPONSE_INVALID"
+        );
+    }
+
+    #[test]
+    fn transport_failures_are_applied_to_the_list_state() {
+        for (transport_error, expected_code) in [
+            ("request timed out", "MAIL_REQUEST_TIMEOUT"),
+            (
+                "HTTP_RESPONSE_BODY_LIMIT_EXCEEDED:262145",
+                "MAIL_RESPONSE_TOO_LARGE",
+            ),
+        ] {
+            let mut app = test_app(session_with_mail());
+            app.update();
+            app.world_mut().write_message(MailClientCommand::LoadList {
+                query: MailListQuery::default(),
+            });
+            app.update();
+            let request = http_requests(&app).pop().unwrap();
+            app.world_mut().write_message(NetworkEvent::HttpError {
+                request_id: request.request_id,
+                error: transport_error.to_owned(),
+            });
+            app.update();
+            let state = app.world().resource::<MailClientState>();
+            assert_eq!(state.list_load_state, MailListLoadState::Failed);
+            assert_eq!(state.last_error.as_ref().unwrap().code, expected_code);
+        }
+    }
+
+    #[test]
     fn detail_rejects_oversized_content_and_attachment_lists_without_retaining_them() {
         let oversized_content = "SENSITIVE_CONTENT".repeat(600);
         let attachments = (0..=MAIL_MAX_DETAIL_ATTACHMENTS)
@@ -3178,6 +3586,10 @@ mod tests {
         );
         assert_eq!(state.mails[0].status, "claimed");
         assert_eq!(state.unread_count, Some(0));
+        let diagnostics = app.world().resource::<MailDiagnostics>();
+        assert_eq!(diagnostics.claim_reconciliation_started, 1);
+        assert_eq!(diagnostics.claim_reconciliation_completed, 1);
+        assert_eq!(diagnostics.claim_reconciliation_exhausted, 0);
     }
 
     #[test]
@@ -3372,6 +3784,10 @@ mod tests {
             workflow.error_code.as_deref(),
             Some("MAIL_CLAIM_RECONCILIATION_EXHAUSTED")
         );
+        let diagnostics = app.world().resource::<MailDiagnostics>();
+        assert_eq!(diagnostics.claim_reconciliation_started, 1);
+        assert_eq!(diagnostics.claim_reconciliation_completed, 0);
+        assert_eq!(diagnostics.claim_reconciliation_exhausted, 1);
     }
 
     #[test]
@@ -3709,5 +4125,261 @@ mod tests {
         assert_eq!(reconciliation_delay(0), Duration::from_secs(1));
         assert_eq!(reconciliation_delay(1), Duration::from_secs(2));
         assert_eq!(reconciliation_delay(2), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn retry_after_is_bounded_and_uses_a_stable_fallback() {
+        for (headers, expected) in [
+            (vec![("Retry-After".to_owned(), "12".to_owned())], 12),
+            (vec![("retry-after".to_owned(), "0".to_owned())], 1),
+            (vec![("Retry-After".to_owned(), "9999".to_owned())], 300),
+            (vec![("Retry-After".to_owned(), "tomorrow".to_owned())], 2),
+            (Vec::new(), 2),
+        ] {
+            let mut state = MailClientState::ready_for_test();
+            apply_mail_rate_limit(&mut state, MailOperation::List, &headers);
+            assert_eq!(state.read_retry_after_seconds(), Some(expected));
+            assert!(!state.is_claim_rate_limited());
+
+            apply_mail_rate_limit(&mut state, MailOperation::Claim, &headers);
+            assert_eq!(
+                remaining_rate_limit_seconds(state.claim_rate_limit.as_ref()),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn rate_limited_list_refresh_coalesces_and_runs_once_after_cooldown() {
+        let mut app = test_app(session_with_mail());
+        app.update();
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let first = http_requests(&app).pop().unwrap();
+        respond_with_headers(
+            &mut app,
+            &first,
+            429,
+            vec![("Retry-After".to_owned(), "5".to_owned())],
+            r#"{"ok":false,"error":"MAIL_RATE_LIMITED"}"#,
+        );
+
+        for _ in 0..3 {
+            app.world_mut().write_message(MailClientCommand::LoadList {
+                query: MailListQuery::default(),
+            });
+            app.update();
+        }
+        assert_eq!(http_requests(&app).len(), 1);
+        assert!(
+            app.world()
+                .resource::<MailClientState>()
+                .list_refresh_queued
+        );
+
+        app.world_mut()
+            .resource_mut::<MailClientState>()
+            .read_rate_limit = None;
+        app.update();
+        app.update();
+        assert_eq!(http_requests(&app).len(), 2);
+        assert!(
+            !app.world()
+                .resource::<MailClientState>()
+                .list_refresh_queued
+        );
+    }
+
+    #[test]
+    fn rate_limited_claim_blocks_only_claim_until_an_explicit_retry_after_cooldown() {
+        let mut app = test_app(session_with_mail());
+        seed_claimable_mail(&mut app, "mail_1");
+        let claim = submit_claim(&mut app, "mail_1");
+        respond_with_headers(
+            &mut app,
+            &claim,
+            429,
+            vec![("Retry-After".to_owned(), "9".to_owned())],
+            r#"{"ok":false,"error":"MAIL_RATE_LIMITED"}"#,
+        );
+        {
+            let state = app.world().resource::<MailClientState>();
+            let workflow = state.claim_workflow.as_ref().unwrap();
+            assert_eq!(workflow.state, MailClaimWorkflowState::RetryableFailure);
+            assert!(!workflow.player_retryable);
+            assert!(workflow.post_attempted);
+            assert!(state.claim_reconciliation.is_none());
+        }
+
+        app.world_mut().write_message(MailClientCommand::Claim {
+            mail_id: "mail_1".to_owned(),
+        });
+        app.update();
+        assert_eq!(
+            http_requests(&app)
+                .iter()
+                .filter(|request| matches!(request.method, HttpMethod::Post))
+                .count(),
+            1
+        );
+
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.world_mut().write_message(MailClientCommand::LoadMail {
+            mail_id: "mail_1".to_owned(),
+        });
+        app.update();
+        assert_eq!(
+            http_requests(&app)
+                .iter()
+                .filter(|request| matches!(request.method, HttpMethod::Get))
+                .count(),
+            2
+        );
+        let detail = http_requests(&app)
+            .into_iter()
+            .find(|request| request.url.ends_with("/mail_1"))
+            .unwrap();
+        respond(
+            &mut app,
+            &detail,
+            200,
+            r#"{"ok":true,"mail":{"mail_id":"mail_1","status":"unread","content":"Reward","attachments":[{"type":"item","id":1001,"count":2,"binded":true}],"claim":{}}}"#,
+        );
+
+        {
+            let mut state = app.world_mut().resource_mut::<MailClientState>();
+            state.claim_rate_limit = None;
+            release_rate_limited_claim(&mut state);
+            assert!(state.can_submit_claim("mail_1"));
+        }
+        let retry = submit_claim(&mut app, "mail_1");
+        assert!(matches!(retry.method, HttpMethod::Post));
+        assert_eq!(
+            http_requests(&app)
+                .iter()
+                .filter(|request| matches!(request.method, HttpMethod::Post))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn list_rate_limit_does_not_block_a_claim() {
+        let mut app = test_app(session_with_mail());
+        seed_claimable_mail(&mut app, "mail_1");
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let list = http_requests(&app)
+            .into_iter()
+            .find(|request| matches!(request.method, HttpMethod::Get))
+            .unwrap();
+        respond_with_headers(
+            &mut app,
+            &list,
+            429,
+            vec![("Retry-After".to_owned(), "6".to_owned())],
+            r#"{"ok":false,"error":"MAIL_RATE_LIMITED"}"#,
+        );
+        assert!(
+            app.world()
+                .resource::<MailClientState>()
+                .is_read_rate_limited()
+        );
+        assert!(
+            !app.world()
+                .resource::<MailClientState>()
+                .is_claim_rate_limited()
+        );
+
+        let claim = submit_claim(&mut app, "mail_1");
+        assert!(matches!(claim.method, HttpMethod::Post));
+    }
+
+    #[test]
+    fn rate_limit_defers_reconciliation_without_consuming_a_poll() {
+        let mut app = test_app(session_with_mail());
+        seed_claimable_mail(&mut app, "mail_1");
+        let claim = submit_claim(&mut app, "mail_1");
+        respond(&mut app, &claim, 202, "");
+        apply_mail_rate_limit(
+            &mut app.world_mut().resource_mut::<MailClientState>(),
+            MailOperation::Detail,
+            &[("Retry-After".to_owned(), "8".to_owned())],
+        );
+
+        app.world_mut()
+            .write_message(MailClientCommand::PollClaimReconciliation {
+                mail_id: "mail_1".to_owned(),
+            });
+        app.update();
+        let state = app.world().resource::<MailClientState>();
+        let reconciliation = state.claim_reconciliation.as_ref().unwrap();
+        assert_eq!(reconciliation.polls_completed, 0);
+        assert!(reconciliation.next_poll.is_some());
+        assert_eq!(
+            http_requests(&app)
+                .iter()
+                .filter(|request| matches!(request.method, HttpMethod::Get))
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn diagnostics_are_low_cardinality_and_do_not_retain_mail_secrets() {
+        let mut app = test_app(session_with_mail());
+        app.update();
+        app.world_mut().write_message(MailClientCommand::LoadList {
+            query: MailListQuery::default(),
+        });
+        app.update();
+        let request = http_requests(&app).pop().unwrap();
+        respond(
+            &mut app,
+            &request,
+            200,
+            r#"{"ok":true,"mails":[],"unread_count":4,"pagination":{"limit":50,"offset":0,"next_offset":null}}"#,
+        );
+
+        let diagnostics = app.world().resource::<MailDiagnostics>();
+        assert_eq!(diagnostics.list_refresh_started, 1);
+        assert_eq!(diagnostics.list_refresh_completed, 1);
+        assert_eq!(diagnostics.unread_updates, 0);
+        let diagnostic = diagnostics.last_request.as_ref().unwrap();
+        assert_eq!(diagnostic.operation, MailOperation::List);
+        assert_eq!(diagnostic.status, Some(200));
+        assert!(diagnostic.error_code.is_none());
+        let debug = format!("{diagnostics:?}");
+        for secret in [
+            "character-bound-ticket",
+            "mail_1",
+            "Reward",
+            "attachment",
+            endpoint().base_url(),
+        ] {
+            assert!(!debug.contains(secret), "diagnostic leaked {secret}");
+        }
+    }
+
+    #[test]
+    fn transport_failures_use_stable_public_codes() {
+        assert_eq!(
+            classify_mail_network_error("request timed out"),
+            "MAIL_REQUEST_TIMEOUT"
+        );
+        assert_eq!(
+            classify_mail_network_error("HTTP_RESPONSE_BODY_LIMIT_EXCEEDED:262145"),
+            "MAIL_RESPONSE_TOO_LARGE"
+        );
+        assert_eq!(
+            classify_mail_network_error("private socket failure"),
+            "MAIL_NETWORK_UNAVAILABLE"
+        );
     }
 }
