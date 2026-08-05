@@ -3,7 +3,18 @@
   "document_id": "game.main_world_hud",
   "metadata": { "title": "Main World HUD", "budget_profile": "mobile_baseline_v1" },
   "assets": {},
-  "bindings": {},
+  "bindings": {
+    "main_world.connection.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "main_world.character.summary": { "scope": "owner", "value_type": { "kind": "string" } },
+    "main_world.mail.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "main_world.mail.unread": { "scope": "owner", "value_type": { "kind": "string" } },
+    "main_world.mail.unread_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "main_world.settings.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "main_world.home.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "main_world.return_lobby.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "main_world.transition.loading": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "main_world.transition.status": { "scope": "owner", "value_type": { "kind": "string" } }
+  },
   "styles": {},
   "root": {
     "type": "container",
@@ -22,10 +33,21 @@
         "id": "main_world.actions",
         "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 8.0 } },
         "children": [
-          { "type": "button", "id": "main_world.settings", "variant": "secondary", "label": { "literal": "Settings" }, "on_click": { "action": "main_world.open_settings" } },
-          { "type": "button", "id": "main_world.mail", "variant": "secondary", "label": { "literal": "Mail" }, "on_click": { "action": "main_world.open_mail" } },
-          { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "literal": "Home" }, "on_click": { "action": "main_world.enter_home" } },
-          { "type": "button", "id": "main_world.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "on_click": { "action": "main_world.return_lobby" } }
+          { "type": "text", "id": "main_world.character_summary", "content": { "binding_path": "main_world.character.summary", "fallback": "Character unavailable" }, "style": { "text_role": "caption" } },
+          { "type": "text", "id": "main_world.connection_status", "content": { "binding_path": "main_world.connection.status", "fallback": "Game services offline" }, "style": { "text_role": "caption" } },
+          { "type": "text", "id": "main_world.transition_status", "content": { "binding_path": "main_world.transition.status", "fallback": "" }, "style": { "text_role": "caption" } },
+          { "type": "button", "id": "main_world.settings", "variant": "secondary", "label": { "literal": "Settings" }, "component": { "bindings": { "disabled": "main_world.settings.disabled" } }, "on_click": { "action": "main_world.open_settings" } },
+          {
+            "type": "container",
+            "id": "main_world.mail_entry",
+            "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 2.0 } },
+            "children": [
+              { "type": "button", "id": "main_world.mail", "variant": "secondary", "label": { "literal": "Mail" }, "component": { "bindings": { "disabled": "main_world.mail.disabled" } }, "on_click": { "action": "main_world.open_mail" } },
+              { "type": "text", "id": "main_world.mail_unread", "content": { "binding_path": "main_world.mail.unread", "fallback": "" }, "style": { "text_role": "caption", "bindings": { "visibility": "main_world.mail.unread_visibility" } } }
+            ]
+          },
+          { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "literal": "Home" }, "component": { "bindings": { "disabled": "main_world.home.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.enter_home" } },
+          { "type": "button", "id": "main_world.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "component": { "bindings": { "disabled": "main_world.return_lobby.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.return_lobby" } }
         ]
       }
     ]

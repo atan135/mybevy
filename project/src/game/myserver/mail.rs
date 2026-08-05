@@ -332,6 +332,14 @@ impl MailClientState {
         matches!(self.availability, MailAvailability::Ready)
     }
 
+    #[cfg(test)]
+    pub(crate) fn ready_for_test() -> Self {
+        Self {
+            availability: MailAvailability::Ready,
+            ..default()
+        }
+    }
+
     fn reset_for_identity(&mut self, identity: MailIdentity, availability: MailAvailability) {
         self.availability = availability;
         self.endpoint = identity.endpoint.clone();

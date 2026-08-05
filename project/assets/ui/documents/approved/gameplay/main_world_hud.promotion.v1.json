@@ -9,7 +9,18 @@
       { "id": "main_world.enter_home", "sources": ["main_world.home"] },
       { "id": "main_world.return_lobby", "sources": ["main_world.return_lobby"] }
     ],
-    "bindings": [],
+    "bindings": [
+      { "path": "main_world.character.summary", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "main_world.connection.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "main_world.home.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "main_world.mail.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "main_world.mail.unread", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "main_world.mail.unread_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "main_world.return_lobby.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "main_world.settings.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "main_world.transition.loading", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "main_world.transition.status", "scope": "owner", "value_type": { "kind": "string" } }
+    ],
     "resources": [],
     "version": 1
   },

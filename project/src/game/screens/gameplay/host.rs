@@ -8,6 +8,7 @@ use crate::framework::ui::audit::UiAuditConfig;
 use crate::framework::ui::document::UiDocumentRuntime;
 
 use crate::framework::{
+    audio::AudioMixer,
     fangyuan::{FangyuanDebugPanelModule, FangyuanDebugPanelState},
     scene::prelude::{SceneCommand, SceneExitRequest},
     ui::{
@@ -16,8 +17,8 @@ use crate::framework::{
             UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema,
             UiActionParamType, UiActionRegistry, UiActionValue, UiBindingDeclaration,
             UiBindingMissingBehavior, UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue,
-            UiDocumentId, UiDocumentLayer, UiDocumentPanel, UiHostBindingKey, UiNodeId,
-            UiPageState, UiRegisteredActionKind,
+            UiBindingVisibility, UiDocumentId, UiDocumentLayer, UiDocumentPanel, UiHostBindingKey,
+            UiNodeId, UiPageState, UiRegisteredActionKind,
         },
     },
 };
@@ -28,6 +29,7 @@ use crate::game::{
         DeclarativeScreenFailureDecision, DeclarativeScreenFailurePolicy, DeclarativeScreenHost,
         DeclarativeScreenHostEvent, DeclarativeScreenRegistry, DeclarativeScreenSource,
     },
+    myserver::{GameConnectionState, MyServerSession, mail::MailClientState},
     navigation::{AppUiMode, GameRouteCommand},
     scenes::{
         FangyuanHomeBlueprintCommand,
@@ -221,7 +223,24 @@ impl Default for GameplayHudHostContract {
     fn default() -> Self {
         Self {
             bindings: BTreeMap::from([
-                (MAIN_WORLD_HUD_DOCUMENT_ID, BTreeMap::new()),
+                (
+                    MAIN_WORLD_HUD_DOCUMENT_ID,
+                    binding_schema([
+                        ("main_world.connection.status", UiBindingType::String),
+                        ("main_world.character.summary", UiBindingType::String),
+                        ("main_world.mail.disabled", UiBindingType::Bool),
+                        ("main_world.mail.unread", UiBindingType::String),
+                        (
+                            "main_world.mail.unread_visibility",
+                            UiBindingType::Visibility,
+                        ),
+                        ("main_world.settings.disabled", UiBindingType::Bool),
+                        ("main_world.home.disabled", UiBindingType::Bool),
+                        ("main_world.return_lobby.disabled", UiBindingType::Bool),
+                        ("main_world.transition.loading", UiBindingType::Bool),
+                        ("main_world.transition.status", UiBindingType::String),
+                    ]),
+                ),
                 (TOUCH_RIPPLE_DOCUMENT_ID, BTreeMap::new()),
                 (SAMPLE_SCENE_DOCUMENT_ID, BTreeMap::new()),
                 (
@@ -246,6 +265,11 @@ impl Default for GameplayHudHostContract {
             ]),
         }
     }
+}
+
+#[derive(Default, Resource)]
+pub(super) struct MainWorldHudBindingGeneration {
+    generation: Option<u64>,
 }
 
 fn binding_schema<const N: usize>(
@@ -772,6 +796,127 @@ pub(super) fn set_binding(
     values.set_scoped(document_id, owner, &path, declaration, value);
 }
 
+pub(super) fn sync_main_world_hud_bindings(
+    entry: Res<MainWorldEntryState>,
+    session: Option<Res<MyServerSession>>,
+    mail: Option<Res<MailClientState>>,
+    mixer: Option<Res<AudioMixer>>,
+    contract: Res<GameplayHudHostContract>,
+    mut synchronized_generation: ResMut<MainWorldHudBindingGeneration>,
+    mut values: ResMut<UiBindingValues>,
+) {
+    if synchronized_generation.generation != Some(entry.generation) {
+        values.clear_owner(OWNER_MAIN_WORLD.as_str());
+        synchronized_generation.generation = Some(entry.generation);
+    }
+
+    let transition_loading = entry.is_in_flight();
+    let mail_available = mail.as_deref().is_some_and(MailClientState::is_available);
+    let unread_count = mail.as_deref().and_then(|mail| mail.unread_count);
+    let mail_disabled = transition_loading || !mail_available;
+    let connection = session
+        .as_deref()
+        .map_or(GameConnectionState::NotConnected, |session| {
+            session.game_connection_state
+        });
+
+    for (path, value) in [
+        (
+            "main_world.connection.status",
+            UiBindingValue::String(main_world_connection_status_text(connection)),
+        ),
+        (
+            "main_world.character.summary",
+            UiBindingValue::String(main_world_character_summary(entry.character_id.as_deref())),
+        ),
+        (
+            "main_world.mail.disabled",
+            UiBindingValue::Bool(mail_disabled),
+        ),
+        (
+            "main_world.mail.unread",
+            UiBindingValue::String(
+                unread_count.map_or_else(String::new, |count| count.to_string()),
+            ),
+        ),
+        (
+            "main_world.mail.unread_visibility",
+            UiBindingValue::Visibility(if unread_count.is_some() {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "main_world.settings.disabled",
+            UiBindingValue::Bool(transition_loading || mixer.is_none()),
+        ),
+        (
+            "main_world.home.disabled",
+            UiBindingValue::Bool(transition_loading),
+        ),
+        (
+            "main_world.return_lobby.disabled",
+            UiBindingValue::Bool(transition_loading),
+        ),
+        (
+            "main_world.transition.loading",
+            UiBindingValue::Bool(transition_loading),
+        ),
+        (
+            "main_world.transition.status",
+            UiBindingValue::String(main_world_transition_status_text(entry.phase)),
+        ),
+    ] {
+        set_binding(
+            &contract,
+            &mut values,
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            OWNER_MAIN_WORLD.as_str(),
+            path,
+            value,
+        );
+    }
+}
+
+fn main_world_connection_status_text(state: GameConnectionState) -> String {
+    match state {
+        GameConnectionState::NotConnected => "Game services offline".to_owned(),
+        GameConnectionState::Connecting => "Connecting to game services".to_owned(),
+        GameConnectionState::Connected => "Transport connected".to_owned(),
+        GameConnectionState::Authenticating => "Authenticating game session".to_owned(),
+        GameConnectionState::Authenticated => "Game session connected".to_owned(),
+        GameConnectionState::Disconnected => "Connection lost".to_owned(),
+        GameConnectionState::Reconnecting => "Reconnecting game session".to_owned(),
+        GameConnectionState::ReconnectFailed => "Reconnect failed".to_owned(),
+    }
+}
+
+fn main_world_character_summary(character_id: Option<&str>) -> String {
+    let Some(character_id) = character_id.filter(|character_id| !character_id.is_empty()) else {
+        return "Character unavailable".to_owned();
+    };
+    let compact_id = character_id.chars().take(8).collect::<String>();
+    format!("Character {compact_id}")
+}
+
+fn main_world_transition_status_text(phase: MainWorldEntryPhase) -> String {
+    match phase {
+        MainWorldEntryPhase::Active => String::new(),
+        MainWorldEntryPhase::Exiting => "Returning to lobby".to_owned(),
+        MainWorldEntryPhase::Recovering => "Recovering game session".to_owned(),
+        MainWorldEntryPhase::HomeLoading => "Entering home".to_owned(),
+        MainWorldEntryPhase::HomeActive => "Home active".to_owned(),
+        MainWorldEntryPhase::ReturningFromHome => "Returning from home".to_owned(),
+        MainWorldEntryPhase::Validating => "Validating game session".to_owned(),
+        MainWorldEntryPhase::JoiningRoom => "Joining game room".to_owned(),
+        MainWorldEntryPhase::LoadingScene => "Loading main world".to_owned(),
+        MainWorldEntryPhase::WaitingSceneReady => "Preparing main world".to_owned(),
+        MainWorldEntryPhase::LobbyIdle => "Waiting for main world".to_owned(),
+        MainWorldEntryPhase::Failed => "Main world unavailable".to_owned(),
+    }
+}
+
 pub(super) fn reset_robot_sync_hud_visibility(
     mut visibility: ResMut<super::robot_sync_scene::RobotSyncHudVisibility>,
 ) {
@@ -1141,6 +1286,118 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_main_world_snapshot_does_not_advance_binding_revision() {
+        let mut app = main_world_binding_test_app();
+        app.update();
+        let revision = app.world().resource::<UiBindingValues>().revision();
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<UiBindingValues>().revision(),
+            revision
+        );
+    }
+
+    #[test]
+    fn main_world_unknown_unread_count_is_hidden_instead_of_displaying_zero() {
+        let mut app = main_world_binding_test_app();
+        app.world_mut()
+            .insert_resource(MailClientState::ready_for_test());
+        app.update();
+
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.mail.unread"),
+            UiBindingValue::String(String::new())
+        );
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.mail.unread_visibility"),
+            UiBindingValue::Visibility(UiBindingVisibility::Hidden)
+        );
+    }
+
+    #[test]
+    fn unavailable_mail_disables_only_the_mail_entry() {
+        let mut app = main_world_binding_test_app();
+        app.update();
+
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.mail.disabled"),
+            UiBindingValue::Bool(true)
+        );
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.settings.disabled"),
+            UiBindingValue::Bool(false)
+        );
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.home.disabled"),
+            UiBindingValue::Bool(false)
+        );
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.return_lobby.disabled"),
+            UiBindingValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn main_world_generation_change_clears_stale_owner_bindings() {
+        let mut app = main_world_binding_test_app();
+        app.update();
+
+        let stale_path = UiBindingPath::from_str("main_world.stale").unwrap();
+        let stale_declaration = UiBindingDeclaration {
+            scope: UiBindingScope::Owner,
+            value_type: UiBindingType::String,
+            default: None,
+            missing: UiBindingMissingBehavior::UseConsumerFallback,
+        };
+        app.world_mut()
+            .resource_mut::<UiBindingValues>()
+            .set_scoped(
+                MAIN_WORLD_HUD_DOCUMENT_ID,
+                OWNER_MAIN_WORLD.as_str(),
+                &stale_path,
+                &stale_declaration,
+                UiBindingValue::String("previous character".to_owned()),
+            );
+        app.world_mut()
+            .resource_mut::<MainWorldEntryState>()
+            .generation = 1;
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<UiBindingValues>().scoped_value(
+                MAIN_WORLD_HUD_DOCUMENT_ID,
+                OWNER_MAIN_WORLD.as_str(),
+                &stale_path,
+                &stale_declaration,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn main_world_transition_disables_conflicting_entries_and_sets_loading() {
+        let mut app = main_world_binding_test_app();
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            MainWorldEntryPhase::HomeLoading;
+        app.update();
+
+        for path in [
+            "main_world.home.disabled",
+            "main_world.return_lobby.disabled",
+        ] {
+            assert_eq!(
+                main_world_binding_value(&app, path),
+                UiBindingValue::Bool(true)
+            );
+        }
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.transition.loading"),
+            UiBindingValue::Bool(true)
+        );
+    }
+
+    #[test]
     fn touch_hud_root_does_not_block_gameplay_picking_and_lifecycle_closes_it() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, StatesPlugin))
@@ -1360,6 +1617,36 @@ mod tests {
             .add_message::<GameRouteCommand>()
             .add_systems(Update, handle_gameplay_hud_document_actions);
         app
+    }
+
+    fn main_world_binding_test_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<MainWorldEntryState>()
+            .init_resource::<GameplayHudHostContract>()
+            .init_resource::<MainWorldHudBindingGeneration>()
+            .init_resource::<UiBindingValues>()
+            .insert_resource(AudioMixer::default())
+            .add_systems(Update, sync_main_world_hud_bindings);
+        app
+    }
+
+    fn main_world_binding_value(app: &App, path: &str) -> UiBindingValue {
+        let path = UiBindingPath::from_str(path).unwrap();
+        let contract = app.world().resource::<GameplayHudHostContract>();
+        let declaration = contract
+            .bindings
+            .get(MAIN_WORLD_HUD_DOCUMENT_ID)
+            .and_then(|bindings| bindings.get(&path))
+            .unwrap();
+        app.world()
+            .resource::<UiBindingValues>()
+            .scoped_value(
+                MAIN_WORLD_HUD_DOCUMENT_ID,
+                OWNER_MAIN_WORLD.as_str(),
+                &path,
+                declaration,
+            )
+            .unwrap()
     }
 
     fn main_world_hud_runtime_app() -> App {

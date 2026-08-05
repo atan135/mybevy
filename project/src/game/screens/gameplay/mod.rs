@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::framework::fangyuan::FangyuanDebugPanelState;
 use crate::framework::ui::{core::binding::UiBindingSystems, document::UiDocumentRuntimeSystems};
-use crate::game::navigation::AppUiMode;
+use crate::game::{myserver::MyServerUpdateSet, navigation::AppUiMode};
 
 pub(super) struct GameplayScreensPlugin;
 
@@ -17,6 +17,7 @@ impl Plugin for GameplayScreensPlugin {
         app.init_resource::<FangyuanDebugPanelState>()
             .init_resource::<robot_sync_scene::RobotSyncHudVisibility>()
             .init_resource::<host::GameplayHudHostContract>()
+            .init_resource::<host::MainWorldHudBindingGeneration>()
             .add_systems(Startup, host::register_gameplay_hud_contracts);
 
         app.add_systems(
@@ -54,6 +55,13 @@ impl Plugin for GameplayScreensPlugin {
         .add_systems(
             Update,
             host::recover_from_main_world_hud_failure.after(UiDocumentRuntimeSystems::Reconcile),
+        )
+        .add_systems(
+            Update,
+            host::sync_main_world_hud_bindings
+                .after(MyServerUpdateSet::CommandDispatch)
+                .before(UiBindingSystems::Apply)
+                .run_if(in_state(AppUiMode::MainWorld)),
         )
         .add_systems(
             Update,
