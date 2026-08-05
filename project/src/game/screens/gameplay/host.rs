@@ -63,6 +63,11 @@ pub(super) const ACTION_MAIN_WORLD_OPEN_MAIL: &str = "main_world.open_mail";
 pub(super) const ACTION_MAIN_WORLD_ENTER_HOME: &str = "main_world.enter_home";
 pub(super) const ACTION_MAIN_WORLD_RETURN_LOBBY: &str = "main_world.return_lobby";
 pub(super) const ACTION_MAIN_WORLD_MAIL_REFRESH: &str = "main_world_mail.refresh";
+pub(super) const ACTION_MAIN_WORLD_MAIL_SELECT: &str = "main_world_mail.select";
+pub(super) const ACTION_MAIN_WORLD_MAIL_LOAD_MORE: &str = "main_world_mail.load_more";
+pub(super) const ACTION_MAIN_WORLD_MAIL_MARK_READ: &str = "main_world_mail.mark_read";
+pub(super) const ACTION_MAIN_WORLD_MAIL_CLAIM: &str = "main_world_mail.claim";
+pub(super) const ACTION_MAIN_WORLD_MAIL_RETRY: &str = "main_world_mail.retry";
 pub(super) const ACTION_MAIN_WORLD_MAIL_CLOSE: &str = "main_world_mail.close";
 /// Deferred from this checklist: developer tool pages, the production chat window,
 /// and a complete character status bar remain outside the main-world HUD contract.
@@ -212,13 +217,24 @@ const MAIN_WORLD_HUD_SOURCE: &str =
     include_str!("../../../../assets/ui/documents/approved/gameplay/main_world_hud.v1.json");
 const MAIN_WORLD_MAIL_SOURCE: &str =
     include_str!("../../../../assets/ui/documents/approved/gameplay/main_world_mail.v1.json");
+const MAIN_WORLD_MAIL_FALLBACK_SOURCE: &str = include_str!(
+    "../../../../assets/ui/documents/approved/gameplay/main_world_mail_fallback.v1.json"
+);
 
 const MAIN_WORLD_SETTINGS_NODE: &str = "main_world.settings";
 const MAIN_WORLD_MAIL_NODE: &str = "main_world.mail";
 const MAIN_WORLD_HOME_NODE: &str = "main_world.home";
 const MAIN_WORLD_RETURN_LOBBY_NODE: &str = "main_world.return_lobby";
 const MAIN_WORLD_MAIL_REFRESH_NODE: &str = "main_world_mail.refresh";
+const MAIN_WORLD_MAIL_SELECT_NODE: &str = "main_world_mail.item.open";
+const MAIN_WORLD_MAIL_LOAD_MORE_NODE: &str = "main_world_mail.load_more";
+const MAIN_WORLD_MAIL_MARK_READ_NODE: &str = "main_world_mail.mark_read";
+const MAIN_WORLD_MAIL_CLAIM_NODE: &str = "main_world_mail.claim";
+const MAIN_WORLD_MAIL_RETRY_NODE: &str = "main_world_mail.retry";
 const MAIN_WORLD_MAIL_CLOSE_NODE: &str = "main_world_mail.close";
+const MAIN_WORLD_MAIL_ID_MAX_BYTES: usize = 64;
+const MAIN_WORLD_MAIL_MAX_ITEMS: u16 = 50;
+const MAIN_WORLD_MAIL_MAX_ATTACHMENTS: u16 = 32;
 const TOUCH_RETURN_NODE: &str = "touch_ripple.return_lobby";
 const SAMPLE_RETURN_NODE: &str = "sample_scene.return_lobby";
 const ROBOT_HIDE_NODE: &str = "robot_sync.hide_hud";
@@ -282,16 +298,7 @@ impl Default for GameplayHudHostContract {
                 ),
                 (
                     MAIN_WORLD_MAIL_DOCUMENT_ID,
-                    binding_schema([
-                        ("main_world_mail.status", UiBindingType::String),
-                        ("main_world_mail.count", UiBindingType::String),
-                        ("main_world_mail.error", UiBindingType::String),
-                        (
-                            "main_world_mail.error_visibility",
-                            UiBindingType::Visibility,
-                        ),
-                        ("main_world_mail.refresh_disabled", UiBindingType::Bool),
-                    ]),
+                    main_world_mail_binding_schema(),
                 ),
                 (TOUCH_RIPPLE_DOCUMENT_ID, BTreeMap::new()),
                 (SAMPLE_SCENE_DOCUMENT_ID, BTreeMap::new()),
@@ -317,6 +324,304 @@ impl Default for GameplayHudHostContract {
             ]),
         }
     }
+}
+
+fn main_world_mail_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclaration> {
+    let mail_item = UiBindingType::Record {
+        fields: BTreeMap::from([
+            ("mail_id".to_owned(), UiBindingType::String),
+            ("title".to_owned(), UiBindingType::String),
+            ("sender".to_owned(), UiBindingType::String),
+            ("sent_at".to_owned(), UiBindingType::String),
+            ("status".to_owned(), UiBindingType::String),
+            ("attachment_label".to_owned(), UiBindingType::String),
+            ("unread".to_owned(), UiBindingType::Bool),
+            ("expired".to_owned(), UiBindingType::Bool),
+            ("selected".to_owned(), UiBindingType::Bool),
+            ("disabled".to_owned(), UiBindingType::Bool),
+        ]),
+    };
+    let attachment_item = UiBindingType::Record {
+        fields: BTreeMap::from([
+            ("attachment_id".to_owned(), UiBindingType::String),
+            ("label".to_owned(), UiBindingType::String),
+            ("count".to_owned(), UiBindingType::String),
+            ("bind_status".to_owned(), UiBindingType::String),
+        ]),
+    };
+    let specs = vec![
+        (
+            "main_world_mail.availability",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: ["unavailable", "awaiting_session", "ready"]
+                    .map(str::to_owned)
+                    .to_vec(),
+            },
+        ),
+        (
+            "main_world_mail.collection_state",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: ["loading", "ready", "error"].map(str::to_owned).to_vec(),
+            },
+        ),
+        (
+            "main_world_mail.view_mode",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: ["list", "detail"].map(str::to_owned).to_vec(),
+            },
+        ),
+        (
+            "main_world_mail.items",
+            UiBindingScope::Owner,
+            UiBindingType::List {
+                item: Box::new(mail_item),
+                max_items: MAIN_WORLD_MAIL_MAX_ITEMS,
+            },
+        ),
+        (
+            "main_world_mail.status",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.count",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.has_more",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.load_more_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "main_world_mail.load_more_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.load_more_loading",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.selected.mail_id",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.detail_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "main_world_mail.detail.title",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.detail.sender",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.detail.sent_at",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.detail.status",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.detail.content",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.detail.attachments",
+            UiBindingScope::Owner,
+            UiBindingType::List {
+                item: Box::new(attachment_item),
+                max_items: MAIN_WORLD_MAIL_MAX_ATTACHMENTS,
+            },
+        ),
+        (
+            "main_world_mail.claim.state",
+            UiBindingScope::Owner,
+            UiBindingType::Enum {
+                values: [
+                    "idle",
+                    "available",
+                    "submitting",
+                    "processing",
+                    "claimed",
+                    "already_claimed",
+                    "expired",
+                    "retryable_failure",
+                    "blocked_capacity",
+                    "permanent_failure",
+                    "reconciliation_pending",
+                    "manual_review",
+                    "unavailable",
+                ]
+                .map(str::to_owned)
+                .to_vec(),
+            },
+        ),
+        (
+            "main_world_mail.claim.label",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.mark_read_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.mark_read_loading",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.claim_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.claim_loading",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.error.code",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.error.message",
+            UiBindingScope::Owner,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.error_visibility",
+            UiBindingScope::Owner,
+            UiBindingType::Visibility,
+        ),
+        (
+            "main_world_mail.retry_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.retry_loading",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.refresh_disabled",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.refresh_loading",
+            UiBindingScope::Owner,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.item.mail_id",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.item.title",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.item.sender",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.item.sent_at",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.item.status",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.item.attachment_label",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.item.unread",
+            UiBindingScope::Item,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.item.expired",
+            UiBindingScope::Item,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.item.selected",
+            UiBindingScope::Item,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.item.disabled",
+            UiBindingScope::Item,
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_mail.attachment.item.attachment_id",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.attachment.item.label",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.attachment.item.count",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+        (
+            "main_world_mail.attachment.item.bind_status",
+            UiBindingScope::Item,
+            UiBindingType::String,
+        ),
+    ];
+    specs
+        .into_iter()
+        .map(|(path, scope, value_type)| {
+            (
+                UiBindingPath::from_str(path).expect("main world mail binding path is static"),
+                UiBindingDeclaration {
+                    scope,
+                    value_type,
+                    default: None,
+                    missing: UiBindingMissingBehavior::UseConsumerFallback,
+                },
+            )
+        })
+        .collect()
 }
 
 #[derive(Default, Resource)]
@@ -470,6 +775,12 @@ fn main_world_mail_declarative_screen_host(
         initial_state: UiPageState::initial(),
         binding_schema: contract.bindings[MAIN_WORLD_MAIL_DOCUMENT_ID]
             .iter()
+            .filter(|(_, declaration)| {
+                matches!(
+                    declaration.scope,
+                    UiBindingScope::Document | UiBindingScope::Owner
+                )
+            })
             .map(|(path, declaration)| {
                 (
                     UiHostBindingKey::new(declaration.scope, path.clone()),
@@ -477,15 +788,24 @@ fn main_world_mail_declarative_screen_host(
                 )
             })
             .collect(),
-        action_allowlist: [ACTION_MAIN_WORLD_MAIL_REFRESH, ACTION_MAIN_WORLD_MAIL_CLOSE]
-            .into_iter()
-            .map(|action| {
-                UiActionId::from_str(action).expect("main world mail action ID is static")
-            })
-            .collect(),
+        action_allowlist: [
+            ACTION_MAIN_WORLD_MAIL_REFRESH,
+            ACTION_MAIN_WORLD_MAIL_SELECT,
+            ACTION_MAIN_WORLD_MAIL_LOAD_MORE,
+            ACTION_MAIN_WORLD_MAIL_MARK_READ,
+            ACTION_MAIN_WORLD_MAIL_CLAIM,
+            ACTION_MAIN_WORLD_MAIL_RETRY,
+            ACTION_MAIN_WORLD_MAIL_CLOSE,
+        ]
+        .into_iter()
+        .map(|action| UiActionId::from_str(action).expect("main world mail action ID is static"))
+        .collect(),
         audit_profiles: DEFAULT_AUDIT_PROFILES.map(str::to_owned).to_vec(),
         source: source.clone(),
-        fallback_source: Some(source),
+        fallback_source: Some(DeclarativeScreenSource::approved(
+            "gameplay/main_world_mail_fallback.v1.json",
+            MAIN_WORLD_MAIL_FALLBACK_SOURCE,
+        )),
         failure_policy: DeclarativeScreenFailurePolicy::PackagedFallback,
     }
 }
@@ -549,6 +869,24 @@ pub(super) fn gameplay_action_descriptors() -> Vec<UiActionDescriptor> {
             OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
             ACTION_MAIN_WORLD_MAIL_REFRESH,
             MAIN_WORLD_MAIL_REFRESH_NODE,
+        ),
+        mail_id_action(ACTION_MAIN_WORLD_MAIL_SELECT, MAIN_WORLD_MAIL_SELECT_NODE),
+        action(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_LOAD_MORE,
+            MAIN_WORLD_MAIL_LOAD_MORE_NODE,
+        ),
+        mail_id_action(
+            ACTION_MAIN_WORLD_MAIL_MARK_READ,
+            MAIN_WORLD_MAIL_MARK_READ_NODE,
+        ),
+        mail_id_action(ACTION_MAIN_WORLD_MAIL_CLAIM, MAIN_WORLD_MAIL_CLAIM_NODE),
+        action(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_RETRY,
+            MAIN_WORLD_MAIL_RETRY_NODE,
         ),
         action(
             MAIN_WORLD_MAIL_DOCUMENT_ID,
@@ -672,6 +1010,21 @@ pub(super) fn gameplay_action_descriptors() -> Vec<UiActionDescriptor> {
     descriptors
 }
 
+fn mail_id_action(action_id: &str, source: &str) -> UiActionDescriptor {
+    action(
+        MAIN_WORLD_MAIL_DOCUMENT_ID,
+        OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+        action_id,
+        source,
+    )
+    .with_param(
+        "mail_id",
+        UiActionParamSchema::required(UiActionParamType::OpaqueId {
+            max_bytes: MAIN_WORLD_MAIL_ID_MAX_BYTES,
+        }),
+    )
+}
+
 fn action(document_id: &str, owner: &str, action_id: &str, source: &str) -> UiActionDescriptor {
     UiActionDescriptor::new(
         UiActionId::from_str(action_id).unwrap(),
@@ -710,6 +1063,37 @@ pub(super) fn recover_from_main_world_hud_failure(
     if entry.is_some_and(|entry| entry.phase == MainWorldEntryPhase::Active) && fallback_failed {
         intents.write(MainWorldEntryIntent::ExitToLobby);
     }
+}
+
+/// The full mailbox has a separate packaged fallback containing the same closed
+/// close action. If even that source cannot mount, close only the detached route;
+/// the global mail resource and any claim reconciliation continue to run.
+pub(super) fn recover_from_main_world_mail_failure(
+    mut host_events: MessageReader<DeclarativeScreenHostEvent>,
+    mut screen_commands: MessageWriter<DeclarativeScreenHostCommand>,
+    mut focus: Option<ResMut<UiFocusState>>,
+) {
+    let fallback_failed = host_events.read().any(|event| {
+        matches!(
+            event,
+            DeclarativeScreenHostEvent::LoadFailed {
+                document_id,
+                owner,
+                decision: DeclarativeScreenFailureDecision::NoFallbackAvailable,
+                ..
+            } if document_id.as_str() == MAIN_WORLD_MAIL_DOCUMENT_ID
+                && owner == OWNER_MAIN_WORLD_MAIL_PANEL.as_str()
+        )
+    });
+    if !fallback_failed {
+        return;
+    }
+    if let Some(focus) = focus.as_deref_mut() {
+        focus.focused_entity = None;
+    }
+    screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
+        route: MainWorldDocumentPanel::Mail.route().to_owned(),
+    });
 }
 
 pub(super) fn handle_gameplay_hud_document_actions(
@@ -752,7 +1136,7 @@ pub(super) fn handle_gameplay_hud_document_actions(
                     query: MailListQuery::default(),
                 });
             }
-            ACTION_MAIN_WORLD_MAIL_REFRESH
+            ACTION_MAIN_WORLD_MAIL_REFRESH | ACTION_MAIN_WORLD_MAIL_RETRY
                 if main_world_actions_are_active(entry.as_deref())
                     && mail.as_deref().is_some_and(MailClientState::is_available) =>
             {
@@ -844,6 +1228,16 @@ fn zero_param_action_matches_contract(action: &UiActionDispatch) -> bool {
             "main_world_mail_panel",
             ACTION_MAIN_WORLD_MAIL_REFRESH,
             MAIN_WORLD_MAIL_REFRESH_NODE,
+        ) | (
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            "main_world_mail_panel",
+            ACTION_MAIN_WORLD_MAIL_LOAD_MORE,
+            MAIN_WORLD_MAIL_LOAD_MORE_NODE,
+        ) | (
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            "main_world_mail_panel",
+            ACTION_MAIN_WORLD_MAIL_RETRY,
+            MAIN_WORLD_MAIL_RETRY_NODE,
         ) | (
             MAIN_WORLD_MAIL_DOCUMENT_ID,
             "main_world_mail_panel",
@@ -1054,8 +1448,21 @@ pub(super) fn sync_main_world_mail_bindings(
     contract: Res<GameplayHudHostContract>,
     mut values: ResMut<UiBindingValues>,
 ) {
-    let (status, count, error, refresh_disabled) = match mail.as_deref() {
+    let (
+        availability,
+        collection_state,
+        status,
+        count,
+        error_code,
+        error_message,
+        refresh_disabled,
+    ) = match mail.as_deref() {
         Some(mail) => {
+            let availability = match &mail.availability {
+                MailAvailability::Ready => "ready",
+                MailAvailability::AwaitingCharacterTicket => "awaiting_session",
+                MailAvailability::Unavailable { .. } => "unavailable",
+            };
             let status = match &mail.availability {
                 MailAvailability::Ready if mail.list_stale => "Refreshing mail".to_owned(),
                 MailAvailability::Ready => "Mail ready".to_owned(),
@@ -1069,44 +1476,158 @@ pub(super) fn sync_main_world_mail_bindings(
             } else {
                 format!("{} cached messages", mail.mails.len())
             };
-            let error = match &mail.availability {
-                MailAvailability::Unavailable { reason } => reason.clone(),
-                MailAvailability::AwaitingCharacterTicket => {
-                    "Character session is not ready".to_owned()
+            let (error_code, error_message) = match &mail.availability {
+                MailAvailability::Unavailable { reason } => {
+                    ("MAIL_UNAVAILABLE".to_owned(), reason.clone())
                 }
-                _ => mail
-                    .last_error
-                    .as_ref()
-                    .map(|error| error.code.clone())
-                    .unwrap_or_default(),
+                MailAvailability::AwaitingCharacterTicket => (
+                    "MAIL_AWAITING_CHARACTER_TICKET".to_owned(),
+                    "Character session is not ready".to_owned(),
+                ),
+                _ => mail.last_error.as_ref().map_or_else(
+                    || (String::new(), String::new()),
+                    |error| (error.code.clone(), error.code.clone()),
+                ),
             };
-            (status, count, error, !mail.is_available())
+            let collection_state = if !mail.is_available() || mail.last_error.is_some() {
+                "error"
+            } else if mail.list_stale && mail.mails.is_empty() {
+                "loading"
+            } else {
+                "ready"
+            };
+            (
+                availability,
+                collection_state,
+                status,
+                count,
+                error_code,
+                error_message,
+                !mail.is_available(),
+            )
         }
         None => (
+            "unavailable",
+            "error",
             "Mail unavailable".to_owned(),
             String::new(),
+            "MAIL_UNAVAILABLE".to_owned(),
             "Mail service is unavailable".to_owned(),
             true,
         ),
     };
-    for (path, value) in [
-        ("main_world_mail.status", UiBindingValue::String(status)),
-        ("main_world_mail.count", UiBindingValue::String(count)),
+    let error_visible = !error_message.is_empty();
+    for (path, value) in vec![
         (
-            "main_world_mail.error",
-            UiBindingValue::String(error.clone()),
+            "main_world_mail.availability",
+            UiBindingValue::Enum(availability.to_owned()),
         ),
         (
-            "main_world_mail.error_visibility",
-            UiBindingValue::Visibility(if error.is_empty() {
-                UiBindingVisibility::Hidden
+            "main_world_mail.collection_state",
+            UiBindingValue::Enum(collection_state.to_owned()),
+        ),
+        (
+            "main_world_mail.view_mode",
+            UiBindingValue::Enum("list".to_owned()),
+        ),
+        ("main_world_mail.items", UiBindingValue::List(Vec::new())),
+        ("main_world_mail.status", UiBindingValue::String(status)),
+        ("main_world_mail.count", UiBindingValue::String(count)),
+        ("main_world_mail.has_more", UiBindingValue::Bool(false)),
+        (
+            "main_world_mail.load_more_visibility",
+            UiBindingValue::Visibility(UiBindingVisibility::Hidden),
+        ),
+        (
+            "main_world_mail.load_more_disabled",
+            UiBindingValue::Bool(true),
+        ),
+        (
+            "main_world_mail.load_more_loading",
+            UiBindingValue::Bool(false),
+        ),
+        (
+            "main_world_mail.selected.mail_id",
+            UiBindingValue::String(String::new()),
+        ),
+        (
+            "main_world_mail.detail_visibility",
+            UiBindingValue::Visibility(UiBindingVisibility::Hidden),
+        ),
+        (
+            "main_world_mail.detail.title",
+            UiBindingValue::String(String::new()),
+        ),
+        (
+            "main_world_mail.detail.sender",
+            UiBindingValue::String(String::new()),
+        ),
+        (
+            "main_world_mail.detail.sent_at",
+            UiBindingValue::String(String::new()),
+        ),
+        (
+            "main_world_mail.detail.status",
+            UiBindingValue::String(String::new()),
+        ),
+        (
+            "main_world_mail.detail.content",
+            UiBindingValue::String(String::new()),
+        ),
+        (
+            "main_world_mail.detail.attachments",
+            UiBindingValue::List(Vec::new()),
+        ),
+        (
+            "main_world_mail.claim.state",
+            UiBindingValue::Enum(if availability == "ready" {
+                "idle".to_owned()
             } else {
-                UiBindingVisibility::Visible
+                "unavailable".to_owned()
             }),
         ),
         (
+            "main_world_mail.claim.label",
+            UiBindingValue::String(String::new()),
+        ),
+        (
+            "main_world_mail.mark_read_disabled",
+            UiBindingValue::Bool(true),
+        ),
+        (
+            "main_world_mail.mark_read_loading",
+            UiBindingValue::Bool(false),
+        ),
+        ("main_world_mail.claim_disabled", UiBindingValue::Bool(true)),
+        ("main_world_mail.claim_loading", UiBindingValue::Bool(false)),
+        (
+            "main_world_mail.error.code",
+            UiBindingValue::String(error_code),
+        ),
+        (
+            "main_world_mail.error.message",
+            UiBindingValue::String(error_message),
+        ),
+        (
+            "main_world_mail.error_visibility",
+            UiBindingValue::Visibility(if error_visible {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
+        ),
+        (
+            "main_world_mail.retry_disabled",
+            UiBindingValue::Bool(refresh_disabled),
+        ),
+        ("main_world_mail.retry_loading", UiBindingValue::Bool(false)),
+        (
             "main_world_mail.refresh_disabled",
             UiBindingValue::Bool(refresh_disabled),
+        ),
+        (
+            "main_world_mail.refresh_loading",
+            UiBindingValue::Bool(collection_state == "loading"),
         ),
     ] {
         set_binding(
@@ -1222,9 +1743,9 @@ mod tests {
         ui::{
             core::{UiInputMode, UiMetrics, UiSafeArea, UiViewport},
             document::{
-                UiDocument, UiDocumentInputMode, UiDocumentPlatform, UiDocumentPreviewPlugin,
-                UiDocumentRuntime, UiDocumentRuntimePlugin, UiNode, UiSafeAreaClass,
-                UiTargetProfile, parse_approved_document_registration,
+                UiActionDispatchContext, UiDocument, UiDocumentInputMode, UiDocumentPlatform,
+                UiDocumentPreviewPlugin, UiDocumentRuntime, UiDocumentRuntimePlugin, UiNode,
+                UiSafeAreaClass, UiTargetProfile, parse_approved_document_registration,
             },
             style::{UiFontAssets, UiTheme},
         },
@@ -1308,6 +1829,149 @@ mod tests {
     }
 
     #[test]
+    fn main_world_mail_host_contract_keeps_repeat_items_local_and_actions_closed() {
+        let contract = GameplayHudHostContract::default();
+        let host = main_world_mail_declarative_screen_host(&contract);
+        assert_eq!(host.document_id.as_str(), MAIN_WORLD_MAIL_DOCUMENT_ID);
+        assert_eq!(host.owner, OWNER_MAIN_WORLD_MAIL_PANEL);
+        assert_eq!(host.route, "main_world_mail");
+        assert_eq!(host.panel, UiDocumentPanel::Floating);
+        assert_eq!(host.layer, UiDocumentLayer::Floating);
+        assert_eq!(host.audit_profiles, DEFAULT_AUDIT_PROFILES);
+        assert_eq!(host.action_allowlist.len(), 7);
+        assert!(
+            host.binding_schema
+                .keys()
+                .all(|key| key.scope != UiBindingScope::Item)
+        );
+
+        let mail = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE).unwrap();
+        let list = find_document_node(&mail.document().root, "main_world_mail.list").unwrap();
+        let repeat = list.repeat().unwrap();
+        assert_eq!(repeat.source.as_str(), "main_world_mail.items");
+        assert_eq!(repeat.key, "mail_id");
+        assert_eq!(
+            repeat.item_bindings[&UiBindingPath::from_str("main_world_mail.item.mail_id").unwrap()],
+            "mail_id"
+        );
+
+        let select =
+            find_document_node(&mail.document().root, MAIN_WORLD_MAIL_SELECT_NODE).unwrap();
+        assert!(matches!(
+            select,
+            UiNode::Button {
+                on_click: Some(invocation),
+                ..
+            } if matches!(
+                invocation.params.get("mail_id"),
+                Some(UiActionValue::ItemBinding(path))
+                    if path.as_str() == "main_world_mail.item.mail_id"
+            )
+        ));
+        for node_id in [MAIN_WORLD_MAIL_MARK_READ_NODE, MAIN_WORLD_MAIL_CLAIM_NODE] {
+            let node = find_document_node(&mail.document().root, node_id).unwrap();
+            assert!(matches!(
+                node,
+                UiNode::Button {
+                    on_click: Some(invocation),
+                    ..
+                } if matches!(
+                    invocation.params.get("mail_id"),
+                    Some(UiActionValue::HostBinding(path))
+                        if path.as_str() == "main_world_mail.selected.mail_id"
+                )
+            ));
+        }
+    }
+
+    #[test]
+    fn main_world_mail_uses_a_distinct_packaged_fallback_with_safe_close() {
+        let host = main_world_mail_declarative_screen_host(&GameplayHudHostContract::default());
+        let fallback = host.fallback_source.as_ref().unwrap();
+        assert_ne!(host.source.source_path, fallback.source_path);
+        assert_ne!(host.source.source_json, fallback.source_json);
+        let fallback = UiDocument::parse_and_validate_json(&fallback.source_json).unwrap();
+        assert_eq!(
+            fallback.document().document_id.as_str(),
+            MAIN_WORLD_MAIL_DOCUMENT_ID
+        );
+        let close =
+            find_document_node(&fallback.document().root, MAIN_WORLD_MAIL_CLOSE_NODE).unwrap();
+        assert!(matches!(
+            close,
+            UiNode::Button {
+                on_click: Some(invocation),
+                ..
+            } if invocation.action.as_str() == ACTION_MAIN_WORLD_MAIL_CLOSE
+                && invocation.params.is_empty()
+        ));
+    }
+
+    #[test]
+    fn main_world_mail_registry_rejects_wrong_document_owner_source_and_params() {
+        let mut registry = UiActionRegistry::default();
+        for descriptor in gameplay_action_descriptors()
+            .into_iter()
+            .filter(|descriptor| descriptor.document_id.as_str() == MAIN_WORLD_MAIL_DOCUMENT_ID)
+        {
+            registry.register(descriptor).unwrap();
+        }
+        let document = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE).unwrap();
+        let context = UiActionDispatchContext {
+            owner: OWNER_MAIN_WORLD_MAIL_PANEL.as_str().to_owned(),
+            owner_alive: true,
+            source_node: UiNodeId::from_str(MAIN_WORLD_MAIL_REFRESH_NODE).unwrap(),
+        };
+        assert!(registry.dispatch(&document, &context).is_ok());
+
+        let mut wrong_owner = context.clone();
+        wrong_owner.owner = OWNER_MAIN_WORLD.as_str().to_owned();
+        assert_eq!(
+            registry.dispatch(&document, &wrong_owner).unwrap_err().code,
+            "UI_ACTION_OWNER_FORBIDDEN"
+        );
+
+        let mut wrong_source = context.clone();
+        wrong_source.source_node = UiNodeId::from_str("main_world_mail.forged").unwrap();
+        assert_eq!(
+            registry
+                .dispatch(&document, &wrong_source)
+                .unwrap_err()
+                .code,
+            "UI_ACTION_SOURCE_NODE_UNKNOWN"
+        );
+
+        let wrong_document_source = MAIN_WORLD_MAIL_SOURCE.replacen(
+            "\"document_id\": \"game.main_world_mail\"",
+            "\"document_id\": \"game.forged_mail\"",
+            1,
+        );
+        let wrong_document = UiDocument::parse_and_validate_json(&wrong_document_source).unwrap();
+        assert_eq!(
+            registry
+                .dispatch(&wrong_document, &context)
+                .unwrap_err()
+                .code,
+            "UI_ACTION_DOCUMENT_FORBIDDEN"
+        );
+
+        let malformed_params_source = MAIN_WORLD_MAIL_SOURCE.replacen(
+            "\"on_click\": { \"action\": \"main_world_mail.refresh\" }",
+            "\"on_click\": { \"action\": \"main_world_mail.refresh\", \"params\": { \"unexpected\": { \"kind\": \"string\", \"value\": \"forged\" } } }",
+            1,
+        );
+        let malformed_params =
+            UiDocument::parse_and_validate_json(&malformed_params_source).unwrap();
+        assert_eq!(
+            registry
+                .dispatch(&malformed_params, &context)
+                .unwrap_err()
+                .code,
+            "UI_ACTION_PARAM_UNKNOWN"
+        );
+    }
+
+    #[test]
     fn main_world_ui_contract_keeps_scene_panels_below_the_fixed_hud_route() {
         assert_eq!(MAIN_WORLD_HUD_DOCUMENT_ID, "game.main_world_hud");
         assert_eq!(MAIN_WORLD_HUD_ROUTE, "main_world");
@@ -1356,7 +2020,7 @@ mod tests {
     #[test]
     fn gameplay_actions_are_closed_to_exact_sources_and_module_values() {
         let descriptors = gameplay_action_descriptors();
-        assert_eq!(descriptors.len(), 19);
+        assert_eq!(descriptors.len(), 24);
         assert!(
             descriptors
                 .iter()
@@ -1378,12 +2042,40 @@ mod tests {
             .iter()
             .filter(|descriptor| descriptor.document_id.as_str() == MAIN_WORLD_MAIL_DOCUMENT_ID)
             .collect::<Vec<_>>();
-        assert_eq!(mail_actions.len(), 2);
-        assert!(
-            mail_actions
+        assert_eq!(mail_actions.len(), 7);
+        for action_id in [
+            ACTION_MAIN_WORLD_MAIL_SELECT,
+            ACTION_MAIN_WORLD_MAIL_MARK_READ,
+            ACTION_MAIN_WORLD_MAIL_CLAIM,
+        ] {
+            let descriptor = mail_actions
                 .iter()
-                .all(|descriptor| descriptor.params.is_empty())
-        );
+                .find(|descriptor| descriptor.id.as_str() == action_id)
+                .unwrap();
+            let mail_id = descriptor.params.get("mail_id").unwrap();
+            assert!(mail_id.required);
+            assert_eq!(
+                mail_id.value_type,
+                UiActionParamType::OpaqueId {
+                    max_bytes: MAIN_WORLD_MAIL_ID_MAX_BYTES,
+                }
+            );
+        }
+        for action_id in [
+            ACTION_MAIN_WORLD_MAIL_REFRESH,
+            ACTION_MAIN_WORLD_MAIL_LOAD_MORE,
+            ACTION_MAIN_WORLD_MAIL_RETRY,
+            ACTION_MAIN_WORLD_MAIL_CLOSE,
+        ] {
+            assert!(
+                mail_actions
+                    .iter()
+                    .find(|descriptor| descriptor.id.as_str() == action_id)
+                    .unwrap()
+                    .params
+                    .is_empty()
+            );
+        }
 
         let module = descriptors
             .iter()
@@ -1593,8 +2285,12 @@ mod tests {
                 UiBindingValue::Bool(true)
             );
             assert_eq!(
-                main_world_mail_binding_value(&bindings, "main_world_mail.error"),
+                main_world_mail_binding_value(&bindings, "main_world_mail.error.message"),
                 UiBindingValue::String(expected_error.to_owned())
+            );
+            assert_ne!(
+                main_world_mail_binding_value(&bindings, "main_world_mail.error.code"),
+                UiBindingValue::String(String::new())
             );
             assert_eq!(
                 main_world_mail_binding_value(&bindings, "main_world_mail.error_visibility"),
@@ -2013,7 +2709,15 @@ mod tests {
                     "{node}"
                 );
             }
-            for node in [MAIN_WORLD_MAIL_REFRESH_NODE, MAIN_WORLD_MAIL_CLOSE_NODE] {
+            for node in [
+                MAIN_WORLD_MAIL_REFRESH_NODE,
+                MAIN_WORLD_MAIL_SELECT_NODE,
+                MAIN_WORLD_MAIL_LOAD_MORE_NODE,
+                MAIN_WORLD_MAIL_MARK_READ_NODE,
+                MAIN_WORLD_MAIL_CLAIM_NODE,
+                MAIN_WORLD_MAIL_RETRY_NODE,
+                MAIN_WORLD_MAIL_CLOSE_NODE,
+            ] {
                 assert!(
                     find_document_node(&mail.document.root, node).is_some(),
                     "{node}"
@@ -2034,18 +2738,16 @@ mod tests {
         let mail = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE).unwrap();
         let mail = mail.document();
         let panel = find_document_node(&mail.root, "main_world_mail.panel").unwrap();
-        let error = find_document_node(&mail.root, "main_world_mail.error_text").unwrap();
+        let error_panel = find_document_node(&mail.root, "main_world_mail.error_panel").unwrap();
         let actions = find_document_node(&mail.root, "main_world_mail.actions").unwrap();
         assert!(
             panel
                 .children()
                 .iter()
-                .any(|node| node.id().as_str() == "main_world_mail.error_text")
+                .any(|node| node.id().as_str() == "main_world_mail.error_panel")
         );
-        assert_eq!(
-            error.layout().width,
-            crate::framework::ui::document::UiLength::Percent(100.0)
-        );
+        assert!(find_document_node(error_panel, "main_world_mail.error_text").is_some());
+        assert!(find_document_node(error_panel, MAIN_WORLD_MAIL_RETRY_NODE).is_some());
         assert!(actions.children().iter().all(|node| matches!(
             node.id().as_str(),
             MAIN_WORLD_MAIL_REFRESH_NODE | MAIN_WORLD_MAIL_CLOSE_NODE
@@ -2167,6 +2869,34 @@ mod tests {
                 Val::Px(height) if height >= touch_target_min
             ));
         }
+
+        let document = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE).unwrap();
+        for node_id in [
+            MAIN_WORLD_MAIL_REFRESH_NODE,
+            MAIN_WORLD_MAIL_SELECT_NODE,
+            MAIN_WORLD_MAIL_LOAD_MORE_NODE,
+            MAIN_WORLD_MAIL_MARK_READ_NODE,
+            MAIN_WORLD_MAIL_CLAIM_NODE,
+            MAIN_WORLD_MAIL_RETRY_NODE,
+            MAIN_WORLD_MAIL_CLOSE_NODE,
+        ] {
+            let node = find_document_node(&document.document().root, node_id).unwrap();
+            assert!(matches!(
+                node.layout().height,
+                crate::framework::ui::document::UiLength::Px(height)
+                    if height >= touch_target_min
+            ));
+        }
+
+        let fallback =
+            UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_FALLBACK_SOURCE).unwrap();
+        let close =
+            find_document_node(&fallback.document().root, MAIN_WORLD_MAIL_CLOSE_NODE).unwrap();
+        assert!(matches!(
+            close.layout().height,
+            crate::framework::ui::document::UiLength::Px(height)
+                if height >= touch_target_min
+        ));
     }
 
     #[test]
@@ -2244,6 +2974,50 @@ mod tests {
             read_messages::<MainWorldEntryIntent>(&app),
             [MainWorldEntryIntent::ExitToLobby]
         );
+    }
+
+    #[test]
+    fn main_world_mail_missing_fallback_closes_only_the_panel_and_preserves_reconciliation() {
+        let mut app = App::new();
+        app.init_resource::<UiFocusState>()
+            .insert_resource(MailClientState::ready_with_reconciliation_for_test(
+                "mail-42",
+            ))
+            .add_message::<DeclarativeScreenHostEvent>()
+            .add_message::<DeclarativeScreenHostCommand>()
+            .add_message::<MainWorldEntryIntent>()
+            .add_message::<MailClientCommand>()
+            .add_systems(Update, recover_from_main_world_mail_failure);
+        let focused = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<UiFocusState>()
+            .focused_entity = Some(focused);
+        app.world_mut()
+            .write_message(DeclarativeScreenHostEvent::LoadFailed {
+                code: "UI_DECLARATIVE_SCREEN_LOAD_FAILED".to_owned(),
+                cause: "mail fallback unavailable".to_owned(),
+                route: MainWorldDocumentPanel::Mail.route().to_owned(),
+                document_id: UiDocumentId::from_str(MAIN_WORLD_MAIL_DOCUMENT_ID).unwrap(),
+                owner: OWNER_MAIN_WORLD_MAIL_PANEL.as_str().to_owned(),
+                decision: DeclarativeScreenFailureDecision::NoFallbackAvailable,
+            });
+        app.update();
+
+        assert!(matches!(
+            read_messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+            [DeclarativeScreenHostCommand::CloseRoute { route }]
+                if route == MainWorldDocumentPanel::Mail.route()
+        ));
+        assert_eq!(app.world().resource::<UiFocusState>().focused_entity, None);
+        let reconciliation = app
+            .world()
+            .resource::<MailClientState>()
+            .claim_reconciliation
+            .as_ref()
+            .unwrap();
+        assert_eq!(reconciliation.mail_id, "mail-42");
+        assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
+        assert!(read_messages::<MailClientCommand>(&app).is_empty());
     }
 
     #[test]

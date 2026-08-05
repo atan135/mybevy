@@ -58,6 +58,10 @@ impl Plugin for GameplayScreensPlugin {
         )
         .add_systems(
             Update,
+            host::recover_from_main_world_mail_failure.after(UiDocumentRuntimeSystems::Reconcile),
+        )
+        .add_systems(
+            Update,
             host::sync_main_world_hud_bindings
                 .after(MyServerUpdateSet::CommandDispatch)
                 .before(UiBindingSystems::Apply)

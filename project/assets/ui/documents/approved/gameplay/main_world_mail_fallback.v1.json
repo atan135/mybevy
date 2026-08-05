@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "document_id": "game.main_world_mail",
+  "metadata": { "title": "Mail fallback", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {},
+  "styles": {},
+  "root": {
+    "type": "container",
+    "id": "main_world_mail.fallback.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 16.0 } }, "align_items": "center", "justify_content": "center" },
+    "children": [
+      {
+        "type": "container",
+        "id": "main_world_mail.fallback.panel",
+        "layout": { "width": { "percent": 92.0 }, "max_width": { "px": 460.0 }, "padding": { "all": { "px": 16.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 10.0 } },
+        "children": [
+          { "type": "text", "id": "main_world_mail.fallback.title", "content": { "literal": "Mail unavailable" }, "style": { "text_role": "subtitle" } },
+          { "type": "text", "id": "main_world_mail.fallback.message", "content": { "literal": "The packaged mail interface could not be opened." }, "style": { "text_role": "body" } },
+          { "type": "button", "id": "main_world_mail.close", "variant": "secondary", "label": { "literal": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.close" } }
+        ]
+      }
+    ]
+  },
+  "states": [],
+  "responsive": []
+}
