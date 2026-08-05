@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::framework::network::{HttpMethod, HttpRequest, NetworkCommand, NetworkEvent, RequestId};
 
 use super::{
-    chat::ChatInbound,
+    chat::{ChatClientState, ChatEvent, ChatInbound},
     types::{ClientServiceEndpoint, ClientServices, MyServerSession},
 };
 
@@ -471,12 +471,14 @@ impl Plugin for MailPlugin {
         app.init_resource::<MailClientState>()
             .add_message::<NetworkCommand>()
             .add_message::<NetworkEvent>()
+            .add_message::<ChatEvent>()
             .add_message::<MailClientCommand>()
             .add_message::<MailClientEvent>()
             .add_systems(
                 PostUpdate,
                 (
                     sync_mail_session,
+                    forward_chat_mail_notifications,
                     handle_mail_commands,
                     handle_mail_network_events,
                     drive_claim_reconciliation,
@@ -494,6 +496,25 @@ pub fn forward_chat_inbound(
 ) {
     if matches!(inbound, ChatInbound::MailNotifyPush(_)) {
         commands.write(MailClientCommand::MailNotifyPush);
+    }
+}
+
+/// Coalesces chat notifications for the current session into one authoritative HTTPS refresh.
+/// The chat event deliberately carries no packet body, title, or preview data.
+fn forward_chat_mail_notifications(
+    mut chat_events: MessageReader<ChatEvent>,
+    chat_state: Option<Res<ChatClientState>>,
+    mut mail_commands: MessageWriter<MailClientCommand>,
+) {
+    let current_generation = chat_state.map(|state| state.endpoint_generation);
+    if chat_events.read().any(|event| {
+        matches!(
+            event,
+            ChatEvent::MailNotifyPush { generation }
+                if current_generation.is_none_or(|current| *generation == current)
+        )
+    }) {
+        mail_commands.write(MailClientCommand::MailNotifyPush);
     }
 }
 
@@ -1292,7 +1313,7 @@ mod tests {
     use crate::{
         framework::network::{HttpResponse, NetworkCommand, NetworkEvent},
         game::myserver::{
-            chat::MAIL_NOTIFY_PUSH,
+            chat::{ChatClientState, ChatEvent, MAIL_NOTIFY_PUSH},
             protocol::{Packet, PacketHeader},
         },
     };
@@ -1571,6 +1592,31 @@ mod tests {
                 .selected_mail
                 .is_none()
         );
+    }
+
+    #[test]
+    fn chat_mail_notifications_are_coalesced_and_ignore_stale_generations() {
+        let mut app = test_app(session_with_mail());
+        app.insert_resource(ChatClientState {
+            endpoint_generation: 8,
+            ..Default::default()
+        });
+        app.world_mut()
+            .write_message(ChatEvent::MailNotifyPush { generation: 7 });
+        app.world_mut()
+            .write_message(ChatEvent::MailNotifyPush { generation: 8 });
+        app.world_mut()
+            .write_message(ChatEvent::MailNotifyPush { generation: 8 });
+        app.update();
+
+        let requests = http_requests(&app);
+        assert_eq!(requests.len(), 1);
+        assert!(matches!(requests[0].method, HttpMethod::Get));
+        assert_eq!(
+            requests[0].url,
+            "https://api.game.zergzerg.cn:443/api/v1/mails?limit=50&offset=0"
+        );
+        assert!(app.world().resource::<MailClientState>().list_stale);
     }
 
     #[test]
