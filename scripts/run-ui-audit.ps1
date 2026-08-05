@@ -88,6 +88,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:UiAuditStableFixtureIdExplicit = $PSBoundParameters.ContainsKey("StableFixtureId")
 $script:MaxUiAuditDeterministicHardFailures = 1024
 
 $script:BasicDevices = @(
@@ -110,6 +111,7 @@ $script:KnownScreens = @(
     [pscustomobject]@{ Canonical = "login"; Aliases = @("login") },
     [pscustomobject]@{ Canonical = "character_select"; Aliases = @("character_select", "character-select", "characters", "select_character", "select-character") },
     [pscustomobject]@{ Canonical = "lobby"; Aliases = @("lobby", "game_list", "game-list", "list") },
+    [pscustomobject]@{ Canonical = "main_world"; Aliases = @("main_world", "main-world") },
     [pscustomobject]@{ Canonical = "audio_settings"; Aliases = @("audio_settings", "audio-settings", "audio", "settings") },
     [pscustomobject]@{ Canonical = "audio_monitor"; Aliases = @("audio_monitor", "audio-monitor", "audio_debug", "audio-debug") },
     [pscustomobject]@{ Canonical = "audio_gallery"; Aliases = @("audio_gallery", "audio-gallery") },
@@ -555,6 +557,16 @@ function New-UiAuditTask {
     $extraArgs = if ($null -eq $ExtraBevyArgs) { @() } else { @($ExtraBevyArgs) }
     $bevyArgsForDevice = @("--window-profile", $Device) + $extraArgs
     $determinism = $null
+    $auditFixture = $null
+    if ($script:UiAuditStableFixtureIdExplicit -and $DynamicContentPolicy -eq "StableFixture") {
+        if ([string]::IsNullOrWhiteSpace($StableFixtureId)) {
+            throw "StableFixture dynamic policy requires -StableFixtureId."
+        }
+        $auditFixture = [pscustomobject]@{
+            dynamic_policy = "stable_fixture"
+            stable_fixture_id = $StableFixtureId.Trim()
+        }
+    }
     if ($DeterministicCapture) {
         if ([string]::IsNullOrWhiteSpace($Locale) -or [string]::IsNullOrWhiteSpace($Theme)) {
             throw "Deterministic capture requires non-empty -Locale and -Theme."
@@ -590,6 +602,7 @@ function New-UiAuditTask {
         cargo_args = @("run", "--") + $bevyArgsForDevice
         bevy_args = $bevyArgsForDevice
         determinism = $determinism
+        audit_fixture = $auditFixture
     }
 }
 
@@ -6224,6 +6237,13 @@ function Invoke-UiAuditCargoRun {
     $psi.Environment["MYBEVY_UI_AUDIT_EXIT_ON_FINISH"] = "1"
     $psi.Environment["MYBEVY_UI_AUDIT_GIT_COMMIT"] = Get-UiAuditGitCommit -RepositoryRoot (Split-Path -Parent $ProjectRoot)
     $psi.Environment["MYBEVY_UI_AUDIT_DETERMINISTIC"] = if ($null -ne $Task.determinism) { "1" } else { "0" }
+    [void]$psi.Environment.Remove("MYBEVY_UI_AUDIT_DYNAMIC_POLICY")
+    [void]$psi.Environment.Remove("MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID")
+    [void]$psi.Environment.Remove("MYBEVY_UI_AUDIT_DYNAMIC_MASK_ID")
+    if ($null -ne $Task.audit_fixture) {
+        $psi.Environment["MYBEVY_UI_AUDIT_DYNAMIC_POLICY"] = [string]$Task.audit_fixture.dynamic_policy
+        $psi.Environment["MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID"] = [string]$Task.audit_fixture.stable_fixture_id
+    }
     if ($null -ne $Task.determinism) {
         $target = $Task.determinism.target_viewport
         $psi.Environment["MYBEVY_UI_AUDIT_TARGET_LOGICAL_WIDTH"] = ([double]$target.logical_width).ToString([Globalization.CultureInfo]::InvariantCulture)
@@ -6237,8 +6257,6 @@ function Invoke-UiAuditCargoRun {
         $psi.Environment["MYBEVY_UI_AUDIT_FROZEN_TIME_SECONDS"] = ([double]$Task.determinism.frozen_time_seconds).ToString([Globalization.CultureInfo]::InvariantCulture)
         $psi.Environment["MYBEVY_UI_AUDIT_ANIMATION_PROGRESS"] = "1"
         $psi.Environment["MYBEVY_UI_AUDIT_DYNAMIC_POLICY"] = [string]$Task.determinism.dynamic_policy
-        [void]$psi.Environment.Remove("MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID")
-        [void]$psi.Environment.Remove("MYBEVY_UI_AUDIT_DYNAMIC_MASK_ID")
         if (-not [string]::IsNullOrWhiteSpace([string]$Task.determinism.stable_fixture_id)) {
             $psi.Environment["MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID"] = [string]$Task.determinism.stable_fixture_id
         }

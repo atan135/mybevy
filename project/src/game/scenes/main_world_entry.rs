@@ -5,6 +5,9 @@
 
 use bevy::{input::keyboard::Key, prelude::*};
 
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+use crate::framework::ui::audit::UiAuditConfig;
+
 use crate::{
     framework::{
         network::NetworkTransport,
@@ -63,6 +66,9 @@ impl Plugin for MainWorldEntryPlugin {
                     .run_if(resource_exists::<MyServerProfiles>)
                     .run_if(resource_exists::<MyServerSession>),
             );
+
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
+        app.add_systems(Startup, prepare_main_world_hud_audit_fixture);
     }
 }
 
@@ -71,6 +77,53 @@ const ENV_MAIN_WORLD_AUTO_EXIT: &str = "MYBEVY_MAIN_WORLD_AUTO_EXIT";
 const ENV_MAIN_WORLD_AUTO_EXIT_AFTER_RECOVERY: &str = "MYBEVY_MAIN_WORLD_AUTO_EXIT_AFTER_RECOVERY";
 const ENV_MAIN_WORLD_ACCEPTANCE_METRICS: &str = "MYBEVY_MAIN_WORLD_ACCEPTANCE_METRICS";
 const MAIN_WORLD_ACCEPTANCE_SAMPLE_SECONDS: f64 = 5.0;
+
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+const MAIN_WORLD_HUD_AUDIT_FIXTURE_ID: &str = "stage16_main_world_hud";
+
+/// Prepares the fixed HUD route for a local deterministic visual capture. This
+/// intentionally supplies no account, ticket, authority connection, or scene.
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+fn prepare_main_world_hud_audit_fixture(
+    audit: Option<Res<UiAuditConfig>>,
+    mut state: ResMut<MainWorldEntryState>,
+    next_mode: Option<ResMut<NextState<AppUiMode>>>,
+) {
+    let Some(audit) = audit else {
+        return;
+    };
+    let Some(mut next_mode) = next_mode else {
+        return;
+    };
+    apply_main_world_hud_audit_fixture(
+        audit.targets_screen("main_world"),
+        audit.stable_fixture_id(),
+        &mut state,
+        &mut next_mode,
+    );
+}
+
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+pub(in crate::game) fn apply_main_world_hud_audit_fixture(
+    targets_main_world: bool,
+    stable_fixture_id: Option<&str>,
+    state: &mut MainWorldEntryState,
+    next_mode: &mut NextState<AppUiMode>,
+) {
+    if targets_main_world && stable_fixture_id == Some(MAIN_WORLD_HUD_AUDIT_FIXTURE_ID) {
+        activate_main_world_hud_audit_fixture(state);
+        next_mode.set(AppUiMode::MainWorld);
+    }
+}
+
+#[cfg(all(debug_assertions, not(target_os = "android")))]
+fn activate_main_world_hud_audit_fixture(state: &mut MainWorldEntryState) {
+    *state = MainWorldEntryState {
+        generation: 1,
+        phase: MainWorldEntryPhase::Active,
+        ..default()
+    };
+}
 
 /// Explicit desktop Debug-only hook for exercising the authority entry flow
 /// without relying on UI coordinate automation.
@@ -1384,9 +1437,16 @@ fn validate_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::scene::prelude::{SceneDefinition, SceneKind};
+    use crate::framework::{
+        scene::prelude::{SceneDefinition, SceneKind},
+        ui::document::{
+            UiDocumentId, UiDocumentInstanceId, UiDocumentLayer, UiDocumentRequestId,
+            UiDocumentSourceOrigin,
+        },
+    };
     use crate::game::myserver::protocol::pb;
     use bevy::ecs::message::{MessageCursor, Messages};
+    use std::str::FromStr;
 
     fn ready_app() -> App {
         let mut app = App::new();
@@ -1845,6 +1905,69 @@ mod tests {
         );
     }
 
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    #[test]
+    fn hud_audit_fixture_is_active_without_session_or_authority_data() {
+        let mut state = MainWorldEntryState::default();
+        let mut next_mode = NextState::default();
+
+        apply_main_world_hud_audit_fixture(
+            true,
+            Some(MAIN_WORLD_HUD_AUDIT_FIXTURE_ID),
+            &mut state,
+            &mut next_mode,
+        );
+
+        assert_eq!(state.generation, 1);
+        assert_eq!(state.phase, MainWorldEntryPhase::Active);
+        assert!(state.environment.is_none());
+        assert!(state.character_id.is_none());
+        assert!(state.authority_transport.is_none());
+        assert!(state.scene_session_id.is_none());
+        assert_eq!(state.room_membership, MainWorldRoomMembership::None);
+        assert!(state.input_frozen);
+    }
+
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    #[test]
+    fn hud_audit_fixture_leaves_real_entry_state_unchanged_when_not_selected() {
+        for (targets_main_world, fixture_id) in [
+            (false, Some(MAIN_WORLD_HUD_AUDIT_FIXTURE_ID)),
+            (true, Some("different_fixture")),
+        ] {
+            let (mut app, _) = active_app();
+            let mut next_mode = NextState::default();
+            let expected = {
+                let state = app.world().resource::<MainWorldEntryState>();
+                (
+                    state.generation,
+                    state.phase,
+                    state.environment.clone(),
+                    state.character_id.clone(),
+                    state.authority_transport.clone(),
+                    state.scene_session_id.clone(),
+                    state.room_membership,
+                )
+            };
+
+            apply_main_world_hud_audit_fixture(
+                targets_main_world,
+                fixture_id,
+                &mut app.world_mut().resource_mut::<MainWorldEntryState>(),
+                &mut next_mode,
+            );
+
+            let state = app.world().resource::<MainWorldEntryState>();
+            assert_eq!(state.generation, expected.0);
+            assert_eq!(state.phase, expected.1);
+            assert_eq!(state.environment, expected.2);
+            assert_eq!(state.character_id, expected.3);
+            assert_eq!(state.authority_transport, expected.4);
+            assert_eq!(state.scene_session_id, expected.5);
+            assert_eq!(state.room_membership, expected.6);
+        }
+    }
+
     #[test]
     fn authority_snapshot_scene_ready_and_room_ack_form_the_only_active_path() {
         let (mut app, session_id) = app_waiting_scene_ready();
@@ -2091,6 +2214,58 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn floating_document_intercepts_escape_and_browser_back_before_main_world_exit() {
+        enum ReturnInput {
+            Escape,
+            BrowserBack,
+        }
+
+        for input in [ReturnInput::Escape, ReturnInput::BrowserBack] {
+            let (mut app, _) = active_app();
+            app.world_mut().spawn(UiDocumentRuntimeRoot {
+                request_id: UiDocumentRequestId(1),
+                instance_id: UiDocumentInstanceId(1),
+                generation: 1,
+                document_id: UiDocumentId::from_str("game.main_world_mail").unwrap(),
+                schema_version: 1,
+                owner: "main_world_mail_panel".to_owned(),
+                panel: UiDocumentPanel::Floating,
+                layer: UiDocumentLayer::Floating,
+                origin: UiDocumentSourceOrigin::Runtime {
+                    producer: "test".to_owned(),
+                },
+            });
+            match input {
+                ReturnInput::Escape => {
+                    app.world_mut()
+                        .insert_resource(ButtonInput::<KeyCode>::default());
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<KeyCode>>()
+                        .press(KeyCode::Escape);
+                }
+                ReturnInput::BrowserBack => {
+                    app.world_mut()
+                        .insert_resource(ButtonInput::<Key>::default());
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<Key>>()
+                        .press(Key::BrowserBack);
+                }
+            }
+            app.update();
+
+            assert_eq!(
+                app.world().resource::<MainWorldEntryState>().phase,
+                MainWorldEntryPhase::Active
+            );
+            assert!(
+                messages::<MyServerCommand>(&app)
+                    .iter()
+                    .all(|command| !matches!(command, MyServerCommand::LeaveRoom))
+            );
+        }
     }
 
     #[test]

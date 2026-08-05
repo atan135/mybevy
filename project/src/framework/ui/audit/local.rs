@@ -540,6 +540,18 @@ impl Default for UiAuditConfig {
 }
 
 impl UiAuditConfig {
+    #[cfg(test)]
+    pub(crate) fn from_test_env(entries: &[(&str, &str)]) -> Self {
+        Self::from_env_reader(
+            |key| {
+                entries
+                    .iter()
+                    .find_map(|(entry_key, value)| (*entry_key == key).then(|| (*value).to_owned()))
+            },
+            0,
+        )
+    }
+
     #[cfg(all(debug_assertions, not(target_os = "android")))]
     pub(crate) fn targets_screen(&self, screen: &str) -> bool {
         self.enabled

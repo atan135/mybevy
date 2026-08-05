@@ -105,7 +105,7 @@ struct FormalScreenBoundaryReport {
     direct_rust_ui_views_match_controlled_exceptions: bool,
 }
 
-const FORMAL_BUSINESS_DOCUMENTS: [(&str, &str, &str, &str); 9] = [
+const FORMAL_BUSINESS_DOCUMENTS: [(&str, &str, &str, &str); 10] = [
     (
         "Login",
         "auth.login",
@@ -129,6 +129,12 @@ const FORMAL_BUSINESS_DOCUMENTS: [(&str, &str, &str, &str); 9] = [
         "game.audio_settings",
         "project/assets/ui/documents/approved/audio_settings/audio_settings.v1.json",
         "project/assets/ui/documents/approved/audio_settings/audio_settings.promotion.v1.json",
+    ),
+    (
+        "MainWorld",
+        "game.main_world_hud",
+        "project/assets/ui/documents/approved/gameplay/main_world_hud.v1.json",
+        "project/assets/ui/documents/approved/gameplay/main_world_hud.promotion.v1.json",
     ),
     (
         "WanfaTouchRipple",
@@ -1083,6 +1089,18 @@ mod tests {
         assert!(report.formal_business_routes_have_approved_documents);
         assert!(report.all_routable_screens_are_classified);
         assert!(report.direct_rust_ui_views_match_controlled_exceptions);
+        assert!(
+            FORMAL_BUSINESS_DOCUMENTS
+                .iter()
+                .any(|(variant, document, _, _)| {
+                    *variant == "MainWorld" && *document == "game.main_world_hud"
+                })
+        );
+        assert!(
+            CONTROLLED_RUST_VIEW_EXCEPTIONS
+                .iter()
+                .all(|(variant, _)| *variant != "MainWorld")
+        );
 
         assert!(
             contains_direct_ui_view(

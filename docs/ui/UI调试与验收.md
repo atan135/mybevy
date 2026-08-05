@@ -127,6 +127,7 @@ metadata 的 `image_snapshots`、`font_snapshots` 和 `visual_summary` 汇总图
 
 - `login`
 - `lobby`, `game_list`, `game-list`, `list`
+- `main_world`, `main-world`
 - `audio_settings`, `audio-settings`, `audio`, `settings`
 - `audio_monitor`, `audio-monitor`, `audio_debug`, `audio-debug`
 - `audio_gallery`, `audio-gallery`
@@ -136,6 +137,22 @@ metadata 的 `image_snapshots`、`font_snapshots` 和 `visual_summary` 汇总图
 - `sample_scene`, `sample-scene`, `sample`
 - `robot_sync_scene`, `robot-sync-scene`, `robot`
 - `fangyuan_home`, `fangyuan-home`, `fangyuan`
+
+### 主世界 HUD 离线审计
+
+主世界 HUD 的本地审计使用 Debug 桌面专用的 `stage16_main_world_hud` fixture。它只将本地审计路由切到主世界并把入口置为供 document host 使用的 `Active` 状态，不创建账号、角色 ticket、authority 连接或场景会话。先验证矩阵：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -Screens main_world -Devices desktop,phone-landscape,phone-1080p-landscape,tablet-landscape -States initial -DryRun
+```
+
+实际本地截图使用同一 fixture：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -Screens main_world -Devices desktop,phone-landscape,phone-1080p-landscape,tablet-landscape -States initial -DeterministicCapture -StableFixtureId stage16_main_world_hud
+```
+
+该审计覆盖 HUD 在四档逻辑 viewport 下的 document、safe-area fixture 和控件布局；它不替代真实账号准入、authority/场景进入、Android system inset 或系统返回键验收。两个横屏 phone profile 均为 `800x360` 逻辑像素，分别以 2x 和 3x 物理 scale 捕获。
 
 ## 窗口级验收命令
 

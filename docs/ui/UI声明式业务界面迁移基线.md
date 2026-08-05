@@ -43,11 +43,11 @@ AI authoring/promotion -> approved UiDocument/resources -> UiUpdateBundle -> UiU
 | 手势/输入 | 只使用已有 click、文本输入、scroll、选择/数值控件的已注册语义。 | 拖拽、长按、双指、gameplay 竞争输入或新的 IME/gesture 语义。 |
 | 业务状态 | 已有宿主 binding 的纯表现更新。 | 新网络数据、权限、路由、场景/authority/MyServer 命令、持久化或业务状态机。 |
 
-UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交说明：只要 diff 含 `.rs`、`Cargo.toml`、`Cargo.lock`、Android 代码或授权以外的脚本，即不是 UI-only；只含已批准 JSON、`project/assets/ui/` 受管资源、主题、i18n、资源 catalog/manifest、授权说明和相应审计 artifact 时才可候选通过。`tools/ui-generation` 的 `check-boundary` 同时检查 UI-only manifest、9 个正式业务 route 的 approved document/promotion、15 个 route 分类和闭合 Rust View 例外；新增普通业务 Rust View 或遗漏 registration 会直接失败。
+UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交说明：只要 diff 含 `.rs`、`Cargo.toml`、`Cargo.lock`、Android 代码或授权以外的脚本，即不是 UI-only；只含已批准 JSON、`project/assets/ui/` 受管资源、主题、i18n、资源 catalog/manifest、授权说明和相应审计 artifact 时才可候选通过。`tools/ui-generation` 的 `check-boundary` 同时检查 UI-only manifest、10 个正式业务 route 的 approved document/promotion、16 个 route 分类和闭合 Rust View 例外；新增普通业务 Rust View 或遗漏 registration 会直接失败。
 
 ## 3. 页面盘点
 
-盘点范围是 `project/src/game/screens/` 下、由 `AppUiMode` 路由的全部 15 个 screen。所有 owner 常量和 Rust View 的 conventional panel 常量定义在 `project/src/game/ui_ids.rs`；声明式页面使用 host/registration 中的 document panel/layer。所有 screen 已由 `project/src/game/navigation/mod.rs` 注册到 `UiAuditScreenRegistry`。
+盘点范围是 `project/src/game/screens/` 下、由 `AppUiMode` 路由的全部 16 个 screen。所有 owner 常量和 Rust View 的 conventional panel 常量定义在 `project/src/game/ui_ids.rs`；声明式页面使用 host/registration 中的 document panel/layer。所有 screen 已由 `project/src/game/navigation/mod.rs` 注册到 `UiAuditScreenRegistry`。
 
 审计 recipe 缩写：`A0` 为该 screen 的默认 route capture；`A1` 为 document owner-ready 的 initial capture 和默认 reference recipe；`A2` 为 `ui_gallery` 的多状态、scroll 与 anchor capture。`A0` 并不等于已经完成目标设备人工验收。
 
@@ -57,6 +57,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | `character_select`，正式业务已声明式 | `character_select` / document `auth.character_select` page | `auth/host.rs` 注册独立 fixed host 与闭合 adapter，View 是 `approved/auth/character_select.v1.json`；角色行由 keyed repeat 增量协调。 | 加载/创建/选择角色、切换账号/角色、角色与连接状态 binding；稳定 key/action identity 均为完整 `character_id`。 | local 角色名输入、owner `list<record>`、item-scope 行状态。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
 | `lobby`，正式业务已声明式 | `lobby` / document `game.lobby` page | `lobby/host.rs` 注册 fixed host 与闭合 adapter，View 是 `approved/lobby/lobby.v1.json`；玩法入口由 keyed repeat 增量协调。 | 选择/进入玩法、列表重载、固定导航、选角与退出账号；完整 `entry_id` 经 bounded opaque action 参数传回并由 host 对当前 `list<record>` 复验；Touch Ripple 与场景进入分别复用公共 Confirm/Loading。 | 标准按钮与 scroll；Confirm/Loading 生命周期仍由 Panel Manager 持有。 | `ui/images/login_stillwater_background.png`；Image 节点声明稳定 error-color fallback，Debug 非 Android 内容审计对该真实节点注入确定性加载失败并与正常加载档对照。 | A1 |
 | `audio_settings`，正式业务已声明式 | `audio_settings` / document `game.audio_settings` page | `settings/audio/host.rs` 注册 fixed host 与闭合 adapter，View 是 `approved/audio_settings/audio_settings.v1.json`。 | 5 个固定 bus 音量、master mute 和回大厅；owner binding 每帧以 `AudioMixer` 为权威源，action source 与 bus 映射由 host 复验。 | 标准 Slider、Toggle、scroll 和 focus；无页面私有控件 helper。 | approved document、主题/font。 | A1 |
+| `main_world`，正式业务已声明式 | `main_world` / document `game.main_world_hud` hud；设置与邮箱为 scene-local Floating document | `gameplay/host.rs` 注册 fixed HUD host 与闭合 adapter，View 是 `approved/gameplay/main_world_hud.v1.json`。 | 设置、邮箱、进入家园和返回大厅 action；连接、角色、未读、disabled/loading 状态使用 owner binding。 | 主世界 authority、场景、输入和 panel cleanup 留在 Rust；HUD 仅在 entry `Active` 后挂载。 | approved HUD/mail document、主题/font。 | A1 |
 | `wanfa_touch_ripple`，正式业务已声明式 | `wanfa_touch_ripple` / document `game.touch_ripple_hud` hud | `gameplay/host.rs` 注册 fixed HUD host；View 是 `approved/gameplay/touch_ripple_hud.v1.json`。 | 仅闭合回大厅 action；无 binding/list。 | feature 层继续处理全屏触控、鼠标、拖动和水波纹；document 根不声明阻断 gameplay 输入。 | approved document、主题/font。 | A1 |
 | `sample_scene`，正式业务已声明式 | `sample_scene` / document `game.sample_scene_hud` hud | `gameplay/host.rs` 注册 fixed HUD host；`sample_scene.rs` 只保留 scene-exit fallback。 | scene exit + 回大厅闭合 action；无 binding/list。 | HUD 标准按钮；场景退出事件仍由 Rust 生命周期处理。 | approved document、主题/font。 | A1 |
 | `robot_sync_scene`，正式业务已声明式 | `robot_sync_scene` / document `game.robot_sync_hud` hud | View 是 `approved/gameplay/robot_sync_hud.v1.json`；Robot/Lockstep 模拟与状态格式化留在 Rust。 | Hide/Show/Lobby action；title/status/details/button visibility 使用 owner binding。 | authority/scene lifecycle 和模拟输入留在 Rust；相同高频 binding 值不推进 revision。 | approved document、主题/font。 | A1 |
@@ -69,7 +70,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | `audio_gallery`，开发工具页 | `audio_gallery` / `audio_gallery_page` | `dev/audio_gallery.rs::setup_audio_gallery` | 大量 `AudioCommand`（cue/music/instance/bus/spatial）、状态/诊断刷新；固定测试 catalog，不是 UI data list。 | 文本输入、按钮和音频空间辅助交互。 | 音频 catalog/首包音频、主题/i18n/font。 | A0 |
 | `audio_monitor`，开发工具页 | `audio_monitor` / `audio_monitor_page` | `dev/audio_monitor.rs::setup_audio_monitor` | 只读 audio debug 快照；无 binding/list。 | 无特殊 gesture。 | 主题/i18n/font。 | A0 |
 
-分类总数当前为：已声明式 11、正式业务待迁移 0、开发工具 Rust View 例外 4，共 15。其中正式业务页面 9/9 已声明式，另外两份声明式页面是开发/验收页面。
+分类总数当前为：已声明式 12、正式业务待迁移 0、开发工具 Rust View 例外 4，共 16。其中正式业务页面 10/10 已声明式，另外两份声明式页面是开发/验收页面。
 
 ### 3.1 Audio Settings 宿主语义
 
@@ -94,7 +95,7 @@ Rust View 例外只覆盖四个开发工具页面，用于展示或调试 framew
 
 ## 5. 路由兼容策略
 
-当前 `AppUiMode` 是 15 个固定 Rust enum variant，负责启动别名、owner 切换、panel/binding 清理和 audit route。现有 `UiApprovedDocumentRegistration.route` 只是 review label，approved adapter 不会从它路由页面。
+当前 `AppUiMode` 是 16 个固定 Rust enum variant，负责启动别名、owner 切换、panel/binding 清理和 audit route。现有 `UiApprovedDocumentRegistration.route` 只是 review label，approved adapter 不会从它路由页面。
 
 后续把无业务逻辑的纯展示页接入数据注册时，可以使用通用 document route，**无需新增 `AppUiMode`**，前提是：
 
@@ -105,14 +106,14 @@ Rust View 例外只覆盖四个开发工具页面，用于展示或调试 framew
 
 ## 6. 迁移完成指标
 
-以下指标在每页迁移和最终验收时记录。分母采用本页 15 个 routable screen，正式业务分母采用 9（4 个普通业务 + 5 个玩法 HUD）。
+以下指标在每页迁移和最终验收时记录。分母采用本页 16 个 routable screen，正式业务分母采用 10（4 个普通业务 + 6 个玩法 HUD）。
 
 | 指标 | 阶段 1 基线 | 完成定义 |
 | --- | ---: | --- |
-| 全部 routable screen | 15 | 清单与 `AppUiMode`/route registry 无遗漏。 |
-| 正式业务 View 已声明式 | 1 / 9 | 当前 9 / 9；门禁要求每项存在 approved document/promotion。 |
-| 所有声明式 screen | 3 / 15 | 当前 11 / 15；剩余 4 项是闭合开发工具例外。 |
-| 直接 Rust View screen | 12 / 15 | 当前 4 / 15，且只允许固定开发工具清单；正式业务为 0。 |
+| 全部 routable screen | 16 | 清单与 `AppUiMode`/route registry 无遗漏。 |
+| 正式业务 View 已声明式 | 1 / 10 | 当前 10 / 10；门禁要求每项存在 approved document/promotion。 |
+| 所有声明式 screen | 3 / 16 | 当前 12 / 16；剩余 4 项是闭合开发工具例外。 |
+| 直接 Rust View screen | 13 / 16 | 当前 4 / 16，且只允许固定开发工具清单；正式业务为 0。 |
 | 受控 Rust View 例外 | 0 | 当前 4 个开发工具例外；`check-boundary` 要求扫描结果与固定清单精确一致。 |
 | UI-only diff 门禁 | 未实现 | 已实现；approved `*.v1.json`/授权资源与固定 fixture 可通过，`.rs`、Cargo、Android 和协议文件拒绝。 |
 | 宿主契约覆盖 | Login 已闭合注册 3 个 action、owner/local bindings、资源与四档 audit profile | 每份业务 document 的 document/owner/source node/action param/binding type/audit profile 都由游戏层闭合注册并有拒绝测试。 |
@@ -140,11 +141,11 @@ Rust View 例外只覆盖四个开发工具页面，用于展示或调试 framew
 | 生产用户端 UI 热更新 | 已实现为显式配置的 `UiUpdateClient`：固定 endpoint、签名、下载约束、cache generation 与安全点激活。 | 可由桌面 Release、Android 配置启用。 | 不能把直接 HTTPS asset loading 或本地文件 watch 称为完成端到端发布。 |
 | approved 首包 fallback | 已有 approved document 与 closed registration 样例；remote/cache 失败或没有 active generation 时仍由宿主保留首包。 | 桌面/Android 包内。 | 不代表默认游戏已绑定真实 cache root、公钥或远端检查时机。 |
 
-当前默认应用尚未创建平台私有 cache root、注册实际 `content_cache` Bevy asset source、提供生产公钥或向游戏 route 安装 active generation，因此 Release/Android 仍只加载首包 approved 文档。Login、Character Select、Lobby、Audio Settings 与五个 gameplay HUD 均通过固定业务 host 加载各自首包文档，其 fallback 不依赖远端；四个开发工具页继续使用受控 Rust View。`UiUpdateCache` 已覆盖缓存损坏到 previous generation 的本地恢复；远端不可用、签名失败与版本发布策略也会保留 current generation 或回退首包，不会阻断登录/核心玩法。
+当前默认应用尚未创建平台私有 cache root、注册实际 `content_cache` Bevy asset source、提供生产公钥或向游戏 route 安装 active generation，因此 Release/Android 仍只加载首包 approved 文档。Login、Character Select、Lobby、Audio Settings 与六个 gameplay HUD 均通过固定业务 host 加载各自首包文档，其 fallback 不依赖远端；四个开发工具页继续使用受控 Rust View。`UiUpdateCache` 已覆盖缓存损坏到 previous generation 的本地恢复；远端不可用、签名失败与版本发布策略也会保留 current generation 或回退首包，不会阻断登录/核心玩法。
 
 ## 9. 阶段 1 审计方法
 
-- 页面和 owner/panel：比对 `project/src/game/navigation/mod.rs` 的 `AppUiMode`、`project/src/game/ui_ids.rs` 和本页 15 行。
+- 页面和 owner/panel：比对 `project/src/game/navigation/mod.rs` 的 `AppUiMode`、`project/src/game/ui_ids.rs` 和本页 16 行。
 - Rust View/action/binding：检查 `project/src/game/screens/` 相应 setup/handler 与 `UiBindingValues` 使用处。
 - 声明式基线：检查 `project/src/game/screens/dev/ui_document_gallery.rs`、`ui_generated_acceptance.rs`、`project/assets/ui/documents/approved/` 与 `approval.rs` 的 closed-field rejection。
 - 生产更新边界：检查 `project/src/framework/ui/document/update.rs`、`remote.rs`、`project/src/framework/network/` 和 Android 工程；远端 provider、签名、下载与 cache activation 已有，默认应用/Android 仍须显式提供私有 cache root、生产 trust roots、检查触发点和真机发布验收。

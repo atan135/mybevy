@@ -2195,6 +2195,33 @@ mod tests {
         );
     }
 
+    #[cfg(all(debug_assertions, not(target_os = "android")))]
+    #[test]
+    fn startup_audit_config_makes_the_main_world_hud_document_root_ready() {
+        let mut app = main_world_hud_runtime_app();
+        app.insert_resource(UiAuditConfig::from_test_env(&[
+            ("MYBEVY_UI_AUDIT", "1"),
+            ("MYBEVY_UI_AUDIT_SCREEN", "main_world"),
+            (
+                "MYBEVY_UI_AUDIT_STABLE_FIXTURE_ID",
+                "stage16_main_world_hud",
+            ),
+        ]))
+        .add_plugins(crate::game::scenes::main_world_entry::MainWorldEntryPlugin);
+        update_frames(&mut app, 6);
+
+        let runtime = app.world().resource::<UiDocumentRuntime>();
+        let document_id = UiDocumentId::from_str(MAIN_WORLD_HUD_DOCUMENT_ID).unwrap();
+        let instance = runtime
+            .active_instance(OWNER_MAIN_WORLD.as_str(), &document_id)
+            .unwrap();
+        assert!(
+            runtime
+                .node_entity(instance, &UiNodeId::from_str("main_world.root").unwrap())
+                .is_some()
+        );
+    }
+
     #[test]
     fn main_world_hud_fallback_exits_only_for_the_active_generation() {
         let mut app = App::new();
