@@ -6,6 +6,7 @@
 
 use std::{
     collections::HashMap,
+    net::Ipv6Addr,
     sync::{Mutex, mpsc as std_mpsc},
     thread,
     time::Duration,
@@ -107,11 +108,7 @@ impl ChatWebSocketEndpoint {
             .port
             .filter(|port| *port > 0)
             .ok_or_else(|| "services.chat port must be between 1 and 65535".to_string())?;
-        let authority = if host.contains(':') && !host.starts_with('[') {
-            format!("[{host}]")
-        } else {
-            host.to_string()
-        };
+        let authority = chat_endpoint_authority(host)?;
         let default_port = match protocol.as_str() {
             "wss" => 443,
             _ => 80,
@@ -130,6 +127,33 @@ impl ChatWebSocketEndpoint {
     pub fn url(&self) -> &str {
         &self.url
     }
+
+    pub fn is_secure(&self) -> bool {
+        self.url.starts_with("wss://")
+    }
+}
+
+fn chat_endpoint_authority(host: &str) -> Result<String, String> {
+    if let Some(bracketed) = host.strip_prefix('[') {
+        let ipv6 = bracketed
+            .strip_suffix(']')
+            .ok_or_else(|| "services.chat IPv6 host must use matching brackets".to_string())?;
+        ipv6.parse::<Ipv6Addr>()
+            .map_err(|_| "services.chat host contains an invalid IPv6 address".to_string())?;
+        return Ok(format!("[{ipv6}]"));
+    }
+    if host.contains(':') {
+        host.parse::<Ipv6Addr>()
+            .map_err(|_| "services.chat host contains an invalid IPv6 address".to_string())?;
+        return Ok(format!("[{host}]"));
+    }
+    if !host
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    {
+        return Err("services.chat host must be a bare hostname or IP address".to_string());
+    }
+    Ok(host.to_string())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -613,6 +637,29 @@ mod tests {
         })
         .unwrap();
         assert_eq!(endpoint.url(), "ws://127.0.0.1:9001/");
+    }
+
+    #[test]
+    fn parses_ipv6_descriptor_and_rejects_malformed_hosts() {
+        let endpoint = ChatWebSocketEndpoint::from_service(&ClientServiceEndpoint {
+            host: Some("2001:db8::5".to_string()),
+            port: Some(443),
+            protocol: Some("wss".to_string()),
+        })
+        .unwrap();
+        assert_eq!(endpoint.url(), "wss://[2001:db8::5]/");
+
+        for host in ["chat.example.com/path", "[2001:db8::5", "host_name"] {
+            assert!(
+                ChatWebSocketEndpoint::from_service(&ClientServiceEndpoint {
+                    host: Some(host.to_string()),
+                    port: Some(443),
+                    protocol: Some("wss".to_string()),
+                })
+                .is_err(),
+                "host {host} should be rejected"
+            );
+        }
     }
 
     #[test]

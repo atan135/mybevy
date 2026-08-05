@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::framework::network::{ConnectionId, NetworkTransport, RequestId};
 
 use super::{
+    chat::ChatWebSocketEndpoint,
     mail::MailHttpEndpoint,
     protocol::{MessageType, PacketCodec, pb},
 };
@@ -62,6 +63,9 @@ pub struct MyServerConfig {
     pub auto_reconnect_with_fresh_ticket: bool,
     pub keepalive_enabled: bool,
     pub keepalive_interval: Duration,
+    /// Allows an explicit desktop debug connection to an insecure local chat endpoint.
+    /// Production builds must continue to use `wss` descriptors.
+    pub allow_insecure_chat_ws: bool,
 }
 
 impl Default for MyServerConfig {
@@ -91,6 +95,7 @@ impl MyServerConfig {
             auto_reconnect_with_fresh_ticket: false,
             keepalive_enabled: true,
             keepalive_interval: DEFAULT_KEEPALIVE_INTERVAL,
+            allow_insecure_chat_ws: environment == MyServerEnvironment::Local,
         }
     }
 
@@ -139,6 +144,8 @@ impl MyServerConfig {
             "MYSERVER_KEEPALIVE_INTERVAL_MS",
             DEFAULT_KEEPALIVE_INTERVAL.as_millis() as u64,
         ));
+        config.allow_insecure_chat_ws = environment == MyServerEnvironment::Local
+            || (cfg!(debug_assertions) && env_bool("MYSERVER_ALLOW_INSECURE_CHAT_WS", false));
         config
     }
 
@@ -147,6 +154,10 @@ impl MyServerConfig {
             NetworkTransport::Tcp => format!("{}:{}", self.game_host, self.tcp_fallback_port),
             NetworkTransport::Kcp => format!("{}:{}", self.game_host, self.kcp_port),
         }
+    }
+
+    pub const fn allows_insecure_chat_ws(&self) -> bool {
+        self.allow_insecure_chat_ws
     }
 }
 
@@ -413,6 +424,9 @@ pub struct MyServerSession {
     pub current_character: Option<CharacterSummary>,
     pub character_profile: Option<CharacterProfile>,
     pub game_endpoint: Option<GameServiceEndpoint>,
+    pub chat_endpoint: Option<ChatWebSocketEndpoint>,
+    pub chat_endpoint_error: Option<String>,
+    pub chat_endpoint_generation: u64,
     pub mail_endpoint: Option<MailHttpEndpoint>,
     pub mail_endpoint_error: Option<String>,
     pub character_elements: CharacterElementsCache,
@@ -469,7 +483,11 @@ impl MyServerSession {
     }
 
     pub fn reset(&mut self) {
-        *self = Self::default();
+        let next_chat_endpoint_generation = self.chat_endpoint_generation.wrapping_add(1);
+        *self = Self {
+            chat_endpoint_generation: next_chat_endpoint_generation,
+            ..Self::default()
+        };
     }
 
     pub fn ticket_expiration_time(&self) -> Option<SystemTime> {
@@ -792,6 +810,17 @@ impl MyServerSession {
     }
 
     pub fn apply_login_response(&mut self, response: &LoginResponse) -> LoginSession {
+        self.apply_login_response_with_chat_ws_policy(
+            response,
+            MyServerEnvironment::current_build_default() == MyServerEnvironment::Local,
+        )
+    }
+
+    pub fn apply_login_response_with_chat_ws_policy(
+        &mut self,
+        response: &LoginResponse,
+        allow_insecure_chat_ws: bool,
+    ) -> LoginSession {
         self.reset_connection_state();
         self.clear_selected_character_state();
         self.characters.clear();
@@ -808,12 +837,12 @@ impl MyServerSession {
         self.player_id = Some(response.player_id.clone());
         self.guest_id = response.guest_id.clone();
         self.login_name = response.login_name.clone();
-        self.game_endpoint = GameServiceEndpoint::from_auth_parts(
+        self.apply_service_descriptors(
             response.game_proxy_host.clone(),
             response.game_proxy_port,
             response.services.as_ref(),
+            allow_insecure_chat_ws,
         );
-        self.apply_mail_endpoint(response.services.as_ref());
         login_session_from_response(response)
     }
 
@@ -855,7 +884,19 @@ impl MyServerSession {
     }
 
     pub fn apply_character_select_response(&mut self, response: &CharacterSelectResponse) {
+        self.apply_character_select_response_with_chat_ws_policy(
+            response,
+            MyServerEnvironment::current_build_default() == MyServerEnvironment::Local,
+        );
+    }
+
+    pub fn apply_character_select_response_with_chat_ws_policy(
+        &mut self,
+        response: &CharacterSelectResponse,
+        allow_insecure_chat_ws: bool,
+    ) {
         self.reset_connection_state();
+        self.invalidate_chat_endpoint();
         self.player_id = Some(response.player_id.clone());
         self.character_id = Some(response.character.character_id.clone());
         self.pending_character_id = None;
@@ -864,18 +905,32 @@ impl MyServerSession {
         self.character_profile = None;
         self.ticket = Some(response.ticket.clone());
         self.ticket_expires_at = Some(response.ticket_expires_at.clone());
-        self.game_endpoint = GameServiceEndpoint::from_auth_parts(
+        self.apply_service_descriptors(
             response.game_proxy_host.clone(),
             response.game_proxy_port,
             response.services.as_ref(),
+            allow_insecure_chat_ws,
         );
-        self.apply_mail_endpoint(response.services.as_ref());
         self.character_elements
             .clear_for_character(response.character.character_id.clone());
         self.character_selection_state = CharacterSelectionState::Selected;
     }
 
     pub fn apply_ticket_response(&mut self, response: &TicketResponse) {
+        self.apply_ticket_response_with_chat_ws_policy(
+            response,
+            MyServerEnvironment::current_build_default() == MyServerEnvironment::Local,
+        );
+    }
+
+    pub fn apply_ticket_response_with_chat_ws_policy(
+        &mut self,
+        response: &TicketResponse,
+        allow_insecure_chat_ws: bool,
+    ) {
+        if self.ticket.as_deref() != Some(response.ticket.as_str()) {
+            self.invalidate_chat_endpoint();
+        }
         self.player_id = Some(response.player_id.clone());
         if let Some(character_id) = response.character_id.clone() {
             self.character_id = Some(character_id);
@@ -883,12 +938,49 @@ impl MyServerSession {
         self.world_id = response.world_id;
         self.ticket = Some(response.ticket.clone());
         self.ticket_expires_at = Some(response.ticket_expires_at.clone());
-        self.game_endpoint = GameServiceEndpoint::from_auth_parts(
+        self.apply_service_descriptors(
             response.game_proxy_host.clone(),
             response.game_proxy_port,
             response.services.as_ref(),
+            allow_insecure_chat_ws,
         );
-        self.apply_mail_endpoint(response.services.as_ref());
+    }
+
+    fn apply_service_descriptors(
+        &mut self,
+        fallback_game_host: Option<String>,
+        fallback_game_port: Option<u16>,
+        services: Option<&ClientServices>,
+        allow_insecure_chat_ws: bool,
+    ) {
+        self.game_endpoint =
+            GameServiceEndpoint::from_auth_parts(fallback_game_host, fallback_game_port, services);
+        self.apply_chat_endpoint(services, allow_insecure_chat_ws);
+        self.apply_mail_endpoint(services);
+    }
+
+    fn apply_chat_endpoint(
+        &mut self,
+        services: Option<&ClientServices>,
+        allow_insecure_chat_ws: bool,
+    ) {
+        let (endpoint, error) = match ChatWebSocketEndpoint::from_services(services) {
+            Ok(Some(endpoint)) if endpoint.is_secure() || allow_insecure_chat_ws => {
+                (Some(endpoint), None)
+            }
+            Ok(Some(_)) => (
+                None,
+                Some("services.chat protocol ws is only permitted by a local or explicit debug policy".to_string()),
+            ),
+            Ok(None) => (None, None),
+            Err(error) => (None, Some(error)),
+        };
+
+        if self.chat_endpoint != endpoint || self.chat_endpoint_error != error {
+            self.chat_endpoint_generation = self.chat_endpoint_generation.wrapping_add(1);
+            self.chat_endpoint = endpoint;
+            self.chat_endpoint_error = error;
+        }
     }
 
     fn apply_mail_endpoint(&mut self, services: Option<&ClientServices>) {
@@ -995,6 +1087,7 @@ impl MyServerSession {
     }
 
     fn clear_selected_character_state(&mut self) {
+        self.invalidate_chat_endpoint();
         self.ticket = None;
         self.ticket_expires_at = None;
         self.character_id = None;
@@ -1005,6 +1098,12 @@ impl MyServerSession {
         self.game_endpoint = None;
         self.character_elements = CharacterElementsCache::default();
         self.reconnect_after_auth = None;
+    }
+
+    fn invalidate_chat_endpoint(&mut self) {
+        self.chat_endpoint_generation = self.chat_endpoint_generation.wrapping_add(1);
+        self.chat_endpoint = None;
+        self.chat_endpoint_error = None;
     }
 }
 
@@ -2977,6 +3076,7 @@ mod tests {
             world_id: Some(7),
             ..Default::default()
         };
+        let chat_generation = session.chat_endpoint_generation;
 
         assert!(profiles.try_activate(
             MyServerEnvironment::Production,
@@ -2994,6 +3094,131 @@ mod tests {
         assert!(session.player_id.is_none());
         assert!(session.character_id.is_none());
         assert!(session.world_id.is_none());
+        assert!(session.chat_endpoint.is_none());
+        assert!(session.chat_endpoint_error.is_none());
+        assert!(session.chat_endpoint_generation > chat_generation);
+    }
+
+    #[test]
+    fn chat_descriptors_share_one_session_entry_and_invalidate_stale_generations() {
+        let game = || ClientServiceEndpoint {
+            host: Some("game.example.com".to_string()),
+            port: Some(14_000),
+            protocol: Some("tcp".to_string()),
+        };
+        let chat = |host: &str, port: u16, protocol: &str| ClientServiceEndpoint {
+            host: Some(host.to_string()),
+            port: Some(port),
+            protocol: Some(protocol.to_string()),
+        };
+        let services = |chat: Option<ClientServiceEndpoint>| ClientServices {
+            game: Some(game()),
+            chat,
+            mail: Some(ClientServiceEndpoint {
+                host: Some("api.game.zergzerg.cn".to_string()),
+                port: Some(443),
+                protocol: Some("https".to_string()),
+            }),
+            announce: None,
+        };
+        let mut session = MyServerSession::default();
+
+        session.apply_login_response_with_chat_ws_policy(
+            &LoginResponse {
+                ok: true,
+                player_id: "plr_1".to_string(),
+                guest_id: None,
+                login_name: Some("alice".to_string()),
+                access_token: "access".to_string(),
+                refresh_token: None,
+                access_token_expires_at: None,
+                refresh_token_expires_at: None,
+                ticket: None,
+                ticket_expires_at: None,
+                game_proxy_host: None,
+                game_proxy_port: None,
+                services: Some(services(Some(chat("chat.game.zergzerg.cn", 443, "wss")))),
+            },
+            false,
+        );
+        assert_eq!(
+            session
+                .chat_endpoint
+                .as_ref()
+                .map(|endpoint| endpoint.url()),
+            Some("wss://chat.game.zergzerg.cn/")
+        );
+        assert!(session.mail_endpoint.is_some());
+        assert_eq!(
+            session.game_endpoint.as_ref().map(|endpoint| endpoint.port),
+            Some(14_000)
+        );
+        let authenticated_generation = session.chat_endpoint_generation;
+
+        session.apply_character_select_response_with_chat_ws_policy(
+            &CharacterSelectResponse {
+                ok: true,
+                player_id: "plr_1".to_string(),
+                character: test_character("chr_1", "Role"),
+                ticket: "ticket-1".to_string(),
+                ticket_expires_at: "2026-08-05T00:00:00Z".to_string(),
+                game_proxy_host: None,
+                game_proxy_port: None,
+                services: Some(services(None)),
+            },
+            false,
+        );
+        assert!(session.chat_endpoint.is_none());
+        assert!(session.chat_endpoint_error.is_none());
+        assert!(session.chat_endpoint_generation > authenticated_generation);
+        let unavailable_generation = session.chat_endpoint_generation;
+
+        session.apply_ticket_response_with_chat_ws_policy(
+            &TicketResponse {
+                ok: true,
+                player_id: "plr_1".to_string(),
+                character_id: Some("chr_1".to_string()),
+                world_id: Some(1),
+                ticket: "ticket-2".to_string(),
+                ticket_expires_at: "2026-08-05T01:00:00Z".to_string(),
+                game_proxy_host: None,
+                game_proxy_port: None,
+                services: Some(services(Some(chat("127.0.0.1", 9001, "ws")))),
+            },
+            false,
+        );
+        assert!(session.chat_endpoint.is_none());
+        assert!(session.chat_endpoint_error.is_some());
+        assert!(session.chat_endpoint_generation > unavailable_generation);
+
+        session.apply_ticket_response_with_chat_ws_policy(
+            &TicketResponse {
+                ok: true,
+                player_id: "plr_1".to_string(),
+                character_id: Some("chr_1".to_string()),
+                world_id: Some(1),
+                ticket: "ticket-2".to_string(),
+                ticket_expires_at: "2026-08-05T01:00:00Z".to_string(),
+                game_proxy_host: None,
+                game_proxy_port: None,
+                services: Some(services(Some(chat("127.0.0.1", 9001, "ws")))),
+            },
+            true,
+        );
+        assert_eq!(
+            session
+                .chat_endpoint
+                .as_ref()
+                .map(|endpoint| endpoint.url()),
+            Some("ws://127.0.0.1:9001/")
+        );
+        assert!(session.chat_endpoint_error.is_none());
+
+        let before_logout = session.chat_endpoint_generation;
+        session.logout();
+        assert!(session.chat_endpoint.is_none());
+        assert!(session.chat_endpoint_error.is_none());
+        assert!(session.chat_endpoint_generation > before_logout);
     }
 
     #[test]

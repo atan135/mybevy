@@ -1791,7 +1791,10 @@ fn handle_character_select_response(
     if session.connection_id.is_some() {
         disconnect(session, network_commands);
     }
-    session.apply_character_select_response(&response);
+    session.apply_character_select_response_with_chat_ws_policy(
+        &response,
+        config.allows_insecure_chat_ws(),
+    );
     events.write(MyServerEvent::CharacterSelected {
         player_id: response.player_id.clone(),
         character_id: response.character.character_id.clone(),
@@ -2432,7 +2435,8 @@ fn handle_login_success(
     events: &mut MessageWriter<MyServerEvent>,
     response: LoginResponse,
 ) {
-    let login_session = session.apply_login_response(&response);
+    let login_session = session
+        .apply_login_response_with_chat_ws_policy(&response, config.allows_insecure_chat_ws());
     info!(
         player_id = %login_session.player_id,
         access_token_fp = %redact_secret_fingerprint(&login_session.access_token),
@@ -2518,7 +2522,7 @@ fn handle_ticket_response(
     }
 
     let (host, port, transport) = ticket_endpoint(&response);
-    session.apply_ticket_response(&response);
+    session.apply_ticket_response_with_chat_ws_policy(&response, config.allows_insecure_chat_ws());
     info!(
         player_id = session.player_id.as_deref().unwrap_or_default(),
         character_id = session.character_id.as_deref().unwrap_or_default(),
