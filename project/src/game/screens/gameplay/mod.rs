@@ -1,6 +1,6 @@
 mod fangyuan_home;
 mod fangyuan_player_preview;
-mod host;
+pub(in crate::game) mod host;
 mod robot_sync_scene;
 mod sample_scene;
 

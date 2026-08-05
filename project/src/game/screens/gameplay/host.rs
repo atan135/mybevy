@@ -11,7 +11,7 @@ use crate::framework::{
     fangyuan::{FangyuanDebugPanelModule, FangyuanDebugPanelState},
     scene::prelude::{SceneCommand, SceneExitRequest},
     ui::{
-        core::{binding::UiBindingValues, focus::UiFocusState},
+        core::{UiOwnerId, binding::UiBindingValues, focus::UiFocusState},
         document::{
             UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema,
             UiActionParamType, UiActionRegistry, UiActionValue, UiBindingDeclaration,
@@ -31,7 +31,8 @@ use crate::game::{
     navigation::{AppUiMode, GameRouteCommand},
     scenes::{FangyuanHomeBlueprintCommand, main_world_entry::MainWorldEntryIntent},
     ui_ids::{
-        OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE,
+        OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_MAIN_WORLD,
+        OWNER_MAIN_WORLD_MAIL_PANEL, OWNER_MAIN_WORLD_SETTINGS_PANEL, OWNER_ROBOT_SYNC_SCENE,
         OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
     },
 };
@@ -41,6 +42,88 @@ pub(super) const SAMPLE_SCENE_DOCUMENT_ID: &str = "game.sample_scene_hud";
 pub(super) const ROBOT_SYNC_DOCUMENT_ID: &str = "game.robot_sync_hud";
 pub(super) const FANGYUAN_PLAYER_PREVIEW_DOCUMENT_ID: &str = "game.fangyuan_player_preview_hud";
 pub(super) const FANGYUAN_HOME_DOCUMENT_ID: &str = "game.fangyuan_home_hud";
+pub(in crate::game) const MAIN_WORLD_HUD_DOCUMENT_ID: &str = "game.main_world_hud";
+
+pub(in crate::game) const MAIN_WORLD_HUD_ROUTE: &str = "main_world";
+pub(in crate::game) const MAIN_WORLD_HUD_ROUTE_ALIASES: &[&str] = &["main_world", "main-world"];
+pub(in crate::game) const MAIN_WORLD_HUD_SOURCE_PATH: &str = "gameplay/main_world_hud.v1.json";
+/// Deferred from this checklist: developer tool pages, the production chat window,
+/// and a complete character status bar remain outside the main-world HUD contract.
+pub(in crate::game) const MAIN_WORLD_HUD_NON_GOALS: &[&str] = &[
+    "developer_tool_pages",
+    "production_chat_window",
+    "complete_character_status_bar",
+];
+
+/// Scene-local document surfaces deliberately remain below the global route state.
+/// Their open/close actions may affect UI focus and input blocking, but may not send
+/// `GameRouteCommand` or `SceneCommand` directly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::game) enum MainWorldDocumentPanel {
+    Settings,
+    Mail,
+}
+
+impl MainWorldDocumentPanel {
+    pub(in crate::game) const fn owner(self) -> UiOwnerId {
+        match self {
+            Self::Settings => OWNER_MAIN_WORLD_SETTINGS_PANEL,
+            Self::Mail => OWNER_MAIN_WORLD_MAIL_PANEL,
+        }
+    }
+
+    pub(in crate::game) const fn route(self) -> &'static str {
+        match self {
+            Self::Settings => "main_world_settings",
+            Self::Mail => "main_world_mail",
+        }
+    }
+
+    pub(in crate::game) const fn aliases(self) -> &'static [&'static str] {
+        match self {
+            Self::Settings => &["main_world_settings", "main-world-settings"],
+            Self::Mail => &["main_world_mail", "main-world-mail", "mail"],
+        }
+    }
+
+    pub(in crate::game) const fn panel(self) -> UiDocumentPanel {
+        UiDocumentPanel::Floating
+    }
+
+    pub(in crate::game) const fn layer(self) -> UiDocumentLayer {
+        UiDocumentLayer::Floating
+    }
+}
+
+/// The entry coordinator may use this reason to request UI cleanup before it changes
+/// a scene session. All reasons share the same panel-to-HUD cleanup order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::game) enum MainWorldUiTeardownCause {
+    LeaveToLobby,
+    SwitchToHome,
+    Logout,
+    EnvironmentChanged,
+    SessionKicked,
+}
+
+impl MainWorldUiTeardownCause {
+    pub(in crate::game) const fn cleanup_owners(self) -> &'static [UiOwnerId] {
+        let _ = self;
+        &MAIN_WORLD_UI_CLEANUP_OWNERS
+    }
+}
+
+/// Close scene-local panels from top to bottom, then the persistent HUD. The scene
+/// coordinator performs scene exit only after this UI cleanup has been requested.
+const MAIN_WORLD_UI_CLEANUP_OWNERS: [UiOwnerId; 3] = [
+    OWNER_MAIN_WORLD_MAIL_PANEL,
+    OWNER_MAIN_WORLD_SETTINGS_PANEL,
+    OWNER_MAIN_WORLD,
+];
+
+pub(in crate::game) const fn main_world_ui_cleanup_owners() -> &'static [UiOwnerId] {
+    MainWorldUiTeardownCause::LeaveToLobby.cleanup_owners()
+}
 
 pub(super) const ACTION_TOUCH_RIPPLE_RETURN_LOBBY: &str = "touch_ripple.return_lobby";
 pub(super) const ACTION_SAMPLE_SCENE_RETURN_LOBBY: &str = "sample_scene.return_lobby";
@@ -721,6 +804,52 @@ mod tests {
             assert_eq!(audit.actions.len(), host.action_allowlist.len());
             assert_eq!(audit.bindings.len(), host.binding_schema.len());
         }
+    }
+
+    #[test]
+    fn main_world_ui_contract_keeps_scene_panels_below_the_fixed_hud_route() {
+        assert_eq!(MAIN_WORLD_HUD_DOCUMENT_ID, "game.main_world_hud");
+        assert_eq!(MAIN_WORLD_HUD_ROUTE, "main_world");
+        assert_eq!(MAIN_WORLD_HUD_ROUTE_ALIASES, ["main_world", "main-world"]);
+        assert_eq!(
+            MAIN_WORLD_HUD_SOURCE_PATH,
+            "gameplay/main_world_hud.v1.json"
+        );
+        assert_eq!(AppUiMode::MainWorld.ui_owner(), OWNER_MAIN_WORLD);
+
+        for panel in [
+            MainWorldDocumentPanel::Settings,
+            MainWorldDocumentPanel::Mail,
+        ] {
+            assert_eq!(panel.panel(), UiDocumentPanel::Floating);
+            assert_eq!(panel.layer(), UiDocumentLayer::Floating);
+            assert!(panel.aliases().contains(&panel.route()));
+        }
+        assert_eq!(
+            main_world_ui_cleanup_owners(),
+            [
+                OWNER_MAIN_WORLD_MAIL_PANEL,
+                OWNER_MAIN_WORLD_SETTINGS_PANEL,
+                OWNER_MAIN_WORLD,
+            ]
+        );
+        for cause in [
+            MainWorldUiTeardownCause::LeaveToLobby,
+            MainWorldUiTeardownCause::SwitchToHome,
+            MainWorldUiTeardownCause::Logout,
+            MainWorldUiTeardownCause::EnvironmentChanged,
+            MainWorldUiTeardownCause::SessionKicked,
+        ] {
+            assert_eq!(cause.cleanup_owners(), main_world_ui_cleanup_owners());
+        }
+        assert_eq!(
+            MAIN_WORLD_HUD_NON_GOALS,
+            [
+                "developer_tool_pages",
+                "production_chat_window",
+                "complete_character_status_bar",
+            ]
+        );
     }
 
     #[test]

@@ -8,6 +8,12 @@ pub(in crate::game) const OWNER_LOGIN: UiOwnerId = UiOwnerId::new("login");
 pub(in crate::game) const OWNER_CHARACTER_SELECT: UiOwnerId = UiOwnerId::new("character_select");
 pub(in crate::game) const OWNER_LOBBY: UiOwnerId = UiOwnerId::new("lobby");
 pub(in crate::game) const OWNER_MAIN_WORLD: UiOwnerId = UiOwnerId::new("main_world");
+/// A scene-local settings panel. It never owns the main-world scene session.
+pub(in crate::game) const OWNER_MAIN_WORLD_SETTINGS_PANEL: UiOwnerId =
+    UiOwnerId::new("main_world_settings_panel");
+/// A scene-local mail panel. It never owns the main-world scene session.
+pub(in crate::game) const OWNER_MAIN_WORLD_MAIL_PANEL: UiOwnerId =
+    UiOwnerId::new("main_world_mail_panel");
 pub(in crate::game) const OWNER_AUDIO_SETTINGS: UiOwnerId = UiOwnerId::new("audio_settings");
 pub(in crate::game) const OWNER_AUDIO_MONITOR: UiOwnerId = UiOwnerId::new("audio_monitor");
 pub(in crate::game) const OWNER_AUDIO_GALLERY: UiOwnerId = UiOwnerId::new("audio_gallery");

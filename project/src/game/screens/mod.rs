@@ -1,6 +1,6 @@
 mod auth;
 mod dev;
-mod gameplay;
+pub(in crate::game) mod gameplay;
 mod lobby;
 mod settings;
 

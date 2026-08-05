@@ -397,11 +397,23 @@ fn handle_game_route_commands(
                 if mode == current_mode.get() && previous_owner == mode.ui_owner() {
                     continue;
                 }
-                binding_values.clear_owner(previous_owner.as_str());
-                panel_commands.write(UiPanelCommand::CloseAllForOwner(previous_owner));
-                runtime_commands.write(UiDocumentRuntimeCommand::SwitchOwner {
-                    previous_owner: previous_owner.as_str().to_owned(),
-                });
+                if *current_mode.get() == AppUiMode::MainWorld {
+                    for owner in
+                        crate::game::screens::gameplay::host::main_world_ui_cleanup_owners()
+                    {
+                        binding_values.clear_owner(owner.as_str());
+                        panel_commands.write(UiPanelCommand::CloseAllForOwner(*owner));
+                        runtime_commands.write(UiDocumentRuntimeCommand::SwitchOwner {
+                            previous_owner: owner.as_str().to_owned(),
+                        });
+                    }
+                } else {
+                    binding_values.clear_owner(previous_owner.as_str());
+                    panel_commands.write(UiPanelCommand::CloseAllForOwner(previous_owner));
+                    runtime_commands.write(UiDocumentRuntimeCommand::SwitchOwner {
+                        previous_owner: previous_owner.as_str().to_owned(),
+                    });
+                }
                 current_owner.owner = Some(mode.ui_owner());
                 next_mode.set(*mode);
             }
@@ -482,6 +494,7 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
             AppUiMode::Login
                 | AppUiMode::CharacterSelect
                 | AppUiMode::Lobby
+                | AppUiMode::MainWorld
                 | AppUiMode::AudioSettings
                 | AppUiMode::WanfaTouchRipple
                 | AppUiMode::SampleScene
@@ -676,7 +689,8 @@ mod tests {
     use super::*;
     use crate::game::ui_ids::{
         OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
-        OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_ROBOT_SYNC_SCENE, OWNER_UI_GENERATED_ACCEPTANCE,
+        OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_MAIN_WORLD_MAIL_PANEL,
+        OWNER_MAIN_WORLD_SETTINGS_PANEL, OWNER_ROBOT_SYNC_SCENE, OWNER_UI_GENERATED_ACCEPTANCE,
     };
     use bevy::{ecs::message::MessageCursor, state::app::StatesPlugin};
     use std::collections::BTreeMap;
@@ -730,6 +744,65 @@ mod tests {
             parse_start_screen_mode("main-world"),
             Some(AppUiMode::MainWorld)
         );
+
+        let mut registry = UiAuditScreenRegistry::default();
+        register_ui_audit_screen_entries(&mut registry);
+        let screen = registry
+            .resolve("main-world")
+            .expect("main-world route should be registered for audit");
+        assert_eq!(screen.owner, OWNER_MAIN_WORLD);
+        assert!(screen.recipe.is_some());
+    }
+
+    #[test]
+    fn leaving_main_world_closes_scene_panels_then_hud_without_a_scene_command() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, StatesPlugin))
+            .init_state::<AppUiMode>()
+            .init_resource::<UiCurrentOwner>()
+            .init_resource::<UiBindingValues>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<UiPanelCommand>()
+            .add_message::<UiDocumentRuntimeCommand>()
+            .add_systems(Update, handle_game_route_commands);
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::MainWorld);
+        app.update();
+        app.update();
+
+        app.world_mut()
+            .write_message(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+        app.update();
+
+        let mut panel_cursor = MessageCursor::<UiPanelCommand>::default();
+        let closed_owners = panel_cursor
+            .read(app.world().resource::<Messages<UiPanelCommand>>())
+            .filter_map(|command| match command {
+                UiPanelCommand::CloseAllForOwner(owner) => Some(owner.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            closed_owners,
+            [
+                OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+                OWNER_MAIN_WORLD.as_str(),
+            ]
+        );
+
+        let mut runtime_cursor = MessageCursor::<UiDocumentRuntimeCommand>::default();
+        let closed_runtime_owners = runtime_cursor
+            .read(app.world().resource::<Messages<UiDocumentRuntimeCommand>>())
+            .filter_map(|command| match command {
+                UiDocumentRuntimeCommand::SwitchOwner { previous_owner } => {
+                    Some(previous_owner.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(closed_runtime_owners, closed_owners);
     }
 
     #[test]
