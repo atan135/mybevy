@@ -10,7 +10,19 @@ use super::{
     types::{ClientServiceEndpoint, ClientServices, MyServerSession},
 };
 
-const MAIL_API_PATH: &str = "/api/v1/mails";
+pub const MAIL_API_PATH: &str = "/api/v1/mails";
+pub const MAIL_GAME_TICKET_HEADER: &str = "X-Game-Ticket";
+pub const PRODUCTION_MAIL_HOST: &str = "api.game.zergzerg.cn";
+pub const PRODUCTION_MAIL_PORT: u16 = 443;
+pub const MAIL_CLAIM_STATUSES: [&str; 7] = [
+    "claimed",
+    "processing",
+    "retryable_failure",
+    "blocked_capacity",
+    "permanent_failure",
+    "reconciliation_pending",
+    "manual_review",
+];
 const MAIL_READ_TIMEOUT: Duration = Duration::from_secs(8);
 const MAIL_CLAIM_TIMEOUT: Duration = Duration::from_secs(12);
 const MAIL_MAX_RESPONSE_BYTES: usize = 256 * 1024;
@@ -22,22 +34,33 @@ pub struct MailHttpEndpoint {
 }
 
 impl MailHttpEndpoint {
-    pub fn from_services(services: Option<&ClientServices>) -> Result<Option<Self>, String> {
+    pub fn from_services(
+        services: Option<&ClientServices>,
+        allow_insecure_http: bool,
+        enforce_production_descriptor: bool,
+    ) -> Result<Option<Self>, String> {
         let Some(service) = services.and_then(|services| services.mail.as_ref()) else {
             return Ok(None);
         };
-        Self::from_service(service).map(Some)
+        Self::from_service(service, allow_insecure_http, enforce_production_descriptor).map(Some)
     }
 
-    pub fn from_service(service: &ClientServiceEndpoint) -> Result<Self, String> {
+    pub fn from_service(
+        service: &ClientServiceEndpoint,
+        allow_insecure_http: bool,
+        enforce_production_descriptor: bool,
+    ) -> Result<Self, String> {
         let protocol = service
             .protocol
             .as_deref()
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase();
-        if protocol != "https" {
-            return Err("services.mail protocol must be https".to_string());
+        if protocol != "https" && !(protocol == "http" && allow_insecure_http) {
+            return Err(
+                "services.mail protocol must be https; http requires the explicit local policy"
+                    .to_string(),
+            );
         }
 
         let host = service.host.as_deref().unwrap_or_default().trim();
@@ -59,9 +82,22 @@ impl MailHttpEndpoint {
             .port
             .filter(|port| *port > 0)
             .ok_or_else(|| "services.mail port must be between 1 and 65535".to_string())?;
+        if enforce_production_descriptor
+            && (protocol != "https"
+                || !host.eq_ignore_ascii_case(PRODUCTION_MAIL_HOST)
+                || port != PRODUCTION_MAIL_PORT)
+        {
+            return Err(
+                "production services.mail must be api.game.zergzerg.cn:443 over https".to_string(),
+            );
+        }
 
+        let port_suffix = match (protocol.as_str(), port) {
+            ("https", 443) | ("http", 80) => String::new(),
+            _ => format!(":{port}"),
+        };
         Ok(Self {
-            base_url: format!("https://{authority_host}:{port}{MAIL_API_PATH}"),
+            base_url: format!("{protocol}://{authority_host}{port_suffix}{MAIL_API_PATH}"),
         })
     }
 
@@ -229,6 +265,7 @@ struct MailReadResponse {
     already_read: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default, Deserialize)]
 struct MailClaimResponse {
     #[serde(default)]
@@ -248,9 +285,23 @@ struct MailClaimResponse {
     #[serde(default)]
     player_retryable: bool,
     #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    attempts: u32,
+    #[serde(default)]
+    result_state: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
+    attachments: Vec<MailAttachment>,
+    #[serde(default)]
     claimed_at: Option<String>,
+    #[serde(default)]
+    completed_at: Option<String>,
     #[serde(default)]
     read_at: Option<String>,
 }
@@ -818,6 +869,18 @@ fn handle_mail_response(
                 return;
             }
             let claim_status = response.mail.claim.claim_status.clone();
+            if claim_status
+                .as_deref()
+                .is_some_and(|status| !valid_claim_status(status))
+            {
+                reject_request(
+                    state,
+                    events,
+                    MailOperation::Detail,
+                    "MAIL_RESPONSE_INVALID",
+                );
+                return;
+            }
             state.selected_mail = Some(response.mail);
             state.last_error = None;
             events.write(MailClientEvent::MailLoaded {
@@ -876,6 +939,10 @@ fn handle_mail_response(
                 return;
             }
             let claim_status = response.claim_status.clone();
+            if !claim_status.as_deref().is_some_and(valid_claim_status) {
+                reject_request(state, events, MailOperation::Claim, "MAIL_RESPONSE_INVALID");
+                return;
+            }
             if response.processing
                 || matches!(
                     claim_status.as_deref(),
@@ -1064,7 +1131,7 @@ fn request_context(
 fn build_read_request(endpoint: &MailHttpEndpoint, ticket: &str, suffix: &str) -> HttpRequest {
     HttpRequest::new(HttpMethod::Get, endpoint.url_for(suffix))
         .with_header("Accept", "application/json")
-        .with_header("X-Game-Ticket", ticket)
+        .with_header(MAIL_GAME_TICKET_HEADER, ticket)
         .with_timeout(MAIL_READ_TIMEOUT)
         .with_max_response_bytes(MAIL_MAX_RESPONSE_BYTES)
 }
@@ -1079,7 +1146,7 @@ fn build_mutation_request(
 ) -> HttpRequest {
     HttpRequest::new(method, endpoint.url_for(&format!("/{mail_id}{suffix}")))
         .with_header("Accept", "application/json")
-        .with_header("X-Game-Ticket", ticket)
+        .with_header(MAIL_GAME_TICKET_HEADER, ticket)
         .with_timeout(timeout)
         .with_max_response_bytes(MAIL_MAX_RESPONSE_BYTES)
 }
@@ -1302,6 +1369,10 @@ fn valid_mail_id(mail_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-'))
 }
 
+fn valid_claim_status(status: &str) -> bool {
+    MAIL_CLAIM_STATUSES.contains(&status)
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::{
@@ -1319,11 +1390,15 @@ mod tests {
     };
 
     fn endpoint() -> MailHttpEndpoint {
-        MailHttpEndpoint::from_service(&ClientServiceEndpoint {
-            host: Some("api.game.zergzerg.cn".to_string()),
-            port: Some(443),
-            protocol: Some("https".to_string()),
-        })
+        MailHttpEndpoint::from_service(
+            &ClientServiceEndpoint {
+                host: Some("api.game.zergzerg.cn".to_string()),
+                port: Some(443),
+                protocol: Some("https".to_string()),
+            },
+            false,
+            true,
+        )
         .unwrap()
     }
 
@@ -1392,24 +1467,125 @@ mod tests {
     fn mail_endpoint_uses_only_the_https_descriptor_and_fixed_api_path() {
         assert_eq!(
             endpoint().base_url(),
-            "https://api.game.zergzerg.cn:443/api/v1/mails"
+            "https://api.game.zergzerg.cn/api/v1/mails"
         );
         assert!(
-            MailHttpEndpoint::from_service(&ClientServiceEndpoint {
-                host: Some("mail-service".to_string()),
-                port: Some(9003),
-                protocol: Some("http".to_string()),
-            })
+            MailHttpEndpoint::from_service(
+                &ClientServiceEndpoint {
+                    host: Some("mail-service".to_string()),
+                    port: Some(9003),
+                    protocol: Some("http".to_string()),
+                },
+                false,
+                true
+            )
+            .is_err()
+        );
+        assert_eq!(
+            MailHttpEndpoint::from_service(
+                &ClientServiceEndpoint {
+                    host: Some("127.0.0.1".to_string()),
+                    port: Some(9003),
+                    protocol: Some("http".to_string()),
+                },
+                true,
+                false
+            )
+            .unwrap()
+            .base_url(),
+            "http://127.0.0.1:9003/api/v1/mails"
+        );
+        assert!(
+            MailHttpEndpoint::from_service(
+                &ClientServiceEndpoint {
+                    host: Some("api.game.zergzerg.cn/other".to_string()),
+                    port: Some(443),
+                    protocol: Some("https".to_string()),
+                },
+                false,
+                true
+            )
             .is_err()
         );
         assert!(
-            MailHttpEndpoint::from_service(&ClientServiceEndpoint {
-                host: Some("api.game.zergzerg.cn/other".to_string()),
-                port: Some(443),
-                protocol: Some("https".to_string()),
-            })
+            MailHttpEndpoint::from_service(
+                &ClientServiceEndpoint {
+                    host: Some("mail-preview.example.com".to_string()),
+                    port: Some(443),
+                    protocol: Some("https".to_string()),
+                },
+                false,
+                true
+            )
             .is_err()
         );
+    }
+
+    #[test]
+    fn public_mail_contract_deserializes_null_pagination_and_claim_states() {
+        let list: MailListResponse = serde_json::from_str(
+            r#"{
+                "ok":true,
+                "mails":[{
+                    "mail_id":"rw_1","sender":{"type":"system","id":"system","name":"System"},
+                    "title":"Reward","mail_type":"system_reward","status":"unread",
+                    "has_attachments":true,"created_at":"2026-08-05T00:00:00Z",
+                    "read_at":null,"claimed_at":null,"expires_at":null
+                }],
+                "unread_count":1,
+                "pagination":{"limit":50,"offset":0,"next_offset":null}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(list.mails[0].mail_id, "rw_1");
+        assert_eq!(list.unread_count, 1);
+        assert_eq!(list.pagination.next_offset, None);
+
+        let detail: MailDetailResponse = serde_json::from_str(
+            r#"{
+                "ok":true,
+                "mail":{
+                    "mail_id":"rw_1","status":"claiming","content":"body",
+                    "attachments":[{"type":"item","id":1001,"count":2,"binded":true}],
+                    "claim":{"claim_status":"reconciliation_pending","already_claimed":false,
+                    "processing":false,"retryable":false,"player_retryable":false,"attempts":1,
+                    "result_state":"unknown","error":"MAIL_CLAIM_RECONCILIATION_PENDING"}
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(detail.mail.summary.mail_id, "rw_1");
+        assert_eq!(detail.mail.attachments.len(), 1);
+        assert_eq!(
+            detail.mail.claim.claim_status.as_deref(),
+            Some("reconciliation_pending")
+        );
+
+        let error = public_http_error(
+            MailOperation::Claim,
+            429,
+            br#"{"ok":false,"error":"MAIL_RATE_LIMITED","message":"Too many mail requests"}"#,
+        );
+        assert_eq!(error.status, Some(429));
+        assert_eq!(error.code, "MAIL_RATE_LIMITED");
+
+        let claim: MailClaimResponse = serde_json::from_str(
+            r#"{
+                "ok":true,"mail_id":"rw_1","claim_status":"reconciliation_pending",
+                "claimed":false,"already_claimed":false,"processing":false,
+                "retryable":false,"player_retryable":false,"request_id":"mail_claim:rw_1",
+                "attempts":1,"result_state":"unknown",
+                "error":"MAIL_CLAIM_RECONCILIATION_PENDING",
+                "message":"Mail attachment claim result is being verified","status":"claiming",
+                "attachments":[{"type":"item","id":1001,"count":2,"binded":true}],
+                "read_at":null,"claimed_at":null,"completed_at":null
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(claim.request_id.as_deref(), Some("mail_claim:rw_1"));
+        assert_eq!(claim.attempts, 1);
+        assert_eq!(claim.attachments.len(), 1);
+        assert!(MAIL_CLAIM_STATUSES.contains(&claim.claim_status.as_deref().unwrap()));
     }
 
     #[test]
@@ -1423,7 +1599,7 @@ mod tests {
         let request = http_requests(&app).pop().unwrap();
         assert_eq!(
             request.url,
-            "https://api.game.zergzerg.cn:443/api/v1/mails?limit=50&offset=0"
+            "https://api.game.zergzerg.cn/api/v1/mails?limit=50&offset=0"
         );
         assert_eq!(
             header(&request, "X-Game-Ticket"),
@@ -1483,7 +1659,7 @@ mod tests {
         assert!(matches!(mark_read.method, HttpMethod::Put));
         assert_eq!(
             mark_read.url,
-            "https://api.game.zergzerg.cn:443/api/v1/mails/mail_1/read"
+            "https://api.game.zergzerg.cn/api/v1/mails/mail_1/read"
         );
 
         respond(
@@ -1547,7 +1723,7 @@ mod tests {
         assert!(matches!(detail.method, HttpMethod::Get));
         assert_eq!(
             detail.url,
-            "https://api.game.zergzerg.cn:443/api/v1/mails/mail_1"
+            "https://api.game.zergzerg.cn/api/v1/mails/mail_1"
         );
 
         respond(
@@ -1584,7 +1760,7 @@ mod tests {
         assert!(matches!(request.method, HttpMethod::Get));
         assert_eq!(
             request.url,
-            "https://api.game.zergzerg.cn:443/api/v1/mails?limit=50&offset=0"
+            "https://api.game.zergzerg.cn/api/v1/mails?limit=50&offset=0"
         );
         assert!(
             app.world()
@@ -1614,7 +1790,7 @@ mod tests {
         assert!(matches!(requests[0].method, HttpMethod::Get));
         assert_eq!(
             requests[0].url,
-            "https://api.game.zergzerg.cn:443/api/v1/mails?limit=50&offset=0"
+            "https://api.game.zergzerg.cn/api/v1/mails?limit=50&offset=0"
         );
         assert!(app.world().resource::<MailClientState>().list_stale);
     }
