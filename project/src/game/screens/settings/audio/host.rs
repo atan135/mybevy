@@ -23,11 +23,11 @@ use crate::framework::{
 use crate::game::ui_ids::SCROLL_AUDIO_SETTINGS_MAIN;
 use crate::game::{
     declarative_screen::{
-        DeclarativeScreenFailurePolicy, DeclarativeScreenHost, DeclarativeScreenRegistry,
-        DeclarativeScreenSource,
+        DeclarativeScreenFailurePolicy, DeclarativeScreenHost, DeclarativeScreenHostCommand,
+        DeclarativeScreenRegistry, DeclarativeScreenSource,
     },
     navigation::{AppUiMode, GameRouteCommand},
-    ui_ids::OWNER_AUDIO_SETTINGS,
+    ui_ids::{OWNER_AUDIO_SETTINGS, OWNER_MAIN_WORLD_SETTINGS_PANEL},
 };
 
 pub(super) const AUDIO_SETTINGS_DOCUMENT_ID: &str = "game.audio_settings";
@@ -36,10 +36,22 @@ pub(super) const AUDIO_SETTINGS_DOCUMENT_SOURCE_PATH: &str =
 pub(super) const AUDIO_SETTINGS_DOCUMENT_SOURCE: &str = include_str!(
     "../../../../../assets/ui/documents/approved/audio_settings/audio_settings.v1.json"
 );
+pub(in crate::game) const MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID: &str =
+    "game.main_world_audio_settings";
+pub(in crate::game) const MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_SOURCE_PATH: &str =
+    "audio_settings/main_world_audio_settings.v1.json";
+pub(super) const MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_SOURCE: &str = include_str!(
+    "../../../../../assets/ui/documents/approved/audio_settings/main_world_audio_settings.v1.json"
+);
 
 pub(super) const ACTION_SET_VOLUME: &str = "audio_settings.set_volume";
 pub(super) const ACTION_SET_MASTER_MUTED: &str = "audio_settings.set_master_muted";
 pub(super) const ACTION_RETURN_LOBBY: &str = "audio_settings.return_lobby";
+pub(super) const ACTION_MAIN_WORLD_SET_VOLUME: &str = "main_world_audio_settings.set_volume";
+pub(super) const ACTION_MAIN_WORLD_SET_MASTER_MUTED: &str =
+    "main_world_audio_settings.set_master_muted";
+pub(super) const ACTION_MAIN_WORLD_CLOSE: &str = "main_world_audio_settings.close";
+pub(in crate::game) const MAIN_WORLD_SETTINGS_ROUTE: &str = "main_world_settings";
 
 const RETURN_LOBBY_NODE: &str = "audio_settings.return_lobby";
 const MASTER_MUTE_NODE: &str = "audio_settings.master.muted";
@@ -63,7 +75,7 @@ const VOLUME_BINDINGS: [(&str, AudioBus); 5] = [
 ];
 
 #[derive(Resource)]
-pub(in crate::game::screens::settings) struct AudioSettingsHostContract {
+pub(in crate::game) struct AudioSettingsHostContract {
     pub bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
 }
 
@@ -105,7 +117,7 @@ impl AudioSettingsSnapshot {
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 #[derive(Clone, Copy, Debug, Default, Resource)]
-pub(in crate::game::screens::settings) struct AudioSettingsAuditFixture {
+pub(in crate::game) struct AudioSettingsAuditFixture {
     pub(super) active: bool,
     pub(super) unavailable: bool,
     pub(super) force_disabled: bool,
@@ -160,7 +172,10 @@ pub(in crate::game::screens::settings) fn register_audio_settings_contract(
     mut actions: ResMut<UiActionRegistry>,
     mut screens: ResMut<DeclarativeScreenRegistry>,
 ) {
-    for descriptor in audio_settings_action_descriptors() {
+    for descriptor in audio_settings_action_descriptors()
+        .into_iter()
+        .chain(main_world_audio_settings_action_descriptors())
+    {
         actions
             .register(descriptor)
             .expect("Audio Settings action registration must be valid and unique");
@@ -168,6 +183,11 @@ pub(in crate::game::screens::settings) fn register_audio_settings_contract(
     screens
         .register(audio_settings_declarative_screen_host(contract.as_ref()))
         .expect("Audio Settings declarative screen registration must be valid and unique");
+    screens
+        .register(main_world_audio_settings_declarative_screen_host(
+            contract.as_ref(),
+        ))
+        .expect("Main World Audio Settings screen registration must be valid and unique");
 }
 
 pub(super) fn audio_settings_declarative_screen_host(
@@ -221,6 +241,61 @@ pub(super) fn audio_settings_declarative_screen_host(
     }
 }
 
+pub(in crate::game) fn main_world_audio_settings_declarative_screen_host(
+    contract: &AudioSettingsHostContract,
+) -> DeclarativeScreenHost {
+    let source = DeclarativeScreenSource::approved(
+        MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_SOURCE_PATH,
+        MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_SOURCE,
+    );
+    DeclarativeScreenHost {
+        document_id: UiDocumentId::from_str(MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID)
+            .expect("Main World Audio Settings document ID is static and valid"),
+        route: MAIN_WORLD_SETTINGS_ROUTE,
+        route_aliases: &["main_world_settings", "main-world-settings"],
+        mode: None,
+        owner: OWNER_MAIN_WORLD_SETTINGS_PANEL,
+        panel: UiDocumentPanel::Floating,
+        layer: UiDocumentLayer::Floating,
+        initial_state: UiPageState::initial(),
+        binding_schema: host_binding_schema(contract),
+        action_allowlist: [
+            ACTION_MAIN_WORLD_SET_VOLUME,
+            ACTION_MAIN_WORLD_SET_MASTER_MUTED,
+            ACTION_MAIN_WORLD_CLOSE,
+        ]
+        .into_iter()
+        .map(|action| UiActionId::from_str(action).expect("static action ID is valid"))
+        .collect(),
+        audit_profiles: [
+            "desktop",
+            "phone-landscape",
+            "phone-1080p-landscape",
+            "tablet-landscape",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+        source: source.clone(),
+        fallback_source: Some(source),
+        failure_policy: DeclarativeScreenFailurePolicy::PackagedFallback,
+    }
+}
+
+fn host_binding_schema(
+    contract: &AudioSettingsHostContract,
+) -> BTreeMap<UiHostBindingKey, UiBindingType> {
+    contract
+        .bindings
+        .iter()
+        .map(|(path, declaration)| {
+            (
+                UiHostBindingKey::new(declaration.scope, path.clone()),
+                declaration.value_type.clone(),
+            )
+        })
+        .collect()
+}
+
 pub(super) fn audio_settings_action_descriptors() -> Vec<UiActionDescriptor> {
     let document_id = || UiDocumentId::from_str(AUDIO_SETTINGS_DOCUMENT_ID).unwrap();
     vec![
@@ -272,6 +347,57 @@ pub(super) fn audio_settings_action_descriptors() -> Vec<UiActionDescriptor> {
     ]
 }
 
+pub(super) fn main_world_audio_settings_action_descriptors() -> Vec<UiActionDescriptor> {
+    let document_id = || UiDocumentId::from_str(MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID).unwrap();
+    vec![
+        UiActionDescriptor::new(
+            UiActionId::from_str(ACTION_MAIN_WORLD_SET_VOLUME).unwrap(),
+            document_id(),
+            OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+            business_command(ACTION_MAIN_WORLD_SET_VOLUME),
+        )
+        .with_sources(
+            VOLUME_SOURCES
+                .iter()
+                .map(|(source, _, _)| UiNodeId::from_str(source).unwrap()),
+        )
+        .with_param(
+            "bus",
+            UiActionParamSchema::required(UiActionParamType::Enum {
+                values: VOLUME_SOURCES
+                    .iter()
+                    .map(|(_, bus, _)| (*bus).to_owned())
+                    .collect(),
+            }),
+        )
+        .with_param(
+            "value",
+            UiActionParamSchema::required(UiActionParamType::Number {
+                min: Some(VOLUME_MIN_PERCENT),
+                max: Some(VOLUME_MAX_PERCENT),
+            }),
+        ),
+        UiActionDescriptor::new(
+            UiActionId::from_str(ACTION_MAIN_WORLD_SET_MASTER_MUTED).unwrap(),
+            document_id(),
+            OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+            business_command(ACTION_MAIN_WORLD_SET_MASTER_MUTED),
+        )
+        .with_source(UiNodeId::from_str(MASTER_MUTE_NODE).unwrap())
+        .with_param(
+            "muted",
+            UiActionParamSchema::required(UiActionParamType::Bool),
+        ),
+        UiActionDescriptor::new(
+            UiActionId::from_str(ACTION_MAIN_WORLD_CLOSE).unwrap(),
+            document_id(),
+            OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+            business_command(ACTION_MAIN_WORLD_CLOSE),
+        )
+        .with_source(UiNodeId::from_str(RETURN_LOBBY_NODE).unwrap()),
+    ]
+}
+
 fn business_command(target: &str) -> UiRegisteredActionKind {
     UiRegisteredActionKind::BusinessCommand {
         target: target.to_owned(),
@@ -286,6 +412,8 @@ pub(in crate::game::screens::settings) fn handle_audio_settings_document_actions
     mut actions: MessageReader<UiActionDispatch>,
     mut audio_commands: MessageWriter<AudioCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
+    mut screen_commands: MessageWriter<DeclarativeScreenHostCommand>,
+    mut focus: ResMut<UiFocusState>,
 ) {
     let available = mixer.is_some();
     let disabled = !available;
@@ -301,11 +429,11 @@ pub(in crate::game::screens::settings) fn handle_audio_settings_document_actions
     };
 
     for action in actions.read() {
-        if !is_audio_settings_business_action(action) {
+        let Some(surface) = audio_settings_action_surface(action) else {
             continue;
-        }
-        match action.action.as_str() {
-            ACTION_SET_VOLUME if available && !disabled => {
+        };
+        match (surface, action.action.as_str()) {
+            (_, ACTION_SET_VOLUME | ACTION_MAIN_WORLD_SET_VOLUME) if available && !disabled => {
                 let Some((bus, percent)) = volume_action_value(action) else {
                     continue;
                 };
@@ -314,7 +442,7 @@ pub(in crate::game::screens::settings) fn handle_audio_settings_document_actions
                     percent_to_bus_volume(percent),
                 )));
             }
-            ACTION_SET_MASTER_MUTED
+            (_, ACTION_SET_MASTER_MUTED | ACTION_MAIN_WORLD_SET_MASTER_MUTED)
                 if available
                     && !disabled
                     && action.source_node.as_str() == MASTER_MUTE_NODE
@@ -328,24 +456,60 @@ pub(in crate::game::screens::settings) fn handle_audio_settings_document_actions
                     *muted,
                 )));
             }
-            ACTION_RETURN_LOBBY
+            (AudioSettingsSurface::Lobby, ACTION_RETURN_LOBBY)
                 if action.source_node.as_str() == RETURN_LOBBY_NODE && action.params.is_empty() =>
             {
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+            }
+            (AudioSettingsSurface::MainWorld, ACTION_MAIN_WORLD_CLOSE)
+                if action.source_node.as_str() == RETURN_LOBBY_NODE && action.params.is_empty() =>
+            {
+                focus.focused_entity = None;
+                screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
+                    route: MAIN_WORLD_SETTINGS_ROUTE.to_owned(),
+                });
             }
             _ => {}
         }
     }
 }
 
-fn is_audio_settings_business_action(action: &UiActionDispatch) -> bool {
-    action.document_id.as_str() == AUDIO_SETTINGS_DOCUMENT_ID
-        && action.owner == OWNER_AUDIO_SETTINGS.as_str()
-        && matches!(
-            &action.kind,
-            UiRegisteredActionKind::BusinessCommand { target }
-                if target == action.action.as_str()
-        )
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AudioSettingsSurface {
+    Lobby,
+    MainWorld,
+}
+
+fn audio_settings_action_surface(action: &UiActionDispatch) -> Option<AudioSettingsSurface> {
+    let matches_business_action = matches!(
+        &action.kind,
+        UiRegisteredActionKind::BusinessCommand { target }
+            if target == action.action.as_str()
+    );
+    if !matches_business_action {
+        return None;
+    }
+    match (
+        action.document_id.as_str(),
+        action.owner.as_str(),
+        action.action.as_str(),
+    ) {
+        (
+            AUDIO_SETTINGS_DOCUMENT_ID,
+            owner,
+            ACTION_SET_VOLUME | ACTION_SET_MASTER_MUTED | ACTION_RETURN_LOBBY,
+        ) if owner == OWNER_AUDIO_SETTINGS.as_str() => Some(AudioSettingsSurface::Lobby),
+        (
+            MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID,
+            owner,
+            ACTION_MAIN_WORLD_SET_VOLUME
+            | ACTION_MAIN_WORLD_SET_MASTER_MUTED
+            | ACTION_MAIN_WORLD_CLOSE,
+        ) if owner == OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str() => {
+            Some(AudioSettingsSurface::MainWorld)
+        }
+        _ => None,
+    }
 }
 
 fn volume_action_value(action: &UiActionDispatch) -> Option<(AudioBus, f64)> {
@@ -377,11 +541,51 @@ pub(in crate::game::screens::settings) fn sync_audio_settings_document_bindings(
     >,
     mut values: ResMut<UiBindingValues>,
 ) {
+    sync_audio_settings_bindings_for_surface(
+        mixer,
+        &contract,
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
+        audit.as_deref(),
+        AUDIO_SETTINGS_DOCUMENT_ID,
+        OWNER_AUDIO_SETTINGS.as_str(),
+        &mut values,
+    );
+}
+
+pub(in crate::game) fn sync_main_world_audio_settings_document_bindings(
+    mixer: Option<Res<AudioMixer>>,
+    contract: Res<AudioSettingsHostContract>,
+    #[cfg(all(debug_assertions, not(target_os = "android")))] audit: Option<
+        Res<AudioSettingsAuditFixture>,
+    >,
+    mut values: ResMut<UiBindingValues>,
+) {
+    sync_audio_settings_bindings_for_surface(
+        mixer,
+        &contract,
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
+        audit.as_deref(),
+        MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID,
+        OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+        &mut values,
+    );
+}
+
+fn sync_audio_settings_bindings_for_surface(
+    mixer: Option<Res<AudioMixer>>,
+    contract: &AudioSettingsHostContract,
+    #[cfg(all(debug_assertions, not(target_os = "android")))] audit: Option<
+        &AudioSettingsAuditFixture,
+    >,
+    document_id: &str,
+    owner: &str,
+    values: &mut UiBindingValues,
+) {
     let snapshot = AudioSettingsSnapshot::from_mixer(mixer.as_deref());
     #[cfg(all(debug_assertions, not(target_os = "android")))]
     let snapshot = {
         let mut snapshot = snapshot;
-        if let Some(audit) = audit.as_deref().filter(|audit| audit.active) {
+        if let Some(audit) = audit.filter(|audit| audit.active) {
             if audit.unavailable {
                 snapshot.available = false;
                 snapshot.disabled = true;
@@ -403,7 +607,7 @@ pub(in crate::game::screens::settings) fn sync_audio_settings_document_bindings(
         .zip(snapshot.volumes)
         .map(|((path, _), value)| (*path, UiBindingValue::Number(clamp_percent(value))))
     {
-        set_binding(&contract, &mut values, path, value);
+        set_binding(contract, values, document_id, owner, path, value);
     }
     for (path, value) in [
         (
@@ -467,13 +671,15 @@ pub(in crate::game::screens::settings) fn sync_audio_settings_document_bindings(
             }),
         ),
     ] {
-        set_binding(&contract, &mut values, path, value);
+        set_binding(contract, values, document_id, owner, path, value);
     }
 }
 
 fn set_binding(
     contract: &AudioSettingsHostContract,
     values: &mut UiBindingValues,
+    document_id: &str,
+    owner: &str,
     path: &str,
     value: UiBindingValue,
 ) {
@@ -482,13 +688,7 @@ fn set_binding(
         .bindings
         .get(&path)
         .expect("Audio Settings binding schema contains every synchronized value");
-    values.set_scoped(
-        AUDIO_SETTINGS_DOCUMENT_ID,
-        OWNER_AUDIO_SETTINGS.as_str(),
-        &path,
-        declaration,
-        value,
-    );
+    values.set_scoped(document_id, owner, &path, declaration, value);
 }
 
 pub(in crate::game::screens::settings) fn cleanup_audio_settings_screen(

@@ -69,8 +69,13 @@ impl UiApprovedDocumentHostContract {
         if version != UI_APPROVED_DOCUMENT_HOST_CONTRACT_VERSION
             || !safe_registration_label(&owner)
             || !safe_registration_label(&route)
-            || !matches!(panel, UiDocumentPanel::Page | UiDocumentPanel::Hud)
-            || layer != UiDocumentLayer::Page
+            || !matches!(
+                (panel, layer),
+                (
+                    UiDocumentPanel::Page | UiDocumentPanel::Hud,
+                    UiDocumentLayer::Page
+                ) | (UiDocumentPanel::Floating, UiDocumentLayer::Floating)
+            )
             || page_state != UiPageState::initial()
             || normalized_profiles(&audit_profiles).is_none()
             || actions.values().any(BTreeSet::is_empty)
@@ -435,7 +440,6 @@ pub fn parse_approved_document_registration(
     };
     if file.kind != REGISTRATION_KIND
         || file.source.root != "approved"
-        || file.layer != "page"
         || !file.i18n_keys.is_empty()
         || !file.theme_tokens.is_empty()
         || !file.action_or_binding_registration.is_empty()
@@ -454,14 +458,24 @@ pub fn parse_approved_document_registration(
     let panel = match file.panel.as_str() {
         "page" => UiDocumentPanel::Page,
         "hud" => UiDocumentPanel::Hud,
+        "floating" => UiDocumentPanel::Floating,
         _ => {
             return Err(UiApprovedDocumentRegistrationError::new(
                 "UI_APPROVED_REGISTRATION_CLOSED_FIELD_REJECTED",
-                "approved registration panel is outside the closed page/HUD set",
+                "approved registration panel is outside the closed page/HUD/floating set",
             ));
         }
     };
-    let layer = UiDocumentLayer::Page;
+    let layer = match file.layer.as_str() {
+        "page" => UiDocumentLayer::Page,
+        "floating" => UiDocumentLayer::Floating,
+        _ => {
+            return Err(UiApprovedDocumentRegistrationError::new(
+                "UI_APPROVED_REGISTRATION_CLOSED_FIELD_REJECTED",
+                "approved registration layer is outside the closed page/floating set",
+            ));
+        }
+    };
     let source_path =
         UiDocumentSourcePath::new(UiDocumentSourceRoot::Approved, file.source.relative_path)
             .map_err(|_| {

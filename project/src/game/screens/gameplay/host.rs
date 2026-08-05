@@ -27,7 +27,8 @@ use crate::game::ui_ids::SCROLL_FANGYUAN_HOME_MAIN;
 use crate::game::{
     declarative_screen::{
         DeclarativeScreenFailureDecision, DeclarativeScreenFailurePolicy, DeclarativeScreenHost,
-        DeclarativeScreenHostEvent, DeclarativeScreenRegistry, DeclarativeScreenSource,
+        DeclarativeScreenHostCommand, DeclarativeScreenHostEvent, DeclarativeScreenRegistry,
+        DeclarativeScreenSource,
     },
     myserver::{GameConnectionState, MyServerSession, mail::MailClientState},
     navigation::{AppUiMode, GameRouteCommand},
@@ -614,6 +615,7 @@ pub(super) fn handle_gameplay_hud_document_actions(
     mut blueprint_commands: MessageWriter<FangyuanHomeBlueprintCommand>,
     mut scene_commands: MessageWriter<SceneCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
+    mut screen_commands: MessageWriter<DeclarativeScreenHostCommand>,
     mut main_world_intents: MessageWriter<MainWorldEntryIntent>,
     mut actions: MessageReader<UiActionDispatch>,
 ) {
@@ -626,6 +628,11 @@ pub(super) fn handle_gameplay_hud_document_actions(
             continue;
         }
         match dispatch.action.as_str() {
+            ACTION_MAIN_WORLD_OPEN_SETTINGS => {
+                screen_commands.write(DeclarativeScreenHostCommand::OpenDetachedRoute {
+                    route: crate::game::screens::settings::MAIN_WORLD_SETTINGS_ROUTE.to_owned(),
+                });
+            }
             ACTION_TOUCH_RIPPLE_RETURN_LOBBY | ACTION_FANGYUAN_PREVIEW_RETURN_LOBBY => {
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
             }

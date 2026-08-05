@@ -24,7 +24,7 @@ use crate::framework::{
 use crate::game::{
     declarative_screen::{DeclarativeScreenHostCommand, DeclarativeScreenHostPlugin},
     navigation::{AppUiMode, GameRouteCommand},
-    ui_ids::OWNER_AUDIO_SETTINGS,
+    ui_ids::{OWNER_AUDIO_SETTINGS, OWNER_MAIN_WORLD_SETTINGS_PANEL},
 };
 
 #[test]
@@ -83,6 +83,42 @@ fn audio_settings_promotion_registration_matches_fixed_host_contract() {
     assert_eq!(registration.route(), "audio_settings");
     assert_eq!(audit.actions.len(), 3);
     assert_eq!(audit.bindings.len(), 12);
+}
+
+#[test]
+fn main_world_audio_settings_reuses_the_schema_as_a_floating_scene_panel() {
+    const REGISTRATION_SOURCE: &str = include_str!(
+        "../../../../../assets/ui/documents/approved/audio_settings/main_world_audio_settings.promotion.v1.json"
+    );
+    let contract = AudioSettingsHostContract::default();
+    let host = main_world_audio_settings_declarative_screen_host(&contract);
+    let registration = parse_approved_document_registration(REGISTRATION_SOURCE).unwrap();
+
+    assert_eq!(
+        host.document_id.as_str(),
+        MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID
+    );
+    assert_eq!(host.mode, None);
+    assert_eq!(host.owner, OWNER_MAIN_WORLD_SETTINGS_PANEL);
+    assert_eq!(host.route, MAIN_WORLD_SETTINGS_ROUTE);
+    assert_eq!(
+        host.panel,
+        crate::framework::ui::document::UiDocumentPanel::Floating
+    );
+    assert_eq!(
+        host.layer,
+        crate::framework::ui::document::UiDocumentLayer::Floating
+    );
+    assert_eq!(host.binding_schema.len(), contract.bindings.len());
+    assert_eq!(
+        registration.owner(),
+        OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str()
+    );
+    assert_eq!(registration.route(), MAIN_WORLD_SETTINGS_ROUTE);
+    assert_eq!(
+        registration.panel(),
+        crate::framework::ui::document::UiDocumentPanel::Floating
+    );
 }
 
 #[test]
@@ -173,6 +209,24 @@ fn unavailable_mixer_rejects_setting_actions_but_keeps_navigation_available() {
             .iter()
             .any(|command| { matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Lobby)) })
     );
+}
+
+#[test]
+fn main_world_close_action_closes_only_the_scene_panel() {
+    let mut app = audio_action_test_app(true);
+    app.world_mut().write_message(main_world_audio_dispatch(
+        ACTION_MAIN_WORLD_CLOSE,
+        "audio_settings.return_lobby",
+        BTreeMap::new(),
+    ));
+    app.update();
+
+    assert!(read_messages::<GameRouteCommand>(&app).is_empty());
+    assert!(matches!(
+        read_messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+        [DeclarativeScreenHostCommand::CloseRoute { route }]
+            if route == MAIN_WORLD_SETTINGS_ROUTE
+    ));
 }
 
 #[test]
@@ -395,6 +449,8 @@ fn audio_action_test_app(with_mixer: bool) -> App {
         .add_message::<UiActionDispatch>()
         .add_message::<AudioCommand>()
         .add_message::<GameRouteCommand>()
+        .add_message::<DeclarativeScreenHostCommand>()
+        .init_resource::<UiFocusState>()
         .add_systems(Update, handle_audio_settings_document_actions);
     if with_mixer {
         app.init_resource::<AudioMixer>();
@@ -411,6 +467,23 @@ fn audio_dispatch(
         action: UiActionId::from_str(action).unwrap(),
         document_id: UiDocumentId::from_str(AUDIO_SETTINGS_DOCUMENT_ID).unwrap(),
         owner: OWNER_AUDIO_SETTINGS.as_str().to_owned(),
+        source_node: UiNodeId::from_str(source).unwrap(),
+        kind: UiRegisteredActionKind::BusinessCommand {
+            target: action.to_owned(),
+        },
+        params,
+    }
+}
+
+fn main_world_audio_dispatch(
+    action: &str,
+    source: &str,
+    params: BTreeMap<String, UiActionValue>,
+) -> UiActionDispatch {
+    UiActionDispatch {
+        action: UiActionId::from_str(action).unwrap(),
+        document_id: UiDocumentId::from_str(MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID).unwrap(),
+        owner: OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str().to_owned(),
         source_node: UiNodeId::from_str(source).unwrap(),
         kind: UiRegisteredActionKind::BusinessCommand {
             target: action.to_owned(),

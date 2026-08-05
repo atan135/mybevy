@@ -1,4 +1,5 @@
-mod audio;
+pub(in crate::game) mod audio;
+pub(in crate::game) use audio::MAIN_WORLD_SETTINGS_ROUTE;
 
 use bevy::prelude::*;
 
@@ -22,8 +23,7 @@ impl Plugin for SettingsScreensPlugin {
                 Update,
                 audio::handle_audio_settings_document_actions
                     .after(UiDocumentRuntimeSystems::Reconcile)
-                    .before(AudioSystemSet::Commands)
-                    .run_if(in_state(AppUiMode::AudioSettings)),
+                    .before(AudioSystemSet::Commands),
             )
             .add_systems(
                 Update,
@@ -32,6 +32,13 @@ impl Plugin for SettingsScreensPlugin {
                     .before(UiBindingSystems::Apply)
                     .run_if(in_state(AppUiMode::AudioSettings)),
             );
+        app.add_systems(
+            Update,
+            audio::sync_main_world_audio_settings_document_bindings
+                .after(AudioSystemSet::Commands)
+                .before(UiBindingSystems::Apply)
+                .run_if(in_state(AppUiMode::MainWorld)),
+        );
 
         #[cfg(all(debug_assertions, not(target_os = "android")))]
         app.init_resource::<audio::AudioSettingsAuditFixture>()

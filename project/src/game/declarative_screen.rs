@@ -11,7 +11,10 @@ use crate::{
             UiAuditCaptureRecipe, UiAuditReadyCondition, UiAuditRecipe, UiAuditScreen,
             UiAuditScreenRecipe, UiAuditScreenRegistry,
         },
-        core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, binding::UiBindingValues},
+        core::{
+            UiCurrentOwner, UiDocumentCloseTopRequest, UiOwnerId, UiPanelCommand, UiPanelSystems,
+            binding::UiBindingValues, focus::UiFocusState,
+        },
         document::{
             UiActionId, UiActionRegistry, UiBindingScope, UiBindingType, UiDocument,
             UiDocumentHostValidationContext, UiDocumentId, UiDocumentLayer,
@@ -288,6 +291,7 @@ pub(in crate::game) enum DeclarativeScreenHostCommand {
 #[derive(Clone, Debug, Default, Resource)]
 struct DeclarativeScreenHostRuntime {
     open: BTreeMap<DeclarativeScreenHostKey, &'static str>,
+    open_order: Vec<DeclarativeScreenHostKey>,
     fallback_attempted: BTreeSet<DeclarativeScreenHostKey>,
     pending_owner_switch: BTreeMap<DeclarativeScreenHostKey, Option<UiOwnerId>>,
     pending_replacements: BTreeMap<DeclarativeScreenHostKey, Vec<DeclarativeScreenHostKey>>,
@@ -309,6 +313,7 @@ impl Plugin for DeclarativeScreenHostPlugin {
             .init_resource::<UiCurrentOwner>()
             .add_message::<AppLifecycle>()
             .add_message::<UiPanelCommand>()
+            .add_message::<UiDocumentCloseTopRequest>()
             .add_message::<DeclarativeScreenHostCommand>()
             .add_message::<DeclarativeScreenHostEvent>()
             .configure_sets(
@@ -325,6 +330,12 @@ impl Plugin for DeclarativeScreenHostPlugin {
                 (sync_mode_host, handle_host_commands)
                     .chain()
                     .in_set(DeclarativeScreenHostSystems::Commands),
+            )
+            .add_systems(
+                Update,
+                close_top_declarative_document
+                    .after(UiPanelSystems::Commands)
+                    .before(DeclarativeScreenHostSystems::Commands),
             )
             .add_systems(
                 Update,
@@ -645,6 +656,50 @@ fn handle_host_commands(
     }
 }
 
+fn close_top_declarative_document(
+    mut requests: MessageReader<UiDocumentCloseTopRequest>,
+    registry: Res<DeclarativeScreenRegistry>,
+    mut host_runtime: ResMut<DeclarativeScreenHostRuntime>,
+    mut preview_commands: MessageWriter<UiDocumentPreviewCommand>,
+    mut runtime_commands: MessageWriter<UiDocumentRuntimeCommand>,
+    mut host_events: MessageWriter<DeclarativeScreenHostEvent>,
+    mut focus: Option<ResMut<UiFocusState>>,
+) {
+    for _ in requests.read() {
+        let Some(key) = host_runtime
+            .open_order
+            .iter()
+            .rev()
+            .find(|key| {
+                registry.host_for_key(key).is_some_and(|host| {
+                    matches!(
+                        host.panel,
+                        crate::framework::ui::document::UiDocumentPanel::Floating
+                            | crate::framework::ui::document::UiDocumentPanel::Modal
+                            | crate::framework::ui::document::UiDocumentPanel::BlockingOverlay
+                    )
+                })
+            })
+            .cloned()
+        else {
+            continue;
+        };
+        let Some(host) = registry.host_for_key(&key).cloned() else {
+            continue;
+        };
+        close_host(
+            &host,
+            &mut host_runtime,
+            &mut preview_commands,
+            &mut runtime_commands,
+            &mut host_events,
+        );
+        if let Some(focus) = focus.as_deref_mut() {
+            focus.focused_entity = None;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn open_host(
     host: &DeclarativeScreenHost,
@@ -705,6 +760,8 @@ fn open_host(
             .insert(key.clone(), replacements);
     }
     host_runtime.open.insert(key.clone(), host.route);
+    host_runtime.open_order.retain(|open_key| open_key != &key);
+    host_runtime.open_order.push(key.clone());
     preview_commands.write(UiDocumentPreviewCommand::Register(
         host.preview_registration(&host.source, target_profile_from_viewport(viewport)),
     ));
@@ -724,6 +781,7 @@ fn close_host(
     if host_runtime.open.remove(&key).is_none() {
         return;
     }
+    host_runtime.open_order.retain(|open_key| open_key != &key);
     host_runtime.fallback_attempted.remove(&key);
     host_runtime.pending_owner_switch.remove(&key);
     host_runtime.pending_replacements.remove(&key);

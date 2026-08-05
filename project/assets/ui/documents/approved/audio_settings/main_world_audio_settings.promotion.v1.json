@@ -1,0 +1,62 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": [
+    "desktop",
+    "phone-landscape",
+    "phone-1080p-landscape",
+    "tablet-landscape"
+  ],
+  "document_id": "game.main_world_audio_settings",
+  "host_contract": {
+    "actions": [
+      {
+        "id": "main_world_audio_settings.set_volume",
+        "sources": [
+          "audio_settings.volume.master",
+          "audio_settings.volume.music",
+          "audio_settings.volume.sfx",
+          "audio_settings.volume.ui",
+          "audio_settings.volume.battle"
+        ]
+      },
+      {
+        "id": "main_world_audio_settings.set_master_muted",
+        "sources": ["audio_settings.master.muted"]
+      },
+      {
+        "id": "main_world_audio_settings.close",
+        "sources": ["audio_settings.return_lobby"]
+      }
+    ],
+    "bindings": [
+      { "path": "audio_settings.controls.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "audio_settings.error.detail", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "audio_settings.error.title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "audio_settings.error.visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "audio_settings.master.muted", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "audio_settings.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "audio_settings.view_state", "scope": "owner", "value_type": { "kind": "enum", "values": ["ready", "unavailable"] } },
+      { "path": "audio_settings.volume.battle", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "audio_settings.volume.master", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "audio_settings.volume.music", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "audio_settings.volume.sfx", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "audio_settings.volume.ui", "scope": "owner", "value_type": { "kind": "number" } }
+    ],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "floating",
+  "owner": "main_world_settings_panel",
+  "page_state": "initial",
+  "panel": "floating",
+  "protocol_version": 2,
+  "route": "main_world_settings",
+  "source": {
+    "relative_path": "audio_settings/main_world_audio_settings.v1.json",
+    "root": "approved"
+  },
+  "template_version": 2,
+  "theme_tokens": []
+}

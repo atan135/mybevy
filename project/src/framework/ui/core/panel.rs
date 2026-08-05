@@ -24,6 +24,7 @@ pub(crate) struct UiPanelPlugin;
 impl Plugin for UiPanelPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiPanelCommand>()
+            .add_message::<UiDocumentCloseTopRequest>()
             .init_resource::<UiCurrentOwner>()
             .init_resource::<UiPanelStack>()
             .configure_sets(Update, UiPanelSystems::Commands)
@@ -142,6 +143,11 @@ pub(crate) enum UiPanelCommand {
     CloseAllForOwner(UiOwnerId),
 }
 
+/// Sent only after the framework panel stack has no closeable surface. Declarative
+/// document hosts consume this to continue the same CloseTop ordering.
+#[derive(Clone, Copy, Debug, Message)]
+pub(crate) struct UiDocumentCloseTopRequest;
+
 #[derive(Clone, Copy, Debug, Default, Resource)]
 pub(crate) struct UiCurrentOwner {
     pub owner: Option<UiOwnerId>,
@@ -169,6 +175,7 @@ fn handle_panel_commands(
     panel_roots: Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     mut visible_panels: Query<(&UiPanelRoot, &mut Visibility)>,
     mut stack: ResMut<UiPanelStack>,
+    mut document_close_requests: MessageWriter<UiDocumentCloseTopRequest>,
 ) {
     for command in panel_commands.read() {
         match command {
@@ -215,7 +222,9 @@ fn handle_panel_commands(
                 set_panel_visibility(&mut visible_panels, *id, Visibility::Visible);
             }
             UiPanelCommand::CloseTop => {
-                close_top_panel(&mut commands, &panel_roots, &mut stack);
+                if !close_top_panel(&mut commands, &panel_roots, &mut stack) {
+                    document_close_requests.write(UiDocumentCloseTopRequest);
+                }
             }
             UiPanelCommand::CloseAllForOwner(owner) => {
                 close_panels_for_owner(&mut commands, &panel_roots, *owner);
@@ -302,13 +311,14 @@ fn close_top_panel(
     commands: &mut Commands,
     panel_roots: &Query<(Entity, &UiPanelRoot, Option<&UiBlockingOverlay>)>,
     stack: &mut UiPanelStack,
-) {
+) -> bool {
     prune_missing_stack_entries(panel_roots, stack);
     let Some(id) = close_top_target_id(panel_roots, stack) else {
-        return;
+        return false;
     };
     close_panel_by_id(commands, panel_roots, id);
     remove_from_stack(stack, id);
+    true
 }
 
 pub(crate) fn close_top_target_id(

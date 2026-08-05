@@ -12,6 +12,7 @@ use crate::{
             SceneCommand, SceneEnterRequest, SceneEvent, SceneExitRequest, SceneOwned,
             SceneRegistry, SceneSessionId,
         },
+        ui::document::{UiDocumentPanel, UiDocumentRuntimeRoot},
     },
     game::{
         myserver::{
@@ -479,9 +480,19 @@ fn adapt_main_world_return_input(
     key_codes: Option<Res<ButtonInput<KeyCode>>>,
     keys: Option<Res<ButtonInput<Key>>>,
     state: Res<MainWorldEntryState>,
+    document_roots: Query<&UiDocumentRuntimeRoot>,
     mut intents: MessageWriter<MainWorldEntryIntent>,
 ) {
     if state.phase != MainWorldEntryPhase::Active {
+        return;
+    }
+
+    if document_roots.iter().any(|root| {
+        matches!(
+            root.panel,
+            UiDocumentPanel::Floating | UiDocumentPanel::Modal | UiDocumentPanel::BlockingOverlay
+        )
+    }) {
         return;
     }
 
