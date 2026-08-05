@@ -980,7 +980,9 @@ MyServer 最新登录链路是账号身份和游戏角色身份分离的流程�
 
 主世界联调在完成登录、选角和 game proxy 鉴权后，从 Lobby 加入固定 `main-world-public / movement_demo`。客户端以 `character_id` 为玩法主体，使用服务端 `grassland_01 / scene_id=1 / spawn_id=1001` 映射；权威快照、客户端 Scene Ready 和服务端 Room Ready 三者齐备前不会开放主世界输入。完整顺序、断线恢复和家园返回语义见 [MyServer 客户端验收](./myserver/服务端最新登录流程客户端验收.md#固定公共主世界)。
 
-所有 MyServer、公共主城和 authority 网络链路统一使用 Windows `cargo run` 客户端对接本地 MyServer 验收。Android 真机不承担任何网络链路验收，只执行不依赖网络的启动、前后台切换、恢复和基础渲染检查。
+02-06 功能阶段先统一使用 Windows `cargo run` 客户端对接本地 MyServer，完成 MyServer、公共主城、authority、chat 和 mail 的本地/常规联调；Android 真机不连接本机 Local MyServer，也不以端口转发、ADB reverse 或临时明文入口代替公网环境。
+
+目标服务与 APK 部署到批准的公网 endpoint 后，Android 真机最终验收集中在 `summary/07_公网部署后Android真机验收_checklist.md`。该阶段仍需覆盖公网 mail HTTPS/TLS、`MailNotifyPush` 后的权威刷新、触控与系统返回键、前后台恢复、网络切换/弱网，以及领取结果未知时的 reconciliation；这些真机项目未执行前不得宣称跨端或公网邮件闭环完成。
 
 本地服常用客户端环境变量：
 

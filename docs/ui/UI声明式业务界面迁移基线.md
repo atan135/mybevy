@@ -80,6 +80,31 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 
 该产品没有设置草稿或持久化事务，因此 stepper、segmented、select、tab、保存、取消恢复、dirty、validation、恢复默认值、配置加载、保存失败和 loading 状态均不适用，文档不得自行实现这些业务表达式。热更新只迁移兼容 node 的 Slider/Toggle 局部状态、focus 与 scroll；下一次 owner binding apply 仍以 mixer 当前值为准。调整设置项排列、分组、说明文本、响应式布局和视觉只修改 approved JSON/资源；新增 bus、action、binding、持久化或状态语义必须修改 Rust host contract 与测试。
 
+### 3.2 主世界邮箱 document
+
+主世界邮箱由 fixed host 注册为 approved document `game.main_world_mail`，owner 为 `main_world_mail_panel`，detached route label 为 `main_world_mail`，panel 与 layer 都是 `Floating`。它只在主世界场景内由 HUD 打开；关闭邮箱只关闭 UI instance、清理该 owner 的 binding/focus 并恢复 HUD/gameplay 输入，不退出房间、场景或取消全局 `MailClientState` 持有的 reconciliation。
+
+首包与晋升文件固定为：
+
+- approved source：`project/assets/ui/documents/approved/gameplay/main_world_mail.v1.json`
+- closed promotion：`project/assets/ui/documents/approved/gameplay/main_world_mail.promotion.v1.json`
+- packaged fallback：`project/assets/ui/documents/approved/gameplay/main_world_mail_fallback.v1.json`
+
+首包 source 或更新 generation 加载失败时，宿主改用 packaged fallback；fallback 只保留闭合的安全关闭入口，不把网络、路由或任意执行能力交给 document。正常 document 也只能派发 host allowlist 中的 refresh、select、load more、back to list、mark read、claim、retry 和 close action；完整 `mail_id` 作为 opaque 参数回到 host 后，还必须对当前 HTTPS 权威列表重新校验。
+
+owner-scope typed bindings 覆盖 availability、collection state、`list<record>` 邮件列表、选中 ID、详情、附件、领取状态、loading/disabled、visibility 和结构化错误；Repeat 的 source 固定为 `main_world_mail.items`，稳定 key 固定为完整 `mail_id`。Repeat item 只读取声明过的 item-scope typed binding，显示标题、发送方、时间、未读、附件和过期状态，不暴露 ownership、endpoint 或内部路由。列表和详情通过 `main_world_mail.list_visibility` / `main_world_mail.detail_visibility` 互斥；返回详情先回列表，关闭 Floating 才回主世界 HUD。
+
+document 根是全视口不透明遮挡，防止详情模式下主世界 HUD 从空隙穿透；Floating panel 采用有界宽高和纵向 scroll，长标题、长正文、32 个附件、分页及错误文案不会撑开固定格式或遮住 48px 操作按钮。responsive overrides 覆盖短横屏和紧凑宽度，宿主注册的四个 audit profile 为 `desktop`、`phone-landscape`、`phone-1080p-landscape`、`tablet-landscape`；desktop 对应的自定义验收尺寸可使用 `1600x720`。
+
+从仓库根运行边界和视觉验收：
+
+```powershell
+cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .
+.\scripts\run-ui-audit.ps1 -Screens main_world -Devices desktop,phone-landscape,phone-1080p-landscape,tablet-landscape -States initial -DeterministicCapture -DynamicContentPolicy StableFixture -StableFixtureId stage18_main_world_mail
+```
+
+`stage18_main_world_mail` 注入长标题、超过 2 KiB 的正文、32 个附件、分页和 `503` 状态。四档桌面审计用于 document/layout 回归，不等于 Android 公网真机验收；后者归 `summary/07_公网部署后Android真机验收_checklist.md`。
+
 ## 4. 受控 Rust View 例外
 
 Rust View 例外只覆盖四个开发工具页面，用于展示或调试 framework 本身的控件、音频命令和视觉状态，不得被正式业务页面借用。Fangyuan/authority/scene 的业务、3D camera/light、网络和特殊输入继续由 Rust owner 持有，但不属于 View 例外。
