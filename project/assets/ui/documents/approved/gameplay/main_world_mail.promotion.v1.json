@@ -7,6 +7,7 @@
       { "id": "main_world_mail.refresh", "sources": ["main_world_mail.refresh"] },
       { "id": "main_world_mail.select", "sources": ["main_world_mail.item.open"] },
       { "id": "main_world_mail.load_more", "sources": ["main_world_mail.load_more"] },
+      { "id": "main_world_mail.back_to_list", "sources": ["main_world_mail.back_to_list"] },
       { "id": "main_world_mail.mark_read", "sources": ["main_world_mail.mark_read"] },
       { "id": "main_world_mail.claim", "sources": ["main_world_mail.claim"] },
       { "id": "main_world_mail.retry", "sources": ["main_world_mail.retry"] },

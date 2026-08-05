@@ -38,8 +38,9 @@ use crate::game::{
     myserver::{
         GameConnectionState, MyServerSession,
         mail::{
-            MailAvailability, MailClientCommand, MailClientState, MailListLoadState, MailListQuery,
-            MailSummary,
+            MAIL_MAX_DETAIL_ATTACHMENTS, MailAttachment, MailAvailability, MailClientCommand,
+            MailClientError, MailClientState, MailDetailLoadState, MailListLoadState,
+            MailListQuery, MailMarkReadState, MailSummary,
         },
     },
     navigation::{AppUiMode, GameRouteCommand},
@@ -73,6 +74,7 @@ pub(super) const ACTION_MAIN_WORLD_MAIL_REFRESH: &str = "main_world_mail.refresh
 pub(super) const ACTION_MAIN_WORLD_MAIL_SELECT: &str = "main_world_mail.select";
 pub(super) const ACTION_MAIN_WORLD_MAIL_LOAD_MORE: &str = "main_world_mail.load_more";
 pub(super) const ACTION_MAIN_WORLD_MAIL_MARK_READ: &str = "main_world_mail.mark_read";
+pub(super) const ACTION_MAIN_WORLD_MAIL_BACK_TO_LIST: &str = "main_world_mail.back_to_list";
 pub(super) const ACTION_MAIN_WORLD_MAIL_CLAIM: &str = "main_world_mail.claim";
 pub(super) const ACTION_MAIN_WORLD_MAIL_RETRY: &str = "main_world_mail.retry";
 pub(super) const ACTION_MAIN_WORLD_MAIL_CLOSE: &str = "main_world_mail.close";
@@ -236,6 +238,7 @@ const MAIN_WORLD_MAIL_REFRESH_NODE: &str = "main_world_mail.refresh";
 const MAIN_WORLD_MAIL_SELECT_NODE: &str = "main_world_mail.item.open";
 const MAIN_WORLD_MAIL_LOAD_MORE_NODE: &str = "main_world_mail.load_more";
 const MAIN_WORLD_MAIL_MARK_READ_NODE: &str = "main_world_mail.mark_read";
+const MAIN_WORLD_MAIL_BACK_TO_LIST_NODE: &str = "main_world_mail.back_to_list";
 const MAIN_WORLD_MAIL_CLAIM_NODE: &str = "main_world_mail.claim";
 const MAIN_WORLD_MAIL_RETRY_NODE: &str = "main_world_mail.retry";
 const MAIN_WORLD_MAIL_CLOSE_NODE: &str = "main_world_mail.close";
@@ -800,6 +803,7 @@ fn main_world_mail_declarative_screen_host(
             ACTION_MAIN_WORLD_MAIL_SELECT,
             ACTION_MAIN_WORLD_MAIL_LOAD_MORE,
             ACTION_MAIN_WORLD_MAIL_MARK_READ,
+            ACTION_MAIN_WORLD_MAIL_BACK_TO_LIST,
             ACTION_MAIN_WORLD_MAIL_CLAIM,
             ACTION_MAIN_WORLD_MAIL_RETRY,
             ACTION_MAIN_WORLD_MAIL_CLOSE,
@@ -887,6 +891,12 @@ pub(super) fn gameplay_action_descriptors() -> Vec<UiActionDescriptor> {
         mail_id_action(
             ACTION_MAIN_WORLD_MAIL_MARK_READ,
             MAIN_WORLD_MAIL_MARK_READ_NODE,
+        ),
+        action(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_BACK_TO_LIST,
+            MAIN_WORLD_MAIL_BACK_TO_LIST_NODE,
         ),
         mail_id_action(ACTION_MAIN_WORLD_MAIL_CLAIM, MAIN_WORLD_MAIL_CLAIM_NODE),
         action(
@@ -1135,6 +1145,23 @@ pub(super) fn handle_gameplay_hud_document_actions(
             }
             continue;
         }
+        if dispatch.action.as_str() == ACTION_MAIN_WORLD_MAIL_MARK_READ {
+            if main_world_actions_are_active(entry.as_deref())
+                && let Some(mail) = mail.as_deref()
+                && let Some(mail_id) = main_world_mail_id_action(
+                    dispatch,
+                    ACTION_MAIN_WORLD_MAIL_MARK_READ,
+                    MAIN_WORLD_MAIL_MARK_READ_NODE,
+                )
+                && mail.selected_mail_id() == Some(mail_id)
+                && mail.contains_authoritative_mail(mail_id)
+            {
+                mail_commands.write(MailClientCommand::MarkRead {
+                    mail_id: mail_id.to_owned(),
+                });
+            }
+            continue;
+        }
         if !zero_param_action_matches_contract(dispatch) {
             continue;
         }
@@ -1159,10 +1186,19 @@ pub(super) fn handle_gameplay_hud_document_actions(
                 if main_world_actions_are_active(entry.as_deref())
                     && mail.as_deref().is_some_and(MailClientState::is_available) =>
             {
-                let query = mail
-                    .as_deref()
-                    .map_or_else(MailListQuery::default, MailClientState::refresh_query);
-                mail_commands.write(MailClientCommand::LoadList { query });
+                if dispatch.action.as_str() == ACTION_MAIN_WORLD_MAIL_RETRY
+                    && let Some(mail_id) = mail
+                        .as_deref()
+                        .and_then(MailClientState::selected_mail_id)
+                        .map(str::to_owned)
+                {
+                    mail_commands.write(MailClientCommand::LoadMail { mail_id });
+                } else {
+                    let query = mail
+                        .as_deref()
+                        .map_or_else(MailListQuery::default, MailClientState::refresh_query);
+                    mail_commands.write(MailClientCommand::LoadList { query });
+                }
             }
             ACTION_MAIN_WORLD_MAIL_LOAD_MORE if main_world_actions_are_active(entry.as_deref()) => {
                 if let Some(query) = mail.as_deref().and_then(MailClientState::next_page_query) {
@@ -1170,12 +1206,21 @@ pub(super) fn handle_gameplay_hud_document_actions(
                 }
             }
             ACTION_MAIN_WORLD_MAIL_CLOSE if main_world_actions_are_active(entry.as_deref()) => {
+                if mail.as_deref().is_some_and(MailClientState::detail_is_open) {
+                    mail_commands.write(MailClientCommand::DismissDetail);
+                }
                 if let Some(focus) = focus.as_deref_mut() {
                     focus.focused_entity = None;
                 }
                 screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
                     route: MainWorldDocumentPanel::Mail.route().to_owned(),
                 });
+            }
+            ACTION_MAIN_WORLD_MAIL_BACK_TO_LIST
+                if main_world_actions_are_active(entry.as_deref())
+                    && mail.as_deref().is_some_and(MailClientState::detail_is_open) =>
+            {
+                mail_commands.write(MailClientCommand::DismissDetail);
             }
             ACTION_MAIN_WORLD_ENTER_HOME
                 if !main_world_transition_requested
@@ -1228,10 +1273,23 @@ fn main_world_actions_are_active(entry: Option<&MainWorldEntryState>) -> bool {
 }
 
 fn main_world_mail_select_id(action: &UiActionDispatch) -> Option<&str> {
+    main_world_mail_id_action(
+        action,
+        ACTION_MAIN_WORLD_MAIL_SELECT,
+        MAIN_WORLD_MAIL_SELECT_NODE,
+    )
+}
+
+fn main_world_mail_id_action<'a>(
+    action: &'a UiActionDispatch,
+    expected_action: &str,
+    expected_source: &str,
+) -> Option<&'a str> {
     (business_target_matches_action(action)
         && action.document_id.as_str() == MAIN_WORLD_MAIL_DOCUMENT_ID
         && action.owner == OWNER_MAIN_WORLD_MAIL_PANEL.as_str()
-        && action.source_node.as_str() == MAIN_WORLD_MAIL_SELECT_NODE
+        && action.action.as_str() == expected_action
+        && action.source_node.as_str() == expected_source
         && action.params.len() == 1)
         .then(|| action.params.get("mail_id"))
         .flatten()
@@ -1277,6 +1335,11 @@ fn zero_param_action_matches_contract(action: &UiActionDispatch) -> bool {
             "main_world_mail_panel",
             ACTION_MAIN_WORLD_MAIL_RETRY,
             MAIN_WORLD_MAIL_RETRY_NODE,
+        ) | (
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            "main_world_mail_panel",
+            ACTION_MAIN_WORLD_MAIL_BACK_TO_LIST,
+            MAIN_WORLD_MAIL_BACK_TO_LIST_NODE,
         ) | (
             MAIN_WORLD_MAIL_DOCUMENT_ID,
             "main_world_mail_panel",
@@ -1497,6 +1560,9 @@ pub(super) fn sync_main_world_mail_bindings(
     };
     let list_load_state = mail.map_or(MailListLoadState::Failed, |mail| mail.list_load_state);
     let is_available = mail.is_some_and(MailClientState::is_available);
+    let detail_open = mail.is_some_and(MailClientState::detail_is_open);
+    let detail_load_state = mail.map_or(MailDetailLoadState::Idle, |mail| mail.detail_load_state);
+    let mark_read_state = mail.map_or(MailMarkReadState::Idle, |mail| mail.mark_read_state);
     let list_is_busy = matches!(
         list_load_state,
         MailListLoadState::InitialLoading
@@ -1513,15 +1579,27 @@ pub(super) fn sync_main_world_mail_bindings(
     } else {
         "ready"
     };
-    let status = match mail.map(|mail| (&mail.availability, mail.list_load_state)) {
-        Some((MailAvailability::Ready, MailListLoadState::InitialLoading)) => "Loading mail",
-        Some((MailAvailability::Ready, MailListLoadState::Refreshing)) => "Refreshing mail",
-        Some((MailAvailability::Ready, MailListLoadState::LoadingMore)) => "Loading more mail",
-        Some((MailAvailability::Ready, MailListLoadState::Empty)) => "No mail",
-        Some((MailAvailability::Ready, MailListLoadState::Failed)) => "Mail request failed",
-        Some((MailAvailability::Ready, _)) => "Mail ready",
-        Some((MailAvailability::AwaitingCharacterTicket, _)) => "Waiting for character session",
-        Some((MailAvailability::Unavailable { .. }, _)) | None => "Mail unavailable",
+    let status = if detail_open {
+        match detail_load_state {
+            MailDetailLoadState::Loading => "Loading mail detail",
+            MailDetailLoadState::Ready => "Mail detail ready",
+            MailDetailLoadState::NotFound => "Mail not found",
+            MailDetailLoadState::Forbidden => "Mail access denied",
+            MailDetailLoadState::Expired => "Mail expired",
+            MailDetailLoadState::Failed => "Mail detail request failed",
+            MailDetailLoadState::Idle => "Mail detail",
+        }
+    } else {
+        match mail.map(|mail| (&mail.availability, mail.list_load_state)) {
+            Some((MailAvailability::Ready, MailListLoadState::InitialLoading)) => "Loading mail",
+            Some((MailAvailability::Ready, MailListLoadState::Refreshing)) => "Refreshing mail",
+            Some((MailAvailability::Ready, MailListLoadState::LoadingMore)) => "Loading more mail",
+            Some((MailAvailability::Ready, MailListLoadState::Empty)) => "No mail",
+            Some((MailAvailability::Ready, MailListLoadState::Failed)) => "Mail request failed",
+            Some((MailAvailability::Ready, _)) => "Mail ready",
+            Some((MailAvailability::AwaitingCharacterTicket, _)) => "Waiting for character session",
+            Some((MailAvailability::Unavailable { .. }, _)) | None => "Mail unavailable",
+        }
     }
     .to_owned();
     let now_unix_seconds = SystemTime::now()
@@ -1530,7 +1608,13 @@ pub(super) fn sync_main_world_mail_bindings(
     let items = mail.map_or_else(Vec::new, |mail| {
         mail.mails
             .iter()
-            .map(|mail| main_world_mail_list_item(mail, now_unix_seconds))
+            .map(|summary| {
+                main_world_mail_list_item(
+                    summary,
+                    now_unix_seconds,
+                    mail.selected_mail_id() == Some(summary.mail_id.as_str()),
+                )
+            })
             .collect()
     });
     let count = mail.map_or_else(String::new, |mail| match mail.list_load_state {
@@ -1549,6 +1633,25 @@ pub(super) fn sync_main_world_mail_bindings(
     });
     let can_load_more = mail.is_some_and(|mail| mail.next_page_query().is_some());
     let load_more_loading = matches!(list_load_state, MailListLoadState::LoadingMore);
+    let detail = mail.and_then(|mail| mail.selected_mail.as_ref());
+    let detail_expired = detail.is_some_and(|detail| {
+        detail.summary.status.eq_ignore_ascii_case("expired")
+            || detail
+                .summary
+                .expires_at
+                .as_deref()
+                .and_then(rfc3339_unix_seconds)
+                .is_some_and(|expires_at| expires_at <= now_unix_seconds)
+    });
+    let attachments = detail.map_or_else(Vec::new, |detail| {
+        detail
+            .attachments
+            .iter()
+            .take(MAIL_MAX_DETAIL_ATTACHMENTS)
+            .enumerate()
+            .map(|(index, attachment)| main_world_mail_attachment(index, attachment))
+            .collect()
+    });
     let (error_code, error_message) = match mail.map(|mail| &mail.availability) {
         Some(MailAvailability::Unavailable { reason }) => {
             ("MAIL_UNAVAILABLE".to_owned(), reason.clone())
@@ -1557,18 +1660,30 @@ pub(super) fn sync_main_world_mail_bindings(
             "MAIL_AWAITING_CHARACTER_TICKET".to_owned(),
             "Character session is not ready".to_owned(),
         ),
-        Some(MailAvailability::Ready) => {
-            mail.and_then(|mail| mail.last_error.as_ref()).map_or_else(
+        Some(MailAvailability::Ready) => mail
+            .and_then(|mail| {
+                if detail_open {
+                    mail.detail_error.as_ref()
+                } else {
+                    mail.last_error.as_ref()
+                }
+            })
+            .map_or_else(
                 || (String::new(), String::new()),
-                |error| (error.code.clone(), error.code.clone()),
-            )
-        }
+                |error| (error.code.clone(), main_world_mail_error_message(error)),
+            ),
         None => (
             "MAIL_UNAVAILABLE".to_owned(),
             "Mail service is unavailable".to_owned(),
         ),
     };
     let refresh_disabled = !is_available || list_is_busy;
+    let mark_read_loading = matches!(mark_read_state, MailMarkReadState::Submitting);
+    let mark_read_disabled = !is_available
+        || !matches!(detail_load_state, MailDetailLoadState::Ready)
+        || detail_expired
+        || mark_read_loading
+        || detail.is_none_or(|detail| !detail.summary.status.eq_ignore_ascii_case("unread"));
     let error_visible = !error_message.is_empty();
     for (path, value) in vec![
         (
@@ -1581,7 +1696,7 @@ pub(super) fn sync_main_world_mail_bindings(
         ),
         (
             "main_world_mail.view_mode",
-            UiBindingValue::Enum("list".to_owned()),
+            UiBindingValue::Enum(if detail_open { "detail" } else { "list" }.to_owned()),
         ),
         ("main_world_mail.items", UiBindingValue::List(items)),
         ("main_world_mail.status", UiBindingValue::String(status)),
@@ -1605,35 +1720,61 @@ pub(super) fn sync_main_world_mail_bindings(
         ),
         (
             "main_world_mail.selected.mail_id",
-            UiBindingValue::String(String::new()),
+            UiBindingValue::String(
+                mail.and_then(MailClientState::selected_mail_id)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
         ),
         (
             "main_world_mail.detail_visibility",
-            UiBindingValue::Visibility(UiBindingVisibility::Hidden),
+            UiBindingValue::Visibility(if detail_open {
+                UiBindingVisibility::Visible
+            } else {
+                UiBindingVisibility::Hidden
+            }),
         ),
         (
             "main_world_mail.detail.title",
-            UiBindingValue::String(String::new()),
+            UiBindingValue::String(detail.map_or_else(String::new, |detail| {
+                bounded_mail_label(&detail.summary.title, 96, "Untitled mail")
+            })),
         ),
         (
             "main_world_mail.detail.sender",
-            UiBindingValue::String(String::new()),
+            UiBindingValue::String(detail.map_or_else(String::new, |detail| {
+                bounded_mail_label(
+                    detail.summary.sender.name.as_deref().unwrap_or_default(),
+                    48,
+                    "System",
+                )
+            })),
         ),
         (
             "main_world_mail.detail.sent_at",
-            UiBindingValue::String(String::new()),
+            UiBindingValue::String(detail.map_or_else(String::new, |detail| {
+                bounded_mail_label(
+                    detail.summary.created_at.as_deref().unwrap_or_default(),
+                    40,
+                    "",
+                )
+            })),
         ),
         (
             "main_world_mail.detail.status",
-            UiBindingValue::String(String::new()),
+            UiBindingValue::String(detail.map_or_else(String::new, |detail| {
+                main_world_mail_status_label(&detail.summary, detail_expired)
+            })),
         ),
         (
             "main_world_mail.detail.content",
-            UiBindingValue::String(String::new()),
+            UiBindingValue::String(
+                detail.map_or_else(String::new, |detail| bounded_mail_content(&detail.content)),
+            ),
         ),
         (
             "main_world_mail.detail.attachments",
-            UiBindingValue::List(Vec::new()),
+            UiBindingValue::List(attachments),
         ),
         (
             "main_world_mail.claim.state",
@@ -1649,11 +1790,11 @@ pub(super) fn sync_main_world_mail_bindings(
         ),
         (
             "main_world_mail.mark_read_disabled",
-            UiBindingValue::Bool(true),
+            UiBindingValue::Bool(mark_read_disabled),
         ),
         (
             "main_world_mail.mark_read_loading",
-            UiBindingValue::Bool(false),
+            UiBindingValue::Bool(mark_read_loading),
         ),
         ("main_world_mail.claim_disabled", UiBindingValue::Bool(true)),
         ("main_world_mail.claim_loading", UiBindingValue::Bool(false)),
@@ -1675,9 +1816,22 @@ pub(super) fn sync_main_world_mail_bindings(
         ),
         (
             "main_world_mail.retry_disabled",
-            UiBindingValue::Bool(!is_available || list_is_busy),
+            UiBindingValue::Bool(
+                !is_available
+                    || if detail_open {
+                        matches!(detail_load_state, MailDetailLoadState::Loading)
+                            || mark_read_loading
+                    } else {
+                        list_is_busy
+                    },
+            ),
         ),
-        ("main_world_mail.retry_loading", UiBindingValue::Bool(false)),
+        (
+            "main_world_mail.retry_loading",
+            UiBindingValue::Bool(
+                detail_open && matches!(detail_load_state, MailDetailLoadState::Loading),
+            ),
+        ),
         (
             "main_world_mail.refresh_disabled",
             UiBindingValue::Bool(refresh_disabled),
@@ -1701,7 +1855,11 @@ pub(super) fn sync_main_world_mail_bindings(
     }
 }
 
-fn main_world_mail_list_item(mail: &MailSummary, now_unix_seconds: i64) -> UiBindingValue {
+fn main_world_mail_list_item(
+    mail: &MailSummary,
+    now_unix_seconds: i64,
+    selected: bool,
+) -> UiBindingValue {
     let expired = mail
         .expires_at
         .as_deref()
@@ -1747,9 +1905,46 @@ fn main_world_mail_list_item(mail: &MailSummary, now_unix_seconds: i64) -> UiBin
             UiBindingValue::Bool(mail.status.eq_ignore_ascii_case("unread")),
         ),
         ("expired".to_owned(), UiBindingValue::Bool(expired)),
-        ("selected".to_owned(), UiBindingValue::Bool(false)),
+        ("selected".to_owned(), UiBindingValue::Bool(selected)),
         ("disabled".to_owned(), UiBindingValue::Bool(false)),
     ]))
+}
+
+fn main_world_mail_attachment(index: usize, attachment: &MailAttachment) -> UiBindingValue {
+    let label = match attachment.r#type.trim().to_ascii_lowercase().as_str() {
+        "item" => "Item",
+        "currency" => "Currency",
+        "resource" => "Resource",
+        _ => "Attachment",
+    };
+    UiBindingValue::Record(BTreeMap::from([
+        (
+            "attachment_id".to_owned(),
+            UiBindingValue::String(format!("attachment-{index}")),
+        ),
+        ("label".to_owned(), UiBindingValue::String(label.to_owned())),
+        (
+            "count".to_owned(),
+            UiBindingValue::String(attachment.count.max(0).to_string()),
+        ),
+        (
+            "bind_status".to_owned(),
+            UiBindingValue::String(if attachment.binded {
+                "Bound".to_owned()
+            } else {
+                String::new()
+            }),
+        ),
+    ]))
+}
+
+fn main_world_mail_error_message(error: &MailClientError) -> String {
+    match error.status {
+        Some(403) => "You no longer have access to this mail".to_owned(),
+        Some(404) => "This mail is no longer available".to_owned(),
+        Some(410) => "This mail has expired".to_owned(),
+        _ => "Mail request could not be completed".to_owned(),
+    }
 }
 
 fn main_world_mail_status_label(mail: &MailSummary, expired: bool) -> String {
@@ -1786,6 +1981,26 @@ fn bounded_mail_label(value: &str, max_chars: usize, fallback: &str) -> String {
     } else {
         bounded
     }
+}
+
+fn bounded_mail_content(value: &str) -> String {
+    const MAX_BINDING_BYTES: usize = 4 * 1024;
+    const ELLIPSIS_BYTES: usize = 3;
+    let mut output = String::new();
+    let mut truncated = false;
+    for (index, character) in value.chars().enumerate() {
+        if index >= 8 * 1024
+            || output.len() + character.len_utf8() > MAX_BINDING_BYTES - ELLIPSIS_BYTES
+        {
+            truncated = true;
+            break;
+        }
+        output.push(character);
+    }
+    if truncated {
+        output.push_str("...");
+    }
+    output
 }
 
 fn rfc3339_unix_seconds(value: &str) -> Option<i64> {
@@ -2074,7 +2289,7 @@ mod tests {
         assert_eq!(host.panel, UiDocumentPanel::Floating);
         assert_eq!(host.layer, UiDocumentLayer::Floating);
         assert_eq!(host.audit_profiles, DEFAULT_AUDIT_PROFILES);
-        assert_eq!(host.action_allowlist.len(), 7);
+        assert_eq!(host.action_allowlist.len(), 8);
         assert!(
             host.binding_schema
                 .keys()
@@ -2466,6 +2681,58 @@ mod tests {
                     && query.limit == Some(25)
                     && query.offset == Some(25)
         ));
+    }
+
+    #[test]
+    fn main_world_mail_mark_read_and_back_actions_revalidate_selected_detail() {
+        let detail = mail_detail_for_test("mail_1", "unread", "Body");
+        let mut app = action_test_app();
+        app.world_mut()
+            .insert_resource(MailClientState::ready_with_detail_for_test(
+                vec![mail_summary_for_test("mail_1", "Selected")],
+                1,
+                crate::game::myserver::mail::MailPagination::default(),
+                detail,
+            ));
+        app.world_mut().write_message(dispatch(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_MARK_READ,
+            MAIN_WORLD_MAIL_MARK_READ_NODE,
+            BTreeMap::from([(
+                "mail_id".to_owned(),
+                UiActionValue::String("mail_1".to_owned()),
+            )]),
+        ));
+        app.world_mut().write_message(dispatch(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_MARK_READ,
+            MAIN_WORLD_MAIL_MARK_READ_NODE,
+            BTreeMap::from([(
+                "mail_id".to_owned(),
+                UiActionValue::String("mail_stale".to_owned()),
+            )]),
+        ));
+        app.update();
+        assert!(matches!(
+            read_messages::<MailClientCommand>(&app).as_slice(),
+            [MailClientCommand::MarkRead { mail_id }] if mail_id == "mail_1"
+        ));
+
+        app.world_mut().write_message(dispatch(
+            MAIN_WORLD_MAIL_DOCUMENT_ID,
+            OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+            ACTION_MAIN_WORLD_MAIL_BACK_TO_LIST,
+            MAIN_WORLD_MAIL_BACK_TO_LIST_NODE,
+            BTreeMap::new(),
+        ));
+        app.update();
+        assert!(
+            read_messages::<MailClientCommand>(&app)
+                .iter()
+                .any(|command| matches!(command, MailClientCommand::DismissDetail))
+        );
     }
 
     #[test]
@@ -2910,6 +3177,102 @@ mod tests {
     }
 
     #[test]
+    fn main_world_mail_detail_bindings_are_bounded_and_hide_attachment_identity() {
+        let mut detail = mail_detail_for_test("mail_1", "unread", &"B".repeat(9000));
+        detail.summary.sender.name = Some("Support".to_owned());
+        detail.attachments = vec![MailAttachment {
+            r#type: "item".to_owned(),
+            id: Some(987654321),
+            count: 3,
+            binded: true,
+        }];
+        let mail = MailClientState::ready_with_detail_for_test(
+            vec![detail.summary.clone()],
+            1,
+            crate::game::myserver::mail::MailPagination::default(),
+            detail,
+        );
+        let mut app = main_world_mail_binding_test_app(mail);
+        app.update();
+
+        assert_eq!(
+            main_world_mail_binding_value(&app, "main_world_mail.view_mode"),
+            UiBindingValue::Enum("detail".to_owned())
+        );
+        assert!(matches!(
+            main_world_mail_binding_value(&app, "main_world_mail.detail.content"),
+            UiBindingValue::String(value) if value.len() == 4096 && value.ends_with("...")
+        ));
+        let UiBindingValue::List(attachments) =
+            main_world_mail_binding_value(&app, "main_world_mail.detail.attachments")
+        else {
+            panic!("detail attachments must remain a typed list");
+        };
+        let [UiBindingValue::Record(attachment)] = attachments.as_slice() else {
+            panic!("one attachment must be exposed");
+        };
+        assert_eq!(
+            attachment["attachment_id"],
+            UiBindingValue::String("attachment-0".to_owned())
+        );
+        assert_eq!(
+            attachment["label"],
+            UiBindingValue::String("Item".to_owned())
+        );
+        assert!(!format!("{attachment:?}").contains("987654321"));
+        assert_eq!(
+            main_world_mail_binding_value(&app, "main_world_mail.mark_read_disabled"),
+            UiBindingValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn main_world_mail_close_top_returns_to_list_before_closing_floating_route() {
+        let mut app = main_world_hud_runtime_app();
+        app.insert_resource(MailClientState::ready_for_test());
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::MainWorld);
+        update_frames(&mut app, 6);
+        app.world_mut()
+            .write_message(DeclarativeScreenHostCommand::OpenDetachedRoute {
+                route: MainWorldDocumentPanel::Mail.route().to_owned(),
+            });
+        update_frames(&mut app, 6);
+        app.world_mut()
+            .resource_mut::<MailClientState>()
+            .show_detail_for_test(mail_detail_for_test("mail_1", "unread", "Body"));
+
+        app.world_mut()
+            .write_message(crate::framework::ui::core::UiDocumentCloseTopRequest);
+        update_frames(&mut app, 2);
+        assert!(!app.world().resource::<MailClientState>().detail_is_open());
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance(
+                    OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                    &UiDocumentId::from_str(MAIN_WORLD_MAIL_DOCUMENT_ID).unwrap(),
+                )
+                .is_some()
+        );
+
+        app.world_mut()
+            .write_message(crate::framework::ui::core::UiDocumentCloseTopRequest);
+        update_frames(&mut app, 2);
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance(
+                    OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),
+                    &UiDocumentId::from_str(MAIN_WORLD_MAIL_DOCUMENT_ID).unwrap(),
+                )
+                .is_none()
+        );
+    }
+
+    #[test]
     fn main_world_mail_expiration_uses_bounded_rfc3339_time() {
         assert_eq!(rfc3339_unix_seconds("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(rfc3339_unix_seconds("1970-01-01T08:00:00+08:00"), Some(0));
@@ -2920,6 +3283,7 @@ mod tests {
         let UiBindingValue::Record(item) = main_world_mail_list_item(
             &expired,
             rfc3339_unix_seconds("2026-08-05T00:00:00Z").unwrap(),
+            false,
         ) else {
             panic!("mail row must remain a typed record");
         };
@@ -3305,6 +3669,7 @@ mod tests {
             MAIN_WORLD_MAIL_REFRESH_NODE,
             MAIN_WORLD_MAIL_SELECT_NODE,
             MAIN_WORLD_MAIL_LOAD_MORE_NODE,
+            MAIN_WORLD_MAIL_BACK_TO_LIST_NODE,
             MAIN_WORLD_MAIL_MARK_READ_NODE,
             MAIN_WORLD_MAIL_CLAIM_NODE,
             MAIN_WORLD_MAIL_RETRY_NODE,
@@ -3530,6 +3895,21 @@ mod tests {
             read_at: None,
             claimed_at: None,
             expires_at: None,
+        }
+    }
+
+    fn mail_detail_for_test(
+        mail_id: &str,
+        status: &str,
+        content: &str,
+    ) -> crate::game::myserver::mail::MailDetail {
+        let mut summary = mail_summary_for_test(mail_id, "Detail title");
+        summary.status = status.to_owned();
+        crate::game::myserver::mail::MailDetail {
+            summary,
+            content: content.to_owned(),
+            attachments: Vec::new(),
+            claim: crate::game::myserver::mail::MailClaimSummary::default(),
         }
     }
 

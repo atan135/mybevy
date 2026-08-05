@@ -31,6 +31,9 @@ pub const MAIL_CLAIM_STATUSES: [&str; 7] = [
 const MAIL_READ_TIMEOUT: Duration = Duration::from_secs(8);
 const MAIL_CLAIM_TIMEOUT: Duration = Duration::from_secs(12);
 const MAIL_MAX_RESPONSE_BYTES: usize = 256 * 1024;
+const MAIL_MAX_DETAIL_CONTENT_BYTES: usize = 32 * 1024;
+const MAIL_MAX_DETAIL_CONTENT_CHARS: usize = 8 * 1024;
+pub const MAIL_MAX_DETAIL_ATTACHMENTS: usize = 32;
 const MAX_RECONCILIATION_POLLS: u8 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,7 +191,7 @@ pub struct MailSender {
     pub name: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct MailDetail {
     #[serde(flatten)]
     pub summary: MailSummary,
@@ -198,6 +201,18 @@ pub struct MailDetail {
     pub attachments: Vec<MailAttachment>,
     #[serde(default)]
     pub claim: MailClaimSummary,
+}
+
+impl std::fmt::Debug for MailDetail {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MailDetail")
+            .field("mail_id", &self.summary.mail_id)
+            .field("status", &self.summary.status)
+            .field("content", &"[REDACTED]")
+            .field("attachment_count", &self.attachments.len())
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -346,6 +361,27 @@ pub enum MailListLoadState {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MailDetailLoadState {
+    #[default]
+    Idle,
+    Loading,
+    Ready,
+    NotFound,
+    Forbidden,
+    Expired,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MailMarkReadState {
+    #[default]
+    Idle,
+    Submitting,
+    Succeeded,
+    Failed,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MailClientError {
     pub operation: MailOperation,
@@ -367,7 +403,11 @@ pub struct MailClientState {
     pub mails: Vec<MailSummary>,
     pub unread_count: Option<u32>,
     pub pagination: Option<MailPagination>,
+    pub selected_mail_id: Option<String>,
     pub selected_mail: Option<MailDetail>,
+    pub detail_load_state: MailDetailLoadState,
+    pub mark_read_state: MailMarkReadState,
+    pub detail_error: Option<MailClientError>,
     pub list_stale: bool,
     pub list_load_state: MailListLoadState,
     pub claim_reconciliation: Option<MailClaimReconciliation>,
@@ -376,6 +416,7 @@ pub struct MailClientState {
     identity: Option<MailIdentity>,
     desired_list_generation: u64,
     active_list_query: Option<MailListQuery>,
+    desired_detail_generation: u64,
 }
 
 impl Default for MailClientState {
@@ -386,7 +427,11 @@ impl Default for MailClientState {
             mails: Vec::new(),
             unread_count: None,
             pagination: None,
+            selected_mail_id: None,
             selected_mail: None,
+            detail_load_state: MailDetailLoadState::Idle,
+            mark_read_state: MailMarkReadState::Idle,
+            detail_error: None,
             list_stale: false,
             list_load_state: MailListLoadState::Idle,
             claim_reconciliation: None,
@@ -395,6 +440,7 @@ impl Default for MailClientState {
             identity: None,
             desired_list_generation: 0,
             active_list_query: None,
+            desired_detail_generation: 0,
         }
     }
 }
@@ -419,6 +465,31 @@ impl MailClientState {
 
     pub fn contains_authoritative_mail(&self, mail_id: &str) -> bool {
         self.mails.iter().any(|mail| mail.mail_id == mail_id)
+    }
+
+    pub fn detail_is_open(&self) -> bool {
+        self.selected_mail_id.is_some()
+    }
+
+    pub fn selected_mail_id(&self) -> Option<&str> {
+        self.selected_mail_id.as_deref()
+    }
+
+    pub fn dismiss_detail(&mut self) {
+        self.desired_detail_generation = self.desired_detail_generation.wrapping_add(1);
+        self.selected_mail_id = None;
+        self.selected_mail = None;
+        self.detail_load_state = MailDetailLoadState::Idle;
+        self.mark_read_state = MailMarkReadState::Idle;
+        self.detail_error = None;
+        if self.last_error.as_ref().is_some_and(|error| {
+            matches!(
+                error.operation,
+                MailOperation::Detail | MailOperation::MarkRead
+            )
+        }) {
+            self.last_error = None;
+        }
     }
 
     pub fn refresh_query(&self) -> MailListQuery {
@@ -511,13 +582,40 @@ impl MailClientState {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn ready_with_detail_for_test(
+        mails: Vec<MailSummary>,
+        unread_count: u32,
+        pagination: MailPagination,
+        detail: MailDetail,
+    ) -> Self {
+        let mut state = Self::ready_with_list_for_test(mails, unread_count, pagination);
+        state.selected_mail_id = Some(detail.summary.mail_id.clone());
+        state.selected_mail = Some(detail);
+        state.detail_load_state = MailDetailLoadState::Ready;
+        state
+    }
+
+    #[cfg(test)]
+    pub(crate) fn show_detail_for_test(&mut self, detail: MailDetail) {
+        self.selected_mail_id = Some(detail.summary.mail_id.clone());
+        self.selected_mail = Some(detail);
+        self.detail_load_state = MailDetailLoadState::Ready;
+        self.mark_read_state = MailMarkReadState::Idle;
+        self.detail_error = None;
+    }
+
     fn reset_for_identity(&mut self, identity: MailIdentity, availability: MailAvailability) {
         self.availability = availability;
         self.endpoint = identity.endpoint.clone();
         self.mails.clear();
         self.unread_count = None;
         self.pagination = None;
+        self.selected_mail_id = None;
         self.selected_mail = None;
+        self.detail_load_state = MailDetailLoadState::Idle;
+        self.mark_read_state = MailMarkReadState::Idle;
+        self.detail_error = None;
         self.list_stale = false;
         self.list_load_state = MailListLoadState::Idle;
         self.claim_reconciliation = None;
@@ -526,6 +624,7 @@ impl MailClientState {
         self.identity = Some(identity);
         self.desired_list_generation = 0;
         self.active_list_query = None;
+        self.desired_detail_generation = 0;
     }
 }
 
@@ -547,9 +646,13 @@ enum PendingMailRequest {
     Detail {
         mail_id: String,
         reconciliation_poll: bool,
+        generation: u64,
+        identity: Option<MailIdentity>,
     },
     MarkRead {
         mail_id: String,
+        generation: u64,
+        identity: Option<MailIdentity>,
     },
     Claim {
         mail_id: String,
@@ -578,6 +681,7 @@ pub enum MailClientCommand {
     MarkRead {
         mail_id: String,
     },
+    DismissDetail,
     Claim {
         mail_id: String,
     },
@@ -753,7 +857,18 @@ fn handle_mail_commands(
                 );
             }
             MailClientCommand::MarkRead { mail_id } => {
-                if !valid_mail_id(mail_id) {
+                let selected_is_authoritative = state.selected_mail_id.as_deref() == Some(mail_id)
+                    && state.contains_authoritative_mail(mail_id)
+                    && state
+                        .selected_mail
+                        .as_ref()
+                        .is_some_and(|detail| detail.summary.mail_id == *mail_id)
+                    && matches!(state.detail_load_state, MailDetailLoadState::Ready)
+                    && state
+                        .selected_mail
+                        .as_ref()
+                        .is_some_and(|detail| detail.summary.status.eq_ignore_ascii_case("unread"));
+                if !valid_mail_id(mail_id) || !selected_is_authoritative {
                     reject_request(
                         &mut state,
                         &mut events,
@@ -763,15 +878,18 @@ fn handle_mail_commands(
                     continue;
                 }
                 if state.pending.values().any(|pending| {
-                    matches!(pending, PendingMailRequest::MarkRead { mail_id: pending_id } if pending_id == mail_id)
+                    matches!(pending, PendingMailRequest::MarkRead { mail_id: pending_id, .. } if pending_id == mail_id)
                 }) {
                     continue;
                 }
                 let Some((endpoint, ticket)) =
                     request_context(&state, &session, MailOperation::MarkRead, &mut events)
                 else {
+                    state.mark_read_state = MailMarkReadState::Failed;
                     continue;
                 };
+                state.mark_read_state = MailMarkReadState::Submitting;
+                state.detail_error = None;
                 let request = build_mutation_request(
                     &endpoint,
                     &ticket,
@@ -780,15 +898,20 @@ fn handle_mail_commands(
                     HttpMethod::Put,
                     MAIL_READ_TIMEOUT,
                 );
+                let generation = state.desired_detail_generation;
+                let identity = state.identity.clone();
                 queue_request(
                     &mut state,
                     PendingMailRequest::MarkRead {
                         mail_id: mail_id.clone(),
+                        generation,
+                        identity,
                     },
                     request,
                     &mut network_commands,
                 );
             }
+            MailClientCommand::DismissDetail => state.dismiss_detail(),
             MailClientCommand::Claim { mail_id } => {
                 if !valid_mail_id(mail_id) {
                     reject_request(
@@ -871,10 +994,8 @@ fn handle_mail_commands(
 }
 
 fn handle_mail_network_events(
-    session: Res<MyServerSession>,
     mut state: ResMut<MailClientState>,
     mut network_events: MessageReader<NetworkEvent>,
-    mut network_commands: MessageWriter<NetworkCommand>,
     mut events: MessageWriter<MailClientEvent>,
 ) {
     for event in network_events.read() {
@@ -884,12 +1005,10 @@ fn handle_mail_network_events(
                     continue;
                 };
                 handle_mail_response(
-                    &session,
                     &mut state,
                     pending,
                     response.status,
                     &response.body,
-                    &mut network_commands,
                     &mut events,
                 );
             }
@@ -907,6 +1026,19 @@ fn handle_mail_network_events(
                         ..
                     } if generation != state.desired_list_generation
                         || identity != state.identity => {}
+                    PendingMailRequest::Detail {
+                        generation,
+                        identity,
+                        reconciliation_poll: false,
+                        ..
+                    } if generation != state.desired_detail_generation
+                        || identity != state.identity => {}
+                    PendingMailRequest::MarkRead {
+                        generation,
+                        identity,
+                        ..
+                    } if generation != state.desired_detail_generation
+                        || identity != state.identity => {}
                     pending => {
                         if matches!(pending, PendingMailRequest::List { .. }) {
                             state.list_stale = true;
@@ -917,6 +1049,20 @@ fn handle_mail_network_events(
                             status: None,
                             code: "MAIL_NETWORK_UNAVAILABLE".to_string(),
                         };
+                        match pending {
+                            PendingMailRequest::Detail {
+                                reconciliation_poll: false,
+                                ..
+                            } => {
+                                state.detail_load_state = MailDetailLoadState::Failed;
+                                state.detail_error = Some(error.clone());
+                            }
+                            PendingMailRequest::MarkRead { .. } => {
+                                state.mark_read_state = MailMarkReadState::Failed;
+                                state.detail_error = Some(error.clone());
+                            }
+                            _ => {}
+                        }
                         state.last_error = Some(error.clone());
                         events.write(MailClientEvent::RequestFailed { error });
                     }
@@ -928,12 +1074,10 @@ fn handle_mail_network_events(
 }
 
 fn handle_mail_response(
-    session: &MyServerSession,
     state: &mut MailClientState,
     pending: PendingMailRequest,
     status: u16,
     body: &[u8],
-    network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MailClientEvent>,
 ) {
     match pending {
@@ -980,7 +1124,14 @@ fn handle_mail_response(
         PendingMailRequest::Detail {
             mail_id,
             reconciliation_poll,
+            generation,
+            identity,
         } => {
+            if identity != state.identity
+                || (!reconciliation_poll && generation != state.desired_detail_generation)
+            {
+                return;
+            }
             let Some(response) = parse_success::<MailDetailResponse>(
                 state,
                 MailOperation::Detail,
@@ -990,6 +1141,8 @@ fn handle_mail_response(
             ) else {
                 if reconciliation_poll {
                     continue_claim_reconciliation(state, &mail_id, events);
+                } else {
+                    set_detail_failure_from_last_error(state);
                 }
                 return;
             };
@@ -997,6 +1150,20 @@ fn handle_mail_response(
                 reject_request(state, events, MailOperation::Detail, "MAIL_DETAIL_REJECTED");
                 if reconciliation_poll {
                     continue_claim_reconciliation(state, &mail_id, events);
+                } else {
+                    set_detail_failure_from_last_error(state);
+                }
+                return;
+            }
+            if !detail_response_is_within_budget(&response.mail) {
+                reject_request(
+                    state,
+                    events,
+                    MailOperation::Detail,
+                    "MAIL_DETAIL_LIMIT_EXCEEDED",
+                );
+                if !reconciliation_poll {
+                    set_detail_failure_from_last_error(state);
                 }
                 return;
             }
@@ -1011,9 +1178,23 @@ fn handle_mail_response(
                     MailOperation::Detail,
                     "MAIL_RESPONSE_INVALID",
                 );
+                if !reconciliation_poll {
+                    set_detail_failure_from_last_error(state);
+                }
                 return;
             }
-            state.selected_mail = Some(response.mail);
+            if !reconciliation_poll || state.selected_mail_id.as_deref() == Some(&mail_id) {
+                let expired = response.mail.summary.status.eq_ignore_ascii_case("expired");
+                state.selected_mail = Some(response.mail);
+                state.selected_mail_id = Some(mail_id.clone());
+                state.detail_load_state = if expired {
+                    MailDetailLoadState::Expired
+                } else {
+                    MailDetailLoadState::Ready
+                };
+                state.mark_read_state = MailMarkReadState::Idle;
+                state.detail_error = None;
+            }
             state.last_error = None;
             events.write(MailClientEvent::MailLoaded {
                 mail_id: mail_id.clone(),
@@ -1022,7 +1203,17 @@ fn handle_mail_response(
                 apply_reconciled_claim_status(state, mail_id, claim_status, events);
             }
         }
-        PendingMailRequest::MarkRead { mail_id } => {
+        PendingMailRequest::MarkRead {
+            mail_id,
+            generation,
+            identity,
+        } => {
+            if generation != state.desired_detail_generation
+                || identity != state.identity
+                || state.selected_mail_id.as_deref() != Some(&mail_id)
+            {
+                return;
+            }
             let Some(response) = parse_success::<MailReadResponse>(
                 state,
                 MailOperation::MarkRead,
@@ -1030,20 +1221,24 @@ fn handle_mail_response(
                 body,
                 events,
             ) else {
+                state.mark_read_state = MailMarkReadState::Failed;
+                state.detail_error = state.last_error.clone();
                 return;
             };
             if !response.ok || response.mail_id != mail_id || response.status != "read" {
                 reject_request(state, events, MailOperation::MarkRead, "MAIL_READ_REJECTED");
+                state.mark_read_state = MailMarkReadState::Failed;
+                state.detail_error = state.last_error.clone();
                 return;
             }
             apply_read_to_cache(state, &mail_id, response.read_at);
+            state.mark_read_state = MailMarkReadState::Succeeded;
+            state.detail_error = None;
             state.last_error = None;
-            let query = state.refresh_query();
             events.write(MailClientEvent::MailRead {
                 mail_id: mail_id.clone(),
                 already_read: response.already_read,
             });
-            start_list_request(session, state, query, network_commands, events);
         }
         PendingMailRequest::Claim { mail_id } => {
             if status == 202 {
@@ -1281,15 +1476,47 @@ fn start_detail_request(
         reject_request(state, events, MailOperation::Detail, "INVALID_MAIL_ID");
         return;
     }
-    if state.pending.values().any(|pending| {
-        matches!(pending, PendingMailRequest::Detail { mail_id: pending_id, .. } if pending_id == mail_id)
-    }) {
+    let generation = if reconciliation_poll {
+        state.desired_detail_generation
+    } else {
+        if !state.contains_authoritative_mail(mail_id) {
+            reject_request(
+                state,
+                events,
+                MailOperation::Detail,
+                "MAIL_DETAIL_NOT_IN_LIST",
+            );
+            return;
+        }
+        state.desired_detail_generation = state.desired_detail_generation.wrapping_add(1);
+        state.selected_mail_id = Some(mail_id.to_owned());
+        state.selected_mail = None;
+        state.detail_load_state = MailDetailLoadState::Loading;
+        state.mark_read_state = MailMarkReadState::Idle;
+        state.detail_error = None;
+        state.last_error = None;
+        state.desired_detail_generation
+    };
+    if reconciliation_poll
+        && state.pending.values().any(|pending| {
+            matches!(pending, PendingMailRequest::Detail { mail_id: pending_id, .. } if pending_id == mail_id)
+        })
+    {
         return;
     }
     let Some((endpoint, ticket)) = request_context(state, session, MailOperation::Detail, events)
     else {
         if reconciliation_poll {
             continue_claim_reconciliation(state, mail_id, events);
+        } else {
+            state.detail_load_state = MailDetailLoadState::Failed;
+            let error = MailClientError {
+                operation: MailOperation::Detail,
+                status: None,
+                code: "MAIL_DETAIL_UNAVAILABLE".to_owned(),
+            };
+            state.detail_error = Some(error.clone());
+            state.last_error = Some(error);
         }
         return;
     };
@@ -1299,11 +1526,14 @@ fn start_detail_request(
         }
     }
     let request = build_read_request(&endpoint, &ticket, &format!("/{mail_id}"));
+    let identity = state.identity.clone();
     queue_request(
         state,
         PendingMailRequest::Detail {
             mail_id: mail_id.to_string(),
             reconciliation_poll,
+            generation,
+            identity,
         },
         request,
         network_commands,
@@ -1431,13 +1661,42 @@ fn public_http_error(operation: MailOperation, status: u16, body: &[u8]) -> Mail
     let code = serde_json::from_slice::<PublicError>(body)
         .ok()
         .and_then(|error| error.error)
-        .filter(|code| !code.trim().is_empty())
+        .filter(|code| valid_public_error_code(code))
         .unwrap_or_else(|| format!("MAIL_HTTP_{status}"));
     MailClientError {
         operation,
         status: Some(status),
         code,
     }
+}
+
+fn valid_public_error_code(code: &str) -> bool {
+    (1..=64).contains(&code.len())
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn detail_response_is_within_budget(detail: &MailDetail) -> bool {
+    detail.content.len() <= MAIL_MAX_DETAIL_CONTENT_BYTES
+        && detail.content.chars().count() <= MAIL_MAX_DETAIL_CONTENT_CHARS
+        && detail.attachments.len() <= MAIL_MAX_DETAIL_ATTACHMENTS
+}
+
+fn set_detail_failure_from_last_error(state: &mut MailClientState) {
+    let error = state.last_error.clone().unwrap_or(MailClientError {
+        operation: MailOperation::Detail,
+        status: None,
+        code: "MAIL_DETAIL_FAILED".to_owned(),
+    });
+    state.detail_load_state = match error.status {
+        Some(403) => MailDetailLoadState::Forbidden,
+        Some(404) => MailDetailLoadState::NotFound,
+        Some(410) => MailDetailLoadState::Expired,
+        _ if error.code == "MAIL_EXPIRED" => MailDetailLoadState::Expired,
+        _ => MailDetailLoadState::Failed,
+    };
+    state.detail_error = Some(error);
 }
 
 fn reject_request(
@@ -1544,6 +1803,11 @@ fn claim_is_settled(status: Option<&str>) -> bool {
 }
 
 fn apply_read_to_cache(state: &mut MailClientState, mail_id: &str, read_at: Option<String>) {
+    let was_unread = state
+        .mails
+        .iter()
+        .find(|mail| mail.mail_id == mail_id)
+        .is_some_and(|mail| mail.status.eq_ignore_ascii_case("unread"));
     if let Some(summary) = state.mails.iter_mut().find(|mail| mail.mail_id == mail_id) {
         summary.status = "read".to_string();
         summary.read_at = read_at.clone();
@@ -1555,6 +1819,9 @@ fn apply_read_to_cache(state: &mut MailClientState, mail_id: &str, read_at: Opti
     {
         detail.summary.status = "read".to_string();
         detail.summary.read_at = read_at;
+    }
+    if was_unread {
+        state.unread_count = state.unread_count.map(|count| count.saturating_sub(1));
     }
 }
 
@@ -1691,6 +1958,21 @@ mod tests {
                 body: body.as_bytes().to_vec(),
             }));
         app.update();
+    }
+
+    fn summary(mail_id: &str, status: &str) -> MailSummary {
+        MailSummary {
+            mail_id: mail_id.to_owned(),
+            sender: MailSender::default(),
+            title: format!("Mail {mail_id}"),
+            mail_type: "system".to_owned(),
+            status: status.to_owned(),
+            has_attachments: false,
+            created_at: None,
+            read_at: None,
+            claimed_at: None,
+            expires_at: None,
+        }
     }
 
     #[test]
@@ -2134,20 +2416,21 @@ mod tests {
         app.update();
         {
             let mut state = app.world_mut().resource_mut::<MailClientState>();
-            state.mails.push(MailSummary {
-                mail_id: "mail_1".to_string(),
-                sender: MailSender::default(),
-                title: "Welcome".to_string(),
-                mail_type: "system".to_string(),
-                status: "unread".to_string(),
-                has_attachments: false,
-                created_at: None,
-                read_at: None,
-                claimed_at: None,
-                expires_at: None,
-            });
+            state.mails.push(summary("mail_1", "unread"));
             state.unread_count = Some(1);
         }
+
+        app.world_mut().write_message(MailClientCommand::LoadMail {
+            mail_id: "mail_1".to_owned(),
+        });
+        app.update();
+        let detail = http_requests(&app).pop().unwrap();
+        respond(
+            &mut app,
+            &detail,
+            200,
+            r#"{"ok":true,"mail":{"mail_id":"mail_1","status":"unread","content":"Welcome"}}"#,
+        );
 
         app.world_mut().write_message(MailClientCommand::MarkRead {
             mail_id: "mail_1".to_string(),
@@ -2164,15 +2447,185 @@ mod tests {
             &mut app,
             &mark_read,
             200,
-            r#"{"ok":true,"mail_id":"mail_1","status":"read","read_at":"2026-08-01T00:00:00Z","already_read":false}"#,
+            r#"{"ok":true,"mail_id":"mail_1","status":"read","read_at":"2026-08-01T00:00:00Z","already_read":true}"#,
         );
-        let refresh = http_requests(&app).pop().unwrap();
-        assert!(matches!(refresh.method, HttpMethod::Get));
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.mails[0].status, "read");
+        assert_eq!(state.selected_mail.as_ref().unwrap().summary.status, "read");
+        assert_eq!(state.unread_count, Some(0));
+        assert_eq!(state.mark_read_state, MailMarkReadState::Succeeded);
+        assert!(!state.list_stale);
+        assert!(
+            messages::<MailClientEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MailClientEvent::MailRead {
+                        mail_id,
+                        already_read: true
+                    } if mail_id == "mail_1"
+                ))
+        );
+    }
+
+    #[test]
+    fn detail_generation_discards_late_selection_and_old_identity() {
+        let mut app = test_app(session_with_mail());
+        app.update();
+        app.world_mut().resource_mut::<MailClientState>().mails =
+            vec![summary("mail_a", "unread"), summary("mail_b", "unread")];
+
+        for mail_id in ["mail_a", "mail_b"] {
+            app.world_mut().write_message(MailClientCommand::LoadMail {
+                mail_id: mail_id.to_owned(),
+            });
+            app.update();
+        }
+        let requests = http_requests(&app);
+        let request_a = &requests[0];
+        let request_b = &requests[1];
+        respond(
+            &mut app,
+            request_b,
+            200,
+            r#"{"ok":true,"mail":{"mail_id":"mail_b","status":"unread","content":"new"}}"#,
+        );
+        respond(
+            &mut app,
+            request_a,
+            200,
+            r#"{"ok":true,"mail":{"mail_id":"mail_a","status":"unread","content":"old"}}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.selected_mail_id(), Some("mail_b"));
+        assert_eq!(state.selected_mail.as_ref().unwrap().content, "new");
+
+        app.world_mut().write_message(MailClientCommand::LoadMail {
+            mail_id: "mail_b".to_owned(),
+        });
+        app.update();
+        let old_identity = http_requests(&app).pop().unwrap();
+        app.world_mut()
+            .resource_mut::<MyServerSession>()
+            .character_id = Some("character_2".to_owned());
+        app.update();
+        respond(
+            &mut app,
+            &old_identity,
+            200,
+            r#"{"ok":true,"mail":{"mail_id":"mail_b","content":"wrong identity"}}"#,
+        );
+        let state = app.world().resource::<MailClientState>();
+        assert!(state.selected_mail_id().is_none());
+        assert!(state.selected_mail.is_none());
+    }
+
+    #[test]
+    fn detail_errors_are_classified_and_sensitive_error_text_is_not_exposed() {
+        for (status, expected) in [
+            (403, MailDetailLoadState::Forbidden),
+            (404, MailDetailLoadState::NotFound),
+            (410, MailDetailLoadState::Expired),
+        ] {
+            let mut app = test_app(session_with_mail());
+            app.update();
+            app.world_mut().resource_mut::<MailClientState>().mails =
+                vec![summary("mail_1", "unread")];
+            app.world_mut().write_message(MailClientCommand::LoadMail {
+                mail_id: "mail_1".to_owned(),
+            });
+            app.update();
+            let request = http_requests(&app).pop().unwrap();
+            respond(
+                &mut app,
+                &request,
+                status,
+                r#"{"error":"private body sentinel must not become a public code"}"#,
+            );
+            let state = app.world().resource::<MailClientState>();
+            assert_eq!(state.detail_load_state, expected);
+            let debug = format!("{state:?}");
+            assert!(!debug.contains("private body sentinel"));
+            assert_eq!(
+                state.detail_error.as_ref().unwrap().code,
+                format!("MAIL_HTTP_{status}")
+            );
+        }
+    }
+
+    #[test]
+    fn detail_rejects_oversized_content_and_attachment_lists_without_retaining_them() {
+        let oversized_content = "SENSITIVE_CONTENT".repeat(600);
+        let attachments = (0..=MAIL_MAX_DETAIL_ATTACHMENTS)
+            .map(|index| format!(r#"{{"type":"item","id":{index},"count":1}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        for body in [
+            format!(
+                r#"{{"ok":true,"mail":{{"mail_id":"mail_1","content":"{oversized_content}"}}}}"#
+            ),
+            format!(
+                r#"{{"ok":true,"mail":{{"mail_id":"mail_1","content":"safe","attachments":[{attachments}]}}}}"#
+            ),
+        ] {
+            let mut app = test_app(session_with_mail());
+            app.update();
+            app.world_mut().resource_mut::<MailClientState>().mails =
+                vec![summary("mail_1", "unread")];
+            app.world_mut().write_message(MailClientCommand::LoadMail {
+                mail_id: "mail_1".to_owned(),
+            });
+            app.update();
+            let request = http_requests(&app).pop().unwrap();
+            respond(&mut app, &request, 200, &body);
+            let state = app.world().resource::<MailClientState>();
+            assert_eq!(state.detail_load_state, MailDetailLoadState::Failed);
+            assert!(state.selected_mail.is_none());
+            assert_eq!(
+                state.detail_error.as_ref().unwrap().code,
+                "MAIL_DETAIL_LIMIT_EXCEEDED"
+            );
+            assert!(!format!("{state:?}").contains("SENSITIVE_CONTENT"));
+        }
+    }
+
+    #[test]
+    fn mark_read_failure_preserves_authoritative_unread_state_and_can_retry() {
+        let mut app = test_app(session_with_mail());
+        app.update();
+        {
+            let mut state = app.world_mut().resource_mut::<MailClientState>();
+            let detail = MailDetail {
+                summary: summary("mail_1", "unread"),
+                content: "secret body".to_owned(),
+                attachments: Vec::new(),
+                claim: MailClaimSummary::default(),
+            };
+            state.mails = vec![summary("mail_1", "unread")];
+            state.unread_count = Some(1);
+            state.selected_mail_id = Some("mail_1".to_owned());
+            state.selected_mail = Some(detail);
+            state.detail_load_state = MailDetailLoadState::Ready;
+        }
+        app.world_mut().write_message(MailClientCommand::MarkRead {
+            mail_id: "mail_1".to_owned(),
+        });
+        app.update();
+        let request = http_requests(&app).pop().unwrap();
+        app.world_mut().write_message(NetworkEvent::HttpError {
+            request_id: request.request_id,
+            error: "timeout".to_owned(),
+        });
+        app.update();
+        let state = app.world().resource::<MailClientState>();
+        assert_eq!(state.mark_read_state, MailMarkReadState::Failed);
+        assert_eq!(state.mails[0].status, "unread");
         assert_eq!(
-            app.world().resource::<MailClientState>().mails[0].status,
-            "read"
+            state.selected_mail.as_ref().unwrap().summary.status,
+            "unread"
         );
-        assert!(app.world().resource::<MailClientState>().list_stale);
+        assert_eq!(state.unread_count, Some(1));
+        assert!(!format!("{state:?}").contains("secret body"));
     }
 
     #[test]

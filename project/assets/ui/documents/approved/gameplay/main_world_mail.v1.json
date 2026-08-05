@@ -205,6 +205,7 @@
                     "id": "main_world_mail.detail.actions",
                     "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "justify_content": "end", "gap": { "px": 8.0 } },
                     "children": [
+                      { "type": "button", "id": "main_world_mail.back_to_list", "variant": "secondary", "label": { "literal": "Back to list" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.back_to_list" } },
                       { "type": "button", "id": "main_world_mail.mark_read", "variant": "secondary", "label": { "literal": "Mark read" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.mark_read_disabled", "loading": "main_world_mail.mark_read_loading" } }, "on_click": { "action": "main_world_mail.mark_read", "params": { "mail_id": { "kind": "host_binding", "value": "main_world_mail.selected.mail_id" } } } },
                       { "type": "button", "id": "main_world_mail.claim", "variant": "primary", "label": { "literal": "Claim" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.claim_disabled", "loading": "main_world_mail.claim_loading" } }, "on_click": { "action": "main_world_mail.claim", "params": { "mail_id": { "kind": "host_binding", "value": "main_world_mail.selected.mail_id" } } } }
                     ]

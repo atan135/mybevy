@@ -25,6 +25,7 @@ use crate::{
         },
     },
     game::{
+        myserver::mail::MailClientState,
         navigation::AppUiMode,
         scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
         ui_ids::{
@@ -663,6 +664,7 @@ fn close_top_declarative_document(
     mut preview_commands: MessageWriter<UiDocumentPreviewCommand>,
     mut runtime_commands: MessageWriter<UiDocumentRuntimeCommand>,
     mut host_events: MessageWriter<DeclarativeScreenHostEvent>,
+    mut mail: Option<ResMut<MailClientState>>,
     mut focus: Option<ResMut<UiFocusState>>,
 ) {
     for _ in requests.read() {
@@ -687,6 +689,17 @@ fn close_top_declarative_document(
         let Some(host) = registry.host_for_key(&key).cloned() else {
             continue;
         };
+        if host.document_id.as_str() == "game.main_world_mail"
+            && mail.as_deref().is_some_and(MailClientState::detail_is_open)
+        {
+            if let Some(mail) = mail.as_deref_mut() {
+                mail.dismiss_detail();
+            }
+            if let Some(focus) = focus.as_deref_mut() {
+                focus.focused_entity = None;
+            }
+            continue;
+        }
         close_host(
             &host,
             &mut host_runtime,
