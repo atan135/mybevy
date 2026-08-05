@@ -12,9 +12,13 @@ use crate::{
             SceneCommand, SceneEnterRequest, SceneEvent, SceneExitRequest, SceneOwned,
             SceneRegistry, SceneSessionId,
         },
-        ui::document::{UiDocumentPanel, UiDocumentRuntimeRoot},
+        ui::{
+            core::{UiPanelCommand, binding::UiBindingValues},
+            document::{UiDocumentPanel, UiDocumentRuntimeCommand, UiDocumentRuntimeRoot},
+        },
     },
     game::{
+        declarative_screen::DeclarativeScreenHostCommand,
         myserver::{
             AccountLoginState, CharacterSelectionState, GameConnectionState, MyServerCommand,
             MyServerEnvironment, MyServerErrorKind, MyServerEvent, MyServerProfiles,
@@ -22,6 +26,7 @@ use crate::{
         },
         navigation::{AppUiMode, GameRouteCommand},
         scenes::{FANGYUAN_HOME_SCENE_ID, main_world_contract::MAIN_WORLD_AUTHORITY_CONTRACT},
+        screens::gameplay::host::{MainWorldUiTeardownCause, request_main_world_ui_teardown},
     },
 };
 
@@ -34,6 +39,10 @@ impl Plugin for MainWorldEntryPlugin {
             .add_message::<MainWorldEntryIntent>()
             .add_message::<MainWorldEntrySignal>()
             .add_message::<MainWorldEntryEvent>()
+            .add_message::<DeclarativeScreenHostCommand>()
+            .add_message::<UiPanelCommand>()
+            .add_message::<UiDocumentRuntimeCommand>()
+            .init_resource::<UiBindingValues>()
             .add_systems(
                 Update,
                 (
@@ -517,6 +526,10 @@ fn handle_entry_intents(
     mut myserver_commands: MessageWriter<MyServerCommand>,
     mut scene_commands: MessageWriter<SceneCommand>,
     mut route_commands: MessageWriter<GameRouteCommand>,
+    mut bindings: ResMut<UiBindingValues>,
+    mut panel_commands: MessageWriter<UiPanelCommand>,
+    mut runtime_commands: MessageWriter<UiDocumentRuntimeCommand>,
+    mut screen_commands: MessageWriter<DeclarativeScreenHostCommand>,
 ) {
     let mut accepted_enter = false;
     for intent in intents.read() {
@@ -550,6 +563,15 @@ fn handle_entry_intents(
         }
         match intent {
             MainWorldEntryIntent::EnterHome if state.owns_authority_session() => {
+                if state.phase != MainWorldEntryPhase::Exiting {
+                    request_main_world_ui_teardown(
+                        MainWorldUiTeardownCause::SwitchToHome,
+                        &mut bindings,
+                        &mut panel_commands,
+                        &mut runtime_commands,
+                        &mut screen_commands,
+                    );
+                }
                 begin_exit(
                     &mut state,
                     MainWorldExitDestination::Home,
@@ -578,6 +600,15 @@ fn handle_entry_intents(
             MainWorldEntryIntent::ExitToLobby | MainWorldEntryIntent::Cancel
                 if state.owns_authority_session() =>
             {
+                if state.phase != MainWorldEntryPhase::Exiting {
+                    request_main_world_ui_teardown(
+                        MainWorldUiTeardownCause::LeaveToLobby,
+                        &mut bindings,
+                        &mut panel_commands,
+                        &mut runtime_commands,
+                        &mut screen_commands,
+                    );
+                }
                 begin_exit(
                     &mut state,
                     MainWorldExitDestination::Lobby,
@@ -1948,6 +1979,12 @@ mod tests {
     #[test]
     fn active_exit_leaves_room_exits_its_scene_and_returns_to_lobby() {
         let (mut app, session_id) = active_app();
+        let ticket = app.world().resource::<MyServerSession>().ticket.clone();
+        let character_id = app
+            .world()
+            .resource::<MyServerSession>()
+            .character_id
+            .clone();
         app.world_mut()
             .write_message(MainWorldEntryIntent::ExitToLobby);
         app.update();
@@ -1955,10 +1992,50 @@ mod tests {
         let state = app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::Exiting);
         assert!(state.input_frozen);
+        assert!(matches!(
+            messages::<UiPanelCommand>(&app).as_slice(),
+            [
+                UiPanelCommand::CloseAllForOwner(mail),
+                UiPanelCommand::CloseAllForOwner(settings),
+                UiPanelCommand::CloseAllForOwner(hud),
+            ] if *mail == crate::game::ui_ids::OWNER_MAIN_WORLD_MAIL_PANEL
+                && *settings == crate::game::ui_ids::OWNER_MAIN_WORLD_SETTINGS_PANEL
+                && *hud == crate::game::ui_ids::OWNER_MAIN_WORLD
+        ));
+        assert!(matches!(
+            messages::<UiDocumentRuntimeCommand>(&app).as_slice(),
+            [
+                UiDocumentRuntimeCommand::CloseAllForOwner { owner: mail },
+                UiDocumentRuntimeCommand::CloseAllForOwner { owner: settings },
+                UiDocumentRuntimeCommand::CloseAllForOwner { owner: hud },
+            ] if mail == "main_world_mail_panel"
+                && settings == "main_world_settings_panel"
+                && hud == "main_world"
+        ));
+        assert!(matches!(
+            messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+            [
+                DeclarativeScreenHostCommand::CloseRoute { route: mail },
+                DeclarativeScreenHostCommand::CloseRoute { route: settings },
+                DeclarativeScreenHostCommand::CloseRoute { route: hud },
+            ] if mail == "main_world_mail"
+                && settings == "main_world_settings"
+                && hud == "main_world"
+        ));
         assert!(
             messages::<MyServerCommand>(&app)
                 .iter()
                 .any(|command| matches!(command, MyServerCommand::LeaveRoom))
+        );
+        assert!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .all(|command| !matches!(command, MyServerCommand::Logout))
+        );
+        assert_eq!(app.world().resource::<MyServerSession>().ticket, ticket);
+        assert_eq!(
+            app.world().resource::<MyServerSession>().character_id,
+            character_id
         );
         assert!(
             messages::<SceneCommand>(&app)

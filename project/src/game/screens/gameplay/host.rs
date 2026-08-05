@@ -12,13 +12,14 @@ use crate::framework::{
     fangyuan::{FangyuanDebugPanelModule, FangyuanDebugPanelState},
     scene::prelude::{SceneCommand, SceneExitRequest},
     ui::{
-        core::{UiOwnerId, binding::UiBindingValues, focus::UiFocusState},
+        core::{UiOwnerId, UiPanelCommand, binding::UiBindingValues, focus::UiFocusState},
         document::{
             UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema,
             UiActionParamType, UiActionRegistry, UiActionValue, UiBindingDeclaration,
             UiBindingMissingBehavior, UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue,
-            UiBindingVisibility, UiDocumentId, UiDocumentLayer, UiDocumentPanel, UiHostBindingKey,
-            UiNodeId, UiPageState, UiRegisteredActionKind,
+            UiBindingVisibility, UiDocumentId, UiDocumentLayer, UiDocumentPanel,
+            UiDocumentRuntimeCommand, UiHostBindingKey, UiNodeId, UiPageState,
+            UiRegisteredActionKind,
         },
     },
 };
@@ -139,6 +140,33 @@ const MAIN_WORLD_UI_CLEANUP_OWNERS: [UiOwnerId; 3] = [
 
 pub(in crate::game) const fn main_world_ui_cleanup_owners() -> &'static [UiOwnerId] {
     MainWorldUiTeardownCause::LeaveToLobby.cleanup_owners()
+}
+
+/// The authority coordinator requests this before changing the main-world scene
+/// session. Route closure keeps detached host state in sync with runtime cleanup.
+pub(in crate::game) fn request_main_world_ui_teardown(
+    cause: MainWorldUiTeardownCause,
+    bindings: &mut UiBindingValues,
+    panel_commands: &mut MessageWriter<UiPanelCommand>,
+    runtime_commands: &mut MessageWriter<UiDocumentRuntimeCommand>,
+    screen_commands: &mut MessageWriter<DeclarativeScreenHostCommand>,
+) {
+    for owner in cause.cleanup_owners() {
+        bindings.clear_owner(owner.as_str());
+        panel_commands.write(UiPanelCommand::CloseAllForOwner(*owner));
+        runtime_commands.write(UiDocumentRuntimeCommand::CloseAllForOwner {
+            owner: owner.as_str().to_owned(),
+        });
+    }
+    for route in [
+        MainWorldDocumentPanel::Mail.route(),
+        MainWorldDocumentPanel::Settings.route(),
+        MAIN_WORLD_HUD_ROUTE,
+    ] {
+        screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
+            route: route.to_owned(),
+        });
+    }
 }
 
 pub(super) const ACTION_TOUCH_RIPPLE_RETURN_LOBBY: &str = "touch_ripple.return_lobby";
@@ -698,6 +726,7 @@ pub(super) fn handle_gameplay_hud_document_actions(
     mut main_world_intents: MessageWriter<MainWorldEntryIntent>,
     mut actions: MessageReader<UiActionDispatch>,
 ) {
+    let mut main_world_transition_requested = false;
     for dispatch in actions.read() {
         if let Some(module) = debug_module_action(dispatch) {
             debug_panel_state.toggle_module(module);
@@ -738,6 +767,20 @@ pub(super) fn handle_gameplay_hud_document_actions(
                 screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
                     route: MainWorldDocumentPanel::Mail.route().to_owned(),
                 });
+            }
+            ACTION_MAIN_WORLD_ENTER_HOME
+                if !main_world_transition_requested
+                    && main_world_actions_are_active(entry.as_deref()) =>
+            {
+                main_world_transition_requested = true;
+                main_world_intents.write(MainWorldEntryIntent::EnterHome);
+            }
+            ACTION_MAIN_WORLD_RETURN_LOBBY
+                if !main_world_transition_requested
+                    && main_world_actions_are_active(entry.as_deref()) =>
+            {
+                main_world_transition_requested = true;
+                main_world_intents.write(MainWorldEntryIntent::ExitToLobby);
             }
             ACTION_TOUCH_RIPPLE_RETURN_LOBBY | ACTION_FANGYUAN_PREVIEW_RETURN_LOBBY => {
                 route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
@@ -1420,6 +1463,43 @@ mod tests {
     }
 
     #[test]
+    fn main_world_home_and_lobby_actions_submit_one_coordinator_intent_without_direct_exit_work() {
+        for (action, source, expected_intent) in [
+            (
+                ACTION_MAIN_WORLD_ENTER_HOME,
+                MAIN_WORLD_HOME_NODE,
+                MainWorldEntryIntent::EnterHome,
+            ),
+            (
+                ACTION_MAIN_WORLD_RETURN_LOBBY,
+                MAIN_WORLD_RETURN_LOBBY_NODE,
+                MainWorldEntryIntent::ExitToLobby,
+            ),
+        ] {
+            let mut app = action_test_app();
+            for _ in 0..2 {
+                app.world_mut().write_message(dispatch(
+                    MAIN_WORLD_HUD_DOCUMENT_ID,
+                    OWNER_MAIN_WORLD.as_str(),
+                    action,
+                    source,
+                    BTreeMap::new(),
+                ));
+            }
+            app.update();
+
+            assert_eq!(
+                read_messages::<MainWorldEntryIntent>(&app),
+                [expected_intent]
+            );
+            assert!(read_messages::<NetworkCommand>(&app).is_empty());
+            assert!(read_messages::<SceneCommand>(&app).is_empty());
+            assert!(read_messages::<GameRouteCommand>(&app).is_empty());
+            assert!(read_messages::<DeclarativeScreenHostCommand>(&app).is_empty());
+        }
+    }
+
+    #[test]
     fn main_world_mail_close_only_closes_its_route_and_preserves_mail_state() {
         let mut app = action_test_app();
         app.world_mut()
@@ -1545,6 +1625,18 @@ mod tests {
                 ACTION_MAIN_WORLD_MAIL_CLOSE,
                 MAIN_WORLD_MAIL_CLOSE_NODE,
             ),
+            (
+                MAIN_WORLD_HUD_DOCUMENT_ID,
+                OWNER_MAIN_WORLD.as_str(),
+                ACTION_MAIN_WORLD_ENTER_HOME,
+                MAIN_WORLD_HOME_NODE,
+            ),
+            (
+                MAIN_WORLD_HUD_DOCUMENT_ID,
+                OWNER_MAIN_WORLD.as_str(),
+                ACTION_MAIN_WORLD_RETURN_LOBBY,
+                MAIN_WORLD_RETURN_LOBBY_NODE,
+            ),
         ] {
             app.world_mut().write_message(dispatch(
                 document_id,
@@ -1559,6 +1651,7 @@ mod tests {
         assert!(read_messages::<DeclarativeScreenHostCommand>(&app).is_empty());
         assert!(read_messages::<MailClientCommand>(&app).is_empty());
         assert!(read_messages::<NetworkCommand>(&app).is_empty());
+        assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
     }
 
     #[test]
