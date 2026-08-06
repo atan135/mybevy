@@ -2082,7 +2082,7 @@ pub fn classify_display_error_code(
     if code.contains("IP_BLOCKED") || code.contains("IP_BANNED") {
         return MyServerErrorKind::IpBlocked;
     }
-    if code.contains("ACCOUNT_BLOCKED") {
+    if code.contains("ACCOUNT_BLOCKED") || code.contains("ACCOUNT_LOCKED") {
         return MyServerErrorKind::AccountBlocked;
     }
     if code.contains("PLAYER_BLOCKED") {
@@ -4571,6 +4571,13 @@ mod tests {
         for (code, expected_kind, expected_key, retryable, blocking) in [
             (
                 "ACCOUNT_BLOCKED",
+                MyServerErrorKind::AccountBlocked,
+                "myserver.error.account_blocked",
+                false,
+                true,
+            ),
+            (
+                "ACCOUNT_LOCKED",
                 MyServerErrorKind::AccountBlocked,
                 "myserver.error.account_blocked",
                 false,
