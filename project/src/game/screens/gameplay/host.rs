@@ -2602,7 +2602,7 @@ mod tests {
     #[test]
     fn gameplay_actions_are_closed_to_exact_sources_and_module_values() {
         let descriptors = gameplay_action_descriptors();
-        assert_eq!(descriptors.len(), 24);
+        assert_eq!(descriptors.len(), 25);
         assert!(
             descriptors
                 .iter()
@@ -2624,7 +2624,7 @@ mod tests {
             .iter()
             .filter(|descriptor| descriptor.document_id.as_str() == MAIN_WORLD_MAIL_DOCUMENT_ID)
             .collect::<Vec<_>>();
-        assert_eq!(mail_actions.len(), 7);
+        assert_eq!(mail_actions.len(), 8);
         for action_id in [
             ACTION_MAIN_WORLD_MAIL_SELECT,
             ACTION_MAIN_WORLD_MAIL_MARK_READ,
@@ -2647,6 +2647,7 @@ mod tests {
             ACTION_MAIN_WORLD_MAIL_REFRESH,
             ACTION_MAIN_WORLD_MAIL_LOAD_MORE,
             ACTION_MAIN_WORLD_MAIL_RETRY,
+            ACTION_MAIN_WORLD_MAIL_BACK_TO_LIST,
             ACTION_MAIN_WORLD_MAIL_CLOSE,
         ] {
             assert!(
