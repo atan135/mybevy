@@ -92,15 +92,28 @@ pub struct ChatWebSocketEndpoint {
     url: String,
 }
 
+pub const PRODUCTION_CHAT_HOST: &str = "chat.game.zergzerg.cn";
+pub const PRODUCTION_CHAT_PORT: u16 = 443;
+
 impl ChatWebSocketEndpoint {
-    pub fn from_services(services: Option<&ClientServices>) -> Result<Option<Self>, String> {
+    pub fn from_services(
+        services: Option<&ClientServices>,
+        enforce_production_descriptor: bool,
+    ) -> Result<Option<Self>, String> {
         let Some(service) = services.and_then(|services| services.chat.as_ref()) else {
             return Ok(None);
         };
-        Self::from_service(service).map(Some)
+        Self::from_service_with_policy(service, enforce_production_descriptor).map(Some)
     }
 
     pub fn from_service(service: &ClientServiceEndpoint) -> Result<Self, String> {
+        Self::from_service_with_policy(service, false)
+    }
+
+    fn from_service_with_policy(
+        service: &ClientServiceEndpoint,
+        enforce_production_descriptor: bool,
+    ) -> Result<Self, String> {
         let protocol = service
             .protocol
             .as_deref()
@@ -122,6 +135,15 @@ impl ChatWebSocketEndpoint {
             .port
             .filter(|port| *port > 0)
             .ok_or_else(|| "services.chat port must be between 1 and 65535".to_string())?;
+        if enforce_production_descriptor
+            && (protocol != "wss"
+                || !host.eq_ignore_ascii_case(PRODUCTION_CHAT_HOST)
+                || port != PRODUCTION_CHAT_PORT)
+        {
+            return Err(
+                "production services.chat must be chat.game.zergzerg.cn:443 over wss".to_string(),
+            );
+        }
         let authority = chat_endpoint_authority(host)?;
         let default_port = match protocol.as_str() {
             "wss" => 443,
@@ -1501,14 +1523,20 @@ mod tests {
 
     #[test]
     fn absent_chat_descriptor_is_unavailable_without_an_internal_fallback() {
-        assert_eq!(ChatWebSocketEndpoint::from_services(None).unwrap(), None);
         assert_eq!(
-            ChatWebSocketEndpoint::from_services(Some(&ClientServices {
-                game: None,
-                chat: None,
-                mail: None,
-                announce: None,
-            }))
+            ChatWebSocketEndpoint::from_services(None, false).unwrap(),
+            None
+        );
+        assert_eq!(
+            ChatWebSocketEndpoint::from_services(
+                Some(&ClientServices {
+                    game: None,
+                    chat: None,
+                    mail: None,
+                    announce: None,
+                }),
+                false,
+            )
             .unwrap(),
             None
         );

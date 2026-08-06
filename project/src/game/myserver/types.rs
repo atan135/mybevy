@@ -71,6 +71,8 @@ pub struct MyServerConfig {
     pub allow_insecure_mail_http: bool,
     /// Pins the production mail descriptor to the public Caddy host and port.
     pub enforce_production_mail_endpoint: bool,
+    /// Pins the production chat descriptor to the public Caddy host and port.
+    pub enforce_production_chat_endpoint: bool,
 }
 
 impl Default for MyServerConfig {
@@ -103,6 +105,7 @@ impl MyServerConfig {
             allow_insecure_chat_ws: environment == MyServerEnvironment::Local,
             allow_insecure_mail_http: environment == MyServerEnvironment::Local,
             enforce_production_mail_endpoint: environment == MyServerEnvironment::Production,
+            enforce_production_chat_endpoint: environment == MyServerEnvironment::Production,
         }
     }
 
@@ -174,6 +177,7 @@ impl MyServerConfig {
             allow_insecure_chat_ws: self.allow_insecure_chat_ws,
             allow_insecure_mail_http: self.allow_insecure_mail_http,
             enforce_production_mail_endpoint: self.enforce_production_mail_endpoint,
+            enforce_production_chat_endpoint: self.enforce_production_chat_endpoint,
         }
     }
 }
@@ -183,6 +187,7 @@ pub struct ClientServiceEndpointPolicy {
     pub allow_insecure_chat_ws: bool,
     pub allow_insecure_mail_http: bool,
     pub enforce_production_mail_endpoint: bool,
+    pub enforce_production_chat_endpoint: bool,
 }
 
 #[derive(Clone, Debug, Resource)]
@@ -842,6 +847,7 @@ impl MyServerSession {
                 allow_insecure_chat_ws: allow_insecure,
                 allow_insecure_mail_http: allow_insecure,
                 enforce_production_mail_endpoint: !allow_insecure,
+                enforce_production_chat_endpoint: !allow_insecure,
             },
         )
     }
@@ -922,6 +928,7 @@ impl MyServerSession {
                 allow_insecure_chat_ws: allow_insecure,
                 allow_insecure_mail_http: allow_insecure,
                 enforce_production_mail_endpoint: !allow_insecure,
+                enforce_production_chat_endpoint: !allow_insecure,
             },
         );
     }
@@ -961,6 +968,7 @@ impl MyServerSession {
                 allow_insecure_chat_ws: allow_insecure,
                 allow_insecure_mail_http: allow_insecure,
                 enforce_production_mail_endpoint: !allow_insecure,
+                enforce_production_chat_endpoint: !allow_insecure,
             },
         );
     }
@@ -997,7 +1005,11 @@ impl MyServerSession {
     ) {
         self.game_endpoint =
             GameServiceEndpoint::from_auth_parts(fallback_game_host, fallback_game_port, services);
-        self.apply_chat_endpoint(services, endpoint_policy.allow_insecure_chat_ws);
+        self.apply_chat_endpoint(
+            services,
+            endpoint_policy.allow_insecure_chat_ws,
+            endpoint_policy.enforce_production_chat_endpoint,
+        );
         self.apply_mail_endpoint(
             services,
             endpoint_policy.allow_insecure_mail_http,
@@ -1009,8 +1021,12 @@ impl MyServerSession {
         &mut self,
         services: Option<&ClientServices>,
         allow_insecure_chat_ws: bool,
+        enforce_production_descriptor: bool,
     ) {
-        let (endpoint, error) = match ChatWebSocketEndpoint::from_services(services) {
+        let (endpoint, error) = match ChatWebSocketEndpoint::from_services(
+            services,
+            enforce_production_descriptor,
+        ) {
             Ok(Some(endpoint)) if endpoint.is_secure() || allow_insecure_chat_ws => {
                 (Some(endpoint), None)
             }
@@ -3317,6 +3333,7 @@ mod tests {
                 allow_insecure_chat_ws: true,
                 allow_insecure_mail_http: false,
                 enforce_production_mail_endpoint: true,
+                enforce_production_chat_endpoint: false,
             },
         );
         assert_eq!(
@@ -3327,6 +3344,31 @@ mod tests {
             Some("ws://127.0.0.1:9001/")
         );
         assert!(session.chat_endpoint_error.is_none());
+
+        session.apply_ticket_response_with_endpoint_policy(
+            &TicketResponse {
+                ok: true,
+                player_id: "plr_1".to_string(),
+                character_id: Some("chr_1".to_string()),
+                world_id: Some(1),
+                ticket: "ticket-3".to_string(),
+                ticket_expires_at: "2026-08-05T02:00:00Z".to_string(),
+                game_proxy_host: None,
+                game_proxy_port: None,
+                services: Some(services(Some(chat("chat-server", 9011, "wss")))),
+            },
+            ClientServiceEndpointPolicy {
+                allow_insecure_chat_ws: false,
+                allow_insecure_mail_http: false,
+                enforce_production_mail_endpoint: true,
+                enforce_production_chat_endpoint: true,
+            },
+        );
+        assert!(session.chat_endpoint.is_none());
+        assert_eq!(
+            session.chat_endpoint_error.as_deref(),
+            Some("production services.chat must be chat.game.zergzerg.cn:443 over wss")
+        );
 
         let before_logout = session.chat_endpoint_generation;
         session.logout();
