@@ -627,6 +627,7 @@ fn lobby_action_test_app() -> App {
         .add_message::<UiOverlayCommand>()
         .add_message::<GameRouteCommand>()
         .add_message::<MyServerCommand>()
+        .add_message::<MainWorldEntryIntent>()
         .add_systems(Update, handle_lobby_document_actions);
     app
 }

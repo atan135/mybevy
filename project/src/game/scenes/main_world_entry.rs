@@ -466,6 +466,7 @@ pub(in crate::game) enum MainWorldEntryFailure {
     AuthoritativeSceneMismatch,
     InvalidAuthoritativePosition,
     JoinTimedOut,
+    ReadyTimedOut,
     SceneLoadFailed,
     ReconnectUnavailable,
 }
@@ -912,6 +913,32 @@ fn consume_main_world_authority_events(
                 );
                 activate_when_ready(&mut state, &mut route_commands);
             }
+            MyServerEvent::ReadyChanged(response)
+                if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id
+                    && !response.ok
+                    && state.phase == MainWorldEntryPhase::WaitingSceneReady
+                    && state.room_ready_requested =>
+            {
+                fail_authority_entry(
+                    &mut state,
+                    &mut entry_events,
+                    room_ready_failure(&response.error_code),
+                );
+            }
+            MyServerEvent::RequestFailed {
+                message_type: Some(crate::game::myserver::protocol::MessageType::RoomReadyReq),
+                error,
+                ..
+            } if state.phase == MainWorldEntryPhase::WaitingSceneReady
+                && state.room_ready_requested =>
+            {
+                let failure = if error.to_ascii_lowercase().contains("timeout") {
+                    MainWorldEntryFailure::ReadyTimedOut
+                } else {
+                    MainWorldEntryFailure::JoinRejected
+                };
+                fail_authority_entry(&mut state, &mut entry_events, failure);
+            }
             MyServerEvent::Disconnected { .. } | MyServerEvent::ConnectionFailed { .. }
                 if state.phase == MainWorldEntryPhase::Active =>
             {
@@ -1208,6 +1235,13 @@ fn room_join_failure(error_code: &str) -> MainWorldEntryFailure {
             MainWorldEntryFailure::RoomUnavailable
         }
         "JOIN_TIMEOUT" => MainWorldEntryFailure::JoinTimedOut,
+        _ => MainWorldEntryFailure::JoinRejected,
+    }
+}
+
+fn room_ready_failure(error_code: &str) -> MainWorldEntryFailure {
+    match error_code.trim() {
+        "READY_TIMEOUT" => MainWorldEntryFailure::ReadyTimedOut,
         _ => MainWorldEntryFailure::JoinRejected,
     }
 }
@@ -1811,13 +1845,17 @@ mod tests {
     }
 
     fn movement_snapshot(frame_id: u32, x: f32, y: f32) -> MyServerEvent {
+        movement_snapshot_with_scene(frame_id, 1, x, y)
+    }
+
+    fn movement_snapshot_with_scene(frame_id: u32, scene_id: i32, x: f32, y: f32) -> MyServerEvent {
         MyServerEvent::MovementSnapshotPush(pb::MovementSnapshotPush {
             room_id: "main-world-public".to_owned(),
             frame_id,
             entities: vec![pb::EntityTransform {
                 entity_id: 1,
                 character_id: "chr_1".to_owned(),
-                scene_id: 1,
+                scene_id,
                 x,
                 y,
                 dir_x: 0.0,
@@ -1875,6 +1913,48 @@ mod tests {
                 failure: MainWorldEntryFailure::GameAuthUnavailable,
             }]
         ));
+    }
+
+    #[test]
+    fn room_join_errors_map_to_stable_entry_failures() {
+        assert_eq!(
+            room_join_failure("ROOM_FULL"),
+            MainWorldEntryFailure::RoomFull
+        );
+        for error_code in ["ROOM_POLICY_MISMATCH", "ROOM_POLICY_UNSUPPORTED"] {
+            assert_eq!(
+                room_join_failure(error_code),
+                MainWorldEntryFailure::RoomPolicyRejected
+            );
+        }
+        assert_eq!(
+            room_join_failure("JOIN_TIMEOUT"),
+            MainWorldEntryFailure::JoinTimedOut
+        );
+    }
+
+    #[test]
+    fn unknown_authoritative_scene_fails_before_client_scene_enter() {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                error_code: String::new(),
+            }));
+        app.world_mut()
+            .write_message(movement_snapshot_with_scene(1, 999, 2.0, 3.0));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Failed);
+        assert_eq!(
+            state.failure,
+            Some(MainWorldEntryFailure::AuthoritativeSceneMismatch)
+        );
+        assert!(state.scene_session_id.is_none());
     }
 
     #[test]
@@ -2047,29 +2127,92 @@ mod tests {
     }
 
     #[test]
-    fn scene_failure_returns_the_entry_coordinator_to_an_operable_lobby_state() {
-        let (mut app, session_id) = app_waiting_scene_ready();
-        app.world_mut().write_message(SceneEvent::Failed(
-            crate::framework::scene::prelude::SceneFailure::new(
-                crate::framework::scene::prelude::SceneFailureKind::RequiredAssetMissing,
-                crate::framework::scene::prelude::SceneLifecycleState::LoadingAssets,
-            )
-            .with_scene(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
-            .with_session(session_id),
-        ));
-        app.update();
+    fn scene_failures_return_the_entry_coordinator_to_an_operable_lobby_state() {
+        use crate::framework::scene::prelude::{
+            SceneFailure, SceneFailureKind, SceneLifecycleState,
+        };
 
-        let state = app.world().resource::<MainWorldEntryState>();
+        for (kind, lifecycle_state) in [
+            (
+                SceneFailureKind::RequiredAssetMissing,
+                SceneLifecycleState::LoadingAssets,
+            ),
+            (
+                SceneFailureKind::ManifestLoadFailed,
+                SceneLifecycleState::Resolving,
+            ),
+            (
+                SceneFailureKind::CameraSetupFailed,
+                SceneLifecycleState::Activating,
+            ),
+            (
+                SceneFailureKind::SpawnPointMissing,
+                SceneLifecycleState::Activating,
+            ),
+        ] {
+            let (mut app, session_id) = app_waiting_scene_ready();
+            app.world_mut().write_message(SceneEvent::Failed(
+                SceneFailure::new(kind, lifecycle_state)
+                    .with_scene(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
+                    .with_session(session_id),
+            ));
+            app.update();
+
+            let state = app.world().resource::<MainWorldEntryState>();
+            assert_eq!(state.phase, MainWorldEntryPhase::Failed);
+            assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
+            assert!(!state.is_in_flight());
+            assert!(events(&app).iter().any(|event| matches!(
+                event,
+                MainWorldEntryEvent::Failed {
+                    generation: 1,
+                    failure: MainWorldEntryFailure::SceneLoadFailed,
+                }
+            )));
+        }
+    }
+
+    #[test]
+    fn room_ready_failure_and_timeout_return_to_a_determinate_entry_state() {
+        let (mut response_app, response_session_id) = app_waiting_scene_ready();
+        response_app
+            .world_mut()
+            .write_message(scene_ready(response_session_id));
+        response_app.update();
+        response_app
+            .world_mut()
+            .write_message(MyServerEvent::ReadyChanged(pb::RoomReadyRes {
+                ok: false,
+                room_id: "main-world-public".to_owned(),
+                ready: true,
+                error_code: "READY_TIMEOUT".to_owned(),
+            }));
+        response_app.update();
+        assert_eq!(
+            response_app
+                .world()
+                .resource::<MainWorldEntryState>()
+                .failure,
+            Some(MainWorldEntryFailure::ReadyTimedOut)
+        );
+
+        let (mut request_app, request_session_id) = app_waiting_scene_ready();
+        request_app
+            .world_mut()
+            .write_message(scene_ready(request_session_id));
+        request_app.update();
+        request_app
+            .world_mut()
+            .write_message(MyServerEvent::RequestFailed {
+                seq: Some(1),
+                message_type: Some(crate::game::myserver::protocol::MessageType::RoomReadyReq),
+                error: "request timeout".to_owned(),
+            });
+        request_app.update();
+        let state = request_app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::Failed);
-        assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
+        assert_eq!(state.failure, Some(MainWorldEntryFailure::ReadyTimedOut));
         assert!(!state.is_in_flight());
-        assert!(events(&app).iter().any(|event| matches!(
-            event,
-            MainWorldEntryEvent::Failed {
-                generation: 1,
-                failure: MainWorldEntryFailure::SceneLoadFailed,
-            }
-        )));
     }
 
     #[test]
