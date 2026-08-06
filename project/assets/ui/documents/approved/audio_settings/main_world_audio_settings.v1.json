@@ -221,7 +221,7 @@
                         }
                       },
                       "on_change": {
-                        "action": "audio_settings.set_master_muted",
+                        "action": "main_world_audio_settings.set_master_muted",
                         "params": { "muted": { "kind": "current_control_value" } }
                       }
                     },
@@ -265,7 +265,7 @@
                         }
                       },
                       "on_change": {
-                        "action": "audio_settings.set_volume",
+                        "action": "main_world_audio_settings.set_volume",
                         "params": {
                           "bus": { "kind": "enum", "value": "master" },
                           "value": { "kind": "current_control_value" }
@@ -286,7 +286,7 @@
                         }
                       },
                       "on_change": {
-                        "action": "audio_settings.set_volume",
+                        "action": "main_world_audio_settings.set_volume",
                         "params": {
                           "bus": { "kind": "enum", "value": "music" },
                           "value": { "kind": "current_control_value" }
@@ -307,7 +307,7 @@
                         }
                       },
                       "on_change": {
-                        "action": "audio_settings.set_volume",
+                        "action": "main_world_audio_settings.set_volume",
                         "params": {
                           "bus": { "kind": "enum", "value": "sfx" },
                           "value": { "kind": "current_control_value" }
@@ -328,7 +328,7 @@
                         }
                       },
                       "on_change": {
-                        "action": "audio_settings.set_volume",
+                        "action": "main_world_audio_settings.set_volume",
                         "params": {
                           "bus": { "kind": "enum", "value": "ui" },
                           "value": { "kind": "current_control_value" }
@@ -349,7 +349,7 @@
                         }
                       },
                       "on_change": {
-                        "action": "audio_settings.set_volume",
+                        "action": "main_world_audio_settings.set_volume",
                         "params": {
                           "bus": { "kind": "enum", "value": "battle" },
                           "value": { "kind": "current_control_value" }

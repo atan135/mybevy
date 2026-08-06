@@ -6,6 +6,7 @@ use crate::framework::ui::{
     core::{
         UiFocusSystems, UiPanelId, UiPanelKind, UiPanelRoot, UiPanelSystems, focus::UiFocusState,
     },
+    document::UiDocumentRuntimeRoot,
     widgets::{UiScrollView, UiTextInput},
 };
 
@@ -73,13 +74,25 @@ fn update_ui_input_state(
     buttons: Query<&Interaction, With<Button>>,
     scroll_views: Query<&Hovered, With<UiScrollView>>,
     text_inputs: Query<(), With<UiTextInput>>,
-    panels: Query<&UiPanelRoot>,
+    panels: Query<(&UiPanelRoot, Option<&UiDocumentRuntimeRoot>)>,
 ) {
     let top_blocking_panel = panels
         .iter()
-        .find(|panel| panel.kind == UiPanelKind::BlockingOverlay)
-        .or_else(|| panels.iter().find(|panel| panel.kind == UiPanelKind::Modal))
-        .map(|panel| (panel.id, panel.kind));
+        .find(|(panel, _)| panel.kind == UiPanelKind::BlockingOverlay)
+        .or_else(|| {
+            panels
+                .iter()
+                .find(|(panel, _)| panel.kind == UiPanelKind::Modal)
+        })
+        // Detached document floating surfaces are full-screen scene-local panels.
+        // Unlike small framework popovers, they must keep gameplay input from
+        // reaching the world while the document is open.
+        .or_else(|| {
+            panels.iter().find(|(panel, document_root)| {
+                panel.kind == UiPanelKind::Floating && document_root.is_some()
+            })
+        })
+        .map(|(panel, _)| (panel.id, panel.kind));
     let focused_text_input = focus_state
         .focused_entity
         .is_some_and(|entity| text_inputs.contains(entity));
@@ -222,7 +235,14 @@ fn resolve_ui_input_route(signals: UiInputRouteSignals) -> UiInputRouteSnapshot 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::ui::core::UI_PANEL_GLOBAL_LOADING;
+    use crate::framework::ui::{
+        core::{UI_PANEL_GLOBAL_LOADING, UiPanelId},
+        document::{
+            UiDocumentId, UiDocumentInstanceId, UiDocumentLayer, UiDocumentPanel,
+            UiDocumentRequestId, UiDocumentSourceOrigin,
+        },
+    };
+    use std::str::FromStr;
 
     #[test]
     fn route_reason_prefers_blocking_panel_then_text_then_button_then_scroll() {
@@ -320,5 +340,47 @@ mod tests {
             UI_INPUT_ROUTE_HISTORY_LIMIT as u64 + 2
         );
         assert_eq!(state.route_history.back().unwrap().id, 3);
+    }
+
+    #[test]
+    fn document_floating_surface_blocks_input_without_blocking_framework_popovers() {
+        let mut app = App::new();
+        app.init_resource::<UiFocusState>()
+            .add_plugins(UiInputPlugin);
+        app.world_mut().spawn(UiPanelRoot {
+            id: UiPanelId::new("framework_popover"),
+            kind: UiPanelKind::Floating,
+            owner: None,
+        });
+        app.update();
+        assert!(!app.world().resource::<UiInputState>().pointer_blocked);
+
+        app.world_mut().spawn((
+            UiPanelRoot {
+                id: UiPanelId::new("document_floating"),
+                kind: UiPanelKind::Floating,
+                owner: None,
+            },
+            UiDocumentRuntimeRoot {
+                request_id: UiDocumentRequestId(1),
+                instance_id: UiDocumentInstanceId(1),
+                generation: 1,
+                document_id: UiDocumentId::from_str("test.floating").unwrap(),
+                schema_version: 1,
+                owner: "test_owner".to_owned(),
+                panel: UiDocumentPanel::Floating,
+                layer: UiDocumentLayer::Floating,
+                origin: UiDocumentSourceOrigin::Fixture {
+                    fixture_id: "input_route".to_owned(),
+                },
+            },
+        ));
+        app.update();
+        let input = app.world().resource::<UiInputState>();
+        assert!(input.pointer_blocked);
+        assert_eq!(
+            input.top_blocking_panel,
+            Some(UiPanelId::new("document_floating"))
+        );
     }
 }

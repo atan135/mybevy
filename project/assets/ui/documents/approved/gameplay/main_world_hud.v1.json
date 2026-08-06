@@ -52,10 +52,16 @@
               {
                 "type": "container",
                 "id": "main_world.mail_entry",
-                "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 2.0 } },
+                "layout": { "position": "relative", "align_items": "stretch", "overflow": { "x": "visible", "y": "visible" } },
                 "children": [
                   { "type": "button", "id": "main_world.mail", "variant": "secondary", "label": { "literal": "Mail" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.mail.disabled" } }, "on_click": { "action": "main_world.open_mail" } },
-                  { "type": "text", "id": "main_world.mail_unread", "content": { "binding_path": "main_world.mail.unread", "fallback": "" }, "style": { "text_role": "caption", "bindings": { "visibility": "main_world.mail.unread_visibility" } } }
+                  {
+                    "type": "badge",
+                    "id": "main_world.mail_unread",
+                    "layout": { "position": { "absolute": { "top": { "px": -6.0 }, "right": { "px": -6.0 } } }, "width": { "px": 32.0 }, "height": { "px": 24.0 }, "z_index": 1 },
+                    "style": { "bindings": { "visibility": "main_world.mail.unread_visibility" } },
+                    "component": { "slots": { "label": { "kind": "text", "content": { "binding_path": "main_world.mail.unread", "fallback": "" } } } }
+                  }
                 ]
               },
               { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "literal": "Home" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.home.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.enter_home" } },
@@ -76,7 +82,7 @@
         { "node_id": "main_world.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } } } } },
         { "node_id": "main_world.actions", "set": { "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 }, "justify_content": "end" } } },
         { "node_id": "main_world.buttons", "set": { "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 } } } },
-        { "node_id": "main_world.mail_entry", "set": { "layout": { "gap": { "px": 0.0 } } } }
+        { "node_id": "main_world.mail_entry", "set": { "layout": { "overflow": { "x": "visible", "y": "visible" } } } }
       ]
     }
   ]

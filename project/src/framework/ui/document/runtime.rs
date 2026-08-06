@@ -162,6 +162,20 @@ impl UiDocumentLayer {
             Self::Debug => UiLayer::Debug,
         }
     }
+
+    /// Document roots are spawned as siblings, so the logical layer also needs a
+    /// concrete Bevy stacking order. Keep these aligned with the framework-owned
+    /// floating, modal, loading, toast, and debug surfaces.
+    const fn root_z_index(self) -> i32 {
+        match self {
+            Self::Page => 0,
+            Self::Floating => 80,
+            Self::Modal => 100,
+            Self::Loading => 150,
+            Self::Toast => 200,
+            Self::Debug => 250,
+        }
+    }
 }
 
 impl UiDocumentPanel {
@@ -1559,6 +1573,16 @@ fn spawn_document(
         },
         pending.request.panel.framework_root(),
     ));
+    let declared_root_z_index = pending
+        .prepared
+        .root
+        .layout
+        .z_index
+        .map_or(0, |z_index| z_index.0);
+    let layer_root_z_index = pending.request.layer.root_z_index();
+    if layer_root_z_index > declared_root_z_index {
+        world.entity_mut(root).insert(ZIndex(layer_root_z_index));
+    }
     Ok(ActiveDocument {
         index: UiDocumentInstanceIndex {
             instance_id,

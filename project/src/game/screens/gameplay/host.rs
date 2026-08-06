@@ -1542,7 +1542,7 @@ pub(super) fn sync_main_world_hud_bindings(
         ),
         (
             "main_world.mail.unread_visibility",
-            UiBindingValue::Visibility(if unread_count.is_some() {
+            UiBindingValue::Visibility(if unread_count.is_some_and(|count| count > 0) {
                 UiBindingVisibility::Visible
             } else {
                 UiBindingVisibility::Hidden
@@ -2313,19 +2313,22 @@ pub(super) fn mark_fangyuan_home_audit_scroll(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::audio::prelude::AudioCommand;
     #[cfg(all(debug_assertions, not(target_os = "android")))]
     use crate::framework::ui::audit::UiAuditConfig;
     use crate::framework::{
         network::NetworkCommand,
         scene::prelude::SceneCommand,
         ui::{
-            core::{UiInputMode, UiMetrics, UiSafeArea, UiViewport},
+            core::{UiInputMode, UiMetrics, UiSafeArea, UiViewport, binding::UiBindingSystems},
             document::{
                 UiActionDispatchContext, UiDocument, UiDocumentInputMode, UiDocumentPlatform,
-                UiDocumentPreviewPlugin, UiDocumentRuntime, UiDocumentRuntimePlugin, UiNode,
-                UiSafeAreaClass, UiTargetProfile, parse_approved_document_registration,
+                UiDocumentPreviewPlugin, UiDocumentRuntime, UiDocumentRuntimePlugin,
+                UiDocumentRuntimeSystems, UiNode, UiSafeAreaClass, UiTargetProfile,
+                parse_approved_document_registration,
             },
             style::{UiFontAssets, UiTheme},
+            widgets::{UiButtonEvent, UiButtonEventKind},
         },
     };
     use crate::game::myserver::mail::MailClaimWorkflowState;
@@ -3318,6 +3321,19 @@ mod tests {
         );
         assert_eq!(
             main_world_binding_value(&app, "main_world.mail.unread_visibility"),
+            UiBindingValue::Visibility(UiBindingVisibility::Hidden)
+        );
+
+        app.world_mut()
+            .resource_mut::<MailClientState>()
+            .unread_count = Some(3);
+        app.update();
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.mail.unread"),
+            UiBindingValue::String("3".to_owned())
+        );
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.mail.unread_visibility"),
             UiBindingValue::Visibility(UiBindingVisibility::Visible)
         );
 
@@ -3792,6 +3808,99 @@ mod tests {
     }
 
     #[test]
+    fn active_main_world_settings_button_opens_its_floating_document() {
+        let mut app = main_world_hud_runtime_app();
+        app.init_resource::<UiAuditConfig>()
+            .init_resource::<FangyuanDebugPanelState>()
+            .init_resource::<super::super::robot_sync_scene::RobotSyncHudVisibility>()
+            .init_resource::<MainWorldHudBindingGeneration>()
+            .insert_resource(AudioMixer::default())
+            .add_message::<AudioCommand>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<FangyuanHomeBlueprintCommand>()
+            .add_message::<SceneCommand>()
+            .add_message::<MailClientCommand>()
+            .add_message::<MainWorldEntryIntent>()
+            .add_systems(
+                Update,
+                handle_gameplay_hud_document_actions.after(UiDocumentRuntimeSystems::Reconcile),
+            )
+            .add_systems(
+                Update,
+                sync_main_world_hud_bindings.before(UiBindingSystems::Apply),
+            )
+            .add_plugins(crate::game::screens::settings::SettingsScreensPlugin);
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::MainWorld);
+        update_frames(&mut app, 6);
+
+        let settings = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .node_entity(
+                app.world()
+                    .resource::<UiDocumentRuntime>()
+                    .active_instance(
+                        OWNER_MAIN_WORLD.as_str(),
+                        &UiDocumentId::from_str(MAIN_WORLD_HUD_DOCUMENT_ID).unwrap(),
+                    )
+                    .unwrap(),
+                &UiNodeId::from_str(MAIN_WORLD_SETTINGS_NODE).unwrap(),
+            )
+            .unwrap();
+        let mut host_events = MessageCursor::<DeclarativeScreenHostEvent>::default();
+        app.world_mut().write_message(UiButtonEvent {
+            entity: settings,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+        assert!(
+            read_messages::<UiActionDispatch>(&app)
+                .iter()
+                .any(|dispatch| {
+                    dispatch.document_id.as_str() == MAIN_WORLD_HUD_DOCUMENT_ID
+                        && dispatch.owner == OWNER_MAIN_WORLD.as_str()
+                        && dispatch.action.as_str() == ACTION_MAIN_WORLD_OPEN_SETTINGS
+                        && dispatch.source_node.as_str() == MAIN_WORLD_SETTINGS_NODE
+                })
+        );
+        assert!(
+            read_messages::<DeclarativeScreenHostCommand>(&app)
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    DeclarativeScreenHostCommand::OpenDetachedRoute { route }
+                        if route == crate::game::screens::settings::MAIN_WORLD_SETTINGS_ROUTE
+                ))
+        );
+        app.update();
+        assert!(
+            host_events
+                .read(
+                    app.world()
+                        .resource::<Messages<DeclarativeScreenHostEvent>>()
+                )
+                .all(|event| !matches!(event, DeclarativeScreenHostEvent::LoadFailed { .. })),
+            "{:#?}",
+            read_messages::<DeclarativeScreenHostEvent>(&app)
+        );
+        update_frames(&mut app, 2);
+
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance(
+                    OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+                    &UiDocumentId::from_str("game.main_world_audio_settings").unwrap(),
+                )
+                .is_some()
+        );
+    }
+
+    #[test]
     fn main_world_hud_exposes_only_its_four_buttons_without_blocking_gameplay() {
         let mut app = main_world_hud_runtime_app();
         app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
@@ -3951,6 +4060,8 @@ mod tests {
 
     #[test]
     fn main_world_hud_touch_controls_keep_the_framework_minimum_on_short_landscape() {
+        let parse = UiDocument::parse_and_validate_json(MAIN_WORLD_HUD_SOURCE);
+        assert!(parse.is_ok(), "{parse:#?}");
         let viewport = main_world_short_landscape_touch_viewport();
         let metrics = UiMetrics::from_viewport_and_theme(&viewport, &UiTheme::default());
         let mut app = main_world_hud_runtime_app();
@@ -4011,6 +4122,8 @@ mod tests {
                 &UiDocumentId::from_str(MAIN_WORLD_MAIL_DOCUMENT_ID).unwrap(),
             )
             .unwrap();
+        let root = runtime.instance(instance).unwrap().root;
+        assert_eq!(app.world().get::<ZIndex>(root), Some(&ZIndex(80)));
         let touch_target_min = app.world().resource::<UiMetrics>().touch_target_min;
         for node_id in [MAIN_WORLD_MAIL_REFRESH_NODE, MAIN_WORLD_MAIL_CLOSE_NODE] {
             let entity = runtime
