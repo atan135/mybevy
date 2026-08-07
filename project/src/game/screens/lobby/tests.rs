@@ -654,6 +654,7 @@ fn lobby_binding_test_app(connection: GameConnectionState, state: LobbyUiState) 
     app.add_plugins(MinimalPlugins)
         .init_resource::<UiBindingValues>()
         .init_resource::<LobbyHostContract>()
+        .init_resource::<MainWorldEntryState>()
         .insert_resource(MyServerSession {
             game_connection_state: connection,
             ..Default::default()
