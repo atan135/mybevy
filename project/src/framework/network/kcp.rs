@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{io, net::SocketAddr, time::Duration};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -84,30 +84,26 @@ async fn run_kcp_connection(
     let connection_id = config.connection_id;
     let remote_addr = config.addr.clone();
 
-    let socket_addr = match remote_addr.parse::<SocketAddr>() {
-        Ok(addr) => addr,
-        Err(err) => {
-            send_event(
-                &event_tx,
-                NetworkEvent::ConnectionFailed {
-                    connection_id,
-                    transport: NetworkTransport::Kcp,
-                    remote_addr,
-                    error: format!("invalid socket address: {err}"),
-                },
-            );
-            send_connection_closed(&command_tx, connection_id, generation);
-            return;
-        }
-    };
-
     let kcp_config = to_kcp_config(&config.session);
     let outbound_timeout = config.session.session_expire;
     let connect_future = async {
-        match config.conv {
-            Some(conv) => KcpStream::connect_with_conv(&kcp_config, conv, socket_addr).await,
-            None => KcpStream::connect(&kcp_config, socket_addr).await,
+        let socket_addrs = resolve_socket_addrs(&remote_addr)
+            .await
+            .map_err(|error| format!("address resolution failed: {error}"))?;
+        let mut last_error = None;
+
+        for socket_addr in socket_addrs {
+            let result = match config.conv {
+                Some(conv) => KcpStream::connect_with_conv(&kcp_config, conv, socket_addr).await,
+                None => KcpStream::connect(&kcp_config, socket_addr).await,
+            };
+            match result {
+                Ok(stream) => return Ok(stream),
+                Err(error) => last_error = Some(error.to_string()),
+            }
         }
+
+        Err(last_error.unwrap_or_else(|| "address resolution returned no addresses".to_string()))
     };
 
     let connect_result = time::timeout(config.connect_timeout, connect_future).await;
@@ -347,6 +343,10 @@ fn to_kcp_config(options: &KcpSessionOptions) -> KcpConfig {
     }
 }
 
+async fn resolve_socket_addrs(remote_addr: &str) -> io::Result<Vec<SocketAddr>> {
+    Ok(tokio::net::lookup_host(remote_addr).await?.collect())
+}
+
 async fn write_kcp_payload(
     stream: &mut KcpStream,
     payload: &[u8],
@@ -446,6 +446,25 @@ mod tests {
                 .expect_err("a blackhole peer must not stall the worker indefinitely");
 
             assert_eq!(error, "KCP outbound write timed out after 10ms");
+        });
+    }
+
+    #[test]
+    fn kcp_remote_address_resolution_accepts_dns_hosts() {
+        Runtime::new().unwrap().block_on(async {
+            let addresses = resolve_socket_addrs("localhost:4000").await.unwrap();
+
+            assert!(!addresses.is_empty());
+            assert!(addresses.iter().all(|address| address.port() == 4000));
+        });
+    }
+
+    #[test]
+    fn kcp_remote_address_resolution_rejects_missing_ports() {
+        Runtime::new().unwrap().block_on(async {
+            let error = resolve_socket_addrs("localhost").await.unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         });
     }
 }
