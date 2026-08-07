@@ -57,7 +57,7 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 | `character_select`，正式业务已声明式 | `character_select` / document `auth.character_select` page | `auth/host.rs` 注册独立 fixed host 与闭合 adapter，View 是 `approved/auth/character_select.v1.json`；角色行由 keyed repeat 增量协调。 | 加载/创建/选择角色、切换账号/角色、角色与连接状态 binding；稳定 key/action identity 均为完整 `character_id`。 | local 角色名输入、owner `list<record>`、item-scope 行状态。 | `ui/images/login_stillwater_background.png`，主题/i18n/font。 | A1 |
 | `lobby`，正式业务已声明式 | `lobby` / document `game.lobby` page | `lobby/host.rs` 注册 fixed host 与闭合 adapter，View 是 `approved/lobby/lobby.v1.json`；玩法入口由 keyed repeat 增量协调。 | 选择/进入玩法、列表重载、固定导航、选角与退出账号；完整 `entry_id` 经 bounded opaque action 参数传回并由 host 对当前 `list<record>` 复验；Touch Ripple 与场景进入分别复用公共 Confirm/Loading。 | 标准按钮与 scroll；Confirm/Loading 生命周期仍由 Panel Manager 持有。 | `ui/images/login_stillwater_background.png`；Image 节点声明稳定 error-color fallback，Debug 非 Android 内容审计对该真实节点注入确定性加载失败并与正常加载档对照。 | A1 |
 | `audio_settings`，正式业务已声明式 | `audio_settings` / document `game.audio_settings` page | `settings/audio/host.rs` 注册 fixed host 与闭合 adapter，View 是 `approved/audio_settings/audio_settings.v1.json`。 | 5 个固定 bus 音量、master mute 和回大厅；owner binding 每帧以 `AudioMixer` 为权威源，action source 与 bus 映射由 host 复验。 | 标准 Slider、Toggle、scroll 和 focus；无页面私有控件 helper。 | approved document、主题/font。 | A1 |
-| `main_world`，正式业务已声明式 | `main_world` / document `game.main_world_hud` hud；设置与邮箱为 scene-local Floating document | `gameplay/host.rs` 注册 fixed HUD host 与闭合 adapter，View 是 `approved/gameplay/main_world_hud.v1.json`。 | 设置、邮箱、进入家园和返回大厅 action；连接、角色、未读、disabled/loading 状态使用 owner binding。 | 主世界 authority、场景、输入和 panel cleanup 留在 Rust；HUD 仅在 entry `Active` 后挂载。 | approved HUD/mail document、主题/font。 | A1 |
+| `main_world`，正式业务已声明式 | `main_world` / document `game.main_world_hud` hud；设置与邮箱为 scene-local Floating document | `gameplay/host.rs` 注册 fixed HUD host 与闭合 adapter；HUD、设置和邮箱分别使用 `main_world_hud.v1.json`、`main_world_audio_settings.v1.json` 和 `main_world_mail.v1.json`。 | 设置、邮箱、进入家园和返回大厅 action；连接、角色、未读、音频、邮件 loading/disabled 状态使用各 owner binding。 | 主世界 authority、场景、输入和 panel cleanup 留在 Rust；HUD 仅在 entry `Active` 后挂载，关闭 scene-local 浮层不退出场景。 | 三份 approved document 及 promotion/fallback、主题/font。 | A1 |
 | `wanfa_touch_ripple`，正式业务已声明式 | `wanfa_touch_ripple` / document `game.touch_ripple_hud` hud | `gameplay/host.rs` 注册 fixed HUD host；View 是 `approved/gameplay/touch_ripple_hud.v1.json`。 | 仅闭合回大厅 action；无 binding/list。 | feature 层继续处理全屏触控、鼠标、拖动和水波纹；document 根不声明阻断 gameplay 输入。 | approved document、主题/font。 | A1 |
 | `sample_scene`，正式业务已声明式 | `sample_scene` / document `game.sample_scene_hud` hud | `gameplay/host.rs` 注册 fixed HUD host；`sample_scene.rs` 只保留 scene-exit fallback。 | scene exit + 回大厅闭合 action；无 binding/list。 | HUD 标准按钮；场景退出事件仍由 Rust 生命周期处理。 | approved document、主题/font。 | A1 |
 | `robot_sync_scene`，正式业务已声明式 | `robot_sync_scene` / document `game.robot_sync_hud` hud | View 是 `approved/gameplay/robot_sync_hud.v1.json`；Robot/Lockstep 模拟与状态格式化留在 Rust。 | Hide/Show/Lobby action；title/status/details/button visibility 使用 owner binding。 | authority/scene lifecycle 和模拟输入留在 Rust；相同高频 binding 值不推进 revision。 | approved document、主题/font。 | A1 |
@@ -80,7 +80,21 @@ UI-only diff 门禁的判定输入是改动后的 Git 路径，而不是提交�
 
 该产品没有设置草稿或持久化事务，因此 stepper、segmented、select、tab、保存、取消恢复、dirty、validation、恢复默认值、配置加载、保存失败和 loading 状态均不适用，文档不得自行实现这些业务表达式。热更新只迁移兼容 node 的 Slider/Toggle 局部状态、focus 与 scroll；下一次 owner binding apply 仍以 mixer 当前值为准。调整设置项排列、分组、说明文本、响应式布局和视觉只修改 approved JSON/资源；新增 bus、action、binding、持久化或状态语义必须修改 Rust host contract 与测试。
 
-### 3.2 主世界邮箱 document
+### 3.2 主世界 HUD 与场景内面板
+
+`world.main` 进入 Active 后挂载 `game.main_world_hud`，owner 为 `main_world`，panel 为 `Hud`、layer 为 `Page`。HUD 只能派发闭合的设置、邮箱、家园和返回 Lobby action；场景、房间、authority、移动输入和退出顺序仍由 Rust 协调器持有。HUD 的 packaged approved source 与 promotion 分别是：
+
+- `project/assets/ui/documents/approved/gameplay/main_world_hud.v1.json`
+- `project/assets/ui/documents/approved/gameplay/main_world_hud.promotion.v1.json`
+
+场景内设置复用音频 mixer 作为权威源，但使用独立 owner `main_world_settings_panel` 和 Floating 实例，不切换 `AppUiMode`。其 approved source 与 promotion 分别是：
+
+- `project/assets/ui/documents/approved/audio_settings/main_world_audio_settings.v1.json`
+- `project/assets/ui/documents/approved/audio_settings/main_world_audio_settings.promotion.v1.json`
+
+设置和邮箱都是 scene-local 面板。关闭任一面板只清理该 owner 的 document、binding 和 focus 并恢复 HUD/gameplay 输入；路由离开主世界、scene exit、身份/environment generation 切换会统一关闭两者，不能遗留旧角色状态。邮箱关闭不会取消 `MailClientState` 中已经开始的 reconciliation。
+
+### 3.3 主世界邮箱 document
 
 主世界邮箱由 fixed host 注册为 approved document `game.main_world_mail`，owner 为 `main_world_mail_panel`，detached route label 为 `main_world_mail`，panel 与 layer 都是 `Floating`。它只在主世界场景内由 HUD 打开；关闭邮箱只关闭 UI instance、清理该 owner 的 binding/focus 并恢复 HUD/gameplay 输入，不退出房间、场景或取消全局 `MailClientState` 持有的 reconciliation。
 

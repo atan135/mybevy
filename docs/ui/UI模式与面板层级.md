@@ -6,19 +6,29 @@ UI 模式、面板身份和层级标记共同决定当前页面显示什么、�
 
 `project/src/game/navigation/mod.rs` 定义 `AppUiMode`：
 
-- `Login`
-- `Lobby`
-- `WanfaTouchRipple`
-- `UiGallery`
+- 当前共有 16 个固定 mode，覆盖 Login、Character Select、Lobby、Audio Settings、6 个玩法/场景 HUD、2 个声明式开发/验收页和 4 个受控 Rust View 开发工具页。
+- 完整 canonical screen、alias、owner、document 和分类盘点以 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md#3-页面盘点) 为准，避免在多处复制 enum 清单后失配。
+- 正式业务 mode 均由 fixed `DeclarativeScreenHost` 挂载 approved `UiDocument`；Rust 继续持有 action adapter、binding、业务状态、场景/authority 生命周期和 3D 内容。
 
-桌面开发时可通过环境变量 `TOUCH_START_SCREEN` 指定启动页面。当前支持的值包括：
+桌面开发时可通过环境变量 `TOUCH_START_SCREEN` 指定已注册的 canonical screen 或 alias，例如：
 
 - `login`
+- `character_select`
 - `lobby`、`game_list`、`game-list`、`list`
+- `main_world`
+- `audio_settings`
 - `ui_gallery`、`ui-gallery`、`gallery`
 - `wanfa_touch_ripple`、`wanfa-touch-ripple`、`touch`、`touch_ripple`、`touch-ripple`
 
-页面插件通常在 `OnEnter(AppUiMode::...)` 生成页面根节点，在退出时清理自己拥有的实体。
+该变量是开发/审计入口，不替代登录、进房或场景生命周期验收。页面宿主在 mode enter/exit 时挂载或关闭 document，并清理 owner 的 binding、focus 和局部面板。
+
+### 主世界面板所有权
+
+- 主世界 HUD 是 `game.main_world_hud`，owner 为 `main_world`，panel kind 为 `Hud`；只在主世界 entry Active 后挂载。
+- 场景内设置是 `game.main_world_audio_settings`，owner 为 `main_world_settings_panel`，panel/layer 为 `Floating`。
+- 场景内邮箱是 `game.main_world_mail`，owner 为 `main_world_mail_panel`，panel/layer 为 `Floating`。
+- 关闭设置或邮箱只关闭对应 Floating、清理其 binding/focus 并恢复 gameplay 输入，不离房、不退出 scene、不切换 mode。
+- 离开主世界、切换路由或身份/environment generation 变化会关闭两个 scene-local 面板和 HUD。邮箱网络状态与未知领取结果对账由全局 `MailClientState` 持有，关闭 document 不会丢失 reconciliation。
 
 ## Panel 标记
 
@@ -99,7 +109,7 @@ pub struct UiPanelRoot {
 
 ## 路由切换语义
 
-`GameRouteCommand::ChangeMode(target)` 会先发送 `CloseAllForOwner(current_mode.ui_owner())`，然后设置 `NextState<AppUiMode>`。这意味着属于旧页面 owner 的 Loading、Confirm、Floating 会随模式切换清理。
+`GameRouteCommand::ChangeMode(target)` 会先发送 `CloseAllForOwner(current_mode.ui_owner())`，然后设置 `NextState<AppUiMode>`。这意味着属于旧页面 owner 的 Loading、Confirm、Floating 会随模式切换清理。主世界退出协调器还会显式关闭 `main_world_settings_panel` 和 `main_world_mail_panel` 两个 scene-local owner，避免它们因独立 owner 跨 mode 残留。
 
 `UiOverlayCommand::ShowToast(toast)` 不进入 Panel Manager。它会直接关闭当前所有 Toast 并生成新 Toast。
 

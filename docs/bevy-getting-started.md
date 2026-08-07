@@ -976,7 +976,7 @@ MyServer 最新登录链路是账号身份和游戏角色身份分离的流程�
 
 登录页顶部的服务器分段控件可选择 `本地服` 或 `正式服`，密码注册、账号登录和游客登录共用上述链路。注册只发送 `loginName` 和 `password`；确认密码仅在受控敏感输入中做本地校验。桌面 Debug 构建默认选择本地服；Release 构建和 Android 构建默认选择正式服。选择只在当前进程内有效，不持久化；登录或注册请求发出后选择会锁定，切换账号回到登录页后可重新选择。切换到另一环境会清空当前 access token、角色、ticket、连接和登录/注册输入框，避免串服。
 
-正式服默认认证地址为 `https://api.game.zergzerg.cn`，game proxy fallback 主机为 `api.game.zergzerg.cn`，默认 KCP `4000/UDP`、TCP fallback `14000/TCP`。登录和选角响应返回公网 game endpoint 时，客户端优先使用响应中的 host、port 和 transport。
+正式服默认认证地址为 `https://api.game.zergzerg.cn`。当前生产 auth 下发 game `game.zergzerg.cn:4000/kcp`、chat `chat.game.zergzerg.cn:443/wss` 和 mail `api.game.zergzerg.cn:443/https`；宿主只公开 Caddy `80/443 TCP` 和 game proxy `4000/UDP`，不公开生产 TCP fallback 或内部服务端口。客户端优先使用登录和选角响应中的 descriptor。
 
 主世界联调在完成登录、选角和 game proxy 鉴权后，从 Lobby 加入固定 `main-world-public / movement_demo`。客户端以 `character_id` 为玩法主体，使用服务端 `grassland_01 / scene_id=1 / spawn_id=1001` 映射；权威快照、客户端 Scene Ready 和服务端 Room Ready 三者齐备前不会开放主世界输入。完整顺序、断线恢复和家园返回语义见 [MyServer 客户端验收](./myserver/服务端最新登录流程客户端验收.md#固定公共主世界)。
 
@@ -1001,9 +1001,8 @@ $env:MYSERVER_DIAGNOSTIC_TRACE="true"
 
 ```powershell
 $env:MYSERVER_REMOTE_HTTP_BASE_URL="https://api.game.zergzerg.cn"
-$env:MYSERVER_REMOTE_GAME_HOST="api.game.zergzerg.cn"
-$env:MYSERVER_REMOTE_TRANSPORT="tcp"
-$env:MYSERVER_REMOTE_TCP_FALLBACK_PORT="14000"
+$env:MYSERVER_REMOTE_GAME_HOST="game.zergzerg.cn"
+$env:MYSERVER_REMOTE_TRANSPORT="kcp"
 $env:MYSERVER_REMOTE_KCP_PORT="4000"
 ```
 
@@ -1087,7 +1086,7 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --rep
 cargo run --manifest-path tools/ui-generation/Cargo.toml -- generate-fixture --task tools/ui-generation/fixtures/acceptance/task.valid.json --repository-root . --document-id generated.acceptance_fixture
 ```
 
-`check-boundary` 除依赖方向和 UI-only write scope 外，还会验证 9 个正式业务 route 都有 approved document/promotion、15 个 screen 均已分类，且直接 Rust UI View 只存在于四个固定开发工具例外。新增正式业务 screen 时必须先建立 fixed host 和 registration，不能把它加入例外清单绕过。
+`check-boundary` 除依赖方向和 UI-only write scope 外，还会验证 10 个正式业务 route 都有 approved document/promotion、16 个 screen 均已分类，且直接 Rust UI View 只存在于四个固定开发工具例外。新增正式业务 screen 时必须先建立 fixed host 和 registration，不能把它加入例外清单绕过。
 
 如果只需检查正式已批准的验收页面能否在独立声明式预览中打开，可运行：
 
