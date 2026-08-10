@@ -13,8 +13,8 @@
 - 当前内置 `project/src/framework/network/` 网络框架模块，提供 HTTP、TCP 和 KCP 的 Bevy 消息接口
 - 当前内置 `project/src/game/authority/` 控制机会话模块，提供本地控制机、局域网控制机和远端 MyServer 控制机的统一命令/事件接口
 - MyServer 登录链路采用账号 `player_id` 和玩法 `character_id` 分离：账号 ID 只用于登录、安全和审计；房间、匹配、输入、移动、战斗、背包、transfer 和 authority MyServer endpoint 都以当前 character-bound ticket 绑定的 `character_id` 作为玩法主体
-- 登录页支持密码注册、账号登录和游客登录，并可在本地服和正式服之间选择 MyServer 环境；注册直接成功复用账号 session，审核中不形成可用会话。密码与确认密码只保存在受控 ECS 输入组件，不进入普通 binding、action、日志或诊断快照；桌面 Debug 默认本地服，Release 和 Android 默认正式服 `https://api.game.zergzerg.cn`，环境切换不持久化并会清空当前账号、角色、ticket、连接状态和登录/注册输入
-- 正式服由 auth 下发 game `game.zergzerg.cn:4000/kcp`、chat `chat.game.zergzerg.cn:443/wss` 和 mail `api.game.zergzerg.cn:443/https` descriptor；生产客户端不读取 registry、不直连内部服务，mail-service 必须使用 PostgreSQL 持久存储
+- 登录页支持密码注册、账号登录和游客登录，并可在本地服和正式服之间选择 MyServer 环境；注册直接成功复用账号 session，审核中不形成可用会话。密码与确认密码只保存在受控 ECS 输入组件，不进入普通 binding、action、日志或诊断快照；桌面 Debug 默认本地服，Release 和 Android 默认正式服 `https://api.bevy.zergzerg.cn`，环境切换不持久化并会清空当前账号、角色、ticket、连接状态和登录/注册输入
+- 正式服由 auth 下发 game `bevy.zergzerg.cn:4000/kcp`、chat `chat.bevy.zergzerg.cn:443/wss` 和 mail `api.bevy.zergzerg.cn:443/https` descriptor；生产客户端不读取 registry、不直连内部服务，mail-service 必须使用 PostgreSQL 持久存储
 - `android/` 是 Android Gradle 壳工程，用于加载 Rust 产出的 `libproject.so` 并打包 APK
 
 ## 目录约定

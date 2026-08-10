@@ -76,7 +76,7 @@ impl UiUpdateEndpoint {
         // receive only content signed by keys paired with this endpoint policy.
         Self::new(
             UiUpdateEnvironment::Production,
-            "https://api.game.zergzerg.cn/api/v1/ui-updates".to_owned(),
+            "https://api.bevy.zergzerg.cn/api/v1/ui-updates".to_owned(),
             bundle_id.into(),
             channel.into(),
         )
@@ -1218,7 +1218,7 @@ fn trusted_base_url(environment: UiUpdateEnvironment, value: &str) -> bool {
         return false;
     }
     match environment {
-        UiUpdateEnvironment::Production => value.starts_with("https://api.game.zergzerg.cn/"),
+        UiUpdateEnvironment::Production => value.starts_with("https://api.bevy.zergzerg.cn/"),
         UiUpdateEnvironment::Local => {
             value.starts_with("http://127.0.0.1:") || value.starts_with("http://localhost:")
         }

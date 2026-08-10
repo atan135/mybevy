@@ -20,8 +20,8 @@ use super::{
 
 pub const DEFAULT_AUTH_HTTP_BASE_URL: &str = "http://127.0.0.1:3000";
 pub const DEFAULT_GAME_PROXY_HOST: &str = "127.0.0.1";
-pub const PRODUCTION_AUTH_HTTP_BASE_URL: &str = "https://api.game.zergzerg.cn";
-pub const PRODUCTION_GAME_PROXY_HOST: &str = "api.game.zergzerg.cn";
+pub const PRODUCTION_AUTH_HTTP_BASE_URL: &str = "https://api.bevy.zergzerg.cn";
+pub const PRODUCTION_GAME_PROXY_HOST: &str = "bevy.zergzerg.cn";
 pub const DEFAULT_GAME_PROXY_KCP_PORT: u16 = 4000;
 pub const DEFAULT_GAME_PROXY_TCP_FALLBACK_PORT: u16 = 14000;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -3241,7 +3241,7 @@ mod tests {
             game: Some(game()),
             chat,
             mail: Some(ClientServiceEndpoint {
-                host: Some("api.game.zergzerg.cn".to_string()),
+                host: Some("api.bevy.zergzerg.cn".to_string()),
                 port: Some(443),
                 protocol: Some("https".to_string()),
             }),
@@ -3263,7 +3263,7 @@ mod tests {
                 ticket_expires_at: None,
                 game_proxy_host: None,
                 game_proxy_port: None,
-                services: Some(services(Some(chat("chat.game.zergzerg.cn", 443, "wss")))),
+                services: Some(services(Some(chat("chat.bevy.zergzerg.cn", 443, "wss")))),
             },
             ClientServiceEndpointPolicy::default(),
         );
@@ -3272,7 +3272,7 @@ mod tests {
                 .chat_endpoint
                 .as_ref()
                 .map(|endpoint| endpoint.url()),
-            Some("wss://chat.game.zergzerg.cn/")
+            Some("wss://chat.bevy.zergzerg.cn/")
         );
         assert!(session.mail_endpoint.is_some());
         assert_eq!(
@@ -3367,7 +3367,7 @@ mod tests {
         assert!(session.chat_endpoint.is_none());
         assert_eq!(
             session.chat_endpoint_error.as_deref(),
-            Some("production services.chat must be chat.game.zergzerg.cn:443 over wss")
+            Some("production services.chat must be chat.bevy.zergzerg.cn:443 over wss")
         );
 
         let before_logout = session.chat_endpoint_generation;

@@ -18,7 +18,7 @@ use super::{
 
 pub const MAIL_API_PATH: &str = "/api/v1/mails";
 pub const MAIL_GAME_TICKET_HEADER: &str = "X-Game-Ticket";
-pub const PRODUCTION_MAIL_HOST: &str = "api.game.zergzerg.cn";
+pub const PRODUCTION_MAIL_HOST: &str = "api.bevy.zergzerg.cn";
 pub const PRODUCTION_MAIL_PORT: u16 = 443;
 pub const MAIL_CLAIM_STATUSES: [&str; 7] = [
     "claimed",
@@ -99,7 +99,7 @@ impl MailHttpEndpoint {
                 || port != PRODUCTION_MAIL_PORT)
         {
             return Err(
-                "production services.mail must be api.game.zergzerg.cn:443 over https".to_string(),
+                "production services.mail must be api.bevy.zergzerg.cn:443 over https".to_string(),
             );
         }
 
@@ -2719,7 +2719,7 @@ mod tests {
     fn endpoint() -> MailHttpEndpoint {
         MailHttpEndpoint::from_service(
             &ClientServiceEndpoint {
-                host: Some("api.game.zergzerg.cn".to_string()),
+                host: Some("api.bevy.zergzerg.cn".to_string()),
                 port: Some(443),
                 protocol: Some("https".to_string()),
             },
@@ -2852,7 +2852,7 @@ mod tests {
     fn mail_endpoint_uses_only_the_https_descriptor_and_fixed_api_path() {
         assert_eq!(
             endpoint().base_url(),
-            "https://api.game.zergzerg.cn/api/v1/mails"
+            "https://api.bevy.zergzerg.cn/api/v1/mails"
         );
         assert!(
             MailHttpEndpoint::from_service(
@@ -2883,7 +2883,7 @@ mod tests {
         assert!(
             MailHttpEndpoint::from_service(
                 &ClientServiceEndpoint {
-                    host: Some("api.game.zergzerg.cn/other".to_string()),
+                    host: Some("api.bevy.zergzerg.cn/other".to_string()),
                     port: Some(443),
                     protocol: Some("https".to_string()),
                 },
@@ -2984,7 +2984,7 @@ mod tests {
         let request = http_requests(&app).pop().unwrap();
         assert_eq!(
             request.url,
-            "https://api.game.zergzerg.cn/api/v1/mails?limit=50&offset=0"
+            "https://api.bevy.zergzerg.cn/api/v1/mails?limit=50&offset=0"
         );
         assert_eq!(
             header(&request, "X-Game-Ticket"),
@@ -3012,7 +3012,7 @@ mod tests {
         let first = http_requests(&app).pop().unwrap();
         assert_eq!(
             first.url,
-            "https://api.game.zergzerg.cn/api/v1/mails?status=unread&limit=2&offset=0"
+            "https://api.bevy.zergzerg.cn/api/v1/mails?status=unread&limit=2&offset=0"
         );
         respond(
             &mut app,
@@ -3049,7 +3049,7 @@ mod tests {
         let second = http_requests(&app).pop().unwrap();
         assert_eq!(
             second.url,
-            "https://api.game.zergzerg.cn/api/v1/mails?status=unread&limit=2&offset=2"
+            "https://api.bevy.zergzerg.cn/api/v1/mails?status=unread&limit=2&offset=2"
         );
         assert_eq!(
             app.world().resource::<MailClientState>().list_load_state,
@@ -3326,7 +3326,7 @@ mod tests {
         assert!(matches!(mark_read.method, HttpMethod::Put));
         assert_eq!(
             mark_read.url,
-            "https://api.game.zergzerg.cn/api/v1/mails/mail_1/read"
+            "https://api.bevy.zergzerg.cn/api/v1/mails/mail_1/read"
         );
 
         respond(
@@ -3625,7 +3625,7 @@ mod tests {
         assert!(matches!(detail.method, HttpMethod::Get));
         assert_eq!(
             detail.url,
-            "https://api.game.zergzerg.cn/api/v1/mails/mail_1"
+            "https://api.bevy.zergzerg.cn/api/v1/mails/mail_1"
         );
 
         respond(
@@ -3931,7 +3931,7 @@ mod tests {
         assert!(matches!(request.method, HttpMethod::Get));
         assert_eq!(
             request.url,
-            "https://api.game.zergzerg.cn/api/v1/mails?limit=50&offset=0"
+            "https://api.bevy.zergzerg.cn/api/v1/mails?limit=50&offset=0"
         );
         assert!(
             app.world()
@@ -3962,7 +3962,7 @@ mod tests {
         assert!(matches!(requests[0].method, HttpMethod::Get));
         assert_eq!(
             requests[0].url,
-            "https://api.game.zergzerg.cn/api/v1/mails?limit=50&offset=0"
+            "https://api.bevy.zergzerg.cn/api/v1/mails?limit=50&offset=0"
         );
         assert!(app.world().resource::<MailClientState>().list_stale);
 

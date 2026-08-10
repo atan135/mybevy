@@ -92,7 +92,7 @@ pub struct ChatWebSocketEndpoint {
     url: String,
 }
 
-pub const PRODUCTION_CHAT_HOST: &str = "chat.game.zergzerg.cn";
+pub const PRODUCTION_CHAT_HOST: &str = "chat.bevy.zergzerg.cn";
 pub const PRODUCTION_CHAT_PORT: u16 = 443;
 
 impl ChatWebSocketEndpoint {
@@ -141,7 +141,7 @@ impl ChatWebSocketEndpoint {
                 || port != PRODUCTION_CHAT_PORT)
         {
             return Err(
-                "production services.chat must be chat.game.zergzerg.cn:443 over wss".to_string(),
+                "production services.chat must be chat.bevy.zergzerg.cn:443 over wss".to_string(),
             );
         }
         let authority = chat_endpoint_authority(host)?;
@@ -1449,7 +1449,7 @@ mod tests {
 
     fn chat_endpoint() -> ChatWebSocketEndpoint {
         ChatWebSocketEndpoint::from_service(&ClientServiceEndpoint {
-            host: Some("chat.game.zergzerg.cn".to_string()),
+            host: Some("chat.bevy.zergzerg.cn".to_string()),
             port: Some(443),
             protocol: Some("wss".to_string()),
         })
@@ -1513,12 +1513,12 @@ mod tests {
     #[test]
     fn builds_public_wss_endpoint_from_auth_descriptor() {
         let endpoint = ChatWebSocketEndpoint::from_service(&ClientServiceEndpoint {
-            host: Some("chat.game.zergzerg.cn".to_string()),
+            host: Some("chat.bevy.zergzerg.cn".to_string()),
             port: Some(443),
             protocol: Some("wss".to_string()),
         })
         .unwrap();
-        assert_eq!(endpoint.url(), "wss://chat.game.zergzerg.cn/");
+        assert_eq!(endpoint.url(), "wss://chat.bevy.zergzerg.cn/");
     }
 
     #[test]
