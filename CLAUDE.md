@@ -59,6 +59,7 @@
 - 新增游戏功能时，优先把逻辑放进 `project/src/` 下的模块，而不是持续堆在 `main.rs`
 - UI 页面结构放在 `project/src/game/screens/`，具体玩法放在 `project/src/game/features/`，具体游戏场景注册和适配放在 `project/src/game/scenes/`，UI 框架能力放在 `project/src/framework/ui/`
 - UI 通用控件放在 `project/src/framework/ui/widgets/`，颜色、字号、间距、圆角等可微调参数集中放在 `project/src/framework/ui/style/theme.rs`
+- 测试或验收 UI 布局时，统一从仓库根目录运行 `scripts/run_fast.ps1`，使用 `2772x1280` 设备尺寸、`3.25` device scale 和 `50%` window scale；不要通过裸 `cargo run` 启动的默认窗口判断 UI 布局
 - 新增首包资源文件时，统一放入 `project/assets/`；后续下载资源不要放入 `project/assets/`
 - `project/assets/` 下的图片、字体、音频、二进制模型和源工程类资源通过 Git LFS 提交；RON、JSON、TXT、授权说明等文本资源保持普通 Git 提交
 - 如果修改了项目结构、初始化方式或 Bevy 版本，同时更新相关文档
@@ -78,16 +79,14 @@ Set-Location project
 cargo run
 ```
 
-用桌面窗口模拟手机/平板分辨率验收 UI：
+测试或验收 UI 布局时，统一回到仓库根目录运行：
 
 ```powershell
-cargo run -- --window-profile phone-landscape
-cargo run -- --window-profile phone-1080p-landscape
-cargo run -- --window-profile tablet-landscape
-cargo run -- --window-size 1600x720
-cargo run -- --window-profile phone-landscape --window-scale 50%
-cargo run -- --window-size 1600x720 --device-scale 2 --window-scale 50%
+Set-Location ..
+.\scripts\run_fast.ps1
 ```
+
+该脚本固定使用 `--window-size 2772x1280 --device-scale 3.25 --window-scale 50%`，并启用 Bevy 动态链接以缩短后续开发链接时间。裸 `cargo run` 只用于普通开发启动，不作为 UI 布局测试或视觉验收依据。
 
 格式化代码：
 
