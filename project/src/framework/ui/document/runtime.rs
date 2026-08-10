@@ -1623,7 +1623,7 @@ fn spawn_prepared_node(
     let entity = world.spawn_empty().id();
     let node_id = prepared.source.id().clone();
     world.entity_mut(entity).insert((
-        prepared.layout.node.clone(),
+        runtime_node_layout(prepared),
         UiNodeMarker {
             document_id: pending.request.document_id.clone(),
             node_id: node_id.clone(),
@@ -2458,7 +2458,7 @@ fn spawn_node_content(
     let framework_node = world.get::<Node>(entity).cloned();
     world
         .entity_mut(entity)
-        .insert(prepared.layout.node.clone());
+        .insert(runtime_node_layout(prepared));
     if let Some(control) = prepared.control {
         apply_control_presentation(
             world,
@@ -2470,6 +2470,22 @@ fn spawn_node_content(
         );
     }
     Ok(())
+}
+
+fn runtime_node_layout(prepared: &PreparedNode) -> Node {
+    let mut node = prepared.layout.node.clone();
+    if let UiNode::Scroll {
+        row_gap,
+        max_height,
+        ..
+    } = &prepared.source
+    {
+        node.flex_direction = FlexDirection::Column;
+        node.row_gap = px(*row_gap);
+        node.max_height = max_height.map_or(Val::Auto, Val::Px);
+        node.overflow = Overflow::scroll_y();
+    }
+    node
 }
 
 fn materialize_remaining_control_slots(

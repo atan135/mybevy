@@ -50,13 +50,13 @@
     "lobby.games.selected_id": { "scope": "owner", "value_type": { "kind": "string" } },
     "lobby.games.selected_title": { "scope": "owner", "value_type": { "kind": "string" } },
     "lobby.games.selected_detail": { "scope": "owner", "value_type": { "kind": "string" } },
-    "lobby.games.selected_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "lobby.games.selected_display": { "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
     "lobby.games.error_title": { "scope": "owner", "value_type": { "kind": "string" } },
     "lobby.games.error_detail": { "scope": "owner", "value_type": { "kind": "string" } },
-    "lobby.games.error_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "lobby.games.error_display": { "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
     "lobby.resources.title": { "scope": "owner", "value_type": { "kind": "string" } },
     "lobby.resources.detail": { "scope": "owner", "value_type": { "kind": "string" } },
-    "lobby.resources.notice_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "lobby.resources.notice_display": { "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
     "lobby.games.reload_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
     "lobby.games.reload_loading": { "scope": "owner", "value_type": { "kind": "bool" } },
     "lobby.games.item.entry_id": { "scope": "item", "value_type": { "kind": "string" } },
@@ -332,7 +332,7 @@
                   "type": "container",
                   "id": "lobby.error",
                   "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 4.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
-                  "style": { "component": "lobby_error", "bindings": { "visibility": "lobby.games.error_visibility" } },
+                  "style": { "component": "lobby_error", "bindings": { "display": "lobby.games.error_display" } },
                   "children": [
                     { "type": "text", "id": "lobby.error_title", "content": { "binding_path": "lobby.games.error_title", "fallback": "" }, "style": { "text_role": "body" } },
                     { "type": "text", "id": "lobby.error_detail", "content": { "binding_path": "lobby.games.error_detail", "fallback": "" }, "style": { "text_role": "caption" } }
@@ -342,7 +342,7 @@
                   "type": "container",
                   "id": "lobby.resource_notice",
                   "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 4.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
-                  "style": { "component": "lobby_notice", "bindings": { "visibility": "lobby.resources.notice_visibility" } },
+                  "style": { "component": "lobby_notice", "bindings": { "display": "lobby.resources.notice_display" } },
                   "children": [
                     { "type": "text", "id": "lobby.resource_title", "content": { "binding_path": "lobby.resources.title", "fallback": "Packaged UI ready" }, "style": { "text_role": "body" } },
                     { "type": "text", "id": "lobby.resource_detail", "content": { "binding_path": "lobby.resources.detail", "fallback": "" }, "style": { "text_role": "caption" } }
@@ -443,7 +443,7 @@
                   "type": "container",
                   "id": "lobby.selection",
                   "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 3.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
-                  "style": { "component": "lobby_entry", "bindings": { "visibility": "lobby.games.selected_visibility" } },
+                  "style": { "component": "lobby_entry", "bindings": { "display": "lobby.games.selected_display" } },
                   "children": [
                     { "type": "text", "id": "lobby.selection_title", "content": { "binding_path": "lobby.games.selected_title", "fallback": "Selected game" }, "style": { "text_role": "body" } },
                     { "type": "text", "id": "lobby.selection_detail", "content": { "binding_path": "lobby.games.selected_detail", "fallback": "" }, "style": { "text_role": "caption" } }

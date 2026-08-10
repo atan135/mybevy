@@ -21,8 +21,8 @@ use crate::framework::{
             UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema,
             UiActionParamType, UiActionRegistry, UiActionValue, UiBindingDeclaration,
             UiBindingMissingBehavior, UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue,
-            UiBindingVisibility, UiDocumentId, UiDocumentLayer, UiDocumentPanel,
-            UiDocumentReloadEvent, UiDocumentReloadStatus, UiHostBindingKey, UiNodeId, UiPageState,
+            UiDocumentId, UiDocumentLayer, UiDocumentPanel, UiDocumentReloadEvent,
+            UiDocumentReloadStatus, UiHostBindingKey, UiNodeId, UiPageState,
             UiRegisteredActionKind,
         },
         i18n::UiI18n,
@@ -162,9 +162,11 @@ pub(super) fn lobby_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::String,
         ),
         (
-            "lobby.games.selected_visibility",
+            "lobby.games.selected_display",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: ["flex", "none"].map(str::to_owned).to_vec(),
+            },
         ),
         (
             "lobby.games.error_title",
@@ -177,9 +179,11 @@ pub(super) fn lobby_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::String,
         ),
         (
-            "lobby.games.error_visibility",
+            "lobby.games.error_display",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: ["flex", "none"].map(str::to_owned).to_vec(),
+            },
         ),
         (
             "lobby.resources.title",
@@ -192,9 +196,11 @@ pub(super) fn lobby_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclara
             UiBindingType::String,
         ),
         (
-            "lobby.resources.notice_visibility",
+            "lobby.resources.notice_display",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: ["flex", "none"].map(str::to_owned).to_vec(),
+            },
         ),
         (
             "lobby.games.reload_disabled",
@@ -758,12 +764,8 @@ pub(super) fn sync_lobby_document_bindings(
             ),
         ),
         (
-            "lobby.games.selected_visibility",
-            UiBindingValue::Visibility(if selected_visible {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            "lobby.games.selected_display",
+            UiBindingValue::Enum(if selected_visible { "flex" } else { "none" }.to_owned()),
         ),
         (
             "lobby.games.error_title",
@@ -774,12 +776,8 @@ pub(super) fn sync_lobby_document_bindings(
             UiBindingValue::String(ui_state.error_detail.clone()),
         ),
         (
-            "lobby.games.error_visibility",
-            UiBindingValue::Visibility(if error_visible {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            "lobby.games.error_display",
+            UiBindingValue::Enum(if error_visible { "flex" } else { "none" }.to_owned()),
         ),
         (
             "lobby.resources.title",
@@ -790,12 +788,15 @@ pub(super) fn sync_lobby_document_bindings(
             UiBindingValue::String(ui_state.resource_detail.clone()),
         ),
         (
-            "lobby.resources.notice_visibility",
-            UiBindingValue::Visibility(if ui_state.resource_notice_visible {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            "lobby.resources.notice_display",
+            UiBindingValue::Enum(
+                if ui_state.resource_notice_visible {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
         ),
         (
             "lobby.games.reload_disabled",

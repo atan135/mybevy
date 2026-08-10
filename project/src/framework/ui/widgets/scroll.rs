@@ -227,9 +227,19 @@ fn on_scroll_handler(
 
 fn on_scroll_drag_start(
     drag_start: On<Pointer<DragStart>>,
+    parents: Query<&ChildOf>,
+    scroll_roots: Query<(), With<UiScrollView>>,
     mut scroll_views: Query<(&ComputedNode, &mut UiScrollDragStart), With<UiScrollView>>,
 ) {
-    let Ok((computed, mut start)) = scroll_views.get_mut(drag_start.entity) else {
+    let Some(scroll_entity) = scroll_event_target_for_pointer(
+        drag_start.event_target(),
+        drag_start.entity,
+        &parents,
+        &scroll_roots,
+    ) else {
+        return;
+    };
+    let Ok((computed, mut start)) = scroll_views.get_mut(scroll_entity) else {
         return;
     };
 
@@ -239,18 +249,49 @@ fn on_scroll_drag_start(
 fn on_scroll_drag(
     drag: On<Pointer<Drag>>,
     ui_scale: Res<UiScale>,
+    parents: Query<&ChildOf>,
+    scroll_roots: Query<(), With<UiScrollView>>,
     mut scroll_views: Query<
         (&mut ScrollPosition, &UiScrollDragStart, &ComputedNode),
         With<UiScrollView>,
     >,
 ) {
-    let Ok((mut scroll_position, start, computed)) = scroll_views.get_mut(drag.entity) else {
+    let Some(scroll_entity) =
+        scroll_event_target_for_pointer(drag.event_target(), drag.entity, &parents, &scroll_roots)
+    else {
+        return;
+    };
+    let Ok((mut scroll_position, start, computed)) = scroll_views.get_mut(scroll_entity) else {
         return;
     };
 
     let max_offset = max_scroll_offset(computed);
     let next = start.0 - drag.distance / ui_scale.0;
     scroll_position.0 = next.clamp(Vec2::ZERO, max_offset);
+}
+
+fn scroll_event_target(
+    entity: Entity,
+    parents: &Query<&ChildOf>,
+    scroll_roots: &Query<(), With<UiScrollView>>,
+) -> Option<Entity> {
+    if scroll_roots.contains(entity) {
+        Some(entity)
+    } else {
+        parents
+            .iter_ancestors(entity)
+            .find(|ancestor| scroll_roots.contains(*ancestor))
+    }
+}
+
+fn scroll_event_target_for_pointer(
+    current_target: Entity,
+    original_target: Entity,
+    parents: &Query<&ChildOf>,
+    scroll_roots: &Query<(), With<UiScrollView>>,
+) -> Option<Entity> {
+    scroll_event_target(current_target, parents, scroll_roots)
+        .or_else(|| scroll_event_target(original_target, parents, scroll_roots))
 }
 
 pub(crate) fn set_scroll_audit_position(
@@ -348,6 +389,7 @@ pub(crate) fn max_scroll_offset(computed: &ComputedNode) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
 
     #[test]
     fn scroll_column_node_uses_vertical_overflow_and_max_height() {
@@ -394,6 +436,22 @@ mod tests {
                 .map(|position| position.0),
             Some(Vec2::ZERO)
         );
+    }
+
+    #[test]
+    fn scroll_drag_target_resolves_the_nearest_scroll_ancestor() {
+        let mut app = App::new();
+        let scroll = app.world_mut().spawn(UiScrollView).id();
+        let child = app.world_mut().spawn(ChildOf(scroll)).id();
+
+        app.world_mut()
+            .run_system_once(
+                move |parents: Query<&ChildOf>, roots: Query<(), With<UiScrollView>>| {
+                    assert_eq!(scroll_event_target(scroll, &parents, &roots), Some(scroll));
+                    assert_eq!(scroll_event_target(child, &parents, &roots), Some(scroll));
+                },
+            )
+            .expect("scroll ancestor query should run");
     }
 
     fn computed_node(size: Vec2, content_size: Vec2) -> ComputedNode {

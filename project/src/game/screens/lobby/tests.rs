@@ -89,6 +89,22 @@ fn lobby_document_is_valid_and_uses_keyed_typed_collection() {
     );
     assert!(find_document_node(&document.root, "lobby.entry_artwork").is_none());
     assert!(!LOBBY_DOCUMENT_SOURCE.contains("artwork_status"));
+    for (node_id, display_binding) in [
+        ("lobby.error", "lobby.games.error_display"),
+        ("lobby.resource_notice", "lobby.resources.notice_display"),
+        ("lobby.selection", "lobby.games.selected_display"),
+    ] {
+        let node = find_document_node(&document.root, node_id).unwrap();
+        assert_eq!(
+            node.style()
+                .bindings
+                .display
+                .as_ref()
+                .map(|path| path.as_str()),
+            Some(display_binding)
+        );
+        assert!(node.style().bindings.visibility.is_none());
+    }
 }
 
 #[test]
@@ -172,6 +188,78 @@ fn lobby_startup_registration_mounts_fixed_document() {
     assert!((fallback.green - 41.0 / 255.0).abs() < 0.001);
     assert!((fallback.blue - 48.0 / 255.0).abs() < 0.001);
     assert!((fallback.alpha - 1.0).abs() < 0.001);
+}
+
+#[test]
+fn lobby_runtime_removes_hidden_sections_from_layout() {
+    let mut state = LobbyUiState::default();
+    state.selected_entry_id = None;
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<AppUiMode>()
+        .insert_resource(UiTheme::default())
+        .insert_resource(UiMetrics::default())
+        .insert_resource(UiFontAssets::test_registry())
+        .init_resource::<UiFocusState>()
+        .init_resource::<UiViewport>()
+        .init_resource::<UiBindingValues>()
+        .init_resource::<LobbyHostContract>()
+        .init_resource::<MainWorldEntryState>()
+        .insert_resource(MyServerSession {
+            game_connection_state: GameConnectionState::Authenticated,
+            ..Default::default()
+        })
+        .insert_resource(state)
+        .add_plugins((
+            UiDocumentRuntimePlugin,
+            UiDocumentPreviewPlugin,
+            DeclarativeScreenHostPlugin,
+        ))
+        .add_systems(Startup, register_lobby_contract)
+        .add_systems(Update, sync_lobby_document_bindings);
+    set_lobby_audit_image_failure(
+        &mut app
+            .world_mut()
+            .resource_mut::<UiDocumentAssetPreflightOverrides>(),
+        true,
+    );
+    app.world_mut()
+        .resource_mut::<NextState<AppUiMode>>()
+        .set(AppUiMode::Lobby);
+
+    for _ in 0..8 {
+        app.update();
+    }
+
+    let document_id = UiDocumentId::from_str(LOBBY_DOCUMENT_ID).unwrap();
+    let instance_id = app
+        .world()
+        .resource::<UiDocumentRuntime>()
+        .active_instance(OWNER_LOBBY.as_str(), &document_id)
+        .unwrap();
+    for node_id in ["lobby.error", "lobby.resource_notice", "lobby.selection"] {
+        let entity = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .node_entity(instance_id, &UiNodeId::from_str(node_id).unwrap())
+            .unwrap();
+        assert_eq!(
+            app.world().get::<Node>(entity).unwrap().display,
+            Display::None,
+            "{node_id} must not reserve layout space while hidden"
+        );
+    }
+    let scroll = app
+        .world()
+        .resource::<UiDocumentRuntime>()
+        .node_entity(instance_id, &UiNodeId::from_str("lobby.scroll").unwrap())
+        .unwrap();
+    let scroll_node = app.world().get::<Node>(scroll).unwrap();
+    assert_eq!(scroll_node.position_type, PositionType::Absolute);
+    assert_eq!(scroll_node.width, percent(100));
+    assert_eq!(scroll_node.height, percent(100));
+    assert_eq!(scroll_node.max_height, px(2400));
+    assert_eq!(scroll_node.overflow, Overflow::scroll_y());
 }
 
 #[test]
@@ -440,6 +528,47 @@ fn lobby_bindings_cover_collection_connection_and_maximum_list_states() {
     assert_eq!(
         lobby_binding_value(&app, "lobby.games.view_state"),
         crate::framework::ui::document::UiBindingValue::Enum("error".to_owned())
+    );
+}
+
+#[test]
+fn lobby_display_bindings_remove_hidden_sections_from_layout() {
+    let mut app =
+        lobby_binding_test_app(GameConnectionState::Authenticated, LobbyUiState::default());
+    app.update();
+
+    assert_eq!(
+        lobby_binding_value(&app, "lobby.games.selected_display"),
+        crate::framework::ui::document::UiBindingValue::Enum("flex".to_owned())
+    );
+    assert_eq!(
+        lobby_binding_value(&app, "lobby.games.error_display"),
+        crate::framework::ui::document::UiBindingValue::Enum("none".to_owned())
+    );
+    assert_eq!(
+        lobby_binding_value(&app, "lobby.resources.notice_display"),
+        crate::framework::ui::document::UiBindingValue::Enum("none".to_owned())
+    );
+
+    {
+        let mut state = app.world_mut().resource_mut::<LobbyUiState>();
+        state.selected_entry_id = None;
+        state.collection_state = LobbyCollectionState::Error;
+        state.resource_notice_visible = true;
+    }
+    app.update();
+
+    assert_eq!(
+        lobby_binding_value(&app, "lobby.games.selected_display"),
+        crate::framework::ui::document::UiBindingValue::Enum("none".to_owned())
+    );
+    assert_eq!(
+        lobby_binding_value(&app, "lobby.games.error_display"),
+        crate::framework::ui::document::UiBindingValue::Enum("flex".to_owned())
+    );
+    assert_eq!(
+        lobby_binding_value(&app, "lobby.resources.notice_display"),
+        crate::framework::ui::document::UiBindingValue::Enum("flex".to_owned())
     );
 }
 
