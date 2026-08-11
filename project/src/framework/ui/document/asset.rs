@@ -89,6 +89,7 @@ pub enum UiImageFit {
     #[default]
     Contain,
     Cover,
+    Natural,
     Stretch,
 }
 
@@ -150,6 +151,7 @@ impl UiImagePresentation {
             UiImageFit::Cover => crate::framework::ui::widgets::UiImageFit::cover(
                 crate::framework::ui::widgets::UiImageFocus::new(focus.x, focus.y),
             ),
+            UiImageFit::Natural => crate::framework::ui::widgets::UiImageFit::Natural,
             UiImageFit::Stretch => crate::framework::ui::widgets::UiImageFit::Stretch,
         })
     }

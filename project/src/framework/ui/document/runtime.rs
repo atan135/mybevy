@@ -33,8 +33,10 @@ use crate::framework::ui::{
     },
     i18n::{UiI18n, UiI18nSystems, UiI18nText},
     style::{
-        UiFontAssets, UiFontWeight, UiTextLineHeight as FrameworkTextLineHeight, UiTheme,
-        theme::ButtonColors, try_ui_styled_text,
+        UiFontAssets, UiFontWeight, UiTextLineHeight as FrameworkTextLineHeight, UiTextStyleToken,
+        UiTextTruncation, UiTheme,
+        theme::{ButtonColors, UiThemeTextColorRole, UiThemeTextStyleRole},
+        try_ui_styled_text,
     },
     widgets::{
         DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
@@ -43,7 +45,8 @@ use crate::framework::ui::{
         UiControlId, UiControlKind, UiControlMeta, UiControlState, UiControlValue, UiDropdown,
         UiDropdownOption, UiImagePixelSize, UiImageSize, UiImageTextureSource, UiProgress,
         UiScrollViewConfig, UiSensitiveTextInput, UiSlider, UiStepper, UiTextInput,
-        UiTextInputMaxChars, UiTextInputSubmitted, UiTextInputValue, UiTooltip, UiTooltipTone,
+        UiTextInputError, UiTextInputMaxChars, UiTextInputSubmitted, UiTextInputValue, UiTooltip,
+        UiTooltipTone,
         controls::{
             SelectionVisualState, UiBadgeLabel, UiButtonStyleLabel, UiDropdownLabel,
             UiNumericControlLabel, UiProgressLabel, UiSegmentOption, UiSegmentOptionSelected,
@@ -52,8 +55,9 @@ use crate::framework::ui::{
             UiTextInputTextPart, badge, progress, progress_display_text, resolve_control_state,
             segment_option_key_bundle, slider_bundle, stepper_bundle, tab,
         },
-        dropdown_key, primary_action_button, secondary_action_button, segmented_control, tab_list,
-        text_input, try_ui_advanced_image_from_handle, ui_image, ui_scroll_column_bundle,
+        dropdown_text, primary_action_button, secondary_action_button, segmented_control, tab_list,
+        text_input, try_ui_advanced_image_from_handle, ui_atlas_image, ui_image,
+        ui_scroll_column_bundle,
     },
 };
 
@@ -2237,12 +2241,63 @@ fn spawn_node_content(
             component,
             ..
         } => {
-            world.entity_mut(entity).insert((Button, FocusableButton));
-            insert_image(world, entity, pending, asset, presentation, *tint)?;
-            if let Some(content) = slot_content(component, UiControlSlot::Label) {
+            let label_content = slot_content(component, UiControlSlot::Label);
+            let icon_only = prepared
+                .style
+                .role
+                .as_ref()
+                .is_some_and(|role| role.as_str() == "icon_only");
+            let has_label = label_content.is_some() && !icon_only;
+            if let (Some(theme), Some(metrics)) = (
+                world.get_resource::<UiTheme>().cloned(),
+                world
+                    .get_resource::<crate::framework::ui::core::UiMetrics>()
+                    .copied(),
+            ) {
+                let node = if has_label {
+                    crate::framework::ui::widgets::controls::icon_label_button_node(
+                        &theme,
+                        &metrics,
+                        crate::framework::ui::widgets::UiIconLabelPlacement::Leading,
+                    )
+                } else {
+                    crate::framework::ui::widgets::controls::icon_button_node(&theme, &metrics)
+                };
+                world.entity_mut(entity).insert((
+                    Button,
+                    FocusableButton,
+                    node,
+                    BackgroundColor(theme.colors.secondary_button.idle),
+                ));
+            } else {
+                world.entity_mut(entity).insert((Button, FocusableButton));
+            }
+
+            let image_entity = world
+                .spawn(Node {
+                    width: px(22),
+                    height: px(22),
+                    min_width: px(22),
+                    flex_shrink: 0.0,
+                    ..default()
+                })
+                .id();
+            insert_image(world, image_entity, pending, asset, presentation, *tint)?;
+            let image_trailing = prepared
+                .style
+                .role
+                .as_ref()
+                .is_some_and(|role| role.as_str() == "icon_trailing");
+            if !image_trailing {
+                world.entity_mut(entity).add_child(image_entity);
+            }
+            if let Some(content) = label_content.filter(|_| !icon_only) {
                 let text = render_text(world, pending, content);
                 let label = spawn_plain_text_child(world, entity, text);
                 configure_generated_text(world, label, pending, content, &prepared.style);
+            }
+            if image_trailing {
+                world.entity_mut(entity).add_child(image_entity);
             }
         }
         UiNode::Badge { component, .. } => {
@@ -2407,13 +2462,13 @@ fn spawn_node_content(
                 world.get_resource::<AssetServer>().cloned(),
                 world.get_resource::<UiI18n>().cloned(),
             ) {
-                world.entity_mut(entity).insert(dropdown_key(
+                world.entity_mut(entity).insert(dropdown_text(
                     &theme,
                     &fonts,
                     &asset_server,
                     &i18n,
-                    "document.dropdown",
-                    "Select",
+                    UiControlId::new("document.dropdown"),
+                    placeholder,
                     options,
                     selected_index,
                     prepared
@@ -2456,9 +2511,14 @@ fn spawn_node_content(
     }
     materialize_remaining_control_slots(world, entity, pending, prepared)?;
     let framework_node = world.get::<Node>(entity).cloned();
-    world
-        .entity_mut(entity)
-        .insert(runtime_node_layout(prepared));
+    let mut runtime_layout = runtime_node_layout(prepared);
+    if matches!(&prepared.source, UiNode::Image { .. } | UiNode::Icon { .. })
+        && prepared.source.layout().align_self == super::UiAlignSelf::Auto
+        && let Some(framework_node) = framework_node.as_ref()
+    {
+        runtime_layout.align_self = framework_node.align_self;
+    }
+    world.entity_mut(entity).insert(runtime_layout);
     if let Some(control) = prepared.control {
         apply_control_presentation(
             world,
@@ -2497,6 +2557,7 @@ fn materialize_remaining_control_slots(
     let Some(component) = prepared.source.component() else {
         return Ok(());
     };
+    let is_text_input = matches!(&prepared.source, UiNode::TextInput { .. });
     let slots: &[UiControlSlot] = match &prepared.source {
         UiNode::Button { .. } => &[UiControlSlot::Leading, UiControlSlot::Trailing],
         UiNode::TextInput { .. } => &[
@@ -2547,6 +2608,48 @@ fn materialize_remaining_control_slots(
                     TextColor(Color::WHITE),
                 ));
                 configure_generated_text(world, child, pending, content, &prepared.style);
+                if is_text_input {
+                    match slot {
+                        UiControlSlot::Label => {
+                            world.entity_mut(child).insert(Node {
+                                display: Display::None,
+                                ..default()
+                            });
+                        }
+                        UiControlSlot::Helper | UiControlSlot::Error => {
+                            let input_height = world
+                                .get_resource::<crate::framework::ui::core::UiMetrics>()
+                                .map_or(48.0, |metrics| metrics.input_height);
+                            let (gap, font_size, color) = world.get_resource::<UiTheme>().map_or(
+                                (6.0, 14.0, Color::WHITE),
+                                |theme| {
+                                    (
+                                        theme.layout.row_gap * 0.5,
+                                        theme.text.caption,
+                                        if *slot == UiControlSlot::Error {
+                                            theme.colors.text_error
+                                        } else {
+                                            theme.colors.text_muted
+                                        },
+                                    )
+                                },
+                            );
+                            world.entity_mut(child).insert((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: px(0),
+                                    top: px(input_height + gap),
+                                    width: percent(100),
+                                    ..default()
+                                },
+                                TextFont::from_font_size(font_size),
+                                TextColor(color),
+                                UiThemeTextStyleRole::Caption,
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
             }
             UiControlSlotContent::Icon { asset, tint } => {
                 insert_image(
@@ -2590,6 +2693,13 @@ fn apply_control_presentation(
         .control_styles
         .as_ref()
         .expect("control nodes retain prepared state styles");
+    if adapter.kind == UiControlKind::TextInput {
+        if adapter.state == UiControlState::Error {
+            world.entity_mut(entity).insert(UiTextInputError);
+        } else {
+            world.entity_mut(entity).remove::<UiTextInputError>();
+        }
+    }
     let font_handles = pending
         .assets
         .iter()
@@ -2600,6 +2710,7 @@ fn apply_control_presentation(
         .collect();
     world.entity_mut(entity).insert((
         UiDocumentControlPresentation {
+            kind: adapter.kind,
             variant,
             size: adapter.size,
             state: adapter.state,
@@ -2619,7 +2730,14 @@ fn apply_control_presentation(
         }
         return;
     };
-    let (background, border) = control_variant_colors(&theme, variant, adapter.state);
+    let (background, border) = if matches!(
+        adapter.kind,
+        UiControlKind::Button | UiControlKind::ImageButton | UiControlKind::Tab
+    ) {
+        control_variant_colors(&theme, variant, adapter.state)
+    } else {
+        (None, None)
+    };
     if let Some(background) = background {
         world.entity_mut(entity).insert(BackgroundColor(background));
     }
@@ -2633,15 +2751,80 @@ fn apply_control_presentation(
     };
     if let Some(mut node) = world.get_mut::<Node>(entity) {
         let source_layout = prepared.source.layout();
-        if source_layout.min_height == super::UiLength::Auto {
+        if let Some(framework_node) = framework_node {
+            if source_layout.width == super::UiLength::Auto {
+                node.width = framework_node.width;
+            }
+            if source_layout.height == super::UiLength::Auto {
+                node.height = framework_node.height;
+            }
+            if source_layout.min_width == super::UiLength::Auto {
+                node.min_width = framework_node.min_width;
+            }
+            if source_layout.max_width == super::UiLength::Auto {
+                node.max_width = framework_node.max_width;
+            }
+            if source_layout.min_height == super::UiLength::Auto {
+                node.min_height = framework_node.min_height;
+            }
+            if source_layout.max_height == super::UiLength::Auto {
+                node.max_height = framework_node.max_height;
+            }
+            if source_layout.border == super::UiInsets::default() {
+                node.border = framework_node.border;
+            }
+            if source_layout.align_items == super::UiAlignItems::Stretch {
+                node.align_items = framework_node.align_items;
+            }
+            if source_layout.justify_content == super::UiContentAlignment::Start {
+                node.justify_content = framework_node.justify_content;
+            }
+            if source_layout.justify_self == super::UiAlignSelf::Auto {
+                node.justify_self = framework_node.justify_self;
+            }
+            if source_layout.direction == super::UiFlexDirection::Column {
+                node.flex_direction = framework_node.flex_direction;
+            }
+            if source_layout.gap == super::UiLength::Px(0.0) && source_layout.row_gap.is_none() {
+                node.row_gap = framework_node.row_gap;
+            }
+            if source_layout.gap == super::UiLength::Px(0.0) && source_layout.column_gap.is_none() {
+                node.column_gap = framework_node.column_gap;
+            }
+            node.border_radius = framework_node.border_radius;
+            node.overflow = framework_node.overflow;
+        }
+        if source_layout.min_height == super::UiLength::Auto
+            && scale != 1.0
+            && matches!(
+                adapter.kind,
+                UiControlKind::Button | UiControlKind::ImageButton
+            )
+        {
             node.min_height = px(theme.button.height * scale);
         }
         if source_layout.padding == super::UiInsets::default() {
             if let Some(framework_node) = framework_node {
                 node.padding = framework_node.padding;
             }
-            node.padding.left = px(theme.button.padding_x * scale);
-            node.padding.right = px(theme.button.padding_x * scale);
+            if scale != 1.0
+                && matches!(
+                    adapter.kind,
+                    UiControlKind::Button | UiControlKind::ImageButton
+                )
+            {
+                node.padding.left = px(theme.button.padding_x * scale);
+                node.padding.right = px(theme.button.padding_x * scale);
+            }
+        }
+        if adapter.kind == UiControlKind::TextInput
+            && source_layout.margin == super::UiInsets::default()
+            && prepared.source.component().is_some_and(|component| {
+                component.slots.contains_key(&UiControlSlot::Helper)
+                    || component.slots.contains_key(&UiControlSlot::Error)
+            })
+        {
+            node.margin.bottom = px(theme.layout.row_gap * 0.5 + theme.text.caption * 1.25);
         }
     }
     if let Some(node) = world.get::<Node>(entity).cloned() {
@@ -2897,14 +3080,40 @@ fn insert_text(
 ) {
     let text = render_text(world, pending, content);
     let text_visual = resolved_style.properties.text.as_ref();
+    let theme = world.get_resource::<UiTheme>().cloned();
+    let theme_role = document_text_style_role(resolved_style);
     let font_size = text_visual
         .and_then(|style| style.font_size)
+        .or_else(|| {
+            theme
+                .as_ref()
+                .zip(theme_role)
+                .map(|(theme, role)| role.font_size(theme))
+        })
         .unwrap_or(18.0);
     let color = text_visual
         .and_then(|style| style.color)
         .map(ui_color)
-        .unwrap_or(Color::WHITE);
+        .unwrap_or_else(|| document_text_color(theme.as_ref(), resolved_style));
     let mut adapter = typography.to_framework_adapter(font_size);
+    if let Some((theme, role)) = theme.as_ref().zip(theme_role) {
+        let role_style = UiTextStyleToken::for_theme_role(theme, role);
+        if typography.font_role == super::UiTextFontRole::Body {
+            adapter.style.font_role = role_style.font_role;
+        }
+        if typography.weight == super::UiTextWeight::Regular {
+            adapter.style.font_weight = role_style.font_weight;
+        }
+        if typography.line_height == UiTextLineHeight::Normal {
+            adapter.style.line_height = role_style.line_height;
+        }
+        if typography.wrap == super::UiTextWrap::WordOrCharacter {
+            adapter.style.wrap = role_style.wrap;
+        }
+    }
+    if typography.overflow == UiTextOverflow::Ellipsis {
+        adapter.style.truncation = UiTextTruncation::Ellipsis { max_graphemes: 22 };
+    }
     if let Some(weight) = text_visual.and_then(|style| style.weight) {
         adapter.style.font_weight = match weight {
             super::UiTextWeight::Regular => UiFontWeight::Regular,
@@ -2960,6 +3169,30 @@ fn insert_text(
             });
         }
         UiTextContent::Literal(_) => {}
+    }
+}
+
+fn document_text_style_role(resolved_style: &UiResolvedStyle) -> Option<UiThemeTextStyleRole> {
+    match resolved_style.text_role.as_ref().map(|role| role.as_str()) {
+        Some("title_large") => Some(UiThemeTextStyleRole::TitleLarge),
+        Some("title") => Some(UiThemeTextStyleRole::Title),
+        Some("subtitle") => Some(UiThemeTextStyleRole::Subtitle),
+        Some("heading" | "section_label") => Some(UiThemeTextStyleRole::SectionLabel),
+        Some("body") => Some(UiThemeTextStyleRole::Body),
+        Some("caption") => Some(UiThemeTextStyleRole::Caption),
+        Some("button") => Some(UiThemeTextStyleRole::Button),
+        _ => None,
+    }
+}
+
+fn document_text_color(theme: Option<&UiTheme>, resolved_style: &UiResolvedStyle) -> Color {
+    let Some(theme) = theme else {
+        return Color::WHITE;
+    };
+    match resolved_style.role.as_ref().map(|role| role.as_str()) {
+        Some("muted" | "caption") => UiThemeTextColorRole::Muted.color(theme),
+        Some("error") => theme.colors.text_error,
+        _ => UiThemeTextColorRole::Primary.color(theme),
     }
 }
 
@@ -3033,6 +3266,7 @@ struct UiDocumentControlSlotMarker(UiControlSlot);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
 struct UiDocumentControlPresentation {
+    kind: UiControlKind,
     variant: UiComponentVariant,
     size: UiComponentSize,
     state: UiControlState,
@@ -3097,13 +3331,18 @@ fn apply_text_constraints(
     let UiNode::Text { typography, .. } = node else {
         return;
     };
-    let font_size = resolved_style
-        .properties
-        .text
-        .as_ref()
-        .and_then(|style| style.font_size)
+    let font_size = world
+        .get::<TextFont>(entity)
+        .map(|font| font.font_size)
         .unwrap_or(18.0);
-    let line_height_px = resolved_line_height_px(typography, resolved_style, font_size);
+    let line_height_px = world
+        .get::<LineHeight>(entity)
+        .copied()
+        .map(|line_height| match line_height {
+            LineHeight::Px(value) => value,
+            LineHeight::RelativeToFont(value) => value * font_size,
+        })
+        .unwrap_or_else(|| resolved_line_height_px(typography, resolved_style, font_size));
     world.entity_mut(entity).insert(UiDocumentTextConstraint {
         max_lines: typography.max_lines,
         overflow: typography.overflow,
@@ -3556,26 +3795,33 @@ fn insert_image_handle(
     tint: UiColor,
 ) -> Result<(), &'static str> {
     if let Some(fit) = presentation.to_widget_fit() {
-        let (_, mut image, background, widget, status, name) = ui_image(
-            handle,
-            fit,
-            UiImageSize::FixedBox {
-                width: 1.0,
-                height: 1.0,
-            },
-        );
-        if let UiImagePresentation::AtlasFrame { frame, .. } = presentation
-            && let Some(description) = entry.frames.get(frame)
-        {
-            image = image.with_rect(Rect::from_corners(
-                Vec2::new(description.x as f32, description.y as f32),
-                Vec2::new(
-                    description.x.saturating_add(description.width) as f32,
-                    description.y.saturating_add(description.height) as f32,
-                ),
-            ));
-        }
+        let size = UiImageSize::FixedBox {
+            width: 1.0,
+            height: 1.0,
+        };
+        let (image_layout, mut image, background, widget, status, name) =
+            if let UiImagePresentation::AtlasFrame { frame, .. } = presentation {
+                let description = entry
+                    .frames
+                    .get(frame)
+                    .ok_or("UI_DOCUMENT_ATLAS_FRAME_MISSING")?;
+                let frame_rect = Rect::from_corners(
+                    Vec2::new(description.x as f32, description.y as f32),
+                    Vec2::new(
+                        description.x.saturating_add(description.width) as f32,
+                        description.y.saturating_add(description.height) as f32,
+                    ),
+                );
+                ui_atlas_image(handle, fit, frame_rect, size)
+            } else {
+                ui_image(handle, fit, size)
+            };
         image.color = ui_color(tint);
+        if let Some(mut node) = world.get_mut::<Node>(entity)
+            && node.align_self == AlignSelf::Auto
+        {
+            node.align_self = image_layout.align_self;
+        }
         world
             .entity_mut(entity)
             .insert((image, background, widget, status, name));
@@ -5088,6 +5334,7 @@ fn enforce_document_control_presentations(world: &mut World) {
             world,
             entity,
             &theme,
+            presentation.kind,
             presentation.variant,
             effective_state,
             &layout,
@@ -5110,6 +5357,7 @@ fn apply_document_control_root_style(
     world: &mut World,
     entity: Entity,
     theme: &UiTheme,
+    kind: UiControlKind,
     variant: UiComponentVariant,
     state: UiControlState,
     layout: &UiDocumentControlLayout,
@@ -5125,7 +5373,17 @@ fn apply_document_control_root_style(
         .remove::<BoxShadow>();
 
     let opacity = style.properties.opacity.unwrap_or(1.0);
-    let (variant_background, variant_border) = control_variant_colors(theme, variant, state);
+    let (variant_background, mut variant_border) = if matches!(
+        kind,
+        UiControlKind::Button | UiControlKind::ImageButton | UiControlKind::Tab
+    ) {
+        control_variant_colors(theme, variant, state)
+    } else {
+        (None, None)
+    };
+    if kind == UiControlKind::TextInput && state == UiControlState::Error {
+        variant_border = Some(theme.colors.error);
+    }
     let mut background = variant_background
         .map(BackgroundColor)
         .or(baseline.background);
@@ -8383,7 +8641,10 @@ mod tests {
         assert!(app.world().get::<UiStepper>(stepper).is_some());
         assert!(app.world().get::<UiScrollView>(scroll).is_some());
         assert_eq!(find_descendants_with::<Text>(app.world(), modal).len(), 2);
-        assert!(app.world().get::<ImageNode>(image_button).is_some());
+        assert_eq!(
+            find_descendants_with::<ImageNode>(app.world(), image_button).len(),
+            1
+        );
         assert!(app.world().get::<UiBadge>(badge).is_some());
         assert!(app.world().get::<UiProgress>(progress).is_some());
         assert!(app.world().get::<UiTab>(tab_entity).is_some());
@@ -9049,6 +9310,7 @@ mod tests {
         assert_eq!(
             app.world().get::<UiDocumentControlPresentation>(button),
             Some(&UiDocumentControlPresentation {
+                kind: UiControlKind::Button,
                 variant: UiComponentVariant::Destructive,
                 size: UiComponentSize::Large,
                 state: UiControlState::Pressed,
@@ -9087,6 +9349,21 @@ mod tests {
         );
 
         let input = node_entity(&app, "mapping.input");
+        let expected_input_height = app
+            .world()
+            .resource::<crate::framework::ui::core::UiMetrics>()
+            .input_height;
+        let expected_message_offset =
+            expected_input_height + app.world().resource::<UiTheme>().layout.row_gap * 0.5;
+        assert_eq!(
+            app.world().get::<Node>(input).unwrap().min_height,
+            px(expected_input_height)
+        );
+        assert_eq!(
+            app.world().get::<Node>(input).unwrap().margin.bottom,
+            px(app.world().resource::<UiTheme>().layout.row_gap * 0.5
+                + app.world().resource::<UiTheme>().text.caption * 1.25)
+        );
         assert_eq!(
             app.world()
                 .get::<UiDocumentControlPresentation>(input)
@@ -9095,15 +9372,41 @@ mod tests {
             UiComponentSize::Small
         );
         let input_slots = find_descendants_with::<UiDocumentControlSlotMarker>(app.world(), input);
-        assert!(input_slots.iter().any(|entity| {
-            app.world().get::<UiDocumentControlSlotMarker>(*entity)
-                == Some(&UiDocumentControlSlotMarker(UiControlSlot::Label))
-        }));
-        assert!(input_slots.iter().any(|entity| {
-            app.world().get::<UiDocumentControlSlotMarker>(*entity)
-                == Some(&UiDocumentControlSlotMarker(UiControlSlot::Error))
-                && app.world().get::<Text>(*entity).unwrap().0 == "Input error"
-        }));
+        let input_label = input_slots
+            .iter()
+            .copied()
+            .find(|entity| {
+                app.world().get::<UiDocumentControlSlotMarker>(*entity)
+                    == Some(&UiDocumentControlSlotMarker(UiControlSlot::Label))
+            })
+            .unwrap();
+        assert_eq!(
+            app.world().get::<Node>(input_label).unwrap().display,
+            Display::None
+        );
+        let input_error = input_slots
+            .iter()
+            .copied()
+            .find(|entity| {
+                app.world().get::<UiDocumentControlSlotMarker>(*entity)
+                    == Some(&UiDocumentControlSlotMarker(UiControlSlot::Error))
+            })
+            .unwrap();
+        assert_eq!(
+            app.world().get::<Text>(input_error).unwrap().0,
+            "Input error"
+        );
+        let input_error_node = app.world().get::<Node>(input_error).unwrap();
+        assert_eq!(input_error_node.position_type, PositionType::Absolute);
+        assert_eq!(input_error_node.top, px(expected_message_offset));
+        assert_eq!(input_error_node.width, percent(100));
+        assert!(app.world().get::<UiTextInputError>(input).is_some());
+        assert_eq!(
+            app.world().get::<BorderColor>(input),
+            Some(&BorderColor::all(
+                app.world().resource::<UiTheme>().colors.error
+            ))
+        );
         let helper = input_slots
             .iter()
             .copied()

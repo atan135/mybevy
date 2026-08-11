@@ -18,7 +18,7 @@ pub(crate) use controls::{
     checkbox_key, checked_checkbox_key, disabled_checkbox_key, disabled_icon_button_key,
     disabled_primary_action_button_key, disabled_secondary_action_button_key,
     disabled_segment_option_key, disabled_slider_key, disabled_stepper_key, disabled_toggle_key,
-    dropdown_key, icon_button_key, icon_label_button_key, image_button_key,
+    dropdown_key, dropdown_text, icon_button_key, icon_label_button_key, image_button_key,
     loading_icon_button_key, loading_primary_action_button_key, primary_action_button,
     primary_action_button_key, primary_action_button_with_i18n_text, progress_key,
     resolve_control_state, screen_label, screen_label_key, screen_title, screen_title_key,
@@ -40,8 +40,9 @@ pub(crate) use image::{
     UiImagePixelRect, UiImagePixelSize, UiImagePresentationKind, UiImageSize, UiImageStatus,
     UiImageTextureSource, UiImageTiling, UiImageWidget, UiNineSlice, UiNineSliceInsets,
     UiSliceScaleMode, UiTileAxis, calculate_image_fit, calculate_nine_slice_layout,
-    calculate_tiling_layout, try_ui_advanced_image, try_ui_advanced_image_from_handle, ui_image,
-    ui_image_panel_node, ui_image_panel_node_with_radius, ui_thumbnail_grid,
+    calculate_tiling_layout, try_ui_advanced_image, try_ui_advanced_image_from_handle,
+    ui_atlas_image, ui_image, ui_image_panel_node, ui_image_panel_node_with_radius,
+    ui_thumbnail_grid,
 };
 #[allow(unused_imports)]
 pub(crate) use layout::{

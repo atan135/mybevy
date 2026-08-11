@@ -60,14 +60,14 @@ use crate::game::{
         ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP, ANCHOR_UI_GALLERY_COMPONENTS,
         ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES, ANCHOR_UI_GALLERY_ICONS,
         ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
-        ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES,
+        ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_INPUTS, ANCHOR_UI_GALLERY_STYLE_SCOPES,
         ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW,
         ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE, MODAL_GALLERY_CONFIRM, OWNER_UI_GALLERY,
         PANEL_GALLERY_FLOATING, PANEL_UI_GALLERY, SCROLL_UI_GALLERY_MAIN,
     },
 };
 
-const GALLERY_STRESS_ITEM_COUNT: usize = 96;
+pub(super) const GALLERY_STRESS_ITEM_COUNT: usize = 24;
 const GALLERY_VISUAL_FIXTURE_PATHS: [&str; 4] = [
     "ui/fixtures/visual-foundation/transparent-edge.png",
     "ui/fixtures/visual-foundation/non-square-2x1.png",
@@ -396,7 +396,7 @@ pub(super) fn setup_ui_gallery(
                         fonts,
                         i18n,
                         "ui_gallery.title",
-                        "UI Gallery",
+                        "UI Gallery (Rust)",
                         UiThemeTextStyleRole::Title,
                     ));
                     header.spawn(secondary_route_button_key(
@@ -889,7 +889,7 @@ pub(super) fn setup_ui_gallery(
                             });
                     });
 
-                body.spawn(gallery_panel(theme))
+                body.spawn((gallery_panel(theme), ANCHOR_UI_GALLERY_INPUTS))
                     .with_children(|inputs_panel| {
                         inputs_panel.spawn(section_label_key(
                             theme,

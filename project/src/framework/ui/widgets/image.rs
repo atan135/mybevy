@@ -838,6 +838,7 @@ pub(crate) struct UiImageWidget {
 #[derive(Clone, Debug)]
 enum UiImagePresentation {
     Fit(UiImageFit),
+    AtlasFit { fit: UiImageFit, frame_rect: Rect },
     Advanced(UiAdvancedImageSpec),
 }
 
@@ -874,6 +875,7 @@ impl UiImageWidget {
             UiImagePresentation::Fit(UiImageFit::Stretch) => UiImagePresentationKind::Stretch,
             UiImagePresentation::Fit(UiImageFit::Contain) => UiImagePresentationKind::Contain,
             UiImagePresentation::Fit(UiImageFit::Cover { .. }) => UiImagePresentationKind::Cover,
+            UiImagePresentation::AtlasFit { .. } => UiImagePresentationKind::AtlasFrame,
             UiImagePresentation::Advanced(spec)
                 if matches!(spec.source, UiAdvancedImageSource::AtlasFrame(_)) =>
             {
@@ -1157,6 +1159,32 @@ pub(crate) fn ui_image(
     )
 }
 
+pub(crate) fn ui_atlas_image(
+    image: Handle<Image>,
+    fit: UiImageFit,
+    frame_rect: Rect,
+    size: UiImageSize,
+) -> (
+    Node,
+    ImageNode,
+    BackgroundColor,
+    UiImageWidget,
+    UiImageStatus,
+    Name,
+) {
+    let (node, mut image_node, background, mut widget, status, _) = ui_image(image, fit, size);
+    image_node.rect = Some(frame_rect);
+    widget.presentation = UiImagePresentation::AtlasFit { fit, frame_rect };
+    (
+        node,
+        image_node,
+        background,
+        widget,
+        status,
+        Name::new("UI atlas image"),
+    )
+}
+
 pub(crate) fn try_ui_advanced_image(
     asset_server: &AssetServer,
     spec: UiAdvancedImageSpec,
@@ -1322,6 +1350,17 @@ pub(crate) fn update_ui_images(
                             },
                         )
                     }
+                    UiImagePresentation::AtlasFit { fit, frame_rect } => {
+                        calculate_atlas_fit(*fit, *frame_rect, container_size).map(|layout| {
+                            apply_ready_image(
+                                &mut next_node,
+                                &mut next_image_node,
+                                &mut next_background,
+                                widget.ready_tint,
+                                layout,
+                            );
+                        })
+                    }
                     UiImagePresentation::Advanced(spec) => resolve_advanced_image_layout(
                         spec,
                         source_size,
@@ -1385,6 +1424,23 @@ pub(crate) fn update_ui_images(
             next_status,
         );
     }
+}
+
+fn calculate_atlas_fit(
+    fit: UiImageFit,
+    frame_rect: Rect,
+    container_size: Vec2,
+) -> Result<UiImageFitLayout, UiImageError> {
+    let frame_size = frame_rect.size();
+    let mut layout = calculate_image_fit(fit, frame_size, container_size)?;
+    let local_rect = layout
+        .source_rect
+        .unwrap_or(Rect::from_corners(Vec2::ZERO, frame_size));
+    layout.source_rect = Some(Rect::from_corners(
+        frame_rect.min + local_rect.min,
+        frame_rect.min + local_rect.max,
+    ));
+    Ok(layout)
 }
 
 fn commit_image_components(
@@ -1848,6 +1904,48 @@ mod tests {
         let contain = calculate_image_fit(UiImageFit::Contain, source, container).unwrap();
         assert_vec2_close(contain.render_size, Vec2::new(100.0, 50.0));
         assert_eq!(contain.source_rect, None);
+    }
+
+    #[test]
+    fn atlas_fit_keeps_frame_rect_after_contain_and_offsets_cover_crop() {
+        let frame = Rect::from_corners(Vec2::new(32.0, 0.0), Vec2::new(64.0, 32.0));
+        let contain =
+            calculate_atlas_fit(UiImageFit::Contain, frame, Vec2::new(64.0, 32.0)).unwrap();
+        assert_vec2_close(contain.render_size, Vec2::splat(32.0));
+        assert_rect_close(contain.source_rect.unwrap(), frame);
+
+        let cover = calculate_atlas_fit(
+            UiImageFit::cover(UiImageFocus::CENTER),
+            frame,
+            Vec2::new(64.0, 32.0),
+        )
+        .unwrap();
+        assert_vec2_close(cover.render_size, Vec2::new(64.0, 32.0));
+        assert_rect_close(
+            cover.source_rect.unwrap(),
+            Rect::from_corners(Vec2::new(32.0, 8.0), Vec2::new(64.0, 24.0)),
+        );
+    }
+
+    #[test]
+    fn atlas_image_widget_reports_atlas_presentation_before_asset_ready() {
+        let frame = Rect::from_corners(Vec2::new(64.0, 0.0), Vec2::new(96.0, 32.0));
+        let (_, image, _, widget, status, _) = ui_atlas_image(
+            Handle::default(),
+            UiImageFit::Contain,
+            frame,
+            UiImageSize::FixedBox {
+                width: 64.0,
+                height: 64.0,
+            },
+        );
+
+        assert_eq!(image.rect, Some(frame));
+        assert_eq!(
+            widget.presentation_kind(),
+            UiImagePresentationKind::AtlasFrame
+        );
+        assert_eq!(status, UiImageStatus::Loading);
     }
 
     #[test]

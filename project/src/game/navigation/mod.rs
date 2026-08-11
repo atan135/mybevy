@@ -28,11 +28,12 @@ use crate::game::ui_ids::{
     ANCHOR_UI_GALLERY_COMPONENT_TOGGLES, ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP,
     ANCHOR_UI_GALLERY_COMPONENTS, ANCHOR_UI_GALLERY_EFFECTS, ANCHOR_UI_GALLERY_ICON_STATES,
     ANCHOR_UI_GALLERY_ICONS, ANCHOR_UI_GALLERY_IMAGE_ATLAS, ANCHOR_UI_GALLERY_IMAGE_MODES,
-    ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_STYLE_SCOPES, ANCHOR_UI_GALLERY_TYPOGRAPHY,
-    ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW, ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE,
-    OWNER_AI_LOGIN_REFERENCE, OWNER_AUDIO_GALLERY, OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS,
-    OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY,
-    OWNER_LOGIN, OWNER_MAIN_WORLD, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
+    ANCHOR_UI_GALLERY_IMAGE_TILING, ANCHOR_UI_GALLERY_INPUTS, ANCHOR_UI_GALLERY_STYLE_SCOPES,
+    ANCHOR_UI_GALLERY_TYPOGRAPHY, ANCHOR_UI_GALLERY_TYPOGRAPHY_OVERFLOW,
+    ANCHOR_UI_GALLERY_VISUAL_ACCEPTANCE, OWNER_AI_LOGIN_REFERENCE, OWNER_AUDIO_GALLERY,
+    OWNER_AUDIO_MONITOR, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
+    OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_LOBBY, OWNER_LOGIN, OWNER_MAIN_WORLD,
+    OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
     OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE, OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GALLERY,
     OWNER_UI_GENERATED_ACCEPTANCE, SCROLL_UI_GALLERY_MAIN,
 };
@@ -110,7 +111,7 @@ fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
                     value_param: "value".to_owned(),
                 },
             )
-            .with_source(UiNodeId::from_str("gallery.action").unwrap())
+            .with_source(UiNodeId::from_str("gallery.pair.binding.update").unwrap())
             .with_param(
                 "value",
                 UiActionParamSchema::required(UiActionParamType::Binding(UiBindingType::String)),
@@ -129,14 +130,14 @@ fn register_game_ui_actions(mut registry: ResMut<UiActionRegistry>) {
             )
             .with_sources(
                 [
-                    "gallery.input",
-                    "gallery.checkbox",
-                    "gallery.toggle",
-                    "gallery.segmented",
-                    "gallery.slider",
-                    "gallery.stepper",
-                    "gallery.tab_overview",
-                    "gallery.tab_details",
+                    "gallery.pair.input.player_name",
+                    "gallery.pair.selection.checkbox.checked",
+                    "gallery.pair.selection.toggle.on",
+                    "gallery.pair.selection.segmented",
+                    "gallery.pair.numeric.volume",
+                    "gallery.pair.numeric.players",
+                    "gallery.pair.components.tab.selected",
+                    "gallery.pair.components.tab.normal",
                     "gallery.select",
                 ]
                 .into_iter()
@@ -489,6 +490,14 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
                         .with_reference(DEFAULT_REFERENCE_AUDIT_RECIPE),
                 ),
             ));
+        } else if mode == AppUiMode::UiDocumentGallery {
+            registry.register_recipe(UiAuditScreenRecipe::new(
+                screen.with_recipe(
+                    UiAuditRecipe::new(UI_GALLERY_AUDIT_CAPTURES)
+                        .with_reference(DEFAULT_REFERENCE_AUDIT_RECIPE)
+                        .with_ready(UiAuditReadyCondition::OwnerDocument),
+                ),
+            ));
         } else if matches!(
             mode,
             AppUiMode::Login
@@ -501,7 +510,6 @@ fn register_ui_audit_screen_entries(registry: &mut UiAuditScreenRegistry) {
                 | AppUiMode::RobotSyncScene
                 | AppUiMode::FangyuanHome
                 | AppUiMode::FangyuanPlayerPreview
-                | AppUiMode::UiDocumentGallery
                 | AppUiMode::UiGeneratedAcceptance
         ) {
             registry.register_recipe(UiAuditScreenRecipe::new(
@@ -645,6 +653,11 @@ const UI_GALLERY_AUDIT_CAPTURES: &[UiAuditCaptureRecipe] = &[
         UiAuditCaptureState::ComponentTooltip,
         SCROLL_UI_GALLERY_MAIN,
         ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP,
+    ),
+    UiAuditCaptureRecipe::scroll_anchor(
+        UiAuditCaptureState::Inputs,
+        SCROLL_UI_GALLERY_MAIN,
+        ANCHOR_UI_GALLERY_INPUTS,
     ),
     UiAuditCaptureRecipe::scroll(
         UiAuditCaptureState::Top,
@@ -958,6 +971,7 @@ mod tests {
                 UiAuditCaptureState::ComponentSegmented,
                 UiAuditCaptureState::ComponentOverlays,
                 UiAuditCaptureState::ComponentTooltip,
+                UiAuditCaptureState::Inputs,
                 UiAuditCaptureState::Top,
                 UiAuditCaptureState::Middle,
                 UiAuditCaptureState::Bottom,
@@ -1035,9 +1049,31 @@ mod tests {
                 UiAuditCaptureState::ComponentTooltip,
                 ANCHOR_UI_GALLERY_COMPONENT_TOOLTIP,
             ),
+            (UiAuditCaptureState::Inputs, ANCHOR_UI_GALLERY_INPUTS),
         ] {
             assert_eq!(target(state), Some(anchor.as_str()));
         }
+    }
+
+    #[test]
+    fn ui_document_gallery_reuses_code_gallery_capture_contract() {
+        let mut registry = UiAuditScreenRegistry::default();
+        register_ui_audit_screen_entries(&mut registry);
+
+        let code_recipe = registry
+            .resolve("ui_gallery")
+            .and_then(|screen| screen.recipe)
+            .expect("code Gallery should have an audit recipe");
+        let document_recipe = registry
+            .resolve("ui_document_gallery")
+            .and_then(|screen| screen.recipe)
+            .expect("document Gallery should have an audit recipe");
+
+        assert_eq!(document_recipe.captures, code_recipe.captures);
+        assert_eq!(
+            document_recipe.ready,
+            Some(UiAuditReadyCondition::OwnerDocument)
+        );
     }
 
     #[test]

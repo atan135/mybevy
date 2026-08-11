@@ -767,8 +767,33 @@ pub(crate) fn dropdown_key(
     selected: Option<usize>,
     state: UiControlState,
 ) -> impl Bundle {
+    dropdown_text(
+        theme,
+        fonts,
+        asset_server,
+        i18n,
+        UiControlId::new(key),
+        i18n.tr(key, fallback),
+        options,
+        selected,
+        state,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dropdown_text(
+    theme: &UiTheme,
+    fonts: &UiFontAssets,
+    asset_server: &AssetServer,
+    i18n: &UiI18n,
+    control_id: UiControlId,
+    placeholder: impl Into<String>,
+    options: Vec<UiDropdownOption>,
+    selected: Option<usize>,
+    state: UiControlState,
+) -> impl Bundle {
     debug_assert!(UiControlKind::Dropdown.supports_state(state));
-    let dropdown = UiDropdown::new(i18n.tr(key, fallback), options, selected).with_status_text(
+    let dropdown = UiDropdown::new(placeholder, options, selected).with_status_text(
         i18n.tr("ui.controls.loading", "Loading..."),
         i18n.tr("ui.controls.empty", "No options"),
         i18n.tr("ui.controls.error", "Unable to load options"),
@@ -778,7 +803,7 @@ pub(crate) fn dropdown_key(
     (
         Button,
         FocusableButton,
-        UiControlMeta::new(UiControlId::new(key), UiControlKind::Dropdown),
+        UiControlMeta::new(control_id, UiControlKind::Dropdown),
         flags,
         dropdown,
         UiThemeButtonNodeRole::TextInput,

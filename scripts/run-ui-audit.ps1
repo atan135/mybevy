@@ -306,13 +306,13 @@ function Resolve-UiAuditStates {
     )
 
     if ($StateValue.Trim().Equals("auto", [System.StringComparison]::OrdinalIgnoreCase)) {
-        if ($Screen -eq "ui_gallery") {
-            return "image_fit,visual_foundation,visual_acceptance,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,middle,bottom"
+        if ($Screen -in @("ui_gallery", "ui_document_gallery")) {
+            return "image_fit,visual_foundation,visual_acceptance,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,inputs,middle,bottom"
         }
         return "initial"
     }
 
-    $valid = @("initial", "visual_foundation", "visual_acceptance", "image_fit", "image_modes", "image_tiling", "image_atlas", "typography", "typography_overflow", "icons", "icon_states", "style_scopes", "effects", "animations", "components", "component_checkboxes", "component_toggles", "component_segmented", "component_overlays", "component_tooltip", "top", "middle", "bottom")
+    $valid = @("initial", "visual_foundation", "visual_acceptance", "image_fit", "image_modes", "image_tiling", "image_atlas", "typography", "typography_overflow", "icons", "icon_states", "style_scopes", "effects", "animations", "components", "component_checkboxes", "component_toggles", "component_segmented", "component_overlays", "component_tooltip", "inputs", "top", "middle", "bottom")
     $states = Split-UiAuditList @($StateValue)
     if ($states.Count -eq 0) {
         throw "At least one audit state is required when -States is not auto."
@@ -343,6 +343,64 @@ function Get-UiAuditDeterministicProfile {
         "tablet-portrait" { return [pscustomobject]@{ logical_width = 800.0; logical_height = 1280.0; physical_width = 1600; physical_height = 2560; device_scale = 2.0 } }
         "tablet-landscape" { return [pscustomobject]@{ logical_width = 1280.0; logical_height = 800.0; physical_width = 2560; physical_height = 1600; device_scale = 2.0 } }
         default { throw "Deterministic capture does not know window profile '$Device'." }
+    }
+}
+
+function Get-UiAuditEffectiveTargetProfile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Device,
+        [AllowNull()][string[]]$ExtraBevyArgs
+    )
+
+    $profile = Get-UiAuditDeterministicProfile -Device $Device
+    $rawWidth = [double]$profile.physical_width
+    $rawHeight = [double]$profile.physical_height
+    $deviceScale = [double]$profile.device_scale
+    $windowScale = 1.0
+    $args = if ($null -eq $ExtraBevyArgs) { @() } else { @($ExtraBevyArgs) }
+
+    for ($index = 0; $index -lt $args.Count; $index++) {
+        switch ([string]$args[$index]) {
+            "--window-size" {
+                if ($index + 1 -lt $args.Count -and [string]$args[$index + 1] -match '^(\d+)x(\d+)$') {
+                    $rawWidth = [double]$Matches[1]
+                    $rawHeight = [double]$Matches[2]
+                    $index++
+                }
+            }
+            "--device-scale" {
+                if ($index + 1 -lt $args.Count) {
+                    $parsed = 0.0
+                    if ([double]::TryParse([string]$args[$index + 1], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -and $parsed -gt 0) {
+                        $deviceScale = $parsed
+                    }
+                    $index++
+                }
+            }
+            "--window-scale" {
+                if ($index + 1 -lt $args.Count) {
+                    $value = ([string]$args[$index + 1]).Trim()
+                    $parsed = 0.0
+                    if ($value.EndsWith("%")) {
+                        $value = $value.Substring(0, $value.Length - 1)
+                        if ([double]::TryParse($value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -and $parsed -gt 0) {
+                            $windowScale = $parsed / 100.0
+                        }
+                    } elseif ([double]::TryParse($value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -and $parsed -gt 0) {
+                        $windowScale = $parsed
+                    }
+                    $index++
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        logical_width = $rawWidth / $deviceScale
+        logical_height = $rawHeight / $deviceScale
+        physical_width = [int][Math]::Round($rawWidth * $windowScale)
+        physical_height = [int][Math]::Round($rawHeight * $windowScale)
+        device_scale = $deviceScale * $windowScale
     }
 }
 
@@ -578,7 +636,7 @@ function New-UiAuditTask {
             throw "ExplicitMask dynamic policy requires -DynamicMaskId."
         }
         $determinism = [pscustomobject]@{
-            target_viewport = Get-UiAuditDeterministicProfile -Device $Device
+            target_viewport = Get-UiAuditEffectiveTargetProfile -Device $Device -ExtraBevyArgs $extraArgs
             locale = $Locale.Trim().ToLowerInvariant().Replace("-", "_")
             theme = $Theme.Trim()
             random_seed = $RandomSeed
@@ -7307,7 +7365,10 @@ function Invoke-UiAuditSelfTest {
 
         $tasks = @(New-UiAuditTasks -RunRoot $tempRoot -ScreensToRun $screens -DevicesToRun $devices -StateValue "auto" -ExtraBevyArgs $extraArgs)
         Assert-SelfTest ($tasks.Count -eq 4) "task matrix expansion"
-        Assert-SelfTest ($tasks[0].states -eq "image_fit,visual_foundation,visual_acceptance,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,middle,bottom") "ui_gallery auto states"
+        $galleryAutoStates = "image_fit,visual_foundation,visual_acceptance,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,inputs,middle,bottom"
+        Assert-SelfTest ($tasks[0].states -eq $galleryAutoStates) "ui_gallery auto states"
+        $documentGalleryTask = New-UiAuditTask -RunRoot (Join-FullPath $tempRoot "document-gallery") -Screen "ui_document_gallery" -Device "phone-landscape" -StateValue "auto" -ExtraBevyArgs @()
+        Assert-SelfTest ($documentGalleryTask.states -eq $galleryAutoStates) "ui_document_gallery auto states"
         Assert-SelfTest ($tasks[2].states -eq "initial") "non-recipe screen auto states"
         Assert-SelfTest (($tasks[0].bevy_args[0] -eq "--window-profile") -and ($tasks[0].bevy_args[1] -eq "phone-small")) "device window profile mapping"
         Assert-SelfTest (($tasks[0].output_dir -replace "\\", "/").Contains("/runs/ui_gallery/phone-small")) "output path layout"

@@ -528,11 +528,16 @@ fn validate_slots(
 
     let label_required = !matches!(
         node,
-        UiNode::Scroll { .. } | UiNode::Modal { .. } | UiNode::Tooltip { .. }
+        UiNode::Segmented { .. }
+            | UiNode::Scroll { .. }
+            | UiNode::Modal { .. }
+            | UiNode::Tooltip { .. }
     );
     let legacy_label = matches!(node, UiNode::Button { label: Some(_), .. });
     let slot_label = component.slots.contains_key(&UiControlSlot::Label);
-    if label_required && !legacy_label && !slot_label {
+    let select_placeholder = matches!(node, UiNode::Select { .. })
+        && component.slots.contains_key(&UiControlSlot::Placeholder);
+    if label_required && !legacy_label && !slot_label && !select_placeholder {
         push_error(
             errors,
             "UI_CONTROL_LABEL_REQUIRED",

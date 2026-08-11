@@ -1533,7 +1533,7 @@ fn ui_document_image_and_resource_validation_reports_stable_field_errors() {
         "UI_IMAGE_FOCUS_INVALID",
     );
 
-    for fit in ["contain", "stretch"] {
+    for fit in ["contain", "natural", "stretch"] {
         let mut value: Value = serde_json::from_str(STYLE_RESOURCE_DOCUMENT).unwrap();
         value["root"]["children"][0]["presentation"]["fit"] = json!(fit);
         value["root"]["children"][0]["presentation"]["focus"]["y"] = json!(-0.1);
@@ -2035,6 +2035,52 @@ fn ui_document_control_complete_fixture_covers_states_slots_and_canonical() {
         &canonical,
     );
     assert_eq!(canonical, CONTROL_COMPLETE_CANONICAL_DOCUMENT);
+}
+
+#[test]
+fn ui_document_segmented_options_can_supply_all_visible_labels() {
+    let source = r#"{
+        "schema_version": 1,
+        "document_id": "controls.segmented_without_group_label",
+        "root": {
+            "type": "segmented",
+            "id": "controls.segmented",
+            "selected": "medium",
+            "options": [
+                { "value": "small", "label": { "literal": "Small" } },
+                { "value": "medium", "label": { "literal": "Medium" } },
+                { "value": "large", "label": { "literal": "Large" } }
+            ],
+            "component": { "slots": {} }
+        }
+    }"#;
+
+    UiDocument::parse_and_validate_json(source)
+        .expect("segmented options are individually labeled without a group label");
+}
+
+#[test]
+fn ui_document_select_placeholder_can_supply_the_visible_control_name() {
+    let source = r#"{
+        "schema_version": 1,
+        "document_id": "controls.select_without_external_label",
+        "root": {
+            "type": "select",
+            "id": "controls.select",
+            "options": [
+                { "value": "north", "label": { "literal": "North" } },
+                { "value": "south", "label": { "literal": "South" } }
+            ],
+            "component": {
+                "slots": {
+                    "placeholder": { "kind": "text", "content": { "literal": "Choose region" } }
+                }
+            }
+        }
+    }"#;
+
+    UiDocument::parse_and_validate_json(source)
+        .expect("a select placeholder can name a control without an external label");
 }
 
 #[test]

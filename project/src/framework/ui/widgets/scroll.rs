@@ -553,4 +553,41 @@ mod tests {
         assert_eq!(metrics.offset, 170.0);
         assert_eq!(metrics.max_offset, 400.0);
     }
+
+    #[test]
+    fn set_scroll_audit_anchor_converges_after_delayed_viewport_transform() {
+        let scroll = computed_node(Vec2::new(320.0, 360.0), Vec2::new(320.0, 8_612.0));
+        let anchor = computed_node(Vec2::new(300.0, 102.0), Vec2::new(300.0, 102.0));
+        let mut position = ScrollPosition(Vec2::ZERO);
+
+        set_scroll_audit_anchor(
+            &mut position,
+            &scroll,
+            &UiGlobalTransform::from_xy(160.0, 208.0),
+            &anchor,
+            &UiGlobalTransform::from_xy(160.0, 4_403.0),
+        )
+        .unwrap();
+        assert_eq!(position.y, 4_324.0);
+
+        set_scroll_audit_anchor(
+            &mut position,
+            &scroll,
+            &UiGlobalTransform::from_xy(160.0, 180.0),
+            &anchor,
+            &UiGlobalTransform::from_xy(160.0, 79.0),
+        )
+        .unwrap();
+        assert_eq!(position.y, 4_352.0);
+
+        set_scroll_audit_anchor(
+            &mut position,
+            &scroll,
+            &UiGlobalTransform::from_xy(160.0, 180.0),
+            &anchor,
+            &UiGlobalTransform::from_xy(160.0, 51.0),
+        )
+        .unwrap();
+        assert_eq!(position.y, 4_352.0);
+    }
 }

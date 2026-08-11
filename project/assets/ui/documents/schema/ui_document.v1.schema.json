@@ -1579,6 +1579,7 @@
       "enum": [
         "contain",
         "cover",
+        "natural",
         "stretch"
       ],
       "type": "string"

@@ -556,9 +556,22 @@ fn validate_preview_document(
     let bytes = fs::read(document_path)
         .map_err(|_| TaskFailure::invalid("preview document cannot be read"))?;
     let validation = validate_json_bytes(&bytes);
-    let validated = validation
-        .validated()
-        .ok_or_else(|| TaskFailure::invalid("preview document failed formal validation"))?;
+    let validated = validation.validated().ok_or_else(|| {
+        let detail = validation
+            .report
+            .diagnostics
+            .first()
+            .map(|diagnostic| {
+                format!(
+                    "{} at {}",
+                    diagnostic.code, diagnostic.document_path
+                )
+            })
+            .unwrap_or_else(|| "diagnostic unavailable".to_owned());
+        TaskFailure::invalid(format!(
+            "preview document failed formal validation: {detail}"
+        ))
+    })?;
     let assets_root = fs::canonicalize(repository_root.join("project/assets"))
         .map_err(|_| TaskFailure::invalid("project assets root cannot be resolved"))?;
     for entry in validated.document().assets.values() {

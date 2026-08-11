@@ -90,6 +90,7 @@ const COMPONENT_TOGGLES_CAPTURE_STATE: &str = "component_toggles";
 const COMPONENT_SEGMENTED_CAPTURE_STATE: &str = "component_segmented";
 const COMPONENT_OVERLAYS_CAPTURE_STATE: &str = "component_overlays";
 const COMPONENT_TOOLTIP_CAPTURE_STATE: &str = "component_tooltip";
+const INPUTS_CAPTURE_STATE: &str = "inputs";
 const SCROLL_TOP_CAPTURE_STATE: &str = "top";
 const SCROLL_MIDDLE_CAPTURE_STATE: &str = "middle";
 const SCROLL_BOTTOM_CAPTURE_STATE: &str = "bottom";
@@ -845,6 +846,7 @@ pub(crate) enum UiAuditCaptureState {
     ComponentSegmented,
     ComponentOverlays,
     ComponentTooltip,
+    Inputs,
     Top,
     Middle,
     Bottom,
@@ -873,6 +875,7 @@ impl UiAuditCaptureState {
             Self::ComponentSegmented => COMPONENT_SEGMENTED_CAPTURE_STATE,
             Self::ComponentOverlays => COMPONENT_OVERLAYS_CAPTURE_STATE,
             Self::ComponentTooltip => COMPONENT_TOOLTIP_CAPTURE_STATE,
+            Self::Inputs => INPUTS_CAPTURE_STATE,
             Self::Top => SCROLL_TOP_CAPTURE_STATE,
             Self::Middle => SCROLL_MIDDLE_CAPTURE_STATE,
             Self::Bottom => SCROLL_BOTTOM_CAPTURE_STATE,
@@ -905,6 +908,7 @@ enum UiAuditPhase {
         waited_frames: u32,
         stable_frames: u32,
         last_signature: Option<u64>,
+        scroll_reconciled: bool,
     },
     RequestScreenshot,
     WaitForScreenshot {
@@ -1018,6 +1022,7 @@ impl fmt::Display for UiAuditFailureKind {
 enum UiAuditPureAction {
     RouteToScreen,
     ApplyCaptureState,
+    ReconcileCaptureScroll,
     RequestScreenshot,
     WriteCapture,
     Finish,
@@ -1268,7 +1273,10 @@ fn drive_local_ui_audit(
                 });
             }
         }
-        Some(UiAuditPureAction::ApplyCaptureState) => {
+        Some(
+            action @ (UiAuditPureAction::ApplyCaptureState
+            | UiAuditPureAction::ReconcileCaptureScroll),
+        ) => {
             let Some(capture) = current_capture_plan(&runtime).cloned() else {
                 let failure = UiAuditFailureKind::ConfigInvalid;
                 runtime.phase = UiAuditPhase::Failed(failure);
@@ -1283,9 +1291,11 @@ fn drive_local_ui_audit(
 
             match apply_capture_state(&capture, &mut scroll_targets, &scroll_anchors) {
                 Ok(()) => {
-                    capture_state_writer.write(UiAuditCaptureStateApplied {
-                        state: capture.state,
-                    });
+                    if action == UiAuditPureAction::ApplyCaptureState {
+                        capture_state_writer.write(UiAuditCaptureStateApplied {
+                            state: capture.state,
+                        });
+                    }
                 }
                 Err((failure, detail)) => {
                     runtime.phase = UiAuditPhase::Failed(failure);
@@ -1854,6 +1864,7 @@ fn advance_audit_phase(
                 waited_frames: 0,
                 stable_frames: 0,
                 last_signature: None,
+                scroll_reconciled: false,
             },
             Some(UiAuditPureAction::ApplyCaptureState),
         ),
@@ -1861,6 +1872,7 @@ fn advance_audit_phase(
             waited_frames,
             stable_frames,
             last_signature,
+            scroll_reconciled,
         } => {
             if !input.readiness.target_ready {
                 (
@@ -1901,6 +1913,17 @@ fn advance_audit_phase(
                         0
                     };
                 if next_stable_frames >= STABLE_WAIT_FRAMES {
+                    if !scroll_reconciled {
+                        return (
+                            UiAuditPhase::WaitForStable {
+                                waited_frames: 0,
+                                stable_frames: 0,
+                                last_signature: None,
+                                scroll_reconciled: true,
+                            },
+                            Some(UiAuditPureAction::ReconcileCaptureScroll),
+                        );
+                    }
                     return (
                         UiAuditPhase::RequestScreenshot,
                         Some(UiAuditPureAction::RequestScreenshot),
@@ -1911,6 +1934,7 @@ fn advance_audit_phase(
                         waited_frames: waited_frames.saturating_add(1),
                         stable_frames: next_stable_frames,
                         last_signature: resources_ready.then_some(input.readiness.signature),
+                        scroll_reconciled,
                     },
                     None,
                 )
@@ -2612,6 +2636,8 @@ fn parse_capture_state(value: &str) -> Option<UiAuditCaptureState> {
         Some(UiAuditCaptureState::ComponentOverlays)
     } else if value.eq_ignore_ascii_case(COMPONENT_TOOLTIP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::ComponentTooltip)
+    } else if value.eq_ignore_ascii_case(INPUTS_CAPTURE_STATE) {
+        Some(UiAuditCaptureState::Inputs)
     } else if value.eq_ignore_ascii_case(SCROLL_TOP_CAPTURE_STATE) {
         Some(UiAuditCaptureState::Top)
     } else if value.eq_ignore_ascii_case(SCROLL_MIDDLE_CAPTURE_STATE) {
@@ -5120,6 +5146,7 @@ mod tests {
                     waited_frames: 0,
                     stable_frames: 0,
                     last_signature: None,
+                    scroll_reconciled: false,
                 },
                 Some(UiAuditPureAction::ApplyCaptureState)
             )
@@ -5134,6 +5161,7 @@ mod tests {
                     waited_frames: 4,
                     stable_frames: 4,
                     last_signature: Some(1),
+                    scroll_reconciled: false,
                 },
                 true,
                 UiAuditScreenshotStatus::Pending
@@ -5143,6 +5171,7 @@ mod tests {
                     waited_frames: 5,
                     stable_frames: 5,
                     last_signature: Some(1),
+                    scroll_reconciled: false,
                 },
                 None
             )
@@ -5153,6 +5182,28 @@ mod tests {
                     waited_frames: STABLE_WAIT_FRAMES,
                     stable_frames: STABLE_WAIT_FRAMES - 1,
                     last_signature: Some(1),
+                    scroll_reconciled: false,
+                },
+                true,
+                UiAuditScreenshotStatus::Pending
+            ),
+            (
+                UiAuditPhase::WaitForStable {
+                    waited_frames: 0,
+                    stable_frames: 0,
+                    last_signature: None,
+                    scroll_reconciled: true,
+                },
+                Some(UiAuditPureAction::ReconcileCaptureScroll)
+            )
+        );
+        assert_eq!(
+            step(
+                UiAuditPhase::WaitForStable {
+                    waited_frames: STABLE_WAIT_FRAMES,
+                    stable_frames: STABLE_WAIT_FRAMES - 1,
+                    last_signature: Some(1),
+                    scroll_reconciled: true,
                 },
                 true,
                 UiAuditScreenshotStatus::Pending
@@ -5172,6 +5223,7 @@ mod tests {
                     waited_frames: 2,
                     stable_frames: 2,
                     last_signature: Some(1),
+                    scroll_reconciled: false,
                 },
                 false,
                 UiAuditScreenshotStatus::Pending
@@ -5189,6 +5241,7 @@ mod tests {
             waited_frames: STABLE_TIMEOUT_FRAMES,
             stable_frames: 0,
             last_signature: None,
+            scroll_reconciled: false,
         };
         let readiness = |locale_ready, theme_ready, fonts_ready, images_ready, viewport_ready| {
             UiAuditReadiness {
@@ -5408,6 +5461,7 @@ mod tests {
                 waited_frames: 10,
                 stable_frames: 9,
                 last_signature: Some(1),
+                scroll_reconciled: false,
             },
             UiAuditStepInput {
                 readiness: UiAuditReadiness {
@@ -5433,6 +5487,7 @@ mod tests {
                     waited_frames: 11,
                     stable_frames: 1,
                     last_signature: Some(2),
+                    scroll_reconciled: false,
                 },
                 None,
             )

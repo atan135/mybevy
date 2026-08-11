@@ -1,6 +1,7 @@
 mod ai_login_reference;
 mod audio_gallery;
 mod audio_monitor;
+mod ui_document_gallery;
 mod ui_gallery;
 
 use bevy::prelude::*;
@@ -48,15 +49,37 @@ impl Plugin for DevScreensPlugin {
             )
             .add_systems(
                 Update,
+                ui_document_gallery::tag_ui_document_gallery_audit_nodes
+                    .run_if(in_state(AppUiMode::UiDocumentGallery)),
+            )
+            .add_systems(
+                Update,
+                ui_document_gallery::localize_ui_document_gallery_status_actions
+                    .run_if(in_state(AppUiMode::UiDocumentGallery)),
+            )
+            .add_systems(
+                Update,
                 ui_gallery::apply_gallery_component_audit_state
                     .before(UiPanelSystems::Commands)
                     .run_if(in_state(AppUiMode::UiGallery)),
             )
             .add_systems(
                 Update,
+                ui_document_gallery::apply_ui_document_gallery_component_audit_state
+                    .before(UiPanelSystems::Commands)
+                    .run_if(in_state(AppUiMode::UiDocumentGallery)),
+            )
+            .add_systems(
+                Update,
                 ui_gallery::freeze_gallery_animation_audit_state
                     .before(UiAnimationSystems::Tick)
                     .run_if(in_state(AppUiMode::UiGallery)),
+            )
+            .add_systems(
+                Update,
+                ui_document_gallery::freeze_ui_document_gallery_animation_audit_state
+                    .before(UiAnimationSystems::Tick)
+                    .run_if(in_state(AppUiMode::UiDocumentGallery)),
             )
             .add_systems(
                 Update,
