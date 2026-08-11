@@ -14,10 +14,11 @@ use crate::framework::ui::{
     document::{
         UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema, UiActionParamType,
         UiActionRegistry, UiActionValue, UiBindingDeclaration, UiBindingMissingBehavior,
-        UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue, UiBindingVisibility,
-        UiDocumentId, UiDocumentLayer, UiDocumentNodeMarker, UiDocumentPanel, UiDocumentRuntime,
+        UiBindingPath, UiBindingScope, UiBindingType, UiBindingValue, UiDocumentId,
+        UiDocumentLayer, UiDocumentNodeMarker, UiDocumentPanel, UiDocumentRuntime,
         UiHostBindingKey, UiNodeId, UiPageState, UiRegisteredActionKind,
     },
+    i18n::UiI18n,
     widgets::{UiSensitiveTextInput, UiTextInputValue},
 };
 #[cfg(all(debug_assertions, not(target_os = "android")))]
@@ -416,7 +417,9 @@ pub(super) fn character_select_binding_schema() -> BTreeMap<UiBindingPath, UiBin
         (
             "auth.character.switch_character_visibility",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
         (
             "auth.character.error_title",
@@ -431,7 +434,9 @@ pub(super) fn character_select_binding_schema() -> BTreeMap<UiBindingPath, UiBin
         (
             "auth.character.error_visibility",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
         (
             "auth.character.notice_title",
@@ -446,12 +451,16 @@ pub(super) fn character_select_binding_schema() -> BTreeMap<UiBindingPath, UiBin
         (
             "auth.character.notice_visibility",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
         (
             "auth.character.profile_visibility",
             UiBindingScope::Owner,
-            UiBindingType::Visibility,
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
         ),
         (
             "auth.character.profile_title",
@@ -1666,6 +1675,7 @@ fn clear_character_feedback(ui_state: &mut LoginUiState) {
 
 pub(super) fn sync_character_select_document_bindings(
     session: Res<MyServerSession>,
+    i18n: Res<UiI18n>,
     mut ui_state: ResMut<LoginUiState>,
     contracts: Res<AuthHostContracts>,
     mut binding_values: ResMut<UiBindingValues>,
@@ -1698,7 +1708,7 @@ pub(super) fn sync_character_select_document_bindings(
                 ),
                 (
                     "detail".to_owned(),
-                    UiBindingValue::String(character.detail.clone()),
+                    UiBindingValue::String(localized_character_detail(character, &i18n)),
                 ),
                 ("selected".to_owned(), UiBindingValue::Bool(selected)),
                 ("pending".to_owned(), UiBindingValue::Bool(pending)),
@@ -1741,7 +1751,7 @@ pub(super) fn sync_character_select_document_bindings(
         ),
         (
             "auth.account.summary",
-            UiBindingValue::String(account_summary_text(&snapshot)),
+            UiBindingValue::String(account_summary_text(&snapshot, &i18n)),
         ),
         (
             "auth.character.character_id",
@@ -1762,11 +1772,11 @@ pub(super) fn sync_character_select_document_bindings(
         ),
         (
             "auth.character.status",
-            UiBindingValue::String(character_status_text(&snapshot)),
+            UiBindingValue::String(localized_character_status_text(&snapshot, &i18n)),
         ),
         (
             "auth.character.connection_status",
-            UiBindingValue::String(connection_status_text(&snapshot)),
+            UiBindingValue::String(localized_connection_status_text(&snapshot, &i18n)),
         ),
         (
             "auth.character.request_pending",
@@ -1804,11 +1814,7 @@ pub(super) fn sync_character_select_document_bindings(
         ),
         (
             "auth.character.switch_character_visibility",
-            UiBindingValue::Visibility(if profile_visible {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            UiBindingValue::Enum(if profile_visible { "flex" } else { "none" }.to_owned()),
         ),
         (
             "auth.character.error_title",
@@ -1820,11 +1826,14 @@ pub(super) fn sync_character_select_document_bindings(
         ),
         (
             "auth.character.error_visibility",
-            UiBindingValue::Visibility(if snapshot.last_error.is_some() {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            UiBindingValue::Enum(
+                if snapshot.last_error.is_some() {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
         ),
         (
             "auth.character.notice_title",
@@ -1836,19 +1845,18 @@ pub(super) fn sync_character_select_document_bindings(
         ),
         (
             "auth.character.notice_visibility",
-            UiBindingValue::Visibility(if snapshot.notice.is_some() {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            UiBindingValue::Enum(
+                if snapshot.notice.is_some() {
+                    "flex"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
         ),
         (
             "auth.character.profile_visibility",
-            UiBindingValue::Visibility(if profile_visible {
-                UiBindingVisibility::Visible
-            } else {
-                UiBindingVisibility::Hidden
-            }),
+            UiBindingValue::Enum(if profile_visible { "flex" } else { "none" }.to_owned()),
         ),
         (
             "auth.character.profile_title",
@@ -1856,8 +1864,13 @@ pub(super) fn sync_character_select_document_bindings(
                 snapshot
                     .selected_character_name
                     .as_ref()
-                    .map(|name| format!("{name} profile"))
-                    .unwrap_or_else(|| "Character profile".to_owned()),
+                    .map(|name| {
+                        format!(
+                            "{name} · {}",
+                            i18n.tr("auth.character.profile", "Character profile")
+                        )
+                    })
+                    .unwrap_or_else(|| i18n.tr("auth.character.profile", "Character profile")),
             ),
         ),
         (
@@ -1865,17 +1878,37 @@ pub(super) fn sync_character_select_document_bindings(
             UiBindingValue::String(
                 element_snapshot
                     .map(|elements| {
-                        format!("Affinity: {}", format_element_values(elements.affinity))
+                        format!(
+                            "{}: {}",
+                            i18n.tr("auth.character.affinity", "Affinity"),
+                            localized_element_values(elements.affinity, &i18n)
+                        )
                     })
-                    .unwrap_or_else(|| "Affinity data unavailable".to_owned()),
+                    .unwrap_or_else(|| {
+                        i18n.tr(
+                            "auth.character.affinity_unavailable",
+                            "Affinity data unavailable",
+                        )
+                    }),
             ),
         ),
         (
             "auth.character.mastery",
             UiBindingValue::String(
                 element_snapshot
-                    .map(|elements| format!("Mastery: {}", format_element_values(elements.mastery)))
-                    .unwrap_or_else(|| "Mastery data unavailable".to_owned()),
+                    .map(|elements| {
+                        format!(
+                            "{}: {}",
+                            i18n.tr("auth.character.mastery", "Mastery"),
+                            localized_element_values(elements.mastery, &i18n)
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        i18n.tr(
+                            "auth.character.mastery_unavailable",
+                            "Mastery data unavailable",
+                        )
+                    }),
             ),
         ),
     ] {
@@ -1896,16 +1929,100 @@ pub(super) fn sync_character_select_document_bindings(
     ui_state.rendered = Some(snapshot);
 }
 
-fn account_summary_text(snapshot: &LoginUiSnapshot) -> String {
+pub(super) fn account_summary_text(snapshot: &LoginUiSnapshot, i18n: &UiI18n) -> String {
     if let Some(login_name) = snapshot.login_name.as_deref() {
-        format!("Account {login_name}")
+        format!(
+            "{} {login_name}",
+            i18n.tr("auth.character.account", "Account")
+        )
     } else if let Some(guest_id) = snapshot.guest_id.as_deref() {
-        format!("Guest {guest_id}")
+        format!("{} {guest_id}", i18n.tr("auth.character.guest", "Guest"))
     } else if let Some(player_id) = snapshot.player_id.as_deref() {
-        format!("Player {player_id}")
+        format!("{} {player_id}", i18n.tr("auth.character.player", "Player"))
     } else {
-        "Account unavailable".to_owned()
+        i18n.tr("auth.character.account_unavailable", "Account unavailable")
     }
+}
+
+pub(super) fn localized_character_detail(
+    character: &CharacterRowSnapshot,
+    i18n: &UiI18n,
+) -> String {
+    let world = character
+        .world_id
+        .map(|world_id| format!("{} {world_id}", i18n.tr("auth.character.world", "World")))
+        .unwrap_or_else(|| i18n.tr("auth.character.world_unknown", "World unknown"));
+    let status = if character.status.eq_ignore_ascii_case("active") {
+        i18n.tr("auth.character.status.active", "active")
+    } else {
+        character.status.clone()
+    };
+    format!("{} · {world} · {status}", character.discriminator)
+}
+
+pub(super) fn localized_character_status_text(snapshot: &LoginUiSnapshot, i18n: &UiI18n) -> String {
+    use crate::game::myserver::CharacterSelectionState;
+    let (key, fallback) = match snapshot.character_state {
+        CharacterSelectionState::NotLoaded => ("not_loaded", "Characters not loaded"),
+        CharacterSelectionState::Loading => ("loading", "Loading characters..."),
+        CharacterSelectionState::NoCharacters => ("empty", "Create a character to continue"),
+        CharacterSelectionState::Creating => ("creating", "Creating character..."),
+        CharacterSelectionState::AwaitingSelection => ("choose", "Choose a character"),
+        CharacterSelectionState::LoadingProfile => ("loading_profile", "Loading profile..."),
+        CharacterSelectionState::Selecting => ("selecting", "Selecting character..."),
+        CharacterSelectionState::Selected => {
+            return snapshot
+                .selected_character_name
+                .as_deref()
+                .map(|name| {
+                    format!(
+                        "{} {name}",
+                        i18n.tr("auth.character.status.selected", "Selected")
+                    )
+                })
+                .unwrap_or_else(|| {
+                    i18n.tr(
+                        "auth.character.status.selected_default",
+                        "Character selected",
+                    )
+                });
+        }
+        CharacterSelectionState::Blocked => ("unavailable", "Character unavailable"),
+        CharacterSelectionState::SelectionFailed => ("failed", "Character request failed"),
+    };
+    i18n.tr(&format!("auth.character.status.{key}"), fallback)
+}
+
+pub(super) fn localized_connection_status_text(
+    snapshot: &LoginUiSnapshot,
+    i18n: &UiI18n,
+) -> String {
+    use crate::game::myserver::GameConnectionState;
+    let (key, fallback) = match snapshot.connection_state {
+        GameConnectionState::NotConnected => ("not_connected", "Game server not connected"),
+        GameConnectionState::Connecting => ("connecting", "Connecting to game server..."),
+        GameConnectionState::Connected => ("connected", "Game server connected"),
+        GameConnectionState::Authenticating => ("authenticating", "Signing in to game server..."),
+        GameConnectionState::Authenticated => ("authenticated", "Game server authenticated"),
+        GameConnectionState::Disconnected => ("disconnected", "Game server disconnected"),
+        GameConnectionState::Reconnecting => ("reconnecting", "Refreshing ticket..."),
+        GameConnectionState::ReconnectFailed => ("failed", "Network or ticket request failed"),
+    };
+    i18n.tr(&format!("auth.character.connection.{key}"), fallback)
+}
+
+fn localized_element_values(values: crate::game::myserver::ElementValues, i18n: &UiI18n) -> String {
+    format!(
+        "{} {} / {} {} / {} {} / {} {}",
+        i18n.tr("auth.character.element.earth", "earth"),
+        values.earth,
+        i18n.tr("auth.character.element.fire", "fire"),
+        values.fire,
+        i18n.tr("auth.character.element.water", "water"),
+        values.water,
+        i18n.tr("auth.character.element.wind", "wind"),
+        values.wind
+    )
 }
 
 fn character_collection_state(snapshot: &LoginUiSnapshot) -> &'static str {

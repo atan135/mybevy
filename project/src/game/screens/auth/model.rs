@@ -44,6 +44,9 @@ pub(super) struct CharacterRowSnapshot {
     pub(super) character_id: String,
     pub(super) name: String,
     pub(super) detail: String,
+    pub(super) discriminator: String,
+    pub(super) world_id: Option<i64>,
+    pub(super) status: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,6 +104,12 @@ impl CharacterRowSnapshot {
             character_id: character.character_id.clone(),
             name: character.name.clone(),
             detail: character_display_detail(character),
+            discriminator: character_discriminator(character),
+            world_id: character.world_id,
+            status: character
+                .status
+                .clone()
+                .unwrap_or_else(|| "active".to_owned()),
         }
     }
 }
@@ -169,38 +178,6 @@ pub(super) fn login_status_text(snapshot: &LoginUiSnapshot) -> String {
     }
 }
 
-pub(super) fn character_status_text(snapshot: &LoginUiSnapshot) -> String {
-    match snapshot.character_state {
-        CharacterSelectionState::NotLoaded => "Characters not loaded".to_string(),
-        CharacterSelectionState::Loading => "Loading characters...".to_string(),
-        CharacterSelectionState::NoCharacters => "Create a character to continue".to_string(),
-        CharacterSelectionState::Creating => "Creating character...".to_string(),
-        CharacterSelectionState::AwaitingSelection => "Choose a character".to_string(),
-        CharacterSelectionState::LoadingProfile => "Loading profile...".to_string(),
-        CharacterSelectionState::Selecting => "Selecting character...".to_string(),
-        CharacterSelectionState::Selected => snapshot
-            .selected_character_name
-            .as_ref()
-            .map(|name| format!("Selected {name}"))
-            .unwrap_or_else(|| "Character selected".to_string()),
-        CharacterSelectionState::Blocked => "Character unavailable".to_string(),
-        CharacterSelectionState::SelectionFailed => "Character request failed".to_string(),
-    }
-}
-
-pub(super) fn connection_status_text(snapshot: &LoginUiSnapshot) -> String {
-    match snapshot.connection_state {
-        GameConnectionState::NotConnected => "Game server not connected".to_string(),
-        GameConnectionState::Connecting => "Connecting to game server...".to_string(),
-        GameConnectionState::Connected => "Game server connected".to_string(),
-        GameConnectionState::Authenticating => "Signing in to game server...".to_string(),
-        GameConnectionState::Authenticated => "Game server authenticated".to_string(),
-        GameConnectionState::Disconnected => "Game server disconnected".to_string(),
-        GameConnectionState::Reconnecting => "Refreshing ticket...".to_string(),
-        GameConnectionState::ReconnectFailed => "Network or ticket request failed".to_string(),
-    }
-}
-
 pub(super) fn element_snapshot_for_session(session: &MyServerSession) -> Option<ElementSnapshot> {
     let character_id = session.character_id.as_deref()?;
     if session.character_elements.character_id.as_deref() != Some(character_id) {
@@ -214,13 +191,6 @@ pub(super) fn element_snapshot_for_session(session: &MyServerSession) -> Option<
             affinity: session.character_elements.affinity,
             mastery: session.character_elements.mastery,
         })
-}
-
-pub(super) fn format_element_values(values: ElementValues) -> String {
-    format!(
-        "earth {} / fire {} / water {} / wind {}",
-        values.earth, values.fire, values.water, values.wind
-    )
 }
 
 pub(super) fn auth_error_title(error: &AuthErrorSnapshot) -> String {
@@ -382,13 +352,7 @@ impl AuthStatusNotice {
 }
 
 pub(super) fn character_display_detail(character: &CharacterSummary) -> String {
-    let discriminator = character
-        .display_discriminator
-        .as_deref()
-        .or(character.character_id_short.as_deref())
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| format!("#{value}"))
-        .unwrap_or_else(|| short_character_id(&character.character_id));
+    let discriminator = character_discriminator(character);
 
     let world = character
         .world_id
@@ -396,6 +360,16 @@ pub(super) fn character_display_detail(character: &CharacterSummary) -> String {
         .unwrap_or_else(|| "World unknown".to_string());
     let status = character.status.as_deref().unwrap_or("active");
     format!("{discriminator} · {world} · {status}")
+}
+
+fn character_discriminator(character: &CharacterSummary) -> String {
+    character
+        .display_discriminator
+        .as_deref()
+        .or(character.character_id_short.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("#{value}"))
+        .unwrap_or_else(|| short_character_id(&character.character_id))
 }
 
 pub(super) fn short_character_id(character_id: &str) -> String {

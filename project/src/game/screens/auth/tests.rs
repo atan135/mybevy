@@ -706,6 +706,40 @@ fn character_document_bindings_keep_account_current_and_pending_ids_separate() {
 }
 
 #[test]
+fn character_dynamic_copy_uses_active_locale() {
+    let mut session = logged_in_session();
+    session.login_name = Some("zergzerg".to_owned());
+    session.character_selection_state = CharacterSelectionState::AwaitingSelection;
+    session.game_connection_state = GameConnectionState::NotConnected;
+    session.characters = vec![test_character("character:qing-shan", "qingshan")];
+    let snapshot = LoginUiSnapshot::from_session(&session, None, None);
+    let i18n = crate::framework::ui::i18n::UiI18n::test_with_texts(
+        "zh_cn",
+        &[
+            ("auth.character.account", "账号"),
+            ("auth.character.world", "世界"),
+            ("auth.character.status.active", "正常"),
+            ("auth.character.status.choose", "请选择一个角色"),
+            (
+                "auth.character.connection.not_connected",
+                "游戏服务器未连接",
+            ),
+        ],
+    );
+
+    assert_eq!(account_summary_text(&snapshot, &i18n), "账号 zergzerg");
+    assert_eq!(
+        localized_character_status_text(&snapshot, &i18n),
+        "请选择一个角色"
+    );
+    assert_eq!(
+        localized_connection_status_text(&snapshot, &i18n),
+        "游戏服务器未连接"
+    );
+    assert!(localized_character_detail(&snapshot.characters[0], &i18n).contains("世界 1 · 正常"));
+}
+
+#[test]
 fn snapshot_includes_connection_error_and_server_element_state() {
     let mut ui_state = LoginUiState::default();
     ui_state.last_error = Some(MyServerDisplayError::from_error_code(
@@ -748,8 +782,9 @@ fn snapshot_includes_connection_error_and_server_element_state() {
         ui_state.notice.as_ref(),
     );
 
+    let i18n = crate::framework::ui::i18n::UiI18n::test_with_texts("en_us", &[]);
     assert_eq!(
-        connection_status_text(&snapshot),
+        localized_connection_status_text(&snapshot, &i18n),
         "Signing in to game server..."
     );
     assert_eq!(
@@ -2066,6 +2101,10 @@ fn character_binding_test_app(session: MyServerSession, ui_state: LoginUiState) 
     app.add_plugins(MinimalPlugins)
         .init_resource::<UiBindingValues>()
         .init_resource::<AuthHostContracts>()
+        .insert_resource(crate::framework::ui::i18n::UiI18n::test_with_texts(
+            "en_us",
+            &[],
+        ))
         .insert_resource(session)
         .insert_resource(ui_state)
         .add_systems(Update, sync_character_select_document_bindings);

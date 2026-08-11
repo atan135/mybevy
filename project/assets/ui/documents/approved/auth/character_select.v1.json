@@ -108,7 +108,7 @@
     },
     "auth.character.switch_character_visibility": {
       "scope": "owner",
-      "value_type": { "kind": "visibility" }
+      "value_type": { "kind": "enum", "values": ["flex", "none"] }
     },
     "auth.character.error_title": {
       "scope": "owner",
@@ -120,7 +120,7 @@
     },
     "auth.character.error_visibility": {
       "scope": "owner",
-      "value_type": { "kind": "visibility" }
+      "value_type": { "kind": "enum", "values": ["flex", "none"] }
     },
     "auth.character.notice_title": {
       "scope": "owner",
@@ -132,11 +132,11 @@
     },
     "auth.character.notice_visibility": {
       "scope": "owner",
-      "value_type": { "kind": "visibility" }
+      "value_type": { "kind": "enum", "values": ["flex", "none"] }
     },
     "auth.character.profile_visibility": {
       "scope": "owner",
-      "value_type": { "kind": "visibility" }
+      "value_type": { "kind": "enum", "values": ["flex", "none"] }
     },
     "auth.character.profile_title": {
       "scope": "owner",
@@ -401,6 +401,7 @@
                           "variant": "secondary",
                           "label": { "i18n_key": "auth.character.action.switch_account", "fallback": "Switch Account" },
                           "on_click": { "action": "auth.switch_account" },
+                          "layout": { "height": { "px": 42.0 } },
                           "component": {
                             "bindings": {
                               "disabled": "auth.character.switch_account_disabled"
@@ -408,21 +409,24 @@
                           }
                         },
                         {
-                          "type": "button",
-                          "id": "character.switch_character",
-                          "variant": "secondary",
-                          "label": { "i18n_key": "auth.character.action.change_character", "fallback": "Change Character" },
-                          "on_click": { "action": "auth.switch_character" },
-                          "style": {
-                            "bindings": {
-                              "visibility": "auth.character.switch_character_visibility"
+                          "type": "container",
+                          "id": "character.switch_character_slot",
+                          "style": { "bindings": { "display": "auth.character.switch_character_visibility" } },
+                          "children": [
+                            {
+                              "type": "button",
+                              "id": "character.switch_character",
+                              "variant": "secondary",
+                              "label": { "i18n_key": "auth.character.action.change_character", "fallback": "Change Character" },
+                              "on_click": { "action": "auth.switch_character" },
+                              "layout": { "height": { "px": 42.0 } },
+                              "component": {
+                                "bindings": {
+                                  "disabled": "auth.character.switch_character_disabled"
+                                }
+                              }
                             }
-                          },
-                          "component": {
-                            "bindings": {
-                              "disabled": "auth.character.switch_character_disabled"
-                            }
-                          }
+                          ]
                         }
                       ]
                     }
@@ -442,9 +446,8 @@
                   "id": "character.summary",
                   "layout": {
                     "width": { "percent": 100.0 },
-                    "direction": "row",
-                    "wrap": "wrap",
-                    "gap": { "px": 12.0 }
+                    "direction": "column",
+                    "gap": { "px": 2.0 }
                   },
                   "children": [
                     {
@@ -454,7 +457,7 @@
                         "binding_path": "auth.character.status",
                         "fallback": "Characters not loaded"
                       },
-                      "style": { "text_role": "body" }
+                      "style": { "text_role": "subtitle" }
                     },
                     {
                       "type": "text",
@@ -463,16 +466,7 @@
                         "binding_path": "auth.character.connection_status",
                         "fallback": "Game server not connected"
                       },
-                      "style": { "text_role": "caption" }
-                    },
-                    {
-                      "type": "text",
-                      "id": "character.view_state",
-                      "content": {
-                        "binding_path": "auth.character.view_state",
-                        "fallback": "loading"
-                      },
-                      "style": { "text_role": "caption" }
+                      "style": { "text_role": "caption", "role": "muted" }
                     }
                   ]
                 },
@@ -488,9 +482,7 @@
                   },
                   "style": {
                     "component": "character_error",
-                    "bindings": {
-                      "visibility": "auth.character.error_visibility"
-                    }
+                    "bindings": { "display": "auth.character.error_visibility" }
                   },
                   "children": [
                     {
@@ -525,9 +517,7 @@
                   },
                   "style": {
                     "component": "character_notice",
-                    "bindings": {
-                      "visibility": "auth.character.notice_visibility"
-                    }
+                    "bindings": { "display": "auth.character.notice_visibility" }
                   },
                   "children": [
                     {
@@ -574,6 +564,7 @@
                       "variant": "secondary",
                       "label": { "i18n_key": "auth.character.action.reload", "fallback": "Reload" },
                       "on_click": { "action": "auth.load_characters" },
+                      "layout": { "height": { "px": 42.0 } },
                       "component": {
                         "bindings": {
                           "disabled": "auth.character.load_disabled",
@@ -659,6 +650,7 @@
                           "id": "character.row.select",
                           "variant": "primary",
                           "label": { "i18n_key": "auth.character.action.select", "fallback": "Select" },
+                          "layout": { "height": { "px": 42.0 }, "min_width": { "px": 96.0 } },
                           "on_click": {
                             "action": "auth.select_character",
                             "params": {
@@ -725,6 +717,7 @@
                       "id": "character.create",
                       "variant": "primary",
                       "label": { "i18n_key": "auth.character.action.create", "fallback": "Create" },
+                      "layout": { "height": { "px": 42.0 }, "min_width": { "px": 96.0 } },
                       "on_click": { "action": "auth.create_character" },
                       "component": {
                         "bindings": {
@@ -747,9 +740,7 @@
                   },
                   "style": {
                     "component": "character_row",
-                    "bindings": {
-                      "visibility": "auth.character.profile_visibility"
-                    }
+                    "bindings": { "display": "auth.character.profile_visibility" }
                   },
                   "children": [
                     {
@@ -811,9 +802,9 @@
           "node_id": "character.panel",
           "set": {
             "layout": {
-              "max_width": { "px": 940.0 },
-              "padding": { "all": { "px": 12.0 } },
-              "gap": { "px": 7.0 }
+              "max_width": { "px": 760.0 },
+              "padding": { "all": { "px": 14.0 } },
+              "gap": { "px": 8.0 }
             }
           }
         },
