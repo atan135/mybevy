@@ -66,12 +66,12 @@ Set-Location project
 $env:MYBEVY_UI_AUDIT="1"
 $env:MYBEVY_UI_AUDIT_SCREEN="ui-gallery"
 $env:MYBEVY_UI_AUDIT_OUTPUT="..\summary\ui-audit\manual-local-check"
-$env:MYBEVY_UI_AUDIT_STATES="image_fit,visual_foundation,visual_acceptance,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,middle,bottom"
+$env:MYBEVY_UI_AUDIT_STATES="image_fit,visual_foundation,visual_acceptance,image_modes,image_tiling,image_atlas,typography,typography_overflow,icons,icon_states,style_scopes,effects,animations,components,component_checkboxes,component_toggles,component_segmented,component_overlays,component_tooltip,inputs,middle,bottom"
 $env:MYBEVY_UI_AUDIT_EXIT_ON_FINISH="1"
 cargo run -- --window-profile phone-small --window-scale 50%
 ```
 
-输出目录会包含 `manifest.json`、`report.md`、`screenshots/` 和 `metadata/`。`ui_gallery` 的默认 runner 状态包含 `visual_acceptance` 以及图片、字体、图标、样式、效果、动画、组件专题和滚动状态；`image_fit` / `visual_foundation` 固定指向顶部，其余专题状态对齐稳定 child anchor，最后两个组件状态会确定性打开 Dropdown 与 Tooltip，兼容状态 `top` 仍可显式请求。其他页面默认只覆盖 `initial`。
+输出目录会包含 `manifest.json`、`report.md`、`screenshots/` 和 `metadata/`。`ui_gallery` 与 `ui_document_gallery` 共用 22 个默认 capture state，包含 `visual_acceptance` 以及图片、字体、图标、样式、效果、动画、组件、输入框专题和滚动状态；`image_fit` / `visual_foundation` 固定指向顶部，其余专题状态对齐稳定 child anchor，组件覆盖层状态会确定性打开 Dropdown 与 Tooltip，兼容状态 `top` 仍可显式请求。声明式页面额外等待 `OwnerDocument` ready condition，避免在 document commit 前截图。其他页面默认只覆盖 `initial`。
 
 metadata 的 `style_resolutions` 收集带 `UiStyleBinding` 实体的 `UiResolvedStyleDebugSnapshot`，包含 scope 链、请求 role/variant、来源链、最终关键 token、fallback 和错误码。它用于 F3/AI 审核边界读取最终解析结果，不包含可写业务状态。
 
@@ -99,6 +99,18 @@ metadata 的 `image_snapshots`、`font_snapshots` 和 `visual_summary` 汇总图
 `-DryRun` 只验证矩阵、报告和分析输入，不启动游戏、不生成真实截图。真实本地运行会为每个 screen + device 启动一次 `cargo run`，并把子进程输出写入本轮 `logs/`。
 
 本地 capture 在滚动完成后固定等待 30 个渲染帧再请求截图。该窗口用于让首次使用的 Bevy UI gradient / box-shadow pipeline 完成准备；只检查 ECS metadata 或等待 5 帧可能得到“组件已存在但首张 PNG 仍是纯色”的假通过。
+
+### 代码版与声明式 Gallery 对照
+
+代码版 `ui_gallery` 是当前覆盖分母，声明式 `ui_document_gallery` 使用相同 capture state 和滚动专题语义。声明式文档中的首批案例使用稳定 `gallery.pair.*` node ID，专题区使用 `gallery.section.*` node ID；游戏层把这些 node ID 适配到既有审计锚点，并在 `component_overlays` / `component_tooltip` 状态下确定性打开对应 document 控件，但不重新拥有 document 生命周期。
+
+可以在相同设备和状态下分别采集两个页面：
+
+```powershell
+.\scripts\run-ui-audit.ps1 -Screens ui-gallery,ui-document-gallery -Devices phone-landscape -States visual_foundation,image_modes,typography,components,bottom -DeterministicCapture
+```
+
+当前 runner 会生成两个页面各自的截图和 metadata，但尚未自动建立 code-vs-document reference manifest，也不会按 `gallery.pair.*` 裁切并计算跨页面差异。现阶段需要人工并排复核；不能因为两个页面共用 capture 名称就宣称已经完成像素级一致性。approved 声明式 Gallery 是生成链路可交付格式的确定性对照基线，不代表在线模型已经生成该页面。
 
 远程 Mock 验收用于确认 adminapi 任务模型、artifact 汇总和报告关联：
 

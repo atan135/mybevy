@@ -1,6 +1,6 @@
 # UI 组件功能与使用
 
-通用控件集中在 `project/src/framework/ui/widgets/`。业务页面优先使用这些 helper 生成一致的节点、主题 marker、焦点 marker 和 i18n marker。
+通用控件集中在 `project/src/framework/ui/widgets/`。业务页面优先使用这些 helper 生成一致的节点、主题 marker、焦点 marker 和 i18n marker。生成式/声明式页面如何映射这些能力，见 [UI生成式组件配置参考.md](UI生成式组件配置参考.md)。
 
 ## 文本
 

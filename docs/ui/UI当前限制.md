@@ -77,7 +77,7 @@
 ## 高保真视觉能力
 
 - 图片 frame 已支持 `Natural`、`Stretch`、`Contain`、焦点 `Cover`、组合尺寸约束、圆角裁切和加载状态占位；高级 API 已支持九宫格、受预算约束的 X/Y/Both 平铺和正式图集帧描述。
-- atlas frame 当前只允许 Stretch，不支持与 NineSlice/Tiled 组合；`original_size` 和 pivot 已进入正式数据描述与校验，但当前静态 UI helper 不负责按 pivot 进行动画定位。
+- atlas frame 已支持 `Stretch`、`Contain` 和焦点 `Cover`，资源 ready 后会保留并按 frame 原点偏移裁切区域；仍不支持与 NineSlice/Tiled 组合。`original_size` 和 pivot 已进入正式数据描述与校验，但当前静态 UI helper 不负责按 pivot 进行动画定位。
 - 高级图片必须来自可验证的首包/AssetServer 相对路径，不接受无路径程序化纹理；基础整图的程序化 handle 仍可使用 `ui_image`。
 - `Failed` 和 `Invalid` 当前使用稳定颜色占位并暴露组件状态，尚无通用重试按钮、错误图标或面向玩家的错误文案协议。
 - 阴影、线性背景/边框渐变、独立边宽/圆角、裁切和 Outline 已有受限 preset、组合校验和规划预算；当前不支持径向/锥形渐变、内阴影或基于内容自动生成效果。
@@ -102,6 +102,8 @@
 - approved adapter 保持默认拒绝：legacy registration 只能加载无 action/binding 的展示页。v2 registration 只有在 action ID、允许 source node、document/owner binding 类型、资源集合、route/owner/profile 与游戏层显式 host contract 全量精确一致时才可引用既有业务能力；它仍拒绝 Rust 类型、handler/system/message、URL、文件路径和执行字符串。`project/assets/ui/documents/host_contracts.v1.json` 仅供 promotion 复验预注册契约，不能替代游戏 Rust 注册或扩大运行时权限。
 - reload 状态迁移覆盖 ID/kind/owner 兼容的 focus、输入值/光标/selection、scroll、数值与选择控件状态；不迁移 IME composition、native keyboard session、动画播放头或任意业务 component，未迁移的已识别状态会写入 decision reason。
 - 自动生成的 document audit recipe 按 `(document_id, owner)` 隔离且只来自 preview registration；直接 Stage 10 `Open` 不生成 recipe，页面能否由审计 runner 进入仍需要游戏层路由注册。
+- 代码版与声明式 UI Gallery 已共用 22 个 capture state，并有首批稳定 `gallery.pair.*` / `gallery.section.*` ID；当前 runner 仍只产出两个页面各自的整屏截图和 metadata，没有自动 code-vs-document reference manifest、pair 区域裁切或跨页面 diff。
+- 声明式 Gallery 当前覆盖首批代表性案例和全部公共控件种类，但尚未逐项复制代码版的深层交互状态、覆盖层矩阵和动画播放/暂停/seek 协议；动画区目前只能作为静态状态占位，不能据此判定动画等价。
 - 详细边界和命令见 [UI声明式预览与热更新.md](UI声明式预览与热更新.md)；业务迁移分母、例外和生产更新目标见 [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md)。
 
 ## AI 参考图生成
@@ -119,4 +121,4 @@
 - 原始参考图、模型响应、日志、草稿、source map 和生成期素材规划保存在被忽略的 `summary/ui-generation/<run-id>/`，不能写入 `project/assets/` 或随正式包交付。
 - 只有通过 Schema、语义、能力、action/binding、资源预算和授权检查，并经过人工批准与显式晋升的 `UiDocument` JSON、授权资源和必要确定性注册适配，才属于正式游戏内容并随桌面和 Android 包交付。
 - 页面主体规划为声明式 JSON；未知业务 action/binding 必须阻塞晋升，模型不能生成任意 Rust 业务实现。完整设计边界见 [UI参考图生成与正式包边界.md](UI参考图生成与正式包边界.md)。
-- 参考图与渲染结果的视觉相似度审核属于后续独立工作，当前生成边界和现有 preview 不能替代该验收。
+- 参考图与渲染结果的完整视觉相似度审核仍属于后续独立工作。当前 Gallery 对照只建立了共享 capture contract、首批稳定 pair ID 和人工截图复核，还不能替代自动跨页面差异、完整状态矩阵或真实用户参考图验收。

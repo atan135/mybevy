@@ -2,6 +2,10 @@
 
 本文冻结“参考图 -> `UiDocument` -> 正式游戏页面”流程的工程边界。仓库当前已提供 Stage 1-11 `tools/ui-generation/` 独立工具、输入契约、工作目录规划、provider 无关调用协议、图片预处理、结构化视觉分析、确定性页面规划、素材策略、受控 `UiDocument` 生成验证、有限结构修复、独立进程预览、多状态/响应式审计、离线 `generate-fixture` 闭环、显式晋升、离线评测和受限可观测性。在线供应商/OCR/图片生成适配仍未实现，因此 `generate-fixture` 只能证明仓库自有结构化 fixture 的工程链路，不能冒充任意用户参考图的真实在线视觉分析。
 
+approved 声明式 UI Gallery 现用于和 Rust 代码版 Gallery 做逐项工程对照。它验证的是 `UiDocument` 交付格式、runtime 能力、审计锚点和确定性截图，不是在线 provider 的输出样本；只有接入真实 provider、保留受控 run 证据并经过显式批准后，才能把新的对照结果归因于模型生成能力。
+
+生成结果中的 Grid、card/frame、文字角色、控件 slot/state、TextInput、高级图片、binding 和响应式字段如何配置，统一查阅 [UI生成式组件配置参考.md](UI生成式组件配置参考.md)。本文继续只定义生成工具、草稿、晋升和正式包之间的工程边界。
+
 ## 目标
 
 参考图生成流程用于在开发机或 CI 中分析图片、规划布局与视觉 token，并输出可验证的声明式 UI 草稿。页面主体是 `UiDocument` JSON，不是 AI 任意生成的 Rust 布局或业务实现。

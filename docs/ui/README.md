@@ -20,6 +20,7 @@
 - [UI调试与验收.md](UI调试与验收.md)：F3 调试面板、窗口级验收命令和 Android 验收关注点。
 - [UI当前限制.md](UI当前限制.md)：当前实现边界和使用时需要规避的点。
 - [UI声明式文档协议.md](UI声明式文档协议.md)：声明式 `UiDocument` 的职责、版本兼容、目录、可信边界、安全预算和 v1 最小 fixture。
+- [UI生成式组件配置参考.md](UI生成式组件配置参考.md)：生成式/声明式页面的可检索配置手册，覆盖 Grid、card/frame、文字角色、控件 slot/state、TextInput、高级图片、样式、binding、响应式和常见差异定位。
 - [UI声明式预览与热更新.md](UI声明式预览与热更新.md)：安全 source 注册、显式 reload、开发期 watch、稳定节点 diff、状态迁移、audit recipe 和声明式 Gallery。
 - [UI声明式业务界面迁移基线.md](UI声明式业务界面迁移基线.md)：正式业务 View 的宿主边界、资源/Rust 判定、16 个页面盘点、主世界 HUD/设置/邮箱、例外、迁移指标与生产更新缺口。
 

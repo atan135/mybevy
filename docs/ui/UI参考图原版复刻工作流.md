@@ -13,7 +13,7 @@
 - 页面需要在 hover、pressed、focus 等状态下提供真实反馈。
 - 声明式 `UiDocument` 无法自然表达页面专属素材组合或局部动效时，需要使用受控的页面级 Bevy UI。
 
-普通表单、列表或后台工具页面优先使用现有组件和 `UiDocument`。不要为了一个常规按钮重写一整页原生 Bevy 节点。
+普通表单、列表或后台工具页面优先使用现有组件和 `UiDocument`。声明式 Grid、card/frame、文字角色、控件 slot/state、TextInput 和高级图片的具体配置见 [UI生成式组件配置参考.md](UI生成式组件配置参考.md)。不要为了一个常规按钮重写一整页原生 Bevy 节点。
 
 ## 完成定义
 
