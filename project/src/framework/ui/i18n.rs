@@ -115,11 +115,11 @@ impl UiI18n {
         self.tr(key, key)
     }
 
-    fn built_in(locale: impl Into<String>) -> Self {
+    fn from_fallback(locale: impl Into<String>, fallback_texts: HashMap<String, String>) -> Self {
         Self {
             locale: locale.into(),
-            texts: built_in_zh_cn_texts(),
-            fallback_texts: built_in_zh_cn_texts(),
+            texts: fallback_texts.clone(),
+            fallback_texts,
         }
     }
 
@@ -157,7 +157,7 @@ impl UiI18nText {
 
 fn load_ui_i18n() -> (UiI18n, UiI18nSource) {
     let mut diagnostics = Vec::new();
-    let fallback_texts = built_in_zh_cn_texts();
+    let fallback_texts = load_default_fallback_texts(&mut diagnostics);
 
     for path in ui_i18n_path_candidates() {
         match load_ui_i18n_from_path(&path, fallback_texts.clone()) {
@@ -175,12 +175,36 @@ fn load_ui_i18n() -> (UiI18n, UiI18nSource) {
     }
 
     (
-        UiI18n::built_in(DEFAULT_LOCALE),
+        UiI18n::from_fallback(DEFAULT_LOCALE, fallback_texts),
         UiI18nSource {
             loaded_path: None,
             diagnostics,
         },
     )
+}
+
+fn load_default_fallback_texts(diagnostics: &mut Vec<String>) -> HashMap<String, String> {
+    load_fallback_texts_from_paths(locale_path_candidates(DEFAULT_LOCALE), diagnostics)
+}
+
+fn load_fallback_texts_from_paths(
+    paths: impl IntoIterator<Item = PathBuf>,
+    diagnostics: &mut Vec<String>,
+) -> HashMap<String, String> {
+    for path in paths {
+        match load_ui_i18n_from_path(&path, HashMap::new()) {
+            Ok(i18n) if i18n.locale() == DEFAULT_LOCALE => return i18n.texts,
+            Ok(i18n) => diagnostics.push(format!(
+                "default locale fallback: {} declares locale {}, expected {}",
+                path.display(),
+                i18n.locale(),
+                DEFAULT_LOCALE
+            )),
+            Err(error) => diagnostics.push(format!("default locale fallback: {error}")),
+        }
+    }
+
+    HashMap::new()
 }
 
 fn load_ui_i18n_from_path(
@@ -221,12 +245,22 @@ fn ui_i18n_path_candidates() -> Vec<PathBuf> {
         push_unique_path(&mut paths, PathBuf::from(path));
     }
 
-    push_locale_candidates(&mut paths, &locale);
-
-    if locale != DEFAULT_LOCALE {
-        push_locale_candidates(&mut paths, DEFAULT_LOCALE);
+    for path in locale_path_candidates(&locale) {
+        push_unique_path(&mut paths, path);
     }
 
+    if locale != DEFAULT_LOCALE {
+        for path in locale_path_candidates(DEFAULT_LOCALE) {
+            push_unique_path(&mut paths, path);
+        }
+    }
+
+    paths
+}
+
+fn locale_path_candidates(locale: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    push_locale_candidates(&mut paths, locale);
     paths
 }
 
@@ -365,7 +399,8 @@ fn poll_ui_i18n_hot_reload(
         return;
     }
 
-    match load_ui_i18n_from_path(&hot_reload.watched_path, built_in_zh_cn_texts()) {
+    let fallback_texts = i18n.fallback_texts.clone();
+    match load_ui_i18n_from_path(&hot_reload.watched_path, fallback_texts) {
         Ok(next_i18n) => {
             *i18n = next_i18n;
             source.loaded_path = Some(hot_reload.watched_path.clone());
@@ -407,393 +442,6 @@ fn refresh_ui_i18n_texts(i18n: Res<UiI18n>, mut texts: Query<(&UiI18nText, &mut 
             text.0 = next_text;
         }
     }
-}
-
-fn built_in_zh_cn_texts() -> HashMap<String, String> {
-    [
-        ("app.name", "MyBevy"),
-        ("common.cancel", "取消"),
-        ("common.confirm", "确认"),
-        ("ui.controls.loading", "加载中..."),
-        ("ui.controls.empty", "暂无选项"),
-        ("ui.controls.error", "选项加载失败"),
-        ("nav.lobby", "大厅"),
-        ("nav.audio_settings", "音频设置"),
-        ("nav.audio_monitor", "音频监控"),
-        ("nav.ui_gallery", "UI 示例"),
-        ("nav.logout", "退出登录"),
-        ("auth.login.subtitle", "账号登录"),
-        ("auth.login.server_section", "服务器"),
-        ("auth.login.server.local", "本地服"),
-        ("auth.login.server.production", "正式服"),
-        ("auth.login.guest_login", "游客登录"),
-        ("auth.character.title", "选择角色"),
-        ("auth.character.subtitle", "角色选择"),
-        ("auth.login.account_section", "账号"),
-        ("auth.login.sign_in", "登录"),
-        ("auth.login.switch_account", "切换账号"),
-        ("auth.login.change_character", "切换角色"),
-        ("auth.login.characters_section", "角色"),
-        ("auth.login.load_characters", "刷新角色"),
-        ("auth.login.create_character", "创建角色"),
-        ("auth.login.select_character", "选择"),
-        ("auth.login.character_selected", "已选择"),
-        ("auth.login.selecting_character", "选择中"),
-        ("auth.login.dev_section", "开发"),
-        ("auth.login.dev_lobby", "打开大厅"),
-        ("nav.change_character", "切换角色"),
-        ("lobby.title", "游戏列表"),
-        ("lobby.available", "可用游戏"),
-        ("lobby.touch_ripple.title", "触控水波纹"),
-        ("lobby.touch_ripple.description", "当前原型"),
-        ("lobby.sample_scene.title", "样板场景"),
-        ("lobby.sample_scene.description", "地下城房间场景原型"),
-        ("lobby.robot_sync_scene.title", "机器人同步"),
-        (
-            "lobby.robot_sync_scene.description",
-            "500x500 控制机帧同步竞技场",
-        ),
-        ("lobby.fangyuan_home.title", "方圆灵构家园原型"),
-        ("lobby.fangyuan_home.description", "蓝图家园场景预览"),
-        ("lobby.fangyuan_player_preview.title", "方圆玩家预览"),
-        (
-            "lobby.fangyuan_player_preview.description",
-            "最小玩家 Entity 外观闭环",
-        ),
-        ("lobby.play", "开始"),
-        ("lobby.enter", "进入"),
-        ("lobby.touch_ripple.confirm.title", "触控水波纹"),
-        ("lobby.touch_ripple.confirm.body", "要以单人会话开始吗？"),
-        (
-            "lobby.touch_ripple.confirm.detail",
-            "单人模式仅使用本地控制机。",
-        ),
-        ("lobby.touch_ripple.confirm.networked", "联机"),
-        ("lobby.touch_ripple.confirm.single_player", "单人"),
-        ("lobby.touch_ripple.toast.local", "正在启动本地触控水波纹"),
-        (
-            "lobby.touch_ripple.toast.networked",
-            "正在启动联机触控水波纹",
-        ),
-        ("audio_settings.title", "音频设置"),
-        ("audio_settings.master.section", "总音频"),
-        ("audio_settings.master.muted", "总音量静音"),
-        ("audio_settings.volume.section", "音量"),
-        ("audio_settings.bus.master", "总音量"),
-        ("audio_settings.bus.music", "音乐"),
-        ("audio_settings.bus.sfx", "音效"),
-        ("audio_settings.bus.ui", "界面"),
-        ("audio_settings.bus.battle", "战斗"),
-        ("audio_monitor.title", "音频监控"),
-        ("audio_monitor.summary.section", "播放实例"),
-        ("audio_monitor.memory.section", "音频资源 bytes"),
-        ("audio_monitor.loading.section", "加载分组"),
-        ("audio_monitor.recent.section", "最近活动"),
-        ("audio_monitor.thresholds.section", "阈值提示"),
-        ("audio_monitor.instances.section", "实例明细"),
-        ("sample_scene.hud.title", "样板场景"),
-        ("sample_scene.hud.status", "场景运行中"),
-        ("fangyuan_home.hud.title", "方圆灵构家园"),
-        ("fangyuan_home.hud.scene", "原型预览"),
-        ("fangyuan_home.hud.reload", "重新加载"),
-        ("fangyuan_home.hud.clear", "清空"),
-        ("fangyuan_player_preview.hud.title", "方圆玩家预览"),
-        ("fangyuan_player_preview.hud.status", "最小玩家 Entity"),
-        ("robot_sync_scene.hud.hide", "隐藏 HUD"),
-        ("robot_sync_scene.hud.show", "显示 HUD"),
-        ("ui_gallery.title", "UI 示例（Rust）"),
-        ("ui_document_gallery.title", "UI 示例（生成式）"),
-        ("ui_gallery.visual_foundation.section", "视觉基础"),
-        (
-            "ui_gallery.visual_foundation.description",
-            "确定性图片适配样例，以及透明边缘、九宫格与图集测试资源。",
-        ),
-        ("ui_gallery.visual_acceptance.section", "高保真综合验收"),
-        (
-            "ui_gallery.visual_acceptance.description",
-            "在稳定审计区域组合正式图片、可缩放表面、多字重、图标、效果与控件状态。",
-        ),
-        ("ui_gallery.image_fit.section", "图片适配"),
-        (
-            "ui_gallery.image_fit.description",
-            "横竖容器中的原始、拉伸、包含与焦点覆盖模式。",
-        ),
-        ("ui_gallery.image_modes.section", "九宫格、平铺与图集帧"),
-        (
-            "ui_gallery.image_modes.description",
-            "可缩放边框、受预算约束的纹理重复与精确图集帧区域。",
-        ),
-        ("ui_gallery.typography.section", "文字排版"),
-        (
-            "ui_gallery.typography.description",
-            "主题文字角色、真实拉丁字重、混排、换行和受控溢出。",
-        ),
-        ("ui_gallery.typography.large_title", "大标题"),
-        ("ui_gallery.typography.section_title", "章节标题"),
-        ("ui_gallery.typography.subtitle", "副标题文本"),
-        ("ui_gallery.typography.body", "正文文本"),
-        ("ui_gallery.typography.caption", "说明文本"),
-        ("ui_gallery.typography.button", "按钮文字角色"),
-        ("ui_gallery.typography.weights", "拉丁测试字体字重"),
-        ("ui_gallery.typography.overflow", "混排和溢出状态"),
-        ("ui_gallery.typography.boundary", "对齐和缺字状态"),
-        ("ui_gallery.buttons.section", "按钮"),
-        ("ui_gallery.buttons.primary", "主按钮"),
-        ("ui_gallery.buttons.secondary", "次按钮"),
-        ("ui_gallery.buttons.focused", "聚焦"),
-        ("ui_gallery.buttons.selected", "选中"),
-        ("ui_gallery.buttons.loading", "加载中"),
-        ("ui_gallery.buttons.disabled", "禁用"),
-        ("ui_gallery.buttons.unavailable", "不可用"),
-        ("ui_gallery.buttons.action", "操作"),
-        ("ui_gallery.icon_buttons.section", "图标与图片按钮"),
-        (
-            "ui_gallery.icon_buttons.description",
-            "覆盖资源图标、左右标签、着色边界和可见的缺失占位。",
-        ),
-        ("ui_gallery.icon_buttons.icon_only", "纯图标"),
-        ("ui_gallery.icon_buttons.labeled", "图标与文字"),
-        ("ui_gallery.icon_buttons.add", "添加"),
-        ("ui_gallery.icon_buttons.remove", "移除"),
-        ("ui_gallery.icon_buttons.help", "帮助"),
-        ("ui_gallery.icon_buttons.close", "关闭"),
-        ("ui_gallery.icon_buttons.loading", "加载中"),
-        ("ui_gallery.icon_buttons.previous", "上一步"),
-        ("ui_gallery.icon_buttons.next", "下一步"),
-        ("ui_gallery.icon_buttons.tintable", "可着色"),
-        ("ui_gallery.icon_buttons.full_color", "全彩"),
-        ("ui_gallery.icon_buttons.missing", "缺失"),
-        ("ui_gallery.icon_states.section", "图标按钮状态"),
-        (
-            "ui_gallery.icon_states.description",
-            "鼠标、焦点、选中、禁用和加载共用一套状态优先级。",
-        ),
-        ("ui_gallery.icon_states.idle", "空闲"),
-        ("ui_gallery.icon_states.hovered", "悬停"),
-        ("ui_gallery.icon_states.pressed", "按下"),
-        ("ui_gallery.icon_states.focused", "聚焦"),
-        ("ui_gallery.icon_states.selected", "选中"),
-        ("ui_gallery.icon_states.disabled", "禁用"),
-        ("ui_gallery.icon_states.loading", "加载中"),
-        ("ui_gallery.components.section", "组件完整状态"),
-        (
-            "ui_gallery.components.description",
-            "展示可复用组件的稳定尺寸、覆盖层行为与长文本边界。",
-        ),
-        ("ui_gallery.components.badge", "徽标"),
-        ("ui_gallery.components.progress", "进度"),
-        ("ui_gallery.components.tabs", "标签页"),
-        ("ui_gallery.components.dropdown", "下拉选择"),
-        ("ui_gallery.components.tooltip", "提示层"),
-        (
-            "ui_gallery.components.selection_states",
-            "复选框、开关与分段控件状态",
-        ),
-        ("ui_gallery.components.state.normal", "常态"),
-        ("ui_gallery.components.state.selected", "选中"),
-        ("ui_gallery.components.state.disabled", "禁用"),
-        ("ui_gallery.components.state.loading", "加载中"),
-        ("ui_gallery.components.state.empty", "空状态"),
-        ("ui_gallery.components.state.error", "错误"),
-        ("ui_gallery.components.progress.normal", "72%"),
-        ("ui_gallery.components.progress.disabled", "34%"),
-        ("ui_gallery.components.progress.loading", "加载中"),
-        ("ui_gallery.components.progress.empty", "空状态"),
-        ("ui_gallery.components.progress.error", "错误"),
-        ("ui_gallery.components.tab.normal", "常态"),
-        ("ui_gallery.components.tab.hovered", "悬停"),
-        ("ui_gallery.components.tab.pressed", "按下"),
-        ("ui_gallery.components.tab.focused", "聚焦"),
-        ("ui_gallery.components.tab.selected", "选中"),
-        ("ui_gallery.components.tab.disabled", "禁用"),
-        ("ui_gallery.components.tab.loading", "加载中"),
-        ("ui_gallery.components.dropdown.normal", "选择区域"),
-        ("ui_gallery.components.dropdown.hovered", "悬停"),
-        ("ui_gallery.components.dropdown.pressed", "按下"),
-        ("ui_gallery.components.dropdown.focused", "聚焦"),
-        ("ui_gallery.components.dropdown.selected", "选中"),
-        ("ui_gallery.components.dropdown.disabled", "禁用"),
-        ("ui_gallery.components.dropdown.loading", "加载中"),
-        ("ui_gallery.components.dropdown.empty", "空状态"),
-        ("ui_gallery.components.dropdown.error", "错误"),
-        ("ui_gallery.components.dropdown.option.north", "北境"),
-        ("ui_gallery.components.dropdown.option.locked", "未解锁区域"),
-        (
-            "ui_gallery.components.dropdown.option.long",
-            "这是一个用于验证长文本换行且不会改变控件点击区域尺寸的区域名称",
-        ),
-        ("ui_gallery.components.dropdown.option.south", "南境"),
-        ("ui_gallery.components.tooltip.normal", "悬停或聚焦"),
-        (
-            "ui_gallery.components.tooltip.body",
-            "提示文本会避让屏幕边缘并跟随所属控件。",
-        ),
-        ("ui_gallery.components.tooltip.error", "错误提示"),
-        (
-            "ui_gallery.components.tooltip.error_body",
-            "请求的数据无法加载。",
-        ),
-        ("ui_gallery.components.tooltip.disabled", "禁用控件"),
-        (
-            "ui_gallery.components.tooltip.disabled_body",
-            "禁用控件仍可说明当前操作不可用的原因。",
-        ),
-        ("ui_gallery.components.checkbox.normal", "复选框常态"),
-        ("ui_gallery.components.checkbox.hovered", "复选框悬停"),
-        ("ui_gallery.components.checkbox.pressed", "复选框按下"),
-        ("ui_gallery.components.checkbox.focused", "复选框聚焦"),
-        ("ui_gallery.components.checkbox.selected", "复选框选中"),
-        ("ui_gallery.components.checkbox.disabled", "复选框禁用"),
-        ("ui_gallery.components.checkbox.loading", "复选框加载中"),
-        ("ui_gallery.components.checkbox.error", "复选框错误"),
-        ("ui_gallery.components.toggle.normal", "开关常态"),
-        ("ui_gallery.components.toggle.hovered", "开关悬停"),
-        ("ui_gallery.components.toggle.pressed", "开关按下"),
-        ("ui_gallery.components.toggle.focused", "开关聚焦"),
-        ("ui_gallery.components.toggle.selected", "开关选中"),
-        ("ui_gallery.components.toggle.disabled", "开关禁用"),
-        ("ui_gallery.components.toggle.loading", "开关加载中"),
-        ("ui_gallery.components.toggle.error", "开关错误"),
-        ("ui_gallery.components.segment.normal", "分段常态"),
-        ("ui_gallery.components.segment.hovered", "分段悬停"),
-        ("ui_gallery.components.segment.pressed", "分段按下"),
-        ("ui_gallery.components.segment.focused", "分段聚焦"),
-        ("ui_gallery.components.segment.selected", "分段选中"),
-        ("ui_gallery.components.segment.disabled", "分段禁用"),
-        ("ui_gallery.components.segment.loading", "分段加载中"),
-        ("ui_gallery.components.segment.error", "分段错误"),
-        ("ui_gallery.selection.section", "选择控件"),
-        ("ui_gallery.selection.checkbox.unchecked", "未勾选"),
-        ("ui_gallery.selection.checkbox.checked", "已勾选"),
-        ("ui_gallery.selection.checkbox.disabled", "禁用"),
-        ("ui_gallery.selection.toggle.off", "开关关闭"),
-        ("ui_gallery.selection.toggle.on", "开关开启"),
-        ("ui_gallery.selection.toggle.disabled", "开关禁用"),
-        ("ui_gallery.selection.segment.small", "小"),
-        ("ui_gallery.selection.segment.medium", "中"),
-        ("ui_gallery.selection.segment.large", "大"),
-        ("ui_gallery.numeric.section", "数值控件"),
-        ("ui_gallery.numeric.slider.volume", "音量"),
-        ("ui_gallery.numeric.slider.disabled", "禁用滑条"),
-        ("ui_gallery.numeric.stepper.players", "玩家数"),
-        ("ui_gallery.numeric.stepper.disabled", "禁用步进器"),
-        ("ui_gallery.inputs.section", "输入框"),
-        ("ui_gallery.inputs.placeholder.player_name", "玩家名称"),
-        ("ui_gallery.inputs.placeholder.required", "必填"),
-        ("ui_gallery.inputs.placeholder.error", "错误状态"),
-        ("ui_gallery.inputs.placeholder.note", "输入备注"),
-        ("ui_gallery.inputs.placeholder.readonly", "只读"),
-        ("ui_gallery.inputs.placeholder.disabled", "禁用"),
-        ("ui_gallery.inputs.placeholder.short_code", "最多 6 个字符"),
-        ("ui_gallery.inputs.placeholder.empty", "空输入"),
-        ("ui_gallery.inputs.helper.player_name", "会展示给其他玩家。"),
-        ("ui_gallery.inputs.helper.required", "必填字段会校验空值。"),
-        ("ui_gallery.inputs.helper.note", "最多 12 个字符。"),
-        (
-            "ui_gallery.inputs.helper.readonly",
-            "只读输入框可聚焦但不能编辑。",
-        ),
-        (
-            "ui_gallery.inputs.helper.short_code",
-            "必填，最多 6 个字符。",
-        ),
-        ("ui_gallery.inputs.helper.empty", "可选的空输入。"),
-        ("ui_gallery.inputs.validation.required", "此字段为必填。"),
-        (
-            "ui_gallery.inputs.validation.error",
-            "请输入 4-8 位字母或数字。",
-        ),
-        (
-            "ui_gallery.inputs.validation.disabled_error",
-            "禁用态视觉优先于错误态。",
-        ),
-        ("ui_gallery.overlays.section", "覆盖层"),
-        ("ui_gallery.overlays.show_toast", "显示 Toast"),
-        ("ui_gallery.overlays.loading", "Loading"),
-        ("ui_gallery.overlays.cancelable", "可取消"),
-        ("ui_gallery.overlays.hide", "隐藏"),
-        ("ui_gallery.overlays.show_confirm", "显示确认框"),
-        ("ui_gallery.overlays.show_floating", "显示浮动面板"),
-        ("ui_gallery.overlays.close_top", "关闭顶层"),
-        ("ui_gallery.toast.preview", "来自 UI 示例的 Toast"),
-        ("ui_gallery.loading.preview", "加载预览"),
-        ("ui_gallery.loading.cancelable", "可取消加载中"),
-        ("ui_gallery.confirm.title", "示例确认框"),
-        (
-            "ui_gallery.confirm.body",
-            "这里用于确认弹窗层级和输入阻断。",
-        ),
-        (
-            "ui_gallery.confirm.detail",
-            "弹窗打开时，下方页面按钮不应响应。",
-        ),
-        ("ui_gallery.floating.title", "浮动面板"),
-        ("ui_gallery.floating.body", "此面板不会覆盖整个页面。"),
-        (
-            "ui_gallery.floating.detail",
-            "使用关闭顶层按钮或 Esc 关闭它。",
-        ),
-        ("ui_gallery.binding.section", "绑定样例"),
-        (
-            "ui_gallery.binding.description",
-            "下方控件由 UiBindingValues 驱动。",
-        ),
-        ("ui_gallery.binding.status.initial", "等待绑定更新。"),
-        ("ui_gallery.binding.status.updated", "绑定文本已更新"),
-        (
-            "ui_gallery.binding.notice",
-            "这行提示由 bool 可见性绑定控制。",
-        ),
-        ("ui_gallery.binding.bound_button", "绑定按钮"),
-        ("ui_gallery.binding.action", "更新绑定"),
-        ("ui_gallery.images.section", "图片"),
-        (
-            "ui_gallery.images.description",
-            "从 assets/ui/images 加载的普通首包 UI 图片。",
-        ),
-        ("ui_gallery.images.atlas_sources", "图集源图"),
-        (
-            "ui_gallery.images.atlas_sources.description",
-            "这里只展示源 PNG；不是正式图集帧预览。",
-        ),
-        ("ui_gallery.stress.section", "压力样例"),
-        (
-            "ui_gallery.stress.description",
-            "静态列表，用于在 F3 中观察节点和文本数量。",
-        ),
-        ("ui_gallery.stress.item", "条目"),
-        ("ui_gallery.stress.item_01", "条目 01"),
-        ("ui_gallery.stress.item_02", "条目 02"),
-        ("ui_gallery.stress.item_03", "条目 03"),
-        ("ui_gallery.stress.item_04", "条目 04"),
-        ("ui_gallery.stress.item_05", "条目 05"),
-        ("ui_gallery.stress.item_06", "条目 06"),
-        ("ui_gallery.stress.item_07", "条目 07"),
-        ("ui_gallery.stress.item_08", "条目 08"),
-        ("ui_gallery.stress.item_09", "条目 09"),
-        ("ui_gallery.stress.item_10", "条目 10"),
-        ("ui_gallery.stress.item_11", "条目 11"),
-        ("ui_gallery.stress.item_12", "条目 12"),
-        ("ui_gallery.stress.item_13", "条目 13"),
-        ("ui_gallery.stress.item_14", "条目 14"),
-        ("ui_gallery.stress.item_15", "条目 15"),
-        ("ui_gallery.stress.item_16", "条目 16"),
-        ("ui_gallery.stress.item_17", "条目 17"),
-        ("ui_gallery.stress.item_18", "条目 18"),
-        ("ui_gallery.stress.item_19", "条目 19"),
-        ("ui_gallery.stress.item_20", "条目 20"),
-        ("ui_gallery.stress.item_21", "条目 21"),
-        ("ui_gallery.stress.item_22", "条目 22"),
-        ("ui_gallery.stress.item_23", "条目 23"),
-        ("ui_gallery.stress.item_24", "条目 24"),
-        ("ui_gallery.stress.state.ready", "就绪"),
-        ("ui_gallery.stress.state.waiting", "等待中"),
-        ("ui_gallery.stress.state.done", "完成"),
-        ("ui_gallery.stress.action", "检查"),
-    ]
-    .into_iter()
-    .map(|(key, value)| (key.to_string(), value.to_string()))
-    .collect()
 }
 
 #[allow(dead_code)]
@@ -864,10 +512,14 @@ mod tests {
         )
     }
 
+    fn test_fallback_texts() -> HashMap<String, String> {
+        HashMap::from([("common.cancel".to_string(), "取消".to_string())])
+    }
+
     fn load_config(source: &str) -> Result<UiI18n, String> {
         let temp = TempConfigDir::new("load_config");
         let path = temp.write_config("i18n.ron", source);
-        load_ui_i18n_from_path(&path, built_in_zh_cn_texts())
+        load_ui_i18n_from_path(&path, test_fallback_texts())
     }
 
     fn assert_error_contains(error: &str, expected: &str) {
@@ -908,14 +560,39 @@ mod tests {
     }
 
     #[test]
-    fn missing_key_falls_back_to_built_in_chinese() {
+    fn missing_key_falls_back_to_loaded_default_locale() {
         let i18n = UiI18n {
             locale: "en_us".to_string(),
             texts: HashMap::new(),
-            fallback_texts: built_in_zh_cn_texts(),
+            fallback_texts: test_fallback_texts(),
         };
 
         assert_eq!(i18n.tr("common.cancel", "Cancel"), "取消");
+    }
+
+    #[test]
+    fn default_fallback_texts_are_loaded_from_ron() {
+        let temp = TempConfigDir::new("default_fallback_texts_are_loaded_from_ron");
+        let missing = temp.path.join("missing.ron");
+        let zh_cn = temp.write_config(
+            "zh_cn.ron",
+            r#"(
+    version: 1,
+    locale: "zh_cn",
+    texts: {
+        "new.translation": "无需重新编译",
+    },
+)"#,
+        );
+        let mut diagnostics = Vec::new();
+
+        let texts = load_fallback_texts_from_paths([missing, zh_cn], &mut diagnostics);
+
+        assert_eq!(
+            texts.get("new.translation").map(String::as_str),
+            Some("无需重新编译")
+        );
+        assert_eq!(diagnostics.len(), 1);
     }
 
     #[test]
@@ -936,7 +613,7 @@ mod tests {
         let i18n = UiI18n {
             locale: "en_us".to_string(),
             texts,
-            fallback_texts: built_in_zh_cn_texts(),
+            fallback_texts: test_fallback_texts(),
         };
         let mut app = App::new();
         app.insert_resource(i18n)
@@ -970,7 +647,7 @@ mod tests {
         let i18n = UiI18n {
             locale: "en_us".to_string(),
             texts,
-            fallback_texts: built_in_zh_cn_texts(),
+            fallback_texts: test_fallback_texts(),
         };
         let mut style = UiTextStyleToken::latin_fixture(UiFontWeight::Medium, 18.0);
         style.line_height = UiTextLineHeight::Relative(1.45);
@@ -1027,7 +704,7 @@ mod tests {
             "i18n.ron",
             &valid_i18n_config_with_version(UI_I18N_CONFIG_VERSION),
         );
-        let current_i18n = load_ui_i18n_from_path(&path, built_in_zh_cn_texts()).unwrap();
+        let current_i18n = load_ui_i18n_from_path(&path, test_fallback_texts()).unwrap();
         let current_app_name = current_i18n.tr("app.name", "Fallback");
         fs::write(&path, "(version: 1, locale:").expect("bad temp config should be written");
 
@@ -1060,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_hot_reload_keeps_built_in_i18n_without_polling_missing_path() {
+    fn disabled_hot_reload_keeps_loaded_fallback_without_polling_missing_path() {
         let missing_path = PathBuf::from("missing/i18n.ron");
         let mut hot_reload = UiI18nHotReload {
             enabled: false,
@@ -1075,7 +752,7 @@ mod tests {
             diagnostics: Vec::new(),
         };
         let mut app = App::new();
-        app.insert_resource(UiI18n::built_in(DEFAULT_LOCALE))
+        app.insert_resource(UiI18n::from_fallback(DEFAULT_LOCALE, test_fallback_texts()))
             .insert_resource(source)
             .insert_resource(hot_reload)
             .insert_resource(Time::<()>::default())

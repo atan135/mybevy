@@ -72,7 +72,7 @@
 - fallback 当前以整个 Text 节点为单位；框架不会自动把中英文或缺字内容拆成多字体 `TextSpan`。
 - Bevy 0.18.1 的当前公共封装不支持字距 token、自动复杂富文本、文字沿路径或高级排版。`TextBounds` 也不是严格像素裁切保证。
 - `UiRasterizedTextSpec` 只允许有可访问/i18n fallback 和明确来源的 `project/assets/ui/` 静态字图，不是动态文案替代品。
-- i18n fallback 优先中文内置文案，适合当前开发期验证，但正式多语言发布前需要补齐每个 locale 的完整资源。
+- i18n fallback 优先使用启动时从 `zh_cn.ron` 读取的中文内存快照；其他 locale 运行期间修改中文 fallback 需要重启，正式多语言发布前仍需补齐每个 locale 的完整资源。
 
 ## 高保真视觉能力
 

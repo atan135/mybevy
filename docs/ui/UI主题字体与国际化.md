@@ -162,19 +162,20 @@ project/assets/ui/i18n/
 
 加载顺序：
 
-1. `MYBEVY_UI_I18N` 指定路径。
-2. 当前 locale 的 `assets/ui/i18n/<locale>.ron`、`project/assets/ui/i18n/<locale>.ron`、`CARGO_MANIFEST_DIR/assets/ui/i18n/<locale>.ron`。
-3. 如果 locale 不是 `zh_cn`，再尝试 `zh_cn`。
-4. 内置中文 fallback。
+1. 从 `zh_cn.ron` 的候选路径读取默认中文表到内存，作为当前会话的 fallback。
+2. 尝试 `MYBEVY_UI_I18N` 指定路径。
+3. 尝试当前 locale 的 `assets/ui/i18n/<locale>.ron`、`project/assets/ui/i18n/<locale>.ron`、`CARGO_MANIFEST_DIR/assets/ui/i18n/<locale>.ron`。
+4. 如果 locale 不是 `zh_cn`，再尝试 `zh_cn.ron` 作为当前语言。
+5. 所有文件都不可用时保留空语言表，由调用点或 `UiDocument` 的 fallback 提供显示文案。
 
 ## 文案解析
 
-业务代码通过 `i18n.tr(key, fallback)` 解析文案。如果当前 locale 缺 key，会优先使用内置中文 fallback；仍没有则使用调用点传入的 fallback；fallback 为空时显示 key。
+业务代码通过 `i18n.tr(key, fallback)` 解析文案。如果当前 locale 缺 key，会优先使用启动时从 `zh_cn.ron` 读入内存的中文 fallback；仍没有则使用调用点传入的 fallback；fallback 为空时显示 key。Rust 代码不保存业务翻译表，新增或修改翻译只需更新 RON，无需重新编译；重启进程后会重新加载默认 fallback。
 
 文本节点如果带 `UiI18nText { key, fallback }`，`UiI18n` 变化后会自动刷新 `Text` 内容。控件 helper 的 `_key` 版本会自动附加这个组件。
 
 ## i18n 热更新
 
-i18n 文件成功加载后同样约每 0.8 秒轮询。热更新成功会替换 `UiI18n`，并刷新带 `UiI18nText` 的文本节点。字体同步在 i18n 和主题刷新之后运行：locale 变化会重新解析全文 coverage 和 truncation，但保留字体角色、weight、line height、wrap、truncation 和 Node 约束。主题刷新只更新主题拥有的字号，不覆盖其余运行时排版字段。热更新失败保留当前 i18n。
+i18n 文件成功加载后同样约每 0.8 秒轮询。热更新成功会替换 `UiI18n`，并刷新带 `UiI18nText` 的文本节点。当前语言就是 `zh_cn` 时，修改 `zh_cn.ron` 会直接热更新；其他语言运行期间，内存中的中文 fallback 保持启动时快照，修改 `zh_cn.ron` 后需重启才能更新该 fallback。字体同步在 i18n 和主题刷新之后运行：locale 变化会重新解析全文 coverage 和 truncation，但保留字体角色、weight、line height、wrap、truncation 和 Node 约束。主题刷新只更新主题拥有的字号，不覆盖其余运行时排版字段。热更新失败保留当前 i18n。
 
 需要注意：输入框 helper 文案、校验消息等部分状态在组件里保存的是已解析字符串，并不一定都能在 locale 热更新后自动回刷。需要完全动态切换语言的表单，应优先保留 key 或在 locale 改变时重新生成对应页面。
