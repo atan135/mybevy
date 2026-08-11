@@ -173,6 +173,10 @@
     },
     "login_error": {
       "properties": {
+        "background": {
+          "kind": "solid",
+          "color": { "kind": "literal", "value": "#2a1418e6" }
+        },
         "border": {
           "width": { "kind": "literal", "value": 1.0 },
           "color": { "kind": "literal", "value": "#d45a61cc" }
@@ -181,6 +185,10 @@
     },
     "login_notice": {
       "properties": {
+        "background": {
+          "kind": "solid",
+          "color": { "kind": "literal", "value": "#162328d9" }
+        },
         "border": {
           "width": { "kind": "literal", "value": 1.0 },
           "color": { "kind": "literal", "value": "#7e9c9780" }
@@ -276,10 +284,10 @@
               "id": "login.panel",
               "layout": {
                 "width": { "percent": 100.0 },
-                "max_width": { "px": 384.0 },
+                "max_width": { "px": 420.0 },
                 "min_width": { "px": 320.0 },
                 "padding": { "all": { "px": 24.0 } },
-                "gap": { "px": 14.0 },
+                "gap": { "px": 12.0 },
                 "direction": "column",
                 "flex_shrink": 0.0
               },
@@ -288,14 +296,14 @@
                 {
                   "type": "text",
                   "id": "login.title",
-                  "content": { "literal": "STILLWATER" },
+                  "content": { "i18n_key": "auth.login.brand", "fallback": "STILLWATER" },
                   "style": { "text_role": "title" }
                 },
                 {
                   "type": "text",
                   "id": "login.subtitle",
-                  "content": { "literal": "Account Login" },
-                  "style": { "text_role": "caption" }
+                  "content": { "i18n_key": "auth.login.subtitle", "fallback": "Account access" },
+                  "style": { "text_role": "caption", "role": "muted" }
                 },
                 {
                   "type": "spacer",
@@ -334,12 +342,24 @@
                           },
                           "children": [
                             {
+                              "type": "text",
+                              "id": "login.environment_label",
+                              "content": { "i18n_key": "auth.login.server_section", "fallback": "SERVER" },
+                              "typography": {
+                                "weight": "medium",
+                                "wrap": "no_wrap",
+                                "max_lines": 1,
+                                "overflow": "clip"
+                              },
+                              "style": { "text_role": "caption", "role": "muted" }
+                            },
+                            {
                               "type": "segmented",
                               "id": "login.environment",
                               "selected": "local",
                               "options": [
-                                { "value": "local", "label": { "literal": "Local" } },
-                                { "value": "production", "label": { "literal": "Production" } }
+                                { "value": "local", "label": { "i18n_key": "auth.login.server.local", "fallback": "Local" } },
+                                { "value": "production", "label": { "i18n_key": "auth.login.server.production", "fallback": "Production" } }
                               ],
                               "on_change": {
                                 "action": "auth.switch_environment",
@@ -357,12 +377,6 @@
                                   "value": {
                                     "binding_path": "auth.login.environment",
                                     "direction": "one_way"
-                                  }
-                                },
-                                "slots": {
-                                  "label": {
-                                    "kind": "text",
-                                    "content": { "literal": "Server" }
                                   }
                                 }
                               }
@@ -382,18 +396,26 @@
                               "type": "button",
                               "id": "login.mode.login",
                               "variant": "secondary",
-                              "label": { "literal": "Login" },
+                              "label": { "i18n_key": "auth.login.mode.login", "fallback": "Login" },
                               "on_click": { "action": "auth.show_login" },
-                              "layout": { "flex_grow": 1.0, "min_width": { "px": 0.0 } },
+                              "layout": {
+                                "height": { "px": 42.0 },
+                                "flex_grow": 1.0,
+                                "min_width": { "px": 0.0 }
+                              },
                               "component": { "bindings": { "disabled": "auth.login.disabled" } }
                             },
                             {
                               "type": "button",
                               "id": "login.mode.register",
                               "variant": "secondary",
-                              "label": { "literal": "Register" },
+                              "label": { "i18n_key": "auth.login.mode.register", "fallback": "Register" },
                               "on_click": { "action": "auth.show_registration" },
-                              "layout": { "flex_grow": 1.0, "min_width": { "px": 0.0 } },
+                              "layout": {
+                                "height": { "px": 42.0 },
+                                "flex_grow": 1.0,
+                                "min_width": { "px": 0.0 }
+                              },
                               "component": { "bindings": { "disabled": "auth.login.disabled" } }
                             }
                           ]
@@ -422,8 +444,8 @@
                                   }
                                 },
                                 "slots": {
-                                  "label": { "kind": "text", "content": { "literal": "Account" } },
-                                  "placeholder": { "kind": "text", "content": { "literal": "Enter account" } }
+                                  "label": { "kind": "text", "content": { "i18n_key": "auth.login.field.account", "fallback": "Account" } },
+                                  "placeholder": { "kind": "text", "content": { "i18n_key": "auth.login.placeholder.account", "fallback": "Enter account" } }
                                 }
                               }
                             },
@@ -436,8 +458,8 @@
                               "component": {
                                 "bindings": { "disabled": "auth.login.disabled" },
                                 "slots": {
-                                  "label": { "kind": "text", "content": { "literal": "Password" } },
-                                  "placeholder": { "kind": "text", "content": { "literal": "Enter password" } }
+                                  "label": { "kind": "text", "content": { "i18n_key": "auth.login.field.password", "fallback": "Password" } },
+                                  "placeholder": { "kind": "text", "content": { "i18n_key": "auth.login.placeholder.password", "fallback": "Enter password" } }
                                 }
                               }
                             },
@@ -455,18 +477,26 @@
                                   "type": "button",
                                   "id": "login.submit",
                                   "variant": "primary",
-                                  "label": { "literal": "Login" },
+                                  "label": { "i18n_key": "auth.login.action.login", "fallback": "Login" },
                                   "on_click": { "action": "auth.account_login" },
-                                  "layout": { "flex_grow": 1.0, "min_width": { "px": 116.0 } },
+                                  "layout": {
+                                    "height": { "px": 44.0 },
+                                    "flex_grow": 1.0,
+                                    "min_width": { "px": 116.0 }
+                                  },
                                   "component": { "bindings": { "disabled": "auth.login.disabled", "loading": "auth.login.request_pending" } }
                                 },
                                 {
                                   "type": "button",
                                   "id": "login.guest",
                                   "variant": "secondary",
-                                  "label": { "literal": "Guest" },
+                                  "label": { "i18n_key": "auth.login.action.guest", "fallback": "Guest" },
                                   "on_click": { "action": "auth.guest_login" },
-                                  "layout": { "flex_grow": 1.0, "min_width": { "px": 116.0 } },
+                                  "layout": {
+                                    "height": { "px": 44.0 },
+                                    "flex_grow": 1.0,
+                                    "min_width": { "px": 116.0 }
+                                  },
                                   "component": { "bindings": { "disabled": "auth.login.disabled", "loading": "auth.login.request_pending" } }
                                 }
                               ]
@@ -494,8 +524,8 @@
                                   "value": { "binding_path": "auth.register.login_name", "direction": "two_way" }
                                 },
                                 "slots": {
-                                  "label": { "kind": "text", "content": { "literal": "Account" } },
-                                  "placeholder": { "kind": "text", "content": { "literal": "Choose account" } }
+                                  "label": { "kind": "text", "content": { "i18n_key": "auth.login.field.account", "fallback": "Account" } },
+                                  "placeholder": { "kind": "text", "content": { "i18n_key": "auth.register.placeholder.account", "fallback": "Choose account" } }
                                 }
                               }
                             },
@@ -508,8 +538,8 @@
                               "component": {
                                 "bindings": { "disabled": "auth.register.disabled" },
                                 "slots": {
-                                  "label": { "kind": "text", "content": { "literal": "Password" } },
-                                  "placeholder": { "kind": "text", "content": { "literal": "Create password" } }
+                                  "label": { "kind": "text", "content": { "i18n_key": "auth.login.field.password", "fallback": "Password" } },
+                                  "placeholder": { "kind": "text", "content": { "i18n_key": "auth.register.placeholder.password", "fallback": "Create password" } }
                                 }
                               }
                             },
@@ -522,8 +552,8 @@
                               "component": {
                                 "bindings": { "disabled": "auth.register.disabled" },
                                 "slots": {
-                                  "label": { "kind": "text", "content": { "literal": "Confirm password" } },
-                                  "placeholder": { "kind": "text", "content": { "literal": "Repeat password" } }
+                                  "label": { "kind": "text", "content": { "i18n_key": "auth.register.field.password_confirmation", "fallback": "Confirm password" } },
+                                  "placeholder": { "kind": "text", "content": { "i18n_key": "auth.register.placeholder.password_confirmation", "fallback": "Repeat password" } }
                                 }
                               }
                             },
@@ -536,7 +566,7 @@
                                   "type": "button",
                                   "id": "login.register.submit",
                                   "variant": "primary",
-                                  "label": { "literal": "Create Account" },
+                                  "label": { "i18n_key": "auth.register.action.create", "fallback": "Create Account" },
                                   "on_click": { "action": "auth.register" },
                                   "layout": { "width": { "percent": 100.0 } },
                                   "component": { "bindings": { "disabled": "auth.register.disabled", "loading": "auth.register.request_pending" } }
@@ -563,7 +593,12 @@
                             "binding_path": "auth.login.status",
                             "fallback": "Not logged in"
                           },
-                          "style": { "text_role": "caption" }
+                          "typography": {
+                            "wrap": "no_wrap",
+                            "max_lines": 1,
+                            "overflow": "ellipsis"
+                          },
+                          "style": { "text_role": "caption", "role": "muted" }
                         },
                         {
                           "type": "container",
@@ -686,20 +721,20 @@
                             {
                               "type": "text",
                               "id": "login.registration.review_title",
-                              "content": { "literal": "Registration requires review" },
+                              "content": { "i18n_key": "auth.register.review.title", "fallback": "Registration requires review" },
                               "style": { "text_role": "body" }
                             },
                             {
                               "type": "text",
                               "id": "login.registration.review_detail",
-                              "content": { "literal": "Your account will be available after approval." },
+                              "content": { "i18n_key": "auth.register.review.detail", "fallback": "Your account will be available after approval." },
                               "style": { "text_role": "caption" }
                             },
                             {
                               "type": "button",
                               "id": "login.registration.back",
                               "variant": "secondary",
-                              "label": { "literal": "Back to Login" },
+                              "label": { "i18n_key": "auth.register.action.back_to_login", "fallback": "Back to Login" },
                               "on_click": { "action": "auth.dismiss_registration_review" },
                               "layout": { "width": { "percent": 100.0 } }
                             }
@@ -723,13 +758,13 @@
                             {
                               "type": "text",
                               "id": "login.registration.success_title",
-                              "content": { "literal": "Registration successful" },
+                              "content": { "i18n_key": "auth.register.success.title", "fallback": "Registration successful" },
                               "style": { "text_role": "body" }
                             },
                             {
                               "type": "text",
                               "id": "login.registration.success_detail",
-                              "content": { "literal": "Signing in to your account." },
+                              "content": { "i18n_key": "auth.register.success.detail", "fallback": "Signing in to your account." },
                               "style": { "text_role": "caption" }
                             }
                           ]
@@ -768,9 +803,17 @@
           "node_id": "login.panel",
           "set": {
             "layout": {
-              "max_width": { "px": 760.0 },
+              "max_width": { "px": 560.0 },
               "padding": { "all": { "px": 16.0 } },
               "gap": { "px": 9.0 }
+            }
+          }
+        },
+        {
+          "node_id": "login.subtitle",
+          "set": {
+            "layout": {
+              "display": "none"
             }
           }
         },
@@ -778,8 +821,8 @@
           "node_id": "login.main",
           "set": {
             "layout": {
-              "direction": "row",
-              "gap": { "px": 16.0 },
+              "direction": "column",
+              "gap": { "px": 8.0 },
               "align_items": "start"
             }
           }
@@ -788,8 +831,9 @@
           "node_id": "login.credentials",
           "set": {
             "layout": {
-              "width": { "percent": 62.0 },
+              "width": { "percent": 100.0 },
               "direction": "row",
+              "gap": { "px": 8.0 },
               "wrap": "wrap"
             }
           }
@@ -895,7 +939,8 @@
           "node_id": "login.feedback",
           "set": {
             "layout": {
-              "width": { "percent": 38.0 }
+              "width": { "percent": 100.0 },
+              "gap": { "px": 6.0 }
             }
           }
         }

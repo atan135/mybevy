@@ -206,8 +206,8 @@ fn login_document_resolves_reference_and_keyboard_height_layouts() {
     let regular_panel = find_document_node(&regular.document.root, "login.panel").unwrap();
     let keyboard_panel = find_document_node(&keyboard.document.root, "login.panel").unwrap();
 
-    assert_eq!(regular_panel.layout().max_width, px_length(384.0));
-    assert_eq!(keyboard_panel.layout().max_width, px_length(760.0));
+    assert_eq!(regular_panel.layout().max_width, px_length(420.0));
+    assert_eq!(keyboard_panel.layout().max_width, px_length(560.0));
     assert!(
         keyboard
             .applied_overrides
