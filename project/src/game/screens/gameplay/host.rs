@@ -25,6 +25,7 @@ use crate::framework::{
             UiDocumentRuntimeCommand, UiHostBindingKey, UiNodeId, UiPageState,
             UiRegisteredActionKind,
         },
+        i18n::UiI18n,
     },
 };
 #[cfg(all(debug_assertions, not(target_os = "android")))]
@@ -1505,6 +1506,7 @@ pub(super) fn sync_main_world_hud_bindings(
     session: Option<Res<MyServerSession>>,
     mail: Option<Res<MailClientState>>,
     mixer: Option<Res<AudioMixer>>,
+    i18n: Res<UiI18n>,
     contract: Res<GameplayHudHostContract>,
     mut synchronized_generation: ResMut<MainWorldHudBindingGeneration>,
     mut values: ResMut<UiBindingValues>,
@@ -1529,11 +1531,14 @@ pub(super) fn sync_main_world_hud_bindings(
     for (path, value) in [
         (
             "main_world.connection.status",
-            UiBindingValue::String(main_world_connection_status_text(connection)),
+            UiBindingValue::String(localized_main_world_connection_status(connection, &i18n)),
         ),
         (
             "main_world.character.summary",
-            UiBindingValue::String(main_world_character_summary(entry.character_id.as_deref())),
+            UiBindingValue::String(localized_main_world_character_summary(
+                entry.character_id.as_deref(),
+                &i18n,
+            )),
         ),
         (
             "main_world.mail.disabled",
@@ -1571,7 +1576,7 @@ pub(super) fn sync_main_world_hud_bindings(
         ),
         (
             "main_world.transition.status",
-            UiBindingValue::String(main_world_transition_status_text(entry.phase)),
+            UiBindingValue::String(localized_main_world_transition_status(entry.phase, &i18n)),
         ),
     ] {
         set_binding(
@@ -2203,42 +2208,47 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
-fn main_world_connection_status_text(state: GameConnectionState) -> String {
-    match state {
-        GameConnectionState::NotConnected => "Game services offline".to_owned(),
-        GameConnectionState::Connecting => "Connecting to game services".to_owned(),
-        GameConnectionState::Connected => "Transport connected".to_owned(),
-        GameConnectionState::Authenticating => "Authenticating game session".to_owned(),
-        GameConnectionState::Authenticated => "Game session connected".to_owned(),
-        GameConnectionState::Disconnected => "Connection lost".to_owned(),
-        GameConnectionState::Reconnecting => "Reconnecting game session".to_owned(),
-        GameConnectionState::ReconnectFailed => "Reconnect failed".to_owned(),
-    }
+fn localized_main_world_connection_status(state: GameConnectionState, i18n: &UiI18n) -> String {
+    let (key, fallback) = match state {
+        GameConnectionState::NotConnected => ("offline", "Game services offline"),
+        GameConnectionState::Connecting => ("connecting", "Connecting to game services"),
+        GameConnectionState::Connected => ("connected", "Transport connected"),
+        GameConnectionState::Authenticating => ("authenticating", "Authenticating game session"),
+        GameConnectionState::Authenticated => ("authenticated", "Game session connected"),
+        GameConnectionState::Disconnected => ("disconnected", "Connection lost"),
+        GameConnectionState::Reconnecting => ("reconnecting", "Reconnecting game session"),
+        GameConnectionState::ReconnectFailed => ("failed", "Reconnect failed"),
+    };
+    i18n.tr(&format!("main_world.connection.{key}"), fallback)
 }
 
-fn main_world_character_summary(character_id: Option<&str>) -> String {
+fn localized_main_world_character_summary(character_id: Option<&str>, i18n: &UiI18n) -> String {
     let Some(character_id) = character_id.filter(|character_id| !character_id.is_empty()) else {
-        return "Character unavailable".to_owned();
+        return i18n.tr("main_world.character.unavailable", "Character unavailable");
     };
     let compact_id = character_id.chars().take(8).collect::<String>();
-    format!("Character {compact_id}")
+    format!(
+        "{} {compact_id}",
+        i18n.tr("main_world.character", "Character")
+    )
 }
 
-fn main_world_transition_status_text(phase: MainWorldEntryPhase) -> String {
-    match phase {
-        MainWorldEntryPhase::Active => String::new(),
-        MainWorldEntryPhase::Exiting => "Returning to lobby".to_owned(),
-        MainWorldEntryPhase::Recovering => "Recovering game session".to_owned(),
-        MainWorldEntryPhase::HomeLoading => "Entering home".to_owned(),
-        MainWorldEntryPhase::HomeActive => "Home active".to_owned(),
-        MainWorldEntryPhase::ReturningFromHome => "Returning from home".to_owned(),
-        MainWorldEntryPhase::Validating => "Validating game session".to_owned(),
-        MainWorldEntryPhase::JoiningRoom => "Joining game room".to_owned(),
-        MainWorldEntryPhase::LoadingScene => "Loading main world".to_owned(),
-        MainWorldEntryPhase::WaitingSceneReady => "Preparing main world".to_owned(),
-        MainWorldEntryPhase::LobbyIdle => "Waiting for main world".to_owned(),
-        MainWorldEntryPhase::Failed => "Main world unavailable".to_owned(),
-    }
+fn localized_main_world_transition_status(phase: MainWorldEntryPhase, i18n: &UiI18n) -> String {
+    let (key, fallback) = match phase {
+        MainWorldEntryPhase::Active => return String::new(),
+        MainWorldEntryPhase::Exiting => ("returning_lobby", "Returning to lobby"),
+        MainWorldEntryPhase::Recovering => ("recovering", "Recovering game session"),
+        MainWorldEntryPhase::HomeLoading => ("entering_home", "Entering home"),
+        MainWorldEntryPhase::HomeActive => ("home_active", "Home active"),
+        MainWorldEntryPhase::ReturningFromHome => ("returning_home", "Returning from home"),
+        MainWorldEntryPhase::Validating => ("validating", "Validating game session"),
+        MainWorldEntryPhase::JoiningRoom => ("joining", "Joining game room"),
+        MainWorldEntryPhase::LoadingScene => ("loading", "Loading main world"),
+        MainWorldEntryPhase::WaitingSceneReady => ("preparing", "Preparing main world"),
+        MainWorldEntryPhase::LobbyIdle => ("waiting", "Waiting for main world"),
+        MainWorldEntryPhase::Failed => ("unavailable", "Main world unavailable"),
+    };
+    i18n.tr(&format!("main_world.transition.{key}"), fallback)
 }
 
 pub(super) fn reset_robot_sync_hud_visibility(
@@ -3291,6 +3301,31 @@ mod tests {
         assert_eq!(
             app.world().resource::<UiBindingValues>().revision(),
             revision
+        );
+    }
+
+    #[test]
+    fn main_world_dynamic_status_uses_the_active_locale() {
+        let i18n = UiI18n::test_with_texts(
+            "zh_cn",
+            &[
+                ("main_world.character", "角色"),
+                ("main_world.connection.authenticated", "游戏会话已连接"),
+                ("main_world.transition.loading", "正在加载主世界"),
+            ],
+        );
+
+        assert_eq!(
+            localized_main_world_character_summary(Some("chr_27he_long"), &i18n),
+            "角色 chr_27he"
+        );
+        assert_eq!(
+            localized_main_world_connection_status(GameConnectionState::Authenticated, &i18n),
+            "游戏会话已连接"
+        );
+        assert_eq!(
+            localized_main_world_transition_status(MainWorldEntryPhase::LoadingScene, &i18n),
+            "正在加载主世界"
         );
     }
 
@@ -4425,6 +4460,7 @@ mod tests {
             .init_resource::<MainWorldHudBindingGeneration>()
             .init_resource::<UiBindingValues>()
             .insert_resource(AudioMixer::default())
+            .insert_resource(UiI18n::test_with_texts("en_us", &[]))
             .add_systems(Update, sync_main_world_hud_bindings);
         app
     }
@@ -4488,6 +4524,7 @@ mod tests {
             .init_resource::<UiViewport>()
             .init_resource::<GameplayHudHostContract>()
             .add_plugins((
+                crate::framework::ui::i18n::UiI18nPlugin,
                 UiDocumentRuntimePlugin,
                 UiDocumentPreviewPlugin,
                 crate::game::declarative_screen::DeclarativeScreenHostPlugin,

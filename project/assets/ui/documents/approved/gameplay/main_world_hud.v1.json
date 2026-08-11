@@ -15,7 +15,15 @@
     "main_world.transition.loading": { "scope": "owner", "value_type": { "kind": "bool" } },
     "main_world.transition.status": { "scope": "owner", "value_type": { "kind": "string" } }
   },
-  "styles": {},
+  "styles": {
+    "hud_panel": {
+      "properties": {
+        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#11191ee8" } },
+        "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#6f858799" } },
+        "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } }
+      }
+    }
+  },
   "root": {
     "type": "container",
     "id": "main_world.root",
@@ -25,14 +33,17 @@
       "padding": { "all": { "px": 20.0 } },
       "direction": "row",
       "align_items": "start",
-      "justify_content": "end"
+      "justify_content": "space_between",
+      "gap": { "px": 12.0 }
     },
     "children": [
       {
         "type": "container",
-        "id": "main_world.actions",
-        "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 8.0 } },
+        "id": "main_world.status_panel",
+        "layout": { "width": { "px": 340.0 }, "max_width": { "percent": 42.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 6.0 }, "flex_shrink": 0.0 },
+        "style": { "component": "hud_panel" },
         "children": [
+          { "type": "text", "id": "main_world.title", "content": { "i18n_key": "main_world.hud.title", "fallback": "Main World" }, "style": { "text_role": "subtitle" } },
           {
             "type": "container",
             "id": "main_world.status",
@@ -42,19 +53,26 @@
               { "type": "text", "id": "main_world.connection_status", "content": { "binding_path": "main_world.connection.status", "fallback": "Game services offline" }, "style": { "text_role": "caption" } },
               { "type": "text", "id": "main_world.transition_status", "content": { "binding_path": "main_world.transition.status", "fallback": "" }, "style": { "text_role": "caption" } }
             ]
-          },
+          }
+        ]
+      },
+      {
+        "type": "container",
+        "id": "main_world.actions",
+        "layout": { "max_width": { "px": 560.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "end", "gap": { "px": 8.0 }, "flex_shrink": 0.0 },
+        "children": [
           {
             "type": "container",
             "id": "main_world.buttons",
-            "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 8.0 } },
+            "layout": { "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "end", "gap": { "px": 8.0 } },
             "children": [
-              { "type": "button", "id": "main_world.settings", "variant": "secondary", "label": { "literal": "Settings" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.settings.disabled" } }, "on_click": { "action": "main_world.open_settings" } },
+              { "type": "button", "id": "main_world.settings", "variant": "secondary", "label": { "i18n_key": "main_world.hud.settings", "fallback": "Settings" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.settings.disabled" } }, "on_click": { "action": "main_world.open_settings" } },
               {
                 "type": "container",
                 "id": "main_world.mail_entry",
                 "layout": { "position": "relative", "align_items": "stretch", "overflow": { "x": "visible", "y": "visible" } },
                 "children": [
-                  { "type": "button", "id": "main_world.mail", "variant": "secondary", "label": { "literal": "Mail" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.mail.disabled" } }, "on_click": { "action": "main_world.open_mail" } },
+                  { "type": "button", "id": "main_world.mail", "variant": "secondary", "label": { "i18n_key": "main_world.hud.mail", "fallback": "Mail" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.mail.disabled" } }, "on_click": { "action": "main_world.open_mail" } },
                   {
                     "type": "badge",
                     "id": "main_world.mail_unread",
@@ -64,8 +82,8 @@
                   }
                 ]
               },
-              { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "literal": "Home" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.home.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.enter_home" } },
-              { "type": "button", "id": "main_world.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.return_lobby.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.return_lobby" } }
+              { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "i18n_key": "main_world.hud.home", "fallback": "Home" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.home.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.enter_home" } },
+              { "type": "button", "id": "main_world.return_lobby", "variant": "secondary", "label": { "i18n_key": "main_world.hud.lobby", "fallback": "Lobby" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.return_lobby.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.return_lobby" } }
             ]
           }
         ]
@@ -80,7 +98,8 @@
       "when": { "height_class": "short", "orientation": "landscape" },
       "overrides": [
         { "node_id": "main_world.root", "set": { "layout": { "padding": { "all": { "px": 10.0 } } } } },
-        { "node_id": "main_world.actions", "set": { "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 }, "justify_content": "end" } } },
+        { "node_id": "main_world.status_panel", "set": { "layout": { "width": { "percent": 34.0 }, "padding": { "all": { "px": 10.0 } } } } },
+        { "node_id": "main_world.actions", "set": { "layout": { "width": { "percent": 64.0 }, "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 }, "justify_content": "end" } } },
         { "node_id": "main_world.buttons", "set": { "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 } } } },
         { "node_id": "main_world.mail_entry", "set": { "layout": { "overflow": { "x": "visible", "y": "visible" } } } }
       ]
