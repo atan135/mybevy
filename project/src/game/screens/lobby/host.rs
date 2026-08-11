@@ -673,6 +673,7 @@ pub(super) fn sync_lobby_document_bindings(
     ui_state: Res<LobbyUiState>,
     main_world_entry: Res<MainWorldEntryState>,
     contract: Res<LobbyHostContract>,
+    i18n: Res<UiI18n>,
     mut values: ResMut<UiBindingValues>,
 ) {
     let connection = ui_state
@@ -698,15 +699,15 @@ pub(super) fn sync_lobby_document_bindings(
                 ),
                 (
                     "title".to_owned(),
-                    UiBindingValue::String(entry.title.clone()),
+                    UiBindingValue::String(localized_entry_title(entry, &i18n)),
                 ),
                 (
                     "description".to_owned(),
-                    UiBindingValue::String(entry.description.clone()),
+                    UiBindingValue::String(localized_entry_description(entry, &i18n)),
                 ),
                 (
                     "badge".to_owned(),
-                    UiBindingValue::String(entry.badge.clone()),
+                    UiBindingValue::String(localized_entry_badge(entry, &i18n)),
                 ),
                 ("selected".to_owned(), UiBindingValue::Bool(selected)),
                 (
@@ -737,11 +738,11 @@ pub(super) fn sync_lobby_document_bindings(
         ),
         (
             "lobby.games.status",
-            UiBindingValue::String(lobby_status_text(&ui_state)),
+            UiBindingValue::String(localized_lobby_status_text(&ui_state, &i18n)),
         ),
         (
             "lobby.connection.status",
-            UiBindingValue::String(connection_status_text(connection)),
+            UiBindingValue::String(localized_connection_status_text(connection, &i18n)),
         ),
         (
             "lobby.games.selected_id",
@@ -751,15 +752,15 @@ pub(super) fn sync_lobby_document_bindings(
             "lobby.games.selected_title",
             UiBindingValue::String(
                 selected
-                    .map(|entry| entry.title.clone())
-                    .unwrap_or_else(|| "No game selected".to_owned()),
+                    .map(|entry| localized_entry_title(entry, &i18n))
+                    .unwrap_or_else(|| i18n.tr("lobby.selection.none", "No game selected")),
             ),
         ),
         (
             "lobby.games.selected_detail",
             UiBindingValue::String(
                 selected
-                    .map(|entry| entry.description.clone())
+                    .map(|entry| localized_entry_description(entry, &i18n))
                     .unwrap_or_default(),
             ),
         ),
@@ -843,32 +844,68 @@ fn lobby_view_state(ui_state: &LobbyUiState, connection: GameConnectionState) ->
     }
 }
 
-fn lobby_status_text(ui_state: &LobbyUiState) -> String {
+pub(super) fn localized_lobby_status_text(ui_state: &LobbyUiState, i18n: &UiI18n) -> String {
     match ui_state.collection_state {
-        LobbyCollectionState::Loading => "Loading available games".to_owned(),
-        LobbyCollectionState::Error => "Game list unavailable".to_owned(),
+        LobbyCollectionState::Loading => i18n.tr("lobby.status.loading", "Loading available games"),
+        LobbyCollectionState::Error => i18n.tr("lobby.status.error", "Game list unavailable"),
         LobbyCollectionState::Ready if ui_state.entries.is_empty() => {
-            "No games are currently available".to_owned()
+            i18n.tr("lobby.status.empty", "No games are currently available")
         }
-        LobbyCollectionState::Ready => format!("{} games available", ui_state.entries.len()),
+        LobbyCollectionState::Ready => format!(
+            "{} {}",
+            ui_state.entries.len(),
+            i18n.tr("lobby.status.available", "games available")
+        ),
     }
 }
 
-fn connection_status_text(state: GameConnectionState) -> String {
-    match state {
-        GameConnectionState::NotConnected => "Game services offline".to_owned(),
-        GameConnectionState::Connecting => "Connecting to game services".to_owned(),
-        GameConnectionState::Connected => "Transport connected".to_owned(),
-        GameConnectionState::Authenticating => "Authenticating game session".to_owned(),
-        GameConnectionState::Authenticated => "Game session connected".to_owned(),
-        GameConnectionState::Disconnected => {
-            "Connection lost; local entries remain available".to_owned()
-        }
-        GameConnectionState::Reconnecting => "Reconnecting game session".to_owned(),
+pub(super) fn localized_connection_status_text(
+    state: GameConnectionState,
+    i18n: &UiI18n,
+) -> String {
+    let (key, fallback) = match state {
+        GameConnectionState::NotConnected => ("offline", "Game services offline"),
+        GameConnectionState::Connecting => ("connecting", "Connecting to game services"),
+        GameConnectionState::Connected => ("connected", "Transport connected"),
+        GameConnectionState::Authenticating => ("authenticating", "Authenticating game session"),
+        GameConnectionState::Authenticated => ("authenticated", "Game session connected"),
+        GameConnectionState::Disconnected => (
+            "disconnected",
+            "Connection lost; local entries remain available",
+        ),
+        GameConnectionState::Reconnecting => ("reconnecting", "Reconnecting game session"),
         GameConnectionState::ReconnectFailed => {
-            "Reconnect failed; retry from the selected game".to_owned()
+            ("failed", "Reconnect failed; retry from the selected game")
         }
-    }
+    };
+    i18n.tr(&format!("lobby.connection.{key}"), fallback)
+}
+
+pub(super) fn localized_entry_title(entry: &LobbyEntry, i18n: &UiI18n) -> String {
+    entry_copy(entry, i18n, "title", &entry.title)
+}
+
+pub(super) fn localized_entry_description(entry: &LobbyEntry, i18n: &UiI18n) -> String {
+    entry_copy(entry, i18n, "description", &entry.description)
+}
+
+pub(super) fn localized_entry_badge(entry: &LobbyEntry, i18n: &UiI18n) -> String {
+    entry_copy(entry, i18n, "badge", &entry.badge)
+}
+
+fn entry_copy(entry: &LobbyEntry, i18n: &UiI18n, field: &str, fallback: &str) -> String {
+    let key = match entry.target {
+        LobbyEntryTarget::MainWorld => "main_world",
+        LobbyEntryTarget::TouchRipple => "touch_ripple",
+        LobbyEntryTarget::LockstepSim => "lockstep_sim",
+        LobbyEntryTarget::SampleDungeon => "sample_scene",
+        LobbyEntryTarget::RobotSync => "robot_sync_scene",
+        LobbyEntryTarget::FangyuanHome => "fangyuan_home",
+        LobbyEntryTarget::FangyuanPlayerPreview => "fangyuan_player_preview",
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
+        LobbyEntryTarget::AuditOnly => return fallback.to_owned(),
+    };
+    i18n.tr(&format!("lobby.{key}.{field}"), fallback)
 }
 
 pub(super) fn follow_lobby_document_reload_events(

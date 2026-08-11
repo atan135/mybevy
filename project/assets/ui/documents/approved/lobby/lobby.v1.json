@@ -228,34 +228,36 @@
                         {
                           "type": "text",
                           "id": "lobby.title",
-                          "content": { "literal": "GAME LOBBY" },
+                          "content": { "i18n_key": "lobby.title", "fallback": "Game List" },
                           "style": { "text_role": "title" }
                         },
                         {
                           "type": "text",
                           "id": "lobby.subtitle",
-                          "content": { "literal": "Choose an experience or open a development tool" },
-                          "style": { "text_role": "caption" }
+                          "content": { "i18n_key": "lobby.subtitle", "fallback": "Choose an experience or open a development tool" },
+                          "style": { "text_role": "caption", "role": "muted" }
                         }
                       ]
                     },
                     {
                       "type": "container",
                       "id": "lobby.account_actions",
-                      "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 8.0 } },
+                      "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 8.0 }, "align_items": "center" },
                       "children": [
                         {
                           "type": "button",
                           "id": "lobby.change_character",
                           "variant": "secondary",
-                          "label": { "literal": "Change Character" },
+                          "label": { "i18n_key": "lobby.action.change_character", "fallback": "Change Character" },
+                          "layout": { "height": { "px": 42.0 } },
                           "on_click": { "action": "lobby.change_character" }
                         },
                         {
                           "type": "button",
                           "id": "lobby.logout",
                           "variant": "secondary",
-                          "label": { "literal": "Logout" },
+                          "label": { "i18n_key": "lobby.action.logout", "fallback": "Logout" },
+                          "layout": { "height": { "px": 42.0 } },
                           "on_click": { "action": "lobby.logout" }
                         }
                       ]
@@ -265,34 +267,45 @@
                 {
                   "type": "container",
                   "id": "lobby.navigation",
-                  "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "gap": { "px": 8.0 } },
+                  "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "gap": { "px": 8.0 } },
                   "children": [
+                    {
+                      "type": "text",
+                      "id": "lobby.navigation_title",
+                      "content": { "i18n_key": "lobby.tools", "fallback": "Development Tools" },
+                      "layout": { "min_width": { "px": 96.0 } },
+                      "style": { "text_role": "section_label", "role": "muted" }
+                    },
                     {
                       "type": "button",
                       "id": "lobby.nav.audio_settings",
                       "variant": "secondary",
-                      "label": { "literal": "Audio Settings" },
+                      "label": { "i18n_key": "lobby.tool.audio_settings", "fallback": "Audio Settings" },
+                      "layout": { "height": { "px": 38.0 } },
                       "on_click": { "action": "lobby.navigate", "params": { "destination": { "kind": "enum", "value": "audio_settings" } } }
                     },
                     {
                       "type": "button",
                       "id": "lobby.nav.audio_monitor",
                       "variant": "secondary",
-                      "label": { "literal": "Audio Monitor" },
+                      "label": { "i18n_key": "lobby.tool.audio_monitor", "fallback": "Audio Monitor" },
+                      "layout": { "height": { "px": 38.0 } },
                       "on_click": { "action": "lobby.navigate", "params": { "destination": { "kind": "enum", "value": "audio_monitor" } } }
                     },
                     {
                       "type": "button",
                       "id": "lobby.nav.audio_gallery",
                       "variant": "secondary",
-                      "label": { "literal": "Audio Gallery" },
+                      "label": { "i18n_key": "lobby.tool.audio_gallery", "fallback": "Audio Gallery" },
+                      "layout": { "height": { "px": 38.0 } },
                       "on_click": { "action": "lobby.navigate", "params": { "destination": { "kind": "enum", "value": "audio_gallery" } } }
                     },
                     {
                       "type": "button",
                       "id": "lobby.nav.ui_gallery",
                       "variant": "secondary",
-                      "label": { "literal": "UI Gallery" },
+                      "label": { "i18n_key": "lobby.tool.ui_gallery", "fallback": "UI Gallery" },
+                      "layout": { "height": { "px": 38.0 } },
                       "on_click": { "action": "lobby.navigate", "params": { "destination": { "kind": "enum", "value": "ui_gallery" } } }
                     }
                   ]
@@ -306,25 +319,19 @@
                 {
                   "type": "container",
                   "id": "lobby.summary",
-                  "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "gap": { "px": 12.0 } },
+                  "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 2.0 } },
                   "children": [
                     {
                       "type": "text",
                       "id": "lobby.status",
                       "content": { "binding_path": "lobby.games.status", "fallback": "Loading available games" },
-                      "style": { "text_role": "body" }
+                      "style": { "text_role": "subtitle" }
                     },
                     {
                       "type": "text",
                       "id": "lobby.connection",
                       "content": { "binding_path": "lobby.connection.status", "fallback": "Game services offline" },
-                      "style": { "text_role": "caption" }
-                    },
-                    {
-                      "type": "text",
-                      "id": "lobby.view_state",
-                      "content": { "binding_path": "lobby.games.view_state", "fallback": "loading" },
-                      "style": { "text_role": "caption" }
+                      "style": { "text_role": "caption", "role": "muted" }
                     }
                   ]
                 },
@@ -353,12 +360,13 @@
                   "id": "lobby.list_header",
                   "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 10.0 } },
                   "children": [
-                    { "type": "text", "id": "lobby.list_title", "content": { "literal": "AVAILABLE" }, "style": { "text_role": "caption" } },
+                    { "type": "text", "id": "lobby.list_title", "content": { "i18n_key": "lobby.available", "fallback": "Available" }, "style": { "text_role": "section_label", "role": "muted" } },
                     {
                       "type": "button",
                       "id": "lobby.reload",
                       "variant": "secondary",
-                      "label": { "literal": "Reload" },
+                      "label": { "i18n_key": "lobby.action.reload", "fallback": "Reload" },
+                      "layout": { "height": { "px": 42.0 }, "min_width": { "px": 96.0 } },
                       "on_click": { "action": "lobby.reload_games" },
                       "component": { "bindings": { "disabled": "lobby.games.reload_disabled", "loading": "lobby.games.reload_loading" } }
                     }
@@ -380,9 +388,9 @@
                       "lobby.games.item.loading": "loading"
                     },
                     "state": "lobby.games.collection_state",
-                    "loading": { "literal": "Loading game catalog..." },
-                    "empty": { "literal": "No games available. Reload to check again." },
-                    "error": { "literal": "Game catalog unavailable. Reload to retry." }
+                    "loading": { "i18n_key": "lobby.catalog.loading", "fallback": "Loading game catalog..." },
+                    "empty": { "i18n_key": "lobby.catalog.empty", "fallback": "No games available. Reload to check again." },
+                    "error": { "i18n_key": "lobby.catalog.error", "fallback": "Game catalog unavailable. Reload to retry." }
                   },
                   "layout": {
                     "width": { "percent": 100.0 },
@@ -399,7 +407,7 @@
                     {
                       "type": "container",
                       "id": "lobby.entry_card",
-                      "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 6.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
+                      "layout": { "width": { "percent": 100.0 }, "min_height": { "px": 116.0 }, "direction": "column", "gap": { "px": 6.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } },
                       "style": { "component": "lobby_entry" },
                       "children": [
                         {
@@ -407,11 +415,11 @@
                           "id": "lobby.entry_heading",
                           "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "justify_content": "space_between", "gap": { "px": 6.0 } },
                           "children": [
-                            { "type": "text", "id": "lobby.entry_title", "content": { "binding_path": "lobby.games.item.title", "fallback": "Game" }, "style": { "text_role": "body" } },
+                            { "type": "text", "id": "lobby.entry_title", "content": { "binding_path": "lobby.games.item.title", "fallback": "Game" }, "style": { "text_role": "subtitle" } },
                             { "type": "text", "id": "lobby.entry_badge", "content": { "binding_path": "lobby.games.item.badge", "fallback": "GAME" }, "style": { "text_role": "caption" } }
                           ]
                         },
-                        { "type": "text", "id": "lobby.entry_description", "content": { "binding_path": "lobby.games.item.description", "fallback": "Description unavailable" }, "style": { "text_role": "caption" } },
+                        { "type": "text", "id": "lobby.entry_description", "content": { "binding_path": "lobby.games.item.description", "fallback": "Description unavailable" }, "layout": { "flex_grow": 1.0 }, "style": { "text_role": "caption", "role": "muted" } },
                         {
                           "type": "container",
                           "id": "lobby.entry_actions",
@@ -421,7 +429,8 @@
                               "type": "button",
                               "id": "lobby.entry.select",
                               "variant": "secondary",
-                              "label": { "literal": "Select" },
+                              "label": { "i18n_key": "lobby.action.select", "fallback": "Select" },
+                              "layout": { "height": { "px": 42.0 }, "min_width": { "px": 96.0 } },
                               "on_click": { "action": "lobby.select_game", "params": { "entry_id": { "kind": "item_binding", "value": "lobby.games.item.entry_id" } } },
                               "component": { "bindings": { "selected": "lobby.games.item.selected", "disabled": "lobby.games.item.disabled" } }
                             },
@@ -429,7 +438,8 @@
                               "type": "button",
                               "id": "lobby.entry.enter",
                               "variant": "primary",
-                              "label": { "literal": "Enter" },
+                              "label": { "i18n_key": "lobby.action.enter", "fallback": "Enter" },
+                              "layout": { "height": { "px": 42.0 }, "min_width": { "px": 96.0 } },
                               "on_click": { "action": "lobby.enter_game", "params": { "entry_id": { "kind": "item_binding", "value": "lobby.games.item.entry_id" } } },
                               "component": { "bindings": { "disabled": "lobby.games.item.disabled", "loading": "lobby.games.item.loading" } }
                             }
@@ -464,9 +474,9 @@
       "when": { "height_class": "short", "orientation": "landscape" },
       "overrides": [
         { "node_id": "lobby.scroll", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "justify_content": "start" } } },
-        { "node_id": "lobby.panel", "set": { "layout": { "max_width": { "px": 1100.0 }, "padding": { "all": { "px": 12.0 } }, "gap": { "px": 7.0 } } } },
+        { "node_id": "lobby.panel", "set": { "layout": { "max_width": { "px": 920.0 }, "padding": { "all": { "px": 14.0 } }, "gap": { "px": 8.0 } } } },
         { "node_id": "lobby.entries", "set": { "layout": { "grid_columns": [ { "repeat": 1, "size": { "fr": 1.0 } }, { "repeat": 1, "size": { "fr": 1.0 } } ], "column_gap": { "px": 8.0 }, "row_gap": { "px": 7.0 } } } },
-        { "node_id": "lobby.entry_card", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "gap": { "px": 4.0 } } } }
+        { "node_id": "lobby.entry_card", "set": { "layout": { "min_height": { "px": 124.0 }, "padding": { "all": { "px": 9.0 } }, "gap": { "px": 5.0 } } } }
       ]
     },
     {

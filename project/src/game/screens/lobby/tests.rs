@@ -135,7 +135,7 @@ fn lobby_promotion_registration_matches_fixed_host_contract() {
 #[test]
 fn lobby_startup_registration_mounts_fixed_document() {
     let mut app = App::new();
-    app.add_plugins((MinimalPlugins, StatesPlugin))
+    app.add_plugins((MinimalPlugins, StatesPlugin, UiI18nPlugin))
         .init_state::<AppUiMode>()
         .insert_resource(UiTheme::default())
         .insert_resource(UiMetrics::default())
@@ -195,7 +195,7 @@ fn lobby_runtime_removes_hidden_sections_from_layout() {
     let mut state = LobbyUiState::default();
     state.selected_entry_id = None;
     let mut app = App::new();
-    app.add_plugins((MinimalPlugins, StatesPlugin))
+    app.add_plugins((MinimalPlugins, StatesPlugin, UiI18nPlugin))
         .init_state::<AppUiMode>()
         .insert_resource(UiTheme::default())
         .insert_resource(UiMetrics::default())
@@ -784,6 +784,10 @@ fn lobby_binding_test_app(connection: GameConnectionState, state: LobbyUiState) 
         .init_resource::<UiBindingValues>()
         .init_resource::<LobbyHostContract>()
         .init_resource::<MainWorldEntryState>()
+        .insert_resource(crate::framework::ui::i18n::UiI18n::test_with_texts(
+            "en_us",
+            &[],
+        ))
         .insert_resource(MyServerSession {
             game_connection_state: connection,
             ..Default::default()
@@ -791,6 +795,34 @@ fn lobby_binding_test_app(connection: GameConnectionState, state: LobbyUiState) 
         .insert_resource(state)
         .add_systems(Update, sync_lobby_document_bindings);
     app
+}
+
+#[test]
+fn lobby_dynamic_copy_uses_active_locale() {
+    let state = LobbyUiState::default();
+    let i18n = crate::framework::ui::i18n::UiI18n::test_with_texts(
+        "zh_cn",
+        &[
+            ("lobby.status.available", "个游戏可用"),
+            ("lobby.connection.authenticated", "游戏会话已连接"),
+            ("lobby.main_world.title", "主世界"),
+            ("lobby.main_world.description", "进入固定公共草原世界"),
+            ("lobby.main_world.badge", "世界"),
+        ],
+    );
+
+    assert_eq!(localized_lobby_status_text(&state, &i18n), "7 个游戏可用");
+    assert_eq!(
+        localized_connection_status_text(GameConnectionState::Authenticated, &i18n),
+        "游戏会话已连接"
+    );
+    let entry = state.entry(ENTRY_MAIN_WORLD).unwrap();
+    assert_eq!(localized_entry_title(entry, &i18n), "主世界");
+    assert_eq!(
+        localized_entry_description(entry, &i18n),
+        "进入固定公共草原世界"
+    );
+    assert_eq!(localized_entry_badge(entry, &i18n), "世界");
 }
 
 fn lobby_binding_value(app: &App, path: &str) -> crate::framework::ui::document::UiBindingValue {
