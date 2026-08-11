@@ -328,7 +328,12 @@ impl Default for GameplayHudHostContract {
                     binding_schema([
                         ("fangyuan_home.status", UiBindingType::String),
                         ("fangyuan_home.debug.text", UiBindingType::String),
-                        ("fangyuan_home.debug.visibility", UiBindingType::Visibility),
+                        (
+                            "fangyuan_home.debug.visibility",
+                            UiBindingType::Enum {
+                                values: ["flex", "none"].map(str::to_owned).to_vec(),
+                            },
+                        ),
                     ]),
                 ),
             ]),
@@ -4314,20 +4319,24 @@ mod tests {
     #[test]
     fn fangyuan_home_status_and_debug_panels_are_runtime_scroll_views() {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, StatesPlugin))
-            .init_state::<AppUiMode>()
-            .insert_resource(UiTheme::default())
-            .insert_resource(UiMetrics::default())
-            .insert_resource(UiFontAssets::test_registry())
-            .init_resource::<UiFocusState>()
-            .init_resource::<UiViewport>()
-            .init_resource::<GameplayHudHostContract>()
-            .add_plugins((
-                UiDocumentRuntimePlugin,
-                UiDocumentPreviewPlugin,
-                crate::game::declarative_screen::DeclarativeScreenHostPlugin,
-            ))
-            .add_systems(Startup, register_gameplay_hud_contracts);
+        app.add_plugins((
+            MinimalPlugins,
+            StatesPlugin,
+            crate::framework::ui::i18n::UiI18nPlugin,
+        ))
+        .init_state::<AppUiMode>()
+        .insert_resource(UiTheme::default())
+        .insert_resource(UiMetrics::default())
+        .insert_resource(UiFontAssets::test_registry())
+        .init_resource::<UiFocusState>()
+        .init_resource::<UiViewport>()
+        .init_resource::<GameplayHudHostContract>()
+        .add_plugins((
+            UiDocumentRuntimePlugin,
+            UiDocumentPreviewPlugin,
+            crate::game::declarative_screen::DeclarativeScreenHostPlugin,
+        ))
+        .add_systems(Startup, register_gameplay_hud_contracts);
         app.world_mut()
             .resource_mut::<NextState<AppUiMode>>()
             .set(AppUiMode::FangyuanHome);
@@ -4337,7 +4346,12 @@ mod tests {
         let runtime = app.world().resource::<UiDocumentRuntime>();
         let instance = runtime
             .active_instance(OWNER_FANGYUAN_HOME.as_str(), &document_id)
-            .unwrap();
+            .unwrap_or_else(|| {
+                panic!(
+                    "{:#?}",
+                    read_messages::<crate::framework::ui::document::UiDocumentReloadEvent>(&app)
+                )
+            });
         let root = runtime
             .node_entity(instance, &UiNodeId::from_str("fangyuan_home.root").unwrap())
             .unwrap();

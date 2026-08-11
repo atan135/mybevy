@@ -3,9 +3,12 @@ use bevy::{
     prelude::*,
 };
 
+#[cfg(test)]
+use crate::framework::fangyuan::{
+    FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH,
+};
 use crate::framework::{
     fangyuan::{
-        FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH,
         FangyuanAoiDebugMetrics, FangyuanAuditDebugMetrics, FangyuanBakeDebugMetrics,
         FangyuanCacheDebugMetrics, FangyuanChunkDebugSummary, FangyuanChunkRuntime,
         FangyuanDebugMetricModule, FangyuanDebugMetricsSnapshot, FangyuanDebugModuleStatus,
@@ -15,7 +18,8 @@ use crate::framework::{
     scene::prelude::SceneEvent,
     ui::{
         core::{UiViewport, UiWidthClass, binding::UiBindingValues},
-        document::{UiBindingValue, UiBindingVisibility},
+        document::UiBindingValue,
+        i18n::UiI18n,
     },
 };
 use crate::game::{
@@ -38,6 +42,7 @@ fn fangyuan_home_debug_panel_is_compact(viewport: &UiViewport) -> bool {
 pub(super) fn update_fangyuan_home_hud_status(
     stats: Res<FangyuanHomeBlueprintStats>,
     chunk_runtime: Option<Res<FangyuanChunkRuntime>>,
+    i18n: Res<UiI18n>,
     contract: Res<GameplayHudHostContract>,
     mut values: ResMut<UiBindingValues>,
 ) {
@@ -45,7 +50,7 @@ pub(super) fn update_fangyuan_home_hud_status(
         .as_deref()
         .map(FangyuanChunkRuntime::debug_summary)
         .unwrap_or_default();
-    let status = fangyuan_home_hud_status_text(Some(&stats), Some(&chunk_summary));
+    let status = localized_fangyuan_home_summary_text(&stats, &chunk_summary, &i18n);
     set_binding(
         &contract,
         &mut values,
@@ -72,11 +77,14 @@ pub(super) fn update_fangyuan_home_debug_panel(
         FANGYUAN_HOME_DOCUMENT_ID,
         OWNER_FANGYUAN_HOME.as_str(),
         "fangyuan_home.debug.visibility",
-        UiBindingValue::Visibility(if debug_panel_state.visible {
-            UiBindingVisibility::Visible
-        } else {
-            UiBindingVisibility::Hidden
-        }),
+        UiBindingValue::Enum(
+            if debug_panel_state.visible {
+                "flex"
+            } else {
+                "none"
+            }
+            .to_owned(),
+        ),
     );
 
     let chunk_summary = chunk_runtime
@@ -93,6 +101,40 @@ pub(super) fn update_fangyuan_home_debug_panel(
         "fangyuan_home.debug.text",
         UiBindingValue::String(panel_text),
     );
+}
+
+fn localized_fangyuan_home_summary_text(
+    stats: &FangyuanHomeBlueprintStats,
+    chunk_summary: &FangyuanChunkDebugSummary,
+    i18n: &UiI18n,
+) -> String {
+    let scene_state = match stats.state_label() {
+        "loaded" => i18n.tr("fangyuan_home.status.loaded", "Loaded"),
+        "failed" => i18n.tr("fangyuan_home.status.failed", "Failed"),
+        _ => i18n.tr("fangyuan_home.status.pending", "Loading"),
+    };
+    let audit_state = match stats.audit_status_label() {
+        "passed" => i18n.tr("fangyuan_home.status.audit_passed", "Passed"),
+        "failed" => i18n.tr("fangyuan_home.status.audit_failed", "Failed"),
+        _ => i18n.tr("fangyuan_home.status.audit_pending", "Pending"),
+    };
+
+    format!(
+        "{}: {scene_state}\n{}: {} / {}\n{}: {audit_state} · {} {} · {} {}\n{}: {} · {} {}",
+        i18n.tr("fangyuan_home.status.scene", "Scene"),
+        i18n.tr("fangyuan_home.status.objects", "Objects"),
+        stats.generated_primitives,
+        FANGYUAN_HOME_PRIMITIVE_LIMIT,
+        i18n.tr("fangyuan_home.status.audit", "Audit"),
+        stats.audit_error_count,
+        i18n.tr("fangyuan_home.status.errors", "errors"),
+        stats.audit_warning_count,
+        i18n.tr("fangyuan_home.status.warnings", "warnings"),
+        i18n.tr("fangyuan_home.status.runtime", "Runtime"),
+        stats.render_mode,
+        chunk_summary.visible_objects,
+        i18n.tr("fangyuan_home.status.visible", "visible"),
+    )
 }
 
 fn fangyuan_home_debug_panel_text(
@@ -250,6 +292,7 @@ fn dominant_fangyuan_home_lod_label(counts: [usize; 5]) -> &'static str {
     .unwrap_or("-")
 }
 
+#[cfg(test)]
 fn fangyuan_home_hud_status_text(
     stats: Option<&FangyuanHomeBlueprintStats>,
     chunk_summary: Option<&FangyuanChunkDebugSummary>,
@@ -328,15 +371,18 @@ fn fangyuan_home_hud_status_text(
     )
 }
 
+#[cfg(test)]
 fn compact_fangyuan_home_chunk_state(state: &str) -> String {
     compact_fangyuan_home_text(state, "pending", 18)
 }
 
+#[cfg(test)]
 fn compact_fangyuan_home_trial_id(id: &str) -> String {
     const MAX_ID_CHARS: usize = 22;
     compact_fangyuan_home_text(id, "-", MAX_ID_CHARS)
 }
 
+#[cfg(test)]
 fn compact_fangyuan_home_trial_label(label: &str) -> String {
     const MAX_LABEL_CHARS: usize = 46;
     compact_fangyuan_home_text(label, "-", MAX_LABEL_CHARS)
@@ -346,14 +392,17 @@ fn compact_fangyuan_home_fallback_reason(reason: &str) -> String {
     compact_fangyuan_home_text(reason, "-", 22)
 }
 
+#[cfg(test)]
 fn compact_fangyuan_home_finding_summary(summary: &str) -> String {
     compact_fangyuan_home_text(summary, "ok", 32)
 }
 
+#[cfg(test)]
 fn compact_fangyuan_home_lod_label(label: &str) -> String {
     compact_fangyuan_home_text(label, "-", 28)
 }
 
+#[cfg(test)]
 fn compact_fangyuan_home_lod_path(label: &str) -> String {
     compact_fangyuan_home_text(label, "-", 38)
 }
@@ -379,6 +428,7 @@ fn compact_fangyuan_home_text(value: &str, fallback: &str, max_chars: usize) -> 
     format!("...{tail}")
 }
 
+#[cfg(test)]
 fn compact_fangyuan_home_layout_path(path: &str, fallback: &str) -> String {
     const MAX_PATH_CHARS: usize = 30;
 
@@ -483,6 +533,37 @@ mod tests {
             text,
             "layout loaded gen 3/1000 skip 2\naudit passed e0 w0 -\npal 2 pf 5 used 4 inst 8 mat 3\nmatprof 1 opaque 1 trans 2 emi 2.0 uniq 3\nrender standard ib 0 ii 0 bytes 0 fb -\nchunk 0 obj 0 state pending fail - ids -\nlod f0 r0 s0 m0 h0 aoi 0 pressure normal degrade -\npath std0 mg0 inst0 mk0 hid0\ntrial none sel - profile standard run 0 status pending e0 w0 s0\ntrial vfx 0 tpl - vis -\neq 0 npc 0 td 0 cost 0/96/128\ntrial before 0 objects cost 0 after keep 0 degrade 0 reject 0\nresult k0 d0 r0 fb0 ok reason ok suggest - find ok\nl fangyuan/home_scene.layout.ron\np ...an/home_prefabs.palette.ron"
         );
+    }
+
+    #[test]
+    fn home_summary_uses_active_locale_and_stays_compact() {
+        let i18n = UiI18n::test_with_texts(
+            "zh_cn",
+            &[
+                ("fangyuan_home.status.scene", "场景"),
+                ("fangyuan_home.status.objects", "对象"),
+                ("fangyuan_home.status.audit", "审核"),
+                ("fangyuan_home.status.runtime", "运行"),
+                ("fangyuan_home.status.pending", "加载中"),
+                ("fangyuan_home.status.audit_pending", "等待中"),
+                ("fangyuan_home.status.errors", "错误"),
+                ("fangyuan_home.status.warnings", "警告"),
+                ("fangyuan_home.status.visible", "可见对象"),
+            ],
+        );
+        let summary = localized_fangyuan_home_summary_text(
+            &FangyuanHomeBlueprintStats::default(),
+            &FangyuanChunkDebugSummary {
+                visible_objects: 3,
+                ..Default::default()
+            },
+            &i18n,
+        );
+
+        assert_eq!(summary.lines().count(), 4);
+        assert!(summary.contains("场景: 加载中"));
+        assert!(summary.contains("对象: 0 / 1000"));
+        assert!(summary.contains("3 可见对象"));
     }
 
     #[test]

@@ -14,7 +14,7 @@
     ],
     "bindings": [
       { "path": "fangyuan_home.debug.text", "scope": "owner", "value_type": { "kind": "string" } },
-      { "path": "fangyuan_home.debug.visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "fangyuan_home.debug.visibility", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
       { "path": "fangyuan_home.status", "scope": "owner", "value_type": { "kind": "string" } }
     ],
     "resources": [],
