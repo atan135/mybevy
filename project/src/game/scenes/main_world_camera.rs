@@ -6,7 +6,15 @@
 
 use bevy::prelude::*;
 
-use crate::framework::scene::prelude::SceneSessionId;
+use crate::{
+    framework::scene::prelude::{
+        SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG, SCENE_CAMERA_PRIMARY_ACTOR_TARGET_TAG,
+        SceneCameraAnimationConfig, SceneCameraFollowTargetSource, SceneCameraMode,
+        SceneCameraProjection, SceneCameraRig, SceneCameraRuntimeState, SceneCameraTarget,
+        SceneSessionId, update_scene_cameras,
+    },
+    game::scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
+};
 
 pub(super) const MAIN_WORLD_CAMERA_DEFAULT_YAW_RADIANS: f32 = 0.0;
 pub(super) const MAIN_WORLD_CAMERA_DEFAULT_PITCH_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
@@ -30,7 +38,42 @@ pub(super) struct MainWorldCameraPlugin;
 
 impl Plugin for MainWorldCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MainWorldCameraOrbitState>();
+        app.init_resource::<MainWorldCameraOrbitState>()
+            .init_resource::<MainWorldCameraRigAdapterRuntime>()
+            .add_systems(
+                Update,
+                sync_main_world_camera_rig.before(update_scene_cameras),
+            );
+    }
+}
+
+#[derive(Default, Resource)]
+struct MainWorldCameraRigAdapterRuntime {
+    session_id: Option<SceneSessionId>,
+    generation: u64,
+    target_entity: Option<Entity>,
+}
+
+impl MainWorldCameraRigAdapterRuntime {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn requires_smoothing_reset(
+        &self,
+        session_id: &SceneSessionId,
+        generation: u64,
+        target_entity: Option<Entity>,
+    ) -> bool {
+        self.session_id.as_ref() != Some(session_id)
+            || self.generation != generation
+            || self.target_entity != target_entity
+    }
+
+    fn bind(&mut self, session_id: SceneSessionId, generation: u64, target_entity: Option<Entity>) {
+        self.session_id = Some(session_id);
+        self.generation = generation;
+        self.target_entity = target_entity;
     }
 }
 
@@ -139,6 +182,119 @@ impl MainWorldCameraOrbitState {
                 MAIN_WORLD_CAMERA_MAX_LERP,
             )
     }
+
+    pub fn follow_offset(&self) -> Vec3 {
+        let horizontal_distance = self.distance * self.pitch_radians.cos();
+        Vec3::new(
+            horizontal_distance * self.yaw_radians.sin(),
+            self.distance * self.pitch_radians.sin(),
+            horizontal_distance * self.yaw_radians.cos(),
+        )
+    }
+
+    pub fn look_at_offset(&self) -> Vec3 {
+        Vec3::Y * self.look_at_height
+    }
+}
+
+fn sync_main_world_camera_rig(
+    entry: Option<Res<MainWorldEntryState>>,
+    mut orbit: ResMut<MainWorldCameraOrbitState>,
+    mut adapter_runtime: ResMut<MainWorldCameraRigAdapterRuntime>,
+    camera_targets: Query<(Entity, &SceneCameraTarget)>,
+    mut scene_cameras: Query<
+        (
+            &mut SceneCameraRig,
+            &Transform,
+            &mut SceneCameraRuntimeState,
+        ),
+        With<Camera3d>,
+    >,
+) {
+    let Some(entry) = entry else {
+        adapter_runtime.reset();
+        return;
+    };
+    let Some(session_id) = entry.scene_session_id.as_ref() else {
+        adapter_runtime.reset();
+        return;
+    };
+    if entry.phase != MainWorldEntryPhase::Active {
+        adapter_runtime.reset();
+        return;
+    }
+
+    if orbit.scene_session_id.as_ref() != Some(session_id) || orbit.generation != entry.generation {
+        orbit.reset_for_session(session_id.clone(), entry.generation);
+    } else {
+        orbit.sanitize();
+    }
+
+    let target_entity = primary_actor_target_for_session(session_id, &camera_targets);
+    let reset_smoothing =
+        adapter_runtime.requires_smoothing_reset(session_id, entry.generation, target_entity);
+    let mut applied = false;
+
+    for (mut rig, transform, mut runtime) in &mut scene_cameras {
+        if !rig.is_session(session_id) || !is_main_world_follow_rig(&rig) {
+            continue;
+        }
+        let Some(follow) = rig.config.follow.as_mut() else {
+            continue;
+        };
+
+        follow.offset = orbit.follow_offset();
+        follow.look_at_offset = orbit.look_at_offset();
+        follow.position_lerp = if reset_smoothing {
+            1.0
+        } else {
+            orbit.position_lerp
+        };
+        follow.rotation_lerp = if reset_smoothing {
+            1.0
+        } else {
+            orbit.rotation_lerp
+        };
+        rig.config.projection = SceneCameraProjection::Perspective3d {
+            fov_y_radians: MAIN_WORLD_CAMERA_FOV_Y_RADIANS,
+            near: MAIN_WORLD_CAMERA_NEAR,
+            far: MAIN_WORLD_CAMERA_FAR,
+        };
+        rig.config.animation = SceneCameraAnimationConfig::default();
+        if reset_smoothing {
+            runtime.reset(*transform);
+        }
+        applied = true;
+    }
+
+    if applied {
+        adapter_runtime.bind(session_id.clone(), entry.generation, target_entity);
+    }
+}
+
+fn is_main_world_follow_rig(rig: &SceneCameraRig) -> bool {
+    rig.config.mode == SceneCameraMode::FollowTarget
+        && rig.config.follow.as_ref().is_some_and(|follow| {
+            follow.target_source == SceneCameraFollowTargetSource::PrimaryActor
+        })
+}
+
+fn primary_actor_target_for_session(
+    session_id: &SceneSessionId,
+    camera_targets: &Query<(Entity, &SceneCameraTarget)>,
+) -> Option<Entity> {
+    [
+        SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG,
+        SCENE_CAMERA_PRIMARY_ACTOR_TARGET_TAG,
+    ]
+    .into_iter()
+    .find_map(|tag| {
+        camera_targets
+            .iter()
+            .filter(|(_, target)| target.is_session(session_id) && target.has_tag(tag))
+            .max_by_key(|(_, target)| target.priority)
+            .map(|(entity, _)| entity)
+    })
 }
 
 fn clamp_finite(value: f32, default: f32, minimum: f32, maximum: f32) -> f32 {
@@ -165,8 +321,95 @@ fn value_is_in_range(value: f32, minimum: f32, maximum: f32) -> bool {
 mod tests {
     use super::*;
     use crate::framework::scene::prelude::{
-        SceneCameraFollowTargetSource, SceneCameraMode, SceneCameraProjection, SceneManifest,
+        SceneCameraConfig, SceneCameraFollowConfig, SceneCameraFollowTargetSource, SceneCameraMode,
+        SceneCameraProjection, SceneManifest, SceneSpawnRegistry, SceneSpawnSessionIndex,
+        spawn_scene_camera,
     };
+
+    const TEST_SCENE_ID: &str = "world.main";
+
+    fn active_camera_app(session_id: SceneSessionId, generation: u64) -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<SceneSpawnRegistry>()
+            .insert_resource(MainWorldEntryState {
+                generation,
+                phase: MainWorldEntryPhase::Active,
+                scene_session_id: Some(session_id.clone()),
+                ..Default::default()
+            })
+            .add_plugins(MainWorldCameraPlugin)
+            .add_systems(Update, update_scene_cameras);
+        app.world_mut()
+            .resource_mut::<SceneSpawnRegistry>()
+            .set_session_index(SceneSpawnSessionIndex::empty(TEST_SCENE_ID, session_id));
+        app
+    }
+
+    fn register_scene_session(app: &mut App, session_id: SceneSessionId) {
+        app.world_mut()
+            .resource_mut::<SceneSpawnRegistry>()
+            .set_session_index(SceneSpawnSessionIndex::empty(TEST_SCENE_ID, session_id));
+    }
+
+    fn schedule_follow_camera(
+        app: &mut App,
+        session_id: SceneSessionId,
+        target_source: SceneCameraFollowTargetSource,
+        offset: Vec3,
+    ) {
+        let config = SceneCameraConfig::follow_target().with_follow(SceneCameraFollowConfig {
+            target_source,
+            offset,
+            look_at_offset: Vec3::new(9.0, 8.0, 7.0),
+            position_lerp: 0.75,
+            rotation_lerp: 0.5,
+            ..Default::default()
+        });
+        app.add_systems(Startup, move |mut commands: Commands| {
+            spawn_scene_camera(&mut commands, &session_id, config.clone());
+        });
+    }
+
+    fn spawn_target(app: &mut App, session_id: &SceneSessionId, position: Vec3) -> Entity {
+        let transform = Transform::from_translation(position);
+        app.world_mut()
+            .spawn((
+                SceneCameraTarget::new(session_id.clone())
+                    .with_tag(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG),
+                transform,
+                GlobalTransform::from(transform),
+            ))
+            .id()
+    }
+
+    fn camera_for_session(
+        app: &mut App,
+        session_id: &SceneSessionId,
+        target_source: SceneCameraFollowTargetSource,
+    ) -> (SceneCameraRig, Transform, Projection) {
+        let world = app.world_mut();
+        let mut cameras = world.query::<(&SceneCameraRig, &Transform, &Projection)>();
+        cameras
+            .iter(world)
+            .find(|(rig, _, _)| {
+                rig.is_session(session_id)
+                    && rig
+                        .config
+                        .follow
+                        .as_ref()
+                        .is_some_and(|follow| follow.target_source == target_source)
+            })
+            .map(|(rig, transform, projection)| (rig.clone(), *transform, projection.clone()))
+            .unwrap()
+    }
+
+    fn assert_vec3_approx_eq(actual: Vec3, expected: Vec3) {
+        assert!(
+            actual.distance(expected) < 0.0001,
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
 
     #[test]
     fn default_orbit_state_freezes_the_first_main_world_camera_parameters() {
@@ -227,6 +470,253 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn orbit_offset_uses_yaw_pitch_and_distance_with_a_height_only_look_at() {
+        let state = MainWorldCameraOrbitState {
+            pitch_radians: std::f32::consts::FRAC_PI_4,
+            distance: 2.0,
+            ..Default::default()
+        };
+
+        assert_vec3_approx_eq(
+            state.follow_offset(),
+            Vec3::new(0.0, std::f32::consts::SQRT_2, std::f32::consts::SQRT_2),
+        );
+        assert_vec3_approx_eq(
+            MainWorldCameraOrbitState {
+                yaw_radians: std::f32::consts::FRAC_PI_2,
+                ..state.clone()
+            }
+            .follow_offset(),
+            Vec3::new(std::f32::consts::SQRT_2, std::f32::consts::SQRT_2, 0.0),
+        );
+        assert_eq!(state.look_at_offset(), Vec3::Y * state.look_at_height);
+    }
+
+    #[test]
+    fn active_adapter_updates_only_the_current_main_world_rig_before_scene_camera_update() {
+        let session_id = SceneSessionId::from("main-world-a");
+        let target_position = Vec3::new(10.0, 0.5, -2.0);
+        let mut app = active_camera_app(session_id.clone(), 4);
+        spawn_target(&mut app, &session_id, target_position);
+        schedule_follow_camera(
+            &mut app,
+            session_id.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            Vec3::new(99.0, 99.0, 99.0),
+        );
+
+        app.update();
+
+        let (rig, transform, projection) = camera_for_session(
+            &mut app,
+            &session_id,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        );
+        let follow = rig.config.follow.unwrap();
+        let expected_offset = MainWorldCameraOrbitState::default().follow_offset();
+        assert_vec3_approx_eq(follow.offset, expected_offset);
+        assert_eq!(
+            follow.look_at_offset,
+            Vec3::Y * MAIN_WORLD_CAMERA_DEFAULT_LOOK_AT_HEIGHT
+        );
+        assert_eq!(follow.position_lerp, 1.0);
+        assert_eq!(follow.rotation_lerp, 1.0);
+        assert_vec3_approx_eq(transform.translation, target_position + expected_offset);
+        let Projection::Perspective(projection) = projection else {
+            panic!("main world camera must remain perspective");
+        };
+        assert_eq!(projection.fov, MAIN_WORLD_CAMERA_FOV_Y_RADIANS);
+        assert_eq!(projection.near, MAIN_WORLD_CAMERA_NEAR);
+        assert_eq!(projection.far, MAIN_WORLD_CAMERA_FAR);
+    }
+
+    #[test]
+    fn active_adapter_leaves_other_session_and_non_primary_rigs_unchanged() {
+        let session_a = SceneSessionId::from("main-world-a");
+        let session_b = SceneSessionId::from("main-world-b");
+        let other_offset = Vec3::new(7.0, 8.0, 9.0);
+        let wrong_session_offset = Vec3::new(4.0, 5.0, 6.0);
+        let mut app = active_camera_app(session_a.clone(), 1);
+        register_scene_session(&mut app, session_b.clone());
+        spawn_target(&mut app, &session_a, Vec3::new(3.0, 0.0, 1.0));
+        schedule_follow_camera(
+            &mut app,
+            session_a.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            Vec3::ZERO,
+        );
+        schedule_follow_camera(
+            &mut app,
+            session_a.clone(),
+            SceneCameraFollowTargetSource::SceneTarget,
+            other_offset,
+        );
+        schedule_follow_camera(
+            &mut app,
+            session_b.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            wrong_session_offset,
+        );
+        let ui_camera = app
+            .world_mut()
+            .spawn((
+                Camera2d,
+                Projection::Orthographic(OrthographicProjection::default_2d()),
+            ))
+            .id();
+
+        app.update();
+
+        let (other_rig, _, _) = camera_for_session(
+            &mut app,
+            &session_a,
+            SceneCameraFollowTargetSource::SceneTarget,
+        );
+        assert_eq!(other_rig.config.follow.unwrap().offset, other_offset);
+        let (wrong_session_rig, _, _) = camera_for_session(
+            &mut app,
+            &session_b,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        );
+        assert_eq!(
+            wrong_session_rig.config.follow.unwrap().offset,
+            wrong_session_offset
+        );
+        assert!(matches!(
+            app.world().entity(ui_camera).get::<Projection>(),
+            Some(Projection::Orthographic(_))
+        ));
+    }
+
+    #[test]
+    fn target_replacement_resets_smoothing_for_one_update_then_restores_orbit_smoothing() {
+        let session_id = SceneSessionId::from("main-world-a");
+        let mut app = active_camera_app(session_id.clone(), 1);
+        let first_target = spawn_target(&mut app, &session_id, Vec3::ZERO);
+        schedule_follow_camera(
+            &mut app,
+            session_id.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            Vec3::ZERO,
+        );
+        app.update();
+        {
+            let mut orbit = app.world_mut().resource_mut::<MainWorldCameraOrbitState>();
+            orbit.position_lerp = 0.3;
+            orbit.rotation_lerp = 0.4;
+        }
+        app.world_mut().despawn(first_target);
+        spawn_target(&mut app, &session_id, Vec3::new(8.0, 0.0, 0.0));
+
+        app.update();
+
+        let (replacement_rig, _, _) = camera_for_session(
+            &mut app,
+            &session_id,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        );
+        let replacement_follow = replacement_rig.config.follow.unwrap();
+        assert_eq!(replacement_follow.position_lerp, 1.0);
+        assert_eq!(replacement_follow.rotation_lerp, 1.0);
+
+        app.update();
+
+        let (settled_rig, _, _) = camera_for_session(
+            &mut app,
+            &session_id,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        );
+        let settled_follow = settled_rig.config.follow.unwrap();
+        assert_eq!(settled_follow.position_lerp, 0.3);
+        assert_eq!(settled_follow.rotation_lerp, 0.4);
+    }
+
+    #[test]
+    fn session_or_generation_change_resets_orbit_and_updates_only_the_new_session_rig() {
+        let session_a = SceneSessionId::from("main-world-a");
+        let session_b = SceneSessionId::from("main-world-b");
+        let mut app = active_camera_app(session_a.clone(), 1);
+        register_scene_session(&mut app, session_b.clone());
+        spawn_target(&mut app, &session_a, Vec3::ZERO);
+        spawn_target(&mut app, &session_b, Vec3::new(2.0, 0.0, 0.0));
+        schedule_follow_camera(
+            &mut app,
+            session_a.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            Vec3::ZERO,
+        );
+        schedule_follow_camera(
+            &mut app,
+            session_b.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            Vec3::new(8.0, 8.0, 8.0),
+        );
+        app.update();
+        {
+            let mut orbit = app.world_mut().resource_mut::<MainWorldCameraOrbitState>();
+            orbit.yaw_radians = std::f32::consts::FRAC_PI_2;
+            orbit.distance = 6.0;
+        }
+        app.update();
+        let changed_a_offset = camera_for_session(
+            &mut app,
+            &session_a,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        )
+        .0
+        .config
+        .follow
+        .unwrap()
+        .offset;
+        assert_vec3_approx_eq(
+            changed_a_offset,
+            Vec3::new(
+                6.0 * MAIN_WORLD_CAMERA_DEFAULT_PITCH_RADIANS.cos(),
+                6.0 * MAIN_WORLD_CAMERA_DEFAULT_PITCH_RADIANS.sin(),
+                0.0,
+            ),
+        );
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 2;
+            entry.scene_session_id = Some(session_b.clone());
+        }
+
+        app.update();
+
+        let orbit = app.world().resource::<MainWorldCameraOrbitState>();
+        assert_eq!(orbit.scene_session_id.as_ref(), Some(&session_b));
+        assert_eq!(orbit.generation, 2);
+        assert_eq!(orbit.yaw_radians, MAIN_WORLD_CAMERA_DEFAULT_YAW_RADIANS);
+        assert_eq!(orbit.distance, MAIN_WORLD_CAMERA_DEFAULT_DISTANCE);
+        let reset_b_offset = camera_for_session(
+            &mut app,
+            &session_b,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        )
+        .0
+        .config
+        .follow
+        .unwrap()
+        .offset;
+        assert_vec3_approx_eq(
+            reset_b_offset,
+            MainWorldCameraOrbitState::default().follow_offset(),
+        );
+        let retained_a_offset = camera_for_session(
+            &mut app,
+            &session_a,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        )
+        .0
+        .config
+        .follow
+        .unwrap()
+        .offset;
+        assert_vec3_approx_eq(retained_a_offset, changed_a_offset);
     }
 
     #[test]

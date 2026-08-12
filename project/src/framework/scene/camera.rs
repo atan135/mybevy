@@ -84,6 +84,12 @@ impl SceneCameraRuntimeState {
         self.tween_from = from;
         self.tween_elapsed_seconds = 0.0;
     }
+
+    /// Discards a previous transition when the game layer changes the follow
+    /// subject or begins a new scene session.
+    pub fn reset(&mut self, current: Transform) {
+        *self = Self::new(current);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
