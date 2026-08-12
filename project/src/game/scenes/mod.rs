@@ -46,6 +46,7 @@ impl Plugin for GameScenesPlugin {
             fangyuan_home::FangyuanHomePlugin,
             lockstep_sim_arena::LockstepSimArenaPlugin,
             main_world_entry::MainWorldEntryPlugin,
+            main_world_players::MainWorldPlayersPlugin,
             main_world::MainWorldScenePlugin,
             robot_sync_arena::RobotSyncArenaPlugin,
             sample_dungeon_room::SampleDungeonRoomPlugin,

@@ -215,6 +215,9 @@ mod tests {
             ))
             .id();
         app.update();
-        assert_eq!(app.world().get::<Transform>(entity).unwrap().rotation, rotation);
+        assert_eq!(
+            app.world().get::<Transform>(entity).unwrap().rotation,
+            rotation
+        );
     }
 }

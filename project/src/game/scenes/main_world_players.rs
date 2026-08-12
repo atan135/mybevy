@@ -8,6 +8,8 @@ use crate::framework::fangyuan::{
 use crate::framework::scene::prelude::{
     SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG, SceneCameraTarget, SceneOwned, SceneSessionId,
 };
+use crate::game::myserver::MyServerEvent;
+use crate::game::myserver::protocol::pb;
 
 use super::main_world_contract::MAIN_WORLD_SERVER_SCENE_ID;
 
@@ -51,6 +53,122 @@ pub(in crate::game) enum MainWorldPlayerRegistrationError {
     StaleGeneration { expected: u64, actual: u64 },
     StaleFrame { current: u32, actual: u32 },
     BlueprintLoadFailed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::game) enum MainWorldPlayerSnapshotError {
+    NotReady,
+    WrongRoom,
+    WrongScene { actual: i32 },
+    InvalidPosition,
+    Registration(MainWorldPlayerRegistrationError),
+}
+
+#[derive(Resource, Default)]
+struct MainWorldPlayerRuntime {
+    cached_snapshot: Option<pb::MovementSnapshotPush>,
+    cached_generation: u64,
+    active_generation: u64,
+    last_applied_frame: Option<u32>,
+    last_error: Option<MainWorldPlayerSnapshotError>,
+    registry: Option<MainWorldPlayerRegistry>,
+}
+
+pub(in crate::game) struct MainWorldPlayersPlugin;
+
+impl Plugin for MainWorldPlayersPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<MainWorldPlayerRuntime>()
+            .add_systems(Update, maintain_main_world_players);
+    }
+}
+
+fn maintain_main_world_players(
+    mut commands: Commands,
+    mut events: MessageReader<MyServerEvent>,
+    entry: Res<super::main_world_entry::MainWorldEntryState>,
+    roots: Query<(Entity, &crate::framework::scene::prelude::SceneRuntimeRoot)>,
+    mut runtime: ResMut<MainWorldPlayerRuntime>,
+) {
+    if runtime.active_generation != entry.generation {
+        if let Some(registry) = runtime.registry.as_mut() {
+            registry.clear(&mut commands);
+        }
+        runtime.registry = None;
+        runtime.cached_snapshot = None;
+        runtime.last_applied_frame = None;
+        runtime.last_error = None;
+        runtime.active_generation = entry.generation;
+    }
+    for event in events.read() {
+        let MyServerEvent::MovementSnapshotPush(push) = event else {
+            continue;
+        };
+        if push.room_id != super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID {
+            continue;
+        }
+        if runtime
+            .cached_snapshot
+            .as_ref()
+            .is_none_or(|cached| push.frame_id >= cached.frame_id)
+        {
+            runtime.cached_snapshot = Some(push.clone());
+            runtime.cached_generation = entry.generation;
+        }
+    }
+    let Some(session_id) = entry.scene_session_id.as_ref() else {
+        return;
+    };
+    let Some(character_id) = entry.character_id.as_ref() else {
+        return;
+    };
+    let Some((root, _)) = roots.iter().find(|(_, root)| root.is_session(session_id)) else {
+        return;
+    };
+    let replace_registry = runtime
+        .registry
+        .as_ref()
+        .is_none_or(|registry| registry.session_id() != session_id);
+    if replace_registry {
+        if let Some(registry) = runtime.registry.as_mut() {
+            registry.clear(&mut commands);
+        }
+        runtime.registry = Some(MainWorldPlayerRegistry::new(
+            session_id.clone(),
+            entry.generation,
+            character_id.clone(),
+            root,
+        ));
+        runtime.last_applied_frame = None;
+    }
+    if !entry.scene_ready || !entry.room_ready_acknowledged {
+        return;
+    }
+    let Some(snapshot) = runtime.cached_snapshot.clone() else {
+        return;
+    };
+    if runtime.cached_generation != entry.generation
+        || runtime.last_applied_frame == Some(snapshot.frame_id)
+    {
+        return;
+    }
+    if let Some(registry) = runtime.registry.as_mut() {
+        match apply_main_world_snapshot(registry, &mut commands, &snapshot, true, true) {
+            Ok(()) => {
+                runtime.last_applied_frame = Some(snapshot.frame_id);
+                runtime.last_error = None;
+            }
+            Err(error) => {
+                warn!(
+                    ?error,
+                    frame_id = snapshot.frame_id,
+                    "main world player snapshot rejected"
+                );
+                runtime.last_applied_frame = Some(snapshot.frame_id);
+                runtime.last_error = Some(error);
+            }
+        }
+    }
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -100,6 +218,24 @@ impl MainWorldPlayerRegistry {
     pub fn clear(&mut self, commands: &mut Commands) {
         for entry in self.players.drain().map(|(_, entry)| entry) {
             commands.entity(entry.entity).despawn();
+        }
+    }
+
+    fn remove_missing(
+        &mut self,
+        commands: &mut Commands,
+        visible: &std::collections::HashSet<String>,
+    ) {
+        let stale: Vec<_> = self
+            .players
+            .keys()
+            .filter(|id| !visible.contains(*id))
+            .cloned()
+            .collect();
+        for character_id in stale {
+            if let Some(entry) = self.players.remove(&character_id) {
+                commands.entity(entry.entity).despawn();
+            }
         }
     }
 
@@ -226,6 +362,58 @@ impl MainWorldPlayerRegistry {
     }
 }
 
+/// Adapter for authoritative snapshots. Entry orchestration supplies the
+/// session/generation gate; this runtime owns all-character presentation.
+pub(in crate::game) fn apply_main_world_snapshot(
+    registry: &mut MainWorldPlayerRegistry,
+    commands: &mut Commands,
+    push: &pb::MovementSnapshotPush,
+    room_ready: bool,
+    scene_ready: bool,
+) -> Result<(), MainWorldPlayerSnapshotError> {
+    if !room_ready || !scene_ready {
+        return Err(MainWorldPlayerSnapshotError::NotReady);
+    }
+    if push.room_id != super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID {
+        return Err(MainWorldPlayerSnapshotError::WrongRoom);
+    }
+    for entity in &push.entities {
+        if entity.character_id.trim().is_empty() {
+            return Err(MainWorldPlayerSnapshotError::Registration(
+                MainWorldPlayerRegistrationError::EmptyCharacterId,
+            ));
+        }
+        if entity.scene_id != MAIN_WORLD_SERVER_SCENE_ID {
+            return Err(MainWorldPlayerSnapshotError::WrongScene {
+                actual: entity.scene_id,
+            });
+        }
+        super::main_world_entry::main_world_bevy_position(entity.x, entity.y)
+            .map_err(|_| MainWorldPlayerSnapshotError::InvalidPosition)?;
+    }
+    let mut visible = std::collections::HashSet::new();
+    for entity in &push.entities {
+        let position = super::main_world_entry::main_world_bevy_position(entity.x, entity.y)
+            .map_err(|_| MainWorldPlayerSnapshotError::InvalidPosition)?;
+        visible.insert(entity.character_id.clone());
+        let registration = MainWorldPlayerRegistration {
+            character_id: entity.character_id.clone(),
+            server_entity_id: entity.entity_id as i64,
+            server_scene_id: entity.scene_id,
+            generation: registry.generation,
+            authoritative_frame: push.frame_id,
+            transform: Transform::from_translation(position),
+        };
+        registry
+            .register(commands, registration)
+            .map_err(MainWorldPlayerSnapshotError::Registration)?;
+    }
+    if push.full_sync {
+        registry.remove_missing(commands, &visible);
+    }
+    Ok(())
+}
+
 fn spawn_player_root(
     commands: &mut Commands,
     runtime_root: Entity,
@@ -271,11 +459,13 @@ pub(in crate::game) fn main_world_player_root_transform(
 
 #[cfg(test)]
 mod tests {
+    use super::super::main_world_entry::MainWorldEntryState;
     use super::*;
     use crate::framework::fangyuan::{
         FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT, FangyuanPlayerPrimitiveVisual,
         FangyuanPlayerRuntimePlugin,
     };
+    use crate::framework::scene::prelude::SceneRuntimeRoot;
 
     fn registration(character: &str, entity_id: i64, frame: u32) -> MainWorldPlayerRegistration {
         MainWorldPlayerRegistration {
@@ -329,7 +519,12 @@ mod tests {
         app.add_plugins((MinimalPlugins, TransformPlugin, FangyuanPlayerRuntimePlugin));
         let root = app.world_mut().spawn_empty().id();
         let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
-        register(app.world_mut(), &mut registry, registration("remote", 10, 1)).unwrap();
+        register(
+            app.world_mut(),
+            &mut registry,
+            registration("remote", 10, 1),
+        )
+        .unwrap();
         let rotation = Quat::from_rotation_y(1.25);
         let mut updated = registration("remote", 10, 2);
         updated.transform.rotation = rotation;
@@ -338,7 +533,10 @@ mod tests {
             panic!()
         };
         app.update();
-        assert_eq!(app.world().get::<Transform>(entity).unwrap().rotation, rotation);
+        assert_eq!(
+            app.world().get::<Transform>(entity).unwrap().rotation,
+            rotation
+        );
     }
 
     #[test]
@@ -448,6 +646,313 @@ mod tests {
         assert!(world.get_entity(entity).is_err());
         assert!(world.get_entity(unrelated).is_ok());
         assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn snapshot_applies_all_characters_incrementally_and_full_sync_removes_missing() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
+        let push = pb::MovementSnapshotPush {
+            room_id: super::super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+            frame_id: 1,
+            entities: vec![
+                pb::EntityTransform {
+                    entity_id: 1,
+                    character_id: "local".into(),
+                    scene_id: 1,
+                    x: 1.0,
+                    y: 1.0,
+                    ..Default::default()
+                },
+                pb::EntityTransform {
+                    entity_id: 2,
+                    character_id: "remote".into(),
+                    scene_id: 1,
+                    x: 2.0,
+                    y: 2.0,
+                    ..Default::default()
+                },
+            ],
+            full_sync: true,
+            ..Default::default()
+        };
+        apply_main_world_snapshot(&mut registry, &mut world.commands(), &push, true, true).unwrap();
+        world.flush();
+        assert_eq!(registry.len(), 2);
+        let incremental = pb::MovementSnapshotPush {
+            frame_id: 2,
+            full_sync: false,
+            entities: vec![pb::EntityTransform {
+                entity_id: 1,
+                character_id: "local".into(),
+                scene_id: 1,
+                x: 3.0,
+                y: 3.0,
+                ..Default::default()
+            }],
+            ..push.clone()
+        };
+        apply_main_world_snapshot(
+            &mut registry,
+            &mut world.commands(),
+            &incremental,
+            true,
+            true,
+        )
+        .unwrap();
+        world.flush();
+        assert_eq!(registry.len(), 2);
+        let full = pb::MovementSnapshotPush {
+            frame_id: 3,
+            full_sync: true,
+            entities: vec![pb::EntityTransform {
+                entity_id: 1,
+                character_id: "local".into(),
+                scene_id: 1,
+                x: 4.0,
+                y: 4.0,
+                ..Default::default()
+            }],
+            ..push
+        };
+        apply_main_world_snapshot(&mut registry, &mut world.commands(), &full, true, true).unwrap();
+        world.flush();
+        assert_eq!(registry.len(), 1);
+        assert!(registry.get("remote").is_none());
+    }
+
+    #[test]
+    fn snapshot_before_ready_is_rejected_without_spawning() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
+        let push = pb::MovementSnapshotPush {
+            room_id: super::super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID.into(),
+            frame_id: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            apply_main_world_snapshot(&mut registry, &mut world.commands(), &push, false, false),
+            Err(MainWorldPlayerSnapshotError::NotReady)
+        );
+        world.flush();
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn invalid_snapshot_is_atomic_and_does_not_partially_spawn() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
+        let push = pb::MovementSnapshotPush {
+            room_id: super::super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID.into(),
+            frame_id: 1,
+            entities: vec![
+                pb::EntityTransform {
+                    entity_id: 1,
+                    character_id: "valid".into(),
+                    scene_id: 1,
+                    x: 1.0,
+                    y: 1.0,
+                    ..Default::default()
+                },
+                pb::EntityTransform {
+                    entity_id: 2,
+                    character_id: "invalid".into(),
+                    scene_id: 99,
+                    x: 2.0,
+                    y: 2.0,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            apply_main_world_snapshot(&mut registry, &mut world.commands(), &push, true, true),
+            Err(MainWorldPlayerSnapshotError::WrongScene { actual: 99 })
+        );
+        world.flush();
+        assert_eq!(registry.len(), 0);
+    }
+
+    fn runtime_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, FangyuanPlayerRuntimePlugin))
+            .add_message::<MyServerEvent>()
+            .init_resource::<MainWorldEntryState>()
+            .add_plugins(MainWorldPlayersPlugin);
+        app
+    }
+
+    fn snapshot(
+        frame: u32,
+        full_sync: bool,
+        entities: &[(&str, u64, f32, f32)],
+    ) -> pb::MovementSnapshotPush {
+        pb::MovementSnapshotPush {
+            room_id: super::super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID.into(),
+            frame_id: frame,
+            full_sync,
+            entities: entities
+                .iter()
+                .map(|(character, id, x, y)| pb::EntityTransform {
+                    entity_id: *id,
+                    character_id: (*character).into(),
+                    scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                    x: *x,
+                    y: *y,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn player_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query_filtered::<Entity, With<MainWorldPlayer>>()
+            .iter(app.world())
+            .count()
+    }
+
+    #[test]
+    fn plugin_caches_early_snapshot_then_handles_repeat_incremental_full_and_stale() {
+        let mut app = runtime_app();
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                5,
+                true,
+                &[("local", 1, 1.0, 1.0), ("remote", 2, 2.0, 2.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 0);
+
+        let root = app
+            .world_mut()
+            .spawn(SceneRuntimeRoot::new("session-1"))
+            .id();
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.update();
+        assert_eq!(player_count(&mut app), 2);
+        let visual_count = app
+            .world_mut()
+            .query_filtered::<Entity, With<FangyuanPlayerPrimitiveVisual>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(visual_count, 4);
+
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                5,
+                true,
+                &[("local", 1, 9.0, 9.0), ("remote", 2, 9.0, 9.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 2);
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<FangyuanPlayerPrimitiveVisual>>()
+                .iter(app.world())
+                .count(),
+            4
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                6,
+                false,
+                &[("local", 1, 3.0, 3.0), ("new", 3, 4.0, 4.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 3);
+        let local = app
+            .world()
+            .resource::<MainWorldPlayerRuntime>()
+            .registry
+            .as_ref()
+            .unwrap()
+            .get("local")
+            .unwrap();
+        assert_eq!(
+            app.world().get::<Transform>(local).unwrap().translation,
+            Vec3::new(3.0, 0.0, 3.0)
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                4,
+                false,
+                &[("local", 1, 1.0, 1.0)],
+            )));
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(local).unwrap().translation,
+            Vec3::new(3.0, 0.0, 3.0)
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                7,
+                true,
+                &[("local", 1, 5.0, 5.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 1);
+        assert!(app.world().get_entity(root).is_ok());
+    }
+
+    #[test]
+    fn plugin_generation_session_switch_clears_old_players_and_cached_snapshot() {
+        let mut app = runtime_app();
+        let old_root = app
+            .world_mut()
+            .spawn(SceneRuntimeRoot::new("session-1"))
+            .id();
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                8,
+                true,
+                &[("local", 1, 2.0, 2.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 1);
+
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-2"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 2;
+            entry.scene_session_id = Some(SceneSessionId::from("session-2"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.update();
+        assert_eq!(player_count(&mut app), 0);
+        assert!(app.world().get_entity(old_root).is_ok());
+        assert!(
+            app.world()
+                .resource::<MainWorldPlayerRuntime>()
+                .cached_snapshot
+                .is_none()
+        );
     }
 
     #[test]
