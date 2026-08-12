@@ -23,14 +23,14 @@
     rotation_degrees: [-48.0, -28.0, 0.0],
     color: [1.0, 0.96, 0.86],
     illuminance: 85000.0,
-    shadows_enabled: true,
+    shadows_enabled: false,
   ),
   render: (
     ambient_color: [0.62, 0.72, 0.86],
     ambient_brightness: 180.0,
     ambient_affects_lightmapped_meshes: true,
     clear_color: [0.42, 0.68, 0.88],
-    exposure_ev100: 13.0,
+    exposure_ev100: 8.0,
     tonemapping: tony_mc_mapface,
   ),
 )

@@ -1,9 +1,9 @@
 use bevy::{
     asset::RenderAssetUsages, camera::Exposure, core_pipeline::tonemapping::Tonemapping,
-    mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
+    light::NotShadowCaster, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
 use serde::{Deserialize, Deserializer, de};
-use std::{fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf, time::Instant};
 
 use crate::{
     framework::scene::prelude::{
@@ -24,6 +24,9 @@ const MAIN_WORLD_LOW_MARKER_VERTICES: usize =
     (MAIN_WORLD_LOW_MARKER_SECTORS + 1) * (MAIN_WORLD_LOW_MARKER_STACKS + 1);
 const MAIN_WORLD_LOW_MARKER_TRIANGLES: usize =
     MAIN_WORLD_LOW_MARKER_SECTORS * 2 * (MAIN_WORLD_LOW_MARKER_STACKS - 1);
+const MAIN_WORLD_ACCEPTANCE_WARMUP_SECONDS: f64 = 2.0;
+const MAIN_WORLD_ACCEPTANCE_SAMPLE_SECONDS: f64 = 5.0;
+const ENV_MAIN_WORLD_ACCEPTANCE_METRICS: &str = "MYBEVY_MAIN_WORLD_ACCEPTANCE_METRICS";
 
 pub(super) struct MainWorldScenePlugin;
 
@@ -31,7 +34,12 @@ impl Plugin for MainWorldScenePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
-            .add_systems(PostUpdate, instantiate_main_world_content);
+            .init_resource::<MainWorldSessionAssets>()
+            .init_resource::<MainWorldAcceptanceMetrics>()
+            .add_systems(
+                PostUpdate,
+                (instantiate_main_world_content, report_main_world_metrics).chain(),
+            );
     }
 }
 
@@ -42,6 +50,47 @@ struct MainWorldContent {
 
 #[derive(Clone, Debug, Component, PartialEq, Eq)]
 struct MainWorldDistanceMarkerCollection;
+
+#[derive(Default, Resource)]
+struct MainWorldSessionAssets(HashMap<SceneSessionId, MainWorldAssetHandles>);
+
+struct MainWorldAssetHandles {
+    meshes: [Handle<Mesh>; 2],
+    materials: [Handle<StandardMaterial>; 2],
+}
+
+#[derive(Resource)]
+struct MainWorldAcceptanceMetrics {
+    enabled: bool,
+    session_id: Option<SceneSessionId>,
+    warmup_seconds: f64,
+    elapsed_seconds: f64,
+    application_frame_times_ms: Vec<f64>,
+    reported: bool,
+    marker_generation_ms: f64,
+}
+
+impl Default for MainWorldAcceptanceMetrics {
+    fn default() -> Self {
+        Self {
+            enabled: cfg!(debug_assertions)
+                && std::env::var(ENV_MAIN_WORLD_ACCEPTANCE_METRICS)
+                    .ok()
+                    .is_some_and(|value| {
+                        matches!(
+                            value.trim().to_ascii_lowercase().as_str(),
+                            "1" | "true" | "on" | "yes" | "enabled"
+                        )
+                    }),
+            session_id: None,
+            warmup_seconds: 0.0,
+            elapsed_seconds: 0.0,
+            application_frame_times_ms: Vec::new(),
+            reported: false,
+            marker_generation_ms: 0.0,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 struct MainWorldLayout {
@@ -405,12 +454,40 @@ fn instantiate_main_world_content(
     existing_content: Query<&MainWorldContent>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut session_assets: ResMut<MainWorldSessionAssets>,
+    mut acceptance_metrics: ResMut<MainWorldAcceptanceMetrics>,
 ) {
     let mut instantiated_sessions = Vec::new();
 
     for event in scene_events.read() {
-        let SceneEvent::Entered(entered) = event else {
-            continue;
+        let entered = match event {
+            SceneEvent::Entered(entered) => entered,
+            SceneEvent::Exited(exited) if exited.scene_id.as_str() == MAIN_WORLD_SCENE_ID => {
+                remove_main_world_session_assets(
+                    &exited.session_id,
+                    &mut session_assets,
+                    &mut meshes,
+                    &mut materials,
+                );
+                continue;
+            }
+            SceneEvent::Failed(failure)
+                if failure
+                    .scene_id
+                    .as_ref()
+                    .is_some_and(|scene_id| scene_id.as_str() == MAIN_WORLD_SCENE_ID) =>
+            {
+                if let Some(session_id) = failure.session_id.as_ref() {
+                    remove_main_world_session_assets(
+                        session_id,
+                        &mut session_assets,
+                        &mut meshes,
+                        &mut materials,
+                    );
+                }
+                continue;
+            }
+            _ => continue,
         };
         if entered.scene_id.as_str() != MAIN_WORLD_SCENE_ID
             || existing_content
@@ -443,6 +520,7 @@ fn instantiate_main_world_content(
             warn!("main world layout scene id does not match its registered scene");
             continue;
         }
+        let mesh_generation_started = Instant::now();
         let distance_marker_mesh =
             match build_main_world_distance_marker_mesh(&layout.distance_markers) {
                 Ok(mesh) => mesh,
@@ -451,6 +529,7 @@ fn instantiate_main_world_content(
                     continue;
                 }
             };
+        let marker_generation_ms = mesh_generation_started.elapsed().as_secs_f64() * 1000.0;
         let distance_marker_stats = distance_marker_mesh.stats;
         let scene_camera = scene_cameras
             .iter_mut()
@@ -469,7 +548,7 @@ fn instantiate_main_world_content(
             .id();
         commands.entity(parent).add_child(content);
 
-        spawn_main_world_visuals(
+        let asset_handles = spawn_main_world_visuals(
             &mut commands,
             content,
             &session_id,
@@ -478,6 +557,15 @@ fn instantiate_main_world_content(
             &mut meshes,
             &mut materials,
         );
+        session_assets.0.insert(session_id.clone(), asset_handles);
+        if acceptance_metrics.enabled {
+            acceptance_metrics.session_id = Some(session_id.clone());
+            acceptance_metrics.warmup_seconds = 0.0;
+            acceptance_metrics.elapsed_seconds = 0.0;
+            acceptance_metrics.application_frame_times_ms.clear();
+            acceptance_metrics.reported = false;
+            acceptance_metrics.marker_generation_ms = marker_generation_ms;
+        }
         if let Some((scene_camera, mut camera)) = scene_camera {
             configure_main_world_camera(&mut commands, scene_camera, &mut camera, &layout.render);
         } else {
@@ -493,10 +581,88 @@ fn instantiate_main_world_content(
             marker_count = distance_marker_stats.marker_count,
             marker_vertices = distance_marker_stats.vertex_count,
             marker_triangles = distance_marker_stats.index_count / 3,
+            marker_generation_ms,
             "main world visuals instantiated: terrain, distance marker collection, directional light"
         );
         instantiated_sessions.push(session_id);
     }
+}
+
+fn report_main_world_metrics(
+    time: Res<Time<Real>>,
+    content: Query<&MainWorldContent>,
+    marker_entities: Query<(), With<MainWorldDistanceMarkerCollection>>,
+    meshes: Res<Assets<Mesh>>,
+    materials: Res<Assets<StandardMaterial>>,
+    mut metrics: ResMut<MainWorldAcceptanceMetrics>,
+) {
+    if !metrics.enabled || metrics.reported {
+        return;
+    }
+    let Some(session_id) = metrics.session_id.as_ref() else {
+        return;
+    };
+    if !content
+        .iter()
+        .any(|content| &content.session_id == session_id)
+    {
+        return;
+    }
+
+    let delta_seconds = time.delta_secs_f64();
+    if metrics.warmup_seconds < MAIN_WORLD_ACCEPTANCE_WARMUP_SECONDS {
+        metrics.warmup_seconds += delta_seconds;
+        return;
+    }
+
+    metrics.elapsed_seconds += delta_seconds;
+    metrics
+        .application_frame_times_ms
+        .push(delta_seconds * 1000.0);
+    if metrics.elapsed_seconds < MAIN_WORLD_ACCEPTANCE_SAMPLE_SECONDS {
+        return;
+    }
+
+    let application_frame_count = metrics.application_frame_times_ms.len();
+    let application_update_fps = application_frame_count as f64 / metrics.elapsed_seconds;
+    let application_frame_time_average_ms =
+        metrics.elapsed_seconds * 1000.0 / application_frame_count.max(1) as f64;
+    let application_frame_time_p95_ms =
+        nearest_rank_percentile(&metrics.application_frame_times_ms, 0.95).unwrap_or(0.0);
+    let application_frame_time_max_ms = metrics
+        .application_frame_times_ms
+        .iter()
+        .copied()
+        .reduce(f64::max)
+        .unwrap_or(0.0);
+    info!(
+        warmup_seconds = metrics.warmup_seconds,
+        sample_seconds = metrics.elapsed_seconds,
+        application_frame_count,
+        application_update_fps,
+        application_frame_time_average_ms,
+        application_frame_time_p95_ms,
+        application_frame_time_max_ms,
+        mesh_assets = meshes.len(),
+        material_assets = materials.len(),
+        marker_entities = marker_entities.iter().count(),
+        marker_vertices = MAIN_WORLD_MARKER_COUNT * MAIN_WORLD_LOW_MARKER_VERTICES,
+        marker_triangles = MAIN_WORLD_MARKER_COUNT * MAIN_WORLD_LOW_MARKER_TRIANGLES,
+        marker_generation_ms = metrics.marker_generation_ms,
+        "main world acceptance metrics (application updates, not GPU presents)"
+    );
+    metrics.reported = true;
+}
+
+fn nearest_rank_percentile(values: &[f64], percentile: f64) -> Option<f64> {
+    if values.is_empty() || !percentile.is_finite() || !(0.0..=1.0).contains(&percentile) {
+        return None;
+    }
+
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let rank = (percentile * sorted.len() as f64).ceil().max(1.0) as usize;
+    sorted.get(rank - 1).copied()
 }
 
 fn spawn_main_world_visuals(
@@ -507,22 +673,24 @@ fn spawn_main_world_visuals(
     distance_marker_mesh: Mesh,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-) {
+) -> MainWorldAssetHandles {
+    let terrain_mesh = meshes.add(Cuboid::new(
+        layout.terrain.size[0],
+        layout.terrain.size[1],
+        layout.terrain.size[2],
+    ));
+    let terrain_material = materials.add(StandardMaterial {
+        base_color: color(layout.terrain.color),
+        metallic: layout.terrain.metallic,
+        perceptual_roughness: layout.terrain.perceptual_roughness,
+        ..default()
+    });
     spawn_owned_child(
         commands,
         parent,
         (
-            Mesh3d(meshes.add(Cuboid::new(
-                layout.terrain.size[0],
-                layout.terrain.size[1],
-                layout.terrain.size[2],
-            ))),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color(layout.terrain.color),
-                metallic: layout.terrain.metallic,
-                perceptual_roughness: layout.terrain.perceptual_roughness,
-                ..default()
-            })),
+            Mesh3d(terrain_mesh.clone()),
+            MeshMaterial3d(terrain_material.clone()),
             Transform::from_xyz(
                 0.0,
                 layout.terrain.top_y - layout.terrain.size[1] * 0.5,
@@ -532,22 +700,25 @@ fn spawn_main_world_visuals(
         ),
         session_id,
     );
+    let marker_mesh = meshes.add(distance_marker_mesh);
+    let marker_material = materials.add(StandardMaterial {
+        base_color: color(layout.distance_markers.color),
+        metallic: layout.distance_markers.metallic,
+        perceptual_roughness: layout.distance_markers.perceptual_roughness,
+        emissive: scaled_emissive(
+            layout.distance_markers.color,
+            layout.distance_markers.emissive_strength,
+        ),
+        ..default()
+    });
     spawn_owned_child(
         commands,
         parent,
         (
             MainWorldDistanceMarkerCollection,
-            Mesh3d(meshes.add(distance_marker_mesh)),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color(layout.distance_markers.color),
-                metallic: layout.distance_markers.metallic,
-                perceptual_roughness: layout.distance_markers.perceptual_roughness,
-                emissive: scaled_emissive(
-                    layout.distance_markers.color,
-                    layout.distance_markers.emissive_strength,
-                ),
-                ..default()
-            })),
+            Mesh3d(marker_mesh.clone()),
+            MeshMaterial3d(marker_material.clone()),
+            NotShadowCaster,
             Transform::IDENTITY,
             Name::new("MainWorldDistanceMarkerCollection"),
         ),
@@ -573,6 +744,28 @@ fn spawn_main_world_visuals(
         ),
         session_id,
     );
+
+    MainWorldAssetHandles {
+        meshes: [terrain_mesh, marker_mesh],
+        materials: [terrain_material, marker_material],
+    }
+}
+
+fn remove_main_world_session_assets(
+    session_id: &SceneSessionId,
+    session_assets: &mut MainWorldSessionAssets,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let Some(handles) = session_assets.0.remove(session_id) else {
+        return;
+    };
+    for handle in handles.meshes {
+        meshes.remove(&handle);
+    }
+    for handle in handles.materials {
+        materials.remove(&handle);
+    }
 }
 
 fn configure_main_world_camera(
@@ -682,6 +875,25 @@ mod tests {
     use bevy::mesh::VertexAttributeValues;
 
     #[test]
+    fn application_frame_time_percentile_uses_nearest_rank_and_preserves_long_tail() {
+        assert_eq!(nearest_rank_percentile(&[], 0.95), None);
+        assert_eq!(nearest_rank_percentile(&[16.0], f64::NAN), None);
+        assert_eq!(nearest_rank_percentile(&[16.0], -0.1), None);
+        assert_eq!(nearest_rank_percentile(&[16.0], 1.1), None);
+
+        let stable_with_one_long_frame =
+            [16.0, 16.2, 15.8, 16.1, 16.0, 17.0, 16.3, 16.0, 15.9, 80.0];
+        assert_eq!(
+            nearest_rank_percentile(&stable_with_one_long_frame, 0.5),
+            Some(16.0)
+        );
+        assert_eq!(
+            nearest_rank_percentile(&stable_with_one_long_frame, 0.95),
+            Some(80.0)
+        );
+    }
+
+    #[test]
     fn main_world_layout_uses_the_contract_client_scene_id() {
         let layout = load_main_world_layout().unwrap();
         assert_eq!(layout.scene_id, MAIN_WORLD_SCENE_ID);
@@ -696,9 +908,9 @@ mod tests {
         assert_eq!(layout.terrain.perceptual_roughness, 0.94);
         assert_eq!(layout.distance_markers.emissive_strength, 0.08);
         assert_eq!(layout.light.illuminance, 85000.0);
-        assert!(layout.light.shadows_enabled);
+        assert!(!layout.light.shadows_enabled);
         assert_eq!(layout.render.ambient_brightness, 180.0);
-        assert_eq!(layout.render.exposure_ev100, 13.0);
+        assert_eq!(layout.render.exposure_ev100, 8.0);
         let terrain_luminance = relative_luminance(layout.terrain.color);
         let marker_luminance = relative_luminance(layout.distance_markers.color);
         assert!((marker_luminance - terrain_luminance).abs() >= 0.1);
@@ -740,7 +952,7 @@ mod tests {
                 ambient_brightness: 180.0,
                 ambient_affects_lightmapped_meshes: true,
                 clear_color: [0.42, 0.68, 0.88],
-                exposure_ev100: 13.0,
+                exposure_ev100: 8.0,
                 tonemapping: tony_mc_mapface,
             ),
         )"#;
@@ -1065,6 +1277,8 @@ mod tests {
             0
         );
         assert_eq!(main_world_camera_count(&mut app, &session_id), 0);
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+        assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 0);
         assert_eq!(app.world().resource::<ClearColor>().0, global_clear.0);
         assert_eq!(
             app.world().resource::<GlobalAmbientLight>().color,
@@ -1107,6 +1321,8 @@ mod tests {
         );
         assert_main_world_camera_rendering(&mut app, &second_session);
         assert_eq!(main_world_camera_count(&mut app, &session_id), 0);
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 2);
+        assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 2);
         assert_eq!(app.world().resource::<ClearColor>().0, global_clear.0);
     }
 
@@ -1194,7 +1410,7 @@ mod tests {
         assert_eq!(ambient.color, Color::srgb(0.62, 0.72, 0.86));
         assert_eq!(ambient.brightness, 180.0);
         assert!(ambient.affects_lightmapped_meshes);
-        assert_eq!(exposure.ev100, 13.0);
+        assert_eq!(exposure.ev100, 8.0);
         assert_eq!(*tonemapping, Tonemapping::TonyMcMapface);
         assert_eq!(main_world_camera_count(app, session_id), 1);
     }
@@ -1231,6 +1447,17 @@ mod tests {
         assert_eq!(markers.metallic, 0.0);
         assert_eq!(markers.perceptual_roughness, 0.72);
         assert!(markers.emissive.red < markers.base_color.to_linear().red);
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<&SceneOwned, (
+                    With<MainWorldDistanceMarkerCollection>,
+                    With<NotShadowCaster>,
+                )>()
+                .iter(app.world())
+                .filter(|owned| owned.session_id == *session_id)
+                .count(),
+            1
+        );
 
         let mut lights = app.world_mut().query::<(&DirectionalLight, &SceneOwned)>();
         let (light, _) = lights
@@ -1238,7 +1465,7 @@ mod tests {
             .find(|(_, owned)| owned.session_id == *session_id)
             .unwrap();
         assert_eq!(light.illuminance, 85000.0);
-        assert!(light.shadows_enabled);
+        assert!(!light.shadows_enabled);
     }
 
     fn relative_luminance(color: [f32; 3]) -> f32 {
