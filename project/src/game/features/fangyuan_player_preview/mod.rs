@@ -142,6 +142,24 @@ mod tests {
     }
 
     #[test]
+    fn leaving_preview_mode_cleans_owned_player_and_primitive_visuals() {
+        let mut app = test_app();
+        enter_preview_mode(&mut app);
+        assert_eq!(fangyuan_player_entities(&mut app).len(), 1);
+        assert_eq!(
+            primitive_visual_records(&mut app).len(),
+            FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT
+        );
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::Lobby);
+        app.update();
+        app.update();
+        assert!(fangyuan_player_entities(&mut app).is_empty());
+        assert!(primitive_visual_records(&mut app).is_empty());
+    }
+
+    #[test]
     fn fangyuan_preview_player_has_required_components() {
         let mut app = test_app();
         enter_preview_mode(&mut app);

@@ -1,4 +1,8 @@
-use bevy::prelude::*;
+use bevy::{
+    app::AppExit,
+    prelude::*,
+    render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
+};
 use std::collections::HashMap;
 
 use crate::framework::fangyuan::{
@@ -6,7 +10,8 @@ use crate::framework::fangyuan::{
     FangyuanPlayerPosition, load_fangyuan_minimal_player_blueprint, spawn_fangyuan_player,
 };
 use crate::framework::scene::prelude::{
-    SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG, SceneCameraTarget, SceneOwned, SceneSessionId,
+    SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG, SceneCameraTarget, SceneOwned, SceneRuntimeRoot,
+    SceneSessionId,
 };
 use crate::game::myserver::MyServerEvent;
 use crate::game::myserver::protocol::pb;
@@ -81,8 +86,127 @@ impl Plugin for MainWorldPlayersPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<MyServerEvent>()
             .init_resource::<MainWorldPlayerRuntime>()
-            .add_systems(Update, maintain_main_world_players);
+            .init_resource::<MainWorldPlayersFixture>()
+            .add_systems(Startup, setup_main_world_players_fixture)
+            .add_systems(
+                Update,
+                (
+                    maintain_main_world_players,
+                    drive_main_world_players_fixture,
+                )
+                    .chain(),
+            );
     }
+}
+
+#[derive(Resource, Default)]
+struct MainWorldPlayersFixture {
+    screenshot_path: Option<std::path::PathBuf>,
+    frames: u32,
+    requested: bool,
+}
+
+fn setup_main_world_players_fixture(
+    mut commands: Commands,
+    mut fixture: ResMut<MainWorldPlayersFixture>,
+    mut entry: ResMut<super::main_world_entry::MainWorldEntryState>,
+    mut snapshots: MessageWriter<MyServerEvent>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    next_mode: Option<ResMut<NextState<crate::game::navigation::AppUiMode>>>,
+) {
+    let Some(path) = std::env::var_os("PROJECT_MAIN_WORLD_PLAYERS_FIXTURE_SCREENSHOT") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    fixture.screenshot_path = Some(path.clone());
+    if let Some(mut next_mode) = next_mode {
+        next_mode.set(crate::game::navigation::AppUiMode::MainWorld);
+    }
+    let session_id = SceneSessionId::from("main-world-players-fixture");
+    entry.generation = 1;
+    entry.phase = super::main_world_entry::MainWorldEntryPhase::Active;
+    entry.character_id = Some("fixture-local".into());
+    entry.scene_session_id = Some(session_id.clone());
+    entry.scene_ready = true;
+    entry.room_ready_acknowledged = true;
+    commands.spawn((
+        SceneRuntimeRoot::new(session_id),
+        Transform::default(),
+        GlobalTransform::default(),
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(8.0, 8.0))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.18, 0.32, 0.18),
+            perceptual_roughness: 0.9,
+            ..default()
+        })),
+        Transform::from_xyz(8.0, 0.0, 8.0),
+    ));
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 18_000.0,
+            shadows_enabled: false,
+            ..default()
+        },
+        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.8, -0.5, 0.0)),
+    ));
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(8.0, 0.75, 9.1).looking_at(Vec3::new(8.0, 0.15, 8.0), Vec3::Y),
+    ));
+    snapshots.write(MyServerEvent::MovementSnapshotPush(
+        pb::MovementSnapshotPush {
+            room_id: super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID.into(),
+            frame_id: 1,
+            full_sync: true,
+            entities: vec![
+                pb::EntityTransform {
+                    entity_id: 1,
+                    character_id: "fixture-local".into(),
+                    scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                    x: 7.7,
+                    y: 8.0,
+                    ..Default::default()
+                },
+                pb::EntityTransform {
+                    entity_id: 2,
+                    character_id: "fixture-remote".into(),
+                    scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                    x: 8.3,
+                    y: 8.0,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        },
+    ));
+    info!(path = %path.display(), local = "fixture-local", remote = "fixture-remote", "offline main world players fixture started");
+}
+
+fn drive_main_world_players_fixture(
+    mut commands: Commands,
+    mut fixture: ResMut<MainWorldPlayersFixture>,
+    players: Query<&MainWorldPlayer>,
+) {
+    let Some(path) = fixture.screenshot_path.clone() else {
+        return;
+    };
+    fixture.frames += 1;
+    if fixture.requested || fixture.frames < 60 || players.iter().count() != 2 {
+        return;
+    }
+    fixture.requested = true;
+    commands.spawn(Screenshot::primary_window()).observe(
+        move |captured: On<ScreenshotCaptured>, mut exits: MessageWriter<AppExit>| {
+            save_to_disk(path.clone())(captured);
+            exits.write(AppExit::Success);
+        },
+    );
 }
 
 fn maintain_main_world_players(
@@ -1243,5 +1367,56 @@ mod tests {
             assert_eq!(matching[0].2, matching[1].2);
             assert_eq!(matching[0].3, matching[1].3);
         }
+    }
+
+    #[test]
+    fn player_generation_measurement_reports_stable_entity_and_asset_deltas() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, FangyuanPlayerRuntimePlugin));
+        let root = app.world_mut().spawn_empty().id();
+        let mut registry = MainWorldPlayerRegistry::new("measure", 3, "local", root);
+        let base_meshes = app.world().resource::<Assets<Mesh>>().len();
+        let base_materials = app.world().resource::<Assets<StandardMaterial>>().len();
+
+        let single_started = std::time::Instant::now();
+        register(app.world_mut(), &mut registry, registration("local", 1, 1)).unwrap();
+        app.update();
+        let single_ms = single_started.elapsed().as_secs_f64() * 1000.0;
+        let single_meshes = app.world().resource::<Assets<Mesh>>().len();
+        let single_materials = app.world().resource::<Assets<StandardMaterial>>().len();
+        assert_eq!(registry.len(), 1);
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<FangyuanPlayerPrimitiveVisual>>()
+                .iter(app.world())
+                .count(),
+            2
+        );
+        assert_eq!(single_meshes - base_meshes, 2);
+        assert_eq!(single_materials - base_materials, 2);
+
+        let double_started = std::time::Instant::now();
+        register(app.world_mut(), &mut registry, registration("remote", 2, 1)).unwrap();
+        app.update();
+        let double_ms = double_started.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(registry.len(), 2);
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<FangyuanPlayerPrimitiveVisual>>()
+                .iter(app.world())
+                .count(),
+            4
+        );
+        assert_eq!(
+            app.world().resource::<Assets<Mesh>>().len() - single_meshes,
+            0
+        );
+        assert_eq!(
+            app.world().resource::<Assets<StandardMaterial>>().len() - single_materials,
+            0
+        );
+        println!(
+            "main-world-player-measurement empty_to_single: roots=+1 visuals=+2 meshes=+2 materials=+2 elapsed_ms={single_ms:.3}; single_to_double: roots=+1 visuals=+2 meshes=+0 materials=+0 elapsed_ms={double_ms:.3}"
+        );
     }
 }
