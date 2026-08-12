@@ -49,8 +49,8 @@ impl Plugin for ScenePlugin {
                     process_scene_trigger_commands,
                     detect_scene_triggers,
                     update_scene_streaming_driver,
-                    update_scene_cameras,
                     sync_scene_loading_ui.before(UiPanelSystems::Commands),
+                    update_scene_cameras,
                 )
                     .chain(),
             );

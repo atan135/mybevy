@@ -1576,7 +1576,10 @@ mod tests {
             panic!("preview camera should remain perspective");
         };
         assert_eq!(preview_projection_after.fov, preview_projection_before.fov);
-        assert_eq!(preview_projection_after.near, preview_projection_before.near);
+        assert_eq!(
+            preview_projection_after.near,
+            preview_projection_before.near
+        );
         assert_eq!(preview_projection_after.far, preview_projection_before.far);
     }
 
