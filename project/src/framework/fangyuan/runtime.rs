@@ -157,7 +157,6 @@ fn sync_fangyuan_player_transform(
         state.root_translation = position.translation;
         transform.translation = state.root_translation;
         transform.scale = state.root_scale;
-        transform.rotation = Quat::IDENTITY;
     }
 }
 
@@ -168,9 +167,9 @@ mod tests {
     #[test]
     fn shared_runtime_does_not_reference_game_or_network_modules() {
         let source = include_str!("runtime.rs");
-        assert!(!source.contains("crate::game"));
-        assert!(!source.contains("MyServer"));
-        assert!(!source.contains("main_world"));
+        assert!(!source.contains(concat!("crate::", "game")));
+        assert!(!source.contains(concat!("My", "Server")));
+        assert!(!source.contains(concat!("main", "_world")));
     }
 
     #[test]
@@ -197,5 +196,25 @@ mod tests {
             app.world().get::<Transform>(entity).unwrap().translation,
             Vec3::new(1.0, 2.0, 3.0)
         );
+    }
+
+    #[test]
+    fn transform_sync_preserves_game_layer_rotation() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, FangyuanPlayerRuntimePlugin));
+        let rotation = Quat::from_rotation_y(0.75);
+        let entity = app
+            .world_mut()
+            .spawn((
+                FangyuanPlayer,
+                FangyuanPlayerPosition::default(),
+                FangyuanObjectState::default(),
+                FangyuanPrimitiveSet::new(),
+                Transform::from_rotation(rotation),
+                GlobalTransform::default(),
+            ))
+            .id();
+        app.update();
+        assert_eq!(app.world().get::<Transform>(entity).unwrap().rotation, rotation);
     }
 }

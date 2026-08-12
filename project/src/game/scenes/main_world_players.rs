@@ -1,6 +1,10 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
+use crate::framework::fangyuan::{
+    FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanBlueprintBounds, FangyuanObjectState,
+    FangyuanPlayerPosition, load_fangyuan_minimal_player_blueprint, spawn_fangyuan_player,
+};
 use crate::framework::scene::prelude::{
     SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG, SceneCameraTarget, SceneOwned, SceneSessionId,
 };
@@ -46,6 +50,7 @@ pub(in crate::game) enum MainWorldPlayerRegistrationError {
     NonFiniteTransform,
     StaleGeneration { expected: u64, actual: u64 },
     StaleFrame { current: u32, actual: u32 },
+    BlueprintLoadFailed,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -53,6 +58,7 @@ pub(in crate::game) struct MainWorldPlayerRegistry {
     session_id: SceneSessionId,
     generation: u64,
     local_character_id: String,
+    runtime_root: Entity,
     players: HashMap<String, MainWorldPlayerRegistryEntry>,
 }
 
@@ -68,11 +74,13 @@ impl MainWorldPlayerRegistry {
         session_id: impl Into<SceneSessionId>,
         generation: u64,
         local_character_id: impl Into<String>,
+        runtime_root: Entity,
     ) -> Self {
         Self {
             session_id: session_id.into(),
             generation,
             local_character_id: local_character_id.into(),
+            runtime_root,
             players: HashMap::new(),
         }
     }
@@ -101,6 +109,13 @@ impl MainWorldPlayerRegistry {
         registration: MainWorldPlayerRegistration,
     ) -> Result<MainWorldPlayerRegistrationResult, MainWorldPlayerRegistrationError> {
         self.validate(&registration)?;
+        let blueprint = load_fangyuan_minimal_player_blueprint()
+            .map_err(|_| MainWorldPlayerRegistrationError::BlueprintLoadFailed)?;
+        let primitive_set = blueprint
+            .compile()
+            .map_err(|_| MainWorldPlayerRegistrationError::BlueprintLoadFailed)?;
+        let root_transform =
+            main_world_player_root_transform(registration.transform, blueprint.bounds);
         let ownership = if registration.character_id == self.local_character_id {
             MainWorldPlayerOwnership::Local
         } else {
@@ -122,9 +137,14 @@ impl MainWorldPlayerRegistry {
                 });
             }
             if existing.server_entity_id == registration.server_entity_id {
-                commands
-                    .entity(existing.entity)
-                    .insert((player, registration.transform));
+                commands.entity(existing.entity).insert((
+                    player,
+                    FangyuanPlayerPosition {
+                        translation: root_transform.translation,
+                    },
+                    FangyuanObjectState::new(root_transform.translation, root_transform.scale),
+                    root_transform,
+                ));
                 self.players.insert(
                     registration.character_id,
                     MainWorldPlayerRegistryEntry {
@@ -136,8 +156,14 @@ impl MainWorldPlayerRegistry {
                 return Ok(MainWorldPlayerRegistrationResult::Updated(existing.entity));
             }
             commands.entity(existing.entity).despawn();
-            let current =
-                spawn_player_root(commands, &self.session_id, player, registration.transform);
+            let current = spawn_player_root(
+                commands,
+                self.runtime_root,
+                &self.session_id,
+                player,
+                primitive_set,
+                root_transform,
+            );
             self.players.insert(
                 registration.character_id,
                 MainWorldPlayerRegistryEntry {
@@ -153,7 +179,14 @@ impl MainWorldPlayerRegistry {
         }
 
         let character_id = registration.character_id;
-        let current = spawn_player_root(commands, &self.session_id, player, registration.transform);
+        let current = spawn_player_root(
+            commands,
+            self.runtime_root,
+            &self.session_id,
+            player,
+            primitive_set,
+            root_transform,
+        );
         self.players.insert(
             character_id,
             MainWorldPlayerRegistryEntry {
@@ -195,29 +228,54 @@ impl MainWorldPlayerRegistry {
 
 fn spawn_player_root(
     commands: &mut Commands,
+    runtime_root: Entity,
     session_id: &SceneSessionId,
     player: MainWorldPlayer,
+    primitive_set: crate::framework::fangyuan::FangyuanPrimitiveSet,
     transform: Transform,
 ) -> Entity {
     let local = player.ownership == MainWorldPlayerOwnership::Local;
-    let mut entity = commands.spawn((
-        player,
-        SceneOwned::new(session_id.clone()),
+    let entity = spawn_fangyuan_player(
+        commands,
+        FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH,
+        "Minimal Fangyuan Player",
+        primitive_set,
         transform,
-        GlobalTransform::default(),
-    ));
+        (player, SceneOwned::new(session_id.clone())),
+    );
     if local {
-        entity.insert(
+        commands.entity(entity).insert(
             SceneCameraTarget::new(session_id.clone())
                 .with_tag(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG),
         );
     }
-    entity.id()
+    commands.entity(runtime_root).add_child(entity);
+    entity
+}
+
+pub(in crate::game) fn main_world_player_uniform_scale(bounds: FangyuanBlueprintBounds) -> f32 {
+    0.25 / bounds.width.max(bounds.depth)
+}
+
+pub(in crate::game) fn main_world_player_root_transform(
+    authoritative: Transform,
+    bounds: FangyuanBlueprintBounds,
+) -> Transform {
+    let scale = main_world_player_uniform_scale(bounds);
+    Transform {
+        translation: authoritative.translation,
+        rotation: authoritative.rotation,
+        scale: Vec3::splat(scale),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::fangyuan::{
+        FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT, FangyuanPlayerPrimitiveVisual,
+        FangyuanPlayerRuntimePlugin,
+    };
 
     fn registration(character: &str, entity_id: i64, frame: u32) -> MainWorldPlayerRegistration {
         MainWorldPlayerRegistration {
@@ -240,10 +298,15 @@ mod tests {
         result
     }
 
+    fn registry(world: &mut World, session: &str, local: &str) -> MainWorldPlayerRegistry {
+        let root = world.spawn_empty().id();
+        MainWorldPlayerRegistry::new(session, 3, local, root)
+    }
+
     #[test]
     fn registry_is_unique_by_character_and_updates_same_entity() {
         let mut world = World::new();
-        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local");
+        let mut registry = registry(&mut world, "session-a", "local");
         let first = register(&mut world, &mut registry, registration("remote", 10, 1)).unwrap();
         let second = register(&mut world, &mut registry, registration("remote", 10, 2)).unwrap();
         let MainWorldPlayerRegistrationResult::Created(first) = first else {
@@ -261,9 +324,27 @@ mod tests {
     }
 
     #[test]
+    fn same_entity_update_preserves_authoritative_rotation_through_runtime_sync() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, FangyuanPlayerRuntimePlugin));
+        let root = app.world_mut().spawn_empty().id();
+        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
+        register(app.world_mut(), &mut registry, registration("remote", 10, 1)).unwrap();
+        let rotation = Quat::from_rotation_y(1.25);
+        let mut updated = registration("remote", 10, 2);
+        updated.transform.rotation = rotation;
+        let result = register(app.world_mut(), &mut registry, updated).unwrap();
+        let MainWorldPlayerRegistrationResult::Updated(entity) = result else {
+            panic!()
+        };
+        app.update();
+        assert_eq!(app.world().get::<Transform>(entity).unwrap().rotation, rotation);
+    }
+
+    #[test]
     fn changed_server_entity_id_replaces_stale_root() {
         let mut world = World::new();
-        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local");
+        let mut registry = registry(&mut world, "session-a", "local");
         let first = register(&mut world, &mut registry, registration("remote", 10, 1)).unwrap();
         let MainWorldPlayerRegistrationResult::Created(stale) = first else {
             panic!()
@@ -284,7 +365,7 @@ mod tests {
     #[test]
     fn local_ticket_character_gets_camera_target_but_remote_does_not() {
         let mut world = World::new();
-        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "ticket-character");
+        let mut registry = registry(&mut world, "session-a", "ticket-character");
         let local = register(
             &mut world,
             &mut registry,
@@ -316,7 +397,7 @@ mod tests {
     #[test]
     fn registry_rejects_invalid_or_stale_input_without_mutating_session() {
         let mut world = World::new();
-        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local");
+        let mut registry = registry(&mut world, "session-a", "local");
         let mut empty = registration("", 1, 1);
         assert_eq!(
             register(&mut world, &mut registry, empty.clone()),
@@ -350,7 +431,7 @@ mod tests {
     fn registry_rejects_older_frames_and_clear_only_despawns_its_session() {
         let mut world = World::new();
         let unrelated = world.spawn_empty().id();
-        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local");
+        let mut registry = registry(&mut world, "session-a", "local");
         let created = register(&mut world, &mut registry, registration("remote", 1, 5)).unwrap();
         let MainWorldPlayerRegistrationResult::Created(entity) = created else {
             panic!()
@@ -367,5 +448,75 @@ mod tests {
         assert!(world.get_entity(entity).is_err());
         assert!(world.get_entity(unrelated).is_ok());
         assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn minimal_blueprint_scales_to_quarter_meter_footprint_and_grounded_height() {
+        let blueprint = load_fangyuan_minimal_player_blueprint().unwrap();
+        let scale = main_world_player_uniform_scale(blueprint.bounds);
+        let transform =
+            main_world_player_root_transform(Transform::from_xyz(4.0, 0.0, -2.0), blueprint.bounds);
+        assert_eq!(
+            blueprint.bounds,
+            FangyuanBlueprintBounds::new(2.0, 2.0, 3.0)
+        );
+        assert_eq!(scale, 0.125);
+        assert_eq!(
+            Vec3::new(
+                blueprint.bounds.width,
+                blueprint.bounds.height,
+                blueprint.bounds.depth,
+            ) * scale,
+            Vec3::new(0.25, 0.375, 0.25)
+        );
+        assert_eq!(transform.translation, Vec3::new(4.0, 0.0, -2.0));
+        assert_eq!(transform.scale, Vec3::splat(0.125));
+    }
+
+    #[test]
+    fn multiple_players_parent_to_runtime_root_and_share_visual_assets() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, FangyuanPlayerRuntimePlugin));
+        let root = app.world_mut().spawn_empty().id();
+        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
+        register(app.world_mut(), &mut registry, registration("local", 1, 1)).unwrap();
+        register(app.world_mut(), &mut registry, registration("remote", 2, 1)).unwrap();
+        app.update();
+
+        let mut visuals = app.world_mut().query::<(
+            &ChildOf,
+            &FangyuanPlayerPrimitiveVisual,
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+        )>();
+        let records: Vec<_> = visuals
+            .iter(app.world())
+            .map(|(parent, visual, mesh, material)| {
+                (
+                    parent.parent(),
+                    visual.kind,
+                    mesh.0.clone(),
+                    material.0.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(records.len(), FANGYUAN_MINIMAL_PLAYER_PRIMITIVE_COUNT * 2);
+        for character in ["local", "remote"] {
+            let player = registry.get(character).unwrap();
+            assert_eq!(app.world().get::<ChildOf>(player).unwrap().parent(), root);
+            assert_eq!(
+                records.iter().filter(|record| record.0 == player).count(),
+                2
+            );
+        }
+        for kind in [
+            crate::framework::fangyuan::FangyuanPrimitiveKind::Cube,
+            crate::framework::fangyuan::FangyuanPrimitiveKind::Sphere,
+        ] {
+            let matching: Vec<_> = records.iter().filter(|record| record.1 == kind).collect();
+            assert_eq!(matching.len(), 2);
+            assert_eq!(matching[0].2, matching[1].2);
+            assert_eq!(matching[0].3, matching[1].3);
+        }
     }
 }
