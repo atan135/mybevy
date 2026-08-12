@@ -9,6 +9,10 @@ use crate::{
 
 pub(in crate::game) const MAIN_WORLD_SCENE_ID: &str = MAIN_WORLD_CLIENT_SCENE_ID;
 const MAIN_WORLD_LAYOUT_PATH: &str = "scenes/main_world/layout.ron";
+const MAIN_WORLD_MIN_COORDINATE: f32 = -2000.0;
+const MAIN_WORLD_MAX_COORDINATE: f32 = 2000.0;
+const MAIN_WORLD_MARKERS_PER_AXIS: usize = 41;
+const MAIN_WORLD_MARKER_COUNT: usize = 1681;
 
 pub(super) struct MainWorldScenePlugin;
 
@@ -29,7 +33,7 @@ struct MainWorldContent {
 struct MainWorldLayout {
     scene_id: String,
     terrain: MainWorldTerrain,
-    landmark: MainWorldLandmark,
+    distance_markers: MainWorldDistanceMarkers,
     light: MainWorldLight,
 }
 
@@ -37,17 +41,26 @@ struct MainWorldLayout {
 struct MainWorldTerrain {
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     size: [f32; 3],
+    top_y: f32,
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     color: [f32; 3],
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum MainWorldMarkerQuality {
+    Low,
+}
+
 #[derive(Clone, Debug, Deserialize)]
-struct MainWorldLandmark {
-    #[serde(deserialize_with = "deserialize_f32_array_3")]
-    position: [f32; 3],
+struct MainWorldDistanceMarkers {
+    start: f32,
+    end: f32,
+    spacing: f32,
     radius: f32,
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     color: [f32; 3],
+    quality: MainWorldMarkerQuality,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -57,6 +70,63 @@ struct MainWorldLight {
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     color: [f32; 3],
     illuminance: f32,
+}
+
+impl MainWorldLayout {
+    fn validate(&self) -> Result<(), String> {
+        const TERRAIN_SIZE: [f32; 3] = [4000.0, 0.4, 4000.0];
+        const TERRAIN_TOP_Y: f32 = 0.0;
+
+        if self.terrain.size != TERRAIN_SIZE {
+            return Err(format!(
+                "terrain size must be {TERRAIN_SIZE:?}, got {:?}",
+                self.terrain.size
+            ));
+        }
+        if self.terrain.top_y != TERRAIN_TOP_Y {
+            return Err(format!(
+                "terrain top_y must be {TERRAIN_TOP_Y}, got {}",
+                self.terrain.top_y
+            ));
+        }
+
+        let markers = &self.distance_markers;
+        if !markers.start.is_finite() || !markers.end.is_finite() || markers.start > markers.end {
+            return Err("distance marker range must be finite and ordered".to_owned());
+        }
+        if markers.start != MAIN_WORLD_MIN_COORDINATE || markers.end != MAIN_WORLD_MAX_COORDINATE {
+            return Err(format!(
+                "distance marker range must be {MAIN_WORLD_MIN_COORDINATE}..{MAIN_WORLD_MAX_COORDINATE}"
+            ));
+        }
+        if !markers.spacing.is_finite() || markers.spacing <= 0.0 {
+            return Err("distance marker spacing must be finite and greater than zero".to_owned());
+        }
+        if !markers.radius.is_finite() || markers.radius <= 0.0 {
+            return Err("distance marker radius must be finite and greater than zero".to_owned());
+        }
+
+        let intervals = (markers.end - markers.start) / markers.spacing;
+        if !intervals.is_finite() || (intervals - intervals.round()).abs() > f32::EPSILON {
+            return Err("distance marker range must be evenly divisible by spacing".to_owned());
+        }
+        if intervals.round() != (MAIN_WORLD_MARKERS_PER_AXIS - 1) as f32 {
+            return Err(format!(
+                "distance markers must form {MAIN_WORLD_MARKERS_PER_AXIS} points per axis"
+            ));
+        }
+        let axis_count = intervals.round() as usize + 1;
+        let total_count = axis_count
+            .checked_mul(axis_count)
+            .ok_or_else(|| "distance marker count overflowed".to_owned())?;
+        if axis_count != MAIN_WORLD_MARKERS_PER_AXIS || total_count != MAIN_WORLD_MARKER_COUNT {
+            return Err(format!(
+                "distance markers must form {MAIN_WORLD_MARKERS_PER_AXIS} points per axis and {MAIN_WORLD_MARKER_COUNT} total, got {axis_count} and {total_count}"
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 fn instantiate_main_world_content(
@@ -157,7 +227,11 @@ fn spawn_main_world_visuals(
                 perceptual_roughness: 0.92,
                 ..default()
             })),
-            Transform::from_xyz(0.0, -layout.terrain.size[1] * 0.5, 0.0),
+            Transform::from_xyz(
+                0.0,
+                layout.terrain.top_y - layout.terrain.size[1] * 0.5,
+                0.0,
+            ),
             Name::new("MainWorldTerrain"),
         ),
         session_id,
@@ -166,13 +240,19 @@ fn spawn_main_world_visuals(
         commands,
         parent,
         (
-            Mesh3d(meshes.add(Sphere::new(layout.landmark.radius).mesh().uv(32, 18))),
+            Mesh3d(
+                meshes.add(
+                    Sphere::new(layout.distance_markers.radius)
+                        .mesh()
+                        .uv(32, 18),
+                ),
+            ),
             MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color(layout.landmark.color),
-                emissive: color(layout.landmark.color).into(),
+                base_color: color(layout.distance_markers.color),
+                emissive: color(layout.distance_markers.color).into(),
                 ..default()
             })),
-            Transform::from_translation(Vec3::from_array(layout.landmark.position)),
+            Transform::from_xyz(0.0, layout.distance_markers.radius, 0.0),
             Name::new("MainWorldFloatingSphere"),
         ),
         session_id,
@@ -241,7 +321,15 @@ fn load_main_world_layout() -> Result<MainWorldLayout, String> {
     };
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    ron::from_str(&source).map_err(|error| format!("failed to parse {}: {error}", path.display()))
+    parse_main_world_layout(&source)
+        .map_err(|error| format!("failed to parse {}: {error}", path.display()))
+}
+
+fn parse_main_world_layout(source: &str) -> Result<MainWorldLayout, String> {
+    let layout: MainWorldLayout =
+        ron::from_str(source).map_err(|error| format!("invalid RON: {error}"))?;
+    layout.validate()?;
+    Ok(layout)
 }
 
 fn first_package_asset_paths() -> Vec<PathBuf> {
@@ -266,8 +354,67 @@ mod tests {
     fn main_world_layout_uses_the_contract_client_scene_id() {
         let layout = load_main_world_layout().unwrap();
         assert_eq!(layout.scene_id, MAIN_WORLD_SCENE_ID);
-        assert!(layout.terrain.size.iter().all(|size| *size > 0.0));
-        assert!(layout.landmark.radius > 0.0);
+        assert_eq!(layout.terrain.size, [4000.0, 0.4, 4000.0]);
+        assert_eq!(layout.terrain.top_y, 0.0);
+        assert_eq!(layout.distance_markers.start, -2000.0);
+        assert_eq!(layout.distance_markers.end, 2000.0);
+        assert_eq!(layout.distance_markers.spacing, 100.0);
+        assert_eq!(layout.distance_markers.radius, 0.5);
+        assert_eq!(layout.distance_markers.quality, MainWorldMarkerQuality::Low);
+        assert_eq!(MAIN_WORLD_MARKERS_PER_AXIS, 41);
+        assert_eq!(MAIN_WORLD_MARKER_COUNT, 1681);
+    }
+
+    #[test]
+    fn main_world_layout_rejects_invalid_distance_marker_contracts() {
+        let valid = r#"(
+            scene_id: "world.main",
+            terrain: (size: [4000.0, 0.4, 4000.0], top_y: 0.0, color: [0.18, 0.42, 0.24]),
+            distance_markers: (
+                start: -2000.0,
+                end: 2000.0,
+                spacing: 100.0,
+                radius: 0.5,
+                color: [0.18, 0.64, 0.92],
+                quality: low,
+            ),
+            light: (
+                rotation_degrees: [-48.0, -28.0, 0.0],
+                color: [1.0, 0.96, 0.86],
+                illuminance: 7000.0,
+            ),
+        )"#;
+
+        parse_main_world_layout(valid).unwrap();
+        for (field, invalid_value) in [
+            ("start", "0.0"),
+            ("end", "-2100.0"),
+            ("spacing", "0.0"),
+            ("spacing", "110.0"),
+            ("spacing", "0.0000000001"),
+            ("radius", "0.0"),
+        ] {
+            let original = match field {
+                "start" => "-2000.0",
+                "end" => "2000.0",
+                "spacing" => "100.0",
+                "radius" => "0.5",
+                _ => unreachable!(),
+            };
+            let invalid = valid.replacen(
+                &format!("{field}: {original}"),
+                &format!("{field}: {invalid_value}"),
+                1,
+            );
+            assert!(
+                parse_main_world_layout(&invalid).is_err(),
+                "{field}={invalid_value} should be rejected"
+            );
+        }
+
+        let mut non_finite = parse_main_world_layout(valid).unwrap();
+        non_finite.distance_markers.start = f32::NAN;
+        assert!(non_finite.validate().is_err());
     }
 
     #[test]
