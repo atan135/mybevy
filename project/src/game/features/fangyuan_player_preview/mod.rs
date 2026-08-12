@@ -1,9 +1,14 @@
-use bevy::{prelude::*, transform::TransformSystems};
+use bevy::prelude::*;
 
 use crate::framework::fangyuan::{
-    FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanAvatar, FangyuanObjectState,
-    FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanRenderAssetCache,
-    fangyuan_render_transform_from_primitive, load_fangyuan_minimal_player_primitive_set_or_log,
+    FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanAvatar, FangyuanObjectState, FangyuanPlayer,
+    FangyuanPlayerPosition, FangyuanPlayerRuntimePlugin, FangyuanPlayerState,
+    load_fangyuan_minimal_player_primitive_set_or_log,
+};
+#[cfg(test)]
+use crate::framework::fangyuan::{
+    FangyuanPlayerPrimitiveVisual, FangyuanPlayerRenderAssets, FangyuanPlayerVisualsSpawned,
+    FangyuanPrimitiveKind, FangyuanPrimitiveSet,
 };
 use crate::game::navigation::AppUiMode;
 
@@ -13,89 +18,16 @@ impl Plugin for FangyuanPlayerPreviewPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
-            .init_resource::<FangyuanPlayerPreviewRenderAssets>()
+            .add_plugins(FangyuanPlayerRuntimePlugin)
             .add_systems(
                 OnEnter(AppUiMode::FangyuanPlayerPreview),
                 spawn_fangyuan_preview_player,
-            )
-            .add_systems(
-                PostUpdate,
-                (
-                    spawn_fangyuan_player_primitive_visuals,
-                    sync_fangyuan_player_transform,
-                )
-                    .chain()
-                    .before(TransformSystems::Propagate),
             );
     }
 }
 
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::game) struct FangyuanPlayer;
-
-#[derive(Component, Clone, Debug, PartialEq)]
-pub(in crate::game) struct FangyuanPlayerState {
-    pub active: bool,
-}
-
-impl Default for FangyuanPlayerState {
-    fn default() -> Self {
-        Self { active: true }
-    }
-}
-
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
-pub(in crate::game) struct FangyuanPlayerPosition {
-    pub translation: Vec3,
-}
-
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct FangyuanPlayerVisualsSpawned;
-
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-struct FangyuanPlayerPrimitiveVisual {
-    kind: FangyuanPrimitiveKind,
-    index: usize,
-    alpha: f32,
-}
-
-#[derive(Clone, Debug, Resource, Default)]
-struct FangyuanPlayerPreviewRenderAssets {
-    cache: FangyuanRenderAssetCache,
-}
-
-impl FangyuanPlayerPreviewRenderAssets {
-    fn unit_mesh(
-        &mut self,
-        kind: FangyuanPrimitiveKind,
-        meshes: &mut Assets<Mesh>,
-    ) -> Handle<Mesh> {
-        self.cache.unit_mesh(kind, meshes)
-    }
-
-    fn material(
-        &mut self,
-        color: Color,
-        materials: &mut Assets<StandardMaterial>,
-    ) -> Handle<StandardMaterial> {
-        self.cache.material(color, materials)
-    }
-
-    #[cfg(test)]
-    fn material_count(&self) -> usize {
-        self.cache.material_count()
-    }
-
-    #[cfg(test)]
-    fn unit_cube_mesh(&self) -> Option<&Handle<Mesh>> {
-        self.cache.unit_cube_mesh()
-    }
-
-    #[cfg(test)]
-    fn unit_sphere_mesh(&self) -> Option<&Handle<Mesh>> {
-        self.cache.unit_sphere_mesh()
-    }
-}
+#[cfg(test)]
+type FangyuanPlayerPreviewRenderAssets = FangyuanPlayerRenderAssets;
 
 fn spawn_fangyuan_preview_player(mut commands: Commands, players: Query<(), With<FangyuanPlayer>>) {
     if !players.is_empty() {
@@ -124,62 +56,6 @@ fn spawn_fangyuan_preview_player(mut commands: Commands, players: Query<(), With
         ),
         primitive_set,
     ));
-}
-
-fn spawn_fangyuan_player_primitive_visuals(
-    mut commands: Commands,
-    players: Query<
-        (Entity, &FangyuanPrimitiveSet),
-        (With<FangyuanPlayer>, Without<FangyuanPlayerVisualsSpawned>),
-    >,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut render_assets: ResMut<FangyuanPlayerPreviewRenderAssets>,
-) {
-    for (player, primitive_set) in &players {
-        for (index, primitive) in primitive_set.primitives().iter().enumerate() {
-            let mesh = render_assets.unit_mesh(primitive.kind, &mut meshes);
-            let material = render_assets.material(primitive.color, &mut materials);
-            let transform = fangyuan_render_transform_from_primitive(primitive);
-            let visual = commands
-                .spawn((
-                    FangyuanPlayerPrimitiveVisual {
-                        kind: primitive.kind,
-                        index,
-                        alpha: primitive.alpha,
-                    },
-                    Mesh3d(mesh),
-                    MeshMaterial3d(material),
-                    transform,
-                    Visibility::Visible,
-                    Name::new(format!(
-                        "FangyuanPlayerPrimitiveVisual({}:{index})",
-                        primitive.kind.as_str()
-                    )),
-                ))
-                .id();
-            commands.entity(player).add_child(visual);
-        }
-        commands.entity(player).insert(FangyuanPlayerVisualsSpawned);
-    }
-}
-
-fn sync_fangyuan_player_transform(
-    mut players: Query<
-        (
-            &FangyuanPlayerPosition,
-            &mut FangyuanObjectState,
-            &mut Transform,
-        ),
-        With<FangyuanPlayer>,
-    >,
-) {
-    for (position, mut object_state, mut transform) in &mut players {
-        object_state.root_translation = position.translation;
-        transform.translation = object_state.root_translation;
-        transform.scale = object_state.root_scale;
-        transform.rotation = Quat::IDENTITY;
-    }
 }
 
 #[cfg(test)]
