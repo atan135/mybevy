@@ -4,8 +4,11 @@
 //! the validated orbit intent that later input adapters apply to the current
 //! session's [`SceneCameraRig`] configuration.
 
+use std::collections::HashMap;
+
 use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
+    input::touch::{TouchInput, TouchPhase},
     prelude::*,
     window::{CursorMoved, PrimaryWindow, WindowFocused},
 };
@@ -49,14 +52,19 @@ impl Plugin for MainWorldCameraPlugin {
         app.init_resource::<MainWorldCameraOrbitState>()
             .init_resource::<MainWorldCameraRigAdapterRuntime>()
             .init_resource::<MainWorldDesktopOrbitRuntime>()
+            .init_resource::<MainWorldTouchOrbitRuntime>()
             .init_resource::<ButtonInput<MouseButton>>()
             .add_message::<CursorMoved>()
             .add_message::<MouseWheel>()
             .add_message::<WindowFocused>()
+            .add_message::<TouchInput>()
             .add_systems(
                 Update,
                 (
                     update_main_world_desktop_orbit
+                        .after(UiInputSystems::Update)
+                        .before(sync_main_world_camera_rig),
+                    update_main_world_touch_orbit
                         .after(UiInputSystems::Update)
                         .before(sync_main_world_camera_rig),
                     sync_main_world_camera_rig.before(update_scene_cameras),
@@ -77,6 +85,34 @@ struct MainWorldDesktopOrbitRuntime {
 struct MainWorldDesktopMouseCapture {
     window: Entity,
     last_cursor_position: Option<Vec2>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MainWorldTouchOwner {
+    Ui,
+    Move,
+    CameraOrbit,
+    CameraPinch,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MainWorldTouchCapture {
+    owner: MainWorldTouchOwner,
+    position: Vec2,
+}
+
+#[derive(Default, Resource)]
+struct MainWorldTouchOrbitRuntime {
+    window: Option<Entity>,
+    viewport_size: Vec2,
+    captures: HashMap<u64, MainWorldTouchCapture>,
+    pinch_distance: Option<f32>,
+}
+
+impl MainWorldTouchOrbitRuntime {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
 
 impl MainWorldDesktopOrbitRuntime {
@@ -341,6 +377,141 @@ fn apply_desktop_orbit_wheel(
     orbit.sanitize();
 }
 
+fn update_main_world_touch_orbit(
+    entry: Option<Res<MainWorldEntryState>>,
+    ui_input: Option<Res<UiInputState>>,
+    primary_window: Query<(Entity, &Window), With<PrimaryWindow>>,
+    mut touch_events: MessageReader<TouchInput>,
+    mut focus_events: MessageReader<WindowFocused>,
+    mut orbit: ResMut<MainWorldCameraOrbitState>,
+    mut touch_runtime: ResMut<MainWorldTouchOrbitRuntime>,
+) {
+    let Some(entry) = entry else {
+        touch_events.clear();
+        touch_runtime.reset();
+        return;
+    };
+    let Some((window_entity, window)) = primary_window.iter().next() else {
+        touch_events.clear();
+        touch_runtime.reset();
+        return;
+    };
+    let window_size = window.size();
+    let focus_lost = focus_events
+        .read()
+        .any(|event| event.window == window_entity && !event.focused);
+    let ui_blocks_gameplay = ui_input
+        .as_ref()
+        .is_some_and(|input| input.blocks_gameplay_pointer());
+    let gate_closed = !entry.allows_gameplay_input()
+        || focus_lost
+        || window_size.x <= 0.0
+        || window_size.y <= 0.0;
+    if gate_closed {
+        touch_events.clear();
+        touch_runtime.reset();
+        return;
+    }
+
+    if touch_runtime.window != Some(window_entity) || touch_runtime.viewport_size != window_size {
+        touch_runtime.reset();
+        touch_runtime.window = Some(window_entity);
+        touch_runtime.viewport_size = window_size;
+    }
+    if ui_blocks_gameplay {
+        touch_runtime.reset();
+        touch_runtime.window = Some(window_entity);
+        touch_runtime.viewport_size = window_size;
+    }
+
+    for event in touch_events.read() {
+        if event.window != window_entity || !event.position.is_finite() {
+            continue;
+        }
+        match event.phase {
+            TouchPhase::Started => {
+                let owner = if ui_blocks_gameplay {
+                    MainWorldTouchOwner::Ui
+                } else if event.position.x < window_size.x * 0.4 {
+                    MainWorldTouchOwner::Move
+                } else {
+                    MainWorldTouchOwner::CameraOrbit
+                };
+                touch_runtime.captures.insert(
+                    event.id,
+                    MainWorldTouchCapture {
+                        owner,
+                        position: event.position,
+                    },
+                );
+                if owner == MainWorldTouchOwner::CameraOrbit
+                    && touch_runtime
+                        .captures
+                        .values()
+                        .filter(|capture| capture.owner == MainWorldTouchOwner::CameraOrbit)
+                        .count()
+                        >= 2
+                {
+                    for capture in touch_runtime.captures.values_mut() {
+                        if capture.owner == MainWorldTouchOwner::CameraOrbit {
+                            capture.owner = MainWorldTouchOwner::CameraPinch;
+                        }
+                    }
+                    touch_runtime.pinch_distance = camera_touch_distance(&touch_runtime);
+                }
+            }
+            TouchPhase::Moved => {
+                let Some(capture) = touch_runtime.captures.get_mut(&event.id) else {
+                    continue;
+                };
+                let delta = event.position - capture.position;
+                capture.position = event.position;
+                if capture.owner == MainWorldTouchOwner::CameraOrbit {
+                    apply_desktop_orbit_drag(&mut orbit, delta);
+                }
+                if capture.owner == MainWorldTouchOwner::CameraPinch {
+                    let previous_distance = touch_runtime.pinch_distance;
+                    touch_runtime.pinch_distance = camera_touch_distance(&touch_runtime);
+                    if let (Some(previous), Some(current)) =
+                        (previous_distance, touch_runtime.pinch_distance)
+                    {
+                        orbit.distance -= (current - previous) * 0.01;
+                        orbit.sanitize();
+                    }
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Canceled => {
+                let was_pinch = touch_runtime
+                    .captures
+                    .get(&event.id)
+                    .is_some_and(|capture| capture.owner == MainWorldTouchOwner::CameraPinch);
+                touch_runtime.captures.remove(&event.id);
+                if was_pinch {
+                    let remaining_camera = touch_runtime
+                        .captures
+                        .values_mut()
+                        .find(|capture| capture.owner == MainWorldTouchOwner::CameraPinch);
+                    if let Some(capture) = remaining_camera {
+                        capture.owner = MainWorldTouchOwner::CameraOrbit;
+                    }
+                    touch_runtime.pinch_distance = camera_touch_distance(&touch_runtime);
+                }
+            }
+        }
+    }
+}
+
+fn camera_touch_distance(runtime: &MainWorldTouchOrbitRuntime) -> Option<f32> {
+    let mut positions = runtime
+        .captures
+        .values()
+        .filter(|capture| capture.owner == MainWorldTouchOwner::CameraPinch)
+        .map(|capture| capture.position);
+    let first = positions.next()?;
+    let second = positions.next()?;
+    Some(first.distance(second))
+}
+
 fn sync_main_world_camera_rig(
     entry: Option<Res<MainWorldEntryState>>,
     mut orbit: ResMut<MainWorldCameraOrbitState>,
@@ -476,6 +647,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<SceneSpawnRegistry>()
+            .init_resource::<UiInputState>()
             .insert_resource(MainWorldEntryState {
                 generation,
                 phase: MainWorldEntryPhase::Active,
@@ -518,6 +690,20 @@ mod tests {
             y,
             window,
         });
+    }
+
+    fn send_touch(app: &mut App, window: Entity, id: u64, phase: TouchPhase, position: Vec2) {
+        app.world_mut().write_message(TouchInput {
+            phase,
+            position,
+            window,
+            force: None,
+            id,
+        });
+    }
+
+    fn touch_runtime(app: &App) -> &MainWorldTouchOrbitRuntime {
+        app.world().resource::<MainWorldTouchOrbitRuntime>()
     }
 
     fn set_right_mouse_button(app: &mut App, pressed: bool) {
@@ -838,6 +1024,232 @@ mod tests {
         send_cursor_move(&mut app, window, Vec2::new(40.0, 10.0));
         app.update();
         assert_desktop_capture(&app, false);
+    }
+
+    #[test]
+    fn touch_right_drag_updates_camera_but_move_owner_stays_out_of_camera() {
+        let (mut app, window) = active_desktop_camera_app();
+        app.update();
+
+        let initial = app.world().resource::<MainWorldCameraOrbitState>().clone();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Started,
+            Vec2::new(700.0, 300.0),
+        );
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Moved,
+            Vec2::new(720.0, 280.0),
+        );
+        app.update();
+        let orbit = app.world().resource::<MainWorldCameraOrbitState>();
+        assert_ne!(orbit.yaw_radians, initial.yaw_radians);
+        assert_ne!(orbit.pitch_radians, initial.pitch_radians);
+
+        let before_move = orbit.clone();
+        send_touch(
+            &mut app,
+            window,
+            2,
+            TouchPhase::Started,
+            Vec2::new(100.0, 300.0),
+        );
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            2,
+            TouchPhase::Moved,
+            Vec2::new(160.0, 250.0),
+        );
+        app.update();
+        assert_eq!(
+            *app.world().resource::<MainWorldCameraOrbitState>(),
+            before_move
+        );
+    }
+
+    #[test]
+    fn touch_owner_is_locked_and_two_camera_touches_pinch_distance() {
+        let (mut app, window) = active_desktop_camera_app();
+        app.update();
+
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Started,
+            Vec2::new(700.0, 300.0),
+        );
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Moved,
+            Vec2::new(100.0, 300.0),
+        );
+        app.update();
+        assert!(
+            app.world()
+                .resource::<MainWorldCameraOrbitState>()
+                .yaw_radians
+                != MAIN_WORLD_CAMERA_DEFAULT_YAW_RADIANS
+        );
+        assert_eq!(
+            touch_runtime(&app)
+                .captures
+                .get(&1)
+                .map(|capture| capture.owner),
+            Some(MainWorldTouchOwner::CameraOrbit)
+        );
+
+        let before = app.world().resource::<MainWorldCameraOrbitState>().distance;
+        send_touch(
+            &mut app,
+            window,
+            2,
+            TouchPhase::Started,
+            Vec2::new(1000.0, 300.0),
+        );
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Moved,
+            Vec2::new(650.0, 300.0),
+        );
+        app.update();
+        assert!(app.world().resource::<MainWorldCameraOrbitState>().distance > before);
+        assert!(
+            touch_runtime(&app)
+                .captures
+                .values()
+                .all(|capture| capture.owner == MainWorldTouchOwner::CameraPinch)
+        );
+
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Ended,
+            Vec2::new(650.0, 300.0),
+        );
+        app.update();
+        assert_eq!(
+            touch_runtime(&app)
+                .captures
+                .get(&2)
+                .map(|capture| capture.owner),
+            Some(MainWorldTouchOwner::CameraOrbit)
+        );
+    }
+
+    #[test]
+    fn touch_ui_gate_cancels_existing_capture_and_marks_new_touch_ui_owned() {
+        let (mut app, window) = active_desktop_camera_app();
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Started,
+            Vec2::new(700.0, 300.0),
+        );
+        app.update();
+        app.world_mut()
+            .resource_mut::<UiInputState>()
+            .pointer_blocked = true;
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Moved,
+            Vec2::new(740.0, 260.0),
+        );
+        send_touch(
+            &mut app,
+            window,
+            2,
+            TouchPhase::Started,
+            Vec2::new(800.0, 300.0),
+        );
+        app.update();
+        assert!(
+            touch_runtime(&app)
+                .captures
+                .values()
+                .all(|capture| capture.owner == MainWorldTouchOwner::Ui)
+        );
+        let blocked_orbit = app.world().resource::<MainWorldCameraOrbitState>().clone();
+        send_touch(
+            &mut app,
+            window,
+            2,
+            TouchPhase::Moved,
+            Vec2::new(850.0, 240.0),
+        );
+        app.update();
+        assert_eq!(
+            *app.world().resource::<MainWorldCameraOrbitState>(),
+            blocked_orbit
+        );
+    }
+
+    #[test]
+    fn touch_focus_loss_cancel_and_resize_clear_runtime() {
+        let (mut app, window) = active_desktop_camera_app();
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Started,
+            Vec2::new(700.0, 300.0),
+        );
+        app.update();
+        app.world_mut().write_message(WindowFocused {
+            window,
+            focused: false,
+        });
+        app.update();
+        assert!(touch_runtime(&app).captures.is_empty());
+
+        app.world_mut().write_message(WindowFocused {
+            window,
+            focused: true,
+        });
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            2,
+            TouchPhase::Started,
+            Vec2::new(700.0, 300.0),
+        );
+        app.update();
+        app.world_mut()
+            .entity_mut(window)
+            .get_mut::<Window>()
+            .unwrap()
+            .resolution
+            .set(1024.0, 768.0);
+        send_touch(
+            &mut app,
+            window,
+            2,
+            TouchPhase::Canceled,
+            Vec2::new(700.0, 300.0),
+        );
+        app.update();
+        assert!(touch_runtime(&app).captures.is_empty());
     }
 
     #[test]
