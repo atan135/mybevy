@@ -22,7 +22,8 @@ impl Plugin for FangyuanPlayerPreviewPlugin {
             .add_systems(
                 OnEnter(AppUiMode::FangyuanPlayerPreview),
                 spawn_fangyuan_preview_player,
-            );
+            )
+            .add_systems(PostUpdate, enforce_preview_identity_rotation);
     }
 }
 
@@ -55,6 +56,14 @@ fn spawn_fangyuan_preview_player(
             FangyuanPlayerPreviewOwner,
         ),
     );
+}
+
+fn enforce_preview_identity_rotation(
+    mut players: Query<&mut Transform, With<FangyuanPlayerPreviewOwner>>,
+) {
+    for mut transform in &mut players {
+        transform.rotation = Quat::IDENTITY;
+    }
 }
 
 #[cfg(test)]

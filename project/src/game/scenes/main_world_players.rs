@@ -71,6 +71,7 @@ struct MainWorldPlayerRuntime {
     active_generation: u64,
     last_applied_frame: Option<u32>,
     last_error: Option<MainWorldPlayerSnapshotError>,
+    was_recovering: bool,
     registry: Option<MainWorldPlayerRegistry>,
 }
 
@@ -78,7 +79,8 @@ pub(in crate::game) struct MainWorldPlayersPlugin;
 
 impl Plugin for MainWorldPlayersPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MainWorldPlayerRuntime>()
+        app.add_message::<MyServerEvent>()
+            .init_resource::<MainWorldPlayerRuntime>()
             .add_systems(Update, maintain_main_world_players);
     }
 }
@@ -98,7 +100,37 @@ fn maintain_main_world_players(
         runtime.cached_snapshot = None;
         runtime.last_applied_frame = None;
         runtime.last_error = None;
+        runtime.was_recovering = false;
         runtime.active_generation = entry.generation;
+    }
+    let owns_visual_session = matches!(
+        entry.phase,
+        super::main_world_entry::MainWorldEntryPhase::JoiningRoom
+            | super::main_world_entry::MainWorldEntryPhase::LoadingScene
+            | super::main_world_entry::MainWorldEntryPhase::WaitingSceneReady
+            | super::main_world_entry::MainWorldEntryPhase::Active
+            | super::main_world_entry::MainWorldEntryPhase::Recovering
+    );
+    if !owns_visual_session {
+        if let Some(registry) = runtime.registry.as_mut() {
+            registry.clear(&mut commands);
+        }
+        runtime.registry = None;
+        runtime.cached_snapshot = None;
+        runtime.last_applied_frame = None;
+        runtime.last_error = None;
+        runtime.was_recovering = false;
+        return;
+    }
+    if runtime.was_recovering && entry.phase == super::main_world_entry::MainWorldEntryPhase::Active
+    {
+        runtime.cached_snapshot = None;
+        runtime.last_applied_frame = None;
+        if let Some(registry) = runtime.registry.as_mut() {
+            for player in registry.players.values_mut() {
+                player.last_authoritative_frame = 0;
+            }
+        }
     }
     for event in events.read() {
         let MyServerEvent::MovementSnapshotPush(push) = event else {
@@ -116,6 +148,8 @@ fn maintain_main_world_players(
             runtime.cached_generation = entry.generation;
         }
     }
+    runtime.was_recovering =
+        entry.phase == super::main_world_entry::MainWorldEntryPhase::Recovering;
     let Some(session_id) = entry.scene_session_id.as_ref() else {
         return;
     };
@@ -140,6 +174,14 @@ fn maintain_main_world_players(
             root,
         ));
         runtime.last_applied_frame = None;
+    }
+    if entry.phase == super::main_world_entry::MainWorldEntryPhase::Recovering {
+        if let Some(registry) = runtime.registry.as_ref() {
+            for entry in registry.players.values() {
+                commands.entity(entry.entity).remove::<SceneCameraTarget>();
+            }
+        }
+        return;
     }
     if !entry.scene_ready || !entry.room_ready_acknowledged {
         return;
@@ -166,6 +208,20 @@ fn maintain_main_world_players(
                 );
                 runtime.last_applied_frame = Some(snapshot.frame_id);
                 runtime.last_error = Some(error);
+            }
+        }
+    }
+    if entry.phase == super::main_world_entry::MainWorldEntryPhase::Active {
+        if let Some(registry) = runtime.registry.as_ref() {
+            for (character_id, player) in &registry.players {
+                if character_id == &registry.local_character_id {
+                    commands.entity(player.entity).insert(
+                        SceneCameraTarget::new(registry.session_id.clone())
+                            .with_tag(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG),
+                    );
+                } else {
+                    commands.entity(player.entity).remove::<SceneCameraTarget>();
+                }
             }
         }
     }
@@ -822,6 +878,7 @@ mod tests {
         {
             let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
             entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::WaitingSceneReady;
             entry.character_id = Some("local".into());
             entry.scene_session_id = Some(SceneSessionId::from("session-1"));
         }
@@ -842,6 +899,7 @@ mod tests {
             let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
             entry.scene_ready = true;
             entry.room_ready_acknowledged = true;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
         }
         app.update();
         assert_eq!(player_count(&mut app), 2);
@@ -922,6 +980,7 @@ mod tests {
         {
             let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
             entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
             entry.character_id = Some("local".into());
             entry.scene_session_id = Some(SceneSessionId::from("session-1"));
             entry.scene_ready = true;
@@ -940,6 +999,7 @@ mod tests {
         {
             let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
             entry.generation = 2;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
             entry.scene_session_id = Some(SceneSessionId::from("session-2"));
             entry.scene_ready = true;
             entry.room_ready_acknowledged = true;
@@ -952,6 +1012,166 @@ mod tests {
                 .resource::<MainWorldPlayerRuntime>()
                 .cached_snapshot
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn plugin_recovery_preserves_visuals_freezes_camera_then_restores_unique_target() {
+        let mut app = runtime_app();
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                10,
+                true,
+                &[("local", 1, 2.0, 2.0), ("remote", 2, 3.0, 3.0)],
+            )));
+        app.update();
+        let local = app
+            .world()
+            .resource::<MainWorldPlayerRuntime>()
+            .registry
+            .as_ref()
+            .unwrap()
+            .get("local")
+            .unwrap();
+        assert!(app.world().get::<SceneCameraTarget>(local).is_some());
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            super::super::main_world_entry::MainWorldEntryPhase::Recovering;
+        app.update();
+        assert_eq!(player_count(&mut app), 2);
+        assert!(app.world().get::<SceneCameraTarget>(local).is_none());
+
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 4.0, 4.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 1);
+        assert!(app.world().get::<SceneCameraTarget>(local).is_some());
+    }
+
+    #[test]
+    fn plugin_scene_exit_or_lobby_teardown_clears_players_visuals_and_targets() {
+        let mut app = runtime_app();
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 2.0, 2.0)],
+            )));
+        app.update();
+        app.update();
+        assert_eq!(player_count(&mut app), 1);
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            super::super::main_world_entry::MainWorldEntryPhase::LobbyIdle;
+        app.update();
+        assert_eq!(player_count(&mut app), 0);
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<FangyuanPlayerPrimitiveVisual>>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<SceneCameraTarget>>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn plugin_same_generation_reentry_after_teardown_uses_fresh_snapshot_and_target() {
+        let mut app = runtime_app();
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                9,
+                true,
+                &[("local", 1, 2.0, 2.0)],
+            )));
+        app.update();
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            super::super::main_world_entry::MainWorldEntryPhase::LobbyIdle;
+        app.update();
+        assert_eq!(player_count(&mut app), 0);
+        assert!(
+            !app.world()
+                .resource::<MainWorldPlayerRuntime>()
+                .was_recovering
+        );
+
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-2"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.scene_session_id = Some(SceneSessionId::from("session-2"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 2, 4.0, 4.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 1);
+        let local = app
+            .world()
+            .resource::<MainWorldPlayerRuntime>()
+            .registry
+            .as_ref()
+            .unwrap()
+            .get("local")
+            .unwrap();
+        assert_eq!(
+            app.world().get::<Transform>(local).unwrap().translation,
+            Vec3::new(4.0, 0.0, 4.0)
+        );
+        assert!(
+            app.world()
+                .get::<SceneCameraTarget>(local)
+                .unwrap()
+                .has_tag(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG)
         );
     }
 
