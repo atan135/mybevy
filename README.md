@@ -57,7 +57,7 @@ rustc --version
 cargo --version
 ```
 
-当前 `project/Cargo.toml` 依赖本地 MyServer 仓库中的 `../../MyServer/packages/authority-core`。如果编译时报找不到该路径，需要先确认同级 `MyServer` 仓库存在，或按你的本地环境调整依赖路径。
+`project/vendor/myserver/` 固化了客户端构建所需的 MyServer shared crate 和 game/chat proto 快照，因此基础构建和 CI 不需要额外 clone 同级 MyServer 仓库。服务端的 authority 协议、确定性模拟规则或 game/chat proto 变更时，必须按该目录 README 记录的来源 commit 同步更新这份快照。
 
 Android 打包还需要：
 

@@ -210,6 +210,7 @@ mybevy/
     |   |-- models/
     |   |-- scenes/
     |   `-- ui/
+    |-- vendor/myserver/      # MyServer shared crate 和 game/chat proto 快照
     |-- src/
     |   |-- framework/
     |   |   |-- audio/
@@ -238,6 +239,7 @@ mybevy/
 可以按下面的职责划分：
 
 - `project/src/main.rs`：程序入口、顶层插件注册
+- `project/vendor/myserver/`：客户端构建使用的 MyServer shared crate 和 game/chat proto 快照；更新 authority 协议、确定性模拟规则或 proto 时，按目录 README 记录的来源 commit 同步更新
 - `project/src/framework/`：框架层横向能力，当前包含 audio、UI、network、scene、fight 和 fangyuan 边界
 - `project/src/framework/audio/`：音频框架能力入口，提供音频命令、事件、catalog、loading、playback、mixer、music、UI/scene/battle adapter、基础空间音频、生命周期暂停和 debug 配置
 - `project/src/framework/fangyuan/`：方圆灵构数据模型入口，提供 blueprint、prefab/palette、scene layout、runtime primitive、对象状态和 primitive set 统计

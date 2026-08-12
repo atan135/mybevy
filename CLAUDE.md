@@ -30,6 +30,7 @@
 - `tools/ui-generation/`：AI 参考图生成 UI 的桌面/CI Rust 工具；拥有独立 `Cargo.toml`、`Cargo.lock`，并与其他 Cargo 清单共享仓库根 `target/` 构建缓存，只单向依赖 `project` 的最小 `UiDocument` tooling facade
 - `project/`：Rust/Bevy 工程根目录
 - `project/src/`：游戏源码
+- `project/vendor/myserver/`：客户端构建所需的 MyServer `authority-core`、`sim-core` 和 game/chat proto 快照；来源 commit 与同步要求见该目录 README
 - `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene、fight 和 fangyuan 边界
 - `project/src/framework/fangyuan/`：方圆灵构数据模型入口，包含 blueprint、prefab/palette、scene layout、runtime primitive、对象状态、primitive set 统计，以及审核 report / budget profile / finding / suggestion
 - `project/src/framework/network/`：网络通信框架插件和 HTTP/TCP/KCP 接口
@@ -57,6 +58,7 @@
 - 共享缓存默认使用 `scripts/clear-shared-cargo-target.ps1` 预演；只有在所有 Cargo/Rust、游戏、UI 工具、测试和 Android Gradle/Java/ADB 进程停止后，才能使用 `-Execute -ConfirmSharedTargetCleanup` 删除。当前配置下任一 Cargo 根的 `cargo clean` 都会影响全部共享缓存；磁盘压力或发布后优先人工清理 stale `target/debug/incremental`，不要在每次构建前清空 `target/`
 - 出现共享 Cargo 锁等待时，先确认其他 Cargo 是否仍有 CPU、磁盘或日志进展；无进展时排查遗留 `cargo`、`rustc`、`link`、游戏和 UI 工具进程，只有所有进程结束且等待持续、产物不变时才按可能死锁重新启动构建。回滚时移除根 `.cargo/config.toml`，恢复 `.gitignore`、脚本和文档路径，删除根缓存并分别重建三个 Cargo 根；不改源码、锁文件或工具依赖方向
 - 新增游戏功能时，优先把逻辑放进 `project/src/` 下的模块，而不是持续堆在 `main.rs`
+- MyServer 的客户端可见 authority 协议、确定性模拟规则或 game/chat proto 变更时，同步更新 `project/vendor/myserver/`，并在其 README 中记录来源 commit
 - UI 页面结构放在 `project/src/game/screens/`，具体玩法放在 `project/src/game/features/`，具体游戏场景注册和适配放在 `project/src/game/scenes/`，UI 框架能力放在 `project/src/framework/ui/`
 - UI 通用控件放在 `project/src/framework/ui/widgets/`，颜色、字号、间距、圆角等可微调参数集中放在 `project/src/framework/ui/style/theme.rs`
 - 测试或验收 UI 布局时，统一从仓库根目录运行 `scripts/run_fast.ps1`，使用 `2772x1280` 设备尺寸、`3.25` device scale 和 `50%` window scale；不要通过裸 `cargo run` 启动的默认窗口判断 UI 布局

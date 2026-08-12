@@ -3,17 +3,13 @@ use std::{env, path::PathBuf};
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
-    let proto_dir = manifest_dir
-        .parent()
-        .and_then(|path| path.parent())
-        .map(|path| path.join("MyServer").join("packages").join("proto"))
-        .expect("failed to resolve workspace parent");
+    let proto_dir = manifest_dir.join("vendor").join("myserver").join("proto");
     let game_proto = proto_dir.join("game.proto");
     let chat_proto = proto_dir.join("chat.proto");
 
     if !game_proto.exists() {
         panic!(
-            "MyServer game.proto not found at {}. Expected server repo at C:\\project\\MyServer.",
+            "vendored MyServer game.proto not found at {}. Refresh project/vendor/myserver from MyServer.",
             game_proto.display()
         );
     }
