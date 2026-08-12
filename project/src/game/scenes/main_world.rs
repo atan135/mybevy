@@ -1,4 +1,6 @@
-use bevy::prelude::*;
+use bevy::{
+    asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
+};
 use serde::{Deserialize, Deserializer, de};
 use std::{fs, path::PathBuf};
 
@@ -13,6 +15,12 @@ const MAIN_WORLD_MIN_COORDINATE: f32 = -2000.0;
 const MAIN_WORLD_MAX_COORDINATE: f32 = 2000.0;
 const MAIN_WORLD_MARKERS_PER_AXIS: usize = 41;
 const MAIN_WORLD_MARKER_COUNT: usize = 1681;
+const MAIN_WORLD_LOW_MARKER_SECTORS: usize = 8;
+const MAIN_WORLD_LOW_MARKER_STACKS: usize = 6;
+const MAIN_WORLD_LOW_MARKER_VERTICES: usize =
+    (MAIN_WORLD_LOW_MARKER_SECTORS + 1) * (MAIN_WORLD_LOW_MARKER_STACKS + 1);
+const MAIN_WORLD_LOW_MARKER_TRIANGLES: usize =
+    MAIN_WORLD_LOW_MARKER_SECTORS * 2 * (MAIN_WORLD_LOW_MARKER_STACKS - 1);
 
 pub(super) struct MainWorldScenePlugin;
 
@@ -61,6 +69,32 @@ struct MainWorldDistanceMarkers {
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     color: [f32; 3],
     quality: MainWorldMarkerQuality,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MainWorldDistanceMarkerMeshStats {
+    marker_count: usize,
+    vertices_per_marker: usize,
+    triangles_per_marker: usize,
+    vertex_count: usize,
+    index_count: usize,
+    first_center: Vec3,
+    last_center: Vec3,
+    bounds_min: Vec3,
+    bounds_max: Vec3,
+}
+
+#[derive(Debug)]
+struct MainWorldDistanceMarkerMesh {
+    mesh: Mesh,
+    stats: MainWorldDistanceMarkerMeshStats,
+}
+
+struct MainWorldMarkerTemplate {
+    positions: Vec<Vec3>,
+    normals: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    indices: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -126,6 +160,152 @@ impl MainWorldLayout {
         }
 
         Ok(())
+    }
+}
+
+fn build_main_world_distance_marker_mesh(
+    markers: &MainWorldDistanceMarkers,
+) -> Result<MainWorldDistanceMarkerMesh, String> {
+    let intervals = (markers.end - markers.start) / markers.spacing;
+    if !markers.start.is_finite()
+        || !markers.end.is_finite()
+        || markers.start != MAIN_WORLD_MIN_COORDINATE
+        || markers.end != MAIN_WORLD_MAX_COORDINATE
+        || !markers.spacing.is_finite()
+        || markers.spacing <= 0.0
+        || !markers.radius.is_finite()
+        || markers.radius <= 0.0
+        || intervals.round() != (MAIN_WORLD_MARKERS_PER_AXIS - 1) as f32
+    {
+        return Err("distance marker mesh configuration does not match the world contract".into());
+    }
+
+    let (sectors, stacks, expected_vertices, expected_triangles) = match markers.quality {
+        MainWorldMarkerQuality::Low => (
+            MAIN_WORLD_LOW_MARKER_SECTORS,
+            MAIN_WORLD_LOW_MARKER_STACKS,
+            MAIN_WORLD_LOW_MARKER_VERTICES,
+            MAIN_WORLD_LOW_MARKER_TRIANGLES,
+        ),
+    };
+    let template = build_main_world_marker_template(markers.radius, sectors, stacks);
+    if template.positions.len() != expected_vertices
+        || template.indices.len() != expected_triangles * 3
+    {
+        return Err("distance marker template does not match its frozen quality budget".into());
+    }
+    let vertex_count = template.positions.len() * MAIN_WORLD_MARKER_COUNT;
+    let index_count = template.indices.len() * MAIN_WORLD_MARKER_COUNT;
+    if vertex_count > u32::MAX as usize {
+        return Err("distance marker mesh exceeds u32 index capacity".into());
+    }
+
+    let mut positions = Vec::with_capacity(vertex_count);
+    let mut normals = Vec::with_capacity(vertex_count);
+    let mut uvs = Vec::with_capacity(vertex_count);
+    let mut indices = Vec::with_capacity(index_count);
+    for z_index in 0..MAIN_WORLD_MARKERS_PER_AXIS {
+        let z = markers.start + z_index as f32 * markers.spacing;
+        for x_index in 0..MAIN_WORLD_MARKERS_PER_AXIS {
+            let x = markers.start + x_index as f32 * markers.spacing;
+            let center = Vec3::new(x, markers.radius, z);
+            let base_index = positions.len() as u32;
+
+            positions.extend(
+                template
+                    .positions
+                    .iter()
+                    .map(|position| (*position + center).to_array()),
+            );
+            normals.extend_from_slice(&template.normals);
+            uvs.extend_from_slice(&template.uvs);
+            indices.extend(template.indices.iter().map(|index| base_index + index));
+        }
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+
+    Ok(MainWorldDistanceMarkerMesh {
+        mesh,
+        stats: MainWorldDistanceMarkerMeshStats {
+            marker_count: MAIN_WORLD_MARKER_COUNT,
+            vertices_per_marker: expected_vertices,
+            triangles_per_marker: expected_triangles,
+            vertex_count,
+            index_count,
+            first_center: Vec3::new(markers.start, markers.radius, markers.start),
+            last_center: Vec3::new(markers.end, markers.radius, markers.end),
+            bounds_min: Vec3::new(
+                markers.start - markers.radius,
+                0.0,
+                markers.start - markers.radius,
+            ),
+            bounds_max: Vec3::new(
+                markers.end + markers.radius,
+                markers.radius * 2.0,
+                markers.end + markers.radius,
+            ),
+        },
+    })
+}
+
+fn build_main_world_marker_template(
+    radius: f32,
+    sectors: usize,
+    stacks: usize,
+) -> MainWorldMarkerTemplate {
+    let mut positions = Vec::with_capacity((sectors + 1) * (stacks + 1));
+    let mut normals = Vec::with_capacity(positions.capacity());
+    let mut uvs = Vec::with_capacity(positions.capacity());
+    let mut indices = Vec::with_capacity(sectors * 2 * (stacks - 1) * 3);
+
+    for stack in 0..=stacks {
+        let v = stack as f32 / stacks as f32;
+        let phi = std::f32::consts::FRAC_PI_2 - v * std::f32::consts::PI;
+        let ring_radius = phi.cos();
+        let y = phi.sin();
+        for sector in 0..=sectors {
+            let u = sector as f32 / sectors as f32;
+            let theta = u * std::f32::consts::TAU;
+            let normal = if stack == 0 {
+                Vec3::Y
+            } else if stack == stacks {
+                Vec3::NEG_Y
+            } else {
+                Vec3::new(ring_radius * theta.cos(), y, ring_radius * theta.sin())
+            };
+            positions.push(normal * radius);
+            normals.push(normal.to_array());
+            uvs.push([u, v]);
+        }
+    }
+
+    let row = sectors + 1;
+    for stack in 0..stacks {
+        for sector in 0..sectors {
+            let top_left = (stack * row + sector) as u32;
+            let bottom_left = top_left + row as u32;
+            if stack > 0 {
+                indices.extend_from_slice(&[top_left, bottom_left, top_left + 1]);
+            }
+            if stack + 1 < stacks {
+                indices.extend_from_slice(&[top_left + 1, bottom_left, bottom_left + 1]);
+            }
+        }
+    }
+
+    MainWorldMarkerTemplate {
+        positions,
+        normals,
+        uvs,
+        indices,
     }
 }
 
@@ -349,6 +529,8 @@ mod tests {
         SceneRegistry, SceneRuntime, SceneRuntimeRoot,
     };
     use bevy::asset::AssetPlugin;
+    use bevy::camera::primitives::MeshAabb;
+    use bevy::mesh::VertexAttributeValues;
 
     #[test]
     fn main_world_layout_uses_the_contract_client_scene_id() {
@@ -415,6 +597,87 @@ mod tests {
         let mut non_finite = parse_main_world_layout(valid).unwrap();
         non_finite.distance_markers.start = f32::NAN;
         assert!(non_finite.validate().is_err());
+    }
+
+    #[test]
+    fn distance_marker_mesh_merges_all_markers_with_valid_attributes_and_bounds() {
+        let layout = load_main_world_layout().unwrap();
+        let generated = build_main_world_distance_marker_mesh(&layout.distance_markers).unwrap();
+        let stats = generated.stats;
+
+        assert_eq!(stats.marker_count, 1681);
+        assert_eq!(stats.vertices_per_marker, 63);
+        assert_eq!(stats.triangles_per_marker, 80);
+        assert_eq!(stats.vertex_count, 1681 * 63);
+        assert_eq!(stats.index_count, 1681 * 80 * 3);
+        assert!(stats.vertex_count > u16::MAX as usize);
+        assert_eq!(stats.first_center, Vec3::new(-2000.0, 0.5, -2000.0));
+        assert_eq!(stats.last_center, Vec3::new(2000.0, 0.5, 2000.0));
+        assert_eq!(stats.bounds_min, Vec3::new(-2000.5, 0.0, -2000.5));
+        assert_eq!(stats.bounds_max, Vec3::new(2000.5, 1.0, 2000.5));
+
+        let mesh = &generated.mesh;
+        let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() {
+            VertexAttributeValues::Float32x3(values) => values,
+            other => panic!("unexpected position attribute: {other:?}"),
+        };
+        let normal_len = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap() {
+            VertexAttributeValues::Float32x3(values) => values.len(),
+            other => panic!("unexpected normal attribute: {other:?}"),
+        };
+        let uv_len = match mesh.attribute(Mesh::ATTRIBUTE_UV_0).unwrap() {
+            VertexAttributeValues::Float32x2(values) => values.len(),
+            other => panic!("unexpected UV attribute: {other:?}"),
+        };
+        assert_eq!(positions.len(), stats.vertex_count);
+        assert_eq!(normal_len, stats.vertex_count);
+        assert_eq!(uv_len, stats.vertex_count);
+
+        let marker_centers = positions
+            .chunks_exact(stats.vertices_per_marker)
+            .map(|vertices| {
+                let top = Vec3::from_array(vertices[0]);
+                Vec3::new(top.x, top.y - layout.distance_markers.radius, top.z)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(marker_centers.len(), MAIN_WORLD_MARKER_COUNT);
+        for (marker_index, center) in marker_centers.into_iter().enumerate() {
+            let x_index = marker_index % MAIN_WORLD_MARKERS_PER_AXIS;
+            let z_index = marker_index / MAIN_WORLD_MARKERS_PER_AXIS;
+            assert_eq!(
+                center,
+                Vec3::new(
+                    MAIN_WORLD_MIN_COORDINATE + x_index as f32 * 100.0,
+                    0.5,
+                    MAIN_WORLD_MIN_COORDINATE + z_index as f32 * 100.0,
+                )
+            );
+        }
+
+        let Some(Indices::U32(indices)) = mesh.indices() else {
+            panic!("distance marker mesh must use u32 indices");
+        };
+        assert_eq!(indices.len(), stats.index_count);
+        assert!(
+            indices
+                .iter()
+                .all(|index| (*index as usize) < stats.vertex_count)
+        );
+        assert_eq!(mesh.compute_aabb().unwrap().min(), stats.bounds_min.into());
+        assert_eq!(mesh.compute_aabb().unwrap().max(), stats.bounds_max.into());
+    }
+
+    #[test]
+    fn distance_marker_mesh_builder_is_pure_and_rejects_invalid_configuration() {
+        let layout = load_main_world_layout().unwrap();
+        let mut invalid = layout.distance_markers.clone();
+        invalid.radius = 0.0;
+        assert!(build_main_world_distance_marker_mesh(&invalid).is_err());
+
+        let mut shifted = layout.distance_markers.clone();
+        shifted.start = -1900.0;
+        shifted.end = 2100.0;
+        assert!(build_main_world_distance_marker_mesh(&shifted).is_err());
     }
 
     #[test]
