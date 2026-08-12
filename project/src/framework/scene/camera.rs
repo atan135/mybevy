@@ -224,6 +224,24 @@ impl SceneCameraConfig {
     pub fn is_3d(&self) -> bool {
         self.mode.is_3d()
     }
+
+    /// Returns configuration that is safe to apply to a Bevy camera.
+    ///
+    /// Manifests are validated before scene creation, but game-layer input can
+    /// update a rig at runtime. This guard prevents invalid input from
+    /// publishing a non-finite transform or projection.
+    pub fn sanitized(&self) -> Self {
+        let default_config = Self::new(self.mode);
+
+        Self {
+            mode: self.mode,
+            transform: sanitize_scene_camera_transform(self.transform, default_config.transform),
+            projection: self.projection.sanitized(),
+            target: self.target.clone(),
+            follow: self.follow.as_ref().map(SceneCameraFollowConfig::sanitized),
+            animation: self.animation.sanitized(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -279,6 +297,25 @@ impl Default for SceneCameraFollowConfig {
     }
 }
 
+impl SceneCameraFollowConfig {
+    fn sanitized(&self) -> Self {
+        let default_config = Self::default();
+
+        Self {
+            target_source: self.target_source.clone(),
+            offset: sanitize_vec3(self.offset, default_config.offset),
+            look_at_offset: sanitize_vec3(self.look_at_offset, default_config.look_at_offset),
+            position_lerp: sanitize_unit_interval(self.position_lerp, default_config.position_lerp),
+            rotation_lerp: sanitize_unit_interval(self.rotation_lerp, default_config.rotation_lerp),
+            min_visible_targets: self.min_visible_targets,
+            visible_target_padding: sanitize_non_negative(
+                self.visible_target_padding,
+                default_config.visible_target_padding,
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SceneCameraFollowTargetSource {
     #[default]
@@ -301,6 +338,20 @@ impl Default for SceneCameraAnimationConfig {
             enabled: false,
             duration_seconds: 0.0,
             easing: SceneCameraEasing::SmoothStep,
+        }
+    }
+}
+
+impl SceneCameraAnimationConfig {
+    fn sanitized(self) -> Self {
+        let default_config = Self::default();
+        Self {
+            enabled: self.enabled,
+            duration_seconds: sanitize_non_negative(
+                self.duration_seconds,
+                default_config.duration_seconds,
+            ),
+            easing: self.easing,
         }
     }
 }
@@ -337,7 +388,7 @@ impl SceneCameraProjection {
     }
 
     pub fn to_bevy_projection(self, mode: SceneCameraMode) -> Projection {
-        match self {
+        match self.sanitized() {
             Self::Default2d => Projection::Orthographic(OrthographicProjection::default_2d()),
             Self::Default3d => Projection::Perspective(PerspectiveProjection::default()),
             Self::Orthographic2d { scale } => Projection::Orthographic(OrthographicProjection {
@@ -357,6 +408,42 @@ impl SceneCameraProjection {
             }),
         }
         .coerce_for_mode(mode)
+    }
+
+    fn sanitized(self) -> Self {
+        match self {
+            Self::Default2d | Self::Default3d => self,
+            Self::Orthographic2d { scale } => Self::Orthographic2d {
+                scale: sanitize_positive(scale, OrthographicProjection::default_2d().scale),
+            },
+            Self::Perspective3d {
+                fov_y_radians,
+                near,
+                far,
+            } => {
+                let default_projection = PerspectiveProjection::default();
+                let fov_y_radians = if fov_y_radians.is_finite()
+                    && fov_y_radians > 0.0
+                    && fov_y_radians < std::f32::consts::PI
+                {
+                    fov_y_radians
+                } else {
+                    default_projection.fov
+                };
+                let near = sanitize_positive(near, default_projection.near);
+                let far = if far.is_finite() && far > near {
+                    far
+                } else {
+                    default_projection.far.max(near + 1.0)
+                };
+
+                Self::Perspective3d {
+                    fov_y_radians,
+                    near,
+                    far,
+                }
+            }
+        }
     }
 }
 
@@ -433,6 +520,7 @@ pub fn spawn_scene_camera(
     session_id: &SceneSessionId,
     config: SceneCameraConfig,
 ) -> Entity {
+    let config = config.sanitized();
     if config.is_3d() {
         spawn_scene_camera_3d(commands, session_id, config)
     } else {
@@ -458,14 +546,21 @@ pub fn update_scene_cameras(
     };
 
     for (rig, mut transform, mut projection, mut runtime) in &mut scene_cameras {
-        *projection = rig.config.projection.to_bevy_projection(rig.config.mode);
+        let config = rig.config.sanitized();
+        *projection = config.projection.to_bevy_projection(config.mode);
+        let current = sanitize_scene_camera_transform(*transform, config.transform);
 
-        let desired =
-            scene_camera_desired_transform(rig, &transform, &spawn_registry, &camera_targets);
+        let desired = scene_camera_desired_transform(
+            &rig.session_id,
+            &config,
+            &current,
+            &spawn_registry,
+            &camera_targets,
+        );
         *transform = scene_camera_apply_animation(
-            &rig.config.animation,
+            &config.animation,
             &mut runtime,
-            *transform,
+            current,
             desired,
             delta_seconds,
         );
@@ -473,23 +568,24 @@ pub fn update_scene_cameras(
 }
 
 fn scene_camera_desired_transform(
-    rig: &SceneCameraRig,
+    session_id: &SceneSessionId,
+    config: &SceneCameraConfig,
     current: &Transform,
     spawn_registry: &SceneSpawnRegistry,
     camera_targets: &Query<(&SceneCameraTarget, &GlobalTransform)>,
 ) -> Transform {
-    if rig.config.mode != SceneCameraMode::FollowTarget {
-        return rig.config.transform;
+    if config.mode != SceneCameraMode::FollowTarget {
+        return config.transform;
     }
 
-    let Some(follow) = rig.config.follow.as_ref() else {
-        return rig.config.transform;
+    let Some(follow) = config.follow.as_ref() else {
+        return config.transform;
     };
 
     let Some(target_transform) =
-        resolve_scene_camera_target_transform(rig, spawn_registry, camera_targets)
+        resolve_scene_camera_target_transform(session_id, config, spawn_registry, camera_targets)
     else {
-        return rig.config.transform;
+        return config.transform;
     };
 
     let look_at = target_transform.translation() + follow.look_at_offset;
@@ -500,33 +596,37 @@ fn scene_camera_desired_transform(
     let desired_rotation =
         scene_camera_look_at_rotation(translation, look_at).unwrap_or(current.rotation);
 
-    Transform {
-        translation,
-        rotation: current.rotation.slerp(desired_rotation, rotation_lerp),
-        scale: rig.config.transform.scale,
-    }
+    sanitize_scene_camera_transform(
+        Transform {
+            translation,
+            rotation: current.rotation.slerp(desired_rotation, rotation_lerp),
+            scale: config.transform.scale,
+        },
+        config.transform,
+    )
 }
 
 fn resolve_scene_camera_target_transform(
-    rig: &SceneCameraRig,
+    session_id: &SceneSessionId,
+    config: &SceneCameraConfig,
     spawn_registry: &SceneSpawnRegistry,
     camera_targets: &Query<(&SceneCameraTarget, &GlobalTransform)>,
 ) -> Option<GlobalTransform> {
-    if !spawn_registry.contains_session(&rig.session_id) {
+    if !spawn_registry.contains_session(session_id) {
         return None;
     }
 
-    let follow = rig.config.follow.as_ref()?;
+    let follow = config.follow.as_ref()?;
     match &follow.target_source {
         SceneCameraFollowTargetSource::Anchor(anchor_id) => spawn_registry
-            .anchor(&rig.session_id, anchor_id)
+            .anchor(session_id, anchor_id)
             .ok()
             .map(|anchor| GlobalTransform::from(anchor.to_transform())),
         SceneCameraFollowTargetSource::SceneTarget => {
-            resolve_scene_target_transform(rig, spawn_registry, camera_targets)
+            resolve_scene_target_transform(session_id, config, spawn_registry, camera_targets)
         }
         SceneCameraFollowTargetSource::PrimaryActor => best_scene_camera_target_with_tags(
-            &rig.session_id,
+            session_id,
             &[
                 SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG,
                 SCENE_CAMERA_PRIMARY_ACTOR_TARGET_TAG,
@@ -534,25 +634,26 @@ fn resolve_scene_camera_target_transform(
             camera_targets,
         ),
         SceneCameraFollowTargetSource::AllParticipants => {
-            average_scene_camera_target_transform(&rig.session_id, camera_targets)
+            average_scene_camera_target_transform(session_id, camera_targets)
         }
     }
 }
 
 fn resolve_scene_target_transform(
-    rig: &SceneCameraRig,
+    session_id: &SceneSessionId,
+    config: &SceneCameraConfig,
     spawn_registry: &SceneSpawnRegistry,
     camera_targets: &Query<(&SceneCameraTarget, &GlobalTransform)>,
 ) -> Option<GlobalTransform> {
-    if let Some(target) = rig.config.target.as_ref() {
-        if let Ok(anchor) = spawn_registry.anchor(&rig.session_id, target) {
+    if let Some(target) = config.target.as_ref() {
+        if let Ok(anchor) = spawn_registry.anchor(session_id, target) {
             return Some(GlobalTransform::from(anchor.to_transform()));
         }
 
-        return best_scene_camera_target_with_tag(&rig.session_id, target.as_str(), camera_targets);
+        return best_scene_camera_target_with_tag(session_id, target.as_str(), camera_targets);
     }
 
-    best_scene_camera_target(&rig.session_id, camera_targets)
+    best_scene_camera_target(session_id, camera_targets)
 }
 
 fn best_scene_camera_target(
@@ -650,11 +751,63 @@ fn scene_camera_transform_nearly_eq(left: Transform, right: Transform) -> bool {
 
 fn scene_camera_look_at_rotation(translation: Vec3, look_at: Vec3) -> Option<Quat> {
     let direction = look_at - translation;
-    (direction.length_squared() > 0.000001).then(|| {
-        Transform::from_translation(translation)
-            .looking_at(look_at, Vec3::Y)
-            .rotation
-    })
+    let direction_length_squared = direction.length_squared();
+    (direction.is_finite()
+        && direction_length_squared.is_finite()
+        && direction_length_squared > 0.000001)
+        .then(|| {
+            Transform::from_translation(translation)
+                .looking_at(look_at, Vec3::Y)
+                .rotation
+        })
+}
+
+fn sanitize_scene_camera_transform(value: Transform, default: Transform) -> Transform {
+    let translation = sanitize_vec3(value.translation, default.translation);
+    let scale = sanitize_vec3(value.scale, default.scale);
+    let rotation_length_squared = value.rotation.length_squared();
+    let rotation = if value.rotation.is_finite()
+        && rotation_length_squared.is_finite()
+        && rotation_length_squared > 0.000001
+    {
+        value.rotation.normalize()
+    } else {
+        default.rotation
+    };
+
+    Transform {
+        translation,
+        rotation,
+        scale,
+    }
+}
+
+fn sanitize_vec3(value: Vec3, default: Vec3) -> Vec3 {
+    value.is_finite().then_some(value).unwrap_or(default)
+}
+
+fn sanitize_unit_interval(value: f32, default: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        default
+    }
+}
+
+fn sanitize_non_negative(value: f32, default: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        default
+    }
+}
+
+fn sanitize_positive(value: f32, default: f32) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        default
+    }
 }
 
 impl SceneCameraEasing {
@@ -894,7 +1047,10 @@ mod tests {
     #[test]
     fn scene_camera_missing_target_falls_back_to_config_transform() {
         let config = SceneCameraConfig::follow_target()
-            .with_target("missing")
+            .with_follow(SceneCameraFollowConfig {
+                target_source: SceneCameraFollowTargetSource::PrimaryActor,
+                ..Default::default()
+            })
             .with_transform(Transform::from_xyz(2.0, 3.0, 4.0));
         let mut app = app_with_scene_camera("scene-a", config);
 
@@ -905,6 +1061,56 @@ mod tests {
             .query_filtered::<&Transform, With<SceneCameraRig>>();
         let transform = cameras.single(app.world()).unwrap();
         assert_eq!(transform.translation, Vec3::new(2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn scene_camera_non_finite_runtime_config_keeps_transform_and_projection_finite() {
+        let invalid_config = SceneCameraConfig::follow_target()
+            .with_transform(Transform::from_xyz(2.0, 3.0, 4.0))
+            .with_projection(SceneCameraProjection::Perspective3d {
+                fov_y_radians: f32::NAN,
+                near: f32::NAN,
+                far: f32::NEG_INFINITY,
+            })
+            .with_follow(SceneCameraFollowConfig {
+                target_source: SceneCameraFollowTargetSource::PrimaryActor,
+                offset: Vec3::splat(f32::NAN),
+                look_at_offset: Vec3::splat(f32::INFINITY),
+                position_lerp: f32::NAN,
+                rotation_lerp: f32::INFINITY,
+                min_visible_targets: 1,
+                visible_target_padding: f32::NAN,
+            });
+        let mut app = app_with_scene_camera("scene-a", SceneCameraConfig::follow_target());
+        let camera = app
+            .world_mut()
+            .query_filtered::<Entity, With<SceneCameraRig>>()
+            .single(app.world())
+            .unwrap();
+        {
+            let mut entity = app.world_mut().entity_mut(camera);
+            entity.get_mut::<SceneCameraRig>().unwrap().config = invalid_config;
+            entity.get_mut::<Transform>().unwrap().rotation =
+                Quat::from_xyzw(f32::MAX, 0.0, 0.0, 1.0);
+        }
+
+        app.update();
+
+        let mut cameras = app
+            .world_mut()
+            .query_filtered::<(&Transform, &Projection), With<SceneCameraRig>>();
+        let (transform, projection) = cameras.single(app.world()).unwrap();
+        assert!(transform.translation.is_finite());
+        assert!(transform.rotation.is_finite());
+        assert!(transform.scale.is_finite());
+        let Projection::Perspective(projection) = projection else {
+            panic!("follow target cameras must preserve a perspective projection");
+        };
+        assert!(projection.fov.is_finite());
+        assert!(projection.near.is_finite());
+        assert!(projection.far.is_finite());
+        assert!(projection.near > 0.0);
+        assert!(projection.far > projection.near);
     }
 
     #[test]

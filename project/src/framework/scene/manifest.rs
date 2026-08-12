@@ -140,15 +140,13 @@ impl SceneManifest {
 
         self.scene_id.validate().map_err(SceneManifestError::from)?;
 
-        if self
-            .entry
-            .camera
-            .as_ref()
-            .is_some_and(SceneCameraRef::is_empty)
-        {
-            return Err(SceneManifestError::EmptyCameraRef {
-                scene_id: self.scene_id.clone(),
-            });
+        if let Some(camera) = self.entry.camera.as_ref() {
+            if camera.is_empty() {
+                return Err(SceneManifestError::EmptyCameraRef {
+                    scene_id: self.scene_id.clone(),
+                });
+            }
+            validate_scene_camera_config(camera.config(), &self.scene_id)?;
         }
 
         let mut layer_ids = HashSet::new();
@@ -463,6 +461,70 @@ impl SceneCameraManifest {
             config: self.config(),
         }
     }
+}
+
+fn validate_scene_camera_config(
+    config: &SceneCameraConfig,
+    scene_id: &SceneId,
+) -> Result<(), SceneManifestError> {
+    if !config.transform.translation.is_finite()
+        || !config.transform.scale.is_finite()
+        || !config.transform.rotation.is_finite()
+        || config.transform.rotation.length_squared() <= 0.000001
+    {
+        return Err(SceneManifestError::InvalidCameraConfig {
+            scene_id: scene_id.clone(),
+            reason: "transform must be finite with a valid rotation",
+        });
+    }
+
+    match config.projection {
+        SceneCameraProjection::Default2d | SceneCameraProjection::Default3d => {}
+        SceneCameraProjection::Orthographic2d { scale } if scale.is_finite() && scale > 0.0 => {}
+        SceneCameraProjection::Perspective3d {
+            fov_y_radians,
+            near,
+            far,
+        } if fov_y_radians.is_finite()
+            && fov_y_radians > 0.0
+            && fov_y_radians < std::f32::consts::PI
+            && near.is_finite()
+            && near > 0.0
+            && far.is_finite()
+            && far > near => {}
+        _ => {
+            return Err(SceneManifestError::InvalidCameraConfig {
+                scene_id: scene_id.clone(),
+                reason: "projection values must be finite and ordered",
+            });
+        }
+    }
+
+    if let Some(follow) = config.follow.as_ref() {
+        if !follow.offset.is_finite()
+            || !follow.look_at_offset.is_finite()
+            || !follow.position_lerp.is_finite()
+            || !(0.0..=1.0).contains(&follow.position_lerp)
+            || !follow.rotation_lerp.is_finite()
+            || !(0.0..=1.0).contains(&follow.rotation_lerp)
+            || !follow.visible_target_padding.is_finite()
+            || follow.visible_target_padding < 0.0
+        {
+            return Err(SceneManifestError::InvalidCameraConfig {
+                scene_id: scene_id.clone(),
+                reason: "follow values must be finite and within their ranges",
+            });
+        }
+    }
+
+    if !config.animation.duration_seconds.is_finite() || config.animation.duration_seconds < 0.0 {
+        return Err(SceneManifestError::InvalidCameraConfig {
+            scene_id: scene_id.clone(),
+            reason: "animation duration must be finite and non-negative",
+        });
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -900,6 +962,10 @@ pub enum SceneManifestError {
     EmptyCameraRef {
         scene_id: SceneId,
     },
+    InvalidCameraConfig {
+        scene_id: SceneId,
+        reason: &'static str,
+    },
     EmptyLayerId {
         index: usize,
     },
@@ -1056,6 +1122,12 @@ impl fmt::Display for SceneManifestError {
                 write!(
                     formatter,
                     "scene manifest camera reference must not be empty for scene: {scene_id}"
+                )
+            }
+            Self::InvalidCameraConfig { scene_id, reason } => {
+                write!(
+                    formatter,
+                    "scene manifest camera configuration is invalid for scene {scene_id}: {reason}"
                 )
             }
             Self::EmptyLayerId { index } => {
@@ -1393,6 +1465,47 @@ mod tests {
         assert_eq!(follow.rotation_lerp, 0.5);
         assert_eq!(follow.min_visible_targets, 2);
         assert_eq!(follow.visible_target_padding, 3.0);
+    }
+
+    #[test]
+    fn validate_basic_rejects_non_finite_camera_projection_and_follow_values() {
+        let invalid_projection = ron::from_str::<SceneManifest>(
+            r#"(
+                version: "1",
+                scene_id: SceneId("scene.invalid_camera"),
+                kind: "world",
+                entry: (
+                    camera: Some((
+                        mode: "follow_target",
+                        projection: Some((kind: "perspective3d", fov_y: 0.82, near: 0.0, far: 800.0)),
+                    )),
+                ),
+            )"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            invalid_projection.validate_basic(),
+            Err(SceneManifestError::InvalidCameraConfig { .. })
+        ));
+
+        let invalid_follow = ron::from_str::<SceneManifest>(
+            r#"(
+                version: "1",
+                scene_id: SceneId("scene.invalid_follow"),
+                kind: "world",
+                entry: (
+                    camera: Some((
+                        mode: "follow_target",
+                        follow: Some((position_lerp: Some(-0.1))),
+                    )),
+                ),
+            )"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            invalid_follow.validate_basic(),
+            Err(SceneManifestError::InvalidCameraConfig { .. })
+        ));
     }
 
     #[test]
