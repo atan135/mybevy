@@ -117,6 +117,13 @@ fn update_ui_input_state(
 }
 
 impl UiInputState {
+    /// Returns whether UI currently owns gameplay pointer and wheel input.
+    /// Game features should use this boundary instead of inspecting panel or
+    /// picking internals directly.
+    pub(crate) fn blocks_gameplay_pointer(&self) -> bool {
+        self.pointer_blocked
+    }
+
     fn apply_snapshot(&mut self, snapshot: UiInputRouteSnapshot) {
         self.pointer_blocked = snapshot.pointer_blocked;
         self.focused_panel = snapshot.focused_panel;

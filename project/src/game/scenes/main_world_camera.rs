@@ -4,7 +4,11 @@
 //! the validated orbit intent that later input adapters apply to the current
 //! session's [`SceneCameraRig`] configuration.
 
-use bevy::prelude::*;
+use bevy::{
+    input::mouse::{MouseScrollUnit, MouseWheel},
+    prelude::*,
+    window::{CursorMoved, PrimaryWindow, WindowFocused},
+};
 
 use crate::{
     framework::scene::prelude::{
@@ -13,6 +17,7 @@ use crate::{
         SceneCameraProjection, SceneCameraRig, SceneCameraRuntimeState, SceneCameraTarget,
         SceneSessionId, update_scene_cameras,
     },
+    framework::ui::core::{UiInputState, UiInputSystems},
     game::scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
 };
 
@@ -33,6 +38,9 @@ pub(super) const MAIN_WORLD_CAMERA_MAX_LERP: f32 = 1.0;
 pub(super) const MAIN_WORLD_CAMERA_FOV_Y_RADIANS: f32 = 0.82;
 pub(super) const MAIN_WORLD_CAMERA_NEAR: f32 = 0.02;
 pub(super) const MAIN_WORLD_CAMERA_FAR: f32 = 800.0;
+const MAIN_WORLD_CAMERA_DESKTOP_YAW_RADIANS_PER_LOGICAL_PIXEL: f32 = 0.006;
+const MAIN_WORLD_CAMERA_DESKTOP_PITCH_RADIANS_PER_LOGICAL_PIXEL: f32 = 0.005;
+const MAIN_WORLD_CAMERA_DESKTOP_DISTANCE_PER_WHEEL_LINE: f32 = 0.35;
 
 pub(super) struct MainWorldCameraPlugin;
 
@@ -40,10 +48,51 @@ impl Plugin for MainWorldCameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MainWorldCameraOrbitState>()
             .init_resource::<MainWorldCameraRigAdapterRuntime>()
+            .init_resource::<MainWorldDesktopOrbitRuntime>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .add_message::<CursorMoved>()
+            .add_message::<MouseWheel>()
+            .add_message::<WindowFocused>()
             .add_systems(
                 Update,
-                sync_main_world_camera_rig.before(update_scene_cameras),
+                (
+                    update_main_world_desktop_orbit
+                        .after(UiInputSystems::Update)
+                        .before(sync_main_world_camera_rig),
+                    sync_main_world_camera_rig.before(update_scene_cameras),
+                ),
             );
+    }
+}
+
+/// Stable ownership of the desktop mouse until the matching button release or
+/// a gameplay/UI lifecycle gate revokes it. Touch input will use the same
+/// ownership boundary with pointer-specific captures in a later stage.
+#[derive(Default, Resource)]
+struct MainWorldDesktopOrbitRuntime {
+    capture: Option<MainWorldDesktopMouseCapture>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MainWorldDesktopMouseCapture {
+    window: Entity,
+    last_cursor_position: Option<Vec2>,
+}
+
+impl MainWorldDesktopOrbitRuntime {
+    fn release(&mut self) {
+        self.capture = None;
+    }
+
+    fn begin(&mut self, window: Entity, cursor_position: Option<Vec2>) {
+        self.capture = Some(MainWorldDesktopMouseCapture {
+            window,
+            last_cursor_position: cursor_position,
+        });
+    }
+
+    fn is_capturing(&self) -> bool {
+        self.capture.is_some()
     }
 }
 
@@ -197,6 +246,100 @@ impl MainWorldCameraOrbitState {
     }
 }
 
+fn update_main_world_desktop_orbit(
+    entry: Option<Res<MainWorldEntryState>>,
+    ui_input: Option<Res<UiInputState>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    primary_window: Query<(Entity, &Window), With<PrimaryWindow>>,
+    mut cursor_moves: MessageReader<CursorMoved>,
+    mut mouse_wheels: MessageReader<MouseWheel>,
+    mut focus_events: MessageReader<WindowFocused>,
+    mut orbit: ResMut<MainWorldCameraOrbitState>,
+    mut desktop_runtime: ResMut<MainWorldDesktopOrbitRuntime>,
+) {
+    let Some(entry) = entry else {
+        desktop_runtime.release();
+        return;
+    };
+    let Some((window_entity, window)) = primary_window.iter().next() else {
+        desktop_runtime.release();
+        return;
+    };
+    let ui_blocks_gameplay = ui_input.is_some_and(|input| input.blocks_gameplay_pointer());
+    let gameplay_active = entry.allows_gameplay_input() && !ui_blocks_gameplay;
+    let primary_window_lost_focus = focus_events
+        .read()
+        .any(|event| event.window == window_entity && !event.focused);
+
+    if !gameplay_active || primary_window_lost_focus {
+        cursor_moves.clear();
+        mouse_wheels.clear();
+        desktop_runtime.release();
+        return;
+    }
+
+    let cursor_position = window.cursor_position();
+    if mouse_buttons.just_pressed(MouseButton::Right) {
+        desktop_runtime.begin(window_entity, cursor_position);
+    }
+    if mouse_buttons.just_released(MouseButton::Right) || !mouse_buttons.pressed(MouseButton::Right)
+    {
+        desktop_runtime.release();
+    }
+
+    if let Some(capture) = desktop_runtime.capture.as_mut() {
+        if capture.window != window_entity {
+            desktop_runtime.release();
+        } else {
+            for cursor_move in cursor_moves.read() {
+                if cursor_move.window != capture.window {
+                    continue;
+                }
+                if let Some(previous_position) = capture.last_cursor_position {
+                    apply_desktop_orbit_drag(&mut orbit, cursor_move.position - previous_position);
+                }
+                capture.last_cursor_position = Some(cursor_move.position);
+            }
+        }
+    } else {
+        cursor_moves.clear();
+    }
+
+    for wheel in mouse_wheels.read() {
+        if wheel.window == window_entity {
+            apply_desktop_orbit_wheel(&mut orbit, wheel.y, wheel.unit);
+        }
+    }
+}
+
+fn apply_desktop_orbit_drag(orbit: &mut MainWorldCameraOrbitState, logical_delta: Vec2) {
+    if !logical_delta.is_finite() {
+        return;
+    }
+
+    orbit.yaw_radians -= logical_delta.x * MAIN_WORLD_CAMERA_DESKTOP_YAW_RADIANS_PER_LOGICAL_PIXEL;
+    orbit.pitch_radians +=
+        logical_delta.y * MAIN_WORLD_CAMERA_DESKTOP_PITCH_RADIANS_PER_LOGICAL_PIXEL;
+    orbit.sanitize();
+}
+
+fn apply_desktop_orbit_wheel(
+    orbit: &mut MainWorldCameraOrbitState,
+    wheel_delta_y: f32,
+    unit: MouseScrollUnit,
+) {
+    if !wheel_delta_y.is_finite() {
+        return;
+    }
+
+    let line_delta = match unit {
+        MouseScrollUnit::Line => wheel_delta_y,
+        MouseScrollUnit::Pixel => wheel_delta_y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
+    };
+    orbit.distance -= line_delta * MAIN_WORLD_CAMERA_DESKTOP_DISTANCE_PER_WHEEL_LINE;
+    orbit.sanitize();
+}
+
 fn sync_main_world_camera_rig(
     entry: Option<Res<MainWorldEntryState>>,
     mut orbit: ResMut<MainWorldCameraOrbitState>,
@@ -346,6 +489,60 @@ mod tests {
         app
     }
 
+    fn active_desktop_camera_app() -> (App, Entity) {
+        let session_id = SceneSessionId::from("main-world-desktop");
+        let mut app = active_camera_app(session_id, 1);
+        let window = app
+            .world_mut()
+            .spawn((PrimaryWindow, Window::default()))
+            .id();
+        app.world_mut()
+            .resource_mut::<MainWorldEntryState>()
+            .input_frozen = false;
+        (app, window)
+    }
+
+    fn send_cursor_move(app: &mut App, window: Entity, position: Vec2) {
+        app.world_mut().write_message(CursorMoved {
+            window,
+            position,
+            delta: None,
+        });
+    }
+
+    fn send_wheel(app: &mut App, window: Entity, y: f32, unit: MouseScrollUnit) {
+        app.world_mut().write_message(MouseWheel {
+            unit,
+            x: 0.0,
+            y,
+            window,
+        });
+    }
+
+    fn set_right_mouse_button(app: &mut App, pressed: bool) {
+        let mut mouse_buttons = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        if pressed {
+            mouse_buttons.press(MouseButton::Right);
+        } else {
+            mouse_buttons.release(MouseButton::Right);
+        }
+    }
+
+    fn clear_mouse_button_transients(app: &mut App) {
+        let mut mouse_buttons = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse_buttons.clear_just_pressed(MouseButton::Right);
+        mouse_buttons.clear_just_released(MouseButton::Right);
+    }
+
+    fn assert_desktop_capture(app: &App, expected: bool) {
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldDesktopOrbitRuntime>()
+                .is_capturing(),
+            expected
+        );
+    }
+
     fn register_scene_session(app: &mut App, session_id: SceneSessionId) {
         app.world_mut()
             .resource_mut::<SceneSpawnRegistry>()
@@ -493,6 +690,153 @@ mod tests {
             Vec3::new(std::f32::consts::SQRT_2, std::f32::consts::SQRT_2, 0.0),
         );
         assert_eq!(state.look_at_offset(), Vec3::Y * state.look_at_height);
+    }
+
+    #[test]
+    fn desktop_right_drag_updates_orbit_only_while_the_capture_is_held() {
+        let (mut app, window) = active_desktop_camera_app();
+        send_cursor_move(&mut app, window, Vec2::new(100.0, 100.0));
+        set_right_mouse_button(&mut app, true);
+
+        app.update();
+
+        assert_desktop_capture(&app, true);
+        let initial_orbit = app.world().resource::<MainWorldCameraOrbitState>().clone();
+        clear_mouse_button_transients(&mut app);
+        send_cursor_move(&mut app, window, Vec2::new(120.0, 90.0));
+        app.update();
+
+        let dragged_orbit = app.world().resource::<MainWorldCameraOrbitState>();
+        assert_eq!(
+            (dragged_orbit.yaw_radians
+                - (initial_orbit.yaw_radians
+                    - 20.0 * MAIN_WORLD_CAMERA_DESKTOP_YAW_RADIANS_PER_LOGICAL_PIXEL))
+                .abs()
+                < 0.000001,
+            true
+        );
+        assert_eq!(
+            (dragged_orbit.pitch_radians
+                - (initial_orbit.pitch_radians
+                    - 10.0 * MAIN_WORLD_CAMERA_DESKTOP_PITCH_RADIANS_PER_LOGICAL_PIXEL))
+                .abs()
+                < 0.000001,
+            true
+        );
+
+        set_right_mouse_button(&mut app, false);
+        app.update();
+        assert_desktop_capture(&app, false);
+        let released_orbit = app.world().resource::<MainWorldCameraOrbitState>().clone();
+        clear_mouse_button_transients(&mut app);
+        send_cursor_move(&mut app, window, Vec2::new(180.0, 40.0));
+        app.update();
+        assert_eq!(
+            *app.world().resource::<MainWorldCameraOrbitState>(),
+            released_orbit
+        );
+    }
+
+    #[test]
+    fn desktop_wheel_clamps_distance_and_normalizes_pixel_units() {
+        let (mut app, window) = active_desktop_camera_app();
+        app.update();
+        send_wheel(&mut app, window, 2.0, MouseScrollUnit::Line);
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldCameraOrbitState>().distance,
+            MAIN_WORLD_CAMERA_MIN_DISTANCE
+        );
+
+        send_wheel(
+            &mut app,
+            window,
+            MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
+            MouseScrollUnit::Pixel,
+        );
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldCameraOrbitState>().distance,
+            MAIN_WORLD_CAMERA_MIN_DISTANCE
+        );
+
+        send_wheel(&mut app, window, 10_000.0, MouseScrollUnit::Line);
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldCameraOrbitState>().distance,
+            MAIN_WORLD_CAMERA_MIN_DISTANCE
+        );
+        send_wheel(&mut app, window, -10_000.0, MouseScrollUnit::Line);
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldCameraOrbitState>().distance,
+            MAIN_WORLD_CAMERA_MAX_DISTANCE
+        );
+    }
+
+    #[test]
+    fn desktop_capture_releases_and_discards_input_when_gameplay_or_ui_gates_close() {
+        let (mut app, window) = active_desktop_camera_app();
+        send_cursor_move(&mut app, window, Vec2::new(10.0, 10.0));
+        set_right_mouse_button(&mut app, true);
+        app.update();
+        assert_desktop_capture(&app, true);
+        clear_mouse_button_transients(&mut app);
+        let before_gate = app.world().resource::<MainWorldCameraOrbitState>().clone();
+        app.world_mut()
+            .resource_mut::<MainWorldEntryState>()
+            .input_frozen = true;
+        send_cursor_move(&mut app, window, Vec2::new(50.0, 10.0));
+        send_wheel(&mut app, window, 1.0, MouseScrollUnit::Line);
+        app.update();
+        assert_desktop_capture(&app, false);
+        assert_eq!(
+            *app.world().resource::<MainWorldCameraOrbitState>(),
+            before_gate
+        );
+
+        app.world_mut()
+            .resource_mut::<MainWorldEntryState>()
+            .input_frozen = false;
+        app.world_mut().insert_resource(UiInputState::default());
+        app.world_mut()
+            .resource_mut::<UiInputState>()
+            .pointer_blocked = true;
+        set_right_mouse_button(&mut app, true);
+        send_cursor_move(&mut app, window, Vec2::new(80.0, 10.0));
+        send_wheel(&mut app, window, 1.0, MouseScrollUnit::Line);
+        app.update();
+        assert_desktop_capture(&app, false);
+        assert_eq!(
+            *app.world().resource::<MainWorldCameraOrbitState>(),
+            before_gate
+        );
+    }
+
+    #[test]
+    fn desktop_capture_releases_on_focus_loss_or_non_active_scene() {
+        let (mut app, window) = active_desktop_camera_app();
+        send_cursor_move(&mut app, window, Vec2::new(10.0, 10.0));
+        set_right_mouse_button(&mut app, true);
+        app.update();
+        assert_desktop_capture(&app, true);
+        clear_mouse_button_transients(&mut app);
+        app.world_mut().write_message(WindowFocused {
+            window,
+            focused: false,
+        });
+        app.update();
+        assert_desktop_capture(&app, false);
+
+        set_right_mouse_button(&mut app, false);
+        app.update();
+        clear_mouse_button_transients(&mut app);
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            MainWorldEntryPhase::Recovering;
+        set_right_mouse_button(&mut app, true);
+        send_cursor_move(&mut app, window, Vec2::new(40.0, 10.0));
+        app.update();
+        assert_desktop_capture(&app, false);
     }
 
     #[test]
