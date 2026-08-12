@@ -1,14 +1,14 @@
 use bevy::prelude::*;
 
 use crate::framework::fangyuan::{
-    FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanAvatar, FangyuanObjectState, FangyuanPlayer,
-    FangyuanPlayerPosition, FangyuanPlayerRuntimePlugin, FangyuanPlayerState,
-    load_fangyuan_minimal_player_primitive_set_or_log,
+    FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanPlayerRuntimePlugin,
+    load_fangyuan_minimal_player_primitive_set_or_log, spawn_fangyuan_player,
 };
 #[cfg(test)]
 use crate::framework::fangyuan::{
-    FangyuanPlayerPrimitiveVisual, FangyuanPlayerRenderAssets, FangyuanPlayerVisualsSpawned,
-    FangyuanPrimitiveKind, FangyuanPrimitiveSet,
+    FangyuanAvatar, FangyuanObjectState, FangyuanPlayer, FangyuanPlayerPosition,
+    FangyuanPlayerPrimitiveVisual, FangyuanPlayerRenderAssets, FangyuanPlayerState,
+    FangyuanPlayerVisualsSpawned, FangyuanPrimitiveKind, FangyuanPrimitiveSet,
 };
 use crate::game::navigation::AppUiMode;
 
@@ -29,7 +29,13 @@ impl Plugin for FangyuanPlayerPreviewPlugin {
 #[cfg(test)]
 type FangyuanPlayerPreviewRenderAssets = FangyuanPlayerRenderAssets;
 
-fn spawn_fangyuan_preview_player(mut commands: Commands, players: Query<(), With<FangyuanPlayer>>) {
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FangyuanPlayerPreviewOwner;
+
+fn spawn_fangyuan_preview_player(
+    mut commands: Commands,
+    players: Query<(), With<FangyuanPlayerPreviewOwner>>,
+) {
     if !players.is_empty() {
         return;
     }
@@ -38,24 +44,17 @@ fn spawn_fangyuan_preview_player(mut commands: Commands, players: Query<(), With
         return;
     };
 
-    let position = FangyuanPlayerPosition::default();
-    let object_state = FangyuanObjectState::from_translation(position.translation);
-    commands.spawn((
-        DespawnOnExit(AppUiMode::FangyuanPlayerPreview),
-        FangyuanPlayer,
-        FangyuanPlayerState::default(),
-        position,
-        object_state,
-        Transform::from_translation(object_state.root_translation)
-            .with_scale(object_state.root_scale),
-        GlobalTransform::default(),
-        FangyuanAvatar::new(
-            FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH,
-            "Minimal Fangyuan Player",
-            primitive_set.clone(),
-        ),
+    spawn_fangyuan_player(
+        &mut commands,
+        FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH,
+        "Minimal Fangyuan Player",
         primitive_set,
-    ));
+        Transform::IDENTITY,
+        (
+            DespawnOnExit(AppUiMode::FangyuanPlayerPreview),
+            FangyuanPlayerPreviewOwner,
+        ),
+    );
 }
 
 #[cfg(test)]
@@ -102,6 +101,23 @@ mod tests {
 
         let players = fangyuan_player_entities(&mut app);
         assert_eq!(players.len(), 1);
+    }
+
+    #[test]
+    fn existing_non_preview_player_does_not_block_preview_owned_player() {
+        let mut app = test_app();
+        let external = spawn_custom_player_for_test(&mut app, FangyuanPrimitiveSet::new());
+
+        enter_preview_mode(&mut app);
+
+        let preview_players: Vec<_> = app
+            .world_mut()
+            .query_filtered::<Entity, With<FangyuanPlayerPreviewOwner>>()
+            .iter(app.world())
+            .collect();
+        assert_eq!(preview_players.len(), 1);
+        assert_ne!(preview_players[0], external);
+        assert_eq!(fangyuan_player_entities(&mut app).len(), 2);
     }
 
     #[test]
