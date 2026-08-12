@@ -91,6 +91,7 @@ impl MainWorldDesktopOrbitRuntime {
         });
     }
 
+    #[cfg(test)]
     fn is_capturing(&self) -> bool {
         self.capture.is_some()
     }
