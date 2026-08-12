@@ -37,6 +37,9 @@ struct MainWorldContent {
     session_id: SceneSessionId,
 }
 
+#[derive(Clone, Debug, Component, PartialEq, Eq)]
+struct MainWorldDistanceMarkerCollection;
+
 #[derive(Clone, Debug, Deserialize)]
 struct MainWorldLayout {
     scene_id: String,
@@ -354,6 +357,15 @@ fn instantiate_main_world_content(
             warn!("main world layout scene id does not match its registered scene");
             continue;
         }
+        let distance_marker_mesh =
+            match build_main_world_distance_marker_mesh(&layout.distance_markers) {
+                Ok(mesh) => mesh,
+                Err(error) => {
+                    warn!("main world distance marker mesh could not be generated: {error}");
+                    continue;
+                }
+            };
+        let distance_marker_stats = distance_marker_mesh.stats;
 
         let session_id = entered.session_id.clone();
         let content = commands
@@ -372,6 +384,7 @@ fn instantiate_main_world_content(
             content,
             &session_id,
             &layout,
+            distance_marker_mesh.mesh,
             &mut meshes,
             &mut materials,
         );
@@ -379,7 +392,10 @@ fn instantiate_main_world_content(
             scene_id = MAIN_WORLD_SCENE_ID,
             session_id = %session_id,
             objects = 3,
-            "main world visuals instantiated: terrain, landmark, directional light"
+            marker_count = distance_marker_stats.marker_count,
+            marker_vertices = distance_marker_stats.vertex_count,
+            marker_triangles = distance_marker_stats.index_count / 3,
+            "main world visuals instantiated: terrain, distance marker collection, directional light"
         );
         instantiated_sessions.push(session_id);
     }
@@ -390,6 +406,7 @@ fn spawn_main_world_visuals(
     parent: Entity,
     session_id: &SceneSessionId,
     layout: &MainWorldLayout,
+    distance_marker_mesh: Mesh,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
@@ -420,20 +437,15 @@ fn spawn_main_world_visuals(
         commands,
         parent,
         (
-            Mesh3d(
-                meshes.add(
-                    Sphere::new(layout.distance_markers.radius)
-                        .mesh()
-                        .uv(32, 18),
-                ),
-            ),
+            MainWorldDistanceMarkerCollection,
+            Mesh3d(meshes.add(distance_marker_mesh)),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: color(layout.distance_markers.color),
                 emissive: color(layout.distance_markers.color).into(),
                 ..default()
             })),
-            Transform::from_xyz(0.0, layout.distance_markers.radius, 0.0),
-            Name::new("MainWorldFloatingSphere"),
+            Transform::IDENTITY,
+            Name::new("MainWorldDistanceMarkerCollection"),
         ),
         session_id,
     );
@@ -681,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn entered_session_owns_terrain_landmark_and_light_without_duplicate_content() {
+    fn entered_session_owns_one_marker_collection_without_duplicate_entities_or_assets() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .add_message::<SceneEvent>()
@@ -699,10 +711,10 @@ mod tests {
         app.update();
 
         let world = app.world_mut();
-        let mut contents = world.query::<(&MainWorldContent, &SceneOwned)>();
-        let content = contents.single(world).unwrap();
-        assert_eq!(content.0.session_id, session_id);
-        assert_eq!(content.1.session_id, session_id);
+        let mut contents = world.query::<(Entity, &MainWorldContent, &SceneOwned)>();
+        let (content_entity, content, content_owned) = contents.single(world).unwrap();
+        assert_eq!(content.session_id, session_id);
+        assert_eq!(content_owned.session_id, session_id);
         assert_eq!(
             world
                 .query::<(&Mesh3d, &SceneOwned)>()
@@ -711,6 +723,48 @@ mod tests {
                 .count(),
             2
         );
+        let mut marker_collections = world.query::<(
+            &MainWorldDistanceMarkerCollection,
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            &SceneOwned,
+            &Name,
+        )>();
+        let (_, marker_mesh, marker_material, owned, name) =
+            marker_collections.single(world).unwrap();
+        assert_eq!(owned.session_id, session_id);
+        assert_eq!(name.as_str(), "MainWorldDistanceMarkerCollection");
+        assert!(
+            world
+                .resource::<Assets<Mesh>>()
+                .get(&marker_mesh.0)
+                .is_some()
+        );
+        assert!(
+            world
+                .resource::<Assets<StandardMaterial>>()
+                .get(&marker_material.0)
+                .is_some()
+        );
+        assert_eq!(world.resource::<Assets<Mesh>>().len(), 2);
+        assert_eq!(world.resource::<Assets<StandardMaterial>>().len(), 2);
+        let mut visual_children = world.query::<(&ChildOf, &SceneOwned, &Name)>();
+        let visual_children = visual_children
+            .iter(world)
+            .filter(|(_, owned, name)| {
+                owned.session_id == session_id
+                    && matches!(
+                        name.as_str(),
+                        "MainWorldTerrain"
+                            | "MainWorldDistanceMarkerCollection"
+                            | "MainWorldDirectionalLight"
+                    )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(visual_children.len(), 3);
+        assert!(visual_children.iter().all(|(parent, owned, _)| {
+            parent.parent() == content_entity && owned.session_id == session_id
+        }));
         assert_eq!(
             world
                 .query::<(&DirectionalLight, &SceneOwned)>()
@@ -735,6 +789,15 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(
+            app.world_mut()
+                .query::<&MainWorldDistanceMarkerCollection>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 2);
+        assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 2);
     }
 
     #[test]
@@ -780,7 +843,7 @@ mod tests {
         app.world_mut()
             .write_message(SceneCommand::Exit(SceneExitRequest {
                 scene_id: Some(MAIN_WORLD_SCENE_ID.into()),
-                session_id: Some(session_id),
+                session_id: Some(session_id.clone()),
                 ..SceneExitRequest::default()
             }));
         app.update();
@@ -791,6 +854,82 @@ mod tests {
             app.world_mut()
                 .query::<&MainWorldContent>()
                 .iter(app.world())
+                .count(),
+            0
+        );
+
+        let second_session = SceneSessionId::from("main-world-framework-reentry");
+        let mut request =
+            crate::framework::scene::prelude::SceneEnterRequest::new(MAIN_WORLD_SCENE_ID);
+        request.session_id = Some(second_session.clone());
+        app.world_mut().write_message(SceneCommand::Enter(request));
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world_mut()
+                .query::<(&MainWorldContent, &SceneOwned)>()
+                .iter(app.world())
+                .filter(|(content, owned)| {
+                    content.session_id == second_session && owned.session_id == second_session
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<(&MainWorldDistanceMarkerCollection, &SceneOwned)>()
+                .iter(app.world())
+                .filter(|(_, owned)| owned.session_id == second_session)
+                .count(),
+            1
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&SceneOwned>()
+                .iter(app.world())
+                .filter(|owned| owned.session_id == session_id)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn failed_manifest_load_never_spawns_main_world_content() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin))
+            .add_plugins(MainWorldScenePlugin);
+        app.world_mut()
+            .resource_mut::<SceneRegistry>()
+            .register(SceneDefinition::first_package_manifest(
+                MAIN_WORLD_SCENE_ID,
+                SceneKind::World,
+                "scenes/main_world/missing-scene.ron",
+            ))
+            .unwrap();
+
+        let session_id = SceneSessionId::from("main-world-failed-load");
+        let mut request =
+            crate::framework::scene::prelude::SceneEnterRequest::new(MAIN_WORLD_SCENE_ID);
+        request.session_id = Some(session_id.clone());
+        app.world_mut().write_message(SceneCommand::Enter(request));
+        app.update();
+        app.update();
+
+        assert!(app.world().resource::<SceneRuntime>().active().is_none());
+        assert!(app.world().resource::<SceneRuntime>().last_error.is_some());
+        assert_eq!(
+            app.world_mut()
+                .query::<&MainWorldContent>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&SceneOwned>()
+                .iter(app.world())
+                .filter(|owned| owned.session_id == session_id)
                 .count(),
             0
         );
