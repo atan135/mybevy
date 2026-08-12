@@ -1,11 +1,14 @@
 use bevy::{
-    asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
+    asset::RenderAssetUsages, camera::Exposure, core_pipeline::tonemapping::Tonemapping,
+    mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
 use serde::{Deserialize, Deserializer, de};
 use std::{fs, path::PathBuf};
 
 use crate::{
-    framework::scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId},
+    framework::scene::prelude::{
+        SceneCameraRig, SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId,
+    },
     game::scenes::main_world_contract::MAIN_WORLD_CLIENT_SCENE_ID,
 };
 
@@ -46,6 +49,7 @@ struct MainWorldLayout {
     terrain: MainWorldTerrain,
     distance_markers: MainWorldDistanceMarkers,
     light: MainWorldLight,
+    render: MainWorldRender,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -55,6 +59,8 @@ struct MainWorldTerrain {
     top_y: f32,
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     color: [f32; 3],
+    metallic: f32,
+    perceptual_roughness: f32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -71,6 +77,9 @@ struct MainWorldDistanceMarkers {
     radius: f32,
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     color: [f32; 3],
+    metallic: f32,
+    perceptual_roughness: f32,
+    emissive_strength: f32,
     quality: MainWorldMarkerQuality,
 }
 
@@ -107,6 +116,25 @@ struct MainWorldLight {
     #[serde(deserialize_with = "deserialize_f32_array_3")]
     color: [f32; 3],
     illuminance: f32,
+    shadows_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum MainWorldTonemapping {
+    TonyMcMapface,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct MainWorldRender {
+    #[serde(deserialize_with = "deserialize_f32_array_3")]
+    ambient_color: [f32; 3],
+    ambient_brightness: f32,
+    ambient_affects_lightmapped_meshes: bool,
+    #[serde(deserialize_with = "deserialize_f32_array_3")]
+    clear_color: [f32; 3],
+    exposure_ev100: f32,
+    tonemapping: MainWorldTonemapping,
 }
 
 impl MainWorldLayout {
@@ -126,6 +154,12 @@ impl MainWorldLayout {
                 self.terrain.top_y
             ));
         }
+        validate_color("terrain color", self.terrain.color)?;
+        validate_unit_interval("terrain metallic", self.terrain.metallic)?;
+        validate_unit_interval(
+            "terrain perceptual_roughness",
+            self.terrain.perceptual_roughness,
+        )?;
 
         let markers = &self.distance_markers;
         if !markers.start.is_finite() || !markers.end.is_finite() || markers.start > markers.end {
@@ -142,6 +176,16 @@ impl MainWorldLayout {
         if !markers.radius.is_finite() || markers.radius <= 0.0 {
             return Err("distance marker radius must be finite and greater than zero".to_owned());
         }
+        validate_color("distance marker color", markers.color)?;
+        validate_unit_interval("distance marker metallic", markers.metallic)?;
+        validate_unit_interval(
+            "distance marker perceptual_roughness",
+            markers.perceptual_roughness,
+        )?;
+        validate_unit_interval(
+            "distance marker emissive_strength",
+            markers.emissive_strength,
+        )?;
 
         let intervals = (markers.end - markers.start) / markers.spacing;
         if !intervals.is_finite() || (intervals - intervals.round()).abs() > f32::EPSILON {
@@ -162,7 +206,48 @@ impl MainWorldLayout {
             ));
         }
 
+        validate_color("directional light color", self.light.color)?;
+        if !self
+            .light
+            .rotation_degrees
+            .iter()
+            .all(|value| value.is_finite())
+            || !self.light.illuminance.is_finite()
+            || self.light.illuminance <= 0.0
+        {
+            return Err(
+                "directional light rotation and illuminance must be finite and positive".into(),
+            );
+        }
+        validate_color("ambient color", self.render.ambient_color)?;
+        validate_color("clear color", self.render.clear_color)?;
+        if !self.render.ambient_brightness.is_finite()
+            || self.render.ambient_brightness <= 0.0
+            || !self.render.exposure_ev100.is_finite()
+        {
+            return Err("render ambient brightness and exposure must be finite and valid".into());
+        }
+
         Ok(())
+    }
+}
+
+fn validate_color(label: &str, value: [f32; 3]) -> Result<(), String> {
+    if value
+        .iter()
+        .all(|channel| channel.is_finite() && (0.0..=1.0).contains(channel))
+    {
+        Ok(())
+    } else {
+        Err(format!("{label} channels must be finite and in 0..=1"))
+    }
+}
+
+fn validate_unit_interval(label: &str, value: f32) -> Result<(), String> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!("{label} must be finite and in 0..=1"))
     }
 }
 
@@ -316,6 +401,7 @@ fn instantiate_main_world_content(
     mut commands: Commands,
     mut scene_events: MessageReader<SceneEvent>,
     runtime_roots: Query<(Entity, &SceneRuntimeRoot)>,
+    mut scene_cameras: Query<(Entity, &SceneCameraRig, &mut Camera), With<Camera3d>>,
     existing_content: Query<&MainWorldContent>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -366,6 +452,10 @@ fn instantiate_main_world_content(
                 }
             };
         let distance_marker_stats = distance_marker_mesh.stats;
+        let scene_camera = scene_cameras
+            .iter_mut()
+            .find(|(_, rig, _)| rig.is_session(&entered.session_id))
+            .map(|(entity, _, camera)| (entity, camera));
 
         let session_id = entered.session_id.clone();
         let content = commands
@@ -388,6 +478,14 @@ fn instantiate_main_world_content(
             &mut meshes,
             &mut materials,
         );
+        if let Some((scene_camera, mut camera)) = scene_camera {
+            configure_main_world_camera(&mut commands, scene_camera, &mut camera, &layout.render);
+        } else {
+            warn!(
+                "main world session `{}` has no 3d scene camera to configure",
+                entered.session_id
+            );
+        }
         info!(
             scene_id = MAIN_WORLD_SCENE_ID,
             session_id = %session_id,
@@ -421,7 +519,8 @@ fn spawn_main_world_visuals(
             ))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: color(layout.terrain.color),
-                perceptual_roughness: 0.92,
+                metallic: layout.terrain.metallic,
+                perceptual_roughness: layout.terrain.perceptual_roughness,
                 ..default()
             })),
             Transform::from_xyz(
@@ -441,7 +540,12 @@ fn spawn_main_world_visuals(
             Mesh3d(meshes.add(distance_marker_mesh)),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: color(layout.distance_markers.color),
-                emissive: color(layout.distance_markers.color).into(),
+                metallic: layout.distance_markers.metallic,
+                perceptual_roughness: layout.distance_markers.perceptual_roughness,
+                emissive: scaled_emissive(
+                    layout.distance_markers.color,
+                    layout.distance_markers.emissive_strength,
+                ),
                 ..default()
             })),
             Transform::IDENTITY,
@@ -456,7 +560,7 @@ fn spawn_main_world_visuals(
             DirectionalLight {
                 color: color(layout.light.color),
                 illuminance: layout.light.illuminance,
-                shadows_enabled: false,
+                shadows_enabled: layout.light.shadows_enabled,
                 ..default()
             },
             Transform::from_rotation(Quat::from_euler(
@@ -469,6 +573,29 @@ fn spawn_main_world_visuals(
         ),
         session_id,
     );
+}
+
+fn configure_main_world_camera(
+    commands: &mut Commands,
+    camera: Entity,
+    camera_settings: &mut Camera,
+    render: &MainWorldRender,
+) {
+    let tonemapping = match render.tonemapping {
+        MainWorldTonemapping::TonyMcMapface => Tonemapping::TonyMcMapface,
+    };
+    camera_settings.clear_color = ClearColorConfig::Custom(color(render.clear_color));
+    commands.entity(camera).insert((
+        AmbientLight {
+            color: color(render.ambient_color),
+            brightness: render.ambient_brightness,
+            affects_lightmapped_meshes: render.ambient_affects_lightmapped_meshes,
+        },
+        Exposure {
+            ev100: render.exposure_ev100,
+        },
+        tonemapping,
+    ));
 }
 
 fn spawn_owned_child<B: Bundle>(
@@ -485,6 +612,16 @@ fn spawn_owned_child<B: Bundle>(
 
 fn color(value: [f32; 3]) -> Color {
     Color::srgb(value[0], value[1], value[2])
+}
+
+fn scaled_emissive(value: [f32; 3], strength: f32) -> LinearRgba {
+    let linear = color(value).to_linear();
+    LinearRgba::new(
+        linear.red * strength,
+        linear.green * strength,
+        linear.blue * strength,
+        1.0,
+    )
 }
 
 fn deserialize_f32_array_3<'de, D>(deserializer: D) -> Result<[f32; 3], D::Error>
@@ -555,6 +692,17 @@ mod tests {
         assert_eq!(layout.distance_markers.spacing, 100.0);
         assert_eq!(layout.distance_markers.radius, 0.5);
         assert_eq!(layout.distance_markers.quality, MainWorldMarkerQuality::Low);
+        assert_eq!(layout.terrain.metallic, 0.0);
+        assert_eq!(layout.terrain.perceptual_roughness, 0.94);
+        assert_eq!(layout.distance_markers.emissive_strength, 0.08);
+        assert_eq!(layout.light.illuminance, 85000.0);
+        assert!(layout.light.shadows_enabled);
+        assert_eq!(layout.render.ambient_brightness, 180.0);
+        assert_eq!(layout.render.exposure_ev100, 13.0);
+        let terrain_luminance = relative_luminance(layout.terrain.color);
+        let marker_luminance = relative_luminance(layout.distance_markers.color);
+        assert!((marker_luminance - terrain_luminance).abs() >= 0.1);
+        assert!(layout.distance_markers.emissive_strength <= 0.1);
         assert_eq!(MAIN_WORLD_MARKERS_PER_AXIS, 41);
         assert_eq!(MAIN_WORLD_MARKER_COUNT, 1681);
     }
@@ -563,19 +711,37 @@ mod tests {
     fn main_world_layout_rejects_invalid_distance_marker_contracts() {
         let valid = r#"(
             scene_id: "world.main",
-            terrain: (size: [4000.0, 0.4, 4000.0], top_y: 0.0, color: [0.18, 0.42, 0.24]),
+            terrain: (
+                size: [4000.0, 0.4, 4000.0],
+                top_y: 0.0,
+                color: [0.24, 0.43, 0.27],
+                metallic: 0.0,
+                perceptual_roughness: 0.94,
+            ),
             distance_markers: (
                 start: -2000.0,
                 end: 2000.0,
                 spacing: 100.0,
                 radius: 0.5,
-                color: [0.18, 0.64, 0.92],
+                color: [0.12, 0.62, 0.96],
+                metallic: 0.0,
+                perceptual_roughness: 0.72,
+                emissive_strength: 0.08,
                 quality: low,
             ),
             light: (
                 rotation_degrees: [-48.0, -28.0, 0.0],
                 color: [1.0, 0.96, 0.86],
-                illuminance: 7000.0,
+                illuminance: 85000.0,
+                shadows_enabled: true,
+            ),
+            render: (
+                ambient_color: [0.62, 0.72, 0.86],
+                ambient_brightness: 180.0,
+                ambient_affects_lightmapped_meshes: true,
+                clear_color: [0.42, 0.68, 0.88],
+                exposure_ev100: 13.0,
+                tonemapping: tony_mc_mapface,
             ),
         )"#;
 
@@ -609,6 +775,29 @@ mod tests {
         let mut non_finite = parse_main_world_layout(valid).unwrap();
         non_finite.distance_markers.start = f32::NAN;
         assert!(non_finite.validate().is_err());
+    }
+
+    #[test]
+    fn main_world_layout_rejects_invalid_rendering_contracts() {
+        let mut layout = load_main_world_layout().unwrap();
+        layout.terrain.metallic = 1.1;
+        assert!(layout.validate().is_err());
+
+        let mut layout = load_main_world_layout().unwrap();
+        layout.distance_markers.emissive_strength = f32::NAN;
+        assert!(layout.validate().is_err());
+
+        let mut layout = load_main_world_layout().unwrap();
+        layout.light.illuminance = 0.0;
+        assert!(layout.validate().is_err());
+
+        let mut layout = load_main_world_layout().unwrap();
+        layout.render.ambient_brightness = 0.0;
+        assert!(layout.validate().is_err());
+
+        let mut layout = load_main_world_layout().unwrap();
+        layout.render.exposure_ev100 = f32::NAN;
+        assert!(layout.validate().is_err());
     }
 
     #[test]
@@ -805,6 +994,14 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin))
             .add_plugins(MainWorldScenePlugin);
+        let global_clear = ClearColor(Color::srgb(0.91, 0.12, 0.23));
+        let global_ambient = GlobalAmbientLight {
+            color: Color::srgb(0.17, 0.29, 0.41),
+            brightness: 37.0,
+            affects_lightmapped_meshes: false,
+        };
+        app.insert_resource(global_clear.clone())
+            .insert_resource(global_ambient.clone());
         app.world_mut()
             .resource_mut::<SceneRegistry>()
             .register(SceneDefinition::first_package_manifest(
@@ -839,6 +1036,16 @@ mod tests {
                 .count(),
             1
         );
+        assert_main_world_camera_rendering(&mut app, &session_id);
+        assert_eq!(app.world().resource::<ClearColor>().0, global_clear.0);
+        let ambient = app.world().resource::<GlobalAmbientLight>();
+        assert_eq!(ambient.color, global_ambient.color);
+        assert_eq!(ambient.brightness, global_ambient.brightness);
+        assert_eq!(
+            ambient.affects_lightmapped_meshes,
+            global_ambient.affects_lightmapped_meshes
+        );
+        assert_main_world_materials_and_light(&mut app, &session_id);
 
         app.world_mut()
             .write_message(SceneCommand::Exit(SceneExitRequest {
@@ -856,6 +1063,12 @@ mod tests {
                 .iter(app.world())
                 .count(),
             0
+        );
+        assert_eq!(main_world_camera_count(&mut app, &session_id), 0);
+        assert_eq!(app.world().resource::<ClearColor>().0, global_clear.0);
+        assert_eq!(
+            app.world().resource::<GlobalAmbientLight>().color,
+            global_ambient.color
         );
 
         let second_session = SceneSessionId::from("main-world-framework-reentry");
@@ -892,6 +1105,9 @@ mod tests {
                 .count(),
             0
         );
+        assert_main_world_camera_rendering(&mut app, &second_session);
+        assert_eq!(main_world_camera_count(&mut app, &session_id), 0);
+        assert_eq!(app.world().resource::<ClearColor>().0, global_clear.0);
     }
 
     #[test]
@@ -899,6 +1115,14 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin))
             .add_plugins(MainWorldScenePlugin);
+        let global_clear = ClearColor(Color::srgb(0.73, 0.31, 0.19));
+        let global_ambient = GlobalAmbientLight {
+            color: Color::srgb(0.21, 0.33, 0.45),
+            brightness: 29.0,
+            affects_lightmapped_meshes: false,
+        };
+        app.insert_resource(global_clear.clone())
+            .insert_resource(global_ambient.clone());
         app.world_mut()
             .resource_mut::<SceneRegistry>()
             .register(SceneDefinition::first_package_manifest(
@@ -933,5 +1157,91 @@ mod tests {
                 .count(),
             0
         );
+        assert_eq!(main_world_camera_count(&mut app, &session_id), 0);
+        assert_eq!(app.world().resource::<ClearColor>().0, global_clear.0);
+        assert_eq!(
+            app.world().resource::<GlobalAmbientLight>().color,
+            global_ambient.color
+        );
+    }
+
+    fn main_world_camera_count(app: &mut App, session_id: &SceneSessionId) -> usize {
+        app.world_mut()
+            .query::<(&SceneCameraRig, &SceneOwned, &Camera3d)>()
+            .iter(app.world())
+            .filter(|(rig, owned, _)| rig.is_session(session_id) && owned.session_id == *session_id)
+            .count()
+    }
+
+    fn assert_main_world_camera_rendering(app: &mut App, session_id: &SceneSessionId) {
+        let mut cameras = app.world_mut().query::<(
+            &SceneCameraRig,
+            &SceneOwned,
+            &Camera,
+            &AmbientLight,
+            &Exposure,
+            &Tonemapping,
+        )>();
+        let (_, owned, camera, ambient, exposure, tonemapping) = cameras
+            .iter(app.world())
+            .find(|(rig, _, _, _, _, _)| rig.is_session(session_id))
+            .expect("main world session should have one configured 3d camera");
+        assert_eq!(owned.session_id, *session_id);
+        assert!(matches!(
+            camera.clear_color,
+            ClearColorConfig::Custom(value) if value == Color::srgb(0.42, 0.68, 0.88)
+        ));
+        assert_eq!(ambient.color, Color::srgb(0.62, 0.72, 0.86));
+        assert_eq!(ambient.brightness, 180.0);
+        assert!(ambient.affects_lightmapped_meshes);
+        assert_eq!(exposure.ev100, 13.0);
+        assert_eq!(*tonemapping, Tonemapping::TonyMcMapface);
+        assert_eq!(main_world_camera_count(app, session_id), 1);
+    }
+
+    fn assert_main_world_materials_and_light(app: &mut App, session_id: &SceneSessionId) {
+        let material_handles = app
+            .world_mut()
+            .query::<(&MeshMaterial3d<StandardMaterial>, &SceneOwned, &Name)>()
+            .iter(app.world())
+            .filter(|(_, owned, _)| owned.session_id == *session_id)
+            .map(|(handle, _, name)| (handle.0.clone(), name.as_str().to_owned()))
+            .collect::<Vec<_>>();
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let terrain = materials
+            .get(
+                &material_handles
+                    .iter()
+                    .find(|(_, name)| name == "MainWorldTerrain")
+                    .unwrap()
+                    .0,
+            )
+            .unwrap();
+        assert_eq!(terrain.metallic, 0.0);
+        assert_eq!(terrain.perceptual_roughness, 0.94);
+        let markers = materials
+            .get(
+                &material_handles
+                    .iter()
+                    .find(|(_, name)| name == "MainWorldDistanceMarkerCollection")
+                    .unwrap()
+                    .0,
+            )
+            .unwrap();
+        assert_eq!(markers.metallic, 0.0);
+        assert_eq!(markers.perceptual_roughness, 0.72);
+        assert!(markers.emissive.red < markers.base_color.to_linear().red);
+
+        let mut lights = app.world_mut().query::<(&DirectionalLight, &SceneOwned)>();
+        let (light, _) = lights
+            .iter(app.world())
+            .find(|(_, owned)| owned.session_id == *session_id)
+            .unwrap();
+        assert_eq!(light.illuminance, 85000.0);
+        assert!(light.shadows_enabled);
+    }
+
+    fn relative_luminance(color: [f32; 3]) -> f32 {
+        color[0] * 0.2126 + color[1] * 0.7152 + color[2] * 0.0722
     }
 }
