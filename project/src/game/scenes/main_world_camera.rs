@@ -419,9 +419,10 @@ fn update_main_world_touch_orbit(
         touch_runtime.viewport_size = window_size;
     }
     if ui_blocks_gameplay {
-        touch_runtime.reset();
-        touch_runtime.window = Some(window_entity);
-        touch_runtime.viewport_size = window_size;
+        touch_runtime
+            .captures
+            .retain(|_, capture| capture.owner == MainWorldTouchOwner::Ui);
+        touch_runtime.pinch_distance = None;
     }
 
     for event in touch_events.read() {
@@ -528,14 +529,17 @@ fn sync_main_world_camera_rig(
 ) {
     let Some(entry) = entry else {
         adapter_runtime.reset();
+        *orbit = MainWorldCameraOrbitState::default();
         return;
     };
     let Some(session_id) = entry.scene_session_id.as_ref() else {
         adapter_runtime.reset();
+        *orbit = MainWorldCameraOrbitState::default();
         return;
     };
     if entry.phase != MainWorldEntryPhase::Active {
         adapter_runtime.reset();
+        *orbit = MainWorldCameraOrbitState::default();
         return;
     }
 
@@ -1474,6 +1478,106 @@ mod tests {
         .unwrap()
         .offset;
         assert_vec3_approx_eq(retained_a_offset, changed_a_offset);
+    }
+
+    #[test]
+    fn leaving_active_session_clears_orbit_and_reentry_starts_from_defaults() {
+        let session_id = SceneSessionId::from("main-world-lifecycle");
+        let mut app = active_camera_app(session_id.clone(), 1);
+        spawn_target(&mut app, &session_id, Vec3::ZERO);
+        schedule_follow_camera(
+            &mut app,
+            session_id.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            Vec3::ZERO,
+        );
+        app.update();
+        {
+            let mut orbit = app.world_mut().resource_mut::<MainWorldCameraOrbitState>();
+            orbit.yaw_radians = 1.2;
+            orbit.distance = 7.0;
+        }
+        app.update();
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            MainWorldEntryPhase::Recovering;
+        app.update();
+        assert_eq!(
+            *app.world().resource::<MainWorldCameraOrbitState>(),
+            MainWorldCameraOrbitState::default()
+        );
+        assert!(
+            app.world()
+                .resource::<MainWorldCameraRigAdapterRuntime>()
+                .session_id
+                .is_none()
+        );
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.update();
+        assert_eq!(
+            *app.world().resource::<MainWorldCameraOrbitState>(),
+            MainWorldCameraOrbitState {
+                scene_session_id: Some(session_id),
+                generation: 1,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn main_world_adapter_does_not_modify_preview_or_ui_cameras_and_keeps_one_world_rig() {
+        let session_id = SceneSessionId::from("main-world-camera-conflict");
+        let mut app = active_camera_app(session_id.clone(), 1);
+        spawn_target(&mut app, &session_id, Vec3::ZERO);
+        schedule_follow_camera(
+            &mut app,
+            session_id.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            Vec3::ZERO,
+        );
+        let preview = app
+            .world_mut()
+            .spawn((
+                Camera3d::default(),
+                Transform::from_translation(Vec3::new(20.0, 21.0, 22.0)),
+                Projection::Perspective(PerspectiveProjection {
+                    fov: 0.47,
+                    near: 0.11,
+                    far: 99.0,
+                    ..Default::default()
+                }),
+            ))
+            .id();
+        let preview_transform_before = *app.world().entity(preview).get::<Transform>().unwrap();
+        let Projection::Perspective(preview_projection_before) =
+            app.world().entity(preview).get::<Projection>().unwrap()
+        else {
+            panic!("preview camera should remain perspective");
+        };
+        let preview_projection_before = preview_projection_before.clone();
+
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<(&SceneCameraRig, &Camera3d)>()
+                .iter(app.world())
+                .filter(|(rig, _)| rig.is_session(&session_id))
+                .count(),
+            1
+        );
+        assert_eq!(
+            *app.world().entity(preview).get::<Transform>().unwrap(),
+            preview_transform_before
+        );
+        let Projection::Perspective(preview_projection_after) =
+            app.world().entity(preview).get::<Projection>().unwrap()
+        else {
+            panic!("preview camera should remain perspective");
+        };
+        assert_eq!(preview_projection_after.fov, preview_projection_before.fov);
+        assert_eq!(preview_projection_after.near, preview_projection_before.near);
+        assert_eq!(preview_projection_after.far, preview_projection_before.far);
     }
 
     #[test]
