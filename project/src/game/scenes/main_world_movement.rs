@@ -4,7 +4,10 @@
 //! It establishes the bounded, generation-scoped state and schedule required
 //! by later input, send, prediction, correction, and interpolation stages.
 
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::Duration,
+};
 
 use bevy::{
     input::touch::{TouchInput, TouchPhase},
@@ -20,17 +23,24 @@ use crate::{
         ui::core::{UiInputState, UiInputSystems},
     },
     game::{
-        myserver::MyServerUpdateSet,
+        myserver::{
+            GameConnectionState, MovementClientState, MyServerCommand, MyServerSession,
+            MyServerUpdateSet,
+        },
         scenes::{
             main_world_camera::{
                 MainWorldCameraOrbitState, MainWorldTouchOwner, main_world_touch_owner,
             },
             main_world_contract::{
-                MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, MainWorldAuthorityFrame,
-                MainWorldConfirmedFrame, MainWorldPredictedFrame, MainWorldRenderFrame,
-                main_world_normalized_direction,
+                MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, MAIN_WORLD_PUBLIC_ROOM_ID,
+                MainWorldAuthorityFrame, MainWorldConfirmedFrame, MainWorldMoveInputKind,
+                MainWorldPredictedFrame, MainWorldRenderFrame, main_world_normalized_direction,
+                main_world_server_position,
             },
-            main_world_entry::{MainWorldEntryPhase, MainWorldEntryState, MainWorldEntryUpdateSet},
+            main_world_entry::{
+                MainWorldEntryPhase, MainWorldEntryState, MainWorldEntryUpdateSet,
+                MainWorldRoomMembership,
+            },
         },
     },
 };
@@ -127,6 +137,73 @@ impl MainWorldMovementInputRuntime {
 
     fn reset_all(&mut self) {
         *self = Self::default();
+    }
+}
+
+/// Outbound movement cadence and deduplication state. This is separate from
+/// prediction so stage 4 can submit legal client state without claiming that
+/// the rendered transform is authoritative.
+#[derive(Resource)]
+struct MainWorldMovementDispatchRuntime {
+    timer: Timer,
+    generation: u64,
+    session_id: Option<SceneSessionId>,
+    last_dispatched_frame: MainWorldAuthorityFrame,
+    observed_stop_sequence: u64,
+}
+
+impl Default for MainWorldMovementDispatchRuntime {
+    fn default() -> Self {
+        Self {
+            timer: Timer::new(
+                Duration::from_secs(1) / MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
+                TimerMode::Repeating,
+            ),
+            generation: 0,
+            session_id: None,
+            last_dispatched_frame: MainWorldAuthorityFrame::default(),
+            observed_stop_sequence: 0,
+        }
+    }
+}
+
+impl MainWorldMovementDispatchRuntime {
+    fn bind(
+        &mut self,
+        entry: &MainWorldEntryState,
+        movement: &MainWorldMovementRuntime,
+        intent: &MainWorldMovementIntent,
+    ) {
+        if self.generation == movement.generation && self.session_id == movement.session_id {
+            return;
+        }
+
+        self.timer.reset();
+        self.generation = movement.generation;
+        self.session_id = movement.session_id.clone();
+        self.last_dispatched_frame =
+            MainWorldAuthorityFrame(movement.predicted.frame.0.max(entry.snapshot_generation));
+        self.observed_stop_sequence = intent.stop_sequence;
+    }
+
+    fn observe_closed_gate(&mut self, intent: &MainWorldMovementIntent) {
+        self.timer.reset();
+        self.observed_stop_sequence = intent.stop_sequence;
+    }
+
+    fn next_frame(
+        &mut self,
+        entry: &MainWorldEntryState,
+        movement: &MainWorldMovementRuntime,
+    ) -> MainWorldPredictedFrame {
+        let baseline = self
+            .last_dispatched_frame
+            .0
+            .max(entry.snapshot_generation)
+            .max(movement.predicted.frame.0);
+        let frame = baseline.wrapping_add(1).max(1);
+        self.last_dispatched_frame = MainWorldAuthorityFrame(frame);
+        MainWorldPredictedFrame(frame)
     }
 }
 
@@ -254,11 +331,19 @@ impl MainWorldMovementRuntime {
         !self.input_frozen && self.session_id.is_some()
     }
 
-    pub fn bind_active_session(&mut self, generation: u64, session_id: SceneSessionId) {
+    pub fn bind_active_session(
+        &mut self,
+        generation: u64,
+        session_id: SceneSessionId,
+        authoritative_position: Option<Vec3>,
+        authority_frame: MainWorldAuthorityFrame,
+    ) {
         if self.generation != generation || self.session_id.as_ref() != Some(&session_id) {
             self.clear();
             self.generation = generation;
             self.session_id = Some(session_id);
+            self.predicted.position = authoritative_position.unwrap_or_default();
+            self.predicted.frame = MainWorldPredictedFrame(authority_frame.0);
         }
         self.input_frozen = false;
     }
@@ -301,6 +386,7 @@ impl Plugin for MainWorldMovementPlugin {
         app.init_resource::<MainWorldMovementIntent>()
             .init_resource::<MainWorldMovementRuntime>()
             .init_resource::<MainWorldMovementInputRuntime>()
+            .init_resource::<MainWorldMovementDispatchRuntime>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(
                 MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
             )))
@@ -308,6 +394,7 @@ impl Plugin for MainWorldMovementPlugin {
             .add_message::<TouchInput>()
             .add_message::<WindowFocused>()
             .add_message::<AppLifecycle>()
+            .add_message::<MyServerCommand>()
             .configure_sets(
                 Update,
                 (
@@ -333,6 +420,8 @@ impl Plugin for MainWorldMovementPlugin {
                     collect_main_world_movement_intent
                         .after(UiInputSystems::Update)
                         .in_set(MainWorldMovementUpdateSet::CollectIntent),
+                    dispatch_main_world_move_input
+                        .in_set(MainWorldMovementUpdateSet::DispatchInput),
                 ),
             )
             .add_systems(
@@ -370,7 +459,12 @@ fn sync_main_world_movement_lifecycle(
     };
 
     if entry.phase == MainWorldEntryPhase::Active && !entry.input_frozen {
-        runtime.bind_active_session(entry.generation, session_id);
+        runtime.bind_active_session(
+            entry.generation,
+            session_id,
+            entry.position,
+            MainWorldAuthorityFrame(entry.snapshot_generation),
+        );
         return;
     }
 
@@ -463,6 +557,105 @@ fn collect_main_world_movement_intent(
     let camera = camera_orbit.as_deref().cloned().unwrap_or_default();
     let world_direction = main_world_camera_relative_direction(local_axis, camera.yaw_radians);
     intent.set_direction(world_direction);
+}
+
+/// Emits the existing binary `MoveInputReq` command at the frozen 20 Hz
+/// authority cadence. This stage writes neither transforms nor prediction
+/// history; stage 5 supplies the actual fixed-step position advance.
+fn dispatch_main_world_move_input(
+    time: Res<Time>,
+    entry: Option<Res<MainWorldEntryState>>,
+    session: Option<Res<MyServerSession>>,
+    intent: Res<MainWorldMovementIntent>,
+    mut movement: ResMut<MainWorldMovementRuntime>,
+    mut dispatch: ResMut<MainWorldMovementDispatchRuntime>,
+    mut commands: MessageWriter<MyServerCommand>,
+) {
+    let Some(entry) = entry else {
+        dispatch.observe_closed_gate(&intent);
+        return;
+    };
+    let Some(session) = session else {
+        dispatch.observe_closed_gate(&intent);
+        return;
+    };
+    if !main_world_movement_send_gate(&entry, &movement, &session) {
+        dispatch.observe_closed_gate(&intent);
+        return;
+    }
+
+    dispatch.bind(&entry, &movement, &intent);
+    if !dispatch.timer.tick(time.delta()).just_finished() {
+        return;
+    }
+
+    let kind = if intent.active {
+        MainWorldMoveInputKind::MoveDirection
+    } else if intent.stop_sequence != dispatch.observed_stop_sequence {
+        MainWorldMoveInputKind::MoveStop
+    } else {
+        return;
+    };
+    let direction = match kind {
+        MainWorldMoveInputKind::MoveDirection => {
+            let Ok(direction) = main_world_normalized_direction(intent.direction) else {
+                return;
+            };
+            direction
+        }
+        MainWorldMoveInputKind::MoveStop => Vec2::ZERO,
+    };
+    let Ok(server_position) = main_world_server_position(movement.predicted.position) else {
+        return;
+    };
+
+    let frame = dispatch.next_frame(&entry, &movement);
+    movement.predicted.frame = frame;
+    let input_type = match kind {
+        MainWorldMoveInputKind::MoveDirection => {
+            crate::game::myserver::protocol::pb::MoveInputType::MoveDir
+        }
+        MainWorldMoveInputKind::MoveStop => {
+            crate::game::myserver::protocol::pb::MoveInputType::MoveStop
+        }
+    };
+    commands.write(MyServerCommand::SendMoveInput {
+        frame_id: frame.0,
+        input_type,
+        dir_x: direction.x,
+        dir_y: direction.y,
+        client_state: Some(MovementClientState {
+            x: server_position.x,
+            y: server_position.y,
+            frame_id: frame.0,
+        }),
+    });
+    if kind == MainWorldMoveInputKind::MoveStop {
+        dispatch.observed_stop_sequence = intent.stop_sequence;
+    }
+}
+
+/// Validates the exact entry/session ownership boundary before a move request
+/// can leave the client. A valid keyboard or touch intent alone is never
+/// sufficient to send to a stale room, character, generation, or connection.
+fn main_world_movement_send_gate(
+    entry: &MainWorldEntryState,
+    movement: &MainWorldMovementRuntime,
+    session: &MyServerSession,
+) -> bool {
+    entry.allows_gameplay_input()
+        && movement.allows_local_movement()
+        && movement.generation == entry.generation
+        && movement.session_id == entry.scene_session_id
+        && entry.room_membership == MainWorldRoomMembership::Joined
+        && entry.room_id.as_deref() == Some(MAIN_WORLD_PUBLIC_ROOM_ID)
+        && session.room_id.as_deref() == Some(MAIN_WORLD_PUBLIC_ROOM_ID)
+        && entry.character_id.is_some()
+        && entry.character_id == session.character_id
+        && session.connection_id.is_some()
+        && session.connected
+        && session.authenticated
+        && session.game_connection_state == GameConnectionState::Authenticated
 }
 
 fn keyboard_movement_axis(keyboard: &ButtonInput<KeyCode>) -> Vec2 {
@@ -574,6 +767,10 @@ fn advance_main_world_render_frame(mut runtime: ResMut<MainWorldMovementRuntime>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{framework::network::ConnectionId, game::myserver::protocol::pb};
+    use bevy::ecs::message::{MessageCursor, Messages};
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
 
     fn active_entry(generation: u64, session_id: &str) -> MainWorldEntryState {
         MainWorldEntryState {
@@ -585,15 +782,45 @@ mod tests {
         }
     }
 
+    fn networked_entry(generation: u64, session_id: &str) -> MainWorldEntryState {
+        MainWorldEntryState {
+            character_id: Some("chr-local".to_owned()),
+            room_id: Some(MAIN_WORLD_PUBLIC_ROOM_ID.to_owned()),
+            room_membership: MainWorldRoomMembership::Joined,
+            position: Some(Vec3::new(1.25, 0.0, -2.5)),
+            snapshot_generation: 41,
+            ..active_entry(generation, session_id)
+        }
+    }
+
+    fn connected_main_world_session() -> MyServerSession {
+        MyServerSession {
+            character_id: Some("chr-local".to_owned()),
+            room_id: Some(MAIN_WORLD_PUBLIC_ROOM_ID.to_owned()),
+            connection_id: Some(ConnectionId::from_raw(41)),
+            connected: true,
+            authenticated: true,
+            game_connection_state: GameConnectionState::Authenticated,
+            ..Default::default()
+        }
+    }
+
     fn movement_app(entry: MainWorldEntryState) -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(entry)
-            .add_plugins(MainWorldMovementPlugin);
+            .add_plugins(MainWorldMovementPlugin)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
         let window = app
             .world_mut()
             .spawn((PrimaryWindow, Window::default()))
             .id();
+        (app, window)
+    }
+
+    fn networked_movement_app() -> (App, Entity) {
+        let (mut app, window) = movement_app(networked_entry(7, "main-world-7"));
+        app.insert_resource(connected_main_world_session());
         (app, window)
     }
 
@@ -628,6 +855,39 @@ mod tests {
             actual.distance(expected) < 0.0001,
             "expected {expected:?}, got {actual:?}"
         );
+    }
+
+    fn advance_update(app: &mut App, duration: Duration) {
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(duration));
+        app.update();
+        assert_eq!(app.world().resource::<Time>().delta(), duration);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    }
+
+    fn read_new_move_commands(
+        app: &App,
+        cursor: &mut MessageCursor<MyServerCommand>,
+    ) -> Vec<MyServerCommand> {
+        cursor
+            .read(app.world().resource::<Messages<MyServerCommand>>())
+            .filter(|command| matches!(command, MyServerCommand::SendMoveInput { .. }))
+            .cloned()
+            .collect()
+    }
+
+    fn move_command_details(
+        command: &MyServerCommand,
+    ) -> (u32, pb::MoveInputType, f32, f32, MovementClientState) {
+        match command {
+            MyServerCommand::SendMoveInput {
+                frame_id,
+                input_type,
+                dir_x,
+                dir_y,
+                client_state: Some(client_state),
+            } => (*frame_id, *input_type, *dir_x, *dir_y, *client_state),
+            unexpected => panic!("expected SendMoveInput with client state, got {unexpected:?}"),
+        }
     }
 
     fn input(frame: u32) -> MainWorldUnconfirmedInput {
@@ -1045,5 +1305,149 @@ mod tests {
         app.update();
         assert!(!intent(&app).active);
         assert_eq!(intent(&app).stop_sequence, 4);
+    }
+
+    #[test]
+    fn move_dispatch_uses_20_hz_continuous_frames_and_server_coordinates() {
+        let (mut app, _) = networked_movement_app();
+        let mut cursor = MessageCursor::<MyServerCommand>::default();
+        app.update();
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+        assert!(read_new_move_commands(&app, &mut cursor).is_empty());
+
+        advance_update(&mut app, Duration::from_millis(49));
+        assert!(read_new_move_commands(&app, &mut cursor).is_empty());
+        advance_update(&mut app, Duration::from_millis(1));
+        let commands = read_new_move_commands(&app, &mut cursor);
+        assert_eq!(commands.len(), 1);
+        let (frame, input_type, dir_x, dir_y, client_state) = move_command_details(&commands[0]);
+        assert_eq!(frame, 42);
+        assert_eq!(input_type, pb::MoveInputType::MoveDir);
+        assert_eq!(Vec2::new(dir_x, dir_y), Vec2::Y);
+        assert_eq!(client_state.frame_id, frame);
+        assert_eq!(
+            Vec2::new(client_state.x, client_state.y),
+            Vec2::new(2001.25, 1997.5)
+        );
+
+        press_key(&mut app, KeyCode::KeyD);
+        app.update();
+        advance_update(&mut app, Duration::from_millis(50));
+        let commands = read_new_move_commands(&app, &mut cursor);
+        assert_eq!(commands.len(), 1);
+        let (frame, input_type, dir_x, dir_y, client_state) = move_command_details(&commands[0]);
+        assert_eq!(frame, 43);
+        assert_eq!(input_type, pb::MoveInputType::MoveDir);
+        assert_vec2_approx_eq(Vec2::new(dir_x, dir_y), Vec2::new(1.0, 1.0).normalize());
+        assert_eq!(client_state.frame_id, frame);
+    }
+
+    #[test]
+    fn move_stop_is_deferred_to_one_authority_tick_and_not_repeated_while_idle() {
+        let (mut app, _) = networked_movement_app();
+        let mut cursor = MessageCursor::<MyServerCommand>::default();
+        app.update();
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+        advance_update(&mut app, Duration::from_millis(50));
+        let start = read_new_move_commands(&app, &mut cursor);
+        assert_eq!(start.len(), 1);
+        assert_eq!(
+            move_command_details(&start[0]).1,
+            pb::MoveInputType::MoveDir
+        );
+
+        release_key(&mut app, KeyCode::KeyW);
+        app.update();
+        assert!(read_new_move_commands(&app, &mut cursor).is_empty());
+        advance_update(&mut app, Duration::from_millis(50));
+        let stop = read_new_move_commands(&app, &mut cursor);
+        assert_eq!(stop.len(), 1);
+        let (frame, input_type, dir_x, dir_y, client_state) = move_command_details(&stop[0]);
+        assert_eq!(frame, 43);
+        assert_eq!(input_type, pb::MoveInputType::MoveStop);
+        assert_eq!(Vec2::new(dir_x, dir_y), Vec2::ZERO);
+        assert_eq!(client_state.frame_id, frame);
+
+        advance_update(&mut app, Duration::from_millis(200));
+        assert!(read_new_move_commands(&app, &mut cursor).is_empty());
+    }
+
+    #[test]
+    fn move_dispatch_rejects_stale_entry_room_character_and_connection_states() {
+        let entry = networked_entry(7, "main-world-7");
+        let mut runtime = MainWorldMovementRuntime::default();
+        runtime.bind_active_session(
+            entry.generation,
+            entry.scene_session_id.clone().unwrap(),
+            entry.position,
+            MainWorldAuthorityFrame(entry.snapshot_generation),
+        );
+        let session = connected_main_world_session();
+        assert!(main_world_movement_send_gate(&entry, &runtime, &session));
+
+        let mut frozen_entry = entry.clone();
+        frozen_entry.input_frozen = true;
+        assert!(!main_world_movement_send_gate(
+            &frozen_entry,
+            &runtime,
+            &session
+        ));
+
+        let mut wrong_room = entry.clone();
+        wrong_room.room_id = Some("another-room".to_owned());
+        assert!(!main_world_movement_send_gate(
+            &wrong_room,
+            &runtime,
+            &session
+        ));
+
+        let mut stale_generation = entry.clone();
+        stale_generation.generation += 1;
+        assert!(!main_world_movement_send_gate(
+            &stale_generation,
+            &runtime,
+            &session
+        ));
+
+        let mut wrong_character = connected_main_world_session();
+        wrong_character.character_id = Some("chr-other".to_owned());
+        assert!(!main_world_movement_send_gate(
+            &entry,
+            &runtime,
+            &wrong_character
+        ));
+
+        let mut unavailable = connected_main_world_session();
+        unavailable.connected = false;
+        assert!(!main_world_movement_send_gate(
+            &entry,
+            &runtime,
+            &unavailable
+        ));
+    }
+
+    #[test]
+    fn connection_loss_sends_nothing_resets_the_timer_and_preserves_next_frame_order() {
+        let (mut app, _) = networked_movement_app();
+        let mut cursor = MessageCursor::<MyServerCommand>::default();
+        app.update();
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+        app.world_mut().resource_mut::<MyServerSession>().connected = false;
+        advance_update(&mut app, Duration::from_millis(80));
+        assert!(read_new_move_commands(&app, &mut cursor).is_empty());
+
+        app.world_mut().resource_mut::<MyServerSession>().connected = true;
+        advance_update(&mut app, Duration::from_millis(49));
+        assert!(read_new_move_commands(&app, &mut cursor).is_empty());
+        advance_update(&mut app, Duration::from_millis(1));
+        let commands = read_new_move_commands(&app, &mut cursor);
+        assert_eq!(commands.len(), 1);
+        let (frame, input_type, _, _, client_state) = move_command_details(&commands[0]);
+        assert_eq!(frame, 42);
+        assert_eq!(input_type, pb::MoveInputType::MoveDir);
+        assert_eq!(client_state.frame_id, frame);
     }
 }
