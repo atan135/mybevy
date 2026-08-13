@@ -33,9 +33,9 @@ use crate::{
                 MainWorldCameraOrbitState, MainWorldTouchOwner, main_world_touch_owner,
             },
             main_world_contract::{
-                MAIN_WORLD_AUTHORITY_TICK_SECONDS, MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
-                MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND, MAIN_WORLD_PUBLIC_ROOM_ID,
-                MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES,
+                MAIN_WORLD_AUTHORITY_CONTRACT, MAIN_WORLD_AUTHORITY_TICK_SECONDS,
+                MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND,
+                MAIN_WORLD_PUBLIC_ROOM_ID, MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES,
                 MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES, MainWorldAuthorityFrame,
                 MainWorldConfirmedFrame, MainWorldMoveInputKind, MainWorldPredictedFrame,
                 MainWorldRenderFrame, main_world_bevy_position_from_authority,
@@ -542,6 +542,7 @@ impl Plugin for MainWorldMovementPlugin {
                 (
                     (
                         sync_main_world_movement_lifecycle,
+                        consume_main_world_movement_rejects,
                         consume_main_world_local_authority_snapshots,
                         consume_main_world_remote_authority_snapshots,
                     )
@@ -648,7 +649,9 @@ fn consume_main_world_local_authority_snapshots(
         || (entry.reconnect_requested
             && matches!(
                 entry.phase,
-                MainWorldEntryPhase::WaitingSceneReady | MainWorldEntryPhase::Active
+                MainWorldEntryPhase::Recovering
+                    | MainWorldEntryPhase::WaitingSceneReady
+                    | MainWorldEntryPhase::Active
             )))
         || runtime.generation != entry.generation
         || runtime.session_id.as_ref() != Some(session_id)
@@ -718,6 +721,147 @@ fn consume_main_world_local_authority_snapshots(
     }
 }
 
+/// Applies a server rejection only to the currently bound local character.
+/// Rejects are intentionally stricter than broadcast snapshots because a
+/// stale reject must never rewind a newer prediction generation.
+fn consume_main_world_movement_rejects(
+    mut events: MessageReader<MyServerEvent>,
+    fixed_time: Res<Time<Fixed>>,
+    entry: Option<Res<MainWorldEntryState>>,
+    mut intent: ResMut<MainWorldMovementIntent>,
+    mut runtime: ResMut<MainWorldMovementRuntime>,
+) {
+    let Some(entry) = entry else {
+        return;
+    };
+    let Some(character_id) = entry.character_id.as_deref() else {
+        return;
+    };
+    let Some(session_id) = entry.scene_session_id.as_ref() else {
+        return;
+    };
+    if !(entry.allows_gameplay_input()
+        || (entry.reconnect_requested
+            && matches!(
+                entry.phase,
+                MainWorldEntryPhase::WaitingSceneReady | MainWorldEntryPhase::Active
+            )))
+        || runtime.generation != entry.generation
+        || runtime.session_id.as_ref() != Some(session_id)
+    {
+        return;
+    }
+
+    for event in events.read() {
+        let MyServerEvent::MovementRejectPush(reject) = event else {
+            continue;
+        };
+        if reject.room_id != MAIN_WORLD_PUBLIC_ROOM_ID || reject.character_id != character_id {
+            continue;
+        }
+        if reject.frame_id != 0
+            && runtime
+                .last_applied_authority_frame
+                .is_some_and(|frame| reject.frame_id < frame.0)
+        {
+            continue;
+        }
+        let reference_frame = reject.reference_frame_id;
+        let known_frame = runtime.predicted.frame.0.max(
+            runtime
+                .unconfirmed_inputs
+                .back()
+                .map_or(0, |input| input.frame.0),
+        );
+        if reference_frame != 0
+            && reference_frame > known_frame
+            && runtime
+                .last_applied_authority_frame
+                .is_none_or(|frame| reference_frame > frame.0)
+        {
+            continue;
+        }
+        let Some(corrected) = reject.corrected.as_ref() else {
+            continue;
+        };
+        if corrected.character_id != character_id
+            || !MAIN_WORLD_AUTHORITY_CONTRACT.is_authoritative_entity_scene(corrected.scene_id)
+        {
+            continue;
+        }
+        let Ok(position) =
+            main_world_bevy_position_from_authority(corrected.scene_id, corrected.x, corrected.y)
+        else {
+            continue;
+        };
+        let raw_direction = Vec2::new(corrected.dir_x, corrected.dir_y);
+        let direction_valid =
+            raw_direction.is_finite() && raw_direction.length_squared() > f32::EPSILON;
+        let direction = if direction_valid {
+            raw_direction.normalize()
+        } else {
+            Vec2::ZERO
+        };
+        let confirmed_frame =
+            MainWorldConfirmedFrame(corrected.last_input_frame.max(reference_frame));
+        reconcile_main_world_local_authority(
+            &mut runtime,
+            MainWorldLocalAuthoritySnapshot {
+                frame: MainWorldAuthorityFrame(reject.frame_id),
+                confirmed_frame,
+                server_entity_id: corrected.entity_id,
+                scene_id: corrected.scene_id,
+                position,
+                direction,
+                moving: corrected.moving && direction_valid,
+                force_rebase: true,
+            },
+            fixed_time.overstep_fraction(),
+        );
+
+        let reason = pb::MovementCorrectionReason::try_from(reject.reason_code).ok();
+        let error_code = reject.error_code.to_ascii_uppercase();
+        let stop_prediction = !direction_valid
+            || matches!(
+                reason,
+                Some(
+                    pb::MovementCorrectionReason::CollisionBlocked
+                        | pb::MovementCorrectionReason::ControlTimeout
+                        | pb::MovementCorrectionReason::MovementRejected
+                )
+            )
+            || [
+                "INVALID_DIRECTION",
+                "OUT_OF_BOUNDS",
+                "BOUNDARY",
+                "COLLISION",
+                "TIMEOUT",
+            ]
+            .iter()
+            .any(|marker| error_code.contains(marker));
+        if stop_prediction {
+            runtime.unconfirmed_inputs.clear();
+            runtime.pending_prediction.clear();
+            runtime.predicted = MainWorldPredictedState {
+                frame: MainWorldPredictedFrame(confirmed_frame.0),
+                position,
+                direction,
+                moving: false,
+            };
+            runtime.predicted_previous = runtime.predicted;
+            intent.request_stop();
+        }
+        debug!(
+            room_id = %reject.room_id,
+            character_id = %reject.character_id,
+            frame_id = reject.frame_id,
+            reference_frame_id = reject.reference_frame_id,
+            reason_code = reject.reason_code,
+            "main world movement reject applied"
+        );
+    }
+}
+
 fn consume_main_world_remote_authority_snapshots(
     mut events: MessageReader<MyServerEvent>,
     entry: Option<Res<MainWorldEntryState>>,
@@ -732,7 +876,14 @@ fn consume_main_world_remote_authority_snapshots(
     let Some(local_character_id) = entry.character_id.as_deref() else {
         return;
     };
-    if !entry.allows_gameplay_input()
+    if !(entry.allows_gameplay_input()
+        || (entry.reconnect_requested
+            && matches!(
+                entry.phase,
+                MainWorldEntryPhase::Recovering
+                    | MainWorldEntryPhase::WaitingSceneReady
+                    | MainWorldEntryPhase::Active
+            )))
         || runtime.generation != entry.generation
         || runtime.session_id.as_ref() != Some(session_id)
     {
@@ -744,6 +895,14 @@ fn consume_main_world_remote_authority_snapshots(
         };
         if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
             continue;
+        }
+        let recovery_sync = push.full_sync
+            || matches!(
+                pb_correction_kind(push.correction_kind),
+                Some(pb::MovementCorrectionKind::Recovery)
+            );
+        if recovery_sync {
+            runtime.remote_interpolation.clear();
         }
         for entity in &push.entities {
             if entity.character_id == local_character_id
@@ -1616,6 +1775,40 @@ mod tests {
         })
     }
 
+    fn movement_reject_event(
+        room_id: &str,
+        character_id: &str,
+        frame: u32,
+        reference_frame: u32,
+        scene_id: i32,
+        reason: pb::MovementCorrectionReason,
+        dir_x: f32,
+        dir_y: f32,
+    ) -> MyServerEvent {
+        MyServerEvent::MovementRejectPush(pb::MovementRejectPush {
+            room_id: room_id.to_owned(),
+            frame_id: frame,
+            character_id: character_id.to_owned(),
+            reference_frame_id: reference_frame,
+            reason_code: reason as i32,
+            error_code: "MOVEMENT_REJECTED".to_owned(),
+            corrected: Some(pb::EntityTransform {
+                entity_id: 7,
+                character_id: character_id.to_owned(),
+                scene_id,
+                x: 2002.0,
+                y: 2003.0,
+                dir_x,
+                dir_y,
+                moving: true,
+                last_input_frame: reference_frame,
+                ..default()
+            }),
+            correction_kind: pb::MovementCorrectionKind::Strong as i32,
+            ..default()
+        })
+    }
+
     #[test]
     fn remote_snapshot_events_interpolate_with_delay_preserve_heading_and_clear_on_full_sync() {
         let (mut app, _) = networked_movement_app();
@@ -2155,6 +2348,204 @@ mod tests {
                 .unconfirmed_inputs
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn movement_reject_applies_corrected_baseline_and_stops_invalid_prediction() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        seed_authority_history(&mut app);
+        let baseline = app
+            .world()
+            .resource::<MainWorldMovementRuntime>()
+            .authority_baseline;
+
+        // Wrong room, character, scene and future reference frame are all
+        // ignored and leave the prediction baseline untouched.
+        for event in [
+            movement_reject_event(
+                "other-room",
+                "chr-local",
+                60,
+                42,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                pb::MovementCorrectionReason::CollisionBlocked,
+                1.0,
+                0.0,
+            ),
+            movement_reject_event(
+                MAIN_WORLD_PUBLIC_ROOM_ID,
+                "other-character",
+                60,
+                42,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                pb::MovementCorrectionReason::CollisionBlocked,
+                1.0,
+                0.0,
+            ),
+            movement_reject_event(
+                MAIN_WORLD_PUBLIC_ROOM_ID,
+                "chr-local",
+                60,
+                42,
+                MAIN_WORLD_SERVER_SCENE_ID + 1,
+                pb::MovementCorrectionReason::CollisionBlocked,
+                1.0,
+                0.0,
+            ),
+            movement_reject_event(
+                MAIN_WORLD_PUBLIC_ROOM_ID,
+                "chr-local",
+                60,
+                999,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                pb::MovementCorrectionReason::CollisionBlocked,
+                1.0,
+                0.0,
+            ),
+        ] {
+            app.world_mut().write_message(event);
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<MainWorldMovementRuntime>()
+                    .authority_baseline,
+                baseline
+            );
+        }
+
+        app.world_mut().write_message(movement_reject_event(
+            MAIN_WORLD_PUBLIC_ROOM_ID,
+            "chr-local",
+            60,
+            42,
+            MAIN_WORLD_SERVER_SCENE_ID,
+            pb::MovementCorrectionReason::CollisionBlocked,
+            f32::NAN,
+            0.0,
+        ));
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime.predicted.position, Vec3::new(2.0, 0.0, 3.0));
+        assert!(runtime.unconfirmed_inputs.is_empty());
+        assert!(runtime.pending_prediction.is_empty());
+        assert!(!app.world().resource::<MainWorldMovementIntent>().active);
+    }
+
+    #[test]
+    fn late_movement_reject_cannot_rewind_a_newer_authority_snapshot() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        seed_authority_history(&mut app);
+        app.world_mut().write_message(local_snapshot(
+            MAIN_WORLD_PUBLIC_ROOM_ID,
+            100,
+            "chr-local",
+            7,
+            MAIN_WORLD_SERVER_SCENE_ID,
+            2008.0,
+            2009.0,
+            41,
+        ));
+        app.update();
+        {
+            let mut intent = app.world_mut().resource_mut::<MainWorldMovementIntent>();
+            intent.active = true;
+            intent.direction = Vec2::X;
+            intent.stop_sequence = 7;
+        }
+        // Let input collection settle this synthetic active intent before the
+        // reject is injected, so the assertion observes only reject effects.
+        app.update();
+        let runtime_before = app.world().resource::<MainWorldMovementRuntime>();
+        let baseline_before = runtime_before.authority_baseline;
+        let predicted_before = runtime_before.predicted;
+        let history_before = runtime_before.unconfirmed_inputs.clone();
+        let pending_len_before = runtime_before.pending_prediction.len();
+        let stop_sequence_before = app
+            .world()
+            .resource::<MainWorldMovementIntent>()
+            .stop_sequence;
+
+        app.world_mut().write_message(movement_reject_event(
+            MAIN_WORLD_PUBLIC_ROOM_ID,
+            "chr-local",
+            50,
+            42,
+            MAIN_WORLD_SERVER_SCENE_ID,
+            pb::MovementCorrectionReason::CollisionBlocked,
+            f32::NAN,
+            0.0,
+        ));
+        app.update();
+
+        let runtime_after = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime_after.authority_baseline, baseline_before);
+        assert_eq!(runtime_after.predicted, predicted_before);
+        assert_eq!(runtime_after.unconfirmed_inputs, history_before);
+        assert_eq!(runtime_after.pending_prediction.len(), pending_len_before);
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldMovementIntent>()
+                .stop_sequence,
+            stop_sequence_before
+        );
+    }
+
+    #[test]
+    fn recovery_snapshot_rebuilds_local_baseline_and_clears_remote_history() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        {
+            let mut runtime = app.world_mut().resource_mut::<MainWorldMovementRuntime>();
+            runtime
+                .remote_buffer_mut("chr-remote")
+                .push(remote_snapshot(9));
+            runtime.push_unconfirmed_input(input(42));
+        }
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = MainWorldEntryPhase::Recovering;
+            entry.input_frozen = true;
+            entry.reconnect_requested = true;
+        }
+        app.world_mut().write_message({
+            let mut event = local_snapshot(
+                MAIN_WORLD_PUBLIC_ROOM_ID,
+                70,
+                "chr-local",
+                7,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2005.0,
+                2006.0,
+                70,
+            );
+            if let MyServerEvent::MovementSnapshotPush(push) = &mut event {
+                push.full_sync = true;
+                push.correction_kind = pb::MovementCorrectionKind::Recovery as i32;
+                push.entities.push(pb::EntityTransform {
+                    entity_id: 99,
+                    character_id: "chr-remote".to_owned(),
+                    scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                    x: 2004.0,
+                    y: 2005.0,
+                    dir_x: 0.0,
+                    dir_y: 1.0,
+                    moving: true,
+                    ..default()
+                });
+            }
+            event
+        });
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(
+            runtime.authority_baseline.unwrap().position,
+            Vec3::new(5.0, 0.0, 6.0)
+        );
+        assert!(runtime.remote_interpolation.contains_key("chr-remote"));
+        assert_eq!(runtime.remote_interpolation["chr-remote"].len(), 1);
+        assert!(runtime.predicted_previous == runtime.predicted);
     }
 
     #[test]
