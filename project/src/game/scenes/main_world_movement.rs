@@ -6,7 +6,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bevy::{
@@ -67,6 +67,51 @@ pub(in crate::game) const MAIN_WORLD_SMALL_CORRECTION_DISTANCE_METRES: f32 = 0.5
 /// Small authority corrections decay over a short, deterministic presentation
 /// interval while the fixed prediction baseline has already been corrected.
 pub(in crate::game) const MAIN_WORLD_SMALL_CORRECTION_SECONDS: f32 = 0.10;
+
+/// Lightweight development telemetry for the client movement pipeline. Values
+/// are wall-clock observations, not frame-budget thresholds or authority data.
+#[derive(Debug, Default, Resource)]
+pub(in crate::game) struct MainWorldMovementDiagnostics {
+    pub update_pipeline_last: Duration,
+    pub fixed_prediction_last: Duration,
+    pub presentation_pipeline_last: Duration,
+    pub update_pipeline_samples: u64,
+    pub fixed_prediction_samples: u64,
+    pub presentation_pipeline_samples: u64,
+    update_started_at: Option<Instant>,
+    presentation_started_at: Option<Instant>,
+}
+
+impl MainWorldMovementDiagnostics {
+    fn begin_update_pipeline(&mut self) {
+        self.update_started_at = Some(Instant::now());
+    }
+
+    fn finish_update_pipeline(&mut self) {
+        let Some(started_at) = self.update_started_at.take() else {
+            return;
+        };
+        self.update_pipeline_last = started_at.elapsed();
+        self.update_pipeline_samples = self.update_pipeline_samples.wrapping_add(1);
+    }
+
+    fn begin_presentation_pipeline(&mut self) {
+        self.presentation_started_at = Some(Instant::now());
+    }
+
+    fn finish_presentation_pipeline(&mut self) {
+        let Some(started_at) = self.presentation_started_at.take() else {
+            return;
+        };
+        self.presentation_pipeline_last = started_at.elapsed();
+        self.presentation_pipeline_samples = self.presentation_pipeline_samples.wrapping_add(1);
+    }
+
+    fn record_fixed_prediction(&mut self, started_at: Instant) {
+        self.fixed_prediction_last = started_at.elapsed();
+        self.fixed_prediction_samples = self.fixed_prediction_samples.wrapping_add(1);
+    }
+}
 
 /// Logical-pixel virtual-stick tuning. Values are deliberately independent of
 /// render resolution so the stick retains a stable dead zone across devices.
@@ -511,6 +556,7 @@ impl Plugin for MainWorldMovementPlugin {
             .init_resource::<MainWorldMovementRuntime>()
             .init_resource::<MainWorldMovementInputRuntime>()
             .init_resource::<MainWorldMovementDispatchRuntime>()
+            .init_resource::<MainWorldMovementDiagnostics>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(
                 MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
             )))
@@ -556,6 +602,15 @@ impl Plugin for MainWorldMovementPlugin {
                 ),
             )
             .add_systems(
+                Update,
+                (
+                    begin_main_world_movement_update_diagnostics
+                        .before(MainWorldMovementUpdateSet::ConsumeAuthority),
+                    finish_main_world_movement_update_diagnostics
+                        .after(MainWorldMovementUpdateSet::DispatchInput),
+                ),
+            )
+            .add_systems(
                 FixedUpdate,
                 predict_main_world_movement_fixed.in_set(MainWorldMovementFixedSet::Predict),
             )
@@ -569,7 +624,40 @@ impl Plugin for MainWorldMovementPlugin {
                     .chain()
                     .in_set(MainWorldMovementPostUpdateSet::WriteTransforms),
             );
+        app.add_systems(
+            PostUpdate,
+            (
+                begin_main_world_movement_presentation_diagnostics
+                    .before(MainWorldMovementPostUpdateSet::WriteTransforms),
+                finish_main_world_movement_presentation_diagnostics
+                    .after(MainWorldMovementPostUpdateSet::WriteTransforms),
+            ),
+        );
     }
+}
+
+fn begin_main_world_movement_update_diagnostics(
+    mut diagnostics: ResMut<MainWorldMovementDiagnostics>,
+) {
+    diagnostics.begin_update_pipeline();
+}
+
+fn finish_main_world_movement_update_diagnostics(
+    mut diagnostics: ResMut<MainWorldMovementDiagnostics>,
+) {
+    diagnostics.finish_update_pipeline();
+}
+
+fn begin_main_world_movement_presentation_diagnostics(
+    mut diagnostics: ResMut<MainWorldMovementDiagnostics>,
+) {
+    diagnostics.begin_presentation_pipeline();
+}
+
+fn finish_main_world_movement_presentation_diagnostics(
+    mut diagnostics: ResMut<MainWorldMovementDiagnostics>,
+) {
+    diagnostics.finish_presentation_pipeline();
 }
 
 /// Applies entry lifecycle ownership before later movement stages inspect any
@@ -1427,8 +1515,11 @@ pub(in crate::game) fn main_world_virtual_joystick_axis(displacement: Vec2) -> V
 fn predict_main_world_movement_fixed(
     entry: Option<Res<MainWorldEntryState>>,
     mut runtime: ResMut<MainWorldMovementRuntime>,
+    mut diagnostics: ResMut<MainWorldMovementDiagnostics>,
 ) {
+    let started_at = Instant::now();
     let Some(entry) = entry else {
+        diagnostics.record_fixed_prediction(started_at);
         return;
     };
     if !entry.allows_gameplay_input()
@@ -1436,14 +1527,17 @@ fn predict_main_world_movement_fixed(
         || runtime.session_id != entry.scene_session_id
         || !runtime.allows_local_movement()
     {
+        diagnostics.record_fixed_prediction(started_at);
         return;
     }
     let Some(pending) = runtime.pending_prediction.pop_front() else {
+        diagnostics.record_fixed_prediction(started_at);
         return;
     };
 
     runtime.predicted_previous = runtime.predicted;
     runtime.predicted = pending.input.predicted_after;
+    diagnostics.record_fixed_prediction(started_at);
 }
 
 fn main_world_predicted_after_input(
@@ -1890,6 +1984,86 @@ mod tests {
                 .resource::<MainWorldMovementRuntime>()
                 .remote_interpolation
                 .contains_key("chr-remote")
+        );
+    }
+
+    #[test]
+    fn shared_snapshot_fixture_drives_local_correction_and_remote_visual_path() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let session_id = SceneSessionId::from("main-world-7");
+        let local = app
+            .world_mut()
+            .spawn((
+                MainWorldPlayer {
+                    character_id: "chr-local".to_owned(),
+                    server_entity_id: 7,
+                    ownership: MainWorldPlayerOwnership::Local,
+                    scene_session_id: session_id.clone(),
+                    last_authoritative_frame: 0,
+                },
+                FangyuanPlayerPosition::default(),
+                FangyuanObjectState::default(),
+                Transform::default(),
+            ))
+            .id();
+        let remote = app
+            .world_mut()
+            .spawn((
+                MainWorldPlayer {
+                    character_id: "chr-remote".to_owned(),
+                    server_entity_id: 99,
+                    ownership: MainWorldPlayerOwnership::Remote,
+                    scene_session_id: session_id,
+                    last_authoritative_frame: 0,
+                },
+                FangyuanPlayerPosition::default(),
+                FangyuanObjectState::default(),
+                Transform::default(),
+            ))
+            .id();
+        app.world_mut().write_message(remote_snapshot_push(
+            50,
+            vec![
+                (
+                    "chr-local",
+                    7,
+                    MAIN_WORLD_SERVER_SCENE_ID,
+                    2001.0,
+                    2002.0,
+                    true,
+                    0.0,
+                    1.0,
+                ),
+                (
+                    "chr-remote",
+                    99,
+                    MAIN_WORLD_SERVER_SCENE_ID,
+                    2003.0,
+                    2004.0,
+                    true,
+                    1.0,
+                    0.0,
+                ),
+            ],
+            true,
+            pb::MovementCorrectionKind::FullSync,
+        ));
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(
+            runtime.authority_baseline.unwrap().position,
+            Vec3::new(1.0, 0.0, 2.0)
+        );
+        assert_eq!(runtime.remote_interpolation["chr-remote"].len(), 1);
+        assert_eq!(
+            app.world().get::<Transform>(local).unwrap().translation,
+            Vec3::new(1.0, 0.0, 2.0)
+        );
+        assert_eq!(
+            app.world().get::<Transform>(remote).unwrap().translation,
+            Vec3::new(3.0, 0.0, 4.0)
         );
     }
 
@@ -2710,6 +2884,23 @@ mod tests {
         assert_eq!(runtime.render_frame, MainWorldRenderFrame(0));
         assert_eq!(MAIN_WORLD_PREDICTION_HISTORY_CAPACITY, 100);
         assert_eq!(MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY, 40);
+    }
+
+    #[test]
+    fn movement_diagnostics_record_update_fixed_and_presentation_samples() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            50,
+        )));
+        app.update();
+        let diagnostics = app.world().resource::<MainWorldMovementDiagnostics>();
+        assert!(diagnostics.update_pipeline_samples >= 2);
+        assert!(diagnostics.fixed_prediction_samples >= 1);
+        assert!(diagnostics.presentation_pipeline_samples >= 2);
+        assert!(diagnostics.update_pipeline_last < Duration::from_secs(1));
+        assert!(diagnostics.fixed_prediction_last < Duration::from_secs(1));
+        assert!(diagnostics.presentation_pipeline_last < Duration::from_secs(1));
     }
 
     #[test]
