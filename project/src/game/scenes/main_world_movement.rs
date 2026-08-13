@@ -1,8 +1,8 @@
 //! Client movement runtime boundary for the public main world.
 //!
-//! This module owns no scene entry policy and does not yet simulate movement.
-//! It establishes the bounded, generation-scoped state and schedule required
-//! by later input, send, prediction, correction, and interpolation stages.
+//! This module owns no scene entry policy. It provides the bounded,
+//! generation-scoped input, fixed local-prediction, and presentation schedule
+//! required before later authority correction and remote interpolation stages.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -19,6 +19,7 @@ use bevy::{
 
 use crate::{
     framework::{
+        fangyuan::{FangyuanObjectState, FangyuanPlayerPosition},
         scene::prelude::SceneSessionId,
         ui::core::{UiInputState, UiInputSystems},
     },
@@ -32,15 +33,18 @@ use crate::{
                 MainWorldCameraOrbitState, MainWorldTouchOwner, main_world_touch_owner,
             },
             main_world_contract::{
-                MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, MAIN_WORLD_PUBLIC_ROOM_ID,
-                MainWorldAuthorityFrame, MainWorldConfirmedFrame, MainWorldMoveInputKind,
-                MainWorldPredictedFrame, MainWorldRenderFrame, main_world_normalized_direction,
-                main_world_server_position,
+                MAIN_WORLD_AUTHORITY_TICK_SECONDS, MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
+                MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND, MAIN_WORLD_PUBLIC_ROOM_ID,
+                MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES,
+                MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES, MainWorldAuthorityFrame,
+                MainWorldConfirmedFrame, MainWorldMoveInputKind, MainWorldPredictedFrame,
+                MainWorldRenderFrame, main_world_normalized_direction, main_world_server_position,
             },
             main_world_entry::{
                 MainWorldEntryPhase, MainWorldEntryState, MainWorldEntryUpdateSet,
                 MainWorldRoomMembership,
             },
+            main_world_players::{MainWorldPlayer, MainWorldPlayerOwnership},
         },
     },
 };
@@ -152,6 +156,11 @@ struct MainWorldMovementDispatchRuntime {
     observed_stop_sequence: u64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MainWorldPendingPrediction {
+    input: MainWorldUnconfirmedInput,
+}
+
 impl Default for MainWorldMovementDispatchRuntime {
     fn default() -> Self {
         Self {
@@ -223,6 +232,7 @@ pub(in crate::game) struct MainWorldUnconfirmedInput {
     pub direction: Vec2,
     pub predicted_before: MainWorldPredictedState,
     pub predicted_after: MainWorldPredictedState,
+    pub confirmed: bool,
 }
 
 /// Last accepted server state for the local character. Later correction code
@@ -306,6 +316,8 @@ pub(in crate::game) struct MainWorldMovementRuntime {
     pub input_frozen: bool,
     pub render_frame: MainWorldRenderFrame,
     pub predicted: MainWorldPredictedState,
+    predicted_previous: MainWorldPredictedState,
+    pending_prediction: VecDeque<MainWorldPendingPrediction>,
     pub authority_baseline: Option<MainWorldAuthorityBaseline>,
     pub unconfirmed_inputs: VecDeque<MainWorldUnconfirmedInput>,
     pub remote_interpolation: HashMap<String, MainWorldRemoteInterpolationBuffer>,
@@ -319,6 +331,8 @@ impl Default for MainWorldMovementRuntime {
             input_frozen: true,
             render_frame: MainWorldRenderFrame::default(),
             predicted: MainWorldPredictedState::default(),
+            predicted_previous: MainWorldPredictedState::default(),
+            pending_prediction: VecDeque::new(),
             authority_baseline: None,
             unconfirmed_inputs: VecDeque::new(),
             remote_interpolation: HashMap::new(),
@@ -344,6 +358,7 @@ impl MainWorldMovementRuntime {
             self.session_id = Some(session_id);
             self.predicted.position = authoritative_position.unwrap_or_default();
             self.predicted.frame = MainWorldPredictedFrame(authority_frame.0);
+            self.predicted_previous = self.predicted;
         }
         self.input_frozen = false;
     }
@@ -357,6 +372,8 @@ impl MainWorldMovementRuntime {
         self.session_id = None;
         self.render_frame = MainWorldRenderFrame::default();
         self.predicted = MainWorldPredictedState::default();
+        self.predicted_previous = MainWorldPredictedState::default();
+        self.pending_prediction.clear();
         self.authority_baseline = None;
         self.unconfirmed_inputs.clear();
         self.remote_interpolation.clear();
@@ -367,6 +384,11 @@ impl MainWorldMovementRuntime {
         if self.unconfirmed_inputs.len() > MAIN_WORLD_PREDICTION_HISTORY_CAPACITY {
             self.unconfirmed_inputs.pop_front();
         }
+    }
+
+    fn queue_prediction(&mut self, input: MainWorldUnconfirmedInput) {
+        self.pending_prediction
+            .push_back(MainWorldPendingPrediction { input });
     }
 
     pub fn remote_buffer_mut(
@@ -426,11 +448,15 @@ impl Plugin for MainWorldMovementPlugin {
             )
             .add_systems(
                 FixedUpdate,
-                maintain_main_world_movement_fixed_gate.in_set(MainWorldMovementFixedSet::Predict),
+                predict_main_world_movement_fixed.in_set(MainWorldMovementFixedSet::Predict),
             )
             .add_systems(
                 PostUpdate,
-                advance_main_world_render_frame
+                (
+                    write_main_world_predicted_visual,
+                    advance_main_world_render_frame,
+                )
+                    .chain()
                     .in_set(MainWorldMovementPostUpdateSet::WriteTransforms),
             );
     }
@@ -560,8 +586,8 @@ fn collect_main_world_movement_intent(
 }
 
 /// Emits the existing binary `MoveInputReq` command at the frozen 20 Hz
-/// authority cadence. This stage writes neither transforms nor prediction
-/// history; stage 5 supplies the actual fixed-step position advance.
+/// authority cadence. Its frame-bound predicted state is queued for the next
+/// fixed step; this Update system never mutates the prediction baseline.
 fn dispatch_main_world_move_input(
     time: Res<Time>,
     entry: Option<Res<MainWorldEntryState>>,
@@ -605,12 +631,16 @@ fn dispatch_main_world_move_input(
         }
         MainWorldMoveInputKind::MoveStop => Vec2::ZERO,
     };
-    let Ok(server_position) = main_world_server_position(movement.predicted.position) else {
+    let frame = dispatch.next_frame(&entry, &movement);
+    let predicted_before = movement
+        .pending_prediction
+        .back()
+        .map(|pending| pending.input.predicted_after)
+        .unwrap_or(movement.predicted);
+    let predicted_after = main_world_predicted_after_input(predicted_before, frame, direction);
+    let Ok(server_position) = main_world_server_position(predicted_after.position) else {
         return;
     };
-
-    let frame = dispatch.next_frame(&entry, &movement);
-    movement.predicted.frame = frame;
     let input_type = match kind {
         MainWorldMoveInputKind::MoveDirection => {
             crate::game::myserver::protocol::pb::MoveInputType::MoveDir
@@ -630,6 +660,15 @@ fn dispatch_main_world_move_input(
             frame_id: frame.0,
         }),
     });
+    let input = MainWorldUnconfirmedInput {
+        frame,
+        direction,
+        predicted_before,
+        predicted_after,
+        confirmed: false,
+    };
+    movement.push_unconfirmed_input(input);
+    movement.queue_prediction(input);
     if kind == MainWorldMoveInputKind::MoveStop {
         dispatch.observed_stop_sequence = intent.stop_sequence;
     }
@@ -745,15 +784,100 @@ pub(in crate::game) fn main_world_virtual_joystick_axis(displacement: Vec2) -> V
     displacement.normalize_or_zero() * magnitude
 }
 
-/// Stage-2 fixed-update gate. It intentionally performs no simulation yet;
-/// this verifies future prediction cannot run while entry lifecycle is frozen.
-fn maintain_main_world_movement_fixed_gate(
-    runtime: Res<MainWorldMovementRuntime>,
-    intent: Res<MainWorldMovementIntent>,
+/// Advances exactly one sent authority input per fixed tick. Render frames can
+/// never create prediction frames, and un-sent local intent never mutates the
+/// predicted baseline.
+fn predict_main_world_movement_fixed(
+    entry: Option<Res<MainWorldEntryState>>,
+    mut runtime: ResMut<MainWorldMovementRuntime>,
 ) {
-    if !runtime.allows_local_movement() || !intent.active {
+    let Some(entry) = entry else {
+        return;
+    };
+    if !entry.allows_gameplay_input()
+        || runtime.generation != entry.generation
+        || runtime.session_id != entry.scene_session_id
+        || !runtime.allows_local_movement()
+    {
         return;
     }
+    let Some(pending) = runtime.pending_prediction.pop_front() else {
+        return;
+    };
+
+    runtime.predicted_previous = runtime.predicted;
+    runtime.predicted = pending.input.predicted_after;
+}
+
+fn main_world_predicted_after_input(
+    predicted_before: MainWorldPredictedState,
+    frame: MainWorldPredictedFrame,
+    direction: Vec2,
+) -> MainWorldPredictedState {
+    let direction = main_world_normalized_direction(direction).unwrap_or(Vec2::ZERO);
+    let moving = direction != Vec2::ZERO;
+    let mut predicted_after = predicted_before;
+    predicted_after.frame = frame;
+    predicted_after.direction = direction;
+    predicted_after.moving = moving;
+    if moving {
+        let step = MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND * MAIN_WORLD_AUTHORITY_TICK_SECONDS;
+        predicted_after.position = main_world_clamped_predicted_position(
+            predicted_before.position + Vec3::new(direction.x * step, 0.0, direction.y * step),
+        );
+    }
+    predicted_after
+}
+
+fn main_world_clamped_predicted_position(position: Vec3) -> Vec3 {
+    // Clamp in server-coordinate precision, then map back. `next_down(2000)`
+    // can round back to 4000 when the centre offset is restored.
+    let upper = f32::next_down(MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES)
+        - MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES;
+    Vec3::new(
+        position
+            .x
+            .clamp(-MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES, upper),
+        position.y,
+        position
+            .z
+            .clamp(-MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES, upper),
+    )
+}
+
+/// Interpolates only the visual representation. The fixed-step predicted
+/// baseline remains untouched so later authority replay is deterministic.
+fn write_main_world_predicted_visual(
+    fixed_time: Res<Time<Fixed>>,
+    runtime: Res<MainWorldMovementRuntime>,
+    mut local_players: Query<(
+        &MainWorldPlayer,
+        &mut FangyuanPlayerPosition,
+        &mut FangyuanObjectState,
+        &mut Transform,
+    )>,
+) {
+    if !runtime.allows_local_movement() {
+        return;
+    }
+    let visual_position = main_world_predicted_visual_position(
+        runtime.predicted_previous.position,
+        runtime.predicted.position,
+        fixed_time.overstep_fraction(),
+    );
+    for (player, mut position, mut object_state, mut transform) in &mut local_players {
+        if player.ownership == MainWorldPlayerOwnership::Local
+            && Some(&player.scene_session_id) == runtime.session_id.as_ref()
+        {
+            position.translation = visual_position;
+            object_state.root_translation = visual_position;
+            transform.translation = visual_position;
+        }
+    }
+}
+
+fn main_world_predicted_visual_position(previous: Vec3, current: Vec3, alpha: f32) -> Vec3 {
+    previous.lerp(current, alpha.clamp(0.0, 1.0))
 }
 
 /// Rendering is a separate cadence from authority or prediction frames. Later
@@ -902,6 +1026,7 @@ mod tests {
             direction: Vec2::X,
             predicted_before: predicted,
             predicted_after: predicted,
+            confirmed: false,
         }
     }
 
@@ -912,6 +1037,172 @@ mod tests {
             direction: Vec2::X,
             moving: true,
         }
+    }
+
+    fn predicted_state(
+        frame: u32,
+        position: Vec3,
+        direction: Vec2,
+        moving: bool,
+    ) -> MainWorldPredictedState {
+        MainWorldPredictedState {
+            frame: MainWorldPredictedFrame(frame),
+            position,
+            direction,
+            moving,
+        }
+    }
+
+    #[test]
+    fn fixed_prediction_advances_exactly_four_metres_per_second_and_normalizes_diagonals() {
+        let start = predicted_state(41, Vec3::ZERO, Vec2::ZERO, false);
+        let forward = main_world_predicted_after_input(start, MainWorldPredictedFrame(42), Vec2::Y);
+        assert_eq!(forward.position, Vec3::new(0.0, 0.0, 0.2));
+        assert_eq!(forward.direction, Vec2::Y);
+        assert!(forward.moving);
+
+        let diagonal = main_world_predicted_after_input(
+            start,
+            MainWorldPredictedFrame(42),
+            Vec2::new(1.0, 1.0),
+        );
+        assert!((diagonal.position.length() - 0.2).abs() < 0.000_01);
+        assert_vec2_approx_eq(diagonal.direction, Vec2::new(1.0, 1.0).normalize());
+    }
+
+    #[test]
+    fn fixed_prediction_preserves_exclusive_server_upper_boundary_and_converges_on_stop() {
+        let upper = f32::next_down(MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES)
+            - MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES;
+        let start = predicted_state(
+            41,
+            Vec3::new(upper - 0.05, 3.0, upper - 0.05),
+            Vec2::X,
+            true,
+        );
+        let bounded = main_world_predicted_after_input(
+            start,
+            MainWorldPredictedFrame(42),
+            Vec2::new(1.0, 1.0),
+        );
+        assert_eq!(bounded.position.x, upper);
+        assert_eq!(bounded.position.z, upper);
+        assert_eq!(bounded.position.y, 3.0);
+        assert!(main_world_server_position(bounded.position).is_ok());
+
+        let stopped =
+            main_world_predicted_after_input(bounded, MainWorldPredictedFrame(43), Vec2::ZERO);
+        assert_eq!(stopped.position, bounded.position);
+        assert_eq!(stopped.direction, Vec2::ZERO);
+        assert!(!stopped.moving);
+    }
+
+    #[test]
+    fn fixed_prediction_replay_is_deterministic_across_render_delta_partitions() {
+        let sequence = [Vec2::Y, Vec2::new(1.0, 1.0), Vec2::ZERO, Vec2::X];
+        let replay = |render_deltas: &[Duration]| {
+            let mut state = predicted_state(41, Vec3::new(1.25, 0.0, -2.5), Vec2::ZERO, false);
+            for (index, direction) in sequence.iter().copied().enumerate() {
+                for _ in render_deltas {
+                    // Render partitions do not enter fixed prediction state.
+                }
+                state = main_world_predicted_after_input(
+                    state,
+                    MainWorldPredictedFrame(42 + index as u32),
+                    direction,
+                );
+            }
+            state
+        };
+        assert_eq!(
+            replay(&[Duration::from_millis(50)]),
+            replay(&[Duration::from_millis(17), Duration::from_millis(33)])
+        );
+    }
+
+    #[test]
+    fn dispatched_frames_bind_prediction_history_and_advance_once_on_the_next_fixed_tick() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+
+        advance_update(&mut app, Duration::from_millis(50));
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(41));
+        assert_eq!(runtime.unconfirmed_inputs.len(), 1);
+        let input = runtime.unconfirmed_inputs.back().unwrap();
+        assert_eq!(input.frame, MainWorldPredictedFrame(42));
+        assert_eq!(input.predicted_before.position, Vec3::new(1.25, 0.0, -2.5));
+        assert_eq!(input.predicted_after.position, Vec3::new(1.25, 0.0, -2.3));
+        assert!(!input.confirmed);
+
+        advance_update(&mut app, Duration::from_millis(50));
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(42));
+        assert_eq!(runtime.predicted.position, Vec3::new(1.25, 0.0, -2.3));
+        assert_eq!(runtime.unconfirmed_inputs.len(), 2);
+    }
+
+    #[test]
+    fn predicted_visual_is_local_only_and_never_writes_back_to_the_fixed_baseline() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let session_id = SceneSessionId::from("main-world-7");
+        let local = app
+            .world_mut()
+            .spawn((
+                MainWorldPlayer {
+                    character_id: "chr-local".to_owned(),
+                    server_entity_id: 1,
+                    ownership: MainWorldPlayerOwnership::Local,
+                    scene_session_id: session_id.clone(),
+                    last_authoritative_frame: 41,
+                },
+                FangyuanPlayerPosition::default(),
+                FangyuanObjectState::default(),
+                Transform::default(),
+            ))
+            .id();
+        let remote = app
+            .world_mut()
+            .spawn((
+                MainWorldPlayer {
+                    character_id: "chr-remote".to_owned(),
+                    server_entity_id: 2,
+                    ownership: MainWorldPlayerOwnership::Remote,
+                    scene_session_id: session_id,
+                    last_authoritative_frame: 41,
+                },
+                FangyuanPlayerPosition {
+                    translation: Vec3::splat(9.0),
+                },
+                FangyuanObjectState::from_translation(Vec3::splat(9.0)),
+                Transform::from_translation(Vec3::splat(9.0)),
+            ))
+            .id();
+        {
+            let mut runtime = app.world_mut().resource_mut::<MainWorldMovementRuntime>();
+            runtime.predicted_previous =
+                predicted_state(41, Vec3::new(1.0, 0.0, 2.0), Vec2::Y, true);
+            runtime.predicted = predicted_state(42, Vec3::new(1.0, 0.0, 2.2), Vec2::Y, true);
+        }
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Transform>(local).unwrap().translation,
+            Vec3::new(1.0, 0.0, 2.0)
+        );
+        assert_eq!(
+            app.world().get::<Transform>(remote).unwrap().translation,
+            Vec3::splat(9.0)
+        );
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime.predicted.position, Vec3::new(1.0, 0.0, 2.2));
+        assert_eq!(
+            main_world_predicted_visual_position(Vec3::ZERO, Vec3::X, 0.5),
+            Vec3::new(0.5, 0.0, 0.0)
+        );
     }
 
     #[test]
@@ -1328,7 +1619,7 @@ mod tests {
         assert_eq!(client_state.frame_id, frame);
         assert_eq!(
             Vec2::new(client_state.x, client_state.y),
-            Vec2::new(2001.25, 1997.5)
+            Vec2::new(2001.25, 1997.7)
         );
 
         press_key(&mut app, KeyCode::KeyD);
