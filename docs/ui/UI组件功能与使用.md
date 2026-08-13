@@ -13,6 +13,22 @@
 
 带 `_key` 的版本会同时生成 `UiI18nText`，在语言资源热更新后自动刷新文本。没有 i18n 需求的内部调试文本可以直接使用非 key 版本。
 
+需要把运行时值填入多语言文案时，使用 `UiI18n::tr_args` 的命名占位符：
+
+```ron
+"account.title": "这是{account_name}的标题"
+```
+
+```rust
+i18n.tr_args(
+    "account.title",
+    "Account title for {account_name}",
+    [("account_name", account_name)],
+)
+```
+
+占位符名称使用 ASCII 字母、数字和下划线，首字符必须是字母或下划线。未提供的参数会原样保留；该 API 只做纯文本替换，不执行表达式或脚本。
+
 四个 helper 当前都通过 `UiTextStyleToken` 解析字体角色、family、weight、字号、行高、对齐、换行和截断，并附加 `UiFontResolution`。旧代码仍可读取 `UiFontAssets.regular`，但新增公共文本不应绕过角色注册表。
 
 需要自定义排版时使用 `try_ui_styled_text`。它会在生成 bundle 前验证 token；ellipsis 按 grapheme cluster 截断。`Clip` 必须通过 `try_ui_text_clip_frame(width, height)` 建立固定父 frame，并把 no-wrap Text 放在其下；Bevy 不会用 Text 自身的 overflow 裁切自身字形。不要把 `TextBounds` 的非严格高度截断误当可靠 ellipsis。字体 fallback 是整节点语义，不是逐字 fallback。
