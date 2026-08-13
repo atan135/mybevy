@@ -1434,13 +1434,15 @@ fn keyboard_movement_axis(keyboard: &ButtonInput<KeyCode>) -> Vec2 {
 }
 
 /// Maps local stick/keyboard axes (right, forward) to an XZ world direction
-/// using the current follow-camera yaw. Pitch does not alter planar movement.
+/// using the current follow-camera yaw. The camera orbit stores the offset
+/// from the actor to the camera, so its inverse is the view-forward vector.
+/// Pitch does not alter planar movement.
 pub(in crate::game) fn main_world_camera_relative_direction(local_axis: Vec2, yaw: f32) -> Vec2 {
     if !local_axis.is_finite() || !yaw.is_finite() {
         return Vec2::ZERO;
     }
-    let forward = Vec2::new(yaw.sin(), yaw.cos());
-    let right = Vec2::new(forward.y, -forward.x);
+    let forward = -Vec2::new(yaw.sin(), yaw.cos());
+    let right = Vec2::new(-forward.y, forward.x);
     main_world_normalized_direction(right * local_axis.x + forward * local_axis.y)
         .unwrap_or(Vec2::ZERO)
 }
@@ -1493,8 +1495,10 @@ fn update_main_world_touch_move_capture(
         })
 }
 
-/// Converts a virtual-stick displacement into continuous local movement. A
-/// fixed dead zone prevents tiny touch jitter from producing `MOVE_DIR` later.
+/// Converts a virtual-stick displacement into continuous local movement. The
+/// screen Y axis grows downward, while local forward grows upward, so Y is
+/// inverted here before keyboard and touch axes are combined. A fixed dead
+/// zone prevents tiny touch jitter from producing `MOVE_DIR` later.
 pub(in crate::game) fn main_world_virtual_joystick_axis(displacement: Vec2) -> Vec2 {
     if !displacement.is_finite() {
         return Vec2::ZERO;
@@ -1506,7 +1510,7 @@ pub(in crate::game) fn main_world_virtual_joystick_axis(displacement: Vec2) -> V
     let magnitude = ((length - MAIN_WORLD_TOUCH_JOYSTICK_DEAD_ZONE)
         / (MAIN_WORLD_TOUCH_JOYSTICK_RADIUS - MAIN_WORLD_TOUCH_JOYSTICK_DEAD_ZONE))
         .clamp(0.0, 1.0);
-    displacement.normalize_or_zero() * magnitude
+    Vec2::new(displacement.x, -displacement.y).normalize_or_zero() * magnitude
 }
 
 /// Advances exactly one sent authority input per fixed tick. Render frames can
@@ -2803,13 +2807,13 @@ mod tests {
         let input = runtime.unconfirmed_inputs.back().unwrap();
         assert_eq!(input.frame, MainWorldPredictedFrame(42));
         assert_eq!(input.predicted_before.position, Vec3::new(1.25, 0.0, -2.5));
-        assert_eq!(input.predicted_after.position, Vec3::new(1.25, 0.0, -2.3));
+        assert_eq!(input.predicted_after.position, Vec3::new(1.25, 0.0, -2.7));
         assert!(!input.confirmed);
 
         advance_update(&mut app, Duration::from_millis(50));
         let runtime = app.world().resource::<MainWorldMovementRuntime>();
         assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(42));
-        assert_eq!(runtime.predicted.position, Vec3::new(1.25, 0.0, -2.3));
+        assert_eq!(runtime.predicted.position, Vec3::new(1.25, 0.0, -2.7));
         assert_eq!(runtime.unconfirmed_inputs.len(), 2);
     }
 
@@ -3099,24 +3103,33 @@ mod tests {
         app.update();
         assert!(intent(&app).active);
         assert!((intent(&app).direction.length() - 1.0).abs() < f32::EPSILON);
-        assert_vec2_approx_eq(intent(&app).direction, Vec2::new(1.0, 1.0).normalize());
+        assert_vec2_approx_eq(intent(&app).direction, Vec2::new(1.0, -1.0).normalize());
 
         release_key(&mut app, KeyCode::KeyW);
         release_key(&mut app, KeyCode::KeyD);
         press_key(&mut app, KeyCode::ArrowLeft);
         press_key(&mut app, KeyCode::ArrowDown);
         app.update();
-        assert_vec2_approx_eq(intent(&app).direction, Vec2::new(-1.0, -1.0).normalize());
+        assert_vec2_approx_eq(intent(&app).direction, Vec2::new(-1.0, 1.0).normalize());
     }
 
     #[test]
-    fn camera_relative_mapping_rotates_local_axes_on_the_xz_plane() {
-        assert_eq!(main_world_camera_relative_direction(Vec2::Y, 0.0), Vec2::Y);
+    fn camera_relative_mapping_matches_view_forward_and_right_at_cardinal_yaws() {
+        // At yaw 0 the camera sits on +Z and looks toward -Z: W moves into
+        // the view and D moves to the view's right.
+        assert_vec2_approx_eq(main_world_camera_relative_direction(Vec2::Y, 0.0), -Vec2::Y);
+        assert_eq!(main_world_camera_relative_direction(Vec2::X, 0.0), Vec2::X);
+
+        // At +90 degrees the camera sits on +X and looks toward -X. The
+        // screen-right direction rotates with the camera to -Z.
         assert_vec2_approx_eq(
             main_world_camera_relative_direction(Vec2::Y, std::f32::consts::FRAC_PI_2),
-            Vec2::X,
+            -Vec2::X,
         );
-        assert_eq!(main_world_camera_relative_direction(Vec2::X, 0.0), Vec2::X);
+        assert_vec2_approx_eq(
+            main_world_camera_relative_direction(Vec2::X, std::f32::consts::FRAC_PI_2),
+            -Vec2::Y,
+        );
         assert_eq!(
             main_world_camera_relative_direction(Vec2::new(f32::NAN, 0.0), 0.0),
             Vec2::ZERO
@@ -3136,6 +3149,10 @@ mod tests {
         assert_eq!(
             main_world_virtual_joystick_axis(Vec2::new(MAIN_WORLD_TOUCH_JOYSTICK_RADIUS, 0.0)),
             Vec2::X
+        );
+        assert_eq!(
+            main_world_virtual_joystick_axis(Vec2::new(0.0, -MAIN_WORLD_TOUCH_JOYSTICK_RADIUS)),
+            Vec2::Y
         );
 
         let (mut app, window) = movement_app(active_entry(1, "main-world-1"));
@@ -3158,6 +3175,20 @@ mod tests {
         app.update();
         assert_eq!(intent(&app).direction, Vec2::X);
 
+        app.insert_resource(MainWorldCameraOrbitState {
+            yaw_radians: std::f32::consts::FRAC_PI_2,
+            ..Default::default()
+        });
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Moved,
+            Vec2::new(100.0, 220.0),
+        );
+        app.update();
+        assert_vec2_approx_eq(intent(&app).direction, -Vec2::X);
+
         send_touch(
             &mut app,
             window,
@@ -3167,7 +3198,7 @@ mod tests {
         );
         app.update();
         assert!(intent(&app).active);
-        assert_eq!(intent(&app).direction, Vec2::X);
+        assert_vec2_approx_eq(intent(&app).direction, -Vec2::Y);
 
         send_touch(
             &mut app,
@@ -3301,11 +3332,11 @@ mod tests {
         let (frame, input_type, dir_x, dir_y, client_state) = move_command_details(&commands[0]);
         assert_eq!(frame, 42);
         assert_eq!(input_type, pb::MoveInputType::MoveDir);
-        assert_eq!(Vec2::new(dir_x, dir_y), Vec2::Y);
+        assert_eq!(Vec2::new(dir_x, dir_y), -Vec2::Y);
         assert_eq!(client_state.frame_id, frame);
         assert_eq!(
             Vec2::new(client_state.x, client_state.y),
-            Vec2::new(2001.25, 1997.7)
+            Vec2::new(2001.25, 1997.3)
         );
 
         press_key(&mut app, KeyCode::KeyD);
@@ -3316,7 +3347,7 @@ mod tests {
         let (frame, input_type, dir_x, dir_y, client_state) = move_command_details(&commands[0]);
         assert_eq!(frame, 43);
         assert_eq!(input_type, pb::MoveInputType::MoveDir);
-        assert_vec2_approx_eq(Vec2::new(dir_x, dir_y), Vec2::new(1.0, 1.0).normalize());
+        assert_vec2_approx_eq(Vec2::new(dir_x, dir_y), Vec2::new(1.0, -1.0).normalize());
         assert_eq!(client_state.frame_id, frame);
     }
 
