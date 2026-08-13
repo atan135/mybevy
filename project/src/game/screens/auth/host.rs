@@ -1931,14 +1931,23 @@ pub(super) fn sync_character_select_document_bindings(
 
 pub(super) fn account_summary_text(snapshot: &LoginUiSnapshot, i18n: &UiI18n) -> String {
     if let Some(login_name) = snapshot.login_name.as_deref() {
-        format!(
-            "{} {login_name}",
-            i18n.tr("auth.character.account", "Account")
+        i18n.tr_args(
+            "auth.character.account_summary",
+            "Account {account_name}",
+            [("account_name", login_name)],
         )
     } else if let Some(guest_id) = snapshot.guest_id.as_deref() {
-        format!("{} {guest_id}", i18n.tr("auth.character.guest", "Guest"))
+        i18n.tr_args(
+            "auth.character.guest_summary",
+            "Guest {account_name}",
+            [("account_name", guest_id)],
+        )
     } else if let Some(player_id) = snapshot.player_id.as_deref() {
-        format!("{} {player_id}", i18n.tr("auth.character.player", "Player"))
+        i18n.tr_args(
+            "auth.character.player_summary",
+            "Player {account_name}",
+            [("account_name", player_id)],
+        )
     } else {
         i18n.tr("auth.character.account_unavailable", "Account unavailable")
     }

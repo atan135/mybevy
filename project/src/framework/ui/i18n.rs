@@ -110,6 +110,26 @@ impl UiI18n {
         }
     }
 
+    /// Resolves a translation and replaces named `{placeholder}` values.
+    ///
+    /// Placeholder names are intentionally limited to ASCII identifiers so
+    /// that ordinary braces in translated prose remain untouched. Missing
+    /// arguments are kept as written, which makes an incomplete call visible
+    /// instead of silently dropping part of the translation.
+    pub(crate) fn tr_args<I, K, V>(&self, key: &str, fallback: impl Into<String>, args: I) -> String
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: std::fmt::Display,
+    {
+        let text = self.tr(key, fallback);
+        let args = args
+            .into_iter()
+            .map(|(name, value)| (name.as_ref().to_owned(), value.to_string()))
+            .collect::<HashMap<_, _>>();
+        interpolate_named_placeholders(&text, &args)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn text(&self, key: &str) -> String {
         self.tr(key, key)
@@ -135,6 +155,44 @@ impl UiI18n {
             texts,
         }
     }
+}
+
+fn interpolate_named_placeholders(text: &str, args: &HashMap<String, String>) -> String {
+    let mut rendered = String::with_capacity(text.len());
+    let mut cursor = 0;
+
+    while let Some(open_offset) = text[cursor..].find('{') {
+        let open = cursor + open_offset;
+        let Some(close_offset) = text[open + 1..].find('}') else {
+            break;
+        };
+        let close = open + 1 + close_offset;
+        let name = &text[open + 1..close];
+
+        rendered.push_str(&text[cursor..open]);
+        if is_i18n_placeholder_name(name) {
+            if let Some(value) = args.get(name) {
+                rendered.push_str(value);
+                cursor = close + 1;
+                continue;
+            }
+        }
+
+        rendered.push_str(&text[open..=close]);
+        cursor = close + 1;
+    }
+
+    rendered.push_str(&text[cursor..]);
+    rendered
+}
+
+fn is_i18n_placeholder_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 impl crate::framework::ui::document::UiDocumentI18nCatalog for UiI18n {
@@ -604,6 +662,57 @@ mod tests {
         };
 
         assert_eq!(i18n.tr("missing.key", ""), "missing.key");
+    }
+
+    #[test]
+    fn tr_args_replaces_named_placeholders() {
+        let i18n = UiI18n::test_with_texts(
+            "zh_cn",
+            &[("account.title", "这是{account_name}的标题，共{count}项")],
+        );
+
+        assert_eq!(
+            i18n.tr_args(
+                "account.title",
+                "Fallback {account_name}",
+                [("account_name", "zergzerg"), ("count", "3")],
+            ),
+            "这是zergzerg的标题，共3项"
+        );
+    }
+
+    #[test]
+    fn tr_args_keeps_unknown_or_malformed_placeholders() {
+        let i18n = UiI18n::test_with_texts(
+            "en_us",
+            &[(
+                "account.title",
+                "{account_name} · {missing} · {not valid} · {unclosed",
+            )],
+        );
+
+        assert_eq!(
+            i18n.tr_args("account.title", "Fallback", [("account_name", "Ada")]),
+            "Ada · {missing} · {not valid} · {unclosed"
+        );
+    }
+
+    #[test]
+    fn tr_args_interpolates_fallback_text_when_key_is_missing() {
+        let i18n = UiI18n {
+            locale: "en_us".to_string(),
+            texts: HashMap::new(),
+            fallback_texts: HashMap::new(),
+        };
+
+        assert_eq!(
+            i18n.tr_args(
+                "missing.key",
+                "Hello, {account_name}!",
+                [("account_name", "Ada")],
+            ),
+            "Hello, Ada!"
+        );
     }
 
     #[test]

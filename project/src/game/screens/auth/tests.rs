@@ -717,6 +717,7 @@ fn character_dynamic_copy_uses_active_locale() {
         "zh_cn",
         &[
             ("auth.character.account", "账号"),
+            ("auth.character.account_summary", "账号 {account_name}"),
             ("auth.character.world", "世界"),
             ("auth.character.status.active", "正常"),
             ("auth.character.status.choose", "请选择一个角色"),
