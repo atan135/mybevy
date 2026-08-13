@@ -44,6 +44,7 @@ pub(super) const MAIN_WORLD_CAMERA_FAR: f32 = 800.0;
 const MAIN_WORLD_CAMERA_DESKTOP_YAW_RADIANS_PER_LOGICAL_PIXEL: f32 = 0.006;
 const MAIN_WORLD_CAMERA_DESKTOP_PITCH_RADIANS_PER_LOGICAL_PIXEL: f32 = 0.005;
 const MAIN_WORLD_CAMERA_DESKTOP_DISTANCE_PER_WHEEL_LINE: f32 = 0.35;
+pub(super) const MAIN_WORLD_TOUCH_MOVE_REGION_FRACTION: f32 = 0.4;
 
 pub(super) struct MainWorldCameraPlugin;
 
@@ -87,12 +88,30 @@ struct MainWorldDesktopMouseCapture {
     last_cursor_position: Option<Vec2>,
 }
 
+/// Initial touch ownership is shared with main-world movement. The owner is
+/// fixed at touch start; crossing screen regions never transfers it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MainWorldTouchOwner {
+pub(super) enum MainWorldTouchOwner {
     Ui,
     Move,
     CameraOrbit,
     CameraPinch,
+}
+
+/// Classifies an initial main-world touch before either camera or movement
+/// code mutates local gesture state. UI always wins over gameplay ownership.
+pub(super) fn main_world_touch_owner(
+    ui_blocks_gameplay: bool,
+    viewport_size: Vec2,
+    position: Vec2,
+) -> MainWorldTouchOwner {
+    if ui_blocks_gameplay || !viewport_size.is_finite() || !position.is_finite() {
+        MainWorldTouchOwner::Ui
+    } else if position.x < viewport_size.x * MAIN_WORLD_TOUCH_MOVE_REGION_FRACTION {
+        MainWorldTouchOwner::Move
+    } else {
+        MainWorldTouchOwner::CameraOrbit
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -431,13 +450,7 @@ fn update_main_world_touch_orbit(
         }
         match event.phase {
             TouchPhase::Started => {
-                let owner = if ui_blocks_gameplay {
-                    MainWorldTouchOwner::Ui
-                } else if event.position.x < window_size.x * 0.4 {
-                    MainWorldTouchOwner::Move
-                } else {
-                    MainWorldTouchOwner::CameraOrbit
-                };
+                let owner = main_world_touch_owner(ui_blocks_gameplay, window_size, event.position);
                 touch_runtime.captures.insert(
                     event.id,
                     MainWorldTouchCapture {

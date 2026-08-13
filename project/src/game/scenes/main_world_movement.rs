@@ -6,16 +6,29 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use bevy::{prelude::*, time::Fixed, transform::TransformSystems};
+use bevy::{
+    input::touch::{TouchInput, TouchPhase},
+    prelude::*,
+    time::Fixed,
+    transform::TransformSystems,
+    window::{AppLifecycle, PrimaryWindow, WindowFocused},
+};
 
 use crate::{
-    framework::scene::prelude::SceneSessionId,
+    framework::{
+        scene::prelude::SceneSessionId,
+        ui::core::{UiInputState, UiInputSystems},
+    },
     game::{
         myserver::MyServerUpdateSet,
         scenes::{
+            main_world_camera::{
+                MainWorldCameraOrbitState, MainWorldTouchOwner, main_world_touch_owner,
+            },
             main_world_contract::{
                 MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, MainWorldAuthorityFrame,
                 MainWorldConfirmedFrame, MainWorldPredictedFrame, MainWorldRenderFrame,
+                main_world_normalized_direction,
             },
             main_world_entry::{MainWorldEntryPhase, MainWorldEntryState, MainWorldEntryUpdateSet},
         },
@@ -29,6 +42,11 @@ pub(in crate::game) const MAIN_WORLD_PREDICTION_HISTORY_CAPACITY: usize = 100;
 /// Maximum number of authority samples retained for any one remote character.
 /// At 20 Hz this gives interpolation a two-second bounded history window.
 pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY: usize = 40;
+
+/// Logical-pixel virtual-stick tuning. Values are deliberately independent of
+/// render resolution so the stick retains a stable dead zone across devices.
+pub(in crate::game) const MAIN_WORLD_TOUCH_JOYSTICK_RADIUS: f32 = 80.0;
+pub(in crate::game) const MAIN_WORLD_TOUCH_JOYSTICK_DEAD_ZONE: f32 = 12.0;
 
 /// Established ordering of the client movement pipeline. The named sets are
 /// intentionally sparse in this stage: later stages fill them without moving
@@ -61,10 +79,53 @@ pub(in crate::game) enum MainWorldMovementPostUpdateSet {
 pub(in crate::game) struct MainWorldMovementIntent {
     pub direction: Vec2,
     pub active: bool,
+    /// Monotonically advances only when an active intent becomes idle. The
+    /// stage-4 sender uses this to emit one `MOVE_STOP` per transition.
+    pub stop_sequence: u64,
 }
 
 impl MainWorldMovementIntent {
     pub fn clear(&mut self) {
+        self.direction = Vec2::ZERO;
+        self.active = false;
+    }
+
+    fn set_direction(&mut self, direction: Vec2) {
+        self.direction = direction;
+        self.active = true;
+    }
+
+    fn request_stop(&mut self) {
+        if self.active {
+            self.stop_sequence = self.stop_sequence.wrapping_add(1).max(1);
+        }
+        self.clear();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MainWorldTouchMoveCapture {
+    id: u64,
+    origin: Vec2,
+    position: Vec2,
+}
+
+/// Input-device state that is intentionally separate from prediction state.
+/// A touch that begins in the move zone can never become a camera touch.
+#[derive(Default, Resource)]
+struct MainWorldMovementInputRuntime {
+    window: Option<Entity>,
+    viewport_size: Vec2,
+    touch_move_capture: Option<MainWorldTouchMoveCapture>,
+    keyboard_rearm_required: bool,
+}
+
+impl MainWorldMovementInputRuntime {
+    fn reset_touch(&mut self) {
+        self.touch_move_capture = None;
+    }
+
+    fn reset_all(&mut self) {
         *self = Self::default();
     }
 }
@@ -239,9 +300,14 @@ impl Plugin for MainWorldMovementPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MainWorldMovementIntent>()
             .init_resource::<MainWorldMovementRuntime>()
+            .init_resource::<MainWorldMovementInputRuntime>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(
                 MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
             )))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_message::<TouchInput>()
+            .add_message::<WindowFocused>()
+            .add_message::<AppLifecycle>()
             .configure_sets(
                 Update,
                 (
@@ -261,8 +327,13 @@ impl Plugin for MainWorldMovementPlugin {
             )
             .add_systems(
                 Update,
-                sync_main_world_movement_lifecycle
-                    .in_set(MainWorldMovementUpdateSet::ConsumeAuthority),
+                (
+                    sync_main_world_movement_lifecycle
+                        .in_set(MainWorldMovementUpdateSet::ConsumeAuthority),
+                    collect_main_world_movement_intent
+                        .after(UiInputSystems::Update)
+                        .in_set(MainWorldMovementUpdateSet::CollectIntent),
+                ),
             )
             .add_systems(
                 FixedUpdate,
@@ -282,15 +353,18 @@ fn sync_main_world_movement_lifecycle(
     entry: Option<Res<MainWorldEntryState>>,
     mut intent: ResMut<MainWorldMovementIntent>,
     mut runtime: ResMut<MainWorldMovementRuntime>,
+    mut input_runtime: ResMut<MainWorldMovementInputRuntime>,
 ) {
     let Some(entry) = entry else {
-        intent.clear();
+        intent.request_stop();
         runtime.clear();
+        input_runtime.reset_all();
         return;
     };
     let Some(session_id) = entry.scene_session_id.clone() else {
-        intent.clear();
+        intent.request_stop();
         runtime.clear();
+        input_runtime.reset_all();
         runtime.generation = entry.generation;
         return;
     };
@@ -300,9 +374,182 @@ fn sync_main_world_movement_lifecycle(
         return;
     }
 
-    intent.clear();
+    intent.request_stop();
     runtime.clear();
+    input_runtime.reset_all();
     runtime.generation = entry.generation;
+}
+
+/// Samples keyboard and left-region virtual-stick input into a world-relative
+/// intent. It never mutates player state, prediction, or network commands.
+#[allow(clippy::too_many_arguments)]
+fn collect_main_world_movement_intent(
+    entry: Option<Res<MainWorldEntryState>>,
+    ui_input: Option<Res<UiInputState>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    primary_window: Query<(Entity, &Window), With<PrimaryWindow>>,
+    camera_orbit: Option<Res<MainWorldCameraOrbitState>>,
+    mut touch_events: MessageReader<TouchInput>,
+    mut focus_events: MessageReader<WindowFocused>,
+    mut lifecycle_events: MessageReader<AppLifecycle>,
+    mut intent: ResMut<MainWorldMovementIntent>,
+    mut input_runtime: ResMut<MainWorldMovementInputRuntime>,
+    runtime: Res<MainWorldMovementRuntime>,
+) {
+    let Some(entry) = entry else {
+        touch_events.clear();
+        intent.request_stop();
+        input_runtime.reset_all();
+        return;
+    };
+    let Some((window_entity, window)) = primary_window.iter().next() else {
+        touch_events.clear();
+        intent.request_stop();
+        input_runtime.reset_all();
+        return;
+    };
+
+    let focus_lost = focus_events
+        .read()
+        .any(|event| event.window == window_entity && !event.focused);
+    let backgrounded = lifecycle_events
+        .read()
+        .any(|event| matches!(event, AppLifecycle::WillSuspend | AppLifecycle::Suspended));
+    let ui_blocks_gameplay = ui_input.is_some_and(|input| input.blocks_gameplay_pointer());
+    let viewport_size = window.size();
+    let gameplay_open = runtime.allows_local_movement()
+        && entry.allows_gameplay_input()
+        && !ui_blocks_gameplay
+        && !focus_lost
+        && !backgrounded
+        && viewport_size.x > 0.0
+        && viewport_size.y > 0.0;
+
+    if input_runtime.window != Some(window_entity) || input_runtime.viewport_size != viewport_size {
+        input_runtime.reset_touch();
+        input_runtime.window = Some(window_entity);
+        input_runtime.viewport_size = viewport_size;
+    }
+    if !gameplay_open {
+        touch_events.clear();
+        intent.request_stop();
+        input_runtime.reset_touch();
+        input_runtime.keyboard_rearm_required = true;
+        return;
+    }
+
+    let touch_axis = update_main_world_touch_move_capture(
+        &mut touch_events,
+        window_entity,
+        viewport_size,
+        ui_blocks_gameplay,
+        &mut input_runtime,
+    );
+    let keyboard_axis = keyboard_movement_axis(&keyboard);
+    if input_runtime.keyboard_rearm_required {
+        if keyboard_axis != Vec2::ZERO || touch_axis != Vec2::ZERO {
+            return;
+        }
+        input_runtime.keyboard_rearm_required = false;
+    }
+    let local_axis =
+        match main_world_normalized_direction((keyboard_axis + touch_axis).clamp_length_max(1.0)) {
+            Ok(direction) => direction,
+            Err(_) => {
+                intent.request_stop();
+                return;
+            }
+        };
+    let camera = camera_orbit.as_deref().cloned().unwrap_or_default();
+    let world_direction = main_world_camera_relative_direction(local_axis, camera.yaw_radians);
+    intent.set_direction(world_direction);
+}
+
+fn keyboard_movement_axis(keyboard: &ButtonInput<KeyCode>) -> Vec2 {
+    let forward = keyboard.pressed(KeyCode::KeyW) || keyboard.pressed(KeyCode::ArrowUp);
+    let backward = keyboard.pressed(KeyCode::KeyS) || keyboard.pressed(KeyCode::ArrowDown);
+    let left = keyboard.pressed(KeyCode::KeyA) || keyboard.pressed(KeyCode::ArrowLeft);
+    let right = keyboard.pressed(KeyCode::KeyD) || keyboard.pressed(KeyCode::ArrowRight);
+    Vec2::new(
+        (right as i8 - left as i8) as f32,
+        (forward as i8 - backward as i8) as f32,
+    )
+}
+
+/// Maps local stick/keyboard axes (right, forward) to an XZ world direction
+/// using the current follow-camera yaw. Pitch does not alter planar movement.
+pub(in crate::game) fn main_world_camera_relative_direction(local_axis: Vec2, yaw: f32) -> Vec2 {
+    if !local_axis.is_finite() || !yaw.is_finite() {
+        return Vec2::ZERO;
+    }
+    let forward = Vec2::new(yaw.sin(), yaw.cos());
+    let right = Vec2::new(forward.y, -forward.x);
+    main_world_normalized_direction(right * local_axis.x + forward * local_axis.y)
+        .unwrap_or(Vec2::ZERO)
+}
+
+fn update_main_world_touch_move_capture(
+    touch_events: &mut MessageReader<TouchInput>,
+    window_entity: Entity,
+    viewport_size: Vec2,
+    ui_blocks_gameplay: bool,
+    input_runtime: &mut MainWorldMovementInputRuntime,
+) -> Vec2 {
+    for event in touch_events.read() {
+        if event.window != window_entity || !event.position.is_finite() {
+            continue;
+        }
+        match event.phase {
+            TouchPhase::Started => {
+                if input_runtime.touch_move_capture.is_none()
+                    && main_world_touch_owner(ui_blocks_gameplay, viewport_size, event.position)
+                        == MainWorldTouchOwner::Move
+                {
+                    input_runtime.touch_move_capture = Some(MainWorldTouchMoveCapture {
+                        id: event.id,
+                        origin: event.position,
+                        position: event.position,
+                    });
+                }
+            }
+            TouchPhase::Moved => {
+                if let Some(capture) = input_runtime.touch_move_capture.as_mut()
+                    && capture.id == event.id
+                {
+                    capture.position = event.position;
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Canceled => {
+                if input_runtime
+                    .touch_move_capture
+                    .is_some_and(|capture| capture.id == event.id)
+                {
+                    input_runtime.reset_touch();
+                }
+            }
+        }
+    }
+    input_runtime
+        .touch_move_capture
+        .map_or(Vec2::ZERO, |capture| {
+            main_world_virtual_joystick_axis(capture.position - capture.origin)
+        })
+}
+
+/// Converts a virtual-stick displacement into continuous local movement. A
+/// fixed dead zone prevents tiny touch jitter from producing `MOVE_DIR` later.
+pub(in crate::game) fn main_world_virtual_joystick_axis(displacement: Vec2) -> Vec2 {
+    if !displacement.is_finite() {
+        return Vec2::ZERO;
+    }
+    let length = displacement.length();
+    if length <= MAIN_WORLD_TOUCH_JOYSTICK_DEAD_ZONE {
+        return Vec2::ZERO;
+    }
+    let magnitude = ((length - MAIN_WORLD_TOUCH_JOYSTICK_DEAD_ZONE)
+        / (MAIN_WORLD_TOUCH_JOYSTICK_RADIUS - MAIN_WORLD_TOUCH_JOYSTICK_DEAD_ZONE))
+        .clamp(0.0, 1.0);
+    displacement.normalize_or_zero() * magnitude
 }
 
 /// Stage-2 fixed-update gate. It intentionally performs no simulation yet;
@@ -338,12 +585,49 @@ mod tests {
         }
     }
 
-    fn movement_app(entry: MainWorldEntryState) -> App {
+    fn movement_app(entry: MainWorldEntryState) -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(entry)
             .add_plugins(MainWorldMovementPlugin);
-        app
+        let window = app
+            .world_mut()
+            .spawn((PrimaryWindow, Window::default()))
+            .id();
+        (app, window)
+    }
+
+    fn send_touch(app: &mut App, window: Entity, id: u64, phase: TouchPhase, position: Vec2) {
+        app.world_mut().write_message(TouchInput {
+            phase,
+            position,
+            window,
+            force: None,
+            id,
+        });
+    }
+
+    fn press_key(app: &mut App, key: KeyCode) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
+    }
+
+    fn release_key(app: &mut App, key: KeyCode) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(key);
+    }
+
+    fn intent(app: &App) -> MainWorldMovementIntent {
+        *app.world().resource::<MainWorldMovementIntent>()
+    }
+
+    fn assert_vec2_approx_eq(actual: Vec2, expected: Vec2) {
+        assert!(
+            actual.distance(expected) < 0.0001,
+            "expected {expected:?}, got {actual:?}"
+        );
     }
 
     fn input(frame: u32) -> MainWorldUnconfirmedInput {
@@ -384,7 +668,7 @@ mod tests {
 
     #[test]
     fn lifecycle_opens_only_for_active_unfrozen_entry_and_resets_intent() {
-        let mut app = movement_app(active_entry(7, "main-world-7"));
+        let (mut app, _) = movement_app(active_entry(7, "main-world-7"));
         app.update();
         assert!(
             app.world()
@@ -408,10 +692,9 @@ mod tests {
                 .resource::<MainWorldMovementRuntime>()
                 .allows_local_movement()
         );
-        assert_eq!(
-            *app.world().resource::<MainWorldMovementIntent>(),
-            MainWorldMovementIntent::default()
-        );
+        assert_eq!(intent(&app).direction, Vec2::ZERO);
+        assert!(!intent(&app).active);
+        assert_eq!(intent(&app).stop_sequence, 1);
     }
 
     #[test]
@@ -488,7 +771,7 @@ mod tests {
 
     #[test]
     fn generation_change_disconnect_exit_and_failure_clear_scoped_runtime() {
-        let mut app = movement_app(active_entry(1, "main-world-1"));
+        let (mut app, _) = movement_app(active_entry(1, "main-world-1"));
         app.update();
         {
             let mut runtime = app.world_mut().resource_mut::<MainWorldMovementRuntime>();
@@ -528,7 +811,7 @@ mod tests {
 
     #[test]
     fn render_frame_advances_only_for_a_bound_session() {
-        let mut app = movement_app(MainWorldEntryState::default());
+        let (mut app, _) = movement_app(MainWorldEntryState::default());
         app.update();
         assert_eq!(
             app.world()
@@ -553,7 +836,7 @@ mod tests {
 
     #[test]
     fn movement_lifecycle_runs_after_entry_coordinator_and_fixed_time_is_20_hz() {
-        let mut app = movement_app(active_entry(1, "main-world-1"));
+        let (mut app, _) = movement_app(active_entry(1, "main-world-1"));
         app.add_systems(
             Update,
             freeze_entry_in_coordinator_set.in_set(MainWorldEntryUpdateSet::Coordinator),
@@ -569,5 +852,198 @@ mod tests {
             app.world().resource::<Time<Fixed>>().timestep(),
             std::time::Duration::from_millis(50)
         );
+    }
+
+    #[test]
+    fn keyboard_axes_normalize_diagonals_and_use_wasd_or_arrows() {
+        let (mut app, _) = movement_app(active_entry(1, "main-world-1"));
+        press_key(&mut app, KeyCode::KeyW);
+        press_key(&mut app, KeyCode::KeyD);
+        app.update();
+        assert!(intent(&app).active);
+        assert!((intent(&app).direction.length() - 1.0).abs() < f32::EPSILON);
+        assert_vec2_approx_eq(intent(&app).direction, Vec2::new(1.0, 1.0).normalize());
+
+        release_key(&mut app, KeyCode::KeyW);
+        release_key(&mut app, KeyCode::KeyD);
+        press_key(&mut app, KeyCode::ArrowLeft);
+        press_key(&mut app, KeyCode::ArrowDown);
+        app.update();
+        assert_vec2_approx_eq(intent(&app).direction, Vec2::new(-1.0, -1.0).normalize());
+    }
+
+    #[test]
+    fn camera_relative_mapping_rotates_local_axes_on_the_xz_plane() {
+        assert_eq!(main_world_camera_relative_direction(Vec2::Y, 0.0), Vec2::Y);
+        assert_vec2_approx_eq(
+            main_world_camera_relative_direction(Vec2::Y, std::f32::consts::FRAC_PI_2),
+            Vec2::X,
+        );
+        assert_eq!(main_world_camera_relative_direction(Vec2::X, 0.0), Vec2::X);
+        assert_eq!(
+            main_world_camera_relative_direction(Vec2::new(f32::NAN, 0.0), 0.0),
+            Vec2::ZERO
+        );
+    }
+
+    #[test]
+    fn left_touch_stick_has_dead_zone_continuous_axis_and_locked_ownership() {
+        assert_eq!(
+            main_world_virtual_joystick_axis(Vec2::splat(1.0)),
+            Vec2::ZERO
+        );
+        assert_eq!(
+            main_world_virtual_joystick_axis(Vec2::new(MAIN_WORLD_TOUCH_JOYSTICK_DEAD_ZONE, 0.0)),
+            Vec2::ZERO
+        );
+        assert_eq!(
+            main_world_virtual_joystick_axis(Vec2::new(MAIN_WORLD_TOUCH_JOYSTICK_RADIUS, 0.0)),
+            Vec2::X
+        );
+
+        let (mut app, window) = movement_app(active_entry(1, "main-world-1"));
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Started,
+            Vec2::new(100.0, 300.0),
+        );
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Moved,
+            Vec2::new(180.0, 300.0),
+        );
+        app.update();
+        assert_eq!(intent(&app).direction, Vec2::X);
+
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Moved,
+            Vec2::new(900.0, 300.0),
+        );
+        app.update();
+        assert!(intent(&app).active);
+        assert_eq!(intent(&app).direction, Vec2::X);
+
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Ended,
+            Vec2::new(900.0, 300.0),
+        );
+        app.update();
+        assert!(!intent(&app).active);
+        assert_eq!(intent(&app).stop_sequence, 1);
+    }
+
+    #[test]
+    fn right_and_ui_touches_never_claim_movement_and_camera_uses_same_owner_rule() {
+        let viewport = Vec2::new(1280.0, 720.0);
+        assert_eq!(
+            main_world_touch_owner(false, viewport, Vec2::new(100.0, 100.0)),
+            MainWorldTouchOwner::Move
+        );
+        assert_eq!(
+            main_world_touch_owner(false, viewport, Vec2::new(700.0, 100.0)),
+            MainWorldTouchOwner::CameraOrbit
+        );
+        assert_eq!(
+            main_world_touch_owner(true, viewport, Vec2::new(100.0, 100.0)),
+            MainWorldTouchOwner::Ui
+        );
+
+        let (mut app, window) = movement_app(active_entry(1, "main-world-1"));
+        app.update();
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Started,
+            Vec2::new(800.0, 300.0),
+        );
+        send_touch(
+            &mut app,
+            window,
+            1,
+            TouchPhase::Moved,
+            Vec2::new(880.0, 300.0),
+        );
+        app.update();
+        assert!(!intent(&app).active);
+
+        app.world_mut().insert_resource(UiInputState::default());
+        app.world_mut()
+            .resource_mut::<UiInputState>()
+            .pointer_blocked = true;
+        send_touch(
+            &mut app,
+            window,
+            2,
+            TouchPhase::Started,
+            Vec2::new(100.0, 300.0),
+        );
+        app.update();
+        assert!(!intent(&app).active);
+    }
+
+    #[test]
+    fn release_focus_background_and_ui_gates_emit_one_stop_and_require_rearm() {
+        let (mut app, window) = movement_app(active_entry(1, "main-world-1"));
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+        assert!(intent(&app).active);
+        assert_eq!(intent(&app).stop_sequence, 0);
+
+        release_key(&mut app, KeyCode::KeyW);
+        app.update();
+        assert!(!intent(&app).active);
+        assert_eq!(intent(&app).stop_sequence, 1);
+        app.update();
+        assert_eq!(intent(&app).stop_sequence, 1);
+
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+        assert!(intent(&app).active);
+        app.world_mut().write_message(WindowFocused {
+            window,
+            focused: false,
+        });
+        app.update();
+        assert!(!intent(&app).active);
+        assert_eq!(intent(&app).stop_sequence, 2);
+
+        app.update();
+        assert!(!intent(&app).active);
+        release_key(&mut app, KeyCode::KeyW);
+        app.update();
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+        assert!(intent(&app).active);
+
+        app.world_mut().write_message(AppLifecycle::WillSuspend);
+        app.update();
+        assert!(!intent(&app).active);
+        assert_eq!(intent(&app).stop_sequence, 3);
+
+        release_key(&mut app, KeyCode::KeyW);
+        app.update();
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+        assert!(intent(&app).active);
+        app.world_mut().insert_resource(UiInputState::default());
+        app.world_mut()
+            .resource_mut::<UiInputState>()
+            .pointer_blocked = true;
+        app.update();
+        assert!(!intent(&app).active);
+        assert_eq!(intent(&app).stop_sequence, 4);
     }
 }
