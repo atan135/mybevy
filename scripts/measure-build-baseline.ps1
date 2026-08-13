@@ -35,24 +35,27 @@ function Test-PathInside {
 }
 
 function Get-ColdTargetPrecondition {
-    param([string]$RepoRoot, [string]$ArtifactsRoot, [string]$ColdTargetDirectory, [bool]$Confirmed)
+    param([string]$RepoRoot, [string]$ArtifactsRoot, [string]$SharedTargetRoot, [string]$ColdTargetDirectory, [bool]$Confirmed)
     if ([string]::IsNullOrWhiteSpace($ColdTargetDirectory)) {
-        return [pscustomobject]@{ ready = $false; path = $null; reason = "precondition unmet: pass -ColdTargetDirectory with a caller-created empty target under artifacts/ and -ConfirmColdTarget" }
+        return [pscustomobject]@{ ready = $false; path = $null; mode = $null; reason = "precondition unmet: pass the repository root target or a caller-created empty target under artifacts/, then pass -ConfirmColdTarget" }
     }
     $path = Resolve-RepoPath $RepoRoot $ColdTargetDirectory
-    if (-not (Test-PathInside $path $ArtifactsRoot)) {
-        return [pscustomobject]@{ ready = $false; path = $path; reason = "precondition unmet: ColdTargetDirectory must be inside ignored artifacts/" }
+    $usesSharedTarget = $path.Equals($SharedTargetRoot, [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $usesSharedTarget -and -not (Test-PathInside $path $ArtifactsRoot)) {
+        return [pscustomobject]@{ ready = $false; path = $path; mode = $null; reason = "precondition unmet: ColdTargetDirectory must be exactly the repository root target or inside ignored artifacts/" }
     }
     if (-not $Confirmed) {
-        return [pscustomobject]@{ ready = $false; path = $path; reason = "precondition unmet: caller must pass -ConfirmColdTarget after verifying the target is safe and independent" }
+        return [pscustomobject]@{ ready = $false; path = $path; mode = $null; reason = "precondition unmet: caller must pass -ConfirmColdTarget after verifying the target is safe and empty" }
     }
     if (-not (Test-Path -LiteralPath $path -PathType Container)) {
-        return [pscustomobject]@{ ready = $false; path = $path; reason = "precondition unmet: ColdTargetDirectory must already exist and be empty; this script will not create or clear it" }
+        return [pscustomobject]@{ ready = $false; path = $path; mode = $null; reason = "precondition unmet: ColdTargetDirectory must already exist and be empty; this script will not create or clear it" }
     }
     if (Get-ChildItem -LiteralPath $path -Force | Select-Object -First 1) {
-        return [pscustomobject]@{ ready = $false; path = $path; reason = "precondition unmet: ColdTargetDirectory is not empty; this script will not clear it" }
+        return [pscustomobject]@{ ready = $false; path = $path; mode = $null; reason = "precondition unmet: ColdTargetDirectory is not empty; this script will not clear it" }
     }
-    return [pscustomobject]@{ ready = $true; path = $path; reason = "caller-confirmed empty independent target" }
+    $mode = if ($usesSharedTarget) { "shared-root" } else { "isolated-artifact" }
+    $reason = if ($usesSharedTarget) { "caller-confirmed empty repository root target; first shared-cache cold build" } else { "caller-confirmed empty independent target under artifacts/" }
+    return [pscustomobject]@{ ready = $true; path = $path; mode = $mode; reason = $reason }
 }
 
 function Get-SafeVersion {
@@ -224,6 +227,7 @@ $scriptStartedAt = [DateTimeOffset]::Now
 $repoRoot = Resolve-RepoRoot
 $outputRoot = Resolve-RepoPath $repoRoot $OutputDirectory
 $allowedRoot = Resolve-RepoPath $repoRoot "artifacts"
+$sharedTargetRoot = Resolve-RepoPath $repoRoot "target"
 if (-not (Test-PathInside $outputRoot $allowedRoot)) {
     throw "OutputDirectory must remain under ignored artifacts/: $outputRoot"
 }
@@ -267,9 +271,9 @@ if (-not $Execute) {
 }
 
 $projectRoot = Join-Path $repoRoot "project"
-$coldPrecondition = Get-ColdTargetPrecondition $repoRoot $allowedRoot $ColdTargetDirectory $ConfirmColdTarget
+$coldPrecondition = Get-ColdTargetPrecondition $repoRoot $allowedRoot $sharedTargetRoot $ColdTargetDirectory $ConfirmColdTarget
 $commands = @{
-    "desktop-cold" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Cold baseline requires a caller-confirmed empty independent target under artifacts/." }
+    "desktop-cold" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Cold baseline requires a caller-confirmed empty repository root target or isolated target under artifacts/." }
     "desktop-warm" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Warm desktop build against the current existing Cargo target." }
     "desktop-incremental" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Not measured automatically: copy or patch a caller-selected ordinary Rust file outside this script, then run this scenario and restore the file separately." }
     "desktop-hot" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Not measured automatically: copy or patch a caller-selected high-churn Rust file outside this script, then run this scenario and restore the file separately." }
@@ -287,7 +291,10 @@ foreach ($name in $selected) {
             continue
         }
         $coldArgs = @("build", "--locked", "--target-dir", $coldPrecondition.path)
-        $results.Add((Invoke-MeasuredCommand -Name "desktop-cold" -FileName "cargo" -Arguments $coldArgs -WorkingDirectory $projectRoot -LogPath $coldLog -TimeoutSeconds $TimeoutSeconds -Skip:(-not [bool]$Execute) -SkipReason "dry-run: caller-confirmed cold target command planned but not started"))
+        $coldSkipReason = "dry-run: $($coldPrecondition.reason); command planned but not started"
+        $coldResult = Invoke-MeasuredCommand -Name "desktop-cold" -FileName "cargo" -Arguments $coldArgs -WorkingDirectory $projectRoot -LogPath $coldLog -TimeoutSeconds $TimeoutSeconds -Skip:(-not [bool]$Execute) -SkipReason $coldSkipReason
+        $coldResult | Add-Member -NotePropertyName note -NotePropertyValue $coldPrecondition.reason
+        $results.Add($coldResult)
         continue
     }
     if ($name -eq "desktop-incremental" -or $name -eq "desktop-hot") {
