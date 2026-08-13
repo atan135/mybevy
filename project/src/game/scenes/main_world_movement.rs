@@ -57,6 +57,8 @@ pub(in crate::game) const MAIN_WORLD_PREDICTION_HISTORY_CAPACITY: usize = 100;
 /// Maximum number of authority samples retained for any one remote character.
 /// At 20 Hz this gives interpolation a two-second bounded history window.
 pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY: usize = 40;
+pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES: u32 = 2;
+pub(in crate::game) const MAIN_WORLD_REMOTE_MAX_SNAP_DISTANCE_METRES: f32 = 8.0;
 
 /// Incremental authority differences no larger than this are eased only in
 /// presentation. Larger differences replace the local baseline immediately.
@@ -289,6 +291,8 @@ pub(in crate::game) struct MainWorldRemoteSnapshot {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(in crate::game) struct MainWorldRemoteInterpolationBuffer {
     snapshots: VecDeque<MainWorldRemoteSnapshot>,
+    entity_id: Option<u64>,
+    scene_id: Option<i32>,
 }
 
 impl MainWorldRemoteInterpolationBuffer {
@@ -302,6 +306,21 @@ impl MainWorldRemoteInterpolationBuffer {
 
     pub fn snapshots(&self) -> &VecDeque<MainWorldRemoteSnapshot> {
         &self.snapshots
+    }
+
+    fn reset_baseline(&mut self) {
+        self.snapshots.clear();
+    }
+
+    fn set_identity(&mut self, entity_id: u64, scene_id: i32) -> bool {
+        let changed = self.entity_id.is_some_and(|id| id != entity_id)
+            || self.scene_id.is_some_and(|id| id != scene_id);
+        if changed {
+            self.reset_baseline();
+        }
+        self.entity_id = Some(entity_id);
+        self.scene_id = Some(scene_id);
+        changed
     }
 
     pub fn push(&mut self, snapshot: MainWorldRemoteSnapshot) -> bool {
@@ -524,6 +543,7 @@ impl Plugin for MainWorldMovementPlugin {
                     (
                         sync_main_world_movement_lifecycle,
                         consume_main_world_local_authority_snapshots,
+                        consume_main_world_remote_authority_snapshots,
                     )
                         .chain()
                         .in_set(MainWorldMovementUpdateSet::ConsumeAuthority),
@@ -542,6 +562,7 @@ impl Plugin for MainWorldMovementPlugin {
                 PostUpdate,
                 (
                     write_main_world_predicted_visual,
+                    write_main_world_remote_visual,
                     advance_main_world_render_frame,
                 )
                     .chain()
@@ -695,6 +716,169 @@ fn consume_main_world_local_authority_snapshots(
         };
         reconcile_main_world_local_authority(&mut runtime, authority, alpha);
     }
+}
+
+fn consume_main_world_remote_authority_snapshots(
+    mut events: MessageReader<MyServerEvent>,
+    entry: Option<Res<MainWorldEntryState>>,
+    mut runtime: ResMut<MainWorldMovementRuntime>,
+) {
+    let Some(entry) = entry else {
+        return;
+    };
+    let Some(session_id) = entry.scene_session_id.as_ref() else {
+        return;
+    };
+    let Some(local_character_id) = entry.character_id.as_deref() else {
+        return;
+    };
+    if !entry.allows_gameplay_input()
+        || runtime.generation != entry.generation
+        || runtime.session_id.as_ref() != Some(session_id)
+    {
+        return;
+    }
+    for event in events.read() {
+        let MyServerEvent::MovementSnapshotPush(push) = event else {
+            continue;
+        };
+        if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
+            continue;
+        }
+        for entity in &push.entities {
+            if entity.character_id == local_character_id
+                || (!push.target_character_ids.is_empty()
+                    && !push
+                        .target_character_ids
+                        .iter()
+                        .any(|id| id == &entity.character_id))
+            {
+                continue;
+            }
+            let Ok(position) =
+                main_world_bevy_position_from_authority(entity.scene_id, entity.x, entity.y)
+            else {
+                continue;
+            };
+            let buffer = runtime.remote_buffer_mut(entity.character_id.clone());
+            let identity_changed = buffer.set_identity(entity.entity_id, entity.scene_id);
+            let previous = buffer.snapshots().back().copied();
+            if push.full_sync
+                || matches!(
+                    pb_correction_kind(push.correction_kind),
+                    Some(
+                        pb::MovementCorrectionKind::FullSync
+                            | pb::MovementCorrectionKind::Strong
+                            | pb::MovementCorrectionKind::Recovery
+                    )
+                )
+                || identity_changed
+                || previous.is_some_and(|sample| {
+                    sample.position.distance(position) > MAIN_WORLD_REMOTE_MAX_SNAP_DISTANCE_METRES
+                })
+            {
+                buffer.reset_baseline();
+            }
+            let direction = Vec2::new(entity.dir_x, entity.dir_y);
+            let direction = if direction.is_finite() && direction.length_squared() > f32::EPSILON {
+                direction.normalize()
+            } else {
+                previous.map(|sample| sample.direction).unwrap_or(Vec2::X)
+            };
+            buffer.push(MainWorldRemoteSnapshot {
+                frame: MainWorldAuthorityFrame(push.frame_id),
+                position,
+                direction,
+                moving: entity.moving,
+            });
+        }
+        if push.full_sync {
+            let visible: std::collections::HashSet<_> = push
+                .entities
+                .iter()
+                .map(|e| e.character_id.as_str())
+                .collect();
+            runtime
+                .remote_interpolation
+                .retain(|id, _| visible.contains(id.as_str()) && id != local_character_id);
+        }
+    }
+}
+
+fn write_main_world_remote_visual(
+    fixed_time: Res<Time<Fixed>>,
+    runtime: Res<MainWorldMovementRuntime>,
+    mut players: Query<(
+        &MainWorldPlayer,
+        &mut FangyuanPlayerPosition,
+        &mut FangyuanObjectState,
+        &mut Transform,
+    )>,
+) {
+    if !runtime.allows_local_movement() {
+        return;
+    }
+    let alpha = fixed_time.overstep_fraction();
+    let target_frame = runtime
+        .remote_interpolation
+        .values()
+        .filter_map(|buffer| buffer.snapshots().back().map(|sample| sample.frame.0))
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES);
+    for (player, mut position, mut object_state, mut transform) in &mut players {
+        if player.ownership != MainWorldPlayerOwnership::Remote
+            || Some(&player.scene_session_id) != runtime.session_id.as_ref()
+        {
+            continue;
+        }
+        let Some(buffer) = runtime.remote_interpolation.get(&player.character_id) else {
+            continue;
+        };
+        let snapshots = buffer.snapshots();
+        let Some(latest) = snapshots.back() else {
+            continue;
+        };
+        let target = target_frame.max(
+            latest
+                .frame
+                .0
+                .saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES),
+        );
+        let (a, b, factor) = remote_interpolation_sample(snapshots, target, alpha);
+        let visual = a.position.lerp(b.position, factor);
+        position.translation = visual;
+        object_state.root_translation = visual;
+        transform.translation = visual;
+        let direction = a.direction.lerp(b.direction, factor).normalize_or_zero();
+        if direction.length_squared() > f32::EPSILON {
+            transform.rotation = Quat::from_rotation_y(direction.x.atan2(direction.y));
+        }
+    }
+}
+
+fn remote_interpolation_sample(
+    snapshots: &VecDeque<MainWorldRemoteSnapshot>,
+    target_frame: u32,
+    alpha: f32,
+) -> (MainWorldRemoteSnapshot, MainWorldRemoteSnapshot, f32) {
+    let Some(after_index) = snapshots
+        .iter()
+        .position(|sample| sample.frame.0 >= target_frame)
+    else {
+        let latest = *snapshots.back().unwrap();
+        return (latest, latest, 0.0);
+    };
+    if after_index == 0 {
+        let first = snapshots[0];
+        return (first, first, 0.0);
+    }
+    let before = snapshots[after_index - 1];
+    let after = snapshots[after_index];
+    let span = (after.frame.0 - before.frame.0).max(1) as f32;
+    let factor =
+        ((target_frame.saturating_sub(before.frame.0) as f32 + alpha) / span).clamp(0.0, 1.0);
+    (before, after, factor)
 }
 
 fn pb_correction_kind(value: i32) -> Option<pb::MovementCorrectionKind> {
@@ -1371,6 +1555,421 @@ mod tests {
             }],
             ..default()
         })
+    }
+
+    fn remote_snapshot_event(
+        frame: u32,
+        x: f32,
+        y: f32,
+        moving: bool,
+        dir_x: f32,
+        dir_y: f32,
+    ) -> MyServerEvent {
+        MyServerEvent::MovementSnapshotPush(pb::MovementSnapshotPush {
+            room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+            frame_id: frame,
+            entities: vec![pb::EntityTransform {
+                entity_id: 99,
+                character_id: "chr-remote".to_owned(),
+                scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                x,
+                y,
+                dir_x,
+                dir_y,
+                moving,
+                ..default()
+            }],
+            ..default()
+        })
+    }
+
+    fn remote_snapshot_push(
+        frame: u32,
+        entities: Vec<(&str, u64, i32, f32, f32, bool, f32, f32)>,
+        full_sync: bool,
+        correction_kind: pb::MovementCorrectionKind,
+    ) -> MyServerEvent {
+        MyServerEvent::MovementSnapshotPush(pb::MovementSnapshotPush {
+            room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+            frame_id: frame,
+            full_sync,
+            correction_kind: correction_kind as i32,
+            entities: entities
+                .into_iter()
+                .map(
+                    |(character_id, entity_id, scene_id, x, y, moving, dir_x, dir_y)| {
+                        pb::EntityTransform {
+                            character_id: character_id.to_owned(),
+                            entity_id,
+                            scene_id,
+                            x,
+                            y,
+                            moving,
+                            dir_x,
+                            dir_y,
+                            ..default()
+                        }
+                    },
+                )
+                .collect(),
+            ..default()
+        })
+    }
+
+    #[test]
+    fn remote_snapshot_events_interpolate_with_delay_preserve_heading_and_clear_on_full_sync() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let session_id = SceneSessionId::from("main-world-7");
+        let remote = app
+            .world_mut()
+            .spawn((
+                MainWorldPlayer {
+                    character_id: "chr-remote".to_owned(),
+                    server_entity_id: 99,
+                    ownership: MainWorldPlayerOwnership::Remote,
+                    scene_session_id: session_id,
+                    last_authoritative_frame: 0,
+                },
+                FangyuanPlayerPosition::default(),
+                FangyuanObjectState::default(),
+                Transform::default(),
+            ))
+            .id();
+
+        app.world_mut()
+            .write_message(remote_snapshot_event(10, 2001.0, 2001.0, true, 1.0, 0.0));
+        app.update();
+        app.world_mut()
+            .write_message(remote_snapshot_event(12, 2003.0, 2001.0, true, 1.0, 0.0));
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        let buffer = runtime.remote_interpolation.get("chr-remote").unwrap();
+        assert_eq!(
+            buffer
+                .snapshots()
+                .iter()
+                .map(|s| s.frame.0)
+                .collect::<Vec<_>>(),
+            vec![10, 12]
+        );
+        assert_eq!(
+            app.world().get::<Transform>(remote).unwrap().translation,
+            Vec3::new(1.0, 0.0, 1.0)
+        );
+
+        app.world_mut()
+            .write_message(remote_snapshot_event(11, 2002.0, 2001.0, true, 0.0, 0.0));
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        let buffer = runtime.remote_interpolation.get("chr-remote").unwrap();
+        assert_eq!(
+            buffer
+                .snapshots()
+                .iter()
+                .map(|s| s.frame.0)
+                .collect::<Vec<_>>(),
+            vec![10, 11, 12]
+        );
+        assert_eq!(buffer.snapshots()[1].direction, Vec2::X);
+
+        app.world_mut()
+            .write_message(remote_snapshot_event(13, 2004.0, 2001.0, false, 0.0, 0.0));
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(remote).unwrap().translation,
+            Vec3::new(2.0, 0.0, 1.0)
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(
+                pb::MovementSnapshotPush {
+                    room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+                    frame_id: 14,
+                    full_sync: true,
+                    entities: Vec::new(),
+                    ..default()
+                },
+            ));
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .remote_interpolation
+                .contains_key("chr-remote")
+        );
+    }
+
+    #[test]
+    fn remote_snapshot_push_is_idempotent_and_resets_on_identity_or_large_jump() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+
+        app.world_mut().write_message(remote_snapshot_push(
+            20,
+            vec![(
+                "chr-remote",
+                99,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2001.0,
+                2001.0,
+                true,
+                1.0,
+                0.0,
+            )],
+            false,
+            pb::MovementCorrectionKind::Incremental,
+        ));
+        app.update();
+        app.world_mut().write_message(remote_snapshot_push(
+            21,
+            vec![(
+                "chr-remote",
+                99,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2002.0,
+                2001.0,
+                true,
+                1.0,
+                0.0,
+            )],
+            false,
+            pb::MovementCorrectionKind::Incremental,
+        ));
+        app.update();
+
+        // Replaying frame 21 replaces the sample rather than growing the queue.
+        app.world_mut().write_message(remote_snapshot_push(
+            21,
+            vec![(
+                "chr-remote",
+                99,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2002.5,
+                2001.0,
+                false,
+                0.0,
+                0.0,
+            )],
+            false,
+            pb::MovementCorrectionKind::Incremental,
+        ));
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        let buffer = runtime.remote_interpolation.get("chr-remote").unwrap();
+        assert_eq!(buffer.len(), 2);
+        assert_eq!(
+            buffer.snapshots().back().unwrap().position,
+            Vec3::new(2.5, 0.0, 1.0)
+        );
+        assert!(!buffer.snapshots().back().unwrap().moving);
+
+        // A large discontinuity starts a new interpolation baseline.
+        app.world_mut().write_message(remote_snapshot_push(
+            22,
+            vec![(
+                "chr-remote",
+                99,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2015.0,
+                2001.0,
+                true,
+                0.0,
+                1.0,
+            )],
+            false,
+            pb::MovementCorrectionKind::Incremental,
+        ));
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        let buffer = runtime.remote_interpolation.get("chr-remote").unwrap();
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(
+            buffer.snapshots().front().unwrap().frame,
+            MainWorldAuthorityFrame(22)
+        );
+        assert!(buffer.snapshots().front().unwrap().direction.is_finite());
+
+        // Changing the server identity also drops the prior baseline.
+        app.world_mut().write_message(remote_snapshot_push(
+            23,
+            vec![(
+                "chr-remote",
+                100,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2015.2,
+                2001.0,
+                true,
+                1.0,
+                0.0,
+            )],
+            false,
+            pb::MovementCorrectionKind::Incremental,
+        ));
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        let buffer = runtime.remote_interpolation.get("chr-remote").unwrap();
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(
+            buffer.snapshots().front().unwrap().frame,
+            MainWorldAuthorityFrame(23)
+        );
+
+        // A snapshot from an unrelated authority scene is rejected without
+        // changing the established remote baseline.
+        app.world_mut().write_message(remote_snapshot_push(
+            24,
+            vec![(
+                "chr-remote",
+                100,
+                MAIN_WORLD_SERVER_SCENE_ID + 1,
+                2015.4,
+                2001.0,
+                true,
+                1.0,
+                0.0,
+            )],
+            false,
+            pb::MovementCorrectionKind::Incremental,
+        ));
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        let buffer = runtime.remote_interpolation.get("chr-remote").unwrap();
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(
+            buffer.snapshots().front().unwrap().frame,
+            MainWorldAuthorityFrame(23)
+        );
+    }
+
+    #[test]
+    fn remote_snapshot_push_strong_and_recovery_start_new_baselines_with_valid_rotation() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let remote = app
+            .world_mut()
+            .spawn((
+                MainWorldPlayer {
+                    character_id: "chr-remote".to_owned(),
+                    server_entity_id: 99,
+                    ownership: MainWorldPlayerOwnership::Remote,
+                    scene_session_id: SceneSessionId::from("main-world-7"),
+                    last_authoritative_frame: 0,
+                },
+                FangyuanPlayerPosition::default(),
+                FangyuanObjectState::default(),
+                Transform::default(),
+            ))
+            .id();
+
+        for (frame, correction_kind) in [
+            (30, pb::MovementCorrectionKind::Incremental),
+            (31, pb::MovementCorrectionKind::Strong),
+            (32, pb::MovementCorrectionKind::Recovery),
+        ] {
+            app.world_mut().write_message(remote_snapshot_push(
+                frame,
+                vec![(
+                    "chr-remote",
+                    99,
+                    MAIN_WORLD_SERVER_SCENE_ID,
+                    2000.5 + frame as f32,
+                    2001.0,
+                    true,
+                    0.0,
+                    1.0,
+                )],
+                false,
+                correction_kind,
+            ));
+            app.update();
+            let runtime = app.world().resource::<MainWorldMovementRuntime>();
+            let buffer = runtime.remote_interpolation.get("chr-remote").unwrap();
+            assert_eq!(buffer.len(), 1, "{correction_kind:?} must reset baseline");
+            assert!(buffer.snapshots().front().unwrap().direction.is_finite());
+            let transform = app.world().get::<Transform>(remote).unwrap();
+            assert!(transform.translation.is_finite());
+            assert!(transform.rotation.is_finite());
+            assert!((transform.rotation.length_squared() - 1.0).abs() < 0.0001);
+        }
+    }
+
+    #[test]
+    fn remote_full_sync_retains_visible_players_and_removes_missing_players() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        for (index, character_id) in ["chr-remote", "chr-other"].iter().enumerate() {
+            app.world_mut().write_message(remote_snapshot_push(
+                40 + index as u32,
+                vec![(
+                    character_id,
+                    100 + index as u64,
+                    MAIN_WORLD_SERVER_SCENE_ID,
+                    2001.0 + index as f32,
+                    2001.0,
+                    true,
+                    1.0,
+                    0.0,
+                )],
+                false,
+                pb::MovementCorrectionKind::Incremental,
+            ));
+            app.update();
+        }
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .remote_interpolation
+                .len(),
+            2
+        );
+
+        app.world_mut().write_message(remote_snapshot_push(
+            42,
+            vec![(
+                "chr-remote",
+                100,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2003.0,
+                2001.0,
+                true,
+                1.0,
+                0.0,
+            )],
+            true,
+            pb::MovementCorrectionKind::FullSync,
+        ));
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert!(runtime.remote_interpolation.contains_key("chr-remote"));
+        assert!(!runtime.remote_interpolation.contains_key("chr-other"));
+        assert_eq!(runtime.remote_interpolation["chr-remote"].len(), 1);
+    }
+
+    #[test]
+    fn remote_snapshot_push_is_cleared_when_scene_session_exits() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        app.world_mut()
+            .write_message(remote_snapshot_event(50, 2001.0, 2001.0, true, 1.0, 0.0));
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .remote_interpolation
+                .is_empty()
+        );
+
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = MainWorldEntryPhase::Exiting;
+            entry.input_frozen = true;
+        }
+        app.update();
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert!(runtime.remote_interpolation.is_empty());
+        assert!(runtime.session_id.is_none());
+        assert!(runtime.input_frozen);
     }
 
     fn seed_authority_history(app: &mut App) {
