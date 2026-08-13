@@ -169,16 +169,16 @@ fn setup_main_world_players_fixture(
                     entity_id: 1,
                     character_id: "fixture-local".into(),
                     scene_id: MAIN_WORLD_SERVER_SCENE_ID,
-                    x: 7.7,
-                    y: 8.0,
+                    x: 2007.7,
+                    y: 2008.0,
                     ..Default::default()
                 },
                 pb::EntityTransform {
                     entity_id: 2,
                     character_id: "fixture-remote".into(),
                     scene_id: MAIN_WORLD_SERVER_SCENE_ID,
-                    x: 8.3,
-                    y: 8.0,
+                    x: 2008.3,
+                    y: 2008.0,
                     ..Default::default()
                 },
             ],
@@ -841,16 +841,16 @@ mod tests {
                     entity_id: 1,
                     character_id: "local".into(),
                     scene_id: 1,
-                    x: 1.0,
-                    y: 1.0,
+                    x: 2001.0,
+                    y: 2001.0,
                     ..Default::default()
                 },
                 pb::EntityTransform {
                     entity_id: 2,
                     character_id: "remote".into(),
                     scene_id: 1,
-                    x: 2.0,
-                    y: 2.0,
+                    x: 2002.0,
+                    y: 2002.0,
                     ..Default::default()
                 },
             ],
@@ -867,8 +867,8 @@ mod tests {
                 entity_id: 1,
                 character_id: "local".into(),
                 scene_id: 1,
-                x: 3.0,
-                y: 3.0,
+                x: 2003.0,
+                y: 2003.0,
                 ..Default::default()
             }],
             ..push.clone()
@@ -890,8 +890,8 @@ mod tests {
                 entity_id: 1,
                 character_id: "local".into(),
                 scene_id: 1,
-                x: 4.0,
-                y: 4.0,
+                x: 2004.0,
+                y: 2004.0,
                 ..Default::default()
             }],
             ..push
@@ -933,16 +933,16 @@ mod tests {
                     entity_id: 1,
                     character_id: "valid".into(),
                     scene_id: 1,
-                    x: 1.0,
-                    y: 1.0,
+                    x: 2001.0,
+                    y: 2001.0,
                     ..Default::default()
                 },
                 pb::EntityTransform {
                     entity_id: 2,
                     character_id: "invalid".into(),
                     scene_id: 99,
-                    x: 2.0,
-                    y: 2.0,
+                    x: 2002.0,
+                    y: 2002.0,
                     ..Default::default()
                 },
             ],
@@ -965,6 +965,8 @@ mod tests {
         app
     }
 
+    /// Builds an authority snapshot from concise centred-Bevy test positions.
+    /// Production snapshots are always already in server coordinates.
     fn snapshot(
         frame: u32,
         full_sync: bool,
@@ -980,8 +982,10 @@ mod tests {
                     entity_id: *id,
                     character_id: (*character).into(),
                     scene_id: MAIN_WORLD_SERVER_SCENE_ID,
-                    x: *x,
-                    y: *y,
+                    x: *x
+                        + super::super::main_world_contract::MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES,
+                    y: *y
+                        + super::super::main_world_contract::MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES,
                     ..Default::default()
                 })
                 .collect(),

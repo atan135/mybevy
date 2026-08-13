@@ -6,6 +6,7 @@
 //! it does not implement room entry or scene loading.
 
 use crate::framework::scene::prelude::SceneId;
+use bevy::prelude::{Vec2, Vec3};
 use serde_json::Value;
 use std::fmt;
 
@@ -30,6 +31,27 @@ pub(in crate::game) const MAIN_WORLD_PUBLIC_ROOM_ID: &str = "main-world-public";
 /// Existing MyServer room policy used by the public main city.
 pub(in crate::game) const MAIN_WORLD_ROOM_POLICY_ID: &str = "movement_demo";
 
+/// The authoritative world is a non-negative, 4000 metre square. Its upper
+/// edge is exclusive so the client and server share exactly one boundary rule.
+pub(in crate::game) const MAIN_WORLD_SERVER_COORDINATE_MIN_METRES: f32 = 0.0;
+pub(in crate::game) const MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES: f32 = 4000.0;
+pub(in crate::game) const MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES: f32 = 2000.0;
+
+/// Shared movement simulation contract. Future movement systems must advance
+/// prediction only at this cadence, rather than at the render cadence.
+pub(in crate::game) const MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND: u32 = 20;
+pub(in crate::game) const MAIN_WORLD_AUTHORITY_TICK_SECONDS: f32 =
+    1.0 / MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND as f32;
+pub(in crate::game) const MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND: f32 = 4.0;
+
+/// `MOVE_DIR` is sent once per authority frame while movement is held. This
+/// keeps the existing three-frame server-side stop watchdog alive. A
+/// transition to idle emits exactly one `MOVE_STOP`; it is not a render-frame
+/// keepalive message.
+pub(in crate::game) const MAIN_WORLD_MOVE_DIR_KEEPALIVE_FRAMES: u32 = 1;
+pub(in crate::game) const MAIN_WORLD_SERVER_CONTROL_STOP_FRAMES: u32 = 3;
+pub(in crate::game) const MAIN_WORLD_MOVE_STOP_MESSAGES_PER_TRANSITION: u32 = 1;
+
 /// Out-of-scope systems for the first main-world authority loop.
 pub(in crate::game) const MAIN_WORLD_NON_GOALS: &[&str] = &[
     "matchmaking",
@@ -38,6 +60,175 @@ pub(in crate::game) const MAIN_WORLD_NON_GOALS: &[&str] = &[
     "production_player_model",
     "combat",
 ];
+
+/// A frame produced by the 20 Hz MyServer movement authority. This is the
+/// only frame kind accepted from `MovementSnapshotPush` and used by
+/// `MoveInputReq.frame_id`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in crate::game) struct MainWorldAuthorityFrame(pub u32);
+
+/// A local fixed-step simulation frame. It can run ahead of the latest
+/// authority frame only through unconfirmed local input replay.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in crate::game) struct MainWorldPredictedFrame(pub u32);
+
+/// The newest local input frame explicitly acknowledged by an authoritative
+/// entity snapshot (`EntityTransform.last_input_frame`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in crate::game) struct MainWorldConfirmedFrame(pub u32);
+
+/// A presentation-only frame. It must never be sent to the server or used as
+/// a prediction-history key, because rendering can run at any cadence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in crate::game) struct MainWorldRenderFrame(pub u64);
+
+/// The two move input semantics shared by all later input adapters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::game) enum MainWorldMoveInputKind {
+    /// A finite, normalized direction is sent every authority frame while held.
+    MoveDirection,
+    /// Exactly one message is sent on a moving-to-idle transition.
+    MoveStop,
+}
+
+/// Errors returned while translating values at the client/server coordinate
+/// boundary. Bevy Y is deliberately absent: server positions are planar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::game) enum MainWorldCoordinateError {
+    UnexpectedScene { expected: i32, actual: i32 },
+    NonFiniteServerPosition,
+    ServerPositionOutOfBounds,
+    NonFiniteBevyPosition,
+    BevyPositionOutOfBounds,
+    NonFiniteDirection,
+    ZeroDirection,
+}
+
+impl fmt::Display for MainWorldCoordinateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnexpectedScene { expected, actual } => {
+                write!(
+                    formatter,
+                    "main-world scene mismatch: expected {expected}, got {actual}"
+                )
+            }
+            Self::NonFiniteServerPosition => {
+                formatter.write_str("main-world server position is not finite")
+            }
+            Self::ServerPositionOutOfBounds => {
+                formatter.write_str("main-world server position is outside [0, 4000) metres")
+            }
+            Self::NonFiniteBevyPosition => {
+                formatter.write_str("main-world Bevy X/Z position is not finite")
+            }
+            Self::BevyPositionOutOfBounds => {
+                formatter.write_str("main-world Bevy X/Z position maps outside [0, 4000) metres")
+            }
+            Self::NonFiniteDirection => formatter.write_str("main-world direction is not finite"),
+            Self::ZeroDirection => formatter.write_str("main-world direction must be non-zero"),
+        }
+    }
+}
+
+impl std::error::Error for MainWorldCoordinateError {}
+
+/// Returns whether a server coordinate is finite and inside its exclusive
+/// 4000-metre world boundary.
+pub(in crate::game) fn is_main_world_server_coordinate(value: f32) -> bool {
+    value.is_finite()
+        && (MAIN_WORLD_SERVER_COORDINATE_MIN_METRES
+            ..MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES)
+            .contains(&value)
+}
+
+/// Converts an authoritative MyServer ground-plane position to the centred
+/// Bevy X/Z plane. This is the sole position mapping for the main world.
+pub(in crate::game) fn main_world_bevy_position(
+    server_x: f32,
+    server_y: f32,
+) -> Result<Vec3, MainWorldCoordinateError> {
+    if !server_x.is_finite() || !server_y.is_finite() {
+        return Err(MainWorldCoordinateError::NonFiniteServerPosition);
+    }
+    if !is_main_world_server_coordinate(server_x) || !is_main_world_server_coordinate(server_y) {
+        return Err(MainWorldCoordinateError::ServerPositionOutOfBounds);
+    }
+    Ok(Vec3::new(
+        server_x - MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES,
+        0.0,
+        server_y - MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES,
+    ))
+}
+
+/// Converts a centred Bevy X/Z ground-plane position back to the server's
+/// non-negative coordinate system. Bevy Y is a visual height and is ignored.
+pub(in crate::game) fn main_world_server_position(
+    bevy_position: Vec3,
+) -> Result<Vec2, MainWorldCoordinateError> {
+    if !bevy_position.x.is_finite() || !bevy_position.z.is_finite() {
+        return Err(MainWorldCoordinateError::NonFiniteBevyPosition);
+    }
+    let server = Vec2::new(
+        bevy_position.x + MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES,
+        bevy_position.z + MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES,
+    );
+    if !is_main_world_server_coordinate(server.x) || !is_main_world_server_coordinate(server.y) {
+        return Err(MainWorldCoordinateError::BevyPositionOutOfBounds);
+    }
+    Ok(server)
+}
+
+/// Validates a movement snapshot's scene before accepting its position.
+pub(in crate::game) fn main_world_bevy_position_from_authority(
+    scene_id: i32,
+    server_x: f32,
+    server_y: f32,
+) -> Result<Vec3, MainWorldCoordinateError> {
+    if !MAIN_WORLD_AUTHORITY_CONTRACT.is_authoritative_entity_scene(scene_id) {
+        return Err(MainWorldCoordinateError::UnexpectedScene {
+            expected: MAIN_WORLD_SERVER_SCENE_ID,
+            actual: scene_id,
+        });
+    }
+    main_world_bevy_position(server_x, server_y)
+}
+
+/// Maps a finite server XY direction to Bevy XZ without applying the world
+/// centre offset. A zero vector is valid for an authoritative stopped state.
+pub(in crate::game) fn main_world_bevy_direction(
+    server_dir_x: f32,
+    server_dir_y: f32,
+) -> Result<Vec3, MainWorldCoordinateError> {
+    if !server_dir_x.is_finite() || !server_dir_y.is_finite() {
+        return Err(MainWorldCoordinateError::NonFiniteDirection);
+    }
+    Ok(Vec3::new(server_dir_x, 0.0, server_dir_y))
+}
+
+/// Maps a finite Bevy XZ direction to server XY without applying the world
+/// centre offset. Bevy Y is not part of planar movement direction.
+pub(in crate::game) fn main_world_server_direction(
+    bevy_direction: Vec3,
+) -> Result<Vec2, MainWorldCoordinateError> {
+    if !bevy_direction.x.is_finite() || !bevy_direction.z.is_finite() {
+        return Err(MainWorldCoordinateError::NonFiniteDirection);
+    }
+    Ok(Vec2::new(bevy_direction.x, bevy_direction.z))
+}
+
+/// Produces the only client move-direction representation accepted by later
+/// prediction and send systems. The result has unit length or is rejected.
+pub(in crate::game) fn main_world_normalized_direction(
+    direction: Vec2,
+) -> Result<Vec2, MainWorldCoordinateError> {
+    if !direction.is_finite() {
+        return Err(MainWorldCoordinateError::NonFiniteDirection);
+    }
+    direction
+        .try_normalize()
+        .ok_or(MainWorldCoordinateError::ZeroDirection)
+}
 
 /// The single client/server mapping for the initial public main world.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -212,6 +403,154 @@ mod tests {
                 "production_player_model",
                 "combat",
             ]
+        );
+    }
+
+    #[test]
+    fn centred_coordinate_mapping_covers_world_centre_and_all_edges() {
+        assert_eq!(main_world_bevy_position(2000.0, 2000.0), Ok(Vec3::ZERO));
+        assert_eq!(
+            main_world_bevy_position(0.0, 0.0),
+            Ok(Vec3::new(-2000.0, 0.0, -2000.0))
+        );
+        assert_eq!(
+            main_world_bevy_position(3999.999, 0.0),
+            Ok(Vec3::new(1999.999, 0.0, -2000.0))
+        );
+        assert_eq!(
+            main_world_bevy_position(0.0, 3999.999),
+            Ok(Vec3::new(-2000.0, 0.0, 1999.999))
+        );
+        assert_eq!(
+            main_world_bevy_position(3999.999, 3999.999),
+            Ok(Vec3::new(1999.999, 0.0, 1999.999))
+        );
+    }
+
+    #[test]
+    fn coordinate_mapping_rejects_exclusive_upper_bound_and_non_finite_values() {
+        for invalid in [
+            (4000.0, 2000.0),
+            (2000.0, 4000.0),
+            (-0.001, 2000.0),
+            (2000.0, -0.001),
+            (f32::NAN, 2000.0),
+            (2000.0, f32::INFINITY),
+        ] {
+            assert!(main_world_bevy_position(invalid.0, invalid.1).is_err());
+        }
+    }
+
+    #[test]
+    fn server_and_bevy_position_mapping_round_trip_for_representative_values() {
+        let samples = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 3998.5),
+            Vec2::new(2000.0, 2000.0),
+            Vec2::new(3999.999, 3999.999),
+        ];
+
+        for server_position in samples {
+            let bevy_position = main_world_bevy_position(server_position.x, server_position.y)
+                .expect("sample must be in bounds");
+            assert_eq!(
+                main_world_server_position(bevy_position),
+                Ok(server_position)
+            );
+        }
+    }
+
+    #[test]
+    fn server_and_bevy_position_mapping_round_trips_every_finite_grid_sample() {
+        for server_x in (0..4000).step_by(37) {
+            for server_y in (0..4000).step_by(41) {
+                let server_position = Vec2::new(server_x as f32 + 0.25, server_y as f32 + 0.5);
+                let bevy_position =
+                    main_world_bevy_position(server_position.x, server_position.y).unwrap();
+                assert_eq!(
+                    main_world_server_position(bevy_position),
+                    Ok(server_position),
+                    "round trip failed for {server_position:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn authority_position_checks_scene_before_applying_mapping() {
+        assert_eq!(
+            main_world_bevy_position_from_authority(MAIN_WORLD_SERVER_SCENE_ID, 2002.0, 1998.0),
+            Ok(Vec3::new(2.0, 0.0, -2.0))
+        );
+        assert_eq!(
+            main_world_bevy_position_from_authority(2, 2000.0, 2000.0),
+            Err(MainWorldCoordinateError::UnexpectedScene {
+                expected: MAIN_WORLD_SERVER_SCENE_ID,
+                actual: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn directions_use_axis_mapping_without_position_offset() {
+        assert_eq!(
+            main_world_bevy_direction(0.6, -0.8),
+            Ok(Vec3::new(0.6, 0.0, -0.8))
+        );
+        assert_eq!(
+            main_world_server_direction(Vec3::new(0.6, 12.0, -0.8)),
+            Ok(Vec2::new(0.6, -0.8))
+        );
+        assert_eq!(
+            main_world_bevy_direction(f32::NAN, 0.0),
+            Err(MainWorldCoordinateError::NonFiniteDirection)
+        );
+        assert_eq!(
+            main_world_server_direction(Vec3::new(0.0, 0.0, f32::NEG_INFINITY)),
+            Err(MainWorldCoordinateError::NonFiniteDirection)
+        );
+    }
+
+    #[test]
+    fn movement_contract_freezes_cadence_speed_normalization_and_stop_semantics() {
+        assert_eq!(MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, 20);
+        assert_eq!(MAIN_WORLD_AUTHORITY_TICK_SECONDS, 0.05);
+        assert_eq!(MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND, 4.0);
+        assert_eq!(MAIN_WORLD_MOVE_DIR_KEEPALIVE_FRAMES, 1);
+        assert_eq!(MAIN_WORLD_SERVER_CONTROL_STOP_FRAMES, 3);
+        assert_eq!(MAIN_WORLD_MOVE_STOP_MESSAGES_PER_TRANSITION, 1);
+        assert_eq!(
+            main_world_normalized_direction(Vec2::new(3.0, 4.0)),
+            Ok(Vec2::new(0.6, 0.8))
+        );
+        assert_eq!(
+            main_world_normalized_direction(Vec2::ZERO),
+            Err(MainWorldCoordinateError::ZeroDirection)
+        );
+        assert_eq!(
+            main_world_normalized_direction(Vec2::new(f32::NAN, 0.0)),
+            Err(MainWorldCoordinateError::NonFiniteDirection)
+        );
+    }
+
+    #[test]
+    fn frame_kinds_keep_authority_prediction_confirmation_and_render_boundaries_distinct() {
+        let authority = MainWorldAuthorityFrame(42);
+        let predicted = MainWorldPredictedFrame(43);
+        let confirmed = MainWorldConfirmedFrame(41);
+        let render = MainWorldRenderFrame(9_001);
+
+        assert_eq!(authority.0, 42);
+        assert_eq!(predicted.0, 43);
+        assert_eq!(confirmed.0, 41);
+        assert_eq!(render.0, 9_001);
+        assert_eq!(
+            MainWorldMoveInputKind::MoveDirection,
+            MainWorldMoveInputKind::MoveDirection
+        );
+        assert_ne!(
+            MainWorldMoveInputKind::MoveDirection,
+            MainWorldMoveInputKind::MoveStop
         );
     }
 }

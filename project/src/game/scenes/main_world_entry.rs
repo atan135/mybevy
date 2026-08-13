@@ -28,7 +28,13 @@ use crate::{
             MyServerSession, MyServerUpdateSet,
         },
         navigation::{AppUiMode, GameRouteCommand},
-        scenes::{FANGYUAN_HOME_SCENE_ID, main_world_contract::MAIN_WORLD_AUTHORITY_CONTRACT},
+        scenes::{
+            FANGYUAN_HOME_SCENE_ID,
+            main_world_contract::{
+                MAIN_WORLD_AUTHORITY_CONTRACT,
+                main_world_bevy_position as contract_main_world_bevy_position,
+            },
+        },
         screens::gameplay::host::{MainWorldUiTeardownCause, request_main_world_ui_teardown},
     },
 };
@@ -1250,12 +1256,13 @@ pub(in crate::game) fn main_world_bevy_position(
     x: f32,
     y: f32,
 ) -> Result<Vec3, MainWorldEntryFailure> {
-    const MIN: f32 = 0.0;
-    const MAX: f32 = 16.0;
-    if !x.is_finite() || !y.is_finite() || !(MIN..=MAX).contains(&x) || !(MIN..=MAX).contains(&y) {
-        return Err(MainWorldEntryFailure::InvalidAuthoritativePosition);
-    }
-    Ok(Vec3::new(x, 0.0, y))
+    contract_main_world_bevy_position(x, y).map_err(|error| {
+        debug!(
+            ?error,
+            "main world authority position rejected by coordinate contract"
+        );
+        MainWorldEntryFailure::InvalidAuthoritativePosition
+    })
 }
 
 fn handle_entry_signals(
@@ -1564,8 +1571,8 @@ mod tests {
                         entity_id: 1,
                         character_id: "chr_1".to_owned(),
                         scene_id: 1,
-                        x: 2.0,
-                        y: 3.0,
+                        x: 2002.0,
+                        y: 2003.0,
                         dir_x: 0.0,
                         dir_y: 1.0,
                         moving: false,
@@ -1769,7 +1776,7 @@ mod tests {
                 }),
             }));
         app.world_mut()
-            .write_message(movement_snapshot(0, 2.0, 3.0));
+            .write_message(movement_snapshot(0, 2002.0, 2003.0));
         app.update();
 
         let state = app.world().resource::<MainWorldEntryState>();
@@ -1979,7 +1986,7 @@ mod tests {
     #[test]
     fn coordinate_conversion_rejects_non_finite_and_out_of_bounds_values() {
         assert_eq!(
-            main_world_bevy_position(2.0, 3.0),
+            main_world_bevy_position(2002.0, 2003.0),
             Ok(Vec3::new(2.0, 0.0, 3.0))
         );
         assert_eq!(
@@ -1987,7 +1994,7 @@ mod tests {
             Err(MainWorldEntryFailure::InvalidAuthoritativePosition)
         );
         assert_eq!(
-            main_world_bevy_position(16.1, 1.0),
+            main_world_bevy_position(4000.0, 1.0),
             Err(MainWorldEntryFailure::InvalidAuthoritativePosition)
         );
     }
@@ -2521,7 +2528,7 @@ mod tests {
                 transport: NetworkTransport::Tcp,
             });
         app.world_mut()
-            .write_message(movement_snapshot(99, 9.0, 9.0));
+            .write_message(movement_snapshot(99, 2009.0, 2009.0));
         app.update();
         assert_eq!(
             app.world().resource::<MainWorldEntryState>().position,
@@ -2536,7 +2543,7 @@ mod tests {
                 ..Default::default()
             }));
         app.world_mut()
-            .write_message(movement_snapshot(10, 5.0, 6.0));
+            .write_message(movement_snapshot(10, 2005.0, 2006.0));
         app.update();
         assert_eq!(
             app.world().resource::<MainWorldEntryState>().position,
