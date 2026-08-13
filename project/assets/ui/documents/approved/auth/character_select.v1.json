@@ -248,6 +248,24 @@
           "color": { "kind": "literal", "value": "#b29a5ecc" }
         }
       }
+    },
+    "character_status_strip": {
+      "properties": {
+        "background": {
+          "kind": "solid",
+          "color": { "kind": "literal", "value": "#102027cc" }
+        },
+        "border": {
+          "width": { "kind": "literal", "value": 1.0 },
+          "color": { "kind": "literal", "value": "#526b6866" }
+        },
+        "corner_radius": {
+          "top_left": { "kind": "literal", "value": 4.0 },
+          "top_right": { "kind": "literal", "value": 4.0 },
+          "bottom_right": { "kind": "literal", "value": 4.0 },
+          "bottom_left": { "kind": "literal", "value": 4.0 }
+        }
+      }
     }
   },
   "root": {
@@ -338,10 +356,10 @@
               "id": "character.panel",
               "layout": {
                 "width": { "percent": 100.0 },
-                "max_width": { "px": 760.0 },
+                "max_width": { "px": 680.0 },
                 "min_width": { "px": 320.0 },
-                "padding": { "all": { "px": 22.0 } },
-                "gap": { "px": 12.0 },
+                "padding": { "all": { "px": 18.0 } },
+                "gap": { "px": 10.0 },
                 "direction": "column",
                 "flex_shrink": 0.0
               },
@@ -373,7 +391,7 @@
                           "type": "text",
                           "id": "character.title",
                           "content": { "i18n_key": "auth.character.title", "fallback": "CHOOSE CHARACTER" },
-                          "style": { "text_role": "title" }
+                          "style": { "text_role": "subtitle" }
                         },
                         {
                           "type": "text",
@@ -446,9 +464,14 @@
                   "id": "character.summary",
                   "layout": {
                     "width": { "percent": 100.0 },
-                    "direction": "column",
-                    "gap": { "px": 2.0 }
+                    "direction": "row",
+                    "wrap": "wrap",
+                    "align_items": "center",
+                    "gap": { "px": 8.0 },
+                    "padding": { "all": { "px": 8.0 } },
+                    "border": { "all": { "px": 1.0 } }
                   },
+                  "style": { "component": "character_status_strip" },
                   "children": [
                     {
                       "type": "text",
@@ -457,7 +480,7 @@
                         "binding_path": "auth.character.status",
                         "fallback": "Characters not loaded"
                       },
-                      "style": { "text_role": "subtitle" }
+                      "style": { "text_role": "body" }
                     },
                     {
                       "type": "text",
@@ -466,7 +489,8 @@
                         "binding_path": "auth.character.connection_status",
                         "fallback": "Game server not connected"
                       },
-                      "style": { "text_role": "caption", "role": "muted" }
+                      "style": { "text_role": "caption", "role": "muted" },
+                      "layout": { "flex_grow": 1.0 }
                     }
                   ]
                 },
@@ -546,10 +570,11 @@
                   "layout": {
                     "width": { "percent": 100.0 },
                     "direction": "row",
-                    "wrap": "wrap",
+                    "wrap": "no_wrap",
                     "align_items": "center",
                     "justify_content": "space_between",
-                    "gap": { "px": 10.0 }
+                    "gap": { "px": 10.0 },
+                    "padding": { "top": { "px": 2.0 } }
                   },
                   "children": [
                     {
@@ -597,7 +622,7 @@
                   "layout": {
                     "width": { "percent": 100.0 },
                     "direction": "column",
-                    "gap": { "px": 8.0 }
+                    "gap": { "px": 7.0 }
                   },
                   "children": [
                     {
@@ -610,7 +635,7 @@
                         "align_items": "center",
                         "justify_content": "space_between",
                         "gap": { "px": 10.0 },
-                        "padding": { "all": { "px": 10.0 } },
+                        "padding": { "all": { "px": 8.0 } },
                         "border": { "all": { "px": 1.0 } }
                       },
                       "style": { "component": "character_row" },
@@ -690,7 +715,7 @@
                       "max_chars": 256,
                       "layout": {
                         "flex_grow": 1.0,
-                        "min_width": { "px": 220.0 }
+                        "min_width": { "px": 200.0 }
                       },
                       "component": {
                         "bindings": {
@@ -802,9 +827,26 @@
           "node_id": "character.panel",
           "set": {
             "layout": {
-              "max_width": { "px": 760.0 },
-              "padding": { "all": { "px": 14.0 } },
-              "gap": { "px": 8.0 }
+              "max_width": { "px": 680.0 },
+              "padding": { "all": { "px": 10.0 } },
+              "gap": { "px": 6.0 }
+            }
+          }
+        },
+        {
+          "node_id": "character.header",
+          "set": {
+            "layout": {
+              "gap": { "px": 7.0 }
+            }
+          }
+        },
+        {
+          "node_id": "character.summary",
+          "set": {
+            "layout": {
+              "padding": { "all": { "px": 7.0 } },
+              "gap": { "px": 6.0 }
             }
           }
         },
@@ -818,7 +860,7 @@
                 { "repeat": 1, "size": { "fr": 1.0 } }
               ],
               "column_gap": { "px": 8.0 },
-              "row_gap": { "px": 7.0 }
+              "row_gap": { "px": 6.0 }
             }
           }
         },
@@ -826,8 +868,8 @@
           "node_id": "character.row_card",
           "set": {
             "layout": {
-              "padding": { "all": { "px": 8.0 } },
-              "gap": { "px": 6.0 }
+              "padding": { "all": { "px": 7.0 } },
+              "gap": { "px": 5.0 }
             }
           }
         }
