@@ -41,6 +41,14 @@ use crate::{
 
 pub(in crate::game) struct MainWorldEntryPlugin;
 
+/// Marks the point at which the entry coordinator has applied current-frame
+/// authority events. Main-world movement consumes that settled lifecycle state
+/// before it considers local input, prediction, or presentation work.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, SystemSet)]
+pub(in crate::game) enum MainWorldEntryUpdateSet {
+    Coordinator,
+}
+
 impl Plugin for MainWorldEntryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MainWorldEntryState>()
@@ -52,6 +60,12 @@ impl Plugin for MainWorldEntryPlugin {
             .add_message::<UiPanelCommand>()
             .add_message::<UiDocumentRuntimeCommand>()
             .init_resource::<UiBindingValues>()
+            .configure_sets(
+                Update,
+                MainWorldEntryUpdateSet::Coordinator
+                    .after(MyServerUpdateSet::NetworkEvents)
+                    .before(MyServerUpdateSet::CommandDispatch),
+            )
             .add_systems(
                 Update,
                 (
@@ -67,8 +81,7 @@ impl Plugin for MainWorldEntryPlugin {
                     trigger_debug_auto_exit_after_recovery,
                 )
                     .chain()
-                    .after(MyServerUpdateSet::NetworkEvents)
-                    .before(MyServerUpdateSet::CommandDispatch)
+                    .in_set(MainWorldEntryUpdateSet::Coordinator)
                     .run_if(resource_exists::<MyServerProfiles>)
                     .run_if(resource_exists::<MyServerSession>),
             );

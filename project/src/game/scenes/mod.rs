@@ -13,6 +13,8 @@ mod main_world_camera;
 pub(in crate::game) mod main_world_contract;
 pub(in crate::game) mod main_world_entry;
 #[allow(dead_code)]
+pub(in crate::game) mod main_world_movement;
+#[allow(dead_code)]
 pub(in crate::game) mod main_world_players;
 mod robot_sync_arena;
 mod sample_dungeon_room;
@@ -47,6 +49,7 @@ impl Plugin for GameScenesPlugin {
             fangyuan_home::FangyuanHomePlugin,
             lockstep_sim_arena::LockstepSimArenaPlugin,
             main_world_entry::MainWorldEntryPlugin,
+            main_world_movement::MainWorldMovementPlugin,
             main_world_players::MainWorldPlayersPlugin,
             main_world_camera::MainWorldCameraPlugin,
             main_world::MainWorldScenePlugin,
