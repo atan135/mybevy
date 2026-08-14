@@ -13,6 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 ui-generation = { path = "../ui-generation", default-features = false, features = ["provider-core"] }
+ui-document-core = { path = "../ui-document-core" }
 ureq = { version = "2.12", features = ["json"] }
 url = "2"
 

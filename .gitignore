@@ -4,6 +4,7 @@
 /project/target-android/
 /tools/ui-generation/target/
 /tools/ui-visual-audit/target/
+/tools/ui-document-core/target/
 /logs/
 /artifacts/
 /local/

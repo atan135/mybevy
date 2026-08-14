@@ -11,12 +11,12 @@ use crate::{
     contract::{AdditionalReferenceRole, GenerationTask, TargetViewport},
     lifecycle::{TaskFailure, TaskFailureKind},
 };
-use project::framework::ui::document::{
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use ui_document_core::{
     UiComponentSpec, UiControlSlot, UiDocument, UiNode, UiNodeId, UiResponsiveVariant,
     UiStateDefinition,
 };
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
 
 pub const PAGE_SERIES_EVIDENCE_VERSION: u32 = 1;
 pub const MIN_TOUCH_TARGET_LOGICAL_PX: f32 = 44.0;
@@ -401,7 +401,7 @@ fn validate_reference_evidence(
 }
 
 fn validate_override_nodes(
-    overrides: &[project::framework::ui::document::UiNodeOverride],
+    overrides: &[ui_document_core::UiNodeOverride],
     nodes: &BTreeMap<UiNodeId, &UiNode>,
 ) -> Result<(), TaskFailure> {
     if overrides.is_empty()
@@ -495,8 +495,8 @@ fn has_label_slot(component: &UiComponentSpec) -> bool {
 
 fn explicit_touch_target(node: &UiNode) -> bool {
     let layout = node.layout();
-    matches!(layout.min_width, project::framework::ui::document::UiLength::Px(width) if width >= MIN_TOUCH_TARGET_LOGICAL_PX)
-        && matches!(layout.min_height, project::framework::ui::document::UiLength::Px(height) if height >= MIN_TOUCH_TARGET_LOGICAL_PX)
+    matches!(layout.min_width, ui_document_core::UiLength::Px(width) if width >= MIN_TOUCH_TARGET_LOGICAL_PX)
+        && matches!(layout.min_height, ui_document_core::UiLength::Px(height) if height >= MIN_TOUCH_TARGET_LOGICAL_PX)
 }
 
 fn sorted_unique(values: &[String]) -> Result<Vec<String>, TaskFailure> {
@@ -517,8 +517,8 @@ fn invalid(message: impl Into<String>) -> TaskFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project::framework::ui::document::UiPageState;
     use serde_json::json;
+    use ui_document_core::UiPageState;
 
     const DOCUMENT: &str = r#"{
       "schema_version": 1,

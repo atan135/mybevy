@@ -95,17 +95,16 @@ pub fn inspect_task(
         assessment,
         verified_references,
         directory_plan,
-        ui_document_schema_version:
-            project::framework::ui::document::tooling::CURRENT_SCHEMA_VERSION,
+        ui_document_schema_version: ui_document_core::CURRENT_SCHEMA_VERSION,
     })
 }
 
 #[cfg(all(test, feature = "full"))]
 mod tests {
-    use project::framework::ui::document::tooling;
+    use ui_document_core as tooling;
 
     #[test]
-    fn project_tooling_facade_is_the_document_entry_point() {
+    fn core_tooling_facade_is_the_document_entry_point() {
         let source = r#"{
             "schema_version": 1,
             "document_id": "tooling.facade",

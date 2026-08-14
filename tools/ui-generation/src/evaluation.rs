@@ -13,7 +13,6 @@ use crate::{
         StructuredOutputContract,
     },
 };
-use project::framework::ui::document::tooling::validate_json_bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -23,6 +22,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use ui_document_core::validate_json_bytes;
 
 pub const EVALUATION_CATALOG_VERSION: u32 = 1;
 const MAX_EVALUATION_CASES: usize = 16;

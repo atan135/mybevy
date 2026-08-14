@@ -12,7 +12,7 @@
 | Game Host（后续 `DeclarativeScreenHost` 或等价物） | 游戏层显式注册 document ID、route、owner、panel/layer、生命周期、action allowlist、binding schema、audit profile 与 fallback；把 framework 通用 dispatch 映射为游戏命令。 | `framework/ui/document`、`game/navigation`、业务资源/消息。 | 反射或执行 document 指定的 Rust 名称；自行建立第二套 panel/input/focus 管理；依赖 AI 工具 crate。 |
 | `UiUpdateBundle`（immutable generation 数据包） | 一个 immutable generation 的 manifest、document、approved registration、资源引用、版本/兼容信息、hash、授权与预算声明；安装前完整验证。签名由外层 release envelope 提供。 | 已批准 document/asset 产物和游戏二进制内的 host contract。 | 业务 Rust、可执行代码、未批准 draft、任意 URL/path、权限扩大字段。 |
 | `UiUpdateClient`（远端客户端能力） | 通过固定受信 endpoint 拉取已签名 manifest 和文件；以 ETag、限流、有限重试、临时文件续传和安全点驱动 `UiUpdateCache` staging/activation，保留 current/previous generation。 | `UiUpdateBundle`、平台私有缓存、现有 network HTTP、二进制 trust roots 和 `UiDocumentRuntime` 的受控 reload 入口。 | 绕过 validation/host contract；在主线程阻塞下载；就地覆盖 active generation；让远端包指定 endpoint、信任根、宿主或业务动作。 |
-| AI authoring / promotion | `tools/ui-generation/` 在独立 Cargo 根生成不可信 draft、证据和 promotion plan；人工批准的 `promote` 才能写 approved JSON、授权资源、catalog 与 closed registration。 | `project::framework::ui::document::tooling` 单向 facade、受限仓库资源。 | 进入正式游戏依赖图、生成/改写业务 Rust、自动发布给用户、直接获得 action/binding 权限。 |
+| AI authoring / promotion | `tools/ui-generation/` 在独立 Cargo 根生成不可信 draft、证据和 promotion plan；人工批准的 `promote` 才能写 approved JSON、授权资源、catalog 与 closed registration。 | `tools/ui-document-core` 的 runtime-free schema/tooling facade、受限仓库资源。 | 依赖 `project`/Bevy runtime、进入正式游戏依赖图、生成/改写业务 Rust、自动发布给用户、直接获得 action/binding 权限。 |
 
 目标依赖方向固定如下；箭头表示允许的依赖或数据交付：
 

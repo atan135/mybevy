@@ -1,0 +1,600 @@
+use super::{UiAssetId, UiColor, UiDocument, UiNode};
+use serde::{Deserialize, Serialize};
+
+pub const UI_TEXT_FALLBACK_MAX_BYTES: usize = 4 * 1024;
+pub const UI_TEXT_LITERAL_MAX_BYTES: usize = 16 * 1024;
+pub const UI_TEXT_MAX_LINES: u16 = 128;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum UiTextContent {
+    Literal(UiLiteralTextSource),
+    I18n(UiI18nTextSource),
+    Binding(UiBindingTextSource),
+}
+
+impl UiTextContent {
+    pub fn format(&self) -> &UiTextFormat {
+        match self {
+            Self::Literal(source) => &source.format,
+            Self::I18n(source) => &source.format,
+            Self::Binding(source) => &source.format,
+        }
+    }
+
+    pub fn fallback_text(&self) -> &str {
+        match self {
+            Self::Literal(source) => &source.literal,
+            Self::I18n(source) => &source.fallback,
+            Self::Binding(source) => &source.fallback,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UiLiteralTextSource {
+    pub literal: String,
+    #[serde(default)]
+    pub format: UiTextFormat,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UiI18nTextSource {
+    pub i18n_key: super::UiI18nKey,
+    pub fallback: String,
+    #[serde(default)]
+    pub format: UiTextFormat,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UiBindingTextSource {
+    pub binding_path: super::UiBindingPath,
+    #[serde(default)]
+    pub fallback: String,
+    #[serde(default)]
+    pub format: UiTextFormat,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum UiTextFormat {
+    #[default]
+    Plain,
+    Number {
+        #[serde(default)]
+        min_fraction_digits: u8,
+        #[serde(default)]
+        max_fraction_digits: u8,
+        #[serde(default)]
+        grouping: bool,
+    },
+    Percent {
+        #[serde(default)]
+        min_fraction_digits: u8,
+        #[serde(default)]
+        max_fraction_digits: u8,
+    },
+    Bytes {
+        #[serde(default)]
+        precision: u8,
+        #[serde(default)]
+        binary_units: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiTextFontRole {
+    Display,
+    Heading,
+    #[default]
+    Body,
+    Caption,
+    Control,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum UiTextLineHeight {
+    #[default]
+    Normal,
+    Relative(f32),
+    Pixels(f32),
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiTextAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+    Justified,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiTextWrap {
+    Word,
+    Character,
+    #[default]
+    WordOrCharacter,
+    NoWrap,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UiTextOverflow {
+    #[default]
+    Visible,
+    Clip,
+    Ellipsis,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UiTextTypography {
+    #[serde(default)]
+    pub font_role: UiTextFontRole,
+    #[serde(default)]
+    pub weight: super::UiTextWeight,
+    #[serde(default)]
+    pub line_height: UiTextLineHeight,
+    #[serde(default)]
+    pub alignment: UiTextAlignment,
+    #[serde(default)]
+    pub wrap: UiTextWrap,
+    #[serde(default)]
+    pub max_lines: Option<u16>,
+    #[serde(default)]
+    pub overflow: UiTextOverflow,
+}
+
+impl Default for UiTextTypography {
+    fn default() -> Self {
+        Self {
+            font_role: UiTextFontRole::Body,
+            weight: super::UiTextWeight::Regular,
+            line_height: UiTextLineHeight::Normal,
+            alignment: UiTextAlignment::Left,
+            wrap: UiTextWrap::WordOrCharacter,
+            max_lines: None,
+            overflow: UiTextOverflow::Visible,
+        }
+    }
+}
+
+impl UiTextTypography {}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum UiImageFailurePresentation {
+    ErrorColor {
+        #[serde(default = "default_image_failure_color")]
+        color: UiColor,
+    },
+    Placeholder,
+    Asset {
+        asset: UiAssetId,
+    },
+    Hide,
+}
+
+impl Default for UiImageFailurePresentation {
+    fn default() -> Self {
+        Self::ErrorColor {
+            color: default_image_failure_color(),
+        }
+    }
+}
+
+fn default_image_failure_color() -> UiColor {
+    UiColor::from_rgba8(140, 31, 36, 255)
+}
+
+pub(crate) fn default_image_tint() -> UiColor {
+    UiColor::from_rgba8(255, 255, 255, 255)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+pub(crate) enum UiImageContentState {
+    Loading,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+pub(crate) enum UiResolvedImageFallback<'a> {
+    Asset(&'a UiAssetId),
+    Solid(UiColor),
+    Hidden,
+}
+
+#[allow(dead_code)]
+pub(crate) fn resolve_image_fallback<'a>(
+    placeholder: Option<&'a UiAssetId>,
+    failure: &'a UiImageFailurePresentation,
+    state: UiImageContentState,
+) -> UiResolvedImageFallback<'a> {
+    match state {
+        UiImageContentState::Loading => placeholder.map_or(
+            UiResolvedImageFallback::Solid(UiColor::from_rgba8(71, 77, 87, 184)),
+            UiResolvedImageFallback::Asset,
+        ),
+        UiImageContentState::Failed => match failure {
+            UiImageFailurePresentation::ErrorColor { color } => {
+                UiResolvedImageFallback::Solid(*color)
+            }
+            UiImageFailurePresentation::Placeholder => placeholder.map_or(
+                UiResolvedImageFallback::Solid(default_image_failure_color()),
+                UiResolvedImageFallback::Asset,
+            ),
+            UiImageFailurePresentation::Asset { asset } => UiResolvedImageFallback::Asset(asset),
+            UiImageFailurePresentation::Hide => UiResolvedImageFallback::Hidden,
+        },
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiContentFieldError {
+    pub code: &'static str,
+    pub path: String,
+}
+
+pub trait UiDocumentI18nCatalog {
+    fn lookup(&self, key: &super::UiI18nKey) -> Option<&str>;
+}
+
+impl UiDocument {
+    pub(crate) fn validate_content(&self) -> Vec<UiContentFieldError> {
+        let mut errors = Vec::new();
+        validate_node_content(&self.root, "$.root", &mut errors);
+        errors
+    }
+
+    pub fn validate_content_with_catalog(
+        &self,
+        catalog: &impl UiDocumentI18nCatalog,
+    ) -> Vec<UiContentFieldError> {
+        let mut errors = Vec::new();
+        validate_node_catalog(&self.root, "$.root", catalog, &mut errors);
+        errors
+    }
+}
+
+fn validate_node_content(node: &UiNode, path: &str, errors: &mut Vec<UiContentFieldError>) {
+    match node {
+        UiNode::Text {
+            content,
+            typography,
+            ..
+        } => {
+            validate_text_content(content, &format!("{path}.content"), errors);
+            validate_typography(typography, &format!("{path}.typography"), errors);
+        }
+        UiNode::Button {
+            label: Some(label), ..
+        } => {
+            validate_text_content(label, &format!("{path}.label"), errors);
+        }
+        _ => {}
+    }
+    validate_component_text(node, path, errors);
+    for (index, child) in node.children().iter().enumerate() {
+        validate_node_content(child, &node.child_path(path, index), errors);
+    }
+}
+
+fn validate_component_text(node: &UiNode, path: &str, errors: &mut Vec<UiContentFieldError>) {
+    let Some(component) = node.component() else {
+        return;
+    };
+    for (slot, content) in &component.slots {
+        if let super::UiControlSlotContent::Text { content } = content {
+            validate_text_content(
+                content,
+                &format!("{path}.component.slots.{slot}.content"),
+                errors,
+            );
+        }
+    }
+    match node {
+        UiNode::Segmented { options, .. } | UiNode::Select { options, .. } => {
+            for (index, option) in options.iter().enumerate() {
+                validate_text_content(
+                    &option.label,
+                    &format!("{path}.options[{index}].label"),
+                    errors,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_text_content(
+    content: &UiTextContent,
+    path: &str,
+    errors: &mut Vec<UiContentFieldError>,
+) {
+    let (text, text_path, max_bytes, source_allows_format) = match content {
+        UiTextContent::Literal(source) => (
+            &source.literal,
+            format!("{path}.literal"),
+            UI_TEXT_LITERAL_MAX_BYTES,
+            false,
+        ),
+        UiTextContent::I18n(source) => {
+            if source.fallback.is_empty() {
+                errors.push(content_error(
+                    "UI_TEXT_I18N_FALLBACK_REQUIRED",
+                    &format!("{path}.fallback"),
+                ));
+            }
+            (
+                &source.fallback,
+                format!("{path}.fallback"),
+                UI_TEXT_FALLBACK_MAX_BYTES,
+                false,
+            )
+        }
+        UiTextContent::Binding(source) => (
+            &source.fallback,
+            format!("{path}.fallback"),
+            UI_TEXT_FALLBACK_MAX_BYTES,
+            true,
+        ),
+    };
+    if text.len() > max_bytes {
+        errors.push(content_error("UI_TEXT_TOO_LONG", &text_path));
+    }
+    if !source_allows_format && !matches!(content.format(), UiTextFormat::Plain) {
+        errors.push(content_error(
+            "UI_TEXT_FORMAT_SOURCE_INCOMPATIBLE",
+            &format!("{path}.format"),
+        ));
+    }
+    match content.format() {
+        UiTextFormat::Number {
+            min_fraction_digits,
+            max_fraction_digits,
+            ..
+        }
+        | UiTextFormat::Percent {
+            min_fraction_digits,
+            max_fraction_digits,
+        } if min_fraction_digits > max_fraction_digits || *max_fraction_digits > 6 => {
+            errors.push(content_error(
+                "UI_TEXT_FORMAT_OPTIONS_INVALID",
+                &format!("{path}.format"),
+            ));
+        }
+        UiTextFormat::Bytes { precision, .. } if *precision > 3 => errors.push(content_error(
+            "UI_TEXT_FORMAT_OPTIONS_INVALID",
+            &format!("{path}.format"),
+        )),
+        _ => {}
+    }
+}
+
+fn validate_typography(
+    typography: &UiTextTypography,
+    path: &str,
+    errors: &mut Vec<UiContentFieldError>,
+) {
+    let invalid_line_height = match typography.line_height {
+        UiTextLineHeight::Normal => false,
+        UiTextLineHeight::Relative(value) | UiTextLineHeight::Pixels(value) => {
+            !value.is_finite() || value <= 0.0
+        }
+    };
+    if invalid_line_height {
+        errors.push(content_error(
+            "UI_TEXT_LINE_HEIGHT_INVALID",
+            &format!("{path}.line_height"),
+        ));
+    }
+    if typography
+        .max_lines
+        .is_some_and(|lines| lines == 0 || lines > UI_TEXT_MAX_LINES)
+    {
+        errors.push(content_error(
+            "UI_TEXT_MAX_LINES_INVALID",
+            &format!("{path}.max_lines"),
+        ));
+    }
+    if typography.max_lines.is_some() && typography.overflow == UiTextOverflow::Visible {
+        errors.push(content_error(
+            "UI_TEXT_MAX_LINES_REQUIRES_OVERFLOW",
+            &format!("{path}.overflow"),
+        ));
+    }
+    if typography.overflow == UiTextOverflow::Ellipsis && typography.max_lines.is_none() {
+        errors.push(content_error(
+            "UI_TEXT_ELLIPSIS_REQUIRES_MAX_LINES",
+            &format!("{path}.max_lines"),
+        ));
+    }
+}
+
+fn validate_node_catalog(
+    node: &UiNode,
+    path: &str,
+    catalog: &impl UiDocumentI18nCatalog,
+    errors: &mut Vec<UiContentFieldError>,
+) {
+    let text = match node {
+        UiNode::Text { content, .. } => Some((content, "content")),
+        UiNode::Button {
+            label: Some(label), ..
+        } => Some((label, "label")),
+        _ => None,
+    };
+    if let Some((UiTextContent::I18n(source), field)) = text
+        && catalog.lookup(&source.i18n_key).is_none()
+    {
+        errors.push(content_error(
+            "UI_TEXT_I18N_KEY_MISSING",
+            &format!("{path}.{field}.i18n_key"),
+        ));
+    }
+    if let Some(component) = node.component() {
+        for (slot, content) in &component.slots {
+            if let super::UiControlSlotContent::Text {
+                content: UiTextContent::I18n(source),
+            } = content
+                && catalog.lookup(&source.i18n_key).is_none()
+            {
+                errors.push(content_error(
+                    "UI_TEXT_I18N_KEY_MISSING",
+                    &format!("{path}.component.slots.{slot}.content.i18n_key"),
+                ));
+            }
+        }
+    }
+    match node {
+        UiNode::Segmented { options, .. } | UiNode::Select { options, .. } => {
+            for (index, option) in options.iter().enumerate() {
+                if let UiTextContent::I18n(source) = &option.label
+                    && catalog.lookup(&source.i18n_key).is_none()
+                {
+                    errors.push(content_error(
+                        "UI_TEXT_I18N_KEY_MISSING",
+                        &format!("{path}.options[{index}].label.i18n_key"),
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
+    for (index, child) in node.children().iter().enumerate() {
+        validate_node_catalog(child, &node.child_path(path, index), catalog, errors);
+    }
+}
+
+pub(crate) fn validate_content_json_shape(value: &serde_json::Value) -> Vec<UiContentFieldError> {
+    let mut errors = Vec::new();
+    if let Some(root) = value.get("root") {
+        validate_node_json_shape(root, "$.root", &mut errors);
+    }
+    errors
+}
+
+fn validate_node_json_shape(
+    node: &serde_json::Value,
+    path: &str,
+    errors: &mut Vec<UiContentFieldError>,
+) {
+    let Some(object) = node.as_object() else {
+        return;
+    };
+    let text = match object.get("type").and_then(serde_json::Value::as_str) {
+        Some("text") => object.get("content").map(|content| (content, "content")),
+        Some("button") => object.get("label").map(|content| (content, "label")),
+        _ => None,
+    };
+    if let Some((content, field)) = text {
+        validate_text_json_shape(content, &format!("{path}.{field}"), errors);
+    }
+    if let Some(component) = object
+        .get("component")
+        .and_then(serde_json::Value::as_object)
+    {
+        if let Some(slots) = component
+            .get("slots")
+            .and_then(serde_json::Value::as_object)
+        {
+            for (slot, content) in slots {
+                if content.get("kind").and_then(serde_json::Value::as_str) == Some("text")
+                    && let Some(content) = content.get("content")
+                {
+                    validate_text_json_shape(
+                        content,
+                        &format!("{path}.component.slots.{slot}.content"),
+                        errors,
+                    );
+                }
+            }
+        }
+        if let Some(children) = component
+            .get("children")
+            .and_then(serde_json::Value::as_array)
+        {
+            for (index, child) in children.iter().enumerate() {
+                validate_node_json_shape(
+                    child,
+                    &format!("{path}.component.children[{index}]"),
+                    errors,
+                );
+            }
+        }
+    }
+    if let Some(options) = object.get("options").and_then(serde_json::Value::as_array) {
+        for (index, option) in options.iter().enumerate() {
+            if let Some(label) = option.get("label") {
+                validate_text_json_shape(label, &format!("{path}.options[{index}].label"), errors);
+            }
+        }
+    }
+    if let Some(children) = object.get("children").and_then(serde_json::Value::as_array) {
+        for (index, child) in children.iter().enumerate() {
+            validate_node_json_shape(child, &format!("{path}.children[{index}]"), errors);
+        }
+    }
+}
+
+fn validate_text_json_shape(
+    content: &serde_json::Value,
+    path: &str,
+    errors: &mut Vec<UiContentFieldError>,
+) {
+    let Some(content) = content.as_object() else {
+        return;
+    };
+    let source_count = ["literal", "i18n_key", "binding_path"]
+        .into_iter()
+        .filter(|key| content.contains_key(*key))
+        .count();
+    if source_count != 1 {
+        errors.push(content_error("UI_TEXT_SOURCE_NOT_EXCLUSIVE", path));
+    }
+    if let Some(format) = content.get("format").and_then(serde_json::Value::as_object)
+        && !matches!(
+            format.get("kind").and_then(serde_json::Value::as_str),
+            Some("plain" | "number" | "percent" | "bytes")
+        )
+    {
+        errors.push(content_error(
+            "UI_TEXT_FORMAT_NOT_ALLOWED",
+            &format!("{path}.format"),
+        ));
+    }
+}
+
+fn content_error(code: &'static str, path: &str) -> UiContentFieldError {
+    UiContentFieldError {
+        code,
+        path: path.to_owned(),
+    }
+}

@@ -47,14 +47,15 @@ project/
 
 `tools/ui-generation/` 已建立独立 Cargo 根。`inspect-task` 当前只严格解析任务、读取图片 bytes、核对声明 metadata/SHA-256、生成高影响问题和返回目录计划，不创建 `summary/ui-generation/`。该目录已由根 `.gitignore` 的 `/summary/*` 规则覆盖。工具自身的公开 fixture 可以提交到 `tools/ui-generation/fixtures/`，但不得为了测试把参考图、模型响应或生成期素材写进 `project/assets/`。除带明确来源说明的文本任务/provider fixture 外，`fixtures/acceptance/reference.png` 是唯一的二进制 acceptance 输入：它是仓库自有 CC0 fixture 的 analysis-only 副本，记录精确 hash/授权/来源并受 Git LFS 管理，只存在于工具工程，不属于 Android asset source set；其他图片 hash 测试仍使用临时目录。现有 `project/assets/ui/documents/fixtures/` 只服务于正式协议/runtime 自身的测试，不作为生成工具的运行目录。
 
-依赖方向只能是：
+依赖方向固定为两个独立工具只依赖 runtime-free core：
 
 ```text
-ui-generation tool -> project 暴露的最小稳定 UiDocument facade
-project / Android / 正式构建 -X-> ui-generation tool
+ui-generation / ui-visual-audit -> ui-document-core
+project / Android / 正式构建 -X-> ui-generation / ui-visual-audit
+project -> ui-document-core（仅 document::core facade；runtime adapter 仍在 project）
 ```
 
-当前最小 facade 位于 `project::framework::ui::document::tooling`，只暴露协议模型、schema version、validation report、资源预算信息和 canonical JSON 能力。Stage 8 另提供 `ui-document-preview-tool` 非默认 feature 下的 desktop-only standalone preview binary；它只组合正式声明式 runtime/preview/screenshot 能力，不包含 provider 或生成器。provider SDK、图片解码/EXIF、prompt、视觉分析、修复、评测、调用成本和生成日志实现只属于工具工程，不能加入 `project/Cargo.toml` 的正式依赖图，也不能注册进 `UiFrameworkPlugin`。
+当前 runtime-free facade 位于 `tools/ui-document-core`，只暴露协议模型、schema version、validation report、资源预算信息和 canonical JSON 能力；`project::framework::ui::document::tooling` 保留 runtime 侧兼容 facade。Stage 8 另提供 `ui-document-preview-tool` 非默认 feature 下的 desktop-only standalone preview binary；它只组合正式声明式 runtime/preview/screenshot 能力，不包含 provider 或生成器。provider SDK、图片解码/EXIF、prompt、视觉分析、修复、评测、调用成本和生成日志实现只属于工具工程，不能加入正式游戏构建图，也不能注册进 `UiFrameworkPlugin`。
 
 工具当前提供以下输入、预处理和边界命令：
 
@@ -237,7 +238,7 @@ Stage 7 的单图生成请求继续拒绝非空 `states` 和 `responsive`，不�
 
 ## Rust 适配边界
 
-页面结构、样式和控件树由 `UiDocument` JSON 表达。正式 `project` 的 `document::tooling::parse_approved_document_registration` 以只读闭合 schema 解析该声明：v1 保持 action/binding 零权限，v2 的 host contract 只列稳定 action ID、source node、外部 binding 类型与 resource ID。游戏层需要在自身 route lifecycle 中显式调用 `to_preview_registration_with_contract`，并传入其独立注册的精确 contract；缺失、版本不符、owner/route 漂移、未知/多余 action 或 binding、source node 漂移或资源漂移都会拒绝。`route` 仍只是审阅标签，adapter 不会执行它。该 adapter 保持在默认 `project --lib` 内，不依赖工具 crate；游戏接入仍必须作为正常、可审阅的人工 Rust 改动完成，不能由工具或模型写出任意业务代码。
+页面结构、样式和控件树由 `UiDocument` JSON 表达。正式 `project` 的 runtime `document::tooling::parse_approved_document_registration` 以只读闭合 schema 解析该声明；工具侧对应能力由 `ui-document-core` 提供。v1 保持 action/binding 零权限，v2 的 host contract 只列稳定 action ID、source node、外部 binding 类型与 resource ID。游戏层需要在自身 route lifecycle 中显式调用 `to_preview_registration_with_contract`，并传入其独立注册的精确 contract；缺失、版本不符、owner/route 漂移、未知/多余 action 或 binding、source node 漂移或资源漂移都会拒绝。`route` 仍只是审阅标签，adapter 不会执行它。该 runtime adapter 保持在默认 `project --lib` 内，不依赖工具 crate；游戏接入仍必须作为正常、可审阅的人工 Rust 改动完成，不能由工具或模型写出任意业务代码。
 
 工具和模型不得：
 
@@ -364,9 +365,9 @@ Schema、prompt、模型、算法、reference、baseline、主题、字体或 vi
 
 ## 正式构建隔离验证
 
-后续实现验收不能只依赖 Rust dead-code elimination。至少应提供以下证据：
+后续实现验收不能只依赖 Rust dead-code elimination。Stage 6 起，工具依赖 `ui-document-core` 的 runtime-free facade，`project` 仅保留 Bevy runtime adapter；两侧 schema 尚未完全单源复用，必须同时验证。至少应提供以下证据：
 
-- `check-boundary` 的结构化 manifest/path 完整可达图和 lockfile 检查证明 `project` 不包含 `tools/ui-generation`，且工具单向可达 `project`；发布验收仍可用 `cargo metadata`/`cargo tree` 交叉确认 provider、图片预处理和评测专属依赖未进入正式图。
+- `check-boundary` 的结构化 manifest/path 完整可达图和 lockfile 检查证明 `project` 不包含 `tools/ui-generation`，且 `ui-generation`/`ui-visual-audit` 只依赖 `ui-document-core`，不达 `project`/Bevy runtime；发布验收仍可用 `cargo metadata`/`cargo tree` 交叉确认 provider、图片预处理和评测专属依赖未进入正式图。
 - `project/Cargo.toml`、Android 壳和正式构建脚本没有反向引用工具 crate，也没有通过默认 feature 或隐式 workspace 把工具带入构建。
 - 正式桌面构建和 Android `cargo ndk ... --lib` 只构建游戏 target；构建记录中没有生成工具 target。
 - 包内容不包含原始参考图、模型响应、run 日志、草稿、source map 或工具 fixture。
@@ -396,7 +397,7 @@ Stage 8 通过 feature-gated standalone binary 复用 [UI声明式预览与热�
 
 `tools/ui-generation/src/planning.rs` 将已通过 Stage 4 校验的分析结果转换为有预算、顺序稳定的页面规划。它聚类可见几何得到字号、间距、重复尺寸、圆角和边框候选，按重复 pattern 保留组件实例到参考元素的 source mapping，并输出父子、尺寸、锚点、对齐、间距、伸缩和滚动约束。计划步骤固定按结构、视觉、装饰排序。
 
-规划器通过 `UiDocument` tooling facade 的只读 catalog 匹配现有 theme token 和正式协议实际支持的 widget variant。variant catalog 与 `UiDocument` semantic validator 共用支持矩阵；label、card、list、list item 等没有正式 component variant 的候选不会被标记为全局复用。匹配成功才建议复用全局项；未匹配 token 默认限制为页面作用域，未匹配的重复组件限制为组件作用域。
+规划器通过 `ui-document-core` tooling facade 的只读 catalog 匹配现有 theme token 和正式协议实际支持的 widget variant。variant catalog 与 `UiDocument` semantic validator 共用支持矩阵；label、card、list、list item 等没有正式 component variant 的候选不会被标记为全局复用。匹配成功才建议复用全局项；未匹配 token 默认限制为页面作用域，未匹配的重复组件限制为组件作用域。
 
 每个 token 都携带稳定的 `origin`：`observed_geometry` 仅表示来自 bounding box/父子位置的几何值，`existing_catalog_suggestion` 表示按视觉角色或控件类型提出的现有主题建议，`heuristic_assumption` 表示字号比例、默认阴影等启发式假设。颜色、圆角、边框和阴影目前不是像素测量结果；后续阶段不得把 catalog 建议或启发式值当作参考图视觉证据。在线视觉测量仍不属于当前能力。
 
@@ -414,9 +415,9 @@ PNG/JPEG 草稿检查会在解码前拒绝超编码字节或超 Android 尺寸/�
 
 ### Stage 7 结构化 UiDocument 生成
 
-`tools/ui-generation/src/generation.rs` 将已验证的 `UiReferenceAnalysis`、确定性布局计划、token/组件建议和 Stage 6 素材表组成 provider `structured_generation` 请求。请求携带固定版本的输出契约、目标 `UiDocument` schema 版本、literal-only 文本策略、stable asset allowlist 和由参考元素 ID 确定性派生的 node ID/source map；不从 Markdown 代码块或自然语言中截取 JSON。
+`tools/ui-generation/src/generation.rs` 将已验证的 `UiReferenceAnalysis`、确定性布局计划、token/组件建议和 Stage 6 素材表组成 provider `structured_generation` 请求。请求携带固定版本的输出契约、目标 `UiDocument` schema 版本、literal-only 文本策略、stable asset allowlist 和由参考元素 ID 确定性派生的 node ID/source map；不从 Markdown 代码块或自然语言中截取 JSON。生成和审计工具通过 `ui-document-core` 使用 runtime-free schema facade，不拉入 Bevy runtime。
 
-provider 响应先受独立的 envelope 字节、深度、节点、容器和字符串预算约束，再交给游戏工程 `document::tooling` facade 执行正式 canonical JSON、Schema、语义、能力和资源预算验证。工具不复制正式 `UiDocument` 协议验证器；正式验证后的 canonical 结构还必须精确覆盖 source map 的节点集合与父子层级。所有可见文字只允许使用分析阶段明确采用的 literal，未解决文字保持 unsupported；生成阶段禁止新增 i18n key、binding 或 action。参考图中看似可交互但没有受信任业务注册的元素只产生未实现项，不会凭空绑定行为。
+provider 响应先受独立的 envelope 字节、深度、节点、容器和字符串预算约束，再交给 `ui-document-core` facade 执行 canonical JSON、Schema、语义、能力和资源预算验证；project runtime adapter 仍在正式加载时复验。工具不复制正式 `UiDocument` 协议验证器；正式验证后的 canonical 结构还必须精确覆盖 source map 的节点集合与父子层级。所有可见文字只允许使用分析阶段明确采用的 literal，未解决文字保持 unsupported；生成阶段禁止新增 i18n key、binding 或 action。参考图中看似可交互但没有受信任业务注册的元素只产生未实现项，不会凭空绑定行为。
 
 素材只允许使用 Stage 6 已明确选中的 stable asset ID，并逐项复核 catalog 中的 packaged path 和类型；placeholder、待生成、待重制或待授权裁切项不能偷偷引用正式资源。输出独立记录 assumptions、unimplemented states、required new components 和 unsupported capabilities；合并预算由 provider、analysis、planning 和 asset strategy 的公开最大预算推导，排序去重后不得截断明细，协议预算漂移导致越界时稳定失败。trace 只保留经过安全 label 约束的 provider/model/prompt/schema 标识、组合输入 hash、受控生成参数、server request ID 和 canonical 文档 hash，不保存完整 prompt 或原始响应。
 
@@ -424,7 +425,7 @@ Stage 7 的底层能力仍是工具库 API，并由最小页面、复杂嵌套�
 
 ### Stage 8 有限修复和独立预览
 
-`tools/ui-generation/src/repair.rs` 接收 Stage 7 已验证来源和严格 generation envelope 中的 staging 文档。每轮重新调用正式 `document::tooling` facade，保留完整 formal validation report，并将最多 64 条只含 phase、code、severity、document path、node ID 和 field path 的有界诊断作为 structured input 回传；不把 Markdown、自然语言 JSON 或完整 prompt 当作修复协议。repair 输出只能是严格 `{ "document": ... }`，硬上限为三轮。
+`tools/ui-generation/src/repair.rs` 接收 Stage 7 已验证来源和严格 generation envelope 中的 staging 文档。每轮重新调用 `ui-document-core` facade，保留完整 formal validation report，并由 project runtime adapter 在正式加载时复验；最多 64 条只含 phase、code、severity、document path、node ID 和 field path 的有界诊断作为 structured input 回传。不把 Markdown、自然语言 JSON 或完整 prompt 当作修复协议。repair 输出只能是严格 `{ "document": ... }`，硬上限为三轮。
 
 Stage 7 的 document ID、schema version、source map、节点层级、literal 文字、stable asset ID/path、禁止 action/binding/i18n、禁止隐藏 state/响应式和正式预算均形成冻结 guardrails。修复不会改 schema、allowlist 或预算；每个新文档仍先通过正式 Schema、语义、引用、能力/action/binding 和预算阶段，再通过 Stage 7 guardrail。相同文档无进展、连续相同诊断、达到轮次上限、provider 不可用、超时、取消、malformed response 和超预算分别产生稳定失败类型，已经发生的轮次不会从证据中删除。通过后的 canonical JSON 和节点树摘要都由正式 canonical 文档按 document path 顺序确定性生成。
 
@@ -444,7 +445,7 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- generate-fixture --t
 
 截至本文更新时：
 
-- 现有 `UiDocument` 协议、验证器、事务 runtime、preview/reload 和 audit metadata 已可供正式游戏与开发预览使用；`document::tooling` 提供不含游戏业务内部实现的最小验证/canonical facade。
+- 现有 `UiDocument` 协议、验证器、事务 runtime、preview/reload 和 audit metadata 已可供正式游戏与开发预览使用；`ui-document-core` 提供不含游戏业务内部实现的 runtime-free 验证/canonical facade，project `document::core` 提供显式适配入口，runtime schema 尚未完全单源复用。
 - 独立 `tools/ui-generation/` 工具工程已实现 Stage 1-11 的输入、provider 安全协议、预处理、分析、规划、素材策略、结构化生成、有限修复、事务 run bundle、独立预览、多状态审计、晋升、评测和可观测性。
 - `inspect-task` 默认不创建用户运行产物；`preprocess-task` 会创建被忽略的 `summary/ui-generation/<run-id>/input/preprocessed/` 和 `.cache/preprocess/`，不会写入正式游戏目录。
 - 离线 `generate-fixture` 已能原子落盘完整草稿 run 并生成真实预览；在线 provider/OCR/图片生成适配仍未实现，真实用户参考图的自动分析不属于该离线证据。

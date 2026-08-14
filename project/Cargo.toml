@@ -39,6 +39,7 @@ tokio = { version = "1.37", features = ["rt-multi-thread", "net", "io-util", "sy
 tokio_kcp = "0.9.8"
 tokio-tungstenite = { version = "0.28.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 unicode-segmentation = "1.13.2"
+ui-document-core = { path = "../tools/ui-document-core" }
 
 [dev-dependencies]
 schemars = "1"

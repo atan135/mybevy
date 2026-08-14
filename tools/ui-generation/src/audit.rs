@@ -13,10 +13,6 @@ use crate::{
         PreviewRunStatus, prepare_preview_command_for_state_with_host_contract, run_preview,
     },
 };
-use project::framework::ui::document::tooling::validate_json_bytes;
-use project::framework::ui::document::{
-    UiDocumentInputMode, UiDocumentPlatform, UiPageState, UiSafeAreaClass, UiTargetProfile,
-};
 use serde::Serialize;
 use std::{
     collections::BTreeSet,
@@ -24,6 +20,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
+};
+use ui_document_core::validate_json_bytes;
+use ui_document_core::{
+    UiDocumentInputMode, UiDocumentPlatform, UiPageState, UiSafeAreaClass, UiTargetProfile,
 };
 
 pub const UI_DOCUMENT_AUDIT_SCREEN: &str = "ui_document_preview";

@@ -265,15 +265,13 @@ pub fn run_offline_fixture_generation(
     generation_value["document"]["document_id"] = Value::String(document_id.to_owned());
     let fixture_document = serde_json::to_string(&generation_value["document"])
         .map_err(|_| TaskFailure::invalid("generation fixture document is not serializable"))?;
-    let canonical_fixture = project::framework::ui::document::tooling::canonicalize_json(
-        &fixture_document,
-    )
-    .map_err(|error| {
-        TaskFailure::invalid(format!(
-            "generation fixture document failed formal canonicalization: {}",
-            error.code()
-        ))
-    })?;
+    let canonical_fixture =
+        ui_document_core::canonicalize_json(&fixture_document).map_err(|error| {
+            TaskFailure::invalid(format!(
+                "generation fixture document failed formal canonicalization: {}",
+                error.code()
+            ))
+        })?;
     generation_value["document"] = serde_json::from_str(&canonical_fixture)
         .expect("formal canonical JSON is always parseable");
     generation_provider.bind_success_value(generation_value)?;

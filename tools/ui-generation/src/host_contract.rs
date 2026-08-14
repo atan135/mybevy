@@ -8,10 +8,10 @@ use crate::{
     contract::{GenerationHostBindingRequest, GenerationHostContractRequest},
     lifecycle::TaskFailure,
 };
-use project::framework::ui::document::parse_approved_document_registration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeSet, fs, path::Path};
+use ui_document_core::parse_approved_document_registration;
 
 pub const HOST_CONTRACT_CATALOG_PATH: &str = "project/assets/ui/documents/host_contracts.v1.json";
 pub const TRUSTED_RESOURCE_CATALOG_PATH: &str =
@@ -267,9 +267,9 @@ fn sorted_bindings(bindings: &[GenerationHostBindingRequest]) -> Vec<GenerationH
 mod tests {
     use super::*;
     use crate::contract::{GenerationForbiddenCapability, GenerationTask};
-    use project::framework::ui::document::UiDocument;
     use serde_json::Value;
     use std::{fs, path::PathBuf};
+    use ui_document_core::UiDocument;
 
     fn request() -> GenerationHostContractRequest {
         GenerationHostContractRequest {

@@ -20,6 +20,12 @@ pub mod tooling;
 mod update;
 mod validation;
 
+/// Runtime-free schema facade shared with repository UI tooling. Runtime systems continue to
+/// use the Bevy adaptation modules in this directory; this alias keeps the shared core explicit.
+pub mod core {
+    pub use ui_document_core::*;
+}
+
 pub use approval::*;
 pub use asset::*;
 pub use binding_action::*;

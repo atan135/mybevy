@@ -2,11 +2,11 @@ use crate::analysis::{
     AlignmentTarget, AnalysisElement, AnchorEdge, Axis, ComponentCandidateKind, LayoutBehaviorKind,
     UiReferenceAnalysis, VisualElementKind,
 };
-use project::framework::ui::document::tooling::{
-    BUILT_IN_TOKENS, BUILT_IN_WIDGET_VARIANTS, UiToolingTokenKind, UiToolingTokenValue,
-};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+use ui_document_core::{
+    BUILT_IN_TOKENS, BUILT_IN_WIDGET_VARIANTS, UiToolingTokenKind, UiToolingTokenValue,
+};
 
 pub const PLANNING_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_PLAN_TOKENS: usize = 4096;

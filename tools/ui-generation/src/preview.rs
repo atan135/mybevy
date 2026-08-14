@@ -3,10 +3,6 @@ use crate::{
     lifecycle::{CancellationToken, TaskFailure, TaskFailureKind},
 };
 use image::{ColorType, ImageDecoder, Limits, codecs::png::PngDecoder};
-use project::framework::ui::document::UiPageState;
-use project::framework::ui::document::tooling::{
-    UI_DOCUMENT_MAX_BYTES, UiAssetSource, canonicalize_json, validate_json_bytes,
-};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -17,6 +13,10 @@ use std::{
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
+};
+use ui_document_core::UiPageState;
+use ui_document_core::{
+    UI_DOCUMENT_MAX_BYTES, UiAssetSource, canonicalize_json, validate_json_bytes,
 };
 
 const MAX_PREVIEW_RESULT_BYTES: u64 = 64 * 1024;
@@ -561,12 +561,7 @@ fn validate_preview_document(
             .report
             .diagnostics
             .first()
-            .map(|diagnostic| {
-                format!(
-                    "{} at {}",
-                    diagnostic.code, diagnostic.document_path
-                )
-            })
+            .map(|diagnostic| format!("{} at {}", diagnostic.code, diagnostic.document_path))
             .unwrap_or_else(|| "diagnostic unavailable".to_owned());
         TaskFailure::invalid(format!(
             "preview document failed formal validation: {detail}"
@@ -1330,10 +1325,8 @@ mod tests {
         assert_eq!(result.status, PreviewRunStatus::Passed);
         let registration_path = result.command.approved_registration_path.unwrap();
         let registration = fs::read_to_string(registration_path).unwrap();
-        let parsed = project::framework::ui::document::parse_approved_document_registration(
-            registration.trim(),
-        )
-        .unwrap();
+        let parsed =
+            ui_document_core::parse_approved_document_registration(registration.trim()).unwrap();
         assert_eq!(
             parsed.document_id().as_str(),
             "approved.business_acceptance"

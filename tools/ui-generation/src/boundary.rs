@@ -14,9 +14,9 @@ pub struct DependencyBoundaryReport {
     pub project_manifest: PathBuf,
     pub tool_manifest: PathBuf,
     pub project_dependency_graph_excludes_tool: bool,
-    pub tool_dependency_graph_reaches_project: bool,
+    pub tool_dependency_graph_excludes_project: bool,
     pub project_lock_excludes_tool_package: bool,
-    pub tool_lock_contains_project_package: bool,
+    pub tool_lock_excludes_project_package: bool,
     pub crates_are_independent_workspaces: bool,
     pub standalone_preview_target_is_feature_gated: bool,
     pub ui_only_generation_write_scope_is_closed: bool,
@@ -50,14 +50,14 @@ pub fn verify_dependency_boundary(
 
     let project_dependency_graph_excludes_tool =
         !manifest_graph_reaches(&project_manifest, &tool_manifest)?;
-    let tool_dependency_graph_reaches_project =
-        manifest_graph_reaches(&tool_manifest, &project_manifest)?;
+    let tool_dependency_graph_excludes_project =
+        !manifest_graph_reaches(&tool_manifest, &project_manifest)?;
     let project_lock_excludes_tool_package = !lock_contains_local_package(
         &project_manifest.with_file_name("Cargo.lock"),
         "ui-generation",
     )?;
-    let tool_lock_contains_project_package =
-        lock_contains_local_package(&tool_manifest.with_file_name("Cargo.lock"), "project")?;
+    let tool_lock_excludes_project_package =
+        !lock_contains_local_package(&tool_manifest.with_file_name("Cargo.lock"), "project")?;
     let project_workspace = enclosing_workspace_root(&project_manifest)?;
     let tool_workspace = enclosing_workspace_root(&tool_manifest)?;
     let crates_are_independent_workspaces = project_workspace != tool_workspace;
@@ -68,9 +68,9 @@ pub fn verify_dependency_boundary(
 
     validate_boundary_flags(
         project_dependency_graph_excludes_tool,
-        tool_dependency_graph_reaches_project,
+        tool_dependency_graph_excludes_project,
         project_lock_excludes_tool_package,
-        tool_lock_contains_project_package,
+        tool_lock_excludes_project_package,
         crates_are_independent_workspaces,
         standalone_preview_target_is_feature_gated,
         ui_only_generation_write_scope_is_closed,
@@ -83,9 +83,9 @@ pub fn verify_dependency_boundary(
         project_manifest,
         tool_manifest,
         project_dependency_graph_excludes_tool,
-        tool_dependency_graph_reaches_project,
+        tool_dependency_graph_excludes_project,
         project_lock_excludes_tool_package,
-        tool_lock_contains_project_package,
+        tool_lock_excludes_project_package,
         crates_are_independent_workspaces,
         standalone_preview_target_is_feature_gated,
         ui_only_generation_write_scope_is_closed,
@@ -776,9 +776,9 @@ fn enclosing_workspace_manifest(manifest: &Path) -> Result<Option<PathBuf>, Task
 
 fn validate_boundary_flags(
     project_dependency_graph_excludes_tool: bool,
-    tool_dependency_graph_reaches_project: bool,
+    tool_dependency_graph_excludes_project: bool,
     project_lock_excludes_tool_package: bool,
-    tool_lock_contains_project_package: bool,
+    tool_lock_excludes_project_package: bool,
     crates_are_independent_workspaces: bool,
     standalone_preview_target_is_feature_gated: bool,
     ui_only_generation_write_scope_is_closed: bool,
@@ -787,9 +787,9 @@ fn validate_boundary_flags(
     direct_rust_ui_views_match_controlled_exceptions: bool,
 ) -> Result<(), TaskFailure> {
     if project_dependency_graph_excludes_tool
-        && tool_dependency_graph_reaches_project
+        && tool_dependency_graph_excludes_project
         && project_lock_excludes_tool_package
-        && tool_lock_contains_project_package
+        && tool_lock_excludes_project_package
         && crates_are_independent_workspaces
         && standalone_preview_target_is_feature_gated
         && ui_only_generation_write_scope_is_closed
@@ -800,7 +800,7 @@ fn validate_boundary_flags(
         Ok(())
     } else {
         Err(boundary_failure(format!(
-            "dependency direction and formal UI boundaries must remain closed (project_graph_excludes_tool={project_dependency_graph_excludes_tool}, tool_graph_reaches_project={tool_dependency_graph_reaches_project}, project_lock_excludes_tool={project_lock_excludes_tool_package}, tool_lock_contains_project={tool_lock_contains_project_package}, independent={crates_are_independent_workspaces}, preview_feature_gated={standalone_preview_target_is_feature_gated}, ui_only_write_scope={ui_only_generation_write_scope_is_closed}, approved_business_documents={formal_business_routes_have_approved_documents}, classified_routes={all_routable_screens_are_classified}, controlled_rust_views={direct_rust_ui_views_match_controlled_exceptions})"
+            "dependency direction and formal UI boundaries must remain closed (project_graph_excludes_tool={project_dependency_graph_excludes_tool}, tool_graph_excludes_project={tool_dependency_graph_excludes_project}, project_lock_excludes_tool={project_lock_excludes_tool_package}, tool_lock_excludes_project={tool_lock_excludes_project_package}, independent={crates_are_independent_workspaces}, preview_feature_gated={standalone_preview_target_is_feature_gated}, ui_only_write_scope={ui_only_generation_write_scope_is_closed}, approved_business_documents={formal_business_routes_have_approved_documents}, classified_routes={all_routable_screens_are_classified}, controlled_rust_views={direct_rust_ui_views_match_controlled_exceptions})"
         )))
     }
 }
@@ -932,17 +932,21 @@ mod tests {
     }
 
     #[test]
-    fn manifest_graph_accepts_only_tool_to_project_direction() {
+    fn manifest_graph_keeps_project_and_tool_graphs_disconnected() {
         let root = tempfile::tempdir().unwrap();
         let project = write_manifest(
             &root.path().join("project"),
             "[package]\nname='project'\nversion='0.1.0'\n",
         );
+        write_manifest(
+            &root.path().join("core"),
+            "[package]\nname='ui-document-core'\nversion='0.1.0'\n",
+        );
         let tool = write_manifest(
             &root.path().join("tool"),
-            "[package]\nname='ui-generation'\nversion='0.1.0'\n[dependencies]\nproject={path='../project'}\n",
+            "[package]\nname='ui-generation'\nversion='0.1.0'\n[dependencies]\nui-document-core={path='../core'}\n",
         );
-        assert!(manifest_graph_reaches(&tool, &project).unwrap());
+        assert!(!manifest_graph_reaches(&tool, &project).unwrap());
         assert!(!manifest_graph_reaches(&project, &tool).unwrap());
     }
 

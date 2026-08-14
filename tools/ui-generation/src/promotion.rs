@@ -16,9 +16,6 @@ use crate::{
         UiGenerationRunManifest,
     },
 };
-use project::framework::ui::document::tooling::{
-    CURRENT_SCHEMA_VERSION, canonicalize_json, parse_approved_document_registration, validate_json,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -28,6 +25,9 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+};
+use ui_document_core::{
+    CURRENT_SCHEMA_VERSION, canonicalize_json, parse_approved_document_registration, validate_json,
 };
 
 pub const PROMOTION_PROTOCOL_VERSION: u32 = 1;

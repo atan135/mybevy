@@ -11,12 +11,12 @@ use crate::{
         ProviderRunner, RequestLogMetadata, StructuredOutputContract,
     },
 };
-use project::framework::ui::document::tooling::{
-    UI_DOCUMENT_MAX_BYTES, UiValidationDiagnostic, UiValidationPhase, UiValidationSeverity,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use ui_document_core::{
+    UI_DOCUMENT_MAX_BYTES, UiValidationDiagnostic, UiValidationPhase, UiValidationSeverity,
+};
 
 pub const REPAIR_OUTPUT_SCHEMA_ID: &str = "ui-document-repair";
 pub const REPAIR_OUTPUT_SCHEMA_VERSION: u32 = 1;
@@ -988,10 +988,9 @@ mod tests {
 
     #[test]
     fn node_tree_summary_is_ordered_by_document_path() {
-        let canonical = project::framework::ui::document::tooling::canonicalize_json(
-            &serde_json::to_string(&valid_document()).unwrap(),
-        )
-        .unwrap();
+        let canonical =
+            ui_document_core::canonicalize_json(&serde_json::to_string(&valid_document()).unwrap())
+                .unwrap();
         let first = node_tree_summary(&canonical).unwrap();
         let second = node_tree_summary(&canonical).unwrap();
         assert_eq!(first, second);

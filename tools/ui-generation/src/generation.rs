@@ -19,15 +19,15 @@ use crate::{
         StructuredOutputContract, is_safe_metadata_label,
     },
 };
-use project::framework::ui::document::UiDocument;
-use project::framework::ui::document::tooling::{
-    CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UI_DOCUMENT_MAX_BYTES,
-    UiValidationReport, canonicalize_json, validate_json_bytes,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use ui_document_core::UiDocument;
+use ui_document_core::{
+    CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, UI_DOCUMENT_MAX_BYTES,
+    UiValidationReport, canonicalize_json, validate_json_bytes,
+};
 
 pub const GENERATION_OUTPUT_SCHEMA_ID: &str = "ui-document-generation";
 pub const GENERATION_OUTPUT_SCHEMA_VERSION: u32 = 1;
@@ -371,8 +371,7 @@ impl PreparedGenerationRequest {
             allow_i18n_keys: false,
             allow_hidden_states: self.visible_series.is_some(),
             allow_responsive_variants: self.visible_series.is_some(),
-            budget_profile: project::framework::ui::document::tooling::UI_DOCUMENT_BUDGET_PROFILE
-                .to_owned(),
+            budget_profile: ui_document_core::UI_DOCUMENT_BUDGET_PROFILE.to_owned(),
             host_contract: self.configuration.host_contract.clone(),
         }
     }

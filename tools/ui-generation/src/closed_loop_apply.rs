@@ -12,7 +12,6 @@ use crate::{
     },
     lifecycle::{TaskFailure, TaskFailureKind},
 };
-use project::framework::ui::document::tooling::{canonicalize_json, validate_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -24,6 +23,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+use ui_document_core::{canonicalize_json, validate_json};
 
 pub const CLOSED_LOOP_APPLY_PROTOCOL_VERSION: u32 = 1;
 const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;

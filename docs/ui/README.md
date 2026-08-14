@@ -103,9 +103,10 @@ flowchart TD
 - `project/src/framework/ui/style/`：字体加载、作用域样式、主题 token、受限视觉效果和材质策略。
 - `project/src/framework/ui/i18n.rs`：UI 文案加载、fallback 和热更新。
 - `project/src/framework/ui/document/`：声明式模型、验证器、事务运行时、预览/reload、diff 和 audit metadata。
-- `project/src/framework/ui/document/tooling.rs`：供独立仓库工具复用的最小 `UiDocument` 协议、验证和 canonical facade。
+- `project/src/framework/ui/document/tooling.rs`：project runtime 侧的兼容 facade；纯 schema、验证、canonical、budget 和 tooling token 由独立 `tools/ui-document-core/` 提供。
+- `tools/ui-document-core/`：不依赖 Bevy 的独立 `UiDocument` core crate，供 `ui-generation` 和 `ui-visual-audit` 使用；`project` 仅通过 `document::core` facade 显式接入，runtime schema 当前尚未完全单源复用。
 - `project/assets/ui/documents/approved/`：通过批准流程并可进入首包的声明式页面。
-- `tools/ui-generation/`：拥有独立 Cargo 根的桌面/CI 生成工具；不属于正式游戏 target、feature、plugin 或 Android 构建。
+- `tools/ui-generation/` 与 `tools/ui-visual-audit/`：拥有独立 Cargo 根的桌面/CI 工具，依赖 `ui-document-core`，不属于正式游戏 target、feature、plugin 或 Android 构建，也不依赖 project/Bevy runtime。
 
 ## 文档维护规则
 
