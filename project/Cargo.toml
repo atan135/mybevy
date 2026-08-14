@@ -3,6 +3,7 @@ name = "project"
 version = "0.1.0"
 edition = "2024"
 default-run = "project"
+autobins = false
 
 [workspace]
 members = [
@@ -23,6 +24,18 @@ ui-document-preview-tool = []
 [lib]
 name = "project"
 crate-type = ["rlib"]
+
+[[bin]]
+name = "project"
+path = "src/main.rs"
+
+[[bin]]
+name = "lockstep-sim-headless"
+path = "src/bin/lockstep-sim-headless.rs"
+
+[[bin]]
+name = "fangyuan_bake"
+path = "src/bin/fangyuan_bake.rs"
 
 [[bin]]
 name = "ui-document-preview"

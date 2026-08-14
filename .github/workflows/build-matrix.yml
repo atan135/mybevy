@@ -1,0 +1,302 @@
+name: Build Matrix
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Run the opt-in desktop release build
+        required: false
+        default: false
+        type: boolean
+      android:
+        description: Run the opt-in Android Rust and APK build
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  project:
+    name: Project bins and tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout sources without credentials
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore project Cargo target
+        id: project-cache
+        uses: actions/cache@v4
+        with:
+          path: project/target
+          key: ${{ runner.os }}-cargo-project-dev-${{ hashFiles('project/Cargo.lock', 'project/Cargo.toml', 'project/crates/**/Cargo.toml', 'project/crates/**/build.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-project-dev-
+
+      - name: Initialize project diagnostics
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path artifacts/ci | Out-Null
+
+      - name: Check isolated protocol generation
+        shell: pwsh
+        run: |
+          $log = "artifacts/ci/myserver-protocol.log"
+          Start-Transcript -Path $log -Force | Out-Null
+          try {
+            cargo check --locked --manifest-path project/Cargo.toml --package myserver-protocol
+            if ($LASTEXITCODE -ne 0) { throw "protocol generation check failed with exit code $LASTEXITCODE" }
+          } finally { Stop-Transcript | Out-Null }
+
+      - name: Check default game bin
+        shell: pwsh
+        run: |
+          $log = "artifacts/ci/project-bin.log"
+          Start-Transcript -Path $log -Force | Out-Null
+          try {
+            & .\scripts\build-entry.ps1 -Target desktop -Action check -Locked
+            if ($LASTEXITCODE -ne 0) { throw "desktop check failed with exit code $LASTEXITCODE" }
+          } finally { Stop-Transcript | Out-Null }
+
+      - name: Check headless bin
+        shell: pwsh
+        run: |
+          $log = "artifacts/ci/headless-bin.log"
+          Start-Transcript -Path $log -Force | Out-Null
+          try {
+            & .\scripts\build-entry.ps1 -Target headless -Action check -Locked
+            if ($LASTEXITCODE -ne 0) { throw "headless check failed with exit code $LASTEXITCODE" }
+          } finally { Stop-Transcript | Out-Null }
+
+      - name: Check Fangyuan bake bin
+        shell: pwsh
+        run: |
+          $log = "artifacts/ci/fangyuan-bake-bin.log"
+          Start-Transcript -Path $log -Force | Out-Null
+          try {
+            & .\scripts\build-entry.ps1 -Target fangyuan-bake -Action check -Locked
+            if ($LASTEXITCODE -ne 0) { throw "fangyuan bake check failed with exit code $LASTEXITCODE" }
+          } finally { Stop-Transcript | Out-Null }
+
+      - name: Check UI preview bin
+        shell: pwsh
+        run: |
+          $log = "artifacts/ci/ui-preview-bin.log"
+          Start-Transcript -Path $log -Force | Out-Null
+          try {
+            & .\scripts\build-entry.ps1 -Target ui-preview -Action check -Locked
+            if ($LASTEXITCODE -ne 0) { throw "UI preview check failed with exit code $LASTEXITCODE" }
+          } finally { Stop-Transcript | Out-Null }
+
+      - name: Compile project tests
+        shell: pwsh
+        run: |
+          $log = "artifacts/ci/project-tests.log"
+          Start-Transcript -Path $log -Force | Out-Null
+          try {
+            & .\scripts\build-entry.ps1 -Target test -Action check -Locked
+            if ($LASTEXITCODE -ne 0) { throw "project test compilation failed with exit code $LASTEXITCODE" }
+          } finally { Stop-Transcript | Out-Null }
+
+      - name: Report project cache and timings
+        if: always()
+        shell: pwsh
+        run: |
+          "project_cache_hit=${{ steps.project-cache.outputs.cache-hit }}" | Out-File -FilePath artifacts/ci/project-cache.txt -Encoding utf8
+          "Each build-entry invocation records target, action, command, status, elapsed_seconds, and the failing step name is preserved by GitHub Actions." | Out-File -FilePath artifacts/ci/project-diagnostics.txt -Encoding utf8
+
+      - name: Upload project diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-matrix-project-diagnostics
+          path: artifacts/ci
+          if-no-files-found: error
+          retention-days: 14
+
+  ui-generation:
+    name: UI generation tool
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout sources without credentials
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore UI generation target
+        id: ui-generation-cache
+        uses: actions/cache@v4
+        with:
+          path: tools/ui-generation/target
+          key: ${{ runner.os }}-cargo-ui-generation-${{ hashFiles('tools/ui-generation/Cargo.lock', 'tools/ui-generation/Cargo.toml', 'tools/ui-document-core/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ui-generation-
+      - name: Test UI generation tool
+        shell: pwsh
+        run: |
+          $timer = [Diagnostics.Stopwatch]::StartNew()
+          cargo test --locked --manifest-path tools/ui-generation/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "UI generation tests failed with exit code $LASTEXITCODE" }
+          $timer.Stop()
+          "ui-generation_cache_hit=${{ steps.ui-generation-cache.outputs.cache-hit }} elapsed_seconds=$([math]::Round($timer.Elapsed.TotalSeconds, 3))" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+  ui-visual-audit:
+    name: UI visual audit tool
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout sources without credentials
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore UI visual audit target
+        id: ui-visual-audit-cache
+        uses: actions/cache@v4
+        with:
+          path: tools/ui-visual-audit/target
+          key: ${{ runner.os }}-cargo-ui-visual-audit-${{ hashFiles('tools/ui-visual-audit/Cargo.lock', 'tools/ui-visual-audit/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ui-visual-audit-
+      - name: Check and test UI visual audit tool
+        shell: pwsh
+        run: |
+          $timer = [Diagnostics.Stopwatch]::StartNew()
+          cargo fmt --manifest-path tools/ui-visual-audit/Cargo.toml -- --check
+          if ($LASTEXITCODE -ne 0) { throw "UI visual audit format check failed with exit code $LASTEXITCODE" }
+          cargo test --locked --manifest-path tools/ui-visual-audit/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "UI visual audit tests failed with exit code $LASTEXITCODE" }
+          $timer.Stop()
+          "ui-visual-audit_cache_hit=${{ steps.ui-visual-audit-cache.outputs.cache-hit }} elapsed_seconds=$([math]::Round($timer.Elapsed.TotalSeconds, 3))" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+  release:
+    name: Opt-in desktop release
+    if: github.event_name == 'workflow_dispatch' && inputs.release == true
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout sources without credentials
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore desktop release target
+        id: release-cache
+        uses: actions/cache@v4
+        with:
+          path: project/target
+          key: ${{ runner.os }}-cargo-project-release-${{ hashFiles('project/Cargo.lock', 'project/Cargo.toml', 'project/crates/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-project-release-
+      - name: Build release bin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/ci | Out-Null
+          Start-Transcript -Path artifacts/ci/release.log -Force | Out-Null
+          try {
+            & .\scripts\build-entry.ps1 -Target release -Action build -Locked
+            if ($LASTEXITCODE -ne 0) { throw "release build failed with exit code $LASTEXITCODE" }
+          } finally { Stop-Transcript | Out-Null }
+      - name: Report release cache
+        if: always()
+        shell: pwsh
+        run: |
+          "release_cache_hit=${{ steps.release-cache.outputs.cache-hit }}" | Out-File -FilePath artifacts/ci/release-cache.txt -Encoding utf8
+      - name: Upload release diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-matrix-release-diagnostics
+          path: artifacts/ci
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: Opt-in Android Rust and APK
+    if: github.event_name == 'workflow_dispatch' && inputs.android == true
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout sources without credentials
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK and NDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android build dependencies
+        shell: pwsh
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"
+      - name: Install cargo-ndk
+        shell: pwsh
+        run: cargo install cargo-ndk --locked
+      - name: Restore Android Rust target
+        id: android-rust-cache
+        uses: actions/cache@v4
+        with:
+          path: project/target-android
+          key: ${{ runner.os }}-cargo-android-rust-${{ hashFiles('project/Cargo.lock', 'project/Cargo.toml', 'project/crates/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-android-rust-
+      - name: Restore Android Gradle cache
+        id: android-gradle-cache
+        uses: actions/cache@v4
+        with:
+          path: android/.gradle
+          key: ${{ runner.os }}-gradle-android-${{ hashFiles('android/gradle/wrapper/**', 'android/*.gradle', 'android/**/*.gradle', 'android/gradle.properties', 'android/gradle/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-android-
+      - name: Build Android Rust and APK
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/ci | Out-Null
+          Start-Transcript -Path artifacts/ci/android.log -Force | Out-Null
+          try {
+            & .\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked -AndroidApk
+            if ($LASTEXITCODE -ne 0) { throw "Android build failed with exit code $LASTEXITCODE" }
+          } finally { Stop-Transcript | Out-Null }
+      - name: Report Android caches
+        if: always()
+        shell: pwsh
+        run: |
+          @(
+            "android_rust_cache_hit=${{ steps.android-rust-cache.outputs.cache-hit }}",
+            "android_gradle_cache_hit=${{ steps.android-gradle-cache.outputs.cache-hit }}",
+            "desktop dynamic-linking cache is not used by this job; Rust target is project/target-android"
+          ) | Out-File -FilePath artifacts/ci/android-cache.txt -Encoding utf8
+      - name: Upload Android diagnostics and APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-matrix-android-diagnostics
+          path: |
+            artifacts/ci
+            android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
+          retention-days: 14
