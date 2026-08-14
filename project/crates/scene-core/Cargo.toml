@@ -1,0 +1,12 @@
+[package]
+name = "scene-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "scene_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
