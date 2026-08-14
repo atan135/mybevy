@@ -1,6 +1,7 @@
 # Rust / Bevy build artifacts
 /target/
 /project/target/
+/project/target-android/
 /tools/ui-generation/target/
 /tools/ui-visual-audit/target/
 /logs/

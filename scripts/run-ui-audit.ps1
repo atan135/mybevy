@@ -4786,7 +4786,7 @@ function Invoke-UiAuditVisualTool {
     New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
     $logPath = Join-FullPath $logDirectory "$LogName.log"
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $cacheBinary = Join-FullPath $RepositoryRoot "target/debug/ui-visual-audit.exe"
+    $cacheBinary = Join-FullPath $RepositoryRoot "tools/ui-visual-audit/target/debug/ui-visual-audit.exe"
     $cacheStatus = if (Test-Path -LiteralPath $cacheBinary -PathType Leaf) { "UI visual audit cache hit: $cacheBinary" } else { "UI visual audit cache cold; cargo will build $Command" }
     Write-Host $cacheStatus
     $psi = New-Object System.Diagnostics.ProcessStartInfo

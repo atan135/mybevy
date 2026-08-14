@@ -33,9 +33,13 @@ if (-not $SkipBuild) {
 }
 
 $binaryName = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { "project.exe" } else { "project" }
-$clientBinary = Join-Path $repoRoot (Join-Path "target" (Join-Path "debug" $binaryName))
+$clientBinary = Join-Path $projectRoot (Join-Path "target" (Join-Path "debug" $binaryName))
 if (-not (Test-Path $clientBinary)) {
-    throw "Client binary not found: $clientBinary. Run without -SkipBuild first."
+    if ($DryRun) {
+        Write-Warning "Client binary not found: $clientBinary. Dry run will continue; run without -SkipBuild before starting clients."
+    } else {
+        throw "Client binary not found: $clientBinary. Run without -SkipBuild first."
+    }
 }
 
 function ConvertTo-PowerShellLiteral {

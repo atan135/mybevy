@@ -74,11 +74,11 @@ Set-Location project
 cargo run
 ```
 
-仓库根 `.cargo/config.toml` 会让游戏工程和独立工具共享根 `target/` 构建缓存，因此从 `project/` 执行游戏命令时二进制仍输出到 `target/debug/`。通常不要设置 `CARGO_TARGET_DIR`；脚本或 CI 必须显式设置时，只能将它指向仓库根 `target/`，避免重新产生清单本地缓存。
+每个 Cargo 工程使用自身 target：游戏输出到 `project/target`，UI 生成工具输出到 `tools/ui-generation/target`，UI 审计工具输出到 `tools/ui-visual-audit/target`。Android Rust 通过 `scripts/build-android-rust.ps1` 输出到 `project/target-android`，再复制 `.so` 到 `android/app/src/main/jniLibs`。常规命令不要设置 `CARGO_TARGET_DIR`。
 
 ## 共享构建缓存维护
 
-共享缓存的三个 Cargo 根仍各自保留 `Cargo.toml` 和 `Cargo.lock`，但在当前根 `.cargo/config.toml` 配置下，从其中任一目录执行 `cargo clean` 都会清除仓库根 `target/`，从而影响其他两个根的后续构建。不要把 `cargo clean` 当作单个工具的局部操作。
+三个 Cargo 根仍各自保留 `Cargo.toml` 和 `Cargo.lock`，并分别维护增量缓存；从某一工程执行 `cargo clean` 只影响该工程的 target。迁移期间遗留的仓库根 `target/` 由清理脚本单独处理。
 
 运行中的游戏客户端、`cargo`/`rustc`、UI 生成或视觉审计工具、测试，以及 Android 的 Gradle/Java/ADB 进程都可能使用共享缓存。停止这些进程后，先执行默认预演，再在人工确认后清理：
 
@@ -89,11 +89,11 @@ pwsh -File scripts/clear-shared-cargo-target.ps1 -IncrementalOnly -Execute -Conf
 pwsh -File scripts/clear-shared-cargo-target.ps1 -Execute -ConfirmSharedTargetCleanup
 ```
 
-前两条命令不会删除文件；`-IncrementalOnly` 只针对 `target/debug/incremental`。建议仅在根 `target/` 超过 35 GiB、磁盘空间紧张，或完成一个发布/大型分支后进行人工检查，优先清理由本脚本控制的 stale incremental 缓存。不要在每次构建前自动清理完整缓存，否则会失去依赖复用并延长构建时间。
+这些命令默认不会删除文件；脚本仅允许清理迁移遗留的根 `target/` 或其 `debug/incremental`，不会触碰 `project/target`、`project/target-android` 或工具 target。不要在每次构建前自动清理工程缓存。
 
 共享目录上的 `Blocking waiting for file lock` 通常表示另一个 Cargo 正在正常排队。先观察对应 Cargo 命令是否仍有 CPU、磁盘或编译日志进展；若没有进展，使用任务管理器或 `Get-CimInstance Win32_Process` 查找遗留的 `cargo`、`rustc`、`link`、游戏或 UI 工具进程并让其正常退出。只有在相关进程均已结束、等待持续且无任何产物或日志变化时，才把它按可能死锁处理；先保留终端输出和进程信息，再重新启动构建，不要直接删除共享缓存。
 
-回滚共享缓存配置时，不需要修改 Rust 源码、任何 `Cargo.lock`，或 UI 工具与正式包的依赖方向：移除根 `.cargo/config.toml`，恢复 `.gitignore`、脚本和当前文档中的原本地 `target/` 路径约定，确认旧路径不再被当成共享缓存后删除根 `target/`，再分别在 `project/`、`tools/ui-generation/` 和 `tools/ui-visual-audit/` 运行各自的构建或测试命令以重建本地缓存。
+回滚时不需要修改 Rust 源码、任何 `Cargo.lock` 或依赖方向；保留各工程本地 target，确认旧根 `target/` 不再使用后再按授权删除。
 
 格式化和检查：
 
@@ -188,7 +188,7 @@ cargo install cargo-ndk
 
 ```powershell
 Set-Location project
-cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib --crate-type cdylib
+..\scripts\build-android-rust.ps1 -Locked
 ```
 
 打包 Debug APK：

@@ -37,12 +37,12 @@ function Test-PathInside {
 function Get-ColdTargetPrecondition {
     param([string]$RepoRoot, [string]$ArtifactsRoot, [string]$SharedTargetRoot, [string]$ColdTargetDirectory, [bool]$Confirmed)
     if ([string]::IsNullOrWhiteSpace($ColdTargetDirectory)) {
-        return [pscustomobject]@{ ready = $false; path = $null; mode = $null; reason = "precondition unmet: pass the repository root target or a caller-created empty target under artifacts/, then pass -ConfirmColdTarget" }
+        return [pscustomobject]@{ ready = $false; path = $null; mode = $null; reason = "precondition unmet: pass project/target or a caller-created empty target under artifacts/, then pass -ConfirmColdTarget" }
     }
     $path = Resolve-RepoPath $RepoRoot $ColdTargetDirectory
     $usesSharedTarget = $path.Equals($SharedTargetRoot, [System.StringComparison]::OrdinalIgnoreCase)
     if (-not $usesSharedTarget -and -not (Test-PathInside $path $ArtifactsRoot)) {
-        return [pscustomobject]@{ ready = $false; path = $path; mode = $null; reason = "precondition unmet: ColdTargetDirectory must be exactly the repository root target or inside ignored artifacts/" }
+        return [pscustomobject]@{ ready = $false; path = $path; mode = $null; reason = "precondition unmet: ColdTargetDirectory must be exactly project/target or inside ignored artifacts/" }
     }
     if (-not $Confirmed) {
         return [pscustomobject]@{ ready = $false; path = $path; mode = $null; reason = "precondition unmet: caller must pass -ConfirmColdTarget after verifying the target is safe and empty" }
@@ -53,8 +53,8 @@ function Get-ColdTargetPrecondition {
     if (Get-ChildItem -LiteralPath $path -Force | Select-Object -First 1) {
         return [pscustomobject]@{ ready = $false; path = $path; mode = $null; reason = "precondition unmet: ColdTargetDirectory is not empty; this script will not clear it" }
     }
-    $mode = if ($usesSharedTarget) { "shared-root" } else { "isolated-artifact" }
-    $reason = if ($usesSharedTarget) { "caller-confirmed empty repository root target; first shared-cache cold build" } else { "caller-confirmed empty independent target under artifacts/" }
+    $mode = if ($usesSharedTarget) { "project-local" } else { "isolated-artifact" }
+    $reason = if ($usesSharedTarget) { "caller-confirmed empty project/target; first project-local cold build" } else { "caller-confirmed empty independent target under artifacts/" }
     return [pscustomobject]@{ ready = $true; path = $path; mode = $mode; reason = $reason }
 }
 
@@ -79,8 +79,8 @@ function Get-DirectorySnapshot {
         }
     }
     $paths = @(
-        (Join-Path $RepoRoot "target"),
         (Join-Path $RepoRoot "project\target"),
+        (Join-Path $RepoRoot "project\target-android"),
         (Join-Path $RepoRoot "tools\ui-generation\target"),
         (Join-Path $RepoRoot "tools\ui-visual-audit\target"),
         (Join-Path $RepoRoot "android\app\build"),
@@ -157,6 +157,7 @@ function Invoke-MeasuredCommand {
         [string]$WorkingDirectory,
         [string]$LogPath,
         [int]$TimeoutSeconds,
+        [hashtable]$Environment = @{},
         [switch]$Skip,
         [string]$SkipReason = "dry-run: pass -Execute to start this command"
     )
@@ -175,6 +176,9 @@ function Invoke-MeasuredCommand {
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    foreach ($entry in $Environment.GetEnumerator()) {
+        $psi.Environment[$entry.Key] = [string]$entry.Value
+    }
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $psi
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -210,10 +214,10 @@ function Invoke-MeasuredCommand {
 function Get-ArtifactSnapshot {
     param([string]$RepoRoot)
     $candidatePaths = @(
-        (Join-Path $RepoRoot "target\debug\project.exe"),
-        (Join-Path $RepoRoot "target\release\project.exe"),
-        (Join-Path $RepoRoot "target\debug\lockstep-sim-headless.exe"),
-        (Join-Path $RepoRoot "target\debug\fangyuan_bake.exe"),
+        (Join-Path $RepoRoot "project\target\debug\project.exe"),
+        (Join-Path $RepoRoot "project\target\release\project.exe"),
+        (Join-Path $RepoRoot "project\target\debug\lockstep-sim-headless.exe"),
+        (Join-Path $RepoRoot "project\target\debug\fangyuan_bake.exe"),
         (Join-Path $RepoRoot "android\app\build\outputs\apk\debug\app-debug.apk"),
         (Join-Path $RepoRoot "android\app\src\main\jniLibs\arm64-v8a\libproject.so")
     )
@@ -227,7 +231,7 @@ $scriptStartedAt = [DateTimeOffset]::Now
 $repoRoot = Resolve-RepoRoot
 $outputRoot = Resolve-RepoPath $repoRoot $OutputDirectory
 $allowedRoot = Resolve-RepoPath $repoRoot "artifacts"
-$sharedTargetRoot = Resolve-RepoPath $repoRoot "target"
+$sharedTargetRoot = Resolve-RepoPath $repoRoot "project\target"
 if (-not (Test-PathInside $outputRoot $allowedRoot)) {
     throw "OutputDirectory must remain under ignored artifacts/: $outputRoot"
 }
@@ -273,7 +277,7 @@ if (-not $Execute) {
 $projectRoot = Join-Path $repoRoot "project"
 $coldPrecondition = Get-ColdTargetPrecondition $repoRoot $allowedRoot $sharedTargetRoot $ColdTargetDirectory $ConfirmColdTarget
 $commands = @{
-    "desktop-cold" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Cold baseline requires a caller-confirmed empty repository root target or isolated target under artifacts/." }
+    "desktop-cold" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Cold baseline requires a caller-confirmed empty project/target or isolated target under artifacts/." }
     "desktop-warm" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Warm desktop build against the current existing Cargo target." }
     "desktop-incremental" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Not measured automatically: copy or patch a caller-selected ordinary Rust file outside this script, then run this scenario and restore the file separately." }
     "desktop-hot" = @{ file = "cargo"; args = @("build", "--locked"); cwd = $projectRoot; note = "Not measured automatically: copy or patch a caller-selected high-churn Rust file outside this script, then run this scenario and restore the file separately." }
@@ -319,7 +323,7 @@ foreach ($name in $selected) {
             $results.Add([pscustomobject]@{ name = "android"; status = "skipped"; note = "cargo-ndk, Java, or Gradle wrapper unavailable; no Android command started."; command = "cargo ndk ...; android\gradlew.bat assembleDebug" })
             continue
         }
-        $results.Add((Invoke-MeasuredCommand -Name "android-rust-release" -FileName "cargo" -Arguments $androidArgs -WorkingDirectory $projectRoot -LogPath $androidLog -TimeoutSeconds $TimeoutSeconds))
+        $results.Add((Invoke-MeasuredCommand -Name "android-rust-release" -FileName "cargo" -Arguments $androidArgs -WorkingDirectory $projectRoot -LogPath $androidLog -TimeoutSeconds $TimeoutSeconds -Environment @{ CARGO_TARGET_DIR = (Join-Path $repoRoot "project\target-android") }))
         $results.Add((Invoke-MeasuredCommand -Name "android-gradle-assemble-debug" -FileName (Join-Path $repoRoot "android\gradlew.bat") -Arguments @("assembleDebug") -WorkingDirectory (Join-Path $repoRoot "android") -LogPath $gradleLog -TimeoutSeconds $TimeoutSeconds))
         continue
     }

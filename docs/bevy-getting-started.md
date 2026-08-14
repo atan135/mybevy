@@ -39,15 +39,15 @@ cargo --version
 
 现在应该把 `project/` 当成游戏工程根目录。
 
-仓库根 `.cargo/config.toml` 将所有 Cargo 清单的构建输出统一到根 `target/`。因此即使在 `project/` 目录执行 `cargo run` 或 `cargo build`，桌面二进制也会位于仓库根的 `target/debug/` 或 `target/release/`。常规开发不要设置 `CARGO_TARGET_DIR`；脚本或 CI 必须显式设置时，只能将其设为仓库根 `target/`，不要使用清单本地的独立缓存。
+每个 Cargo 工程使用自身 target：游戏为 `project/target`，UI 工具为各自目录下的 `target`。Android Rust 由 `scripts/build-android-rust.ps1` 使用 `project/target-android`，避免桌面与 Android 增量缓存混用。常规开发不要设置 `CARGO_TARGET_DIR`。
 
-共享 `target/` 的清理必须由仓库根脚本控制：`pwsh -File scripts/clear-shared-cargo-target.ps1` 默认只预演，实际删除还需要 `-Execute -ConfirmSharedTargetCleanup`。`-IncrementalOnly` 可仅预演或清理 `target/debug/incremental`，适用于 stale incremental 缓存。正在运行游戏、Cargo/Rust 编译或测试、UI 工具，或 Android Gradle/Java/ADB 构建时禁止清理；脚本会在预演和实际删除前检查这些进程。
+迁移遗留的仓库根 `target/` 由 `pwsh -File scripts/clear-shared-cargo-target.ps1` 控制，默认只预演，实际删除还需要 `-Execute -ConfirmSharedTargetCleanup`。脚本不会清理新的工程 target 或 `project/target-android`。
 
-当前配置下，从任一 Cargo 根执行 `cargo clean` 都会影响同一个根 `target/`，因此也会使其他 Cargo 根失去缓存。仅在根 `target/` 超过 35 GiB、磁盘空间紧张或完成发布/大型分支后人工检查，优先处理 stale incremental；不要在每次构建前清空缓存。
+从某一 Cargo 根执行 `cargo clean` 只影响该工程自己的缓存；不要在每次构建前清空缓存。
 
 遇到 `Blocking waiting for file lock` 时，先观察另一条 Cargo 命令是否仍有 CPU、磁盘或日志进展，这是正常排队。若无进展，检查遗留 `cargo`、`rustc`、`link`、游戏和 UI 工具进程；只有进程均已结束且等待持续、产物和日志都不再变化时，才按可能死锁保留信息并重新启动构建，不要先清理缓存。
 
-如需回滚，移除根 `.cargo/config.toml`，恢复 `.gitignore`、脚本和现行文档中的本地 `target/` 路径，再删除根共享缓存，最后分别在 `project/`、`tools/ui-generation/` 与 `tools/ui-visual-audit/` 重建。这个过程不要求改 Rust 源码、锁文件或 UI 工具与正式包的依赖方向，且删除后的旧 `target` 路径不应被视为仍在使用的共享缓存。
+如需回滚，保留各 Cargo 工程本地 `target`，确认旧根 `target/` 不再使用后再按授权删除；不需要修改 Rust 源码、锁文件或依赖方向。
 
 方式一：先进入 `project/` 再初始化
 
@@ -685,7 +685,7 @@ cargo build --release
 构建完成后，产物在：
 
 ```text
-target/release/project.exe
+project/target/release/project.exe
 ```
 
 如果后续你在 `project/assets/` 里放了贴图、音频、字体等资源，发布时通常要把资源目录一起带上。常见发布目录结构：
@@ -699,7 +699,7 @@ dist/
 也就是说：
 
 1. 先执行 `cargo build --release`
-2. 拿到 `target/release/project.exe`
+2. 拿到 `project/target/release/project.exe`
 3. 把 `project/assets/` 复制到最终发布目录
 4. 然后把整个目录发给别人运行
 
@@ -768,7 +768,7 @@ project/
 crate-type = ["rlib"]
 ```
 
-桌面开发默认只构建 `rlib`，避免 Windows 本地运行和测试额外链接动态库。Android 需要的 `libproject.so` 在构建时通过 `cargo ndk ... rustc --lib --crate-type cdylib` 显式产出。
+桌面开发默认只构建 `rlib`，避免 Windows 本地运行和测试额外链接动态库。Android 需要的 `libproject.so` 由 `scripts/build-android-rust.ps1` 显式产出，并使用 `project/target-android`。
 
 如果你准备跟 Bevy 当前移动端默认方案保持一致，通常用 `GameActivity` 即可；如果你要兼容更老的 Android API，再考虑 `android-native-activity`。
 
@@ -797,7 +797,7 @@ mybevy/
 在 `project/` 目录执行类似命令：
 
 ```powershell
-cargo ndk -t arm64-v8a -o ..\android\app\src\main\jniLibs rustc --release --lib --crate-type cdylib
+..\scripts\build-android-rust.ps1 -Locked
 ```
 
 执行后会在 `android/app/src/main/jniLibs/arm64-v8a/` 下得到对应的 Rust 动态库。
@@ -846,7 +846,7 @@ android/app/build/outputs/apk/release/
 - `project/src/main.rs`：桌面入口，只负责调用 `project::run()`
 - `project/src/lib.rs`：共享 Bevy App 入口，并通过 `#[bevy_main]` 支持移动端入口
 - `project/src/game/`：当前游戏玩法模块
-- `project/Cargo.toml`：桌面默认构建 `rlib`；Android 动态库由 `cargo ndk ... rustc --lib --crate-type cdylib` 产出
+- `project/Cargo.toml`：桌面默认构建 `rlib`；Android 动态库由 `scripts/build-android-rust.ps1` 产出
 - `android/`：Android Gradle 壳工程，会加载 `libproject.so`
 
 当前 Android 壳工程使用 Bevy 0.18.1 间接依赖的 `android-activity 0.6.1`。
@@ -1060,7 +1060,7 @@ rustup target add aarch64-linux-android
 cargo install cargo-ndk
 
 Set-Location project
-cargo ndk -t arm64-v8a -P 26 -o ..\android\app\src\main\jniLibs rustc --release --lib --crate-type cdylib
+..\scripts\build-android-rust.ps1 -Locked
 
 Set-Location ..\android
 .\gradlew.bat assembleDebug

@@ -1,6 +1,6 @@
 # UI Visual Audit Tool
 
-This development-only crate owns reference manifests and deterministic visual comparison. It is intentionally outside `project/`, has no dependency edge into the game or Android package, and shares the repository-root `target/` Cargo cache through `.cargo/config.toml`. Android packages only `project/assets/`, so this executable, its dependencies, fixtures, and reports add no game runtime size or startup work.
+This development-only crate owns reference manifests and deterministic visual comparison. It is intentionally outside `project/`, has no dependency edge into the game or Android package, and keeps its own incremental Cargo cache in `tools/ui-visual-audit/target`. Android packages only `project/assets/`, so this executable, its dependencies, fixtures, and reports add no game runtime size or startup work.
 
 ## Reference storage
 
