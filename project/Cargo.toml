@@ -5,7 +5,7 @@ edition = "2024"
 default-run = "project"
 
 [workspace]
-members = ["crates/myserver-protocol", "crates/network-types"]
+members = ["crates/audio-core", "crates/myserver-protocol", "crates/network-types"]
 default-members = ["."]
 exclude = ["vendor/myserver/authority-core", "vendor/myserver/sim-core"]
 resolver = "3"
@@ -28,6 +28,7 @@ name = "ui-update-publish"
 path = "src/bin/ui_update_publish.rs"
 
 [dependencies]
+audio-core = { path = "crates/audio-core" }
 accesskit = "0.21.1"
 bevy = { version = "0.18.1", features = ["wav"] }
 authority-core = { path = "vendor/myserver/authority-core" }

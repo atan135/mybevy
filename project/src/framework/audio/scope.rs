@@ -1,29 +1,9 @@
-use std::fmt;
-
 use bevy::prelude::Entity;
+use std::fmt;
 
 use super::id::{AudioIdError, AudioScopeId};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AudioBus {
-    Master,
-    Music,
-    Sfx,
-    Ui,
-    Battle,
-}
-
-impl fmt::Display for AudioBus {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Master => "master",
-            Self::Music => "music",
-            Self::Sfx => "sfx",
-            Self::Ui => "ui",
-            Self::Battle => "battle",
-        })
-    }
-}
+pub use audio_core::AudioBus;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AudioScope {
@@ -59,15 +39,6 @@ impl fmt::Display for AudioScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bus_displays_stable_lowercase_names() {
-        assert_eq!(AudioBus::Master.to_string(), "master");
-        assert_eq!(AudioBus::Music.to_string(), "music");
-        assert_eq!(AudioBus::Sfx.to_string(), "sfx");
-        assert_eq!(AudioBus::Ui.to_string(), "ui");
-        assert_eq!(AudioBus::Battle.to_string(), "battle");
-    }
 
     #[test]
     fn scope_displays_basic_variants() {

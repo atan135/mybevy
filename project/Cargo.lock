@@ -346,6 +346,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio-core"
+version = "0.1.0"
+
+[[package]]
 name = "authority-core"
 version = "0.1.0"
 dependencies = [
@@ -4565,6 +4569,7 @@ version = "0.1.0"
 dependencies = [
  "accesskit",
  "arboard",
+ "audio-core",
  "authority-core",
  "bevy",
  "csv",
