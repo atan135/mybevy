@@ -110,6 +110,28 @@ opt-level = 3
 
 当前仓库还保留了明确的构建边界：普通 `cargo run`、`cargo test` 和 `cargo check` 使用 `dev`，用于桌面 UI 高频迭代的 `scripts/run_fast.ps1` 使用 `dev-fast` 并只在该桌面入口启用 `bevy/dynamic_linking`。`dev-fast` 将第三方依赖设为 `opt-level = 1`，缩短依赖重编译和链接时间；需要观察接近发布的运行时性能时，在 `project/` 使用 `cargo build --locked --profile perf`。正式桌面发布使用 `cargo build --locked --release`，headless 和 Android Rust release 也保持普通 `release`，不会继承桌面动态链接 feature。
 
+### 4.1 统一构建入口和缓存边界
+
+从仓库根目录使用 `scripts/build-entry.ps1` 选择单一目标，避免为一个检查隐式构建无关 bin：
+
+```powershell
+.\scripts\build-entry.ps1 -Target desktop -Action check -Locked
+.\scripts\build-entry.ps1 -Target headless -Action check -Locked
+.\scripts\build-entry.ps1 -Target fangyuan-bake -Action check -Locked
+.\scripts\build-entry.ps1 -Target ui-preview -Action check -Locked
+.\scripts\build-entry.ps1 -Target test -Action check -Locked
+.\scripts\build-entry.ps1 -Target release -Action build -Locked
+```
+
+桌面 UI 布局验收继续使用 `scripts/run_fast.ps1`，它固定窗口参数并启用 `dev-fast + bevy/dynamic_linking`；不要把 `dynamic_linking` 加到 headless、Android 或 release 命令。Android 只在需要时执行 Rust release 和 APK：
+
+```powershell
+.\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked
+.\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked -AndroidApk
+```
+
+`project/target`、`tools/ui-generation/target`、`tools/ui-visual-audit/target`、`tools/ui-document-core/target` 和 `project/target-android` 是相互独立的 Cargo 缓存；Android Gradle 只复用 `android/.gradle`。构建入口会打印 target、命令、状态和耗时。CI 对应 `.github/workflows/build-matrix.yml`：push/PR 运行 project 与两个 UI 工具检查，release 和 Android job 仅接受 workflow_dispatch 的显式勾选，并将 cache hit、Transcript 和失败阶段作为 artifact 保存。
+
 ## 5. 第一个可运行示例
 
 把 `project/src/main.rs` 改成下面这样：

@@ -94,6 +94,27 @@ Set-Location ..
 
 该脚本固定使用 `--window-size 2772x1280 --device-scale 3.25 --window-scale 50%`，并启用 Bevy 动态链接以缩短后续开发链接时间。裸 `cargo run` 只用于普通开发启动，不作为 UI 布局测试或视觉验收依据。
 
+统一构建入口：
+
+```powershell
+# 以下命令从仓库根目录执行；-Locked 用于可复现构建
+.\scripts\build-entry.ps1 -Target desktop -Action check -Locked
+.\scripts\build-entry.ps1 -Target headless -Action check -Locked
+.\scripts\build-entry.ps1 -Target fangyuan-bake -Action check -Locked
+.\scripts\build-entry.ps1 -Target ui-preview -Action check -Locked
+.\scripts\build-entry.ps1 -Target test -Action check -Locked
+.\scripts\build-entry.ps1 -Target release -Action build -Locked
+```
+
+`build-entry.ps1` 显式绑定 `project`、`lockstep-sim-headless`、`fangyuan_bake` 和 `ui-document-preview` bin；UI preview 额外启用 `ui-document-preview-tool`。桌面高频迭代仍使用 `run_fast.ps1`，只有该入口可启用 `bevy/dynamic_linking`，并自动使用 `dev-fast` profile；Android 不使用动态链接，按需执行：
+
+```powershell
+.\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked
+.\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked -AndroidApk
+```
+
+Android Rust 缓存固定为 `project/target-android`，Gradle 缓存为 `android/.gradle`；二者不与桌面 `project/target` 混用。`.github/workflows/build-matrix.yml` 在 push/PR 上执行 project、UI generation 和 UI visual audit 的独立检查；桌面 release 与 Android Rust/APK 仅在 workflow_dispatch 显式勾选后执行。CI cache key 由锁文件和 manifest 决定，源码修改保留可复用的增量缓存；每个入口输出命令、状态和耗时，并上传失败阶段 transcript。旧仓库根 `target/` 只允许通过 `clear-shared-cargo-target.ps1` 预演/确认清理。
+
 格式化代码：
 
 ```powershell

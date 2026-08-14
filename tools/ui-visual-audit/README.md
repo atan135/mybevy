@@ -2,6 +2,18 @@
 
 This development-only crate owns reference manifests and deterministic visual comparison. It is intentionally outside `project/`, has no dependency edge into the game or Android package, and keeps its own incremental Cargo cache in `tools/ui-visual-audit/target`. Android packages only `project/assets/`, so this executable, its dependencies, fixtures, and reports add no game runtime size or startup work.
 
+## Build entry and CI boundary
+
+Run the tool from the repository root so its target stays isolated from the game workspace:
+
+```powershell
+cargo fmt --manifest-path tools/ui-visual-audit/Cargo.toml -- --check
+cargo test --locked --manifest-path tools/ui-visual-audit/Cargo.toml
+cargo check --locked --manifest-path tools/ui-visual-audit/Cargo.toml
+```
+
+The `ui-visual-audit` job in `.github/workflows/build-matrix.yml` uses a dedicated cache key based on this manifest and `Cargo.lock`; source changes reuse the cache, while dependency changes invalidate it. The job records format/test failure stages and elapsed time. It never builds the game, Android Rust library, or Gradle APK.
+
 ## Reference storage
 
 - Committable baselines: `tools/ui-visual-audit/fixtures/references/`
