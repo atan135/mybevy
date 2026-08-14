@@ -2546,6 +2546,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fangyuan-core"
+version = "0.1.0"
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4574,6 +4578,7 @@ dependencies = [
  "bevy",
  "csv",
  "ed25519-dalek",
+ "fangyuan-core",
  "futures-util",
  "myserver-protocol",
  "network-types",

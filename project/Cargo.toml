@@ -7,6 +7,7 @@ default-run = "project"
 [workspace]
 members = [
     "crates/audio-core",
+    "crates/fangyuan-core",
     "crates/myserver-protocol",
     "crates/network-types",
     "crates/scene-core",
@@ -34,6 +35,7 @@ path = "src/bin/ui_update_publish.rs"
 
 [dependencies]
 audio-core = { path = "crates/audio-core" }
+fangyuan-core = { path = "crates/fangyuan-core" }
 accesskit = "0.21.1"
 bevy = { version = "0.18.1", features = ["wav"] }
 authority-core = { path = "vendor/myserver/authority-core" }

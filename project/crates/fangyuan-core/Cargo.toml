@@ -1,0 +1,9 @@
+[package]
+name = "fangyuan-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "fangyuan_core"
+path = "src/lib.rs"
