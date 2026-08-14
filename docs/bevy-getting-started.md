@@ -108,7 +108,7 @@ opt-level = 3
 
 如果你已经有自己的 `Cargo.toml`，只需要把 `bevy` 依赖和上面的 profile 配置合并进去，不要整文件覆盖。
 
-当前仓库还保留了明确的构建边界：普通 `cargo run`、`cargo test` 和 `cargo check` 使用 `dev`，用于桌面 UI 高频迭代的 `scripts/run_fast.ps1` 使用 `dev-fast` 并只在该桌面入口启用 `bevy/dynamic_linking`。`dev-fast` 将第三方依赖设为 `opt-level = 1`，缩短依赖重编译和链接时间；需要观察接近发布的运行时性能时，在 `project/` 使用 `cargo build --locked --profile perf`。正式桌面发布使用 `cargo build --locked --release`，headless 和 Android Rust release 也保持普通 `release`，不会继承桌面动态链接 feature。
+当前仓库还保留了明确的构建边界：普通 `cargo run`、`cargo test` 和 `cargo check` 使用 `dev`，用于桌面 UI 高频迭代的 `scripts/run_fast.ps1` 使用 `dev-fast`。非 Windows 的该入口启用 `bevy/dynamic_linking`；Windows 因 Bevy dylib 超过 65,535 个链接对象/导出限制，使用静态 `dev-fast` fallback。`dev-fast` 将第三方依赖设为 `opt-level = 1`，缩短依赖重编译和链接时间；需要观察接近发布的运行时性能时，在 `project/` 使用 `cargo build --locked --profile perf`。正式桌面发布使用 `cargo build --locked --release`，headless 和 Android Rust release 也保持普通 `release`，不会继承桌面动态链接 feature。
 
 ### 4.1 统一构建入口和缓存边界
 
@@ -123,7 +123,7 @@ opt-level = 3
 .\scripts\build-entry.ps1 -Target release -Action build -Locked
 ```
 
-桌面 UI 布局验收继续使用 `scripts/run_fast.ps1`，它固定窗口参数并启用 `dev-fast + bevy/dynamic_linking`；不要把 `dynamic_linking` 加到 headless、Android 或 release 命令。Android 只在需要时执行 Rust release 和 APK：
+桌面 UI 布局验收继续使用 `scripts/run_fast.ps1`，它固定窗口参数并使用 `dev-fast`：非 Windows 启用 `bevy/dynamic_linking`，Windows 使用静态 fallback；不要把 `dynamic_linking` 加到 headless、Android 或 release 命令。Android 只在需要时执行 Rust release 和 APK：
 
 ```powershell
 .\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked

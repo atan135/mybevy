@@ -11,10 +11,19 @@ $defaultGameArguments = @(
     "50%"
 )
 $gameArguments = @($defaultGameArguments) + @($args)
+$cargoArguments = @("run", "--locked", "--profile", "dev-fast")
+
+if ($env:OS -eq "Windows_NT") {
+    Write-Host "run_fast platform=windows mode=static-dev-fast reason=bevy_dylib_windows_link_limit"
+}
+else {
+    $cargoArguments += @("--features", "bevy/dynamic_linking")
+}
+$cargoArguments += @("--") + $gameArguments
 
 Push-Location $projectRoot
 try {
-    & cargo run --locked --profile dev-fast --features bevy/dynamic_linking -- @gameArguments
+    & cargo @cargoArguments
     $exitCode = $LASTEXITCODE
 }
 finally {

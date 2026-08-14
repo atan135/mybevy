@@ -16,6 +16,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $projectRoot = Join-Path $repoRoot "project"
+$isWindowsHost = $env:OS -eq "Windows_NT"
 
 function Add-LockedArgument {
     param([string[]]$Arguments)
@@ -105,7 +106,18 @@ if ($Target -eq "test") {
 
 $effectiveProfile = if ($Target -eq "release") { "release" } elseif ($DesktopFast) { "dev-fast" } else { $Profile }
 $effectiveProfileArguments = if ($effectiveProfile -eq "dev") { @() } else { @("--profile", $effectiveProfile) }
-$featureArguments = if ($Target -eq "ui-preview") { @("--features", "ui-document-preview-tool") } elseif ($DesktopFast) { @("--features", "bevy/dynamic_linking") } else { @() }
+$featureArguments = if ($Target -eq "ui-preview") {
+    @("--features", "ui-document-preview-tool")
+}
+elseif ($DesktopFast -and -not $isWindowsHost) {
+    @("--features", "bevy/dynamic_linking")
+}
+else {
+    @()
+}
+if ($DesktopFast -and $isWindowsHost) {
+    Write-Host "build-entry desktop-fast platform=windows mode=static-dev-fast reason=bevy_dylib_windows_link_limit"
+}
 $command = if ($Action -eq "run") { "run" } elseif ($Action -eq "build" -or $Target -eq "release") { "build" } else { "check" }
 $arguments = @($command, "--manifest-path", (Join-Path $projectRoot "Cargo.toml"), "--bin", $binary) + $effectiveProfileArguments + $featureArguments + $lockedArguments
 if ($Action -eq "run" -or $Action -eq "build") {

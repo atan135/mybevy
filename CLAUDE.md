@@ -106,7 +106,7 @@ Set-Location ..
 .\scripts\build-entry.ps1 -Target release -Action build -Locked
 ```
 
-`build-entry.ps1` 显式绑定 `project`、`lockstep-sim-headless`、`fangyuan_bake` 和 `ui-document-preview` bin；UI preview 额外启用 `ui-document-preview-tool`。桌面高频迭代仍使用 `run_fast.ps1`，只有该入口可启用 `bevy/dynamic_linking`，并自动使用 `dev-fast` profile；Android 不使用动态链接，按需执行：
+`build-entry.ps1` 显式绑定 `project`、`lockstep-sim-headless`、`fangyuan_bake` 和 `ui-document-preview` bin；UI preview 额外启用 `ui-document-preview-tool`。桌面高频迭代仍使用 `run_fast.ps1` 并自动使用 `dev-fast` profile：非 Windows 启用 `bevy/dynamic_linking`，Windows 因 Bevy dylib 的 65,535 链接对象/导出限制改用静态 `dev-fast` fallback。Android 不使用动态链接，按需执行：
 
 ```powershell
 .\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked
