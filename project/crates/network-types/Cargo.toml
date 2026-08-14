@@ -1,0 +1,8 @@
+[package]
+name = "network-types"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "network_types"
+path = "src/lib.rs"
