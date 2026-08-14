@@ -14,6 +14,10 @@ pub enum UiDocumentError {
     Parse {
         message: String,
     },
+    CoreValidation {
+        code: String,
+        message: String,
+    },
     InvalidSchemaVersion,
     FutureSchemaVersion {
         found: u32,
@@ -55,6 +59,7 @@ impl UiDocumentError {
     pub fn code(&self) -> &str {
         match self {
             Self::Parse { .. } => "UI_DOCUMENT_PARSE_FAILED",
+            Self::CoreValidation { code, .. } => code,
             Self::InvalidSchemaVersion => "UI_SCHEMA_VERSION_INVALID",
             Self::FutureSchemaVersion { .. } => "UI_SCHEMA_FUTURE_VERSION",
             Self::UnsupportedSchemaVersion { .. } => "UI_SCHEMA_VERSION_UNSUPPORTED",
@@ -79,6 +84,7 @@ impl fmt::Display for UiDocumentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Parse { message } => formatter.write_str(message),
+            Self::CoreValidation { message, .. } => formatter.write_str(message),
             Self::InvalidSchemaVersion => {
                 formatter.write_str("schema_version must be a positive 32-bit integer")
             }

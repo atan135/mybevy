@@ -7712,6 +7712,10 @@ mod tests {
             record.failure_stage,
             Some(UiDocumentFailureStage::StaticValidation)
         );
+        assert_eq!(
+            record.failure_code.as_deref(),
+            Some("UI_SCHEMA_VERSION_INVALID")
+        );
         assert!(
             runtime
                 .active_instance("runtime_owner", &document_id())

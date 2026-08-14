@@ -12,11 +12,12 @@ use std::{
     str::FromStr,
 };
 
-type RuntimeWidthClass = UiWidthClass;
-type RuntimeHeightClass = UiHeightClass;
-type RuntimeOrientation = UiOrientation;
-
 pub const UI_RESPONSIVE_MAX_ABS_PRIORITY: i16 = 1_000;
+
+const UI_VIEWPORT_WIDTH_MEDIUM_MIN: f32 = 480.0;
+const UI_VIEWPORT_WIDTH_EXPANDED_MIN: f32 = 840.0;
+const UI_VIEWPORT_HEIGHT_REGULAR_MIN: f32 = 600.0;
+const UI_VIEWPORT_HEIGHT_TALL_MIN: f32 = 800.0;
 
 const UI_RESPONSIVE_ID_MAX_BYTES: usize = 64;
 const UI_PAGE_STATE_MAX_BYTES: usize = 128;
@@ -314,57 +315,10 @@ const fn height_class_for(height: f32) -> UiHeightClass {
 }
 
 const fn orientation_for(width: f32, height: f32) -> UiOrientation {
-    if width >= height {
-        UiOrientation::Landscape
-    } else {
+    if height >= width {
         UiOrientation::Portrait
-    }
-}
-/*
-const fn document_width_class(value: RuntimeWidthClass) -> UiWidthClass {
-    match value {
-        RuntimeWidthClass::Compact => UiWidthClass::Compact,
-        RuntimeWidthClass::Medium => UiWidthClass::Medium,
-        RuntimeWidthClass::Expanded => UiWidthClass::Expanded,
-    }
-}
-*/
-
-const fn runtime_width_class(value: UiWidthClass) -> RuntimeWidthClass {
-    match value {
-        UiWidthClass::Compact => RuntimeWidthClass::Compact,
-        UiWidthClass::Medium => RuntimeWidthClass::Medium,
-        UiWidthClass::Expanded => RuntimeWidthClass::Expanded,
-    }
-}
-
-const fn document_height_class(value: RuntimeHeightClass) -> UiHeightClass {
-    match value {
-        RuntimeHeightClass::Short => UiHeightClass::Short,
-        RuntimeHeightClass::Regular => UiHeightClass::Regular,
-        RuntimeHeightClass::Tall => UiHeightClass::Tall,
-    }
-}
-
-const fn runtime_height_class(value: UiHeightClass) -> RuntimeHeightClass {
-    match value {
-        UiHeightClass::Short => RuntimeHeightClass::Short,
-        UiHeightClass::Regular => RuntimeHeightClass::Regular,
-        UiHeightClass::Tall => RuntimeHeightClass::Tall,
-    }
-}
-
-const fn document_orientation(value: RuntimeOrientation) -> UiOrientation {
-    match value {
-        RuntimeOrientation::Portrait => UiOrientation::Portrait,
-        RuntimeOrientation::Landscape => UiOrientation::Landscape,
-    }
-}
-
-const fn runtime_orientation(value: UiOrientation) -> RuntimeOrientation {
-    match value {
-        UiOrientation::Portrait => RuntimeOrientation::Portrait,
-        UiOrientation::Landscape => RuntimeOrientation::Landscape,
+    } else {
+        UiOrientation::Landscape
     }
 }
 
@@ -435,10 +389,65 @@ fn geometry_is_satisfiable(
     height_class: Option<UiHeightClass>,
     orientation: Option<UiOrientation>,
 ) -> bool {
-    width_class.is_some()
-        || height_class.is_some()
-        || orientation.is_some()
-        || (width_class.is_none() && height_class.is_none() && orientation.is_none())
+    let width = width_interval(width_class);
+    let height = height_interval(height_class);
+    match orientation {
+        None => true,
+        Some(UiOrientation::Portrait) => height
+            .upper_exclusive
+            .is_none_or(|height_upper| height_upper > width.lower),
+        Some(UiOrientation::Landscape) => width
+            .upper_exclusive
+            .is_none_or(|width_upper| width_upper > height.lower),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ClassInterval {
+    lower: f32,
+    upper_exclusive: Option<f32>,
+}
+
+fn width_interval(class: Option<UiWidthClass>) -> ClassInterval {
+    match class {
+        None => ClassInterval {
+            lower: 0.0,
+            upper_exclusive: None,
+        },
+        Some(UiWidthClass::Compact) => ClassInterval {
+            lower: 0.0,
+            upper_exclusive: Some(UI_VIEWPORT_WIDTH_MEDIUM_MIN),
+        },
+        Some(UiWidthClass::Medium) => ClassInterval {
+            lower: UI_VIEWPORT_WIDTH_MEDIUM_MIN,
+            upper_exclusive: Some(UI_VIEWPORT_WIDTH_EXPANDED_MIN),
+        },
+        Some(UiWidthClass::Expanded) => ClassInterval {
+            lower: UI_VIEWPORT_WIDTH_EXPANDED_MIN,
+            upper_exclusive: None,
+        },
+    }
+}
+
+fn height_interval(class: Option<UiHeightClass>) -> ClassInterval {
+    match class {
+        None => ClassInterval {
+            lower: 0.0,
+            upper_exclusive: None,
+        },
+        Some(UiHeightClass::Short) => ClassInterval {
+            lower: 0.0,
+            upper_exclusive: Some(UI_VIEWPORT_HEIGHT_REGULAR_MIN),
+        },
+        Some(UiHeightClass::Regular) => ClassInterval {
+            lower: UI_VIEWPORT_HEIGHT_REGULAR_MIN,
+            upper_exclusive: Some(UI_VIEWPORT_HEIGHT_TALL_MIN),
+        },
+        Some(UiHeightClass::Tall) => ClassInterval {
+            lower: UI_VIEWPORT_HEIGHT_TALL_MIN,
+            upper_exclusive: None,
+        },
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1098,5 +1107,39 @@ fn error(
 fn push_error(errors: &mut Vec<UiResponsiveStateError>, error: UiResponsiveStateError) {
     if errors.len() <= UI_DOCUMENT_MAX_DIAGNOSTICS {
         errors.push(error);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn responsive_geometry_satisfiability_respects_orientation_and_thresholds() {
+        assert!(!geometry_is_satisfiable(
+            Some(UiWidthClass::Compact),
+            Some(UiHeightClass::Tall),
+            Some(UiOrientation::Landscape),
+        ));
+        assert!(geometry_is_satisfiable(
+            Some(UiWidthClass::Compact),
+            Some(UiHeightClass::Short),
+            Some(UiOrientation::Landscape),
+        ));
+        assert!(geometry_is_satisfiable(
+            Some(UiWidthClass::Expanded),
+            Some(UiHeightClass::Tall),
+            Some(UiOrientation::Portrait),
+        ));
+        assert!(!geometry_is_satisfiable(
+            Some(UiWidthClass::Expanded),
+            Some(UiHeightClass::Short),
+            Some(UiOrientation::Portrait),
+        ));
+    }
+
+    #[test]
+    fn square_viewport_is_portrait_like_runtime() {
+        assert_eq!(orientation_for(800.0, 800.0), UiOrientation::Portrait);
     }
 }
