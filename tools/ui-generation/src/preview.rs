@@ -25,6 +25,8 @@ const MAX_PREVIEW_SCREENSHOT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PREVIEW_DECODE_ALLOC: u64 = 64 * 1024 * 1024;
 const MAX_PREVIEW_PIXELS: u64 = 4096 * 4096;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+pub const DEFAULT_PREVIEW_PREWARM_TIMEOUT_MS: u64 = 900_000;
+pub const DEFAULT_PREVIEW_PROCESS_TIMEOUT_MS: u64 = 600_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,12 +68,48 @@ pub struct PreviewCommandPlan {
     pub page_state: String,
     pub timeout_frames: u32,
     pub stable_frames: u32,
+    pub prewarm_timeout_ms: u64,
     pub process_timeout_ms: u64,
     pub canonical_document_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host_contract_version: Option<u32>,
     #[serde(skip_serializing)]
     pub approved_registration_json: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreviewExecutionOptions {
+    pub prewarm_timeout_ms: u64,
+    pub process_timeout_ms: u64,
+}
+
+impl Default for PreviewExecutionOptions {
+    fn default() -> Self {
+        Self {
+            prewarm_timeout_ms: DEFAULT_PREVIEW_PREWARM_TIMEOUT_MS,
+            process_timeout_ms: DEFAULT_PREVIEW_PROCESS_TIMEOUT_MS,
+        }
+    }
+}
+
+impl PreviewExecutionOptions {
+    pub fn from_seconds(prewarm_seconds: u64, process_seconds: u64) -> Result<Self, TaskFailure> {
+        let prewarm_timeout_ms = prewarm_seconds.checked_mul(1_000).ok_or_else(|| {
+            TaskFailure::invalid("preview prewarm timeout seconds exceed the supported range")
+        })?;
+        let process_timeout_ms = process_seconds.checked_mul(1_000).ok_or_else(|| {
+            TaskFailure::invalid("preview timeout seconds exceed the supported range")
+        })?;
+        if prewarm_timeout_ms == 0 || process_timeout_ms == 0 {
+            return Err(TaskFailure::invalid(
+                "preview prewarm and process timeouts must be greater than zero",
+            ));
+        }
+        Ok(Self {
+            prewarm_timeout_ms,
+            process_timeout_ms,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -160,100 +198,220 @@ impl PreviewExecutor for CommandPreviewExecutor {
         plan: &PreviewCommandPlan,
         cancellation: &CancellationToken,
     ) -> Result<PreviewProcessRecord, PreviewFailure> {
-        let parent = plan.log_path.parent().ok_or_else(|| {
-            preview_failure(
+        let prewarm_log_path = plan.log_path.with_file_name("preview-prewarm.log");
+        let prewarm_arguments = prewarm_arguments(plan)?;
+        let prewarm = run_bounded_command(
+            &plan.program,
+            &prewarm_arguments,
+            &plan.working_directory,
+            &prewarm_log_path,
+            plan.prewarm_timeout_ms,
+            cancellation,
+            "prewarm",
+        )?;
+        if prewarm.cancelled {
+            return Err(stage_failure(
+                PreviewFailureKind::Cancelled,
+                "UI_GENERATION_PREVIEW_PREWARM_CANCELLED",
+                "standalone preview prewarm was cancelled",
+                "prewarm",
+                &prewarm_log_path,
+            ));
+        }
+        if prewarm.timed_out {
+            return Err(stage_failure(
+                PreviewFailureKind::ProcessTimeout,
+                "UI_GENERATION_PREVIEW_PREWARM_TIMEOUT",
+                &format!(
+                    "standalone preview prewarm exceeded {} ms",
+                    plan.prewarm_timeout_ms
+                ),
+                "prewarm",
+                &prewarm_log_path,
+            ));
+        }
+        if prewarm.exit_code != Some(0) {
+            return Err(stage_failure(
+                PreviewFailureKind::ProcessFailed,
+                "UI_GENERATION_PREVIEW_PREWARM_FAILED",
+                &format!(
+                    "standalone preview prewarm exited with code {:?}",
+                    prewarm.exit_code
+                ),
+                "prewarm",
+                &prewarm_log_path,
+            ));
+        }
+        run_bounded_command(
+            &plan.program,
+            &plan.arguments,
+            &plan.working_directory,
+            &plan.log_path,
+            plan.process_timeout_ms,
+            cancellation,
+            "preview",
+        )
+    }
+}
+
+fn prewarm_arguments(plan: &PreviewCommandPlan) -> Result<Vec<String>, PreviewFailure> {
+    let separator = plan
+        .arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .ok_or_else(|| {
+            stage_failure(
                 PreviewFailureKind::ConfigurationInvalid,
-                "UI_GENERATION_PREVIEW_LOG_PATH_INVALID",
-                "preview log path has no parent",
+                "UI_GENERATION_PREVIEW_PREWARM_ARGUMENTS_INVALID",
+                "standalone preview command has no cargo argument separator",
+                "prewarm",
+                &plan.log_path.with_file_name("preview-prewarm.log"),
             )
         })?;
-        fs::create_dir_all(parent).map_err(|_| {
-            preview_failure(
+    let mut arguments = plan.arguments[..separator].to_vec();
+    let command = arguments
+        .iter_mut()
+        .find(|argument| argument.as_str() == "run")
+        .ok_or_else(|| {
+            stage_failure(
                 PreviewFailureKind::ConfigurationInvalid,
-                "UI_GENERATION_PREVIEW_LOG_DIRECTORY_FAILED",
-                "preview log directory could not be created",
+                "UI_GENERATION_PREVIEW_PREWARM_ARGUMENTS_INVALID",
+                "standalone preview command is not cargo run",
+                "prewarm",
+                &plan.log_path.with_file_name("preview-prewarm.log"),
             )
         })?;
-        let mut log = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&plan.log_path)
-            .map_err(|_| {
-                preview_failure(
-                    PreviewFailureKind::ConfigurationInvalid,
-                    "UI_GENERATION_PREVIEW_LOG_CONFLICT",
-                    "preview log must not overwrite existing evidence",
-                )
-            })?;
-        writeln!(log, "ui-generation standalone preview process")
-            .and_then(|_| log.flush())
-            .map_err(|_| {
-                preview_failure(
-                    PreviewFailureKind::ProcessUnavailable,
-                    "UI_GENERATION_PREVIEW_LOG_WRITE_FAILED",
-                    "preview process log preamble could not be written",
-                )
-            })?;
-        let stderr = log.try_clone().map_err(|_| {
-            preview_failure(
+    *command = "check".to_owned();
+    if !arguments.iter().any(|argument| argument == "--locked") {
+        arguments.insert(1, "--locked".to_owned());
+    }
+    Ok(arguments)
+}
+
+fn run_bounded_command(
+    program: &str,
+    arguments: &[String],
+    working_directory: &Path,
+    log_path: &Path,
+    timeout_ms: u64,
+    cancellation: &CancellationToken,
+    stage: &str,
+) -> Result<PreviewProcessRecord, PreviewFailure> {
+    let parent = log_path.parent().ok_or_else(|| {
+        stage_failure(
+            PreviewFailureKind::ConfigurationInvalid,
+            "UI_GENERATION_PREVIEW_LOG_PATH_INVALID",
+            "preview log path has no parent",
+            stage,
+            log_path,
+        )
+    })?;
+    fs::create_dir_all(parent).map_err(|_| {
+        stage_failure(
+            PreviewFailureKind::ConfigurationInvalid,
+            "UI_GENERATION_PREVIEW_LOG_DIRECTORY_FAILED",
+            "preview log directory could not be created",
+            stage,
+            log_path,
+        )
+    })?;
+    let mut log = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(log_path)
+        .map_err(|_| {
+            stage_failure(
+                PreviewFailureKind::ConfigurationInvalid,
+                "UI_GENERATION_PREVIEW_LOG_CONFLICT",
+                "preview log must not overwrite existing evidence",
+                stage,
+                log_path,
+            )
+        })?;
+    writeln!(log, "ui-generation standalone preview {stage} process")
+        .and_then(|_| log.flush())
+        .map_err(|_| {
+            stage_failure(
                 PreviewFailureKind::ProcessUnavailable,
-                "UI_GENERATION_PREVIEW_LOG_CLONE_FAILED",
-                "preview process log handle could not be cloned",
+                "UI_GENERATION_PREVIEW_LOG_WRITE_FAILED",
+                "preview process log preamble could not be written",
+                stage,
+                log_path,
             )
         })?;
-        let started = Instant::now();
-        let mut child = Command::new(&plan.program)
-            .args(&plan.arguments)
-            .current_dir(&plan.working_directory)
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(log))
-            .stderr(Stdio::from(stderr))
-            .spawn()
-            .map_err(|_| {
-                preview_failure(
-                    PreviewFailureKind::ProcessUnavailable,
-                    "UI_GENERATION_PREVIEW_PROCESS_UNAVAILABLE",
-                    "standalone preview process could not be started",
-                )
-            })?;
-        let timeout = Duration::from_millis(plan.process_timeout_ms);
-        loop {
-            if cancellation.is_requested() {
-                terminate_process_tree(&mut child);
+    let stderr = log.try_clone().map_err(|_| {
+        stage_failure(
+            PreviewFailureKind::ProcessUnavailable,
+            "UI_GENERATION_PREVIEW_LOG_CLONE_FAILED",
+            "preview process log handle could not be cloned",
+            stage,
+            log_path,
+        )
+    })?;
+    let started = Instant::now();
+    let mut child = Command::new(program)
+        .args(arguments)
+        .current_dir(working_directory)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .map_err(|_| {
+            stage_failure(
+                PreviewFailureKind::ProcessUnavailable,
+                if stage == "prewarm" {
+                    "UI_GENERATION_PREVIEW_PREWARM_PROCESS_UNAVAILABLE"
+                } else {
+                    "UI_GENERATION_PREVIEW_PROCESS_UNAVAILABLE"
+                },
+                "standalone preview process could not be started",
+                stage,
+                log_path,
+            )
+        })?;
+    let timeout = Duration::from_millis(timeout_ms);
+    loop {
+        if cancellation.is_requested() {
+            terminate_process_tree(&mut child);
+            return Ok(PreviewProcessRecord {
+                exit_code: None,
+                timed_out: false,
+                cancelled: true,
+                elapsed_ms: duration_ms(started.elapsed()),
+            });
+        }
+        if started.elapsed() >= timeout {
+            terminate_process_tree(&mut child);
+            return Ok(PreviewProcessRecord {
+                exit_code: None,
+                timed_out: true,
+                cancelled: false,
+                elapsed_ms: duration_ms(started.elapsed()),
+            });
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
                 return Ok(PreviewProcessRecord {
-                    exit_code: None,
+                    exit_code: status.code(),
                     timed_out: false,
-                    cancelled: true,
-                    elapsed_ms: duration_ms(started.elapsed()),
-                });
-            }
-            if started.elapsed() >= timeout {
-                terminate_process_tree(&mut child);
-                return Ok(PreviewProcessRecord {
-                    exit_code: None,
-                    timed_out: true,
                     cancelled: false,
                     elapsed_ms: duration_ms(started.elapsed()),
                 });
             }
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    return Ok(PreviewProcessRecord {
-                        exit_code: status.code(),
-                        timed_out: false,
-                        cancelled: false,
-                        elapsed_ms: duration_ms(started.elapsed()),
-                    });
-                }
-                Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(_) => {
-                    terminate_process_tree(&mut child);
-                    return Err(preview_failure(
-                        PreviewFailureKind::ProcessFailed,
-                        "UI_GENERATION_PREVIEW_PROCESS_WAIT_FAILED",
-                        "standalone preview process status could not be read",
-                    ));
-                }
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(_) => {
+                terminate_process_tree(&mut child);
+                return Err(stage_failure(
+                    PreviewFailureKind::ProcessFailed,
+                    if stage == "prewarm" {
+                        "UI_GENERATION_PREVIEW_PREWARM_PROCESS_WAIT_FAILED"
+                    } else {
+                        "UI_GENERATION_PREVIEW_PROCESS_WAIT_FAILED"
+                    },
+                    "standalone preview process status could not be read",
+                    stage,
+                    log_path,
+                ));
             }
         }
     }
@@ -308,7 +466,27 @@ pub fn prepare_preview_command_with_host_contract(
     height: u32,
     host_contract: Option<&ResolvedGenerationHostContract>,
 ) -> Result<PreviewCommandPlan, TaskFailure> {
-    prepare_preview_command_for_state_with_host_contract(
+    prepare_preview_command_with_host_contract_and_options(
+        repository_root,
+        document_path,
+        output_directory,
+        width,
+        height,
+        host_contract,
+        PreviewExecutionOptions::default(),
+    )
+}
+
+pub fn prepare_preview_command_with_host_contract_and_options(
+    repository_root: &Path,
+    document_path: &Path,
+    output_directory: &Path,
+    width: u32,
+    height: u32,
+    host_contract: Option<&ResolvedGenerationHostContract>,
+    options: PreviewExecutionOptions,
+) -> Result<PreviewCommandPlan, TaskFailure> {
+    prepare_preview_command_for_state_with_host_contract_and_options(
         repository_root,
         document_path,
         output_directory,
@@ -316,6 +494,7 @@ pub fn prepare_preview_command_with_host_contract(
         height,
         &UiPageState::initial(),
         host_contract,
+        options,
     )
 }
 
@@ -330,7 +509,7 @@ pub fn prepare_preview_command_for_state(
     height: u32,
     page_state: &UiPageState,
 ) -> Result<PreviewCommandPlan, TaskFailure> {
-    prepare_preview_command_for_state_with_host_contract(
+    prepare_preview_command_for_state_with_host_contract_and_options(
         repository_root,
         document_path,
         output_directory,
@@ -338,6 +517,7 @@ pub fn prepare_preview_command_for_state(
         height,
         page_state,
         None,
+        PreviewExecutionOptions::default(),
     )
 }
 
@@ -349,6 +529,28 @@ pub fn prepare_preview_command_for_state_with_host_contract(
     height: u32,
     page_state: &UiPageState,
     host_contract: Option<&ResolvedGenerationHostContract>,
+) -> Result<PreviewCommandPlan, TaskFailure> {
+    prepare_preview_command_for_state_with_host_contract_and_options(
+        repository_root,
+        document_path,
+        output_directory,
+        width,
+        height,
+        page_state,
+        host_contract,
+        PreviewExecutionOptions::default(),
+    )
+}
+
+pub fn prepare_preview_command_for_state_with_host_contract_and_options(
+    repository_root: &Path,
+    document_path: &Path,
+    output_directory: &Path,
+    width: u32,
+    height: u32,
+    page_state: &UiPageState,
+    host_contract: Option<&ResolvedGenerationHostContract>,
+    options: PreviewExecutionOptions,
 ) -> Result<PreviewCommandPlan, TaskFailure> {
     if output_directory.exists() || output_directory.as_os_str().is_empty() {
         return Err(TaskFailure::new(
@@ -391,6 +593,7 @@ pub fn prepare_preview_command_for_state_with_host_contract(
     let process_working_directory = process_path(&repository_root);
     let mut arguments = vec![
         "run".to_owned(),
+        "--locked".to_owned(),
         "--quiet".to_owned(),
         "--manifest-path".to_owned(),
         process_manifest.to_string_lossy().into_owned(),
@@ -436,9 +639,8 @@ pub fn prepare_preview_command_for_state_with_host_contract(
         page_state: page_state.to_string(),
         timeout_frames: 1200,
         stable_frames: 30,
-        // Match the closed-loop Previewing state budget. This includes a cold `cargo run`, so
-        // callers receive a durable timeout record instead of a parent process hanging forever.
-        process_timeout_ms: 300_000,
+        prewarm_timeout_ms: options.prewarm_timeout_ms,
+        process_timeout_ms: options.process_timeout_ms,
         canonical_document_sha256,
         host_contract_version: host_contract.map(|contract| contract.version),
         approved_registration_json: host_contract
@@ -530,7 +732,10 @@ pub fn run_preview(
     };
     let screenshot = match validate_preview_evidence(&plan, &process, None) {
         Ok(evidence) => evidence,
-        Err(failure) => return failed_preview(plan, process, failure),
+        Err(failure) => {
+            let failure = with_preview_log_path(failure, &plan.log_path);
+            return failed_preview(plan, process, failure);
+        }
     };
     PreviewRunResult {
         status: PreviewRunStatus::Passed,
@@ -977,6 +1182,28 @@ fn preview_failure(
     }
 }
 
+fn stage_failure(
+    kind: PreviewFailureKind,
+    code: impl Into<String>,
+    detail: &str,
+    stage: &str,
+    log_path: &Path,
+) -> PreviewFailure {
+    preview_failure(
+        kind,
+        code,
+        format!("{detail} during {stage} stage; see {}", log_path.display()),
+    )
+}
+
+fn with_preview_log_path(mut failure: PreviewFailure, log_path: &Path) -> PreviewFailure {
+    let log_path = log_path.display().to_string();
+    if !failure.detail.contains(&log_path) {
+        failure.detail = format!("{} during preview stage; see {log_path}", failure.detail);
+    }
+    failure
+}
+
 fn is_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -1222,6 +1449,9 @@ mod tests {
                 .windows(2)
                 .any(|pair| { pair == ["--bin", "ui-document-preview"] })
         );
+        assert!(plan.arguments.iter().any(|argument| argument == "--locked"));
+        assert_eq!(plan.prewarm_timeout_ms, DEFAULT_PREVIEW_PREWARM_TIMEOUT_MS);
+        assert_eq!(plan.process_timeout_ms, DEFAULT_PREVIEW_PROCESS_TIMEOUT_MS);
         assert!(
             !plan
                 .arguments
@@ -1229,6 +1459,15 @@ mod tests {
                 .any(|argument| argument.starts_with(r"\\?\"))
         );
         assert!(plan.result_path.ends_with("preview-result.json"));
+    }
+
+    #[test]
+    fn preview_execution_options_parameterize_both_process_timeouts() {
+        let options = PreviewExecutionOptions::from_seconds(17, 29).unwrap();
+        assert_eq!(options.prewarm_timeout_ms, 17_000);
+        assert_eq!(options.process_timeout_ms, 29_000);
+        assert!(PreviewExecutionOptions::from_seconds(0, 1).is_err());
+        assert!(PreviewExecutionOptions::from_seconds(u64::MAX, 1).is_err());
     }
 
     #[test]
@@ -1379,6 +1618,29 @@ mod tests {
             timeout.failure.unwrap().kind,
             PreviewFailureKind::ProcessTimeout
         );
+    }
+
+    #[test]
+    fn command_prewarm_failure_reports_stage_and_log_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let document = bare_document(directory.path());
+        let mut plan = prepare_preview_command(
+            &repository_root(),
+            &document,
+            &directory.path().join("prewarm-failure"),
+            390,
+            844,
+        )
+        .unwrap();
+        plan.program = "ui-generation-preview-command-does-not-exist".to_owned();
+        let result = run_preview(plan, &CommandPreviewExecutor, &CancellationToken::default());
+        let failure = result.failure.unwrap();
+        assert_eq!(
+            failure.code,
+            "UI_GENERATION_PREVIEW_PREWARM_PROCESS_UNAVAILABLE"
+        );
+        assert!(failure.detail.contains("prewarm"));
+        assert!(failure.detail.contains("preview-prewarm.log"));
     }
 
     #[test]

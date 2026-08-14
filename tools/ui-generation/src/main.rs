@@ -26,8 +26,8 @@ use ui_generation::{
     },
     preprocess::preprocess_task,
     preview::{
-        CommandPreviewExecutor, PreviewRunStatus, prepare_preview_command_with_host_contract,
-        run_preview,
+        CommandPreviewExecutor, PreviewRunStatus,
+        prepare_preview_command_with_host_contract_and_options, run_preview,
     },
     promotion::{
         create_promotion_decision_template, create_promotion_plan, promote,
@@ -100,6 +100,12 @@ enum Command {
         width: u32,
         #[arg(long, default_value_t = 844)]
         height: u32,
+        /// Maximum seconds allowed for the feature-gated cargo check prewarm.
+        #[arg(long, default_value_t = 900)]
+        prewarm_timeout_seconds: u64,
+        /// Maximum seconds allowed for the standalone preview process after prewarm.
+        #[arg(long, default_value_t = 600)]
+        preview_timeout_seconds: u64,
     },
     /// Captures the standalone declarative screen for every requested state and audit device.
     AuditDocument {
@@ -323,16 +329,23 @@ fn run() -> Result<(), ui_generation::lifecycle::TaskFailure> {
             host_contract_task,
             width,
             height,
+            prewarm_timeout_seconds,
+            preview_timeout_seconds,
         } => {
             let host_contract =
                 resolve_host_contract_task(host_contract_task.as_deref(), &repository_root)?;
-            let plan = prepare_preview_command_with_host_contract(
+            let options = ui_generation::preview::PreviewExecutionOptions::from_seconds(
+                prewarm_timeout_seconds,
+                preview_timeout_seconds,
+            )?;
+            let plan = prepare_preview_command_with_host_contract_and_options(
                 &repository_root,
                 &document,
                 &output_directory,
                 width,
                 height,
                 host_contract.as_ref(),
+                options,
             )?;
             let result = run_preview(plan, &CommandPreviewExecutor, &CancellationToken::default());
             if result.status == PreviewRunStatus::Failed {
