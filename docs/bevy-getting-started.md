@@ -1121,8 +1121,14 @@ cargo run --manifest-path tools/ui-generation/Cargo.toml -- generate-fixture --t
 
 ```powershell
 $output = Join-Path $env:TEMP ("mybevy-ui-preview-" + [Guid]::NewGuid().ToString("N"))
-cargo run --manifest-path tools/ui-generation/Cargo.toml -- preview-document --document project/assets/ui/documents/approved/generated_acceptance_fixture/document.v1.json --output-directory $output --repository-root . --width 390 --height 844
+cargo run --locked --manifest-path tools/ui-generation/Cargo.toml -- preview-document --document project/assets/ui/documents/approved/generated_acceptance_fixture/document.v1.json --output-directory $output --repository-root . --width 390 --height 844
 ```
+
+该命令会先在独立的 `project/target` 中预热 `ui-document-preview` bin，再启动实际 preview。
+预热使用 `--locked`、`ui-document-preview-tool` feature 和 `ui-document-preview` bin，默认超时分别为
+900 秒和 600 秒。需要调整时追加 `--prewarm-timeout-seconds <秒数>` 和
+`--preview-timeout-seconds <秒数>`；输出目录中的 `preview-prewarm.log` 和 `preview.log`
+分别记录预热与实际 preview 阶段，失败信息会包含对应日志路径。
 
 需要完整离线桌面验收时，使用 `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-ui-e2e-acceptance.ps1`。它使用新的 run ID 完成 repository fixture、四 profile、多状态、reference comparison、FixMode 演练和 Runner self-test；报告位于被忽略的 `summary/ui-generation/`。该命令不调用在线 provider 或远程 Android，因此 `passed_with_external_android_blocker` 不等同于真机验收通过。
 
