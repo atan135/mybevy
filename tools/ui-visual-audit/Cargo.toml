@@ -27,3 +27,18 @@ opt-level = 3
 
 [profile.dev.package."ui-generation"]
 opt-level = 1
+
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 1
+debug = "line-tables-only"
+incremental = true
+
+[profile.dev-fast.package."*"]
+opt-level = 1
+
+[profile.dev-fast.package."ui-generation"]
+opt-level = 1
+
+[profile.release]
+incremental = false

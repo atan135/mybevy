@@ -14,7 +14,7 @@ $gameArguments = @($defaultGameArguments) + @($args)
 
 Push-Location $projectRoot
 try {
-    & cargo run --locked --features bevy/dynamic_linking -- @gameArguments
+    & cargo run --locked --profile dev-fast --features bevy/dynamic_linking -- @gameArguments
     $exitCode = $LASTEXITCODE
 }
 finally {

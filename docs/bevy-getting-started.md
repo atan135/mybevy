@@ -108,6 +108,8 @@ opt-level = 3
 
 如果你已经有自己的 `Cargo.toml`，只需要把 `bevy` 依赖和上面的 profile 配置合并进去，不要整文件覆盖。
 
+当前仓库还保留了明确的构建边界：普通 `cargo run`、`cargo test` 和 `cargo check` 使用 `dev`，用于桌面 UI 高频迭代的 `scripts/run_fast.ps1` 使用 `dev-fast` 并只在该桌面入口启用 `bevy/dynamic_linking`。`dev-fast` 将第三方依赖设为 `opt-level = 1`，缩短依赖重编译和链接时间；需要观察接近发布的运行时性能时，在 `project/` 使用 `cargo build --locked --profile perf`。正式桌面发布使用 `cargo build --locked --release`，headless 和 Android Rust release 也保持普通 `release`，不会继承桌面动态链接 feature。
+
 ## 5. 第一个可运行示例
 
 把 `project/src/main.rs` 改成下面这样：
