@@ -91,7 +91,6 @@ if ($Target -eq "android") {
 }
 
 $lockedArguments = if ($Locked) { @("--locked") } else { @() }
-$profileArguments = if ($Profile -eq "dev") { @() } else { @("--profile", $Profile) }
 $binary = switch ($Target) {
     "desktop" { "project" }
     "headless" { "lockstep-sim-headless" }
