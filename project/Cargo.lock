@@ -3761,6 +3761,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
+name = "myserver-protocol"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
 name = "naga"
 version = "27.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4557,9 +4566,8 @@ dependencies = [
  "csv",
  "ed25519-dalek",
  "futures-util",
+ "myserver-protocol",
  "prost",
- "prost-build",
- "protoc-bin-vendored",
  "reqwest",
  "ron",
  "schemars",

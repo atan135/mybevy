@@ -39,7 +39,7 @@ cargo --version
 
 现在应该把 `project/` 当成游戏工程根目录。
 
-每个 Cargo 工程使用自身 target：游戏为 `project/target`，UI 工具为各自目录下的 `target`。Android Rust 由 `scripts/build-android-rust.ps1` 使用 `project/target-android`，避免桌面与 Android 增量缓存混用。常规开发不要设置 `CARGO_TARGET_DIR`。
+每个 Cargo 工程使用自身 target：游戏 workspace（`project` 和内部 `myserver-protocol`）为 `project/target`，UI 工具为各自目录下的 `target`。Android Rust 由 `scripts/build-android-rust.ps1` 使用 `project/target-android`，避免桌面与 Android 增量缓存混用。常规开发不要设置 `CARGO_TARGET_DIR`。
 
 迁移遗留的仓库根 `target/` 由 `pwsh -File scripts/clear-shared-cargo-target.ps1` 控制，默认只预演，实际删除还需要 `-Execute -ConfirmSharedTargetCleanup`。脚本不会清理新的工程 target 或 `project/target-android`。
 
@@ -212,6 +212,8 @@ mybevy/
     |   |-- models/
     |   |-- scenes/
     |   `-- ui/
+    |-- crates/
+    |   `-- myserver-protocol/ # game/chat protobuf generation and packet codec
     |-- vendor/myserver/      # MyServer shared crate 和 game/chat proto 快照
     |-- src/
     |   |-- framework/
@@ -241,6 +243,7 @@ mybevy/
 可以按下面的职责划分：
 
 - `project/src/main.rs`：程序入口、顶层插件注册
+- `project/crates/myserver-protocol/`：游戏 workspace 内独立编译的 game/chat protobuf 和 packet codec；proto 输入继续使用 `project/vendor/myserver/proto/` 快照，游戏代码通过 `project/src/game/myserver/protocol.rs` facade 保持兼容路径
 - `project/vendor/myserver/`：客户端构建使用的 MyServer shared crate 和 game/chat proto 快照；更新 authority 协议、确定性模拟规则或 proto 时，按目录 README 记录的来源 commit 同步更新
 - `project/src/framework/`：框架层横向能力，当前包含 audio、UI、network、scene、fight 和 fangyuan 边界
 - `project/src/framework/audio/`：音频框架能力入口，提供音频命令、事件、catalog、loading、playback、mixer、music、UI/scene/battle adapter、基础空间音频、生命周期暂停和 debug 配置

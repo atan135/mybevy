@@ -31,6 +31,7 @@
 - `tools/ui-visual-audit/`：独立 UI 视觉审计工具，依赖 `ui-generation` 和 `ui-document-core`，不进入正式游戏包
 - `tools/ui-document-core/`：runtime-free `UiDocument` schema、canonical、validation、budget 和 tooling facade crate，拥有独立 `Cargo.toml`、`Cargo.lock` 和 `tools/ui-document-core/target` 缓存
 - `project/`：Rust/Bevy 工程根目录
+- `project/crates/myserver-protocol/`：`project` workspace 内的 MyServer protobuf 生成和 packet codec crate；直接读取 `project/vendor/myserver/proto/` 快照，不依赖 Bevy runtime
 - `project/src/`：游戏源码
 - `project/vendor/myserver/`：客户端构建所需的 MyServer `authority-core`、`sim-core` 和 game/chat proto 快照；来源 commit 与同步要求见该目录 README
 - `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene、fight 和 fangyuan 边界
@@ -56,11 +57,11 @@
 ## 开发约定
 
 - 所有 Rust 和 Bevy 相关命令默认在 `project/` 目录执行
-- 各 Cargo 工程默认使用自身缓存：主工程 `project/target`，UI 生成工具 `tools/ui-generation/target`，UI 审计工具 `tools/ui-visual-audit/target`，UI document core `tools/ui-document-core/target`；Android Rust 通过 `scripts/build-android-rust.ps1` 使用 `project/target-android`。常规命令不要设置 `CARGO_TARGET_DIR`，仅 Android 入口显式指定专用目录
+- 各 Cargo 工程默认使用自身缓存：`project` workspace（主工程及 `myserver-protocol`）使用 `project/target`，UI 生成工具 `tools/ui-generation/target`，UI 审计工具 `tools/ui-visual-audit/target`，UI document core `tools/ui-document-core/target`；Android Rust 通过 `scripts/build-android-rust.ps1` 使用 `project/target-android`。常规命令不要设置 `CARGO_TARGET_DIR`，仅 Android 入口显式指定专用目录
 - `scripts/clear-shared-cargo-target.ps1` 现在只负责迁移期间遗留的仓库根 `target/`，默认预演；新工程 target 和 `project/target-android` 永远不在其清理范围。只有所有 Cargo/Rust、游戏、UI 工具、测试和 Android Gradle/Java/ADB 进程停止后，才能使用 `-Execute -ConfirmSharedTargetCleanup` 删除旧缓存
 - 出现 Cargo 锁等待时，先确认对应工程的 Cargo 是否仍有 CPU、磁盘或日志进展；独立 target 之间不应产生构建目录锁等待。迁移回滚只需恢复根 target 配置及路径约定并单独处理旧缓存，不改源码、锁文件或工具依赖方向
 - 新增游戏功能时，优先把逻辑放进 `project/src/` 下的模块，而不是持续堆在 `main.rs`
-- MyServer 的客户端可见 authority 协议、确定性模拟规则或 game/chat proto 变更时，同步更新 `project/vendor/myserver/`，并在其 README 中记录来源 commit
+- MyServer 的客户端可见 authority 协议、确定性模拟规则或 game/chat proto 变更时，同步更新 `project/vendor/myserver/`，并在其 README 中记录来源 commit；game/chat proto 由 workspace 内 `myserver-protocol` 生成，游戏侧通过 `project::game::myserver::protocol` 兼容 facade 使用
 - UI 页面结构放在 `project/src/game/screens/`，具体玩法放在 `project/src/game/features/`，具体游戏场景注册和适配放在 `project/src/game/scenes/`，UI 框架能力放在 `project/src/framework/ui/`
 - UI 通用控件放在 `project/src/framework/ui/widgets/`，颜色、字号、间距、圆角等可微调参数集中放在 `project/src/framework/ui/style/theme.rs`
 - `project/src/framework/ui/document/` 保留 Bevy runtime adapter；`document::core` facade 显式暴露 `ui-document-core`。当前 runtime schema 尚未完全单源复用，变更需同步验证两侧语义。

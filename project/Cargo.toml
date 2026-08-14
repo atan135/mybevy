@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 default-run = "project"
 
+[workspace]
+members = ["crates/myserver-protocol"]
+default-members = ["."]
+exclude = ["vendor/myserver/authority-core", "vendor/myserver/sim-core"]
+resolver = "3"
+
 [features]
 default = []
 ui-document-preview-tool = []
@@ -28,6 +34,7 @@ authority-core = { path = "vendor/myserver/authority-core" }
 csv = "1"
 ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
 futures-util = "0.3"
+myserver-protocol = { path = "crates/myserver-protocol" }
 prost = "0.14"
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
 ron = "0.12.1"
@@ -46,10 +53,6 @@ schemars = "1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 arboard = "3.6"
-
-[build-dependencies]
-prost-build = "0.14"
-protoc-bin-vendored = "3"
 
 [profile.dev]
 opt-level = 1
