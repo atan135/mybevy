@@ -44,6 +44,14 @@ pub enum MessageType {
     CreateMatchedRoomRes = 1120,
     MoveInputReq = 1121,
     MoveInputRes = 1122,
+    MatchStartReq = 1123,
+    MatchStartRes = 1124,
+    MatchCancelReq = 1125,
+    MatchCancelRes = 1126,
+    MatchStatusReq = 1127,
+    MatchStatusRes = 1128,
+    MatchEventStreamReq = 1129,
+    MatchEventStreamRes = 1130,
     RoomStatePush = 1201,
     GameMessagePush = 1202,
     FrameBundlePush = 1203,
@@ -55,6 +63,7 @@ pub enum MessageType {
     SessionKickPush = 1209,
     AuthorityMigrationStartPush = 1210,
     AuthorityMigrationCompletePush = 1211,
+    MatchEventPush = 1212,
     GetRoomDataReq = 1301,
     GetRoomDataRes = 1302,
     ItemEquipReq = 1401,
@@ -106,6 +115,14 @@ impl MessageType {
             1120 => Some(Self::CreateMatchedRoomRes),
             1121 => Some(Self::MoveInputReq),
             1122 => Some(Self::MoveInputRes),
+            1123 => Some(Self::MatchStartReq),
+            1124 => Some(Self::MatchStartRes),
+            1125 => Some(Self::MatchCancelReq),
+            1126 => Some(Self::MatchCancelRes),
+            1127 => Some(Self::MatchStatusReq),
+            1128 => Some(Self::MatchStatusRes),
+            1129 => Some(Self::MatchEventStreamReq),
+            1130 => Some(Self::MatchEventStreamRes),
             1201 => Some(Self::RoomStatePush),
             1202 => Some(Self::GameMessagePush),
             1203 => Some(Self::FrameBundlePush),
@@ -117,6 +134,7 @@ impl MessageType {
             1209 => Some(Self::SessionKickPush),
             1210 => Some(Self::AuthorityMigrationStartPush),
             1211 => Some(Self::AuthorityMigrationCompletePush),
+            1212 => Some(Self::MatchEventPush),
             1301 => Some(Self::GetRoomDataReq),
             1302 => Some(Self::GetRoomDataRes),
             1401 => Some(Self::ItemEquipReq),
@@ -319,5 +337,23 @@ mod tests {
         assert_eq!(packets[1].message_type(), Some(MessageType::PingRes));
         assert_eq!(packets[1].header.seq, 2);
         assert_eq!(packets[1].body, vec![4]);
+    }
+
+    #[test]
+    fn player_match_message_types_round_trip() {
+        for (value, expected) in [
+            (1123, MessageType::MatchStartReq),
+            (1124, MessageType::MatchStartRes),
+            (1125, MessageType::MatchCancelReq),
+            (1126, MessageType::MatchCancelRes),
+            (1127, MessageType::MatchStatusReq),
+            (1128, MessageType::MatchStatusRes),
+            (1129, MessageType::MatchEventStreamReq),
+            (1130, MessageType::MatchEventStreamRes),
+            (1212, MessageType::MatchEventPush),
+        ] {
+            assert_eq!(MessageType::from_u16(value), Some(expected));
+            assert_eq!(expected.raw(), value);
+        }
     }
 }
