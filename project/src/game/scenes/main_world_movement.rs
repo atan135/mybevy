@@ -397,6 +397,37 @@ impl MainWorldRemoteInterpolationBuffer {
         {
             return false;
         }
+
+        let previous_latest = self.snapshots.back().copied();
+        if let Some(previous_latest) = previous_latest
+            && snapshot.frame > previous_latest.frame
+            && !previous_latest.moving
+            && snapshot.moving
+        {
+            let delayed_frame = snapshot
+                .frame
+                .0
+                .saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES);
+            if delayed_frame > previous_latest.frame.0 {
+                self.insert_snapshot(MainWorldRemoteSnapshot {
+                    frame: MainWorldAuthorityFrame(delayed_frame),
+                    ..previous_latest
+                });
+            }
+            let current = self
+                .presentation_frame
+                .unwrap_or(previous_latest.frame.0 as f32);
+            self.presentation_frame = Some(current.max(delayed_frame as f32));
+        }
+
+        self.insert_snapshot(snapshot);
+        if self.presentation_frame.is_none() {
+            self.presentation_frame = Some(snapshot.frame.0 as f32);
+        }
+        true
+    }
+
+    fn insert_snapshot(&mut self, snapshot: MainWorldRemoteSnapshot) {
         let insert_at = self
             .snapshots
             .iter()
@@ -406,17 +437,23 @@ impl MainWorldRemoteInterpolationBuffer {
         if self.snapshots.len() > MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY {
             self.snapshots.pop_front();
         }
-        if self.presentation_frame.is_none() {
-            self.presentation_frame = Some(snapshot.frame.0 as f32);
-        }
-        true
     }
 
     fn advance_presentation_frame(&mut self, delta_seconds: f32) -> Option<f32> {
         let oldest = self.snapshots.front()?.frame.0 as f32;
-        let latest = self.snapshots.back()?.frame.0;
-        let target = latest.saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES) as f32;
-        let current = self.presentation_frame.unwrap_or(latest as f32).max(oldest);
+        let latest = self.snapshots.back()?;
+        let target = if latest.moving {
+            latest
+                .frame
+                .0
+                .saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES)
+        } else {
+            latest.frame.0
+        } as f32;
+        let current = self
+            .presentation_frame
+            .unwrap_or(latest.frame.0 as f32)
+            .max(oldest);
         let advance = delta_seconds.max(0.0) * MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND as f32;
         let next = if target > current {
             (current + advance).min(target)
@@ -1890,6 +1927,15 @@ mod tests {
             position: Vec3::new(frame as f32, 0.0, 0.0),
             direction: Vec2::X,
             moving: true,
+        }
+    }
+
+    fn remote_snapshot_state(frame: u32, x: f32, moving: bool) -> MainWorldRemoteSnapshot {
+        MainWorldRemoteSnapshot {
+            frame: MainWorldAuthorityFrame(frame),
+            position: Vec3::new(x, 0.0, 0.0),
+            direction: Vec2::X,
+            moving,
         }
     }
 
@@ -3400,6 +3446,95 @@ mod tests {
             buffer.snapshots().back().unwrap().frame,
             MainWorldAuthorityFrame(11 + MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY as u32)
         );
+    }
+
+    #[test]
+    fn remote_stop_snapshot_releases_terminal_frame_without_an_idle_followup() {
+        let mut buffer = MainWorldRemoteInterpolationBuffer::default();
+        assert!(buffer.push(remote_snapshot_state(100, 0.0, true)));
+        assert!(buffer.push(remote_snapshot_state(103, 3.0, true)));
+        assert_eq!(buffer.advance_presentation_frame(1.0), Some(100.0));
+        assert!(buffer.push(remote_snapshot_state(106, 6.0, true)));
+        assert_eq!(buffer.advance_presentation_frame(0.15), Some(103.0));
+
+        assert!(buffer.push(remote_snapshot_state(109, 9.0, false)));
+        let middle_frame = buffer.advance_presentation_frame(0.15).unwrap();
+        let (middle_before, middle_after, middle_factor) =
+            remote_interpolation_sample(buffer.snapshots(), middle_frame);
+        assert_eq!(middle_frame, 106.0);
+        assert_eq!(
+            middle_before
+                .position
+                .lerp(middle_after.position, middle_factor),
+            Vec3::new(6.0, 0.0, 0.0)
+        );
+
+        let terminal_frame = buffer.advance_presentation_frame(0.15).unwrap();
+        let (terminal_before, terminal_after, terminal_factor) =
+            remote_interpolation_sample(buffer.snapshots(), terminal_frame);
+        assert_eq!(terminal_frame, 109.0);
+        assert_eq!(
+            terminal_before
+                .position
+                .lerp(terminal_after.position, terminal_factor),
+            Vec3::new(9.0, 0.0, 0.0)
+        );
+        assert_eq!(buffer.advance_presentation_frame(1.0), Some(109.0));
+    }
+
+    #[test]
+    fn remote_idle_to_moving_rebases_to_delay_window_without_visual_jump() {
+        let mut buffer = MainWorldRemoteInterpolationBuffer::default();
+        assert!(buffer.push(remote_snapshot_state(100, 5.0, false)));
+        assert!(buffer.push(remote_snapshot_state(115, 5.0, false)));
+
+        assert!(buffer.push(remote_snapshot_state(130, 8.0, true)));
+        assert_eq!(buffer.presentation_frame, Some(127.0));
+        let anchor = buffer
+            .snapshots()
+            .iter()
+            .find(|sample| sample.frame == MainWorldAuthorityFrame(127))
+            .unwrap();
+        assert_eq!(anchor.position, Vec3::new(5.0, 0.0, 0.0));
+        assert!(!anchor.moving);
+        let (at_anchor, _, _) = remote_interpolation_sample(buffer.snapshots(), 127.0);
+        assert_eq!(at_anchor.position, Vec3::new(5.0, 0.0, 0.0));
+
+        let next_frame = buffer.advance_presentation_frame(0.05).unwrap();
+        let (before, after, factor) = remote_interpolation_sample(buffer.snapshots(), next_frame);
+        assert_eq!(next_frame, 127.0);
+        assert_eq!(before.position.lerp(after.position, factor).x, 5.0);
+
+        assert!(buffer.push(remote_snapshot_state(133, 11.0, true)));
+        assert_eq!(buffer.advance_presentation_frame(0.15), Some(130.0));
+        assert_eq!(133.0 - buffer.presentation_frame.unwrap(), 3.0);
+    }
+
+    #[test]
+    fn remote_late_snapshot_does_not_rewind_or_rebase_presentation() {
+        let mut buffer = MainWorldRemoteInterpolationBuffer::default();
+        assert!(buffer.push(remote_snapshot_state(100, 0.0, false)));
+        assert!(buffer.push(remote_snapshot_state(130, 3.0, true)));
+        assert_eq!(buffer.presentation_frame, Some(127.0));
+
+        assert!(buffer.push(remote_snapshot_state(120, 1.0, true)));
+        assert_eq!(buffer.presentation_frame, Some(127.0));
+        assert_eq!(buffer.advance_presentation_frame(0.0), Some(127.0));
+        assert_eq!(buffer.snapshots().back().unwrap().frame.0, 130);
+    }
+
+    #[test]
+    fn remote_continuous_movement_keeps_the_normal_delay_and_monotonic_time() {
+        let mut buffer = MainWorldRemoteInterpolationBuffer::default();
+        assert!(buffer.push(remote_snapshot_state(200, 0.0, true)));
+        assert!(buffer.push(remote_snapshot_state(203, 3.0, true)));
+        assert_eq!(buffer.advance_presentation_frame(1.0), Some(200.0));
+        assert!(buffer.push(remote_snapshot_state(206, 6.0, true)));
+        assert_eq!(buffer.advance_presentation_frame(0.15), Some(203.0));
+        assert!(buffer.push(remote_snapshot_state(209, 9.0, true)));
+        assert_eq!(buffer.advance_presentation_frame(0.15), Some(206.0));
+        assert_eq!(209.0 - buffer.presentation_frame.unwrap(), 3.0);
+        assert_eq!(buffer.advance_presentation_frame(-1.0), Some(206.0));
     }
 
     #[test]
