@@ -33,6 +33,7 @@ use crate::{
             main_world_contract::{
                 MAIN_WORLD_AUTHORITY_CONTRACT,
                 main_world_bevy_position as contract_main_world_bevy_position,
+                main_world_movement_snapshot_from_event,
             },
         },
         screens::gameplay::host::{MainWorldUiTeardownCause, request_main_world_ui_teardown},
@@ -633,6 +634,11 @@ fn handle_entry_intents(
                 continue;
             }
             state.phase = MainWorldEntryPhase::JoiningRoom;
+            warn!(
+                generation = state.generation,
+                character_id = %state.character_id.as_deref().unwrap_or_default(),
+                "main world entry accepted; joining room"
+            );
             events.write(MainWorldEntryEvent::JoinRequested {
                 generation: state.generation,
                 room_id: MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
@@ -794,27 +800,33 @@ fn consume_main_world_authority_events(
             }
             continue;
         }
+        if !matches!(event, MyServerEvent::RoomStatePush(_))
+            && let Some(push) = main_world_movement_snapshot_from_event(event)
+        {
+            consume_main_world_entry_snapshot(
+                &push,
+                &character_id,
+                &mut state,
+                &mut entry_events,
+                &mut commands,
+            );
+            continue;
+        }
         match event {
             MyServerEvent::RoomJoined(response)
                 if state.phase == MainWorldEntryPhase::JoiningRoom
                     && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
             {
                 if response.ok {
+                    warn!(
+                        generation = state.generation,
+                        character_id = %character_id,
+                        "main world room join acknowledged"
+                    );
                     state.join_acknowledged = true;
                     state.room_membership = MainWorldRoomMembership::Joined;
                     state.room_id = Some(response.room_id.clone());
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
-                    // The fixed public room is created in the server's waiting
-                    // phase. Its first authority entry must start the movement
-                    // policy before a snapshot can establish the scene spawn.
-                    if !state.room_start_requested {
-                        state.room_start_requested = true;
-                        info!(
-                            room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
-                            "main world public room start requested"
-                        );
-                        commands.write(MyServerCommand::StartRoom);
-                    }
                 } else {
                     fail_authority_entry(
                         &mut state,
@@ -859,62 +871,25 @@ fn consume_main_world_authority_events(
                     state.room_membership = MainWorldRoomMembership::Joined;
                     state.room_id = Some(snapshot.room_id.clone());
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
-                }
-            }
-            MyServerEvent::MovementSnapshotPush(push)
-                if push.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
-            {
-                if state.phase == MainWorldEntryPhase::Recovering
-                    && !state.reconnect_room_acknowledged
-                {
-                    continue;
-                }
-                if push.frame_id < state.snapshot_generation {
-                    continue;
-                }
-                let Some(entity) = push
-                    .entities
-                    .iter()
-                    .find(|entity| entity.character_id == character_id)
-                else {
-                    continue;
-                };
-                if !MAIN_WORLD_AUTHORITY_CONTRACT.is_authoritative_entity_scene(entity.scene_id) {
-                    fail_authority_entry(
-                        &mut state,
-                        &mut entry_events,
-                        MainWorldEntryFailure::AuthoritativeSceneMismatch,
-                    );
-                    continue;
-                }
-                let Ok(position) = main_world_bevy_position(entity.x, entity.y) else {
-                    fail_authority_entry(
-                        &mut state,
-                        &mut entry_events,
-                        MainWorldEntryFailure::InvalidAuthoritativePosition,
-                    );
-                    continue;
-                };
-                state.room_id = Some(push.room_id.clone());
-                state.room_membership = MainWorldRoomMembership::Joined;
-                state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
-                state.authoritative_scene_id = Some(entity.scene_id);
-                state.position = Some(position);
-                state.snapshot_generation = push.frame_id;
-                match state.phase {
-                    MainWorldEntryPhase::JoiningRoom => {
+                    if snapshot.state == "in_game" {
+                        if let Some(movement) = main_world_movement_snapshot_from_event(event) {
+                            consume_main_world_entry_snapshot(
+                                &movement,
+                                &character_id,
+                                &mut state,
+                                &mut entry_events,
+                                &mut commands,
+                            );
+                        }
+                    } else if !state.room_start_requested {
+                        state.room_start_requested = true;
                         info!(
                             room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
-                            scene_id = entity.scene_id,
-                            frame_id = push.frame_id,
-                            "main world authoritative snapshot accepted"
+                            room_state = %snapshot.state,
+                            "main world public room start requested"
                         );
-                        begin_ready_or_scene_load_after_snapshot(&mut state, &mut commands);
+                        commands.write(MyServerCommand::StartRoom);
                     }
-                    MainWorldEntryPhase::Recovering => {
-                        resume_after_reconnect_snapshot(&mut state, &mut commands);
-                    }
-                    _ => {}
                 }
             }
             MyServerEvent::ReadyChanged(response)
@@ -1041,6 +1016,63 @@ fn consume_main_world_authority_events(
             ),
             _ => {}
         }
+    }
+}
+
+fn consume_main_world_entry_snapshot(
+    push: &crate::game::myserver::protocol::pb::MovementSnapshotPush,
+    character_id: &str,
+    state: &mut MainWorldEntryState,
+    entry_events: &mut MessageWriter<MainWorldEntryEvent>,
+    commands: &mut MessageWriter<MyServerCommand>,
+) {
+    if push.room_id != MAIN_WORLD_AUTHORITY_CONTRACT.room_id
+        || (state.phase == MainWorldEntryPhase::Recovering && !state.reconnect_room_acknowledged)
+        || push.frame_id < state.snapshot_generation
+    {
+        return;
+    }
+    let Some(entity) = push
+        .entities
+        .iter()
+        .find(|entity| entity.character_id == character_id)
+    else {
+        return;
+    };
+    if !MAIN_WORLD_AUTHORITY_CONTRACT.is_authoritative_entity_scene(entity.scene_id) {
+        fail_authority_entry(
+            state,
+            entry_events,
+            MainWorldEntryFailure::AuthoritativeSceneMismatch,
+        );
+        return;
+    }
+    let Ok(position) = main_world_bevy_position(entity.x, entity.y) else {
+        fail_authority_entry(
+            state,
+            entry_events,
+            MainWorldEntryFailure::InvalidAuthoritativePosition,
+        );
+        return;
+    };
+    state.room_id = Some(push.room_id.clone());
+    state.room_membership = MainWorldRoomMembership::Joined;
+    state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
+    state.authoritative_scene_id = Some(entity.scene_id);
+    state.position = Some(position);
+    state.snapshot_generation = push.frame_id;
+    match state.phase {
+        MainWorldEntryPhase::JoiningRoom => {
+            info!(
+                room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
+                scene_id = entity.scene_id,
+                frame_id = push.frame_id,
+                "main world authoritative snapshot accepted"
+            );
+            begin_ready_or_scene_load_after_snapshot(state, commands);
+        }
+        MainWorldEntryPhase::Recovering => resume_after_reconnect_snapshot(state, commands),
+        _ => {}
     }
 }
 
@@ -1305,7 +1337,7 @@ fn dispatch_authority_confirmed_scene_enter(
     let mut request = SceneEnterRequest::new(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene());
     request.session_id = Some(session_id.clone());
     scene_commands.write(SceneCommand::Enter(request));
-    info!(
+    warn!(
         scene_id = MAIN_WORLD_AUTHORITY_CONTRACT.client_scene().as_str(),
         session_id = %session_id,
         "main world SceneCommand::Enter dispatched"
@@ -1333,7 +1365,7 @@ fn consume_main_world_scene_ready(
             {
                 state.scene_ready = true;
                 state.room_ready_requested = true;
-                info!(
+                warn!(
                     scene_id = ready.scene_id.as_str(),
                     session_id = %ready.session_id,
                     "main world SceneEvent::Ready received; requesting room ready"
@@ -1800,7 +1832,7 @@ mod tests {
     }
 
     #[test]
-    fn successful_public_room_join_starts_the_movement_policy_once() {
+    fn running_room_state_embedded_movement_completes_first_entry() {
         let mut app = ready_app();
         app.world_mut().write_message(MainWorldEntryIntent::Enter);
         app.update();
@@ -1810,6 +1842,30 @@ mod tests {
                 room_id: "main-world-public".to_owned(),
                 error_code: String::new(),
             }));
+        app.world_mut()
+            .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
+                event: "joined".to_owned(),
+                snapshot: Some(pb::RoomSnapshot {
+                    room_id: "main-world-public".to_owned(),
+                    state: "in_game".to_owned(),
+                    current_frame_id: 120,
+                    game_state: r#"{"room_id":"main-world-public","scene_id":1,"entities":[{"entity_id":1,"character_id":"chr_1","scene_id":1,"x":2002.0,"y":2003.0,"dir_x":0.0,"dir_y":1.0,"moving":false,"last_input_frame":119}]}"#.to_owned(),
+                    ..Default::default()
+                }),
+            }));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::WaitingSceneReady);
+        assert_eq!(state.snapshot_generation, 120);
+        assert_eq!(state.position, Some(Vec3::new(2.0, 0.0, 3.0)));
+        assert!(!state.room_start_requested);
+    }
+
+    #[test]
+    fn running_public_room_join_does_not_restart_the_movement_policy() {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
         app.update();
         app.world_mut()
             .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
@@ -1817,7 +1873,56 @@ mod tests {
                 room_id: "main-world-public".to_owned(),
                 error_code: String::new(),
             }));
+        app.world_mut()
+            .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
+                event: "joined".to_owned(),
+                snapshot: Some(pb::RoomSnapshot {
+                    room_id: "main-world-public".to_owned(),
+                    state: "in_game".to_owned(),
+                    game_state: r#"{"scene_id":1}"#.to_owned(),
+                    ..Default::default()
+                }),
+            }));
         app.update();
+
+        assert!(
+            !app.world()
+                .resource::<MainWorldEntryState>()
+                .room_start_requested
+        );
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(command, MyServerCommand::StartRoom))
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn waiting_public_room_starts_the_movement_policy_once() {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                error_code: String::new(),
+            }));
+        for state in ["waiting", "ready"] {
+            app.world_mut()
+                .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
+                    event: "joined".to_owned(),
+                    snapshot: Some(pb::RoomSnapshot {
+                        room_id: "main-world-public".to_owned(),
+                        state: state.to_owned(),
+                        game_state: r#"{"scene_id":1}"#.to_owned(),
+                        ..Default::default()
+                    }),
+                }));
+            app.update();
+        }
 
         assert!(
             app.world()

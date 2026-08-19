@@ -16,7 +16,9 @@ use crate::framework::scene::prelude::{
 use crate::game::myserver::MyServerEvent;
 use crate::game::myserver::protocol::pb;
 
-use super::main_world_contract::MAIN_WORLD_SERVER_SCENE_ID;
+use super::main_world_contract::{
+    MAIN_WORLD_SERVER_SCENE_ID, main_world_movement_snapshot_from_event,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::game) enum MainWorldPlayerOwnership {
@@ -257,7 +259,7 @@ fn maintain_main_world_players(
         }
     }
     for event in events.read() {
-        let MyServerEvent::MovementSnapshotPush(push) = event else {
+        let Some(push) = main_world_movement_snapshot_from_event(event) else {
             continue;
         };
         if push.room_id != super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID {
@@ -268,7 +270,7 @@ fn maintain_main_world_players(
             .as_ref()
             .is_none_or(|cached| push.frame_id >= cached.frame_id)
         {
-            runtime.cached_snapshot = Some(push.clone());
+            runtime.cached_snapshot = Some(push.into_owned());
             runtime.cached_generation = entry.generation;
         }
     }
@@ -453,14 +455,23 @@ impl MainWorldPlayerRegistry {
                 });
             }
             if existing.server_entity_id == registration.server_entity_id {
-                commands.entity(existing.entity).insert((
-                    player,
-                    FangyuanPlayerPosition {
-                        translation: root_transform.translation,
-                    },
-                    FangyuanObjectState::new(root_transform.translation, root_transform.scale),
-                    root_transform,
-                ));
+                if ownership == MainWorldPlayerOwnership::Remote {
+                    // Remote spatial presentation is owned exclusively by the
+                    // interpolation system. Re-inserting authoritative spatial
+                    // components here would snap to each low-frequency sample
+                    // before interpolation writes the delayed visual position,
+                    // producing a visible back-and-forth jitter every snapshot.
+                    commands.entity(existing.entity).insert(player);
+                } else {
+                    commands.entity(existing.entity).insert((
+                        player,
+                        FangyuanPlayerPosition {
+                            translation: root_transform.translation,
+                        },
+                        FangyuanObjectState::new(root_transform.translation, root_transform.scale),
+                        root_transform,
+                    ));
+                }
                 self.players.insert(
                     registration.character_id,
                     MainWorldPlayerRegistryEntry {
@@ -699,14 +710,9 @@ mod tests {
         app.add_plugins((MinimalPlugins, TransformPlugin, FangyuanPlayerRuntimePlugin));
         let root = app.world_mut().spawn_empty().id();
         let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
-        register(
-            app.world_mut(),
-            &mut registry,
-            registration("remote", 10, 1),
-        )
-        .unwrap();
+        register(app.world_mut(), &mut registry, registration("local", 10, 1)).unwrap();
         let rotation = Quat::from_rotation_y(1.25);
-        let mut updated = registration("remote", 10, 2);
+        let mut updated = registration("local", 10, 2);
         updated.transform.rotation = rotation;
         let result = register(app.world_mut(), &mut registry, updated).unwrap();
         let MainWorldPlayerRegistrationResult::Updated(entity) = result else {
@@ -716,6 +722,40 @@ mod tests {
         assert_eq!(
             app.world().get::<Transform>(entity).unwrap().rotation,
             rotation
+        );
+    }
+
+    #[test]
+    fn remote_same_entity_update_preserves_interpolated_spatial_state() {
+        let mut world = World::new();
+        let mut registry = registry(&mut world, "session-a", "local");
+        let created = register(&mut world, &mut registry, registration("remote", 10, 1)).unwrap();
+        let MainWorldPlayerRegistrationResult::Created(entity) = created else {
+            panic!()
+        };
+        let interpolated = Transform::from_xyz(7.0, 0.0, 9.0);
+        world.entity_mut(entity).insert((
+            interpolated,
+            FangyuanPlayerPosition {
+                translation: interpolated.translation,
+            },
+            FangyuanObjectState::new(interpolated.translation, interpolated.scale),
+        ));
+
+        let mut updated = registration("remote", 10, 2);
+        updated.transform.translation = Vec3::new(20.0, 0.0, 30.0);
+        assert!(matches!(
+            register(&mut world, &mut registry, updated),
+            Ok(MainWorldPlayerRegistrationResult::Updated(current)) if current == entity
+        ));
+
+        assert_eq!(world.get::<Transform>(entity).unwrap(), &interpolated);
+        assert_eq!(
+            world
+                .get::<FangyuanPlayerPosition>(entity)
+                .unwrap()
+                .translation,
+            interpolated.translation
         );
     }
 

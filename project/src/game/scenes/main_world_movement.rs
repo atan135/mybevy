@@ -39,7 +39,8 @@ use crate::{
                 MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES, MainWorldAuthorityFrame,
                 MainWorldConfirmedFrame, MainWorldMoveInputKind, MainWorldPredictedFrame,
                 MainWorldRenderFrame, main_world_bevy_position_from_authority,
-                main_world_normalized_direction, main_world_server_position,
+                main_world_movement_snapshot_from_event, main_world_normalized_direction,
+                main_world_server_position,
             },
             main_world_entry::{
                 MainWorldEntryPhase, MainWorldEntryState, MainWorldEntryUpdateSet,
@@ -59,6 +60,10 @@ pub(in crate::game) const MAIN_WORLD_PREDICTION_HISTORY_CAPACITY: usize = 100;
 pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY: usize = 40;
 pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES: u32 = 2;
 pub(in crate::game) const MAIN_WORLD_REMOTE_MAX_SNAP_DISTANCE_METRES: f32 = 8.0;
+/// The room accepts inputs up to this many frames ahead of its current clock.
+/// Keep outbound input at the edge of that window so network latency cannot
+/// make a frame expire before the server receives it.
+pub(in crate::game) const MAIN_WORLD_INPUT_LEAD_FRAMES: u32 = 2;
 
 /// Incremental authority differences no larger than this are eased only in
 /// presentation. Larger differences replace the local baseline immediately.
@@ -208,6 +213,7 @@ struct MainWorldMovementDispatchRuntime {
     timer: Timer,
     generation: u64,
     session_id: Option<SceneSessionId>,
+    room_clock_epoch: u64,
     last_dispatched_frame: MainWorldAuthorityFrame,
     observed_stop_sequence: u64,
 }
@@ -226,6 +232,7 @@ impl Default for MainWorldMovementDispatchRuntime {
             ),
             generation: 0,
             session_id: None,
+            room_clock_epoch: 0,
             last_dispatched_frame: MainWorldAuthorityFrame::default(),
             observed_stop_sequence: 0,
         }
@@ -233,21 +240,19 @@ impl Default for MainWorldMovementDispatchRuntime {
 }
 
 impl MainWorldMovementDispatchRuntime {
-    fn bind(
-        &mut self,
-        entry: &MainWorldEntryState,
-        movement: &MainWorldMovementRuntime,
-        intent: &MainWorldMovementIntent,
-    ) {
-        if self.generation == movement.generation && self.session_id == movement.session_id {
+    fn bind(&mut self, movement: &MainWorldMovementRuntime, intent: &MainWorldMovementIntent) {
+        if self.generation == movement.generation
+            && self.session_id == movement.session_id
+            && self.room_clock_epoch == movement.room_clock_epoch
+        {
             return;
         }
 
         self.timer.reset();
         self.generation = movement.generation;
         self.session_id = movement.session_id.clone();
-        self.last_dispatched_frame =
-            MainWorldAuthorityFrame(movement.predicted.frame.0.max(entry.snapshot_generation));
+        self.room_clock_epoch = movement.room_clock_epoch;
+        self.last_dispatched_frame = movement.latest_room_frame;
         self.observed_stop_sequence = intent.stop_sequence;
     }
 
@@ -258,17 +263,21 @@ impl MainWorldMovementDispatchRuntime {
 
     fn next_frame(
         &mut self,
-        entry: &MainWorldEntryState,
         movement: &MainWorldMovementRuntime,
-    ) -> MainWorldPredictedFrame {
-        let baseline = self
-            .last_dispatched_frame
-            .0
-            .max(entry.snapshot_generation)
-            .max(movement.predicted.frame.0);
-        let frame = baseline.wrapping_add(1).max(1);
+    ) -> Option<MainWorldPredictedFrame> {
+        let room_frame = movement.latest_room_frame.0;
+        if room_frame == 0 {
+            return None;
+        }
+        let baseline = self.last_dispatched_frame.0.max(room_frame);
+        let next_sequential = baseline.wrapping_add(1).max(1);
+        let window_end = room_frame.saturating_add(MAIN_WORLD_INPUT_LEAD_FRAMES);
+        let frame = next_sequential.max(window_end);
+        if frame > window_end {
+            return None;
+        }
         self.last_dispatched_frame = MainWorldAuthorityFrame(frame);
-        MainWorldPredictedFrame(frame)
+        Some(MainWorldPredictedFrame(frame))
     }
 }
 
@@ -411,6 +420,8 @@ pub(in crate::game) struct MainWorldMovementRuntime {
     pending_prediction: VecDeque<MainWorldPendingPrediction>,
     pub authority_baseline: Option<MainWorldAuthorityBaseline>,
     last_applied_authority_frame: Option<MainWorldAuthorityFrame>,
+    latest_room_frame: MainWorldAuthorityFrame,
+    room_clock_epoch: u64,
     local_authority_entity_id: Option<u64>,
     local_authority_scene_id: Option<i32>,
     visual_correction_offset: Vec3,
@@ -431,6 +442,8 @@ impl Default for MainWorldMovementRuntime {
             pending_prediction: VecDeque::new(),
             authority_baseline: None,
             last_applied_authority_frame: None,
+            latest_room_frame: MainWorldAuthorityFrame::default(),
+            room_clock_epoch: 0,
             local_authority_entity_id: None,
             local_authority_scene_id: None,
             visual_correction_offset: Vec3::ZERO,
@@ -482,6 +495,8 @@ impl MainWorldMovementRuntime {
         self.pending_prediction.clear();
         self.authority_baseline = None;
         self.last_applied_authority_frame = None;
+        self.latest_room_frame = MainWorldAuthorityFrame::default();
+        self.room_clock_epoch = 0;
         self.local_authority_entity_id = None;
         self.local_authority_scene_id = None;
         self.visual_correction_offset = Vec3::ZERO;
@@ -723,6 +738,7 @@ fn consume_main_world_local_authority_snapshots(
     fixed_time: Res<Time<Fixed>>,
     entry: Option<Res<MainWorldEntryState>>,
     mut runtime: ResMut<MainWorldMovementRuntime>,
+    mut dispatch: ResMut<MainWorldMovementDispatchRuntime>,
 ) {
     let Some(entry) = entry else {
         return;
@@ -749,7 +765,25 @@ fn consume_main_world_local_authority_snapshots(
 
     let alpha = fixed_time.overstep_fraction();
     for event in events.read() {
-        let MyServerEvent::MovementSnapshotPush(push) = event else {
+        if let MyServerEvent::FrameBundlePush(push) = event {
+            if push.frame_id < runtime.latest_room_frame.0 {
+                if push.frame_id <= 1 {
+                    runtime.room_clock_epoch = runtime.room_clock_epoch.wrapping_add(1);
+                    runtime.pending_prediction.clear();
+                    runtime.unconfirmed_inputs.clear();
+                    runtime.last_applied_authority_frame = None;
+                    runtime.authority_baseline = None;
+                    runtime.remote_interpolation.clear();
+                    dispatch.last_dispatched_frame = MainWorldAuthorityFrame::default();
+                    runtime.latest_room_frame = MainWorldAuthorityFrame(push.frame_id);
+                } else {
+                    continue;
+                }
+            } else {
+                runtime.latest_room_frame = MainWorldAuthorityFrame(push.frame_id);
+            }
+        }
+        let Some(push) = main_world_movement_snapshot_from_event(event) else {
             continue;
         };
         if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID
@@ -818,6 +852,7 @@ fn consume_main_world_movement_rejects(
     entry: Option<Res<MainWorldEntryState>>,
     mut intent: ResMut<MainWorldMovementIntent>,
     mut runtime: ResMut<MainWorldMovementRuntime>,
+    mut dispatch: ResMut<MainWorldMovementDispatchRuntime>,
 ) {
     let Some(entry) = entry else {
         return;
@@ -890,8 +925,25 @@ fn consume_main_world_movement_rejects(
         } else {
             Vec2::ZERO
         };
-        let confirmed_frame =
-            MainWorldConfirmedFrame(corrected.last_input_frame.max(reference_frame));
+        let error_code = reject.error_code.to_ascii_uppercase();
+        let timing_reject = matches!(
+            error_code.as_str(),
+            "INPUT_FRAME_EXPIRED" | "INPUT_FRAME_TOO_FAR"
+        );
+        // A rejected frame was never simulated by the server. A client-state
+        // reference is diagnostic only and must not advance confirmation.
+        let confirmed_frame = MainWorldConfirmedFrame(corrected.last_input_frame);
+        if timing_reject {
+            runtime.unconfirmed_inputs.retain(|input| {
+                Some(input.frame.0) != (reference_frame != 0).then_some(reference_frame)
+            });
+            runtime.pending_prediction.retain(|pending| {
+                Some(pending.input.frame.0) != (reference_frame != 0).then_some(reference_frame)
+            });
+            dispatch.last_dispatched_frame = MainWorldAuthorityFrame(
+                runtime.latest_room_frame.0.max(corrected.last_input_frame),
+            );
+        }
         reconcile_main_world_local_authority(
             &mut runtime,
             MainWorldLocalAuthoritySnapshot {
@@ -908,8 +960,7 @@ fn consume_main_world_movement_rejects(
         );
 
         let reason = pb::MovementCorrectionReason::try_from(reject.reason_code).ok();
-        let error_code = reject.error_code.to_ascii_uppercase();
-        let stop_prediction = !direction_valid
+        let stop_prediction = (!timing_reject && !direction_valid)
             || matches!(
                 reason,
                 Some(
@@ -978,10 +1029,21 @@ fn consume_main_world_remote_authority_snapshots(
         return;
     }
     for event in events.read() {
-        let MyServerEvent::MovementSnapshotPush(push) = event else {
+        let Some(push) = main_world_movement_snapshot_from_event(event) else {
             continue;
         };
         if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
+            continue;
+        }
+        // target_character_ids identifies snapshot recipients, not the entities
+        // visible inside the snapshot. A recovery push for a newly joined
+        // client can contain every room entity while targeting only that client.
+        if !push.target_character_ids.is_empty()
+            && !push
+                .target_character_ids
+                .iter()
+                .any(|id| id == local_character_id)
+        {
             continue;
         }
         let recovery_sync = push.full_sync
@@ -993,13 +1055,7 @@ fn consume_main_world_remote_authority_snapshots(
             runtime.remote_interpolation.clear();
         }
         for entity in &push.entities {
-            if entity.character_id == local_character_id
-                || (!push.target_character_ids.is_empty()
-                    && !push
-                        .target_character_ids
-                        .iter()
-                        .any(|id| id == &entity.character_id))
-            {
+            if entity.character_id == local_character_id {
                 continue;
             }
             let Ok(position) =
@@ -1066,13 +1122,6 @@ fn write_main_world_remote_visual(
         return;
     }
     let alpha = fixed_time.overstep_fraction();
-    let target_frame = runtime
-        .remote_interpolation
-        .values()
-        .filter_map(|buffer| buffer.snapshots().back().map(|sample| sample.frame.0))
-        .max()
-        .unwrap_or(0)
-        .saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES);
     for (player, mut position, mut object_state, mut transform) in &mut players {
         if player.ownership != MainWorldPlayerOwnership::Remote
             || Some(&player.scene_session_id) != runtime.session_id.as_ref()
@@ -1086,13 +1135,11 @@ fn write_main_world_remote_visual(
         let Some(latest) = snapshots.back() else {
             continue;
         };
-        let target = target_frame.max(
-            latest
-                .frame
-                .0
-                .saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES),
-        );
-        let (a, b, factor) = remote_interpolation_sample(snapshots, target, alpha);
+        let target_frame = latest
+            .frame
+            .0
+            .saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES);
+        let (a, b, factor) = remote_interpolation_sample(snapshots, target_frame, alpha);
         let visual = a.position.lerp(b.position, factor);
         position.translation = visual;
         object_state.root_translation = visual;
@@ -1331,11 +1378,29 @@ fn dispatch_main_world_move_input(
         return;
     };
     if !main_world_movement_send_gate(&entry, &movement, &session) {
+        if intent.active {
+            warn!(
+                entry_phase = ?entry.phase,
+                entry_input_frozen = entry.input_frozen,
+                movement_input_frozen = movement.input_frozen,
+                generation_matches = movement.generation == entry.generation,
+                scene_session_matches = movement.session_id == entry.scene_session_id,
+                room_membership = ?entry.room_membership,
+                entry_room_id = ?entry.room_id,
+                session_room_id = ?session.room_id,
+                character_matches = entry.character_id == session.character_id,
+                has_connection = session.connection_id.is_some(),
+                connected = session.connected,
+                authenticated = session.authenticated,
+                connection_state = ?session.game_connection_state,
+                "main world move input blocked by send gate"
+            );
+        }
         dispatch.observe_closed_gate(&intent);
         return;
     }
 
-    dispatch.bind(&entry, &movement, &intent);
+    dispatch.bind(&movement, &intent);
     if !dispatch.timer.tick(time.delta()).just_finished() {
         return;
     }
@@ -1356,7 +1421,16 @@ fn dispatch_main_world_move_input(
         }
         MainWorldMoveInputKind::MoveStop => Vec2::ZERO,
     };
-    let frame = dispatch.next_frame(&entry, &movement);
+    let Some(frame) = dispatch.next_frame(&movement) else {
+        warn!(
+            latest_room_frame = movement.latest_room_frame.0,
+            predicted_frame = movement.predicted.frame.0,
+            snapshot_generation = entry.snapshot_generation,
+            last_dispatched_frame = dispatch.last_dispatched_frame.0,
+            "main world move input waiting for legal frame window"
+        );
+        return;
+    };
     let predicted_before = movement
         .pending_prediction
         .back()
@@ -1385,6 +1459,13 @@ fn dispatch_main_world_move_input(
             frame_id: frame.0,
         }),
     });
+    warn!(
+        frame_id = frame.0,
+        latest_room_frame = movement.latest_room_frame.0,
+        dir_x = direction.x,
+        dir_y = direction.y,
+        "main world move input dispatched"
+    );
     let input = MainWorldUnconfirmedInput {
         frame,
         direction,
@@ -1678,6 +1759,15 @@ mod tests {
     fn networked_movement_app() -> (App, Entity) {
         let (mut app, window) = movement_app(networked_entry(7, "main-world-7"));
         app.insert_resource(connected_main_world_session());
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(pb::FrameBundlePush {
+                room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+                frame_id: 40,
+                fps: MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
+                inputs: Vec::new(),
+                is_silent_frame: true,
+                snapshot: None,
+            }));
         (app, window)
     }
 
@@ -2266,6 +2356,72 @@ mod tests {
     }
 
     #[test]
+    fn targeted_recovery_snapshot_registers_all_visible_remote_entities() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let remote = app
+            .world_mut()
+            .spawn((
+                MainWorldPlayer {
+                    character_id: "chr-remote".to_owned(),
+                    server_entity_id: 99,
+                    ownership: MainWorldPlayerOwnership::Remote,
+                    scene_session_id: SceneSessionId::from("main-world-7"),
+                    last_authoritative_frame: 0,
+                },
+                FangyuanPlayerPosition::default(),
+                FangyuanObjectState::default(),
+                Transform::default(),
+            ))
+            .id();
+
+        let MyServerEvent::MovementSnapshotPush(mut push) = remote_snapshot_push(
+            60,
+            vec![
+                (
+                    "chr-local",
+                    7,
+                    MAIN_WORLD_SERVER_SCENE_ID,
+                    2002.0,
+                    2002.0,
+                    false,
+                    1.0,
+                    0.0,
+                ),
+                (
+                    "chr-remote",
+                    99,
+                    MAIN_WORLD_SERVER_SCENE_ID,
+                    2004.0,
+                    2002.0,
+                    true,
+                    1.0,
+                    0.0,
+                ),
+            ],
+            true,
+            pb::MovementCorrectionKind::Recovery,
+        ) else {
+            unreachable!();
+        };
+        push.target_character_ids = vec!["chr-local".to_owned()];
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(push));
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert!(runtime.remote_interpolation.contains_key("chr-remote"));
+        assert_eq!(runtime.remote_interpolation["chr-remote"].len(), 1);
+        assert!(
+            app.world()
+                .get::<Transform>(remote)
+                .unwrap()
+                .translation
+                .is_finite()
+        );
+    }
+
+    #[test]
     fn remote_full_sync_retains_visible_players_and_removes_missing_players() {
         let (mut app, _) = networked_movement_app();
         app.update();
@@ -2814,7 +2970,7 @@ mod tests {
         let runtime = app.world().resource::<MainWorldMovementRuntime>();
         assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(42));
         assert_eq!(runtime.predicted.position, Vec3::new(1.25, 0.0, -2.7));
-        assert_eq!(runtime.unconfirmed_inputs.len(), 2);
+        assert_eq!(runtime.unconfirmed_inputs.len(), 1);
     }
 
     #[test]
@@ -3340,6 +3496,15 @@ mod tests {
         );
 
         press_key(&mut app, KeyCode::KeyD);
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(pb::FrameBundlePush {
+                room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+                frame_id: 41,
+                fps: MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
+                inputs: Vec::new(),
+                is_silent_frame: true,
+                snapshot: None,
+            }));
         app.update();
         advance_update(&mut app, Duration::from_millis(50));
         let commands = read_new_move_commands(&app, &mut cursor);
@@ -3349,6 +3514,64 @@ mod tests {
         assert_eq!(input_type, pb::MoveInputType::MoveDir);
         assert_vec2_approx_eq(Vec2::new(dir_x, dir_y), Vec2::new(1.0, -1.0).normalize());
         assert_eq!(client_state.frame_id, frame);
+    }
+
+    #[test]
+    fn move_dispatch_uses_room_lead_window_and_waits_for_clock_progress() {
+        let (mut app, _) = networked_movement_app();
+        let mut cursor = MessageCursor::<MyServerCommand>::default();
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(pb::FrameBundlePush {
+                room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+                frame_id: 1_200,
+                fps: MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
+                inputs: Vec::new(),
+                is_silent_frame: true,
+                snapshot: None,
+            }));
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+
+        advance_update(&mut app, Duration::from_millis(50));
+        let commands = read_new_move_commands(&app, &mut cursor);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(move_command_details(&commands[0]).0, 1_202);
+
+        advance_update(&mut app, Duration::from_millis(50));
+        assert!(read_new_move_commands(&app, &mut cursor).is_empty());
+
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(pb::FrameBundlePush {
+                room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+                frame_id: 1_201,
+                fps: MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
+                inputs: Vec::new(),
+                is_silent_frame: true,
+                snapshot: None,
+            }));
+        app.update();
+        advance_update(&mut app, Duration::from_millis(50));
+        let commands = read_new_move_commands(&app, &mut cursor);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(move_command_details(&commands[0]).0, 1_203);
+    }
+
+    #[test]
+    fn move_dispatch_ignores_snapshot_sequence_ahead_of_room_clock() {
+        let (mut app, _) = networked_movement_app();
+        app.world_mut()
+            .resource_mut::<MainWorldEntryState>()
+            .snapshot_generation = 41_792;
+        let mut cursor = MessageCursor::<MyServerCommand>::default();
+        app.update();
+        press_key(&mut app, KeyCode::KeyW);
+        app.update();
+
+        advance_update(&mut app, Duration::from_millis(50));
+        let commands = read_new_move_commands(&app, &mut cursor);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(move_command_details(&commands[0]).0, 42);
     }
 
     #[test]
@@ -3367,6 +3590,15 @@ mod tests {
         );
 
         release_key(&mut app, KeyCode::KeyW);
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(pb::FrameBundlePush {
+                room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+                frame_id: 41,
+                fps: MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
+                inputs: Vec::new(),
+                is_silent_frame: true,
+                snapshot: None,
+            }));
         app.update();
         assert!(read_new_move_commands(&app, &mut cursor).is_empty());
         advance_update(&mut app, Duration::from_millis(50));

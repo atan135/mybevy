@@ -7,7 +7,9 @@
 
 use crate::framework::scene::prelude::SceneId;
 use bevy::prelude::{Vec2, Vec3};
+use serde::Deserialize;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::fmt;
 
 /// Product-facing logical identifier for the fixed public main world.
@@ -253,6 +255,94 @@ pub(in crate::game) const MAIN_WORLD_AUTHORITY_CONTRACT: MainWorldAuthorityContr
         policy_id: MAIN_WORLD_ROOM_POLICY_ID,
     };
 
+#[derive(Debug, Deserialize)]
+struct MainWorldRoomMovementState {
+    room_id: String,
+    entities: Vec<MainWorldRoomMovementEntity>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MainWorldRoomMovementEntity {
+    entity_id: u64,
+    character_id: String,
+    scene_id: i32,
+    x: f32,
+    y: f32,
+    dir_x: f32,
+    dir_y: f32,
+    moving: bool,
+    last_input_frame: u32,
+}
+
+/// Converts the complete `movement_demo` state embedded in a room/frame
+/// snapshot into the same shape consumed by the live movement pipeline.
+pub(in crate::game) fn main_world_movement_snapshot_from_room(
+    snapshot: &crate::game::myserver::protocol::pb::RoomSnapshot,
+    frame_id: u32,
+) -> Option<crate::game::myserver::protocol::pb::MovementSnapshotPush> {
+    if snapshot.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
+        return None;
+    }
+    let state: MainWorldRoomMovementState = serde_json::from_str(&snapshot.game_state).ok()?;
+    if state.room_id != snapshot.room_id {
+        return None;
+    }
+    let entities = state
+        .entities
+        .into_iter()
+        .map(
+            |entity| crate::game::myserver::protocol::pb::EntityTransform {
+                entity_id: entity.entity_id,
+                character_id: entity.character_id,
+                scene_id: entity.scene_id,
+                x: entity.x,
+                y: entity.y,
+                dir_x: entity.dir_x,
+                dir_y: entity.dir_y,
+                moving: entity.moving,
+                last_input_frame: entity.last_input_frame,
+            },
+        )
+        .collect();
+    Some(crate::game::myserver::protocol::pb::MovementSnapshotPush {
+        room_id: snapshot.room_id.clone(),
+        frame_id,
+        entities,
+        // The embedded state contains every entity, but it is a periodic sample
+        // rather than a correction that should reset interpolation/prediction.
+        full_sync: false,
+        reason: "frame_bundle_snapshot".to_owned(),
+        correction_kind: crate::game::myserver::protocol::pb::MovementCorrectionKind::Incremental
+            as i32,
+        reason_code: crate::game::myserver::protocol::pb::MovementCorrectionReason::Periodic as i32,
+        target_character_ids: Vec::new(),
+        reference_frame_id: frame_id,
+    })
+}
+
+pub(in crate::game) fn main_world_movement_snapshot_from_event(
+    event: &crate::game::myserver::MyServerEvent,
+) -> Option<Cow<'_, crate::game::myserver::protocol::pb::MovementSnapshotPush>> {
+    match event {
+        crate::game::myserver::MyServerEvent::MovementSnapshotPush(push) => {
+            Some(Cow::Borrowed(push))
+        }
+        crate::game::myserver::MyServerEvent::FrameBundlePush(push) => push
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| main_world_movement_snapshot_from_room(snapshot, push.frame_id))
+            .map(Cow::Owned),
+        crate::game::myserver::MyServerEvent::RoomStatePush(push) => push
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                main_world_movement_snapshot_from_room(snapshot, snapshot.current_frame_id)
+            })
+            .map(Cow::Owned),
+        _ => None,
+    }
+}
+
 impl MainWorldAuthorityContract {
     pub fn client_scene(self) -> SceneId {
         SceneId::from(self.client_scene_id)
@@ -390,6 +480,20 @@ mod tests {
             room_game_state_scene_id(r#"{"entities":[]}"#),
             Err(MainWorldContractError::MissingRoomGameStateScene)
         );
+    }
+
+    #[test]
+    fn frame_bundle_room_state_normalizes_to_movement_snapshot() {
+        let snapshot = crate::game::myserver::protocol::pb::RoomSnapshot {
+            room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+            game_state: r#"{"room_id":"main-world-public","scene_id":1,"entities":[{"entity_id":7,"character_id":"chr-a","scene_id":1,"x":2001.0,"y":1999.0,"dir_x":1.0,"dir_y":0.0,"moving":true,"last_input_frame":9}]}"#.to_owned(),
+            ..Default::default()
+        };
+        let push = main_world_movement_snapshot_from_room(&snapshot, 12).unwrap();
+        assert_eq!(push.frame_id, 12);
+        assert_eq!(push.entities[0].character_id, "chr-a");
+        assert!(push.entities[0].moving);
+        assert!(!push.full_sync);
     }
 
     #[test]
