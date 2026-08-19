@@ -11,6 +11,8 @@
     ],
     "bindings": [
       { "path": "main_world.character.summary", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "main_world.character.position", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "main_world.character.direction", "scope": "owner", "value_type": { "kind": "string" } },
       { "path": "main_world.connection.status", "scope": "owner", "value_type": { "kind": "string" } },
       { "path": "main_world.home.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "main_world.mail.disabled", "scope": "owner", "value_type": { "kind": "bool" } },

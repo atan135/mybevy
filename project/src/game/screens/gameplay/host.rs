@@ -13,7 +13,7 @@ use crate::framework::ui::document::UiDocumentRuntime;
 
 use crate::framework::{
     audio::AudioMixer,
-    fangyuan::{FangyuanDebugPanelModule, FangyuanDebugPanelState},
+    fangyuan::{FangyuanDebugPanelModule, FangyuanDebugPanelState, FangyuanPlayerPosition},
     scene::prelude::{SceneCommand, SceneExitRequest},
     ui::{
         core::{UiOwnerId, UiPanelCommand, binding::UiBindingValues, focus::UiFocusState},
@@ -47,7 +47,10 @@ use crate::game::{
     navigation::{AppUiMode, GameRouteCommand},
     scenes::{
         FangyuanHomeBlueprintCommand,
+        main_world_contract::main_world_server_position,
         main_world_entry::{MainWorldEntryIntent, MainWorldEntryPhase, MainWorldEntryState},
+        main_world_movement::MainWorldMovementIntent,
+        main_world_players::{MainWorldPlayer, MainWorldPlayerOwnership},
     },
     ui_ids::{
         OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_MAIN_WORLD,
@@ -294,6 +297,8 @@ impl Default for GameplayHudHostContract {
                     binding_schema([
                         ("main_world.connection.status", UiBindingType::String),
                         ("main_world.character.summary", UiBindingType::String),
+                        ("main_world.character.position", UiBindingType::String),
+                        ("main_world.character.direction", UiBindingType::String),
                         ("main_world.mail.disabled", UiBindingType::Bool),
                         ("main_world.mail.unread", UiBindingType::String),
                         (
@@ -1504,6 +1509,8 @@ pub(super) fn set_binding(
 pub(super) fn sync_main_world_hud_bindings(
     entry: Res<MainWorldEntryState>,
     session: Option<Res<MyServerSession>>,
+    movement_intent: Option<Res<MainWorldMovementIntent>>,
+    local_players: Query<(&MainWorldPlayer, &FangyuanPlayerPosition)>,
     mail: Option<Res<MailClientState>>,
     mixer: Option<Res<AudioMixer>>,
     i18n: Res<UiI18n>,
@@ -1527,6 +1534,19 @@ pub(super) fn sync_main_world_hud_bindings(
         .map_or(GameConnectionState::NotConnected, |session| {
             session.game_connection_state
         });
+    let character_name = session
+        .as_deref()
+        .and_then(|session| session.current_character.as_ref())
+        .filter(|character| entry.character_id.as_deref() == Some(character.character_id.as_str()))
+        .map(|character| character.name.as_str());
+    let local_position = local_players
+        .iter()
+        .find(|(player, _)| {
+            player.ownership == MainWorldPlayerOwnership::Local
+                && entry.character_id.as_deref() == Some(player.character_id.as_str())
+                && entry.scene_session_id.as_ref() == Some(&player.scene_session_id)
+        })
+        .map(|(_, position)| position.translation);
 
     for (path, value) in [
         (
@@ -1537,6 +1557,18 @@ pub(super) fn sync_main_world_hud_bindings(
             "main_world.character.summary",
             UiBindingValue::String(localized_main_world_character_summary(
                 entry.character_id.as_deref(),
+                character_name,
+                &i18n,
+            )),
+        ),
+        (
+            "main_world.character.position",
+            UiBindingValue::String(localized_main_world_position(local_position, &i18n)),
+        ),
+        (
+            "main_world.character.direction",
+            UiBindingValue::String(localized_main_world_direction(
+                movement_intent.as_deref(),
                 &i18n,
             )),
         ),
@@ -2222,14 +2254,44 @@ fn localized_main_world_connection_status(state: GameConnectionState, i18n: &UiI
     i18n.tr(&format!("main_world.connection.{key}"), fallback)
 }
 
-fn localized_main_world_character_summary(character_id: Option<&str>, i18n: &UiI18n) -> String {
+fn localized_main_world_character_summary(
+    character_id: Option<&str>,
+    character_name: Option<&str>,
+    i18n: &UiI18n,
+) -> String {
     let Some(character_id) = character_id.filter(|character_id| !character_id.is_empty()) else {
         return i18n.tr("main_world.character.unavailable", "Character unavailable");
     };
     let compact_id = character_id.chars().take(8).collect::<String>();
-    format!(
+    let summary = format!(
         "{} {compact_id}",
         i18n.tr("main_world.character", "Character")
+    );
+    character_name
+        .filter(|name| !name.trim().is_empty())
+        .map_or(summary.clone(), |name| format!("{summary} · {name}"))
+}
+
+fn localized_main_world_position(position: Option<Vec3>, i18n: &UiI18n) -> String {
+    let label = i18n.tr("main_world.position", "Position");
+    let Some(position) = position.and_then(|position| main_world_server_position(position).ok())
+    else {
+        return format!("{label}: --");
+    };
+    format!("{label}: ({:.2}, {:.2})", position.x, position.y)
+}
+
+fn localized_main_world_direction(
+    intent: Option<&MainWorldMovementIntent>,
+    i18n: &UiI18n,
+) -> String {
+    let label = i18n.tr("main_world.direction", "Direction");
+    let Some(intent) = intent.filter(|intent| intent.active && intent.direction.is_finite()) else {
+        return format!("{label}: {}", i18n.tr("main_world.direction.idle", "Idle"));
+    };
+    format!(
+        "{label}: ({:.2}, {:.2})",
+        intent.direction.x, intent.direction.y
     )
 }
 
@@ -3310,14 +3372,33 @@ mod tests {
             "zh_cn",
             &[
                 ("main_world.character", "角色"),
+                ("main_world.position", "坐标"),
+                ("main_world.direction", "方向"),
+                ("main_world.direction.idle", "静止"),
                 ("main_world.connection.authenticated", "游戏会话已连接"),
                 ("main_world.transition.loading", "正在加载主世界"),
             ],
         );
 
         assert_eq!(
-            localized_main_world_character_summary(Some("chr_27he_long"), &i18n),
-            "角色 chr_27he"
+            localized_main_world_character_summary(Some("chr_27he_long"), Some("测试角色"), &i18n),
+            "角色 chr_27he · 测试角色"
+        );
+        assert_eq!(
+            localized_main_world_position(Some(Vec3::new(1.25, 0.0, -2.5)), &i18n),
+            "坐标: (2001.25, 1997.50)"
+        );
+        assert_eq!(localized_main_world_direction(None, &i18n), "方向: 静止");
+        assert_eq!(
+            localized_main_world_direction(
+                Some(&MainWorldMovementIntent {
+                    direction: Vec2::new(0.6, -0.8),
+                    active: true,
+                    stop_sequence: 0,
+                }),
+                &i18n
+            ),
+            "方向: (0.60, -0.80)"
         );
         assert_eq!(
             localized_main_world_connection_status(GameConnectionState::Authenticated, &i18n),
@@ -4034,7 +4115,7 @@ mod tests {
         let hud = hud.document();
         let status = find_document_node(&hud.root, "main_world.status").unwrap();
         let buttons = find_document_node(&hud.root, "main_world.buttons").unwrap();
-        assert_eq!(status.children().len(), 3);
+        assert_eq!(status.children().len(), 5);
         assert_eq!(buttons.children().len(), 4);
 
         let mail = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE).unwrap();

@@ -6,6 +6,8 @@
   "bindings": {
     "main_world.connection.status": { "scope": "owner", "value_type": { "kind": "string" } },
     "main_world.character.summary": { "scope": "owner", "value_type": { "kind": "string" } },
+    "main_world.character.position": { "scope": "owner", "value_type": { "kind": "string" } },
+    "main_world.character.direction": { "scope": "owner", "value_type": { "kind": "string" } },
     "main_world.mail.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
     "main_world.mail.unread": { "scope": "owner", "value_type": { "kind": "string" } },
     "main_world.mail.unread_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
@@ -50,6 +52,8 @@
             "layout": { "direction": "column", "align_items": "start", "gap": { "px": 2.0 } },
             "children": [
               { "type": "text", "id": "main_world.character_summary", "content": { "binding_path": "main_world.character.summary", "fallback": "Character unavailable" }, "style": { "text_role": "caption" } },
+              { "type": "text", "id": "main_world.character_position", "content": { "binding_path": "main_world.character.position", "fallback": "Position: --" }, "style": { "text_role": "caption" } },
+              { "type": "text", "id": "main_world.character_direction", "content": { "binding_path": "main_world.character.direction", "fallback": "Direction: Idle" }, "style": { "text_role": "caption" } },
               { "type": "text", "id": "main_world.connection_status", "content": { "binding_path": "main_world.connection.status", "fallback": "Game services offline" }, "style": { "text_role": "caption" } },
               { "type": "text", "id": "main_world.transition_status", "content": { "binding_path": "main_world.transition.status", "fallback": "" }, "style": { "text_role": "caption" } }
             ]
