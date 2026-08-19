@@ -58,7 +58,9 @@ pub(in crate::game) const MAIN_WORLD_PREDICTION_HISTORY_CAPACITY: usize = 100;
 /// Maximum number of authority samples retained for any one remote character.
 /// At 20 Hz this gives interpolation a two-second bounded history window.
 pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY: usize = 40;
-pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES: u32 = 2;
+/// Keep one normal movement correction interval buffered so remote rendering
+/// can advance continuously between the server's three-frame samples.
+pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES: u32 = 3;
 pub(in crate::game) const MAIN_WORLD_REMOTE_MAX_SNAP_DISTANCE_METRES: f32 = 8.0;
 /// The room accepts inputs up to this many frames ahead of its current clock.
 /// Keep outbound input at the edge of that window so network latency cannot
@@ -347,6 +349,7 @@ pub(in crate::game) struct MainWorldRemoteInterpolationBuffer {
     snapshots: VecDeque<MainWorldRemoteSnapshot>,
     entity_id: Option<u64>,
     scene_id: Option<i32>,
+    presentation_frame: Option<f32>,
 }
 
 impl MainWorldRemoteInterpolationBuffer {
@@ -364,6 +367,7 @@ impl MainWorldRemoteInterpolationBuffer {
 
     fn reset_baseline(&mut self) {
         self.snapshots.clear();
+        self.presentation_frame = None;
     }
 
     fn set_identity(&mut self, entity_id: u64, scene_id: i32) -> bool {
@@ -402,7 +406,25 @@ impl MainWorldRemoteInterpolationBuffer {
         if self.snapshots.len() > MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY {
             self.snapshots.pop_front();
         }
+        if self.presentation_frame.is_none() {
+            self.presentation_frame = Some(snapshot.frame.0 as f32);
+        }
         true
+    }
+
+    fn advance_presentation_frame(&mut self, delta_seconds: f32) -> Option<f32> {
+        let oldest = self.snapshots.front()?.frame.0 as f32;
+        let latest = self.snapshots.back()?.frame.0;
+        let target = latest.saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES) as f32;
+        let current = self.presentation_frame.unwrap_or(latest as f32).max(oldest);
+        let advance = delta_seconds.max(0.0) * MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND as f32;
+        let next = if target > current {
+            (current + advance).min(target)
+        } else {
+            current
+        };
+        self.presentation_frame = Some(next);
+        Some(next)
     }
 }
 
@@ -1109,8 +1131,8 @@ fn consume_main_world_remote_authority_snapshots(
 }
 
 fn write_main_world_remote_visual(
-    fixed_time: Res<Time<Fixed>>,
-    runtime: Res<MainWorldMovementRuntime>,
+    time: Res<Time>,
+    mut runtime: ResMut<MainWorldMovementRuntime>,
     mut players: Query<(
         &MainWorldPlayer,
         &mut FangyuanPlayerPosition,
@@ -1121,25 +1143,19 @@ fn write_main_world_remote_visual(
     if !runtime.allows_local_movement() {
         return;
     }
-    let alpha = fixed_time.overstep_fraction();
     for (player, mut position, mut object_state, mut transform) in &mut players {
         if player.ownership != MainWorldPlayerOwnership::Remote
             || Some(&player.scene_session_id) != runtime.session_id.as_ref()
         {
             continue;
         }
-        let Some(buffer) = runtime.remote_interpolation.get(&player.character_id) else {
+        let Some(buffer) = runtime.remote_interpolation.get_mut(&player.character_id) else {
             continue;
         };
-        let snapshots = buffer.snapshots();
-        let Some(latest) = snapshots.back() else {
+        let Some(presentation_frame) = buffer.advance_presentation_frame(time.delta_secs()) else {
             continue;
         };
-        let target_frame = latest
-            .frame
-            .0
-            .saturating_sub(MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES);
-        let (a, b, factor) = remote_interpolation_sample(snapshots, target_frame, alpha);
+        let (a, b, factor) = remote_interpolation_sample(buffer.snapshots(), presentation_frame);
         let visual = a.position.lerp(b.position, factor);
         position.translation = visual;
         object_state.root_translation = visual;
@@ -1153,12 +1169,11 @@ fn write_main_world_remote_visual(
 
 fn remote_interpolation_sample(
     snapshots: &VecDeque<MainWorldRemoteSnapshot>,
-    target_frame: u32,
-    alpha: f32,
+    target_frame: f32,
 ) -> (MainWorldRemoteSnapshot, MainWorldRemoteSnapshot, f32) {
     let Some(after_index) = snapshots
         .iter()
-        .position(|sample| sample.frame.0 >= target_frame)
+        .position(|sample| sample.frame.0 as f32 >= target_frame)
     else {
         let latest = *snapshots.back().unwrap();
         return (latest, latest, 0.0);
@@ -1170,8 +1185,7 @@ fn remote_interpolation_sample(
     let before = snapshots[after_index - 1];
     let after = snapshots[after_index];
     let span = (after.frame.0 - before.frame.0).max(1) as f32;
-    let factor =
-        ((target_frame.saturating_sub(before.frame.0) as f32 + alpha) / span).clamp(0.0, 1.0);
+    let factor = ((target_frame - before.frame.0 as f32) / span).clamp(0.0, 1.0);
     (before, after, factor)
 }
 
@@ -1235,6 +1249,11 @@ fn reconcile_main_world_local_authority(
         runtime.pending_prediction.pop_front();
     }
 
+    // FixedUpdate consumes the pending queue independently from the render
+    // update that receives authority. Rebuild every input's replay state, but
+    // keep the predicted baseline at the last input already consumed by
+    // FixedUpdate. Otherwise the next tick would apply an older pending input
+    // and visibly move the local player backwards.
     let pending_frames: std::collections::HashSet<u32> = runtime
         .pending_prediction
         .iter()
@@ -1246,12 +1265,18 @@ fn reconcile_main_world_local_authority(
         direction: authority.direction,
         moving: authority.moving,
     };
+    let mut replayed_applied = replayed;
+    let mut replayed_previous_applied = replayed;
     for input in &mut runtime.unconfirmed_inputs {
         input.predicted_before = replayed;
         input.predicted_after =
             main_world_predicted_after_input(replayed, input.frame, input.direction);
         input.confirmed = false;
         replayed = input.predicted_after;
+        if !pending_frames.contains(&input.frame.0) {
+            replayed_previous_applied = replayed_applied;
+            replayed_applied = replayed;
+        }
     }
     runtime.pending_prediction = runtime
         .unconfirmed_inputs
@@ -1260,8 +1285,8 @@ fn reconcile_main_world_local_authority(
         .copied()
         .map(|input| MainWorldPendingPrediction { input })
         .collect();
-    runtime.predicted_previous = runtime.predicted;
-    runtime.predicted = replayed;
+    runtime.predicted_previous = replayed_previous_applied;
+    runtime.predicted = replayed_applied;
     if force_rebase {
         runtime.predicted_previous = runtime.predicted;
         runtime.clear_visual_correction();
@@ -1616,6 +1641,11 @@ fn predict_main_world_movement_fixed(
         return;
     }
     let Some(pending) = runtime.pending_prediction.pop_front() else {
+        // Fixed interpolation restarts from alpha zero after every fixed
+        // boundary. When no new authority input is ready, collapse the
+        // endpoints to the current state so presentation holds its position
+        // instead of replaying the previous movement step backwards.
+        runtime.predicted_previous = runtime.predicted;
         diagnostics.record_fixed_prediction(started_at);
         return;
     };
@@ -1664,6 +1694,7 @@ fn main_world_clamped_predicted_position(position: Vec3) -> Vec3 {
 /// Interpolates only the visual representation. The fixed-step predicted
 /// baseline remains untouched so later authority replay is deterministic.
 fn write_main_world_predicted_visual(
+    time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
     mut runtime: ResMut<MainWorldMovementRuntime>,
     mut local_players: Query<(
@@ -1676,7 +1707,7 @@ fn write_main_world_predicted_visual(
     if !runtime.allows_local_movement() {
         return;
     }
-    runtime.advance_visual_correction(fixed_time.delta_secs());
+    runtime.advance_visual_correction(time.delta_secs());
     let visual_position = runtime.visual_position(fixed_time.overstep_fraction());
     for (player, mut position, mut object_state, mut transform) in &mut local_players {
         if player.ownership == MainWorldPlayerOwnership::Local
@@ -2059,7 +2090,19 @@ mod tests {
         app.update();
         assert_eq!(
             app.world().get::<Transform>(remote).unwrap().translation,
-            Vec3::new(2.0, 0.0, 1.0)
+            Vec3::new(1.0, 0.0, 1.0)
+        );
+
+        app.world_mut()
+            .write_message(remote_snapshot_event(16, 2007.0, 2001.0, false, 0.0, 0.0));
+        advance_update(&mut app, Duration::from_millis(40));
+        let before_fixed_boundary = app.world().get::<Transform>(remote).unwrap().translation;
+        advance_update(&mut app, Duration::from_millis(20));
+        let after_fixed_boundary = app.world().get::<Transform>(remote).unwrap().translation;
+        assert!(before_fixed_boundary.x > 1.0);
+        assert!(
+            after_fixed_boundary.x > before_fixed_boundary.x,
+            "remote presentation must not rewind when fixed overstep resets: before={before_fixed_boundary:?}, after={after_fixed_boundary:?}"
         );
 
         app.world_mut()
@@ -2552,7 +2595,7 @@ mod tests {
             MainWorldPredictedFrame(43)
         );
         assert_eq!(runtime.pending_prediction.len(), 1);
-        assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(43));
+        assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(42));
         let baseline = runtime.authority_baseline.unwrap();
 
         app.world_mut().write_message(local_snapshot(
@@ -2569,6 +2612,179 @@ mod tests {
         let runtime = app.world().resource::<MainWorldMovementRuntime>();
         assert_eq!(runtime.authority_baseline.unwrap(), baseline);
         assert_eq!(runtime.unconfirmed_inputs.len(), 1);
+
+        advance_update(&mut app, Duration::from_millis(50));
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(43));
+        assert_eq!(runtime.pending_prediction.len(), 0);
+    }
+
+    #[test]
+    fn authority_replay_waits_for_fixed_ticks_before_applying_pending_inputs() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let base = predicted_state(41, Vec3::ZERO, Vec2::X, true);
+        let first_after =
+            main_world_predicted_after_input(base, MainWorldPredictedFrame(42), Vec2::X);
+        let first = MainWorldUnconfirmedInput {
+            frame: MainWorldPredictedFrame(42),
+            direction: Vec2::X,
+            predicted_before: base,
+            predicted_after: first_after,
+            confirmed: false,
+        };
+        let second_after =
+            main_world_predicted_after_input(first_after, MainWorldPredictedFrame(43), Vec2::X);
+        let second = MainWorldUnconfirmedInput {
+            frame: MainWorldPredictedFrame(43),
+            direction: Vec2::X,
+            predicted_before: first_after,
+            predicted_after: second_after,
+            confirmed: false,
+        };
+        let third_after =
+            main_world_predicted_after_input(second_after, MainWorldPredictedFrame(44), Vec2::X);
+        let third = MainWorldUnconfirmedInput {
+            frame: MainWorldPredictedFrame(44),
+            direction: Vec2::X,
+            predicted_before: second_after,
+            predicted_after: third_after,
+            confirmed: false,
+        };
+        {
+            let mut runtime = app.world_mut().resource_mut::<MainWorldMovementRuntime>();
+            runtime.predicted_previous = base;
+            runtime.predicted = first_after;
+            runtime.push_unconfirmed_input(first);
+            runtime.push_unconfirmed_input(second);
+            runtime.push_unconfirmed_input(third);
+            runtime.queue_prediction(second);
+            runtime.queue_prediction(third);
+
+            let correction = reconcile_main_world_local_authority(
+                &mut runtime,
+                MainWorldLocalAuthoritySnapshot {
+                    frame: MainWorldAuthorityFrame(50),
+                    confirmed_frame: MainWorldConfirmedFrame(42),
+                    server_entity_id: 7,
+                    scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                    position: Vec3::new(0.21, 0.0, 0.0),
+                    direction: Vec2::X,
+                    moving: true,
+                    force_rebase: false,
+                },
+                0.5,
+            );
+            assert_eq!(correction, MainWorldAuthorityCorrection::Smoothed);
+            assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(42));
+            assert!((runtime.predicted.position.x - 0.21).abs() < 0.000_01);
+            assert_eq!(runtime.pending_prediction.len(), 2);
+            assert!(
+                (runtime.pending_prediction[0]
+                    .input
+                    .predicted_after
+                    .position
+                    .x
+                    - 0.41)
+                    .abs()
+                    < 0.000_01
+            );
+            assert!(
+                (runtime.pending_prediction[1]
+                    .input
+                    .predicted_after
+                    .position
+                    .x
+                    - 0.61)
+                    .abs()
+                    < 0.000_01
+            );
+        }
+
+        advance_update(&mut app, Duration::from_millis(50));
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(43));
+        assert!((runtime.predicted.position.x - 0.41).abs() < 0.000_01);
+
+        advance_update(&mut app, Duration::from_millis(50));
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(44));
+        assert!((runtime.predicted.position.x - 0.61).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn authority_replay_preserves_applied_fixed_step_interpolation_endpoints() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let base = predicted_state(40, Vec3::ZERO, Vec2::X, true);
+        let confirmed_after =
+            main_world_predicted_after_input(base, MainWorldPredictedFrame(41), Vec2::X);
+        let confirmed = MainWorldUnconfirmedInput {
+            frame: MainWorldPredictedFrame(41),
+            direction: Vec2::X,
+            predicted_before: base,
+            predicted_after: confirmed_after,
+            confirmed: false,
+        };
+        let applied_after =
+            main_world_predicted_after_input(confirmed_after, MainWorldPredictedFrame(42), Vec2::X);
+        let applied = MainWorldUnconfirmedInput {
+            frame: MainWorldPredictedFrame(42),
+            direction: Vec2::X,
+            predicted_before: confirmed_after,
+            predicted_after: applied_after,
+            confirmed: false,
+        };
+
+        let mut runtime = app.world_mut().resource_mut::<MainWorldMovementRuntime>();
+        runtime.predicted_previous = confirmed_after;
+        runtime.predicted = applied_after;
+        runtime.push_unconfirmed_input(confirmed);
+        runtime.push_unconfirmed_input(applied);
+
+        let correction = reconcile_main_world_local_authority(
+            &mut runtime,
+            MainWorldLocalAuthoritySnapshot {
+                frame: MainWorldAuthorityFrame(50),
+                confirmed_frame: MainWorldConfirmedFrame(41),
+                server_entity_id: 7,
+                scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                position: confirmed_after.position + Vec3::new(0.000_1, 0.0, 0.0),
+                direction: Vec2::X,
+                moving: true,
+                force_rebase: false,
+            },
+            0.1,
+        );
+
+        assert_eq!(correction, MainWorldAuthorityCorrection::Smoothed);
+        assert_eq!(
+            runtime.predicted_previous.frame,
+            MainWorldPredictedFrame(41)
+        );
+        assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(42));
+        assert!(runtime.visual_correction_offset.length() < 0.001);
+        assert!(
+            (runtime.visual_correction_offset.x + 0.000_1).abs() < 0.000_01,
+            "visual correction must reflect only the authority error: {:?}",
+            runtime.visual_correction_offset
+        );
+    }
+
+    #[test]
+    fn local_visual_correction_decays_by_render_delta() {
+        let (mut app, _) = movement_app(active_entry(7, "main-world-7"));
+        app.update();
+        {
+            let mut runtime = app.world_mut().resource_mut::<MainWorldMovementRuntime>();
+            runtime.visual_correction_offset = Vec3::X;
+            runtime.visual_correction_remaining_seconds = MAIN_WORLD_SMALL_CORRECTION_SECONDS;
+        }
+
+        advance_update(&mut app, Duration::from_millis(10));
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert!((runtime.visual_correction_remaining_seconds - 0.09).abs() < 0.000_01);
+        assert!((runtime.visual_correction_offset.x - 0.9).abs() < 0.000_01);
     }
 
     #[test]
@@ -2971,6 +3187,26 @@ mod tests {
         assert_eq!(runtime.predicted.frame, MainWorldPredictedFrame(42));
         assert_eq!(runtime.predicted.position, Vec3::new(1.25, 0.0, -2.7));
         assert_eq!(runtime.unconfirmed_inputs.len(), 1);
+    }
+
+    #[test]
+    fn empty_fixed_tick_holds_current_prediction_without_visual_rewind() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let previous = predicted_state(41, Vec3::ZERO, Vec2::X, true);
+        let current = predicted_state(42, Vec3::new(0.2, 0.0, 0.0), Vec2::X, true);
+        {
+            let mut runtime = app.world_mut().resource_mut::<MainWorldMovementRuntime>();
+            runtime.predicted_previous = previous;
+            runtime.predicted = current;
+            runtime.pending_prediction.clear();
+        }
+
+        advance_update(&mut app, Duration::from_millis(50));
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(runtime.predicted_previous, current);
+        assert_eq!(runtime.predicted, current);
+        assert_eq!(runtime.visual_position(0.0), current.position);
     }
 
     #[test]
