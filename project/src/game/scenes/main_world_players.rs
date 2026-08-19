@@ -17,7 +17,8 @@ use crate::game::myserver::MyServerEvent;
 use crate::game::myserver::protocol::pb;
 
 use super::main_world_contract::{
-    MAIN_WORLD_SERVER_SCENE_ID, main_world_movement_snapshot_from_event,
+    MAIN_WORLD_SERVER_SCENE_ID, main_world_movement_snapshot_contains_complete_room_entities,
+    main_world_movement_snapshot_from_event,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -599,7 +600,7 @@ pub(in crate::game) fn apply_main_world_snapshot(
             .register(commands, registration)
             .map_err(MainWorldPlayerSnapshotError::Registration)?;
     }
-    if push.full_sync {
+    if push.full_sync || main_world_movement_snapshot_contains_complete_room_entities(push) {
         registry.remove_missing(commands, &visible);
     }
     Ok(())
@@ -939,6 +940,69 @@ mod tests {
         apply_main_world_snapshot(&mut registry, &mut world.commands(), &full, true, true).unwrap();
         world.flush();
         assert_eq!(registry.len(), 1);
+        assert!(registry.get("remote").is_none());
+    }
+
+    #[test]
+    fn complete_room_snapshot_removes_missing_remote_player_without_full_sync() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
+        let initial = pb::MovementSnapshotPush {
+            room_id: super::super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+            frame_id: 1,
+            entities: vec![
+                pb::EntityTransform {
+                    entity_id: 1,
+                    character_id: "local".into(),
+                    scene_id: 1,
+                    x: 2001.0,
+                    y: 2001.0,
+                    ..Default::default()
+                },
+                pb::EntityTransform {
+                    entity_id: 2,
+                    character_id: "remote".into(),
+                    scene_id: 1,
+                    x: 2002.0,
+                    y: 2002.0,
+                    ..Default::default()
+                },
+            ],
+            full_sync: true,
+            ..Default::default()
+        };
+        apply_main_world_snapshot(&mut registry, &mut world.commands(), &initial, true, true)
+            .unwrap();
+        world.flush();
+        assert_eq!(registry.len(), 2);
+
+        let room_snapshot = pb::MovementSnapshotPush {
+            frame_id: 2,
+            full_sync: false,
+            reason: super::super::main_world_contract::MAIN_WORLD_ROOM_SNAPSHOT_REASON.to_owned(),
+            entities: vec![pb::EntityTransform {
+                entity_id: 1,
+                character_id: "local".into(),
+                scene_id: 1,
+                x: 2003.0,
+                y: 2003.0,
+                ..Default::default()
+            }],
+            ..initial
+        };
+        apply_main_world_snapshot(
+            &mut registry,
+            &mut world.commands(),
+            &room_snapshot,
+            true,
+            true,
+        )
+        .unwrap();
+        world.flush();
+
+        assert_eq!(registry.len(), 1);
+        assert!(registry.get("local").is_some());
         assert!(registry.get("remote").is_none());
     }
 

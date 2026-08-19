@@ -12,6 +12,8 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::fmt;
 
+use crate::game::myserver::protocol::pb;
+
 /// Product-facing logical identifier for the fixed public main world.
 pub(in crate::game) const MAIN_WORLD_LOGICAL_ID: &str = "main_world";
 
@@ -32,6 +34,11 @@ pub(in crate::game) const MAIN_WORLD_PUBLIC_ROOM_ID: &str = "main-world-public";
 
 /// Existing MyServer room policy used by the public main city.
 pub(in crate::game) const MAIN_WORLD_ROOM_POLICY_ID: &str = "movement_demo";
+
+/// Synthetic reason assigned to room/frame snapshots normalized into
+/// `MovementSnapshotPush`. These snapshots contain the complete room entity
+/// set, but they are not movement corrections.
+pub(in crate::game) const MAIN_WORLD_ROOM_SNAPSHOT_REASON: &str = "frame_bundle_snapshot";
 
 /// The authoritative world is a non-negative, 4000 metre square. Its upper
 /// edge is exclusive so the client and server share exactly one boundary rule.
@@ -277,9 +284,9 @@ struct MainWorldRoomMovementEntity {
 /// Converts the complete `movement_demo` state embedded in a room/frame
 /// snapshot into the same shape consumed by the live movement pipeline.
 pub(in crate::game) fn main_world_movement_snapshot_from_room(
-    snapshot: &crate::game::myserver::protocol::pb::RoomSnapshot,
+    snapshot: &pb::RoomSnapshot,
     frame_id: u32,
-) -> Option<crate::game::myserver::protocol::pb::MovementSnapshotPush> {
+) -> Option<pb::MovementSnapshotPush> {
     if snapshot.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
         return None;
     }
@@ -290,39 +297,42 @@ pub(in crate::game) fn main_world_movement_snapshot_from_room(
     let entities = state
         .entities
         .into_iter()
-        .map(
-            |entity| crate::game::myserver::protocol::pb::EntityTransform {
-                entity_id: entity.entity_id,
-                character_id: entity.character_id,
-                scene_id: entity.scene_id,
-                x: entity.x,
-                y: entity.y,
-                dir_x: entity.dir_x,
-                dir_y: entity.dir_y,
-                moving: entity.moving,
-                last_input_frame: entity.last_input_frame,
-            },
-        )
+        .map(|entity| pb::EntityTransform {
+            entity_id: entity.entity_id,
+            character_id: entity.character_id,
+            scene_id: entity.scene_id,
+            x: entity.x,
+            y: entity.y,
+            dir_x: entity.dir_x,
+            dir_y: entity.dir_y,
+            moving: entity.moving,
+            last_input_frame: entity.last_input_frame,
+        })
         .collect();
-    Some(crate::game::myserver::protocol::pb::MovementSnapshotPush {
+    Some(pb::MovementSnapshotPush {
         room_id: snapshot.room_id.clone(),
         frame_id,
         entities,
         // The embedded state contains every entity, but it is a periodic sample
         // rather than a correction that should reset interpolation/prediction.
         full_sync: false,
-        reason: "frame_bundle_snapshot".to_owned(),
-        correction_kind: crate::game::myserver::protocol::pb::MovementCorrectionKind::Incremental
-            as i32,
-        reason_code: crate::game::myserver::protocol::pb::MovementCorrectionReason::Periodic as i32,
+        reason: MAIN_WORLD_ROOM_SNAPSHOT_REASON.to_owned(),
+        correction_kind: pb::MovementCorrectionKind::Incremental as i32,
+        reason_code: pb::MovementCorrectionReason::Periodic as i32,
         target_character_ids: Vec::new(),
         reference_frame_id: frame_id,
     })
 }
 
+pub(in crate::game) fn main_world_movement_snapshot_contains_complete_room_entities(
+    push: &pb::MovementSnapshotPush,
+) -> bool {
+    push.reason == MAIN_WORLD_ROOM_SNAPSHOT_REASON
+}
+
 pub(in crate::game) fn main_world_movement_snapshot_from_event(
     event: &crate::game::myserver::MyServerEvent,
-) -> Option<Cow<'_, crate::game::myserver::protocol::pb::MovementSnapshotPush>> {
+) -> Option<Cow<'_, pb::MovementSnapshotPush>> {
     match event {
         crate::game::myserver::MyServerEvent::MovementSnapshotPush(push) => {
             Some(Cow::Borrowed(push))
@@ -494,6 +504,8 @@ mod tests {
         assert_eq!(push.entities[0].character_id, "chr-a");
         assert!(push.entities[0].moving);
         assert!(!push.full_sync);
+        assert_eq!(push.reason, MAIN_WORLD_ROOM_SNAPSHOT_REASON);
+        assert!(main_world_movement_snapshot_contains_complete_room_entities(&push));
     }
 
     #[test]

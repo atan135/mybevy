@@ -39,6 +39,7 @@ use crate::{
                 MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES, MainWorldAuthorityFrame,
                 MainWorldConfirmedFrame, MainWorldMoveInputKind, MainWorldPredictedFrame,
                 MainWorldRenderFrame, main_world_bevy_position_from_authority,
+                main_world_movement_snapshot_contains_complete_room_entities,
                 main_world_movement_snapshot_from_event, main_world_normalized_direction,
                 main_world_server_position,
             },
@@ -1110,6 +1111,8 @@ fn consume_main_world_remote_authority_snapshots(
                 pb_correction_kind(push.correction_kind),
                 Some(pb::MovementCorrectionKind::Recovery)
             );
+        let complete_room_entities =
+            main_world_movement_snapshot_contains_complete_room_entities(&push);
         if recovery_sync {
             runtime.remote_interpolation.clear();
         }
@@ -1154,7 +1157,7 @@ fn consume_main_world_remote_authority_snapshots(
                 moving: entity.moving,
             });
         }
-        if push.full_sync {
+        if push.full_sync || complete_room_entities {
             let visible: std::collections::HashSet<_> = push
                 .entities
                 .iter()
@@ -2560,6 +2563,65 @@ mod tests {
         assert!(runtime.remote_interpolation.contains_key("chr-remote"));
         assert!(!runtime.remote_interpolation.contains_key("chr-other"));
         assert_eq!(runtime.remote_interpolation["chr-remote"].len(), 1);
+    }
+
+    #[test]
+    fn complete_room_snapshot_removes_missing_remote_interpolation_without_rebase() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        for (index, character_id) in ["chr-remote", "chr-other"].iter().enumerate() {
+            app.world_mut().write_message(remote_snapshot_push(
+                50 + index as u32,
+                vec![(
+                    character_id,
+                    100 + index as u64,
+                    MAIN_WORLD_SERVER_SCENE_ID,
+                    2001.0 + index as f32,
+                    2001.0,
+                    true,
+                    1.0,
+                    0.0,
+                )],
+                false,
+                pb::MovementCorrectionKind::Incremental,
+            ));
+            app.update();
+        }
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .remote_interpolation
+                .len(),
+            2
+        );
+
+        let MyServerEvent::MovementSnapshotPush(mut room_snapshot) = remote_snapshot_push(
+            52,
+            vec![(
+                "chr-remote",
+                100,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2003.0,
+                2001.0,
+                true,
+                1.0,
+                0.0,
+            )],
+            false,
+            pb::MovementCorrectionKind::Incremental,
+        ) else {
+            panic!();
+        };
+        room_snapshot.reason =
+            super::super::main_world_contract::MAIN_WORLD_ROOM_SNAPSHOT_REASON.to_owned();
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(room_snapshot));
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert!(runtime.remote_interpolation.contains_key("chr-remote"));
+        assert!(!runtime.remote_interpolation.contains_key("chr-other"));
+        assert_eq!(runtime.remote_interpolation["chr-remote"].len(), 2);
     }
 
     #[test]
