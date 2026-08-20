@@ -4,6 +4,7 @@
 //! loading and RoomReady remain separate later-stage responsibilities.
 
 use bevy::{input::keyboard::Key, prelude::*};
+use std::time::Duration;
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 use crate::framework::ui::audit::UiAuditConfig;
@@ -30,6 +31,7 @@ use crate::{
         navigation::{AppUiMode, GameRouteCommand},
         scenes::{
             FANGYUAN_HOME_SCENE_ID,
+            main_world::MainWorldContentEvent,
             main_world_contract::{
                 MAIN_WORLD_AUTHORITY_CONTRACT,
                 main_world_bevy_position as contract_main_world_bevy_position,
@@ -53,10 +55,12 @@ pub(in crate::game) enum MainWorldEntryUpdateSet {
 impl Plugin for MainWorldEntryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MainWorldEntryState>()
+            .init_resource::<MainWorldEntryWatchdog>()
             .init_resource::<MainWorldEntryDebugConfig>()
             .add_message::<MainWorldEntryIntent>()
             .add_message::<MainWorldEntrySignal>()
             .add_message::<MainWorldEntryEvent>()
+            .add_message::<MainWorldContentEvent>()
             .add_message::<DeclarativeScreenHostCommand>()
             .add_message::<UiPanelCommand>()
             .add_message::<UiDocumentRuntimeCommand>()
@@ -78,6 +82,9 @@ impl Plugin for MainWorldEntryPlugin {
                     consume_main_world_authority_events,
                     dispatch_authority_confirmed_scene_enter,
                     consume_main_world_scene_ready,
+                    consume_main_world_content_events,
+                    watchdog_main_world_entry_progress,
+                    route_failed_authority_entry,
                     handle_entry_signals,
                     trigger_debug_auto_exit_after_recovery,
                 )
@@ -97,6 +104,8 @@ const ENV_MAIN_WORLD_AUTO_EXIT: &str = "MYBEVY_MAIN_WORLD_AUTO_EXIT";
 const ENV_MAIN_WORLD_AUTO_EXIT_AFTER_RECOVERY: &str = "MYBEVY_MAIN_WORLD_AUTO_EXIT_AFTER_RECOVERY";
 const ENV_MAIN_WORLD_ACCEPTANCE_METRICS: &str = "MYBEVY_MAIN_WORLD_ACCEPTANCE_METRICS";
 const MAIN_WORLD_ACCEPTANCE_SAMPLE_SECONDS: f64 = 5.0;
+const MAIN_WORLD_ENTRY_PROGRESS_TIMEOUT: Duration = Duration::from_secs(20);
+const MAIN_WORLD_EXIT_PROGRESS_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 const MAIN_WORLD_HUD_AUDIT_FIXTURE_ID: &str = "stage16_main_world_hud";
@@ -226,6 +235,51 @@ pub(in crate::game) enum MainWorldEntryPhase {
     Failed,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MainWorldEntryWatchdogKey {
+    generation: u64,
+    phase: MainWorldEntryPhase,
+    join_attempt: Option<u64>,
+    join_acknowledged: bool,
+    has_authoritative_scene: bool,
+    has_scene_session: bool,
+    scene_ready: bool,
+    scene_content_ready: bool,
+    room_ready_requested: bool,
+    reconnect_attempt: Option<u64>,
+    reconnect_room_acknowledged: bool,
+    recovery_snapshot_received: bool,
+    exit_scene_settled: bool,
+    exit_authority_settled: bool,
+}
+
+impl MainWorldEntryWatchdogKey {
+    fn from_state(state: &MainWorldEntryState) -> Self {
+        Self {
+            generation: state.generation,
+            phase: state.phase,
+            join_attempt: state.join_attempt,
+            join_acknowledged: state.join_acknowledged,
+            has_authoritative_scene: state.authoritative_scene_id.is_some(),
+            has_scene_session: state.scene_session_id.is_some(),
+            scene_ready: state.scene_ready,
+            scene_content_ready: state.scene_content_ready,
+            room_ready_requested: state.room_ready_requested,
+            reconnect_attempt: state.reconnect_attempt,
+            reconnect_room_acknowledged: state.reconnect_room_acknowledged,
+            recovery_snapshot_received: state.recovery_snapshot_received,
+            exit_scene_settled: state.exit_scene_settled,
+            exit_authority_settled: state.exit_authority_settled,
+        }
+    }
+}
+
+#[derive(Debug, Default, Resource)]
+struct MainWorldEntryWatchdog {
+    key: Option<MainWorldEntryWatchdogKey>,
+    elapsed: Duration,
+}
+
 impl MainWorldEntryPhase {
     pub const fn blocks_lobby_input(self) -> bool {
         matches!(
@@ -255,20 +309,31 @@ pub(in crate::game) struct MainWorldEntryState {
     pub authoritative_scene_id: Option<i32>,
     pub position: Option<Vec3>,
     pub snapshot_generation: u32,
+    pub scene_content_ready: bool,
     pub join_acknowledged: bool,
+    pub authority_attempt: u64,
+    pub join_attempt: Option<u64>,
+    pub join_dispatched: bool,
     pub room_start_requested: bool,
     pub scene_session_id: Option<SceneSessionId>,
     pub scene_ready: bool,
     pub room_ready_requested: bool,
     pub room_ready_acknowledged: bool,
+    pub ready_attempt: Option<u64>,
     pub input_frozen: bool,
     pub room_membership: MainWorldRoomMembership,
     pub last_departure: MainWorldRoomDeparture,
     pub exit_destination: Option<MainWorldExitDestination>,
+    pub exit_scene_settled: bool,
+    pub exit_authority_settled: bool,
+    pub leave_attempt: Option<u64>,
     pub reconnect_requested: bool,
     pub reconnect_room_acknowledged: bool,
+    pub reconnect_attempt: Option<u64>,
+    pub recovery_snapshot_received: bool,
     pub home_session_id: Option<SceneSessionId>,
     pub failure: Option<MainWorldEntryFailure>,
+    pub failure_routed: bool,
 }
 
 impl Default for MainWorldEntryState {
@@ -284,20 +349,31 @@ impl Default for MainWorldEntryState {
             authoritative_scene_id: None,
             position: None,
             snapshot_generation: 0,
+            scene_content_ready: false,
             join_acknowledged: false,
+            authority_attempt: 0,
+            join_attempt: None,
+            join_dispatched: false,
             room_start_requested: false,
             scene_session_id: None,
             scene_ready: false,
             room_ready_requested: false,
             room_ready_acknowledged: false,
+            ready_attempt: None,
             input_frozen: true,
             room_membership: MainWorldRoomMembership::None,
             last_departure: MainWorldRoomDeparture::None,
             exit_destination: None,
+            exit_scene_settled: false,
+            exit_authority_settled: false,
+            leave_attempt: None,
             reconnect_requested: false,
             reconnect_room_acknowledged: false,
+            reconnect_attempt: None,
+            recovery_snapshot_received: false,
             home_session_id: None,
             failure: None,
+            failure_routed: false,
         }
     }
 }
@@ -339,23 +415,33 @@ impl MainWorldEntryState {
         self.character_id = Some(character_id);
         self.authority_transport = authority_transport;
         self.failure = None;
+        self.failure_routed = false;
         self.room_id = None;
         self.policy_id = None;
         self.authoritative_scene_id = None;
         self.position = None;
         self.snapshot_generation = 0;
+        self.scene_content_ready = false;
         self.join_acknowledged = false;
+        self.join_attempt = None;
+        self.join_dispatched = false;
         self.room_start_requested = false;
         self.scene_session_id = None;
         self.scene_ready = false;
         self.room_ready_requested = false;
         self.room_ready_acknowledged = false;
+        self.ready_attempt = None;
         self.input_frozen = true;
         self.room_membership = MainWorldRoomMembership::None;
         self.last_departure = MainWorldRoomDeparture::None;
         self.exit_destination = None;
+        self.exit_scene_settled = false;
+        self.exit_authority_settled = false;
+        self.leave_attempt = None;
         self.reconnect_requested = false;
         self.reconnect_room_acknowledged = false;
+        self.reconnect_attempt = None;
+        self.recovery_snapshot_received = false;
         self.home_session_id = None;
     }
 
@@ -365,22 +451,32 @@ impl MainWorldEntryState {
         self.character_id = None;
         self.authority_transport = None;
         self.failure = None;
+        self.failure_routed = false;
         self.room_id = None;
         self.policy_id = None;
         self.authoritative_scene_id = None;
         self.position = None;
         self.snapshot_generation = 0;
+        self.scene_content_ready = false;
         self.join_acknowledged = false;
+        self.join_attempt = None;
+        self.join_dispatched = false;
         self.room_start_requested = false;
         self.scene_session_id = None;
         self.scene_ready = false;
         self.room_ready_requested = false;
         self.room_ready_acknowledged = false;
+        self.ready_attempt = None;
         self.input_frozen = true;
         self.room_membership = MainWorldRoomMembership::None;
         self.exit_destination = None;
+        self.exit_scene_settled = false;
+        self.exit_authority_settled = false;
+        self.leave_attempt = None;
         self.reconnect_requested = false;
         self.reconnect_room_acknowledged = false;
+        self.reconnect_attempt = None;
+        self.recovery_snapshot_received = false;
         self.home_session_id = None;
     }
 
@@ -391,6 +487,12 @@ impl MainWorldEntryState {
         self.character_id = None;
         self.authority_transport = None;
         self.failure = Some(failure);
+        self.failure_routed = false;
+    }
+
+    fn begin_authority_attempt(&mut self) -> u64 {
+        self.authority_attempt = self.authority_attempt.wrapping_add(1).max(1);
+        self.authority_attempt
     }
 }
 
@@ -443,6 +545,7 @@ pub(in crate::game) enum MainWorldEntrySignal {
 pub(in crate::game) enum MainWorldEntryEvent {
     JoinRequested {
         generation: u64,
+        attempt: u64,
         room_id: &'static str,
         policy_id: &'static str,
         character_id: String,
@@ -615,7 +718,12 @@ fn handle_entry_intents(
     let mut accepted_enter = false;
     for intent in intents.read() {
         if matches!(intent, MainWorldEntryIntent::Enter) {
-            if accepted_enter || state.is_in_flight() {
+            if accepted_enter
+                || !matches!(
+                    state.phase,
+                    MainWorldEntryPhase::LobbyIdle | MainWorldEntryPhase::Failed
+                )
+            {
                 continue;
             }
             accepted_enter = true;
@@ -634,6 +742,8 @@ fn handle_entry_intents(
                 continue;
             }
             state.phase = MainWorldEntryPhase::JoiningRoom;
+            let attempt = state.begin_authority_attempt();
+            state.join_attempt = Some(attempt);
             warn!(
                 generation = state.generation,
                 character_id = %state.character_id.as_deref().unwrap_or_default(),
@@ -641,6 +751,7 @@ fn handle_entry_intents(
             );
             events.write(MainWorldEntryEvent::JoinRequested {
                 generation: state.generation,
+                attempt,
                 room_id: MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
                 policy_id: MAIN_WORLD_AUTHORITY_CONTRACT.policy_id,
                 character_id: state.character_id.clone().unwrap_or_default(),
@@ -704,6 +815,18 @@ fn handle_entry_intents(
                     &mut route_commands,
                 );
             }
+            MainWorldEntryIntent::EnvironmentChanged | MainWorldEntryIntent::CharacterChanged
+                if state.owns_authority_session() =>
+            {
+                begin_exit(
+                    &mut state,
+                    MainWorldExitDestination::Lobby,
+                    &session,
+                    &mut myserver_commands,
+                    &mut scene_commands,
+                    &mut route_commands,
+                );
+            }
             MainWorldEntryIntent::LoggedOut | MainWorldEntryIntent::ApplicationExit
                 if state.owns_authority_session() =>
             {
@@ -726,6 +849,9 @@ fn abort_invalidated_entry(
     session: Res<MyServerSession>,
     mut state: ResMut<MainWorldEntryState>,
     mut events: MessageWriter<MainWorldEntryEvent>,
+    mut myserver_commands: MessageWriter<MyServerCommand>,
+    mut scene_commands: MessageWriter<SceneCommand>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
 ) {
     if matches!(
         state.phase,
@@ -738,29 +864,46 @@ fn abort_invalidated_entry(
         || state.character_id.as_deref() != session.character_id.as_deref()
         || !matches!(session.account_login_state, AccountLoginState::LoggedIn))
     {
-        abort_entry(
+        abort_invalidated_entry_with_cleanup(
             &mut state,
+            &session,
             &mut events,
-            MainWorldEntryAbortReason::PreconditionsInvalidated,
+            &mut myserver_commands,
+            &mut scene_commands,
+            &mut route_commands,
         );
     }
 }
 
 fn dispatch_main_world_join_requests(
     mut entry_events: MessageReader<MainWorldEntryEvent>,
+    mut state: ResMut<MainWorldEntryState>,
     mut commands: MessageWriter<MyServerCommand>,
 ) {
     for event in entry_events.read() {
         let MainWorldEntryEvent::JoinRequested {
-            room_id, policy_id, ..
+            generation,
+            attempt,
+            room_id,
+            policy_id,
+            ..
         } = event
         else {
             continue;
         };
-        commands.write(MyServerCommand::JoinRoom {
+        if state.phase != MainWorldEntryPhase::JoiningRoom
+            || state.generation != *generation
+            || state.join_acknowledged
+            || state.join_attempt != Some(*attempt)
+        {
+            continue;
+        }
+        commands.write(MyServerCommand::JoinRoomScoped {
             room_id: (*room_id).to_owned(),
             policy_id: (*policy_id).to_owned(),
+            correlation: *attempt,
         });
+        state.join_dispatched = true;
     }
 }
 
@@ -780,21 +923,95 @@ fn consume_main_world_authority_events(
     for event in myserver_events.read() {
         if state.phase == MainWorldEntryPhase::Exiting {
             match event {
-                MyServerEvent::RoomLeft(response)
-                    if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
+                MyServerEvent::RoomJoinedScoped {
+                    correlation,
+                    response,
+                    ..
+                } if state.join_attempt == Some(*correlation)
+                    && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
                 {
+                    state.join_attempt = None;
+                    state.join_dispatched = false;
+                    if response.ok {
+                        commands.write(MyServerCommand::AdoptRoomMembership {
+                            room_id: response.room_id.clone(),
+                        });
+                        state.room_id = Some(response.room_id.clone());
+                        state.room_membership = MainWorldRoomMembership::Joined;
+                        request_main_world_leave_for_exit(&mut state, &session, &mut commands);
+                    } else {
+                        state.room_membership = MainWorldRoomMembership::None;
+                        state.exit_authority_settled = true;
+                    }
+                    complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
+                }
+                MyServerEvent::ScopedRequestFailed {
+                    message_type: crate::game::myserver::protocol::MessageType::RoomJoinReq,
+                    correlation,
+                    ..
+                } if state.join_attempt == Some(*correlation) => {
+                    state.join_attempt = None;
+                    state.join_dispatched = false;
+                    state.room_membership = MainWorldRoomMembership::None;
+                    state.exit_authority_settled = true;
+                    complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
+                }
+                MyServerEvent::RoomLeftScoped {
+                    correlation,
+                    response,
+                    ..
+                } if state.leave_attempt == Some(*correlation)
+                    && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
+                {
+                    state.leave_attempt = None;
                     state.last_departure = if response.ok {
                         MainWorldRoomDeparture::Confirmed
                     } else {
                         MainWorldRoomDeparture::Unknown
                     };
-                    state.room_membership = MainWorldRoomMembership::None;
+                    state.room_membership = if response.ok {
+                        commands.write(MyServerCommand::ClearRoomMembership {
+                            room_id: response.room_id.clone(),
+                        });
+                        MainWorldRoomMembership::None
+                    } else {
+                        MainWorldRoomMembership::Unknown
+                    };
+                    state.exit_authority_settled = true;
+                    complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
                 }
-                MyServerEvent::Disconnected { .. }
-                | MyServerEvent::ConnectionFailed { .. }
-                | MyServerEvent::RequestFailed { .. } => {
+                MyServerEvent::ScopedRequestFailed {
+                    message_type:
+                        crate::game::myserver::protocol::MessageType::RoomLeaveReq
+                        | crate::game::myserver::protocol::MessageType::RoomLeaveRes,
+                    correlation,
+                    ..
+                } if state.leave_attempt == Some(*correlation) => {
+                    state.leave_attempt = None;
                     state.last_departure = MainWorldRoomDeparture::Unknown;
                     state.room_membership = MainWorldRoomMembership::Unknown;
+                    state.exit_authority_settled = true;
+                    complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
+                }
+                MyServerEvent::Disconnected { .. } | MyServerEvent::ConnectionFailed { .. } => {
+                    state.join_attempt = None;
+                    state.reconnect_attempt = None;
+                    state.leave_attempt = None;
+                    if state.room_membership != MainWorldRoomMembership::None {
+                        state.last_departure = MainWorldRoomDeparture::Unknown;
+                        state.room_membership = MainWorldRoomMembership::Unknown;
+                    }
+                    state.exit_authority_settled = true;
+                    complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
+                }
+                MyServerEvent::RequestFailed { correlation, .. }
+                    if correlation.is_some_and(|value| state.leave_attempt == Some(value)) =>
+                {
+                    state.leave_attempt = None;
+                    state.last_departure = MainWorldRoomDeparture::Unknown;
+                    state.room_membership = MainWorldRoomMembership::Unknown;
+                    state.exit_authority_settled = true;
+                    complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
                 }
                 _ => {}
             }
@@ -807,15 +1024,22 @@ fn consume_main_world_authority_events(
                 &push,
                 &character_id,
                 &mut state,
+                &session,
                 &mut entry_events,
                 &mut commands,
+                &mut scene_commands,
             );
             continue;
         }
         match event {
-            MyServerEvent::RoomJoined(response)
-                if state.phase == MainWorldEntryPhase::JoiningRoom
-                    && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
+            MyServerEvent::RoomJoinedScoped {
+                correlation,
+                response,
+                ..
+            } if state.phase == MainWorldEntryPhase::JoiningRoom
+                && state.join_attempt.is_some()
+                && Some(*correlation) == state.join_attempt
+                && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
             {
                 if response.ok {
                     warn!(
@@ -824,31 +1048,29 @@ fn consume_main_world_authority_events(
                         "main world room join acknowledged"
                     );
                     state.join_acknowledged = true;
+                    state.join_attempt = None;
+                    state.join_dispatched = false;
                     state.room_membership = MainWorldRoomMembership::Joined;
+                    commands.write(MyServerCommand::AdoptRoomMembership {
+                        room_id: response.room_id.clone(),
+                    });
                     state.room_id = Some(response.room_id.clone());
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
                 } else {
                     fail_authority_entry(
                         &mut state,
+                        &session,
                         &mut entry_events,
+                        &mut commands,
+                        &mut scene_commands,
                         room_join_failure(&response.error_code),
                     );
                 }
             }
-            MyServerEvent::RoomLeft(response)
-                if state.phase == MainWorldEntryPhase::Exiting
-                    && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
-            {
-                state.last_departure = if response.ok {
-                    MainWorldRoomDeparture::Confirmed
-                } else {
-                    MainWorldRoomDeparture::Unknown
-                };
-                state.room_membership = MainWorldRoomMembership::None;
-            }
             MyServerEvent::RoomStatePush(push) => {
-                if state.phase == MainWorldEntryPhase::Recovering
-                    && !state.reconnect_room_acknowledged
+                if (state.phase == MainWorldEntryPhase::JoiningRoom && !state.join_acknowledged)
+                    || (state.phase == MainWorldEntryPhase::Recovering
+                        && (!state.join_acknowledged || !state.reconnect_room_acknowledged))
                 {
                     continue;
                 }
@@ -864,7 +1086,10 @@ fn consume_main_world_authority_events(
                 {
                     fail_authority_entry(
                         &mut state,
+                        &session,
                         &mut entry_events,
+                        &mut commands,
+                        &mut scene_commands,
                         MainWorldEntryFailure::AuthoritativeSceneMismatch,
                     );
                 } else {
@@ -877,8 +1102,10 @@ fn consume_main_world_authority_events(
                                 &movement,
                                 &character_id,
                                 &mut state,
+                                &session,
                                 &mut entry_events,
                                 &mut commands,
+                                &mut scene_commands,
                             );
                         }
                     } else if !state.room_start_requested {
@@ -892,101 +1119,227 @@ fn consume_main_world_authority_events(
                     }
                 }
             }
-            MyServerEvent::ReadyChanged(response)
-                if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id
-                    && response.ok
-                    && response.ready
-                    && state.phase == MainWorldEntryPhase::WaitingSceneReady
-                    && state.scene_ready
-                    && state.room_ready_requested =>
+            MyServerEvent::ReadyChangedScoped {
+                correlation,
+                response,
+                ..
+            } if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id
+                && Some(*correlation) == state.ready_attempt
+                && response.ok
+                && response.ready
+                && state.phase == MainWorldEntryPhase::WaitingSceneReady
+                && state.scene_ready
+                && state.scene_content_ready
+                && state.room_ready_requested
+                && state.ready_attempt.is_some() =>
             {
                 state.room_ready_acknowledged = true;
+                state.ready_attempt = None;
                 info!(
                     room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
                     "main world room ready acknowledged"
                 );
                 activate_when_ready(&mut state, &mut route_commands);
             }
-            MyServerEvent::ReadyChanged(response)
-                if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id
-                    && !response.ok
-                    && state.phase == MainWorldEntryPhase::WaitingSceneReady
-                    && state.room_ready_requested =>
+            MyServerEvent::ReadyChangedScoped {
+                correlation,
+                response,
+                ..
+            } if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id
+                && Some(*correlation) == state.ready_attempt
+                && !response.ok
+                && state.phase == MainWorldEntryPhase::WaitingSceneReady
+                && state.room_ready_requested
+                && state.ready_attempt.is_some() =>
             {
                 fail_authority_entry(
                     &mut state,
+                    &session,
                     &mut entry_events,
+                    &mut commands,
+                    &mut scene_commands,
                     room_ready_failure(&response.error_code),
                 );
             }
-            MyServerEvent::RequestFailed {
-                message_type: Some(crate::game::myserver::protocol::MessageType::RoomReadyReq),
+            MyServerEvent::ScopedRequestFailed {
+                message_type:
+                    crate::game::myserver::protocol::MessageType::RoomReadyReq
+                    | crate::game::myserver::protocol::MessageType::RoomReadyRes,
                 error,
+                correlation,
                 ..
             } if state.phase == MainWorldEntryPhase::WaitingSceneReady
-                && state.room_ready_requested =>
+                && state.room_ready_requested
+                && state.ready_attempt.is_some()
+                && Some(*correlation) == state.ready_attempt =>
             {
                 let failure = if error.to_ascii_lowercase().contains("timeout") {
                     MainWorldEntryFailure::ReadyTimedOut
                 } else {
                     MainWorldEntryFailure::JoinRejected
                 };
-                fail_authority_entry(&mut state, &mut entry_events, failure);
-            }
-            MyServerEvent::Disconnected { .. } | MyServerEvent::ConnectionFailed { .. }
-                if state.phase == MainWorldEntryPhase::Active =>
-            {
-                begin_recovery(
+                fail_authority_entry(
                     &mut state,
                     &session,
+                    &mut entry_events,
                     &mut commands,
                     &mut scene_commands,
-                    &mut route_commands,
+                    failure,
+                );
+            }
+            MyServerEvent::ScopedRequestFailed {
+                message_type:
+                    crate::game::myserver::protocol::MessageType::RoomJoinReq
+                    | crate::game::myserver::protocol::MessageType::RoomJoinRes,
+                error,
+                correlation,
+                ..
+            } if state.phase == MainWorldEntryPhase::JoiningRoom
+                && state.join_attempt.is_some()
+                && Some(*correlation) == state.join_attempt =>
+            {
+                state.join_dispatched = false;
+                fail_authority_entry(
+                    &mut state,
+                    &session,
+                    &mut entry_events,
+                    &mut commands,
+                    &mut scene_commands,
+                    join_request_failure(error),
+                );
+            }
+            MyServerEvent::ScopedRequestFailed {
+                message_type:
+                    crate::game::myserver::protocol::MessageType::RoomReconnectReq
+                    | crate::game::myserver::protocol::MessageType::RoomReconnectRes,
+                correlation,
+                ..
+            } if state.phase == MainWorldEntryPhase::Recovering
+                && state.reconnect_attempt.is_some()
+                && Some(*correlation) == state.reconnect_attempt =>
+            {
+                fail_authority_entry(
+                    &mut state,
+                    &session,
+                    &mut entry_events,
+                    &mut commands,
+                    &mut scene_commands,
+                    MainWorldEntryFailure::ReconnectUnavailable,
                 );
             }
             MyServerEvent::Disconnected { .. } | MyServerEvent::ConnectionFailed { .. }
                 if matches!(
                     state.phase,
-                    MainWorldEntryPhase::WaitingSceneReady | MainWorldEntryPhase::LoadingScene
+                    MainWorldEntryPhase::Active
+                        | MainWorldEntryPhase::JoiningRoom
+                        | MainWorldEntryPhase::WaitingSceneReady
+                        | MainWorldEntryPhase::LoadingScene
                 ) =>
             {
                 begin_recovery(
                     &mut state,
                     &session,
+                    &mut entry_events,
                     &mut commands,
                     &mut scene_commands,
                     &mut route_commands,
                 );
             }
-            MyServerEvent::ServerRedirectReconnectStarted { .. } => {
+            MyServerEvent::Disconnected { .. } | MyServerEvent::ConnectionFailed { .. }
+                if state.phase == MainWorldEntryPhase::Recovering =>
+            {
+                fail_authority_entry(
+                    &mut state,
+                    &session,
+                    &mut entry_events,
+                    &mut commands,
+                    &mut scene_commands,
+                    MainWorldEntryFailure::ReconnectUnavailable,
+                );
+            }
+            MyServerEvent::ServerRedirectReconnectStarted {
+                transport,
+                correlation,
+                ..
+            } => {
                 state.phase = MainWorldEntryPhase::Recovering;
                 state.input_frozen = true;
                 state.room_membership = MainWorldRoomMembership::Unknown;
+                state.authoritative_scene_id = None;
+                state.position = None;
                 state.snapshot_generation = 0;
                 state.room_ready_requested = false;
                 state.room_ready_acknowledged = false;
                 state.reconnect_requested = true;
                 state.reconnect_room_acknowledged = false;
+                state.authority_transport = Some(*transport);
+                state.reconnect_attempt = Some(*correlation);
+                state.recovery_snapshot_received = false;
             }
-            MyServerEvent::RoomReconnected(response)
-                if state.phase == MainWorldEntryPhase::Recovering
-                    && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
+            MyServerEvent::RoomReconnectedScoped {
+                correlation,
+                response,
+                ..
+            } if state.phase == MainWorldEntryPhase::Recovering
+                && state.reconnect_attempt.is_some()
+                && Some(*correlation) == state.reconnect_attempt
+                && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
             {
                 if response.ok {
+                    commands.write(MyServerCommand::AdoptRoomMembership {
+                        room_id: response.room_id.clone(),
+                    });
                     state.room_id = Some(response.room_id.clone());
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
                     state.room_membership = MainWorldRoomMembership::Joined;
+                    state.join_acknowledged = true;
                     state.reconnect_room_acknowledged = true;
+                    state.reconnect_attempt = None;
                     info!("main world recovery room reconnect accepted");
-                    resume_after_reconnect_snapshot(&mut state, &mut commands);
+                    if let Some(recovery) = response.movement_recovery.as_ref() {
+                        consume_main_world_entry_snapshot(
+                            &crate::game::myserver::protocol::pb::MovementSnapshotPush {
+                                room_id: response.room_id.clone(),
+                                frame_id: recovery.frame_id,
+                                entities: recovery.entities.clone(),
+                                full_sync: true,
+                                reason: "room_reconnect".to_owned(),
+                                correction_kind: recovery.correction_kind,
+                                reason_code: recovery.reason_code,
+                                target_character_ids: Vec::new(),
+                                reference_frame_id: recovery.reference_frame_id,
+                            },
+                            &character_id,
+                            &mut state,
+                            &session,
+                            &mut entry_events,
+                            &mut commands,
+                            &mut scene_commands,
+                        );
+                    }
                 } else {
+                    commands.write(MyServerCommand::ClearRoomMembership {
+                        room_id: response.room_id.clone(),
+                    });
                     state.room_membership = MainWorldRoomMembership::None;
+                    state.join_acknowledged = false;
                     state.reconnect_room_acknowledged = false;
+                    state.recovery_snapshot_received = false;
+                    state.snapshot_generation = 0;
+                    state.authoritative_scene_id = None;
+                    state.position = None;
+                    state.room_start_requested = false;
+                    state.room_ready_requested = false;
+                    state.room_ready_acknowledged = false;
+                    state.ready_attempt = None;
                     state.phase = MainWorldEntryPhase::JoiningRoom;
                     state.room_id = None;
-                    commands.write(MyServerCommand::JoinRoom {
+                    state.join_attempt = Some(state.begin_authority_attempt());
+                    state.join_dispatched = true;
+                    commands.write(MyServerCommand::JoinRoomScoped {
                         room_id: MAIN_WORLD_AUTHORITY_CONTRACT.room_id.to_owned(),
                         policy_id: MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned(),
+                        correlation: state.join_attempt.unwrap_or_default(),
                     });
                 }
             }
@@ -1023,11 +1376,15 @@ fn consume_main_world_entry_snapshot(
     push: &crate::game::myserver::protocol::pb::MovementSnapshotPush,
     character_id: &str,
     state: &mut MainWorldEntryState,
+    session: &MyServerSession,
     entry_events: &mut MessageWriter<MainWorldEntryEvent>,
     commands: &mut MessageWriter<MyServerCommand>,
+    scene_commands: &mut MessageWriter<SceneCommand>,
 ) {
     if push.room_id != MAIN_WORLD_AUTHORITY_CONTRACT.room_id
-        || (state.phase == MainWorldEntryPhase::Recovering && !state.reconnect_room_acknowledged)
+        || (state.phase == MainWorldEntryPhase::JoiningRoom && !state.join_acknowledged)
+        || (state.phase == MainWorldEntryPhase::Recovering
+            && (!state.join_acknowledged || !state.reconnect_room_acknowledged))
         || push.frame_id < state.snapshot_generation
     {
         return;
@@ -1042,7 +1399,10 @@ fn consume_main_world_entry_snapshot(
     if !MAIN_WORLD_AUTHORITY_CONTRACT.is_authoritative_entity_scene(entity.scene_id) {
         fail_authority_entry(
             state,
+            session,
             entry_events,
+            commands,
+            scene_commands,
             MainWorldEntryFailure::AuthoritativeSceneMismatch,
         );
         return;
@@ -1050,7 +1410,10 @@ fn consume_main_world_entry_snapshot(
     let Ok(position) = main_world_bevy_position(entity.x, entity.y) else {
         fail_authority_entry(
             state,
+            session,
             entry_events,
+            commands,
+            scene_commands,
             MainWorldEntryFailure::InvalidAuthoritativePosition,
         );
         return;
@@ -1061,6 +1424,9 @@ fn consume_main_world_entry_snapshot(
     state.authoritative_scene_id = Some(entity.scene_id);
     state.position = Some(position);
     state.snapshot_generation = push.frame_id;
+    if state.phase == MainWorldEntryPhase::Recovering {
+        state.recovery_snapshot_received = true;
+    }
     match state.phase {
         MainWorldEntryPhase::JoiningRoom => {
             info!(
@@ -1078,10 +1444,33 @@ fn consume_main_world_entry_snapshot(
 
 fn fail_authority_entry(
     state: &mut MainWorldEntryState,
+    session: &MyServerSession,
     events: &mut MessageWriter<MainWorldEntryEvent>,
+    commands: &mut MessageWriter<MyServerCommand>,
+    scene_commands: &mut MessageWriter<SceneCommand>,
     failure: MainWorldEntryFailure,
 ) {
+    if matches!(
+        state.phase,
+        MainWorldEntryPhase::Failed | MainWorldEntryPhase::Exiting
+    ) {
+        return;
+    }
     let generation = state.generation;
+    if (state.room_membership == MainWorldRoomMembership::Joined || state.join_attempt.is_some())
+        && session.authenticated
+        && session.game_connection_state == GameConnectionState::Authenticated
+    {
+        commands.write(MyServerCommand::LeaveRoom);
+        state.last_departure = MainWorldRoomDeparture::Unknown;
+    }
+    if let Some(session_id) = state.scene_session_id.clone() {
+        scene_commands.write(SceneCommand::Exit(SceneExitRequest {
+            scene_id: Some(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()),
+            session_id: Some(session_id),
+            ..SceneExitRequest::default()
+        }));
+    }
     state.fail(failure);
     events.write(MainWorldEntryEvent::Failed {
         generation,
@@ -1107,33 +1496,83 @@ fn begin_exit(
     state.room_ready_acknowledged = false;
     state.reconnect_requested = false;
     state.reconnect_room_acknowledged = false;
+    state.recovery_snapshot_received = false;
+    state.leave_attempt = None;
+    state.exit_scene_settled = state.scene_session_id.is_none();
+    state.exit_authority_settled = false;
 
     info!(destination = ?destination, "main world exit requested");
 
-    if state.room_membership == MainWorldRoomMembership::Joined
-        && session.authenticated
-        && session.game_connection_state == GameConnectionState::Authenticated
-    {
-        info!("main world dispatching LeaveRoom before scene exit");
-        myserver_commands.write(MyServerCommand::LeaveRoom);
+    if state.join_attempt.is_some() && state.join_dispatched {
+        // A cancelled join can still succeed later in this update stream. Wait
+        // for its correlated result, then leave only if membership was created.
+        state.exit_authority_settled = false;
+    } else if state.join_attempt.take().is_some() {
+        state.join_dispatched = false;
+        state.exit_authority_settled = true;
     } else if state.room_membership != MainWorldRoomMembership::None {
-        state.last_departure = MainWorldRoomDeparture::Unknown;
-        state.room_membership = MainWorldRoomMembership::Unknown;
+        request_main_world_leave_for_exit(state, session, myserver_commands);
+    } else {
+        state.exit_authority_settled = true;
     }
 
     if destination == MainWorldExitDestination::Login {
         myserver_commands.write(MyServerCommand::Logout);
     }
 
-    let Some(session_id) = state.scene_session_id.clone() else {
-        complete_exit(state, route_commands);
+    if let Some(session_id) = state.scene_session_id.clone() {
+        scene_commands.write(SceneCommand::Exit(SceneExitRequest {
+            scene_id: Some(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()),
+            session_id: Some(session_id),
+            ..SceneExitRequest::default()
+        }));
+    }
+    complete_exit_if_settled(state, scene_commands, route_commands);
+}
+
+fn request_main_world_leave_for_exit(
+    state: &mut MainWorldEntryState,
+    session: &MyServerSession,
+    commands: &mut MessageWriter<MyServerCommand>,
+) {
+    if state.leave_attempt.is_some() || state.exit_authority_settled {
         return;
-    };
-    scene_commands.write(SceneCommand::Exit(SceneExitRequest {
-        scene_id: Some(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()),
-        session_id: Some(session_id),
-        ..SceneExitRequest::default()
-    }));
+    }
+    if session.authenticated && session.game_connection_state == GameConnectionState::Authenticated
+    {
+        let attempt = state.begin_authority_attempt();
+        state.leave_attempt = Some(attempt);
+        info!(
+            attempt,
+            "main world dispatching correlated LeaveRoom before exit"
+        );
+        commands.write(MyServerCommand::LeaveRoomScoped {
+            correlation: attempt,
+        });
+    } else {
+        state.last_departure = MainWorldRoomDeparture::Unknown;
+        state.room_membership = MainWorldRoomMembership::Unknown;
+        state.exit_authority_settled = true;
+    }
+}
+
+fn complete_exit_if_settled(
+    state: &mut MainWorldEntryState,
+    scene_commands: &mut MessageWriter<SceneCommand>,
+    route_commands: &mut MessageWriter<GameRouteCommand>,
+) {
+    if state.phase != MainWorldEntryPhase::Exiting
+        || !state.exit_scene_settled
+        || !state.exit_authority_settled
+    {
+        return;
+    }
+    if state.exit_destination == Some(MainWorldExitDestination::Home) {
+        state.reset();
+        begin_home_enter(state, scene_commands);
+    } else {
+        complete_exit(state, route_commands);
+    }
 }
 
 fn complete_exit(
@@ -1197,6 +1636,7 @@ fn begin_home_return(
 fn begin_recovery(
     state: &mut MainWorldEntryState,
     session: &MyServerSession,
+    entry_events: &mut MessageWriter<MainWorldEntryEvent>,
     commands: &mut MessageWriter<MyServerCommand>,
     scene_commands: &mut MessageWriter<SceneCommand>,
     route_commands: &mut MessageWriter<GameRouteCommand>,
@@ -1216,25 +1656,36 @@ fn begin_recovery(
         return;
     };
     let Some(transport) = state.authority_transport else {
-        state.fail(MainWorldEntryFailure::ReconnectUnavailable);
+        fail_authority_entry(
+            state,
+            session,
+            entry_events,
+            commands,
+            scene_commands,
+            MainWorldEntryFailure::ReconnectUnavailable,
+        );
         error!("main world recovery unavailable because authority transport was not retained");
-        route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
         return;
     };
     state.phase = MainWorldEntryPhase::Recovering;
     state.input_frozen = true;
     state.room_membership = MainWorldRoomMembership::Unknown;
+    state.authoritative_scene_id = None;
+    state.position = None;
     state.snapshot_generation = 0;
     state.room_ready_requested = false;
     state.room_ready_acknowledged = false;
     state.reconnect_requested = true;
     state.reconnect_room_acknowledged = false;
+    state.reconnect_attempt = Some(state.begin_authority_attempt());
+    state.recovery_snapshot_received = false;
     info!("main world recovery requested after connection loss");
-    commands.write(MyServerCommand::ReconnectWithTicket {
+    commands.write(MyServerCommand::ReconnectWithTicketScoped {
         ticket,
         transport,
         host: None,
         port: None,
+        correlation: state.reconnect_attempt.unwrap_or_default(),
     });
 }
 
@@ -1244,6 +1695,7 @@ fn resume_after_reconnect_snapshot(
 ) {
     if state.phase != MainWorldEntryPhase::Recovering
         || !state.reconnect_room_acknowledged
+        || !state.recovery_snapshot_received
         || state.authoritative_scene_id.is_none()
     {
         return;
@@ -1254,10 +1706,7 @@ fn resume_after_reconnect_snapshot(
         return;
     }
     state.phase = MainWorldEntryPhase::WaitingSceneReady;
-    if state.scene_ready {
-        state.room_ready_requested = true;
-        commands.write(MyServerCommand::SetReady { ready: true });
-    }
+    request_room_ready_if_admitted(state, commands);
 }
 
 fn begin_ready_or_scene_load_after_snapshot(
@@ -1269,11 +1718,29 @@ fn begin_ready_or_scene_load_after_snapshot(
         return;
     }
     state.phase = MainWorldEntryPhase::WaitingSceneReady;
-    if state.scene_ready {
-        state.room_ready_requested = true;
-        state.room_ready_acknowledged = false;
-        commands.write(MyServerCommand::SetReady { ready: true });
+    request_room_ready_if_admitted(state, commands);
+}
+
+fn request_room_ready_if_admitted(
+    state: &mut MainWorldEntryState,
+    commands: &mut MessageWriter<MyServerCommand>,
+) {
+    if state.phase != MainWorldEntryPhase::WaitingSceneReady
+        || !state.scene_ready
+        || !state.scene_content_ready
+        || state.authoritative_scene_id.is_none()
+        || state.room_ready_requested
+    {
+        return;
     }
+    state.room_ready_requested = true;
+    state.room_ready_acknowledged = false;
+    state.ready_attempt = Some(state.begin_authority_attempt());
+    warn!("main world scene and content ready; requesting room ready");
+    commands.write(MyServerCommand::SetReadyScoped {
+        ready: true,
+        correlation: state.ready_attempt.unwrap_or_default(),
+    });
 }
 
 fn room_join_failure(error_code: &str) -> MainWorldEntryFailure {
@@ -1287,6 +1754,14 @@ fn room_join_failure(error_code: &str) -> MainWorldEntryFailure {
         }
         "JOIN_TIMEOUT" => MainWorldEntryFailure::JoinTimedOut,
         _ => MainWorldEntryFailure::JoinRejected,
+    }
+}
+
+fn join_request_failure(error: &str) -> MainWorldEntryFailure {
+    if error.to_ascii_lowercase().contains("timeout") {
+        MainWorldEntryFailure::JoinTimedOut
+    } else {
+        MainWorldEntryFailure::JoinRejected
     }
 }
 
@@ -1349,6 +1824,7 @@ fn dispatch_authority_confirmed_scene_enter(
 fn consume_main_world_scene_ready(
     mut scene_events: MessageReader<SceneEvent>,
     mut state: ResMut<MainWorldEntryState>,
+    session: Res<MyServerSession>,
     mut commands: MessageWriter<MyServerCommand>,
     mut entry_events: MessageWriter<MainWorldEntryEvent>,
     mut route_commands: MessageWriter<GameRouteCommand>,
@@ -1358,30 +1834,33 @@ fn consume_main_world_scene_ready(
     for event in scene_events.read() {
         match event {
             SceneEvent::Ready(ready)
-                if state.phase == MainWorldEntryPhase::WaitingSceneReady
-                    && ready.scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
+                if matches!(
+                    state.phase,
+                    MainWorldEntryPhase::WaitingSceneReady | MainWorldEntryPhase::Recovering
+                ) && ready.scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
                     && state.scene_session_id.as_ref() == Some(&ready.session_id)
                     && !state.scene_ready =>
             {
                 state.scene_ready = true;
-                state.room_ready_requested = true;
-                warn!(
-                    scene_id = ready.scene_id.as_str(),
-                    session_id = %ready.session_id,
-                    "main world SceneEvent::Ready received; requesting room ready"
-                );
-                commands.write(MyServerCommand::SetReady { ready: true });
-                activate_when_ready(&mut state, &mut route_commands);
+                if state.phase == MainWorldEntryPhase::WaitingSceneReady {
+                    request_room_ready_if_admitted(&mut state, &mut commands);
+                    activate_when_ready(&mut state, &mut route_commands);
+                }
             }
             SceneEvent::Failed(failure)
-                if state.phase == MainWorldEntryPhase::WaitingSceneReady
-                    && failure.scene_id.as_ref()
-                        == Some(&MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
+                if matches!(
+                    state.phase,
+                    MainWorldEntryPhase::WaitingSceneReady | MainWorldEntryPhase::Recovering
+                ) && failure.scene_id.as_ref()
+                    == Some(&MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
                     && failure.session_id.as_ref() == state.scene_session_id.as_ref() =>
             {
                 fail_authority_entry(
                     &mut state,
+                    &session,
                     &mut entry_events,
+                    &mut commands,
+                    &mut scene_commands,
                     MainWorldEntryFailure::SceneLoadFailed,
                 );
             }
@@ -1395,12 +1874,22 @@ fn consume_main_world_scene_ready(
                     session_id = %exited.session_id,
                     "main world SceneEvent::Exited received during exit"
                 );
-                if state.exit_destination == Some(MainWorldExitDestination::Home) {
-                    state.reset();
-                    begin_home_enter(&mut state, &mut scene_commands);
-                } else {
-                    complete_exit(&mut state, &mut route_commands);
-                }
+                state.exit_scene_settled = true;
+                complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
+            }
+            SceneEvent::Exited(exited)
+                if state.phase == MainWorldEntryPhase::Recovering
+                    && exited.scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
+                    && state.scene_session_id.as_ref() == Some(&exited.session_id) =>
+            {
+                fail_authority_entry(
+                    &mut state,
+                    &session,
+                    &mut entry_events,
+                    &mut commands,
+                    &mut scene_commands,
+                    MainWorldEntryFailure::SceneLoadFailed,
+                );
             }
             SceneEvent::Failed(failure)
                 if state.phase == MainWorldEntryPhase::Exiting
@@ -1408,7 +1897,8 @@ fn consume_main_world_scene_ready(
                         == Some(&MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
                     && failure.session_id.as_ref() == state.scene_session_id.as_ref() =>
             {
-                complete_exit(&mut state, &mut route_commands);
+                state.exit_scene_settled = true;
+                complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
             }
             SceneEvent::Ready(ready)
                 if state.phase == MainWorldEntryPhase::HomeLoading
@@ -1448,11 +1938,17 @@ fn activate_when_ready(
     state: &mut MainWorldEntryState,
     route_commands: &mut MessageWriter<GameRouteCommand>,
 ) {
-    if state.scene_ready && state.room_ready_acknowledged && state.authoritative_scene_id.is_some()
+    if state.scene_ready
+        && state.scene_content_ready
+        && state.room_ready_acknowledged
+        && state.authoritative_scene_id.is_some()
     {
         let recovered = state.reconnect_requested;
         state.phase = MainWorldEntryPhase::Active;
         state.input_frozen = false;
+        state.reconnect_requested = false;
+        state.reconnect_room_acknowledged = false;
+        state.recovery_snapshot_received = false;
         route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::MainWorld));
         if recovered {
             info!("main world entry recovered active");
@@ -1460,6 +1956,159 @@ fn activate_when_ready(
             info!("main world entry active");
         }
     }
+}
+
+fn consume_main_world_content_events(
+    mut content_events: MessageReader<MainWorldContentEvent>,
+    mut state: ResMut<MainWorldEntryState>,
+    session: Res<MyServerSession>,
+    mut commands: MessageWriter<MyServerCommand>,
+    mut entry_events: MessageWriter<MainWorldEntryEvent>,
+    mut scene_commands: MessageWriter<SceneCommand>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
+) {
+    for event in content_events.read() {
+        match event {
+            MainWorldContentEvent::Ready {
+                scene_id,
+                session_id,
+            } if matches!(
+                state.phase,
+                MainWorldEntryPhase::WaitingSceneReady | MainWorldEntryPhase::Recovering
+            ) && *scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
+                && state.scene_session_id.as_ref() == Some(session_id) =>
+            {
+                state.scene_content_ready = true;
+                if state.phase == MainWorldEntryPhase::WaitingSceneReady {
+                    request_room_ready_if_admitted(&mut state, &mut commands);
+                    activate_when_ready(&mut state, &mut route_commands);
+                }
+            }
+            MainWorldContentEvent::Failed {
+                scene_id,
+                session_id,
+                ..
+            } if matches!(
+                state.phase,
+                MainWorldEntryPhase::LoadingScene
+                    | MainWorldEntryPhase::WaitingSceneReady
+                    | MainWorldEntryPhase::Recovering
+            ) && *scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
+                && state.scene_session_id.as_ref() == Some(session_id) =>
+            {
+                fail_authority_entry(
+                    &mut state,
+                    &session,
+                    &mut entry_events,
+                    &mut commands,
+                    &mut scene_commands,
+                    MainWorldEntryFailure::SceneLoadFailed,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+fn watchdog_main_world_entry_progress(
+    time: Res<Time<Real>>,
+    mut watchdog: ResMut<MainWorldEntryWatchdog>,
+    mut state: ResMut<MainWorldEntryState>,
+    session: Res<MyServerSession>,
+    mut entry_events: MessageWriter<MainWorldEntryEvent>,
+    mut commands: MessageWriter<MyServerCommand>,
+    mut scene_commands: MessageWriter<SceneCommand>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
+) {
+    let key = MainWorldEntryWatchdogKey::from_state(&state);
+    if watchdog.key.as_ref() != Some(&key) {
+        watchdog.key = Some(key);
+        watchdog.elapsed = Duration::ZERO;
+        return;
+    }
+
+    let timeout = match state.phase {
+        MainWorldEntryPhase::JoiningRoom
+        | MainWorldEntryPhase::LoadingScene
+        | MainWorldEntryPhase::WaitingSceneReady
+        | MainWorldEntryPhase::Recovering => MAIN_WORLD_ENTRY_PROGRESS_TIMEOUT,
+        MainWorldEntryPhase::Exiting => MAIN_WORLD_EXIT_PROGRESS_TIMEOUT,
+        _ => {
+            watchdog.elapsed = Duration::ZERO;
+            return;
+        }
+    };
+    watchdog.elapsed = watchdog.elapsed.saturating_add(time.delta());
+    if watchdog.elapsed < timeout {
+        return;
+    }
+    watchdog.elapsed = Duration::ZERO;
+
+    match state.phase {
+        MainWorldEntryPhase::JoiningRoom => fail_authority_entry(
+            &mut state,
+            &session,
+            &mut entry_events,
+            &mut commands,
+            &mut scene_commands,
+            MainWorldEntryFailure::JoinTimedOut,
+        ),
+        MainWorldEntryPhase::LoadingScene | MainWorldEntryPhase::WaitingSceneReady => {
+            let ready_was_requested = state.room_ready_requested;
+            fail_authority_entry(
+                &mut state,
+                &session,
+                &mut entry_events,
+                &mut commands,
+                &mut scene_commands,
+                if ready_was_requested {
+                    MainWorldEntryFailure::ReadyTimedOut
+                } else {
+                    MainWorldEntryFailure::SceneLoadFailed
+                },
+            )
+        }
+        MainWorldEntryPhase::Recovering => fail_authority_entry(
+            &mut state,
+            &session,
+            &mut entry_events,
+            &mut commands,
+            &mut scene_commands,
+            MainWorldEntryFailure::ReconnectUnavailable,
+        ),
+        MainWorldEntryPhase::Exiting => {
+            state.last_departure = MainWorldRoomDeparture::Unknown;
+            state.room_membership = MainWorldRoomMembership::Unknown;
+            state.leave_attempt = None;
+            state.exit_scene_settled = true;
+            state.exit_authority_settled = true;
+            complete_exit_if_settled(&mut state, &mut scene_commands, &mut route_commands);
+        }
+        _ => {}
+    }
+}
+
+fn route_failed_authority_entry(
+    mut state: ResMut<MainWorldEntryState>,
+    session: Res<MyServerSession>,
+    mut route_commands: MessageWriter<GameRouteCommand>,
+) {
+    if state.phase != MainWorldEntryPhase::Failed || state.failure_routed {
+        return;
+    }
+    state.failure_routed = true;
+    let destination = match state.failure {
+        Some(
+            MainWorldEntryFailure::AccountSessionUnavailable
+            | MainWorldEntryFailure::TicketUnavailable
+            | MainWorldEntryFailure::GameAuthUnavailable,
+        ) => AppUiMode::Login,
+        Some(MainWorldEntryFailure::ReconnectUnavailable) if !session.authenticated => {
+            AppUiMode::Login
+        }
+        _ => AppUiMode::Lobby,
+    };
+    route_commands.write(GameRouteCommand::ChangeMode(destination));
 }
 
 fn abort_for_intent(
@@ -1493,6 +2142,41 @@ fn abort_entry(
     let generation = state.generation;
     state.reset();
     events.write(MainWorldEntryEvent::Aborted { generation, reason });
+}
+
+fn abort_invalidated_entry_with_cleanup(
+    state: &mut MainWorldEntryState,
+    session: &MyServerSession,
+    events: &mut MessageWriter<MainWorldEntryEvent>,
+    myserver_commands: &mut MessageWriter<MyServerCommand>,
+    scene_commands: &mut MessageWriter<SceneCommand>,
+    route_commands: &mut MessageWriter<GameRouteCommand>,
+) {
+    if !state.is_in_flight() {
+        return;
+    }
+    let generation = state.generation;
+    if (state.room_membership == MainWorldRoomMembership::Joined || state.join_attempt.is_some())
+        && state.character_id.as_deref() == session.character_id.as_deref()
+        && session.authenticated
+        && session.game_connection_state == GameConnectionState::Authenticated
+    {
+        myserver_commands.write(MyServerCommand::LeaveRoom);
+        state.last_departure = MainWorldRoomDeparture::Unknown;
+    }
+    if let Some(session_id) = state.scene_session_id.clone() {
+        scene_commands.write(SceneCommand::Exit(SceneExitRequest {
+            scene_id: Some(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()),
+            session_id: Some(session_id),
+            ..SceneExitRequest::default()
+        }));
+    }
+    state.reset();
+    events.write(MainWorldEntryEvent::Aborted {
+        generation,
+        reason: MainWorldEntryAbortReason::PreconditionsInvalidated,
+    });
+    route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
 }
 
 fn validate_entry(
@@ -1589,12 +2273,7 @@ mod tests {
         let mut app = ready_app();
         app.world_mut().write_message(MainWorldEntryIntent::Enter);
         app.update();
-        app.world_mut()
-            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                error_code: String::new(),
-            }));
+        app.world_mut().write_message(room_join_ack());
         app.world_mut()
             .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
                 event: "joined".to_owned(),
@@ -1651,21 +2330,73 @@ mod tests {
         })
     }
 
-    fn room_ready_ack() -> MyServerEvent {
-        MyServerEvent::ReadyChanged(pb::RoomReadyRes {
-            ok: true,
-            room_id: "main-world-public".to_owned(),
-            ready: true,
-            error_code: String::new(),
-        })
+    fn room_ready_response(app: &App, ok: bool, error_code: &str) -> MyServerEvent {
+        let correlation = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .ready_attempt
+            .expect("room ready request must be in flight");
+        MyServerEvent::ReadyChangedScoped {
+            correlation,
+            seq: 1,
+            response: pb::RoomReadyRes {
+                ok,
+                room_id: "main-world-public".to_owned(),
+                ready: true,
+                error_code: error_code.to_owned(),
+            },
+        }
+    }
+
+    fn room_ready_ack(app: &App) -> MyServerEvent {
+        room_ready_response(app, true, "")
+    }
+
+    fn room_leave_ack(app: &App) -> MyServerEvent {
+        let correlation = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .leave_attempt
+            .expect("room leave request must be in flight");
+        MyServerEvent::RoomLeftScoped {
+            correlation,
+            seq: 1,
+            response: pb::RoomLeaveRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                error_code: String::new(),
+            },
+        }
+    }
+
+    fn room_join_ack() -> MyServerEvent {
+        MyServerEvent::RoomJoinedScoped {
+            correlation: 1,
+            seq: 1,
+            response: pb::RoomJoinRes {
+                ok: true,
+                room_id: "main-world-public".to_owned(),
+                error_code: String::new(),
+            },
+        }
+    }
+
+    fn content_ready(session_id: SceneSessionId) -> MainWorldContentEvent {
+        MainWorldContentEvent::Ready {
+            scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+            session_id,
+        }
     }
 
     fn active_app() -> (App, SceneSessionId) {
         let (mut app, session_id) = app_waiting_scene_ready();
         app.world_mut()
             .write_message(scene_ready(session_id.clone()));
+        app.world_mut()
+            .write_message(content_ready(session_id.clone()));
         app.update();
-        app.world_mut().write_message(room_ready_ack());
+        let ready_ack = room_ready_ack(&app);
+        app.world_mut().write_message(ready_ack);
         app.update();
         assert_eq!(
             app.world().resource::<MainWorldEntryState>().phase,
@@ -1738,7 +2469,7 @@ mod tests {
         assert_eq!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .filter(|command| matches!(command, MyServerCommand::JoinRoom { .. }))
+                .filter(|command| matches!(command, MyServerCommand::JoinRoomScoped { .. }))
                 .count(),
             1
         );
@@ -1779,7 +2510,7 @@ mod tests {
         assert_eq!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .filter(|command| matches!(command, MyServerCommand::LeaveRoom))
+                .filter(|command| matches!(command, MyServerCommand::LeaveRoomScoped { .. }))
                 .count(),
             1
         );
@@ -1802,12 +2533,7 @@ mod tests {
         let mut app = ready_app();
         app.world_mut().write_message(MainWorldEntryIntent::Enter);
         app.update();
-        app.world_mut()
-            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                error_code: String::new(),
-            }));
+        app.world_mut().write_message(room_join_ack());
         app.world_mut()
             .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
                 event: "joined".to_owned(),
@@ -1836,12 +2562,7 @@ mod tests {
         let mut app = ready_app();
         app.world_mut().write_message(MainWorldEntryIntent::Enter);
         app.update();
-        app.world_mut()
-            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                error_code: String::new(),
-            }));
+        app.world_mut().write_message(room_join_ack());
         app.world_mut()
             .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
                 event: "joined".to_owned(),
@@ -1867,12 +2588,7 @@ mod tests {
         let mut app = ready_app();
         app.world_mut().write_message(MainWorldEntryIntent::Enter);
         app.update();
-        app.world_mut()
-            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                error_code: String::new(),
-            }));
+        app.world_mut().write_message(room_join_ack());
         app.world_mut()
             .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
                 event: "joined".to_owned(),
@@ -1904,12 +2620,7 @@ mod tests {
         let mut app = ready_app();
         app.world_mut().write_message(MainWorldEntryIntent::Enter);
         app.update();
-        app.world_mut()
-            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                error_code: String::new(),
-            }));
+        app.world_mut().write_message(room_join_ack());
         for state in ["waiting", "ready"] {
             app.world_mut()
                 .write_message(MyServerEvent::RoomStatePush(pb::RoomStatePush {
@@ -1963,7 +2674,7 @@ mod tests {
         assert_eq!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .filter(|command| matches!(command, MyServerCommand::LeaveRoom))
+                .filter(|command| matches!(command, MyServerCommand::LeaveRoomScoped { .. }))
                 .count(),
             1
         );
@@ -2011,11 +2722,57 @@ mod tests {
             events(&app).as_slice(),
             [MainWorldEntryEvent::JoinRequested {
                 generation: 1,
+                attempt: 1,
                 room_id: "main-world-public",
                 policy_id: "movement_demo",
                 character_id,
             }] if character_id == "chr_1"
         ));
+    }
+
+    #[test]
+    fn same_frame_cancel_prevents_a_stale_join_request_dispatch() {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.world_mut().write_message(MainWorldEntryIntent::Cancel);
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::LobbyIdle);
+        assert!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .all(|command| !matches!(command, MyServerCommand::JoinRoomScoped { .. }))
+        );
+    }
+
+    #[test]
+    fn snapshot_before_join_acknowledgement_is_not_admitted() {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+        app.world_mut()
+            .write_message(movement_snapshot(1, 2002.0, 2003.0));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::JoiningRoom);
+        assert!(!state.join_acknowledged);
+        assert!(state.position.is_none());
+        assert!(state.scene_session_id.is_none());
+    }
+
+    #[test]
+    fn active_entry_ignores_a_new_enter_intent() {
+        let (mut app, session_id) = active_app();
+        let generation = app.world().resource::<MainWorldEntryState>().generation;
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Active);
+        assert_eq!(state.generation, generation);
+        assert_eq!(state.scene_session_id.as_ref(), Some(&session_id));
     }
 
     #[test]
@@ -2063,12 +2820,7 @@ mod tests {
         let mut app = ready_app();
         app.world_mut().write_message(MainWorldEntryIntent::Enter);
         app.update();
-        app.world_mut()
-            .write_message(MyServerEvent::RoomJoined(pb::RoomJoinRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                error_code: String::new(),
-            }));
+        app.world_mut().write_message(room_join_ack());
         app.world_mut()
             .write_message(movement_snapshot_with_scene(1, 999, 2.0, 3.0));
         app.update();
@@ -2212,7 +2964,10 @@ mod tests {
         assert_eq!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .filter(|command| matches!(command, MyServerCommand::SetReady { ready: true }))
+                .filter(|command| matches!(
+                    command,
+                    MyServerCommand::SetReadyScoped { ready: true, .. }
+                ))
                 .count(),
             0
         );
@@ -2221,6 +2976,8 @@ mod tests {
             .write_message(scene_ready(session_id.clone()));
         app.world_mut()
             .write_message(scene_ready(session_id.clone()));
+        app.world_mut()
+            .write_message(content_ready(session_id.clone()));
         app.update();
         assert_eq!(
             app.world().resource::<MainWorldEntryState>().phase,
@@ -2229,18 +2986,16 @@ mod tests {
         assert_eq!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .filter(|command| matches!(command, MyServerCommand::SetReady { ready: true }))
+                .filter(|command| matches!(
+                    command,
+                    MyServerCommand::SetReadyScoped { ready: true, .. }
+                ))
                 .count(),
             1
         );
 
-        app.world_mut()
-            .write_message(MyServerEvent::ReadyChanged(pb::RoomReadyRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                ready: true,
-                error_code: String::new(),
-            }));
+        let ready_ack = room_ready_ack(&app);
+        app.world_mut().write_message(ready_ack);
         app.update();
         assert_eq!(
             app.world().resource::<MainWorldEntryState>().phase,
@@ -2302,16 +3057,13 @@ mod tests {
         let (mut response_app, response_session_id) = app_waiting_scene_ready();
         response_app
             .world_mut()
-            .write_message(scene_ready(response_session_id));
-        response_app.update();
+            .write_message(scene_ready(response_session_id.clone()));
         response_app
             .world_mut()
-            .write_message(MyServerEvent::ReadyChanged(pb::RoomReadyRes {
-                ok: false,
-                room_id: "main-world-public".to_owned(),
-                ready: true,
-                error_code: "READY_TIMEOUT".to_owned(),
-            }));
+            .write_message(content_ready(response_session_id));
+        response_app.update();
+        let ready_failure = room_ready_response(&response_app, false, "READY_TIMEOUT");
+        response_app.world_mut().write_message(ready_failure);
         response_app.update();
         assert_eq!(
             response_app
@@ -2324,13 +3076,22 @@ mod tests {
         let (mut request_app, request_session_id) = app_waiting_scene_ready();
         request_app
             .world_mut()
-            .write_message(scene_ready(request_session_id));
-        request_app.update();
+            .write_message(scene_ready(request_session_id.clone()));
         request_app
             .world_mut()
-            .write_message(MyServerEvent::RequestFailed {
-                seq: Some(1),
-                message_type: Some(crate::game::myserver::protocol::MessageType::RoomReadyReq),
+            .write_message(content_ready(request_session_id));
+        request_app.update();
+        let ready_attempt = request_app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .ready_attempt
+            .unwrap();
+        request_app
+            .world_mut()
+            .write_message(MyServerEvent::ScopedRequestFailed {
+                seq: 1,
+                message_type: crate::game::myserver::protocol::MessageType::RoomReadyReq,
+                correlation: ready_attempt,
                 error: "request timeout".to_owned(),
             });
         request_app.update();
@@ -2345,15 +3106,12 @@ mod tests {
         let (mut app, session_id) = app_waiting_scene_ready();
         app.world_mut()
             .write_message(scene_ready(session_id.clone()));
-        app.update();
-        app.world_mut().write_message(MainWorldEntryIntent::Cancel);
         app.world_mut()
-            .write_message(MyServerEvent::ReadyChanged(pb::RoomReadyRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                ready: true,
-                error_code: String::new(),
-            }));
+            .write_message(content_ready(session_id.clone()));
+        app.update();
+        let stale_ready_ack = room_ready_ack(&app);
+        app.world_mut().write_message(MainWorldEntryIntent::Cancel);
+        app.world_mut().write_message(stale_ready_ack);
         app.update();
 
         let state = app.world().resource::<MainWorldEntryState>();
@@ -2367,6 +3125,13 @@ mod tests {
                 session_id,
             },
         ));
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        let leave_ack = room_leave_ack(&app);
+        app.world_mut().write_message(leave_ack);
         app.update();
         assert_eq!(
             app.world().resource::<MainWorldEntryState>().phase,
@@ -2423,7 +3188,7 @@ mod tests {
         assert!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .any(|command| matches!(command, MyServerCommand::LeaveRoom))
+                .any(|command| matches!(command, MyServerCommand::LeaveRoomScoped { .. }))
         );
         assert!(
             messages::<MyServerCommand>(&app)
@@ -2446,18 +3211,20 @@ mod tests {
                 ))
         );
 
-        app.world_mut()
-            .write_message(MyServerEvent::RoomLeft(pb::RoomLeaveRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                error_code: String::new(),
-            }));
         app.world_mut().write_message(SceneEvent::Exited(
             crate::framework::scene::prelude::SceneExited {
                 scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
                 session_id,
             },
         ));
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        let leave_ack = room_leave_ack(&app);
+        app.world_mut().write_message(leave_ack);
         app.update();
 
         let state = app.world().resource::<MainWorldEntryState>();
@@ -2485,7 +3252,7 @@ mod tests {
         assert_eq!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .filter(|command| matches!(command, MyServerCommand::LeaveRoom))
+                .filter(|command| matches!(command, MyServerCommand::LeaveRoomScoped { .. }))
                 .count(),
             1
         );
@@ -2538,7 +3305,7 @@ mod tests {
             assert!(
                 messages::<MyServerCommand>(&app)
                     .iter()
-                    .all(|command| !matches!(command, MyServerCommand::LeaveRoom))
+                    .all(|command| !matches!(command, MyServerCommand::LeaveRoomScoped { .. }))
             );
         }
     }
@@ -2583,10 +3350,73 @@ mod tests {
                 .iter()
                 .any(|command| matches!(
                     command,
-                    MyServerCommand::ReconnectWithTicket { ticket, transport: NetworkTransport::Tcp, .. }
+                    MyServerCommand::ReconnectWithTicketScoped { ticket, transport: NetworkTransport::Tcp, .. }
                         if ticket == "character-bound-ticket"
                 ))
         );
+    }
+
+    #[test]
+    fn disconnect_and_scene_failure_in_the_same_frame_fail_recovery() {
+        use crate::framework::scene::prelude::{
+            SceneFailure, SceneFailureKind, SceneLifecycleState,
+        };
+
+        let (mut app, session_id) = active_app();
+        app.world_mut().write_message(MyServerEvent::Disconnected {
+            reason: Some("transport lost while scene failed".to_owned()),
+        });
+        app.world_mut().write_message(SceneEvent::Failed(
+            SceneFailure::new(
+                SceneFailureKind::RequiredAssetMissing,
+                SceneLifecycleState::LoadingAssets,
+            )
+            .with_scene(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
+            .with_session(session_id),
+        ));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Failed);
+        assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
+    }
+
+    #[test]
+    fn disconnect_and_content_failure_in_the_same_frame_fail_recovery() {
+        let (mut app, session_id) = active_app();
+        app.world_mut().write_message(MyServerEvent::Disconnected {
+            reason: Some("transport lost while content failed".to_owned()),
+        });
+        app.world_mut()
+            .write_message(MainWorldContentEvent::Failed {
+                scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+                session_id,
+                reason: "main world content instantiation failed".to_owned(),
+            });
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Failed);
+        assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
+    }
+
+    #[test]
+    fn disconnect_and_scene_exit_in_the_same_frame_fail_recovery() {
+        let (mut app, session_id) = active_app();
+        app.world_mut().write_message(MyServerEvent::Disconnected {
+            reason: Some("transport lost while scene exited".to_owned()),
+        });
+        app.world_mut().write_message(SceneEvent::Exited(
+            crate::framework::scene::prelude::SceneExited {
+                scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+                session_id,
+            },
+        ));
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Failed);
+        assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
     }
 
     #[test]
@@ -2603,7 +3433,7 @@ mod tests {
         assert!(messages::<MyServerCommand>(&app).iter().any(|command| {
             matches!(
                 command,
-                MyServerCommand::ReconnectWithTicket {
+                MyServerCommand::ReconnectWithTicketScoped {
                     transport: NetworkTransport::Kcp,
                     ..
                 }
@@ -2631,7 +3461,67 @@ mod tests {
         assert!(
             !messages::<MyServerCommand>(&app)
                 .iter()
-                .any(|command| matches!(command, MyServerCommand::ReconnectWithTicket { .. }))
+                .any(|command| matches!(
+                    command,
+                    MyServerCommand::ReconnectWithTicketScoped { .. }
+                ))
+        );
+    }
+
+    #[test]
+    fn recovery_keeps_scene_and_content_gates_until_a_fresh_snapshot_restores_active() {
+        let (mut app, session_id) = active_app();
+        app.world_mut().write_message(MyServerEvent::Disconnected {
+            reason: Some("temporary transport loss".to_owned()),
+        });
+        app.update();
+        let reconnect_attempt = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .reconnect_attempt
+            .unwrap();
+
+        app.world_mut()
+            .write_message(MyServerEvent::RoomReconnectedScoped {
+                correlation: reconnect_attempt,
+                seq: 3,
+                response: pb::RoomReconnectRes {
+                    ok: true,
+                    room_id: "main-world-public".to_owned(),
+                    error_code: String::new(),
+                    ..Default::default()
+                },
+            });
+        app.update();
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Recovering);
+        assert!(state.scene_ready);
+        assert!(state.scene_content_ready);
+        assert_eq!(state.scene_session_id.as_ref(), Some(&session_id));
+
+        app.world_mut()
+            .write_message(movement_snapshot(10, 2005.0, 2006.0));
+        app.update();
+        let ready_attempt = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .ready_attempt
+            .unwrap();
+        app.world_mut()
+            .write_message(MyServerEvent::ReadyChangedScoped {
+                correlation: ready_attempt,
+                seq: 4,
+                response: pb::RoomReadyRes {
+                    ok: true,
+                    room_id: "main-world-public".to_owned(),
+                    ready: true,
+                    error_code: String::new(),
+                },
+            });
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Active
         );
     }
 
@@ -2644,22 +3534,24 @@ mod tests {
                 target_host: "new.game.test".to_owned(),
                 target_port: 14400,
                 transport: NetworkTransport::Tcp,
+                correlation: 3,
             });
         app.world_mut()
             .write_message(movement_snapshot(99, 2009.0, 2009.0));
         app.update();
-        assert_eq!(
-            app.world().resource::<MainWorldEntryState>().position,
-            Some(Vec3::new(2.0, 0.0, 3.0))
-        );
+        assert_eq!(app.world().resource::<MainWorldEntryState>().position, None);
 
         app.world_mut()
-            .write_message(MyServerEvent::RoomReconnected(pb::RoomReconnectRes {
-                ok: true,
-                room_id: "main-world-public".to_owned(),
-                error_code: String::new(),
-                ..Default::default()
-            }));
+            .write_message(MyServerEvent::RoomReconnectedScoped {
+                correlation: 3,
+                seq: 3,
+                response: pb::RoomReconnectRes {
+                    ok: true,
+                    room_id: "main-world-public".to_owned(),
+                    error_code: String::new(),
+                    ..Default::default()
+                },
+            });
         app.world_mut()
             .write_message(movement_snapshot(10, 2005.0, 2006.0));
         app.update();
@@ -2674,12 +3566,16 @@ mod tests {
         assert!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .filter(|command| matches!(command, MyServerCommand::SetReady { ready: true }))
+                .filter(|command| matches!(
+                    command,
+                    MyServerCommand::SetReadyScoped { ready: true, .. }
+                ))
                 .count()
                 >= 2
         );
 
-        app.world_mut().write_message(room_ready_ack());
+        let ready_ack = room_ready_ack(&app);
+        app.world_mut().write_message(ready_ack);
         app.update();
         assert_eq!(
             app.world().resource::<MainWorldEntryState>().phase,
@@ -2693,6 +3589,38 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_acknowledgement_requires_a_fresh_snapshot_before_resuming() {
+        let (mut app, _) = active_app();
+        app.world_mut()
+            .write_message(MyServerEvent::ServerRedirectReconnectStarted {
+                reason: "rollout".to_owned(),
+                target_host: "new.game.test".to_owned(),
+                target_port: 14400,
+                transport: NetworkTransport::Tcp,
+                correlation: 3,
+            });
+        app.world_mut()
+            .write_message(MyServerEvent::RoomReconnectedScoped {
+                correlation: 3,
+                seq: 3,
+                response: pb::RoomReconnectRes {
+                    ok: true,
+                    room_id: "main-world-public".to_owned(),
+                    error_code: String::new(),
+                    ..Default::default()
+                },
+            });
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Recovering);
+        assert!(state.reconnect_room_acknowledged);
+        assert!(!state.recovery_snapshot_received);
+        assert!(state.position.is_none());
+        assert!(state.authoritative_scene_id.is_none());
+    }
+
+    #[test]
     fn reconnect_membership_expiry_rejoins_the_fixed_public_room() {
         let (mut app, session_id) = active_app();
         app.world_mut()
@@ -2701,15 +3629,20 @@ mod tests {
                 target_host: "new.game.test".to_owned(),
                 target_port: 14400,
                 transport: NetworkTransport::Tcp,
+                correlation: 3,
             });
         app.update();
         app.world_mut()
-            .write_message(MyServerEvent::RoomReconnected(pb::RoomReconnectRes {
-                ok: false,
-                room_id: "main-world-public".to_owned(),
-                error_code: "ROOM_MEMBER_EXPIRED".to_owned(),
-                ..Default::default()
-            }));
+            .write_message(MyServerEvent::RoomReconnectedScoped {
+                correlation: 3,
+                seq: 3,
+                response: pb::RoomReconnectRes {
+                    ok: false,
+                    room_id: "main-world-public".to_owned(),
+                    error_code: "ROOM_MEMBER_EXPIRED".to_owned(),
+                    ..Default::default()
+                },
+            });
         app.update();
 
         let state = app.world().resource::<MainWorldEntryState>();
@@ -2720,7 +3653,7 @@ mod tests {
                 .iter()
                 .any(|command| matches!(
                     command,
-                    MyServerCommand::JoinRoom { room_id, policy_id }
+                    MyServerCommand::JoinRoomScoped { room_id, policy_id, .. }
                         if room_id == "main-world-public" && policy_id == "movement_demo"
                 ))
         );
@@ -2751,6 +3684,13 @@ mod tests {
             },
         ));
         app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        let leave_ack = room_leave_ack(&app);
+        app.world_mut().write_message(leave_ack);
+        app.update();
         let route_messages = app.world().resource::<Messages<GameRouteCommand>>();
         let mut cursor = MessageCursor::default();
         assert!(
@@ -2773,9 +3713,11 @@ mod tests {
         assert!(
             messages::<MyServerCommand>(&app)
                 .iter()
-                .any(|command| matches!(command, MyServerCommand::LeaveRoom))
+                .any(|command| matches!(command, MyServerCommand::LeaveRoomScoped { .. }))
         );
 
+        let leave_ack = room_leave_ack(&app);
+        app.world_mut().write_message(leave_ack);
         app.world_mut().write_message(SceneEvent::Exited(
             crate::framework::scene::prelude::SceneExited {
                 scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
@@ -2846,6 +3788,8 @@ mod tests {
             1
         );
 
+        let leave_ack = room_leave_ack(&app);
+        app.world_mut().write_message(leave_ack);
         app.world_mut().write_message(SceneEvent::Exited(
             crate::framework::scene::prelude::SceneExited {
                 scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),

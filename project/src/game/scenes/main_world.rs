@@ -3,11 +3,16 @@ use bevy::{
     light::NotShadowCaster, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
 use serde::{Deserialize, Deserializer, de};
-use std::{collections::HashMap, fs, path::PathBuf, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
+    time::Instant,
+};
 
 use crate::{
     framework::scene::prelude::{
-        SceneCameraRig, SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId,
+        SceneCameraRig, SceneEvent, SceneId, SceneOwned, SceneRuntimeRoot, SceneSessionId,
     },
     game::scenes::main_world_contract::MAIN_WORLD_CLIENT_SCENE_ID,
 };
@@ -32,15 +37,30 @@ pub(super) struct MainWorldScenePlugin;
 
 impl Plugin for MainWorldScenePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Assets<Mesh>>()
+        app.add_message::<MainWorldContentEvent>()
+            .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<MainWorldSessionAssets>()
+            .init_resource::<MainWorldContentTerminalSessions>()
             .init_resource::<MainWorldAcceptanceMetrics>()
             .add_systems(
                 PostUpdate,
                 (instantiate_main_world_content, report_main_world_metrics).chain(),
             );
     }
+}
+
+#[derive(Clone, Debug, Message, PartialEq, Eq)]
+pub(in crate::game) enum MainWorldContentEvent {
+    Ready {
+        scene_id: SceneId,
+        session_id: SceneSessionId,
+    },
+    Failed {
+        scene_id: SceneId,
+        session_id: SceneSessionId,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Component, PartialEq, Eq)]
@@ -53,6 +73,15 @@ struct MainWorldDistanceMarkerCollection;
 
 #[derive(Default, Resource)]
 struct MainWorldSessionAssets(HashMap<SceneSessionId, MainWorldAssetHandles>);
+
+#[derive(Default, Resource)]
+struct MainWorldContentTerminalSessions(HashMap<SceneSessionId, MainWorldContentTerminal>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MainWorldContentTerminal {
+    Ready,
+    Failed,
+}
 
 struct MainWorldAssetHandles {
     meshes: [Handle<Mesh>; 2],
@@ -449,27 +478,29 @@ fn build_main_world_marker_template(
 fn instantiate_main_world_content(
     mut commands: Commands,
     mut scene_events: MessageReader<SceneEvent>,
+    mut content_events: MessageWriter<MainWorldContentEvent>,
     runtime_roots: Query<(Entity, &SceneRuntimeRoot)>,
-    mut scene_cameras: Query<(Entity, &SceneCameraRig, &mut Camera), With<Camera3d>>,
+    mut scene_cameras: Query<(Entity, &SceneCameraRig, &SceneOwned, &mut Camera), With<Camera3d>>,
     existing_content: Query<&MainWorldContent>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut session_assets: ResMut<MainWorldSessionAssets>,
+    mut terminal_sessions: ResMut<MainWorldContentTerminalSessions>,
     mut acceptance_metrics: ResMut<MainWorldAcceptanceMetrics>,
 ) {
-    let mut instantiated_sessions = Vec::new();
-
-    for event in scene_events.read() {
-        let entered = match event {
-            SceneEvent::Entered(entered) => entered,
+    let scene_events = scene_events.read().cloned().collect::<Vec<_>>();
+    let mut terminated_sessions = HashSet::new();
+    for event in &scene_events {
+        match event {
             SceneEvent::Exited(exited) if exited.scene_id.as_str() == MAIN_WORLD_SCENE_ID => {
+                terminated_sessions.insert(exited.session_id.clone());
+                terminal_sessions.0.remove(&exited.session_id);
                 remove_main_world_session_assets(
                     &exited.session_id,
                     &mut session_assets,
                     &mut meshes,
                     &mut materials,
                 );
-                continue;
             }
             SceneEvent::Failed(failure)
                 if failure
@@ -478,6 +509,8 @@ fn instantiate_main_world_content(
                     .is_some_and(|scene_id| scene_id.as_str() == MAIN_WORLD_SCENE_ID) =>
             {
                 if let Some(session_id) = failure.session_id.as_ref() {
+                    terminated_sessions.insert(session_id.clone());
+                    terminal_sessions.0.remove(session_id);
                     remove_main_world_session_assets(
                         session_id,
                         &mut session_assets,
@@ -485,15 +518,21 @@ fn instantiate_main_world_content(
                         &mut materials,
                     );
                 }
-                continue;
             }
-            _ => continue,
+            _ => {}
+        }
+    }
+
+    for event in &scene_events {
+        let SceneEvent::Entered(entered) = event else {
+            continue;
         };
         if entered.scene_id.as_str() != MAIN_WORLD_SCENE_ID
+            || terminated_sessions.contains(&entered.session_id)
+            || terminal_sessions.0.contains_key(&entered.session_id)
             || existing_content
                 .iter()
                 .any(|content| content.session_id == entered.session_id)
-            || instantiated_sessions.contains(&entered.session_id)
         {
             continue;
         }
@@ -503,21 +542,61 @@ fn instantiate_main_world_content(
             .find(|(_, root)| root.is_session(&entered.session_id))
             .map(|(entity, _)| entity)
         else {
-            warn!(
-                "main world session `{}` has no runtime root",
-                entered.session_id
+            publish_main_world_content_failure(
+                &mut content_events,
+                &mut terminal_sessions,
+                &entered.scene_id,
+                &entered.session_id,
+                format!(
+                    "main world session `{}` has no runtime root",
+                    entered.session_id
+                ),
+            );
+            continue;
+        };
+        let scene_camera = scene_cameras
+            .iter_mut()
+            .find(|(_, rig, owned, _)| {
+                rig.is_session(&entered.session_id) && owned.session_id == entered.session_id
+            })
+            .map(|(entity, _, _, camera)| (entity, camera));
+        let Some((scene_camera, mut camera)) = scene_camera else {
+            publish_main_world_content_failure(
+                &mut content_events,
+                &mut terminal_sessions,
+                &entered.scene_id,
+                &entered.session_id,
+                format!(
+                    "main world session `{}` has no 3d scene camera to configure",
+                    entered.session_id
+                ),
             );
             continue;
         };
         let layout = match load_main_world_layout() {
             Ok(layout) => layout,
             Err(error) => {
-                warn!("main world layout could not be loaded: {error}");
+                publish_main_world_content_failure(
+                    &mut content_events,
+                    &mut terminal_sessions,
+                    &entered.scene_id,
+                    &entered.session_id,
+                    format!("main world layout could not be loaded: {error}"),
+                );
                 continue;
             }
         };
         if layout.scene_id != MAIN_WORLD_SCENE_ID {
-            warn!("main world layout scene id does not match its registered scene");
+            publish_main_world_content_failure(
+                &mut content_events,
+                &mut terminal_sessions,
+                &entered.scene_id,
+                &entered.session_id,
+                format!(
+                    "main world layout scene id `{}` does not match `{MAIN_WORLD_SCENE_ID}`",
+                    layout.scene_id
+                ),
+            );
             continue;
         }
         let mesh_generation_started = Instant::now();
@@ -525,16 +604,18 @@ fn instantiate_main_world_content(
             match build_main_world_distance_marker_mesh(&layout.distance_markers) {
                 Ok(mesh) => mesh,
                 Err(error) => {
-                    warn!("main world distance marker mesh could not be generated: {error}");
+                    publish_main_world_content_failure(
+                        &mut content_events,
+                        &mut terminal_sessions,
+                        &entered.scene_id,
+                        &entered.session_id,
+                        format!("main world distance marker mesh could not be generated: {error}"),
+                    );
                     continue;
                 }
             };
         let marker_generation_ms = mesh_generation_started.elapsed().as_secs_f64() * 1000.0;
         let distance_marker_stats = distance_marker_mesh.stats;
-        let scene_camera = scene_cameras
-            .iter_mut()
-            .find(|(_, rig, _)| rig.is_session(&entered.session_id))
-            .map(|(entity, _, camera)| (entity, camera));
 
         let session_id = entered.session_id.clone();
         let content = commands
@@ -566,14 +647,7 @@ fn instantiate_main_world_content(
             acceptance_metrics.reported = false;
             acceptance_metrics.marker_generation_ms = marker_generation_ms;
         }
-        if let Some((scene_camera, mut camera)) = scene_camera {
-            configure_main_world_camera(&mut commands, scene_camera, &mut camera, &layout.render);
-        } else {
-            warn!(
-                "main world session `{}` has no 3d scene camera to configure",
-                entered.session_id
-            );
-        }
+        configure_main_world_camera(&mut commands, scene_camera, &mut camera, &layout.render);
         info!(
             scene_id = MAIN_WORLD_SCENE_ID,
             session_id = %session_id,
@@ -584,8 +658,42 @@ fn instantiate_main_world_content(
             marker_generation_ms,
             "main world visuals instantiated: terrain, distance marker collection, directional light"
         );
-        instantiated_sessions.push(session_id);
+        terminal_sessions
+            .0
+            .insert(session_id.clone(), MainWorldContentTerminal::Ready);
+        content_events.write(MainWorldContentEvent::Ready {
+            scene_id: entered.scene_id.clone(),
+            session_id,
+        });
     }
+}
+
+fn publish_main_world_content_failure(
+    content_events: &mut MessageWriter<MainWorldContentEvent>,
+    terminal_sessions: &mut MainWorldContentTerminalSessions,
+    scene_id: &SceneId,
+    session_id: &SceneSessionId,
+    reason: String,
+) {
+    if terminal_sessions
+        .0
+        .insert(session_id.clone(), MainWorldContentTerminal::Failed)
+        .is_some()
+    {
+        return;
+    }
+
+    error!(
+        scene_id = scene_id.as_str(),
+        session_id = %session_id,
+        reason = %reason,
+        "main world content instantiation failed"
+    );
+    content_events.write(MainWorldContentEvent::Failed {
+        scene_id: scene_id.clone(),
+        session_id: session_id.clone(),
+        reason,
+    });
 }
 
 fn report_main_world_metrics(
@@ -867,11 +975,12 @@ fn first_package_asset_paths() -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use crate::framework::scene::prelude::{
-        SceneCommand, SceneDefinition, SceneEntered, SceneExitRequest, SceneKind, ScenePlugin,
-        SceneRegistry, SceneRuntime, SceneRuntimeRoot,
+        SceneCommand, SceneDefinition, SceneEntered, SceneExitRequest, SceneExited, SceneKind,
+        ScenePlugin, SceneRegistry, SceneRuntime, SceneRuntimeRoot, default_scene_camera_3d_config,
     };
     use bevy::asset::AssetPlugin;
     use bevy::camera::primitives::MeshAabb;
+    use bevy::ecs::message::{MessageCursor, Messages};
     use bevy::mesh::VertexAttributeValues;
 
     #[test]
@@ -1103,6 +1212,8 @@ mod tests {
         let session_id = SceneSessionId::from("main-world-test-1");
         app.world_mut()
             .spawn(SceneRuntimeRoot::new(session_id.clone()));
+        spawn_test_main_world_camera(&mut app, &session_id);
+        let mut content_events = MessageCursor::<MainWorldContentEvent>::default();
         app.world_mut()
             .write_message(SceneEvent::Entered(SceneEntered {
                 scene_id: MAIN_WORLD_SCENE_ID.into(),
@@ -1110,6 +1221,14 @@ mod tests {
                 content_version: None,
             }));
         app.update();
+
+        assert_eq!(
+            read_main_world_content_events(&app, &mut content_events),
+            vec![MainWorldContentEvent::Ready {
+                scene_id: MAIN_WORLD_SCENE_ID.into(),
+                session_id: session_id.clone(),
+            }]
+        );
 
         let world = app.world_mut();
         let mut contents = world.query::<(Entity, &MainWorldContent, &SceneOwned)>();
@@ -1183,6 +1302,8 @@ mod tests {
             }));
         app.update();
 
+        assert!(read_main_world_content_events(&app, &mut content_events).is_empty());
+
         assert_eq!(
             app.world_mut()
                 .query::<&MainWorldContent>()
@@ -1199,6 +1320,138 @@ mod tests {
         );
         assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 2);
         assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 2);
+    }
+
+    #[test]
+    fn content_failure_is_emitted_once_per_session_and_exit_allows_a_new_attempt() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .add_message::<SceneEvent>()
+            .add_plugins(MainWorldScenePlugin);
+
+        let session_id = SceneSessionId::from("main-world-missing-root");
+        let entered = SceneEvent::Entered(SceneEntered {
+            scene_id: MAIN_WORLD_SCENE_ID.into(),
+            session_id: session_id.clone(),
+            content_version: None,
+        });
+        let mut content_events = MessageCursor::<MainWorldContentEvent>::default();
+
+        app.world_mut().write_message(entered.clone());
+        app.update();
+
+        let events = read_main_world_content_events(&app, &mut content_events);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            MainWorldContentEvent::Failed {
+                scene_id,
+                session_id: failed_session_id,
+                reason,
+            } if scene_id.as_str() == MAIN_WORLD_SCENE_ID
+                && failed_session_id == &session_id
+                && reason.contains("has no runtime root")
+        ));
+
+        app.world_mut().write_message(entered.clone());
+        app.update();
+        assert!(read_main_world_content_events(&app, &mut content_events).is_empty());
+
+        app.world_mut()
+            .write_message(SceneEvent::Exited(SceneExited {
+                scene_id: MAIN_WORLD_SCENE_ID.into(),
+                session_id: session_id.clone(),
+            }));
+        app.update();
+        assert!(read_main_world_content_events(&app, &mut content_events).is_empty());
+
+        app.world_mut().write_message(entered);
+        app.update();
+        assert_eq!(
+            read_main_world_content_events(&app, &mut content_events)
+                .into_iter()
+                .filter(|event| matches!(event, MainWorldContentEvent::Failed { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn missing_3d_camera_fails_before_spawning_content_or_assets() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .add_message::<SceneEvent>()
+            .add_plugins(MainWorldScenePlugin);
+
+        let session_id = SceneSessionId::from("main-world-missing-camera");
+        app.world_mut()
+            .spawn(SceneRuntimeRoot::new(session_id.clone()));
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id: MAIN_WORLD_SCENE_ID.into(),
+                session_id: session_id.clone(),
+                content_version: None,
+            }));
+        app.update();
+
+        let mut cursor = MessageCursor::<MainWorldContentEvent>::default();
+        let events = read_main_world_content_events(&app, &mut cursor);
+        assert!(matches!(
+            events.as_slice(),
+            [MainWorldContentEvent::Failed {
+                scene_id,
+                session_id: failed_session_id,
+                reason,
+            }] if scene_id.as_str() == MAIN_WORLD_SCENE_ID
+                && failed_session_id == &session_id
+                && reason.contains("has no 3d scene camera")
+        ));
+        assert_eq!(
+            app.world_mut()
+                .query::<&MainWorldContent>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+        assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 0);
+    }
+
+    #[test]
+    fn same_frame_exit_suppresses_entered_session_instantiation() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .add_message::<SceneEvent>()
+            .add_plugins(MainWorldScenePlugin);
+
+        let session_id = SceneSessionId::from("main-world-enter-exit-race");
+        app.world_mut()
+            .spawn(SceneRuntimeRoot::new(session_id.clone()));
+        spawn_test_main_world_camera(&mut app, &session_id);
+        app.world_mut()
+            .write_message(SceneEvent::Entered(SceneEntered {
+                scene_id: MAIN_WORLD_SCENE_ID.into(),
+                session_id: session_id.clone(),
+                content_version: None,
+            }));
+        app.world_mut()
+            .write_message(SceneEvent::Exited(SceneExited {
+                scene_id: MAIN_WORLD_SCENE_ID.into(),
+                session_id,
+            }));
+        app.update();
+
+        let mut cursor = MessageCursor::<MainWorldContentEvent>::default();
+        assert!(read_main_world_content_events(&app, &mut cursor).is_empty());
+        assert_eq!(
+            app.world_mut()
+                .query::<&MainWorldContent>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+        assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 0);
     }
 
     #[test]
@@ -1379,6 +1632,25 @@ mod tests {
             app.world().resource::<GlobalAmbientLight>().color,
             global_ambient.color
         );
+    }
+
+    fn spawn_test_main_world_camera(app: &mut App, session_id: &SceneSessionId) {
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Camera::default(),
+            SceneCameraRig::new(session_id.clone(), default_scene_camera_3d_config()),
+            SceneOwned::new(session_id.clone()),
+        ));
+    }
+
+    fn read_main_world_content_events(
+        app: &App,
+        cursor: &mut MessageCursor<MainWorldContentEvent>,
+    ) -> Vec<MainWorldContentEvent> {
+        cursor
+            .read(app.world().resource::<Messages<MainWorldContentEvent>>())
+            .cloned()
+            .collect()
     }
 
     fn main_world_camera_count(app: &mut App, session_id: &SceneSessionId) -> usize {

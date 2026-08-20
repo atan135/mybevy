@@ -3,7 +3,11 @@ use bevy::{
     prelude::*,
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
 };
-use std::collections::HashMap;
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashMap, HashSet},
+    time::Duration,
+};
 
 use crate::framework::fangyuan::{
     FANGYUAN_MINIMAL_PLAYER_BLUEPRINT_PATH, FangyuanBlueprintBounds, FangyuanObjectState,
@@ -17,7 +21,8 @@ use crate::game::myserver::MyServerEvent;
 use crate::game::myserver::protocol::pb;
 
 use super::main_world_contract::{
-    MAIN_WORLD_SERVER_SCENE_ID, main_world_movement_snapshot_contains_complete_room_entities,
+    MAIN_WORLD_ROOM_SNAPSHOT_REASON, MAIN_WORLD_SERVER_SCENE_ID,
+    main_world_movement_snapshot_contains_complete_room_entities,
     main_world_movement_snapshot_from_event,
 };
 
@@ -74,13 +79,213 @@ pub(in crate::game) enum MainWorldPlayerSnapshotError {
 
 #[derive(Resource, Default)]
 struct MainWorldPlayerRuntime {
-    cached_snapshot: Option<pb::MovementSnapshotPush>,
+    cached_snapshots: BTreeMap<u32, MainWorldPlayerSnapshotBatch>,
     cached_generation: u64,
     active_generation: u64,
     last_applied_frame: Option<u32>,
+    last_applied_envelope_count: usize,
     last_error: Option<MainWorldPlayerSnapshotError>,
     was_recovering: bool,
     registry: Option<MainWorldPlayerRegistry>,
+    remote_offline_deadlines: HashMap<String, Duration>,
+}
+
+const MAIN_WORLD_REMOTE_OFFLINE_GRACE: Duration = Duration::from_secs(5);
+// Covers the 20-second entry watchdog at the current 20 Hz authority rate,
+// with headroom for bursts while scene/content readiness settles.
+const MAIN_WORLD_PLAYER_SNAPSHOT_CACHE_FRAMES: usize = 512;
+
+#[derive(Clone, Debug)]
+struct MainWorldPlayerSnapshotBatch {
+    frame_id: u32,
+    envelopes: Vec<pb::MovementSnapshotPush>,
+}
+
+#[derive(Clone, Debug)]
+struct MainWorldMergedPlayerSnapshot {
+    push: pb::MovementSnapshotPush,
+    complete_visible_character_ids: Option<HashSet<String>>,
+}
+
+impl MainWorldPlayerSnapshotBatch {
+    fn new(push: pb::MovementSnapshotPush) -> Self {
+        Self {
+            frame_id: push.frame_id,
+            envelopes: vec![push],
+        }
+    }
+
+    fn merge(&self) -> MainWorldMergedPlayerSnapshot {
+        let mut ordered: Vec<_> = self.envelopes.iter().collect();
+        ordered.sort_by(|left, right| compare_main_world_snapshot_envelopes(left, right));
+
+        let strongest = *ordered
+            .last()
+            .expect("a cached main-world snapshot batch is never empty");
+        let mut push = strongest.clone();
+        let complete_envelope = ordered
+            .iter()
+            .rev()
+            .find(|envelope| main_world_player_snapshot_contains_complete_roster(envelope))
+            .copied();
+        let complete_visible_character_ids = complete_envelope.map(|envelope| {
+            envelope
+                .entities
+                .iter()
+                .map(|entity| entity.character_id.clone())
+                .collect()
+        });
+
+        let mut entities = BTreeMap::new();
+        for envelope in ordered {
+            let mut ordered_entities: Vec<_> = envelope.entities.iter().collect();
+            ordered_entities.sort_by(|left, right| compare_entity_transforms(left, right));
+            for entity in ordered_entities {
+                entities.insert(entity.character_id.clone(), entity.clone());
+            }
+        }
+        push.entities = entities.into_values().collect();
+        if let Some(complete) = complete_envelope {
+            push.full_sync = complete.full_sync;
+            push.reason = complete.reason.clone();
+            push.target_character_ids = complete.target_character_ids.clone();
+        } else {
+            // A targeted strong/recovery correction sets full_sync on the wire,
+            // but it is not proof that its entity list is the whole roster.
+            push.full_sync = false;
+            if push.reason == MAIN_WORLD_ROOM_SNAPSHOT_REASON {
+                push.reason.clear();
+            }
+        }
+
+        MainWorldMergedPlayerSnapshot {
+            push,
+            complete_visible_character_ids,
+        }
+    }
+}
+
+fn main_world_snapshot_correction_priority(push: &pb::MovementSnapshotPush) -> u8 {
+    match pb::MovementCorrectionKind::try_from(push.correction_kind).ok() {
+        Some(pb::MovementCorrectionKind::Recovery) => 4,
+        Some(pb::MovementCorrectionKind::Strong) => 3,
+        Some(pb::MovementCorrectionKind::FullSync) => 2,
+        Some(pb::MovementCorrectionKind::Incremental) => 1,
+        None => 0,
+    }
+}
+
+fn compare_main_world_snapshot_envelopes(
+    left: &pb::MovementSnapshotPush,
+    right: &pb::MovementSnapshotPush,
+) -> Ordering {
+    main_world_snapshot_correction_priority(left)
+        .cmp(&main_world_snapshot_correction_priority(right))
+        .then_with(|| left.full_sync.cmp(&right.full_sync))
+        .then_with(|| left.reference_frame_id.cmp(&right.reference_frame_id))
+        .then_with(|| left.reason_code.cmp(&right.reason_code))
+        .then_with(|| left.reason.cmp(&right.reason))
+        .then_with(|| left.target_character_ids.cmp(&right.target_character_ids))
+        .then_with(|| compare_entity_transform_slices(&left.entities, &right.entities))
+}
+
+fn compare_entity_transform_slices(
+    left: &[pb::EntityTransform],
+    right: &[pb::EntityTransform],
+) -> Ordering {
+    let mut left = left.iter().collect::<Vec<_>>();
+    let mut right = right.iter().collect::<Vec<_>>();
+    left.sort_by(|a, b| compare_entity_transforms(a, b));
+    right.sort_by(|a, b| compare_entity_transforms(a, b));
+    left.iter()
+        .zip(&right)
+        .map(|(a, b)| compare_entity_transforms(a, b))
+        .find(|ordering| *ordering != Ordering::Equal)
+        .unwrap_or_else(|| left.len().cmp(&right.len()))
+}
+
+fn compare_entity_transforms(left: &pb::EntityTransform, right: &pb::EntityTransform) -> Ordering {
+    left.character_id
+        .cmp(&right.character_id)
+        .then_with(|| left.entity_id.cmp(&right.entity_id))
+        .then_with(|| left.scene_id.cmp(&right.scene_id))
+        .then_with(|| left.x.total_cmp(&right.x))
+        .then_with(|| left.y.total_cmp(&right.y))
+        .then_with(|| left.dir_x.total_cmp(&right.dir_x))
+        .then_with(|| left.dir_y.total_cmp(&right.dir_y))
+        .then_with(|| left.moving.cmp(&right.moving))
+        .then_with(|| left.last_input_frame.cmp(&right.last_input_frame))
+}
+
+fn main_world_snapshot_targets_character(
+    push: &pb::MovementSnapshotPush,
+    character_id: Option<&str>,
+) -> bool {
+    push.target_character_ids.is_empty()
+        || character_id.is_some_and(|character_id| {
+            push.target_character_ids
+                .iter()
+                .any(|target| target == character_id)
+        })
+}
+
+fn main_world_player_snapshot_contains_complete_roster(push: &pb::MovementSnapshotPush) -> bool {
+    (main_world_movement_snapshot_contains_complete_room_entities(push)
+        && push.target_character_ids.is_empty())
+        || (push.full_sync && push.target_character_ids.is_empty())
+}
+
+fn cache_main_world_player_snapshot(
+    runtime: &mut MainWorldPlayerRuntime,
+    push: pb::MovementSnapshotPush,
+    generation: u64,
+) {
+    if runtime
+        .last_applied_frame
+        .is_some_and(|applied| push.frame_id < applied)
+    {
+        return;
+    }
+    match runtime.cached_snapshots.get_mut(&push.frame_id) {
+        Some(cached) => {
+            if !cached
+                .envelopes
+                .iter()
+                .any(|cached| same_main_world_snapshot_envelope(cached, &push))
+            {
+                cached.envelopes.push(push);
+            }
+        }
+        None => {
+            runtime
+                .cached_snapshots
+                .insert(push.frame_id, MainWorldPlayerSnapshotBatch::new(push));
+        }
+    }
+    while runtime.cached_snapshots.len() > MAIN_WORLD_PLAYER_SNAPSHOT_CACHE_FRAMES {
+        runtime.cached_snapshots.pop_first();
+    }
+    runtime.cached_generation = generation;
+}
+
+fn same_main_world_snapshot_envelope(
+    left: &pb::MovementSnapshotPush,
+    right: &pb::MovementSnapshotPush,
+) -> bool {
+    left.frame_id == right.frame_id
+        && left.full_sync == right.full_sync
+        && left.correction_kind == right.correction_kind
+        && left.reason_code == right.reason_code
+        && left.reason == right.reason
+        && left.target_character_ids == right.target_character_ids
+        && left.reference_frame_id == right.reference_frame_id
+        && compare_entity_transform_slices(&left.entities, &right.entities) == Ordering::Equal
+}
+
+fn clear_main_world_player_snapshot_cache(runtime: &mut MainWorldPlayerRuntime) {
+    runtime.cached_snapshots.clear();
+    runtime.last_applied_frame = None;
+    runtime.last_applied_envelope_count = 0;
 }
 
 pub(in crate::game) struct MainWorldPlayersPlugin;
@@ -94,7 +299,8 @@ impl Plugin for MainWorldPlayersPlugin {
             .add_systems(
                 Update,
                 (
-                    maintain_main_world_players,
+                    maintain_main_world_players
+                        .after(super::main_world_entry::MainWorldEntryUpdateSet::Coordinator),
                     drive_main_world_players_fixture,
                 )
                     .chain(),
@@ -217,6 +423,7 @@ fn maintain_main_world_players(
     mut events: MessageReader<MyServerEvent>,
     entry: Res<super::main_world_entry::MainWorldEntryState>,
     roots: Query<(Entity, &crate::framework::scene::prelude::SceneRuntimeRoot)>,
+    time: Res<Time>,
     mut runtime: ResMut<MainWorldPlayerRuntime>,
 ) {
     if runtime.active_generation != entry.generation {
@@ -224,10 +431,10 @@ fn maintain_main_world_players(
             registry.clear(&mut commands);
         }
         runtime.registry = None;
-        runtime.cached_snapshot = None;
-        runtime.last_applied_frame = None;
+        clear_main_world_player_snapshot_cache(&mut runtime);
         runtime.last_error = None;
         runtime.was_recovering = false;
+        runtime.remote_offline_deadlines.clear();
         runtime.active_generation = entry.generation;
     }
     let owns_visual_session = matches!(
@@ -243,16 +450,19 @@ fn maintain_main_world_players(
             registry.clear(&mut commands);
         }
         runtime.registry = None;
-        runtime.cached_snapshot = None;
-        runtime.last_applied_frame = None;
+        clear_main_world_player_snapshot_cache(&mut runtime);
         runtime.last_error = None;
         runtime.was_recovering = false;
+        runtime.remote_offline_deadlines.clear();
         return;
     }
-    if runtime.was_recovering && entry.phase == super::main_world_entry::MainWorldEntryPhase::Active
+    // A recovered room starts a new authority-frame epoch. Reset before
+    // handling recovery messages so the initial low frame replaces the old
+    // epoch even when entry later passes through WaitingSceneReady.
+    if !runtime.was_recovering
+        && entry.phase == super::main_world_entry::MainWorldEntryPhase::Recovering
     {
-        runtime.cached_snapshot = None;
-        runtime.last_applied_frame = None;
+        clear_main_world_player_snapshot_cache(&mut runtime);
         if let Some(registry) = runtime.registry.as_mut() {
             for player in registry.players.values_mut() {
                 player.last_authoritative_frame = 0;
@@ -260,19 +470,33 @@ fn maintain_main_world_players(
         }
     }
     for event in events.read() {
-        let Some(push) = main_world_movement_snapshot_from_event(event) else {
-            continue;
-        };
-        if push.room_id != super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID {
-            continue;
-        }
-        if runtime
-            .cached_snapshot
-            .as_ref()
-            .is_none_or(|cached| push.frame_id >= cached.frame_id)
-        {
-            runtime.cached_snapshot = Some(push.into_owned());
-            runtime.cached_generation = entry.generation;
+        match event {
+            MyServerEvent::RoomMemberOfflinePush(push)
+                if push.room_id == super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID =>
+            {
+                if push.character_id != entry.character_id.as_deref().unwrap_or_default() {
+                    if push.offline {
+                        runtime.remote_offline_deadlines.insert(
+                            push.character_id.clone(),
+                            time.elapsed() + MAIN_WORLD_REMOTE_OFFLINE_GRACE,
+                        );
+                    } else {
+                        runtime.remote_offline_deadlines.remove(&push.character_id);
+                    }
+                }
+            }
+            _ => {
+                let Some(push) = main_world_movement_snapshot_from_event(event) else {
+                    continue;
+                };
+                if push.room_id != super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID {
+                    continue;
+                }
+                if !main_world_snapshot_targets_character(&push, entry.character_id.as_deref()) {
+                    continue;
+                }
+                cache_main_world_player_snapshot(&mut runtime, push.into_owned(), entry.generation);
+            }
         }
     }
     runtime.was_recovering =
@@ -301,7 +525,18 @@ fn maintain_main_world_players(
             root,
         ));
         runtime.last_applied_frame = None;
+        runtime.last_applied_envelope_count = 0;
     }
+    let mut offline_deadlines = std::mem::take(&mut runtime.remote_offline_deadlines);
+    if let Some(registry) = runtime.registry.as_mut() {
+        remove_expired_remote_offline_players(
+            registry,
+            &mut commands,
+            &mut offline_deadlines,
+            time.elapsed(),
+        );
+    }
+    runtime.remote_offline_deadlines = offline_deadlines;
     if entry.phase == super::main_world_entry::MainWorldEntryPhase::Recovering {
         if let Some(registry) = runtime.registry.as_ref() {
             for entry in registry.players.values() {
@@ -313,29 +548,65 @@ fn maintain_main_world_players(
     if !entry.scene_ready || !entry.room_ready_acknowledged {
         return;
     }
-    let Some(snapshot) = runtime.cached_snapshot.clone() else {
-        return;
-    };
-    if runtime.cached_generation != entry.generation
-        || runtime.last_applied_frame == Some(snapshot.frame_id)
-    {
+    if runtime.cached_generation != entry.generation {
         return;
     }
-    if let Some(registry) = runtime.registry.as_mut() {
-        match apply_main_world_snapshot(registry, &mut commands, &snapshot, true, true) {
-            Ok(()) => {
+    let pending_batches: Vec<_> = runtime
+        .cached_snapshots
+        .values()
+        .filter(|batch| {
+            runtime
+                .last_applied_frame
+                .is_none_or(|applied| batch.frame_id > applied)
+                || (runtime.last_applied_frame == Some(batch.frame_id)
+                    && batch.envelopes.len() > runtime.last_applied_envelope_count)
+        })
+        .cloned()
+        .collect();
+    for batch in pending_batches {
+        let mut merged = batch.merge();
+        suppress_expired_remote_offline_entities(
+            &mut merged.push,
+            &runtime.remote_offline_deadlines,
+            time.elapsed(),
+        );
+        let snapshot = &merged.push;
+        let result = runtime.registry.as_mut().map(|registry| {
+            apply_main_world_snapshot(registry, &mut commands, snapshot, true, true)
+        });
+        match result {
+            Some(Ok(())) => {
                 runtime.last_applied_frame = Some(snapshot.frame_id);
+                runtime.last_applied_envelope_count = batch.envelopes.len();
                 runtime.last_error = None;
+                if let Some(visible) = merged.complete_visible_character_ids.as_ref() {
+                    let mut offline_deadlines =
+                        std::mem::take(&mut runtime.remote_offline_deadlines);
+                    if let Some(registry) = runtime.registry.as_mut() {
+                        let offline: Vec<_> = offline_deadlines.keys().cloned().collect();
+                        for character_id in offline {
+                            if !visible.contains(&character_id) {
+                                registry.remove_remote(&mut commands, &character_id);
+                                // Preserve an expired tombstone until an explicit
+                                // online notice proves that snapshots may spawn it again.
+                                offline_deadlines.insert(character_id, time.elapsed());
+                            }
+                        }
+                    }
+                    runtime.remote_offline_deadlines = offline_deadlines;
+                }
             }
-            Err(error) => {
+            Some(Err(error)) => {
                 warn!(
                     ?error,
                     frame_id = snapshot.frame_id,
                     "main world player snapshot rejected"
                 );
                 runtime.last_applied_frame = Some(snapshot.frame_id);
+                runtime.last_applied_envelope_count = batch.envelopes.len();
                 runtime.last_error = Some(error);
             }
+            None => break,
         }
     }
     if entry.phase == super::main_world_entry::MainWorldEntryPhase::Active {
@@ -354,6 +625,33 @@ fn maintain_main_world_players(
     }
 }
 
+fn remove_expired_remote_offline_players(
+    registry: &mut MainWorldPlayerRegistry,
+    commands: &mut Commands,
+    deadlines: &mut HashMap<String, Duration>,
+    now: Duration,
+) {
+    let expired: Vec<_> = deadlines
+        .iter()
+        .filter_map(|(character_id, deadline)| (*deadline <= now).then_some(character_id.clone()))
+        .collect();
+    for character_id in expired {
+        registry.remove_remote(commands, &character_id);
+    }
+}
+
+fn suppress_expired_remote_offline_entities(
+    push: &mut pb::MovementSnapshotPush,
+    deadlines: &HashMap<String, Duration>,
+    now: Duration,
+) {
+    push.entities.retain(|entity| {
+        !deadlines
+            .get(&entity.character_id)
+            .is_some_and(|deadline| *deadline <= now)
+    });
+}
+
 #[derive(Resource, Clone, Debug)]
 pub(in crate::game) struct MainWorldPlayerRegistry {
     session_id: SceneSessionId,
@@ -361,6 +659,13 @@ pub(in crate::game) struct MainWorldPlayerRegistry {
     local_character_id: String,
     runtime_root: Entity,
     players: HashMap<String, MainWorldPlayerRegistryEntry>,
+    player_blueprint: Option<MainWorldPlayerBlueprint>,
+}
+
+#[derive(Clone, Debug)]
+struct MainWorldPlayerBlueprint {
+    bounds: FangyuanBlueprintBounds,
+    primitive_set: crate::framework::fangyuan::FangyuanPrimitiveSet,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -383,6 +688,7 @@ impl MainWorldPlayerRegistry {
             local_character_id: local_character_id.into(),
             runtime_root,
             players: HashMap::new(),
+            player_blueprint: None,
         }
     }
 
@@ -422,19 +728,23 @@ impl MainWorldPlayerRegistry {
         }
     }
 
+    /// An offline notice concerns presence, not the ticket owner.  The local
+    /// player remains visible until entry/session orchestration tears it down.
+    fn remove_remote(&mut self, commands: &mut Commands, character_id: &str) {
+        if character_id == self.local_character_id {
+            return;
+        }
+        if let Some(entry) = self.players.remove(character_id) {
+            commands.entity(entry.entity).despawn();
+        }
+    }
+
     pub fn register(
         &mut self,
         commands: &mut Commands,
         registration: MainWorldPlayerRegistration,
     ) -> Result<MainWorldPlayerRegistrationResult, MainWorldPlayerRegistrationError> {
         self.validate(&registration)?;
-        let blueprint = load_fangyuan_minimal_player_blueprint()
-            .map_err(|_| MainWorldPlayerRegistrationError::BlueprintLoadFailed)?;
-        let primitive_set = blueprint
-            .compile()
-            .map_err(|_| MainWorldPlayerRegistrationError::BlueprintLoadFailed)?;
-        let root_transform =
-            main_world_player_root_transform(registration.transform, blueprint.bounds);
         let ownership = if registration.character_id == self.local_character_id {
             MainWorldPlayerOwnership::Local
         } else {
@@ -464,6 +774,10 @@ impl MainWorldPlayerRegistry {
                     // producing a visible back-and-forth jitter every snapshot.
                     commands.entity(existing.entity).insert(player);
                 } else {
+                    let root_transform = main_world_player_root_transform(
+                        registration.transform,
+                        self.player_blueprint()?.bounds,
+                    );
                     commands.entity(existing.entity).insert((
                         player,
                         FangyuanPlayerPosition {
@@ -484,12 +798,15 @@ impl MainWorldPlayerRegistry {
                 return Ok(MainWorldPlayerRegistrationResult::Updated(existing.entity));
             }
             commands.entity(existing.entity).despawn();
+            let player_blueprint = self.player_blueprint()?.clone();
+            let root_transform =
+                main_world_player_root_transform(registration.transform, player_blueprint.bounds);
             let current = spawn_player_root(
                 commands,
                 self.runtime_root,
                 &self.session_id,
                 player,
-                primitive_set,
+                player_blueprint.primitive_set,
                 root_transform,
             );
             self.players.insert(
@@ -507,12 +824,15 @@ impl MainWorldPlayerRegistry {
         }
 
         let character_id = registration.character_id;
+        let player_blueprint = self.player_blueprint()?.clone();
+        let root_transform =
+            main_world_player_root_transform(registration.transform, player_blueprint.bounds);
         let current = spawn_player_root(
             commands,
             self.runtime_root,
             &self.session_id,
             player,
-            primitive_set,
+            player_blueprint.primitive_set,
             root_transform,
         );
         self.players.insert(
@@ -524,6 +844,26 @@ impl MainWorldPlayerRegistry {
             },
         );
         Ok(MainWorldPlayerRegistrationResult::Created(current))
+    }
+
+    fn player_blueprint(
+        &mut self,
+    ) -> Result<&MainWorldPlayerBlueprint, MainWorldPlayerRegistrationError> {
+        if self.player_blueprint.is_none() {
+            let blueprint = load_fangyuan_minimal_player_blueprint()
+                .map_err(|_| MainWorldPlayerRegistrationError::BlueprintLoadFailed)?;
+            let primitive_set = blueprint
+                .compile()
+                .map_err(|_| MainWorldPlayerRegistrationError::BlueprintLoadFailed)?;
+            self.player_blueprint = Some(MainWorldPlayerBlueprint {
+                bounds: blueprint.bounds,
+                primitive_set,
+            });
+        }
+        Ok(self
+            .player_blueprint
+            .as_ref()
+            .expect("player blueprint was initialized"))
     }
 
     fn validate(
@@ -600,7 +940,7 @@ pub(in crate::game) fn apply_main_world_snapshot(
             .register(commands, registration)
             .map_err(MainWorldPlayerSnapshotError::Registration)?;
     }
-    if push.full_sync || main_world_movement_snapshot_contains_complete_room_entities(push) {
+    if main_world_player_snapshot_contains_complete_roster(push) {
         registry.remove_missing(commands, &visible);
     }
     Ok(())
@@ -690,12 +1030,24 @@ mod tests {
         let mut world = World::new();
         let mut registry = registry(&mut world, "session-a", "local");
         let first = register(&mut world, &mut registry, registration("remote", 10, 1)).unwrap();
+        let blueprint_ptr = registry
+            .player_blueprint
+            .as_ref()
+            .expect("first spawn caches blueprint")
+            as *const MainWorldPlayerBlueprint;
         let second = register(&mut world, &mut registry, registration("remote", 10, 2)).unwrap();
         let MainWorldPlayerRegistrationResult::Created(first) = first else {
             panic!()
         };
         assert_eq!(second, MainWorldPlayerRegistrationResult::Updated(first));
         assert_eq!(registry.len(), 1);
+        assert_eq!(
+            registry
+                .player_blueprint
+                .as_ref()
+                .expect("cached blueprint remains") as *const MainWorldPlayerBlueprint,
+            blueprint_ptr
+        );
         assert_eq!(
             world
                 .get::<MainWorldPlayer>(first)
@@ -1007,6 +1359,61 @@ mod tests {
     }
 
     #[test]
+    fn targeted_full_snapshot_does_not_remove_players_outside_its_entity_subset() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let mut registry = MainWorldPlayerRegistry::new("session-a", 3, "local", root);
+        let initial = pb::MovementSnapshotPush {
+            room_id: super::super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
+            frame_id: 1,
+            full_sync: true,
+            entities: vec![
+                pb::EntityTransform {
+                    entity_id: 1,
+                    character_id: "local".into(),
+                    scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                    x: 2001.0,
+                    y: 2001.0,
+                    ..Default::default()
+                },
+                pb::EntityTransform {
+                    entity_id: 2,
+                    character_id: "remote".into(),
+                    scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                    x: 2002.0,
+                    y: 2002.0,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        apply_main_world_snapshot(&mut registry, &mut world.commands(), &initial, true, true)
+            .unwrap();
+        world.flush();
+
+        let targeted = pb::MovementSnapshotPush {
+            frame_id: 2,
+            entities: vec![pb::EntityTransform {
+                entity_id: 1,
+                character_id: "local".into(),
+                scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                x: 2003.0,
+                y: 2003.0,
+                ..Default::default()
+            }],
+            target_character_ids: vec!["local".into()],
+            correction_kind: pb::MovementCorrectionKind::Strong as i32,
+            ..initial
+        };
+        apply_main_world_snapshot(&mut registry, &mut world.commands(), &targeted, true, true)
+            .unwrap();
+        world.flush();
+
+        assert_eq!(registry.len(), 2);
+        assert!(registry.get("remote").is_some());
+    }
+
+    #[test]
     fn snapshot_before_ready_is_rejected_without_spawning() {
         let mut world = World::new();
         let root = world.spawn_empty().id();
@@ -1102,6 +1509,178 @@ mod tests {
             .query_filtered::<Entity, With<MainWorldPlayer>>()
             .iter(app.world())
             .count()
+    }
+
+    fn activate_runtime_app(app: &mut App) {
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+        entry.generation = 1;
+        entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+        entry.character_id = Some("local".into());
+        entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+        entry.scene_ready = true;
+        entry.room_ready_acknowledged = true;
+    }
+
+    #[test]
+    fn plugin_merges_same_frame_envelopes_with_deterministic_correction_priority() {
+        let mut app = runtime_app();
+        activate_runtime_app(&mut app);
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 1.0, 1.0), ("remote", 2, 2.0, 2.0)],
+            )));
+        app.update();
+
+        let mut strong = snapshot(2, true, &[("local", 1, 8.0, 8.0)]);
+        strong.correction_kind = pb::MovementCorrectionKind::Strong as i32;
+        strong.target_character_ids = vec!["local".into()];
+        let mut incremental = snapshot(2, false, &[("new-remote", 3, 4.0, 4.0)]);
+        incremental.correction_kind = pb::MovementCorrectionKind::Incremental as i32;
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(strong));
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(incremental));
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldPlayerRuntime>();
+        let registry = runtime.registry.as_ref().unwrap();
+        let local = registry.get("local").unwrap();
+        assert!(registry.get("remote").is_some());
+        assert!(registry.get("new-remote").is_some());
+        assert_eq!(runtime.last_applied_frame, Some(2));
+        assert_eq!(runtime.last_applied_envelope_count, 2);
+        assert_eq!(
+            app.world().get::<Transform>(local).unwrap().translation,
+            Vec3::new(8.0, 0.0, 8.0)
+        );
+    }
+
+    #[test]
+    fn cache_keeps_same_frame_same_metadata_envelopes_with_different_entities() {
+        let mut runtime = MainWorldPlayerRuntime::default();
+        cache_main_world_player_snapshot(
+            &mut runtime,
+            snapshot(4, false, &[("local", 1, 1.0, 1.0)]),
+            1,
+        );
+        cache_main_world_player_snapshot(
+            &mut runtime,
+            snapshot(4, false, &[("remote", 2, 2.0, 2.0)]),
+            1,
+        );
+
+        assert_eq!(runtime.cached_snapshots[&4].envelopes.len(), 2);
+        let merged = runtime.cached_snapshots[&4].merge();
+        assert_eq!(merged.push.entities.len(), 2);
+    }
+
+    #[test]
+    fn plugin_ignores_snapshot_targeted_to_another_recipient() {
+        let mut app = runtime_app();
+        activate_runtime_app(&mut app);
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 1.0, 1.0), ("remote", 2, 2.0, 2.0)],
+            )));
+        app.update();
+
+        let mut not_for_local = snapshot(2, true, &[("intruder", 3, 9.0, 9.0)]);
+        not_for_local.target_character_ids = vec!["someone-else".into()];
+        not_for_local.correction_kind = pb::MovementCorrectionKind::Recovery as i32;
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(not_for_local));
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldPlayerRuntime>();
+        assert_eq!(runtime.last_applied_frame, Some(1));
+        assert_eq!(runtime.registry.as_ref().unwrap().len(), 2);
+        assert!(runtime.registry.as_ref().unwrap().get("intruder").is_none());
+    }
+
+    #[test]
+    fn plugin_replays_earlier_complete_roster_before_later_incremental_after_ready() {
+        let mut app = runtime_app();
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::WaitingSceneReady;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                10,
+                true,
+                &[("local", 1, 1.0, 1.0), ("remote", 2, 2.0, 2.0)],
+            )));
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                11,
+                false,
+                &[("local", 1, 3.0, 3.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 0);
+
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldPlayerRuntime>();
+        let registry = runtime.registry.as_ref().unwrap();
+        assert!(registry.get("remote").is_some());
+        assert_eq!(runtime.last_applied_frame, Some(11));
+        assert_eq!(
+            app.world()
+                .get::<Transform>(registry.get("local").unwrap())
+                .unwrap()
+                .translation,
+            Vec3::new(3.0, 0.0, 3.0)
+        );
+    }
+
+    fn activate_entry_in_coordinator(mut entry: ResMut<MainWorldEntryState>) {
+        entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+        entry.scene_ready = true;
+        entry.room_ready_acknowledged = true;
+    }
+
+    #[test]
+    fn plugin_observes_entry_state_after_coordinator_in_the_same_update() {
+        let mut app = runtime_app();
+        app.add_systems(
+            Update,
+            activate_entry_in_coordinator
+                .in_set(super::super::main_world_entry::MainWorldEntryUpdateSet::Coordinator),
+        );
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::WaitingSceneReady;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 1.0, 1.0)],
+            )));
+
+        app.update();
+
+        assert_eq!(player_count(&mut app), 1);
     }
 
     #[test]
@@ -1242,8 +1821,8 @@ mod tests {
         assert!(
             app.world()
                 .resource::<MainWorldPlayerRuntime>()
-                .cached_snapshot
-                .is_none()
+                .cached_snapshots
+                .is_empty()
         );
     }
 
@@ -1285,8 +1864,8 @@ mod tests {
 
         {
             let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
-            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
-            entry.room_ready_acknowledged = true;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::WaitingSceneReady;
+            entry.room_ready_acknowledged = false;
         }
         app.world_mut()
             .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
@@ -1295,8 +1874,180 @@ mod tests {
                 &[("local", 1, 4.0, 4.0)],
             )));
         app.update();
+        assert_eq!(player_count(&mut app), 2);
+
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.room_ready_acknowledged = true;
+        }
+        app.update();
         assert_eq!(player_count(&mut app), 1);
         assert!(app.world().get::<SceneCameraTarget>(local).is_some());
+    }
+
+    fn offline_push(character_id: &str, offline: bool) -> MyServerEvent {
+        MyServerEvent::RoomMemberOfflinePush(pb::RoomMemberOfflinePush {
+            room_id: super::super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID.into(),
+            character_id: character_id.into(),
+            offline,
+        })
+    }
+
+    #[test]
+    fn plugin_complete_snapshot_presence_does_not_override_offline_notice() {
+        let mut app = runtime_app();
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 2.0, 2.0), ("remote", 2, 3.0, 3.0)],
+            )));
+        app.update();
+        app.world_mut().write_message(offline_push("remote", true));
+        app.update();
+        assert_eq!(player_count(&mut app), 2);
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                2,
+                true,
+                &[("local", 1, 4.0, 4.0), ("remote", 2, 5.0, 5.0)],
+            )));
+        app.update();
+        assert!(
+            app.world()
+                .resource::<MainWorldPlayerRuntime>()
+                .remote_offline_deadlines
+                .contains_key("remote")
+        );
+        assert_eq!(player_count(&mut app), 2);
+    }
+
+    #[test]
+    fn plugin_incremental_presence_does_not_clear_remote_offline_grace() {
+        let mut app = runtime_app();
+        activate_runtime_app(&mut app);
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 2.0, 2.0), ("remote", 2, 3.0, 3.0)],
+            )));
+        app.update();
+        app.world_mut().write_message(offline_push("remote", true));
+        app.update();
+
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                2,
+                false,
+                &[("remote", 2, 4.0, 4.0)],
+            )));
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldPlayerRuntime>();
+        assert!(runtime.remote_offline_deadlines.contains_key("remote"));
+        assert!(runtime.registry.as_ref().unwrap().get("remote").is_some());
+    }
+
+    #[test]
+    fn plugin_online_notice_clears_remote_offline_grace() {
+        let mut app = runtime_app();
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 2.0, 2.0), ("remote", 2, 3.0, 3.0)],
+            )));
+        app.update();
+        app.world_mut().write_message(offline_push("remote", true));
+        app.update();
+        app.world_mut().write_message(offline_push("remote", false));
+        app.update();
+        assert!(
+            app.world()
+                .resource::<MainWorldPlayerRuntime>()
+                .remote_offline_deadlines
+                .is_empty()
+        );
+        assert_eq!(player_count(&mut app), 2);
+    }
+
+    #[test]
+    fn plugin_offline_remote_is_removed_when_complete_snapshot_omits_it() {
+        let mut app = runtime_app();
+        app.world_mut().spawn(SceneRuntimeRoot::new("session-1"));
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 1;
+            entry.phase = super::super::main_world_entry::MainWorldEntryPhase::Active;
+            entry.character_id = Some("local".into());
+            entry.scene_session_id = Some(SceneSessionId::from("session-1"));
+            entry.scene_ready = true;
+            entry.room_ready_acknowledged = true;
+        }
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                1,
+                true,
+                &[("local", 1, 2.0, 2.0), ("remote", 2, 3.0, 3.0)],
+            )));
+        app.update();
+        app.world_mut().write_message(offline_push("remote", true));
+        app.update();
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(snapshot(
+                2,
+                true,
+                &[("local", 1, 4.0, 4.0)],
+            )));
+        app.update();
+        assert_eq!(player_count(&mut app), 1);
+        assert!(
+            app.world()
+                .resource::<MainWorldPlayerRuntime>()
+                .remote_offline_deadlines
+                .contains_key("remote")
+        );
+    }
+
+    #[test]
+    fn expired_remote_offline_grace_removes_only_remote_player() {
+        let mut world = World::new();
+        let mut registry = registry(&mut world, "session-a", "local");
+        register(&mut world, &mut registry, registration("local", 1, 1)).unwrap();
+        register(&mut world, &mut registry, registration("remote", 2, 1)).unwrap();
+        let mut deadlines = HashMap::from([("remote".to_owned(), MAIN_WORLD_REMOTE_OFFLINE_GRACE)]);
+        remove_expired_remote_offline_players(
+            &mut registry,
+            &mut world.commands(),
+            &mut deadlines,
+            MAIN_WORLD_REMOTE_OFFLINE_GRACE,
+        );
+        world.flush();
+        assert_eq!(registry.get("remote"), None);
+        assert!(registry.get("local").is_some());
+        assert!(deadlines.contains_key("remote"));
     }
 
     #[test]

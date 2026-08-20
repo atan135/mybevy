@@ -467,6 +467,10 @@ pub struct MyServerSession {
     pub next_seq: u32,
     pub codec: PacketCodec,
     pub pending: HashMap<u32, PendingRequest>,
+    /// The active configuration snapshot used to assign deadlines to game
+    /// requests. Kept here so packet send helpers do not need to thread the
+    /// configuration through every protocol-specific call.
+    pub pending_request_timeout: Option<Duration>,
     pub pending_http: HashMap<RequestId, PendingHttpRequest>,
     pub login_request: Option<RequestId>,
     pub ticket_request: Option<RequestId>,
@@ -509,6 +513,35 @@ impl MyServerSession {
     pub fn reconnect_failed_cleanup(&mut self) {
         self.clear_reconnect_plan();
         self.game_connection_state = GameConnectionState::ReconnectFailed;
+    }
+
+    /// A room reconnect happens after game authentication has already
+    /// succeeded. Failing to restore the old room must not make that healthy
+    /// authenticated transport look disconnected: callers may fall back to a
+    /// normal `JoinRoom` request.
+    pub fn room_reconnect_failed_cleanup(&mut self) {
+        self.room_id = None;
+        self.clear_reconnect_plan();
+        self.game_connection_state = if self.connected && self.authenticated {
+            GameConnectionState::Authenticated
+        } else {
+            GameConnectionState::ReconnectFailed
+        };
+    }
+
+    pub fn set_pending_request_timeout(&mut self, timeout: Duration) {
+        self.pending_request_timeout = Some(timeout);
+    }
+
+    pub fn pending_request_timeout(&self) -> Duration {
+        self.pending_request_timeout
+            .unwrap_or(DEFAULT_REQUEST_TIMEOUT)
+    }
+
+    pub fn ensure_authenticated_transport_state(&mut self) {
+        if self.connected && self.authenticated {
+            self.game_connection_state = GameConnectionState::Authenticated;
+        }
     }
 
     pub fn reset(&mut self) {
@@ -1236,7 +1269,33 @@ impl CharacterElementsCache {
 
 #[derive(Clone, Debug)]
 pub struct PendingRequest {
+    pub request_type: MessageType,
     pub response_type: MessageType,
+    pub correlation: Option<u64>,
+    pub sent_at: SystemTime,
+    pub deadline: SystemTime,
+}
+
+impl PendingRequest {
+    pub fn new(request_type: MessageType, response_type: MessageType, timeout: Duration) -> Self {
+        let sent_at = SystemTime::now();
+        Self {
+            request_type,
+            response_type,
+            correlation: None,
+            deadline: sent_at.checked_add(timeout).unwrap_or(sent_at),
+            sent_at,
+        }
+    }
+
+    pub fn is_expired(&self, now: SystemTime) -> bool {
+        now.duration_since(self.deadline).is_ok()
+    }
+
+    pub fn with_correlation(mut self, correlation: Option<u64>) -> Self {
+        self.correlation = correlation;
+        self
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1376,6 +1435,7 @@ pub enum ReconnectCause {
 #[derive(Clone, Debug)]
 pub struct ReconnectPlan {
     pub cause: ReconnectCause,
+    pub correlation: Option<u64>,
 }
 
 #[derive(Clone, Message)]
@@ -1431,6 +1491,13 @@ pub enum MyServerCommand {
         host: Option<String>,
         port: Option<u16>,
     },
+    ReconnectWithTicketScoped {
+        ticket: String,
+        transport: NetworkTransport,
+        host: Option<String>,
+        port: Option<u16>,
+        correlation: u64,
+    },
     Disconnect,
     SwitchCharacter,
     Logout,
@@ -1441,12 +1508,30 @@ pub enum MyServerCommand {
         room_id: String,
         policy_id: String,
     },
+    JoinRoomScoped {
+        room_id: String,
+        policy_id: String,
+        correlation: u64,
+    },
     JoinRoomAsObserver {
         room_id: String,
     },
     LeaveRoom,
+    LeaveRoomScoped {
+        correlation: u64,
+    },
+    AdoptRoomMembership {
+        room_id: String,
+    },
+    ClearRoomMembership {
+        room_id: String,
+    },
     SetReady {
         ready: bool,
+    },
+    SetReadyScoped {
+        ready: bool,
+        correlation: u64,
     },
     StartRoom,
     EndRoom {
@@ -1513,6 +1598,20 @@ impl fmt::Debug for MyServerCommand {
                 .field("host", host)
                 .field("port", port)
                 .finish(),
+            Self::ReconnectWithTicketScoped {
+                transport,
+                host,
+                port,
+                correlation,
+                ..
+            } => formatter
+                .debug_struct("ReconnectWithTicketScoped")
+                .field("ticket", &"[REDACTED]")
+                .field("transport", transport)
+                .field("host", host)
+                .field("port", port)
+                .field("correlation", correlation)
+                .finish(),
             other => formatter.write_str(match other {
                 Self::GuestLogin { .. } => "GuestLogin",
                 Self::DismissRegistrationReview => "DismissRegistrationReview",
@@ -1529,9 +1628,14 @@ impl fmt::Debug for MyServerCommand {
                 Self::Logout => "Logout",
                 Self::Ping { .. } => "Ping",
                 Self::JoinRoom { .. } => "JoinRoom",
+                Self::JoinRoomScoped { .. } => "JoinRoomScoped",
                 Self::JoinRoomAsObserver { .. } => "JoinRoomAsObserver",
                 Self::LeaveRoom => "LeaveRoom",
+                Self::LeaveRoomScoped { .. } => "LeaveRoomScoped",
+                Self::AdoptRoomMembership { .. } => "AdoptRoomMembership",
+                Self::ClearRoomMembership { .. } => "ClearRoomMembership",
                 Self::SetReady { .. } => "SetReady",
+                Self::SetReadyScoped { .. } => "SetReadyScoped",
                 Self::StartRoom => "StartRoom",
                 Self::EndRoom { .. } => "EndRoom",
                 Self::SendPlayerInput { .. } => "SendPlayerInput",
@@ -1540,6 +1644,7 @@ impl fmt::Debug for MyServerCommand {
                 | Self::Register { .. }
                 | Self::ConnectWithTicket { .. }
                 | Self::ReconnectWithTicket { .. } => unreachable!(),
+                Self::ReconnectWithTicketScoped { .. } => unreachable!(),
             }),
         }
     }
@@ -1720,9 +1825,24 @@ pub enum MyServerEvent {
     },
     Pong(pb::PingRes),
     RoomJoined(pb::RoomJoinRes),
+    RoomJoinedScoped {
+        correlation: u64,
+        seq: u32,
+        response: pb::RoomJoinRes,
+    },
     RoomJoinedAsObserver(pb::RoomJoinAsObserverRes),
     RoomLeft(pb::RoomLeaveRes),
+    RoomLeftScoped {
+        correlation: u64,
+        seq: u32,
+        response: pb::RoomLeaveRes,
+    },
     ReadyChanged(pb::RoomReadyRes),
+    ReadyChangedScoped {
+        correlation: u64,
+        seq: u32,
+        response: pb::RoomReadyRes,
+    },
     RoomStarted(pb::RoomStartRes),
     RoomEnded(pb::RoomEndRes),
     PlayerInputAccepted(pb::PlayerInputRes),
@@ -1738,12 +1858,18 @@ pub enum MyServerEvent {
     CharacterElementsChanged(pb::CharacterElementsChangePush),
     CharacterElementsCacheUpdated(CharacterElementsCache),
     RoomReconnected(pb::RoomReconnectRes),
+    RoomReconnectedScoped {
+        correlation: u64,
+        seq: u32,
+        response: pb::RoomReconnectRes,
+    },
     ServerRedirectPush(pb::ServerRedirectPush),
     ServerRedirectReconnectStarted {
         reason: String,
         target_host: String,
         target_port: u16,
         transport: NetworkTransport,
+        correlation: u64,
     },
     ServerRedirectIgnored {
         reason: String,
@@ -1768,6 +1894,13 @@ pub enum MyServerEvent {
     RequestFailed {
         seq: Option<u32>,
         message_type: Option<MessageType>,
+        correlation: Option<u64>,
+        error: String,
+    },
+    ScopedRequestFailed {
+        seq: u32,
+        message_type: MessageType,
+        correlation: u64,
         error: String,
     },
 }
@@ -3724,6 +3857,7 @@ mod tests {
             }),
             reconnect_after_auth: Some(ReconnectPlan {
                 cause: ReconnectCause::TransportRecovery,
+                correlation: None,
             }),
             pending_http: HashMap::from([(
                 RequestId::from_raw(31),

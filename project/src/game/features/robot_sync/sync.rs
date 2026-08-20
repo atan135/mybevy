@@ -1333,6 +1333,7 @@ fn handle_robot_sync_myserver_event(
             seq,
             message_type,
             error,
+            ..
         } => {
             warn!(
                 room_id = %config.myserver_room_id,

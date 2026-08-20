@@ -31,6 +31,7 @@ pub(crate) enum MyServerUpdateSet {
     NetworkEvents,
     AutoClient,
     CommandDispatch,
+    RequestTimeouts,
     Keepalive,
 }
 
@@ -53,7 +54,8 @@ impl Plugin for MyServerPlugin {
                     MyServerUpdateSet::NetworkEvents,
                     MyServerUpdateSet::AutoClient.after(MyServerUpdateSet::NetworkEvents),
                     MyServerUpdateSet::CommandDispatch.after(MyServerUpdateSet::AutoClient),
-                    MyServerUpdateSet::Keepalive.after(MyServerUpdateSet::CommandDispatch),
+                    MyServerUpdateSet::RequestTimeouts.after(MyServerUpdateSet::CommandDispatch),
+                    MyServerUpdateSet::Keepalive.after(MyServerUpdateSet::RequestTimeouts),
                 ),
             )
             .add_systems(
@@ -62,9 +64,66 @@ impl Plugin for MyServerPlugin {
                     handle_network_events.in_set(MyServerUpdateSet::NetworkEvents),
                     auto_client_follow_events.in_set(MyServerUpdateSet::AutoClient),
                     handle_myserver_commands.in_set(MyServerUpdateSet::CommandDispatch),
+                    expire_pending_game_requests.in_set(MyServerUpdateSet::RequestTimeouts),
                     keepalive_myserver_connection.in_set(MyServerUpdateSet::Keepalive),
                 ),
             );
+    }
+}
+
+fn expire_pending_game_requests(
+    config: Res<MyServerConfig>,
+    mut session: ResMut<MyServerSession>,
+    mut events: MessageWriter<MyServerEvent>,
+) {
+    session.set_pending_request_timeout(config.request_timeout);
+    let now = SystemTime::now();
+    let expired = session
+        .pending
+        .iter()
+        .filter_map(|(&seq, pending)| {
+            pending.is_expired(now).then_some((
+                seq,
+                pending.request_type,
+                pending.response_type,
+                pending.correlation,
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    for (seq, request_type, response_type, correlation) in expired {
+        session.pending.remove(&seq);
+        if response_type == MessageType::RoomReconnectRes && correlation.is_none() {
+            session.room_reconnect_failed_cleanup();
+        }
+        let error = "game request timed out".to_string();
+        write_display_error(
+            &mut events,
+            MyServerDisplayError::transport(MyServerOperation::GameRequest, Some(error.clone())),
+        );
+        if let Some(correlation) = correlation {
+            // Keep the legacy request-failure stream populated as well as the
+            // strongly typed event consumed by scoped coordinators.
+            events.write(MyServerEvent::RequestFailed {
+                seq: Some(seq),
+                message_type: Some(request_type),
+                correlation: Some(correlation),
+                error: error.clone(),
+            });
+            events.write(MyServerEvent::ScopedRequestFailed {
+                seq,
+                message_type: request_type,
+                correlation,
+                error,
+            });
+        } else {
+            events.write(MyServerEvent::RequestFailed {
+                seq: Some(seq),
+                message_type: Some(request_type),
+                correlation: None,
+                error,
+            });
+        }
     }
 }
 
@@ -406,9 +465,10 @@ fn auto_client_follow_events(
             MyServerEvent::RequestFailed {
                 seq,
                 message_type,
+                correlation,
                 error,
             } => {
-                error!(?seq, ?message_type, %error, "MyServer request failed");
+                error!(?seq, ?message_type, ?correlation, %error, "MyServer request failed");
             }
             MyServerEvent::Disconnected { reason } => {
                 warn!(?reason, "MyServer disconnected");
@@ -476,6 +536,7 @@ fn handle_myserver_commands(
     mut network_commands: MessageWriter<NetworkCommand>,
     mut events: MessageWriter<MyServerEvent>,
 ) {
+    session.set_pending_request_timeout(config.request_timeout);
     for command in commands.read() {
         match command {
             MyServerCommand::Login {
@@ -599,18 +660,54 @@ fn handle_myserver_commands(
                 transport,
                 host,
                 port,
-            } => reconnect_with_ticket(
-                &config,
-                &mut session,
-                &mut network_commands,
-                &mut events,
-                ticket.clone(),
-                ConnectPlan {
-                    transport: *transport,
-                    host: host.clone(),
-                    port: *port,
-                },
-            ),
+            } => {
+                let retained_endpoint = session.game_endpoint.clone();
+                reconnect_with_ticket(
+                    &config,
+                    &mut session,
+                    &mut network_commands,
+                    &mut events,
+                    ticket.clone(),
+                    ConnectPlan {
+                        transport: *transport,
+                        host: host.clone().or_else(|| {
+                            retained_endpoint
+                                .as_ref()
+                                .map(|endpoint| endpoint.host.clone())
+                        }),
+                        port: (*port)
+                            .or_else(|| retained_endpoint.as_ref().map(|endpoint| endpoint.port)),
+                    },
+                    None,
+                )
+            }
+            MyServerCommand::ReconnectWithTicketScoped {
+                ticket,
+                transport,
+                host,
+                port,
+                correlation,
+            } => {
+                let retained_endpoint = session.game_endpoint.clone();
+                reconnect_with_ticket(
+                    &config,
+                    &mut session,
+                    &mut network_commands,
+                    &mut events,
+                    ticket.clone(),
+                    ConnectPlan {
+                        transport: *transport,
+                        host: host.clone().or_else(|| {
+                            retained_endpoint
+                                .as_ref()
+                                .map(|endpoint| endpoint.host.clone())
+                        }),
+                        port: (*port)
+                            .or_else(|| retained_endpoint.as_ref().map(|endpoint| endpoint.port)),
+                    },
+                    Some(*correlation),
+                )
+            }
             MyServerCommand::Disconnect => disconnect(&mut session, &mut network_commands),
             MyServerCommand::SwitchCharacter => {
                 disconnect(&mut session, &mut network_commands);
@@ -640,6 +737,22 @@ fn handle_myserver_commands(
                     policy_id: policy_id.clone(),
                 },
             ),
+            MyServerCommand::JoinRoomScoped {
+                room_id,
+                policy_id,
+                correlation,
+            } => send_request_with_correlation(
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                MessageType::RoomJoinReq,
+                MessageType::RoomJoinRes,
+                &pb::RoomJoinReq {
+                    room_id: room_id.clone(),
+                    policy_id: policy_id.clone(),
+                },
+                Some(*correlation),
+            ),
             MyServerCommand::JoinRoomAsObserver { room_id } => send_request(
                 &mut session,
                 &mut network_commands,
@@ -658,6 +771,23 @@ fn handle_myserver_commands(
                 MessageType::RoomLeaveRes,
                 &pb::RoomLeaveReq {},
             ),
+            MyServerCommand::LeaveRoomScoped { correlation } => send_request_with_correlation(
+                &mut session,
+                &mut network_commands,
+                &mut events,
+                MessageType::RoomLeaveReq,
+                MessageType::RoomLeaveRes,
+                &pb::RoomLeaveReq {},
+                Some(*correlation),
+            ),
+            MyServerCommand::AdoptRoomMembership { room_id } => {
+                session.room_id = (!room_id.is_empty()).then_some(room_id.clone());
+            }
+            MyServerCommand::ClearRoomMembership { room_id } => {
+                if session.room_id.as_deref() == Some(room_id.as_str()) {
+                    session.room_id = None;
+                }
+            }
             MyServerCommand::SetReady { ready } => send_request(
                 &mut session,
                 &mut network_commands,
@@ -666,6 +796,17 @@ fn handle_myserver_commands(
                 MessageType::RoomReadyRes,
                 &pb::RoomReadyReq { ready: *ready },
             ),
+            MyServerCommand::SetReadyScoped { ready, correlation } => {
+                send_request_with_correlation(
+                    &mut session,
+                    &mut network_commands,
+                    &mut events,
+                    MessageType::RoomReadyReq,
+                    MessageType::RoomReadyRes,
+                    &pb::RoomReadyReq { ready: *ready },
+                    Some(*correlation),
+                )
+            }
             MyServerCommand::StartRoom => {
                 info!("MyServer dispatching room start request");
                 send_request(
@@ -834,6 +975,7 @@ fn handle_network_events(
                     events.write(MyServerEvent::RequestFailed {
                         seq: None,
                         message_type: Some(MessageType::AuthReq),
+                        correlation: None,
                         error: "connected without a ticket".to_string(),
                     });
                     continue;
@@ -869,6 +1011,7 @@ fn handle_network_events(
                     events.write(MyServerEvent::RequestFailed {
                         seq: None,
                         message_type: Some(MessageType::AuthReq),
+                        correlation: None,
                         error,
                     });
                     continue;
@@ -951,6 +1094,7 @@ fn handle_network_events(
                 events.write(MyServerEvent::RequestFailed {
                     seq: None,
                     message_type: None,
+                    correlation: None,
                     error: error.clone(),
                 });
                 trace_game_transition(
@@ -2625,6 +2769,7 @@ fn connect_with_ticket(
         events.write(MyServerEvent::RequestFailed {
             seq: None,
             message_type: Some(MessageType::AuthReq),
+            correlation: None,
             error,
         });
         return;
@@ -2652,6 +2797,7 @@ fn connect_with_ticket(
             events.write(MyServerEvent::RequestFailed {
                 seq: None,
                 message_type: Some(MessageType::AuthReq),
+                correlation: None,
                 error: format!(
                     "refusing game connection with invalid character-bound ticket: {error}"
                 ),
@@ -2694,6 +2840,7 @@ fn connect_with_ticket(
             events.write(MyServerEvent::RequestFailed {
                 seq: None,
                 message_type: Some(MessageType::AuthReq),
+                correlation: None,
                 error: error.clone(),
             });
             events.write(MyServerEvent::AuthFailed {
@@ -2775,6 +2922,7 @@ fn reconnect_with_ticket(
     events: &mut MessageWriter<MyServerEvent>,
     ticket: String,
     plan: ConnectPlan,
+    correlation: Option<u64>,
 ) {
     if session.connection_id.is_some() {
         let error_code = "RECONNECT_CONNECTION_STILL_OPEN";
@@ -2793,6 +2941,7 @@ fn reconnect_with_ticket(
         events.write(MyServerEvent::RequestFailed {
             seq: None,
             message_type: Some(MessageType::RoomReconnectReq),
+            correlation,
             error: error_code.to_string(),
         });
         return;
@@ -2800,6 +2949,7 @@ fn reconnect_with_ticket(
 
     session.reconnect_after_auth = Some(ReconnectPlan {
         cause: ReconnectCause::TransportRecovery,
+        correlation,
     });
     connect_with_ticket(config, session, network_commands, events, ticket, plan);
 }
@@ -2852,7 +3002,11 @@ fn send_auth_request(
 ) {
     session.begin_game_auth();
     let ticket_fp = redact_secret_fingerprint(&ticket);
-    let Some(auth_seq) = send_request_with_seq(
+    let correlation = session
+        .reconnect_after_auth
+        .as_ref()
+        .and_then(|plan| plan.correlation);
+    let Some(auth_seq) = send_request_with_seq_and_correlation(
         session,
         network_commands,
         events,
@@ -2862,6 +3016,7 @@ fn send_auth_request(
             ticket,
             client_protocol_version: 0,
         },
+        correlation,
     ) else {
         return;
     };
@@ -2928,13 +3083,36 @@ fn send_request<M>(
 ) where
     M: prost::Message,
 {
-    let _ = send_request_with_seq(
+    let _ = send_request_with_seq_and_correlation(
         session,
         network_commands,
         events,
         request_type,
         response_type,
         message,
+        None,
+    );
+}
+
+fn send_request_with_correlation<M>(
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    request_type: MessageType,
+    response_type: MessageType,
+    message: &M,
+    correlation: Option<u64>,
+) where
+    M: prost::Message,
+{
+    let _ = send_request_with_seq_and_correlation(
+        session,
+        network_commands,
+        events,
+        request_type,
+        response_type,
+        message,
+        correlation,
     );
 }
 
@@ -2942,12 +3120,13 @@ fn send_room_reconnect_request(
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
+    correlation: Option<u64>,
 ) {
     let last_character_push_sequence = session
         .character_elements
         .last_push_sequence
         .unwrap_or_default();
-    let _ = send_request_with_seq(
+    let _ = send_request_with_seq_and_correlation(
         session,
         network_commands,
         events,
@@ -2956,6 +3135,7 @@ fn send_room_reconnect_request(
         &pb::RoomReconnectReq {
             last_character_push_sequence,
         },
+        correlation,
     );
 }
 
@@ -2985,6 +3165,29 @@ fn send_request_with_seq<M>(
 where
     M: prost::Message,
 {
+    send_request_with_seq_and_correlation(
+        session,
+        network_commands,
+        events,
+        request_type,
+        response_type,
+        message,
+        None,
+    )
+}
+
+fn send_request_with_seq_and_correlation<M>(
+    session: &mut MyServerSession,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    request_type: MessageType,
+    response_type: MessageType,
+    message: &M,
+    correlation: Option<u64>,
+) -> Option<u32>
+where
+    M: prost::Message,
+{
     let Some(connection_id) = session.connection_id else {
         write_display_error(
             events,
@@ -2993,18 +3196,31 @@ where
                 Some("game connection is not open".to_string()),
             ),
         );
-        events.write(MyServerEvent::RequestFailed {
-            seq: None,
-            message_type: Some(request_type),
-            error: "game connection is not open".to_string(),
-        });
+        if let Some(correlation) = correlation {
+            events.write(MyServerEvent::ScopedRequestFailed {
+                seq: 0,
+                message_type: request_type,
+                correlation,
+                error: "game connection is not open".to_string(),
+            });
+        } else {
+            events.write(MyServerEvent::RequestFailed {
+                seq: None,
+                message_type: Some(request_type),
+                correlation: None,
+                error: "game connection is not open".to_string(),
+            });
+        }
         return None;
     };
 
     let seq = session.reserve_seq();
-    session
-        .pending
-        .insert(seq, PendingRequest { response_type });
+    let request_timeout = session.pending_request_timeout();
+    session.pending.insert(
+        seq,
+        PendingRequest::new(request_type, response_type, request_timeout)
+            .with_correlation(correlation),
+    );
     let payload = encode_proto_packet(request_type, seq, message);
     trace_game_transition(
         "game_request_sent",
@@ -3047,7 +3263,7 @@ fn handle_game_packet(
     if message_type == MessageType::ErrorRes {
         match packet.decode::<pb::ErrorRes>() {
             Ok(error) => {
-                session.pending.remove(&packet.header.seq);
+                let pending = session.pending.remove(&packet.header.seq);
                 write_display_error(
                     events,
                     display_error_from_game_code(
@@ -3059,9 +3275,22 @@ fn handle_game_packet(
                 );
                 events.write(MyServerEvent::Error {
                     seq: packet.header.seq,
-                    error_code: error.error_code,
-                    message: error.message,
+                    error_code: error.error_code.clone(),
+                    message: error.message.clone(),
                 });
+                if let Some(PendingRequest {
+                    request_type,
+                    correlation: Some(correlation),
+                    ..
+                }) = pending
+                {
+                    events.write(MyServerEvent::ScopedRequestFailed {
+                        seq: packet.header.seq,
+                        message_type: request_type,
+                        correlation,
+                        error: error.message,
+                    });
+                }
             }
             Err(error) => {
                 write_display_error(
@@ -3164,25 +3393,33 @@ fn handle_response_packet(
     };
 
     if pending.response_type != message_type {
+        let error = format!(
+            "unexpected response type for seq {}: expected {:?}, got {:?}",
+            packet.header.seq, pending.response_type, message_type
+        );
         write_display_error(
             events,
             MyServerDisplayError::protocol(
                 Some(message_type),
                 Some(packet.header.seq),
-                Some(format!(
-                    "unexpected response type for seq {}: expected {:?}, got {:?}",
-                    packet.header.seq, pending.response_type, message_type
-                )),
+                Some(error.clone()),
             ),
         );
         events.write(MyServerEvent::ProtocolError {
-            error: format!(
-                "unexpected response type for seq {}: expected {:?}, got {:?}",
-                packet.header.seq, pending.response_type, message_type
-            ),
+            error: error.clone(),
         });
+        if let Some(correlation) = pending.correlation {
+            events.write(MyServerEvent::ScopedRequestFailed {
+                seq: packet.header.seq,
+                message_type: pending.request_type,
+                correlation,
+                error,
+            });
+        }
         return;
     }
+
+    let correlation = pending.correlation;
 
     match message_type {
         MessageType::AuthRes => match packet.decode::<pb::AuthRes>() {
@@ -3249,7 +3486,12 @@ fn handle_response_packet(
                         player_id: gameplay_character_id,
                         cause: plan.cause.clone(),
                     });
-                    send_room_reconnect_request(session, network_commands, events);
+                    send_room_reconnect_request(
+                        session,
+                        network_commands,
+                        events,
+                        plan.correlation,
+                    );
                 } else {
                     events.write(MyServerEvent::Authenticated {
                         player_id: gameplay_character_id,
@@ -3325,7 +3567,10 @@ fn handle_response_packet(
         MessageType::RoomJoinRes => match packet.decode::<pb::RoomJoinRes>() {
             Ok(response) => {
                 if response.ok {
-                    session.room_id = Some(response.room_id.clone());
+                    if correlation.is_none() {
+                        session.room_id = Some(response.room_id.clone());
+                        session.ensure_authenticated_transport_state();
+                    }
                 } else {
                     write_display_error(
                         events,
@@ -3337,7 +3582,15 @@ fn handle_response_packet(
                         ),
                     );
                 }
-                events.write(MyServerEvent::RoomJoined(response));
+                if let Some(correlation) = correlation {
+                    events.write(MyServerEvent::RoomJoinedScoped {
+                        correlation,
+                        seq: packet.header.seq,
+                        response,
+                    });
+                } else {
+                    events.write(MyServerEvent::RoomJoined(response));
+                }
             }
             Err(error) => {
                 write_display_error(
@@ -3348,6 +3601,14 @@ fn handle_response_packet(
                         Some(error.clone()),
                     ),
                 );
+                if let Some(correlation) = correlation {
+                    events.write(MyServerEvent::ScopedRequestFailed {
+                        seq: packet.header.seq,
+                        message_type: MessageType::RoomJoinReq,
+                        correlation,
+                        error: error.clone(),
+                    });
+                }
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
@@ -3383,7 +3644,7 @@ fn handle_response_packet(
         },
         MessageType::RoomLeaveRes => match packet.decode::<pb::RoomLeaveRes>() {
             Ok(response) => {
-                if response.ok {
+                if response.ok && correlation.is_none() {
                     session.room_id = None;
                 }
                 info!(
@@ -3392,7 +3653,15 @@ fn handle_response_packet(
                     error_code = %response.error_code,
                     "MyServer room leave response"
                 );
-                events.write(MyServerEvent::RoomLeft(response));
+                if let Some(correlation) = correlation {
+                    events.write(MyServerEvent::RoomLeftScoped {
+                        correlation,
+                        seq: packet.header.seq,
+                        response,
+                    });
+                } else {
+                    events.write(MyServerEvent::RoomLeft(response));
+                }
             }
             Err(error) => {
                 write_display_error(
@@ -3403,22 +3672,34 @@ fn handle_response_packet(
                         Some(error.clone()),
                     ),
                 );
+                if let Some(correlation) = correlation {
+                    events.write(MyServerEvent::ScopedRequestFailed {
+                        seq: packet.header.seq,
+                        message_type: MessageType::RoomLeaveReq,
+                        correlation,
+                        error: error.clone(),
+                    });
+                }
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
         MessageType::RoomReconnectRes => match packet.decode::<pb::RoomReconnectRes>() {
             Ok(response) => {
                 if response.ok {
-                    session.room_id =
-                        (!response.room_id.is_empty()).then_some(response.room_id.clone());
-                    session.reconnect_after_auth = None;
+                    if correlation.is_none() {
+                        session.room_id =
+                            (!response.room_id.is_empty()).then_some(response.room_id.clone());
+                        session.reconnect_after_auth = None;
+                    }
                     // Room reconnect restores connection and room membership only. The
                     // character elements snapshot is always refreshed; title/class snapshots
                     // stay on their existing HTTP/profile refresh boundary.
                     send_character_elements_snapshot_request(session, network_commands, events);
                 } else {
-                    session.room_id = None;
-                    session.reconnect_failed_cleanup();
+                    if correlation.is_none() {
+                        session.room_id = None;
+                        session.room_reconnect_failed_cleanup();
+                    }
                     write_display_error(
                         events,
                         display_error_from_game_code(
@@ -3429,10 +3710,37 @@ fn handle_response_packet(
                         ),
                     );
                 }
-                events.write(MyServerEvent::RoomReconnected(response));
+                if let Some(correlation) = correlation {
+                    events.write(MyServerEvent::RoomReconnectedScoped {
+                        correlation,
+                        seq: packet.header.seq,
+                        response: response.clone(),
+                    });
+                } else {
+                    events.write(MyServerEvent::RoomReconnected(response.clone()));
+                }
+                if response.ok
+                    && let Some(recovery) = response.movement_recovery.as_ref()
+                {
+                    events.write(MyServerEvent::MovementSnapshotPush(
+                        pb::MovementSnapshotPush {
+                            room_id: response.room_id.clone(),
+                            frame_id: recovery.frame_id,
+                            entities: recovery.entities.clone(),
+                            full_sync: true,
+                            reason: "room_reconnect_recovery".to_owned(),
+                            correction_kind: recovery.correction_kind,
+                            reason_code: recovery.reason_code,
+                            target_character_ids: Vec::new(),
+                            reference_frame_id: recovery.reference_frame_id,
+                        },
+                    ));
+                }
             }
             Err(error) => {
-                session.reconnect_failed_cleanup();
+                if correlation.is_none() {
+                    session.room_reconnect_failed_cleanup();
+                }
                 write_display_error(
                     events,
                     MyServerDisplayError::protobuf_decode(
@@ -3441,12 +3749,49 @@ fn handle_response_packet(
                         Some(error.clone()),
                     ),
                 );
+                if let Some(correlation) = correlation {
+                    events.write(MyServerEvent::ScopedRequestFailed {
+                        seq: packet.header.seq,
+                        message_type: MessageType::RoomReconnectReq,
+                        correlation,
+                        error: error.clone(),
+                    });
+                }
                 events.write(MyServerEvent::ProtocolError { error });
             }
         },
-        MessageType::RoomReadyRes => {
-            decode_push::<pb::RoomReadyRes, _>(events, &packet, MyServerEvent::ReadyChanged)
-        }
+        MessageType::RoomReadyRes => match packet.decode::<pb::RoomReadyRes>() {
+            Ok(response) => {
+                if let Some(correlation) = correlation {
+                    events.write(MyServerEvent::ReadyChangedScoped {
+                        correlation,
+                        seq: packet.header.seq,
+                        response,
+                    });
+                } else {
+                    events.write(MyServerEvent::ReadyChanged(response));
+                }
+            }
+            Err(error) => {
+                write_display_error(
+                    events,
+                    MyServerDisplayError::protobuf_decode(
+                        Some(MessageType::RoomReadyRes),
+                        Some(packet.header.seq),
+                        Some(error.clone()),
+                    ),
+                );
+                if let Some(correlation) = correlation {
+                    events.write(MyServerEvent::ScopedRequestFailed {
+                        seq: packet.header.seq,
+                        message_type: MessageType::RoomReadyReq,
+                        correlation,
+                        error: error.clone(),
+                    });
+                }
+                events.write(MyServerEvent::ProtocolError { error });
+            }
+        },
         MessageType::RoomStartRes => {
             decode_push::<pb::RoomStartRes, _>(events, &packet, MyServerEvent::RoomStarted)
         }
@@ -3633,6 +3978,7 @@ fn handle_server_redirect_push(
                 return;
             }
 
+            let correlation = u64::from(session.reserve_seq());
             session.room_id = None;
             session.reconnect_after_auth = Some(ReconnectPlan {
                 cause: ReconnectCause::ServerRedirect {
@@ -3641,6 +3987,7 @@ fn handle_server_redirect_push(
                     target_server_id,
                     rollout_epoch,
                 },
+                correlation: Some(correlation),
             });
             session.connect_after_login = Some(ConnectPlan {
                 transport: target_transport,
@@ -3663,6 +4010,7 @@ fn handle_server_redirect_push(
                 target_host,
                 target_port,
                 transport: target_transport,
+                correlation,
             });
             send_refresh_ticket(config, session, network_commands, events, true);
         }
@@ -3851,7 +4199,7 @@ fn current_unix_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     use bevy::ecs::message::MessageCursor;
     use bevy::prelude::{App, Messages, MinimalPlugins};
@@ -5233,9 +5581,11 @@ mod tests {
             session.game_connection_state = GameConnectionState::Authenticated;
             session.pending.insert(
                 7,
-                PendingRequest {
-                    response_type: MessageType::PingRes,
-                },
+                PendingRequest::new(
+                    MessageType::PingReq,
+                    MessageType::PingRes,
+                    Duration::from_secs(10),
+                ),
             );
         }
         app.world_mut()
@@ -5367,9 +5717,436 @@ mod tests {
                 .resource::<MyServerSession>()
                 .reconnect_after_auth,
             Some(ReconnectPlan {
-                cause: ReconnectCause::TransportRecovery
+                cause: ReconnectCause::TransportRecovery,
+                ..
             })
         ));
+    }
+
+    #[test]
+    fn scoped_reconnect_uses_retained_game_endpoint_when_host_and_port_are_absent() {
+        let mut app = test_app();
+        let ticket = ticket_for_test("plr_1", "chr_1", "4102444800");
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.game_endpoint = Some(super::super::types::GameServiceEndpoint {
+                host: "retained.game.test".to_string(),
+                port: 15500,
+                transport: Some(NetworkTransport::Tcp),
+            });
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::ReconnectWithTicketScoped {
+                ticket,
+                transport: NetworkTransport::Tcp,
+                host: None,
+                port: None,
+                correlation: 12,
+            });
+        app.update();
+
+        let (_, transport, remote_addr) = latest_connect_command(&app).unwrap();
+        assert_eq!(transport, NetworkTransport::Tcp);
+        assert_eq!(remote_addr, "retained.game.test:15500");
+    }
+
+    #[test]
+    fn expired_game_request_reports_request_type_and_is_removed() {
+        let mut app = test_app();
+        app.world_mut()
+            .resource_mut::<MyServerSession>()
+            .pending
+            .insert(
+                77,
+                PendingRequest {
+                    request_type: MessageType::RoomJoinReq,
+                    response_type: MessageType::RoomJoinRes,
+                    correlation: Some(7),
+                    sent_at: SystemTime::UNIX_EPOCH,
+                    deadline: SystemTime::UNIX_EPOCH,
+                },
+            );
+
+        app.update();
+
+        assert!(
+            !app.world()
+                .resource::<MyServerSession>()
+                .pending
+                .contains_key(&77)
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::RequestFailed {
+                        seq: Some(77),
+                        message_type: Some(MessageType::RoomJoinReq),
+                        correlation: Some(7),
+                        error,
+                    } if error == "game request timed out"
+                ))
+        );
+    }
+
+    #[test]
+    fn scoped_room_join_response_preserves_correlation_and_seq() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(778);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::JoinRoomScoped {
+                room_id: "room-1".to_string(),
+                policy_id: "movement_demo".to_string(),
+                correlation: 42,
+            });
+        app.update();
+        let join_seq = latest_sent_packet(&app).unwrap().1.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: room_join_response_packet(join_seq, true, ""),
+        });
+        app.update();
+
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::RoomJoinedScoped {
+                        correlation: 42,
+                        seq,
+                        response,
+                    } if *seq == join_seq && response.ok
+                ))
+        );
+    }
+
+    #[test]
+    fn scoped_membership_responses_do_not_mutate_room_until_adopt_or_clear() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(781);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.room_id = Some("old-room".to_string());
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::JoinRoomScoped {
+                room_id: "new-room".to_string(),
+                policy_id: "movement_demo".to_string(),
+                correlation: 51,
+            });
+        app.update();
+        let join_seq = latest_sent_packet(&app).unwrap().1.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: encode_proto_packet(
+                MessageType::RoomJoinRes,
+                join_seq,
+                &pb::RoomJoinRes {
+                    ok: true,
+                    room_id: "new-room".to_string(),
+                    error_code: String::new(),
+                },
+            ),
+        });
+        app.update();
+        assert_eq!(
+            app.world().resource::<MyServerSession>().room_id.as_deref(),
+            Some("old-room")
+        );
+
+        app.world_mut()
+            .write_message(MyServerCommand::AdoptRoomMembership {
+                room_id: "new-room".to_string(),
+            });
+        app.update();
+        assert_eq!(
+            app.world().resource::<MyServerSession>().room_id.as_deref(),
+            Some("new-room")
+        );
+
+        app.world_mut()
+            .write_message(MyServerCommand::ClearRoomMembership {
+                room_id: "other-room".to_string(),
+            });
+        app.update();
+        assert_eq!(
+            app.world().resource::<MyServerSession>().room_id.as_deref(),
+            Some("new-room")
+        );
+
+        app.world_mut()
+            .write_message(MyServerCommand::ClearRoomMembership {
+                room_id: "new-room".to_string(),
+            });
+        app.update();
+        assert!(app.world().resource::<MyServerSession>().room_id.is_none());
+    }
+
+    #[test]
+    fn scoped_join_decode_failure_emits_correlated_failure_without_membership_change() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(782);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.room_id = Some("old-room".to_string());
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::JoinRoomScoped {
+                room_id: "new-room".to_string(),
+                policy_id: "movement_demo".to_string(),
+                correlation: 52,
+            });
+        app.update();
+        let join_seq = latest_sent_packet(&app).unwrap().1.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: encode_raw_packet(MessageType::RoomJoinRes, join_seq, &[0xff]),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MyServerSession>().room_id.as_deref(),
+            Some("old-room")
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::ScopedRequestFailed {
+                        seq,
+                        message_type: MessageType::RoomJoinReq,
+                        correlation: 52,
+                        ..
+                    } if *seq == join_seq
+                ))
+        );
+    }
+
+    #[test]
+    fn scoped_leave_response_preserves_membership_and_correlation() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(783);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.room_id = Some("room-1".to_string());
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::LeaveRoomScoped { correlation: 53 });
+        app.update();
+        let seq = latest_sent_packet(&app).unwrap().1.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: encode_proto_packet(
+                MessageType::RoomLeaveRes,
+                seq,
+                &pb::RoomLeaveRes {
+                    ok: true,
+                    room_id: "room-1".to_string(),
+                    error_code: String::new(),
+                },
+            ),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MyServerSession>().room_id.as_deref(),
+            Some("room-1")
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::RoomLeftScoped {
+                        correlation: 53,
+                        seq: event_seq,
+                        response,
+                    } if *event_seq == seq && response.ok && response.room_id == "room-1"
+                ))
+        );
+    }
+
+    #[test]
+    fn scoped_reconnect_response_preserves_membership_and_correlation() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(784);
+        let ticket = ticket_for_test("plr_1", "chr_1", "4102444800");
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.ticket = Some(ticket.clone());
+            session.player_id = Some("plr_1".to_string());
+            session.character_id = Some("chr_1".to_string());
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.room_id = Some("old-room".to_string());
+            session.game_connection_state = GameConnectionState::Authenticated;
+            session.reconnect_after_auth = Some(ReconnectPlan {
+                cause: ReconnectCause::TransportRecovery,
+                correlation: Some(54),
+            });
+        }
+
+        // Exercise the response boundary directly with the same correlated
+        // request record that the reconnect helper creates after auth.
+        let mut session = app.world_mut().resource_mut::<MyServerSession>();
+        let seq = session.reserve_seq();
+        session.pending.insert(
+            seq,
+            PendingRequest::new(
+                MessageType::RoomReconnectReq,
+                MessageType::RoomReconnectRes,
+                Duration::from_secs(10),
+            )
+            .with_correlation(Some(54)),
+        );
+        drop(session);
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: room_reconnect_response_packet(seq, true, "new-room", ""),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MyServerSession>().room_id.as_deref(),
+            Some("old-room")
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::RoomReconnectedScoped {
+                        correlation: 54,
+                        seq: event_seq,
+                        response,
+                    } if *event_seq == seq && response.ok && response.room_id == "new-room"
+                ))
+        );
+    }
+
+    #[test]
+    fn scoped_ready_response_preserves_correlation_and_seq() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(779);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::SetReadyScoped {
+                ready: true,
+                correlation: 43,
+            });
+        app.update();
+        let seq = latest_sent_packet(&app).unwrap().1.header.seq;
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: encode_proto_packet(
+                MessageType::RoomReadyRes,
+                seq,
+                &pb::RoomReadyRes {
+                    ok: true,
+                    room_id: "room-1".to_string(),
+                    ready: true,
+                    error_code: String::new(),
+                },
+            ),
+        });
+        app.update();
+
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::ReadyChangedScoped {
+                        correlation: 43,
+                        seq: event_seq,
+                        response,
+                    } if *event_seq == seq && response.ok && response.ready
+                ))
+        );
+    }
+
+    #[test]
+    fn timed_out_scoped_request_cannot_emit_a_typed_event_for_a_late_packet() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(780);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+            session.pending.insert(
+                81,
+                PendingRequest {
+                    request_type: MessageType::RoomJoinReq,
+                    response_type: MessageType::RoomJoinRes,
+                    correlation: Some(1),
+                    sent_at: SystemTime::UNIX_EPOCH,
+                    deadline: SystemTime::UNIX_EPOCH,
+                },
+            );
+        }
+        app.update();
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: room_join_response_packet(81, true, ""),
+        });
+        app.update();
+
+        assert!(
+            !read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    MyServerEvent::RoomJoinedScoped {
+                        correlation: 1,
+                        seq: 81,
+                        ..
+                    }
+                ))
+        );
     }
 
     #[test]
@@ -5440,7 +6217,8 @@ mod tests {
                 .resource::<MyServerSession>()
                 .reconnect_after_auth,
             Some(ReconnectPlan {
-                cause: ReconnectCause::TransportRecovery
+                cause: ReconnectCause::TransportRecovery,
+                ..
             })
         ));
         assert!(
@@ -5682,6 +6460,7 @@ mod tests {
                     target_server_id: Some("server-b".to_string()),
                     rollout_epoch: Some("epoch-1".to_string()),
                 },
+                correlation: None,
             });
             session.begin_connect_game(connection_id, NetworkTransport::Tcp);
         }
@@ -5741,6 +6520,7 @@ mod tests {
                     target_server_id: Some("server-b".to_string()),
                     rollout_epoch: Some("epoch-1".to_string()),
                 },
+                correlation: None,
             });
             session.begin_connect_game(connection_id, NetworkTransport::Tcp);
         }
@@ -6081,9 +6861,11 @@ mod tests {
             session.begin_game_auth();
             session.pending.insert(
                 7,
-                PendingRequest {
-                    response_type: MessageType::AuthRes,
-                },
+                PendingRequest::new(
+                    MessageType::AuthReq,
+                    MessageType::AuthRes,
+                    Duration::from_secs(10),
+                ),
             );
         }
 
@@ -6402,9 +7184,11 @@ mod tests {
             .pending
             .insert(
                 9,
-                PendingRequest {
-                    response_type: MessageType::AuthRes,
-                },
+                PendingRequest::new(
+                    MessageType::AuthReq,
+                    MessageType::AuthRes,
+                    Duration::from_secs(10),
+                ),
             );
         app.world_mut().write_message(NetworkEvent::Packet {
             connection_id,
@@ -6425,9 +7209,11 @@ mod tests {
             .pending
             .insert(
                 10,
-                PendingRequest {
-                    response_type: MessageType::GetCharacterElementsRes,
-                },
+                PendingRequest::new(
+                    MessageType::GetCharacterElementsReq,
+                    MessageType::GetCharacterElementsRes,
+                    Duration::from_secs(10),
+                ),
             );
         app.world_mut().write_message(NetworkEvent::Packet {
             connection_id,

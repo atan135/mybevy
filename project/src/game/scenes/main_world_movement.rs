@@ -62,6 +62,11 @@ pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_CAPACITY: usize = 40;
 /// Keep one normal movement correction interval buffered so remote rendering
 /// can advance continuously between the server's three-frame samples.
 pub(in crate::game) const MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES: u32 = 3;
+/// Once presentation is more than two normal interpolation windows behind,
+/// increase its frame rate proportionally until it returns to the usual delay.
+const MAIN_WORLD_REMOTE_CATCH_UP_LAG_FRAMES: f32 =
+    (MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES * 2) as f32;
+const MAIN_WORLD_REMOTE_MAX_CATCH_UP_RATE: f32 = 4.0;
 pub(in crate::game) const MAIN_WORLD_REMOTE_MAX_SNAP_DISTANCE_METRES: f32 = 8.0;
 /// The room accepts inputs up to this many frames ahead of its current clock.
 /// Keep outbound input at the edge of that window so network latency cannot
@@ -455,7 +460,15 @@ impl MainWorldRemoteInterpolationBuffer {
             .presentation_frame
             .unwrap_or(latest.frame.0 as f32)
             .max(oldest);
-        let advance = delta_seconds.max(0.0) * MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND as f32;
+        let normal_advance = delta_seconds.max(0.0) * MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND as f32;
+        let lag = (target - current).max(0.0);
+        let catch_up_rate = if lag > MAIN_WORLD_REMOTE_CATCH_UP_LAG_FRAMES {
+            (lag / MAIN_WORLD_REMOTE_INTERPOLATION_DELAY_FRAMES as f32)
+                .clamp(1.0, MAIN_WORLD_REMOTE_MAX_CATCH_UP_RATE)
+        } else {
+            1.0
+        };
+        let advance = normal_advance * catch_up_rate;
         let next = if target > current {
             (current + advance).min(target)
         } else {
@@ -480,8 +493,11 @@ pub(in crate::game) struct MainWorldMovementRuntime {
     pending_prediction: VecDeque<MainWorldPendingPrediction>,
     pub authority_baseline: Option<MainWorldAuthorityBaseline>,
     last_applied_authority_frame: Option<MainWorldAuthorityFrame>,
+    last_applied_remote_snapshot_frame: Option<MainWorldAuthorityFrame>,
     latest_room_frame: MainWorldAuthorityFrame,
     room_clock_epoch: u64,
+    reconnect_rebase_pending: bool,
+    reconnect_requested_seen: bool,
     local_authority_entity_id: Option<u64>,
     local_authority_scene_id: Option<i32>,
     visual_correction_offset: Vec3,
@@ -502,8 +518,11 @@ impl Default for MainWorldMovementRuntime {
             pending_prediction: VecDeque::new(),
             authority_baseline: None,
             last_applied_authority_frame: None,
+            last_applied_remote_snapshot_frame: None,
             latest_room_frame: MainWorldAuthorityFrame::default(),
             room_clock_epoch: 0,
+            reconnect_rebase_pending: false,
+            reconnect_requested_seen: false,
             local_authority_entity_id: None,
             local_authority_scene_id: None,
             visual_correction_offset: Vec3::ZERO,
@@ -555,8 +574,11 @@ impl MainWorldMovementRuntime {
         self.pending_prediction.clear();
         self.authority_baseline = None;
         self.last_applied_authority_frame = None;
+        self.last_applied_remote_snapshot_frame = None;
         self.latest_room_frame = MainWorldAuthorityFrame::default();
         self.room_clock_epoch = 0;
+        self.reconnect_rebase_pending = false;
+        self.reconnect_requested_seen = false;
         self.local_authority_entity_id = None;
         self.local_authority_scene_id = None;
         self.visual_correction_offset = Vec3::ZERO;
@@ -611,6 +633,33 @@ impl MainWorldMovementRuntime {
         if self.visual_correction_remaining_seconds == 0.0 {
             self.visual_correction_offset = Vec3::ZERO;
         }
+    }
+
+    /// The entry state keeps its reconnect flag set until it has finished its
+    /// own recovery bookkeeping. The rising edge starts a new authority clock
+    /// epoch so a recovered room is allowed to resume from a lower frame.
+    fn observe_reconnect_request(&mut self, requested: bool) {
+        if requested && !self.reconnect_requested_seen {
+            self.room_clock_epoch = self.room_clock_epoch.wrapping_add(1);
+            self.pending_prediction.clear();
+            self.unconfirmed_inputs.clear();
+            self.authority_baseline = None;
+            self.last_applied_authority_frame = None;
+            self.last_applied_remote_snapshot_frame = None;
+            self.latest_room_frame = MainWorldAuthorityFrame::default();
+            self.local_authority_entity_id = None;
+            self.local_authority_scene_id = None;
+            self.remote_interpolation.clear();
+            self.clear_visual_correction();
+            self.reconnect_rebase_pending = true;
+        } else if !requested {
+            self.reconnect_rebase_pending = false;
+        }
+        self.reconnect_requested_seen = requested;
+    }
+
+    fn take_reconnect_rebase(&mut self) -> bool {
+        std::mem::take(&mut self.reconnect_rebase_pending)
     }
 
     pub fn remote_buffer_mut(
@@ -757,7 +806,12 @@ fn sync_main_world_movement_lifecycle(
         return;
     };
 
-    if entry.phase == MainWorldEntryPhase::Recovering && entry.reconnect_requested {
+    if entry.reconnect_requested
+        && matches!(
+            entry.phase,
+            MainWorldEntryPhase::Recovering | MainWorldEntryPhase::WaitingSceneReady
+        )
+    {
         if runtime.generation != entry.generation
             || runtime.session_id.as_ref() != Some(&session_id)
         {
@@ -768,6 +822,7 @@ fn sync_main_world_movement_lifecycle(
             runtime.predicted.frame = MainWorldPredictedFrame(entry.snapshot_generation);
             runtime.predicted_previous = runtime.predicted;
         }
+        runtime.observe_reconnect_request(true);
         intent.request_stop();
         runtime.freeze();
         input_runtime.reset_all();
@@ -781,6 +836,7 @@ fn sync_main_world_movement_lifecycle(
             entry.position,
             MainWorldAuthorityFrame(entry.snapshot_generation),
         );
+        runtime.observe_reconnect_request(entry.reconnect_requested);
         return;
     }
 
@@ -826,12 +882,16 @@ fn consume_main_world_local_authority_snapshots(
     let alpha = fixed_time.overstep_fraction();
     for event in events.read() {
         if let MyServerEvent::FrameBundlePush(push) = event {
+            if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
+                continue;
+            }
             if push.frame_id < runtime.latest_room_frame.0 {
                 if push.frame_id <= 1 {
                     runtime.room_clock_epoch = runtime.room_clock_epoch.wrapping_add(1);
                     runtime.pending_prediction.clear();
                     runtime.unconfirmed_inputs.clear();
                     runtime.last_applied_authority_frame = None;
+                    runtime.last_applied_remote_snapshot_frame = None;
                     runtime.authority_baseline = None;
                     runtime.remote_interpolation.clear();
                     dispatch.last_dispatched_frame = MainWorldAuthorityFrame::default();
@@ -882,6 +942,7 @@ fn consume_main_world_local_authority_snapshots(
             };
             direction
         };
+        let reconnect_rebase = runtime.take_reconnect_rebase();
         let authority = MainWorldLocalAuthoritySnapshot {
             frame: MainWorldAuthorityFrame(push.frame_id),
             confirmed_frame: MainWorldConfirmedFrame(entity.last_input_frame),
@@ -897,7 +958,7 @@ fn consume_main_world_local_authority_snapshots(
                         | Some(pb::MovementCorrectionKind::Strong)
                         | Some(pb::MovementCorrectionKind::Recovery)
                 )
-                || entry.reconnect_requested,
+                || reconnect_rebase,
         };
         reconcile_main_world_local_authority(&mut runtime, authority, alpha);
     }
@@ -1106,6 +1167,26 @@ fn consume_main_world_remote_authority_snapshots(
         {
             continue;
         }
+        // Incremental samples may arrive out of order and each character's
+        // queue can safely place them in authority order. Baseline-resetting
+        // snapshots are different: a delayed full/recovery correction must
+        // never clear a newer remote presentation baseline.
+        let resets_remote_baseline = push.full_sync
+            || matches!(
+                pb_correction_kind(push.correction_kind),
+                Some(
+                    pb::MovementCorrectionKind::FullSync
+                        | pb::MovementCorrectionKind::Strong
+                        | pb::MovementCorrectionKind::Recovery
+                )
+            );
+        if resets_remote_baseline
+            && runtime
+                .last_applied_remote_snapshot_frame
+                .is_some_and(|frame| push.frame_id <= frame.0)
+        {
+            continue;
+        }
         let recovery_sync = push.full_sync
             || matches!(
                 pb_correction_kind(push.correction_kind),
@@ -1128,15 +1209,7 @@ fn consume_main_world_remote_authority_snapshots(
             let buffer = runtime.remote_buffer_mut(entity.character_id.clone());
             let identity_changed = buffer.set_identity(entity.entity_id, entity.scene_id);
             let previous = buffer.snapshots().back().copied();
-            if push.full_sync
-                || matches!(
-                    pb_correction_kind(push.correction_kind),
-                    Some(
-                        pb::MovementCorrectionKind::FullSync
-                            | pb::MovementCorrectionKind::Strong
-                            | pb::MovementCorrectionKind::Recovery
-                    )
-                )
+            if resets_remote_baseline
                 || identity_changed
                 || previous.is_some_and(|sample| {
                     sample.position.distance(position) > MAIN_WORLD_REMOTE_MAX_SNAP_DISTANCE_METRES
@@ -1166,6 +1239,13 @@ fn consume_main_world_remote_authority_snapshots(
             runtime
                 .remote_interpolation
                 .retain(|id, _| visible.contains(id.as_str()) && id != local_character_id);
+        }
+        if runtime
+            .last_applied_remote_snapshot_frame
+            .is_none_or(|frame| push.frame_id > frame.0)
+        {
+            runtime.last_applied_remote_snapshot_frame =
+                Some(MainWorldAuthorityFrame(push.frame_id));
         }
     }
 }
@@ -2158,7 +2238,7 @@ mod tests {
             .write_message(MyServerEvent::MovementSnapshotPush(
                 pb::MovementSnapshotPush {
                     room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
-                    frame_id: 14,
+                    frame_id: 17,
                     full_sync: true,
                     entities: Vec::new(),
                     ..default()
@@ -2392,6 +2472,46 @@ mod tests {
         assert_eq!(
             buffer.snapshots().front().unwrap().frame,
             MainWorldAuthorityFrame(23)
+        );
+    }
+
+    #[test]
+    fn stale_remote_full_snapshot_cannot_clear_a_newer_presentation_baseline() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        app.world_mut().write_message(remote_snapshot_push(
+            20,
+            vec![(
+                "chr-remote",
+                99,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2001.0,
+                2001.0,
+                true,
+                1.0,
+                0.0,
+            )],
+            false,
+            pb::MovementCorrectionKind::Incremental,
+        ));
+        app.update();
+
+        app.world_mut().write_message(remote_snapshot_push(
+            19,
+            Vec::new(),
+            true,
+            pb::MovementCorrectionKind::FullSync,
+        ));
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(
+            runtime.remote_interpolation["chr-remote"].snapshots()[0].frame,
+            MainWorldAuthorityFrame(20)
+        );
+        assert_eq!(
+            runtime.last_applied_remote_snapshot_frame,
+            Some(MainWorldAuthorityFrame(20))
         );
     }
 
@@ -3207,6 +3327,86 @@ mod tests {
     }
 
     #[test]
+    fn recovery_epoch_accepts_a_lower_frame_while_waiting_for_scene_admission() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        app.world_mut().write_message(local_snapshot(
+            MAIN_WORLD_PUBLIC_ROOM_ID,
+            120,
+            "chr-local",
+            7,
+            MAIN_WORLD_SERVER_SCENE_ID,
+            2005.0,
+            2006.0,
+            119,
+        ));
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .last_applied_authority_frame,
+            Some(MainWorldAuthorityFrame(120))
+        );
+
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = MainWorldEntryPhase::Recovering;
+            entry.input_frozen = true;
+            entry.reconnect_requested = true;
+        }
+        app.update();
+        {
+            let runtime = app.world().resource::<MainWorldMovementRuntime>();
+            assert!(runtime.input_frozen);
+            assert_eq!(
+                runtime.session_id,
+                Some(SceneSessionId::from("main-world-7"))
+            );
+            assert_eq!(runtime.last_applied_authority_frame, None);
+            assert_eq!(
+                runtime.latest_room_frame,
+                MainWorldAuthorityFrame::default()
+            );
+        }
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            MainWorldEntryPhase::WaitingSceneReady;
+        app.world_mut().write_message({
+            let mut event = local_snapshot(
+                MAIN_WORLD_PUBLIC_ROOM_ID,
+                5,
+                "chr-local",
+                7,
+                MAIN_WORLD_SERVER_SCENE_ID,
+                2007.0,
+                2008.0,
+                4,
+            );
+            if let MyServerEvent::MovementSnapshotPush(push) = &mut event {
+                push.full_sync = true;
+                push.correction_kind = pb::MovementCorrectionKind::Recovery as i32;
+            }
+            event
+        });
+        app.update();
+
+        let runtime = app.world().resource::<MainWorldMovementRuntime>();
+        assert!(runtime.input_frozen);
+        assert_eq!(
+            runtime.session_id,
+            Some(SceneSessionId::from("main-world-7"))
+        );
+        assert_eq!(
+            runtime.last_applied_authority_frame,
+            Some(MainWorldAuthorityFrame(5))
+        );
+        assert_eq!(
+            runtime.authority_baseline.unwrap().position,
+            Vec3::new(7.0, 0.0, 8.0)
+        );
+    }
+
+    #[test]
     fn fixed_prediction_advances_exactly_four_metres_per_second_and_normalizes_diagonals() {
         let start = predicted_state(41, Vec3::ZERO, Vec2::ZERO, false);
         let forward = main_world_predicted_after_input(start, MainWorldPredictedFrame(42), Vec2::Y);
@@ -3600,6 +3800,34 @@ mod tests {
     }
 
     #[test]
+    fn remote_presentation_adaptively_catches_up_after_excessive_lag() {
+        let mut buffer = MainWorldRemoteInterpolationBuffer::default();
+        assert!(buffer.push(remote_snapshot_state(100, 0.0, true)));
+        assert!(buffer.push(remote_snapshot_state(130, 30.0, true)));
+
+        // The usual rate would advance one authority frame in 50 ms. At this
+        // much lag the bounded adaptive rate advances four without overshoot.
+        assert_eq!(buffer.advance_presentation_frame(0.05), Some(104.0));
+        assert!(buffer.presentation_frame.unwrap() < 127.0);
+    }
+
+    #[test]
+    fn reconnect_rebase_request_is_consumed_once_until_the_next_request_edge() {
+        let mut runtime = MainWorldMovementRuntime::default();
+        runtime.observe_reconnect_request(true);
+        assert!(runtime.take_reconnect_rebase());
+        assert!(!runtime.take_reconnect_rebase());
+
+        // The entry layer may retain this flag while it completes recovery.
+        runtime.observe_reconnect_request(true);
+        assert!(!runtime.take_reconnect_rebase());
+
+        runtime.observe_reconnect_request(false);
+        runtime.observe_reconnect_request(true);
+        assert!(runtime.take_reconnect_rebase());
+    }
+
+    #[test]
     fn generation_change_disconnect_exit_and_failure_clear_scoped_runtime() {
         let (mut app, _) = movement_app(active_entry(1, "main-world-1"));
         app.update();
@@ -3988,6 +4216,32 @@ mod tests {
         let commands = read_new_move_commands(&app, &mut cursor);
         assert_eq!(commands.len(), 1);
         assert_eq!(move_command_details(&commands[0]).0, 1_203);
+    }
+
+    #[test]
+    fn frame_bundle_from_another_room_cannot_mutate_clock_epoch_or_frame() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let before = app.world().resource::<MainWorldMovementRuntime>().clone();
+
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(pb::FrameBundlePush {
+                room_id: "another-room".to_owned(),
+                frame_id: 1,
+                fps: MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND,
+                inputs: Vec::new(),
+                is_silent_frame: true,
+                snapshot: None,
+            }));
+        app.update();
+
+        let after = app.world().resource::<MainWorldMovementRuntime>();
+        assert_eq!(after.latest_room_frame, before.latest_room_frame);
+        assert_eq!(after.room_clock_epoch, before.room_clock_epoch);
+        assert_eq!(
+            after.last_applied_authority_frame,
+            before.last_applied_authority_frame
+        );
     }
 
     #[test]

@@ -437,6 +437,7 @@ fn handle_lockstep_sim_myserver_event(
             seq,
             message_type,
             error,
+            ..
         } => {
             warn!(
                 room_id = %config.myserver_room_id,
