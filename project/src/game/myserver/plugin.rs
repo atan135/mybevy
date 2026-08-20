@@ -87,11 +87,12 @@ fn expire_pending_game_requests(
                 pending.request_type,
                 pending.response_type,
                 pending.correlation,
+                pending.connection_id,
             ))
         })
         .collect::<Vec<_>>();
 
-    for (seq, request_type, response_type, correlation) in expired {
+    for (seq, request_type, response_type, correlation, connection_id) in expired {
         session.pending.remove(&seq);
         if response_type == MessageType::RoomReconnectRes && correlation.is_none() {
             session.room_reconnect_failed_cleanup();
@@ -114,6 +115,7 @@ fn expire_pending_game_requests(
                 seq,
                 message_type: request_type,
                 correlation,
+                connection_id,
                 error,
             });
         } else {
@@ -1075,6 +1077,7 @@ fn handle_network_events(
                         &mut session,
                         &mut network_commands,
                         &mut events,
+                        *connection_id,
                         packet,
                     );
                 }
@@ -3201,6 +3204,7 @@ where
                 seq: 0,
                 message_type: request_type,
                 correlation,
+                connection_id: None,
                 error: "game connection is not open".to_string(),
             });
         } else {
@@ -3219,7 +3223,8 @@ where
     session.pending.insert(
         seq,
         PendingRequest::new(request_type, response_type, request_timeout)
-            .with_correlation(correlation),
+            .with_correlation(correlation)
+            .with_connection_id(connection_id),
     );
     let payload = encode_proto_packet(request_type, seq, message);
     trace_game_transition(
@@ -3243,6 +3248,7 @@ fn handle_game_packet(
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
+    connection_id: ConnectionId,
     packet: Packet,
 ) {
     let Some(message_type) = packet.message_type() else {
@@ -3281,13 +3287,16 @@ fn handle_game_packet(
                 if let Some(PendingRequest {
                     request_type,
                     correlation: Some(correlation),
+                    connection_id: pending_connection_id,
                     ..
                 }) = pending
+                    && pending_connection_id == Some(connection_id)
                 {
                     events.write(MyServerEvent::ScopedRequestFailed {
                         seq: packet.header.seq,
                         message_type: request_type,
                         correlation,
+                        connection_id: Some(connection_id),
                         error: error.message,
                     });
                 }
@@ -3360,7 +3369,14 @@ fn handle_game_packet(
         MessageType::CharacterElementsChangePush => {
             handle_character_elements_push(session, events, packet)
         }
-        _ => handle_response_packet(session, network_commands, events, message_type, packet),
+        _ => handle_response_packet(
+            session,
+            network_commands,
+            events,
+            connection_id,
+            message_type,
+            packet,
+        ),
     }
 }
 
@@ -3368,6 +3384,7 @@ fn handle_response_packet(
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
     events: &mut MessageWriter<MyServerEvent>,
+    connection_id: ConnectionId,
     message_type: MessageType,
     packet: Packet,
 ) {
@@ -3392,6 +3409,23 @@ fn handle_response_packet(
         return;
     };
 
+    if pending.connection_id != Some(connection_id) {
+        let error = format!(
+            "received response {:?} for seq {} on a different connection",
+            message_type, packet.header.seq
+        );
+        write_display_error(
+            events,
+            MyServerDisplayError::protocol(
+                Some(message_type),
+                Some(packet.header.seq),
+                Some(error.clone()),
+            ),
+        );
+        events.write(MyServerEvent::ProtocolError { error });
+        return;
+    }
+
     if pending.response_type != message_type {
         let error = format!(
             "unexpected response type for seq {}: expected {:?}, got {:?}",
@@ -3413,6 +3447,7 @@ fn handle_response_packet(
                 seq: packet.header.seq,
                 message_type: pending.request_type,
                 correlation,
+                connection_id: Some(connection_id),
                 error,
             });
         }
@@ -3586,6 +3621,7 @@ fn handle_response_packet(
                     events.write(MyServerEvent::RoomJoinedScoped {
                         correlation,
                         seq: packet.header.seq,
+                        connection_id,
                         response,
                     });
                 } else {
@@ -3606,6 +3642,7 @@ fn handle_response_packet(
                         seq: packet.header.seq,
                         message_type: MessageType::RoomJoinReq,
                         correlation,
+                        connection_id: Some(connection_id),
                         error: error.clone(),
                     });
                 }
@@ -3657,6 +3694,7 @@ fn handle_response_packet(
                     events.write(MyServerEvent::RoomLeftScoped {
                         correlation,
                         seq: packet.header.seq,
+                        connection_id,
                         response,
                     });
                 } else {
@@ -3677,6 +3715,7 @@ fn handle_response_packet(
                         seq: packet.header.seq,
                         message_type: MessageType::RoomLeaveReq,
                         correlation,
+                        connection_id: Some(connection_id),
                         error: error.clone(),
                     });
                 }
@@ -3714,6 +3753,7 @@ fn handle_response_packet(
                     events.write(MyServerEvent::RoomReconnectedScoped {
                         correlation,
                         seq: packet.header.seq,
+                        connection_id,
                         response: response.clone(),
                     });
                 } else {
@@ -3754,6 +3794,7 @@ fn handle_response_packet(
                         seq: packet.header.seq,
                         message_type: MessageType::RoomReconnectReq,
                         correlation,
+                        connection_id: Some(connection_id),
                         error: error.clone(),
                     });
                 }
@@ -3766,6 +3807,7 @@ fn handle_response_packet(
                     events.write(MyServerEvent::ReadyChangedScoped {
                         correlation,
                         seq: packet.header.seq,
+                        connection_id,
                         response,
                     });
                 } else {
@@ -3786,6 +3828,7 @@ fn handle_response_packet(
                         seq: packet.header.seq,
                         message_type: MessageType::RoomReadyReq,
                         correlation,
+                        connection_id: Some(connection_id),
                         error: error.clone(),
                     });
                 }
@@ -5763,6 +5806,7 @@ mod tests {
                     request_type: MessageType::RoomJoinReq,
                     response_type: MessageType::RoomJoinRes,
                     correlation: Some(7),
+                    connection_id: None,
                     sent_at: SystemTime::UNIX_EPOCH,
                     deadline: SystemTime::UNIX_EPOCH,
                 },
@@ -5826,8 +5870,10 @@ mod tests {
                     MyServerEvent::RoomJoinedScoped {
                         correlation: 42,
                         seq,
+                        connection_id: event_connection_id,
                         response,
-                    } if *seq == join_seq && response.ok
+                        ..
+                    } if *seq == join_seq && *event_connection_id == connection_id && response.ok
                 ))
         );
     }
@@ -5991,8 +6037,13 @@ mod tests {
                     MyServerEvent::RoomLeftScoped {
                         correlation: 53,
                         seq: event_seq,
+                        connection_id: event_connection_id,
                         response,
-                    } if *event_seq == seq && response.ok && response.room_id == "room-1"
+                        ..
+                    } if *event_seq == seq
+                        && *event_connection_id == connection_id
+                        && response.ok
+                        && response.room_id == "room-1"
                 ))
         );
     }
@@ -6029,7 +6080,8 @@ mod tests {
                 MessageType::RoomReconnectRes,
                 Duration::from_secs(10),
             )
-            .with_correlation(Some(54)),
+            .with_correlation(Some(54))
+            .with_connection_id(connection_id),
         );
         drop(session);
         app.world_mut().write_message(NetworkEvent::Packet {
@@ -6051,8 +6103,13 @@ mod tests {
                     MyServerEvent::RoomReconnectedScoped {
                         correlation: 54,
                         seq: event_seq,
+                        connection_id: event_connection_id,
                         response,
-                    } if *event_seq == seq && response.ok && response.room_id == "new-room"
+                        ..
+                    } if *event_seq == seq
+                        && *event_connection_id == connection_id
+                        && response.ok
+                        && response.room_id == "new-room"
                 ))
         );
     }
@@ -6100,8 +6157,13 @@ mod tests {
                     MyServerEvent::ReadyChangedScoped {
                         correlation: 43,
                         seq: event_seq,
+                        connection_id: event_connection_id,
                         response,
-                    } if *event_seq == seq && response.ok && response.ready
+                        ..
+                    } if *event_seq == seq
+                        && *event_connection_id == connection_id
+                        && response.ok
+                        && response.ready
                 ))
         );
     }
@@ -6122,6 +6184,7 @@ mod tests {
                     request_type: MessageType::RoomJoinReq,
                     response_type: MessageType::RoomJoinRes,
                     correlation: Some(1),
+                    connection_id: Some(connection_id),
                     sent_at: SystemTime::UNIX_EPOCH,
                     deadline: SystemTime::UNIX_EPOCH,
                 },

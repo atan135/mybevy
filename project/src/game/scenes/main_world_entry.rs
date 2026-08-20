@@ -11,7 +11,7 @@ use crate::framework::ui::audit::UiAuditConfig;
 
 use crate::{
     framework::{
-        network::NetworkTransport,
+        network::{ConnectionId, NetworkTransport},
         scene::prelude::{
             SceneCommand, SceneEnterRequest, SceneEvent, SceneExitRequest, SceneOwned,
             SceneRegistry, SceneSessionId,
@@ -304,6 +304,11 @@ pub(in crate::game) struct MainWorldEntryState {
     pub environment: Option<MyServerEnvironment>,
     pub character_id: Option<String>,
     pub authority_transport: Option<NetworkTransport>,
+    /// Identity boundary for every authority-side action in this entry run.
+    /// A response must belong to this character and transport before it can
+    /// advance the state machine, even when its correlation matches.
+    pub authority_character_id: Option<String>,
+    pub authority_connection_id: Option<ConnectionId>,
     pub room_id: Option<String>,
     pub policy_id: Option<String>,
     pub authoritative_scene_id: Option<i32>,
@@ -344,6 +349,8 @@ impl Default for MainWorldEntryState {
             environment: None,
             character_id: None,
             authority_transport: None,
+            authority_character_id: None,
+            authority_connection_id: None,
             room_id: None,
             policy_id: None,
             authoritative_scene_id: None,
@@ -403,17 +410,31 @@ impl MainWorldEntryState {
         )
     }
 
+    fn accepts_scoped_authority_event(
+        &self,
+        session: &MyServerSession,
+        connection_id: ConnectionId,
+    ) -> bool {
+        self.authority_character_id == self.character_id
+            && self.authority_character_id.as_deref() == session.character_id.as_deref()
+            && self.authority_connection_id == Some(connection_id)
+            && session.connection_id == Some(connection_id)
+    }
+
     fn begin(
         &mut self,
         environment: MyServerEnvironment,
         character_id: String,
         authority_transport: Option<NetworkTransport>,
+        authority_connection_id: Option<ConnectionId>,
     ) {
         self.generation = self.generation.wrapping_add(1).max(1);
         self.phase = MainWorldEntryPhase::Validating;
         self.environment = Some(environment);
         self.character_id = Some(character_id);
         self.authority_transport = authority_transport;
+        self.authority_character_id = self.character_id.clone();
+        self.authority_connection_id = authority_connection_id;
         self.failure = None;
         self.failure_routed = false;
         self.room_id = None;
@@ -450,6 +471,8 @@ impl MainWorldEntryState {
         self.environment = None;
         self.character_id = None;
         self.authority_transport = None;
+        self.authority_character_id = None;
+        self.authority_connection_id = None;
         self.failure = None;
         self.failure_routed = false;
         self.room_id = None;
@@ -546,6 +569,7 @@ pub(in crate::game) enum MainWorldEntryEvent {
     JoinRequested {
         generation: u64,
         attempt: u64,
+        connection_id: ConnectionId,
         room_id: &'static str,
         policy_id: &'static str,
         character_id: String,
@@ -731,6 +755,7 @@ fn handle_entry_intents(
                 profiles.selected(),
                 session.character_id.clone().unwrap_or_default(),
                 session.transport,
+                session.connection_id,
             );
             if let Err(failure) = validate_entry(&profiles, &session, &registry) {
                 let generation = state.generation;
@@ -752,6 +777,9 @@ fn handle_entry_intents(
             events.write(MainWorldEntryEvent::JoinRequested {
                 generation: state.generation,
                 attempt,
+                connection_id: session
+                    .connection_id
+                    .expect("validated game transport must have a connection id"),
                 room_id: MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
                 policy_id: MAIN_WORLD_AUTHORITY_CONTRACT.policy_id,
                 character_id: state.character_id.clone().unwrap_or_default(),
@@ -877,6 +905,7 @@ fn abort_invalidated_entry(
 
 fn dispatch_main_world_join_requests(
     mut entry_events: MessageReader<MainWorldEntryEvent>,
+    session: Res<MyServerSession>,
     mut state: ResMut<MainWorldEntryState>,
     mut commands: MessageWriter<MyServerCommand>,
 ) {
@@ -884,6 +913,7 @@ fn dispatch_main_world_join_requests(
         let MainWorldEntryEvent::JoinRequested {
             generation,
             attempt,
+            connection_id,
             room_id,
             policy_id,
             ..
@@ -895,6 +925,7 @@ fn dispatch_main_world_join_requests(
             || state.generation != *generation
             || state.join_acknowledged
             || state.join_attempt != Some(*attempt)
+            || !state.accepts_scoped_authority_event(&session, *connection_id)
         {
             continue;
         }
@@ -925,9 +956,11 @@ fn consume_main_world_authority_events(
             match event {
                 MyServerEvent::RoomJoinedScoped {
                     correlation,
+                    connection_id,
                     response,
                     ..
                 } if state.join_attempt == Some(*correlation)
+                    && state.accepts_scoped_authority_event(&session, *connection_id)
                     && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
                 {
                     state.join_attempt = None;
@@ -948,8 +981,11 @@ fn consume_main_world_authority_events(
                 MyServerEvent::ScopedRequestFailed {
                     message_type: crate::game::myserver::protocol::MessageType::RoomJoinReq,
                     correlation,
+                    connection_id: Some(connection_id),
                     ..
-                } if state.join_attempt == Some(*correlation) => {
+                } if state.join_attempt == Some(*correlation)
+                    && state.accepts_scoped_authority_event(&session, *connection_id) =>
+                {
                     state.join_attempt = None;
                     state.join_dispatched = false;
                     state.room_membership = MainWorldRoomMembership::None;
@@ -958,9 +994,11 @@ fn consume_main_world_authority_events(
                 }
                 MyServerEvent::RoomLeftScoped {
                     correlation,
+                    connection_id,
                     response,
                     ..
                 } if state.leave_attempt == Some(*correlation)
+                    && state.accepts_scoped_authority_event(&session, *connection_id)
                     && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
                 {
                     state.leave_attempt = None;
@@ -985,8 +1023,11 @@ fn consume_main_world_authority_events(
                         crate::game::myserver::protocol::MessageType::RoomLeaveReq
                         | crate::game::myserver::protocol::MessageType::RoomLeaveRes,
                     correlation,
+                    connection_id: Some(connection_id),
                     ..
-                } if state.leave_attempt == Some(*correlation) => {
+                } if state.leave_attempt == Some(*correlation)
+                    && state.accepts_scoped_authority_event(&session, *connection_id) =>
+                {
                     state.leave_attempt = None;
                     state.last_departure = MainWorldRoomDeparture::Unknown;
                     state.room_membership = MainWorldRoomMembership::Unknown;
@@ -1032,13 +1073,23 @@ fn consume_main_world_authority_events(
             continue;
         }
         match event {
+            MyServerEvent::Connected { connection_id, .. }
+                if state.phase == MainWorldEntryPhase::Recovering
+                    && state.authority_character_id.as_deref()
+                        == session.character_id.as_deref()
+                    && session.connection_id == Some(*connection_id) =>
+            {
+                state.authority_connection_id = Some(*connection_id);
+            }
             MyServerEvent::RoomJoinedScoped {
                 correlation,
+                connection_id,
                 response,
                 ..
             } if state.phase == MainWorldEntryPhase::JoiningRoom
                 && state.join_attempt.is_some()
                 && Some(*correlation) == state.join_attempt
+                && state.accepts_scoped_authority_event(&session, *connection_id)
                 && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
             {
                 if response.ok {
@@ -1121,10 +1172,12 @@ fn consume_main_world_authority_events(
             }
             MyServerEvent::ReadyChangedScoped {
                 correlation,
+                connection_id,
                 response,
                 ..
             } if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id
                 && Some(*correlation) == state.ready_attempt
+                && state.accepts_scoped_authority_event(&session, *connection_id)
                 && response.ok
                 && response.ready
                 && state.phase == MainWorldEntryPhase::WaitingSceneReady
@@ -1143,10 +1196,12 @@ fn consume_main_world_authority_events(
             }
             MyServerEvent::ReadyChangedScoped {
                 correlation,
+                connection_id,
                 response,
                 ..
             } if response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id
                 && Some(*correlation) == state.ready_attempt
+                && state.accepts_scoped_authority_event(&session, *connection_id)
                 && !response.ok
                 && state.phase == MainWorldEntryPhase::WaitingSceneReady
                 && state.room_ready_requested
@@ -1167,11 +1222,13 @@ fn consume_main_world_authority_events(
                     | crate::game::myserver::protocol::MessageType::RoomReadyRes,
                 error,
                 correlation,
+                connection_id: Some(connection_id),
                 ..
             } if state.phase == MainWorldEntryPhase::WaitingSceneReady
                 && state.room_ready_requested
                 && state.ready_attempt.is_some()
-                && Some(*correlation) == state.ready_attempt =>
+                && Some(*correlation) == state.ready_attempt
+                && state.accepts_scoped_authority_event(&session, *connection_id) =>
             {
                 let failure = if error.to_ascii_lowercase().contains("timeout") {
                     MainWorldEntryFailure::ReadyTimedOut
@@ -1193,10 +1250,12 @@ fn consume_main_world_authority_events(
                     | crate::game::myserver::protocol::MessageType::RoomJoinRes,
                 error,
                 correlation,
+                connection_id: Some(connection_id),
                 ..
             } if state.phase == MainWorldEntryPhase::JoiningRoom
                 && state.join_attempt.is_some()
-                && Some(*correlation) == state.join_attempt =>
+                && Some(*correlation) == state.join_attempt
+                && state.accepts_scoped_authority_event(&session, *connection_id) =>
             {
                 state.join_dispatched = false;
                 fail_authority_entry(
@@ -1213,10 +1272,12 @@ fn consume_main_world_authority_events(
                     crate::game::myserver::protocol::MessageType::RoomReconnectReq
                     | crate::game::myserver::protocol::MessageType::RoomReconnectRes,
                 correlation,
+                connection_id: Some(connection_id),
                 ..
             } if state.phase == MainWorldEntryPhase::Recovering
                 && state.reconnect_attempt.is_some()
-                && Some(*correlation) == state.reconnect_attempt =>
+                && Some(*correlation) == state.reconnect_attempt
+                && state.accepts_scoped_authority_event(&session, *connection_id) =>
             {
                 fail_authority_entry(
                     &mut state,
@@ -1273,16 +1334,19 @@ fn consume_main_world_authority_events(
                 state.reconnect_requested = true;
                 state.reconnect_room_acknowledged = false;
                 state.authority_transport = Some(*transport);
+                state.authority_connection_id = None;
                 state.reconnect_attempt = Some(*correlation);
                 state.recovery_snapshot_received = false;
             }
             MyServerEvent::RoomReconnectedScoped {
                 correlation,
+                connection_id,
                 response,
                 ..
             } if state.phase == MainWorldEntryPhase::Recovering
                 && state.reconnect_attempt.is_some()
                 && Some(*correlation) == state.reconnect_attempt
+                && state.accepts_scoped_authority_event(&session, *connection_id)
                 && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
             {
                 if response.ok {
@@ -2201,7 +2265,9 @@ fn validate_entry(
     if session.ticket.as_deref().is_none_or(str::is_empty) {
         return Err(MainWorldEntryFailure::TicketUnavailable);
     }
-    if !session.authenticated || session.game_connection_state != GameConnectionState::Authenticated
+    if !session.authenticated
+        || session.game_connection_state != GameConnectionState::Authenticated
+        || session.connection_id.is_none()
     {
         return Err(MainWorldEntryFailure::GameAuthUnavailable);
     }
@@ -2244,6 +2310,7 @@ mod tests {
         session.ticket = Some("character-bound-ticket".to_owned());
         session.authenticated = true;
         session.game_connection_state = GameConnectionState::Authenticated;
+        session.connection_id = Some(test_connection_id());
         session.transport = Some(NetworkTransport::Tcp);
         app.world_mut()
             .resource_mut::<SceneRegistry>()
@@ -2253,6 +2320,10 @@ mod tests {
             ))
             .unwrap();
         app
+    }
+
+    fn test_connection_id() -> ConnectionId {
+        ConnectionId::from_raw(1)
     }
 
     fn events(app: &App) -> Vec<MainWorldEntryEvent> {
@@ -2331,14 +2402,17 @@ mod tests {
     }
 
     fn room_ready_response(app: &App, ok: bool, error_code: &str) -> MyServerEvent {
-        let correlation = app
-            .world()
-            .resource::<MainWorldEntryState>()
+        let state = app.world().resource::<MainWorldEntryState>();
+        let correlation = state
             .ready_attempt
             .expect("room ready request must be in flight");
+        let connection_id = state
+            .authority_connection_id
+            .expect("room ready request must retain its authority connection");
         MyServerEvent::ReadyChangedScoped {
             correlation,
             seq: 1,
+            connection_id,
             response: pb::RoomReadyRes {
                 ok,
                 room_id: "main-world-public".to_owned(),
@@ -2361,6 +2435,7 @@ mod tests {
         MyServerEvent::RoomLeftScoped {
             correlation,
             seq: 1,
+            connection_id: test_connection_id(),
             response: pb::RoomLeaveRes {
                 ok: true,
                 room_id: "main-world-public".to_owned(),
@@ -2373,12 +2448,30 @@ mod tests {
         MyServerEvent::RoomJoinedScoped {
             correlation: 1,
             seq: 1,
+            connection_id: test_connection_id(),
             response: pb::RoomJoinRes {
                 ok: true,
                 room_id: "main-world-public".to_owned(),
                 error_code: String::new(),
             },
         }
+    }
+
+    fn bind_reconnected_transport(app: &mut App, connection_id: ConnectionId) {
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.transport = Some(NetworkTransport::Tcp);
+            session.connected = true;
+            session.authenticated = true;
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+        app.world_mut().write_message(MyServerEvent::Connected {
+            connection_id,
+            transport: NetworkTransport::Tcp,
+            remote_addr: "127.0.0.1:4000".to_owned(),
+        });
+        app.update();
     }
 
     fn content_ready(session_id: SceneSessionId) -> MainWorldContentEvent {
@@ -2726,8 +2819,58 @@ mod tests {
                 room_id: "main-world-public",
                 policy_id: "movement_demo",
                 character_id,
+                ..
             }] if character_id == "chr_1"
         ));
+    }
+
+    #[test]
+    fn old_connection_join_response_cannot_advance_the_current_entry_attempt() {
+        let mut app = ready_app();
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+        let attempt = app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .join_attempt
+            .expect("join attempt must be active");
+
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoinedScoped {
+                correlation: attempt,
+                seq: 91,
+                connection_id: ConnectionId::from_raw(2),
+                response: pb::RoomJoinRes {
+                    ok: true,
+                    room_id: "main-world-public".to_owned(),
+                    error_code: String::new(),
+                },
+            });
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::JoiningRoom);
+        assert_eq!(state.join_attempt, Some(attempt));
+        assert!(!state.join_acknowledged);
+        assert_eq!(state.room_membership, MainWorldRoomMembership::None);
+
+        app.world_mut()
+            .write_message(MyServerEvent::RoomJoinedScoped {
+                correlation: attempt,
+                seq: 92,
+                connection_id: test_connection_id(),
+                response: pb::RoomJoinRes {
+                    ok: true,
+                    room_id: "main-world-public".to_owned(),
+                    error_code: String::new(),
+                },
+            });
+        app.update();
+        assert!(
+            app.world()
+                .resource::<MainWorldEntryState>()
+                .join_acknowledged
+        );
     }
 
     #[test]
@@ -3092,6 +3235,7 @@ mod tests {
                 seq: 1,
                 message_type: crate::game::myserver::protocol::MessageType::RoomReadyReq,
                 correlation: ready_attempt,
+                connection_id: Some(test_connection_id()),
                 error: "request timeout".to_owned(),
             });
         request_app.update();
@@ -3485,6 +3629,7 @@ mod tests {
             .write_message(MyServerEvent::RoomReconnectedScoped {
                 correlation: reconnect_attempt,
                 seq: 3,
+                connection_id: test_connection_id(),
                 response: pb::RoomReconnectRes {
                     ok: true,
                     room_id: "main-world-public".to_owned(),
@@ -3511,6 +3656,7 @@ mod tests {
             .write_message(MyServerEvent::ReadyChangedScoped {
                 correlation: ready_attempt,
                 seq: 4,
+                connection_id: test_connection_id(),
                 response: pb::RoomReadyRes {
                     ok: true,
                     room_id: "main-world-public".to_owned(),
@@ -3541,10 +3687,14 @@ mod tests {
         app.update();
         assert_eq!(app.world().resource::<MainWorldEntryState>().position, None);
 
+        let reconnected_connection_id = ConnectionId::from_raw(2);
+        bind_reconnected_transport(&mut app, reconnected_connection_id);
+
         app.world_mut()
             .write_message(MyServerEvent::RoomReconnectedScoped {
                 correlation: 3,
                 seq: 3,
+                connection_id: reconnected_connection_id,
                 response: pb::RoomReconnectRes {
                     ok: true,
                     room_id: "main-world-public".to_owned(),
@@ -3599,10 +3749,14 @@ mod tests {
                 transport: NetworkTransport::Tcp,
                 correlation: 3,
             });
+        app.update();
+        let reconnected_connection_id = ConnectionId::from_raw(2);
+        bind_reconnected_transport(&mut app, reconnected_connection_id);
         app.world_mut()
             .write_message(MyServerEvent::RoomReconnectedScoped {
                 correlation: 3,
                 seq: 3,
+                connection_id: reconnected_connection_id,
                 response: pb::RoomReconnectRes {
                     ok: true,
                     room_id: "main-world-public".to_owned(),
@@ -3632,10 +3786,13 @@ mod tests {
                 correlation: 3,
             });
         app.update();
+        let reconnected_connection_id = ConnectionId::from_raw(2);
+        bind_reconnected_transport(&mut app, reconnected_connection_id);
         app.world_mut()
             .write_message(MyServerEvent::RoomReconnectedScoped {
                 correlation: 3,
                 seq: 3,
+                connection_id: reconnected_connection_id,
                 response: pb::RoomReconnectRes {
                     ok: false,
                     room_id: "main-world-public".to_owned(),

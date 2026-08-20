@@ -1272,6 +1272,9 @@ pub struct PendingRequest {
     pub request_type: MessageType,
     pub response_type: MessageType,
     pub correlation: Option<u64>,
+    /// The transport that carried this request. A packet sequence is only
+    /// meaningful on its originating connection.
+    pub connection_id: Option<ConnectionId>,
     pub sent_at: SystemTime,
     pub deadline: SystemTime,
 }
@@ -1283,6 +1286,7 @@ impl PendingRequest {
             request_type,
             response_type,
             correlation: None,
+            connection_id: None,
             deadline: sent_at.checked_add(timeout).unwrap_or(sent_at),
             sent_at,
         }
@@ -1294,6 +1298,11 @@ impl PendingRequest {
 
     pub fn with_correlation(mut self, correlation: Option<u64>) -> Self {
         self.correlation = correlation;
+        self
+    }
+
+    pub fn with_connection_id(mut self, connection_id: ConnectionId) -> Self {
+        self.connection_id = Some(connection_id);
         self
     }
 }
@@ -1828,6 +1837,7 @@ pub enum MyServerEvent {
     RoomJoinedScoped {
         correlation: u64,
         seq: u32,
+        connection_id: ConnectionId,
         response: pb::RoomJoinRes,
     },
     RoomJoinedAsObserver(pb::RoomJoinAsObserverRes),
@@ -1835,12 +1845,14 @@ pub enum MyServerEvent {
     RoomLeftScoped {
         correlation: u64,
         seq: u32,
+        connection_id: ConnectionId,
         response: pb::RoomLeaveRes,
     },
     ReadyChanged(pb::RoomReadyRes),
     ReadyChangedScoped {
         correlation: u64,
         seq: u32,
+        connection_id: ConnectionId,
         response: pb::RoomReadyRes,
     },
     RoomStarted(pb::RoomStartRes),
@@ -1861,6 +1873,7 @@ pub enum MyServerEvent {
     RoomReconnectedScoped {
         correlation: u64,
         seq: u32,
+        connection_id: ConnectionId,
         response: pb::RoomReconnectRes,
     },
     ServerRedirectPush(pb::ServerRedirectPush),
@@ -1901,6 +1914,7 @@ pub enum MyServerEvent {
         seq: u32,
         message_type: MessageType,
         correlation: u64,
+        connection_id: Option<ConnectionId>,
         error: String,
     },
 }
