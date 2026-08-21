@@ -16,6 +16,7 @@ pub(in crate::game) mod main_world_entry;
 pub(in crate::game) mod main_world_movement;
 #[allow(dead_code)]
 pub(in crate::game) mod main_world_players;
+pub(in crate::game) mod main_world_snapshot;
 mod robot_sync_arena;
 mod sample_dungeon_room;
 

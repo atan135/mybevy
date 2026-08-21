@@ -39,15 +39,16 @@ use crate::{
                 MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES, MainWorldAuthorityFrame,
                 MainWorldConfirmedFrame, MainWorldMoveInputKind, MainWorldPredictedFrame,
                 MainWorldRenderFrame, main_world_bevy_position_from_authority,
-                main_world_movement_snapshot_contains_complete_room_entities,
-                main_world_movement_snapshot_from_event, main_world_normalized_direction,
-                main_world_server_position,
+                main_world_normalized_direction, main_world_server_position,
             },
             main_world_entry::{
                 MainWorldEntryPhase, MainWorldEntryState, MainWorldEntryUpdateSet,
                 MainWorldRoomMembership,
             },
             main_world_players::{MainWorldPlayer, MainWorldPlayerOwnership},
+            main_world_snapshot::{
+                MainWorldSnapshotBusState, MainWorldSnapshotEvent, install_main_world_snapshot_bus,
+            },
         },
     },
 };
@@ -625,7 +626,12 @@ impl MainWorldMovementRuntime {
     /// Starts a new authority-clock epoch after a trusted complete snapshot
     /// proves that the server's room frame sequence restarted.
     fn reset_authority_clock(&mut self, frame: MainWorldAuthorityFrame) {
-        self.room_clock_epoch = self.room_clock_epoch.wrapping_add(1);
+        let epoch = self.room_clock_epoch.wrapping_add(1).max(1);
+        self.reset_authority_clock_to(epoch, frame);
+    }
+
+    fn reset_authority_clock_to(&mut self, epoch: u64, frame: MainWorldAuthorityFrame) {
+        self.room_clock_epoch = epoch.max(1);
         self.pending_prediction.clear();
         self.unconfirmed_inputs.clear();
         self.authority_baseline = None;
@@ -655,11 +661,15 @@ impl MainWorldMovementRuntime {
     }
 
     /// The entry state keeps its reconnect flag set until it has finished its
-    /// own recovery bookkeeping. The rising edge starts a new authority clock
-    /// epoch so a recovered room is allowed to resume from a lower frame.
+    /// own recovery bookkeeping. Recovery clears local prediction immediately,
+    /// while the shared snapshot bus owns epoch advancement once it observes a
+    /// reconnect or a trusted lower complete snapshot.
     fn observe_reconnect_request(&mut self, requested: bool) {
         if requested && !self.reconnect_requested_seen {
-            self.reset_authority_clock(MainWorldAuthorityFrame::default());
+            self.reset_authority_clock_to(
+                self.room_clock_epoch,
+                MainWorldAuthorityFrame::default(),
+            );
         } else if !requested {
             self.reconnect_rebase_pending = false;
         }
@@ -684,6 +694,7 @@ pub(in crate::game) struct MainWorldMovementPlugin;
 
 impl Plugin for MainWorldMovementPlugin {
     fn build(&self, app: &mut App) {
+        install_main_world_snapshot_bus(app);
         app.init_resource::<MainWorldMovementIntent>()
             .init_resource::<MainWorldMovementRuntime>()
             .init_resource::<MainWorldMovementInputRuntime>()
@@ -858,7 +869,9 @@ fn sync_main_world_movement_lifecycle(
 /// player registry has its own reader for presentation; this reader performs
 /// the prediction baseline/correction work and never touches remote players.
 fn consume_main_world_local_authority_snapshots(
-    mut events: MessageReader<MyServerEvent>,
+    mut myserver_events: MessageReader<MyServerEvent>,
+    mut snapshot_events: MessageReader<MainWorldSnapshotEvent>,
+    bus: Res<MainWorldSnapshotBusState>,
     fixed_time: Res<Time<Fixed>>,
     entry: Option<Res<MainWorldEntryState>>,
     mut runtime: ResMut<MainWorldMovementRuntime>,
@@ -888,10 +901,13 @@ fn consume_main_world_local_authority_snapshots(
     }
 
     let alpha = fixed_time.overstep_fraction();
-    for event in events.read() {
+    for event in myserver_events.read() {
         if let MyServerEvent::FrameBundlePush(push) = event {
             if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
                 continue;
+            }
+            if runtime.room_clock_epoch == 0 {
+                runtime.room_clock_epoch = bus.epoch;
             }
             if push.frame_id < runtime.latest_room_frame.0 {
                 if push.snapshot.is_some() {
@@ -907,9 +923,13 @@ fn consume_main_world_local_authority_snapshots(
                 runtime.latest_room_frame = MainWorldAuthorityFrame(push.frame_id);
             }
         }
-        let Some(push) = main_world_movement_snapshot_from_event(event) else {
+        if !matches!(event, MyServerEvent::FrameBundlePush(_)) {
             continue;
-        };
+        }
+        continue;
+    }
+    for snapshot in snapshot_events.read() {
+        let push = &snapshot.push;
         if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID
             || (!push.target_character_ids.is_empty()
                 && !push
@@ -931,15 +951,19 @@ fn consume_main_world_local_authority_snapshots(
         else {
             continue;
         };
-        let restarts_authority_clock = push.frame_id < runtime.latest_room_frame.0
-            && (main_world_movement_snapshot_contains_complete_room_entities(&push)
-                || matches!(
-                    pb_correction_kind(push.correction_kind),
-                    Some(pb::MovementCorrectionKind::Recovery)
-                ));
-        if restarts_authority_clock {
-            runtime.reset_authority_clock(MainWorldAuthorityFrame(push.frame_id));
-            dispatch.last_dispatched_frame = MainWorldAuthorityFrame::default();
+        if snapshot.epoch < runtime.room_clock_epoch {
+            continue;
+        }
+        if snapshot.epoch > runtime.room_clock_epoch {
+            if runtime.room_clock_epoch == 0 {
+                runtime.room_clock_epoch = snapshot.epoch;
+            } else {
+                runtime.reset_authority_clock_to(
+                    snapshot.epoch,
+                    MainWorldAuthorityFrame(push.frame_id),
+                );
+                dispatch.last_dispatched_frame = MainWorldAuthorityFrame::default();
+            }
         }
         if runtime
             .last_applied_authority_frame
@@ -1137,7 +1161,7 @@ fn consume_main_world_movement_rejects(
 }
 
 fn consume_main_world_remote_authority_snapshots(
-    mut events: MessageReader<MyServerEvent>,
+    mut snapshot_events: MessageReader<MainWorldSnapshotEvent>,
     entry: Option<Res<MainWorldEntryState>>,
     mut runtime: ResMut<MainWorldMovementRuntime>,
 ) {
@@ -1163,10 +1187,8 @@ fn consume_main_world_remote_authority_snapshots(
     {
         return;
     }
-    for event in events.read() {
-        let Some(push) = main_world_movement_snapshot_from_event(event) else {
-            continue;
-        };
+    for snapshot in snapshot_events.read() {
+        let push = &snapshot.push;
         if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
             continue;
         }
@@ -1180,6 +1202,19 @@ fn consume_main_world_remote_authority_snapshots(
                 .any(|id| id == local_character_id)
         {
             continue;
+        }
+        if snapshot.epoch < runtime.room_clock_epoch {
+            continue;
+        }
+        if snapshot.epoch > runtime.room_clock_epoch {
+            if runtime.room_clock_epoch == 0 {
+                runtime.room_clock_epoch = snapshot.epoch;
+            } else {
+                runtime.reset_authority_clock_to(
+                    snapshot.epoch,
+                    MainWorldAuthorityFrame(push.frame_id),
+                );
+            }
         }
         // Incremental samples may arrive out of order and each character's
         // queue can safely place them in authority order. Baseline-resetting
@@ -1206,8 +1241,7 @@ fn consume_main_world_remote_authority_snapshots(
                 pb_correction_kind(push.correction_kind),
                 Some(pb::MovementCorrectionKind::Recovery)
             );
-        let complete_room_entities =
-            main_world_movement_snapshot_contains_complete_room_entities(&push);
+        let complete_room_entities = snapshot.complete_room_entities;
         if recovery_sync {
             runtime.remote_interpolation.clear();
         }

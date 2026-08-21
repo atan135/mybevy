@@ -23,7 +23,9 @@ use crate::game::myserver::protocol::pb;
 use super::main_world_contract::{
     MAIN_WORLD_ROOM_SNAPSHOT_REASON, MAIN_WORLD_SERVER_SCENE_ID,
     main_world_movement_snapshot_contains_complete_room_entities,
-    main_world_movement_snapshot_from_event,
+};
+use super::main_world_snapshot::{
+    MainWorldSnapshotEvent, MainWorldSnapshotSource, install_main_world_snapshot_bus,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +83,7 @@ pub(in crate::game) enum MainWorldPlayerSnapshotError {
 struct MainWorldPlayerRuntime {
     cached_snapshots: BTreeMap<u32, MainWorldPlayerSnapshotBatch>,
     cached_generation: u64,
+    snapshot_epoch: u64,
     active_generation: u64,
     last_applied_frame: Option<u32>,
     last_applied_envelope_count: usize,
@@ -98,7 +101,7 @@ const MAIN_WORLD_PLAYER_SNAPSHOT_CACHE_FRAMES: usize = 512;
 #[derive(Clone, Debug)]
 struct MainWorldPlayerSnapshotBatch {
     frame_id: u32,
-    envelopes: Vec<pb::MovementSnapshotPush>,
+    envelopes: Vec<MainWorldSnapshotEvent>,
 }
 
 #[derive(Clone, Debug)]
@@ -108,10 +111,10 @@ struct MainWorldMergedPlayerSnapshot {
 }
 
 impl MainWorldPlayerSnapshotBatch {
-    fn new(push: pb::MovementSnapshotPush) -> Self {
+    fn new(snapshot: MainWorldSnapshotEvent) -> Self {
         Self {
-            frame_id: push.frame_id,
-            envelopes: vec![push],
+            frame_id: snapshot.push.frame_id,
+            envelopes: vec![snapshot],
         }
     }
 
@@ -122,14 +125,17 @@ impl MainWorldPlayerSnapshotBatch {
         let strongest = *ordered
             .last()
             .expect("a cached main-world snapshot batch is never empty");
-        let mut push = strongest.clone();
+        let mut push = strongest.push.clone();
         let complete_envelope = ordered
             .iter()
             .rev()
-            .find(|envelope| main_world_player_snapshot_contains_complete_roster(envelope))
+            .find(|envelope| {
+                envelope.complete_room_entities && envelope.push.target_character_ids.is_empty()
+            })
             .copied();
         let complete_visible_character_ids = complete_envelope.map(|envelope| {
             envelope
+                .push
                 .entities
                 .iter()
                 .map(|entity| entity.character_id.clone())
@@ -138,7 +144,7 @@ impl MainWorldPlayerSnapshotBatch {
 
         let mut entities = BTreeMap::new();
         for envelope in ordered {
-            let mut ordered_entities: Vec<_> = envelope.entities.iter().collect();
+            let mut ordered_entities: Vec<_> = envelope.push.entities.iter().collect();
             ordered_entities.sort_by(|left, right| compare_entity_transforms(left, right));
             for entity in ordered_entities {
                 entities.insert(entity.character_id.clone(), entity.clone());
@@ -146,9 +152,9 @@ impl MainWorldPlayerSnapshotBatch {
         }
         push.entities = entities.into_values().collect();
         if let Some(complete) = complete_envelope {
-            push.full_sync = complete.full_sync;
-            push.reason = complete.reason.clone();
-            push.target_character_ids = complete.target_character_ids.clone();
+            push.full_sync = complete.push.full_sync;
+            push.reason = complete.push.reason.clone();
+            push.target_character_ids = complete.push.target_character_ids.clone();
         } else {
             // A targeted strong/recovery correction sets full_sync on the wire,
             // but it is not proof that its entity list is the whole roster.
@@ -165,8 +171,8 @@ impl MainWorldPlayerSnapshotBatch {
     }
 }
 
-fn main_world_snapshot_correction_priority(push: &pb::MovementSnapshotPush) -> u8 {
-    match pb::MovementCorrectionKind::try_from(push.correction_kind).ok() {
+fn main_world_snapshot_correction_priority(snapshot: &MainWorldSnapshotEvent) -> u8 {
+    match pb::MovementCorrectionKind::try_from(snapshot.push.correction_kind).ok() {
         Some(pb::MovementCorrectionKind::Recovery) => 4,
         Some(pb::MovementCorrectionKind::Strong) => 3,
         Some(pb::MovementCorrectionKind::FullSync) => 2,
@@ -176,17 +182,29 @@ fn main_world_snapshot_correction_priority(push: &pb::MovementSnapshotPush) -> u
 }
 
 fn compare_main_world_snapshot_envelopes(
-    left: &pb::MovementSnapshotPush,
-    right: &pb::MovementSnapshotPush,
+    left: &MainWorldSnapshotEvent,
+    right: &MainWorldSnapshotEvent,
 ) -> Ordering {
     main_world_snapshot_correction_priority(left)
         .cmp(&main_world_snapshot_correction_priority(right))
-        .then_with(|| left.full_sync.cmp(&right.full_sync))
-        .then_with(|| left.reference_frame_id.cmp(&right.reference_frame_id))
-        .then_with(|| left.reason_code.cmp(&right.reason_code))
-        .then_with(|| left.reason.cmp(&right.reason))
-        .then_with(|| left.target_character_ids.cmp(&right.target_character_ids))
-        .then_with(|| compare_entity_transform_slices(&left.entities, &right.entities))
+        .then_with(|| {
+            left.complete_room_entities
+                .cmp(&right.complete_room_entities)
+        })
+        .then_with(|| left.push.full_sync.cmp(&right.push.full_sync))
+        .then_with(|| {
+            left.push
+                .reference_frame_id
+                .cmp(&right.push.reference_frame_id)
+        })
+        .then_with(|| left.push.reason_code.cmp(&right.push.reason_code))
+        .then_with(|| left.push.reason.cmp(&right.push.reason))
+        .then_with(|| {
+            left.push
+                .target_character_ids
+                .cmp(&right.push.target_character_ids)
+        })
+        .then_with(|| compare_entity_transform_slices(&left.push.entities, &right.push.entities))
 }
 
 fn compare_entity_transform_slices(
@@ -237,9 +255,19 @@ fn main_world_player_snapshot_contains_complete_roster(push: &pb::MovementSnapsh
 
 fn cache_main_world_player_snapshot(
     runtime: &mut MainWorldPlayerRuntime,
-    push: pb::MovementSnapshotPush,
+    snapshot: MainWorldSnapshotEvent,
     generation: u64,
 ) {
+    if snapshot.epoch < runtime.snapshot_epoch {
+        return;
+    }
+    if snapshot.epoch > runtime.snapshot_epoch {
+        runtime.cached_snapshots.clear();
+        runtime.last_applied_frame = None;
+        runtime.last_applied_envelope_count = 0;
+        runtime.snapshot_epoch = snapshot.epoch;
+    }
+    let push = &snapshot.push;
     if runtime
         .last_applied_frame
         .is_some_and(|applied| push.frame_id < applied)
@@ -251,15 +279,15 @@ fn cache_main_world_player_snapshot(
             if !cached
                 .envelopes
                 .iter()
-                .any(|cached| same_main_world_snapshot_envelope(cached, &push))
+                .any(|cached| same_main_world_snapshot_envelope(cached, &snapshot))
             {
-                cached.envelopes.push(push);
+                cached.envelopes.push(snapshot);
             }
         }
         None => {
             runtime
                 .cached_snapshots
-                .insert(push.frame_id, MainWorldPlayerSnapshotBatch::new(push));
+                .insert(push.frame_id, MainWorldPlayerSnapshotBatch::new(snapshot));
         }
     }
     while runtime.cached_snapshots.len() > MAIN_WORLD_PLAYER_SNAPSHOT_CACHE_FRAMES {
@@ -269,21 +297,26 @@ fn cache_main_world_player_snapshot(
 }
 
 fn same_main_world_snapshot_envelope(
-    left: &pb::MovementSnapshotPush,
-    right: &pb::MovementSnapshotPush,
+    left: &MainWorldSnapshotEvent,
+    right: &MainWorldSnapshotEvent,
 ) -> bool {
-    left.frame_id == right.frame_id
-        && left.full_sync == right.full_sync
-        && left.correction_kind == right.correction_kind
-        && left.reason_code == right.reason_code
-        && left.reason == right.reason
-        && left.target_character_ids == right.target_character_ids
-        && left.reference_frame_id == right.reference_frame_id
-        && compare_entity_transform_slices(&left.entities, &right.entities) == Ordering::Equal
+    left.epoch == right.epoch
+        && left.source == right.source
+        && left.complete_room_entities == right.complete_room_entities
+        && left.push.frame_id == right.push.frame_id
+        && left.push.full_sync == right.push.full_sync
+        && left.push.correction_kind == right.push.correction_kind
+        && left.push.reason_code == right.push.reason_code
+        && left.push.reason == right.push.reason
+        && left.push.target_character_ids == right.push.target_character_ids
+        && left.push.reference_frame_id == right.push.reference_frame_id
+        && compare_entity_transform_slices(&left.push.entities, &right.push.entities)
+            == Ordering::Equal
 }
 
 fn clear_main_world_player_snapshot_cache(runtime: &mut MainWorldPlayerRuntime) {
     runtime.cached_snapshots.clear();
+    runtime.snapshot_epoch = 0;
     runtime.last_applied_frame = None;
     runtime.last_applied_envelope_count = 0;
 }
@@ -292,6 +325,7 @@ pub(in crate::game) struct MainWorldPlayersPlugin;
 
 impl Plugin for MainWorldPlayersPlugin {
     fn build(&self, app: &mut App) {
+        install_main_world_snapshot_bus(app);
         app.add_message::<MyServerEvent>()
             .init_resource::<MainWorldPlayerRuntime>()
             .init_resource::<MainWorldPlayersFixture>()
@@ -420,7 +454,8 @@ fn drive_main_world_players_fixture(
 
 fn maintain_main_world_players(
     mut commands: Commands,
-    mut events: MessageReader<MyServerEvent>,
+    mut myserver_events: MessageReader<MyServerEvent>,
+    mut snapshot_events: MessageReader<MainWorldSnapshotEvent>,
     entry: Res<super::main_world_entry::MainWorldEntryState>,
     roots: Query<(Entity, &crate::framework::scene::prelude::SceneRuntimeRoot)>,
     time: Res<Time>,
@@ -433,6 +468,7 @@ fn maintain_main_world_players(
         runtime.registry = None;
         clear_main_world_player_snapshot_cache(&mut runtime);
         runtime.last_error = None;
+        runtime.snapshot_epoch = 0;
         runtime.was_recovering = false;
         runtime.remote_offline_deadlines.clear();
         runtime.active_generation = entry.generation;
@@ -469,35 +505,32 @@ fn maintain_main_world_players(
             }
         }
     }
-    for event in events.read() {
-        match event {
-            MyServerEvent::RoomMemberOfflinePush(push)
-                if push.room_id == super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID =>
-            {
-                if push.character_id != entry.character_id.as_deref().unwrap_or_default() {
-                    if push.offline {
-                        runtime.remote_offline_deadlines.insert(
-                            push.character_id.clone(),
-                            time.elapsed() + MAIN_WORLD_REMOTE_OFFLINE_GRACE,
-                        );
-                    } else {
-                        runtime.remote_offline_deadlines.remove(&push.character_id);
-                    }
-                }
-            }
-            _ => {
-                let Some(push) = main_world_movement_snapshot_from_event(event) else {
-                    continue;
-                };
-                if push.room_id != super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID {
-                    continue;
-                }
-                if !main_world_snapshot_targets_character(&push, entry.character_id.as_deref()) {
-                    continue;
-                }
-                cache_main_world_player_snapshot(&mut runtime, push.into_owned(), entry.generation);
+    for event in myserver_events.read() {
+        let MyServerEvent::RoomMemberOfflinePush(push) = event else {
+            continue;
+        };
+        if push.room_id == super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID
+            && push.character_id != entry.character_id.as_deref().unwrap_or_default()
+        {
+            if push.offline {
+                runtime.remote_offline_deadlines.insert(
+                    push.character_id.clone(),
+                    time.elapsed() + MAIN_WORLD_REMOTE_OFFLINE_GRACE,
+                );
+            } else {
+                runtime.remote_offline_deadlines.remove(&push.character_id);
             }
         }
+    }
+    for snapshot in snapshot_events.read() {
+        let push = &snapshot.push;
+        if push.room_id != super::main_world_contract::MAIN_WORLD_PUBLIC_ROOM_ID {
+            continue;
+        }
+        if !main_world_snapshot_targets_character(push, entry.character_id.as_deref()) {
+            continue;
+        }
+        cache_main_world_player_snapshot(&mut runtime, snapshot.clone(), entry.generation);
     }
     runtime.was_recovering =
         entry.phase == super::main_world_entry::MainWorldEntryPhase::Recovering;
@@ -1563,12 +1596,22 @@ mod tests {
         let mut runtime = MainWorldPlayerRuntime::default();
         cache_main_world_player_snapshot(
             &mut runtime,
-            snapshot(4, false, &[("local", 1, 1.0, 1.0)]),
+            MainWorldSnapshotEvent {
+                epoch: 1,
+                source: MainWorldSnapshotSource::Movement,
+                complete_room_entities: false,
+                push: snapshot(4, false, &[("local", 1, 1.0, 1.0)]),
+            },
             1,
         );
         cache_main_world_player_snapshot(
             &mut runtime,
-            snapshot(4, false, &[("remote", 2, 2.0, 2.0)]),
+            MainWorldSnapshotEvent {
+                epoch: 1,
+                source: MainWorldSnapshotSource::Movement,
+                complete_room_entities: false,
+                push: snapshot(4, false, &[("remote", 2, 2.0, 2.0)]),
+            },
             1,
         );
 

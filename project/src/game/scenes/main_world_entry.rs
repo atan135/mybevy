@@ -35,8 +35,8 @@ use crate::{
             main_world_contract::{
                 MAIN_WORLD_AUTHORITY_CONTRACT,
                 main_world_bevy_position as contract_main_world_bevy_position,
-                main_world_movement_snapshot_from_event,
             },
+            main_world_snapshot::{MainWorldSnapshotEvent, install_main_world_snapshot_bus},
         },
         screens::gameplay::host::{MainWorldUiTeardownCause, request_main_world_ui_teardown},
     },
@@ -54,6 +54,8 @@ pub(in crate::game) enum MainWorldEntryUpdateSet {
 
 impl Plugin for MainWorldEntryPlugin {
     fn build(&self, app: &mut App) {
+        app.add_message::<MyServerEvent>();
+        install_main_world_snapshot_bus(app);
         app.init_resource::<MainWorldEntryState>()
             .init_resource::<MainWorldEntryWatchdog>()
             .init_resource::<MainWorldEntryDebugConfig>()
@@ -313,6 +315,7 @@ pub(in crate::game) struct MainWorldEntryState {
     pub policy_id: Option<String>,
     pub authoritative_scene_id: Option<i32>,
     pub position: Option<Vec3>,
+    pub snapshot_epoch: u64,
     pub snapshot_generation: u32,
     pub scene_content_ready: bool,
     pub join_acknowledged: bool,
@@ -355,6 +358,7 @@ impl Default for MainWorldEntryState {
             policy_id: None,
             authoritative_scene_id: None,
             position: None,
+            snapshot_epoch: 0,
             snapshot_generation: 0,
             scene_content_ready: false,
             join_acknowledged: false,
@@ -441,6 +445,7 @@ impl MainWorldEntryState {
         self.policy_id = None;
         self.authoritative_scene_id = None;
         self.position = None;
+        self.snapshot_epoch = 0;
         self.snapshot_generation = 0;
         self.scene_content_ready = false;
         self.join_acknowledged = false;
@@ -479,6 +484,7 @@ impl MainWorldEntryState {
         self.policy_id = None;
         self.authoritative_scene_id = None;
         self.position = None;
+        self.snapshot_epoch = 0;
         self.snapshot_generation = 0;
         self.scene_content_ready = false;
         self.join_acknowledged = false;
@@ -939,6 +945,7 @@ fn dispatch_main_world_join_requests(
 
 fn consume_main_world_authority_events(
     mut myserver_events: MessageReader<MyServerEvent>,
+    mut snapshot_events: MessageReader<MainWorldSnapshotEvent>,
     session: Res<MyServerSession>,
     mut state: ResMut<MainWorldEntryState>,
     mut entry_events: MessageWriter<MainWorldEntryEvent>,
@@ -1057,20 +1064,6 @@ fn consume_main_world_authority_events(
             }
             continue;
         }
-        if !matches!(event, MyServerEvent::RoomStatePush(_))
-            && let Some(push) = main_world_movement_snapshot_from_event(event)
-        {
-            consume_main_world_entry_snapshot(
-                &push,
-                &character_id,
-                &mut state,
-                &session,
-                &mut entry_events,
-                &mut commands,
-                &mut scene_commands,
-            );
-            continue;
-        }
         match event {
             MyServerEvent::Connected { connection_id, .. }
                 if state.phase == MainWorldEntryPhase::Recovering
@@ -1152,19 +1145,7 @@ fn consume_main_world_authority_events(
                     state.room_membership = MainWorldRoomMembership::Joined;
                     state.room_id = Some(snapshot.room_id.clone());
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
-                    if snapshot.state == "in_game" {
-                        if let Some(movement) = main_world_movement_snapshot_from_event(event) {
-                            consume_main_world_entry_snapshot(
-                                &movement,
-                                &character_id,
-                                &mut state,
-                                &session,
-                                &mut entry_events,
-                                &mut commands,
-                                &mut scene_commands,
-                            );
-                        }
-                    } else if !state.room_start_requested {
+                    if snapshot.state != "in_game" && !state.room_start_requested {
                         state.room_start_requested = true;
                         info!(
                             room_id = MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
@@ -1286,13 +1267,11 @@ fn consume_main_world_authority_events(
                 && Some(*correlation) == state.reconnect_attempt
                 && state.accepts_scoped_authority_event(&session, *connection_id) =>
             {
-                fail_authority_entry(
+                let previous_room_id = state.room_id.clone().unwrap_or_default();
+                fallback_to_main_world_join_after_reconnect_failure(
                     &mut state,
-                    &session,
-                    &mut entry_events,
                     &mut commands,
-                    &mut scene_commands,
-                    MainWorldEntryFailure::ReconnectUnavailable,
+                    previous_room_id,
                 );
             }
             MyServerEvent::Disconnected { .. } | MyServerEvent::ConnectionFailed { .. }
@@ -1335,6 +1314,7 @@ fn consume_main_world_authority_events(
                 state.room_membership = MainWorldRoomMembership::Unknown;
                 state.authoritative_scene_id = None;
                 state.position = None;
+                state.snapshot_epoch = 0;
                 state.snapshot_generation = 0;
                 state.room_ready_requested = false;
                 state.room_ready_acknowledged = false;
@@ -1354,7 +1334,8 @@ fn consume_main_world_authority_events(
                 && state.reconnect_attempt.is_some()
                 && Some(*correlation) == state.reconnect_attempt
                 && state.accepts_scoped_authority_event(&session, *connection_id)
-                && response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id =>
+                && ((!response.ok && response.room_id.is_empty())
+                    || response.room_id == MAIN_WORLD_AUTHORITY_CONTRACT.room_id) =>
             {
                 if response.ok {
                     commands.write(MyServerCommand::AdoptRoomMembership {
@@ -1367,51 +1348,12 @@ fn consume_main_world_authority_events(
                     state.reconnect_room_acknowledged = true;
                     state.reconnect_attempt = None;
                     info!("main world recovery room reconnect accepted");
-                    if let Some(recovery) = response.movement_recovery.as_ref() {
-                        consume_main_world_entry_snapshot(
-                            &crate::game::myserver::protocol::pb::MovementSnapshotPush {
-                                room_id: response.room_id.clone(),
-                                frame_id: recovery.frame_id,
-                                entities: recovery.entities.clone(),
-                                full_sync: true,
-                                reason: "room_reconnect".to_owned(),
-                                correction_kind: recovery.correction_kind,
-                                reason_code: recovery.reason_code,
-                                target_character_ids: Vec::new(),
-                                reference_frame_id: recovery.reference_frame_id,
-                            },
-                            &character_id,
-                            &mut state,
-                            &session,
-                            &mut entry_events,
-                            &mut commands,
-                            &mut scene_commands,
-                        );
-                    }
                 } else {
-                    commands.write(MyServerCommand::ClearRoomMembership {
-                        room_id: response.room_id.clone(),
-                    });
-                    state.room_membership = MainWorldRoomMembership::None;
-                    state.join_acknowledged = false;
-                    state.reconnect_room_acknowledged = false;
-                    state.recovery_snapshot_received = false;
-                    state.snapshot_generation = 0;
-                    state.authoritative_scene_id = None;
-                    state.position = None;
-                    state.room_start_requested = false;
-                    state.room_ready_requested = false;
-                    state.room_ready_acknowledged = false;
-                    state.ready_attempt = None;
-                    state.phase = MainWorldEntryPhase::JoiningRoom;
-                    state.room_id = None;
-                    state.join_attempt = Some(state.begin_authority_attempt());
-                    state.join_dispatched = true;
-                    commands.write(MyServerCommand::JoinRoomScoped {
-                        room_id: MAIN_WORLD_AUTHORITY_CONTRACT.room_id.to_owned(),
-                        policy_id: MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned(),
-                        correlation: state.join_attempt.unwrap_or_default(),
-                    });
+                    fallback_to_main_world_join_after_reconnect_failure(
+                        &mut state,
+                        &mut commands,
+                        response.room_id.clone(),
+                    );
                 }
             }
             MyServerEvent::SessionKicked { .. }
@@ -1441,10 +1383,57 @@ fn consume_main_world_authority_events(
             _ => {}
         }
     }
+    for snapshot in snapshot_events.read() {
+        consume_main_world_entry_snapshot(
+            snapshot,
+            &character_id,
+            &mut state,
+            &session,
+            &mut entry_events,
+            &mut commands,
+            &mut scene_commands,
+        );
+    }
+}
+
+fn fallback_to_main_world_join_after_reconnect_failure(
+    state: &mut MainWorldEntryState,
+    commands: &mut MessageWriter<MyServerCommand>,
+    previous_room_id: String,
+) {
+    info!(
+        previous_room_id = %previous_room_id,
+        "main world recovery reconnect unavailable; joining room afresh"
+    );
+    commands.write(MyServerCommand::ClearRoomMembership {
+        room_id: previous_room_id,
+    });
+    state.room_membership = MainWorldRoomMembership::None;
+    state.join_acknowledged = false;
+    state.reconnect_attempt = None;
+    state.reconnect_room_acknowledged = false;
+    state.recovery_snapshot_received = false;
+    state.snapshot_epoch = 0;
+    state.snapshot_generation = 0;
+    state.authoritative_scene_id = None;
+    state.position = None;
+    state.room_start_requested = false;
+    state.room_ready_requested = false;
+    state.room_ready_acknowledged = false;
+    state.ready_attempt = None;
+    state.phase = MainWorldEntryPhase::JoiningRoom;
+    state.room_id = None;
+    state.join_attempt = Some(state.begin_authority_attempt());
+    state.join_dispatched = true;
+    commands.write(MyServerCommand::JoinRoomScoped {
+        room_id: MAIN_WORLD_AUTHORITY_CONTRACT.room_id.to_owned(),
+        policy_id: MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned(),
+        correlation: state.join_attempt.unwrap_or_default(),
+    });
 }
 
 fn consume_main_world_entry_snapshot(
-    push: &crate::game::myserver::protocol::pb::MovementSnapshotPush,
+    snapshot: &MainWorldSnapshotEvent,
     character_id: &str,
     state: &mut MainWorldEntryState,
     session: &MyServerSession,
@@ -1452,11 +1441,13 @@ fn consume_main_world_entry_snapshot(
     commands: &mut MessageWriter<MyServerCommand>,
     scene_commands: &mut MessageWriter<SceneCommand>,
 ) {
+    let push = &snapshot.push;
     if push.room_id != MAIN_WORLD_AUTHORITY_CONTRACT.room_id
         || (state.phase == MainWorldEntryPhase::JoiningRoom && !state.join_acknowledged)
         || (state.phase == MainWorldEntryPhase::Recovering
             && (!state.join_acknowledged || !state.reconnect_room_acknowledged))
-        || push.frame_id < state.snapshot_generation
+        || snapshot.epoch < state.snapshot_epoch
+        || (snapshot.epoch == state.snapshot_epoch && push.frame_id < state.snapshot_generation)
     {
         return;
     }
@@ -1494,6 +1485,7 @@ fn consume_main_world_entry_snapshot(
     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
     state.authoritative_scene_id = Some(entity.scene_id);
     state.position = Some(position);
+    state.snapshot_epoch = snapshot.epoch;
     state.snapshot_generation = push.frame_id;
     if state.phase == MainWorldEntryPhase::Recovering {
         state.recovery_snapshot_received = true;
@@ -1777,6 +1769,7 @@ fn begin_recovery(
     state.room_membership = MainWorldRoomMembership::Unknown;
     state.authoritative_scene_id = None;
     state.position = None;
+    state.snapshot_epoch = 0;
     state.snapshot_generation = 0;
     state.room_ready_requested = false;
     state.room_ready_acknowledged = false;
@@ -3928,6 +3921,87 @@ mod tests {
         let state = app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::JoiningRoom);
         assert_eq!(state.scene_session_id.as_ref(), Some(&session_id));
+        assert!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    MyServerCommand::JoinRoomScoped { room_id, policy_id, .. }
+                        if room_id == "main-world-public" && policy_id == "movement_demo"
+                ))
+        );
+    }
+
+    #[test]
+    fn reconnect_after_server_restart_rejoins_when_failure_has_no_room_id() {
+        let (mut app, session_id) = active_app();
+        app.world_mut()
+            .write_message(MyServerEvent::ServerRedirectReconnectStarted {
+                reason: "server restart".to_owned(),
+                target_host: "127.0.0.1".to_owned(),
+                target_port: 4000,
+                transport: NetworkTransport::Kcp,
+                correlation: 4,
+            });
+        app.update();
+        let reconnected_connection_id = ConnectionId::from_raw(2);
+        bind_reconnected_transport(&mut app, reconnected_connection_id);
+        app.world_mut()
+            .write_message(MyServerEvent::RoomReconnectedScoped {
+                correlation: 4,
+                seq: 3,
+                connection_id: reconnected_connection_id,
+                response: pb::RoomReconnectRes {
+                    ok: false,
+                    room_id: String::new(),
+                    error_code: "PLAYER_NOT_OFFLINE".to_owned(),
+                    ..Default::default()
+                },
+            });
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::JoiningRoom);
+        assert_eq!(state.scene_session_id.as_ref(), Some(&session_id));
+        assert!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    MyServerCommand::JoinRoomScoped { room_id, policy_id, .. }
+                        if room_id == "main-world-public" && policy_id == "movement_demo"
+                ))
+        );
+    }
+
+    #[test]
+    fn reconnect_request_failure_rejoins_instead_of_returning_to_lobby() {
+        let (mut app, session_id) = active_app();
+        app.world_mut()
+            .write_message(MyServerEvent::ServerRedirectReconnectStarted {
+                reason: "proxy upstream unavailable".to_owned(),
+                target_host: "127.0.0.1".to_owned(),
+                target_port: 4000,
+                transport: NetworkTransport::Kcp,
+                correlation: 5,
+            });
+        app.update();
+        let reconnected_connection_id = ConnectionId::from_raw(2);
+        bind_reconnected_transport(&mut app, reconnected_connection_id);
+        app.world_mut()
+            .write_message(MyServerEvent::ScopedRequestFailed {
+                seq: 3,
+                message_type: crate::game::myserver::protocol::MessageType::RoomReconnectReq,
+                correlation: 5,
+                connection_id: Some(reconnected_connection_id),
+                error: "no upstream endpoint".to_owned(),
+            });
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::JoiningRoom);
+        assert_eq!(state.scene_session_id.as_ref(), Some(&session_id));
+        assert!(state.reconnect_attempt.is_none());
         assert!(
             messages::<MyServerCommand>(&app)
                 .iter()
