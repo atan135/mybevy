@@ -22,10 +22,14 @@ MyBevy 是一个基于 Rust 和 Bevy 的游戏项目仓库。仓库根目录用�
 mybevy/
 |-- android/                 # Android Gradle 壳工程
 |-- docs/                    # 项目文档
-|   |-- audio/               # 音频框架说明
-|   |-- gameplay/            # 玩法系统设计
-|   |-- scene/               # 场景框架说明
-|   |-- ui/                  # UI 框架说明
+|   |-- 音频/                # 音频框架说明
+|   |-- 构建/                # 构建性能和构建验收
+|   |-- 调试/                # 调试和自动化机制
+|   |-- 方圆灵构/            # 方圆灵构技术路线
+|   |-- 玩法/                # 玩法系统设计
+|   |-- 服务端/              # MyServer 客户端接入
+|   |-- 场景/                # 场景框架说明
+|   |-- 界面/                # UI 框架说明
 |   `-- 世界观/              # 世界观和长期玩法设定
 |-- project/                 # Rust / Bevy 游戏工程根目录
 |   |-- assets/              # 首包资源
@@ -36,7 +40,7 @@ mybevy/
 |   |   `-- main.rs          # 桌面入口
 |   `-- Cargo.toml
 |-- scripts/                 # 仓库级开发脚本
-|-- summary/                 # 开发中 checklist，完成后归档到 docs
+|-- summary/                 # 开发中清单，完成后归档到 docs
 |-- CLAUDE.md                # 协作和开发约定
 `-- README.md
 ```
@@ -228,16 +232,21 @@ project/assets/ui/fonts/MyBevyUiCjk-Regular.otf
 
 图片、字体、音频、二进制模型和源工程类资源通过 Git LFS 提交；RON、JSON、TXT、授权说明等文本资源保持普通 Git 提交。
 
-后续下载资源不要放入 `project/assets/`。相关设计见 [docs/assets-workflow.md](docs/assets-workflow.md)。
+后续下载资源不要放入 `project/assets/`。相关设计见 [docs/资源工作流.md](docs/资源工作流.md)。
 
 ## 文档索引
 
-- [Bevy 入门使用文档](docs/bevy-getting-started.md)
-- [资源使用方式](docs/assets-workflow.md)
-- [UI 文档总览](docs/ui/README.md)
-- [场景功能设计文档](docs/scene/README.md)
-- [音频框架说明](docs/audio/README.md)
-- [Gameplay 系统文档](docs/gameplay/README.md)
+- [文档总索引](docs/README.md)
+- [引擎入门使用文档](docs/引擎入门使用文档.md)
+- [资源工作流](docs/资源工作流.md)
+- [界面文档总览](docs/界面/README.md)
+- [场景功能设计文档](docs/场景/README.md)
+- [音频框架说明](docs/音频/README.md)
+- [玩法系统文档](docs/玩法/README.md)
+- [服务端接入文档](docs/服务端/README.md)
+- [方圆灵构技术文档](docs/方圆灵构/README.md)
+- [调试与自动化文档](docs/调试/README.md)
+- [构建文档](docs/构建/README.md)
 - [世界观文档](docs/世界观/README.md)
 - [协作和开发约定](CLAUDE.md)
 

@@ -20,11 +20,18 @@
 ## 目录约定
 
 - `docs/`：项目文档
-- `docs/bevy-getting-started.md`：当前 Bevy 入门说明
-- `docs/assets-workflow.md`：项目资源使用方式，覆盖首包、APK 包内和后续下载资源
-- `docs/fangyuan/`：方圆灵构基础技术文档，覆盖对象资源构建、渲染、Bake、加载、预算和 LOD 等工程路线
-- `docs/scene/`：场景框架相关文档，当前总文档规划场景生命周期、资源、切换、流式加载、相机和联机同步
-- `docs/ui/`：UI 框架相关文档，描述整体架构、输入实现、组件使用、布局、主题和限制，不记录开发期任务流程
+- `docs/README.md`：文档总索引、阅读路径和文档生命周期
+- `docs/引擎入门使用文档.md`：当前 Bevy 入门说明
+- `docs/资源工作流.md`：项目资源使用方式，覆盖首包、APK 包内和后续下载资源
+- `docs/音频/`：音频框架说明和音频验收清单
+- `docs/构建/`：构建性能、缓存边界和构建验收清单
+- `docs/调试/`：远程调试控制和自动化机制
+- `docs/方圆灵构/`：方圆灵构基础技术文档，覆盖对象资源构建、渲染、Bake、加载、预算和 LOD 等工程路线
+- `docs/玩法/`：角色、移动、同步和具体玩法规则
+- `docs/服务端/`：MyServer 登录、聊天、邮件和客户端公开契约
+- `docs/场景/`：场景框架相关文档，当前总文档规划场景生命周期、资源、切换、流式加载、相机和联机同步
+- `docs/界面/`：UI 框架相关文档，描述整体架构、输入实现、组件使用、布局、主题和限制，不记录开发期任务流程
+- `docs/世界观/`：世界观和长期玩法设定
 - `scripts/`：仓库级开发辅助脚本
 - `tools/`：不进入正式游戏包的独立开发工具工程
 - `tools/ui-generation/`：AI 参考图生成 UI 的桌面/CI Rust 工具；拥有独立 `Cargo.toml`、`Cargo.lock` 和本地 `tools/ui-generation/target` 缓存，依赖独立的 `tools/ui-document-core`，不依赖 `project`/Bevy runtime
@@ -69,7 +76,7 @@
 - 新增首包资源文件时，统一放入 `project/assets/`；后续下载资源不要放入 `project/assets/`
 - `project/assets/` 下的图片、字体、音频、二进制模型和源工程类资源通过 Git LFS 提交；RON、JSON、TXT、授权说明等文本资源保持普通 Git 提交
 - 如果修改了项目结构、初始化方式或 Bevy 版本，同时更新相关文档
-- 如果改动影响新成员上手流程，优先同步更新 `docs/bevy-getting-started.md`
+- 如果改动影响新成员上手流程，优先同步更新 `docs/引擎入门使用文档.md`
 
 ## 常用命令
 
@@ -182,7 +189,7 @@ cargo update
 
 ## 文档维护约定
 
-- `summary/` 下的 checklist 完成后，转移并归档到 `docs/<领域>/checklists/` 目录，再纳入 Git 提交。
+- `summary/` 下的 清单 完成后，转移并归档到 `docs/<领域>/清单/` 目录，再纳入 Git 提交。
 
 以下变更应同步检查文档是否需要更新：
 
@@ -194,8 +201,8 @@ cargo update
 
 至少检查这些文件：
 
-- `docs/bevy-getting-started.md`
-- `docs/ui/`
+- `docs/引擎入门使用文档.md`
+- `docs/界面/`
 - `CLAUDE.md`
 
 ## Git 提交规范
