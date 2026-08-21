@@ -116,8 +116,8 @@
 
 - [x] 从主世界返回 Lobby 时停止 gameplay 输入，发送 `RoomLeaveReq`，退出 scene session，再切换 Lobby owner/HUD。（验证：active exit 状态机测试通过。）
 - [x] `RoomLeaveReq` 超时或连接已断开时仍能完成本地场景清理，同时记录服务端状态未知以供后续重连处理。（验证：lost leave response 测试记录 departure Unknown 并回 Lobby。）
-- [x] game proxy 短线时冻结权威输入并保留可恢复场景，使用最新 ticket 执行 game auth 和 `RoomReconnectReq`。（验证：disconnect 冻结 input、保留 scene、ReconnectWithTicket 测试通过。）
-- [x] 重连成功后重新应用权威快照、修正场景/位置并恢复 ready；成员已失效时重新加入固定公共房间。（验证：redirect recovery 与 member expiry rejoin 测试通过。）
+- [x] game proxy 短线时冻结权威输入并保留可恢复场景，使用最新 ticket 执行 game auth 和 `RoomReconnectReq`；服务端重启后即使旧 KCP 仍半开，也必须替换旧 transport 创建新 connection。（验证：disconnect 冻结 input、保留 scene、`explicit_transport_reconnect_replaces_an_old_connection` 及 `9d3ebd5` 通过。）
+- [x] 重连成功后重新应用权威快照、修正场景/位置并恢复 ready；成员已失效时重新加入固定公共房间；代理短暂不可用时在同一恢复事务内继续重试。（验证：recovery retry、redirect recovery 与 member expiry rejoin 测试通过；实机日志确认新 Auth、snapshot、RoomReady 和 recovered active。）
 - [x] session kick、封禁、维护、版本不兼容和不可恢复鉴权失败必须清理房间/场景并回登录页。（验证：fatal account event scene cleanup/logout/login route 测试通过。）
 - [x] server redirect 期间保持 generation 隔离，不让旧连接 push 覆盖新 authority 状态。（验证：redirect 在 RoomReconnected 前忽略旧 snapshot 测试通过；底层 event 无 connection generation 的限制已记录。）
 
@@ -163,3 +163,9 @@
 - [x] 重复点击、房间满员、策略不一致、加载失败、断网、重连和 session kick 均有确定结果。（验证：main_world_entry 24/24、TCP/KCP 饥饿回归、跨帧旧连接 disconnect 回归及 relay 断线恢复实跑通过。）
 - [x] 返回 Lobby 会释放主世界场景、HUD、输入和房间状态，不退出账号或丢失有效角色会话。（验证：final-v3 单次 Leave/scene cleanup 完成并回 Lobby，会话保持。）
 - [x] Windows `cargo run` + 本地 MyServer 网络链路、客户端自动化和必要的 MyServer 定向验证全部通过。（验证：详见阶段 9 运行、测试与视觉记录；Android 真机验收不再属于本清单完成门槛。）
+
+### 2026-08-21 断线恢复补充验收
+
+- 客户端提交 `9d3ebd5`：替换服务端重启后半开的旧 KCP 连接，恢复连接失败时继续重试，并在 Recovering 阶段保持主世界 HUD 与摄像机 orbit 状态。
+- 实机确认：watchdog 约 5 秒触发后生成新的 `connection_id`，重新 Auth、Join/Start、接收 authoritative snapshot、RoomReady，随后回到 `main world entry recovered active` 或持续 authority frame。
+- 额外确认：正常持续收帧不误触发 watchdog；恢复失败超过时限只返回 Lobby，不跳 Login；从游戏列表再次进入主世界正常。

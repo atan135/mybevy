@@ -41,7 +41,7 @@ Android 真机上的安全区、触控、系统返回键、前后台和公网业
 - [x] 新增 approved 主世界 HUD document，首版提供设置、邮件、家园和返回四个清晰入口。（验证：`project/assets/ui/documents/approved/gameplay/main_world_hud.v1.json` 和 promotion 文件声明四个按钮）
 - [x] 为四个入口注册稳定 action ID、唯一 source node 和空或受限参数 schema。（验证：`gameplay_action_descriptors` 注册四个零参数、唯一 source 的 `main_world.*` action）
 - [x] HUD 根节点不阻断主世界空白区域的 gameplay 输入；按钮区域仍正确参与 picking 和焦点。（验证：`main_world_hud_exposes_only_its_four_buttons_without_blocking_gameplay` 通过）
-- [x] HUD 只在当前主世界 generation 达到 active 条件后打开；Scene entered 但 Room ready 未完成时保持 Loading。（验证：`mode_host_is_eligible` 要求 `MainWorldEntryPhase::Active`；active gate 测试通过）
+- [x] HUD 首次进场只在当前主世界 generation 达到 active 条件后打开；Scene entered 但 Room ready 未完成时保持 Loading。进入 Recovering 后保留已挂载 HUD，继续冻结 gameplay 输入，直到恢复成功或统一退出。（验证：`mode_host_is_eligible` 使用 `retains_main_world_visuals`；`main_world_hud_waits_for_the_active_entry_generation` 覆盖 WaitingSceneReady/Recovering，`9d3ebd5` 实机恢复通过）
 - [x] document 加载失败时使用首包 fallback；fallback 也失败时允许安全返回 Lobby，不留下无控制 HUD。（验证：host 配置 packaged fallback；active 与 stale fallback 定向测试通过）
 
 ## 阶段 3：HUD 状态绑定和入口可用性
