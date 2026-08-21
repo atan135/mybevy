@@ -504,11 +504,10 @@ impl MainWorldEntryState {
     }
 
     fn fail(&mut self, failure: MainWorldEntryFailure) {
+        // A terminal failure must not retain an entry-scoped scene, snapshot,
+        // request correlation, or authority identity for a later attempt.
+        self.reset();
         self.phase = MainWorldEntryPhase::Failed;
-        self.input_frozen = true;
-        self.environment = None;
-        self.character_id = None;
-        self.authority_transport = None;
         self.failure = Some(failure);
         self.failure_routed = false;
     }
@@ -1108,6 +1107,12 @@ fn consume_main_world_authority_events(
                     state.room_id = Some(response.room_id.clone());
                     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
                 } else {
+                    // This correlated response proves that the join did not
+                    // create membership, so rollback must not wait for a
+                    // second response that cannot arrive.
+                    state.join_attempt = None;
+                    state.join_dispatched = false;
+                    state.room_membership = MainWorldRoomMembership::None;
                     fail_authority_entry(
                         &mut state,
                         &session,
@@ -1258,6 +1263,8 @@ fn consume_main_world_authority_events(
                 && state.accepts_scoped_authority_event(&session, *connection_id) =>
             {
                 state.join_dispatched = false;
+                state.join_attempt = None;
+                state.room_membership = MainWorldRoomMembership::None;
                 fail_authority_entry(
                     &mut state,
                     &session,
@@ -1521,25 +1528,22 @@ fn fail_authority_entry(
         return;
     }
     let generation = state.generation;
-    if (state.room_membership == MainWorldRoomMembership::Joined || state.join_attempt.is_some())
-        && session.authenticated
-        && session.game_connection_state == GameConnectionState::Authenticated
-    {
-        commands.write(MyServerCommand::LeaveRoom);
-        state.last_departure = MainWorldRoomDeparture::Unknown;
-    }
-    if let Some(session_id) = state.scene_session_id.clone() {
-        scene_commands.write(SceneCommand::Exit(SceneExitRequest {
-            scene_id: Some(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()),
-            session_id: Some(session_id),
-            ..SceneExitRequest::default()
-        }));
-    }
-    state.fail(failure);
+    // Publish the deterministic outcome once, but do not expose Failed to the
+    // router until the room and scene side effects have been compensated.
+    state.failure = Some(failure);
+    state.failure_routed = false;
     events.write(MainWorldEntryEvent::Failed {
         generation,
         failure,
     });
+    begin_exit_teardown(
+        state,
+        MainWorldExitDestination::Lobby,
+        session,
+        commands,
+        scene_commands,
+    );
+    finalize_failed_exit_if_settled(state);
 }
 
 fn begin_exit(
@@ -1553,11 +1557,29 @@ fn begin_exit(
     if state.phase == MainWorldEntryPhase::Exiting {
         return;
     }
+    begin_exit_teardown(
+        state,
+        destination,
+        session,
+        myserver_commands,
+        scene_commands,
+    );
+    complete_exit_if_settled(state, scene_commands, route_commands);
+}
+
+fn begin_exit_teardown(
+    state: &mut MainWorldEntryState,
+    destination: MainWorldExitDestination,
+    session: &MyServerSession,
+    myserver_commands: &mut MessageWriter<MyServerCommand>,
+    scene_commands: &mut MessageWriter<SceneCommand>,
+) {
     state.phase = MainWorldEntryPhase::Exiting;
     state.input_frozen = true;
     state.exit_destination = Some(destination);
     state.room_ready_requested = false;
     state.room_ready_acknowledged = false;
+    state.ready_attempt = None;
     state.reconnect_requested = false;
     state.reconnect_room_acknowledged = false;
     state.recovery_snapshot_received = false;
@@ -1591,7 +1613,6 @@ fn begin_exit(
             ..SceneExitRequest::default()
         }));
     }
-    complete_exit_if_settled(state, scene_commands, route_commands);
 }
 
 fn request_main_world_leave_for_exit(
@@ -1602,7 +1623,10 @@ fn request_main_world_leave_for_exit(
     if state.leave_attempt.is_some() || state.exit_authority_settled {
         return;
     }
-    if session.authenticated && session.game_connection_state == GameConnectionState::Authenticated
+    if state.authority_character_id.as_deref() == session.character_id.as_deref()
+        && state.authority_connection_id == session.connection_id
+        && session.authenticated
+        && session.game_connection_state == GameConnectionState::Authenticated
     {
         let attempt = state.begin_authority_attempt();
         state.leave_attempt = Some(attempt);
@@ -1631,12 +1655,29 @@ fn complete_exit_if_settled(
     {
         return;
     }
+    if finalize_failed_exit_if_settled(state) {
+        return;
+    }
     if state.exit_destination == Some(MainWorldExitDestination::Home) {
         state.reset();
         begin_home_enter(state, scene_commands);
     } else {
         complete_exit(state, route_commands);
     }
+}
+
+fn finalize_failed_exit_if_settled(state: &mut MainWorldEntryState) -> bool {
+    if state.phase != MainWorldEntryPhase::Exiting
+        || !state.exit_scene_settled
+        || !state.exit_authority_settled
+    {
+        return false;
+    }
+    let Some(failure) = state.failure else {
+        return false;
+    };
+    state.fail(failure);
+    true
 }
 
 fn complete_exit(
@@ -1919,6 +1960,10 @@ fn consume_main_world_scene_ready(
                     == Some(&MAIN_WORLD_AUTHORITY_CONTRACT.client_scene())
                     && failure.session_id.as_ref() == state.scene_session_id.as_ref() =>
             {
+                // The scene framework already reached its terminal failure
+                // state. Do not wait for a separate exit event that it will
+                // not emit; room rollback is still required.
+                state.scene_session_id = None;
                 fail_authority_entry(
                     &mut state,
                     &session,
@@ -1946,6 +1991,7 @@ fn consume_main_world_scene_ready(
                     && exited.scene_id == MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()
                     && state.scene_session_id.as_ref() == Some(&exited.session_id) =>
             {
+                state.scene_session_id = None;
                 fail_authority_entry(
                     &mut state,
                     &session,
@@ -2220,27 +2266,18 @@ fn abort_invalidated_entry_with_cleanup(
         return;
     }
     let generation = state.generation;
-    if (state.room_membership == MainWorldRoomMembership::Joined || state.join_attempt.is_some())
-        && state.character_id.as_deref() == session.character_id.as_deref()
-        && session.authenticated
-        && session.game_connection_state == GameConnectionState::Authenticated
-    {
-        myserver_commands.write(MyServerCommand::LeaveRoom);
-        state.last_departure = MainWorldRoomDeparture::Unknown;
-    }
-    if let Some(session_id) = state.scene_session_id.clone() {
-        scene_commands.write(SceneCommand::Exit(SceneExitRequest {
-            scene_id: Some(MAIN_WORLD_AUTHORITY_CONTRACT.client_scene()),
-            session_id: Some(session_id),
-            ..SceneExitRequest::default()
-        }));
-    }
-    state.reset();
     events.write(MainWorldEntryEvent::Aborted {
         generation,
         reason: MainWorldEntryAbortReason::PreconditionsInvalidated,
     });
-    route_commands.write(GameRouteCommand::ChangeMode(AppUiMode::Lobby));
+    begin_exit(
+        state,
+        MainWorldExitDestination::Lobby,
+        session,
+        myserver_commands,
+        scene_commands,
+        route_commands,
+    );
 }
 
 fn validate_entry(
@@ -2442,6 +2479,39 @@ mod tests {
                 error_code: String::new(),
             },
         }
+    }
+
+    fn settle_failed_exit(app: &mut App) {
+        let (scene_session_id, scene_settled) = {
+            let state = app.world().resource::<MainWorldEntryState>();
+            assert_eq!(state.phase, MainWorldEntryPhase::Exiting);
+            (state.scene_session_id.clone(), state.exit_scene_settled)
+        };
+        if !scene_settled {
+            let session_id =
+                scene_session_id.expect("unsettled scene exit must retain its session");
+            app.world_mut().write_message(SceneEvent::Exited(
+                crate::framework::scene::prelude::SceneExited {
+                    scene_id: MAIN_WORLD_AUTHORITY_CONTRACT.client_scene(),
+                    session_id,
+                },
+            ));
+            app.update();
+        }
+        if app
+            .world()
+            .resource::<MainWorldEntryState>()
+            .leave_attempt
+            .is_some()
+        {
+            let leave_ack = room_leave_ack(app);
+            app.world_mut().write_message(leave_ack);
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Failed
+        );
     }
 
     fn room_join_ack() -> MyServerEvent {
@@ -2968,6 +3038,11 @@ mod tests {
             .write_message(movement_snapshot_with_scene(1, 999, 2.0, 3.0));
         app.update();
 
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        settle_failed_exit(&mut app);
         let state = app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::Failed);
         assert_eq!(
@@ -3116,11 +3191,24 @@ mod tests {
         );
 
         app.world_mut()
-            .write_message(scene_ready(session_id.clone()));
-        app.world_mut()
-            .write_message(scene_ready(session_id.clone()));
-        app.world_mut()
             .write_message(content_ready(session_id.clone()));
+        app.update();
+        assert!(!app.world().resource::<MainWorldEntryState>().scene_ready);
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| matches!(
+                    command,
+                    MyServerCommand::SetReadyScoped { ready: true, .. }
+                ))
+                .count(),
+            0
+        );
+
+        app.world_mut()
+            .write_message(scene_ready(session_id.clone()));
+        app.world_mut()
+            .write_message(scene_ready(session_id.clone()));
         app.update();
         assert_eq!(
             app.world().resource::<MainWorldEntryState>().phase,
@@ -3181,6 +3269,11 @@ mod tests {
             ));
             app.update();
 
+            assert_eq!(
+                app.world().resource::<MainWorldEntryState>().phase,
+                MainWorldEntryPhase::Exiting
+            );
+            settle_failed_exit(&mut app);
             let state = app.world().resource::<MainWorldEntryState>();
             assert_eq!(state.phase, MainWorldEntryPhase::Failed);
             assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
@@ -3208,6 +3301,11 @@ mod tests {
         let ready_failure = room_ready_response(&response_app, false, "READY_TIMEOUT");
         response_app.world_mut().write_message(ready_failure);
         response_app.update();
+        assert_eq!(
+            response_app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        settle_failed_exit(&mut response_app);
         assert_eq!(
             response_app
                 .world()
@@ -3239,6 +3337,11 @@ mod tests {
                 error: "request timeout".to_owned(),
             });
         request_app.update();
+        assert_eq!(
+            request_app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        settle_failed_exit(&mut request_app);
         let state = request_app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::Failed);
         assert_eq!(state.failure, Some(MainWorldEntryFailure::ReadyTimedOut));
@@ -3520,6 +3623,11 @@ mod tests {
         ));
         app.update();
 
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        settle_failed_exit(&mut app);
         let state = app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::Failed);
         assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
@@ -3539,6 +3647,11 @@ mod tests {
             });
         app.update();
 
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        settle_failed_exit(&mut app);
         let state = app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::Failed);
         assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
@@ -3558,6 +3671,11 @@ mod tests {
         ));
         app.update();
 
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        settle_failed_exit(&mut app);
         let state = app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::Failed);
         assert_eq!(state.failure, Some(MainWorldEntryFailure::SceneLoadFailed));
@@ -3596,6 +3714,11 @@ mod tests {
         });
         app.update();
 
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Exiting
+        );
+        settle_failed_exit(&mut app);
         let state = app.world().resource::<MainWorldEntryState>();
         assert_eq!(state.phase, MainWorldEntryPhase::Failed);
         assert_eq!(
