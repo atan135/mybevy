@@ -1529,11 +1529,16 @@ pub(super) fn sync_main_world_hud_bindings(
         .as_deref()
         .and_then(MailClientState::authoritative_unread_count);
     let mail_disabled = transition_loading || !mail_available;
-    let connection = session
+    let session_connection = session
         .as_deref()
         .map_or(GameConnectionState::NotConnected, |session| {
             session.game_connection_state
         });
+    // The entry phase changes as soon as recovery starts, while the session
+    // resource can still contain the last authenticated state for a frame.
+    // Do not let that stale state make the main-world HUD claim the session is
+    // connected during recovery.
+    let connection = main_world_hud_connection_state(entry.phase, session_connection);
     let character_name = session
         .as_deref()
         .and_then(|session| session.current_character.as_ref())
@@ -2252,6 +2257,17 @@ fn localized_main_world_connection_status(state: GameConnectionState, i18n: &UiI
         GameConnectionState::ReconnectFailed => ("failed", "Reconnect failed"),
     };
     i18n.tr(&format!("main_world.connection.{key}"), fallback)
+}
+
+fn main_world_hud_connection_state(
+    phase: MainWorldEntryPhase,
+    session_state: GameConnectionState,
+) -> GameConnectionState {
+    if phase == MainWorldEntryPhase::Recovering {
+        GameConnectionState::Reconnecting
+    } else {
+        session_state
+    }
 }
 
 fn localized_main_world_character_summary(
@@ -3407,6 +3423,29 @@ mod tests {
         assert_eq!(
             localized_main_world_transition_status(MainWorldEntryPhase::LoadingScene, &i18n),
             "正在加载主世界"
+        );
+    }
+
+    #[test]
+    fn main_world_hud_shows_reconnecting_until_entry_recovery_is_active() {
+        let mut app = main_world_binding_test_app();
+        let mut session = MyServerSession::default();
+        session.game_connection_state = GameConnectionState::Authenticated;
+        app.insert_resource(session);
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            MainWorldEntryPhase::Recovering;
+        app.update();
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.connection.status"),
+            UiBindingValue::String("Reconnecting game session".to_owned())
+        );
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.update();
+        assert_eq!(
+            main_world_binding_value(&app, "main_world.connection.status"),
+            UiBindingValue::String("Game session connected".to_owned())
         );
     }
 
