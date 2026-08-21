@@ -64,7 +64,7 @@
 
 - [x] 复核 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md` 中“阶段 2：统一方圆数据模型”的目标和非目标。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:1448`、`:1452`、`:1457` 记录阶段 2 统一 primitive 结构、blueprint/runtime 分层、role/material/生命周期预留和无 rotation 目标）
 - [x] 复核 `docs/世界观/方圆灵构蓝图规则.md` 中当前 RON v1 字段、默认路径和禁止旋转规则。（验证：`docs/世界观/方圆灵构蓝图规则.md:18`、`:130`、`:194`、`:250`、`:261` 记录默认路径、v1 字段和禁止 `rotation/quaternion/euler/angular_velocity/rotate/spin`）
-- [x] 复核 `summary/方圆玩家外观最小闭环清单.md`，确认第一阶段已完成的能力和遗留风险。（验证：`summary/方圆玩家外观最小闭环清单.md:45`、`:61`、`:81`、`:97` 已完成基础模型、RON 编译、玩家 Entity 和 render-only 适配；`:86`、`:112` 记录 Component 边界和手动验收遗留）
+- [x] 复核 `summary/方圆玩家外观最小闭环_checklist.md`，确认第一阶段已完成的能力和遗留风险。（验证：`summary/方圆玩家外观最小闭环_checklist.md:45`、`:61`、`:81`、`:97` 已完成基础模型、RON 编译、玩家 Entity 和 render-only 适配；`:86`、`:112` 记录 Component 边界和手动验收遗留）
 - [x] 明确第二阶段不处理家园恢复、Prefab、Chunk、Bake、mesh 合并、GPU Instancing、技能 VFX 和 LOD。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:1478`、`:1511`、`:1661`、`:1742`、`:1775` 将这些能力放入后续阶段或长期路线）
 - [x] 检查当前代码里 primitive 相关 Component、蓝图、runtime、渲染适配分别位于哪些模块。（验证：`project/src/framework/fangyuan/primitive.rs:6`、`:39`、`:63` 定义 kind/runtime/set；`blueprint.rs:13`、`:17`、`:89`、`:150` 定义蓝图、默认路径和编译；`avatar.rs:5` 定义玩家外观组件；`project/src/game/features/fangyuan_player_preview/mod.rs:60` 暂放 Component impl，`:90`、`:180`、`:183`、`:190` 处理 render-only 适配）
 - [x] 验证命令：只读阶段至少执行 `rg` / `Get-Content` / `git diff --stat`，不修改代码。（验证：worker 报告执行 `Get-Content`、`rg`、`rg --files`、`git diff --stat`、`git status --short`；只读复核未产生业务代码 diff）

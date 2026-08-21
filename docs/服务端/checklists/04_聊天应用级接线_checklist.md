@@ -10,9 +10,9 @@
 
 - 依赖现有 `project/src/game/myserver/chat.rs` 的 WSS endpoint、packet codec、router 和 worker。
 - 依赖 MyServer auth 登录、选角和补票响应下发公网 `services.chat` descriptor。
-- 邮件通知消费依赖 `05_邮箱界面与通知闭环清单.md`。
+- 邮件通知消费依赖 `05_邮箱界面与通知闭环_checklist.md`。
 - 生产客户端只使用 Caddy WSS 公网入口，不读取 registry 或直连 chat-server 内部 listener。
-- Android 真机 WSS、网络切换与前后台验收集中转移至 `07_公网部署后Android真机验收清单.md`，必须在 chat 公网入口部署后执行。
+- Android 真机 WSS、网络切换与前后台验收集中转移至 `07_公网部署后Android真机验收_checklist.md`，必须在 chat 公网入口部署后执行。
 
 ## 基础原则
 
@@ -110,7 +110,7 @@
 
 - 开始时间：2026-08-05 17:11:00 +08:00
 - 结束时间：2026-08-05 18:45:37 +08:00（本地范围）
-- 开发总结：补齐应用状态机的本地边界测试，并完成完整 local MyServer 栈的显式 WS 联调：ChatAuth、双向私聊/push、无效 ticket、同账号连接限制、同连接消息限流和跨实例 Redis/NATS push 均通过。生产 WSS/Caddy/公网负向验证已迁移至 `07_公网部署后Android真机验收清单.md`。
+- 开发总结：补齐应用状态机的本地边界测试，并完成完整 local MyServer 栈的显式 WS 联调：ChatAuth、双向私聊/push、无效 ticket、同账号连接限制、同连接消息限流和跨实例 Redis/NATS push 均通过。生产 WSS/Caddy/公网负向验证已迁移至 `07_公网部署后Android真机验收_checklist.md`。
 - 验证记录：客户端本地 `cargo fmt --check`、chat 21 项、types 38 项、plugin 54 项、`cargo check` 与 `git diff --check` 通过；服务端静态/loopback 测试 `chat-wss-edge-config` 6/6、mock-client WebSocket 6/6 通过。完整 local stack 实测 9011/9111 WS：双客户端 ChatAuth/private/push、无效 ticket、连接数限制、`CHAT_MSG_RATE_MAX=1` 限流、双 chat 实例跨 Redis/NATS push 均通过。测试后精确停止本 run 服务与两个 chat 实例，端口/PID file 均清理；测试角色已按 ID 软删除，已知测试消息仅关联这些已删除角色（现有工具无精确消息删除命令）。
 
 - [x] 增加状态机测试，覆盖 transport connected 但未 auth、auth 成功/失败、发送门禁和 generation 隔离。（验证：`rejected_chat_authentication_enters_a_typed_failed_state`、`preauth_queue_is_bounded_before_the_runtime_is_ready`、既有 `chat_auth_response_gates_requests_until_ready` 与 logout generation 测试通过）
@@ -119,7 +119,7 @@
 - [x] 运行 `cargo fmt`、`cargo check` 和 chat/MyServer 相关定向测试。（验证：`cargo fmt --check`、chat 21 项、types 38 项、plugin 54 项和 `cargo check` 均通过）
 - [x] 在 MyServer 执行 chat WSS、认证、限流和跨实例 push 测试前确认依赖与执行范围。（验证：只读发现确认 auth、NATS、WSS、mail、PostgreSQL 与第二 chat 实例未形成隔离完整栈；未启动服务或访问公网）
 - [x] 启动完整本地 MyServer 开发栈，使用双客户端或 mock-client 验证 local chat 鉴权、限流和跨实例 push；local 显式 `ws` 仅用于开发验证。（验证：9011/9111 双实例 WS 的 ChatAuth、私聊 `20102`、push `20105 seq=0`、`INVALID_TICKET_FORMAT`、连接限制、`MSG_RATE_EXCEEDED` 与 Redis/NATS 跨实例路由均通过）
-- [x] 生产 WSS/Caddy/公网负向安全验证已迁移至 `07_公网部署后Android真机验收清单.md` 的阶段 5 与阶段 8。（验证：07 已承接正式 descriptor、ChatAuth、WSS 重连、内部 endpoint 与明文流量拒绝验收）
+- [x] 生产 WSS/Caddy/公网负向安全验证已迁移至 `07_公网部署后Android真机验收_checklist.md` 的阶段 5 与阶段 8。（验证：07 已承接正式 descriptor、ChatAuth、WSS 重连、内部 endpoint 与明文流量拒绝验收）
 
 ## 阶段 8：文档与可观测性
 
@@ -140,7 +140,7 @@
 
 - 开始时间：2026-08-05 18:45:37 +08:00
 - 结束时间：2026-08-05 18:46:32 +08:00（本地范围）
-- 验收总结：应用级 chat 接线的本地范围已验收：descriptor/session generation、ChatAuth 门禁、请求/push 分流、生命周期、邮件刷新桥接、脱敏诊断和完整 local WS 双实例联调均通过。生产 WSS/Caddy、公网负向安全与 Android 真机验收已按确认范围移交 `07_公网部署后Android真机验收清单.md`，不由本清单的 local `ws` 结果替代。
+- 验收总结：应用级 chat 接线的本地范围已验收：descriptor/session generation、ChatAuth 门禁、请求/push 分流、生命周期、邮件刷新桥接、脱敏诊断和完整 local WS 双实例联调均通过。生产 WSS/Caddy、公网负向安全与 Android 真机验收已按确认范围移交 `07_公网部署后Android真机验收_checklist.md`，不由本清单的 local `ws` 结果替代。
 
 - [x] 客户端从 auth descriptor 建立 local chat 连接，并只在 ChatAuthRes 成功后进入业务 Ready。（验证：descriptor/session 单测与 9011/9111 local WS ChatAuth 实测；生产 WSS 转 07）
 - [x] ticket、endpoint、环境、角色和前后台变化会正确重建或关闭连接，不污染新 session。（验证：generation、ticket refresh、foreground/background 与 Logout 定向测试通过）

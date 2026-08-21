@@ -29,7 +29,7 @@
 - [ ] 每个阶段完成后执行对应验证并独立提交，避免把目录迁移、架构拆包和无关功能开发混在一起。
 - [ ] 清理任意共享缓存前确认没有 `cargo`、`rustc`、游戏客户端、UI 工具或 Android 构建进程正在使用相关文件。
 - [ ] 只迁移当前脚本、正式使用说明、fixture 和自动化测试；已归档 清单 中的历史路径、截图和验证记录保持原样。
-- [ ] 本 清单 当前位于被忽略的 `summary/`；整体完成后按仓库约定归档到 `docs/<领域>/清单/` 并随实现提交。
+- [ ] 本 清单 当前位于被忽略的 `summary/`；整体完成后按仓库约定归档到 `docs/<领域>/checklists/` 并随实现提交。
 
 ## 阶段 1：基线复测与复用条件确认
 
@@ -86,7 +86,7 @@
 - [x] 修改 `scripts/run-ui-audit.ps1`，从仓库级 `target/debug` 查找 `ui-visual-audit` 缓存二进制，并保持 Cargo manifest 调用指向独立 UI 审计工具。（验证：`Invoke-UiAuditVisualTool` 缓存路径为 `target/debug/ui-visual-audit.exe`；PowerShell 7 self-test 多次报告该根缓存命中并通过）
 - [x] 更新 UI audit 修复安全策略和 self-test：根 `target/` 必须被拒绝，旧 `project/target/` 在迁移窗口内仍被拒绝，且测试覆盖两条路径。（验证：self-test 对 `target/debug/build-output.rs` 与 `project/target/debug/build-output.rs` 分别断言拒绝；PowerShell 7 self-test exit 0）
 - [x] 扫描活跃脚本、README、`docs/引擎入门使用文档.md`、UI 工具说明和 UI 审计 fixture 中的 `project/target`、`tools/ui-generation/target`、`tools/ui-visual-audit/target` 硬编码，迁移实际运行路径和示例路径。（验证：受限检索在活动范围仅保留 UI audit 的安全拒绝策略及其测试，README、指南、fixture 和 UI audit 示例均为根 `target/`）
-- [x] 不篡改已归档 清单、历史截图、历史报告和验证记录；为保留的历史路径写明其为当时的验收证据，而非当前运行说明。（验证：`git diff --name-only` 不含 `docs/**/清单/`；全仓旧路径命中均为历史证据、`.gitignore` 兼容项或当前安全策略）
+- [x] 不篡改已归档 清单、历史截图、历史报告和验证记录；为保留的历史路径写明其为当时的验收证据，而非当前运行说明。（验证：`git diff --name-only` 不含 `docs/**/checklists/`；全仓旧路径命中均为历史证据、`.gitignore` 兼容项或当前安全策略）
 - [x] 更新 `CLAUDE.md`、`README.md`、`docs/引擎入门使用文档.md` 及相关 UI 工具文档，明确独立 Cargo 根和共享仓库级缓存的关系、二进制位置和清理方式。（验证：三份正式说明和 `tools/ui-visual-audit/README.md` 说明根 `.cargo/config.toml`、根 `target/`、独立 Cargo 边界及 `CARGO_TARGET_DIR` 约定；Bevy release 输出更新为 `target/release/project.exe`）
 - [x] 验证双客户端脚本、UI audit dry-run/self-test、UI 生成工具 `check-boundary` 和 UI 审计工具调用均不依赖旧 target 路径。（验证：两个 dry-run 和 PowerShell 7 self-test 均通过，UI audit 缓存命中 `target/debug/ui-visual-audit.exe`；`cargo run --locked --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .` 所有边界字段 true）
 
@@ -149,4 +149,4 @@
 - [x] 主工程 `cargo check`、UI 生成工具测试、`check-boundary`、UI 审计工具测试和必要的桌面启动验证通过。（验证：阶段 5 冷序列为 project check 257.463s、ui-generation 206 passed、boundary 19.352s、ui-audit 76 passed/1 ignored、桌面运行 20 秒；阶段 6 热 `cargo check --locked` 1.74s 通过）
 - [x] 重建后的硬盘占用与阶段 1 基线相比有明确、可复现的下降，并记录冷构建、增量构建和未复用产物的代价。（验证：30.53 GiB/18,171 files 对比旧三目录 37.49 GiB/19,542 files，减少约 6.96 GiB/1,371 files；冷/热时长和 feature/profile/triple 差异均记录于阶段 5）
 - [x] 共享 target 的清理、并发锁等待、失败诊断和回滚流程有明确说明并经过验证。（验证：阶段 6 脚本双 PowerShell self-test、dry-run 与未确认删除拒绝通过；README、Bevy 指南和 CLAUDE.md 已记录维护流程）
-- [x] 未提交 target、PDB、rlib、APK、日志、本地配置、密钥或其他构建产物；完成的 清单 已归档到对应 `docs/<领域>/清单/` 并随实现提交。（验证：根 target 已被 Git 忽略；本 清单 将归档到 `docs/界面/清单/` 并在归档提交前复核暂存范围）
+- [x] 未提交 target、PDB、rlib、APK、日志、本地配置、密钥或其他构建产物；完成的 清单 已归档到对应 `docs/<领域>/checklists/` 并随实现提交。（验证：根 target 已被 Git 忽略；本 清单 将归档到 `docs/界面/checklists/` 并在归档提交前复核暂存范围）

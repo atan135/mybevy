@@ -9,7 +9,7 @@
 ## 已有基础与依赖
 
 - 现有 `run-ui-audit.ps1` 已支持设备矩阵、analysis fixture、FixMode、迭代快照、`cargo fmt`/`cargo check` 和安全策略骨架。
-- 依赖 `01_界面高保真视觉基础能力清单.md`、`02_界面声明式描述与运行时生成清单.md`、`03_人工智能参考图生成界面清单.md` 和 `04_界面参考图视觉审核清单.md` 的最终公共接口。
+- 依赖 `01_界面高保真视觉基础能力_checklist.md`、`02_界面声明式描述与运行时生成_checklist.md`、`03_人工智能参考图生成界面_checklist.md` 和 `04_界面参考图视觉审核_checklist.md` 的最终公共接口。
 - 真实远程 Android 设备执行依赖外部 adminapi、game-server 和 client 调试链路；本仓库负责调用、artifact 和失败处理。
 - 本清单是整体工程化与最终验收清单，不重复实现前置清单内部算法。
 

@@ -46,10 +46,10 @@
 
 - [x] 复核 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md` 中“阶段 3：静态对象和家园蓝图预览”的目标、技术做法、验收标准和风险。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:1494` 明确读取家园蓝图、生成 HomeObject/FangyuanObject、编译到 `FangyuanPrimitiveSet`、复用 unit mesh/材质、1000 上限、非法 primitive 跳过和主要风险）
 - [x] 复核 `docs/世界观/方圆灵构蓝图规则.md` 中静态对象或家园蓝图结构、RON v1 字段、数量上限、bounds 和禁止旋转规则。（验证：`docs/世界观/方圆灵构蓝图规则.md:164` 给出静态对象或家园 RON v1 结构，`:247` 规定数量不超过 `min(max_primitives, 1000)`，`:271` 禁止旋转字段，`:401` 说明 primitive 是 `FangyuanPrimitiveSet` 内 runtime 数据）
-- [x] 复核 `docs/世界观/清单/方圆灵构家园原型第一阶段清单.md`，确认第一阶段已完成的家园场景、HUD、reload、clear 和手动验收能力。（验证：`docs/世界观/清单/方圆灵构家园原型第一阶段清单.md:42` 记录场景注册和基础空间完成，`:88` 记录 HUD、重新加载、清空和返回大厅完成，`:104` 记录 reload/clear/手动验收通过）
-- [x] 复核 `summary/方圆统一数据模型第二阶段清单.md`，确认第二阶段已完成的 `FangyuanPrimitiveSet`、role、alpha、emissive、material profile、lifecycle、`FangyuanObjectState` 和 stats 能力。（验证：`summary/方圆统一数据模型第二阶段清单.md:94`、`:109`、`:125`、`:175`、`:222` 分别记录 runtime primitive、role、alpha/emissive/material profile/lifecycle、对象根状态和 stats 已完成）
+- [x] 复核 `docs/世界观/checklists/方圆灵构家园原型第一阶段_checklist.md`，确认第一阶段已完成的家园场景、HUD、reload、clear 和手动验收能力。（验证：`docs/世界观/checklists/方圆灵构家园原型第一阶段_checklist.md:42` 记录场景注册和基础空间完成，`:88` 记录 HUD、重新加载、清空和返回大厅完成，`:104` 记录 reload/clear/手动验收通过）
+- [x] 复核 `summary/方圆统一数据模型第二阶段_checklist.md`，确认第二阶段已完成的 `FangyuanPrimitiveSet`、role、alpha、emissive、material profile、lifecycle、`FangyuanObjectState` 和 stats 能力。（验证：`summary/方圆统一数据模型第二阶段_checklist.md:94`、`:109`、`:125`、`:175`、`:222` 分别记录 runtime primitive、role、alpha/emissive/material profile/lifecycle、对象根状态和 stats 已完成）
 - [x] 检查当前家园蓝图相关代码仍有多少独立的临时数据结构、校验逻辑和渲染适配逻辑。（验证：`project/src/game/scenes/fangyuan_home.rs:256` 起仍有 `FangyuanHomeBlueprint`、`FangyuanHomeBlueprintPrimitive`、`ValidatedFangyuanHomeBlueprintPrimitive` 和 validation 结构；`:291`、`:364` 包含私有校验逻辑；`:480`、`:1092` 包含私有渲染资产缓存和实体生成；HUD 仍在 `project/src/game/screens/gameplay/fangyuan_home.rs:223` 读取私有 `FangyuanHomeBlueprintStats`）
-- [x] 明确本阶段不处理 Prefab、Scene Layout 拆分、Bake、Instancing、LOD、AOI 和联网同步。（验证：`summary/方圆静态对象和家园蓝图预览第三阶段清单.md:9` 明确本阶段非目标；`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md` 将 Prefab/Scene Layout、LOD/AOI/Bake 放到后续阶段）
+- [x] 明确本阶段不处理 Prefab、Scene Layout 拆分、Bake、Instancing、LOD、AOI 和联网同步。（验证：`summary/方圆静态对象和家园蓝图预览第三阶段_checklist.md:9` 明确本阶段非目标；`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md` 将 Prefab/Scene Layout、LOD/AOI/Bake 放到后续阶段）
 - [x] 验证命令：执行 `rg` / `Get-Content` / `git status --short` 等只读检查，确认阶段 1 不修改代码。（验证：worker 报告执行 `git status --short`、`git diff --stat`、多组 `rg -n` 和 `Get-Content`；未修改文件、未运行 cargo、未提交 git，最终状态无业务 diff）
 
 ## 阶段 2：统一蓝图结构入口设计
@@ -186,7 +186,7 @@
 - [x] 如模块结构、启动方式或新成员理解路径变化，检查并同步 `docs/引擎入门使用文档.md`。（验证：主流程和 worker 均确认本阶段未改变项目结构、启动方式、Bevy 版本或新成员上手路径；`docs/引擎入门使用文档.md` 存在且无需修改）
 - [x] 如仓库级说明需要更新，检查并同步 `CLAUDE.md`。（验证：主流程和 worker 均确认仓库级目录约定和开发流程未变化；`CLAUDE.md` 存在且无需修改）
 - [x] 确认文档仍明确 Prefab、Bake、mesh merge、GPU Instancing、LOD、AOI 和联网同步不是本阶段能力。（验证：两份文档均明确本阶段不实现 Prefab、Scene Layout、Chunk、Bake、mesh merge、GPU Instancing、LOD、AOI、联网同步等后续能力）
-- [ ] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/清单/` 目录。（待确认：`multi-agent-dev` 提交规则要求提交时排除 清单 文件和 `summary/`，与仓库归档并提交 清单 的约定存在冲突）
+- [ ] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/checklists/` 目录。（待确认：`multi-agent-dev` 提交规则要求提交时排除 清单 文件和 `summary/`，与仓库归档并提交 清单 的约定存在冲突）
 - [ ] 归档前确认 清单 的阶段时间、开发总结和验证记录均来自真实执行结果。（待归档前最终复核）
 - [x] 验证命令：`cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo test fangyuan_home -- --nocapture`、`cargo check`，以及必要的文档路径检查。（验证：主流程复跑四条命令均通过；`fangyuan` 112 passed，`fangyuan_home` 37 passed，`cargo check` 仅有既有 `checkbox` dead_code warning；路径检查确认新增引用路径存在）
 
@@ -196,7 +196,7 @@
 
 - 开始时间：2026-07-02 14:17:46 +08:00
 - 结束时间：2026-07-02 14:17:46 +08:00
-- 验收总结：第三阶段代码、文档、回归测试和手机窗口手动链路均已完成；默认家园蓝图通过统一蓝图入口编译为 `FangyuanPrimitiveSet`，家园逻辑根持有统一 primitive set 和对象状态，render-only 子实体不承担玩法状态，HUD 使用统一 stats 和 compile report。仍待单独决策的是 清单 从 ignored `summary/` 归档到 `docs/<领域>/清单/` 的处理方式，因为该动作与本次 `multi-agent-dev` 提交排除 清单/summary 的规则存在冲突。
+- 验收总结：第三阶段代码、文档、回归测试和手机窗口手动链路均已完成；默认家园蓝图通过统一蓝图入口编译为 `FangyuanPrimitiveSet`，家园逻辑根持有统一 primitive set 和对象状态，render-only 子实体不承担玩法状态，HUD 使用统一 stats 和 compile report。仍待单独决策的是 清单 从 ignored `summary/` 归档到 `docs/<领域>/checklists/` 的处理方式，因为该动作与本次 `multi-agent-dev` 提交排除 清单/summary 的规则存在冲突。
 
 - [x] `home_preview.ron` 可以通过统一蓝图或统一 primitive 编译入口生成 `FangyuanPrimitiveSet`。（验证：`project/src/framework/fangyuan/blueprint.rs` 的默认家园蓝图测试编译为 493 个 generated primitive、12 个 skipped；`cargo test fangyuan -- --nocapture` 112 passed）
 - [x] 家园或静态对象逻辑根 Entity 持有 `FangyuanPrimitiveSet` 和 `FangyuanObjectState` 或等价统一根状态。（验证：`project/src/game/scenes/fangyuan_home.rs` 生成 `FangyuanHomeObject` 逻辑根并插入 `FangyuanPrimitiveSet`、`FangyuanObjectState`；`cargo test fangyuan_home -- --nocapture` 37 passed）

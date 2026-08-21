@@ -1,6 +1,6 @@
 # 方圆 Prefab 和场景布局第四阶段 清单
 
-归档说明：本文件是 docs 归档副本，来源于已完成的 `summary/方圆预制体和场景布局第四阶段清单.md`；`summary/` 源文件按 multi-agent-dev 规则不提交。
+归档说明：本文件是 docs 归档副本，来源于已完成的 `summary/方圆预制体和场景布局第四阶段_checklist.md`；`summary/` 源文件按 multi-agent-dev 规则不提交。
 
 ## 目标
 
@@ -49,7 +49,7 @@
 
 - [x] 复核 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md` 中“结构拆分：Prefab 和 Scene Layout”和“阶段 4：Prefab 和场景布局拆分”的目标、技术做法、验收标准和风险。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:474` 记录 prefab/palette 和 scene layout 两层拆分，`:1548` 起记录阶段 4 的目标、做法、验收和风险）
 - [x] 复核 `docs/世界观/方圆灵构蓝图规则.md` 中当前 RON v1 primitive 字段、数量上限、bounds、禁止旋转和错误处理规则。（验证：`docs/世界观/方圆灵构蓝图规则.md:198` 起记录顶层字段，`:248` 记录 1000 primitive 上限，`:256` 起记录 primitive 字段，`:275` 明确禁止旋转字段，`:429` 起记录错误处理建议）
-- [x] 复核第三阶段 清单，确认 `FangyuanBlueprint`、`FangyuanPrimitiveSet`、`FangyuanHomeObject`、render-only 边界、Reload/Clear/HUD 已稳定。（验证：`summary/方圆静态对象和家园蓝图预览第三阶段清单.md:102`、`:139`、`:184`、`:222`、`:249` 分别记录统一编译、家园逻辑根、render cache、Reload/Clear 和 HUD stats 已完成）
+- [x] 复核第三阶段 清单，确认 `FangyuanBlueprint`、`FangyuanPrimitiveSet`、`FangyuanHomeObject`、render-only 边界、Reload/Clear/HUD 已稳定。（验证：`summary/方圆静态对象和家园蓝图预览第三阶段_checklist.md:102`、`:139`、`:184`、`:222`、`:249` 分别记录统一编译、家园逻辑根、render cache、Reload/Clear 和 HUD stats 已完成）
 - [x] 检查当前 `project/src/framework/fangyuan/` 和 `project/src/game/scenes/fangyuan_home.rs` 中可复用的加载、校验、编译、stats 和 render cache 边界。（验证：`project/src/framework/fangyuan/blueprint.rs:127` 提供 compile report，`:645` 起统一校验；`primitive.rs:311` 说明 primitive set 挂逻辑根；`render_assets.rs:28` 说明 cache 边界；`stats.rs:9` 说明 stats 来自 runtime primitive；`project/src/game/scenes/fangyuan_home.rs:606`、`:661`、`:707`、`:1022` 覆盖加载、编译、生成逻辑根和 Reload/Clear）
 - [x] 明确本阶段不处理 Chunk、Bake、Instancing、LOD、AOI、联网同步、正式家园编辑器、蓝图持久化和技能规则层。（验证：本 清单 目标段和功能地图已列明非目标，worker 报告确认阶段 2-8 边界不引入这些能力）
 - [x] 验证命令：执行 `rg`、`Get-Content`、`git status --short` 等只读检查，确认阶段 1 不修改代码。（验证：worker 报告列出只读命令且前后 `git status --short` 均无输出；主 agent 再次执行 `git status --short` 无输出）
@@ -190,7 +190,7 @@
 
 - 开始时间：2026-07-02 18:30:38 +08:00
 - 结束时间：2026-07-02 18:42:38 +08:00
-- 开发总结：同步第四阶段 Prefab / Palette、Scene Layout、路径策略、预算 report、HUD/Reload/Clear 和非目标边界到方圆技术路线、蓝图规则、新人上手和仓库说明；按仓库归档约定在 `docs/方圆灵构/清单/` 准备归档副本，同时保留 `summary/` 源 清单 作为本轮进度记录且不纳入提交。
+- 开发总结：同步第四阶段 Prefab / Palette、Scene Layout、路径策略、预算 report、HUD/Reload/Clear 和非目标边界到方圆技术路线、蓝图规则、新人上手和仓库说明；按仓库归档约定在 `docs/方圆灵构/checklists/` 准备归档副本，同时保留 `summary/` 源 清单 作为本轮进度记录且不纳入提交。
 - 验证记录：worker 执行 `cargo fmt --check` 通过；`cargo test fangyuan -- --nocapture` 通过（157 passed）；`cargo test fangyuan_home -- --nocapture` 通过（38 passed）；`cargo check` 通过；`rg` / `Test-Path` 文档路径和关键文本检查通过。仅保留既有 `selection.rs:32` 的 `checkbox` dead_code warning。
 
 - [x] 更新 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`，记录第四阶段实际落地的 Prefab、Palette 和 Scene Layout 边界。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:443` 记录第四阶段已落地 Prefab/Palette/Scene Layout，`:1575` 起更新阶段 4 目标、做法、验收和风险）
@@ -198,7 +198,7 @@
 - [x] 如新增资源路径或开发启动方式影响新成员理解，检查并同步 `docs/引擎入门使用文档.md`。（验证：`docs/引擎入门使用文档.md:232` 更新 framework fangyuan 说明，`:250`-`:251` 记录默认 palette/layout 首包样例路径）
 - [x] 如仓库级说明需要更新，检查并同步 `CLAUDE.md`。（验证：`CLAUDE.md:30` 更新 framework fangyuan 边界，`:42`-`:43` 记录默认 palette/layout 首包样例路径）
 - [x] 确认文档仍明确 Chunk、Bake、mesh merge、GPU Instancing、LOD、AOI、联网同步、正式家园编辑器、蓝图持久化、装备挂点和技能规则层不是本阶段能力。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:453`、`:1608` 和 `docs/世界观/方圆灵构蓝图规则.md:18`、`:531` 明确这些能力仍不是第四阶段能力）
-- [x] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/清单/` 目录。（验证：已创建 `docs/方圆灵构/清单/方圆预制体和场景布局第四阶段清单.md` 作为 docs 归档副本；受 multi-agent-dev 提交规则约束，`summary/` 源文件保留为未提交进度记录，不纳入 git 提交）
+- [x] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/checklists/` 目录。（验证：已创建 `docs/方圆灵构/checklists/方圆预制体和场景布局第四阶段_checklist.md` 作为 docs 归档副本；受 multi-agent-dev 提交规则约束，`summary/` 源文件保留为未提交进度记录，不纳入 git 提交）
 - [x] 归档前确认 清单 的阶段时间、开发总结和验证记录均来自真实执行结果。（验证：阶段 1-10 的开始/结束时间、总结和验证记录均来自主 agent、worker 和命令输出；归档副本将在最终完成定义更新后同步）
 - [x] 验证命令：`cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo test fangyuan_home -- --nocapture`、`cargo check`，以及必要的文档路径检查。（验证：worker 在 `project/` 下执行四条 cargo 命令均通过；`fangyuan` 157 passed，`fangyuan_home` 38 passed，`cargo check` 仅输出既有 `checkbox` dead_code warning；文档路径和关键文本检查通过）
 

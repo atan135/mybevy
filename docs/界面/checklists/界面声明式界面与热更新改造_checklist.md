@@ -29,7 +29,7 @@
 - [x] 页面节点、列表项和 action source 使用稳定 ID；reload、列表 diff、焦点和输入状态迁移不得依赖 ECS Entity 顺序。（验证：阶段 3-5 stable node/source/keyed repeat 与状态迁移测试通过，角色列表保留完整稳定 `character_id`）
 - [x] AI 工具只能修改允许的资源目录和运行产物；promotion 必须显式批准，并证明没有生成或改写 Rust 业务实现。（验证：阶段 9 host-bound generation/promotion、approval evidence 和 UI-only write scope 门禁通过）
 - [x] 每个阶段独立实现、验证和提交；涉及 Rust 的阶段至少运行 `cargo fmt`、focused tests 和 `cargo check`，不得为构建清理共享 `target/`。（验证：15 个阶段均记录独立验证和提交；本执行链 commits `6f78d44..092b512`，未运行 `cargo clean`）
-- [x] 清单 全部完成后转移到 `docs/界面/清单/` 归档，并同步更新 `docs/界面/`、`docs/资源工作流.md`、`docs/引擎入门使用文档.md` 和 `CLAUDE.md` 中受影响的约定。（验证：阶段 7/8/15 已同步资源工作流、UI 文档、上手文档和 CLAUDE；最终文件归档到 `docs/界面/清单/`）
+- [x] 清单 全部完成后转移到 `docs/界面/checklists/` 归档，并同步更新 `docs/界面/`、`docs/资源工作流.md`、`docs/引擎入门使用文档.md` 和 `CLAUDE.md` 中受影响的约定。（验证：阶段 7/8/15 已同步资源工作流、UI 文档、上手文档和 CLAUDE；最终文件归档到 `docs/界面/checklists/`）
 
 ## 阶段 1：冻结架构边界和页面迁移清单
 
@@ -338,4 +338,4 @@
 - [ ] Android 真机条件可用时完成下载、激活、重启保持、离线 fallback、软键盘、安全区、触控和失败回滚验收；不可用时保留未勾选并记录阻塞条件。（阻塞：SM-G9730 API 31 位于 secure keyguard 后，虽已完成 arm64 Release、Debug APK、安装、Activity/PID/surface/WindowInsets/Vulkan 出帧检查，但触控、IME、安全区视觉、重启/离线/回滚不可可信执行；生产更新还未注入 app-private cache root、production trust roots、endpoint 和 `CheckNow` 触发点）
 - [x] `cargo fmt`、项目相关测试、`cargo check`、UI generation 工具测试、boundary check、UI audit/e2e acceptance 和 `git diff --check` 全部通过。（验证：最终主审查 gameplay 25/25、UiDocument 108/108、navigation 20/20、approval 正负测试、两端 fmt、Debug/Release check、audit self-test、UI generation 217/217、boundary 10 项 true、E2E external-Android-blocker 合格状态与 diff check 通过）
 - [x] `docs/界面/`、资源工作流、上手文档和 `CLAUDE.md` 已与最终架构一致，不再把开发期 reload 描述为用户端生产热更新。（验证：相关文档明确区分 desktop Debug preview/watch 与显式配置的签名 production `UiUpdateClient`，并记录默认应用/Android 尚缺的发布接线）
-- [x] 本 清单 已从 `summary/` 转移到 `docs/界面/清单/` 归档并纳入最终提交。（验证：归档路径 `docs/界面/清单/UI声明式界面与热更新改造清单.md`）
+- [x] 本 清单 已从 `summary/` 转移到 `docs/界面/checklists/` 归档并纳入最终提交。（验证：归档路径 `docs/界面/checklists/UI声明式界面与热更新改造_checklist.md`）

@@ -101,7 +101,7 @@
 - [x] 根据最终实现更新 `docs/场景/场景框架层功能说明.md` 的当前能力清单、模块职责和系统调度说明。（验证：docs/场景/场景框架层功能说明.md:72 更新 camera.rs 职责，:120 记录 `update_scene_cameras` 调度位置，:473 记录目标标记和 session 隔离）
 - [x] 根据最终实现更新 `docs/场景/游戏层场景使用说明.md` 的 Robot Sync 摄像机使用说明和验收流程。（验证：docs/场景/游戏层场景使用说明.md:692 记录默认 Overview，:695 记录 `C` 键，:698 记录 FollowLocal 参数，:706-708 记录验收口径）
 - [x] 如新增环境变量、按键或启动方式，同步更新 `docs/引擎入门使用文档.md`。（验证：docs/引擎入门使用文档.md:461 补充 Robot Sync `C` 键 Overview/FollowLocal 切换说明）
-- [x] 阶段全部完成后，将本 清单 从 `summary/` 转移并归档到 `docs/场景/清单/`。（验证：准备将 `summary/摄像机管理系统第一阶段清单.md` 归档为 `docs/场景/清单/摄像机管理系统第一阶段清单.md`）
+- [x] 阶段全部完成后，将本 清单 从 `summary/` 转移并归档到 `docs/场景/checklists/`。（验证：准备将 `summary/摄像机管理系统第一阶段_checklist.md` 归档为 `docs/场景/checklists/摄像机管理系统第一阶段_checklist.md`）
 - [x] 归档前确认 清单 中每个已完成阶段都有开始时间、结束时间、开发总结和验证记录。（验证：阶段 1-6 均已填写开始时间、结束时间、开发总结和验证记录）
 
 ## 最终完成定义
@@ -119,6 +119,6 @@
 - [x] 场景退出后 scene camera、camera target、Robot Sync visual 和相关运行时状态不残留。（验证：project/src/framework/scene/camera.rs 场景相机清理测试通过，project/src/game/features/robot_sync/visual.rs camera target 清理测试随 `cargo test robot_sync --lib` 通过；direct-start 点击“大厅”后进程清理为 0）
 - [x] 镜头特效与渲染/VFX 特效边界已记录，第一阶段未引入完整后处理栈。（验证：docs/场景/摄像机管理系统设计.md 和 docs/场景/场景框架层功能说明.md 记录 transform/projection 与渲染/VFX 边界及未完成后处理栈）
 - [x] `cargo fmt --check`、相关 `cargo test`、`cargo check` 和 `git diff --check` 通过。（验证：阶段 5 记录 `cargo fmt --check`、`cargo test robot_sync --lib`、`cargo test scene_camera --lib`、`cargo test scene --lib`、`cargo check`、`git diff --check` 均通过）
-- [x] 相关 docs 已与实现同步，清单 已按仓库约定归档到 `docs/场景/清单/`。（验证：docs/引擎入门使用文档.md 与 docs/场景/ 三份文档已同步，准备归档到 docs/场景/清单/）
+- [x] 相关 docs 已与实现同步，清单 已按仓库约定归档到 `docs/场景/checklists/`。（验证：docs/引擎入门使用文档.md 与 docs/场景/ 三份文档已同步，准备归档到 docs/场景/checklists/）
 
 

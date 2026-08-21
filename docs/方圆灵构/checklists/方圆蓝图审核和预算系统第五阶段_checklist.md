@@ -42,7 +42,7 @@
 
 - [x] 复核 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md` 中“审核和安全”“蓝图审核”“阶段 5：蓝图审核和预算系统”的目标、做法、验收和风险。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:1341` 起定义审核和安全，`:1345`-`:1360` 列出审核重点，`:1610`-`:1628` 记录阶段 5 目标和做法，`:1630`-`:1632` 记录主要风险）
 - [x] 复核 `docs/世界观/方圆灵构蓝图规则.md` 中现有数量、bounds、size、color、alpha、emissive、material profile、lifecycle、禁止字段和错误处理建议。（验证：`docs/世界观/方圆灵构蓝图规则.md:380`-`:400` 限定 kind 和禁止旋转字段，`:417`-`:425` 记录 bounds，`:440`-`:467` 记录 size/color/alpha，`:496`-`:503` 记录 1000 数量限制，`:533`-`:559` 记录禁止事项和错误处理建议）
-- [x] 复核第四阶段 清单 和提交记录，确认 blueprint、prefab、layout、compile report、HUD stats 和家园 Reload/Clear 已稳定。（验证：最近提交包含 `1d70554`、`1ee142a`、`bf4fce6`、`9d98c65`、`0128ad7`；`docs/方圆灵构/清单/方圆预制体和场景布局第四阶段清单.md:172`-`:187` 记录阶段 9 自动和手动验收，`:211`-`:232` 记录最终完成定义）
+- [x] 复核第四阶段 清单 和提交记录，确认 blueprint、prefab、layout、compile report、HUD stats 和家园 Reload/Clear 已稳定。（验证：最近提交包含 `1d70554`、`1ee142a`、`bf4fce6`、`9d98c65`、`0128ad7`；`docs/方圆灵构/checklists/方圆预制体和场景布局第四阶段_checklist.md:172`-`:187` 记录阶段 9 自动和手动验收，`:211`-`:232` 记录最终完成定义）
 - [x] 检查 `project/src/framework/fangyuan/` 中现有 validation、compile report、stats、asset path 和错误类型，明确哪些能力复用、哪些需要新增审核层。（验证：`project/src/framework/fangyuan/blueprint.rs:123`-`:159` 提供 simple compile report，`:600` 起提供 primitive validator；`layout.rs:122`-`:215` 提供 layout compile report；`stats.rs:14`-`:30` 提供 stats；`asset_path.rs:51`-`:76` 提供统一路径校验；worker 报告确认需新增统一 AuditReport/Finding/Suggestion、severity/status、budget profile 和三类 audit adapter）
 - [x] 明确本阶段不处理正式编辑器、持久化、联网同步、四属性正式额度、职业权限、AI 内容审核、自定义 shader、Chunk、Bake、LOD 和 AOI。（验证：本 清单 目标段和基础原则明确非目标，worker 报告确认阶段 2-8 只做审核、预算、report 和调试接入）
 - [x] 验证命令：执行 `rg`、`Get-Content`、`git status --short` 等只读检查，确认阶段 1 不修改业务代码。（验证：worker 报告列出只读命令并确认未修改任何文件；主 agent 再次执行 `git status --short` 无输出）
@@ -182,7 +182,7 @@
 - [x] 如审核系统新增资源路径、开发命令或调试方式影响新成员理解，检查并同步 `docs/引擎入门使用文档.md`。（验证：文档新增 `dev.fangyuan_home` 首包场景、`MYBEVY_START_SCENE="dev.fangyuan_home"` 家园审核 HUD 验收命令和 Windows `WGPU_BACKEND="dx12"` 可视验收说明）
 - [x] 如仓库级说明需要更新，检查并同步 `CLAUDE.md`。（验证：`CLAUDE.md` 的 `project/src/framework/fangyuan/` 目录说明已补充审核 report / budget profile / finding / suggestion）
 - [x] 确认文档仍明确 Chunk、Bake、mesh merge、GPU Instancing、LOD、AOI、联网同步、正式家园编辑器、蓝图持久化、装备挂点和技能规则层不是本阶段能力。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`、`docs/世界观/方圆灵构蓝图规则.md`、`docs/引擎入门使用文档.md` 均明确第五阶段只覆盖审核和预算；`rg` 复核相关词均为后续/非目标说明）
-- [x] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/清单/` 目录。（验证：归档目标确认为 `docs/方圆灵构/清单/方圆蓝图审核和预算系统第五阶段清单.md`，移动前已确认源文件和目标目录绝对路径）
+- [x] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/checklists/` 目录。（验证：归档目标确认为 `docs/方圆灵构/checklists/方圆蓝图审核和预算系统第五阶段_checklist.md`，移动前已确认源文件和目标目录绝对路径）
 - [x] 归档前确认 清单 的阶段时间、开发总结和验证记录均来自真实执行结果。（验证：阶段 1-10 均有开始/结束时间、总结和命令/代码/截图证据；阶段 9 记录了 DX12 可视截图和 GUI 自动点击限制，未虚构点击结果）
 - [x] 验证命令：`cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo test fangyuan_home -- --nocapture`、`cargo check`，以及必要的文档路径检查。（验证：主 agent 执行全部命令通过；额外执行 `cargo test fangyuan_player_preview -- --nocapture` 通过；`Resolve-Path` 确认 清单 源文件和归档目录存在）
 

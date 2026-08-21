@@ -4,9 +4,9 @@
 
 为主世界提供 fixed host + approved `UiDocument` 的常驻 HUD，并以场景内面板形式接入设置、邮箱、家园和返回 Lobby。HUD 只在主世界网络与场景 ready 条件满足后显示，面板开关不应破坏当前 scene session 或误切换到 Lobby。
 
-本清单负责 UI 宿主、动作、绑定、面板层级和交互生命周期；主世界房间与 Scene ready 由 `02_主世界进场与权威闭环清单.md` 负责，邮箱数据由 `05_邮箱界面与通知闭环清单.md` 负责。
+本清单负责 UI 宿主、动作、绑定、面板层级和交互生命周期；主世界房间与 Scene ready 由 `02_主世界进场与权威闭环_checklist.md` 负责，邮箱数据由 `05_邮箱界面与通知闭环_checklist.md` 负责。
 
-Android 真机上的安全区、触控、系统返回键、前后台和公网业务验收集中转移至 `07_公网部署后Android真机验收清单.md`。本清单仍负责 Android 返回语义、响应式和输入合同的实现与自动化验证，不执行真机验收。
+Android 真机上的安全区、触控、系统返回键、前后台和公网业务验收集中转移至 `07_公网部署后Android真机验收_checklist.md`。本清单仍负责 Android 返回语义、响应式和输入合同的实现与自动化验证，不执行真机验收。
 
 ## 基础原则
 
@@ -93,7 +93,7 @@ Android 真机上的安全区、触控、系统返回键、前后台和公网业
 - 验证记录：`cargo fmt --check`、`cargo test main_world --lib`（57 项）与 `cargo check` 通过。
 
 - [x] 家园按钮只提交场景切换意图，不直接发送多条 Scene/MyServer/route 命令。（验证：HUD adapter 仅写 `MainWorldEntryIntent::EnterHome`，定向测试断言无直接副作用）
-- [x] 按 `02_主世界进场与权威闭环清单.md` 已确认的家园网络和返回方案驱动 Loading、房间离开与场景切换。（验证：`main_world_entry` coordinator 接收 intent 后复用既有 leave-room/scene exit 流程）
+- [x] 按 `02_主世界进场与权威闭环_checklist.md` 已确认的家园网络和返回方案驱动 Loading、房间离开与场景切换。（验证：`main_world_entry` coordinator 接收 intent 后复用既有 leave-room/scene exit 流程）
 - [x] 家园切换失败时按已实现的回退能力恢复主世界或回 Lobby，不宣称当前 destructive Switch 可以原地恢复。（验证：保留既有 home scene load failure -> Lobby 回退测试）
 - [x] 返回 Lobby 按钮先关闭场景内面板，再请求主世界退出；退出完成前保持阻断状态。（验证：`request_main_world_ui_teardown` 先清 mail/settings/HUD 再 `begin_exit`，顺序测试通过）
 - [x] 返回 Lobby 不发送账号 Logout，不清除有效角色、ticket 或 chat/mail endpoint。（验证：ExitToLobby 仅走 coordinator scene/room 退出，主世界测试通过）

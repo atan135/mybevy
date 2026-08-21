@@ -8,12 +8,12 @@
 
 ## 依赖与边界
 
-- 依赖 `01_注册与登录入口适配清单.md` 或现有登录/选角链路提供有效 character-bound ticket。
+- 依赖 `01_注册与登录入口适配_checklist.md` 或现有登录/选角链路提供有效 character-bound ticket。
 - 依赖 `project/src/framework/scene/` 的 `SceneRuntime`、`SceneCommand`、`SceneEvent`、Loading、根实体和 ready 边界。
 - 依赖 `project/src/game/myserver/` 的 game proxy 鉴权、房间命令、重连和移动快照事件。
-- 主世界 HUD 和场景内按钮由 `03_主世界界面与场景内面板清单.md` 负责。
+- 主世界 HUD 和场景内按钮由 `03_主世界界面与场景内面板_checklist.md` 负责。
 - 服务端权威场景为 `scene_code=grassland_01`、`scene_id=1`、默认出生点 `spawn_id=1001`。
-- 本清单的网络链路验收统一使用本机 Windows `cargo run` 客户端连接本地 MyServer；Android 真机验收集中转移至 `07_公网部署后Android真机验收清单.md`，只在目标版本完成公网部署后启动。
+- 本清单的网络链路验收统一使用本机 Windows `cargo run` 客户端连接本地 MyServer；Android 真机验收集中转移至 `07_公网部署后Android真机验收_checklist.md`，只在目标版本完成公网部署后启动。
 
 ## 基础原则
 

@@ -192,7 +192,7 @@
 - [x] 更新资源工作流文档，说明开发期 RON、发布期 bin、首包、缓存和后续下载资源边界。（验证：`docs/资源工作流.md:166` 起补充方圆 RON / `.fyb` / 首包 / 后续下载 / authority cache 边界，`:710` 起补充 chunk/cache/streaming update 安装与纪元继承边界）
 - [x] 更新新成员上手文档中的 bake dry-run、调试加载和缓存验收命令。（验证：`docs/引擎入门使用文档.md:504` 起新增 chunk/runtime/cache/streaming/epoch/cache authority 验收命令，`:522` 记录完整 `cargo test fangyuan -- --nocapture`，`:1007` 起补充 Android 与缓存/后续下载验证边界）
 - [x] 确认文档仍明确完整服务器集群、商业 CDN、运营后台、账号交易和最终云压测平台不是本 清单 能力。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:781` / `:2023`、`docs/资源工作流.md:716`、`docs/引擎入门使用文档.md:549` 均保留非目标边界）
-- [x] 清单 全部完成后，按仓库约定从 `summary/` 归档到 `docs/方圆灵构/清单/`。（验证：`docs/方圆灵构/清单/方圆大世界资源和加载第十二至第十四阶段清单.md:1` 已创建归档副本；summary 文件保留为本轮进度记录且不纳入提交）
+- [x] 清单 全部完成后，按仓库约定从 `summary/` 归档到 `docs/方圆灵构/checklists/`。（验证：`docs/方圆灵构/checklists/方圆大世界资源和加载第十二至第十四阶段_checklist.md:1` 已创建归档副本；summary 文件保留为本轮进度记录且不纳入提交）
 - [x] 验证命令：`git diff --check`、`cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo check`。（验证：worker 在本阶段执行四条命令均通过；`cargo test fangyuan -- --nocapture` 为 382 passed / 0 failed / 673 filtered out，仅有既有 `selection.rs:32` dead_code warning）
 
 ## 最终完成定义

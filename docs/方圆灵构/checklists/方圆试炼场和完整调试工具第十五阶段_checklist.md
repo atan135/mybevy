@@ -130,7 +130,7 @@
 - [x] 更新方圆技术路线，记录试炼场、调试面板、压测、报告和回放一致性。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:2051` 起记录 debug metrics bus、玩家试炼场、developer debug panel、pressure simulation、visual replay consistency 和 debug report / baseline）
 - [x] 更新新成员上手或调试文档，说明如何运行试炼场、压力测试和报告导出。（验证：`docs/引擎入门使用文档.md:496` 起记录 `TOUCH_START_SCREEN=fangyuan_home cargo run -- --window-profile phone-small` 以及 `fangyuan_trial` / `fangyuan_debug_panel` / `fangyuan_pressure` / `fangyuan_visual_replay` / `fangyuan_debug_report` 定向命令）
 - [x] 确认文档明确该阶段不是运营后台、云压测平台或商业监控系统。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:2058` 和 `docs/引擎入门使用文档.md:517` 明确排除运营后台、云压测平台、商业监控系统、线上告警和生产级监控管线）
-- [x] 清单 完成后归档到 `docs/方圆灵构/清单/`。（验证：`docs/方圆灵构/清单/方圆试炼场和完整调试工具第十五阶段清单.md:1` 已创建归档副本，并在最终完成后与 summary 源文件同步）
+- [x] 清单 完成后归档到 `docs/方圆灵构/checklists/`。（验证：`docs/方圆灵构/checklists/方圆试炼场和完整调试工具第十五阶段_checklist.md:1` 已创建归档副本，并在最终完成后与 summary 源文件同步）
 - [x] 验证命令：`git diff --check`、`cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo check`。（验证：主 agent 复跑四条命令全部通过；`cargo test fangyuan -- --nocapture` 为 416 passed / 0 failed / 674 filtered out，仅有既有 `selection.rs:32` dead_code warning）
 
 ## 最终完成定义

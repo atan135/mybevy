@@ -177,13 +177,13 @@
 
 - 开始时间：2026-07-05 03:16:18 +08:00
 - 结束时间：2026-07-05 03:31:38 +08:00
-- 开发总结：完成方圆技术路线、程序动画与技能表现路线、天道自演蓝图规则层边界的文档同步，并创建 `docs/方圆灵构/清单/` 归档副本；归档副本会随最终 清单 状态同步提交。
+- 开发总结：完成方圆技术路线、程序动画与技能表现路线、天道自演蓝图规则层边界的文档同步，并创建 `docs/方圆灵构/checklists/` 归档副本；归档副本会随最终 清单 状态同步提交。
 - 验证记录：`git diff --check` 通过；`cargo fmt --check` 通过；`cargo test fangyuan -- --nocapture` 通过（301 passed）；`cargo test authority -- --nocapture` 通过（8 passed）；`cargo check` 通过（保留既有 `selection.rs:32` dead_code warning）。
 
 - [x] 更新方圆技术路线，记录 VFX recipe、确定性、技能规则层/个性层、装备 socket、NPC 抽象表达和天道 FSM。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:1781` 起更新阶段 9-11，`docs/方圆灵构/方圆程序动画与技能表现技术路线.md:9` 起记录当前落地边界）
 - [x] 更新世界观蓝图规则，说明玩家定制不可越过规则层、可读性限制、对象审核和预算要求。（验证：`docs/世界观/天道自演.md:196` 新增蓝图规则层边界、可读性限制、对象审核和预算要求）
 - [x] 确认文档仍明确完整战斗结算、职业技能库、传统骨骼模型、Chunk / AOI、Bake 和纪元继承不是本 清单 能力。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:1876`、`docs/方圆灵构/方圆程序动画与技能表现技术路线.md:651`、`docs/世界观/天道自演.md:238` 均保留非目标边界）
-- [x] 清单 全部完成后，按仓库约定从 `summary/` 归档到 `docs/方圆灵构/清单/`。（验证：已创建并同步 `docs/方圆灵构/清单/方圆动态表现和对象接入第九至第十一阶段清单.md`）
+- [x] 清单 全部完成后，按仓库约定从 `summary/` 归档到 `docs/方圆灵构/checklists/`。（验证：已创建并同步 `docs/方圆灵构/checklists/方圆动态表现和对象接入第九至第十一阶段_checklist.md`）
 - [x] 验证命令：`git diff --check`、`cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo test authority -- --nocapture`、`cargo check`。（验证：worker 在 `project/` / 仓库根目录执行全部通过；仅有既有 `src/framework/ui/widgets/controls/selection.rs:32` 未使用 warning）
 
 ## 最终完成定义

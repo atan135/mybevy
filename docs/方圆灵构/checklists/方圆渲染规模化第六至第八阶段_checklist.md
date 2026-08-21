@@ -168,7 +168,7 @@
 - [x] 更新世界观蓝图规则或资源文档，说明 material_profile_id 的合法值、默认值、透明/发光预算和审核规则。（验证：`docs/世界观/方圆灵构蓝图规则.md:469` 新增 `material_profile_id` 规则，`:626` 起列出非法原因，`:715` 和 `:727` 记录默认 `material:default`、受控 ASCII id、透明/发光/material profile 预算检查）
 - [x] 如新增运行参数、调试开关或开发验收方式，更新 `docs/引擎入门使用文档.md` 或相关方圆文档。（验证：`docs/引擎入门使用文档.md:502`、`:512`、`:517` 记录 `MYBEVY_FANGYUAN_HOME_RENDER_MODE=standard|cpu_merge|static_instance`、别名、HUD/日志字段和 `WGPU_BACKEND=dx12` 复验方式）
 - [x] 确认文档仍明确动态 VFX、技能规则层、Chunk、LOD、AOI、Bake、缓存继承和任意 shader 不是本 清单 能力。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:1778`、`docs/世界观/方圆灵构蓝图规则.md:18`、`:574`、`:592`、`docs/引擎入门使用文档.md:520` 均明确非目标边界）
-- [x] 清单 全部完成后，按仓库约定从 `summary/` 归档到 `docs/方圆灵构/清单/`。（验证：最终完成定义全部通过后，主 agent 已将本 清单 归档到 `docs/方圆灵构/清单/方圆渲染规模化第六至第八阶段清单.md`）
+- [x] 清单 全部完成后，按仓库约定从 `summary/` 归档到 `docs/方圆灵构/checklists/`。（验证：最终完成定义全部通过后，主 agent 已将本 清单 归档到 `docs/方圆灵构/checklists/方圆渲染规模化第六至第八阶段_checklist.md`）
 - [x] 验证命令：`git diff --check`、`cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo check`。（验证：主 agent 在仓库根和 `project/` 下执行全部通过；`cargo test fangyuan -- --nocapture` 为 234 passed，`cargo check` 仅有既有 `selection.rs:32` warning）
 
 ## 最终完成定义

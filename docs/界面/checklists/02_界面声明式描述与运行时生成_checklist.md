@@ -9,7 +9,7 @@ AI 交换格式以 JSON 为主，首包或人工维护资源可以在复用同�
 ## 已有基础与依赖
 
 - 复用现有 `UiFrameworkPlugin`、`UiTheme`、`UiMetrics`、widgets、Panel Manager、i18n、binding、focus 和 audit 能力。
-- 依赖 `01_界面高保真视觉基础能力清单.md` 暴露稳定、可描述的视觉组件；协议可以先覆盖现有能力，再按版本增量扩展。
+- 依赖 `01_界面高保真视觉基础能力_checklist.md` 暴露稳定、可描述的视觉组件；协议可以先覆盖现有能力，再按版本增量扩展。
 - 复用仓库已有 `serde`、`serde_json` 和 `ron`，新增依赖必须说明必要性和 Android 构建影响。
 - 运行时生成的页面仍遵循 `project/src/game/screens/` 与游戏层路由边界，不把业务命令实现塞入 framework。
 

@@ -10,7 +10,7 @@
 
 - 需求来源：`summary/主世界尺度角色摄像机与联机移动需求设计.md`。
 - 摄像机单测和 fixture 验证不需要登录；如必须进入主世界，优先使用正式服登录，不启动或连接本地服务端。
-- 依赖 `02_方圆玩家共享渲染与主世界多人实体清单.md` 提供唯一的本地 `SceneCameraTarget`。
+- 依赖 `02_方圆玩家共享渲染与主世界多人实体_checklist.md` 提供唯一的本地 `SceneCameraTarget`。
 - 复用 `SceneCameraRig`、`SceneCameraMode::FollowTarget`、`PrimaryActor`、scene session 隔离和全局 UI Camera 层级。
 - 不创建第二个竞争的世界 Camera，不直接每帧修改最终 Camera Transform。
 - Gameplay 输入必须服从现有 Loading、Floating panel、Modal 和 UI picking 阻断边界。

@@ -9,10 +9,10 @@
 ## 依赖与边界
 
 - 依赖 `project/src/game/myserver/mail.rs` 已有列表、详情、已读、领取和有界 reconciliation。
-- 依赖 `04_聊天应用级接线清单.md` 提供 `MailNotifyPush` 桥接；chat 不可用时邮箱仍可主动 HTTPS 查询。
-- 依赖 `03_主世界界面与场景内面板清单.md` 提供邮件入口和场景内 panel 生命周期。
+- 依赖 `04_聊天应用级接线_checklist.md` 提供 `MailNotifyPush` 桥接；chat 不可用时邮箱仍可主动 HTTPS 查询。
+- 依赖 `03_主世界界面与场景内面板_checklist.md` 提供邮件入口和场景内 panel 生命周期。
 - 邮件 ownership 使用账号 `player_id`，附件发放目标使用当前 ticket 绑定的 `character_id`。
-- Android 真机上的公网邮件 HTTPS、通知、触控、前后台与领取验收集中转移至 `07_公网部署后Android真机验收清单.md`。
+- Android 真机上的公网邮件 HTTPS、通知、触控、前后台与领取验收集中转移至 `07_公网部署后Android真机验收_checklist.md`。
 
 ## 基础原则
 

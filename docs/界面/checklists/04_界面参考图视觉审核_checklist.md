@@ -11,7 +11,7 @@
 - 已有 `UiScreenshotCommand`、本地单页面审计、滚动 state、设备矩阵、metadata、manifest 和 `report.md`。
 - 已有 AI analysis input/output、severity、gating 和 fixture 解析，但真实外部 AI 分析尚未接入。
 - 依赖声明式 UI 协议提供 document/node source map 时，可以把问题定位到精确节点；传统 Rust 页面仍应支持文件级定位。
-- 与 `03_人工智能参考图生成界面清单.md` 共享 reference element ID，但审核器必须保持独立证据和独立通过规则。
+- 与 `03_人工智能参考图生成界面_checklist.md` 共享 reference element ID，但审核器必须保持独立证据和独立通过规则。
 
 ## 基础原则
 
