@@ -36,11 +36,16 @@ use crate::{
                 MAIN_WORLD_AUTHORITY_CONTRACT,
                 main_world_bevy_position as contract_main_world_bevy_position,
             },
-            main_world_snapshot::{MainWorldSnapshotEvent, install_main_world_snapshot_bus},
+            main_world_snapshot::{
+                MainWorldSnapshotBusState, MainWorldSnapshotEvent, install_main_world_snapshot_bus,
+            },
         },
         screens::gameplay::host::{MainWorldUiTeardownCause, request_main_world_ui_teardown},
     },
 };
+
+#[cfg(test)]
+use crate::game::myserver::GameServiceEndpoint;
 
 pub(in crate::game) struct MainWorldEntryPlugin;
 
@@ -58,6 +63,7 @@ impl Plugin for MainWorldEntryPlugin {
         install_main_world_snapshot_bus(app);
         app.init_resource::<MainWorldEntryState>()
             .init_resource::<MainWorldEntryWatchdog>()
+            .init_resource::<MainWorldFrameWatchdog>()
             .init_resource::<MainWorldEntryDebugConfig>()
             .add_message::<MainWorldEntryIntent>()
             .add_message::<MainWorldEntrySignal>()
@@ -82,6 +88,8 @@ impl Plugin for MainWorldEntryPlugin {
                     handle_entry_intents,
                     dispatch_main_world_join_requests,
                     consume_main_world_authority_events,
+                    resume_main_world_entry_after_game_auth,
+                    watchdog_main_world_authority_frames,
                     dispatch_authority_confirmed_scene_enter,
                     consume_main_world_scene_ready,
                     consume_main_world_content_events,
@@ -108,6 +116,7 @@ const ENV_MAIN_WORLD_ACCEPTANCE_METRICS: &str = "MYBEVY_MAIN_WORLD_ACCEPTANCE_ME
 const MAIN_WORLD_ACCEPTANCE_SAMPLE_SECONDS: f64 = 5.0;
 const MAIN_WORLD_ENTRY_PROGRESS_TIMEOUT: Duration = Duration::from_secs(20);
 const MAIN_WORLD_EXIT_PROGRESS_TIMEOUT: Duration = Duration::from_secs(12);
+const MAIN_WORLD_FRAME_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 const MAIN_WORLD_HUD_AUDIT_FIXTURE_ID: &str = "stage16_main_world_hud";
@@ -225,6 +234,7 @@ pub(in crate::game) enum MainWorldEntryPhase {
     #[default]
     LobbyIdle,
     Validating,
+    WaitingGameAuth,
     JoiningRoom,
     LoadingScene,
     WaitingSceneReady,
@@ -282,11 +292,27 @@ struct MainWorldEntryWatchdog {
     elapsed: Duration,
 }
 
+#[derive(Clone, Copy, Debug, Default, Resource)]
+struct MainWorldFrameWatchdog {
+    elapsed: Duration,
+    last_activity_serial: u64,
+    tripped_generation: Option<u64>,
+}
+
+impl MainWorldFrameWatchdog {
+    fn reset(&mut self, activity_serial: u64) {
+        self.elapsed = Duration::ZERO;
+        self.last_activity_serial = activity_serial;
+        self.tripped_generation = None;
+    }
+}
+
 impl MainWorldEntryPhase {
     pub const fn blocks_lobby_input(self) -> bool {
         matches!(
             self,
             Self::Validating
+                | Self::WaitingGameAuth
                 | Self::JoiningRoom
                 | Self::LoadingScene
                 | Self::WaitingSceneReady
@@ -763,6 +789,16 @@ fn handle_entry_intents(
                 session.connection_id,
             );
             if let Err(failure) = validate_entry(&profiles, &session, &registry) {
+                if failure == MainWorldEntryFailure::GameAuthUnavailable
+                    && begin_game_auth_for_entry(
+                        &mut state,
+                        &session,
+                        &profiles,
+                        &mut myserver_commands,
+                    )
+                {
+                    continue;
+                }
                 let generation = state.generation;
                 state.fail(failure);
                 events.write(MainWorldEntryEvent::Failed {
@@ -792,6 +828,16 @@ fn handle_entry_intents(
             continue;
         }
         match intent {
+            MainWorldEntryIntent::Recover if state.phase == MainWorldEntryPhase::Active => {
+                begin_recovery(
+                    &mut state,
+                    &session,
+                    &mut events,
+                    &mut myserver_commands,
+                    &mut scene_commands,
+                    &mut route_commands,
+                );
+            }
             MainWorldEntryIntent::EnterHome if state.owns_authority_session() => {
                 if state.phase != MainWorldEntryPhase::Exiting {
                     request_main_world_ui_teardown(
@@ -877,6 +923,43 @@ fn handle_entry_intents(
     }
 }
 
+fn watchdog_main_world_authority_frames(
+    time: Res<Time<Real>>,
+    entry: Res<MainWorldEntryState>,
+    bus: Res<MainWorldSnapshotBusState>,
+    mut watchdog: ResMut<MainWorldFrameWatchdog>,
+    mut intents: MessageWriter<MainWorldEntryIntent>,
+) {
+    if entry.phase != MainWorldEntryPhase::Active
+        || entry.input_frozen
+        || entry.room_id.as_deref() != Some(MAIN_WORLD_AUTHORITY_CONTRACT.room_id)
+        || entry.authoritative_scene_id.is_none()
+    {
+        watchdog.reset(bus.authority_activity_serial);
+        return;
+    }
+
+    if watchdog.last_activity_serial != bus.authority_activity_serial {
+        watchdog.reset(bus.authority_activity_serial);
+        return;
+    }
+
+    watchdog.elapsed += time.delta();
+    if watchdog.elapsed < MAIN_WORLD_FRAME_WATCHDOG_TIMEOUT
+        || watchdog.tripped_generation == Some(entry.generation)
+    {
+        return;
+    }
+
+    watchdog.tripped_generation = Some(entry.generation);
+    warn!(
+        generation = entry.generation,
+        elapsed_ms = watchdog.elapsed.as_millis() as u64,
+        "main world authority frame watchdog triggered; starting recovery"
+    );
+    intents.write(MainWorldEntryIntent::Recover);
+}
+
 fn abort_invalidated_entry(
     profiles: Res<MyServerProfiles>,
     session: Res<MyServerSession>,
@@ -890,6 +973,7 @@ fn abort_invalidated_entry(
         state.phase,
         MainWorldEntryPhase::Validating
             | MainWorldEntryPhase::JoiningRoom
+            | MainWorldEntryPhase::WaitingGameAuth
             | MainWorldEntryPhase::LoadingScene
             | MainWorldEntryPhase::WaitingSceneReady
             | MainWorldEntryPhase::Recovering
@@ -941,6 +1025,45 @@ fn dispatch_main_world_join_requests(
         });
         state.join_dispatched = true;
     }
+}
+
+fn resume_main_world_entry_after_game_auth(
+    session: Res<MyServerSession>,
+    mut state: ResMut<MainWorldEntryState>,
+    mut entry_events: MessageWriter<MainWorldEntryEvent>,
+) {
+    if state.phase != MainWorldEntryPhase::WaitingGameAuth
+        || !session.authenticated
+        || session.game_connection_state != GameConnectionState::Authenticated
+        || session.connection_id.is_none()
+        || state.authority_character_id.as_deref() != session.character_id.as_deref()
+    {
+        return;
+    }
+
+    let connection_id = session
+        .connection_id
+        .expect("authenticated game transport must have a connection id");
+    let character_id = state.character_id.clone().unwrap_or_default();
+    let attempt = state.begin_authority_attempt();
+    state.phase = MainWorldEntryPhase::JoiningRoom;
+    state.authority_connection_id = Some(connection_id);
+    state.authority_transport = session.transport;
+    state.join_attempt = Some(attempt);
+    state.join_dispatched = false;
+    warn!(
+        generation = state.generation,
+        character_id = %character_id,
+        "main world game authentication restored; joining room"
+    );
+    entry_events.write(MainWorldEntryEvent::JoinRequested {
+        generation: state.generation,
+        attempt,
+        connection_id,
+        room_id: MAIN_WORLD_AUTHORITY_CONTRACT.room_id,
+        policy_id: MAIN_WORLD_AUTHORITY_CONTRACT.policy_id,
+        character_id,
+    });
 }
 
 fn consume_main_world_authority_events(
@@ -1066,9 +1189,11 @@ fn consume_main_world_authority_events(
         }
         match event {
             MyServerEvent::Connected { connection_id, .. }
-                if state.phase == MainWorldEntryPhase::Recovering
-                    && state.authority_character_id.as_deref()
-                        == session.character_id.as_deref()
+                if matches!(
+                    state.phase,
+                    MainWorldEntryPhase::Recovering | MainWorldEntryPhase::WaitingGameAuth
+                ) && state.authority_character_id.as_deref()
+                    == session.character_id.as_deref()
                     && session.connection_id == Some(*connection_id) =>
             {
                 state.authority_connection_id = Some(*connection_id);
@@ -1278,6 +1403,7 @@ fn consume_main_world_authority_events(
                 if matches!(
                     state.phase,
                     MainWorldEntryPhase::Active
+                        | MainWorldEntryPhase::WaitingGameAuth
                         | MainWorldEntryPhase::JoiningRoom
                         | MainWorldEntryPhase::WaitingSceneReady
                         | MainWorldEntryPhase::LoadingScene
@@ -2131,7 +2257,8 @@ fn watchdog_main_world_entry_progress(
     }
 
     let timeout = match state.phase {
-        MainWorldEntryPhase::JoiningRoom
+        MainWorldEntryPhase::WaitingGameAuth
+        | MainWorldEntryPhase::JoiningRoom
         | MainWorldEntryPhase::LoadingScene
         | MainWorldEntryPhase::WaitingSceneReady
         | MainWorldEntryPhase::Recovering => MAIN_WORLD_ENTRY_PROGRESS_TIMEOUT,
@@ -2148,6 +2275,14 @@ fn watchdog_main_world_entry_progress(
     watchdog.elapsed = Duration::ZERO;
 
     match state.phase {
+        MainWorldEntryPhase::WaitingGameAuth => fail_authority_entry(
+            &mut state,
+            &session,
+            &mut entry_events,
+            &mut commands,
+            &mut scene_commands,
+            MainWorldEntryFailure::ReconnectUnavailable,
+        ),
         MainWorldEntryPhase::JoiningRoom => fail_authority_entry(
             &mut state,
             &session,
@@ -2193,7 +2328,6 @@ fn watchdog_main_world_entry_progress(
 
 fn route_failed_authority_entry(
     mut state: ResMut<MainWorldEntryState>,
-    session: Res<MyServerSession>,
     mut route_commands: MessageWriter<GameRouteCommand>,
 ) {
     if state.phase != MainWorldEntryPhase::Failed || state.failure_routed {
@@ -2206,9 +2340,10 @@ fn route_failed_authority_entry(
             | MainWorldEntryFailure::TicketUnavailable
             | MainWorldEntryFailure::GameAuthUnavailable,
         ) => AppUiMode::Login,
-        Some(MainWorldEntryFailure::ReconnectUnavailable) if !session.authenticated => {
-            AppUiMode::Login
-        }
+        // A transport/room recovery timeout is a game-service failure. It
+        // must not be promoted to an account-login failure merely because the
+        // game transport is currently unauthenticated.
+        Some(MainWorldEntryFailure::ReconnectUnavailable) => AppUiMode::Lobby,
         _ => AppUiMode::Lobby,
     };
     route_commands.write(GameRouteCommand::ChangeMode(destination));
@@ -2271,6 +2406,49 @@ fn abort_invalidated_entry_with_cleanup(
         scene_commands,
         route_commands,
     );
+}
+
+fn begin_game_auth_for_entry(
+    state: &mut MainWorldEntryState,
+    session: &MyServerSession,
+    profiles: &MyServerProfiles,
+    commands: &mut MessageWriter<MyServerCommand>,
+) -> bool {
+    if session.connected && session.connection_id.is_some() {
+        return false;
+    }
+    if !matches!(session.account_login_state, AccountLoginState::LoggedIn)
+        || !matches!(
+            session.character_selection_state,
+            CharacterSelectionState::Selected
+        )
+    {
+        return false;
+    }
+    let Some(ticket) = session.ticket.clone().filter(|ticket| !ticket.is_empty()) else {
+        return false;
+    };
+    let config = profiles.config(profiles.selected());
+    let endpoint = session.game_endpoint.as_ref();
+    let transport = endpoint
+        .and_then(|endpoint| endpoint.transport)
+        .unwrap_or(config.prefer_transport);
+    state.phase = MainWorldEntryPhase::WaitingGameAuth;
+    state.input_frozen = true;
+    state.authority_transport = Some(transport);
+    state.authority_connection_id = None;
+    commands.write(MyServerCommand::ConnectWithTicket {
+        ticket,
+        transport,
+        host: endpoint.map(|endpoint| endpoint.host.clone()),
+        port: endpoint.map(|endpoint| endpoint.port),
+    });
+    info!(
+        generation = state.generation,
+        ?transport,
+        "main world entry game authentication requested"
+    );
+    true
 }
 
 fn validate_entry(
@@ -2559,6 +2737,79 @@ mod tests {
             MainWorldEntryPhase::Active
         );
         (app, session_id)
+    }
+
+    fn arm_frame_watchdog(app: &mut App) {
+        let activity_serial = app
+            .world()
+            .resource::<MainWorldSnapshotBusState>()
+            .authority_activity_serial;
+        let mut watchdog = app.world_mut().resource_mut::<MainWorldFrameWatchdog>();
+        watchdog.last_activity_serial = activity_serial;
+        watchdog.elapsed = MAIN_WORLD_FRAME_WATCHDOG_TIMEOUT;
+        watchdog.tripped_generation = None;
+    }
+
+    #[test]
+    fn authority_frame_watchdog_starts_recovery_after_silence() {
+        let (mut app, _) = active_app();
+        arm_frame_watchdog(&mut app);
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Active
+        );
+        assert!(
+            messages::<MainWorldEntryIntent>(&app)
+                .iter()
+                .any(|intent| *intent == MainWorldEntryIntent::Recover)
+        );
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Recovering
+        );
+        assert!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    MyServerCommand::ReconnectWithTicketScoped { .. }
+                ))
+        );
+    }
+
+    #[test]
+    fn authority_frame_watchdog_resets_when_a_new_frame_arrives() {
+        let (mut app, _) = active_app();
+        arm_frame_watchdog(&mut app);
+        let previous_activity_serial = app
+            .world()
+            .resource::<MainWorldSnapshotBusState>()
+            .authority_activity_serial;
+        app.world_mut()
+            .write_message(MyServerEvent::FrameBundlePush(pb::FrameBundlePush {
+                room_id: MAIN_WORLD_AUTHORITY_CONTRACT.room_id.to_owned(),
+                frame_id: 100,
+                fps: 20,
+                inputs: Vec::new(),
+                is_silent_frame: true,
+                snapshot: None,
+            }));
+
+        app.update();
+
+        let bus = app.world().resource::<MainWorldSnapshotBusState>();
+        let watchdog = app.world().resource::<MainWorldFrameWatchdog>();
+        assert!(bus.authority_activity_serial > previous_activity_serial);
+        assert_eq!(watchdog.elapsed, Duration::ZERO);
+        assert_eq!(watchdog.tripped_generation, None);
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Active
+        );
     }
 
     #[test]
@@ -2982,7 +3233,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_game_auth_fails_without_a_join_request() {
+    fn connected_without_game_auth_starts_a_fresh_entry_authentication() {
         let mut app = ready_app();
         let session = &mut *app.world_mut().resource_mut::<MyServerSession>();
         session.authenticated = false;
@@ -2991,16 +3242,91 @@ mod tests {
         app.update();
 
         assert_eq!(
-            app.world().resource::<MainWorldEntryState>().failure,
-            Some(MainWorldEntryFailure::GameAuthUnavailable)
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::WaitingGameAuth
         );
-        assert!(matches!(
-            events(&app).as_slice(),
-            [MainWorldEntryEvent::Failed {
-                generation: 1,
-                failure: MainWorldEntryFailure::GameAuthUnavailable,
-            }]
-        ));
+        assert!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .any(|command| { matches!(command, MyServerCommand::ConnectWithTicket { .. }) })
+        );
+    }
+
+    #[test]
+    fn main_world_entry_reconnects_game_transport_before_joining_after_server_restart() {
+        let mut app = ready_app();
+        {
+            let session = &mut *app.world_mut().resource_mut::<MyServerSession>();
+            session.authenticated = false;
+            session.connection_id = None;
+            session.transport = None;
+            session.game_connection_state = GameConnectionState::ReconnectFailed;
+            session.game_endpoint = Some(GameServiceEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 4000,
+                transport: Some(NetworkTransport::Kcp),
+            });
+        }
+
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::WaitingGameAuth
+        );
+        assert!(messages::<MyServerCommand>(&app).iter().any(|command| {
+            matches!(
+                command,
+                MyServerCommand::ConnectWithTicket {
+                    transport: NetworkTransport::Kcp,
+                    host: Some(host),
+                    port: Some(4000),
+                    ..
+                } if host == "127.0.0.1"
+            )
+        }));
+    }
+
+    #[test]
+    fn restored_game_authentication_resumes_main_world_join() {
+        let mut app = ready_app();
+        {
+            let session = &mut *app.world_mut().resource_mut::<MyServerSession>();
+            session.authenticated = false;
+            session.connection_id = None;
+            session.transport = None;
+            session.game_connection_state = GameConnectionState::ReconnectFailed;
+            session.player_id = Some("plr_1".to_owned());
+        }
+        app.world_mut().write_message(MainWorldEntryIntent::Enter);
+        app.update();
+
+        let connection_id = test_connection_id();
+        {
+            let session = &mut *app.world_mut().resource_mut::<MyServerSession>();
+            session.authenticated = true;
+            session.connected = true;
+            session.connection_id = Some(connection_id);
+            session.transport = Some(NetworkTransport::Kcp);
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+        app.world_mut().write_message(MyServerEvent::Authenticated {
+            player_id: "plr_1".to_owned(),
+        });
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::JoiningRoom);
+        assert!(state.join_attempt.is_some());
+        assert!(events(&app).iter().any(|event| matches!(
+            event,
+            MainWorldEntryEvent::JoinRequested {
+                connection_id: received,
+                room_id: "main-world-public",
+                ..
+            } if *received == connection_id
+        )));
     }
 
     #[test]
@@ -3699,6 +4025,11 @@ mod tests {
     #[test]
     fn recovery_without_a_retained_transport_fails_without_tcp_fallback() {
         let (mut app, _) = active_app();
+        {
+            let session = &mut *app.world_mut().resource_mut::<MyServerSession>();
+            session.authenticated = false;
+            session.game_connection_state = GameConnectionState::Reconnecting;
+        }
         app.world_mut()
             .resource_mut::<MainWorldEntryState>()
             .authority_transport = None;
@@ -3717,6 +4048,11 @@ mod tests {
         assert_eq!(
             state.failure,
             Some(MainWorldEntryFailure::ReconnectUnavailable)
+        );
+        assert!(
+            messages::<GameRouteCommand>(&app).iter().any(|command| {
+                matches!(command, GameRouteCommand::ChangeMode(AppUiMode::Lobby))
+            })
         );
         assert!(
             !messages::<MyServerCommand>(&app)

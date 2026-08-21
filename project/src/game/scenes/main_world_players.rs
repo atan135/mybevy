@@ -572,8 +572,15 @@ fn maintain_main_world_players(
     runtime.remote_offline_deadlines = offline_deadlines;
     if entry.phase == super::main_world_entry::MainWorldEntryPhase::Recovering {
         if let Some(registry) = runtime.registry.as_ref() {
-            for entry in registry.players.values() {
-                commands.entity(entry.entity).remove::<SceneCameraTarget>();
+            for (character_id, player) in &registry.players {
+                if character_id == &registry.local_character_id {
+                    commands.entity(player.entity).insert(
+                        SceneCameraTarget::new(registry.session_id.clone())
+                            .with_tag(SCENE_CAMERA_LOCAL_PLAYER_TARGET_TAG),
+                    );
+                } else {
+                    commands.entity(player.entity).remove::<SceneCameraTarget>();
+                }
             }
         }
         return;
@@ -642,7 +649,11 @@ fn maintain_main_world_players(
             None => break,
         }
     }
-    if entry.phase == super::main_world_entry::MainWorldEntryPhase::Active {
+    if matches!(
+        entry.phase,
+        super::main_world_entry::MainWorldEntryPhase::Active
+            | super::main_world_entry::MainWorldEntryPhase::Recovering
+    ) {
         if let Some(registry) = runtime.registry.as_ref() {
             for (character_id, player) in &registry.players {
                 if character_id == &registry.local_character_id {
@@ -1903,7 +1914,7 @@ mod tests {
             super::super::main_world_entry::MainWorldEntryPhase::Recovering;
         app.update();
         assert_eq!(player_count(&mut app), 2);
-        assert!(app.world().get::<SceneCameraTarget>(local).is_none());
+        assert!(app.world().get::<SceneCameraTarget>(local).is_some());
 
         {
             let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();

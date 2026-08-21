@@ -8,6 +8,8 @@ pub(crate) use plugin::{MyServerPlugin, MyServerUpdateSet};
 #[cfg(test)]
 pub(crate) use types::CharacterElements;
 #[cfg(test)]
+pub(crate) use types::GameServiceEndpoint;
+#[cfg(test)]
 pub(crate) use types::LoginSession;
 pub(crate) use types::{
     AccountLoginState, CharacterSelectionState, CharacterSummary, ElementValues,

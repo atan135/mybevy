@@ -550,7 +550,10 @@ fn sync_main_world_camera_rig(
         *orbit = MainWorldCameraOrbitState::default();
         return;
     };
-    if entry.phase != MainWorldEntryPhase::Active {
+    if !matches!(
+        entry.phase,
+        MainWorldEntryPhase::Active | MainWorldEntryPhase::Recovering
+    ) {
         adapter_runtime.reset();
         *orbit = MainWorldCameraOrbitState::default();
         return;
@@ -1494,7 +1497,7 @@ mod tests {
     }
 
     #[test]
-    fn leaving_active_session_clears_orbit_and_reentry_starts_from_defaults() {
+    fn recovery_preserves_orbit_and_reentry_starts_from_defaults() {
         let session_id = SceneSessionId::from("main-world-lifecycle");
         let mut app = active_camera_app(session_id.clone(), 1);
         spawn_target(&mut app, &session_id, Vec3::ZERO);
@@ -1517,13 +1520,19 @@ mod tests {
         app.update();
         assert_eq!(
             *app.world().resource::<MainWorldCameraOrbitState>(),
-            MainWorldCameraOrbitState::default()
+            MainWorldCameraOrbitState {
+                yaw_radians: 1.2,
+                distance: 7.0,
+                scene_session_id: Some(session_id.clone()),
+                generation: 1,
+                ..Default::default()
+            }
         );
         assert!(
             app.world()
                 .resource::<MainWorldCameraRigAdapterRuntime>()
                 .session_id
-                .is_none()
+                .is_some()
         );
 
         app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
@@ -1533,6 +1542,8 @@ mod tests {
             MainWorldCameraOrbitState {
                 scene_session_id: Some(session_id),
                 generation: 1,
+                yaw_radians: 1.2,
+                distance: 7.0,
                 ..Default::default()
             }
         );

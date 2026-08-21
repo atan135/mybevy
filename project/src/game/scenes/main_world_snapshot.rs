@@ -38,6 +38,10 @@ pub(in crate::game) struct MainWorldSnapshotEvent {
 #[derive(Resource, Debug)]
 pub(in crate::game) struct MainWorldSnapshotBusState {
     pub epoch: u64,
+    /// Monotonic activity counter for every accepted main-world authority
+    /// frame or snapshot. Consumers can detect a silent transport without
+    /// reading the raw MyServer event stream again.
+    pub authority_activity_serial: u64,
     room_id: Option<String>,
     latest_frame: Option<u32>,
 }
@@ -46,6 +50,7 @@ impl Default for MainWorldSnapshotBusState {
     fn default() -> Self {
         Self {
             epoch: 0,
+            authority_activity_serial: 0,
             room_id: None,
             latest_frame: None,
         }
@@ -70,6 +75,7 @@ impl MainWorldSnapshotBusState {
         if resets_epoch && self.latest_frame.is_some_and(|latest| frame_id < latest) {
             self.start_new_epoch(room_id);
         }
+        self.authority_activity_serial = self.authority_activity_serial.wrapping_add(1).max(1);
         self.latest_frame = Some(
             self.latest_frame
                 .map_or(frame_id, |latest| latest.max(frame_id)),

@@ -2320,6 +2320,7 @@ fn localized_main_world_transition_status(phase: MainWorldEntryPhase, i18n: &UiI
         MainWorldEntryPhase::HomeActive => ("home_active", "Home active"),
         MainWorldEntryPhase::ReturningFromHome => ("returning_home", "Returning from home"),
         MainWorldEntryPhase::Validating => ("validating", "Validating game session"),
+        MainWorldEntryPhase::WaitingGameAuth => ("authenticating", "Connecting game session"),
         MainWorldEntryPhase::JoiningRoom => ("joining", "Joining game room"),
         MainWorldEntryPhase::LoadingScene => ("loading", "Loading main world"),
         MainWorldEntryPhase::WaitingSceneReady => ("preparing", "Preparing main world"),
