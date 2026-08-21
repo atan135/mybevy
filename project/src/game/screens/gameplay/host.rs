@@ -4330,6 +4330,8 @@ mod tests {
     #[test]
     fn main_world_hud_waits_for_the_active_entry_generation() {
         let mut app = main_world_hud_runtime_app();
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            MainWorldEntryPhase::WaitingSceneReady;
         app.world_mut()
             .resource_mut::<NextState<AppUiMode>>()
             .set(AppUiMode::MainWorld);
@@ -4345,6 +4347,29 @@ mod tests {
 
         app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
         update_frames(&mut app, 6);
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance(OWNER_MAIN_WORLD.as_str(), &document_id)
+                .is_some()
+        );
+
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = MainWorldEntryPhase::Recovering;
+            entry.reconnect_requested = true;
+        }
+        update_frames(&mut app, 2);
+        assert!(
+            app.world()
+                .resource::<UiDocumentRuntime>()
+                .active_instance(OWNER_MAIN_WORLD.as_str(), &document_id)
+                .is_some()
+        );
+
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            MainWorldEntryPhase::WaitingSceneReady;
+        update_frames(&mut app, 2);
         assert!(
             app.world()
                 .resource::<UiDocumentRuntime>()

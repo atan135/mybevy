@@ -21,7 +21,7 @@ use crate::{
         SceneSessionId, update_scene_cameras,
     },
     framework::ui::core::{UiInputState, UiInputSystems},
-    game::scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
+    game::scenes::main_world_entry::MainWorldEntryState,
 };
 
 pub(super) const MAIN_WORLD_CAMERA_DEFAULT_YAW_RADIANS: f32 = 0.0;
@@ -550,10 +550,7 @@ fn sync_main_world_camera_rig(
         *orbit = MainWorldCameraOrbitState::default();
         return;
     };
-    if !matches!(
-        entry.phase,
-        MainWorldEntryPhase::Active | MainWorldEntryPhase::Recovering
-    ) {
+    if !entry.retains_main_world_visuals() {
         adapter_runtime.reset();
         *orbit = MainWorldCameraOrbitState::default();
         return;
@@ -660,6 +657,7 @@ mod tests {
         SceneCameraProjection, SceneManifest, SceneSpawnRegistry, SceneSpawnSessionIndex,
         spawn_scene_camera,
     };
+    use crate::game::scenes::main_world_entry::MainWorldEntryPhase;
 
     const TEST_SCENE_ID: &str = "world.main";
 
@@ -1515,8 +1513,11 @@ mod tests {
         }
         app.update();
 
-        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
-            MainWorldEntryPhase::Recovering;
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = MainWorldEntryPhase::Recovering;
+            entry.reconnect_requested = true;
+        }
         app.update();
         assert_eq!(
             *app.world().resource::<MainWorldCameraOrbitState>(),
@@ -1535,7 +1536,31 @@ mod tests {
                 .is_some()
         );
 
-        app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
+        app.world_mut().resource_mut::<MainWorldEntryState>().phase =
+            MainWorldEntryPhase::WaitingSceneReady;
+        app.update();
+        assert_eq!(
+            *app.world().resource::<MainWorldCameraOrbitState>(),
+            MainWorldCameraOrbitState {
+                yaw_radians: 1.2,
+                distance: 7.0,
+                scene_session_id: Some(session_id.clone()),
+                generation: 1,
+                ..Default::default()
+            }
+        );
+        assert!(
+            app.world()
+                .resource::<MainWorldCameraRigAdapterRuntime>()
+                .session_id
+                .is_some()
+        );
+
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.phase = MainWorldEntryPhase::Active;
+            entry.reconnect_requested = false;
+        }
         app.update();
         assert_eq!(
             *app.world().resource::<MainWorldCameraOrbitState>(),

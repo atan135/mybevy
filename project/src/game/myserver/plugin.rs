@@ -2927,29 +2927,10 @@ fn reconnect_with_ticket(
     plan: ConnectPlan,
     correlation: Option<u64>,
 ) {
-    if session.connection_id.is_some() {
-        let error_code = "RECONNECT_CONNECTION_STILL_OPEN";
-        write_display_error(
-            events,
-            MyServerDisplayError::from_error_code(
-                MyServerErrorSource::Client,
-                Some(MyServerOperation::GameConnect),
-                Some(MessageType::RoomReconnectReq),
-                None,
-                None,
-                error_code,
-                Some("transport reconnect requires the previous connection to close".to_string()),
-            ),
-        );
-        events.write(MyServerEvent::RequestFailed {
-            seq: None,
-            message_type: Some(MessageType::RoomReconnectReq),
-            correlation,
-            error: error_code.to_string(),
-        });
-        return;
-    }
-
+    // `connect_with_ticket` owns transport replacement: it disconnects and
+    // clears any stale worker before assigning a fresh connection id. A KCP
+    // peer can remain half-open after the server disappears, so waiting for a
+    // later Disconnected event here would strand recovery indefinitely.
     session.reconnect_after_auth = Some(ReconnectPlan {
         cause: ReconnectCause::TransportRecovery,
         correlation,
@@ -5707,7 +5688,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_transport_reconnect_requires_the_old_connection_to_be_closed() {
+    fn explicit_transport_reconnect_replaces_an_old_connection() {
         let mut app = test_app();
         let old_connection_id = ConnectionId::from_raw(889);
         app.world_mut()
@@ -5724,19 +5705,14 @@ mod tests {
             });
         app.update();
 
-        assert!(latest_connect_command(&app).is_none());
+        assert!(disconnect_commands(&app).contains(&old_connection_id));
+        let (new_connection_id, transport, remote_addr) = latest_connect_command(&app).unwrap();
+        assert_ne!(new_connection_id, old_connection_id);
+        assert_eq!(transport, NetworkTransport::Tcp);
+        assert_eq!(remote_addr, "127.0.0.1:7000");
         assert_eq!(
             app.world().resource::<MyServerSession>().connection_id,
-            Some(old_connection_id)
-        );
-        assert!(
-            read_messages::<MyServerEvent>(&app)
-                .iter()
-                .any(|event| matches!(
-                    event,
-                    MyServerEvent::RequestFailed { error, .. }
-                        if error == "RECONNECT_CONNECTION_STILL_OPEN"
-                ))
+            Some(new_connection_id)
         );
     }
 

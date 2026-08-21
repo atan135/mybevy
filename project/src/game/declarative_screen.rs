@@ -27,7 +27,7 @@ use crate::{
     game::{
         myserver::mail::MailClientState,
         navigation::AppUiMode,
-        scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
+        scenes::main_world_entry::MainWorldEntryState,
         ui_ids::{
             OWNER_DECLARATIVE_DOCUMENT_ROUTE, OWNER_UI_APPROVED_BUSINESS_ACCEPTANCE,
             OWNER_UI_DOCUMENT_GALLERY, OWNER_UI_GENERATED_ACCEPTANCE,
@@ -546,7 +546,7 @@ fn sync_mode_host(
 
 fn mode_host_is_eligible(mode: AppUiMode, main_world_entry: Option<&MainWorldEntryState>) -> bool {
     mode != AppUiMode::MainWorld
-        || main_world_entry.is_some_and(|entry| entry.phase == MainWorldEntryPhase::Active)
+        || main_world_entry.is_some_and(MainWorldEntryState::retains_main_world_visuals)
 }
 
 #[allow(clippy::too_many_arguments)]

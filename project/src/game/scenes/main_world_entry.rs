@@ -277,7 +277,14 @@ impl MainWorldEntryWatchdogKey {
             scene_ready: state.scene_ready,
             scene_content_ready: state.scene_content_ready,
             room_ready_requested: state.room_ready_requested,
-            reconnect_attempt: state.reconnect_attempt,
+            // A transport retry must not restart the recovery deadline. The
+            // phase itself marks the beginning of the recovery transaction;
+            // changing its request correlation is not forward progress.
+            reconnect_attempt: if state.phase == MainWorldEntryPhase::Recovering {
+                None
+            } else {
+                state.reconnect_attempt
+            },
             reconnect_room_acknowledged: state.reconnect_room_acknowledged,
             recovery_snapshot_received: state.recovery_snapshot_received,
             exit_scene_settled: state.exit_scene_settled,
@@ -426,6 +433,15 @@ impl MainWorldEntryState {
 
     pub fn allows_gameplay_input(&self) -> bool {
         self.phase == MainWorldEntryPhase::Active && !self.input_frozen
+    }
+
+    /// Keeps the current main-world presentation mounted while a recovery
+    /// transaction freezes gameplay and re-establishes room readiness.
+    pub fn retains_main_world_visuals(&self) -> bool {
+        matches!(
+            self.phase,
+            MainWorldEntryPhase::Active | MainWorldEntryPhase::Recovering
+        ) || (self.reconnect_requested && self.phase == MainWorldEntryPhase::WaitingSceneReady)
     }
 
     fn owns_authority_session(&self) -> bool {
@@ -1421,13 +1437,32 @@ fn consume_main_world_authority_events(
             MyServerEvent::Disconnected { .. } | MyServerEvent::ConnectionFailed { .. }
                 if state.phase == MainWorldEntryPhase::Recovering =>
             {
-                fail_authority_entry(
+                begin_recovery(
                     &mut state,
                     &session,
                     &mut entry_events,
                     &mut commands,
                     &mut scene_commands,
-                    MainWorldEntryFailure::ReconnectUnavailable,
+                    &mut route_commands,
+                );
+            }
+            MyServerEvent::RequestFailed {
+                message_type: Some(crate::game::myserver::protocol::MessageType::RoomReconnectReq),
+                correlation: Some(correlation),
+                ..
+            } if state.phase == MainWorldEntryPhase::Recovering
+                && state.reconnect_attempt == Some(*correlation) =>
+            {
+                // A transport-level reconnect failure can be reported before
+                // a scoped room request exists. Keep the recovery transaction
+                // alive and retry once the proxy route is available.
+                begin_recovery(
+                    &mut state,
+                    &session,
+                    &mut entry_events,
+                    &mut commands,
+                    &mut scene_commands,
+                    &mut route_commands,
                 );
             }
             MyServerEvent::ServerRedirectReconnectStarted {
@@ -1864,9 +1899,7 @@ fn begin_recovery(
     scene_commands: &mut MessageWriter<SceneCommand>,
     route_commands: &mut MessageWriter<GameRouteCommand>,
 ) {
-    if state.phase == MainWorldEntryPhase::Recovering {
-        return;
-    }
+    let retrying = state.phase == MainWorldEntryPhase::Recovering;
     let Some(ticket) = session.ticket.clone().filter(|ticket| !ticket.is_empty()) else {
         begin_exit(
             state,
@@ -1893,17 +1926,23 @@ fn begin_recovery(
     state.phase = MainWorldEntryPhase::Recovering;
     state.input_frozen = true;
     state.room_membership = MainWorldRoomMembership::Unknown;
-    state.authoritative_scene_id = None;
-    state.position = None;
-    state.snapshot_epoch = 0;
-    state.snapshot_generation = 0;
-    state.room_ready_requested = false;
-    state.room_ready_acknowledged = false;
+    if !retrying {
+        state.authoritative_scene_id = None;
+        state.position = None;
+        state.snapshot_epoch = 0;
+        state.snapshot_generation = 0;
+        state.room_ready_requested = false;
+        state.room_ready_acknowledged = false;
+    }
     state.reconnect_requested = true;
     state.reconnect_room_acknowledged = false;
     state.reconnect_attempt = Some(state.begin_authority_attempt());
     state.recovery_snapshot_received = false;
-    info!("main world recovery requested after connection loss");
+    if retrying {
+        info!("main world recovery transport retry requested after connection failure");
+    } else {
+        info!("main world recovery requested after connection loss");
+    }
     commands.write(MyServerCommand::ReconnectWithTicketScoped {
         ticket,
         transport,
@@ -3919,6 +3958,50 @@ mod tests {
                     MyServerCommand::ReconnectWithTicketScoped { ticket, transport: NetworkTransport::Tcp, .. }
                         if ticket == "character-bound-ticket"
                 ))
+        );
+    }
+
+    #[test]
+    fn recovery_connection_failure_retries_without_leaving_the_scene() {
+        let (mut app, session_id) = active_app();
+        app.world_mut().write_message(MyServerEvent::Disconnected {
+            reason: Some("temporary transport loss".to_owned()),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<MainWorldEntryState>().phase,
+            MainWorldEntryPhase::Recovering
+        );
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| {
+                    matches!(command, MyServerCommand::ReconnectWithTicketScoped { .. })
+                })
+                .count(),
+            1
+        );
+
+        app.world_mut()
+            .write_message(MyServerEvent::ConnectionFailed {
+                transport: NetworkTransport::Tcp,
+                remote_addr: "127.0.0.1:14000".to_owned(),
+                error: "proxy upstream unavailable".to_owned(),
+            });
+        app.update();
+
+        let state = app.world().resource::<MainWorldEntryState>();
+        assert_eq!(state.phase, MainWorldEntryPhase::Recovering);
+        assert_eq!(state.scene_session_id.as_ref(), Some(&session_id));
+        assert_eq!(
+            messages::<MyServerCommand>(&app)
+                .iter()
+                .filter(|command| {
+                    matches!(command, MyServerCommand::ReconnectWithTicketScoped { .. })
+                })
+                .count(),
+            2
         );
     }
 
