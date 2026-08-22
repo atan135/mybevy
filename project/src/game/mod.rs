@@ -1,6 +1,7 @@
 mod audio;
 pub mod authority;
 mod declarative_screen;
+pub mod devtools;
 mod features;
 pub mod myserver;
 mod navigation;
