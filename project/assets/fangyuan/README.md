@@ -11,3 +11,11 @@
 ```
 
 生成后确认 `home_preview.ron` 仍只包含 `cube` 和 `sphere`，数量不超过 `1000`，并且能看出金黄色龙、灰白色云、护栏和入口门的轮廓。
+
+## 基础表面图集
+
+`atlases/base/surface_atlas.json` 是基础表面图集的共享语义目录，按稳定 `tile_id` 绑定 `surface_color.png` 与 `surface_normal.png` 的同一格坐标。AI 生成方圆 primitive 时应读取该目录选择条目，不应直接猜测 UV 或只依赖线性 index。
+
+当前图集为 `1024×1024`、`16×16` 网格，每格 `64×64`，其中包含 `60×60` 有效内容和四周各 `2px` padding。噪点图集若不与这 256 个表面语义槽严格对齐，应使用独立目录文件。
+
+`atlases/noise/noise_atlas.json` 是独立的程序化噪点目录，引用 `procedural_noise.png`。其源图实际由 `12×6` 和 `10×5` 两个网格拼合而成，因此归一化后的 `16×16` 图集中只有 122 个有效格；AI 和运行时只能选择目录中明确登记的 `tile_id`，其余 134 格为黑色保留位。

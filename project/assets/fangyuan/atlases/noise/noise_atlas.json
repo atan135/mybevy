@@ -1,0 +1,5556 @@
+{
+  "schema_version": 1,
+  "catalog_id": "fangyuan.noise.procedural",
+  "display_name_zh": "方圆灵构程序化噪点图集",
+  "language": "zh-CN",
+  "description_zh": "供 Shader、地形、VFX 与 PBR 视觉扰动使用的噪点目录。当前有效内容由非规则 JPEG 拼图归一化而来，只允许选择 tiles 中登记的 122 个格子。",
+  "semantic_review": {
+    "source": "user_region_reference_plus_visual_analysis",
+    "status": "visual_estimates_require_effect_level_review",
+    "algorithm_identity": "unverified",
+    "notes_zh": [
+      "原说明声称 16×16、单格 128×128，但 sound.jfif 实际为 619×619，包含上部 12×6 与下部 10×5 两套网格，共 122 个有效单元。",
+      "逐格名称描述的是可观察外观，不证明其生成算法确实为 Perlin、Simplex、Worley、Gabor 或其他特定实现。",
+      "源图为 JPEG yuvj420p；转为 PNG 不会继续引入有损压缩，但既有块效应、振铃和色度抽样损失不可恢复。",
+      "品红、红橙、蓝紫格仅标记为 RGB 噪点候选。由于 JPEG 色度抽样，禁止直接当作精确独立通道打包数据。"
+    ]
+  },
+  "source_layout": {
+    "source_filename": "sound.jfif",
+    "source_dimensions_px": [
+      619,
+      619
+    ],
+    "source_format": "jpeg_yuv420",
+    "detected_regions": [
+      {
+        "id": "upper_12x6",
+        "rect_px": {
+          "left": 0,
+          "top": 0,
+          "width": 619,
+          "height": 310
+        },
+        "columns": 12,
+        "rows": 6,
+        "destination_origin": [
+          0,
+          0
+        ]
+      },
+      {
+        "id": "lower_10x5",
+        "rect_px": {
+          "left": 0,
+          "top": 310,
+          "width": 619,
+          "height": 309
+        },
+        "columns": 10,
+        "rows": 5,
+        "destination_origin": [
+          0,
+          6
+        ]
+      }
+    ],
+    "removed_border_px_each_side": 2
+  },
+  "grid": {
+    "coordinate_space": "image_pixels",
+    "origin": "top_left",
+    "x_direction": "right",
+    "y_direction": "down",
+    "order": "row_major",
+    "columns": 16,
+    "rows": 16,
+    "atlas_width_px": 1024,
+    "atlas_height_px": 1024,
+    "cell_width_px": 64,
+    "cell_height_px": 64,
+    "padding_px_each_side": 2,
+    "content_width_px": 60,
+    "content_height_px": 60,
+    "available_tile_count": 122,
+    "reserved_tile_count": 134,
+    "available_ranges": [
+      {
+        "y_min": 0,
+        "y_max": 5,
+        "x_min": 0,
+        "x_max": 11
+      },
+      {
+        "y_min": 6,
+        "y_max": 10,
+        "x_min": 0,
+        "x_max": 9
+      }
+    ],
+    "reserved_ranges": [
+      {
+        "y_min": 0,
+        "y_max": 5,
+        "x_min": 12,
+        "x_max": 15
+      },
+      {
+        "y_min": 6,
+        "y_max": 10,
+        "x_min": 10,
+        "x_max": 15
+      },
+      {
+        "y_min": 11,
+        "y_max": 15,
+        "x_min": 0,
+        "x_max": 15
+      }
+    ],
+    "index_formula": "index = y * 16 + x",
+    "content_pixel_rect_formula": "left = x * 64 + 2; top = y * 64 + 2; width = 60; height = 60",
+    "texel_center_uv_formula": {
+      "min": "((x * 64 + 2.5) / 1024, (y * 64 + 2.5) / 1024)",
+      "max": "((x * 64 + 61.5) / 1024, (y * 64 + 61.5) / 1024)"
+    }
+  },
+  "texture": {
+    "file": "procedural_noise.png",
+    "semantic": "shader_data_noise",
+    "dimensions_px": [
+      1024,
+      1024
+    ],
+    "pixel_format": "rgb24",
+    "color_space": "linear",
+    "alpha": "none",
+    "reserved_value_rgb": [
+      0,
+      0,
+      0
+    ]
+  },
+  "rendering_contract": {
+    "sampling_zh": "按 tile 的 content UV 采样；2px padding 不属于有效内容。smooth 类型通常使用 linear，离散点阵、像素块和规则网格可按 recommended_filter 使用 nearest。",
+    "tiling_zh": "需要平铺时先在局部 tile UV 中 repeat/fract，再映射到 content UV；禁止让整张 atlas 直接 repeat。",
+    "mipmap_zh": "普通整图 mipmap 可能跨格串色；使用 atlas-aware mipmap、限制 LOD，或改用 texture array。",
+    "data_color_space_zh": "噪点是数据纹理，必须按 linear 采样，不做 sRGB 解码。",
+    "deterministic_boundary_zh": "只用于视觉渲染。不得把纹理采样结果用作 authority、帧同步、碰撞、战斗或其他确定性玩法逻辑的随机源。",
+    "range_zh": "需要双极性扰动时由 Shader 显式执行 value * 2 - 1；目录中的 measured 数值均基于 PNG 的 0..1 解码值。",
+    "tileability_zh": "每格是否真正无缝平铺尚未验证；正式使用前应针对目标缩放和动画速度做接缝测试。"
+  },
+  "ai_selection_contract": {
+    "goal_zh": "根据 Shader 或 VFX 提示词选择外观、频率、方向性和用途最匹配的有效噪点格。",
+    "expected_prompt_context_zh": [
+      "effect_role：溶解、云雾、地形、焦散、裂缝、拉丝、火焰、网格等",
+      "frequency：大尺度低频、中尺度或微观高频",
+      "contrast：柔和连续、全值域、高对比或近二值",
+      "direction：各向同性、横向、纵向、斜向、放射、旋涡或细胞状",
+      "sampling：linear 或 nearest、静态或动画、是否需要局部平铺",
+      "channel_need：单通道灰度、彩色扰动或候选多通道数据"
+    ],
+    "search_fields_in_priority_order": [
+      "suggested_uses",
+      "family",
+      "frequency",
+      "directionality",
+      "name_zh",
+      "description_zh",
+      "measured",
+      "search_text_zh"
+    ],
+    "required_output_fields": [
+      "tile_id",
+      "index",
+      "x",
+      "y",
+      "confidence",
+      "reason_zh"
+    ],
+    "rules_zh": [
+      "只能从 tiles 中选择，reserved_ranges 永远不可选。",
+      "先匹配用途、频率和方向，再比较视觉名称及实测亮度统计。",
+      "不得依据视觉相似度宣称某格必然由特定 Perlin、Simplex、Worley 或 Gabor 算法生成。",
+      "需要精确数据通道时拒绝 rgb_colored_candidate，并要求无损源图或重新生成。",
+      "用于溶解、阈值或遮罩时优先比较 luminance_stddev、luminance_min 和 luminance_max；用于弱扰动时优先较低 stddev。",
+      "置信度低于 0.65 时返回最多 3 个候选及差异，不得假装存在唯一答案。",
+      "primitive 或 effect 配置最终保存稳定 tile_id，index 与坐标只用于运行时校验。"
+    ],
+    "output_example": {
+      "tile_id": "noise_x07_y04",
+      "index": 71,
+      "x": 7,
+      "y": 4,
+      "confidence": 0.9,
+      "reason_zh": "需要中等尺度细胞亮边用于能量护盾，该格具有明确的大细胞距离场结构。"
+    }
+  },
+  "families": {
+    "white_random": "高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。",
+    "value_block": "分块或量化的 Value Noise 外观，适合像素化遮罩和低频随机区块。",
+    "gradient_fractal": "平滑渐变或多倍频分形外观；算法身份仅为视觉估计。",
+    "turbulence": "高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。",
+    "cellular": "Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。",
+    "sparse_points": "稀疏随机点、颗粒或脉冲分布。",
+    "directional": "具有明确横向、纵向、斜向或放射方向的噪点。",
+    "grid_woven": "规则点阵、正交网格或编织结构。",
+    "rgb_noise_candidate": "带明显颜色偏置的噪点候选；不等同于已验证的独立通道打包。",
+    "vfx_element": "火焰、烟雾、脉络、木纹等面向特效的专用外观。"
+  },
+  "usage_profiles": {
+    "surface_grain": "材质表面的微观颗粒、粗糙度或轻微颜色扰动。",
+    "dither_mask": "抖动、透明裁切过渡、像素化溶解和磨损遮罩。",
+    "particle_random": "仅用于视觉粒子的随机采样、尺寸或位置偏移。",
+    "dissolve_mask": "溶解、侵蚀、生长和显隐过渡遮罩。",
+    "cloud_fog": "云、雾、烟和体积感遮罩或密度扰动。",
+    "terrain_height": "程序化地形或表面高度扰动的候选输入。",
+    "uv_distortion": "UV 扭曲、折射、热浪和流体扰动。",
+    "water_surface": "水面波纹、折射或法线扰动的候选输入。",
+    "caustics": "水下焦散、能量光斑或细胞状亮纹。",
+    "crack_cells": "冰、玻璃、泥土的裂缝和分区边界。",
+    "stone_cells": "石块、鹅卵石、鳞片或细胞分区遮罩。",
+    "energy_cells": "护盾、能量网格和科幻细胞图案。",
+    "anisotropic_material": "拉丝金属、发丝或单轴各向异性扰动。",
+    "rain_streaks": "雨丝、下落拖尾和纵向速度线。",
+    "speed_lines": "运动模糊、速度感拉线和定向拖尾。",
+    "beam_mask": "激光、能量束、耀斑和条带遮罩。",
+    "fabric_detail": "织物编织、网眼和规则表面细节。",
+    "screen_grid": "科技屏显、点阵、网格和规则采样遮罩。",
+    "packed_variation_candidate": "多通道材质扰动候选；当前 JPEG 来源不满足精确通道打包要求。",
+    "fire_smoke": "火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。",
+    "marble_veins": "大理石、能量脉络和流体细纹。",
+    "wood_grain": "木纹、年轮和纵向有机条纹。",
+    "flow_field_mask": "湍流、流向、旋涡和动态 UV 偏移。"
+  },
+  "row_groups": [
+    {
+      "id": "random_gradient_00",
+      "y": 0,
+      "name_zh": "细粒随机、块状 Value 与平滑云团",
+      "available_x_min": 0,
+      "available_x_max": 11
+    },
+    {
+      "id": "random_gradient_01",
+      "y": 1,
+      "name_zh": "随机噪点、量化块与分形云团",
+      "available_x_min": 0,
+      "available_x_max": 11
+    },
+    {
+      "id": "random_turbulence_02",
+      "y": 2,
+      "name_zh": "随机微粒、卷曲湍流与低频梯度",
+      "available_x_min": 0,
+      "available_x_max": 11
+    },
+    {
+      "id": "turbulence_cellular_03",
+      "y": 3,
+      "name_zh": "高对比湍流、平滑分形与细胞斑点",
+      "available_x_min": 0,
+      "available_x_max": 11
+    },
+    {
+      "id": "directional_cellular_04",
+      "y": 4,
+      "name_zh": "方向性条纹、平滑团块与细胞距离场",
+      "available_x_min": 0,
+      "available_x_max": 11
+    },
+    {
+      "id": "points_cellular_05",
+      "y": 5,
+      "name_zh": "稀疏点阵、碎裂噪点与细胞骨架",
+      "available_x_min": 0,
+      "available_x_max": 11
+    },
+    {
+      "id": "cellular_fractal_06",
+      "y": 6,
+      "name_zh": "细胞裂缝、卵石分区与分形云团",
+      "available_x_min": 0,
+      "available_x_max": 9
+    },
+    {
+      "id": "rgb_grid_07",
+      "y": 7,
+      "name_zh": "彩色噪点候选、平滑噪点与规则网格",
+      "available_x_min": 0,
+      "available_x_max": 9
+    },
+    {
+      "id": "directional_grid_08",
+      "y": 8,
+      "name_zh": "拉丝、速度线、放射纹与编织网格",
+      "available_x_min": 0,
+      "available_x_max": 9
+    },
+    {
+      "id": "fractal_turbulence_09",
+      "y": 9,
+      "name_zh": "烟尘分形、虫纹湍流与流体云团",
+      "available_x_min": 0,
+      "available_x_max": 9
+    },
+    {
+      "id": "vfx_elements_10",
+      "y": 10,
+      "name_zh": "火焰、烟雾、旋涡、脉络与木纹",
+      "available_x_min": 0,
+      "available_x_max": 9
+    }
+  ],
+  "tiles": [
+    {
+      "tile_id": "noise_x00_y00",
+      "index": 0,
+      "x": 0,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "white_random",
+      "name_zh": "低对比细粒随机噪点 A",
+      "description_zh": "均匀密集的浅灰微粒，整体值域较窄。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "surface_grain",
+        "dither_mask",
+        "particle_random"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5013,
+        "luminance_stddev": 0.0319,
+        "luminance_min": 0.3922,
+        "luminance_max": 0.6431,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0297,
+        "vertical_gradient": 0.0307
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 0,
+        "local_y": 0,
+        "crop_px": {
+          "left": 2,
+          "top": 2,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "低对比细粒随机噪点 A；均匀密集的浅灰微粒，整体值域较窄。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。；仅用于视觉粒子的随机采样、尺寸或位置偏移。"
+    },
+    {
+      "tile_id": "noise_x01_y00",
+      "index": 1,
+      "x": 1,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "white_random",
+      "name_zh": "低对比细粒随机噪点 B",
+      "description_zh": "比 A 略粗的均匀灰度颗粒，适合作为轻微随机扰动。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "surface_grain",
+        "particle_random"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4906,
+        "luminance_stddev": 0.0622,
+        "luminance_min": 0.298,
+        "luminance_max": 0.7294,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0547,
+        "vertical_gradient": 0.0574
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 1,
+        "local_y": 0,
+        "crop_px": {
+          "left": 54,
+          "top": 2,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "低对比细粒随机噪点 B；比 A 略粗的均匀灰度颗粒，适合作为轻微随机扰动。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；仅用于视觉粒子的随机采样、尺寸或位置偏移。"
+    },
+    {
+      "tile_id": "noise_x02_y00",
+      "index": 2,
+      "x": 2,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "white_random",
+      "name_zh": "中对比灰度白噪点",
+      "description_zh": "黑白分布更明显的细粒随机点，局部对比度中等。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "dither_mask",
+        "particle_random",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.508,
+        "luminance_stddev": 0.0751,
+        "luminance_min": 0.2549,
+        "luminance_max": 0.7922,
+        "mean_chroma": 0.0004,
+        "horizontal_gradient": 0.0666,
+        "vertical_gradient": 0.0649
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 2,
+        "local_y": 0,
+        "crop_px": {
+          "left": 105,
+          "top": 2,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "中对比灰度白噪点；黑白分布更明显的细粒随机点，局部对比度中等。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。；仅用于视觉粒子的随机采样、尺寸或位置偏移。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x03_y00",
+      "index": 3,
+      "x": 3,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "white_random",
+      "name_zh": "暗灰微粒随机噪点",
+      "description_zh": "暗灰底上的密集微粒，适合弱颗粒和暗部扰动。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "surface_grain",
+        "dither_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5022,
+        "luminance_stddev": 0.0398,
+        "luminance_min": 0.3529,
+        "luminance_max": 0.6588,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.0347,
+        "vertical_gradient": 0.0357
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 3,
+        "local_y": 0,
+        "crop_px": {
+          "left": 157,
+          "top": 2,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "暗灰微粒随机噪点；暗灰底上的密集微粒，适合弱颗粒和暗部扰动。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。"
+    },
+    {
+      "tile_id": "noise_x04_y00",
+      "index": 4,
+      "x": 4,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "white_random",
+      "name_zh": "高对比盐椒噪点",
+      "description_zh": "高频黑白盐椒状噪点，边缘变化剧烈。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "dither_mask",
+        "particle_random"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4983,
+        "luminance_stddev": 0.1437,
+        "luminance_min": 0.0294,
+        "luminance_max": 0.9333,
+        "mean_chroma": 0.0036,
+        "horizontal_gradient": 0.1144,
+        "vertical_gradient": 0.1137
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 4,
+        "local_y": 0,
+        "crop_px": {
+          "left": 208,
+          "top": 2,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高对比盐椒噪点；高频黑白盐椒状噪点，边缘变化剧烈。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。；仅用于视觉粒子的随机采样、尺寸或位置偏移。"
+    },
+    {
+      "tile_id": "noise_x05_y00",
+      "index": 5,
+      "x": 5,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "value_block",
+      "name_zh": "粗块量化 Value Noise",
+      "description_zh": "大尺寸方块随机值，具有清晰像素块和量化层级。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "grid_aligned",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "dither_mask",
+        "screen_grid"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4484,
+        "luminance_stddev": 0.2181,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0428,
+        "vertical_gradient": 0.049
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 5,
+        "local_y": 0,
+        "crop_px": {
+          "left": 260,
+          "top": 2,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "粗块量化 Value Noise；大尺寸方块随机值，具有清晰像素块和量化层级。；分块或量化的 Value Noise 外观，适合像素化遮罩和低频随机区块。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。；科技屏显、点阵、网格和规则采样遮罩。"
+    },
+    {
+      "tile_id": "noise_x06_y00",
+      "index": 6,
+      "x": 6,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "turbulence",
+      "name_zh": "中粒度碎块湍流",
+      "description_zh": "不规则中等颗粒聚合，介于随机噪点与分形云之间。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.509,
+        "luminance_stddev": 0.1193,
+        "luminance_min": 0.1333,
+        "luminance_max": 0.8784,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.051,
+        "vertical_gradient": 0.0523
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 6,
+        "local_y": 0,
+        "crop_px": {
+          "left": 312,
+          "top": 2,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "中粒度碎块湍流；不规则中等颗粒聚合，介于随机噪点与分形云之间。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x07_y00",
+      "index": 7,
+      "x": 7,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "gradient_fractal",
+      "name_zh": "低对比平滑云噪点",
+      "description_zh": "灰度变化柔和、尺度较小的云雾状过渡。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5131,
+        "luminance_stddev": 0.0612,
+        "luminance_min": 0.349,
+        "luminance_max": 0.7014,
+        "mean_chroma": 0.0004,
+        "horizontal_gradient": 0.0284,
+        "vertical_gradient": 0.0284
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 7,
+        "local_y": 0,
+        "crop_px": {
+          "left": 363,
+          "top": 2,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "低对比平滑云噪点；灰度变化柔和、尺度较小的云雾状过渡。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x08_y00",
+      "index": 8,
+      "x": 8,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "gradient_fractal",
+      "name_zh": "灰度斑驳分形噪点",
+      "description_zh": "细小斑驳与平滑过渡混合的分形外观。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "surface_grain",
+        "dissolve_mask",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4925,
+        "luminance_stddev": 0.0727,
+        "luminance_min": 0.2314,
+        "luminance_max": 0.7725,
+        "mean_chroma": 0.0008,
+        "horizontal_gradient": 0.0485,
+        "vertical_gradient": 0.0492
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 8,
+        "local_y": 0,
+        "crop_px": {
+          "left": 415,
+          "top": 2,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "灰度斑驳分形噪点；细小斑驳与平滑过渡混合的分形外观。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x09_y00",
+      "index": 9,
+      "x": 9,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "gradient_fractal",
+      "name_zh": "大尺度平滑团块 A",
+      "description_zh": "少量大尺寸亮暗团块，过渡非常柔和。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5166,
+        "luminance_stddev": 0.1388,
+        "luminance_min": 0.1765,
+        "luminance_max": 0.8078,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0193,
+        "vertical_gradient": 0.0177
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 9,
+        "local_y": 0,
+        "crop_px": {
+          "left": 466,
+          "top": 2,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "大尺度平滑团块 A；少量大尺寸亮暗团块，过渡非常柔和。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x10_y00",
+      "index": 10,
+      "x": 10,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "gradient_fractal",
+      "name_zh": "大尺度平滑团块 B",
+      "description_zh": "柔和低频亮暗斑块，团块尺寸较大。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5072,
+        "luminance_stddev": 0.1125,
+        "luminance_min": 0.1686,
+        "luminance_max": 0.7922,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0169,
+        "vertical_gradient": 0.0173
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 10,
+        "local_y": 0,
+        "crop_px": {
+          "left": 518,
+          "top": 2,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "大尺度平滑团块 B；柔和低频亮暗斑块，团块尺寸较大。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x11_y00",
+      "index": 11,
+      "x": 11,
+      "y": 0,
+      "row_group": "random_gradient_00",
+      "family": "gradient_fractal",
+      "name_zh": "大尺度有机云团",
+      "description_zh": "边界柔和的不规则大云团，局部具有方向变化。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.497,
+        "luminance_stddev": 0.1019,
+        "luminance_min": 0.2549,
+        "luminance_max": 0.7647,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0151,
+        "vertical_gradient": 0.0154
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 11,
+        "local_y": 0,
+        "crop_px": {
+          "left": 569,
+          "top": 2,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "大尺度有机云团；边界柔和的不规则大云团，局部具有方向变化。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x00_y01",
+      "index": 16,
+      "x": 0,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "white_random",
+      "name_zh": "细粒随机噪点 C",
+      "description_zh": "均匀细密的灰度随机纹理。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "surface_grain",
+        "particle_random"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5009,
+        "luminance_stddev": 0.0507,
+        "luminance_min": 0.3137,
+        "luminance_max": 0.6824,
+        "mean_chroma": 0.0005,
+        "horizontal_gradient": 0.0478,
+        "vertical_gradient": 0.0458
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 0,
+        "local_y": 1,
+        "crop_px": {
+          "left": 2,
+          "top": 54,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "细粒随机噪点 C；均匀细密的灰度随机纹理。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；仅用于视觉粒子的随机采样、尺寸或位置偏移。"
+    },
+    {
+      "tile_id": "noise_x01_y01",
+      "index": 17,
+      "x": 1,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "white_random",
+      "name_zh": "高密度细粒随机噪点",
+      "description_zh": "密度较高、亮暗交替快速的微粒噪点。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "dither_mask",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5155,
+        "luminance_stddev": 0.1037,
+        "luminance_min": 0.1529,
+        "luminance_max": 0.8392,
+        "mean_chroma": 0.0024,
+        "horizontal_gradient": 0.0907,
+        "vertical_gradient": 0.0882
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 1,
+        "local_y": 1,
+        "crop_px": {
+          "left": 54,
+          "top": 54,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "高密度细粒随机噪点；密度较高、亮暗交替快速的微粒噪点。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x02_y01",
+      "index": 18,
+      "x": 2,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "value_block",
+      "name_zh": "粗块量化 Value Noise B",
+      "description_zh": "少量大方块组成的随机值图案，块边界清楚。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "grid_aligned",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "dither_mask",
+        "screen_grid"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5296,
+        "luminance_stddev": 0.1783,
+        "luminance_min": 0.149,
+        "luminance_max": 0.9647,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0345,
+        "vertical_gradient": 0.0265
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 2,
+        "local_y": 1,
+        "crop_px": {
+          "left": 105,
+          "top": 54,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "粗块量化 Value Noise B；少量大方块组成的随机值图案，块边界清楚。；分块或量化的 Value Noise 外观，适合像素化遮罩和低频随机区块。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。；科技屏显、点阵、网格和规则采样遮罩。"
+    },
+    {
+      "tile_id": "noise_x03_y01",
+      "index": 19,
+      "x": 3,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "value_block",
+      "name_zh": "模糊粗块 Value Noise",
+      "description_zh": "大方块随机值经过平滑处理，保留块状结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "grid_aligned",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4867,
+        "luminance_stddev": 0.2015,
+        "luminance_min": 0.0235,
+        "luminance_max": 0.9529,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0317,
+        "vertical_gradient": 0.0275
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 3,
+        "local_y": 1,
+        "crop_px": {
+          "left": 157,
+          "top": 54,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "模糊粗块 Value Noise；大方块随机值经过平滑处理，保留块状结构。；分块或量化的 Value Noise 外观，适合像素化遮罩和低频随机区块。；溶解、侵蚀、生长和显隐过渡遮罩。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x04_y01",
+      "index": 20,
+      "x": 4,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "gradient_fractal",
+      "name_zh": "中尺度平滑云噪点 A",
+      "description_zh": "连续平滑的中尺度灰度云团。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5157,
+        "luminance_stddev": 0.0942,
+        "luminance_min": 0.2588,
+        "luminance_max": 0.8039,
+        "mean_chroma": 0.0004,
+        "horizontal_gradient": 0.0382,
+        "vertical_gradient": 0.0353
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 4,
+        "local_y": 1,
+        "crop_px": {
+          "left": 208,
+          "top": 54,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "中尺度平滑云噪点 A；连续平滑的中尺度灰度云团。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x05_y01",
+      "index": 21,
+      "x": 5,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "turbulence",
+      "name_zh": "阈值化细碎湍流",
+      "description_zh": "高对比细碎块面，接近阈值化分形噪点。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5222,
+        "luminance_stddev": 0.1645,
+        "luminance_min": 0.0314,
+        "luminance_max": 0.9451,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.0659,
+        "vertical_gradient": 0.0628
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 5,
+        "local_y": 1,
+        "crop_px": {
+          "left": 260,
+          "top": 54,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "阈值化细碎湍流；高对比细碎块面，接近阈值化分形噪点。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x06_y01",
+      "index": 22,
+      "x": 6,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "turbulence",
+      "name_zh": "高对比分形颗粒",
+      "description_zh": "多尺度黑白颗粒叠加，局部结构复杂。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5195,
+        "luminance_stddev": 0.1839,
+        "luminance_min": 0.0157,
+        "luminance_max": 0.9569,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0851,
+        "vertical_gradient": 0.0812
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 6,
+        "local_y": 1,
+        "crop_px": {
+          "left": 312,
+          "top": 54,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "高对比分形颗粒；多尺度黑白颗粒叠加，局部结构复杂。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x07_y01",
+      "index": 23,
+      "x": 7,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "gradient_fractal",
+      "name_zh": "中尺度平滑分形 A",
+      "description_zh": "平滑团块与较细变化共同存在的分形外观。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5299,
+        "luminance_stddev": 0.111,
+        "luminance_min": 0.1524,
+        "luminance_max": 0.8235,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.0278,
+        "vertical_gradient": 0.027
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 7,
+        "local_y": 1,
+        "crop_px": {
+          "left": 363,
+          "top": 54,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "中尺度平滑分形 A；平滑团块与较细变化共同存在的分形外观。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x08_y01",
+      "index": 24,
+      "x": 8,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "gradient_fractal",
+      "name_zh": "中尺度平滑分形 B",
+      "description_zh": "较均匀的灰度云团，边缘柔和。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5653,
+        "luminance_stddev": 0.1363,
+        "luminance_min": 0.1608,
+        "luminance_max": 0.9098,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0315,
+        "vertical_gradient": 0.0296
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 8,
+        "local_y": 1,
+        "crop_px": {
+          "left": 415,
+          "top": 54,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "中尺度平滑分形 B；较均匀的灰度云团，边缘柔和。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x09_y01",
+      "index": 25,
+      "x": 9,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "gradient_fractal",
+      "name_zh": "高对比云团噪点",
+      "description_zh": "亮暗差异明显的中大尺度云团。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5356,
+        "luminance_stddev": 0.1801,
+        "luminance_min": 0.0549,
+        "luminance_max": 0.9882,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0395,
+        "vertical_gradient": 0.0337
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 9,
+        "local_y": 1,
+        "crop_px": {
+          "left": 466,
+          "top": 54,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "高对比云团噪点；亮暗差异明显的中大尺度云团。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x10_y01",
+      "index": 26,
+      "x": 10,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "gradient_fractal",
+      "name_zh": "高对比平滑分形",
+      "description_zh": "平滑但对比强烈的多尺度云状噪点。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "uv_distortion",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5591,
+        "luminance_stddev": 0.1914,
+        "luminance_min": 0.0078,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0318,
+        "vertical_gradient": 0.0312
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 10,
+        "local_y": 1,
+        "crop_px": {
+          "left": 518,
+          "top": 54,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "高对比平滑分形；平滑但对比强烈的多尺度云状噪点。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；溶解、侵蚀、生长和显隐过渡遮罩。；UV 扭曲、折射、热浪和流体扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x11_y01",
+      "index": 27,
+      "x": 11,
+      "y": 1,
+      "row_group": "random_gradient_01",
+      "family": "gradient_fractal",
+      "name_zh": "超低频柔和云团",
+      "description_zh": "极少量大尺寸亮暗区，适合缓慢的大范围变化。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5508,
+        "luminance_stddev": 0.224,
+        "luminance_min": 0.051,
+        "luminance_max": 0.9843,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0245,
+        "vertical_gradient": 0.0185
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 11,
+        "local_y": 1,
+        "crop_px": {
+          "left": 569,
+          "top": 54,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "超低频柔和云团；极少量大尺寸亮暗区，适合缓慢的大范围变化。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x00_y02",
+      "index": 32,
+      "x": 0,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "white_random",
+      "name_zh": "低对比微粒随机噪点",
+      "description_zh": "值域收窄的细粒灰度随机纹理。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "surface_grain",
+        "particle_random"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4833,
+        "luminance_stddev": 0.0436,
+        "luminance_min": 0.2784,
+        "luminance_max": 0.6314,
+        "mean_chroma": 0.0007,
+        "horizontal_gradient": 0.035,
+        "vertical_gradient": 0.037
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 0,
+        "local_y": 2,
+        "crop_px": {
+          "left": 2,
+          "top": 105,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "低对比微粒随机噪点；值域收窄的细粒灰度随机纹理。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；仅用于视觉粒子的随机采样、尺寸或位置偏移。"
+    },
+    {
+      "tile_id": "noise_x01_y02",
+      "index": 33,
+      "x": 1,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "white_random",
+      "name_zh": "高频灰度随机噪点",
+      "description_zh": "亮暗变化快速的高频随机纹理。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "dither_mask",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5037,
+        "luminance_stddev": 0.1132,
+        "luminance_min": 0.1373,
+        "luminance_max": 0.8745,
+        "mean_chroma": 0.0017,
+        "horizontal_gradient": 0.0965,
+        "vertical_gradient": 0.1007
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 1,
+        "local_y": 2,
+        "crop_px": {
+          "left": 54,
+          "top": 105,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高频灰度随机噪点；亮暗变化快速的高频随机纹理。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x02_y02",
+      "index": 34,
+      "x": 2,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "turbulence",
+      "name_zh": "高对比细丝湍流",
+      "description_zh": "细密卷曲的黑白短丝与碎裂结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "marble_veins"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5255,
+        "luminance_stddev": 0.1606,
+        "luminance_min": 0.0314,
+        "luminance_max": 0.9922,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.1145,
+        "vertical_gradient": 0.1116
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 2,
+        "local_y": 2,
+        "crop_px": {
+          "left": 105,
+          "top": 105,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高对比细丝湍流；细密卷曲的黑白短丝与碎裂结构。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；大理石、能量脉络和流体细纹。"
+    },
+    {
+      "tile_id": "noise_x03_y02",
+      "index": 35,
+      "x": 3,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "turbulence",
+      "name_zh": "中粒度卷曲噪点",
+      "description_zh": "中等尺度的弯曲颗粒和局部流向。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "flowing",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "uv_distortion",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5139,
+        "luminance_stddev": 0.1217,
+        "luminance_min": 0.1333,
+        "luminance_max": 0.8745,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0613,
+        "vertical_gradient": 0.065
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 3,
+        "local_y": 2,
+        "crop_px": {
+          "left": 157,
+          "top": 105,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "中粒度卷曲噪点；中等尺度的弯曲颗粒和局部流向。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；UV 扭曲、折射、热浪和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x04_y02",
+      "index": 36,
+      "x": 4,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "turbulence",
+      "name_zh": "虫纹状分形噪点",
+      "description_zh": "连续短曲线形成的有机虫纹外观。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "flowing",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "marble_veins",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5117,
+        "luminance_stddev": 0.1306,
+        "luminance_min": 0.0745,
+        "luminance_max": 0.9333,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0582,
+        "vertical_gradient": 0.0577
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 4,
+        "local_y": 2,
+        "crop_px": {
+          "left": 208,
+          "top": 105,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "虫纹状分形噪点；连续短曲线形成的有机虫纹外观。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；大理石、能量脉络和流体细纹。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x05_y02",
+      "index": 37,
+      "x": 5,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "turbulence",
+      "name_zh": "斜向卷曲湍流",
+      "description_zh": "带轻微斜向趋势的卷曲分形块面。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "diagonal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "uv_distortion",
+        "flow_field_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5461,
+        "luminance_stddev": 0.1783,
+        "luminance_min": 0.0392,
+        "luminance_max": 0.9765,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0646,
+        "vertical_gradient": 0.0587
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 5,
+        "local_y": 2,
+        "crop_px": {
+          "left": 260,
+          "top": 105,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "斜向卷曲湍流；带轻微斜向趋势的卷曲分形块面。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；UV 扭曲、折射、热浪和流体扰动。；湍流、流向、旋涡和动态 UV 偏移。"
+    },
+    {
+      "tile_id": "noise_x06_y02",
+      "index": 38,
+      "x": 6,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "gradient_fractal",
+      "name_zh": "柔和平滑云噪点",
+      "description_zh": "低对比的中尺度云团过渡。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5163,
+        "luminance_stddev": 0.1155,
+        "luminance_min": 0.1961,
+        "luminance_max": 0.9412,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0265,
+        "vertical_gradient": 0.03
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 6,
+        "local_y": 2,
+        "crop_px": {
+          "left": 312,
+          "top": 105,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "柔和平滑云噪点；低对比的中尺度云团过渡。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x07_y02",
+      "index": 39,
+      "x": 7,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "gradient_fractal",
+      "name_zh": "低频 Perlin 风格团块 A",
+      "description_zh": "少量平滑亮暗团块，外观接近低频梯度噪点。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "terrain_height",
+        "cloud_fog"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5302,
+        "luminance_stddev": 0.0931,
+        "luminance_min": 0.2275,
+        "luminance_max": 0.8275,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0132,
+        "vertical_gradient": 0.0184
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 7,
+        "local_y": 2,
+        "crop_px": {
+          "left": 363,
+          "top": 105,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "低频 Perlin 风格团块 A；少量平滑亮暗团块，外观接近低频梯度噪点。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；程序化地形或表面高度扰动的候选输入。；云、雾、烟和体积感遮罩或密度扰动。"
+    },
+    {
+      "tile_id": "noise_x08_y02",
+      "index": 40,
+      "x": 8,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "gradient_fractal",
+      "name_zh": "低频 Perlin 风格团块 B",
+      "description_zh": "更强对比的低频平滑团块。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "terrain_height",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5506,
+        "luminance_stddev": 0.1838,
+        "luminance_min": 0.1412,
+        "luminance_max": 0.9412,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.015,
+        "vertical_gradient": 0.0222
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 8,
+        "local_y": 2,
+        "crop_px": {
+          "left": 415,
+          "top": 105,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "低频 Perlin 风格团块 B；更强对比的低频平滑团块。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；程序化地形或表面高度扰动的候选输入。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x09_y02",
+      "index": 41,
+      "x": 9,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "gradient_fractal",
+      "name_zh": "四象限平滑梯度",
+      "description_zh": "数个大尺度亮暗中心形成的柔和距离变化。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "uv_distortion",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5332,
+        "luminance_stddev": 0.1427,
+        "luminance_min": 0.1569,
+        "luminance_max": 0.9451,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0183,
+        "vertical_gradient": 0.0234
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 9,
+        "local_y": 2,
+        "crop_px": {
+          "left": 466,
+          "top": 105,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "四象限平滑梯度；数个大尺度亮暗中心形成的柔和距离变化。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；UV 扭曲、折射、热浪和流体扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x10_y02",
+      "index": 42,
+      "x": 10,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "gradient_fractal",
+      "name_zh": "超低频斜向梯度",
+      "description_zh": "大范围明暗沿斜向缓慢变化。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_low",
+      "directionality": "diagonal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5603,
+        "luminance_stddev": 0.2004,
+        "luminance_min": 0.0314,
+        "luminance_max": 0.9373,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0111,
+        "vertical_gradient": 0.0134
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 10,
+        "local_y": 2,
+        "crop_px": {
+          "left": 518,
+          "top": 105,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "超低频斜向梯度；大范围明暗沿斜向缓慢变化。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x11_y02",
+      "index": 43,
+      "x": 11,
+      "y": 2,
+      "row_group": "random_turbulence_02",
+      "family": "gradient_fractal",
+      "name_zh": "低频有机团块",
+      "description_zh": "边缘柔和、形状不规则的低频灰度团块。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.54,
+        "luminance_stddev": 0.0993,
+        "luminance_min": 0.2706,
+        "luminance_max": 0.7725,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0126,
+        "vertical_gradient": 0.0174
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 11,
+        "local_y": 2,
+        "crop_px": {
+          "left": 569,
+          "top": 105,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "低频有机团块；边缘柔和、形状不规则的低频灰度团块。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x00_y03",
+      "index": 48,
+      "x": 0,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "white_random",
+      "name_zh": "均匀灰度细噪点",
+      "description_zh": "中灰底上的均匀高频微粒。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "surface_grain",
+        "particle_random"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5006,
+        "luminance_stddev": 0.0503,
+        "luminance_min": 0.2902,
+        "luminance_max": 0.6824,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0433,
+        "vertical_gradient": 0.0416
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 0,
+        "local_y": 3,
+        "crop_px": {
+          "left": 2,
+          "top": 157,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "均匀灰度细噪点；中灰底上的均匀高频微粒。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；仅用于视觉粒子的随机采样、尺寸或位置偏移。"
+    },
+    {
+      "tile_id": "noise_x01_y03",
+      "index": 49,
+      "x": 1,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "directional",
+      "name_zh": "细碎方向性颗粒",
+      "description_zh": "细粒纹理带有轻微斜向拉伸。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "diagonal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "surface_grain",
+        "anisotropic_material"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4955,
+        "luminance_stddev": 0.0706,
+        "luminance_min": 0.1843,
+        "luminance_max": 0.7255,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0449,
+        "vertical_gradient": 0.0463
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 1,
+        "local_y": 3,
+        "crop_px": {
+          "left": 54,
+          "top": 157,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "细碎方向性颗粒；细粒纹理带有轻微斜向拉伸。；具有明确横向、纵向、斜向或放射方向的噪点。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；拉丝金属、发丝或单轴各向异性扰动。"
+    },
+    {
+      "tile_id": "noise_x02_y03",
+      "index": 50,
+      "x": 2,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "turbulence",
+      "name_zh": "高对比细碎湍流",
+      "description_zh": "密集黑白短纹与不规则碎块。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "marble_veins"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5064,
+        "luminance_stddev": 0.1688,
+        "luminance_min": 0.0235,
+        "luminance_max": 0.9647,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0992,
+        "vertical_gradient": 0.0909
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 2,
+        "local_y": 3,
+        "crop_px": {
+          "left": 105,
+          "top": 157,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高对比细碎湍流；密集黑白短纹与不规则碎块。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；大理石、能量脉络和流体细纹。"
+    },
+    {
+      "tile_id": "noise_x03_y03",
+      "index": 51,
+      "x": 3,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "turbulence",
+      "name_zh": "高对比粗粒湍流",
+      "description_zh": "较粗的黑白分形块，边缘变化明显。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5639,
+        "luminance_stddev": 0.1976,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0796,
+        "vertical_gradient": 0.0766
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 3,
+        "local_y": 3,
+        "crop_px": {
+          "left": 157,
+          "top": 157,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高对比粗粒湍流；较粗的黑白分形块，边缘变化明显。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x04_y03",
+      "index": 52,
+      "x": 4,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "gradient_fractal",
+      "name_zh": "中尺度斑驳云噪点",
+      "description_zh": "平滑云团叠加少量细节。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5402,
+        "luminance_stddev": 0.1575,
+        "luminance_min": 0.1176,
+        "luminance_max": 0.9529,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0491,
+        "vertical_gradient": 0.0495
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 4,
+        "local_y": 3,
+        "crop_px": {
+          "left": 208,
+          "top": 157,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "中尺度斑驳云噪点；平滑云团叠加少量细节。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x05_y03",
+      "index": 53,
+      "x": 5,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "turbulence",
+      "name_zh": "阈值化粗粒分形",
+      "description_zh": "高对比粗块与细碎分支并存。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "crack_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5659,
+        "luminance_stddev": 0.2535,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0862,
+        "vertical_gradient": 0.082
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 5,
+        "local_y": 3,
+        "crop_px": {
+          "left": 260,
+          "top": 157,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "阈值化粗粒分形；高对比粗块与细碎分支并存。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；冰、玻璃、泥土的裂缝和分区边界。"
+    },
+    {
+      "tile_id": "noise_x06_y03",
+      "index": 54,
+      "x": 6,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "turbulence",
+      "name_zh": "中频有机湍流",
+      "description_zh": "中等频率的卷曲团块和分支。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "flowing",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "uv_distortion",
+        "flow_field_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5213,
+        "luminance_stddev": 0.1435,
+        "luminance_min": 0.0902,
+        "luminance_max": 0.9333,
+        "mean_chroma": 0.0003,
+        "horizontal_gradient": 0.0591,
+        "vertical_gradient": 0.0613
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 6,
+        "local_y": 3,
+        "crop_px": {
+          "left": 312,
+          "top": 157,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "中频有机湍流；中等频率的卷曲团块和分支。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；UV 扭曲、折射、热浪和流体扰动。；湍流、流向、旋涡和动态 UV 偏移。"
+    },
+    {
+      "tile_id": "noise_x07_y03",
+      "index": 55,
+      "x": 7,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "gradient_fractal",
+      "name_zh": "低中频平滑团块",
+      "description_zh": "柔和低对比的中等尺度团块。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5232,
+        "luminance_stddev": 0.0983,
+        "luminance_min": 0.2941,
+        "luminance_max": 0.8039,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0191,
+        "vertical_gradient": 0.0203
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 7,
+        "local_y": 3,
+        "crop_px": {
+          "left": 363,
+          "top": 157,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "低中频平滑团块；柔和低对比的中等尺度团块。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x08_y03",
+      "index": 56,
+      "x": 8,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "gradient_fractal",
+      "name_zh": "有机云团分形",
+      "description_zh": "多尺度云团，亮暗区域分布均匀。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5373,
+        "luminance_stddev": 0.0997,
+        "luminance_min": 0.2706,
+        "luminance_max": 0.8314,
+        "mean_chroma": 0.0004,
+        "horizontal_gradient": 0.0275,
+        "vertical_gradient": 0.0284
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 8,
+        "local_y": 3,
+        "crop_px": {
+          "left": 415,
+          "top": 157,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "有机云团分形；多尺度云团，亮暗区域分布均匀。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x09_y03",
+      "index": 57,
+      "x": 9,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "cellular",
+      "name_zh": "高对比细胞斑点 A",
+      "description_zh": "密集圆斑和暗色间隙，具有细胞距离场外观。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "caustics",
+        "stone_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5331,
+        "luminance_stddev": 0.1391,
+        "luminance_min": 0.1373,
+        "luminance_max": 0.9412,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0514,
+        "vertical_gradient": 0.0478
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 9,
+        "local_y": 3,
+        "crop_px": {
+          "left": 466,
+          "top": 157,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高对比细胞斑点 A；密集圆斑和暗色间隙，具有细胞距离场外观。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；水下焦散、能量光斑或细胞状亮纹。；石块、鹅卵石、鳞片或细胞分区遮罩。"
+    },
+    {
+      "tile_id": "noise_x10_y03",
+      "index": 58,
+      "x": 10,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "cellular",
+      "name_zh": "高对比细胞斑点 B",
+      "description_zh": "大小不一的明暗细胞斑点，边界较软。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "caustics",
+        "stone_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5204,
+        "luminance_stddev": 0.1774,
+        "luminance_min": 0.0078,
+        "luminance_max": 0.9725,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0505,
+        "vertical_gradient": 0.0522
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 10,
+        "local_y": 3,
+        "crop_px": {
+          "left": 518,
+          "top": 157,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高对比细胞斑点 B；大小不一的明暗细胞斑点，边界较软。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；水下焦散、能量光斑或细胞状亮纹。；石块、鹅卵石、鳞片或细胞分区遮罩。"
+    },
+    {
+      "tile_id": "noise_x11_y03",
+      "index": 59,
+      "x": 11,
+      "y": 3,
+      "row_group": "turbulence_cellular_03",
+      "family": "cellular",
+      "name_zh": "暗核细胞噪点",
+      "description_zh": "暗色细胞核心分布在浅灰背景中。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "stone_cells",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.513,
+        "luminance_stddev": 0.1923,
+        "luminance_min": 0,
+        "luminance_max": 0.9216,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0402,
+        "vertical_gradient": 0.0412
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 11,
+        "local_y": 3,
+        "crop_px": {
+          "left": 569,
+          "top": 157,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "暗核细胞噪点；暗色细胞核心分布在浅灰背景中。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；石块、鹅卵石、鳞片或细胞分区遮罩。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x00_y04",
+      "index": 64,
+      "x": 0,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "directional",
+      "name_zh": "高频纵向 Gabor 条纹",
+      "description_zh": "密集明暗竖条，具有强烈单轴方向性。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "anisotropic_material",
+        "rain_streaks",
+        "beam_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5152,
+        "luminance_stddev": 0.1441,
+        "luminance_min": 0.0353,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0681,
+        "vertical_gradient": 0.0052
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 0,
+        "local_y": 4,
+        "crop_px": {
+          "left": 2,
+          "top": 209,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "高频纵向 Gabor 条纹；密集明暗竖条，具有强烈单轴方向性。；具有明确横向、纵向、斜向或放射方向的噪点。；拉丝金属、发丝或单轴各向异性扰动。；雨丝、下落拖尾和纵向速度线。；激光、能量束、耀斑和条带遮罩。"
+    },
+    {
+      "tile_id": "noise_x01_y04",
+      "index": 65,
+      "x": 1,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "directional",
+      "name_zh": "中频纵向 Gabor 条纹",
+      "description_zh": "间距略宽的纵向明暗条带。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "anisotropic_material",
+        "rain_streaks"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.504,
+        "luminance_stddev": 0.1423,
+        "luminance_min": 0.0706,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0635,
+        "vertical_gradient": 0.0054
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 1,
+        "local_y": 4,
+        "crop_px": {
+          "left": 54,
+          "top": 209,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "中频纵向 Gabor 条纹；间距略宽的纵向明暗条带。；具有明确横向、纵向、斜向或放射方向的噪点。；拉丝金属、发丝或单轴各向异性扰动。；雨丝、下落拖尾和纵向速度线。"
+    },
+    {
+      "tile_id": "noise_x02_y04",
+      "index": 66,
+      "x": 2,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "directional",
+      "name_zh": "窄幅柔和纵向条纹",
+      "description_zh": "少量细窄竖向亮带，边缘柔和。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "beam_mask",
+        "rain_streaks"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5008,
+        "luminance_stddev": 0.1471,
+        "luminance_min": 0.098,
+        "luminance_max": 0.9922,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0394,
+        "vertical_gradient": 0.0049
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 2,
+        "local_y": 4,
+        "crop_px": {
+          "left": 105,
+          "top": 209,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "窄幅柔和纵向条纹；少量细窄竖向亮带，边缘柔和。；具有明确横向、纵向、斜向或放射方向的噪点。；激光、能量束、耀斑和条带遮罩。；雨丝、下落拖尾和纵向速度线。"
+    },
+    {
+      "tile_id": "noise_x03_y04",
+      "index": 67,
+      "x": 3,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "directional",
+      "name_zh": "宽幅柔和纵向条纹",
+      "description_zh": "较宽的纵向明暗带，适合低频拉伸效果。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "beam_mask",
+        "speed_lines"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5067,
+        "luminance_stddev": 0.1562,
+        "luminance_min": 0.102,
+        "luminance_max": 1,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.0357,
+        "vertical_gradient": 0.0055
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 3,
+        "local_y": 4,
+        "crop_px": {
+          "left": 157,
+          "top": 209,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "宽幅柔和纵向条纹；较宽的纵向明暗带，适合低频拉伸效果。；具有明确横向、纵向、斜向或放射方向的噪点。；激光、能量束、耀斑和条带遮罩。；运动模糊、速度感拉线和定向拖尾。"
+    },
+    {
+      "tile_id": "noise_x04_y04",
+      "index": 68,
+      "x": 4,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "gradient_fractal",
+      "name_zh": "中尺度平滑斑块",
+      "description_zh": "灰度连续的中尺度圆润斑块。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "uv_distortion",
+        "water_surface"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5171,
+        "luminance_stddev": 0.1455,
+        "luminance_min": 0.0863,
+        "luminance_max": 0.8431,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0313,
+        "vertical_gradient": 0.0293
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 4,
+        "local_y": 4,
+        "crop_px": {
+          "left": 208,
+          "top": 209,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "中尺度平滑斑块；灰度连续的中尺度圆润斑块。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；UV 扭曲、折射、热浪和流体扰动。；水面波纹、折射或法线扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x05_y04",
+      "index": 69,
+      "x": 5,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "directional",
+      "name_zh": "斜向拉伸团块",
+      "description_zh": "平滑团块沿斜向拉伸，带有流向感。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "diagonal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "speed_lines",
+        "flow_field_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5273,
+        "luminance_stddev": 0.1897,
+        "luminance_min": 0.0196,
+        "luminance_max": 0.9804,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0441,
+        "vertical_gradient": 0.0422
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 5,
+        "local_y": 4,
+        "crop_px": {
+          "left": 260,
+          "top": 209,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "斜向拉伸团块；平滑团块沿斜向拉伸，带有流向感。；具有明确横向、纵向、斜向或放射方向的噪点。；运动模糊、速度感拉线和定向拖尾。；湍流、流向、旋涡和动态 UV 偏移。"
+    },
+    {
+      "tile_id": "noise_x06_y04",
+      "index": 70,
+      "x": 6,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "gradient_fractal",
+      "name_zh": "平滑有机云团",
+      "description_zh": "连续柔和的有机亮暗分布。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5427,
+        "luminance_stddev": 0.15,
+        "luminance_min": 0.2078,
+        "luminance_max": 0.9176,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0213,
+        "vertical_gradient": 0.0219
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 6,
+        "local_y": 4,
+        "crop_px": {
+          "left": 312,
+          "top": 209,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "平滑有机云团；连续柔和的有机亮暗分布。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x07_y04",
+      "index": 71,
+      "x": 7,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "cellular",
+      "name_zh": "大细胞亮边距离场",
+      "description_zh": "大型暗色细胞由亮色边界分隔，接近 Worley 距离场。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "energy_cells",
+        "caustics",
+        "crack_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.2485,
+        "luminance_stddev": 0.174,
+        "luminance_min": 0.0039,
+        "luminance_max": 0.8275,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0374,
+        "vertical_gradient": 0.0374
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 7,
+        "local_y": 4,
+        "crop_px": {
+          "left": 363,
+          "top": 209,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "大细胞亮边距离场；大型暗色细胞由亮色边界分隔，接近 Worley 距离场。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；护盾、能量网格和科幻细胞图案。；水下焦散、能量光斑或细胞状亮纹。；冰、玻璃、泥土的裂缝和分区边界。"
+    },
+    {
+      "tile_id": "noise_x08_y04",
+      "index": 72,
+      "x": 8,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "cellular",
+      "name_zh": "中细胞亮边距离场",
+      "description_zh": "中等尺寸暗细胞与发亮边界。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "energy_cells",
+        "caustics"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.283,
+        "luminance_stddev": 0.1797,
+        "luminance_min": 0,
+        "luminance_max": 0.8392,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0534,
+        "vertical_gradient": 0.0477
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 8,
+        "local_y": 4,
+        "crop_px": {
+          "left": 415,
+          "top": 209,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "中细胞亮边距离场；中等尺寸暗细胞与发亮边界。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；护盾、能量网格和科幻细胞图案。；水下焦散、能量光斑或细胞状亮纹。"
+    },
+    {
+      "tile_id": "noise_x09_y04",
+      "index": 73,
+      "x": 9,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "cellular",
+      "name_zh": "小细胞亮边距离场",
+      "description_zh": "更密集的细胞网络和亮色边界。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "caustics",
+        "energy_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.3629,
+        "luminance_stddev": 0.1453,
+        "luminance_min": 0.1412,
+        "luminance_max": 0.8745,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0473,
+        "vertical_gradient": 0.0423
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 9,
+        "local_y": 4,
+        "crop_px": {
+          "left": 466,
+          "top": 209,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "小细胞亮边距离场；更密集的细胞网络和亮色边界。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；水下焦散、能量光斑或细胞状亮纹。；护盾、能量网格和科幻细胞图案。"
+    },
+    {
+      "tile_id": "noise_x10_y04",
+      "index": 74,
+      "x": 10,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "cellular",
+      "name_zh": "稀疏柔和暗斑",
+      "description_zh": "浅灰背景上的少量柔和暗色圆斑。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "stone_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4764,
+        "luminance_stddev": 0.1241,
+        "luminance_min": 0.0588,
+        "luminance_max": 0.7804,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0289,
+        "vertical_gradient": 0.0283
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 10,
+        "local_y": 4,
+        "crop_px": {
+          "left": 518,
+          "top": 209,
+          "width": 47,
+          "height": 47
+        }
+      },
+      "search_text_zh": "稀疏柔和暗斑；浅灰背景上的少量柔和暗色圆斑。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；溶解、侵蚀、生长和显隐过渡遮罩。；石块、鹅卵石、鳞片或细胞分区遮罩。"
+    },
+    {
+      "tile_id": "noise_x11_y04",
+      "index": 75,
+      "x": 11,
+      "y": 4,
+      "row_group": "directional_cellular_04",
+      "family": "cellular",
+      "name_zh": "浅底多边形裂缝",
+      "description_zh": "浅色多边形单元由细暗线分隔。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "crack_cells",
+        "stone_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.6406,
+        "luminance_stddev": 0.0599,
+        "luminance_min": 0.2667,
+        "luminance_max": 0.7529,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0325,
+        "vertical_gradient": 0.0317
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 11,
+        "local_y": 4,
+        "crop_px": {
+          "left": 569,
+          "top": 209,
+          "width": 48,
+          "height": 47
+        }
+      },
+      "search_text_zh": "浅底多边形裂缝；浅色多边形单元由细暗线分隔。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；冰、玻璃、泥土的裂缝和分区边界。；石块、鹅卵石、鳞片或细胞分区遮罩。"
+    },
+    {
+      "tile_id": "noise_x00_y05",
+      "index": 80,
+      "x": 0,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "sparse_points",
+      "name_zh": "稀疏浮雕亮点",
+      "description_zh": "浅灰底上的稀疏亮点，带轻微阴影或浮雕感。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low_density",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "particle_random",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5068,
+        "luminance_stddev": 0.0673,
+        "luminance_min": 0,
+        "luminance_max": 0.9804,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0224,
+        "vertical_gradient": 0.0148
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 0,
+        "local_y": 5,
+        "crop_px": {
+          "left": 2,
+          "top": 260,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "稀疏浮雕亮点；浅灰底上的稀疏亮点，带轻微阴影或浮雕感。；稀疏随机点、颗粒或脉冲分布。；仅用于视觉粒子的随机采样、尺寸或位置偏移。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x01_y05",
+      "index": 81,
+      "x": 1,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "sparse_points",
+      "name_zh": "稀疏黑点阵",
+      "description_zh": "少量离散黑点随机分布。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low_density",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "particle_random",
+        "dither_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.609,
+        "luminance_stddev": 0.1039,
+        "luminance_min": 0,
+        "luminance_max": 0.6902,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0237,
+        "vertical_gradient": 0.0243
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 1,
+        "local_y": 5,
+        "crop_px": {
+          "left": 54,
+          "top": 260,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "稀疏黑点阵；少量离散黑点随机分布。；稀疏随机点、颗粒或脉冲分布。；仅用于视觉粒子的随机采样、尺寸或位置偏移。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。"
+    },
+    {
+      "tile_id": "noise_x02_y05",
+      "index": 82,
+      "x": 2,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "sparse_points",
+      "name_zh": "中密度黑点阵",
+      "description_zh": "中等数量黑点随机分布，点径较一致。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_density",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "particle_random",
+        "dither_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5813,
+        "luminance_stddev": 0.1257,
+        "luminance_min": 0,
+        "luminance_max": 0.7098,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0439,
+        "vertical_gradient": 0.0341
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 2,
+        "local_y": 5,
+        "crop_px": {
+          "left": 105,
+          "top": 260,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "中密度黑点阵；中等数量黑点随机分布，点径较一致。；稀疏随机点、颗粒或脉冲分布。；仅用于视觉粒子的随机采样、尺寸或位置偏移。；抖动、透明裁切过渡、像素化溶解和磨损遮罩。"
+    },
+    {
+      "tile_id": "noise_x03_y05",
+      "index": 83,
+      "x": 3,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "sparse_points",
+      "name_zh": "多尺度随机点阵",
+      "description_zh": "大小和密度不一的黑色随机点。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "mixed",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "particle_random",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5401,
+        "luminance_stddev": 0.1069,
+        "luminance_min": 0.0078,
+        "luminance_max": 0.6431,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0364,
+        "vertical_gradient": 0.0356
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 3,
+        "local_y": 5,
+        "crop_px": {
+          "left": 157,
+          "top": 260,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "多尺度随机点阵；大小和密度不一的黑色随机点。；稀疏随机点、颗粒或脉冲分布。；仅用于视觉粒子的随机采样、尺寸或位置偏移。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x04_y05",
+      "index": 84,
+      "x": 4,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "turbulence",
+      "name_zh": "高对比团簇噪点",
+      "description_zh": "黑白团簇与碎粒混合，局部接近阈值化。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5232,
+        "luminance_stddev": 0.242,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0813,
+        "vertical_gradient": 0.0758
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 4,
+        "local_y": 5,
+        "crop_px": {
+          "left": 208,
+          "top": 260,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高对比团簇噪点；黑白团簇与碎粒混合，局部接近阈值化。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x05_y05",
+      "index": 85,
+      "x": 5,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "cellular",
+      "name_zh": "柔和细胞斑点",
+      "description_zh": "柔和圆斑与低对比背景组成的细胞外观。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "caustics",
+        "stone_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5254,
+        "luminance_stddev": 0.2158,
+        "luminance_min": 0.0196,
+        "luminance_max": 0.9922,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0371,
+        "vertical_gradient": 0.0354
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 5,
+        "local_y": 5,
+        "crop_px": {
+          "left": 260,
+          "top": 260,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "柔和细胞斑点；柔和圆斑与低对比背景组成的细胞外观。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；水下焦散、能量光斑或细胞状亮纹。；石块、鹅卵石、鳞片或细胞分区遮罩。"
+    },
+    {
+      "tile_id": "noise_x06_y05",
+      "index": 86,
+      "x": 6,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "turbulence",
+      "name_zh": "高频碎裂噪点",
+      "description_zh": "密集高频碎片和短纹，整体对比度较高。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5141,
+        "luminance_stddev": 0.1731,
+        "luminance_min": 0.0039,
+        "luminance_max": 0.9059,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0716,
+        "vertical_gradient": 0.0719
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 6,
+        "local_y": 5,
+        "crop_px": {
+          "left": 312,
+          "top": 260,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "高频碎裂噪点；密集高频碎片和短纹，整体对比度较高。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x07_y05",
+      "index": 87,
+      "x": 7,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "cellular",
+      "name_zh": "细线多边形单元",
+      "description_zh": "浅色底上的细线多边形分区。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "crack_cells",
+        "stone_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.6446,
+        "luminance_stddev": 0.0578,
+        "luminance_min": 0.3255,
+        "luminance_max": 0.7529,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.0286,
+        "vertical_gradient": 0.0304
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 7,
+        "local_y": 5,
+        "crop_px": {
+          "left": 363,
+          "top": 260,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "细线多边形单元；浅色底上的细线多边形分区。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；冰、玻璃、泥土的裂缝和分区边界。；石块、鹅卵石、鳞片或细胞分区遮罩。"
+    },
+    {
+      "tile_id": "noise_x08_y05",
+      "index": 88,
+      "x": 8,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "cellular",
+      "name_zh": "发光细胞斑点",
+      "description_zh": "亮色细胞中心与柔和暗间隙，适合作为焦散候选。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "caustics",
+        "energy_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.6165,
+        "luminance_stddev": 0.1413,
+        "luminance_min": 0.2235,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0355,
+        "vertical_gradient": 0.0361
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 8,
+        "local_y": 5,
+        "crop_px": {
+          "left": 415,
+          "top": 260,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "发光细胞斑点；亮色细胞中心与柔和暗间隙，适合作为焦散候选。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；水下焦散、能量光斑或细胞状亮纹。；护盾、能量网格和科幻细胞图案。"
+    },
+    {
+      "tile_id": "noise_x09_y05",
+      "index": 89,
+      "x": 9,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "cellular",
+      "name_zh": "粗黑细胞骨架 A",
+      "description_zh": "粗黑多边形边界包围亮色细胞核心。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "energy_cells",
+        "crack_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.2874,
+        "luminance_stddev": 0.2827,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0516,
+        "vertical_gradient": 0.0524
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 9,
+        "local_y": 5,
+        "crop_px": {
+          "left": 466,
+          "top": 260,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "粗黑细胞骨架 A；粗黑多边形边界包围亮色细胞核心。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；护盾、能量网格和科幻细胞图案。；冰、玻璃、泥土的裂缝和分区边界。"
+    },
+    {
+      "tile_id": "noise_x10_y05",
+      "index": 90,
+      "x": 10,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "cellular",
+      "name_zh": "粗黑细胞骨架 B",
+      "description_zh": "较大的不规则黑色骨架和亮色块面。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_low",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "energy_cells",
+        "stone_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.3571,
+        "luminance_stddev": 0.2153,
+        "luminance_min": 0.0039,
+        "luminance_max": 0.9765,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0489,
+        "vertical_gradient": 0.0534
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 10,
+        "local_y": 5,
+        "crop_px": {
+          "left": 518,
+          "top": 260,
+          "width": 47,
+          "height": 48
+        }
+      },
+      "search_text_zh": "粗黑细胞骨架 B；较大的不规则黑色骨架和亮色块面。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；护盾、能量网格和科幻细胞图案。；石块、鹅卵石、鳞片或细胞分区遮罩。"
+    },
+    {
+      "tile_id": "noise_x11_y05",
+      "index": 91,
+      "x": 11,
+      "y": 5,
+      "row_group": "points_cellular_05",
+      "family": "cellular",
+      "name_zh": "密集黑色细胞骨架",
+      "description_zh": "密集不规则细胞边界，暗部占比较高。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "crack_cells",
+        "energy_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.2675,
+        "luminance_stddev": 0.1944,
+        "luminance_min": 0,
+        "luminance_max": 0.8431,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0375,
+        "vertical_gradient": 0.0404
+      },
+      "source": {
+        "region": "upper_12x6",
+        "local_x": 11,
+        "local_y": 5,
+        "crop_px": {
+          "left": 569,
+          "top": 260,
+          "width": 48,
+          "height": 48
+        }
+      },
+      "search_text_zh": "密集黑色细胞骨架；密集不规则细胞边界，暗部占比较高。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；冰、玻璃、泥土的裂缝和分区边界。；护盾、能量网格和科幻细胞图案。"
+    },
+    {
+      "tile_id": "noise_x00_y06",
+      "index": 96,
+      "x": 0,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "cellular",
+      "name_zh": "浅底细胞裂缝 B",
+      "description_zh": "细暗线构成的浅色多边形裂缝网络。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "crack_cells",
+        "stone_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.6057,
+        "luminance_stddev": 0.1072,
+        "luminance_min": 0.0314,
+        "luminance_max": 0.9961,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.0461,
+        "vertical_gradient": 0.0357
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 0,
+        "local_y": 0,
+        "crop_px": {
+          "left": 2,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "浅底细胞裂缝 B；细暗线构成的浅色多边形裂缝网络。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；冰、玻璃、泥土的裂缝和分区边界。；石块、鹅卵石、鳞片或细胞分区遮罩。"
+    },
+    {
+      "tile_id": "noise_x01_y06",
+      "index": 97,
+      "x": 1,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "cellular",
+      "name_zh": "柔和暗斑细胞",
+      "description_zh": "大小不一的柔和暗斑，具有 Worley 核心外观。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "stone_cells",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.483,
+        "luminance_stddev": 0.2425,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0.0004,
+        "horizontal_gradient": 0.0901,
+        "vertical_gradient": 0.085
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 1,
+        "local_y": 0,
+        "crop_px": {
+          "left": 64,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "柔和暗斑细胞；大小不一的柔和暗斑，具有 Worley 核心外观。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；石块、鹅卵石、鳞片或细胞分区遮罩。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x02_y06",
+      "index": 98,
+      "x": 2,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "cellular",
+      "name_zh": "高对比迷宫细胞",
+      "description_zh": "黑白弯曲边界形成迷宫状细胞结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "crack_cells",
+        "energy_cells"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5055,
+        "luminance_stddev": 0.2389,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0.0005,
+        "horizontal_gradient": 0.1263,
+        "vertical_gradient": 0.1141
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 2,
+        "local_y": 0,
+        "crop_px": {
+          "left": 126,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "高对比迷宫细胞；黑白弯曲边界形成迷宫状细胞结构。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；冰、玻璃、泥土的裂缝和分区边界。；护盾、能量网格和科幻细胞图案。"
+    },
+    {
+      "tile_id": "noise_x03_y06",
+      "index": 99,
+      "x": 3,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "cellular",
+      "name_zh": "簇状高对比细胞",
+      "description_zh": "多尺度明暗簇形成紧密细胞块。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "stone_cells",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.503,
+        "luminance_stddev": 0.2052,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0.0003,
+        "horizontal_gradient": 0.0941,
+        "vertical_gradient": 0.088
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 3,
+        "local_y": 0,
+        "crop_px": {
+          "left": 188,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "簇状高对比细胞；多尺度明暗簇形成紧密细胞块。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；石块、鹅卵石、鳞片或细胞分区遮罩。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x04_y06",
+      "index": 100,
+      "x": 4,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "cellular",
+      "name_zh": "规则微细胞点阵",
+      "description_zh": "密集且较规则的小细胞或圆点结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "caustics",
+        "screen_grid"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4909,
+        "luminance_stddev": 0.2032,
+        "luminance_min": 0.0196,
+        "luminance_max": 0.8941,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.1422,
+        "vertical_gradient": 0.1317
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 4,
+        "local_y": 0,
+        "crop_px": {
+          "left": 250,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "规则微细胞点阵；密集且较规则的小细胞或圆点结构。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；水下焦散、能量光斑或细胞状亮纹。；科技屏显、点阵、网格和规则采样遮罩。"
+    },
+    {
+      "tile_id": "noise_x05_y06",
+      "index": 101,
+      "x": 5,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "cellular",
+      "name_zh": "卵石分区纹理",
+      "description_zh": "具有石块大小变化和明暗边缘的天然分区外观。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "cellular",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "stone_cells",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4723,
+        "luminance_stddev": 0.2134,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0786,
+        "vertical_gradient": 0.0722
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 5,
+        "local_y": 0,
+        "crop_px": {
+          "left": 312,
+          "top": 312,
+          "width": 57,
+          "height": 58
+        }
+      },
+      "search_text_zh": "卵石分区纹理；具有石块大小变化和明暗边缘的天然分区外观。；Voronoi/Worley/Cell 风格的细胞、裂缝或距离场外观。；石块、鹅卵石、鳞片或细胞分区遮罩。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x06_y06",
+      "index": 102,
+      "x": 6,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "gradient_fractal",
+      "name_zh": "中尺度灰度云团",
+      "description_zh": "连续中尺度灰度团块，过渡柔和。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5165,
+        "luminance_stddev": 0.1841,
+        "luminance_min": 0.0314,
+        "luminance_max": 0.9804,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0561,
+        "vertical_gradient": 0.0498
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 6,
+        "local_y": 0,
+        "crop_px": {
+          "left": 373,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "中尺度灰度云团；连续中尺度灰度团块，过渡柔和。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x07_y06",
+      "index": 103,
+      "x": 7,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "gradient_fractal",
+      "name_zh": "高对比有机云团",
+      "description_zh": "亮暗差异较强的中尺度有机块面。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "cloud_fog"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5284,
+        "luminance_stddev": 0.1611,
+        "luminance_min": 0.0431,
+        "luminance_max": 0.9765,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0638,
+        "vertical_gradient": 0.0491
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 7,
+        "local_y": 0,
+        "crop_px": {
+          "left": 435,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "高对比有机云团；亮暗差异较强的中尺度有机块面。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；溶解、侵蚀、生长和显隐过渡遮罩。；云、雾、烟和体积感遮罩或密度扰动。"
+    },
+    {
+      "tile_id": "noise_x08_y06",
+      "index": 104,
+      "x": 8,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "directional",
+      "name_zh": "斜向划痕湍流",
+      "description_zh": "带斜向刮擦和流动趋势的灰度纹理。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "diagonal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "anisotropic_material",
+        "speed_lines"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5011,
+        "luminance_stddev": 0.1576,
+        "luminance_min": 0.0118,
+        "luminance_max": 0.9922,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0862,
+        "vertical_gradient": 0.0821
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 8,
+        "local_y": 0,
+        "crop_px": {
+          "left": 497,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "斜向划痕湍流；带斜向刮擦和流动趋势的灰度纹理。；具有明确横向、纵向、斜向或放射方向的噪点。；拉丝金属、发丝或单轴各向异性扰动。；运动模糊、速度感拉线和定向拖尾。"
+    },
+    {
+      "tile_id": "noise_x09_y06",
+      "index": 105,
+      "x": 9,
+      "y": 6,
+      "row_group": "cellular_fractal_06",
+      "family": "turbulence",
+      "name_zh": "高频不规则碎纹",
+      "description_zh": "密集不规则短纹和颗粒，方向性较弱。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "surface_grain",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5367,
+        "luminance_stddev": 0.1585,
+        "luminance_min": 0.0549,
+        "luminance_max": 0.9333,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0496,
+        "vertical_gradient": 0.0391
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 9,
+        "local_y": 0,
+        "crop_px": {
+          "left": 559,
+          "top": 312,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "高频不规则碎纹；密集不规则短纹和颗粒，方向性较弱。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x00_y07",
+      "index": 112,
+      "x": 0,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "white_random",
+      "name_zh": "中性灰微粒基底",
+      "description_zh": "接近中灰的低对比微粒，可作为弱扰动基底。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "surface_grain",
+        "particle_random"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5129,
+        "luminance_stddev": 0.0646,
+        "luminance_min": 0.2099,
+        "luminance_max": 0.7089,
+        "mean_chroma": 0.0412,
+        "horizontal_gradient": 0.0403,
+        "vertical_gradient": 0.0293
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 0,
+        "local_y": 1,
+        "crop_px": {
+          "left": 2,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "中性灰微粒基底；接近中灰的低对比微粒，可作为弱扰动基底。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；仅用于视觉粒子的随机采样、尺寸或位置偏移。"
+    },
+    {
+      "tile_id": "noise_x01_y07",
+      "index": 113,
+      "x": 1,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "rgb_noise_candidate",
+      "name_zh": "品红色通道噪点候选",
+      "description_zh": "明显偏品红的细粒彩色噪点；受 JPEG 色度抽样影响，不可视为精确独立通道。",
+      "channel_mode": "rgb_colored_candidate",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "packed_variation_candidate"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.9
+      },
+      "measured": {
+        "luminance_mean": 0.6055,
+        "luminance_stddev": 0.0638,
+        "luminance_min": 0.2067,
+        "luminance_max": 0.7496,
+        "mean_chroma": 0.3684,
+        "horizontal_gradient": 0.0408,
+        "vertical_gradient": 0.026
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 1,
+        "local_y": 1,
+        "crop_px": {
+          "left": 64,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "品红色通道噪点候选；明显偏品红的细粒彩色噪点；受 JPEG 色度抽样影响，不可视为精确独立通道。；带明显颜色偏置的噪点候选；不等同于已验证的独立通道打包。；多通道材质扰动候选；当前 JPEG 来源不满足精确通道打包要求。"
+    },
+    {
+      "tile_id": "noise_x02_y07",
+      "index": 114,
+      "x": 2,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "rgb_noise_candidate",
+      "name_zh": "红橙色通道噪点候选",
+      "description_zh": "明显偏红橙的细粒彩色噪点；仅适合作为视觉颜色扰动候选。",
+      "channel_mode": "rgb_colored_candidate",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "packed_variation_candidate"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.9
+      },
+      "measured": {
+        "luminance_mean": 0.5638,
+        "luminance_stddev": 0.0622,
+        "luminance_min": 0.1605,
+        "luminance_max": 0.6971,
+        "mean_chroma": 0.399,
+        "horizontal_gradient": 0.0431,
+        "vertical_gradient": 0.0313
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 2,
+        "local_y": 1,
+        "crop_px": {
+          "left": 126,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "红橙色通道噪点候选；明显偏红橙的细粒彩色噪点；仅适合作为视觉颜色扰动候选。；带明显颜色偏置的噪点候选；不等同于已验证的独立通道打包。；多通道材质扰动候选；当前 JPEG 来源不满足精确通道打包要求。"
+    },
+    {
+      "tile_id": "noise_x03_y07",
+      "index": 115,
+      "x": 3,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "rgb_noise_candidate",
+      "name_zh": "蓝紫色通道噪点候选",
+      "description_zh": "明显偏蓝紫的细粒彩色噪点；当前来源不能保证通道独立性。",
+      "channel_mode": "rgb_colored_candidate",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "packed_variation_candidate"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.9
+      },
+      "measured": {
+        "luminance_mean": 0.5086,
+        "luminance_stddev": 0.1133,
+        "luminance_min": 0.0549,
+        "luminance_max": 0.9137,
+        "mean_chroma": 0.1264,
+        "horizontal_gradient": 0.0597,
+        "vertical_gradient": 0.0507
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 3,
+        "local_y": 1,
+        "crop_px": {
+          "left": 188,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "蓝紫色通道噪点候选；明显偏蓝紫的细粒彩色噪点；当前来源不能保证通道独立性。；带明显颜色偏置的噪点候选；不等同于已验证的独立通道打包。；多通道材质扰动候选；当前 JPEG 来源不满足精确通道打包要求。"
+    },
+    {
+      "tile_id": "noise_x04_y07",
+      "index": 116,
+      "x": 4,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "gradient_fractal",
+      "name_zh": "中频灰度分形颗粒",
+      "description_zh": "中等频率的灰度斑驳与颗粒混合。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "surface_grain",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5062,
+        "luminance_stddev": 0.237,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.1219,
+        "vertical_gradient": 0.118
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 4,
+        "local_y": 1,
+        "crop_px": {
+          "left": 250,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "中频灰度分形颗粒；中等频率的灰度斑驳与颗粒混合。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x05_y07",
+      "index": 117,
+      "x": 5,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "turbulence",
+      "name_zh": "高对比细碎分形",
+      "description_zh": "细密高对比碎纹，局部形成短小分支。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "surface_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4882,
+        "luminance_stddev": 0.1174,
+        "luminance_min": 0.1176,
+        "luminance_max": 0.9059,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0403,
+        "vertical_gradient": 0.0347
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 5,
+        "local_y": 1,
+        "crop_px": {
+          "left": 312,
+          "top": 374,
+          "width": 57,
+          "height": 58
+        }
+      },
+      "search_text_zh": "高对比细碎分形；细密高对比碎纹，局部形成短小分支。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。"
+    },
+    {
+      "tile_id": "noise_x06_y07",
+      "index": 118,
+      "x": 6,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "gradient_fractal",
+      "name_zh": "低对比柔和灰云",
+      "description_zh": "低对比平滑灰度云团。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5085,
+        "luminance_stddev": 0.2059,
+        "luminance_min": 0.0431,
+        "luminance_max": 0.9333,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0291,
+        "vertical_gradient": 0.0227
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 6,
+        "local_y": 1,
+        "crop_px": {
+          "left": 373,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "低对比柔和灰云；低对比平滑灰度云团。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x07_y07",
+      "index": 119,
+      "x": 7,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "value_block",
+      "name_zh": "超低频 Value 团块",
+      "description_zh": "少量大尺寸亮暗区，边界经过强平滑。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_low",
+      "directionality": "grid_aligned",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "uv_distortion",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4971,
+        "luminance_stddev": 0.1445,
+        "luminance_min": 0.1569,
+        "luminance_max": 0.8588,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0291,
+        "vertical_gradient": 0.0233
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 7,
+        "local_y": 1,
+        "crop_px": {
+          "left": 435,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "超低频 Value 团块；少量大尺寸亮暗区，边界经过强平滑。；分块或量化的 Value Noise 外观，适合像素化遮罩和低频随机区块。；UV 扭曲、折射、热浪和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x08_y07",
+      "index": 120,
+      "x": 8,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "grid_woven",
+      "name_zh": "正交编织网格",
+      "description_zh": "横纵线条交错形成规则编织结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "orthogonal",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "fabric_detail",
+        "screen_grid"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4645,
+        "luminance_stddev": 0.1841,
+        "luminance_min": 0,
+        "luminance_max": 0.8471,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0685,
+        "vertical_gradient": 0.0595
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 8,
+        "local_y": 1,
+        "crop_px": {
+          "left": 497,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "正交编织网格；横纵线条交错形成规则编织结构。；规则点阵、正交网格或编织结构。；织物编织、网眼和规则表面细节。；科技屏显、点阵、网格和规则采样遮罩。"
+    },
+    {
+      "tile_id": "noise_x09_y07",
+      "index": 121,
+      "x": 9,
+      "y": 7,
+      "row_group": "rgb_grid_07",
+      "family": "grid_woven",
+      "name_zh": "规则圆点矩阵",
+      "description_zh": "等距排列的黑色圆点阵列。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "orthogonal",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "screen_grid",
+        "fabric_detail"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4857,
+        "luminance_stddev": 0.2335,
+        "luminance_min": 0,
+        "luminance_max": 0.8353,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.1149,
+        "vertical_gradient": 0.1132
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 9,
+        "local_y": 1,
+        "crop_px": {
+          "left": 559,
+          "top": 374,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "规则圆点矩阵；等距排列的黑色圆点阵列。；规则点阵、正交网格或编织结构。；科技屏显、点阵、网格和规则采样遮罩。；织物编织、网眼和规则表面细节。"
+    },
+    {
+      "tile_id": "noise_x00_y08",
+      "index": 128,
+      "x": 0,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "directional",
+      "name_zh": "高频纵向纤维",
+      "description_zh": "密集细长竖向纤维，长度和亮度随机。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "anisotropic_material",
+        "rain_streaks"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.512,
+        "luminance_stddev": 0.0922,
+        "luminance_min": 0.2157,
+        "luminance_max": 0.902,
+        "mean_chroma": 0.0004,
+        "horizontal_gradient": 0.0854,
+        "vertical_gradient": 0.0182
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 0,
+        "local_y": 2,
+        "crop_px": {
+          "left": 2,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "高频纵向纤维；密集细长竖向纤维，长度和亮度随机。；具有明确横向、纵向、斜向或放射方向的噪点。；拉丝金属、发丝或单轴各向异性扰动。；雨丝、下落拖尾和纵向速度线。"
+    },
+    {
+      "tile_id": "noise_x01_y08",
+      "index": 129,
+      "x": 1,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "directional",
+      "name_zh": "横向运动拉丝",
+      "description_zh": "大量横向短线形成速度模糊和拉丝感。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "horizontal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "speed_lines",
+        "anisotropic_material"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5072,
+        "luminance_stddev": 0.0969,
+        "luminance_min": 0.251,
+        "luminance_max": 0.8196,
+        "mean_chroma": 0.0018,
+        "horizontal_gradient": 0.0174,
+        "vertical_gradient": 0.0746
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 1,
+        "local_y": 2,
+        "crop_px": {
+          "left": 64,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "横向运动拉丝；大量横向短线形成速度模糊和拉丝感。；具有明确横向、纵向、斜向或放射方向的噪点。；运动模糊、速度感拉线和定向拖尾。；拉丝金属、发丝或单轴各向异性扰动。"
+    },
+    {
+      "tile_id": "noise_x02_y08",
+      "index": 130,
+      "x": 2,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "directional",
+      "name_zh": "纵向柔和拉丝",
+      "description_zh": "宽窄不一的纵向亮暗条带，边缘平滑。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "anisotropic_material",
+        "rain_streaks"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5022,
+        "luminance_stddev": 0.1565,
+        "luminance_min": 0.1686,
+        "luminance_max": 0.9586,
+        "mean_chroma": 0.0022,
+        "horizontal_gradient": 0.0274,
+        "vertical_gradient": 0.0154
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 2,
+        "local_y": 2,
+        "crop_px": {
+          "left": 126,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "纵向柔和拉丝；宽窄不一的纵向亮暗条带，边缘平滑。；具有明确横向、纵向、斜向或放射方向的噪点。；拉丝金属、发丝或单轴各向异性扰动。；雨丝、下落拖尾和纵向速度线。"
+    },
+    {
+      "tile_id": "noise_x03_y08",
+      "index": 131,
+      "x": 3,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "directional",
+      "name_zh": "斜向速度线",
+      "description_zh": "由中心偏侧延伸的斜向长线。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "diagonal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "speed_lines",
+        "beam_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5002,
+        "luminance_stddev": 0.1299,
+        "luminance_min": 0,
+        "luminance_max": 0.9608,
+        "mean_chroma": 0.0008,
+        "horizontal_gradient": 0.0739,
+        "vertical_gradient": 0.0464
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 3,
+        "local_y": 2,
+        "crop_px": {
+          "left": 188,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "斜向速度线；由中心偏侧延伸的斜向长线。；具有明确横向、纵向、斜向或放射方向的噪点。；运动模糊、速度感拉线和定向拖尾。；激光、能量束、耀斑和条带遮罩。"
+    },
+    {
+      "tile_id": "noise_x04_y08",
+      "index": 132,
+      "x": 4,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "directional",
+      "name_zh": "放射爆发噪点",
+      "description_zh": "从中心向外扩散的高密度放射线。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "radial",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "speed_lines",
+        "beam_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5206,
+        "luminance_stddev": 0.1147,
+        "luminance_min": 0.0471,
+        "luminance_max": 0.9294,
+        "mean_chroma": 0.0003,
+        "horizontal_gradient": 0.0662,
+        "vertical_gradient": 0.0689
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 4,
+        "local_y": 2,
+        "crop_px": {
+          "left": 250,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "放射爆发噪点；从中心向外扩散的高密度放射线。；具有明确横向、纵向、斜向或放射方向的噪点。；运动模糊、速度感拉线和定向拖尾。；激光、能量束、耀斑和条带遮罩。"
+    },
+    {
+      "tile_id": "noise_x05_y08",
+      "index": 133,
+      "x": 5,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "grid_woven",
+      "name_zh": "粗编织正交网格",
+      "description_zh": "粗线条交错形成的规则织物结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "orthogonal",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "fabric_detail",
+        "screen_grid"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4489,
+        "luminance_stddev": 0.1956,
+        "luminance_min": 0,
+        "luminance_max": 0.8196,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0934,
+        "vertical_gradient": 0.1041
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 5,
+        "local_y": 2,
+        "crop_px": {
+          "left": 312,
+          "top": 436,
+          "width": 57,
+          "height": 57
+        }
+      },
+      "search_text_zh": "粗编织正交网格；粗线条交错形成的规则织物结构。；规则点阵、正交网格或编织结构。；织物编织、网眼和规则表面细节。；科技屏显、点阵、网格和规则采样遮罩。"
+    },
+    {
+      "tile_id": "noise_x06_y08",
+      "index": 134,
+      "x": 6,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "grid_woven",
+      "name_zh": "细编织正交网格",
+      "description_zh": "更细密的横纵交叉网格。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "orthogonal",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "fabric_detail",
+        "screen_grid"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.479,
+        "luminance_stddev": 0.1851,
+        "luminance_min": 0,
+        "luminance_max": 0.8,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.1,
+        "vertical_gradient": 0.1099
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 6,
+        "local_y": 2,
+        "crop_px": {
+          "left": 373,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "细编织正交网格；更细密的横纵交叉网格。；规则点阵、正交网格或编织结构。；织物编织、网眼和规则表面细节。；科技屏显、点阵、网格和规则采样遮罩。"
+    },
+    {
+      "tile_id": "noise_x07_y08",
+      "index": 135,
+      "x": 7,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "grid_woven",
+      "name_zh": "柔和圆点阵列",
+      "description_zh": "规则排列、边缘模糊的圆形点阵。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "orthogonal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "screen_grid",
+        "caustics"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4944,
+        "luminance_stddev": 0.1579,
+        "luminance_min": 0.0902,
+        "luminance_max": 0.8039,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0486,
+        "vertical_gradient": 0.0474
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 7,
+        "local_y": 2,
+        "crop_px": {
+          "left": 435,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "柔和圆点阵列；规则排列、边缘模糊的圆形点阵。；规则点阵、正交网格或编织结构。；科技屏显、点阵、网格和规则采样遮罩。；水下焦散、能量光斑或细胞状亮纹。"
+    },
+    {
+      "tile_id": "noise_x08_y08",
+      "index": 136,
+      "x": 8,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "grid_woven",
+      "name_zh": "高频微型交错纹",
+      "description_zh": "极细密的交错短纹，容易产生摩尔纹。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_high",
+      "directionality": "orthogonal",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "fabric_detail",
+        "screen_grid"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4967,
+        "luminance_stddev": 0.18,
+        "luminance_min": 0,
+        "luminance_max": 0.902,
+        "mean_chroma": 0.0004,
+        "horizontal_gradient": 0.1609,
+        "vertical_gradient": 0.1546
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 8,
+        "local_y": 2,
+        "crop_px": {
+          "left": 497,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "高频微型交错纹；极细密的交错短纹，容易产生摩尔纹。；规则点阵、正交网格或编织结构。；织物编织、网眼和规则表面细节。；科技屏显、点阵、网格和规则采样遮罩。"
+    },
+    {
+      "tile_id": "noise_x09_y08",
+      "index": 137,
+      "x": 9,
+      "y": 8,
+      "row_group": "directional_grid_08",
+      "family": "turbulence",
+      "name_zh": "密集各向同性卷纹",
+      "description_zh": "细密卷曲短纹均匀铺满画面。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "surface_grain",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4965,
+        "luminance_stddev": 0.1564,
+        "luminance_min": 0.0235,
+        "luminance_max": 0.9451,
+        "mean_chroma": 0.0003,
+        "horizontal_gradient": 0.1209,
+        "vertical_gradient": 0.117
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 9,
+        "local_y": 2,
+        "crop_px": {
+          "left": 559,
+          "top": 436,
+          "width": 58,
+          "height": 57
+        }
+      },
+      "search_text_zh": "密集各向同性卷纹；细密卷曲短纹均匀铺满画面。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x00_y09",
+      "index": 144,
+      "x": 0,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "gradient_fractal",
+      "name_zh": "烟尘状分形噪点",
+      "description_zh": "多尺度烟尘团块与细碎纹理混合。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "fire_smoke"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4684,
+        "luminance_stddev": 0.1031,
+        "luminance_min": 0.1255,
+        "luminance_max": 0.772,
+        "mean_chroma": 0.0004,
+        "horizontal_gradient": 0.0543,
+        "vertical_gradient": 0.0522
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 0,
+        "local_y": 3,
+        "crop_px": {
+          "left": 2,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "烟尘状分形噪点；多尺度烟尘团块与细碎纹理混合。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。"
+    },
+    {
+      "tile_id": "noise_x01_y09",
+      "index": 145,
+      "x": 1,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "gradient_fractal",
+      "name_zh": "柔和中频云团",
+      "description_zh": "平滑中频灰度云团，局部对比较低。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5063,
+        "luminance_stddev": 0.1317,
+        "luminance_min": 0.1098,
+        "luminance_max": 0.9137,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.0571,
+        "vertical_gradient": 0.0549
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 1,
+        "local_y": 3,
+        "crop_px": {
+          "left": 64,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "柔和中频云团；平滑中频灰度云团，局部对比较低。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x02_y09",
+      "index": 146,
+      "x": 2,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "turbulence",
+      "name_zh": "迷宫状湍流纹",
+      "description_zh": "连续弯曲短线形成密集迷宫结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "flowing",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "marble_veins",
+        "flow_field_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5029,
+        "luminance_stddev": 0.1402,
+        "luminance_min": 0.0392,
+        "luminance_max": 0.902,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.1058,
+        "vertical_gradient": 0.1025
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 2,
+        "local_y": 3,
+        "crop_px": {
+          "left": 126,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "迷宫状湍流纹；连续弯曲短线形成密集迷宫结构。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；大理石、能量脉络和流体细纹。；湍流、流向、旋涡和动态 UV 偏移。"
+    },
+    {
+      "tile_id": "noise_x03_y09",
+      "index": 147,
+      "x": 3,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "turbulence",
+      "name_zh": "细密虫纹湍流",
+      "description_zh": "更高频的有机虫纹和短曲线。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "very_high",
+      "directionality": "flowing",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "surface_grain",
+        "marble_veins"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4872,
+        "luminance_stddev": 0.2161,
+        "luminance_min": 0,
+        "luminance_max": 0.9804,
+        "mean_chroma": 0.0013,
+        "horizontal_gradient": 0.2019,
+        "vertical_gradient": 0.1859
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 3,
+        "local_y": 3,
+        "crop_px": {
+          "left": 188,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "细密虫纹湍流；更高频的有机虫纹和短曲线。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；大理石、能量脉络和流体细纹。"
+    },
+    {
+      "tile_id": "noise_x04_y09",
+      "index": 148,
+      "x": 4,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "turbulence",
+      "name_zh": "高对比碎云团",
+      "description_zh": "高对比云块叠加细碎结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "fire_smoke"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4923,
+        "luminance_stddev": 0.1855,
+        "luminance_min": 0,
+        "luminance_max": 0.9961,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0917,
+        "vertical_gradient": 0.0869
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 4,
+        "local_y": 3,
+        "crop_px": {
+          "left": 250,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "高对比碎云团；高对比云块叠加细碎结构。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。"
+    },
+    {
+      "tile_id": "noise_x05_y09",
+      "index": 149,
+      "x": 5,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "gradient_fractal",
+      "name_zh": "平滑多尺度云团",
+      "description_zh": "大中小尺度团块叠加，过渡较平滑。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "terrain_height"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5151,
+        "luminance_stddev": 0.1469,
+        "luminance_min": 0.0275,
+        "luminance_max": 0.9373,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0531,
+        "vertical_gradient": 0.0525
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 5,
+        "local_y": 3,
+        "crop_px": {
+          "left": 312,
+          "top": 497,
+          "width": 57,
+          "height": 58
+        }
+      },
+      "search_text_zh": "平滑多尺度云团；大中小尺度团块叠加，过渡较平滑。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；程序化地形或表面高度扰动的候选输入。"
+    },
+    {
+      "tile_id": "noise_x06_y09",
+      "index": 150,
+      "x": 6,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "turbulence",
+      "name_zh": "强对比块状分形",
+      "description_zh": "强烈黑白块面与柔和边缘并存。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "fire_smoke"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5245,
+        "luminance_stddev": 0.1931,
+        "luminance_min": 0.0039,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0634,
+        "vertical_gradient": 0.059
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 6,
+        "local_y": 3,
+        "crop_px": {
+          "left": 373,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "强对比块状分形；强烈黑白块面与柔和边缘并存。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。"
+    },
+    {
+      "tile_id": "noise_x07_y09",
+      "index": 151,
+      "x": 7,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "turbulence",
+      "name_zh": "阈值化低频云团",
+      "description_zh": "大尺度黑白区域接近阈值分割。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "low",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "dissolve_mask",
+        "fire_smoke"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4887,
+        "luminance_stddev": 0.2309,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0445,
+        "vertical_gradient": 0.04
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 7,
+        "local_y": 3,
+        "crop_px": {
+          "left": 435,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "阈值化低频云团；大尺度黑白区域接近阈值分割。；高对比、卷曲或碎裂的湍流外观，适合溶解和流体扰动。；溶解、侵蚀、生长和显隐过渡遮罩。；火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。"
+    },
+    {
+      "tile_id": "noise_x08_y09",
+      "index": 152,
+      "x": 8,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "gradient_fractal",
+      "name_zh": "柔和流体云噪点",
+      "description_zh": "平滑连续、略带流向的灰度云团。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_low",
+      "directionality": "flowing",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "uv_distortion",
+        "flow_field_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5404,
+        "luminance_stddev": 0.1819,
+        "luminance_min": 0.0353,
+        "luminance_max": 0.9882,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0298,
+        "vertical_gradient": 0.029
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 8,
+        "local_y": 3,
+        "crop_px": {
+          "left": 497,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "柔和流体云噪点；平滑连续、略带流向的灰度云团。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；UV 扭曲、折射、热浪和流体扰动。；湍流、流向、旋涡和动态 UV 偏移。"
+    },
+    {
+      "tile_id": "noise_x09_y09",
+      "index": 153,
+      "x": 9,
+      "y": 9,
+      "row_group": "fractal_turbulence_09",
+      "family": "gradient_fractal",
+      "name_zh": "中频斑点云噪点",
+      "description_zh": "中等尺度斑点与云团混合。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "isotropic",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "cloud_fog",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.502,
+        "luminance_stddev": 0.2145,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0569,
+        "vertical_gradient": 0.0572
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 9,
+        "local_y": 3,
+        "crop_px": {
+          "left": 559,
+          "top": 497,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "中频斑点云噪点；中等尺度斑点与云团混合。；平滑渐变或多倍频分形外观；算法身份仅为视觉估计。；云、雾、烟和体积感遮罩或密度扰动。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x00_y10",
+      "index": 160,
+      "x": 0,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "white_random",
+      "name_zh": "低对比细粒基底",
+      "description_zh": "低对比细粒随机纹理，可作为特效叠加的微扰。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "high",
+      "directionality": "isotropic",
+      "recommended_filter": "nearest",
+      "suggested_uses": [
+        "surface_grain",
+        "particle_random"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5054,
+        "luminance_stddev": 0.0743,
+        "luminance_min": 0.2,
+        "luminance_max": 0.7647,
+        "mean_chroma": 0.0011,
+        "horizontal_gradient": 0.0726,
+        "vertical_gradient": 0.0736
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 0,
+        "local_y": 4,
+        "crop_px": {
+          "left": 2,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "低对比细粒基底；低对比细粒随机纹理，可作为特效叠加的微扰。；高频无序灰度噪点，适合颗粒、抖动和视觉随机采样。；材质表面的微观颗粒、粗糙度或轻微颜色扰动。；仅用于视觉粒子的随机采样、尺寸或位置偏移。"
+    },
+    {
+      "tile_id": "noise_x01_y10",
+      "index": 161,
+      "x": 1,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "高对比火焰遮罩 A",
+      "description_zh": "黑底上向上生长的亮色火舌轮廓。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "fire_smoke",
+        "dissolve_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.2696,
+        "luminance_stddev": 0.247,
+        "luminance_min": 0,
+        "luminance_max": 0.9843,
+        "mean_chroma": 0.0003,
+        "horizontal_gradient": 0.0465,
+        "vertical_gradient": 0.03
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 1,
+        "local_y": 4,
+        "crop_px": {
+          "left": 64,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "高对比火焰遮罩 A；黑底上向上生长的亮色火舌轮廓。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。；溶解、侵蚀、生长和显隐过渡遮罩。"
+    },
+    {
+      "tile_id": "noise_x02_y10",
+      "index": 162,
+      "x": 2,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "高对比火焰遮罩 B",
+      "description_zh": "更细长、更尖锐的上升火焰与烟丝。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium_high",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "fire_smoke",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.3431,
+        "luminance_stddev": 0.2824,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0.0002,
+        "horizontal_gradient": 0.0453,
+        "vertical_gradient": 0.0286
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 2,
+        "local_y": 4,
+        "crop_px": {
+          "left": 126,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "高对比火焰遮罩 B；更细长、更尖锐的上升火焰与烟丝。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x03_y10",
+      "index": 163,
+      "x": 3,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "柔和火焰烟雾",
+      "description_zh": "边缘柔和的上升亮团和烟雾结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "fire_smoke",
+        "cloud_fog"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4558,
+        "luminance_stddev": 0.2325,
+        "luminance_min": 0,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0378,
+        "vertical_gradient": 0.0383
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 3,
+        "local_y": 4,
+        "crop_px": {
+          "left": 188,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "柔和火焰烟雾；边缘柔和的上升亮团和烟雾结构。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。；云、雾、烟和体积感遮罩或密度扰动。"
+    },
+    {
+      "tile_id": "noise_x04_y10",
+      "index": 164,
+      "x": 4,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "翻滚烟云噪点",
+      "description_zh": "连续翻滚的中尺度烟云团块。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "flowing",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "fire_smoke",
+        "cloud_fog"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5487,
+        "luminance_stddev": 0.1536,
+        "luminance_min": 0.1176,
+        "luminance_max": 0.9608,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0307,
+        "vertical_gradient": 0.0283
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 4,
+        "local_y": 4,
+        "crop_px": {
+          "left": 250,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "翻滚烟云噪点；连续翻滚的中尺度烟云团块。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；火焰、烟雾、蒸汽和向上流动的 VFX 遮罩。；云、雾、烟和体积感遮罩或密度扰动。"
+    },
+    {
+      "tile_id": "noise_x05_y10",
+      "index": 165,
+      "x": 5,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "湍流旋涡噪点",
+      "description_zh": "带旋转和卷吸感的高对比流体结构。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "swirling",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "flow_field_mask",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5695,
+        "luminance_stddev": 0.198,
+        "luminance_min": 0.0471,
+        "luminance_max": 0.9961,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0254,
+        "vertical_gradient": 0.027
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 5,
+        "local_y": 4,
+        "crop_px": {
+          "left": 312,
+          "top": 559,
+          "width": 57,
+          "height": 58
+        }
+      },
+      "search_text_zh": "湍流旋涡噪点；带旋转和卷吸感的高对比流体结构。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；湍流、流向、旋涡和动态 UV 偏移。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x06_y10",
+      "index": 166,
+      "x": 6,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "大理石脉络噪点",
+      "description_zh": "亮暗流体脉络与不规则细线交织。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "flowing",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "marble_veins",
+        "uv_distortion"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.5184,
+        "luminance_stddev": 0.1941,
+        "luminance_min": 0,
+        "luminance_max": 0.9961,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0473,
+        "vertical_gradient": 0.0454
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 6,
+        "local_y": 4,
+        "crop_px": {
+          "left": 373,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "大理石脉络噪点；亮暗流体脉络与不规则细线交织。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；大理石、能量脉络和流体细纹。；UV 扭曲、折射、热浪和流体扰动。"
+    },
+    {
+      "tile_id": "noise_x07_y10",
+      "index": 167,
+      "x": 7,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "纵向有机纹理",
+      "description_zh": "纵向延伸的有机明暗条纹，介于石纹与木纹之间。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "marble_veins",
+        "wood_grain"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.6464,
+        "luminance_stddev": 0.1677,
+        "luminance_min": 0.0745,
+        "luminance_max": 1,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0479,
+        "vertical_gradient": 0.0447
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 7,
+        "local_y": 4,
+        "crop_px": {
+          "left": 435,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "纵向有机纹理；纵向延伸的有机明暗条纹，介于石纹与木纹之间。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；大理石、能量脉络和流体细纹。；木纹、年轮和纵向有机条纹。"
+    },
+    {
+      "tile_id": "noise_x08_y10",
+      "index": 168,
+      "x": 8,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "水平波纹脉络",
+      "description_zh": "多条平行起伏曲线形成水平流动纹理。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "horizontal",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "water_surface",
+        "marble_veins"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4975,
+        "luminance_stddev": 0.0836,
+        "luminance_min": 0.251,
+        "luminance_max": 0.749,
+        "mean_chroma": 0,
+        "horizontal_gradient": 0.0251,
+        "vertical_gradient": 0.0809
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 8,
+        "local_y": 4,
+        "crop_px": {
+          "left": 497,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "水平波纹脉络；多条平行起伏曲线形成水平流动纹理。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；水面波纹、折射或法线扰动的候选输入。；大理石、能量脉络和流体细纹。"
+    },
+    {
+      "tile_id": "noise_x09_y10",
+      "index": 169,
+      "x": 9,
+      "y": 10,
+      "row_group": "vfx_elements_10",
+      "family": "vfx_element",
+      "name_zh": "纵向木纹年轮",
+      "description_zh": "纵向椭圆年轮与平行木纹组合。",
+      "channel_mode": "grayscale_scalar",
+      "frequency": "medium",
+      "directionality": "vertical",
+      "recommended_filter": "linear",
+      "suggested_uses": [
+        "wood_grain",
+        "flow_field_mask"
+      ],
+      "identification": {
+        "basis": "visual_estimate",
+        "confidence": 0.74
+      },
+      "measured": {
+        "luminance_mean": 0.4992,
+        "luminance_stddev": 0.0874,
+        "luminance_min": 0.2157,
+        "luminance_max": 0.7647,
+        "mean_chroma": 0.0001,
+        "horizontal_gradient": 0.0964,
+        "vertical_gradient": 0.017
+      },
+      "source": {
+        "region": "lower_10x5",
+        "local_x": 9,
+        "local_y": 4,
+        "crop_px": {
+          "left": 559,
+          "top": 559,
+          "width": 58,
+          "height": 58
+        }
+      },
+      "search_text_zh": "纵向木纹年轮；纵向椭圆年轮与平行木纹组合。；火焰、烟雾、脉络、木纹等面向特效的专用外观。；木纹、年轮和纵向有机条纹。；湍流、流向、旋涡和动态 UV 偏移。"
+    }
+  ]
+}
