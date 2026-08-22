@@ -242,10 +242,30 @@ pub struct PlayerPreviewState {
     pub display_name: Option<String>,
     pub world_id: Option<StablePreviewId>,
     pub selection_state: Option<String>,
+    pub attributes: Option<PlayerAttributesPreview>,
+    pub attributes_source: Option<String>,
+    pub attributes_snapshot_refreshed_at_ms: Option<u64>,
+    pub attributes_push_sequence: Option<u64>,
+    pub attributes_revision: Option<u64>,
+    pub attributes_freshness: Option<String>,
     pub position: Option<[f32; 3]>,
     pub direction: Option<[f32; 3]>,
     pub movement_state: Option<String>,
     pub authority_frame: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PlayerAttributesPreview {
+    pub affinity: PlayerElementValuesPreview,
+    pub mastery: PlayerElementValuesPreview,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PlayerElementValuesPreview {
+    pub earth: i32,
+    pub fire: i32,
+    pub water: i32,
+    pub wind: i32,
 }
 
 impl StablePreviewValue for PlayerPreviewState {

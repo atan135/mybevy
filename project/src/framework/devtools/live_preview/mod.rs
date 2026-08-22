@@ -16,11 +16,11 @@ pub use collect_scene::ScenePreviewAdapter;
 pub use model::{
     LIVE_PREVIEW_SCHEMA_VERSION, LivePreviewSnapshot, LivePreviewSnapshotHub,
     LivePreviewSnapshotRead, NetworkPreviewSection, NetworkPreviewState, PerformancePreviewSection,
-    PerformancePreviewState, PlayerPreviewSection, PlayerPreviewState, PreviewDataStatus,
-    PreviewFailure, PreviewSection, PreviewSourceHealth, PreviewSourceHealthSection,
-    PreviewSourceHealthState, SceneLayerPreview, ScenePreviewSection, ScenePreviewState,
-    StablePreviewId, StablePreviewValue, UiPanelKindPreviewCounts, UiPanelPreview,
-    UiPreviewSection, UiPreviewState,
+    PerformancePreviewState, PlayerAttributesPreview, PlayerElementValuesPreview,
+    PlayerPreviewSection, PlayerPreviewState, PreviewDataStatus, PreviewFailure, PreviewSection,
+    PreviewSourceHealth, PreviewSourceHealthSection, PreviewSourceHealthState, SceneLayerPreview,
+    ScenePreviewSection, ScenePreviewState, StablePreviewId, StablePreviewValue,
+    UiPanelKindPreviewCounts, UiPanelPreview, UiPreviewSection, UiPreviewState,
 };
 
 pub use model::{LivePreviewPolicy, LivePreviewPolicy as LivePreviewConfig};
