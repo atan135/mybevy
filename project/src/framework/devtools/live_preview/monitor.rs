@@ -14,7 +14,11 @@ use crate::framework::ui::{
             UiThemeTextColorRole, UiThemeTextStyleRole,
         },
     },
-    widgets::{UiScrollViewConfig, screen_label, screen_title, ui_scroll_column_bundle},
+    widgets::{
+        UiButtonEvent, UiButtonEventKind, UiControlFlags, UiControlState, UiScrollViewConfig,
+        controls::tab as tab_control, screen_label, screen_title, tab_list,
+        ui_scroll_column_bundle,
+    },
 };
 
 const MONITOR_RENDER_LAYER: usize = 30;
@@ -278,6 +282,9 @@ struct LivePreviewMonitorHeader;
 struct LivePreviewMonitorTabs;
 
 #[derive(Component)]
+struct LivePreviewMonitorTabButton(LivePreviewMonitorTab);
+
+#[derive(Component)]
 struct LivePreviewMonitorBody(LivePreviewMonitorTab);
 
 #[derive(Component)]
@@ -289,12 +296,15 @@ impl Plugin for LivePreviewMonitorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LivePreviewMonitorState>()
             .init_resource::<LivePreviewMonitorPerformance>()
+            .add_message::<UiButtonEvent>()
             .add_systems(
                 Update,
                 (
                     handle_monitor_keys,
+                    handle_monitor_tab_events,
                     sync_monitor_target,
                     sync_monitor_scroll,
+                    sync_monitor_tab_controls,
                     refresh_monitor_view,
                     measure_monitor_performance,
                 )
@@ -380,9 +390,45 @@ fn handle_monitor_keys(
         apply_timeline_shortcut(&mut state, KeyCode::PageDown);
     }
     if keys.just_pressed(KeyCode::Tab) && state.enabled {
-        state.tab = state.tab.next();
-        state.focused_tab = state.tab;
-        state.scroll_restore_pending = true;
+        let next = state.tab.next();
+        select_monitor_tab(&mut state, next);
+    }
+}
+
+fn handle_monitor_tab_events(
+    mut events: MessageReader<UiButtonEvent>,
+    tabs: Query<&LivePreviewMonitorTabButton>,
+    mut state: ResMut<LivePreviewMonitorState>,
+) {
+    if !state.enabled {
+        return;
+    }
+    for event in events.read() {
+        if event.kind != UiButtonEventKind::Click {
+            continue;
+        }
+        let Ok(tab) = tabs.get(event.entity) else {
+            continue;
+        };
+        select_monitor_tab(&mut state, tab.0);
+    }
+}
+
+fn select_monitor_tab(state: &mut LivePreviewMonitorState, tab: LivePreviewMonitorTab) {
+    if state.tab == tab {
+        return;
+    }
+    state.tab = tab;
+    state.focused_tab = tab;
+    state.scroll_restore_pending = true;
+}
+
+fn sync_monitor_tab_controls(
+    state: Res<LivePreviewMonitorState>,
+    mut tabs: Query<(&LivePreviewMonitorTabButton, &mut UiControlFlags)>,
+) {
+    for (tab, mut flags) in &mut tabs {
+        flags.selected = tab.0 == state.tab;
     }
 }
 
@@ -565,7 +611,6 @@ fn refresh_monitor_view(
     hub: Res<super::LivePreviewSnapshotHub>,
     mut queries: ParamSet<(
         Query<&mut Text, With<LivePreviewMonitorHeader>>,
-        Query<&mut Text, With<LivePreviewMonitorTabs>>,
         Query<(&LivePreviewMonitorBody, &mut Text)>,
     )>,
 ) {
@@ -574,29 +619,15 @@ fn refresh_monitor_view(
     }
     let snapshot = hub.read();
     let header = monitor_header(&state, &snapshot);
-    let tab_line = LivePreviewMonitorTab::ALL
-        .iter()
-        .map(|tab| {
-            if *tab == state.tab {
-                format!("[{}]", tab.label())
-            } else {
-                tab.label().to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("  ");
     if let Ok(mut text) = queries.p0().single_mut() {
         text.0 = header;
-    }
-    if let Ok(mut text) = queries.p1().single_mut() {
-        text.0 = tab_line;
     }
     if state.frozen {
         return;
     }
     let body = monitor_body(&snapshot, &state);
     if let Some((_, mut text)) = queries
-        .p2()
+        .p1()
         .iter_mut()
         .find(|(body, _)| body.0 == state.tab)
     {
@@ -681,22 +712,25 @@ fn spawn_monitor_root(
             LivePreviewMonitorHeader,
             Pickable::IGNORE,
         ));
-        root.spawn((
-            Node {
-                width: percent(100.0),
-                min_height: px(metrics.touch_target_min),
-                ..default()
-            },
-            screen_label(
-                theme,
-                fonts,
-                "[Overview]  UI  Player  Scene  Network  Performance  Timeline",
-                UiThemeTextStyleRole::Caption,
-                UiThemeTextColorRole::Primary,
-            ),
-            LivePreviewMonitorTabs,
-            Pickable::IGNORE,
-        ));
+        root.spawn((tab_list(theme), LivePreviewMonitorTabs, Pickable::IGNORE))
+            .with_children(|tabs| {
+                for tab in LivePreviewMonitorTab::ALL {
+                    tabs.spawn((
+                        tab_control(
+                            theme,
+                            fonts,
+                            tab.label(),
+                            tab.label(),
+                            if tab == active_tab {
+                                UiControlState::Selected
+                            } else {
+                                UiControlState::Normal
+                            },
+                        ),
+                        LivePreviewMonitorTabButton(tab),
+                    ));
+                }
+            });
         for tab in LivePreviewMonitorTab::ALL {
             root.spawn((
                 ui_scroll_column_bundle(
@@ -1472,6 +1506,40 @@ mod tests {
             scrolls.iter(world).count()
         };
         assert_eq!(scroll_count, LivePreviewMonitorTab::ALL.len());
+
+        let tab_count = {
+            let world = app.world_mut();
+            let mut tabs = world.query_filtered::<Entity, With<LivePreviewMonitorTabButton>>();
+            tabs.iter(world).count()
+        };
+        assert_eq!(tab_count, LivePreviewMonitorTab::ALL.len());
+    }
+
+    #[test]
+    fn monitor_tab_click_updates_state_and_requests_scroll_restore() {
+        let mut app = App::new();
+        app.init_resource::<LivePreviewMonitorState>()
+            .add_message::<UiButtonEvent>()
+            .add_systems(Update, handle_monitor_tab_events);
+        let button = app
+            .world_mut()
+            .spawn(LivePreviewMonitorTabButton(LivePreviewMonitorTab::Network))
+            .id();
+        app.world_mut()
+            .resource_mut::<LivePreviewMonitorState>()
+            .enabled = true;
+        app.world_mut().write_message(UiButtonEvent {
+            entity: button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+
+        app.update();
+
+        let state = app.world().resource::<LivePreviewMonitorState>();
+        assert_eq!(state.tab, LivePreviewMonitorTab::Network);
+        assert_eq!(state.focused_tab, LivePreviewMonitorTab::Network);
+        assert!(state.scroll_restore_pending);
     }
 
     #[test]
