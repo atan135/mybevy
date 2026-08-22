@@ -3,6 +3,7 @@
   "catalog_id": "fangyuan.base.surface",
   "display_name_zh": "方圆灵构基础表面图集",
   "language": "zh-CN",
+  "material_presets_file": "surface_material_presets.json",
   "description_zh": "基础颜色图与切线空间法线图共享的 16×16 语义目录。生成器应先选择 tile_id，再把同一坐标同时应用到所需纹理通道。",
   "semantic_review": {
     "source": "user_provided_reference",
@@ -98,7 +99,7 @@
       "天空、水体、熔岩和植被条目只在提示词或 primitive 角色明确需要时选择，不能作为普通实体表面的默认候选。",
       "颜色图与法线图必须绑定同一个 tile_id；是否启用法线通道由材质能力决定。",
       "置信度低于 0.65 时返回最多 3 个候选并说明差异，不得假装存在唯一答案。",
-      "目录不包含 roughness、metallic、透明度或真实世界尺度；AI 不得把这些物理参数当作已验证数据。",
+      "PBR 常量和真实尺度提示从 surface_material_presets.json 获取；这些数值是语义估算而非测量值，AI 只可在声明的覆盖范围内调整。",
       "primitive 最终应保存稳定 tile_id，坐标和 index 只作为校验及运行时派生值。"
     ],
     "output_example": {

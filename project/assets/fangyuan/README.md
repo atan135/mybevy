@@ -19,3 +19,5 @@
 当前图集为 `1024×1024`、`16×16` 网格，每格 `64×64`，其中包含 `60×60` 有效内容和四周各 `2px` padding。噪点图集若不与这 256 个表面语义槽严格对齐，应使用独立目录文件。
 
 `atlases/noise/noise_atlas.json` 是独立的程序化噪点目录，引用 `procedural_noise.png`。其源图实际由 `12×6` 和 `10×5` 两个网格拼合而成，因此归一化后的 `16×16` 图集中只有 122 个有效格；AI 和运行时只能选择目录中明确登记的 `tile_id`，其余 134 格为黑色保留位。
+
+`atlases/base/surface_material_presets.json` 为 256 个表面条目提供 primitive 级 PBR 常量、法线强度、参考重复尺寸和可选噪点建议，因此当前不需要 ORM 图集。该文件目前是 AI 创作 companion catalog；现有 Rust `FangyuanMaterialProfile` 仍只支持 color、alpha 和 emissive，运行时接入需要后续扩展。
