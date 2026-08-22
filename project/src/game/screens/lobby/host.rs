@@ -570,7 +570,10 @@ fn navigation_destination(action: &UiActionDispatch) -> Option<AppUiMode> {
         (NAV_UI_GALLERY_NODE, Some(UiActionValue::Enum(value)))
             if value == DESTINATION_UI_GALLERY =>
         {
-            Some(AppUiMode::UiGallery)
+            // The public Gallery entry is backed by the approved UiDocument. Keep the
+            // `ui_gallery` destination stable for existing lobby documents while routing
+            // it to the declarative host instead of the legacy Rust view.
+            Some(AppUiMode::UiDocumentGallery)
         }
         _ => None,
     }

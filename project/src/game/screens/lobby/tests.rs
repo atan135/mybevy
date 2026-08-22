@@ -393,7 +393,10 @@ fn lobby_navigation_rejects_source_destination_forgery() {
         read_messages::<GameRouteCommand>(&app)
             .iter()
             .any(|command| {
-                matches!(command, GameRouteCommand::ChangeMode(AppUiMode::UiGallery))
+                matches!(
+                    command,
+                    GameRouteCommand::ChangeMode(AppUiMode::UiDocumentGallery)
+                )
             })
     );
 }
