@@ -188,6 +188,7 @@ impl MainWorldCameraRigAdapterRuntime {
 /// carrying orbit state across a re-entry or authority recovery boundary.
 #[derive(Clone, Debug, PartialEq, Resource)]
 pub(in crate::game) struct MainWorldCameraOrbitState {
+    pub follow_player: bool,
     pub yaw_radians: f32,
     pub pitch_radians: f32,
     pub distance: f32,
@@ -201,6 +202,7 @@ pub(in crate::game) struct MainWorldCameraOrbitState {
 impl Default for MainWorldCameraOrbitState {
     fn default() -> Self {
         Self {
+            follow_player: true,
             yaw_radians: MAIN_WORLD_CAMERA_DEFAULT_YAW_RADIANS,
             pitch_radians: MAIN_WORLD_CAMERA_DEFAULT_PITCH_RADIANS,
             distance: MAIN_WORLD_CAMERA_DEFAULT_DISTANCE,
@@ -562,19 +564,29 @@ fn sync_main_world_camera_rig(
         orbit.sanitize();
     }
 
-    let target_entity = primary_actor_target_for_session(session_id, &camera_targets);
+    let target_entity = orbit
+        .follow_player
+        .then(|| primary_actor_target_for_session(session_id, &camera_targets))
+        .flatten();
     let reset_smoothing =
         adapter_runtime.requires_smoothing_reset(session_id, entry.generation, target_entity);
     let mut applied = false;
 
     for (mut rig, transform, mut runtime) in &mut scene_cameras {
-        if !rig.is_session(session_id) || !is_main_world_follow_rig(&rig) {
+        if !rig.is_session(session_id) || !is_main_world_camera_rig(&rig) {
             continue;
         }
+        if !orbit.follow_player {
+            rig.config.mode = SceneCameraMode::Fixed3d;
+            rig.config.transform = *transform;
+            rig.config.animation = SceneCameraAnimationConfig::default();
+            adapter_runtime.reset();
+            continue;
+        }
+        rig.config.mode = SceneCameraMode::FollowTarget;
         let Some(follow) = rig.config.follow.as_mut() else {
             continue;
         };
-
         follow.offset = orbit.follow_offset();
         follow.look_at_offset = orbit.look_at_offset();
         follow.position_lerp = if reset_smoothing {
@@ -604,11 +616,15 @@ fn sync_main_world_camera_rig(
     }
 }
 
-fn is_main_world_follow_rig(rig: &SceneCameraRig) -> bool {
-    rig.config.mode == SceneCameraMode::FollowTarget
-        && rig.config.follow.as_ref().is_some_and(|follow| {
-            follow.target_source == SceneCameraFollowTargetSource::PrimaryActor
-        })
+fn is_main_world_camera_rig(rig: &SceneCameraRig) -> bool {
+    matches!(
+        rig.config.mode,
+        SceneCameraMode::FollowTarget | SceneCameraMode::Fixed3d
+    ) && rig
+        .config
+        .follow
+        .as_ref()
+        .is_some_and(|follow| follow.target_source == SceneCameraFollowTargetSource::PrimaryActor)
 }
 
 fn primary_actor_target_for_session(
@@ -817,6 +833,7 @@ mod tests {
     fn default_orbit_state_freezes_the_first_main_world_camera_parameters() {
         let state = MainWorldCameraOrbitState::default();
 
+        assert!(state.follow_player);
         assert_eq!(state.yaw_radians, MAIN_WORLD_CAMERA_DEFAULT_YAW_RADIANS);
         assert_eq!(state.pitch_radians, MAIN_WORLD_CAMERA_DEFAULT_PITCH_RADIANS);
         assert_eq!(state.distance, MAIN_WORLD_CAMERA_DEFAULT_DISTANCE);
@@ -1306,6 +1323,50 @@ mod tests {
         assert_eq!(projection.fov, MAIN_WORLD_CAMERA_FOV_Y_RADIANS);
         assert_eq!(projection.near, MAIN_WORLD_CAMERA_NEAR);
         assert_eq!(projection.far, MAIN_WORLD_CAMERA_FAR);
+    }
+
+    #[test]
+    fn camera_follow_intent_freezes_the_current_rig_and_can_resume_following() {
+        let session_id = SceneSessionId::from("main-world-follow-toggle");
+        let target_position = Vec3::new(3.0, 0.0, 1.0);
+        let mut app = active_camera_app(session_id.clone(), 1);
+        spawn_target(&mut app, &session_id, target_position);
+        schedule_follow_camera(
+            &mut app,
+            session_id.clone(),
+            SceneCameraFollowTargetSource::PrimaryActor,
+            Vec3::ZERO,
+        );
+        app.update();
+        let followed_transform = camera_for_session(
+            &mut app,
+            &session_id,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        )
+        .1;
+
+        app.world_mut()
+            .resource_mut::<MainWorldCameraOrbitState>()
+            .follow_player = false;
+        app.update();
+        let (frozen_rig, frozen_transform, _) = camera_for_session(
+            &mut app,
+            &session_id,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        );
+        assert_eq!(frozen_rig.config.mode, SceneCameraMode::Fixed3d);
+        assert_eq!(frozen_transform, followed_transform);
+
+        app.world_mut()
+            .resource_mut::<MainWorldCameraOrbitState>()
+            .follow_player = true;
+        app.update();
+        let (resumed_rig, _, _) = camera_for_session(
+            &mut app,
+            &session_id,
+            SceneCameraFollowTargetSource::PrimaryActor,
+        );
+        assert_eq!(resumed_rig.config.mode, SceneCameraMode::FollowTarget);
     }
 
     #[test]

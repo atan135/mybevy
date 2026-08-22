@@ -1,11 +1,7 @@
 {
   "schema_version": 1,
   "document_id": "game.main_world_audio_settings",
-  "metadata": {
-    "title": "Audio Settings",
-    "budget_profile": "mobile_baseline_v1"
-  },
-  "assets": {},
+  "metadata": { "title": "Main World Settings", "budget_profile": "mobile_baseline_v1" },
   "bindings": {
     "audio_settings.volume.master": { "scope": "owner", "value_type": { "kind": "number" } },
     "audio_settings.volume.music": { "scope": "owner", "value_type": { "kind": "number" } },
@@ -14,429 +10,90 @@
     "audio_settings.volume.battle": { "scope": "owner", "value_type": { "kind": "number" } },
     "audio_settings.master.muted": { "scope": "owner", "value_type": { "kind": "bool" } },
     "audio_settings.controls.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
-    "audio_settings.view_state": {
-      "scope": "owner",
-      "value_type": { "kind": "enum", "values": ["ready", "unavailable"] }
-    },
+    "audio_settings.view_state": { "scope": "owner", "value_type": { "kind": "enum", "values": ["ready", "unavailable"] } },
     "audio_settings.status": { "scope": "owner", "value_type": { "kind": "string" } },
     "audio_settings.error.title": { "scope": "owner", "value_type": { "kind": "string" } },
     "audio_settings.error.detail": { "scope": "owner", "value_type": { "kind": "string" } },
-    "audio_settings.error.visibility": { "scope": "owner", "value_type": { "kind": "visibility" } }
+    "audio_settings.error.visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "main_world_settings.tab.audio.selected": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "main_world_settings.tab.scene.selected": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "main_world_settings.tab.audio.display": { "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+    "main_world_settings.tab.scene.display": { "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+    "main_world_settings.camera.follow_player": { "scope": "owner", "value_type": { "kind": "bool" } }
   },
   "styles": {
-    "audio_shell": {
-      "properties": {
-        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#11191ee8" } },
-        "border": {
-          "width": { "kind": "literal", "value": 1.0 },
-          "color": { "kind": "literal", "value": "#6f858799" }
-        },
-        "corner_radius": {
-          "top_left": { "kind": "literal", "value": 6.0 },
-          "top_right": { "kind": "literal", "value": 6.0 },
-          "bottom_right": { "kind": "literal", "value": 6.0 },
-          "bottom_left": { "kind": "literal", "value": 6.0 }
-        }
-      }
-    },
-    "audio_section": {
-      "properties": {
-        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#182328e8" } },
-        "border": {
-          "width": { "kind": "literal", "value": 1.0 },
-          "color": { "kind": "literal", "value": "#43575bb3" }
-        },
-        "corner_radius": {
-          "top_left": { "kind": "literal", "value": 4.0 },
-          "top_right": { "kind": "literal", "value": 4.0 },
-          "bottom_right": { "kind": "literal", "value": 4.0 },
-          "bottom_left": { "kind": "literal", "value": 4.0 }
-        }
-      }
-    },
-    "audio_error": {
-      "properties": {
-        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#39191dcc" } },
-        "border": {
-          "width": { "kind": "literal", "value": 1.0 },
-          "color": { "kind": "literal", "value": "#d45a61cc" }
-        }
-      }
-    },
-    "audio_rule": {
-      "properties": {
-        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#60757999" } }
-      }
-    }
+    "audio_shell": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#11191ee8" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#6f858799" } }, "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } } } },
+    "audio_section": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#182328e8" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#43575bb3" } }, "corner_radius": { "top_left": { "kind": "literal", "value": 4.0 }, "top_right": { "kind": "literal", "value": 4.0 }, "bottom_right": { "kind": "literal", "value": 4.0 }, "bottom_left": { "kind": "literal", "value": 4.0 } } } },
+    "audio_error": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#39191dcc" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#d45a61cc" } } } }
   },
   "root": {
-    "type": "container",
-    "id": "audio_settings.root",
-    "layout": {
-      "width": { "percent": 100.0 },
-      "height": { "percent": 100.0 },
-      "direction": "column"
-    },
-    "style": {
-      "inline": {
-        "background": { "kind": "solid", "color": { "kind": "literal", "value": "#081014" } }
-      }
-    },
-    "children": [
-      {
-        "type": "scroll",
-        "id": "audio_settings.scroll",
-        "block_lower": true,
-        "max_height": 2400.0,
-        "layout": {
-          "width": { "percent": 100.0 },
-          "height": { "percent": 100.0 },
-          "padding": { "all": { "px": 20.0 } },
-          "overflow": { "y": "scroll" },
-          "align_items": "center",
-          "justify_content": "center"
-        },
-        "component": {
-          "children": [
-            {
-              "type": "container",
-              "id": "audio_settings.shell",
-              "layout": {
-                "width": { "percent": 100.0 },
-                "max_width": { "px": 760.0 },
-                "min_width": { "px": 300.0 },
-                "padding": { "all": { "px": 22.0 } },
-                "gap": { "px": 14.0 },
-                "direction": "column",
-                "flex_shrink": 0.0
-              },
-              "style": { "component": "audio_shell" },
-              "children": [
-                {
-                  "type": "container",
-                  "id": "audio_settings.header",
-                  "layout": {
-                    "width": { "percent": 100.0 },
-                    "direction": "row",
-                    "wrap": "wrap",
-                    "align_items": "center",
-                    "justify_content": "space_between",
-                    "gap": { "px": 10.0 }
-                  },
-                  "children": [
-                    {
-                      "type": "container",
-                      "id": "audio_settings.heading",
-                      "layout": {
-                        "direction": "column",
-                        "gap": { "px": 3.0 },
-                        "flex_grow": 1.0,
-                        "min_width": { "px": 190.0 }
-                      },
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "audio_settings.title",
-                          "content": { "literal": "AUDIO SETTINGS" },
-                          "style": { "text_role": "title" }
-                        },
-                        {
-                          "type": "text",
-                          "id": "audio_settings.status",
-                          "content": {
-                            "binding_path": "audio_settings.status",
-                            "fallback": "Changes apply immediately"
-                          },
-                          "style": { "text_role": "caption" }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "button",
-                      "id": "audio_settings.return_lobby",
-                      "variant": "secondary",
-                      "label": { "literal": "Close" },
-                      "on_click": { "action": "main_world_audio_settings.close" }
-                    }
-                  ]
-                },
-                {
-                  "type": "container",
-                  "id": "audio_settings.error",
-                  "layout": {
-                    "width": { "percent": 100.0 },
-                    "direction": "column",
-                    "gap": { "px": 4.0 },
-                    "padding": { "all": { "px": 10.0 } },
-                    "border": { "all": { "px": 1.0 } }
-                  },
-                  "style": {
-                    "component": "audio_error",
-                    "bindings": { "visibility": "audio_settings.error.visibility" }
-                  },
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "audio_settings.error.title",
-                      "content": { "binding_path": "audio_settings.error.title", "fallback": "" },
-                      "style": { "text_role": "body" }
-                    },
-                    {
-                      "type": "text",
-                      "id": "audio_settings.error.detail",
-                      "content": { "binding_path": "audio_settings.error.detail", "fallback": "" },
-                      "style": { "text_role": "caption" }
-                    }
-                  ]
-                },
-                {
-                  "type": "container",
-                  "id": "audio_settings.master.section",
-                  "layout": {
-                    "width": { "percent": 100.0 },
-                    "direction": "column",
-                    "gap": { "px": 10.0 },
-                    "padding": { "all": { "px": 14.0 } },
-                    "border": { "all": { "px": 1.0 } }
-                  },
-                  "style": { "component": "audio_section" },
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "audio_settings.master.label",
-                      "content": { "literal": "MASTER" },
-                      "style": { "text_role": "caption" }
-                    },
-                    {
-                      "type": "toggle",
-                      "id": "audio_settings.master.muted",
-                      "on": false,
-                      "component": {
-                        "slots": {
-                          "label": { "kind": "text", "content": { "literal": "Mute all audio" } }
-                        },
-                        "bindings": {
-                          "disabled": "audio_settings.controls.disabled",
-                          "value": { "binding_path": "audio_settings.master.muted" }
-                        }
-                      },
-                      "on_change": {
-                        "action": "main_world_audio_settings.set_master_muted",
-                        "params": { "muted": { "kind": "current_control_value" } }
-                      }
-                    },
-                    {
-                      "type": "text",
-                      "id": "audio_settings.master.helper",
-                      "content": { "literal": "Volume levels are preserved while muted" },
-                      "style": { "text_role": "caption" }
-                    }
-                  ]
-                },
-                {
-                  "type": "container",
-                  "id": "audio_settings.volume.section",
-                  "layout": {
-                    "width": { "percent": 100.0 },
-                    "direction": "column",
-                    "gap": { "px": 10.0 },
-                    "padding": { "all": { "px": 14.0 } },
-                    "border": { "all": { "px": 1.0 } }
-                  },
-                  "style": { "component": "audio_section" },
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "audio_settings.volume.label",
-                      "content": { "literal": "BUS LEVELS" },
-                      "style": { "text_role": "caption" }
-                    },
-                    {
-                      "type": "slider",
-                      "id": "audio_settings.volume.master",
-                      "value": 100.0,
-                      "min": 0.0,
-                      "max": 100.0,
-                      "component": {
-                        "slots": { "label": { "kind": "text", "content": { "literal": "Master" } } },
-                        "bindings": {
-                          "disabled": "audio_settings.controls.disabled",
-                          "value": { "binding_path": "audio_settings.volume.master" }
-                        }
-                      },
-                      "on_change": {
-                        "action": "main_world_audio_settings.set_volume",
-                        "params": {
-                          "bus": { "kind": "enum", "value": "master" },
-                          "value": { "kind": "current_control_value" }
-                        }
-                      }
-                    },
-                    {
-                      "type": "slider",
-                      "id": "audio_settings.volume.music",
-                      "value": 100.0,
-                      "min": 0.0,
-                      "max": 100.0,
-                      "component": {
-                        "slots": { "label": { "kind": "text", "content": { "literal": "Music" } } },
-                        "bindings": {
-                          "disabled": "audio_settings.controls.disabled",
-                          "value": { "binding_path": "audio_settings.volume.music" }
-                        }
-                      },
-                      "on_change": {
-                        "action": "main_world_audio_settings.set_volume",
-                        "params": {
-                          "bus": { "kind": "enum", "value": "music" },
-                          "value": { "kind": "current_control_value" }
-                        }
-                      }
-                    },
-                    {
-                      "type": "slider",
-                      "id": "audio_settings.volume.sfx",
-                      "value": 100.0,
-                      "min": 0.0,
-                      "max": 100.0,
-                      "component": {
-                        "slots": { "label": { "kind": "text", "content": { "literal": "SFX" } } },
-                        "bindings": {
-                          "disabled": "audio_settings.controls.disabled",
-                          "value": { "binding_path": "audio_settings.volume.sfx" }
-                        }
-                      },
-                      "on_change": {
-                        "action": "main_world_audio_settings.set_volume",
-                        "params": {
-                          "bus": { "kind": "enum", "value": "sfx" },
-                          "value": { "kind": "current_control_value" }
-                        }
-                      }
-                    },
-                    {
-                      "type": "slider",
-                      "id": "audio_settings.volume.ui",
-                      "value": 100.0,
-                      "min": 0.0,
-                      "max": 100.0,
-                      "component": {
-                        "slots": { "label": { "kind": "text", "content": { "literal": "UI" } } },
-                        "bindings": {
-                          "disabled": "audio_settings.controls.disabled",
-                          "value": { "binding_path": "audio_settings.volume.ui" }
-                        }
-                      },
-                      "on_change": {
-                        "action": "main_world_audio_settings.set_volume",
-                        "params": {
-                          "bus": { "kind": "enum", "value": "ui" },
-                          "value": { "kind": "current_control_value" }
-                        }
-                      }
-                    },
-                    {
-                      "type": "slider",
-                      "id": "audio_settings.volume.battle",
-                      "value": 100.0,
-                      "min": 0.0,
-                      "max": 100.0,
-                      "component": {
-                        "slots": { "label": { "kind": "text", "content": { "literal": "Battle" } } },
-                        "bindings": {
-                          "disabled": "audio_settings.controls.disabled",
-                          "value": { "binding_path": "audio_settings.volume.battle" }
-                        }
-                      },
-                      "on_change": {
-                        "action": "main_world_audio_settings.set_volume",
-                        "params": {
-                          "bus": { "kind": "enum", "value": "battle" },
-                          "value": { "kind": "current_control_value" }
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "spacer",
-                  "id": "audio_settings.rule",
-                  "layout": { "width": { "percent": 100.0 }, "height": { "px": 1.0 } },
-                  "style": { "component": "audio_rule" }
-                },
-                {
-                  "type": "text",
-                  "id": "audio_settings.contract_note",
-                  "content": { "literal": "Settings are applied directly to the active audio mixer." },
-                  "style": { "text_role": "caption" }
-                }
-              ]
-            }
-          ]
-        }
-      }
-    ]
+    "type": "container", "id": "main_world_settings.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "direction": "column" },
+    "style": { "inline": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#081014" } } } },
+    "children": [{
+      "type": "scroll", "id": "main_world_settings.scroll", "block_lower": true, "max_height": 2400.0,
+      "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "overflow": { "y": "scroll" }, "align_items": "center", "justify_content": "center" },
+      "component": { "children": [{
+        "type": "container", "id": "main_world_settings.shell",
+        "layout": { "width": { "percent": 100.0 }, "max_width": { "px": 980.0 }, "min_width": { "px": 300.0 }, "padding": { "all": { "px": 22.0 } }, "gap": { "px": 14.0 }, "direction": "column", "flex_shrink": 0.0 }, "style": { "component": "audio_shell" },
+        "children": [
+          { "type": "container", "id": "main_world_settings.header", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 10.0 } }, "children": [
+            { "type": "container", "id": "main_world_settings.heading", "layout": { "direction": "column", "gap": { "px": 3.0 }, "flex_grow": 1.0, "min_width": { "px": 190.0 } }, "children": [
+              { "type": "text", "id": "main_world_settings.title", "content": { "i18n_key": "main_world_settings.title", "fallback": "SETTINGS" }, "style": { "text_role": "title" } },
+              { "type": "text", "id": "main_world_settings.status", "content": { "i18n_key": "main_world_settings.status", "fallback": "Changes apply immediately" }, "style": { "text_role": "caption" } }
+            ] },
+            { "type": "button", "id": "audio_settings.return_lobby", "variant": "secondary", "label": { "i18n_key": "main_world_settings.action.close", "fallback": "Close" }, "on_click": { "action": "main_world_audio_settings.close" } }
+          ] },
+          { "type": "container", "id": "audio_settings.error", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 4.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "audio_error", "bindings": { "visibility": "audio_settings.error.visibility" } }, "children": [
+            { "type": "text", "id": "audio_settings.error.title", "content": { "binding_path": "audio_settings.error.title", "fallback": "" }, "style": { "text_role": "body" } },
+            { "type": "text", "id": "audio_settings.error.detail", "content": { "binding_path": "audio_settings.error.detail", "fallback": "" }, "style": { "text_role": "caption" } }
+          ] },
+          { "type": "container", "id": "main_world_settings.body", "layout": { "width": { "percent": 100.0 }, "direction": "row", "gap": { "px": 14.0 }, "align_items": "start" }, "children": [
+            { "type": "container", "id": "main_world_settings.tabs", "layout": { "width": { "px": 180.0 }, "min_width": { "px": 140.0 }, "direction": "column", "gap": { "px": 6.0 }, "align_self": "start" }, "children": [
+              { "type": "button", "id": "main_world_settings.tab.audio", "variant": "secondary", "label": { "i18n_key": "main_world_settings.tab.audio", "fallback": "Audio Settings" }, "layout": { "width": { "percent": 100.0 } }, "component": { "bindings": { "selected": "main_world_settings.tab.audio.selected" } }, "on_click": { "action": "main_world_audio_settings.select_tab", "params": { "tab": { "kind": "enum", "value": "audio" } } } },
+              { "type": "button", "id": "main_world_settings.tab.scene", "variant": "secondary", "label": { "i18n_key": "main_world_settings.tab.scene", "fallback": "Scene Settings" }, "layout": { "width": { "percent": 100.0 } }, "component": { "bindings": { "selected": "main_world_settings.tab.scene.selected" } }, "on_click": { "action": "main_world_audio_settings.select_tab", "params": { "tab": { "kind": "enum", "value": "scene" } } } }
+            ] },
+            { "type": "container", "id": "main_world_settings.content", "layout": { "flex_grow": 1.0, "min_width": { "px": 220.0 }, "direction": "column" }, "children": [
+              { "type": "container", "id": "main_world_settings.audio_page", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 14.0 } }, "style": { "bindings": { "display": "main_world_settings.tab.audio.display" } }, "children": [
+                { "type": "container", "id": "audio_settings.master.section", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 10.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "audio_section" }, "children": [
+                  { "type": "text", "id": "audio_settings.master.label", "content": { "i18n_key": "main_world_settings.audio.master.section", "fallback": "MASTER" }, "style": { "text_role": "caption" } },
+                  { "type": "toggle", "id": "audio_settings.master.muted", "on": false, "component": { "slots": { "label": { "kind": "text", "content": { "i18n_key": "main_world_settings.audio.master.muted", "fallback": "Mute all audio" } } }, "bindings": { "disabled": "audio_settings.controls.disabled", "value": { "binding_path": "audio_settings.master.muted" } } }, "on_change": { "action": "main_world_audio_settings.set_master_muted", "params": { "muted": { "kind": "current_control_value" } } } },
+                  { "type": "text", "id": "audio_settings.master.helper", "content": { "i18n_key": "main_world_settings.audio.master.helper", "fallback": "Volume levels are preserved while muted" }, "style": { "text_role": "caption" } }
+                ] },
+                { "type": "container", "id": "audio_settings.volume.section", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 10.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "audio_section" }, "children": [
+                  { "type": "text", "id": "audio_settings.volume.label", "content": { "i18n_key": "main_world_settings.audio.volume.section", "fallback": "BUS LEVELS" }, "style": { "text_role": "caption" } },
+                  { "type": "slider", "id": "audio_settings.volume.master", "value": 100.0, "min": 0.0, "max": 100.0, "component": { "slots": { "label": { "kind": "text", "content": { "i18n_key": "main_world_settings.audio.bus.master", "fallback": "Master" } } }, "bindings": { "disabled": "audio_settings.controls.disabled", "value": { "binding_path": "audio_settings.volume.master" } } }, "on_change": { "action": "main_world_audio_settings.set_volume", "params": { "bus": { "kind": "enum", "value": "master" }, "value": { "kind": "current_control_value" } } } },
+                  { "type": "slider", "id": "audio_settings.volume.music", "value": 100.0, "min": 0.0, "max": 100.0, "component": { "slots": { "label": { "kind": "text", "content": { "i18n_key": "main_world_settings.audio.bus.music", "fallback": "Music" } } }, "bindings": { "disabled": "audio_settings.controls.disabled", "value": { "binding_path": "audio_settings.volume.music" } } }, "on_change": { "action": "main_world_audio_settings.set_volume", "params": { "bus": { "kind": "enum", "value": "music" }, "value": { "kind": "current_control_value" } } } },
+                  { "type": "slider", "id": "audio_settings.volume.sfx", "value": 100.0, "min": 0.0, "max": 100.0, "component": { "slots": { "label": { "kind": "text", "content": { "i18n_key": "main_world_settings.audio.bus.sfx", "fallback": "SFX" } } }, "bindings": { "disabled": "audio_settings.controls.disabled", "value": { "binding_path": "audio_settings.volume.sfx" } } }, "on_change": { "action": "main_world_audio_settings.set_volume", "params": { "bus": { "kind": "enum", "value": "sfx" }, "value": { "kind": "current_control_value" } } } },
+                  { "type": "slider", "id": "audio_settings.volume.ui", "value": 100.0, "min": 0.0, "max": 100.0, "component": { "slots": { "label": { "kind": "text", "content": { "i18n_key": "main_world_settings.audio.bus.ui", "fallback": "UI" } } }, "bindings": { "disabled": "audio_settings.controls.disabled", "value": { "binding_path": "audio_settings.volume.ui" } } }, "on_change": { "action": "main_world_audio_settings.set_volume", "params": { "bus": { "kind": "enum", "value": "ui" }, "value": { "kind": "current_control_value" } } } },
+                  { "type": "slider", "id": "audio_settings.volume.battle", "value": 100.0, "min": 0.0, "max": 100.0, "component": { "slots": { "label": { "kind": "text", "content": { "i18n_key": "main_world_settings.audio.bus.battle", "fallback": "Battle" } } }, "bindings": { "disabled": "audio_settings.controls.disabled", "value": { "binding_path": "audio_settings.volume.battle" } } }, "on_change": { "action": "main_world_audio_settings.set_volume", "params": { "bus": { "kind": "enum", "value": "battle" }, "value": { "kind": "current_control_value" } } } }
+                ] },
+                { "type": "text", "id": "audio_settings.contract_note", "content": { "i18n_key": "main_world_settings.audio.contract_note", "fallback": "Settings are applied directly to the active audio mixer." }, "style": { "text_role": "caption" } }
+              ] },
+              { "type": "container", "id": "main_world_settings.scene_page", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 14.0 } }, "style": { "bindings": { "display": "main_world_settings.tab.scene.display" } }, "children": [
+                { "type": "container", "id": "main_world_settings.scene.section", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 10.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "audio_section" }, "children": [
+                  { "type": "text", "id": "main_world_settings.scene.title", "content": { "i18n_key": "main_world_settings.scene.title", "fallback": "SCENE SETTINGS" }, "style": { "text_role": "caption" } },
+                  { "type": "toggle", "id": "main_world_settings.camera.follow_player", "on": true, "component": { "states": ["selected"], "slots": { "label": { "kind": "text", "content": { "i18n_key": "main_world_settings.scene.camera.follow_player", "fallback": "Camera follow player" } } }, "bindings": { "value": { "binding_path": "main_world_settings.camera.follow_player" } } }, "on_change": { "action": "main_world_audio_settings.set_camera_follow", "params": { "follow_player": { "kind": "current_control_value" } } } },
+                  { "type": "text", "id": "main_world_settings.camera.follow_player_help", "content": { "i18n_key": "main_world_settings.scene.camera.follow_player.help", "fallback": "When disabled, the camera remains at its current position." }, "style": { "text_role": "caption" } }
+                ] }
+              ] }
+            ] }
+          ] }
+        ]
+      }] }
+    }]
   },
   "states": [],
   "responsive": [
-    {
-      "id": "short_landscape",
-      "priority": 100,
-      "when": { "height_class": "short", "orientation": "landscape" },
-      "overrides": [
-        {
-          "node_id": "audio_settings.scroll",
-          "set": {
-            "layout": {
-              "padding": { "all": { "px": 8.0 } },
-              "justify_content": "start"
-            }
-          }
-        },
-        {
-          "node_id": "audio_settings.shell",
-          "set": {
-            "layout": {
-              "max_width": { "px": 920.0 },
-              "padding": { "all": { "px": 12.0 } },
-              "gap": { "px": 8.0 }
-            }
-          }
-        },
-        {
-          "node_id": "audio_settings.master.section",
-          "set": { "layout": { "padding": { "all": { "px": 10.0 } }, "gap": { "px": 6.0 } } }
-        },
-        {
-          "node_id": "audio_settings.volume.section",
-          "set": { "layout": { "padding": { "all": { "px": 10.0 } }, "gap": { "px": 6.0 } } }
-        }
-      ]
-    },
-    {
-      "id": "compact_width",
-      "priority": 50,
-      "when": { "width_class": "compact" },
-      "overrides": [
-        {
-          "node_id": "audio_settings.scroll",
-          "set": {
-            "layout": {
-              "padding": { "all": { "px": 10.0 } },
-              "justify_content": "start"
-            }
-          }
-        },
-        {
-          "node_id": "audio_settings.shell",
-          "set": {
-            "layout": {
-              "min_width": { "px": 280.0 },
-              "padding": { "all": { "px": 14.0 } }
-            }
-          }
-        }
-      ]
-    }
+    { "id": "short_landscape", "priority": 100, "when": { "height_class": "short", "orientation": "landscape" }, "overrides": [
+      { "node_id": "main_world_settings.scroll", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "justify_content": "start" } } },
+      { "node_id": "main_world_settings.shell", "set": { "layout": { "padding": { "all": { "px": 12.0 } }, "gap": { "px": 8.0 } } } },
+      { "node_id": "main_world_settings.tabs", "set": { "layout": { "width": { "px": 140.0 }, "min_width": { "px": 120.0 } } } }
+    ] },
+    { "id": "compact_width", "priority": 50, "when": { "width_class": "compact" }, "overrides": [
+      { "node_id": "main_world_settings.scroll", "set": { "layout": { "padding": { "all": { "px": 10.0 } }, "justify_content": "start" } } },
+      { "node_id": "main_world_settings.shell", "set": { "layout": { "min_width": { "px": 280.0 }, "padding": { "all": { "px": 14.0 } } } } },
+      { "node_id": "main_world_settings.tabs", "set": { "layout": { "width": { "px": 130.0 }, "min_width": { "px": 110.0 } } } }
+    ] }
   ]
 }

@@ -27,6 +27,7 @@ use crate::game::{
         DeclarativeScreenRegistry, DeclarativeScreenSource,
     },
     navigation::{AppUiMode, GameRouteCommand},
+    scenes::MainWorldCameraOrbitState,
     ui_ids::{OWNER_AUDIO_SETTINGS, OWNER_MAIN_WORLD_SETTINGS_PANEL},
 };
 
@@ -51,10 +52,16 @@ pub(super) const ACTION_MAIN_WORLD_SET_VOLUME: &str = "main_world_audio_settings
 pub(super) const ACTION_MAIN_WORLD_SET_MASTER_MUTED: &str =
     "main_world_audio_settings.set_master_muted";
 pub(super) const ACTION_MAIN_WORLD_CLOSE: &str = "main_world_audio_settings.close";
+pub(super) const ACTION_MAIN_WORLD_SELECT_TAB: &str = "main_world_audio_settings.select_tab";
+pub(super) const ACTION_MAIN_WORLD_SET_CAMERA_FOLLOW: &str =
+    "main_world_audio_settings.set_camera_follow";
 pub(in crate::game) const MAIN_WORLD_SETTINGS_ROUTE: &str = "main_world_settings";
 
 const RETURN_LOBBY_NODE: &str = "audio_settings.return_lobby";
 const MASTER_MUTE_NODE: &str = "audio_settings.master.muted";
+const MAIN_WORLD_TAB_AUDIO_NODE: &str = "main_world_settings.tab.audio";
+const MAIN_WORLD_TAB_SCENE_NODE: &str = "main_world_settings.tab.scene";
+const MAIN_WORLD_CAMERA_FOLLOW_NODE: &str = "main_world_settings.camera.follow_player";
 const VOLUME_MIN_PERCENT: f64 = 0.0;
 const VOLUME_MAX_PERCENT: f64 = 100.0;
 
@@ -77,6 +84,23 @@ const VOLUME_BINDINGS: [(&str, AudioBus); 5] = [
 #[derive(Resource)]
 pub(in crate::game) struct AudioSettingsHostContract {
     pub bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Resource)]
+pub(in crate::game::screens::settings) enum MainWorldSettingsTab {
+    #[default]
+    Audio,
+    Scene,
+}
+
+impl MainWorldSettingsTab {
+    fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "audio" => Some(Self::Audio),
+            "scene" => Some(Self::Scene),
+            _ => None,
+        }
+    }
 }
 
 impl Default for AudioSettingsHostContract {
@@ -263,6 +287,8 @@ pub(in crate::game) fn main_world_audio_settings_declarative_screen_host(
             ACTION_MAIN_WORLD_SET_VOLUME,
             ACTION_MAIN_WORLD_SET_MASTER_MUTED,
             ACTION_MAIN_WORLD_CLOSE,
+            ACTION_MAIN_WORLD_SELECT_TAB,
+            ACTION_MAIN_WORLD_SET_CAMERA_FOLLOW,
         ]
         .into_iter()
         .map(|action| UiActionId::from_str(action).expect("static action ID is valid"))
@@ -284,7 +310,7 @@ pub(in crate::game) fn main_world_audio_settings_declarative_screen_host(
 fn host_binding_schema(
     contract: &AudioSettingsHostContract,
 ) -> BTreeMap<UiHostBindingKey, UiBindingType> {
-    contract
+    let mut bindings = contract
         .bindings
         .iter()
         .map(|(path, declaration)| {
@@ -293,7 +319,42 @@ fn host_binding_schema(
                 declaration.value_type.clone(),
             )
         })
-        .collect()
+        .collect::<BTreeMap<_, _>>();
+    for (path, value_type) in [
+        (
+            "main_world_settings.tab.audio.selected",
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_settings.tab.scene.selected",
+            UiBindingType::Bool,
+        ),
+        (
+            "main_world_settings.tab.audio.display",
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
+        ),
+        (
+            "main_world_settings.tab.scene.display",
+            UiBindingType::Enum {
+                values: vec!["flex".to_owned(), "none".to_owned()],
+            },
+        ),
+        (
+            "main_world_settings.camera.follow_player",
+            UiBindingType::Bool,
+        ),
+    ] {
+        bindings.insert(
+            UiHostBindingKey::new(
+                UiBindingScope::Owner,
+                UiBindingPath::from_str(path).expect("Main World Settings binding path is valid"),
+            ),
+            value_type,
+        );
+    }
+    bindings
 }
 
 pub(super) fn audio_settings_action_descriptors() -> Vec<UiActionDescriptor> {
@@ -395,6 +456,33 @@ pub(super) fn main_world_audio_settings_action_descriptors() -> Vec<UiActionDesc
             business_command(ACTION_MAIN_WORLD_CLOSE),
         )
         .with_source(UiNodeId::from_str(RETURN_LOBBY_NODE).unwrap()),
+        UiActionDescriptor::new(
+            UiActionId::from_str(ACTION_MAIN_WORLD_SELECT_TAB).unwrap(),
+            document_id(),
+            OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+            business_command(ACTION_MAIN_WORLD_SELECT_TAB),
+        )
+        .with_sources([
+            UiNodeId::from_str(MAIN_WORLD_TAB_AUDIO_NODE).unwrap(),
+            UiNodeId::from_str(MAIN_WORLD_TAB_SCENE_NODE).unwrap(),
+        ])
+        .with_param(
+            "tab",
+            UiActionParamSchema::required(UiActionParamType::Enum {
+                values: ["audio".to_owned(), "scene".to_owned()].into(),
+            }),
+        ),
+        UiActionDescriptor::new(
+            UiActionId::from_str(ACTION_MAIN_WORLD_SET_CAMERA_FOLLOW).unwrap(),
+            document_id(),
+            OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+            business_command(ACTION_MAIN_WORLD_SET_CAMERA_FOLLOW),
+        )
+        .with_source(UiNodeId::from_str(MAIN_WORLD_CAMERA_FOLLOW_NODE).unwrap())
+        .with_param(
+            "follow_player",
+            UiActionParamSchema::required(UiActionParamType::Bool),
+        ),
     ]
 }
 
@@ -414,6 +502,8 @@ pub(in crate::game::screens::settings) fn handle_audio_settings_document_actions
     mut route_commands: MessageWriter<GameRouteCommand>,
     mut screen_commands: MessageWriter<DeclarativeScreenHostCommand>,
     mut focus: ResMut<UiFocusState>,
+    mut selected_tab: ResMut<MainWorldSettingsTab>,
+    mut camera_orbit: Option<ResMut<MainWorldCameraOrbitState>>,
 ) {
     let available = mixer.is_some();
     let disabled = !available;
@@ -465,9 +555,44 @@ pub(in crate::game::screens::settings) fn handle_audio_settings_document_actions
                 if action.source_node.as_str() == RETURN_LOBBY_NODE && action.params.is_empty() =>
             {
                 focus.focused_entity = None;
+                *selected_tab = MainWorldSettingsTab::Audio;
                 screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
                     route: MAIN_WORLD_SETTINGS_ROUTE.to_owned(),
                 });
+            }
+            (AudioSettingsSurface::MainWorld, ACTION_MAIN_WORLD_SELECT_TAB)
+                if action.params.len() == 1
+                    && matches!(
+                        action.source_node.as_str(),
+                        MAIN_WORLD_TAB_AUDIO_NODE | MAIN_WORLD_TAB_SCENE_NODE
+                    ) =>
+            {
+                let Some(UiActionValue::Enum(tab)) = action.params.get("tab") else {
+                    continue;
+                };
+                let Some(tab) = MainWorldSettingsTab::from_str(tab) else {
+                    continue;
+                };
+                if (action.source_node.as_str() == MAIN_WORLD_TAB_AUDIO_NODE
+                    && tab != MainWorldSettingsTab::Audio)
+                    || (action.source_node.as_str() == MAIN_WORLD_TAB_SCENE_NODE
+                        && tab != MainWorldSettingsTab::Scene)
+                {
+                    continue;
+                }
+                *selected_tab = tab;
+            }
+            (AudioSettingsSurface::MainWorld, ACTION_MAIN_WORLD_SET_CAMERA_FOLLOW)
+                if action.source_node.as_str() == MAIN_WORLD_CAMERA_FOLLOW_NODE
+                    && action.params.len() == 1 =>
+            {
+                let Some(UiActionValue::Bool(follow_player)) = action.params.get("follow_player")
+                else {
+                    continue;
+                };
+                if let Some(camera_orbit) = camera_orbit.as_deref_mut() {
+                    camera_orbit.follow_player = *follow_player;
+                }
             }
             _ => {}
         }
@@ -504,7 +629,9 @@ fn audio_settings_action_surface(action: &UiActionDispatch) -> Option<AudioSetti
             owner,
             ACTION_MAIN_WORLD_SET_VOLUME
             | ACTION_MAIN_WORLD_SET_MASTER_MUTED
-            | ACTION_MAIN_WORLD_CLOSE,
+            | ACTION_MAIN_WORLD_CLOSE
+            | ACTION_MAIN_WORLD_SELECT_TAB
+            | ACTION_MAIN_WORLD_SET_CAMERA_FOLLOW,
         ) if owner == OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str() => {
             Some(AudioSettingsSurface::MainWorld)
         }
@@ -558,6 +685,8 @@ pub(in crate::game) fn sync_main_world_audio_settings_document_bindings(
     #[cfg(all(debug_assertions, not(target_os = "android")))] audit: Option<
         Res<AudioSettingsAuditFixture>,
     >,
+    selected_tab: Res<MainWorldSettingsTab>,
+    camera_orbit: Option<Res<MainWorldCameraOrbitState>>,
     mut values: ResMut<UiBindingValues>,
 ) {
     sync_audio_settings_bindings_for_surface(
@@ -568,6 +697,65 @@ pub(in crate::game) fn sync_main_world_audio_settings_document_bindings(
         MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID,
         OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
         &mut values,
+    );
+    let selected_tab = *selected_tab;
+    let display =
+        |tab| UiBindingValue::Enum(if selected_tab == tab { "flex" } else { "none" }.to_owned());
+    for (path, value) in [
+        (
+            "main_world_settings.tab.audio.selected",
+            UiBindingValue::Bool(selected_tab == MainWorldSettingsTab::Audio),
+        ),
+        (
+            "main_world_settings.tab.scene.selected",
+            UiBindingValue::Bool(selected_tab == MainWorldSettingsTab::Scene),
+        ),
+        (
+            "main_world_settings.tab.audio.display",
+            display(MainWorldSettingsTab::Audio),
+        ),
+        (
+            "main_world_settings.tab.scene.display",
+            display(MainWorldSettingsTab::Scene),
+        ),
+        (
+            "main_world_settings.camera.follow_player",
+            UiBindingValue::Bool(camera_orbit.is_none_or(|orbit| orbit.follow_player)),
+        ),
+    ] {
+        set_main_world_binding(&contract, &mut values, path, value);
+    }
+}
+
+fn set_main_world_binding(
+    contract: &AudioSettingsHostContract,
+    values: &mut UiBindingValues,
+    path: &str,
+    value: UiBindingValue,
+) {
+    let path = UiBindingPath::from_str(path).expect("Main World Settings binding path is valid");
+    let declaration = contract
+        .bindings
+        .get(&path)
+        .cloned()
+        .unwrap_or(UiBindingDeclaration {
+            scope: UiBindingScope::Owner,
+            value_type: match value {
+                UiBindingValue::Bool(_) => UiBindingType::Bool,
+                UiBindingValue::Enum(_) => UiBindingType::Enum {
+                    values: vec!["flex".to_owned(), "none".to_owned()],
+                },
+                _ => unreachable!("Main World Settings only emits bool and enum bindings"),
+            },
+            default: None,
+            missing: UiBindingMissingBehavior::UseConsumerFallback,
+        });
+    values.set_scoped(
+        MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID,
+        OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+        &path,
+        &declaration,
+        value,
     );
 }
 

@@ -110,7 +110,8 @@ fn main_world_audio_settings_reuses_the_schema_as_a_floating_scene_panel() {
         host.layer,
         crate::framework::ui::document::UiDocumentLayer::Floating
     );
-    assert_eq!(host.binding_schema.len(), contract.bindings.len());
+    assert_eq!(host.binding_schema.len(), contract.bindings.len() + 5);
+    assert_eq!(host.action_allowlist.len(), 5);
     assert_eq!(
         registration.owner(),
         OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str()
@@ -131,7 +132,10 @@ fn main_world_audio_settings_stays_scrollable_and_actionable_in_audit_profiles()
             .effective_document(&profile, &UiPageState::initial())
             .unwrap();
         for node in [
-            "audio_settings.scroll",
+            "main_world_settings.scroll",
+            "main_world_settings.tab.audio",
+            "main_world_settings.tab.scene",
+            "main_world_settings.camera.follow_player",
             "audio_settings.return_lobby",
             "audio_settings.master.muted",
             "audio_settings.volume.master",
@@ -270,6 +274,32 @@ fn main_world_close_action_closes_only_the_scene_panel() {
         [DeclarativeScreenHostCommand::CloseRoute { route }]
             if route == MAIN_WORLD_SETTINGS_ROUTE
     ));
+}
+
+#[test]
+fn main_world_scene_settings_actions_switch_tabs_and_update_camera_follow_intent() {
+    let mut app = audio_action_test_app(true);
+    app.world_mut().write_message(main_world_audio_dispatch(
+        ACTION_MAIN_WORLD_SELECT_TAB,
+        "main_world_settings.tab.scene",
+        BTreeMap::from([("tab".to_owned(), UiActionValue::Enum("scene".to_owned()))]),
+    ));
+    app.world_mut().write_message(main_world_audio_dispatch(
+        ACTION_MAIN_WORLD_SET_CAMERA_FOLLOW,
+        "main_world_settings.camera.follow_player",
+        BTreeMap::from([("follow_player".to_owned(), UiActionValue::Bool(false))]),
+    ));
+    app.update();
+
+    assert_eq!(
+        *app.world().resource::<MainWorldSettingsTab>(),
+        MainWorldSettingsTab::Scene
+    );
+    assert!(
+        !app.world()
+            .resource::<crate::game::scenes::MainWorldCameraOrbitState>()
+            .follow_player
+    );
 }
 
 #[test]
@@ -494,6 +524,8 @@ fn audio_action_test_app(with_mixer: bool) -> App {
         .add_message::<GameRouteCommand>()
         .add_message::<DeclarativeScreenHostCommand>()
         .init_resource::<UiFocusState>()
+        .init_resource::<MainWorldSettingsTab>()
+        .init_resource::<crate::game::scenes::MainWorldCameraOrbitState>()
         .add_systems(Update, handle_audio_settings_document_actions);
     if with_mixer {
         app.init_resource::<AudioMixer>();

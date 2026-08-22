@@ -26,6 +26,17 @@
       {
         "id": "main_world_audio_settings.close",
         "sources": ["audio_settings.return_lobby"]
+      },
+      {
+        "id": "main_world_audio_settings.select_tab",
+        "sources": [
+          "main_world_settings.tab.audio",
+          "main_world_settings.tab.scene"
+        ]
+      },
+      {
+        "id": "main_world_audio_settings.set_camera_follow",
+        "sources": ["main_world_settings.camera.follow_player"]
       }
     ],
     "bindings": [
@@ -40,7 +51,12 @@
       { "path": "audio_settings.volume.master", "scope": "owner", "value_type": { "kind": "number" } },
       { "path": "audio_settings.volume.music", "scope": "owner", "value_type": { "kind": "number" } },
       { "path": "audio_settings.volume.sfx", "scope": "owner", "value_type": { "kind": "number" } },
-      { "path": "audio_settings.volume.ui", "scope": "owner", "value_type": { "kind": "number" } }
+      { "path": "audio_settings.volume.ui", "scope": "owner", "value_type": { "kind": "number" } },
+      { "path": "main_world_settings.camera.follow_player", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "main_world_settings.tab.audio.display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+      { "path": "main_world_settings.tab.audio.selected", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "main_world_settings.tab.scene.display", "scope": "owner", "value_type": { "kind": "enum", "values": ["flex", "none"] } },
+      { "path": "main_world_settings.tab.scene.selected", "scope": "owner", "value_type": { "kind": "bool" } }
     ],
     "resources": [],
     "version": 1

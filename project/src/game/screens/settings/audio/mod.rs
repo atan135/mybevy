@@ -10,7 +10,7 @@ pub(super) use host::{
     mark_audio_settings_audit_scroll, prepare_audio_settings_audit_fixture,
 };
 pub(super) use host::{
-    AudioSettingsHostContract, cleanup_audio_settings_screen,
+    AudioSettingsHostContract, MainWorldSettingsTab, cleanup_audio_settings_screen,
     handle_audio_settings_document_actions, register_audio_settings_contract,
     sync_audio_settings_document_bindings, sync_main_world_audio_settings_document_bindings,
 };

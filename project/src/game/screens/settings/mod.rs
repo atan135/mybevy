@@ -14,6 +14,7 @@ pub(super) struct SettingsScreensPlugin;
 impl Plugin for SettingsScreensPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<audio::AudioSettingsHostContract>()
+            .init_resource::<audio::MainWorldSettingsTab>()
             .add_systems(Startup, audio::register_audio_settings_contract)
             .add_systems(
                 OnExit(AppUiMode::AudioSettings),
