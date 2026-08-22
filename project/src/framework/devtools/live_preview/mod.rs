@@ -4,6 +4,7 @@
 //! through the adapter boundary in `game::devtools::live_preview`, while views
 //! only receive an immutable snapshot reference.
 
+mod collect_ui;
 mod model;
 mod plugin;
 mod schedule;
@@ -16,7 +17,7 @@ pub use model::{
     PerformancePreviewState, PlayerPreviewSection, PlayerPreviewState, PreviewDataStatus,
     PreviewFailure, PreviewSection, PreviewSourceHealth, PreviewSourceHealthSection,
     PreviewSourceHealthState, ScenePreviewSection, ScenePreviewState, StablePreviewId,
-    StablePreviewValue, UiPanelPreview, UiPreviewSection, UiPreviewState,
+    StablePreviewValue, UiPanelKindPreviewCounts, UiPanelPreview, UiPreviewSection, UiPreviewState,
 };
 
 pub use model::{LivePreviewPolicy, LivePreviewPolicy as LivePreviewConfig};

@@ -26,6 +26,7 @@ impl Plugin for UiPanelPlugin {
         app.add_message::<UiPanelCommand>()
             .add_message::<UiDocumentCloseTopRequest>()
             .init_resource::<UiCurrentOwner>()
+            .init_resource::<UiCurrentScreen>()
             .init_resource::<UiPanelStack>()
             .configure_sets(Update, UiPanelSystems::Commands)
             .add_systems(
@@ -153,6 +154,24 @@ pub(crate) struct UiCurrentOwner {
     pub owner: Option<UiOwnerId>,
 }
 
+/// Canonical route name supplied by the game navigation adapter. Keeping this
+/// separate from the owner lets diagnostics distinguish a route such as
+/// `audio_settings` from its owner namespace.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Resource)]
+pub(crate) struct UiCurrentScreen {
+    canonical_screen: Option<String>,
+}
+
+impl UiCurrentScreen {
+    pub(crate) fn set(&mut self, canonical_screen: impl Into<String>) {
+        self.canonical_screen = Some(canonical_screen.into());
+    }
+
+    pub(crate) fn canonical_screen(&self) -> Option<&str> {
+        self.canonical_screen.as_deref()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct UiPanelStackEntry {
     id: UiPanelId,
@@ -162,6 +181,14 @@ struct UiPanelStackEntry {
 #[derive(Default, Resource)]
 pub(crate) struct UiPanelStack {
     open_order: Vec<UiPanelStackEntry>,
+}
+
+impl UiPanelStack {
+    /// Read-only view used by diagnostics. Panel Manager remains the owner of
+    /// stack mutation and pruning; consumers must not rebuild this ordering.
+    pub(crate) fn ordered_entries(&self) -> impl Iterator<Item = (UiPanelId, UiPanelKind)> + '_ {
+        self.open_order.iter().map(|entry| (entry.id, entry.kind))
+    }
 }
 
 fn handle_panel_commands(

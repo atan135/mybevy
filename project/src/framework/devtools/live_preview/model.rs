@@ -194,17 +194,40 @@ pub struct UiPanelPreview {
     pub owner: Option<String>,
     pub z_index: Option<i32>,
     pub active: Option<bool>,
+    pub stack_index: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct UiPreviewState {
     pub canonical_screen: Option<String>,
+    pub screen_id: Option<StablePreviewId>,
     pub owner: Option<String>,
     pub panels: Vec<UiPanelPreview>,
+    pub pointer_blocked: Option<bool>,
+    pub block_reason: Option<String>,
+    pub route_summary: Option<String>,
     pub blocking_reason: Option<String>,
     pub focus_panel_id: Option<StablePreviewId>,
+    pub focus_node_id: Option<StablePreviewId>,
+    pub ui_node_count: Option<u64>,
+    pub visible_ui_node_count: Option<u64>,
+    pub text_node_count: Option<u64>,
+    pub panel_count: Option<u64>,
+    pub panel_kind_counts: Option<UiPanelKindPreviewCounts>,
     pub document_id: Option<StablePreviewId>,
     pub document_schema_version: Option<u16>,
+    pub document_status: Option<String>,
+    pub document_source: Option<String>,
+    pub document_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct UiPanelKindPreviewCounts {
+    pub page: u64,
+    pub hud: u64,
+    pub floating: u64,
+    pub modal: u64,
+    pub blocking_overlay: u64,
 }
 
 impl StablePreviewValue for UiPreviewState {

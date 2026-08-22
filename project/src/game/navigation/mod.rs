@@ -10,7 +10,7 @@ use crate::framework::ui::{
         UiAuditScreen, UiAuditScreenRecipe, UiAuditScreenRegistry, UiAuditTargetViewport,
     },
     core::binding::UiBindingValues,
-    core::{UiCurrentOwner, UiOwnerId, UiPanelCommand, UiPanelSystems},
+    core::{UiCurrentOwner, UiCurrentScreen, UiOwnerId, UiPanelCommand, UiPanelSystems},
     document::{
         UiActionDescriptor, UiActionDispatch, UiActionId, UiActionParamSchema, UiActionParamType,
         UiActionRegistry, UiBindingPath, UiBindingType, UiDocumentId, UiDocumentRuntimeCommand,
@@ -72,6 +72,10 @@ impl Plugin for NavigationPlugin {
             )
                 .chain()
                 .in_set(GameRouteSystems::Commands),
+        )
+        .add_systems(
+            Update,
+            sync_current_screen_with_mode.before(GameRouteSystems::Commands),
         );
     }
 }
@@ -383,12 +387,18 @@ fn handle_game_route_commands(
     mut next_mode: ResMut<NextState<AppUiMode>>,
     current_mode: Res<State<AppUiMode>>,
     mut current_owner: ResMut<UiCurrentOwner>,
+    mut current_screen: Option<ResMut<UiCurrentScreen>>,
     mut binding_values: ResMut<UiBindingValues>,
     mut panel_commands: MessageWriter<UiPanelCommand>,
     mut runtime_commands: MessageWriter<UiDocumentRuntimeCommand>,
 ) {
     if current_owner.owner.is_none() {
         current_owner.owner = Some(current_mode.get().ui_owner());
+    }
+    if let Some(screen) = current_screen.as_deref_mut()
+        && screen.canonical_screen().is_none()
+    {
+        screen.set(current_mode.get().canonical_screen());
     }
 
     for command in route_commands.read() {
@@ -416,9 +426,25 @@ fn handle_game_route_commands(
                     });
                 }
                 current_owner.owner = Some(mode.ui_owner());
+                if let Some(screen) = current_screen.as_deref_mut() {
+                    screen.set(mode.canonical_screen());
+                }
                 next_mode.set(*mode);
             }
         }
+    }
+}
+
+fn sync_current_screen_with_mode(
+    current_mode: Res<State<AppUiMode>>,
+    mut current_screen: Option<ResMut<UiCurrentScreen>>,
+) {
+    let Some(current_screen) = current_screen.as_deref_mut() else {
+        return;
+    };
+    let canonical_screen = current_mode.get().canonical_screen();
+    if current_screen.canonical_screen() != Some(canonical_screen) {
+        current_screen.set(canonical_screen);
     }
 }
 
@@ -748,6 +774,38 @@ mod tests {
     #[test]
     fn audio_settings_mode_uses_dedicated_owner() {
         assert_eq!(AppUiMode::AudioSettings.ui_owner(), OWNER_AUDIO_SETTINGS);
+    }
+
+    #[test]
+    fn route_command_updates_canonical_screen_independently_from_owner() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, StatesPlugin))
+            .init_state::<AppUiMode>()
+            .init_resource::<UiCurrentOwner>()
+            .init_resource::<UiCurrentScreen>()
+            .init_resource::<UiBindingValues>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<UiPanelCommand>()
+            .add_message::<UiDocumentRuntimeCommand>()
+            .add_systems(
+                Update,
+                sync_current_screen_with_mode.before(handle_game_route_commands),
+            )
+            .add_systems(Update, handle_game_route_commands);
+        app.update();
+
+        app.world_mut()
+            .write_message(GameRouteCommand::ChangeMode(AppUiMode::AudioSettings));
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<UiCurrentScreen>().canonical_screen(),
+            Some("audio_settings")
+        );
+        assert_eq!(
+            app.world().resource::<UiCurrentOwner>().owner,
+            Some(OWNER_AUDIO_SETTINGS)
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@ use bevy::prelude::{
 };
 use bevy::time::Real;
 
+use super::collect_ui::{UiPreviewCollectorState, collect_ui_preview};
 use super::model::{
     LivePreviewSnapshot, LivePreviewSnapshotHub, NetworkPreviewSection, PerformancePreviewSection,
     PlayerPreviewSection, PreviewSection, PreviewSourceHealthSection, ScenePreviewSection,
@@ -215,6 +216,7 @@ impl Plugin for LivePreviewPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LivePreviewClock>()
             .init_resource::<LivePreviewScheduler>()
+            .init_resource::<UiPreviewCollectorState>()
             .init_resource::<LivePreviewCollectionBuffer>()
             .init_resource::<LivePreviewSnapshotHub>()
             .init_resource::<LivePreviewTimeline>()
@@ -231,6 +233,10 @@ impl Plugin for LivePreviewPlugin {
             .add_systems(
                 PostUpdate,
                 advance_live_preview_clock.in_set(LivePreviewSet::AdvanceClock),
+            )
+            .add_systems(
+                PostUpdate,
+                collect_ui_preview.in_set(LivePreviewSet::Collect),
             )
             .add_systems(
                 PostUpdate,
