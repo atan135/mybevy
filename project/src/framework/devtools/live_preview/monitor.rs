@@ -710,11 +710,6 @@ fn spawn_monitor_root(
                 } else {
                     Visibility::Hidden
                 },
-                Node {
-                    width: percent(100.0),
-                    flex_grow: 1.0,
-                    ..default()
-                },
             ))
             .with_children(|body| {
                 body.spawn((
@@ -1440,6 +1435,43 @@ mod tests {
                 LivePreviewMonitorTarget::GameWindow
             }
         );
+    }
+
+    #[test]
+    fn monitor_root_applies_without_duplicate_scroll_nodes() {
+        let mut app = App::new();
+        app.insert_resource(UiTheme::default())
+            .insert_resource(UiViewport::default())
+            .insert_resource(UiMetrics::default())
+            .insert_resource(UiFontAssets::test_registry())
+            .add_systems(
+                Startup,
+                |mut commands: Commands,
+                 theme: Res<UiTheme>,
+                 metrics: Res<UiMetrics>,
+                 viewport: Res<UiViewport>,
+                 fonts: Res<UiFontAssets>| {
+                    spawn_monitor_root(
+                        &mut commands,
+                        &theme,
+                        &metrics,
+                        &viewport,
+                        &fonts,
+                        LivePreviewMonitorTarget::GameWindow,
+                        None,
+                        LivePreviewMonitorTab::Overview,
+                    );
+                },
+            );
+
+        app.update();
+
+        let scroll_count = {
+            let world = app.world_mut();
+            let mut scrolls = world.query_filtered::<&Node, With<LivePreviewMonitorScroll>>();
+            scrolls.iter(world).count()
+        };
+        assert_eq!(scroll_count, LivePreviewMonitorTab::ALL.len());
     }
 
     #[test]
