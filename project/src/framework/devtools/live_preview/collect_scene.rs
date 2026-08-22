@@ -105,22 +105,10 @@ pub(crate) fn collect_scene_preview(
         collector_state.last_debug_sample_ms = Some(now_ms);
     }
     let debug_snapshot = runtime.as_deref().and_then(|runtime| {
-        collector_state.debug_snapshot.as_ref().map(|cached| {
-            let metadata = SceneDebugSnapshot::from_runtime(runtime);
-            let same_session = cached.session_id == metadata.session_id;
-            let mut snapshot = cached.clone();
-            snapshot.scene_id = metadata.scene_id;
-            snapshot.session_id = metadata.session_id;
-            snapshot.state = metadata.state;
-            snapshot.last_error = metadata.last_error;
-            if !same_session {
-                snapshot.entity_counts = Default::default();
-                snapshot.scene_owned_entities = 0;
-                snapshot.layer_count = 0;
-                snapshot.layers.clear();
-            }
-            snapshot
-        })
+        collector_state
+            .debug_snapshot
+            .as_ref()
+            .map(|cached| merge_debug_snapshot_metadata(cached, runtime))
     });
     let next_state = collect_scene_state(
         runtime.as_deref(),
@@ -467,6 +455,26 @@ fn clear_scene_debug_cache_if_runtime_missing(
     }
 }
 
+fn merge_debug_snapshot_metadata(
+    cached: &SceneDebugSnapshot,
+    runtime: &SceneRuntime,
+) -> SceneDebugSnapshot {
+    let metadata = SceneDebugSnapshot::from_runtime(runtime);
+    let same_session = cached.session_id == metadata.session_id;
+    let mut snapshot = cached.clone();
+    snapshot.scene_id = metadata.scene_id;
+    snapshot.session_id = metadata.session_id;
+    snapshot.state = metadata.state;
+    snapshot.last_error = metadata.last_error;
+    if !same_session {
+        snapshot.entity_counts = Default::default();
+        snapshot.scene_owned_entities = 0;
+        snapshot.layer_count = 0;
+        snapshot.layers.clear();
+    }
+    snapshot
+}
+
 fn scene_lifecycle_label(state: SceneLifecycleState) -> &'static str {
     match state {
         SceneLifecycleState::Idle => "idle",
@@ -781,6 +789,39 @@ mod tests {
         assert_eq!(state.scene_status.as_deref(), Some("idle"));
         assert!(state.scene_entity_count.is_none());
         assert!(state.layer_ids.is_empty());
+    }
+
+    #[test]
+    fn cached_scene_counts_are_cleared_on_session_switch() {
+        let old_runtime = SceneRuntime {
+            active: Some(session("world.old", "session-old")),
+            state: SceneLifecycleState::Active,
+            ..Default::default()
+        };
+        let mut cached = debug_for(&old_runtime);
+        cached.entity_counts.total_scene_owned = 12;
+        cached.layer_count = 1;
+        cached.layers.push(SceneLayerDebugInfo {
+            layer_id: "base".into(),
+            session_id: "session-old".into(),
+            state: SceneLayerState::Active,
+            required: true,
+        });
+
+        let new_runtime = SceneRuntime {
+            pending: Some(session("world.new", "session-new")),
+            state: SceneLifecycleState::LoadingAssets,
+            ..Default::default()
+        };
+        let merged = merge_debug_snapshot_metadata(&cached, &new_runtime);
+
+        assert_eq!(
+            merged.session_id.as_ref().map(ToString::to_string),
+            Some("session-new".to_owned())
+        );
+        assert_eq!(merged.entity_counts.total_scene_owned, 0);
+        assert_eq!(merged.layer_count, 0);
+        assert!(merged.layers.is_empty());
     }
 
     #[test]
