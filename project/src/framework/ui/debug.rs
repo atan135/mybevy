@@ -126,6 +126,7 @@ impl UiDebugDisplayTarget {
         }
     }
 
+    #[allow(dead_code)]
     fn next_supported(self) -> Self {
         match self {
             Self::GameWindow if supports_dedicated_debug_window() => Self::DedicatedWindow,
@@ -156,32 +157,12 @@ fn handle_ui_debug_keys(
     key_codes: Res<ButtonInput<KeyCode>>,
     mut debug_state: ResMut<UiDebugState>,
 ) {
-    if key_codes.just_pressed(KeyCode::F3) {
-        debug_state.enabled = !debug_state.enabled;
-    }
-
-    if key_codes.just_pressed(KeyCode::F4) {
-        debug_state.frozen = !debug_state.frozen;
-    }
-
     if key_codes.just_pressed(KeyCode::F5) {
         debug_state.panel_filter = debug_state.panel_filter.next();
     }
 
     if key_codes.just_pressed(KeyCode::F6) {
         debug_state.highlight_panels = !debug_state.highlight_panels;
-    }
-
-    if key_codes.just_pressed(KeyCode::F7) {
-        let next_target = debug_state.target.next_supported();
-        if debug_state.target != next_target {
-            debug_state.target = next_target;
-            debug_state.root = None;
-        }
-    }
-
-    if key_codes.just_pressed(KeyCode::F8) {
-        debug_state.copy_requested = true;
     }
 }
 

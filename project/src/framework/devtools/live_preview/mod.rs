@@ -7,6 +7,7 @@
 mod collect_scene;
 mod collect_ui;
 mod model;
+mod monitor;
 mod plugin;
 mod schedule;
 mod source_health;
@@ -21,6 +22,10 @@ pub use model::{
     PreviewSourceHealth, PreviewSourceHealthSection, PreviewSourceHealthState, SceneLayerPreview,
     ScenePreviewSection, ScenePreviewState, StablePreviewId, StablePreviewValue,
     UiPanelKindPreviewCounts, UiPanelPreview, UiPreviewSection, UiPreviewState,
+};
+pub use monitor::{
+    LivePreviewMonitorPanelFilter, LivePreviewMonitorState, LivePreviewMonitorTab,
+    LivePreviewMonitorTarget,
 };
 
 pub use model::{LivePreviewPolicy, LivePreviewPolicy as LivePreviewConfig};

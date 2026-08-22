@@ -10,6 +10,7 @@ use super::model::{
     PlayerPreviewSection, PreviewSection, PreviewSourceHealthSection, ScenePreviewSection,
     UiPreviewSection,
 };
+use super::monitor::LivePreviewMonitorPlugin;
 use super::source_health::LivePreviewSourceHealthRegistry;
 use super::timeline::LivePreviewTimeline;
 
@@ -215,7 +216,8 @@ pub struct LivePreviewPlugin;
 
 impl Plugin for LivePreviewPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LivePreviewClock>()
+        app.add_plugins(LivePreviewMonitorPlugin)
+            .init_resource::<LivePreviewClock>()
             .init_resource::<LivePreviewScheduler>()
             .init_resource::<UiPreviewCollectorState>()
             .init_resource::<ScenePreviewCollectorState>()
