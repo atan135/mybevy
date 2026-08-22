@@ -290,6 +290,9 @@ struct LivePreviewMonitorBody(LivePreviewMonitorTab);
 #[derive(Component)]
 struct LivePreviewMonitorScroll(LivePreviewMonitorTab);
 
+#[derive(Component)]
+struct LivePreviewMonitorScrollHost(LivePreviewMonitorTab);
+
 pub(crate) struct LivePreviewMonitorPlugin;
 
 impl Plugin for LivePreviewMonitorPlugin {
@@ -568,6 +571,7 @@ fn sync_monitor_scroll(
         &mut ScrollPosition,
         &mut Visibility,
     )>,
+    mut hosts: Query<(&LivePreviewMonitorScrollHost, &mut Node)>,
 ) {
     let mut state = state;
     let restore = state.scroll_restore_pending;
@@ -579,6 +583,13 @@ fn sync_monitor_scroll(
             sync_scroll_offset(&mut state, scroll.0, position.0.y, false);
             *visibility = Visibility::Hidden;
         }
+    }
+    for (host, mut node) in &mut hosts {
+        node.display = if host.0 == state.tab {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
     state.scroll_restore_pending = false;
 }
@@ -674,7 +685,7 @@ fn spawn_monitor_root(
     match target {
         LivePreviewMonitorTarget::GameWindow => {
             node.width = px((viewport.logical_width * 0.42).clamp(420.0, 720.0));
-            node.max_height = percent(92.0);
+            node.height = percent(92.0);
         }
         LivePreviewMonitorTarget::DedicatedWindow => {
             node.left = px(metrics.page_padding);
@@ -733,34 +744,47 @@ fn spawn_monitor_root(
             });
         for tab in LivePreviewMonitorTab::ALL {
             root.spawn((
-                ui_scroll_column_bundle(
-                    UiScrollViewConfig::new(metrics.control_gap).with_max_height(
-                        (viewport.logical_height - metrics.page_padding * 3.0).max(280.0),
-                    ),
-                ),
-                LivePreviewMonitorScroll(tab),
-                if tab == active_tab {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
+                LivePreviewMonitorScrollHost(tab),
+                Node {
+                    width: percent(100.0),
+                    flex_grow: 1.0,
+                    flex_direction: FlexDirection::Column,
+                    min_height: px(0.0),
+                    display: if tab == active_tab {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    },
+                    ..default()
                 },
             ))
-            .with_children(|body| {
-                body.spawn((
-                    Node {
-                        width: percent(100.0),
-                        ..default()
+            .with_children(|host| {
+                host.spawn((
+                    ui_scroll_column_bundle(UiScrollViewConfig::new(metrics.control_gap)),
+                    LivePreviewMonitorScroll(tab),
+                    if tab == active_tab {
+                        Visibility::Visible
+                    } else {
+                        Visibility::Hidden
                     },
-                    screen_label(
-                        theme,
-                        fonts,
-                        "",
-                        UiThemeTextStyleRole::Caption,
-                        UiThemeTextColorRole::Primary,
-                    ),
-                    LivePreviewMonitorBody(tab),
-                    Pickable::IGNORE,
-                ));
+                ))
+                .with_children(|body| {
+                    body.spawn((
+                        Node {
+                            width: percent(100.0),
+                            ..default()
+                        },
+                        screen_label(
+                            theme,
+                            fonts,
+                            "",
+                            UiThemeTextStyleRole::Caption,
+                            UiThemeTextColorRole::Primary,
+                        ),
+                        LivePreviewMonitorBody(tab),
+                        Pickable::IGNORE,
+                    ));
+                });
             });
         }
     })
@@ -1513,6 +1537,116 @@ mod tests {
             tabs.iter(world).count()
         };
         assert_eq!(tab_count, LivePreviewMonitorTab::ALL.len());
+    }
+
+    fn assert_monitor_scroll_layout(target: LivePreviewMonitorTarget) {
+        let mut app = App::new();
+        app.insert_resource(UiTheme::default())
+            .insert_resource(UiViewport::default())
+            .insert_resource(UiMetrics::default())
+            .insert_resource(UiFontAssets::test_registry())
+            .insert_resource(LivePreviewMonitorState {
+                enabled: true,
+                ..Default::default()
+            })
+            .add_systems(
+                Startup,
+                move |mut commands: Commands,
+                      theme: Res<UiTheme>,
+                      metrics: Res<UiMetrics>,
+                      viewport: Res<UiViewport>,
+                      fonts: Res<UiFontAssets>| {
+                    spawn_monitor_root(
+                        &mut commands,
+                        &theme,
+                        &metrics,
+                        &viewport,
+                        &fonts,
+                        target,
+                        None,
+                        LivePreviewMonitorTab::Overview,
+                    );
+                },
+            )
+            .add_systems(Update, sync_monitor_scroll);
+
+        app.update();
+
+        {
+            let world = app.world_mut();
+            let mut roots = world.query_filtered::<&Node, With<LivePreviewMonitorRoot>>();
+            let root = roots.iter(world).next().expect("monitor root");
+            assert_eq!(
+                root.height,
+                if target == LivePreviewMonitorTarget::GameWindow {
+                    percent(92.0)
+                } else {
+                    percent(100.0)
+                }
+            );
+
+            let mut hosts = world.query::<(&LivePreviewMonitorScrollHost, &Node)>();
+            let host_rows = hosts
+                .iter(world)
+                .map(|(host, node)| {
+                    (
+                        host.0,
+                        node.width,
+                        node.flex_grow,
+                        node.min_height,
+                        node.display,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(host_rows.len(), LivePreviewMonitorTab::ALL.len());
+            for (tab, width, flex_grow, min_height, display) in host_rows {
+                assert_eq!(width, percent(100.0));
+                assert_eq!(flex_grow, 1.0);
+                assert_eq!(min_height, px(0.0));
+                assert_eq!(
+                    display,
+                    if tab == LivePreviewMonitorTab::Overview {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    }
+                );
+            }
+
+            let mut scrolls = world.query::<(&LivePreviewMonitorScroll, &Node)>();
+            for (_, node) in scrolls.iter(world) {
+                assert_eq!(node.max_height, Val::Auto);
+                assert_eq!(node.flex_grow, 1.0);
+            }
+        }
+
+        app.world_mut()
+            .resource_mut::<LivePreviewMonitorState>()
+            .tab = LivePreviewMonitorTab::Scene;
+        app.update();
+
+        let world = app.world_mut();
+        let mut hosts = world.query::<(&LivePreviewMonitorScrollHost, &Node)>();
+        for (host, node) in hosts.iter(world) {
+            assert_eq!(
+                node.display,
+                if host.0 == LivePreviewMonitorTab::Scene {
+                    Display::Flex
+                } else {
+                    Display::None
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn monitor_game_window_scroll_layout_uses_remaining_height() {
+        assert_monitor_scroll_layout(LivePreviewMonitorTarget::GameWindow);
+    }
+
+    #[test]
+    fn monitor_dedicated_window_scroll_layout_uses_remaining_height() {
+        assert_monitor_scroll_layout(LivePreviewMonitorTarget::DedicatedWindow);
     }
 
     #[test]
