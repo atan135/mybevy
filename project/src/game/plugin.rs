@@ -1,6 +1,8 @@
 use bevy::{prelude::*, ui::IsDefaultUiCamera};
 
-use crate::framework::{audio::AudioPlugin, scene::ScenePlugin};
+use crate::framework::{
+    audio::AudioPlugin, devtools::live_preview::LivePreviewPlugin, scene::ScenePlugin,
+};
 
 use super::{
     audio::GameAudioPlugin,
@@ -24,6 +26,7 @@ impl Plugin for GamePlugin {
             AudioPlugin,
             GameAudioPlugin,
             ScenePlugin,
+            LivePreviewPlugin,
             GameScenesPlugin,
             MyServerPlugin,
             AuthorityPlugin,
@@ -53,7 +56,13 @@ fn setup_camera(mut commands: Commands) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::framework::scene::{SCENE_CAMERA_2D_ORDER, SCENE_CAMERA_3D_ORDER};
+    use crate::framework::{
+        devtools::live_preview::{
+            LivePreviewClock, LivePreviewCollectionBuffer, LivePreviewScheduler,
+            LivePreviewSnapshotHub, LivePreviewSourceHealthRegistry, LivePreviewTimeline,
+        },
+        scene::{SCENE_CAMERA_2D_ORDER, SCENE_CAMERA_3D_ORDER},
+    };
 
     #[test]
     fn global_ui_camera_order_is_above_scene_cameras() {
@@ -74,5 +83,25 @@ mod tests {
 
         assert_eq!(camera.order, GLOBAL_UI_CAMERA_ORDER);
         assert!(matches!(camera.clear_color, ClearColorConfig::None));
+    }
+
+    #[test]
+    fn live_preview_plugin_initializes_core_resources() {
+        let mut app = App::new();
+        app.add_plugins(LivePreviewPlugin);
+        app.update();
+
+        assert!(app.world().contains_resource::<LivePreviewClock>());
+        assert!(
+            app.world()
+                .contains_resource::<LivePreviewCollectionBuffer>()
+        );
+        assert!(app.world().contains_resource::<LivePreviewScheduler>());
+        assert!(app.world().contains_resource::<LivePreviewSnapshotHub>());
+        assert!(app.world().contains_resource::<LivePreviewTimeline>());
+        assert!(
+            app.world()
+                .contains_resource::<LivePreviewSourceHealthRegistry>()
+        );
     }
 }
