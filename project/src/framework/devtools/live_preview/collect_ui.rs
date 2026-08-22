@@ -490,6 +490,7 @@ mod tests {
                 owner: None,
             },
             Visibility::Visible,
+            InheritedVisibility::VISIBLE,
             ZIndex(1),
         ));
         world.spawn((
@@ -499,6 +500,7 @@ mod tests {
                 owner: None,
             },
             Visibility::Hidden,
+            InheritedVisibility::HIDDEN,
             ZIndex(20),
         ));
         world.spawn((
@@ -508,6 +510,7 @@ mod tests {
                 owner: None,
             },
             Visibility::Visible,
+            InheritedVisibility::VISIBLE,
             ZIndex(100),
         ));
 

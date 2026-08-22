@@ -6904,7 +6904,8 @@ mod tests {
                     MessageType::AuthReq,
                     MessageType::AuthRes,
                     Duration::from_secs(10),
-                ),
+                )
+                .with_connection_id(connection_id),
             );
         }
 
@@ -7227,7 +7228,8 @@ mod tests {
                     MessageType::AuthReq,
                     MessageType::AuthRes,
                     Duration::from_secs(10),
-                ),
+                )
+                .with_connection_id(connection_id),
             );
         app.world_mut().write_message(NetworkEvent::Packet {
             connection_id,
@@ -7252,7 +7254,8 @@ mod tests {
                     MessageType::GetCharacterElementsReq,
                     MessageType::GetCharacterElementsRes,
                     Duration::from_secs(10),
-                ),
+                )
+                .with_connection_id(connection_id),
             );
         app.world_mut().write_message(NetworkEvent::Packet {
             connection_id,

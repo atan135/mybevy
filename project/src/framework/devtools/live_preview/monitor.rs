@@ -307,11 +307,13 @@ fn measure_monitor_performance(
     state: Res<LivePreviewMonitorState>,
     budget: Res<super::LivePreviewPerformanceBudget>,
     mut performance: ResMut<LivePreviewMonitorPerformance>,
-    entities: Query<Entity>,
-    roots: Query<Entity, With<LivePreviewMonitorRoot>>,
-    windows: Query<Entity, With<LivePreviewMonitorWindow>>,
-    cameras: Query<Entity, With<LivePreviewMonitorCamera>>,
-    scrolls: Query<Entity, With<LivePreviewMonitorScroll>>,
+    mut queries: ParamSet<(
+        Query<Entity>,
+        Query<Entity, With<LivePreviewMonitorRoot>>,
+        Query<Entity, With<LivePreviewMonitorWindow>>,
+        Query<Entity, With<LivePreviewMonitorCamera>>,
+        Query<Entity, With<LivePreviewMonitorScroll>>,
+    )>,
 ) {
     if performance.last_sample_at.elapsed().as_millis() < MONITOR_PERFORMANCE_SAMPLE_INTERVAL_MS {
         return;
@@ -328,11 +330,11 @@ fn measure_monitor_performance(
             }
         }
     };
-    performance.all_entity_count = entities.iter().count() as u64;
-    performance.monitor_entity_count = (roots.iter().count()
-        + windows.iter().count()
-        + cameras.iter().count()
-        + scrolls.iter().count()) as u64;
+    performance.all_entity_count = queries.p0().iter().count() as u64;
+    performance.monitor_entity_count = (queries.p1().iter().count()
+        + queries.p2().iter().count()
+        + queries.p3().iter().count()
+        + queries.p4().iter().count()) as u64;
     performance.collector_cpu_us = budget.last_collector_time_us();
     performance.measurement_cpu_us =
         started_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
@@ -340,7 +342,7 @@ fn measure_monitor_performance(
 }
 
 fn handle_monitor_keys(
-    keys: Res<ButtonInput<KeyCode>>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
     mut state: ResMut<LivePreviewMonitorState>,
     hub: Res<super::LivePreviewSnapshotHub>,
     policy: Res<super::LivePreviewPolicy>,
@@ -349,6 +351,9 @@ fn handle_monitor_keys(
         state.enabled = false;
         return;
     }
+    let Some(keys) = keys else {
+        return;
+    };
     if keys.just_pressed(KeyCode::F3) {
         state.enabled = !state.enabled;
     }
@@ -405,15 +410,46 @@ fn apply_ui_shortcut(state: &mut LivePreviewMonitorState, key: KeyCode) {
 
 fn sync_monitor_target(
     mut commands: Commands,
-    theme: Res<UiTheme>,
-    metrics: Res<UiMetrics>,
-    viewport: Res<UiViewport>,
-    fonts: Res<UiFontAssets>,
+    theme: Option<Res<UiTheme>>,
+    metrics: Option<Res<UiMetrics>>,
+    viewport: Option<Res<UiViewport>>,
+    fonts: Option<Res<UiFontAssets>>,
     mut state: ResMut<LivePreviewMonitorState>,
-    roots: Query<Entity, With<LivePreviewMonitorRoot>>,
-    windows: Query<Entity, With<LivePreviewMonitorWindow>>,
-    cameras: Query<Entity, With<LivePreviewMonitorCamera>>,
+    roots: Query<
+        Entity,
+        (
+            With<LivePreviewMonitorRoot>,
+            Without<LivePreviewMonitorWindow>,
+            Without<LivePreviewMonitorCamera>,
+        ),
+    >,
+    windows: Query<
+        Entity,
+        (
+            With<LivePreviewMonitorWindow>,
+            Without<LivePreviewMonitorRoot>,
+            Without<LivePreviewMonitorCamera>,
+        ),
+    >,
+    cameras: Query<
+        Entity,
+        (
+            With<LivePreviewMonitorCamera>,
+            Without<LivePreviewMonitorRoot>,
+            Without<LivePreviewMonitorWindow>,
+        ),
+    >,
 ) {
+    let (Some(theme), Some(metrics), Some(viewport), Some(fonts)) =
+        (theme, metrics, viewport, fonts)
+    else {
+        state.enabled = false;
+        despawn_monitor_roots(&mut commands, &roots, &windows, &cameras);
+        state.root = None;
+        state.window = None;
+        state.camera = None;
+        return;
+    };
     if !cfg!(debug_assertions) || cfg!(target_os = "android") {
         if state.enabled {
             state.enabled = false;
@@ -527,9 +563,11 @@ fn tab_index(tab: LivePreviewMonitorTab) -> usize {
 fn refresh_monitor_view(
     state: Res<LivePreviewMonitorState>,
     hub: Res<super::LivePreviewSnapshotHub>,
-    mut headers: Query<&mut Text, With<LivePreviewMonitorHeader>>,
-    mut tabs: Query<&mut Text, With<LivePreviewMonitorTabs>>,
-    mut bodies: Query<(&LivePreviewMonitorBody, &mut Text)>,
+    mut queries: ParamSet<(
+        Query<&mut Text, With<LivePreviewMonitorHeader>>,
+        Query<&mut Text, With<LivePreviewMonitorTabs>>,
+        Query<(&LivePreviewMonitorBody, &mut Text)>,
+    )>,
 ) {
     if !state.enabled {
         return;
@@ -547,17 +585,21 @@ fn refresh_monitor_view(
         })
         .collect::<Vec<_>>()
         .join("  ");
-    if let Ok(mut text) = headers.single_mut() {
+    if let Ok(mut text) = queries.p0().single_mut() {
         text.0 = header;
     }
-    if let Ok(mut text) = tabs.single_mut() {
+    if let Ok(mut text) = queries.p1().single_mut() {
         text.0 = tab_line;
     }
     if state.frozen {
         return;
     }
     let body = monitor_body(&snapshot, &state);
-    if let Some((_, mut text)) = bodies.iter_mut().find(|(body, _)| body.0 == state.tab) {
+    if let Some((_, mut text)) = queries
+        .p2()
+        .iter_mut()
+        .find(|(body, _)| body.0 == state.tab)
+    {
         text.0 = body;
     }
 }
@@ -720,9 +762,30 @@ fn spawn_monitor_window(commands: &mut Commands) -> (Entity, Entity) {
 
 fn despawn_monitor_roots(
     commands: &mut Commands,
-    roots: &Query<Entity, With<LivePreviewMonitorRoot>>,
-    windows: &Query<Entity, With<LivePreviewMonitorWindow>>,
-    cameras: &Query<Entity, With<LivePreviewMonitorCamera>>,
+    roots: &Query<
+        Entity,
+        (
+            With<LivePreviewMonitorRoot>,
+            Without<LivePreviewMonitorWindow>,
+            Without<LivePreviewMonitorCamera>,
+        ),
+    >,
+    windows: &Query<
+        Entity,
+        (
+            With<LivePreviewMonitorWindow>,
+            Without<LivePreviewMonitorRoot>,
+            Without<LivePreviewMonitorCamera>,
+        ),
+    >,
+    cameras: &Query<
+        Entity,
+        (
+            With<LivePreviewMonitorCamera>,
+            Without<LivePreviewMonitorRoot>,
+            Without<LivePreviewMonitorWindow>,
+        ),
+    >,
 ) {
     for root in roots {
         commands.entity(root).try_despawn();
@@ -732,8 +795,22 @@ fn despawn_monitor_roots(
 
 fn despawn_monitor_window(
     commands: &mut Commands,
-    windows: &Query<Entity, With<LivePreviewMonitorWindow>>,
-    cameras: &Query<Entity, With<LivePreviewMonitorCamera>>,
+    windows: &Query<
+        Entity,
+        (
+            With<LivePreviewMonitorWindow>,
+            Without<LivePreviewMonitorRoot>,
+            Without<LivePreviewMonitorCamera>,
+        ),
+    >,
+    cameras: &Query<
+        Entity,
+        (
+            With<LivePreviewMonitorCamera>,
+            Without<LivePreviewMonitorRoot>,
+            Without<LivePreviewMonitorWindow>,
+        ),
+    >,
 ) {
     for camera in cameras {
         commands.entity(camera).try_despawn();
