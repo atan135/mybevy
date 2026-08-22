@@ -18,7 +18,7 @@ pub(crate) use types::{
     CharacterSummary, ElementValues, GameConnectionState, MovementClientState,
     MyServerAutoClientConfig, MyServerCommand, MyServerConfig, MyServerDisplayError,
     MyServerEnvironment, MyServerErrorKind, MyServerErrorSource, MyServerEvent, MyServerOperation,
-    MyServerProfiles, MyServerSession, ReconnectCause,
+    MyServerProfiles, MyServerSession, ReconnectCause, ReconnectPlan,
 };
 // Registration contracts are intentionally re-exported for the auth host,
 // which owns sensitive form inputs without exposing the underlying types module.

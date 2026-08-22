@@ -668,7 +668,10 @@ mod tests {
         });
         assert_eq!(state.login_status.as_deref(), Some("logged_in"));
         assert_eq!(state.registration_status.as_deref(), Some("pending_review"));
-        assert_eq!(state.character_selection_status.as_deref(), Some("selecting"));
+        assert_eq!(
+            state.character_selection_status.as_deref(),
+            Some("selecting")
+        );
         assert_eq!(state.connection_state.as_deref(), Some("reconnecting"));
         assert_eq!(state.reconnect_phase.as_deref(), Some("transport_recovery"));
         assert_eq!(state.session_status.as_deref(), Some("session_kicked"));
