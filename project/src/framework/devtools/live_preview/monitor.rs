@@ -3,6 +3,7 @@ use bevy::{
     prelude::*,
     window::{WindowRef, WindowResolution},
 };
+use std::time::Instant;
 
 use crate::framework::ui::{
     core::{UiLayer, UiLayerRoot, UiMetrics, UiViewport},
@@ -20,6 +21,45 @@ const MONITOR_RENDER_LAYER: usize = 30;
 const MONITOR_WINDOW_WIDTH: u32 = 720;
 const MONITOR_WINDOW_HEIGHT: u32 = 760;
 const MONITOR_MAX_TEXT_CHARS: usize = 12_000;
+const MONITOR_PERFORMANCE_SAMPLE_INTERVAL_MS: u128 = 500;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LivePreviewMonitorRuntimeMode {
+    #[default]
+    Closed,
+    MainWindow,
+    DedicatedWindow,
+}
+
+#[derive(Debug, Resource)]
+pub struct LivePreviewMonitorPerformance {
+    last_sample_at: Instant,
+    pub mode: LivePreviewMonitorRuntimeMode,
+    pub all_entity_count: u64,
+    pub monitor_entity_count: u64,
+    pub measurement_cpu_us: u64,
+    pub collector_cpu_us: u64,
+    pub memory_estimate_bytes: u64,
+    pub sample_count: u64,
+}
+
+impl Default for LivePreviewMonitorPerformance {
+    fn default() -> Self {
+        Self {
+            last_sample_at: Instant::now(),
+            mode: LivePreviewMonitorRuntimeMode::Closed,
+            all_entity_count: 0,
+            monitor_entity_count: 0,
+            measurement_cpu_us: 0,
+            collector_cpu_us: 0,
+            memory_estimate_bytes: (super::redaction::LIVE_PREVIEW_MAX_EXPORT_BYTES as u64)
+                + (super::timeline::LIVE_PREVIEW_TIMELINE_MAX_CAPACITY as u64)
+                    * (super::timeline::LIVE_PREVIEW_TIMELINE_MAX_SUMMARY_CHARS as u64
+                        + super::timeline::LIVE_PREVIEW_TIMELINE_MAX_DETAIL_CHARS as u64),
+            sample_count: 0,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LivePreviewMonitorTab {
@@ -247,25 +287,65 @@ pub(crate) struct LivePreviewMonitorPlugin;
 
 impl Plugin for LivePreviewMonitorPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LivePreviewMonitorState>().add_systems(
-            Update,
-            (
-                handle_monitor_keys,
-                sync_monitor_target,
-                sync_monitor_scroll,
-                refresh_monitor_view,
-            )
-                .chain(),
-        );
+        app.init_resource::<LivePreviewMonitorState>()
+            .init_resource::<LivePreviewMonitorPerformance>()
+            .add_systems(
+                Update,
+                (
+                    handle_monitor_keys,
+                    sync_monitor_target,
+                    sync_monitor_scroll,
+                    refresh_monitor_view,
+                    measure_monitor_performance,
+                )
+                    .chain(),
+            );
     }
+}
+
+fn measure_monitor_performance(
+    state: Res<LivePreviewMonitorState>,
+    budget: Res<super::LivePreviewPerformanceBudget>,
+    mut performance: ResMut<LivePreviewMonitorPerformance>,
+    entities: Query<Entity>,
+    roots: Query<Entity, With<LivePreviewMonitorRoot>>,
+    windows: Query<Entity, With<LivePreviewMonitorWindow>>,
+    cameras: Query<Entity, With<LivePreviewMonitorCamera>>,
+    scrolls: Query<Entity, With<LivePreviewMonitorScroll>>,
+) {
+    if performance.last_sample_at.elapsed().as_millis() < MONITOR_PERFORMANCE_SAMPLE_INTERVAL_MS {
+        return;
+    }
+    let started_at = Instant::now();
+    performance.last_sample_at = started_at;
+    performance.mode = if !state.enabled {
+        LivePreviewMonitorRuntimeMode::Closed
+    } else {
+        match state.target {
+            LivePreviewMonitorTarget::GameWindow => LivePreviewMonitorRuntimeMode::MainWindow,
+            LivePreviewMonitorTarget::DedicatedWindow => {
+                LivePreviewMonitorRuntimeMode::DedicatedWindow
+            }
+        }
+    };
+    performance.all_entity_count = entities.iter().count() as u64;
+    performance.monitor_entity_count = (roots.iter().count()
+        + windows.iter().count()
+        + cameras.iter().count()
+        + scrolls.iter().count()) as u64;
+    performance.collector_cpu_us = budget.last_collector_time_us();
+    performance.measurement_cpu_us =
+        started_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+    performance.sample_count = performance.sample_count.saturating_add(1);
 }
 
 fn handle_monitor_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<LivePreviewMonitorState>,
     hub: Res<super::LivePreviewSnapshotHub>,
+    policy: Res<super::LivePreviewPolicy>,
 ) {
-    if !cfg!(debug_assertions) || cfg!(target_os = "android") {
+    if !(*policy).is_enabled() {
         state.enabled = false;
         return;
     }
@@ -279,7 +359,7 @@ fn handle_monitor_keys(
         state.target = state.target.next_supported();
         state.root = None;
     }
-    if keys.just_pressed(KeyCode::F8) {
+    if keys.just_pressed(KeyCode::F8) && state.enabled {
         state.last_export = Some(redacted_export(&hub.read()));
     }
     if keys.just_pressed(KeyCode::F5) {
@@ -749,9 +829,9 @@ fn ui_body(snapshot: &super::LivePreviewSnapshot, state: &LivePreviewMonitorStat
         viewport,
         metrics,
         bool_label(value.pointer_blocked),
-        value.block_reason.as_deref().unwrap_or("-"),
-        value.route_summary.as_deref().unwrap_or("-"),
-        value.blocking_reason.as_deref().unwrap_or("-"),
+        safe_text(value.block_reason.as_deref(), "-"),
+        safe_text(value.route_summary.as_deref(), "-"),
+        safe_text(value.blocking_reason.as_deref(), "-"),
         value.focus_panel_id.as_ref().map_or("-", |id| id.as_str()),
         value.focus_node_id.as_ref().map_or("-", |id| id.as_str()),
         optional_u64(value.ui_node_count),
@@ -778,9 +858,9 @@ fn ui_body(snapshot: &super::LivePreviewSnapshot, state: &LivePreviewMonitorStat
         value
             .document_schema_version
             .map_or("-".to_owned(), |version| version.to_string()),
-        value.document_status.as_deref().unwrap_or("-"),
-        value.document_source.as_deref().unwrap_or("-"),
-        value.document_error.as_deref().unwrap_or("-"),
+        safe_text(value.document_status.as_deref(), "-"),
+        safe_text(value.document_source.as_deref(), "-"),
+        safe_text(value.document_error.as_deref(), "-"),
     )
 }
 
@@ -811,21 +891,21 @@ fn player_body(snapshot: &super::LivePreviewSnapshot) -> String {
             .character_id
             .as_ref()
             .map_or("unavailable", |id| id.as_str()),
-        value.display_name.as_deref().unwrap_or("unavailable"),
+        safe_text(value.display_name.as_deref(), "unavailable"),
         value
             .world_id
             .as_ref()
             .map_or("unavailable", |id| id.as_str()),
-        value.selection_state.as_deref().unwrap_or("unavailable"),
+        safe_text(value.selection_state.as_deref(), "unavailable"),
         attrs,
-        value.attributes_source.as_deref().unwrap_or("-"),
-        value.attributes_freshness.as_deref().unwrap_or("-"),
+        safe_text(value.attributes_source.as_deref(), "-"),
+        safe_text(value.attributes_freshness.as_deref(), "-"),
         optional_u64(value.attributes_snapshot_refreshed_at_ms),
         optional_u64(value.attributes_push_sequence),
         optional_u64(value.attributes_revision),
         vector3(value.position),
         vector3(value.direction),
-        value.movement_state.as_deref().unwrap_or("unavailable"),
+        safe_text(value.movement_state.as_deref(), "unavailable"),
         optional_u64(value.authority_frame),
     )
 }
@@ -842,7 +922,7 @@ fn scene_body(snapshot: &super::LivePreviewSnapshot) -> String {
                 "{} session={} state={} required={}",
                 layer.id.as_str(),
                 layer.session_id.as_str(),
-                layer.state.as_deref().unwrap_or("-"),
+                safe_text(layer.state.as_deref(), "-"),
                 bool_label(layer.required),
             )
         })
@@ -868,18 +948,18 @@ fn scene_body(snapshot: &super::LivePreviewSnapshot) -> String {
             .ready_session_id
             .as_ref()
             .map_or("-", |id| id.as_str()),
-        value.lifecycle.as_deref().unwrap_or("-"),
-        value.scene_status.as_deref().unwrap_or("-"),
-        value.loading_phase.as_deref().unwrap_or("-"),
-        value.loading_policy.as_deref().unwrap_or("-"),
+        safe_text(value.lifecycle.as_deref(), "-"),
+        safe_text(value.scene_status.as_deref(), "-"),
+        safe_text(value.loading_phase.as_deref(), "-"),
+        safe_text(value.loading_policy.as_deref(), "-"),
         optional_u64(value.required_loaded),
         optional_u64(value.required_total),
         optional_u64(value.optional_loaded),
         optional_u64(value.optional_total),
         optional_u64(value.optional_failed),
-        value.loading_message_key.as_deref().unwrap_or("-"),
-        value.authority_mode.as_deref().unwrap_or("-"),
-        value.content_version.as_deref().unwrap_or("-"),
+        safe_text(value.loading_message_key.as_deref(), "-"),
+        safe_text(value.authority_mode.as_deref(), "-"),
+        safe_text(value.content_version.as_deref(), "-"),
         optional_u64(value.seed),
         optional_u64(value.layer_count),
         if value.layer_ids.is_empty() {
@@ -895,8 +975,8 @@ fn scene_body(snapshot: &super::LivePreviewSnapshot) -> String {
         optional_u64(value.scene_entity_count),
         optional_u64(value.scene_root_count),
         optional_u64(value.runtime_root_count),
-        value.recent_error.as_deref().unwrap_or("-"),
-        value.adapter_summary.as_deref().unwrap_or("-"),
+        safe_text(value.recent_error.as_deref(), "-"),
+        safe_text(value.adapter_summary.as_deref(), "-"),
         if layers.is_empty() {
             "layers: -".to_owned()
         } else {
@@ -1004,11 +1084,10 @@ fn timeline_body(snapshot: &super::LivePreviewSnapshot, state: &LivePreviewMonit
                 event.severity,
                 event.event_type,
                 event.repeat_count,
-                event.summary,
-                event
-                    .detail
-                    .as_ref()
-                    .map_or_else(String::new, |detail| format!(" ({detail})")),
+                super::redaction::redacted_text(&event.summary),
+                event.detail.as_ref().map_or_else(String::new, |detail| {
+                    format!(" ({})", super::redaction::redacted_text(detail))
+                }),
             )
         })
         .collect::<Vec<_>>();
@@ -1073,28 +1152,35 @@ fn overview_body(snapshot: &super::LivePreviewSnapshot) -> String {
         .unwrap_or(0);
     format!(
         "Overview\nScreen: {}\nOwner: {}\nCharacter: {}\nRoom: {}\nScene: {}\nConnection: {}\nAuthority: {} / {}\nFPS: {}\nWarnings: {}",
-        ui.and_then(|value| value.canonical_screen.as_deref())
-            .unwrap_or("unavailable"),
-        ui.and_then(|value| value.owner.as_deref())
-            .unwrap_or("unavailable"),
-        player
-            .and_then(|value| value.display_name.as_deref())
-            .unwrap_or("unavailable"),
-        network
-            .and_then(|value| value.room_id.as_ref().map(|id| id.as_str()))
-            .unwrap_or("unavailable"),
-        scene
-            .and_then(|value| value.active_scene_id.as_ref().map(|id| id.as_str()))
-            .unwrap_or("unavailable"),
-        network
-            .and_then(|value| value.connection_state.as_deref())
-            .unwrap_or("unavailable"),
-        network
-            .and_then(|value| value.authority_endpoint_kind.as_deref())
-            .unwrap_or("unavailable"),
-        network
-            .and_then(|value| value.authority_sync_health.as_deref())
-            .unwrap_or("unavailable"),
+        safe_text(
+            ui.and_then(|value| value.canonical_screen.as_deref()),
+            "unavailable"
+        ),
+        safe_text(ui.and_then(|value| value.owner.as_deref()), "unavailable"),
+        safe_text(
+            player.and_then(|value| value.display_name.as_deref()),
+            "unavailable"
+        ),
+        safe_text(
+            network.and_then(|value| value.room_id.as_ref().map(|id| id.as_str())),
+            "unavailable",
+        ),
+        safe_text(
+            scene.and_then(|value| value.active_scene_id.as_ref().map(|id| id.as_str())),
+            "unavailable",
+        ),
+        safe_text(
+            network.and_then(|value| value.connection_state.as_deref()),
+            "unavailable",
+        ),
+        safe_text(
+            network.and_then(|value| value.authority_endpoint_kind.as_deref()),
+            "unavailable",
+        ),
+        safe_text(
+            network.and_then(|value| value.authority_sync_health.as_deref()),
+            "unavailable",
+        ),
         performance.map_or("unavailable".to_owned(), |value| format_number(value.fps)),
         warnings,
     )
@@ -1110,6 +1196,10 @@ fn section_body(name: &str, status: super::PreviewDataStatus, detail: Option<Str
 
 fn status_label(status: super::PreviewDataStatus) -> String {
     format!("{status:?}").to_ascii_lowercase()
+}
+
+fn safe_text(value: Option<&str>, fallback: &str) -> String {
+    value.map_or_else(|| fallback.to_owned(), super::redaction::redacted_text)
 }
 
 fn bool_label(value: Option<bool>) -> &'static str {
@@ -1159,7 +1249,7 @@ fn truncate_text(mut value: String) -> String {
 }
 
 fn redacted_export(snapshot: &super::LivePreviewSnapshot) -> String {
-    serde_json::to_string(snapshot).unwrap_or_else(|_| "{\"status\":\"export_failed\"}".to_owned())
+    super::redaction::redacted_json(snapshot)
 }
 
 #[cfg(test)]

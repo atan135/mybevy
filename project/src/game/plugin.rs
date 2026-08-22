@@ -1,7 +1,9 @@
 use bevy::{prelude::*, ui::IsDefaultUiCamera};
 
 use crate::framework::{
-    audio::AudioPlugin, devtools::live_preview::LivePreviewPlugin, scene::ScenePlugin,
+    audio::AudioPlugin,
+    devtools::live_preview::{LivePreviewPlugin, LivePreviewPolicy},
+    scene::ScenePlugin,
 };
 
 use super::{
@@ -23,24 +25,25 @@ pub const GLOBAL_UI_CAMERA_ORDER: isize = 1;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
-            AudioPlugin,
-            GameAudioPlugin,
-            ScenePlugin,
-            LivePreviewPlugin,
-            GameLivePreviewPlugin,
-            GameNetworkLivePreviewPlugin,
-            GameScenesPlugin,
-            MyServerPlugin,
-            AuthorityPlugin,
-            ScreensPlugin,
-            TouchRipplePlugin,
-            RobotSyncPlugin,
-            LockstepSimPlugin,
-            LockstepSimVisualSmokePlugin,
-            FangyuanPlayerPreviewPlugin,
-        ))
-        .add_systems(Startup, setup_camera);
+        app.insert_resource(LivePreviewPolicy::explicit_debug_authorization())
+            .add_plugins((
+                AudioPlugin,
+                GameAudioPlugin,
+                ScenePlugin,
+                LivePreviewPlugin,
+                GameLivePreviewPlugin,
+                GameNetworkLivePreviewPlugin,
+                GameScenesPlugin,
+                MyServerPlugin,
+                AuthorityPlugin,
+                ScreensPlugin,
+                TouchRipplePlugin,
+                RobotSyncPlugin,
+                LockstepSimPlugin,
+                LockstepSimVisualSmokePlugin,
+                FangyuanPlayerPreviewPlugin,
+            ))
+            .add_systems(Startup, setup_camera);
     }
 }
 

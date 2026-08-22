@@ -6,6 +6,7 @@ use super::model::StablePreviewId;
 
 pub const LIVE_PREVIEW_TIMELINE_MAX_SUMMARY_CHARS: usize = 256;
 pub const LIVE_PREVIEW_TIMELINE_MAX_DETAIL_CHARS: usize = 1_024;
+pub const LIVE_PREVIEW_TIMELINE_MAX_CAPACITY: usize = 256;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -90,8 +91,8 @@ impl Default for LivePreviewTimeline {
 impl LivePreviewTimeline {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            capacity,
-            events: VecDeque::with_capacity(capacity),
+            capacity: capacity.min(LIVE_PREVIEW_TIMELINE_MAX_CAPACITY),
+            events: VecDeque::with_capacity(capacity.min(LIVE_PREVIEW_TIMELINE_MAX_CAPACITY)),
         }
     }
 
@@ -100,7 +101,7 @@ impl LivePreviewTimeline {
     }
 
     pub fn set_capacity(&mut self, capacity: usize) {
-        self.capacity = capacity;
+        self.capacity = capacity.min(LIVE_PREVIEW_TIMELINE_MAX_CAPACITY);
         while self.events.len() > capacity {
             self.events.pop_front();
         }

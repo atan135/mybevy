@@ -2,6 +2,7 @@ use bevy::prelude::{
     App, IntoScheduleConfigs, Plugin, PostUpdate, Res, ResMut, Resource, SystemSet, Time,
 };
 use bevy::time::Real;
+use std::time::Instant;
 
 use super::collect_scene::{ScenePreviewCollectorState, collect_scene_preview};
 use super::collect_ui::{UiPreviewCollectorState, collect_ui_preview};
@@ -18,6 +19,7 @@ use super::timeline::LivePreviewTimeline;
 pub const LIVE_PREVIEW_PLAYER_SAMPLE_INTERVAL_MS: u64 = 100;
 pub const LIVE_PREVIEW_STATISTICS_SAMPLE_INTERVAL_MS: u64 = 500;
 pub const LIVE_PREVIEW_HEARTBEAT_INTERVAL_MS: u64 = 2_000;
+pub const LIVE_PREVIEW_COLLECTOR_BUDGET_US: u64 = 4_000;
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct LivePreviewClock {
@@ -47,6 +49,68 @@ pub struct LivePreviewScheduler {
     last_player_sample_ms: Option<u64>,
     last_statistics_sample_ms: Option<u64>,
     last_publish_ms: Option<u64>,
+}
+
+#[derive(Debug, Resource)]
+pub struct LivePreviewPerformanceBudget {
+    started_at: Option<Instant>,
+    last_sample_ms: Option<u64>,
+    revision: u64,
+    sample_count: u64,
+    over_budget_samples: u64,
+    last_collector_time_us: u64,
+    max_collector_time_us: u64,
+}
+
+impl Default for LivePreviewPerformanceBudget {
+    fn default() -> Self {
+        Self {
+            started_at: None,
+            last_sample_ms: None,
+            revision: 0,
+            sample_count: 0,
+            over_budget_samples: 0,
+            last_collector_time_us: 0,
+            max_collector_time_us: 0,
+        }
+    }
+}
+
+impl LivePreviewPerformanceBudget {
+    pub fn sample_count(&self) -> u64 {
+        self.sample_count
+    }
+
+    pub fn over_budget_samples(&self) -> u64 {
+        self.over_budget_samples
+    }
+
+    pub fn last_collector_time_us(&self) -> u64 {
+        self.last_collector_time_us
+    }
+
+    pub fn max_collector_time_us(&self) -> u64 {
+        self.max_collector_time_us
+    }
+
+    fn begin(&mut self) {
+        self.started_at = Some(Instant::now());
+    }
+
+    fn finish(&mut self) -> u64 {
+        let elapsed = self
+            .started_at
+            .take()
+            .map(|start| start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64)
+            .unwrap_or(0);
+        self.sample_count = self.sample_count.saturating_add(1);
+        self.last_collector_time_us = elapsed;
+        self.max_collector_time_us = self.max_collector_time_us.max(elapsed);
+        if elapsed > LIVE_PREVIEW_COLLECTOR_BUDGET_US {
+            self.over_budget_samples = self.over_budget_samples.saturating_add(1);
+        }
+        elapsed
+    }
 }
 
 impl LivePreviewScheduler {
@@ -244,7 +308,9 @@ fn section_metadata_changed<T>(before: &PreviewSection<T>, after: &PreviewSectio
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
 pub enum LivePreviewSet {
     AdvanceClock,
+    CollectBegin,
     Collect,
+    CollectEnd,
     Publish,
 }
 
@@ -253,8 +319,10 @@ pub struct LivePreviewPlugin;
 impl Plugin for LivePreviewPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(LivePreviewMonitorPlugin)
+            .init_resource::<super::model::LivePreviewPolicy>()
             .init_resource::<LivePreviewClock>()
             .init_resource::<LivePreviewScheduler>()
+            .init_resource::<LivePreviewPerformanceBudget>()
             .init_resource::<UiPreviewCollectorState>()
             .init_resource::<ScenePreviewCollectorState>()
             .init_resource::<LivePreviewCollectionBuffer>()
@@ -265,7 +333,9 @@ impl Plugin for LivePreviewPlugin {
                 PostUpdate,
                 (
                     LivePreviewSet::AdvanceClock,
+                    LivePreviewSet::CollectBegin,
                     LivePreviewSet::Collect,
+                    LivePreviewSet::CollectEnd,
                     LivePreviewSet::Publish,
                 )
                     .chain(),
@@ -273,6 +343,10 @@ impl Plugin for LivePreviewPlugin {
             .add_systems(
                 PostUpdate,
                 advance_live_preview_clock.in_set(LivePreviewSet::AdvanceClock),
+            )
+            .add_systems(
+                PostUpdate,
+                begin_live_preview_collection.in_set(LivePreviewSet::CollectBegin),
             )
             .add_systems(
                 PostUpdate,
@@ -284,9 +358,42 @@ impl Plugin for LivePreviewPlugin {
             )
             .add_systems(
                 PostUpdate,
+                finish_live_preview_collection.in_set(LivePreviewSet::CollectEnd),
+            )
+            .add_systems(
+                PostUpdate,
                 publish_live_preview_snapshot.in_set(LivePreviewSet::Publish),
             );
     }
+}
+
+fn begin_live_preview_collection(mut budget: ResMut<LivePreviewPerformanceBudget>) {
+    budget.begin();
+}
+
+fn finish_live_preview_collection(
+    clock: Res<LivePreviewClock>,
+    mut budget: ResMut<LivePreviewPerformanceBudget>,
+    mut buffer: ResMut<LivePreviewCollectionBuffer>,
+    timeline: Res<LivePreviewTimeline>,
+) {
+    let collector_time_us = budget.finish();
+    let should_publish_sample = budget.last_sample_ms.is_none_or(|last| {
+        clock.monotonic_ms().saturating_sub(last) >= LIVE_PREVIEW_STATISTICS_SAMPLE_INTERVAL_MS
+    });
+    if !should_publish_sample {
+        return;
+    }
+    budget.last_sample_ms = Some(clock.monotonic_ms());
+    budget.revision = budget.revision.saturating_add(1).max(1);
+    buffer.set_performance(PreviewSection::available(
+        budget.revision,
+        super::model::PerformancePreviewState {
+            collector_time_us: Some(collector_time_us),
+            timeline_entry_count: Some(timeline.len() as u64),
+            ..Default::default()
+        },
+    ));
 }
 
 fn advance_live_preview_clock(time: Option<Res<Time<Real>>>, mut clock: ResMut<LivePreviewClock>) {
@@ -385,5 +492,17 @@ mod tests {
         buffer.set_ui(PreviewSection::unavailable());
         assert_eq!(buffer.snapshot.ui.status, PreviewDataStatus::Unavailable);
         assert_eq!(buffer.snapshot.ui.revision, None);
+    }
+
+    #[test]
+    fn performance_budget_tracks_samples_and_over_budget_measurements() {
+        let mut budget = LivePreviewPerformanceBudget::default();
+        budget.begin();
+        let elapsed = budget.finish();
+        assert_eq!(budget.sample_count(), 1);
+        assert_eq!(budget.last_collector_time_us(), elapsed);
+        assert!(budget.max_collector_time_us() >= elapsed);
+        assert!(budget.over_budget_samples() <= budget.sample_count());
+        assert!(LIVE_PREVIEW_COLLECTOR_BUDGET_US > 0);
     }
 }

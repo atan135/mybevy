@@ -9,6 +9,7 @@ mod collect_ui;
 mod model;
 mod monitor;
 mod plugin;
+mod redaction;
 mod schedule;
 mod source_health;
 mod timeline;
@@ -25,24 +26,25 @@ pub use model::{
     UiPanelKindPreviewCounts, UiPanelPreview, UiPreviewSection, UiPreviewState, UiViewportPreview,
 };
 pub use monitor::{
-    LivePreviewMonitorPanelFilter, LivePreviewMonitorState, LivePreviewMonitorTab,
-    LivePreviewMonitorTarget, LivePreviewMonitorTimelineDomainFilter,
-    LivePreviewMonitorTimelineSeverityFilter,
+    LivePreviewMonitorPanelFilter, LivePreviewMonitorPerformance, LivePreviewMonitorRuntimeMode,
+    LivePreviewMonitorState, LivePreviewMonitorTab, LivePreviewMonitorTarget,
+    LivePreviewMonitorTimelineDomainFilter, LivePreviewMonitorTimelineSeverityFilter,
 };
 
 pub use model::{LivePreviewPolicy, LivePreviewPolicy as LivePreviewConfig};
 pub use plugin::LivePreviewPlugin;
 pub use schedule::{
-    LIVE_PREVIEW_HEARTBEAT_INTERVAL_MS, LIVE_PREVIEW_PLAYER_SAMPLE_INTERVAL_MS,
-    LIVE_PREVIEW_STATISTICS_SAMPLE_INTERVAL_MS, LivePreviewClock, LivePreviewCollectionBuffer,
-    LivePreviewDirtySections, LivePreviewScheduler, LivePreviewSet,
+    LIVE_PREVIEW_COLLECTOR_BUDGET_US, LIVE_PREVIEW_HEARTBEAT_INTERVAL_MS,
+    LIVE_PREVIEW_PLAYER_SAMPLE_INTERVAL_MS, LIVE_PREVIEW_STATISTICS_SAMPLE_INTERVAL_MS,
+    LivePreviewClock, LivePreviewCollectionBuffer, LivePreviewDirtySections,
+    LivePreviewPerformanceBudget, LivePreviewScheduler, LivePreviewSet,
 };
 pub use source_health::{
     LIVE_PREVIEW_SOURCE_STALE_AFTER_MS, LivePreviewSourceHealthRegistry, LivePreviewSourceRecord,
     LivePreviewSourceStatus,
 };
 pub use timeline::{
-    LIVE_PREVIEW_TIMELINE_MAX_DETAIL_CHARS, LIVE_PREVIEW_TIMELINE_MAX_SUMMARY_CHARS,
-    LivePreviewTimeline, LivePreviewTimelineEvent, LivePreviewTimelineSeverity,
-    LivePreviewTimelineType,
+    LIVE_PREVIEW_TIMELINE_MAX_CAPACITY, LIVE_PREVIEW_TIMELINE_MAX_DETAIL_CHARS,
+    LIVE_PREVIEW_TIMELINE_MAX_SUMMARY_CHARS, LivePreviewTimeline, LivePreviewTimelineEvent,
+    LivePreviewTimelineSeverity, LivePreviewTimelineType,
 };

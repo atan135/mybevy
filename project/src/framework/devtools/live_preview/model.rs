@@ -428,6 +428,9 @@ pub struct LivePreviewSnapshot {
     pub sequence: u64,
     pub captured_frame: u64,
     pub captured_monotonic_ms: u64,
+    /// Reserved for a future externally transported section delta. Full
+    /// snapshots keep this unset; no network delta transport is implemented.
+    pub base_sequence: Option<u64>,
     pub ui: UiPreviewSection,
     pub player: PlayerPreviewSection,
     pub scene: ScenePreviewSection,
@@ -461,6 +464,7 @@ impl Default for LivePreviewSnapshot {
             sequence: 0,
             captured_frame: 0,
             captured_monotonic_ms: 0,
+            base_sequence: None,
             ui: UiPreviewSection::default(),
             player: PlayerPreviewSection::default(),
             scene: ScenePreviewSection::default(),
@@ -552,7 +556,7 @@ impl LivePreviewSnapshotWriter<'_> {
 }
 
 /// Explicit fail-closed policy for the process-local monitor.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Resource, Serialize)]
 pub struct LivePreviewPolicy {
     requested: bool,
     authorized: bool,
