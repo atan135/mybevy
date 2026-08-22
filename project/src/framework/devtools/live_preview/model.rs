@@ -324,20 +324,30 @@ impl StablePreviewValue for ScenePreviewState {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct NetworkPreviewState {
+    pub session_status: Option<String>,
     pub login_status: Option<String>,
     pub registration_status: Option<String>,
     pub character_selection_status: Option<String>,
+    pub connection_state: Option<String>,
     pub transport: Option<String>,
     pub connected: Option<bool>,
     pub authenticated: Option<bool>,
     pub room_id: Option<StablePreviewId>,
     pub endpoint_kind: Option<String>,
+    pub endpoint_environment: Option<String>,
+    /// Deliberately empty unless a separately authorized local-debug view opts in.
+    pub endpoint_detail: Option<String>,
     pub pending_request_count: Option<u32>,
     pub last_successful_receive_ms: Option<u64>,
     pub last_error_category: Option<String>,
     pub reconnecting: Option<bool>,
+    pub reconnect_phase: Option<String>,
     pub authority_endpoint_kind: Option<String>,
+    pub authority_role: Option<String>,
+    pub authority_epoch: Option<u64>,
     pub authority_frame: Option<u64>,
+    pub authority_last_activity_age_ms: Option<u64>,
+    pub authority_sync_health: Option<String>,
 }
 
 impl StablePreviewValue for NetworkPreviewState {

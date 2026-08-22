@@ -7,7 +7,7 @@ use crate::framework::{
 use super::{
     audio::GameAudioPlugin,
     authority::AuthorityPlugin,
-    devtools::live_preview::GameLivePreviewPlugin,
+    devtools::live_preview::{GameLivePreviewPlugin, GameNetworkLivePreviewPlugin},
     features::{
         FangyuanPlayerPreviewPlugin, LockstepSimPlugin, LockstepSimVisualSmokePlugin,
         RobotSyncPlugin, TouchRipplePlugin,
@@ -29,6 +29,7 @@ impl Plugin for GamePlugin {
             ScenePlugin,
             LivePreviewPlugin,
             GameLivePreviewPlugin,
+            GameNetworkLivePreviewPlugin,
             GameScenesPlugin,
             MyServerPlugin,
             AuthorityPlugin,

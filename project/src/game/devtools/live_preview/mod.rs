@@ -9,6 +9,7 @@ mod network;
 mod player;
 
 pub use authority::AuthorityPreviewAdapter;
+pub(crate) use network::GameNetworkLivePreviewPlugin;
 pub use network::NetworkPreviewAdapter;
 pub(crate) use player::GameLivePreviewPlugin;
 pub use player::PlayerPreviewAdapter;
