@@ -1,6 +1,6 @@
 # UI Generation Tool
 
-`tools/ui-generation` 是桌面/CI 使用的离线 UI 生成工具，不属于 `project` workspace，不依赖 Bevy runtime。它使用自己的 `tools/ui-generation/target` 增量缓存，并通过 `tools/ui-document-core` 共享 schema、校验和 tooling facade。
+`tools/ui-generation` 是桌面/CI 使用的离线 UI 生成工具，不属于 `project` workspace；工具 crate 本身不声明 Bevy Cargo 依赖。它使用自己的 `tools/ui-generation/target` 增量缓存，并通过 `tools/ui-document-core` 共享 schema、校验和 tooling facade。`preview-document` 子命令会按需启动 `project` 中受 `ui-document-preview-tool` feature 和 `required-features` 双重隔离的 standalone preview binary，但该 binary 不会进入工具 crate 或正式游戏默认构建。
 
 从仓库根目录执行常用检查：
 

@@ -14,19 +14,19 @@ AI 生成器本身是仓库级桌面/CI 开发工具，不属于正式游戏运�
 - 依赖 `02_界面声明式描述与运行时生成_checklist.md` 提供 JSON Schema、验证器和运行时预览。
 - 可复用现有 UI audit 截图、设备矩阵、metadata 和报告结构，但视觉相似度审核由 `04_界面参考图视觉审核_checklist.md` 负责。
 - AI 服务应通过可替换 provider 接口接入，不在协议和业务页面中绑定单一供应商。
-- 工具工程可以单向依赖游戏工程公开的最小 `UiDocument` 校验/预览 API；`project`、Android 壳和正式构建脚本不得反向依赖工具工程。
+- 工具工程依赖独立的 runtime-free `ui-document-core`；`ui-visual-audit` 仅在 `provider-core` feature 下复用 `ui-generation` provider 协议。`project` 只依赖 `ui-document-core` facade，Android 壳和正式构建脚本不得反向依赖任一工具工程。
 
 ## 正式包隔离与工程边界
 
 - [x] 在 `tools/ui-generation/` 建立独立 Rust 工具工程，确保它不是 `project` 的依赖、Android `--lib` 构建目标或正式游戏插件。
 - [x] provider、图片解码/EXIF、prompt、评测和其他生成期依赖只声明在工具工程中，不加入 `project/Cargo.toml` 的正式依赖图。
-- [x] 依赖方向保持为 `ui-generation tool -> project UiDocument public facade`；公开 facade 只暴露复用所需的稳定协议、校验和预览能力，不暴露游戏业务内部实现。
+- [x] 依赖方向保持为 `ui-generation -> ui-document-core`、`ui-visual-audit -> ui-generation(provider-core), ui-document-core`、`project -> ui-document-core`；core facade 只暴露复用所需的稳定协议、校验和 tooling 能力，不暴露游戏业务内部实现。
 - [x] 参考图、模型响应、日志、草稿、source map 和生成期素材不写入 `project/assets/`；可提交 fixture 放在工具目录，私有运行产物放在被忽略的 `summary/ui-generation/`。
 - [x] 正式桌面/Android 构建必须通过依赖图和构建记录证明未编译、链接或打包 `tools/ui-generation/`；只有人工批准并明确晋升的 JSON、资源和必要注册适配可以进入正式包。
 
 ## 基础原则
 
-- [x] AI 输出只能落入受控 staging 目录，默认不得修改 `project/src/`、正式 assets 或已批准 UI 文档。
+- [x] AI 输出只能落入受控 staging 目录，默认不得修改 `project/src/`、正式 assets 或已批准 UI 文档；代码修复只有在显式批准后才能通过 `closed-loop-patch-apply` 修改 allowlist 中的共享 widget/theme/framework Rust。
 - [x] 所有模型输出必须通过结构化 Schema、语义验证和资源预算检查，不能直接信任自然语言结果。
 - [x] 参考图只能证明可见状态；隐藏交互、响应式规则和业务行为必须标记为假设或由额外输入提供。
 - [x] 未确认授权的参考图素材不得直接裁切并作为正式游戏资源提交。
@@ -41,7 +41,7 @@ AI 生成器本身是仓库级桌面/CI 开发工具，不属于正式游戏运�
 - 验证记录：`cargo test --manifest-path tools/ui-generation/Cargo.toml` 20/20 通过；工具 crate `cargo fmt --all -- --check`、`cargo check` 通过；`check-boundary` 报告五项依赖/lock/workspace 边界均为 `true`；`project/` 的 `cargo test ui_document_tooling_facade --lib` 1/1、`cargo fmt --all -- --check`、`cargo check` 通过；仓库 `git diff --check` 通过。
 
 - [x] 创建 `tools/ui-generation/` 独立 Rust crate 和 CLI 入口，明确它不属于 `project` 的正式 target、feature 或依赖。（验证：`tools/ui-generation/Cargo.toml` 使用独立 package/lock/target，`src/main.rs` 提供 `inspect-task` 与 `check-boundary`；边界报告确认独立 workspace）
-- [x] 为游戏工程提供最小、稳定的 `UiDocument` 工具 facade，保持工具到游戏的单向依赖并添加反向依赖防回归检查。（验证：`project/src/framework/ui/document/tooling.rs` 仅导出协议/校验/canonical API；`boundary.rs` 递归检查 manifest path 图、lockfile 与 workspace，真实 `check-boundary` 五项均通过）
+- [x] 为工具和游戏提供独立、稳定的 `UiDocument` core facade，保持工具与游戏不互相依赖并添加反向依赖防回归检查。（验证：`tools/ui-document-core` 导出协议/校验/canonical API，`project/src/framework/ui/document/tooling.rs` 保留兼容 facade；`boundary.rs` 递归检查 manifest path 图、lockfile 与 workspace，真实 `check-boundary` 五项均通过）
 - [x] 定义生成任务输入，至少包含页面用途、参考图、目标 viewport、可见文字、必须保留内容和允许修改范围。（验证：`contract.rs::GenerationTask` 定义全部必需字段并使用 `deny_unknown_fields`；严格解析测试通过）
 - [x] 支持一张主参考图和可选的多状态、多尺寸、局部细节参考图，并定义它们的优先级。（验证：`primary_reference`、`additional_references`、`AdditionalReferenceRole` 和 `ordered_references` 实现主图优先及数值/角色/ID 确定性排序；排序测试通过）
 - [x] 为输入图片记录原始尺寸、方向、色彩空间、文件 hash、来源和素材使用授权状态。（验证：`ImageInputMetadata`/`ImageProvenance` 覆盖全部字段，`verify_reference_files` 分块计算 SHA-256；metadata/hash 测试通过）
@@ -154,7 +154,7 @@ AI 生成器本身是仓库级桌面/CI 开发工具，不属于正式游戏运�
 - [x] 对文本使用 literal 或 i18n key 的策略作显式选择，不生成不存在的业务绑定和动作。（验证：`TextSourceStrategy` 显式区分 Literal/Unresolved；canonical 节点 literal 必须逐项匹配 analysis adopted text，递归拒绝 action/on_click/binding/i18n_key，且禁止非空 Stage 9 states/responsive；非法行为测试通过）
 - [x] 输出生成假设、未实现状态、所需新组件和不受支持能力列表。（验证：`GenerationDisclosures` 分四类合并 provider 与可信本地证据，排序去重后不截断；7168 上限由 512 provider、analysis uncertainties/elements、4096 tokens、512 components/assets 推导，超旧 512 回归证明 provider 尾项及 heuristic/uncertainty/hidden/component/asset 全保留）
 - [x] 记录 model、prompt version、schema version、输入 hash、生成参数和响应 request ID。（验证：`GenerationTrace` 记录受安全 label 约束的 provider/model/prompt/output schema/document schema、组合输入 SHA-256、参数、最后成功 server request ID 和 canonical document hash；trace/预算/伪造 request ID 测试通过）
-- [x] 生成器通过游戏工程公开的最小 facade 复用 `UiDocument` canonical JSON、Schema/语义验证和预算规则，不复制协议实现，也不让游戏工程依赖生成器。（验证：generation 仅调用 `project::framework::ui::document::tooling::{validate_json_bytes,canonicalize_json,...}`；正式 facade 无改动，check-boundary 五项 true，project Cargo/lock 无 diff）
+- [x] 生成器通过 `ui-document-core` 复用 `UiDocument` canonical JSON、Schema/语义验证和预算规则，不复制协议实现，也不让游戏工程依赖生成器。（验证：generation 直接调用 core facade；`project::framework::ui::document::tooling` 仅作 runtime 兼容层，check-boundary 五项 true，project Cargo/lock 无 diff）
 - [x] 为最小页面、复杂页面、非法输出和不支持能力补充 fixture 测试。（验证：`tools/ui-generation/fixtures/generation/` 四个仓库自有文本 fixture 覆盖最小、嵌套复杂、正式协议非法和不支持能力；Stage 7 10 项测试另覆盖 Markdown、source map/hash、registered variant、stable asset path、trace/预算和披露完整性）
 - [x] 在工具 crate 运行格式检查、生成器/fixture/source map 测试和 `cargo check`；在 `project/` 运行 `ui_document_` focused tests、格式检查和 `cargo check`。（验证：2026-07-15 14:47 +08:00 工具 Stage 7 10/10、全量 91/91、fmt/check，project `ui_document_` 98/98、fmt/check，boundary 与 diff 检查全部退出码 0）
 
@@ -208,7 +208,7 @@ AI 生成器本身是仓库级桌面/CI 开发工具，不属于正式游戏运�
 - [x] 实现显式 `promote` 命令：只接受通过全部校验且带人工批准决定的 run，把 `UiDocument` 写入 `project/assets/ui/documents/approved/`，把授权资源写入正式 assets，并生成可审阅的 i18n/theme/page registration 变更。（验证：CLI `promote` 要求精确 `--confirm-plan` hash，仅写 `approved/<document-id>/` 页面包和 `promotion.v1.json` 审阅声明；promotion 6/6）
 - [x] 页面主体保持为声明式 JSON；只允许从封闭模板生成确定性的 owner/route/registration 适配，未知业务 action 或 binding 必须阻塞晋升，不允许模型生成任意 Rust 业务实现。（验证：project `approval.rs` 只读解析并拒绝 business fields，route 是 review-only label；approval focused 4/4）
 - [x] 晋升命令在写入前生成完整变更计划，要求显式确认，使用临时目录和原子替换，失败时不留下部分正式文件，也不覆盖未声明的现有页面。（验证：no-write `promotion-plan` hash 必须在 promote 重复提交；同卷 staging page directory 单次 rename，冲突/原子失败测试无残留）
-- [x] 生成工具默认没有写入 `project/src/`、`project/assets/` 和 approved 文档目录的权限；只有独立 `promote` 子命令在校验、批准和目标所有权检查全部通过后才能写入。（验证：仅 CLI `promote` 调用 `promotion::promote`；inspect/preprocess/generation/repair/preview/audit 未引入 promotion write API）
+- [x] 生成工具默认没有写入 `project/src/`、`project/assets/` 和 approved 文档目录的权限；`closed-loop-patch-apply` 仅在精确 plan、allowlist 和人工 approval 全部通过后修改共享 Rust，只有独立 `promote` 子命令才能写入 approved 页面。（验证：代码修复入口只接受 `CommonWidget`/`Theme`/`Framework` approval-gated action；`promote` 负责正式目录写入；普通 inspect/preprocess/generation/repair/preview/audit 不具备这些写入权限）
 - [x] 晋升后使用正式游戏构建加载已批准页面，验证路由、资源、action/binding 注册、owner 清理和 audit metadata，确认生成结果会随桌面与 Android 游戏包交付。（验证：approved registration adapter 显式转为 runtime registration，focused lifecycle 测试验证 packaged resource override、active instance、audit recipe、unregister/owner cleanup；business registration 为空，默认 project/Android `--lib` 不依赖工具）
 - [x] 为批准、部分批准、拒绝和目标冲突补充测试或 fixture。（验证：promotion 6/6 覆盖批准、拒绝、sealed hash 篡改、owner/target 冲突、资源/LFS/catalog 和冲突后无残留）
 - [x] 在工具 crate 运行晋升 dry-run/批准/拒绝/冲突/原子失败测试、格式检查和 `cargo check`；在 `project/` 运行生成页面 focused tests、格式检查、`cargo check` 和 `git diff --check`。（验证：工具全量 134/134、promotion 6/6、fmt/check/boundary；project approval 4/4、`ui_document_` 100/100、standalone preview 3/3、fmt/check；diff check 通过）
