@@ -39,9 +39,9 @@
         "id": "robot_sync.actions",
         "layout": { "direction": "column", "align_items": "stretch", "gap": { "px": 7.0 } },
         "children": [
-          { "type": "button", "id": "robot_sync.hide_hud", "variant": "secondary", "label": { "literal": "Hide HUD" }, "style": { "bindings": { "visibility": "robot_sync.hide_visibility" } }, "on_click": { "action": "robot_sync.hide_hud" } },
-          { "type": "button", "id": "robot_sync.show_hud", "variant": "secondary", "label": { "literal": "Show HUD" }, "style": { "bindings": { "visibility": "robot_sync.show_visibility" } }, "on_click": { "action": "robot_sync.show_hud" } },
-          { "type": "button", "id": "robot_sync.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "on_click": { "action": "robot_sync.return_lobby" } }
+          { "type": "button", "id": "robot_sync.hide_hud", "variant": "secondary", "label": { "i18n_key": "robot_sync_scene.hud.hide", "fallback": "Hide HUD" }, "style": { "bindings": { "visibility": "robot_sync.hide_visibility" } }, "on_click": { "action": "robot_sync.hide_hud" } },
+          { "type": "button", "id": "robot_sync.show_hud", "variant": "secondary", "label": { "i18n_key": "robot_sync_scene.hud.show", "fallback": "Show HUD" }, "style": { "bindings": { "visibility": "robot_sync.show_visibility" } }, "on_click": { "action": "robot_sync.show_hud" } },
+          { "type": "button", "id": "robot_sync.return_lobby", "variant": "secondary", "label": { "i18n_key": "nav.lobby", "fallback": "Lobby" }, "on_click": { "action": "robot_sync.return_lobby" } }
         ]
       }
     ]

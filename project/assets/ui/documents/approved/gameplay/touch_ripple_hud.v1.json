@@ -21,7 +21,7 @@
         "type": "button",
         "id": "touch_ripple.return_lobby",
         "variant": "secondary",
-        "label": { "literal": "Lobby" },
+        "label": { "i18n_key": "nav.lobby", "fallback": "Lobby" },
         "on_click": { "action": "touch_ripple.return_lobby" }
       }
     ]

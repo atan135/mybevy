@@ -15,9 +15,9 @@
         "id": "main_world_mail.fallback.panel",
         "layout": { "width": { "percent": 92.0 }, "max_width": { "px": 460.0 }, "padding": { "all": { "px": 16.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 10.0 } },
         "children": [
-          { "type": "text", "id": "main_world_mail.fallback.title", "content": { "literal": "Mail unavailable" }, "style": { "text_role": "subtitle" } },
-          { "type": "text", "id": "main_world_mail.fallback.message", "content": { "literal": "The packaged mail interface could not be opened." }, "style": { "text_role": "body" } },
-          { "type": "button", "id": "main_world_mail.close", "variant": "secondary", "label": { "literal": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.close" } }
+          { "type": "text", "id": "main_world_mail.fallback.title", "content": { "i18n_key": "main_world_mail.fallback.title", "fallback": "Mail unavailable" }, "style": { "text_role": "subtitle" } },
+          { "type": "text", "id": "main_world_mail.fallback.message", "content": { "i18n_key": "main_world_mail.fallback.message", "fallback": "The packaged mail interface could not be opened." }, "style": { "text_role": "body" } },
+          { "type": "button", "id": "main_world_mail.close", "variant": "secondary", "label": { "i18n_key": "main_world_mail.action.close", "fallback": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.close" } }
         ]
       }
     ]

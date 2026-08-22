@@ -24,11 +24,11 @@
         "layout": { "max_width": { "px": 360.0 }, "padding": { "all": { "px": 14.0 } }, "border": { "all": { "px": 1.0 } }, "direction": "column", "gap": { "px": 6.0 } },
         "style": { "component": "hud_panel" },
         "children": [
-          { "type": "text", "id": "sample_scene.title", "content": { "literal": "Sample Scene" }, "style": { "text_role": "title" } },
-          { "type": "text", "id": "sample_scene.status", "content": { "literal": "Scene running" }, "style": { "text_role": "caption" } }
+          { "type": "text", "id": "sample_scene.title", "content": { "i18n_key": "sample_scene.hud.title", "fallback": "Sample Scene" }, "style": { "text_role": "title" } },
+          { "type": "text", "id": "sample_scene.status", "content": { "i18n_key": "sample_scene.hud.status", "fallback": "Scene running" }, "style": { "text_role": "caption" } }
         ]
       },
-      { "type": "button", "id": "sample_scene.return_lobby", "variant": "secondary", "label": { "literal": "Lobby" }, "on_click": { "action": "sample_scene.return_lobby" } }
+      { "type": "button", "id": "sample_scene.return_lobby", "variant": "secondary", "label": { "i18n_key": "nav.lobby", "fallback": "Lobby" }, "on_click": { "action": "sample_scene.return_lobby" } }
     ]
   },
   "states": [],

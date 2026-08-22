@@ -91,14 +91,14 @@
             "id": "main_world_mail.header",
             "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 8.0 } },
             "children": [
-              { "type": "text", "id": "main_world_mail.title", "content": { "literal": "Mail" }, "style": { "text_role": "subtitle" } },
+              { "type": "text", "id": "main_world_mail.title", "content": { "i18n_key": "main_world_mail.title", "fallback": "Mail" }, "style": { "text_role": "subtitle" } },
               {
                 "type": "container",
                 "id": "main_world_mail.actions",
                 "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 8.0 }, "justify_content": "end" },
                 "children": [
-                  { "type": "button", "id": "main_world_mail.refresh", "variant": "secondary", "label": { "literal": "Refresh" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.refresh_disabled", "loading": "main_world_mail.refresh_loading" } }, "on_click": { "action": "main_world_mail.refresh" } },
-                  { "type": "button", "id": "main_world_mail.close", "variant": "secondary", "label": { "literal": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.close" } }
+                  { "type": "button", "id": "main_world_mail.refresh", "variant": "secondary", "label": { "i18n_key": "main_world_mail.action.refresh", "fallback": "Refresh" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.refresh_disabled", "loading": "main_world_mail.refresh_loading" } }, "on_click": { "action": "main_world_mail.refresh" } },
+                  { "type": "button", "id": "main_world_mail.close", "variant": "secondary", "label": { "i18n_key": "main_world_mail.action.close", "fallback": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.close" } }
                 ]
               }
             ]
@@ -112,7 +112,7 @@
             "style": { "component": "mail_error", "bindings": { "visibility": "main_world_mail.error_visibility" } },
             "children": [
               { "type": "text", "id": "main_world_mail.error_text", "layout": { "flex_grow": 1.0, "min_width": { "px": 180.0 } }, "content": { "binding_path": "main_world_mail.error.message", "fallback": "Mail request could not be completed." }, "style": { "text_role": "caption" } },
-              { "type": "button", "id": "main_world_mail.retry", "variant": "secondary", "label": { "literal": "Retry" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.retry_disabled", "loading": "main_world_mail.retry_loading" } }, "on_click": { "action": "main_world_mail.retry" } }
+              { "type": "button", "id": "main_world_mail.retry", "variant": "secondary", "label": { "i18n_key": "main_world_mail.action.retry", "fallback": "Retry" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.retry_disabled", "loading": "main_world_mail.retry_loading" } }, "on_click": { "action": "main_world_mail.retry" } }
             ]
           },
           {
@@ -145,9 +145,9 @@
                         "main_world_mail.item.disabled": "disabled"
                       },
                       "state": "main_world_mail.collection_state",
-                      "loading": { "literal": "Loading mail..." },
-                      "empty": { "literal": "No mail available." },
-                      "error": { "literal": "Mail list unavailable. Retry to continue." }
+                      "loading": { "i18n_key": "main_world_mail.list.loading", "fallback": "Loading mail..." },
+                      "empty": { "i18n_key": "main_world_mail.list.empty", "fallback": "No mail available." },
+                      "error": { "i18n_key": "main_world_mail.list.error", "fallback": "Mail list unavailable. Retry to continue." }
                     },
                     "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 8.0 } },
                     "children": [
@@ -176,12 +176,12 @@
                               }
                             ]
                           },
-                          { "type": "button", "id": "main_world_mail.item.open", "variant": "secondary", "label": { "literal": "Open" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "selected": "main_world_mail.item.selected", "disabled": "main_world_mail.item.disabled" } }, "on_click": { "action": "main_world_mail.select", "params": { "mail_id": { "kind": "item_binding", "value": "main_world_mail.item.mail_id" } } } }
+                          { "type": "button", "id": "main_world_mail.item.open", "variant": "secondary", "label": { "i18n_key": "main_world_mail.action.open", "fallback": "Open" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "selected": "main_world_mail.item.selected", "disabled": "main_world_mail.item.disabled" } }, "on_click": { "action": "main_world_mail.select", "params": { "mail_id": { "kind": "item_binding", "value": "main_world_mail.item.mail_id" } } } }
                         ]
                       }
                     ]
                   },
-                  { "type": "button", "id": "main_world_mail.load_more", "variant": "secondary", "label": { "literal": "Load more" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "style": { "bindings": { "visibility": "main_world_mail.load_more_visibility" } }, "component": { "bindings": { "disabled": "main_world_mail.load_more_disabled", "loading": "main_world_mail.load_more_loading" } }, "on_click": { "action": "main_world_mail.load_more" } }
+                  { "type": "button", "id": "main_world_mail.load_more", "variant": "secondary", "label": { "i18n_key": "main_world_mail.action.load_more", "fallback": "Load more" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "style": { "bindings": { "visibility": "main_world_mail.load_more_visibility" } }, "component": { "bindings": { "disabled": "main_world_mail.load_more_disabled", "loading": "main_world_mail.load_more_loading" } }, "on_click": { "action": "main_world_mail.load_more" } }
                 ]
               },
               {
@@ -207,9 +207,9 @@
                         "main_world_mail.attachment.item.bind_status": "bind_status"
                       },
                       "state": "main_world_mail.collection_state",
-                      "loading": { "literal": "Loading attachments..." },
-                      "empty": { "literal": "No attachments." },
-                      "error": { "literal": "Attachments unavailable." }
+                      "loading": { "i18n_key": "main_world_mail.attachments.loading", "fallback": "Loading attachments..." },
+                      "empty": { "i18n_key": "main_world_mail.attachments.empty", "fallback": "No attachments." },
+                      "error": { "i18n_key": "main_world_mail.attachments.error", "fallback": "Attachments unavailable." }
                     },
                     "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 4.0 } },
                     "children": [
@@ -231,9 +231,9 @@
                     "id": "main_world_mail.detail.actions",
                     "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "justify_content": "end", "gap": { "px": 8.0 } },
                     "children": [
-                      { "type": "button", "id": "main_world_mail.back_to_list", "variant": "secondary", "label": { "literal": "Back to list" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.back_to_list" } },
-                      { "type": "button", "id": "main_world_mail.mark_read", "variant": "secondary", "label": { "literal": "Mark read" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.mark_read_disabled", "loading": "main_world_mail.mark_read_loading" } }, "on_click": { "action": "main_world_mail.mark_read", "params": { "mail_id": { "kind": "host_binding", "value": "main_world_mail.selected.mail_id" } } } },
-                      { "type": "button", "id": "main_world_mail.claim", "variant": "primary", "label": { "literal": "Claim" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.claim_disabled", "loading": "main_world_mail.claim_loading" } }, "on_click": { "action": "main_world_mail.claim", "params": { "mail_id": { "kind": "host_binding", "value": "main_world_mail.selected.mail_id" } } } }
+                      { "type": "button", "id": "main_world_mail.back_to_list", "variant": "secondary", "label": { "i18n_key": "main_world_mail.action.back_to_list", "fallback": "Back to list" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_mail.back_to_list" } },
+                      { "type": "button", "id": "main_world_mail.mark_read", "variant": "secondary", "label": { "i18n_key": "main_world_mail.action.mark_read", "fallback": "Mark read" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.mark_read_disabled", "loading": "main_world_mail.mark_read_loading" } }, "on_click": { "action": "main_world_mail.mark_read", "params": { "mail_id": { "kind": "host_binding", "value": "main_world_mail.selected.mail_id" } } } },
+                      { "type": "button", "id": "main_world_mail.claim", "variant": "primary", "label": { "i18n_key": "main_world_mail.action.claim", "fallback": "Claim" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world_mail.claim_disabled", "loading": "main_world_mail.claim_loading" } }, "on_click": { "action": "main_world_mail.claim", "params": { "mail_id": { "kind": "host_binding", "value": "main_world_mail.selected.mail_id" } } } }
                     ]
                   }
                 ]
