@@ -255,18 +255,50 @@ impl StablePreviewValue for PlayerPreviewState {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ScenePreviewState {
     pub active_scene_id: Option<StablePreviewId>,
+    pub active_session_id: Option<StablePreviewId>,
     pub pending_scene_id: Option<StablePreviewId>,
+    pub pending_session_id: Option<StablePreviewId>,
+    pub ready_scene_id: Option<StablePreviewId>,
+    pub ready_session_id: Option<StablePreviewId>,
+    pub scene_status: Option<String>,
     pub lifecycle: Option<String>,
     pub loading_phase: Option<String>,
+    pub loading_policy: Option<String>,
+    pub required_total: Option<u64>,
+    pub required_loaded: Option<u64>,
+    pub optional_total: Option<u64>,
+    pub optional_loaded: Option<u64>,
+    pub optional_failed: Option<u64>,
+    pub loading_message_key: Option<String>,
     pub authority_mode: Option<String>,
     pub content_version: Option<String>,
+    pub seed: Option<u64>,
+    pub scene_entity_count: Option<u64>,
+    pub scene_root_count: Option<u64>,
+    pub runtime_root_count: Option<u64>,
+    pub layer_count: Option<u64>,
     pub layer_ids: Vec<StablePreviewId>,
+    pub layers: Vec<SceneLayerPreview>,
     pub recent_error: Option<String>,
+    pub adapter_summary: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct SceneLayerPreview {
+    pub id: StablePreviewId,
+    pub session_id: StablePreviewId,
+    pub state: Option<String>,
+    pub required: Option<bool>,
 }
 
 impl StablePreviewValue for ScenePreviewState {
     fn stable_sort(&mut self) {
         self.layer_ids.sort();
+        self.layers.sort_by(|left, right| {
+            left.id
+                .cmp(&right.id)
+                .then(left.session_id.cmp(&right.session_id))
+        });
     }
 }
 
