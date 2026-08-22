@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::ops::Deref;
 
 /// Increment when the serialized shape or enum vocabulary changes incompatibly.
-pub const LIVE_PREVIEW_SCHEMA_VERSION: u16 = 1;
+pub const LIVE_PREVIEW_SCHEMA_VERSION: u16 = 2;
 
 /// A string identifier supplied by a domain adapter, never a Bevy `Entity`.
 ///
@@ -219,6 +219,32 @@ pub struct UiPreviewState {
     pub document_status: Option<String>,
     pub document_source: Option<String>,
     pub document_error: Option<String>,
+    pub viewport: Option<UiViewportPreview>,
+    pub metrics: Option<UiMetricsPreview>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct UiViewportPreview {
+    pub logical_width: f32,
+    pub logical_height: f32,
+    pub device_scale: f32,
+    pub preview_scale: f32,
+    pub width_class: String,
+    pub height_class: String,
+    pub orientation: String,
+    pub input_mode: String,
+    pub safe_area: [f32; 4],
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct UiMetricsPreview {
+    pub page_padding: f32,
+    pub panel_padding: f32,
+    pub control_gap: f32,
+    pub section_gap: f32,
+    pub touch_target_min: f32,
+    pub font_body: f32,
+    pub content_max_width: f32,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -408,6 +434,24 @@ pub struct LivePreviewSnapshot {
     pub network: NetworkPreviewSection,
     pub performance: PerformancePreviewSection,
     pub source_health: PreviewSourceHealthSection,
+    pub timeline: LivePreviewTimelinePreview,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct LivePreviewTimelinePreview {
+    pub capacity: u64,
+    pub events: Vec<LivePreviewTimelineEventPreview>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct LivePreviewTimelineEventPreview {
+    pub event_type: String,
+    pub severity: String,
+    pub timestamp_ms: u64,
+    pub snapshot_sequence: u64,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub repeat_count: u32,
 }
 
 impl Default for LivePreviewSnapshot {
@@ -423,6 +467,7 @@ impl Default for LivePreviewSnapshot {
             network: NetworkPreviewSection::default(),
             performance: PerformancePreviewSection::default(),
             source_health: PreviewSourceHealthSection::default(),
+            timeline: LivePreviewTimelinePreview::default(),
         }
     }
 }
@@ -436,6 +481,13 @@ impl LivePreviewSnapshot {
         self.network.canonicalize();
         self.performance.canonicalize();
         self.source_health.canonicalize();
+        self.timeline.events.sort_by(|left, right| {
+            left.timestamp_ms
+                .cmp(&right.timestamp_ms)
+                .then(left.snapshot_sequence.cmp(&right.snapshot_sequence))
+                .then(left.event_type.cmp(&right.event_type))
+                .then(left.summary.cmp(&right.summary))
+        });
     }
 }
 

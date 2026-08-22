@@ -6,7 +6,8 @@ use bevy::time::Real;
 use super::collect_scene::{ScenePreviewCollectorState, collect_scene_preview};
 use super::collect_ui::{UiPreviewCollectorState, collect_ui_preview};
 use super::model::{
-    LivePreviewSnapshot, LivePreviewSnapshotHub, NetworkPreviewSection, PerformancePreviewSection,
+    LivePreviewSnapshot, LivePreviewSnapshotHub, LivePreviewTimelineEventPreview,
+    LivePreviewTimelinePreview, NetworkPreviewSection, PerformancePreviewSection,
     PlayerPreviewSection, PreviewSection, PreviewSourceHealthSection, ScenePreviewSection,
     UiPreviewSection,
 };
@@ -89,6 +90,36 @@ impl LivePreviewScheduler {
 
 fn elapsed_at_least(last: Option<u64>, now: u64, interval: u64) -> bool {
     last.is_none_or(|previous| now.saturating_sub(previous) >= interval)
+}
+
+fn timeline_preview(timeline: &LivePreviewTimeline) -> LivePreviewTimelinePreview {
+    LivePreviewTimelinePreview {
+        capacity: timeline.capacity() as u64,
+        events: timeline
+            .iter()
+            .map(|event| LivePreviewTimelineEventPreview {
+                event_type: timeline_type_label(&event.event_type),
+                severity: format!("{:?}", event.severity).to_ascii_lowercase(),
+                timestamp_ms: event.timestamp_ms,
+                snapshot_sequence: event.snapshot_sequence,
+                summary: event.summary.clone(),
+                detail: event.detail.clone(),
+                repeat_count: event.repeat_count,
+            })
+            .collect(),
+    }
+}
+
+fn timeline_type_label(event_type: &super::timeline::LivePreviewTimelineType) -> String {
+    match event_type {
+        super::timeline::LivePreviewTimelineType::Ui => "ui".to_owned(),
+        super::timeline::LivePreviewTimelineType::Player => "player".to_owned(),
+        super::timeline::LivePreviewTimelineType::Scene => "scene".to_owned(),
+        super::timeline::LivePreviewTimelineType::Network => "network".to_owned(),
+        super::timeline::LivePreviewTimelineType::Performance => "performance".to_owned(),
+        super::timeline::LivePreviewTimelineType::SourceHealth => "source_health".to_owned(),
+        super::timeline::LivePreviewTimelineType::Custom(id) => format!("custom:{}", id.as_str()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -186,10 +217,15 @@ impl LivePreviewCollectionBuffer {
         }
     }
 
-    fn snapshot_for_publish(&self, clock: &LivePreviewClock) -> LivePreviewSnapshot {
+    fn snapshot_for_publish(
+        &self,
+        clock: &LivePreviewClock,
+        timeline: &LivePreviewTimeline,
+    ) -> LivePreviewSnapshot {
         let mut snapshot = self.snapshot.clone();
         snapshot.captured_frame = clock.frame();
         snapshot.captured_monotonic_ms = clock.monotonic_ms();
+        snapshot.timeline = timeline_preview(timeline);
         snapshot
     }
 
@@ -266,12 +302,13 @@ fn publish_live_preview_snapshot(
     mut scheduler: ResMut<LivePreviewScheduler>,
     mut buffer: ResMut<LivePreviewCollectionBuffer>,
     mut hub: ResMut<LivePreviewSnapshotHub>,
+    timeline: Res<LivePreviewTimeline>,
 ) {
     if !buffer.dirty().any() && !scheduler.heartbeat_due(clock.monotonic_ms()) {
         return;
     }
 
-    let snapshot = buffer.snapshot_for_publish(&clock);
+    let snapshot = buffer.snapshot_for_publish(&clock, &timeline);
     hub.writer().publish(snapshot);
     buffer.clear_dirty();
     scheduler.record_publish(clock.monotonic_ms());
@@ -327,7 +364,8 @@ mod tests {
         buffer.set_ui(PreviewSection::not_collected());
         assert_eq!(buffer.dirty().ui, false);
         clock.advance_millis(16);
-        let snapshot = buffer.snapshot_for_publish(&clock);
+        let timeline = LivePreviewTimeline::default();
+        let snapshot = buffer.snapshot_for_publish(&clock, &timeline);
         hub.writer().publish(snapshot);
         buffer.clear_dirty();
         scheduler.record_publish(clock.monotonic_ms());

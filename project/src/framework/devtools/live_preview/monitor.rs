@@ -77,6 +77,76 @@ pub enum LivePreviewMonitorPanelFilter {
     BlockingOnly,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LivePreviewMonitorTimelineSeverityFilter {
+    #[default]
+    All,
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+impl LivePreviewMonitorTimelineSeverityFilter {
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::Info,
+            Self::Info => Self::Warning,
+            Self::Warning => Self::Error,
+            Self::Error => Self::Critical,
+            Self::Critical => Self::All,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Error => "error",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LivePreviewMonitorTimelineDomainFilter {
+    #[default]
+    All,
+    Ui,
+    Player,
+    Scene,
+    Network,
+    Performance,
+    SourceHealth,
+}
+
+impl LivePreviewMonitorTimelineDomainFilter {
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::Ui,
+            Self::Ui => Self::Player,
+            Self::Player => Self::Scene,
+            Self::Scene => Self::Network,
+            Self::Network => Self::Performance,
+            Self::Performance => Self::SourceHealth,
+            Self::SourceHealth => Self::All,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Ui => "ui",
+            Self::Player => "player",
+            Self::Scene => "scene",
+            Self::Network => "network",
+            Self::Performance => "performance",
+            Self::SourceHealth => "source_health",
+        }
+    }
+}
+
 impl LivePreviewMonitorPanelFilter {
     fn next(self) -> Self {
         match self {
@@ -119,6 +189,11 @@ pub struct LivePreviewMonitorState {
     pub tab: LivePreviewMonitorTab,
     pub panel_filter: LivePreviewMonitorPanelFilter,
     pub highlight_panels: bool,
+    pub timeline_severity_filter: LivePreviewMonitorTimelineSeverityFilter,
+    pub timeline_domain_filter: LivePreviewMonitorTimelineDomainFilter,
+    pub scroll_offsets: [f32; 7],
+    pub focused_tab: LivePreviewMonitorTab,
+    pub scroll_restore_pending: bool,
     pub root: Option<Entity>,
     pub window: Option<Entity>,
     pub camera: Option<Entity>,
@@ -134,6 +209,11 @@ impl Default for LivePreviewMonitorState {
             tab: LivePreviewMonitorTab::Overview,
             panel_filter: LivePreviewMonitorPanelFilter::All,
             highlight_panels: false,
+            timeline_severity_filter: LivePreviewMonitorTimelineSeverityFilter::All,
+            timeline_domain_filter: LivePreviewMonitorTimelineDomainFilter::All,
+            scroll_offsets: [0.0; 7],
+            focused_tab: LivePreviewMonitorTab::Overview,
+            scroll_restore_pending: false,
             root: None,
             window: None,
             camera: None,
@@ -158,7 +238,10 @@ struct LivePreviewMonitorHeader;
 struct LivePreviewMonitorTabs;
 
 #[derive(Component)]
-struct LivePreviewMonitorBody;
+struct LivePreviewMonitorBody(LivePreviewMonitorTab);
+
+#[derive(Component)]
+struct LivePreviewMonitorScroll(LivePreviewMonitorTab);
 
 pub(crate) struct LivePreviewMonitorPlugin;
 
@@ -169,6 +252,7 @@ impl Plugin for LivePreviewMonitorPlugin {
             (
                 handle_monitor_keys,
                 sync_monitor_target,
+                sync_monitor_scroll,
                 refresh_monitor_view,
             )
                 .chain(),
@@ -195,17 +279,47 @@ fn handle_monitor_keys(
         state.target = state.target.next_supported();
         state.root = None;
     }
-    if keys.just_pressed(KeyCode::F5) {
-        state.panel_filter = state.panel_filter.next();
-    }
-    if keys.just_pressed(KeyCode::F6) {
-        state.highlight_panels = !state.highlight_panels;
-    }
     if keys.just_pressed(KeyCode::F8) {
         state.last_export = Some(redacted_export(&hub.read()));
     }
+    if keys.just_pressed(KeyCode::F5) {
+        apply_ui_shortcut(&mut state, KeyCode::F5);
+    }
+    if keys.just_pressed(KeyCode::F6) {
+        apply_ui_shortcut(&mut state, KeyCode::F6);
+    }
+    if keys.just_pressed(KeyCode::PageUp) {
+        apply_timeline_shortcut(&mut state, KeyCode::PageUp);
+    }
+    if keys.just_pressed(KeyCode::PageDown) {
+        apply_timeline_shortcut(&mut state, KeyCode::PageDown);
+    }
     if keys.just_pressed(KeyCode::Tab) && state.enabled {
         state.tab = state.tab.next();
+        state.focused_tab = state.tab;
+        state.scroll_restore_pending = true;
+    }
+}
+
+fn apply_timeline_shortcut(state: &mut LivePreviewMonitorState, key: KeyCode) {
+    if state.tab != LivePreviewMonitorTab::Timeline {
+        return;
+    }
+    match key {
+        KeyCode::PageUp => state.timeline_severity_filter = state.timeline_severity_filter.next(),
+        KeyCode::PageDown => state.timeline_domain_filter = state.timeline_domain_filter.next(),
+        _ => {}
+    }
+}
+
+fn apply_ui_shortcut(state: &mut LivePreviewMonitorState, key: KeyCode) {
+    if state.tab != LivePreviewMonitorTab::Ui {
+        return;
+    }
+    match key {
+        KeyCode::F5 => state.panel_filter = state.panel_filter.next(),
+        KeyCode::F6 => state.highlight_panels = !state.highlight_panels,
+        _ => {}
     }
 }
 
@@ -279,8 +393,55 @@ fn sync_monitor_target(
             &fonts,
             state.target,
             target_camera,
+            state.tab,
         ));
+        state.scroll_restore_pending = true;
     }
+}
+
+fn sync_monitor_scroll(
+    state: ResMut<LivePreviewMonitorState>,
+    mut scrolls: Query<(
+        &LivePreviewMonitorScroll,
+        &mut ScrollPosition,
+        &mut Visibility,
+    )>,
+) {
+    let mut state = state;
+    let restore = state.scroll_restore_pending;
+    for (scroll, mut position, mut visibility) in &mut scrolls {
+        if scroll.0 == state.tab {
+            position.0.y = sync_scroll_offset(&mut state, scroll.0, position.0.y, restore);
+            *visibility = Visibility::Visible;
+        } else {
+            sync_scroll_offset(&mut state, scroll.0, position.0.y, false);
+            *visibility = Visibility::Hidden;
+        }
+    }
+    state.scroll_restore_pending = false;
+}
+
+fn sync_scroll_offset(
+    state: &mut LivePreviewMonitorState,
+    tab: LivePreviewMonitorTab,
+    observed: f32,
+    restore: bool,
+) -> f32 {
+    let index = tab_index(tab);
+    if restore && tab == state.tab {
+        state.scroll_offsets[index].max(0.0)
+    } else {
+        let observed = observed.max(0.0);
+        state.scroll_offsets[index] = observed;
+        observed
+    }
+}
+
+fn tab_index(tab: LivePreviewMonitorTab) -> usize {
+    LivePreviewMonitorTab::ALL
+        .iter()
+        .position(|candidate| *candidate == tab)
+        .unwrap_or(0)
 }
 
 fn refresh_monitor_view(
@@ -288,7 +449,7 @@ fn refresh_monitor_view(
     hub: Res<super::LivePreviewSnapshotHub>,
     mut headers: Query<&mut Text, With<LivePreviewMonitorHeader>>,
     mut tabs: Query<&mut Text, With<LivePreviewMonitorTabs>>,
-    mut bodies: Query<&mut Text, With<LivePreviewMonitorBody>>,
+    mut bodies: Query<(&LivePreviewMonitorBody, &mut Text)>,
 ) {
     if !state.enabled {
         return;
@@ -315,8 +476,8 @@ fn refresh_monitor_view(
     if state.frozen {
         return;
     }
-    let body = monitor_body(&snapshot, state.tab);
-    if let Ok(mut text) = bodies.single_mut() {
+    let body = monitor_body(&snapshot, &state);
+    if let Some((_, mut text)) = bodies.iter_mut().find(|(body, _)| body.0 == state.tab) {
         text.0 = body;
     }
 }
@@ -344,6 +505,7 @@ fn spawn_monitor_root(
     fonts: &UiFontAssets,
     target: LivePreviewMonitorTarget,
     target_camera: Option<Entity>,
+    active_tab: LivePreviewMonitorTab,
 ) -> Entity {
     let mut node = Node {
         position_type: PositionType::Absolute,
@@ -413,35 +575,43 @@ fn spawn_monitor_root(
             LivePreviewMonitorTabs,
             Pickable::IGNORE,
         ));
-        root.spawn((
-            ui_scroll_column_bundle(
-                UiScrollViewConfig::new(metrics.control_gap).with_max_height(
-                    (viewport.logical_height - metrics.page_padding * 3.0).max(280.0),
+        for tab in LivePreviewMonitorTab::ALL {
+            root.spawn((
+                ui_scroll_column_bundle(
+                    UiScrollViewConfig::new(metrics.control_gap).with_max_height(
+                        (viewport.logical_height - metrics.page_padding * 3.0).max(280.0),
+                    ),
                 ),
-            ),
-            Node {
-                width: percent(100.0),
-                flex_grow: 1.0,
-                ..default()
-            },
-        ))
-        .with_children(|body| {
-            body.spawn((
+                LivePreviewMonitorScroll(tab),
+                if tab == active_tab {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                },
                 Node {
                     width: percent(100.0),
+                    flex_grow: 1.0,
                     ..default()
                 },
-                screen_label(
-                    theme,
-                    fonts,
-                    "",
-                    UiThemeTextStyleRole::Caption,
-                    UiThemeTextColorRole::Primary,
-                ),
-                LivePreviewMonitorBody,
-                Pickable::IGNORE,
-            ));
-        });
+            ))
+            .with_children(|body| {
+                body.spawn((
+                    Node {
+                        width: percent(100.0),
+                        ..default()
+                    },
+                    screen_label(
+                        theme,
+                        fonts,
+                        "",
+                        UiThemeTextStyleRole::Caption,
+                        UiThemeTextColorRole::Primary,
+                    ),
+                    LivePreviewMonitorBody(tab),
+                    Pickable::IGNORE,
+                ));
+            });
+        }
     })
     .id()
 }
@@ -497,84 +667,385 @@ fn supports_dedicated_window() -> bool {
     !cfg!(target_os = "android")
 }
 
-fn monitor_body(snapshot: &super::LivePreviewSnapshot, tab: LivePreviewMonitorTab) -> String {
-    let body = match tab {
+fn monitor_body(snapshot: &super::LivePreviewSnapshot, state: &LivePreviewMonitorState) -> String {
+    let body = match state.tab {
         LivePreviewMonitorTab::Overview => overview_body(snapshot),
-        LivePreviewMonitorTab::Ui => section_body(
-            "UI",
-            snapshot.ui.status,
-            snapshot.ui.value.as_ref().map(|value| {
-                format!(
-                    "screen={} owner={} panels={}",
-                    value.canonical_screen.as_deref().unwrap_or("-"),
-                    value.owner.as_deref().unwrap_or("-"),
-                    value
-                        .panel_count
-                        .map_or("-".to_owned(), |count| count.to_string())
-                )
-            }),
-        ),
-        LivePreviewMonitorTab::Player => section_body(
-            "Player",
-            snapshot.player.status,
-            snapshot.player.value.as_ref().map(|value| {
-                format!(
-                    "character={} world={} movement={}",
-                    value.character_id.as_ref().map_or("-", |id| id.as_str()),
-                    value.world_id.as_ref().map_or("-", |id| id.as_str()),
-                    value.movement_state.as_deref().unwrap_or("-")
-                )
-            }),
-        ),
-        LivePreviewMonitorTab::Scene => section_body(
-            "Scene",
-            snapshot.scene.status,
-            snapshot.scene.value.as_ref().map(|value| {
-                format!(
-                    "active={} status={} lifecycle={}",
-                    value.active_scene_id.as_ref().map_or("-", |id| id.as_str()),
-                    value.scene_status.as_deref().unwrap_or("-"),
-                    value.lifecycle.as_deref().unwrap_or("-")
-                )
-            }),
-        ),
-        LivePreviewMonitorTab::Network => section_body(
-            "Network",
-            snapshot.network.status,
-            snapshot.network.value.as_ref().map(|value| {
-                format!(
-                    "connection={} room={} authority={} health={}",
-                    value.connection_state.as_deref().unwrap_or("-"),
-                    value.room_id.as_ref().map_or("-", |id| id.as_str()),
-                    value.authority_endpoint_kind.as_deref().unwrap_or("-"),
-                    value.authority_sync_health.as_deref().unwrap_or("-")
-                )
-            }),
-        ),
-        LivePreviewMonitorTab::Performance => section_body(
-            "Performance",
-            snapshot.performance.status,
-            snapshot.performance.value.as_ref().map(|value| {
-                format!(
-                    "fps={} frame_ms={} timeline={}",
-                    format_number(value.fps),
-                    format_number(value.frame_time_ms),
-                    value
-                        .timeline_entry_count
-                        .map_or("-".to_owned(), |count| count.to_string())
-                )
-            }),
-        ),
-        LivePreviewMonitorTab::Timeline => format!(
-            "Timeline\nentries are available in the shared fixed-capacity timeline ({} source records).",
-            snapshot
-                .source_health
-                .value
-                .as_ref()
-                .map_or(0, |health| health.sources.len())
-        ),
+        LivePreviewMonitorTab::Ui => ui_body(snapshot, state),
+        LivePreviewMonitorTab::Player => player_body(snapshot),
+        LivePreviewMonitorTab::Scene => scene_body(snapshot),
+        LivePreviewMonitorTab::Network => network_body(snapshot),
+        LivePreviewMonitorTab::Performance => performance_body(snapshot),
+        LivePreviewMonitorTab::Timeline => timeline_body(snapshot, state),
     };
     truncate_text(body)
+}
+
+fn ui_body(snapshot: &super::LivePreviewSnapshot, state: &LivePreviewMonitorState) -> String {
+    let Some(value) = snapshot.ui.value.as_ref() else {
+        return section_body("UI", snapshot.ui.status, None);
+    };
+    let panels = value
+        .panels
+        .iter()
+        .filter(|panel| match state.panel_filter {
+            LivePreviewMonitorPanelFilter::All => true,
+            LivePreviewMonitorPanelFilter::ActiveOnly => panel.active == Some(true),
+            LivePreviewMonitorPanelFilter::BlockingOnly => {
+                panel.kind.as_deref() == Some("blocking_overlay")
+            }
+        })
+        .map(|panel| {
+            format!(
+                "{} kind={} active={} z={}{}",
+                panel.id.as_str(),
+                panel.kind.as_deref().unwrap_or("-"),
+                bool_label(panel.active),
+                optional_u64(panel.z_index.map(|value| value as u64)),
+                if state.highlight_panels && panel.active == Some(true) {
+                    " highlight"
+                } else {
+                    ""
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    let viewport = value.viewport.as_ref().map_or_else(
+        || "unavailable".to_owned(),
+        |viewport| {
+            format!(
+                "{}x{} scale={} preview={} class={}/{} orientation={} input={} safe={:?}",
+                format_float(viewport.logical_width),
+                format_float(viewport.logical_height),
+                format_float(viewport.device_scale),
+                format_float(viewport.preview_scale),
+                viewport.width_class,
+                viewport.height_class,
+                viewport.orientation,
+                viewport.input_mode,
+                viewport.safe_area,
+            )
+        },
+    );
+    let metrics = value.metrics.as_ref().map_or_else(
+        || "unavailable".to_owned(),
+        |metrics| {
+            format!(
+                "padding={} panel={} gap={} section_gap={} touch={} font={} max_width={}",
+                format_float(metrics.page_padding),
+                format_float(metrics.panel_padding),
+                format_float(metrics.control_gap),
+                format_float(metrics.section_gap),
+                format_float(metrics.touch_target_min),
+                format_float(metrics.font_body),
+                format_float(metrics.content_max_width),
+            )
+        },
+    );
+    format!(
+        "UI\nstatus={}\nscreen={} owner={}\nviewport={}\nmetrics={}\ninput pointer_blocked={} reason={} route={} blocking={}\nfocus panel={} node={}\nstats nodes={}/{} text={} panels={} kinds={}\npanel filter={} highlight={} visible={}/{}\ntree panels:\n{}\nlayout document={} schema={} status={} source={} error={}",
+        status_label(snapshot.ui.status),
+        value.canonical_screen.as_deref().unwrap_or("unavailable"),
+        value.owner.as_deref().unwrap_or("unavailable"),
+        viewport,
+        metrics,
+        bool_label(value.pointer_blocked),
+        value.block_reason.as_deref().unwrap_or("-"),
+        value.route_summary.as_deref().unwrap_or("-"),
+        value.blocking_reason.as_deref().unwrap_or("-"),
+        value.focus_panel_id.as_ref().map_or("-", |id| id.as_str()),
+        value.focus_node_id.as_ref().map_or("-", |id| id.as_str()),
+        optional_u64(value.ui_node_count),
+        optional_u64(value.visible_ui_node_count),
+        optional_u64(value.text_node_count),
+        optional_u64(value.panel_count),
+        value.panel_kind_counts.as_ref().map_or_else(
+            || "-".to_owned(),
+            |counts| format!(
+                "page={} hud={} floating={} modal={} blocking={}",
+                counts.page, counts.hud, counts.floating, counts.modal, counts.blocking_overlay
+            ),
+        ),
+        state.panel_filter.label(),
+        if state.highlight_panels { "on" } else { "off" },
+        panels.len(),
+        value.panels.len(),
+        if panels.is_empty() {
+            "-".to_owned()
+        } else {
+            panels.join("\n")
+        },
+        value.document_id.as_ref().map_or("-", |id| id.as_str()),
+        value
+            .document_schema_version
+            .map_or("-".to_owned(), |version| version.to_string()),
+        value.document_status.as_deref().unwrap_or("-"),
+        value.document_source.as_deref().unwrap_or("-"),
+        value.document_error.as_deref().unwrap_or("-"),
+    )
+}
+
+fn player_body(snapshot: &super::LivePreviewSnapshot) -> String {
+    let Some(value) = snapshot.player.value.as_ref() else {
+        return section_body("Player", snapshot.player.status, None);
+    };
+    let attrs = value.attributes.as_ref().map_or_else(
+        || "unavailable".to_owned(),
+        |attrs| {
+            format!(
+                "affinity[e={},f={},w={},wind={}] mastery[e={},f={},w={},wind={}]",
+                attrs.affinity.earth,
+                attrs.affinity.fire,
+                attrs.affinity.water,
+                attrs.affinity.wind,
+                attrs.mastery.earth,
+                attrs.mastery.fire,
+                attrs.mastery.water,
+                attrs.mastery.wind,
+            )
+        },
+    );
+    format!(
+        "Player\nstatus={}\nidentity character={} name={} world={} selection={}\nattributes={} source={} freshness={} refreshed_ms={} push_seq={} revision={}\nposition={} direction={} movement={} authority_frame={}",
+        status_label(snapshot.player.status),
+        value
+            .character_id
+            .as_ref()
+            .map_or("unavailable", |id| id.as_str()),
+        value.display_name.as_deref().unwrap_or("unavailable"),
+        value
+            .world_id
+            .as_ref()
+            .map_or("unavailable", |id| id.as_str()),
+        value.selection_state.as_deref().unwrap_or("unavailable"),
+        attrs,
+        value.attributes_source.as_deref().unwrap_or("-"),
+        value.attributes_freshness.as_deref().unwrap_or("-"),
+        optional_u64(value.attributes_snapshot_refreshed_at_ms),
+        optional_u64(value.attributes_push_sequence),
+        optional_u64(value.attributes_revision),
+        vector3(value.position),
+        vector3(value.direction),
+        value.movement_state.as_deref().unwrap_or("unavailable"),
+        optional_u64(value.authority_frame),
+    )
+}
+
+fn scene_body(snapshot: &super::LivePreviewSnapshot) -> String {
+    let Some(value) = snapshot.scene.value.as_ref() else {
+        return section_body("Scene", snapshot.scene.status, None);
+    };
+    let layers = value
+        .layers
+        .iter()
+        .map(|layer| {
+            format!(
+                "{} session={} state={} required={}",
+                layer.id.as_str(),
+                layer.session_id.as_str(),
+                layer.state.as_deref().unwrap_or("-"),
+                bool_label(layer.required),
+            )
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "Scene\nstatus={} active={} session={} pending={} pending_session={} ready={} ready_session={}\nlifecycle={} scene_status={} loading={} policy={} required={}/{} optional={}/{} failed={} message={} authority={} version={} seed={}\nlayers count={} ids={} entities={} roots={} runtime_roots={} recent_error={} adapter={}\n{}",
+        status_label(snapshot.scene.status),
+        value.active_scene_id.as_ref().map_or("-", |id| id.as_str()),
+        value
+            .active_session_id
+            .as_ref()
+            .map_or("-", |id| id.as_str()),
+        value
+            .pending_scene_id
+            .as_ref()
+            .map_or("-", |id| id.as_str()),
+        value
+            .pending_session_id
+            .as_ref()
+            .map_or("-", |id| id.as_str()),
+        value.ready_scene_id.as_ref().map_or("-", |id| id.as_str()),
+        value
+            .ready_session_id
+            .as_ref()
+            .map_or("-", |id| id.as_str()),
+        value.lifecycle.as_deref().unwrap_or("-"),
+        value.scene_status.as_deref().unwrap_or("-"),
+        value.loading_phase.as_deref().unwrap_or("-"),
+        value.loading_policy.as_deref().unwrap_or("-"),
+        optional_u64(value.required_loaded),
+        optional_u64(value.required_total),
+        optional_u64(value.optional_loaded),
+        optional_u64(value.optional_total),
+        optional_u64(value.optional_failed),
+        value.loading_message_key.as_deref().unwrap_or("-"),
+        value.authority_mode.as_deref().unwrap_or("-"),
+        value.content_version.as_deref().unwrap_or("-"),
+        optional_u64(value.seed),
+        optional_u64(value.layer_count),
+        if value.layer_ids.is_empty() {
+            "-".to_owned()
+        } else {
+            value
+                .layer_ids
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        },
+        optional_u64(value.scene_entity_count),
+        optional_u64(value.scene_root_count),
+        optional_u64(value.runtime_root_count),
+        value.recent_error.as_deref().unwrap_or("-"),
+        value.adapter_summary.as_deref().unwrap_or("-"),
+        if layers.is_empty() {
+            "layers: -".to_owned()
+        } else {
+            format!("layers:\n{}", layers.join("\n"))
+        },
+    )
+}
+
+fn network_body(snapshot: &super::LivePreviewSnapshot) -> String {
+    let Some(value) = snapshot.network.value.as_ref() else {
+        return section_body("Network", snapshot.network.status, None);
+    };
+    format!(
+        "Network\nstatus={} session={} login={} registration={} character_selection={}\nconnection={} connected={} authenticated={} transport={} room={} pending={} reconnecting={} phase={}\nendpoint kind={} environment={} detail=redacted\nreceive last_success_ms={} error_category={}\nauthority endpoint={} role={} epoch={} frame={} activity_age_ms={} sync_health={}",
+        status_label(snapshot.network.status),
+        value.session_status.as_deref().unwrap_or("-"),
+        value.login_status.as_deref().unwrap_or("-"),
+        value.registration_status.as_deref().unwrap_or("-"),
+        value.character_selection_status.as_deref().unwrap_or("-"),
+        value.connection_state.as_deref().unwrap_or("unavailable"),
+        bool_label(value.connected),
+        bool_label(value.authenticated),
+        value.transport.as_deref().unwrap_or("-"),
+        value.room_id.as_ref().map_or("-", |id| id.as_str()),
+        optional_u64(value.pending_request_count.map(u64::from)),
+        bool_label(value.reconnecting),
+        value.reconnect_phase.as_deref().unwrap_or("-"),
+        value.endpoint_kind.as_deref().unwrap_or("-"),
+        value.endpoint_environment.as_deref().unwrap_or("-"),
+        optional_u64(value.last_successful_receive_ms),
+        value.last_error_category.as_deref().unwrap_or("-"),
+        value.authority_endpoint_kind.as_deref().unwrap_or("-"),
+        value.authority_role.as_deref().unwrap_or("-"),
+        optional_u64(value.authority_epoch),
+        optional_u64(value.authority_frame),
+        optional_u64(value.authority_last_activity_age_ms),
+        value.authority_sync_health.as_deref().unwrap_or("-"),
+    )
+}
+
+fn performance_body(snapshot: &super::LivePreviewSnapshot) -> String {
+    let value = snapshot.performance.value.as_ref();
+    let stale = snapshot
+        .source_health
+        .value
+        .as_ref()
+        .map(|health| {
+            health
+                .sources
+                .iter()
+                .filter(|source| {
+                    matches!(
+                        source.status,
+                        super::PreviewDataStatus::Unavailable | super::PreviewDataStatus::Failed
+                    )
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    format!(
+        "Performance\nstatus={} fps={} frame_time_ms={} collector_time_us={}\ncounts ui_nodes={} scene_entities={} timeline_entries={} timeline_capacity={}\nsections ui={}#{} player={}#{} scene={}#{} network={}#{} performance={}#{} source_health={}#{}\nsource stale_or_failed={} timeline_history=fixed_capacity",
+        status_label(snapshot.performance.status),
+        value.map_or("-".to_owned(), |value| format_number(value.fps)),
+        value.map_or("-".to_owned(), |value| format_number(value.frame_time_ms)),
+        value.map_or("-".to_owned(), |value| optional_u64(
+            value.collector_time_us
+        )),
+        value.map_or("-".to_owned(), |value| optional_u64(value.ui_node_count)),
+        value.map_or("-".to_owned(), |value| optional_u64(
+            value.scene_entity_count
+        )),
+        value.map_or("-".to_owned(), |value| optional_u64(
+            value.timeline_entry_count
+        )),
+        snapshot.timeline.capacity,
+        status_label(snapshot.ui.status),
+        optional_u64(snapshot.ui.revision),
+        status_label(snapshot.player.status),
+        optional_u64(snapshot.player.revision),
+        status_label(snapshot.scene.status),
+        optional_u64(snapshot.scene.revision),
+        status_label(snapshot.network.status),
+        optional_u64(snapshot.network.revision),
+        status_label(snapshot.performance.status),
+        optional_u64(snapshot.performance.revision),
+        status_label(snapshot.source_health.status),
+        optional_u64(snapshot.source_health.revision),
+        stale,
+    )
+}
+
+fn timeline_body(snapshot: &super::LivePreviewSnapshot, state: &LivePreviewMonitorState) -> String {
+    let events = filtered_timeline_events(
+        &snapshot.timeline.events,
+        state.timeline_severity_filter.label(),
+        state.timeline_domain_filter.label(),
+    );
+    let lines = events
+        .iter()
+        .map(|event| {
+            format!(
+                "{}ms seq={} [{} / {}] x{} {}{}",
+                event.timestamp_ms,
+                event.snapshot_sequence,
+                event.severity,
+                event.event_type,
+                event.repeat_count,
+                event.summary,
+                event
+                    .detail
+                    .as_ref()
+                    .map_or_else(String::new, |detail| format!(" ({detail})")),
+            )
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "Timeline\nseverity={} domain={}\ncapacity={} entries={} filtered={}{}\n{}",
+        state.timeline_severity_filter.label(),
+        state.timeline_domain_filter.label(),
+        snapshot.timeline.capacity,
+        snapshot.timeline.events.len(),
+        events.len(),
+        if (snapshot.timeline.events.len() as u64) >= snapshot.timeline.capacity
+            && snapshot.timeline.capacity > 0
+        {
+            " fixed-capacity: oldest entries evicted"
+        } else {
+            ""
+        },
+        if lines.is_empty() {
+            "history: empty".to_owned()
+        } else {
+            lines.join("\n")
+        },
+    )
+}
+
+fn filtered_timeline_events<'a>(
+    events: &'a [super::LivePreviewTimelineEventPreview],
+    severity: &str,
+    domain: &str,
+) -> Vec<&'a super::LivePreviewTimelineEventPreview> {
+    events
+        .iter()
+        .filter(|event| {
+            (severity == "all" || event.severity == severity)
+                && (domain == "all" || event.event_type == domain)
+        })
+        .collect()
 }
 
 fn overview_body(snapshot: &super::LivePreviewSnapshot) -> String {
@@ -637,8 +1108,46 @@ fn section_body(name: &str, status: super::PreviewDataStatus, detail: Option<Str
     )
 }
 
+fn status_label(status: super::PreviewDataStatus) -> String {
+    format!("{status:?}").to_ascii_lowercase()
+}
+
+fn bool_label(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "unavailable",
+    }
+}
+
+fn optional_u64(value: Option<u64>) -> String {
+    value.map_or_else(|| "-".to_owned(), |value| value.to_string())
+}
+
+fn format_float(value: f32) -> String {
+    if value.is_finite() {
+        format!("{value:.1}")
+    } else {
+        "-".to_owned()
+    }
+}
+
+fn vector3(value: Option<[f32; 3]>) -> String {
+    value.map_or_else(
+        || "unavailable".to_owned(),
+        |value| {
+            format!(
+                "[{},{},{}]",
+                format_float(value[0]),
+                format_float(value[1]),
+                format_float(value[2])
+            )
+        },
+    )
+}
+
 fn format_number(value: Option<f32>) -> String {
-    value.map_or_else(|| "-".to_owned(), |value| format!("{value:.1}"))
+    value.map_or_else(|| "-".to_owned(), format_float)
 }
 
 fn truncate_text(mut value: String) -> String {
@@ -657,7 +1166,8 @@ fn redacted_export(snapshot: &super::LivePreviewSnapshot) -> String {
 mod tests {
     use super::*;
     use crate::framework::devtools::live_preview::{
-        LivePreviewSnapshot, NetworkPreviewState, PreviewSection, StablePreviewId,
+        LivePreviewSnapshot, LivePreviewTimelineEventPreview, NetworkPreviewState, PreviewFailure,
+        PreviewSection, StablePreviewId,
     };
 
     #[test]
@@ -685,6 +1195,71 @@ mod tests {
         assert_eq!(
             LivePreviewMonitorPanelFilter::BlockingOnly.next(),
             LivePreviewMonitorPanelFilter::All
+        );
+    }
+
+    #[test]
+    fn f5_f6_only_change_ui_panel_state() {
+        let mut state = LivePreviewMonitorState {
+            tab: LivePreviewMonitorTab::Network,
+            ..Default::default()
+        };
+        apply_ui_shortcut(&mut state, KeyCode::F5);
+        apply_ui_shortcut(&mut state, KeyCode::F6);
+        assert_eq!(state.panel_filter, LivePreviewMonitorPanelFilter::All);
+        assert!(!state.highlight_panels);
+
+        state.tab = LivePreviewMonitorTab::Ui;
+        apply_ui_shortcut(&mut state, KeyCode::F5);
+        apply_ui_shortcut(&mut state, KeyCode::F6);
+        assert_eq!(
+            state.panel_filter,
+            LivePreviewMonitorPanelFilter::ActiveOnly
+        );
+        assert!(state.highlight_panels);
+    }
+
+    #[test]
+    fn timeline_filters_cycle_without_using_ui_shortcuts() {
+        let mut state = LivePreviewMonitorState {
+            tab: LivePreviewMonitorTab::Timeline,
+            ..Default::default()
+        };
+        apply_timeline_shortcut(&mut state, KeyCode::PageUp);
+        apply_timeline_shortcut(&mut state, KeyCode::PageDown);
+        assert_eq!(
+            state.timeline_severity_filter,
+            LivePreviewMonitorTimelineSeverityFilter::Info
+        );
+        assert_eq!(
+            state.timeline_domain_filter,
+            LivePreviewMonitorTimelineDomainFilter::Ui
+        );
+    }
+
+    #[test]
+    fn tab_scroll_offsets_restore_independently() {
+        let mut state = LivePreviewMonitorState {
+            tab: LivePreviewMonitorTab::Ui,
+            scroll_offsets: [0.0, 12.0, 34.0, 0.0, 0.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        assert_eq!(
+            sync_scroll_offset(&mut state, LivePreviewMonitorTab::Ui, 99.0, true),
+            12.0
+        );
+        state.tab = LivePreviewMonitorTab::Player;
+        assert_eq!(
+            sync_scroll_offset(&mut state, LivePreviewMonitorTab::Player, 0.0, true),
+            34.0
+        );
+        assert_eq!(
+            state.scroll_offsets[tab_index(LivePreviewMonitorTab::Ui)],
+            12.0
+        );
+        assert_eq!(
+            state.scroll_offsets[tab_index(LivePreviewMonitorTab::Player)],
+            34.0
         );
     }
 
@@ -732,5 +1307,73 @@ mod tests {
             ..Default::default()
         };
         assert!(monitor_header(&state, &snapshot).contains("freeze=on"));
+    }
+
+    #[test]
+    fn timeline_presenter_filters_by_severity_and_domain_in_stable_order() {
+        let events = vec![
+            LivePreviewTimelineEventPreview {
+                event_type: "network".to_owned(),
+                severity: "warning".to_owned(),
+                timestamp_ms: 2,
+                summary: "reconnecting".to_owned(),
+                ..Default::default()
+            },
+            LivePreviewTimelineEventPreview {
+                event_type: "ui".to_owned(),
+                severity: "info".to_owned(),
+                timestamp_ms: 1,
+                summary: "screen changed".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let filtered = filtered_timeline_events(&events, "warning", "network");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].summary, "reconnecting");
+        let mut snapshot = LivePreviewSnapshot::default();
+        snapshot.timeline.capacity = 1;
+        snapshot.timeline.events = events;
+        let body = timeline_body(
+            &snapshot,
+            &LivePreviewMonitorState {
+                timeline_severity_filter: LivePreviewMonitorTimelineSeverityFilter::Warning,
+                timeline_domain_filter: LivePreviewMonitorTimelineDomainFilter::Network,
+                ..Default::default()
+            },
+        );
+        assert!(body.contains("severity=warning domain=network"));
+        assert!(body.contains("fixed-capacity"));
+    }
+
+    #[test]
+    fn presenters_fail_closed_and_bound_long_text() {
+        let mut snapshot = LivePreviewSnapshot::default();
+        snapshot.ui = PreviewSection::failed(PreviewFailure::new("failed", "diagnostic"));
+        let state = LivePreviewMonitorState::default();
+        assert!(
+            monitor_body(
+                &snapshot,
+                &LivePreviewMonitorState {
+                    tab: LivePreviewMonitorTab::Ui,
+                    ..state.clone()
+                }
+            )
+            .contains("status=failed")
+        );
+        let long = "x".repeat(MONITOR_MAX_TEXT_CHARS * 2);
+        snapshot
+            .timeline
+            .events
+            .push(LivePreviewTimelineEventPreview {
+                summary: long,
+                ..Default::default()
+            });
+        let timeline_state = LivePreviewMonitorState {
+            tab: LivePreviewMonitorTab::Timeline,
+            ..state
+        };
+        assert!(
+            monitor_body(&snapshot, &timeline_state).chars().count() <= MONITOR_MAX_TEXT_CHARS + 32
+        );
     }
 }

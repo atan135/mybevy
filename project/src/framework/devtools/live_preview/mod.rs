@@ -16,16 +16,18 @@ mod timeline;
 pub use collect_scene::ScenePreviewAdapter;
 pub use model::{
     LIVE_PREVIEW_SCHEMA_VERSION, LivePreviewSnapshot, LivePreviewSnapshotHub,
-    LivePreviewSnapshotRead, NetworkPreviewSection, NetworkPreviewState, PerformancePreviewSection,
-    PerformancePreviewState, PlayerAttributesPreview, PlayerElementValuesPreview,
-    PlayerPreviewSection, PlayerPreviewState, PreviewDataStatus, PreviewFailure, PreviewSection,
-    PreviewSourceHealth, PreviewSourceHealthSection, PreviewSourceHealthState, SceneLayerPreview,
-    ScenePreviewSection, ScenePreviewState, StablePreviewId, StablePreviewValue,
-    UiPanelKindPreviewCounts, UiPanelPreview, UiPreviewSection, UiPreviewState,
+    LivePreviewSnapshotRead, LivePreviewTimelineEventPreview, LivePreviewTimelinePreview,
+    NetworkPreviewSection, NetworkPreviewState, PerformancePreviewSection, PerformancePreviewState,
+    PlayerAttributesPreview, PlayerElementValuesPreview, PlayerPreviewSection, PlayerPreviewState,
+    PreviewDataStatus, PreviewFailure, PreviewSection, PreviewSourceHealth,
+    PreviewSourceHealthSection, PreviewSourceHealthState, SceneLayerPreview, ScenePreviewSection,
+    ScenePreviewState, StablePreviewId, StablePreviewValue, UiMetricsPreview,
+    UiPanelKindPreviewCounts, UiPanelPreview, UiPreviewSection, UiPreviewState, UiViewportPreview,
 };
 pub use monitor::{
     LivePreviewMonitorPanelFilter, LivePreviewMonitorState, LivePreviewMonitorTab,
-    LivePreviewMonitorTarget,
+    LivePreviewMonitorTarget, LivePreviewMonitorTimelineDomainFilter,
+    LivePreviewMonitorTimelineSeverityFilter,
 };
 
 pub use model::{LivePreviewPolicy, LivePreviewPolicy as LivePreviewConfig};

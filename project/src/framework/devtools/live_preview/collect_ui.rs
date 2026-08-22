@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::framework::ui::{
     core::{
-        UiCurrentOwner, UiCurrentScreen, UiInputState, UiPanelKind, UiPanelRoot, UiPanelStack,
-        focus::UiFocusState, stats::UiStats,
+        UiCurrentOwner, UiCurrentScreen, UiInputState, UiMetrics, UiPanelKind, UiPanelRoot,
+        UiPanelStack, UiViewport, focus::UiFocusState, stats::UiStats,
     },
     document::{
         UiDocumentBuildState, UiDocumentNodeAuditMarker, UiDocumentRuntimeEvent,
@@ -27,18 +27,25 @@ pub(crate) struct UiPreviewCollectorState {
     document_error: Option<String>,
 }
 
+#[derive(SystemParam)]
+pub(crate) struct UiPreviewInputs<'w> {
+    current_owner: Option<Res<'w, UiCurrentOwner>>,
+    current_screen: Option<Res<'w, UiCurrentScreen>>,
+    input_state: Option<Res<'w, UiInputState>>,
+    focus_state: Option<Res<'w, UiFocusState>>,
+    stats: Option<Res<'w, UiStats>>,
+    viewport: Option<Res<'w, UiViewport>>,
+    metrics: Option<Res<'w, UiMetrics>>,
+    panel_stack: Option<Res<'w, UiPanelStack>>,
+}
+
 /// Collects the framework-owned UI facts after the normal UI update systems.
 /// The collector intentionally does not inspect binding values or text input
 /// contents; those remain outside the preview allowlist.
 pub(crate) fn collect_ui_preview(
     clock: Res<LivePreviewClock>,
     mut scheduler: ResMut<LivePreviewScheduler>,
-    current_owner: Option<Res<UiCurrentOwner>>,
-    current_screen: Option<Res<UiCurrentScreen>>,
-    input_state: Option<Res<UiInputState>>,
-    focus_state: Option<Res<UiFocusState>>,
-    stats: Option<Res<UiStats>>,
-    panel_stack: Option<Res<UiPanelStack>>,
+    inputs: UiPreviewInputs,
     panels: Query<(
         &UiPanelRoot,
         Option<&Visibility>,
@@ -77,12 +84,14 @@ pub(crate) fn collect_ui_preview(
     }
 
     let next_state = collect_ui_state(
-        current_owner.as_deref(),
-        current_screen.as_deref(),
-        input_state.as_deref(),
-        focus_state.as_deref(),
-        stats.as_deref(),
-        panel_stack.as_deref(),
+        inputs.current_owner.as_deref(),
+        inputs.current_screen.as_deref(),
+        inputs.input_state.as_deref(),
+        inputs.focus_state.as_deref(),
+        inputs.stats.as_deref(),
+        inputs.viewport.as_deref(),
+        inputs.metrics.as_deref(),
+        inputs.panel_stack.as_deref(),
         &panels,
         &focus_nodes,
         &document_roots,
@@ -129,6 +138,8 @@ pub(crate) fn collect_ui_state(
     input_state: Option<&UiInputState>,
     focus_state: Option<&UiFocusState>,
     stats: Option<&UiStats>,
+    viewport: Option<&UiViewport>,
+    metrics: Option<&UiMetrics>,
     panel_stack: Option<&UiPanelStack>,
     panels: &Query<(
         &UiPanelRoot,
@@ -267,6 +278,39 @@ pub(crate) fn collect_ui_state(
         document_status,
         document_source,
         document_error: document_error.map(str::to_owned),
+        viewport: viewport.map(viewport_preview),
+        metrics: metrics.map(metrics_preview),
+    }
+}
+
+fn viewport_preview(viewport: &UiViewport) -> super::UiViewportPreview {
+    super::UiViewportPreview {
+        logical_width: viewport.logical_width,
+        logical_height: viewport.logical_height,
+        device_scale: viewport.device_scale,
+        preview_scale: viewport.preview_scale,
+        width_class: format!("{:?}", viewport.width_class).to_ascii_lowercase(),
+        height_class: format!("{:?}", viewport.height_class).to_ascii_lowercase(),
+        orientation: format!("{:?}", viewport.orientation).to_ascii_lowercase(),
+        input_mode: format!("{:?}", viewport.input_mode).to_ascii_lowercase(),
+        safe_area: [
+            viewport.safe_area.left,
+            viewport.safe_area.right,
+            viewport.safe_area.top,
+            viewport.safe_area.bottom,
+        ],
+    }
+}
+
+fn metrics_preview(metrics: &UiMetrics) -> super::UiMetricsPreview {
+    super::UiMetricsPreview {
+        page_padding: metrics.page_padding,
+        panel_padding: metrics.panel_padding,
+        control_gap: metrics.control_gap,
+        section_gap: metrics.section_gap,
+        touch_target_min: metrics.touch_target_min,
+        font_body: metrics.font_body,
+        content_max_width: metrics.content_max_width,
     }
 }
 
@@ -348,13 +392,26 @@ mod tests {
             Option<Res<UiInputState>>,
             Option<Res<UiFocusState>>,
             Option<Res<UiStats>>,
+            Option<Res<UiViewport>>,
+            Option<Res<UiMetrics>>,
             Option<Res<UiPanelStack>>,
             PanelQuery,
             FocusNodeQuery,
             Query<'static, 'static, &'static UiDocumentRuntimeRoot>,
         )>::new(world);
-        let (owner, screen, input, focus, stats, stack, panels, focus_nodes, document_roots) =
-            state.get(world);
+        let (
+            owner,
+            screen,
+            input,
+            focus,
+            stats,
+            viewport,
+            metrics,
+            stack,
+            panels,
+            focus_nodes,
+            document_roots,
+        ) = state.get(world);
 
         collect_ui_state(
             owner.as_deref(),
@@ -362,6 +419,8 @@ mod tests {
             input.as_deref(),
             focus.as_deref(),
             stats.as_deref(),
+            viewport.as_deref(),
+            metrics.as_deref(),
             stack.as_deref(),
             &panels,
             &focus_nodes,
