@@ -9,8 +9,7 @@ use crate::framework::network::{NetworkEvent, NetworkTransport};
 use crate::game::authority::{AuthorityEndpoint, AuthorityEvent, AuthorityRole, AuthoritySession};
 use crate::game::myserver::{
     AccountLoginState, CharacterSelectionState, GameConnectionState, MyServerErrorKind,
-    MyServerEvent, MyServerProfiles, MyServerSession, ReconnectCause, ReconnectPlan,
-    RegistrationState,
+    MyServerEvent, MyServerProfiles, MyServerSession, ReconnectCause, RegistrationState,
 };
 use crate::game::scenes::{
     main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
@@ -571,6 +570,7 @@ fn next_publish_sequence(current_sequence: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::game::authority::AuthorityEndpoint;
+    use crate::game::myserver::ReconnectPlan;
 
     #[test]
     fn offline_state_is_explicit_and_endpoint_is_redacted() {

@@ -13,12 +13,14 @@ pub(crate) use types::CharacterProfile;
 pub(crate) use types::GameServiceEndpoint;
 #[cfg(test)]
 pub(crate) use types::LoginSession;
+#[cfg(test)]
+pub(crate) use types::ReconnectPlan;
 pub(crate) use types::{
     AccountLoginState, CharacterAttributes, CharacterElementsCache, CharacterSelectionState,
     CharacterSummary, ElementValues, GameConnectionState, MovementClientState,
     MyServerAutoClientConfig, MyServerCommand, MyServerConfig, MyServerDisplayError,
     MyServerEnvironment, MyServerErrorKind, MyServerErrorSource, MyServerEvent, MyServerOperation,
-    MyServerProfiles, MyServerSession, ReconnectCause, ReconnectPlan,
+    MyServerProfiles, MyServerSession, ReconnectCause,
 };
 // Registration contracts are intentionally re-exported for the auth host,
 // which owns sensitive form inputs without exposing the underlying types module.
