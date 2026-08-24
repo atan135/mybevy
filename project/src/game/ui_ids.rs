@@ -22,6 +22,8 @@ pub(in crate::game) const OWNER_MAIN_WORLD_ACTIVITY_DETAIL: UiOwnerId =
     UiOwnerId::new("main_world_activity_detail");
 pub(in crate::game) const OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL: UiOwnerId =
     UiOwnerId::new("main_world_login_reward_detail");
+pub(in crate::game) const OWNER_MAIN_WORLD_LOTTERY_DETAIL: UiOwnerId =
+    UiOwnerId::new("main_world_lottery_detail");
 pub(in crate::game) const OWNER_AUDIO_SETTINGS: UiOwnerId = UiOwnerId::new("audio_settings");
 pub(in crate::game) const OWNER_AUDIO_MONITOR: UiOwnerId = UiOwnerId::new("audio_monitor");
 pub(in crate::game) const OWNER_AUDIO_GALLERY: UiOwnerId = UiOwnerId::new("audio_gallery");

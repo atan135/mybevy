@@ -3763,13 +3763,15 @@ mod tests {
         assert!(matches!(
             messages::<UiPanelCommand>(&app).as_slice(),
             [
+                UiPanelCommand::CloseAllForOwner(lottery_detail),
                 UiPanelCommand::CloseAllForOwner(login_reward_detail),
                 UiPanelCommand::CloseAllForOwner(activity_detail),
                 UiPanelCommand::CloseAllForOwner(activity_list),
                 UiPanelCommand::CloseAllForOwner(mail),
                 UiPanelCommand::CloseAllForOwner(settings),
                 UiPanelCommand::CloseAllForOwner(hud),
-            ] if *login_reward_detail == crate::game::ui_ids::OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL
+            ] if *lottery_detail == crate::game::ui_ids::OWNER_MAIN_WORLD_LOTTERY_DETAIL
+                && *login_reward_detail == crate::game::ui_ids::OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL
                 && *activity_detail == crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_DETAIL
                 && *activity_list == crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_LIST
                 && *mail == crate::game::ui_ids::OWNER_MAIN_WORLD_MAIL_PANEL
@@ -3779,13 +3781,15 @@ mod tests {
         assert!(matches!(
             messages::<UiDocumentRuntimeCommand>(&app).as_slice(),
             [
+                UiDocumentRuntimeCommand::CloseAllForOwner { owner: lottery_detail },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: login_reward_detail },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: activity_detail },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: activity_list },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: mail },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: settings },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: hud },
-            ] if login_reward_detail == "main_world_login_reward_detail"
+            ] if lottery_detail == "main_world_lottery_detail"
+                && login_reward_detail == "main_world_login_reward_detail"
                 && activity_detail == "main_world_activity_detail"
                 && activity_list == "main_world_activity_list"
                 && mail == "main_world_mail_panel"
@@ -3795,13 +3799,15 @@ mod tests {
         assert!(matches!(
             messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
             [
+                DeclarativeScreenHostCommand::CloseRoute { route: lottery_detail },
                 DeclarativeScreenHostCommand::CloseRoute { route: login_reward_detail },
                 DeclarativeScreenHostCommand::CloseRoute { route: activity_detail },
                 DeclarativeScreenHostCommand::CloseRoute { route: activity_list },
                 DeclarativeScreenHostCommand::CloseRoute { route: mail },
                 DeclarativeScreenHostCommand::CloseRoute { route: settings },
                 DeclarativeScreenHostCommand::CloseRoute { route: hud },
-            ] if login_reward_detail == "main_world_login_reward_detail"
+            ] if lottery_detail == "main_world_lottery_detail"
+                && login_reward_detail == "main_world_login_reward_detail"
                 && activity_detail == "main_world_activity_detail"
                 && activity_list == "main_world_activity_list"
                 && mail == "main_world_mail"

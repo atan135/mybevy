@@ -10,6 +10,7 @@ pub(crate) use activity::{
     ActivityClientState, ActivityDetail, ActivityError, ActivityErrorKind, ActivityEvent,
     ActivityKey, ActivityPlayerView, ActivityPlugin, ActivityProgressView, ActivityRequestKind,
     ActivityRequestTracker, ActivitySummary, LoginRewardPlayerView, LoginRewardStageView,
+    LotteryPlayerView, LotteryStateView,
 };
 pub(crate) use plugin::{MyServerPlugin, MyServerUpdateSet};
 #[cfg(test)]

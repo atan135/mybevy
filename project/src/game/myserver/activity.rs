@@ -63,6 +63,7 @@ pub struct ActivityProgressView {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ActivityPlayerView {
     LoginReward(LoginRewardPlayerView),
+    Lottery(LotteryPlayerView),
     Unsupported,
 }
 
@@ -70,7 +71,14 @@ impl ActivityPlayerView {
     pub const fn login_reward(&self) -> Option<&LoginRewardPlayerView> {
         match self {
             Self::LoginReward(view) => Some(view),
-            Self::Unsupported => None,
+            Self::Lottery(_) | Self::Unsupported => None,
+        }
+    }
+
+    pub const fn lottery(&self) -> Option<&LotteryPlayerView> {
+        match self {
+            Self::Lottery(view) => Some(view),
+            Self::LoginReward(_) | Self::Unsupported => None,
         }
     }
 }
@@ -98,6 +106,30 @@ pub struct LoginRewardStageView {
     pub achieved: bool,
     pub claimable: bool,
     pub claimed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LotteryPlayerView {
+    pub draw_source: String,
+    pub pool_version: u32,
+    pub free_draw_count: u32,
+    pub daily_draw_limit: u32,
+    pub total_draw_limit: u32,
+    pub pool_total_weight: u64,
+    pub state: LotteryStateView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LotteryStateView {
+    pub free_draws_remaining: u32,
+    pub voucher_count: u32,
+    pub daily_draw_count: u32,
+    pub total_draw_count: u32,
+    pub last_draw_period_key: Option<String>,
+    pub pool_version: Option<u32>,
+    pub draw_request_id: Option<String>,
+    pub result_item_id: Option<i32>,
+    pub result_state: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -607,12 +639,7 @@ fn apply_detail_response(
         Ok(progress) => progress,
         Err(()) => return invalid_progress(state, events, tracked.kind),
     };
-    if summary.activity_type == "login_reward"
-        && !progress
-            .as_ref()
-            .and_then(|progress| progress.player_view.login_reward())
-            .is_some()
-    {
+    if !matches_typed_player_view(summary.activity_type.as_str(), progress.as_ref()) {
         return invalid_progress(state, events, tracked.kind);
     }
     state.details.insert(
@@ -839,6 +866,9 @@ fn parse_progress_json(value: &str) -> Result<Option<ActivityProgressView>, ()> 
         "login_reward" => {
             ActivityPlayerView::LoginReward(parse_login_reward_player_view(object, schema_version)?)
         }
+        "lottery" => {
+            ActivityPlayerView::Lottery(parse_lottery_player_view(object, schema_version)?)
+        }
         _ => ActivityPlayerView::Unsupported,
     };
     Ok(Some(ActivityProgressView {
@@ -847,6 +877,18 @@ fn parse_progress_json(value: &str) -> Result<Option<ActivityProgressView>, ()> 
         value,
         player_view,
     }))
+}
+
+fn matches_typed_player_view(activity_type: &str, progress: Option<&ActivityProgressView>) -> bool {
+    match activity_type {
+        "login_reward" => progress
+            .and_then(|progress| progress.player_view.login_reward())
+            .is_some(),
+        "lottery" => progress
+            .and_then(|progress| progress.player_view.lottery())
+            .is_some(),
+        _ => true,
+    }
 }
 
 fn parse_login_reward_player_view(
@@ -915,6 +957,42 @@ fn parse_login_reward_stage(value: &Value) -> Result<LoginRewardStageView, ()> {
     })
 }
 
+fn parse_lottery_player_view(
+    object: &serde_json::Map<String, Value>,
+    schema_version: u32,
+) -> Result<LotteryPlayerView, ()> {
+    if schema_version != 1 || required_view_string(object, "draw_source")? != "player_action" {
+        return Err(());
+    }
+    let pool_version = required_u32(object, "pool_version")?;
+    let pool_total_weight = required_u64(object, "pool_total_weight")?;
+    if pool_version == 0 || pool_total_weight == 0 {
+        return Err(());
+    }
+    let state = object.get("state").and_then(Value::as_object).ok_or(())?;
+    let result_item_id = optional_i32(state, "result_item_id")?;
+    let result_state = optional_view_string(state, "result_state")?;
+    Ok(LotteryPlayerView {
+        draw_source: "player_action".to_owned(),
+        pool_version,
+        free_draw_count: required_u32(object, "free_draw_count")?,
+        daily_draw_limit: required_u32(object, "daily_draw_limit")?,
+        total_draw_limit: required_u32(object, "total_draw_limit")?,
+        pool_total_weight,
+        state: LotteryStateView {
+            free_draws_remaining: required_u32(state, "free_draws_remaining")?,
+            voucher_count: required_u32(state, "voucher_count")?,
+            daily_draw_count: required_u32(state, "daily_draw_count")?,
+            total_draw_count: required_u32(state, "total_draw_count")?,
+            last_draw_period_key: optional_view_string(state, "last_draw_period_key")?,
+            pool_version: optional_u32(state, "pool_version")?,
+            draw_request_id: optional_view_string(state, "draw_request_id")?,
+            result_item_id,
+            result_state,
+        },
+    })
+}
+
 fn required_view_string(object: &serde_json::Map<String, Value>, key: &str) -> Result<String, ()> {
     let value = object.get(key).and_then(Value::as_str).ok_or(())?;
     (!value.trim().is_empty() && value.len() <= MAX_ACTIVITY_VIEW_STRING_BYTES)
@@ -946,6 +1024,32 @@ fn required_u32(object: &serde_json::Map<String, Value>, key: &str) -> Result<u3
         .ok_or(())
 }
 
+fn required_u64(object: &serde_json::Map<String, Value>, key: &str) -> Result<u64, ()> {
+    object.get(key).and_then(Value::as_u64).ok_or(())
+}
+
+fn optional_u32(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<u32>, ()> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| *value <= u64::from(u32::MAX))
+            .map(|value| Some(value as u32))
+            .ok_or(()),
+    }
+}
+
+fn optional_i32(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<i32>, ()> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_i64()
+            .filter(|value| (1..=i64::from(i32::MAX)).contains(value))
+            .map(|value| Some(value as i32))
+            .ok_or(()),
+    }
+}
+
 fn required_bool(object: &serde_json::Map<String, Value>, key: &str) -> Result<bool, ()> {
     object.get(key).and_then(Value::as_bool).ok_or(())
 }
@@ -957,6 +1061,12 @@ mod tests {
     fn login_reward_json(stages: &str) -> String {
         format!(
             r#"{{"type":"login_reward","schema_version":1,"contract_only":true,"event_source":"game_entry","cycle_unit":"natural_day","progression":"consecutive","miss_policy":"reset","claim_mode":"manual","stages":{stages},"current_stage_id":null,"last_period_key":"2026-08-24","consecutive_days":3,"cumulative_days":8,"today_status":"logged_in","future_field":{{"ignored":true}}}}"#
+        )
+    }
+
+    fn lottery_json(state: &str) -> String {
+        format!(
+            r#"{{"type":"lottery","schema_version":1,"contract_only":true,"draw_source":"player_action","pool_version":3,"free_draw_count":2,"daily_draw_limit":10,"total_draw_limit":100,"pool_total_weight":10,"state":{state},"future_field":{{"ignored":true}}}}"#
         )
     }
 
@@ -996,6 +1106,34 @@ mod tests {
             r#"[{"stage_no":0,"required_count":1,"reward_group_key":"first","achieved":true,"claimable":true,"claimed":false}]"#,
         );
         assert!(parse_progress_json(&invalid_stage).is_err());
+    }
+
+    #[test]
+    fn lottery_progress_accepts_unknown_fields_and_preserves_server_result_reference() {
+        let view = parse_progress_json(&lottery_json(
+            r#"{"free_draws_remaining":1,"voucher_count":4,"daily_draw_count":2,"total_draw_count":7,"last_draw_period_key":"2026-08-24","pool_version":3,"draw_request_id":"draw-1","result_item_id":1001,"result_state":"applied","future_state":{"ignored":true}}"#,
+        ))
+        .unwrap()
+        .unwrap();
+        let lottery = view.player_view.lottery().unwrap();
+        assert_eq!(lottery.pool_version, 3);
+        assert_eq!(lottery.state.free_draws_remaining, 1);
+        assert_eq!(lottery.state.result_item_id, Some(1001));
+        assert_eq!(lottery.state.result_state.as_deref(), Some("applied"));
+    }
+
+    #[test]
+    fn lottery_progress_rejects_invalid_schema_or_state() {
+        let invalid_schema = lottery_json(
+            r#"{"free_draws_remaining":1,"voucher_count":4,"daily_draw_count":2,"total_draw_count":7,"last_draw_period_key":null,"pool_version":3,"draw_request_id":null,"result_item_id":null,"result_state":null}"#,
+        )
+        .replace("\"schema_version\":1", "\"schema_version\":2");
+        assert!(parse_progress_json(&invalid_schema).is_err());
+
+        let invalid_result = lottery_json(
+            r#"{"free_draws_remaining":1,"voucher_count":4,"daily_draw_count":2,"total_draw_count":7,"last_draw_period_key":null,"pool_version":3,"draw_request_id":null,"result_item_id":0,"result_state":"future_state"}"#,
+        );
+        assert!(parse_progress_json(&invalid_result).is_err());
     }
 
     #[test]

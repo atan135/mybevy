@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "document_id": "game.main_world_lottery_detail",
+  "metadata": { "title": "Lottery", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {
+    "lottery.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lottery.availability": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lottery.counts": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lottery.request": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lottery.result": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lottery.draw_state": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lottery.error": { "scope": "owner", "value_type": { "kind": "string" } },
+    "lottery.error_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "lottery.draw_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "lottery.draw_loading": { "scope": "owner", "value_type": { "kind": "bool" } }
+  },
+  "styles": {
+    "lottery_shell": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#182629f5" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#829a8daa" } }, "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } } } },
+    "lottery_section": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#26353ae8" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#637d81cc" } } } },
+    "lottery_result": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#263238ee" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#8b9b63cc" } } } },
+    "lottery_error": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#3a1b20e8" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#dc666ecc" } } } }
+  },
+  "root": {
+    "type": "container", "id": "main_world_lottery_detail.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "direction": "column" },
+    "style": { "inline": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#071014d9" } } } },
+    "children": [{
+      "type": "scroll", "id": "main_world_lottery_detail.scroll", "block_lower": true, "max_height": 1600.0,
+      "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "overflow": { "y": "scroll" }, "align_items": "center", "justify_content": "center" },
+      "component": { "children": [{
+        "type": "container", "id": "main_world_lottery_detail.panel",
+        "layout": { "width": { "percent": 100.0 }, "max_width": { "px": 760.0 }, "min_width": { "px": 280.0 }, "padding": { "all": { "px": 18.0 } }, "direction": "column", "gap": { "px": 12.0 }, "flex_shrink": 0.0 }, "style": { "component": "lottery_shell" },
+        "children": [
+          { "type": "container", "id": "main_world_lottery_detail.header", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 8.0 } }, "children": [
+            { "type": "container", "id": "main_world_lottery_detail.heading", "layout": { "direction": "column", "gap": { "px": 3.0 }, "flex_grow": 1.0, "min_width": { "px": 180.0 } }, "children": [
+              { "type": "text", "id": "main_world_lottery_detail.title", "content": { "i18n_key": "main_world_lottery.title", "fallback": "LOTTERY" }, "style": { "text_role": "subtitle" } },
+              { "type": "text", "id": "main_world_lottery_detail.status", "content": { "binding_path": "lottery.status", "fallback": "Loading" }, "style": { "text_role": "caption" } }
+            ] },
+            { "type": "button", "id": "main_world_lottery_detail.close", "variant": "secondary", "label": { "i18n_key": "main_world_lottery.action.close", "fallback": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_lottery_detail.close" } }
+          ] },
+          { "type": "container", "id": "main_world_lottery_detail.error_panel", "layout": { "width": { "percent": 100.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "lottery_error", "bindings": { "visibility": "lottery.error_visibility" } }, "children": [
+            { "type": "text", "id": "main_world_lottery_detail.error", "content": { "binding_path": "lottery.error", "fallback": "Lottery request could not be verified." }, "style": { "text_role": "caption" } }
+          ] },
+          { "type": "container", "id": "main_world_lottery_detail.availability_panel", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 5.0 }, "padding": { "all": { "px": 12.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "lottery_section" }, "children": [
+            { "type": "text", "id": "main_world_lottery_detail.availability", "content": { "binding_path": "lottery.availability", "fallback": "" }, "style": { "text_role": "body" } },
+            { "type": "text", "id": "main_world_lottery_detail.counts", "content": { "binding_path": "lottery.counts", "fallback": "" }, "style": { "text_role": "caption" } },
+            { "type": "text", "id": "main_world_lottery_detail.draw_state", "content": { "binding_path": "lottery.draw_state", "fallback": "" }, "style": { "text_role": "caption" } }
+          ] },
+          { "type": "container", "id": "main_world_lottery_detail.result_panel", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 5.0 }, "padding": { "all": { "px": 12.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "lottery_result" }, "children": [
+            { "type": "text", "id": "main_world_lottery_detail.result", "content": { "binding_path": "lottery.result", "fallback": "No server-confirmed result" }, "style": { "text_role": "body" } },
+            { "type": "text", "id": "main_world_lottery_detail.request", "content": { "binding_path": "lottery.request", "fallback": "" }, "style": { "text_role": "caption" } }
+          ] },
+          { "type": "container", "id": "main_world_lottery_detail.actions", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "justify_content": "end", "gap": { "px": 8.0 } }, "children": [
+            { "type": "button", "id": "main_world_lottery_detail.draw", "variant": "primary", "label": { "i18n_key": "main_world_lottery.action.draw", "fallback": "Draw" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "lottery.draw_disabled", "loading": "lottery.draw_loading" } }, "on_click": { "action": "main_world_lottery_detail.draw" } },
+            { "type": "button", "id": "main_world_lottery_detail.back", "variant": "secondary", "label": { "i18n_key": "main_world_lottery.action.back", "fallback": "Back to activities" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_lottery_detail.back" } }
+          ] }
+        ]
+      }] }
+    }]
+  },
+  "states": [],
+  "responsive": [
+    { "id": "short_landscape", "priority": 100, "when": { "height_class": "short", "orientation": "landscape" }, "overrides": [
+      { "node_id": "main_world_lottery_detail.scroll", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "justify_content": "start" } } },
+      { "node_id": "main_world_lottery_detail.panel", "set": { "layout": { "padding": { "all": { "px": 12.0 } }, "gap": { "px": 8.0 } } } }
+    ] }
+  ]
+}

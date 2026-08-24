@@ -2,6 +2,7 @@ mod detail;
 mod host;
 mod list;
 mod login_reward;
+mod lottery;
 
 use bevy::prelude::*;
 
@@ -10,7 +11,7 @@ use crate::game::myserver::MyServerUpdateSet;
 
 pub(in crate::game) use host::{
     ACTIVITY_DETAIL_ROUTE, ACTIVITY_LIST_ROUTE, ActivityScreenCommand, ActivityScreenState,
-    LOGIN_REWARD_DETAIL_ROUTE,
+    LOGIN_REWARD_DETAIL_ROUTE, LOTTERY_DETAIL_ROUTE,
 };
 
 pub(super) struct ActivityScreensPlugin;
@@ -20,6 +21,7 @@ impl Plugin for ActivityScreensPlugin {
         app.init_resource::<host::ActivityScreenHostContract>()
             .init_resource::<ActivityScreenState>()
             .init_resource::<login_reward::LoginRewardClaimTracker>()
+            .init_resource::<lottery::LotteryDrawTracker>()
             .add_message::<ActivityScreenCommand>()
             .add_systems(Startup, host::register_activity_screen_contract)
             .add_systems(
@@ -35,8 +37,11 @@ impl Plugin for ActivityScreensPlugin {
                         .after(UiDocumentRuntimeSystems::Reconcile),
                     login_reward::handle_login_reward_document_actions
                         .after(UiDocumentRuntimeSystems::Reconcile),
+                    lottery::handle_lottery_document_actions
+                        .after(UiDocumentRuntimeSystems::Reconcile),
                     login_reward::apply_login_reward_activity_events
                         .after(MyServerUpdateSet::AutoClient),
+                    lottery::apply_lottery_activity_events.after(MyServerUpdateSet::AutoClient),
                 ),
             )
             .add_systems(
@@ -54,6 +59,12 @@ impl Plugin for ActivityScreensPlugin {
             .add_systems(
                 Update,
                 login_reward::sync_login_reward_bindings
+                    .after(MyServerUpdateSet::AutoClient)
+                    .before(UiBindingSystems::Apply),
+            )
+            .add_systems(
+                Update,
+                lottery::sync_lottery_bindings
                     .after(MyServerUpdateSet::AutoClient)
                     .before(UiBindingSystems::Apply),
             );

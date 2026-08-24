@@ -1,0 +1,37 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+  "document_id": "game.main_world_lottery_detail",
+  "host_contract": {
+    "actions": [
+      { "id": "main_world_lottery_detail.back", "sources": ["main_world_lottery_detail.back"] },
+      { "id": "main_world_lottery_detail.close", "sources": ["main_world_lottery_detail.close"] },
+      { "id": "main_world_lottery_detail.draw", "sources": ["main_world_lottery_detail.draw"] }
+    ],
+    "bindings": [
+      { "path": "lottery.availability", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lottery.counts", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lottery.draw_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "lottery.draw_loading", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "lottery.draw_state", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lottery.error", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lottery.error_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "lottery.request", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lottery.result", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "lottery.status", "scope": "owner", "value_type": { "kind": "string" } }
+    ],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "floating",
+  "owner": "main_world_lottery_detail",
+  "page_state": "initial",
+  "panel": "floating",
+  "protocol_version": 2,
+  "route": "main_world_lottery_detail",
+  "source": { "relative_path": "activity/main_world_lottery_detail.v1.json", "root": "approved" },
+  "template_version": 2,
+  "theme_tokens": []
+}

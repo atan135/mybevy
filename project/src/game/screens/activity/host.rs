@@ -21,19 +21,21 @@ use crate::game::{
     scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
     ui_ids::{
         OWNER_MAIN_WORLD_ACTIVITY_DETAIL, OWNER_MAIN_WORLD_ACTIVITY_LIST,
-        OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL,
+        OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL, OWNER_MAIN_WORLD_LOTTERY_DETAIL,
     },
 };
 
-use super::{detail, list, login_reward};
+use super::{detail, list, login_reward, lottery};
 
 pub(in crate::game) const ACTIVITY_LIST_DOCUMENT_ID: &str = "game.main_world_activity_list";
 pub(in crate::game) const ACTIVITY_DETAIL_DOCUMENT_ID: &str = "game.main_world_activity_detail";
 pub(in crate::game) const LOGIN_REWARD_DETAIL_DOCUMENT_ID: &str =
     "game.main_world_login_reward_detail";
+pub(in crate::game) const LOTTERY_DETAIL_DOCUMENT_ID: &str = "game.main_world_lottery_detail";
 pub(in crate::game) const ACTIVITY_LIST_ROUTE: &str = "main_world_activity_list";
 pub(in crate::game) const ACTIVITY_DETAIL_ROUTE: &str = "main_world_activity_detail";
 pub(in crate::game) const LOGIN_REWARD_DETAIL_ROUTE: &str = "main_world_login_reward_detail";
+pub(in crate::game) const LOTTERY_DETAIL_ROUTE: &str = "main_world_lottery_detail";
 
 pub(super) const ACTIVITY_LIST_DOCUMENT_SOURCE: &str = include_str!(
     "../../../../assets/ui/documents/approved/activity/main_world_activity_list.v1.json"
@@ -43,6 +45,9 @@ pub(super) const ACTIVITY_DETAIL_DOCUMENT_SOURCE: &str = include_str!(
 );
 pub(super) const LOGIN_REWARD_DETAIL_DOCUMENT_SOURCE: &str = include_str!(
     "../../../../assets/ui/documents/approved/activity/main_world_login_reward_detail.v1.json"
+);
+pub(super) const LOTTERY_DETAIL_DOCUMENT_SOURCE: &str = include_str!(
+    "../../../../assets/ui/documents/approved/activity/main_world_lottery_detail.v1.json"
 );
 
 const DEFAULT_AUDIT_PROFILES: [&str; 4] = [
@@ -150,6 +155,7 @@ pub(super) struct ActivityScreenHostContract {
     pub(super) list_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
     pub(super) detail_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
     pub(super) login_reward_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
+    pub(super) lottery_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
 }
 
 impl Default for ActivityScreenHostContract {
@@ -158,6 +164,7 @@ impl Default for ActivityScreenHostContract {
             list_bindings: list::activity_list_binding_schema(),
             detail_bindings: detail::activity_detail_binding_schema(),
             login_reward_bindings: login_reward::login_reward_binding_schema(),
+            lottery_bindings: lottery::lottery_binding_schema(),
         }
     }
 }
@@ -171,6 +178,7 @@ pub(super) fn register_activity_screen_contract(
         .into_iter()
         .chain(detail::activity_detail_action_descriptors())
         .chain(login_reward::login_reward_action_descriptors())
+        .chain(lottery::lottery_action_descriptors())
     {
         actions
             .register(descriptor)
@@ -180,6 +188,7 @@ pub(super) fn register_activity_screen_contract(
         activity_list_declarative_screen_host(&contract),
         activity_detail_declarative_screen_host(&contract),
         login_reward_detail_declarative_screen_host(&contract),
+        lottery_detail_declarative_screen_host(&contract),
     ] {
         screens
             .register(host)
@@ -240,6 +249,25 @@ fn login_reward_detail_declarative_screen_host(
             login_reward::ACTION_LOGIN_REWARD_CLOSE,
         ],
         &contract.login_reward_bindings,
+    )
+}
+
+fn lottery_detail_declarative_screen_host(
+    contract: &ActivityScreenHostContract,
+) -> DeclarativeScreenHost {
+    activity_host(
+        LOTTERY_DETAIL_DOCUMENT_ID,
+        LOTTERY_DETAIL_ROUTE,
+        &[LOTTERY_DETAIL_ROUTE, "main-world-lottery-detail"],
+        OWNER_MAIN_WORLD_LOTTERY_DETAIL,
+        "activity/main_world_lottery_detail.v1.json",
+        LOTTERY_DETAIL_DOCUMENT_SOURCE,
+        &[
+            lottery::ACTION_LOTTERY_DRAW,
+            lottery::ACTION_LOTTERY_BACK,
+            lottery::ACTION_LOTTERY_CLOSE,
+        ],
+        &contract.lottery_bindings,
     )
 }
 
@@ -495,7 +523,7 @@ pub(super) fn track_activity_screen_host_events(
             DeclarativeScreenHostEvent::Closed { route, .. }
                 if matches!(
                     route.as_str(),
-                    ACTIVITY_DETAIL_ROUTE | LOGIN_REWARD_DETAIL_ROUTE
+                    ACTIVITY_DETAIL_ROUTE | LOGIN_REWARD_DETAIL_ROUTE | LOTTERY_DETAIL_ROUTE
                 ) =>
             {
                 state.close_detail();
@@ -510,6 +538,7 @@ pub(super) fn track_activity_screen_host_events(
 
 fn close_activity_routes(commands: &mut MessageWriter<DeclarativeScreenHostCommand>) {
     for route in [
+        LOTTERY_DETAIL_ROUTE,
         LOGIN_REWARD_DETAIL_ROUTE,
         ACTIVITY_DETAIL_ROUTE,
         ACTIVITY_LIST_ROUTE,
@@ -530,6 +559,7 @@ fn detail_route_for_activity(
         .find(|summary| summary.activity_id == key.activity_id && summary.version == key.version)
         .map(|summary| match summary.activity_type.as_str() {
             "login_reward" => LOGIN_REWARD_DETAIL_ROUTE,
+            "lottery" => LOTTERY_DETAIL_ROUTE,
             _ => ACTIVITY_DETAIL_ROUTE,
         })
 }
@@ -682,6 +712,45 @@ mod tests {
     }
 
     #[test]
+    fn lottery_uses_its_dedicated_fixed_detail_route() {
+        let mut app = test_app(active_entry(9), active_session());
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(9);
+            state.list_open = true;
+        }
+        app.world_mut()
+            .resource_mut::<ActivityClientState>()
+            .activities
+            .push(ActivitySummary {
+                activity_id: "lottery".to_owned(),
+                version: 2,
+                activity_type: "lottery".to_owned(),
+                status: "running".to_owned(),
+                start_at_ms: 1,
+                end_at_ms: 2,
+                claim_deadline_ms: 3,
+                timezone: "UTC".to_owned(),
+            });
+        app.world_mut()
+            .write_message(ActivityScreenCommand::OpenDetail {
+                activity_id: "lottery".to_owned(),
+                version: 2,
+            });
+        app.update();
+
+        assert!(matches!(
+            read_messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+            [DeclarativeScreenHostCommand::OpenDetachedRoute { route }]
+                if route == LOTTERY_DETAIL_ROUTE
+        ));
+        assert_eq!(
+            app.world().resource::<ActivityScreenState>().detail_route,
+            Some(LOTTERY_DETAIL_ROUTE)
+        );
+    }
+
+    #[test]
     fn retrying_a_failed_list_reuses_the_list_route_without_requesting_detail() {
         let mut app = test_app(active_entry(3), active_session());
         {
@@ -715,6 +784,7 @@ mod tests {
             ACTIVITY_LIST_DOCUMENT_SOURCE,
             ACTIVITY_DETAIL_DOCUMENT_SOURCE,
             LOGIN_REWARD_DETAIL_DOCUMENT_SOURCE,
+            LOTTERY_DETAIL_DOCUMENT_SOURCE,
         ] {
             UiDocument::parse_and_validate_json(source)
                 .expect("activity surface must remain an approved valid UiDocument");
