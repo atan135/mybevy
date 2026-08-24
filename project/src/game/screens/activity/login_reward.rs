@@ -47,6 +47,7 @@ enum LoginRewardClaimPhase {
     Pending,
     Retryable,
     Refreshing,
+    Reconciling,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -86,6 +87,14 @@ impl LoginRewardClaimTracker {
     fn sync_character(&mut self, character_id: &str) {
         if self.character_id.as_deref() != Some(character_id) {
             self.character_id = Some(character_id.to_owned());
+            self.entries.clear();
+        }
+    }
+
+    fn sync_session_character(&mut self, character_id: Option<&str>) {
+        if let Some(character_id) = character_id {
+            self.sync_character(character_id);
+        } else if self.character_id.take().is_some() || !self.entries.is_empty() {
             self.entries.clear();
         }
     }
@@ -153,9 +162,19 @@ impl LoginRewardClaimTracker {
         }
     }
 
+    fn mark_activity_reconciling(&mut self, activity: &ActivityKey) {
+        for (key, entry) in &mut self.entries {
+            if &key.activity == activity {
+                entry.phase = LoginRewardClaimPhase::Reconciling;
+            }
+        }
+    }
+
     fn mark_all_retryable(&mut self) {
         for entry in self.entries.values_mut() {
-            entry.phase = LoginRewardClaimPhase::Retryable;
+            if entry.phase != LoginRewardClaimPhase::Reconciling {
+                entry.phase = LoginRewardClaimPhase::Retryable;
+            }
         }
     }
 
@@ -412,9 +431,7 @@ pub(super) fn apply_login_reward_activity_events(
     let character_id = session
         .as_deref()
         .and_then(|session| session.character_id.as_deref());
-    if let Some(character_id) = character_id {
-        claims.sync_character(character_id);
-    }
+    claims.sync_session_character(character_id);
     for event in events.read() {
         match event {
             ActivityEvent::DetailUpdated {
@@ -461,6 +478,7 @@ pub(super) fn apply_login_reward_activity_events(
             }
             ActivityEvent::RequestFailed {
                 kind: ActivityRequestKind::Claim,
+                activity: failed_activity,
                 error,
             } => {
                 let Some(key) = state
@@ -470,6 +488,12 @@ pub(super) fn apply_login_reward_activity_events(
                 else {
                     continue;
                 };
+                if failed_activity
+                    .as_ref()
+                    .is_some_and(|activity| activity != key)
+                {
+                    continue;
+                }
                 match error.kind {
                     ActivityErrorKind::QualificationNotMet | ActivityErrorKind::AlreadyClaimed => {
                         claims.mark_activity_retryable(key);
@@ -482,6 +506,12 @@ pub(super) fn apply_login_reward_activity_events(
                     }
                     ActivityErrorKind::Processing => {
                         claims.mark_activity_retryable(key);
+                        refresh_login_reward(key, &mut myserver_commands);
+                    }
+                    ActivityErrorKind::ReconciliationPending
+                    | ActivityErrorKind::ManualReview
+                    | ActivityErrorKind::Unknown => {
+                        claims.mark_activity_reconciling(key);
                         refresh_login_reward(key, &mut myserver_commands);
                     }
                     _ => claims.mark_activity_retryable(key),
@@ -641,6 +671,7 @@ fn login_reward_stage_binding(
     let claim_available = stage_claim_is_available(activity_status, view, stage);
     let (claim_disabled, claim_loading) = match phase {
         Some(LoginRewardClaimPhase::Pending | LoginRewardClaimPhase::Refreshing) => (true, true),
+        Some(LoginRewardClaimPhase::Reconciling) => (true, false),
         Some(LoginRewardClaimPhase::Retryable) => (false, false),
         None => (false, false),
     };
@@ -702,6 +733,9 @@ fn login_reward_stage_status(
         Some(LoginRewardClaimPhase::Pending) => "Claiming".to_owned(),
         Some(LoginRewardClaimPhase::Refreshing) => "Refreshing server state".to_owned(),
         Some(LoginRewardClaimPhase::Retryable) => "Retry available".to_owned(),
+        Some(LoginRewardClaimPhase::Reconciling) => {
+            "Server result requires verification".to_owned()
+        }
         None if stage.claimable => "Ready to claim".to_owned(),
         None => "Unavailable".to_owned(),
     }
@@ -905,6 +939,107 @@ mod tests {
             claimed["state"],
             UiBindingValue::String("Claimed".to_owned())
         );
+
+        let reconciling = login_reward_stage_binding(
+            "running",
+            &view,
+            &view.stages[0],
+            Some(LoginRewardClaimPhase::Reconciling),
+        );
+        let UiBindingValue::Record(reconciling) = reconciling else {
+            panic!("stage must bind as a record");
+        };
+        assert_eq!(reconciling["claim_disabled"], UiBindingValue::Bool(true));
+        assert_eq!(reconciling["claim_loading"], UiBindingValue::Bool(false));
+        assert_eq!(
+            reconciling["state"],
+            UiBindingValue::String("Server result requires verification".to_owned())
+        );
+    }
+
+    #[test]
+    fn manual_review_keeps_the_claim_reconciling_without_a_new_request() {
+        let key = sample_key();
+        let mut app = login_reward_mock_app(&key);
+        let mut command_cursor = MessageCursor::default();
+
+        app.world_mut().write_message(claim_dispatch(5));
+        app.update();
+        let first_commands = read_new_commands(&app, &mut command_cursor);
+        assert!(matches!(
+            first_commands.as_slice(),
+            [MyServerCommand::ClaimActivityStage { .. }]
+        ));
+
+        let kind = ActivityErrorKind::ManualReview;
+        app.world_mut().write_message(ActivityEvent::RequestFailed {
+            kind: ActivityRequestKind::Claim,
+            activity: Some(key.clone()),
+            error: ActivityError {
+                kind,
+                error_code: "ACTIVITY_MANUAL_REVIEW".to_owned(),
+                message_key: kind.message_key(),
+                retryable: false,
+            },
+        });
+        app.update();
+        assert_refresh_commands(read_new_commands(&app, &mut command_cursor), &key);
+        assert!(matches!(
+            app.world()
+                .resource::<LoginRewardClaimTracker>()
+                .phase(Some("character-1"), &key, 5),
+            Some(LoginRewardClaimPhase::Reconciling)
+        ));
+
+        app.world_mut().write_message(claim_dispatch(5));
+        app.update();
+        assert!(read_new_commands(&app, &mut command_cursor).is_empty());
+    }
+
+    #[test]
+    fn scope_loss_drops_page_local_claim_request_ids() {
+        let key = sample_key();
+        let mut app = login_reward_mock_app(&key);
+        let mut command_cursor = MessageCursor::default();
+
+        app.world_mut().write_message(claim_dispatch(5));
+        app.update();
+        let first_commands = read_new_commands(&app, &mut command_cursor);
+        let [first_claim] = first_commands.as_slice() else {
+            panic!("initial interaction must issue one claim command");
+        };
+        let first_request_id = claim_request_id(first_claim).to_owned();
+
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.character_id = None;
+            session.connection_id = None;
+            session.connected = false;
+            session.authenticated = false;
+            session.game_connection_state = GameConnectionState::Disconnected;
+        }
+        app.world_mut().write_message(ActivityEvent::ScopeChanged);
+        app.update();
+        assert!(read_new_commands(&app, &mut command_cursor).is_empty());
+        let tracker = app.world().resource::<LoginRewardClaimTracker>();
+        assert!(tracker.character_id.is_none());
+        assert!(tracker.entries.is_empty());
+
+        *app.world_mut().resource_mut::<MyServerSession>() = MyServerSession {
+            character_id: Some("character-1".to_owned()),
+            connection_id: Some(ConnectionId::from_raw(8)),
+            connected: true,
+            authenticated: true,
+            game_connection_state: GameConnectionState::Authenticated,
+            ..Default::default()
+        };
+        app.world_mut().write_message(claim_dispatch(5));
+        app.update();
+        let next_commands = read_new_commands(&app, &mut command_cursor);
+        let [next_claim] = next_commands.as_slice() else {
+            panic!("a new scope must not retain the old claim request");
+        };
+        assert_ne!(claim_request_id(next_claim), first_request_id);
     }
 
     #[test]

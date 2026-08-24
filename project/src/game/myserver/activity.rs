@@ -14,6 +14,7 @@ use super::{MyServerEvent, MyServerSession, MyServerUpdateSet};
 
 pub const MAX_ACTIVITY_PROGRESS_JSON_BYTES: usize = 64 * 1024;
 const MAX_ACTIVITY_VIEW_STRING_BYTES: usize = 128;
+const MAX_ACTIVITY_ERROR_CODE_BYTES: usize = 96;
 const MAX_LOGIN_REWARD_STAGES: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,6 +140,7 @@ pub enum ActivityErrorKind {
     QualificationNotMet,
     AlreadyClaimed,
     VersionConflict,
+    RateLimited,
     Processing,
     RetryableFailure,
     ReconciliationPending,
@@ -158,6 +160,7 @@ impl ActivityErrorKind {
             Self::QualificationNotMet => "activity.error.qualification_not_met",
             Self::AlreadyClaimed => "activity.error.already_claimed",
             Self::VersionConflict => "activity.error.version_conflict",
+            Self::RateLimited => "activity.error.rate_limited",
             Self::Processing => "activity.error.processing",
             Self::RetryableFailure => "activity.error.retryable_failure",
             Self::ReconciliationPending => "activity.error.reconciliation_pending",
@@ -174,6 +177,7 @@ impl ActivityErrorKind {
         matches!(
             self,
             Self::EngineUnavailable
+                | Self::RateLimited
                 | Self::Processing
                 | Self::RetryableFailure
                 | Self::StorageUnavailable
@@ -192,7 +196,7 @@ pub struct ActivityError {
 
 impl ActivityError {
     fn from_code(code: impl AsRef<str>) -> Self {
-        let error_code = code.as_ref().trim().to_ascii_uppercase();
+        let error_code = sanitize_activity_error_code(code.as_ref());
         let kind = if error_code == "ACTIVITY_ENGINE_UNAVAILABLE" {
             ActivityErrorKind::EngineUnavailable
         } else if error_code == "ACTIVITY_AUTH_REQUIRED" {
@@ -206,6 +210,11 @@ impl ActivityError {
             "ACTIVITY_VERSION_CONFLICT" | "ACTIVITY_INVALID_VERSION"
         ) {
             ActivityErrorKind::VersionConflict
+        } else if matches!(
+            error_code.as_str(),
+            "ACTIVITY_RATE_LIMITED" | "ACTIVITY_RATE_LIMIT_EXCEEDED" | "MSG_RATE_EXCEEDED"
+        ) {
+            ActivityErrorKind::RateLimited
         } else if error_code == "ACTIVITY_PROCESSING" {
             ActivityErrorKind::Processing
         } else if error_code == "ACTIVITY_RETRYABLE_FAILURE" {
@@ -216,6 +225,8 @@ impl ActivityError {
             ActivityErrorKind::ManualReview
         } else if error_code == "ACTIVITY_STORAGE_UNAVAILABLE" {
             ActivityErrorKind::StorageUnavailable
+        } else if error_code == "ACTIVITY_CONNECTION_UNAVAILABLE" {
+            ActivityErrorKind::Transport
         } else {
             ActivityErrorKind::Unknown
         };
@@ -255,6 +266,20 @@ impl ActivityError {
             message_key: kind.message_key(),
             retryable: false,
         }
+    }
+}
+
+fn sanitize_activity_error_code(code: &str) -> String {
+    let code = code.trim().to_ascii_uppercase();
+    let valid_activity_code = code.starts_with("ACTIVITY_")
+        && code.len() <= MAX_ACTIVITY_ERROR_CODE_BYTES
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_');
+    if valid_activity_code || code == "MSG_RATE_EXCEEDED" {
+        code
+    } else {
+        "ACTIVITY_UNKNOWN".to_owned()
     }
 }
 
@@ -363,6 +388,7 @@ pub enum ActivityEvent {
     },
     RequestFailed {
         kind: ActivityRequestKind,
+        activity: Option<ActivityKey>,
         error: ActivityError,
     },
 }
@@ -539,6 +565,7 @@ fn apply_activity_responses(
                     state.fail(error.clone());
                     activity_events.write(ActivityEvent::RequestFailed {
                         kind: tracked.kind,
+                        activity: tracked.activity,
                         error,
                     });
                 }
@@ -546,7 +573,11 @@ fn apply_activity_responses(
             MyServerEvent::ActivityRequestRejected { kind, error_code } => {
                 let error = ActivityError::from_code(error_code);
                 state.fail(error.clone());
-                activity_events.write(ActivityEvent::RequestFailed { kind: *kind, error });
+                activity_events.write(ActivityEvent::RequestFailed {
+                    kind: *kind,
+                    activity: None,
+                    error,
+                });
             }
             MyServerEvent::RequestFailed {
                 seq: Some(seq),
@@ -558,6 +589,7 @@ fn apply_activity_responses(
                     state.fail(error.clone());
                     activity_events.write(ActivityEvent::RequestFailed {
                         kind: tracked.kind,
+                        activity: tracked.activity,
                         error,
                     });
                 }
@@ -570,6 +602,7 @@ fn apply_activity_responses(
                     state.fail(error.clone());
                     activity_events.write(ActivityEvent::RequestFailed {
                         kind: tracked.kind,
+                        activity: tracked.activity,
                         error,
                     });
                 }
@@ -590,10 +623,10 @@ fn apply_list_response(
         return;
     };
     if tracked.kind != ActivityRequestKind::List {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, None);
     }
     if !response.ok {
-        return request_error(state, events, tracked.kind, &response.error_code);
+        return request_error(state, events, tracked.kind, None, &response.error_code);
     }
     state.activities = response
         .activities
@@ -615,14 +648,20 @@ fn apply_detail_response(
     let Some(tracked) = state.complete_request(seq, connection_id) else {
         return;
     };
-    let Some(key) = tracked.activity else {
-        return response_mismatch(state, events, tracked.kind);
+    let Some(key) = tracked.activity.clone() else {
+        return response_mismatch(state, events, tracked.kind, None);
     };
     if tracked.kind != ActivityRequestKind::Detail || !response.ok {
         return if response.ok {
-            response_mismatch(state, events, tracked.kind)
+            response_mismatch(state, events, tracked.kind, Some(key.clone()))
         } else {
-            request_error(state, events, tracked.kind, &response.error_code)
+            request_error(
+                state,
+                events,
+                tracked.kind,
+                Some(key.clone()),
+                &response.error_code,
+            )
         };
     }
     let Some(summary) = response
@@ -630,17 +669,17 @@ fn apply_detail_response(
         .clone()
         .and_then(ActivitySummary::from_proto)
     else {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, Some(key.clone()));
     };
     if summary.activity_id != key.activity_id || summary.version != key.version {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, Some(key.clone()));
     }
     let progress = match parse_progress_json(&response.progress_json) {
         Ok(progress) => progress,
-        Err(()) => return invalid_progress(state, events, tracked.kind),
+        Err(()) => return invalid_progress(state, events, tracked.kind, Some(key.clone())),
     };
     if !matches_typed_player_view(summary.activity_type.as_str(), progress.as_ref()) {
-        return invalid_progress(state, events, tracked.kind);
+        return invalid_progress(state, events, tracked.kind, Some(key.clone()));
     }
     state.details.insert(
         key.clone(),
@@ -668,8 +707,8 @@ fn apply_progress_response(
     let Some(tracked) = state.complete_request(seq, connection_id) else {
         return;
     };
-    let Some(key) = tracked.activity else {
-        return response_mismatch(state, events, tracked.kind);
+    let Some(key) = tracked.activity.clone() else {
+        return response_mismatch(state, events, tracked.kind, None);
     };
     if tracked.kind != ActivityRequestKind::Progress
         || !response.ok
@@ -677,14 +716,20 @@ fn apply_progress_response(
         || response.version != key.version
     {
         return if response.ok {
-            response_mismatch(state, events, tracked.kind)
+            response_mismatch(state, events, tracked.kind, Some(key.clone()))
         } else {
-            request_error(state, events, tracked.kind, &response.error_code)
+            request_error(
+                state,
+                events,
+                tracked.kind,
+                Some(key.clone()),
+                &response.error_code,
+            )
         };
     }
     let progress = match parse_progress_json(&response.progress_json) {
         Ok(progress) => progress,
-        Err(()) => return invalid_progress(state, events, tracked.kind),
+        Err(()) => return invalid_progress(state, events, tracked.kind, Some(key.clone())),
     };
     if let Some(detail) = state.details.get_mut(&key) {
         apply_progress_to_detail(detail, progress, response.state_revision);
@@ -719,6 +764,7 @@ fn apply_claim_response(
     let Some(tracked) = state.complete_request(seq, connection_id) else {
         return;
     };
+    let activity = tracked.activity.clone();
     if tracked.kind != ActivityRequestKind::Claim
         || !write_response_stage_matches(&tracked, &response.stage_id)
         || tracked
@@ -728,16 +774,22 @@ fn apply_claim_response(
                 redact_secret_fingerprint(&response.client_request_id) != fingerprint
             })
     {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, activity);
     }
     let Some(key) = tracked.activity else {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, None);
     };
     if response.activity_id != key.activity_id || response.version != key.version {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, Some(key.clone()));
     }
     if !response.ok {
-        return request_error(state, events, tracked.kind, &response.error_code);
+        return request_error(
+            state,
+            events,
+            tracked.kind,
+            Some(key.clone()),
+            &response.error_code,
+        );
     }
     state.last_error = None;
     events.write(ActivityEvent::ActionResolved {
@@ -762,6 +814,7 @@ fn apply_action_response(
     let Some(tracked) = state.complete_request(seq, connection_id) else {
         return;
     };
+    let activity = tracked.activity.clone();
     if tracked.kind != ActivityRequestKind::Action
         || !write_response_stage_matches(&tracked, &response.stage_id)
         || tracked
@@ -771,22 +824,28 @@ fn apply_action_response(
                 redact_secret_fingerprint(&response.client_request_id) != fingerprint
             })
     {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, activity);
     }
     let Some(key) = tracked.activity else {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, None);
     };
     let Some(action_type) = tracked.action_type else {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, Some(key));
     };
     if response.activity_id != key.activity_id
         || response.version != key.version
         || response.action_type != action_type
     {
-        return response_mismatch(state, events, tracked.kind);
+        return response_mismatch(state, events, tracked.kind, Some(key.clone()));
     }
     if !response.ok {
-        return request_error(state, events, tracked.kind, &response.error_code);
+        return request_error(
+            state,
+            events,
+            tracked.kind,
+            Some(key.clone()),
+            &response.error_code,
+        );
     }
     state.last_error = None;
     events.write(ActivityEvent::ActionResolved {
@@ -805,11 +864,16 @@ fn request_error(
     state: &mut ActivityClientState,
     events: &mut MessageWriter<ActivityEvent>,
     kind: ActivityRequestKind,
+    activity: Option<ActivityKey>,
     code: &str,
 ) {
     let error = ActivityError::from_code(code);
     state.fail(error.clone());
-    events.write(ActivityEvent::RequestFailed { kind, error });
+    events.write(ActivityEvent::RequestFailed {
+        kind,
+        activity,
+        error,
+    });
 }
 
 fn write_response_stage_matches(tracked: &TrackedActivityRequest, response_stage_id: &str) -> bool {
@@ -820,20 +884,30 @@ fn invalid_progress(
     state: &mut ActivityClientState,
     events: &mut MessageWriter<ActivityEvent>,
     kind: ActivityRequestKind,
+    activity: Option<ActivityKey>,
 ) {
     let error = ActivityError::invalid_progress();
     state.fail(error.clone());
-    events.write(ActivityEvent::RequestFailed { kind, error });
+    events.write(ActivityEvent::RequestFailed {
+        kind,
+        activity,
+        error,
+    });
 }
 
 fn response_mismatch(
     state: &mut ActivityClientState,
     events: &mut MessageWriter<ActivityEvent>,
     kind: ActivityRequestKind,
+    activity: Option<ActivityKey>,
 ) {
     let error = ActivityError::response_mismatch();
     state.fail(error.clone());
-    events.write(ActivityEvent::RequestFailed { kind, error });
+    events.write(ActivityEvent::RequestFailed {
+        kind,
+        activity,
+        error,
+    });
 }
 
 fn is_activity_request(message_type: super::protocol::MessageType) -> bool {
@@ -1234,9 +1308,81 @@ mod tests {
         assert_eq!(retryable.kind, ActivityErrorKind::StorageUnavailable);
         assert!(retryable.retryable);
 
+        let rate_limited = ActivityError::from_code("MSG_RATE_EXCEEDED");
+        assert_eq!(rate_limited.kind, ActivityErrorKind::RateLimited);
+        assert!(rate_limited.retryable);
+
+        let connection_unavailable = ActivityError::from_code("ACTIVITY_CONNECTION_UNAVAILABLE");
+        assert_eq!(connection_unavailable.kind, ActivityErrorKind::Transport);
+        assert!(connection_unavailable.retryable);
+
         let terminal = ActivityError::from_code("ACTIVITY_ALREADY_CLAIMED");
         assert_eq!(terminal.kind, ActivityErrorKind::AlreadyClaimed);
         assert!(!terminal.retryable);
+
+        let unknown = ActivityError::from_code("ACTIVITY_FUTURE_STATE");
+        assert_eq!(unknown.kind, ActivityErrorKind::Unknown);
+        assert_eq!(unknown.error_code, "ACTIVITY_FUTURE_STATE");
+        assert!(!unknown.retryable);
+
+        let unsafe_code = ActivityError::from_code("ACTIVITY_FUTURE_STATE bad-detail");
+        assert_eq!(unsafe_code.kind, ActivityErrorKind::Unknown);
+        assert_eq!(unsafe_code.error_code, "ACTIVITY_UNKNOWN");
+    }
+
+    #[test]
+    fn scope_change_clears_activity_state_and_pending_requests() {
+        let old_session = MyServerSession {
+            character_id: Some("character-old".to_owned()),
+            connection_id: Some(ConnectionId::from_raw(12)),
+            authenticated: true,
+            ..Default::default()
+        };
+        let new_session = MyServerSession {
+            character_id: Some("character-new".to_owned()),
+            connection_id: Some(ConnectionId::from_raw(13)),
+            authenticated: true,
+            ..Default::default()
+        };
+        let key = ActivityKey {
+            activity_id: "login-reward".to_owned(),
+            version: 1,
+        };
+        let mut state = ActivityClientState::default();
+        assert!(state.sync_scope(&old_session));
+        state.activities.push(ActivitySummary {
+            activity_id: key.activity_id.clone(),
+            version: key.version,
+            activity_type: "login_reward".to_owned(),
+            status: "running".to_owned(),
+            start_at_ms: 0,
+            end_at_ms: 0,
+            claim_deadline_ms: 0,
+            timezone: "UTC".to_owned(),
+        });
+        state.selected = Some(key.clone());
+        state.record_request(
+            &old_session,
+            9,
+            ActivityRequestKind::Detail,
+            Some(key),
+            None,
+            None,
+            None,
+        );
+        assert!(!state.request_tracker.is_empty());
+
+        assert!(state.sync_scope(&new_session));
+        assert!(state.activities.is_empty());
+        assert!(state.selected.is_none());
+        assert!(state.details.is_empty());
+        assert!(state.last_error.is_none());
+        assert!(state.request_tracker.is_empty());
+        assert!(
+            state
+                .complete_request(9, ConnectionId::from_raw(12))
+                .is_none()
+        );
     }
 
     #[test]

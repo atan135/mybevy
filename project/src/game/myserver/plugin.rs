@@ -6159,6 +6159,7 @@ mod tests {
                 ActivityEvent::RequestFailed {
                     kind: ActivityRequestKind::List,
                     error,
+                    ..
                 } if error.error_code == "ACTIVITY_AUTH_REQUIRED"
             )
         }));

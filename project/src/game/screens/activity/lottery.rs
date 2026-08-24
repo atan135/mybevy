@@ -92,6 +92,15 @@ impl LotteryDrawTracker {
         }
     }
 
+    fn sync_session_character(&mut self, character_id: Option<&str>) {
+        if let Some(character_id) = character_id {
+            self.sync_character(character_id);
+        } else if self.character_id.take().is_some() || !self.entries.is_empty() {
+            self.entries.clear();
+            self.last_error = None;
+        }
+    }
+
     fn begin_or_retry(&mut self, character_id: &str, activity: &ActivityKey) -> Option<String> {
         self.sync_character(character_id);
         let key = LotteryDrawKey {
@@ -327,9 +336,7 @@ pub(super) fn apply_lottery_activity_events(
     let character_id = session
         .as_deref()
         .and_then(|session| session.character_id.as_deref());
-    if let Some(character_id) = character_id {
-        draws.sync_character(character_id);
-    }
+    draws.sync_session_character(character_id);
     for event in events.read() {
         match event {
             ActivityEvent::DetailUpdated {
@@ -375,6 +382,7 @@ pub(super) fn apply_lottery_activity_events(
             }
             ActivityEvent::RequestFailed {
                 kind: ActivityRequestKind::Action,
+                activity: failed_activity,
                 error,
             } => {
                 let Some(key) = state
@@ -384,6 +392,12 @@ pub(super) fn apply_lottery_activity_events(
                 else {
                     continue;
                 };
+                if failed_activity
+                    .as_ref()
+                    .is_some_and(|activity| activity != key)
+                {
+                    continue;
+                }
                 match error.kind {
                     ActivityErrorKind::QualificationNotMet | ActivityErrorKind::AlreadyClaimed => {
                         draws.mark_activity_refreshing(key, error);
@@ -396,6 +410,7 @@ pub(super) fn apply_lottery_activity_events(
                     }
                     ActivityErrorKind::Processing
                     | ActivityErrorKind::EngineUnavailable
+                    | ActivityErrorKind::RateLimited
                     | ActivityErrorKind::RetryableFailure
                     | ActivityErrorKind::StorageUnavailable
                     | ActivityErrorKind::Transport => {
@@ -809,6 +824,53 @@ mod tests {
     }
 
     #[test]
+    fn scope_loss_drops_page_local_draw_request_ids() {
+        let key = sample_key();
+        let mut app = lottery_test_app(&key);
+        let mut command_cursor = MessageCursor::default();
+
+        app.world_mut().write_message(draw_dispatch());
+        app.update();
+        let first_commands = read_new_commands(&app, &mut command_cursor);
+        let [first_draw] = first_commands.as_slice() else {
+            panic!("initial interaction must issue one draw command");
+        };
+        let first_request_id = draw_request_id(first_draw).to_owned();
+
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.character_id = None;
+            session.connection_id = None;
+            session.connected = false;
+            session.authenticated = false;
+            session.game_connection_state = GameConnectionState::Disconnected;
+        }
+        app.world_mut().write_message(ActivityEvent::ScopeChanged);
+        app.update();
+        assert!(read_new_commands(&app, &mut command_cursor).is_empty());
+        let tracker = app.world().resource::<LotteryDrawTracker>();
+        assert!(tracker.character_id.is_none());
+        assert!(tracker.entries.is_empty());
+        assert!(tracker.last_error.is_none());
+
+        *app.world_mut().resource_mut::<MyServerSession>() = MyServerSession {
+            character_id: Some("character-1".to_owned()),
+            connection_id: Some(ConnectionId::from_raw(8)),
+            connected: true,
+            authenticated: true,
+            game_connection_state: GameConnectionState::Authenticated,
+            ..Default::default()
+        };
+        app.world_mut().write_message(draw_dispatch());
+        app.update();
+        let next_commands = read_new_commands(&app, &mut command_cursor);
+        let [next_draw] = next_commands.as_slice() else {
+            panic!("a new scope must not retain the old draw request");
+        };
+        assert_ne!(draw_request_id(next_draw), first_request_id);
+    }
+
+    #[test]
     fn draw_action_emits_only_the_controlled_wire_fields() {
         let key = sample_key();
         let mut app = lottery_test_app(&key);
@@ -940,6 +1002,7 @@ mod tests {
         let kind = ActivityErrorKind::ReconciliationPending;
         app.world_mut().write_message(ActivityEvent::RequestFailed {
             kind: ActivityRequestKind::Action,
+            activity: Some(key.clone()),
             error: ActivityError {
                 kind,
                 error_code: "ACTIVITY_RECONCILIATION_PENDING".to_owned(),
@@ -1051,6 +1114,7 @@ mod tests {
             let kind = ActivityErrorKind::EngineUnavailable;
             ActivityEvent::RequestFailed {
                 kind: ActivityRequestKind::Action,
+                activity: Some(sample_key()),
                 error: ActivityError {
                     kind,
                     error_code: "ACTIVITY_ENGINE_UNAVAILABLE".to_owned(),

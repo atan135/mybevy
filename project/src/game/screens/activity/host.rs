@@ -498,12 +498,21 @@ pub(super) fn apply_activity_screen_events(
                 state.detail_load_state = ActivityDetailLoadState::Ready;
                 state.detail_error = None;
             }
-            ActivityEvent::RequestFailed { kind, error } => match kind {
+            ActivityEvent::RequestFailed {
+                kind,
+                activity: failed_activity,
+                error,
+            } => match kind {
                 ActivityRequestKind::List if state.list_open => {
                     state.list_load_state = ActivityListLoadState::Failed;
                     state.list_error = Some(error.clone());
                 }
-                ActivityRequestKind::Detail if state.detail_open => {
+                ActivityRequestKind::Detail
+                    if state.detail_open
+                        && failed_activity
+                            .as_ref()
+                            .is_none_or(|activity| state.selected.as_ref() == Some(activity)) =>
+                {
                     state.detail_load_state = ActivityDetailLoadState::Failed;
                     state.detail_error = Some(error.clone());
                 }
@@ -603,9 +612,16 @@ mod tests {
             .init_resource::<ActivityClientState>()
             .init_resource::<ActivityScreenState>()
             .add_message::<ActivityScreenCommand>()
+            .add_message::<ActivityEvent>()
             .add_message::<MyServerCommand>()
             .add_message::<DeclarativeScreenHostCommand>()
-            .add_systems(Update, handle_activity_screen_commands);
+            .add_systems(
+                Update,
+                (
+                    handle_activity_screen_commands,
+                    apply_activity_screen_events,
+                ),
+            );
         app
     }
 
@@ -670,6 +686,42 @@ mod tests {
 
         assert!(read_messages::<MyServerCommand>(&app).is_empty());
         assert!(read_messages::<DeclarativeScreenHostCommand>(&app).is_empty());
+    }
+
+    #[test]
+    fn old_detail_failure_does_not_replace_the_current_detail_state() {
+        let mut app = test_app(active_entry(9), active_session());
+        let current = ActivityKey {
+            activity_id: "lottery".to_owned(),
+            version: 2,
+        };
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(9);
+            state.list_open = true;
+            state.detail_open = true;
+            state.detail_route = Some(LOTTERY_DETAIL_ROUTE);
+            state.selected = Some(current);
+            state.detail_load_state = ActivityDetailLoadState::Ready;
+        }
+        app.world_mut().write_message(ActivityEvent::RequestFailed {
+            kind: ActivityRequestKind::Detail,
+            activity: Some(ActivityKey {
+                activity_id: "login-reward".to_owned(),
+                version: 1,
+            }),
+            error: ActivityError {
+                kind: crate::game::myserver::ActivityErrorKind::Transport,
+                error_code: "ACTIVITY_TRANSPORT_FAILURE".to_owned(),
+                message_key: "activity.error.transport",
+                retryable: true,
+            },
+        });
+        app.update();
+
+        let state = app.world().resource::<ActivityScreenState>();
+        assert_eq!(state.detail_load_state, ActivityDetailLoadState::Ready);
+        assert!(state.detail_error.is_none());
     }
 
     #[test]
