@@ -1,9 +1,16 @@
+mod activity;
 pub mod chat;
 pub mod mail;
 mod plugin;
 pub mod protocol;
 mod types;
 
+#[allow(unused_imports)]
+pub(crate) use activity::{
+    ActivityClientState, ActivityError, ActivityErrorKind, ActivityEvent, ActivityKey,
+    ActivityPlugin, ActivityProgressView, ActivityRequestKind, ActivityRequestTracker,
+    ActivitySummary,
+};
 pub(crate) use plugin::{MyServerPlugin, MyServerUpdateSet};
 #[cfg(test)]
 pub(crate) use types::CharacterElements;

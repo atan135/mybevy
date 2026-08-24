@@ -17,12 +17,15 @@ use super::types::{
     GameConnectionState, LoginResponse, MovementClientState, MyServerAutoClientConfig,
     MyServerAutoClientState, MyServerCommand, MyServerConfig, MyServerDiagnosticSnapshot,
     MyServerDisplayError, MyServerErrorSource, MyServerEvent, MyServerOperation, MyServerProfiles,
-    MyServerSession, PendingHttpOperation, PendingHttpRequest, PendingRequest, ReconnectCause,
-    ReconnectPlan, RegisterPendingReviewResponse, RegisterResponse, SessionKickCategory,
-    TicketResponse, character_select_endpoint, classify_game_auth_failure,
+    MyServerSession, PendingActivityRequest, PendingHttpOperation, PendingHttpRequest,
+    PendingRequest, ReconnectCause, ReconnectPlan, RegisterPendingReviewResponse, RegisterResponse,
+    SessionKickCategory, TicketResponse, character_select_endpoint, classify_game_auth_failure,
     parse_character_bound_ticket, redact_secret_fingerprint, ticket_endpoint,
 };
-use super::{chat::ChatPlugin, mail::MailPlugin};
+use super::{
+    ActivityClientState, ActivityKey, ActivityPlugin, ActivityRequestKind, chat::ChatPlugin,
+    mail::MailPlugin,
+};
 
 pub struct MyServerPlugin;
 
@@ -47,6 +50,7 @@ impl Plugin for MyServerPlugin {
             .add_message::<MyServerEvent>()
             .add_plugins(MailPlugin)
             .add_plugins(ChatPlugin)
+            .add_plugins(ActivityPlugin)
             .add_systems(Startup, auto_client_startup)
             .configure_sets(
                 Update,
@@ -534,6 +538,7 @@ fn auto_client_character_name(guest_id: Option<&str>) -> String {
 fn handle_myserver_commands(
     config: Res<MyServerConfig>,
     mut session: ResMut<MyServerSession>,
+    mut activity: ResMut<ActivityClientState>,
     mut commands: MessageReader<MyServerCommand>,
     mut network_commands: MessageWriter<NetworkCommand>,
     mut events: MessageWriter<MyServerEvent>,
@@ -862,6 +867,122 @@ fn handle_myserver_commands(
                 *dir_x,
                 *dir_y,
                 *client_state,
+            ),
+            MyServerCommand::LoadActivityList => send_activity_request(
+                &mut session,
+                &mut activity,
+                &mut network_commands,
+                &mut events,
+                MessageType::ActivityListReq,
+                MessageType::ActivityListRes,
+                &pb::ActivityListReq {},
+                ActivityRequestKind::List,
+                None,
+                None,
+                None,
+                None,
+            ),
+            MyServerCommand::LoadActivityDetail {
+                activity_id,
+                version,
+            } => send_activity_request(
+                &mut session,
+                &mut activity,
+                &mut network_commands,
+                &mut events,
+                MessageType::ActivityDetailReq,
+                MessageType::ActivityDetailRes,
+                &pb::ActivityDetailReq {
+                    activity_id: activity_id.clone(),
+                    version: *version,
+                },
+                ActivityRequestKind::Detail,
+                Some(ActivityKey {
+                    activity_id: activity_id.clone(),
+                    version: *version,
+                }),
+                None,
+                None,
+                None,
+            ),
+            MyServerCommand::LoadActivityProgress {
+                activity_id,
+                version,
+            } => send_activity_request(
+                &mut session,
+                &mut activity,
+                &mut network_commands,
+                &mut events,
+                MessageType::ActivityProgressReq,
+                MessageType::ActivityProgressRes,
+                &pb::ActivityProgressReq {
+                    activity_id: activity_id.clone(),
+                    version: *version,
+                },
+                ActivityRequestKind::Progress,
+                Some(ActivityKey {
+                    activity_id: activity_id.clone(),
+                    version: *version,
+                }),
+                None,
+                None,
+                None,
+            ),
+            MyServerCommand::ClaimActivityStage {
+                activity_id,
+                version,
+                stage_id,
+                client_request_id,
+            } => send_activity_request(
+                &mut session,
+                &mut activity,
+                &mut network_commands,
+                &mut events,
+                MessageType::ActivityClaimReq,
+                MessageType::ActivityClaimRes,
+                &pb::ActivityClaimReq {
+                    activity_id: activity_id.clone(),
+                    version: *version,
+                    stage_id: stage_id.clone(),
+                    client_request_id: client_request_id.clone(),
+                },
+                ActivityRequestKind::Claim,
+                Some(ActivityKey {
+                    activity_id: activity_id.clone(),
+                    version: *version,
+                }),
+                Some(stage_id),
+                None,
+                Some(client_request_id),
+            ),
+            MyServerCommand::RunActivityAction {
+                activity_id,
+                version,
+                stage_id,
+                action_type,
+                client_request_id,
+            } => send_activity_request(
+                &mut session,
+                &mut activity,
+                &mut network_commands,
+                &mut events,
+                MessageType::ActivityActionReq,
+                MessageType::ActivityActionRes,
+                &pb::ActivityActionReq {
+                    activity_id: activity_id.clone(),
+                    version: *version,
+                    stage_id: stage_id.clone(),
+                    action_type: action_type.clone(),
+                    client_request_id: client_request_id.clone(),
+                },
+                ActivityRequestKind::Action,
+                Some(ActivityKey {
+                    activity_id: activity_id.clone(),
+                    version: *version,
+                }),
+                Some(stage_id),
+                Some(action_type),
+                Some(client_request_id),
             ),
         }
     }
@@ -3057,6 +3178,71 @@ fn send_move_input(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
+fn send_activity_request<M>(
+    session: &mut MyServerSession,
+    activity: &mut ActivityClientState,
+    network_commands: &mut MessageWriter<NetworkCommand>,
+    events: &mut MessageWriter<MyServerEvent>,
+    request_type: MessageType,
+    response_type: MessageType,
+    message: &M,
+    kind: ActivityRequestKind,
+    activity_key: Option<ActivityKey>,
+    stage_id: Option<&str>,
+    action_type: Option<&str>,
+    client_request_id: Option<&str>,
+) where
+    M: prost::Message,
+{
+    if !session.authenticated || session.character_id.is_none() {
+        events.write(MyServerEvent::ActivityRequestRejected {
+            kind,
+            error_code: "ACTIVITY_AUTH_REQUIRED".to_owned(),
+        });
+        return;
+    }
+    if !session.connected || session.connection_id.is_none() {
+        events.write(MyServerEvent::ActivityRequestRejected {
+            kind,
+            error_code: "ACTIVITY_CONNECTION_UNAVAILABLE".to_owned(),
+        });
+        return;
+    }
+
+    let Some(seq) = send_request_with_seq(
+        session,
+        network_commands,
+        events,
+        request_type,
+        response_type,
+        message,
+    ) else {
+        return;
+    };
+
+    let character_id = session.character_id.clone();
+    if let Some(pending) = session.pending.get_mut(&seq) {
+        pending.activity = Some(PendingActivityRequest {
+            kind,
+            activity_id: activity_key.as_ref().map(|key| key.activity_id.clone()),
+            version: activity_key.as_ref().map(|key| key.version),
+            stage_id: stage_id.map(str::to_owned),
+            request_id_fingerprint: client_request_id.map(redact_secret_fingerprint),
+            character_id,
+        });
+    }
+    activity.record_request(
+        session,
+        seq,
+        kind,
+        activity_key,
+        stage_id,
+        action_type,
+        client_request_id,
+    );
+}
+
 fn send_request<M>(
     session: &mut MyServerSession,
     network_commands: &mut MessageWriter<NetworkCommand>,
@@ -3250,7 +3436,43 @@ fn handle_game_packet(
     if message_type == MessageType::ErrorRes {
         match packet.decode::<pb::ErrorRes>() {
             Ok(error) => {
-                let pending = session.pending.remove(&packet.header.seq);
+                let Some(pending_connection_id) = session
+                    .pending
+                    .get(&packet.header.seq)
+                    .map(|pending| pending.connection_id)
+                else {
+                    let error = format!("received ErrorRes for unknown seq {}", packet.header.seq);
+                    write_display_error(
+                        events,
+                        MyServerDisplayError::protocol(
+                            Some(MessageType::ErrorRes),
+                            Some(packet.header.seq),
+                            Some(error.clone()),
+                        ),
+                    );
+                    events.write(MyServerEvent::ProtocolError { error });
+                    return;
+                };
+                if pending_connection_id != Some(connection_id) {
+                    let error = format!(
+                        "received ErrorRes for seq {} on a different connection",
+                        packet.header.seq
+                    );
+                    write_display_error(
+                        events,
+                        MyServerDisplayError::protocol(
+                            Some(MessageType::ErrorRes),
+                            Some(packet.header.seq),
+                            Some(error.clone()),
+                        ),
+                    );
+                    events.write(MyServerEvent::ProtocolError { error });
+                    return;
+                }
+                let pending = session
+                    .pending
+                    .remove(&packet.header.seq)
+                    .expect("pending request was checked before ErrorRes handling");
                 write_display_error(
                     events,
                     display_error_from_game_code(
@@ -3265,12 +3487,12 @@ fn handle_game_packet(
                     error_code: error.error_code.clone(),
                     message: error.message.clone(),
                 });
-                if let Some(PendingRequest {
+                if let PendingRequest {
                     request_type,
                     correlation: Some(correlation),
                     connection_id: pending_connection_id,
                     ..
-                }) = pending
+                } = pending
                     && pending_connection_id == Some(connection_id)
                 {
                     events.write(MyServerEvent::ScopedRequestFailed {
@@ -3833,6 +4055,61 @@ fn handle_response_packet(
         MessageType::GetCharacterElementsRes => {
             handle_character_elements_response(session, events, packet)
         }
+        MessageType::ActivityListRes => decode_activity_response::<pb::ActivityListRes, _>(
+            events,
+            connection_id,
+            packet,
+            MessageType::ActivityListRes,
+            |seq, connection_id, response| MyServerEvent::ActivityListResponse {
+                seq,
+                connection_id,
+                response,
+            },
+        ),
+        MessageType::ActivityDetailRes => decode_activity_response::<pb::ActivityDetailRes, _>(
+            events,
+            connection_id,
+            packet,
+            MessageType::ActivityDetailRes,
+            |seq, connection_id, response| MyServerEvent::ActivityDetailResponse {
+                seq,
+                connection_id,
+                response,
+            },
+        ),
+        MessageType::ActivityProgressRes => decode_activity_response::<pb::ActivityProgressRes, _>(
+            events,
+            connection_id,
+            packet,
+            MessageType::ActivityProgressRes,
+            |seq, connection_id, response| MyServerEvent::ActivityProgressResponse {
+                seq,
+                connection_id,
+                response,
+            },
+        ),
+        MessageType::ActivityClaimRes => decode_activity_response::<pb::ActivityClaimRes, _>(
+            events,
+            connection_id,
+            packet,
+            MessageType::ActivityClaimRes,
+            |seq, connection_id, response| MyServerEvent::ActivityClaimResponse {
+                seq,
+                connection_id,
+                response,
+            },
+        ),
+        MessageType::ActivityActionRes => decode_activity_response::<pb::ActivityActionRes, _>(
+            events,
+            connection_id,
+            packet,
+            MessageType::ActivityActionRes,
+            |seq, connection_id, response| MyServerEvent::ActivityActionResponse {
+                seq,
+                connection_id,
+                response,
+            },
+        ),
         _ => {
             write_display_error(
                 events,
@@ -3845,6 +4122,40 @@ fn handle_response_packet(
             events.write(MyServerEvent::ProtocolError {
                 error: format!("unhandled response type {:?}", message_type),
             });
+        }
+    }
+}
+
+fn decode_activity_response<M, F>(
+    events: &mut MessageWriter<MyServerEvent>,
+    connection_id: ConnectionId,
+    packet: Packet,
+    message_type: MessageType,
+    event_factory: F,
+) where
+    M: prost::Message + Default,
+    F: FnOnce(u32, ConnectionId, M) -> MyServerEvent,
+{
+    let seq = packet.header.seq;
+    match packet.decode::<M>() {
+        Ok(response) => {
+            events.write(event_factory(seq, connection_id, response));
+        }
+        Err(error) => {
+            write_display_error(
+                events,
+                MyServerDisplayError::protobuf_decode(
+                    Some(message_type),
+                    Some(seq),
+                    Some(error.clone()),
+                ),
+            );
+            events.write(MyServerEvent::ActivityProtocolFailed {
+                seq,
+                connection_id,
+                message_type,
+            });
+            events.write(MyServerEvent::ProtocolError { error });
         }
     }
 }
@@ -4229,6 +4540,7 @@ mod tests {
     use bevy::prelude::{App, Messages, MinimalPlugins};
     use serde_json::Value;
 
+    use super::super::activity::ActivityEvent;
     use super::super::protocol::encode_raw_packet;
     use super::*;
     use crate::framework::network::{HttpMethod, HttpResponse};
@@ -5783,6 +6095,7 @@ mod tests {
                     response_type: MessageType::RoomJoinRes,
                     correlation: Some(7),
                     connection_id: None,
+                    activity: None,
                     sent_at: SystemTime::UNIX_EPOCH,
                     deadline: SystemTime::UNIX_EPOCH,
                 },
@@ -5808,6 +6121,103 @@ mod tests {
                         error,
                     } if error == "game request timed out"
                 ))
+        );
+    }
+
+    #[test]
+    fn activity_request_requires_an_authenticated_character_bound_connection() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(779);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = false;
+            session.character_id = Some("character-1".to_owned());
+            session.game_connection_state = GameConnectionState::Connected;
+        }
+
+        app.world_mut()
+            .write_message(MyServerCommand::LoadActivityList);
+        app.update();
+        app.update();
+
+        assert!(decoded_sent_packets(&app).is_empty());
+        assert!(app.world().resource::<MyServerSession>().pending.is_empty());
+        let activity = app.world().resource::<ActivityClientState>();
+        assert!(activity.request_tracker.is_empty());
+        assert_eq!(
+            activity
+                .last_error
+                .as_ref()
+                .map(|error| error.error_code.as_str()),
+            Some("ACTIVITY_AUTH_REQUIRED")
+        );
+        assert!(read_messages::<ActivityEvent>(&app).iter().any(|event| {
+            matches!(
+                event,
+                ActivityEvent::RequestFailed {
+                    kind: ActivityRequestKind::List,
+                    error,
+                } if error.error_code == "ACTIVITY_AUTH_REQUIRED"
+            )
+        }));
+    }
+
+    #[test]
+    fn error_response_from_the_wrong_connection_keeps_the_current_pending_request() {
+        let mut app = test_app();
+        let old_connection_id = ConnectionId::from_raw(780);
+        let current_connection_id = ConnectionId::from_raw(781);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(old_connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.character_id = Some("character-new".to_owned());
+            session.game_connection_state = GameConnectionState::Authenticated;
+            session.pending.insert(
+                91,
+                PendingRequest::new(
+                    MessageType::ActivityListReq,
+                    MessageType::ActivityListRes,
+                    Duration::from_secs(10),
+                )
+                .with_connection_id(current_connection_id),
+            );
+        }
+
+        app.world_mut().write_message(NetworkEvent::Packet {
+            connection_id: old_connection_id,
+            transport: NetworkTransport::Tcp,
+            payload: encode_proto_packet(
+                MessageType::ErrorRes,
+                91,
+                &pb::ErrorRes {
+                    error_code: "ACTIVITY_ENGINE_UNAVAILABLE".to_owned(),
+                    message: "stale response".to_owned(),
+                },
+            ),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<MyServerSession>()
+                .pending
+                .get(&91)
+                .and_then(|pending| pending.connection_id),
+            Some(current_connection_id)
+        );
+        assert!(
+            !read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| { matches!(event, MyServerEvent::Error { seq: 91, .. }) })
+        );
+        assert!(
+            read_messages::<MyServerEvent>(&app)
+                .iter()
+                .any(|event| matches!(event, MyServerEvent::ProtocolError { .. }))
         );
     }
 
@@ -6161,6 +6571,7 @@ mod tests {
                     response_type: MessageType::RoomJoinRes,
                     correlation: Some(1),
                     connection_id: Some(connection_id),
+                    activity: None,
                     sent_at: SystemTime::UNIX_EPOCH,
                     deadline: SystemTime::UNIX_EPOCH,
                 },

@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::framework::network::{ConnectionId, NetworkTransport, RequestId};
 
 use super::{
+    activity::ActivityRequestKind,
     chat::ChatWebSocketEndpoint,
     mail::MailHttpEndpoint,
     protocol::{MessageType, PacketCodec, pb},
@@ -1275,6 +1276,9 @@ pub struct PendingRequest {
     /// The transport that carried this request. A packet sequence is only
     /// meaningful on its originating connection.
     pub connection_id: Option<ConnectionId>,
+    /// Activity metadata is deliberately bounded to public routing fields and
+    /// a redacted retry-key fingerprint. It never contains request payloads.
+    pub activity: Option<PendingActivityRequest>,
     pub sent_at: SystemTime,
     pub deadline: SystemTime,
 }
@@ -1287,6 +1291,7 @@ impl PendingRequest {
             response_type,
             correlation: None,
             connection_id: None,
+            activity: None,
             deadline: sent_at.checked_add(timeout).unwrap_or(sent_at),
             sent_at,
         }
@@ -1305,6 +1310,21 @@ impl PendingRequest {
         self.connection_id = Some(connection_id);
         self
     }
+
+    pub fn with_activity(mut self, activity: PendingActivityRequest) -> Self {
+        self.activity = Some(activity);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingActivityRequest {
+    pub kind: ActivityRequestKind,
+    pub activity_id: Option<String>,
+    pub version: Option<u32>,
+    pub stage_id: Option<String>,
+    pub request_id_fingerprint: Option<String>,
+    pub character_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1558,6 +1578,28 @@ pub enum MyServerCommand {
         dir_y: f32,
         client_state: Option<MovementClientState>,
     },
+    LoadActivityList,
+    LoadActivityDetail {
+        activity_id: String,
+        version: u32,
+    },
+    LoadActivityProgress {
+        activity_id: String,
+        version: u32,
+    },
+    ClaimActivityStage {
+        activity_id: String,
+        version: u32,
+        stage_id: String,
+        client_request_id: String,
+    },
+    RunActivityAction {
+        activity_id: String,
+        version: u32,
+        stage_id: String,
+        action_type: String,
+        client_request_id: String,
+    },
 }
 
 impl fmt::Debug for MyServerCommand {
@@ -1649,6 +1691,11 @@ impl fmt::Debug for MyServerCommand {
                 Self::EndRoom { .. } => "EndRoom",
                 Self::SendPlayerInput { .. } => "SendPlayerInput",
                 Self::SendMoveInput { .. } => "SendMoveInput",
+                Self::LoadActivityList => "LoadActivityList",
+                Self::LoadActivityDetail { .. } => "LoadActivityDetail",
+                Self::LoadActivityProgress { .. } => "LoadActivityProgress",
+                Self::ClaimActivityStage { .. } => "ClaimActivityStage",
+                Self::RunActivityAction { .. } => "RunActivityAction",
                 Self::Login { .. }
                 | Self::Register { .. }
                 | Self::ConnectWithTicket { .. }
@@ -1869,6 +1916,40 @@ pub enum MyServerEvent {
     CharacterElementsLoaded(pb::GetCharacterElementsRes),
     CharacterElementsChanged(pb::CharacterElementsChangePush),
     CharacterElementsCacheUpdated(CharacterElementsCache),
+    ActivityListResponse {
+        seq: u32,
+        connection_id: ConnectionId,
+        response: pb::ActivityListRes,
+    },
+    ActivityDetailResponse {
+        seq: u32,
+        connection_id: ConnectionId,
+        response: pb::ActivityDetailRes,
+    },
+    ActivityProgressResponse {
+        seq: u32,
+        connection_id: ConnectionId,
+        response: pb::ActivityProgressRes,
+    },
+    ActivityClaimResponse {
+        seq: u32,
+        connection_id: ConnectionId,
+        response: pb::ActivityClaimRes,
+    },
+    ActivityActionResponse {
+        seq: u32,
+        connection_id: ConnectionId,
+        response: pb::ActivityActionRes,
+    },
+    ActivityRequestRejected {
+        kind: ActivityRequestKind,
+        error_code: String,
+    },
+    ActivityProtocolFailed {
+        seq: u32,
+        connection_id: ConnectionId,
+        message_type: MessageType,
+    },
     RoomReconnected(pb::RoomReconnectRes),
     RoomReconnectedScoped {
         correlation: u64,

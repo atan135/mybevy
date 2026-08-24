@@ -80,6 +80,16 @@ pub enum MessageType {
     GetInventoryRes = 1412,
     GetCharacterElementsReq = 1413,
     GetCharacterElementsRes = 1414,
+    ActivityListReq = 1435,
+    ActivityListRes = 1436,
+    ActivityDetailReq = 1437,
+    ActivityDetailRes = 1438,
+    ActivityProgressReq = 1439,
+    ActivityProgressRes = 1440,
+    ActivityClaimReq = 1441,
+    ActivityClaimRes = 1442,
+    ActivityActionReq = 1443,
+    ActivityActionRes = 1444,
     InventoryUpdatePush = 1501,
     AttrChangePush = 1502,
     VisualChangePush = 1503,
@@ -151,6 +161,16 @@ impl MessageType {
             1412 => Some(Self::GetInventoryRes),
             1413 => Some(Self::GetCharacterElementsReq),
             1414 => Some(Self::GetCharacterElementsRes),
+            1435 => Some(Self::ActivityListReq),
+            1436 => Some(Self::ActivityListRes),
+            1437 => Some(Self::ActivityDetailReq),
+            1438 => Some(Self::ActivityDetailRes),
+            1439 => Some(Self::ActivityProgressReq),
+            1440 => Some(Self::ActivityProgressRes),
+            1441 => Some(Self::ActivityClaimReq),
+            1442 => Some(Self::ActivityClaimRes),
+            1443 => Some(Self::ActivityActionReq),
+            1444 => Some(Self::ActivityActionRes),
             1501 => Some(Self::InventoryUpdatePush),
             1502 => Some(Self::AttrChangePush),
             1503 => Some(Self::VisualChangePush),
@@ -355,5 +375,47 @@ mod tests {
             assert_eq!(MessageType::from_u16(value), Some(expected));
             assert_eq!(expected.raw(), value);
         }
+    }
+
+    #[test]
+    fn activity_message_types_round_trip() {
+        let messages = [
+            (1435, MessageType::ActivityListReq),
+            (1436, MessageType::ActivityListRes),
+            (1437, MessageType::ActivityDetailReq),
+            (1438, MessageType::ActivityDetailRes),
+            (1439, MessageType::ActivityProgressReq),
+            (1440, MessageType::ActivityProgressRes),
+            (1441, MessageType::ActivityClaimReq),
+            (1442, MessageType::ActivityClaimRes),
+            (1443, MessageType::ActivityActionReq),
+            (1444, MessageType::ActivityActionRes),
+        ];
+        for (value, expected) in messages {
+            assert_eq!(MessageType::from_u16(value), Some(expected));
+            assert_eq!(expected.raw(), value);
+        }
+    }
+
+    #[test]
+    fn activity_proto_round_trip_ignores_unknown_fields() {
+        let message = pb::ActivityActionRes {
+            ok: true,
+            error_code: String::new(),
+            activity_id: "spring-login".to_owned(),
+            version: 3,
+            stage_id: String::new(),
+            action_type: "draw".to_owned(),
+            client_request_id: "request-1".to_owned(),
+            processing: false,
+            duplicate: false,
+            state_revision: 7,
+        };
+        let mut encoded = message.encode_to_vec();
+        encoded.extend_from_slice(&[0x98, 0x06, 0x01]);
+        let decoded = pb::ActivityActionRes::decode(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.activity_id, "spring-login");
+        assert_eq!(decoded.action_type, "draw");
+        assert_eq!(decoded.state_revision, 7);
     }
 }
