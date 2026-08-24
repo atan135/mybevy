@@ -52,6 +52,7 @@ use crate::game::{
         main_world_movement::MainWorldMovementIntent,
         main_world_players::{MainWorldPlayer, MainWorldPlayerOwnership},
     },
+    screens::activity::ActivityScreenCommand,
     ui_ids::{
         OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_MAIN_WORLD,
         OWNER_MAIN_WORLD_MAIL_PANEL, OWNER_MAIN_WORLD_SETTINGS_PANEL, OWNER_ROBOT_SYNC_SCENE,
@@ -72,6 +73,7 @@ pub(in crate::game) const MAIN_WORLD_HUD_ROUTE_ALIASES: &[&str] = &["main_world"
 pub(in crate::game) const MAIN_WORLD_HUD_SOURCE_PATH: &str = "gameplay/main_world_hud.v1.json";
 pub(super) const ACTION_MAIN_WORLD_OPEN_SETTINGS: &str = "main_world.open_settings";
 pub(super) const ACTION_MAIN_WORLD_OPEN_MAIL: &str = "main_world.open_mail";
+pub(super) const ACTION_MAIN_WORLD_OPEN_ACTIVITY: &str = "main_world.open_activity";
 pub(super) const ACTION_MAIN_WORLD_ENTER_HOME: &str = "main_world.enter_home";
 pub(super) const ACTION_MAIN_WORLD_RETURN_LOBBY: &str = "main_world.return_lobby";
 pub(super) const ACTION_MAIN_WORLD_MAIL_REFRESH: &str = "main_world_mail.refresh";
@@ -150,7 +152,9 @@ impl MainWorldUiTeardownCause {
 
 /// Close scene-local panels from top to bottom, then the persistent HUD. The scene
 /// coordinator performs scene exit only after this UI cleanup has been requested.
-const MAIN_WORLD_UI_CLEANUP_OWNERS: [UiOwnerId; 3] = [
+const MAIN_WORLD_UI_CLEANUP_OWNERS: [UiOwnerId; 5] = [
+    crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_DETAIL,
+    crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_LIST,
     OWNER_MAIN_WORLD_MAIL_PANEL,
     OWNER_MAIN_WORLD_SETTINGS_PANEL,
     OWNER_MAIN_WORLD,
@@ -177,6 +181,8 @@ pub(in crate::game) fn request_main_world_ui_teardown(
         });
     }
     for route in [
+        crate::game::screens::activity::ACTIVITY_DETAIL_ROUTE,
+        crate::game::screens::activity::ACTIVITY_LIST_ROUTE,
         MainWorldDocumentPanel::Mail.route(),
         MainWorldDocumentPanel::Settings.route(),
         MAIN_WORLD_HUD_ROUTE,
@@ -236,6 +242,7 @@ const MAIN_WORLD_MAIL_FALLBACK_SOURCE: &str = include_str!(
 
 const MAIN_WORLD_SETTINGS_NODE: &str = "main_world.settings";
 const MAIN_WORLD_MAIL_NODE: &str = "main_world.mail";
+const MAIN_WORLD_ACTIVITY_NODE: &str = "main_world.activity";
 const MAIN_WORLD_HOME_NODE: &str = "main_world.home";
 const MAIN_WORLD_RETURN_LOBBY_NODE: &str = "main_world.return_lobby";
 const MAIN_WORLD_MAIL_REFRESH_NODE: &str = "main_world_mail.refresh";
@@ -300,6 +307,7 @@ impl Default for GameplayHudHostContract {
                         ("main_world.character.position", UiBindingType::String),
                         ("main_world.character.direction", UiBindingType::String),
                         ("main_world.mail.disabled", UiBindingType::Bool),
+                        ("main_world.activity.disabled", UiBindingType::Bool),
                         ("main_world.mail.unread", UiBindingType::String),
                         (
                             "main_world.mail.unread_visibility",
@@ -707,6 +715,7 @@ pub(super) fn gameplay_declarative_screen_hosts(
             &[
                 ACTION_MAIN_WORLD_OPEN_SETTINGS,
                 ACTION_MAIN_WORLD_OPEN_MAIL,
+                ACTION_MAIN_WORLD_OPEN_ACTIVITY,
                 ACTION_MAIN_WORLD_ENTER_HOME,
                 ACTION_MAIN_WORLD_RETURN_LOBBY,
             ],
@@ -936,6 +945,12 @@ pub(super) fn gameplay_action_descriptors() -> Vec<UiActionDescriptor> {
         action(
             MAIN_WORLD_HUD_DOCUMENT_ID,
             OWNER_MAIN_WORLD.as_str(),
+            ACTION_MAIN_WORLD_OPEN_ACTIVITY,
+            MAIN_WORLD_ACTIVITY_NODE,
+        ),
+        action(
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            OWNER_MAIN_WORLD.as_str(),
             ACTION_MAIN_WORLD_ENTER_HOME,
             MAIN_WORLD_HOME_NODE,
         ),
@@ -1137,8 +1152,10 @@ pub(super) fn handle_gameplay_hud_document_actions(
     mut route_commands: MessageWriter<GameRouteCommand>,
     mut screen_commands: MessageWriter<DeclarativeScreenHostCommand>,
     entry: Option<Res<MainWorldEntryState>>,
+    session: Option<Res<MyServerSession>>,
     mail: Option<Res<MailClientState>>,
     mut mail_commands: MessageWriter<MailClientCommand>,
+    mut activity_commands: MessageWriter<ActivityScreenCommand>,
     mut focus: Option<ResMut<UiFocusState>>,
     mut main_world_intents: MessageWriter<MainWorldEntryIntent>,
     mut actions: MessageReader<UiActionDispatch>,
@@ -1225,6 +1242,11 @@ pub(super) fn handle_gameplay_hud_document_actions(
                 mail_commands.write(MailClientCommand::LoadList {
                     query: MailListQuery::default(),
                 });
+            }
+            ACTION_MAIN_WORLD_OPEN_ACTIVITY
+                if main_world_activity_is_available(entry.as_deref(), session.as_deref()) =>
+            {
+                activity_commands.write(ActivityScreenCommand::OpenList);
             }
             ACTION_MAIN_WORLD_MAIL_REFRESH | ACTION_MAIN_WORLD_MAIL_RETRY
                 if main_world_actions_are_active(entry.as_deref())
@@ -1316,6 +1338,22 @@ fn main_world_actions_are_active(entry: Option<&MainWorldEntryState>) -> bool {
     entry.is_some_and(|entry| entry.phase == MainWorldEntryPhase::Active)
 }
 
+fn main_world_activity_is_available(
+    entry: Option<&MainWorldEntryState>,
+    session: Option<&MyServerSession>,
+) -> bool {
+    main_world_actions_are_active(entry)
+        && matches!(session, Some(session)
+        if session.authenticated
+            && session.connected
+            && session.connection_id.is_some()
+            && session.character_id.is_some()
+            && session.game_connection_state == GameConnectionState::Authenticated
+            && entry.is_some_and(|entry| {
+                entry.character_id.as_deref() == session.character_id.as_deref()
+            }))
+}
+
 fn main_world_mail_select_id(action: &UiActionDispatch) -> Option<&str> {
     main_world_mail_id_action(
         action,
@@ -1364,6 +1402,11 @@ fn zero_param_action_matches_contract(action: &UiActionDispatch) -> bool {
             "main_world",
             ACTION_MAIN_WORLD_OPEN_MAIL,
             MAIN_WORLD_MAIL_NODE,
+        ) | (
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            "main_world",
+            ACTION_MAIN_WORLD_OPEN_ACTIVITY,
+            MAIN_WORLD_ACTIVITY_NODE,
         ) | (
             MAIN_WORLD_MAIL_DOCUMENT_ID,
             "main_world_mail_panel",
@@ -1529,6 +1572,8 @@ pub(super) fn sync_main_world_hud_bindings(
         .as_deref()
         .and_then(MailClientState::authoritative_unread_count);
     let mail_disabled = transition_loading || !mail_available;
+    let activity_disabled =
+        transition_loading || !main_world_activity_is_available(Some(&entry), session.as_deref());
     let session_connection = session
         .as_deref()
         .map_or(GameConnectionState::NotConnected, |session| {
@@ -1580,6 +1625,10 @@ pub(super) fn sync_main_world_hud_bindings(
         (
             "main_world.mail.disabled",
             UiBindingValue::Bool(mail_disabled),
+        ),
+        (
+            "main_world.activity.disabled",
+            UiBindingValue::Bool(activity_disabled),
         ),
         (
             "main_world.mail.unread",
@@ -2669,6 +2718,8 @@ mod tests {
         assert_eq!(
             main_world_ui_cleanup_owners(),
             [
+                crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_DETAIL,
+                crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_LIST,
                 OWNER_MAIN_WORLD_MAIL_PANEL,
                 OWNER_MAIN_WORLD_SETTINGS_PANEL,
                 OWNER_MAIN_WORLD,
@@ -2696,7 +2747,7 @@ mod tests {
     #[test]
     fn gameplay_actions_are_closed_to_exact_sources_and_module_values() {
         let descriptors = gameplay_action_descriptors();
-        assert_eq!(descriptors.len(), 25);
+        assert_eq!(descriptors.len(), 26);
         assert!(
             descriptors
                 .iter()
@@ -2707,7 +2758,7 @@ mod tests {
             .iter()
             .filter(|descriptor| descriptor.document_id.as_str() == MAIN_WORLD_HUD_DOCUMENT_ID)
             .collect::<Vec<_>>();
-        assert_eq!(main_world_actions.len(), 4);
+        assert_eq!(main_world_actions.len(), 5);
         assert!(
             main_world_actions
                 .iter()
@@ -2830,6 +2881,40 @@ mod tests {
         ));
         assert!(read_messages::<NetworkCommand>(&app).is_empty());
         assert!(read_messages::<SceneCommand>(&app).is_empty());
+        assert!(read_messages::<GameRouteCommand>(&app).is_empty());
+        assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
+    }
+
+    #[test]
+    fn active_main_world_activity_button_opens_only_the_activity_list_bridge() {
+        let mut app = action_test_app();
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation = 6;
+            entry.character_id = Some("character-1".to_owned());
+        }
+        app.world_mut().insert_resource(MyServerSession {
+            character_id: Some("character-1".to_owned()),
+            connection_id: Some(crate::framework::network::ConnectionId::from_raw(9)),
+            connected: true,
+            authenticated: true,
+            game_connection_state: GameConnectionState::Authenticated,
+            ..Default::default()
+        });
+        app.world_mut().write_message(dispatch(
+            MAIN_WORLD_HUD_DOCUMENT_ID,
+            OWNER_MAIN_WORLD.as_str(),
+            ACTION_MAIN_WORLD_OPEN_ACTIVITY,
+            MAIN_WORLD_ACTIVITY_NODE,
+            BTreeMap::new(),
+        ));
+        app.update();
+
+        assert!(matches!(
+            read_messages::<ActivityScreenCommand>(&app).as_slice(),
+            [ActivityScreenCommand::OpenList]
+        ));
+        assert!(read_messages::<DeclarativeScreenHostCommand>(&app).is_empty());
         assert!(read_messages::<GameRouteCommand>(&app).is_empty());
         assert!(read_messages::<MainWorldEntryIntent>(&app).is_empty());
     }
@@ -3982,6 +4067,7 @@ mod tests {
             .add_message::<FangyuanHomeBlueprintCommand>()
             .add_message::<SceneCommand>()
             .add_message::<MailClientCommand>()
+            .add_message::<ActivityScreenCommand>()
             .add_message::<MainWorldEntryIntent>()
             .add_systems(
                 Update,
@@ -4008,7 +4094,12 @@ mod tests {
                         OWNER_MAIN_WORLD.as_str(),
                         &UiDocumentId::from_str(MAIN_WORLD_HUD_DOCUMENT_ID).unwrap(),
                     )
-                    .unwrap(),
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "main-world HUD did not mount: {:#?}",
+                            read_messages::<DeclarativeScreenHostEvent>(&app)
+                        )
+                    }),
                 &UiNodeId::from_str(MAIN_WORLD_SETTINGS_NODE).unwrap(),
             )
             .unwrap();
@@ -4063,7 +4154,7 @@ mod tests {
     }
 
     #[test]
-    fn main_world_hud_exposes_only_its_four_buttons_without_blocking_gameplay() {
+    fn main_world_hud_exposes_its_five_buttons_without_blocking_gameplay() {
         let mut app = main_world_hud_runtime_app();
         app.world_mut().resource_mut::<MainWorldEntryState>().phase = MainWorldEntryPhase::Active;
         app.world_mut()
@@ -4084,6 +4175,7 @@ mod tests {
         for node_id in [
             MAIN_WORLD_SETTINGS_NODE,
             MAIN_WORLD_MAIL_NODE,
+            MAIN_WORLD_ACTIVITY_NODE,
             MAIN_WORLD_HOME_NODE,
             MAIN_WORLD_RETURN_LOBBY_NODE,
         ] {
@@ -4124,6 +4216,7 @@ mod tests {
             for node in [
                 MAIN_WORLD_SETTINGS_NODE,
                 MAIN_WORLD_MAIL_NODE,
+                MAIN_WORLD_ACTIVITY_NODE,
                 MAIN_WORLD_HOME_NODE,
                 MAIN_WORLD_RETURN_LOBBY_NODE,
             ] {
@@ -4156,7 +4249,7 @@ mod tests {
         let status = find_document_node(&hud.root, "main_world.status").unwrap();
         let buttons = find_document_node(&hud.root, "main_world.buttons").unwrap();
         assert_eq!(status.children().len(), 5);
-        assert_eq!(buttons.children().len(), 4);
+        assert_eq!(buttons.children().len(), 5);
 
         let mail = UiDocument::parse_and_validate_json(MAIN_WORLD_MAIL_SOURCE).unwrap();
         let mail = mail.document();
@@ -4592,6 +4685,7 @@ mod tests {
             .add_message::<GameRouteCommand>()
             .add_message::<DeclarativeScreenHostCommand>()
             .add_message::<MailClientCommand>()
+            .add_message::<ActivityScreenCommand>()
             .add_message::<NetworkCommand>()
             .add_message::<MainWorldEntryIntent>()
             .add_systems(Update, handle_gameplay_hud_document_actions);

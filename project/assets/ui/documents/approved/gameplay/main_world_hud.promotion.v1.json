@@ -6,11 +6,13 @@
     "actions": [
       { "id": "main_world.open_settings", "sources": ["main_world.settings"] },
       { "id": "main_world.open_mail", "sources": ["main_world.mail"] },
+      { "id": "main_world.open_activity", "sources": ["main_world.activity"] },
       { "id": "main_world.enter_home", "sources": ["main_world.home"] },
       { "id": "main_world.return_lobby", "sources": ["main_world.return_lobby"] }
     ],
     "bindings": [
       { "path": "main_world.character.summary", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "main_world.activity.disabled", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "main_world.character.position", "scope": "owner", "value_type": { "kind": "string" } },
       { "path": "main_world.character.direction", "scope": "owner", "value_type": { "kind": "string" } },
       { "path": "main_world.connection.status", "scope": "owner", "value_type": { "kind": "string" } },

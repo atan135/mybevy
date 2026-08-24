@@ -1,3 +1,4 @@
+pub(in crate::game) mod activity;
 mod auth;
 mod dev;
 pub(in crate::game) mod gameplay;
@@ -21,6 +22,7 @@ impl Plugin for ScreensPlugin {
         .add_plugins((auth::AuthScreensPlugin, lobby::LobbyScreensPlugin))
         .add_plugins(settings::SettingsScreensPlugin)
         .add_plugins(dev::DevScreensPlugin)
-        .add_plugins(gameplay::GameplayScreensPlugin);
+        .add_plugins(gameplay::GameplayScreensPlugin)
+        .add_plugins(activity::ActivityScreensPlugin);
     }
 }

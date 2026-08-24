@@ -9,6 +9,7 @@
     "main_world.character.position": { "scope": "owner", "value_type": { "kind": "string" } },
     "main_world.character.direction": { "scope": "owner", "value_type": { "kind": "string" } },
     "main_world.mail.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "main_world.activity.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
     "main_world.mail.unread": { "scope": "owner", "value_type": { "kind": "string" } },
     "main_world.mail.unread_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
     "main_world.settings.disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
@@ -86,6 +87,7 @@
                   }
                 ]
               },
+              { "type": "button", "id": "main_world.activity", "variant": "secondary", "label": { "i18n_key": "main_world.hud.activity", "fallback": "Activities" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.activity.disabled" } }, "on_click": { "action": "main_world.open_activity" } },
               { "type": "button", "id": "main_world.home", "variant": "secondary", "label": { "i18n_key": "main_world.hud.home", "fallback": "Home" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.home.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.enter_home" } },
               { "type": "button", "id": "main_world.return_lobby", "variant": "secondary", "label": { "i18n_key": "main_world.hud.lobby", "fallback": "Lobby" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "main_world.return_lobby.disabled", "loading": "main_world.transition.loading" } }, "on_click": { "action": "main_world.return_lobby" } }
             ]

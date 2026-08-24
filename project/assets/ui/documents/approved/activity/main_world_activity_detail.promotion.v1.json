@@ -1,0 +1,34 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+  "document_id": "game.main_world_activity_detail",
+  "host_contract": {
+    "actions": [
+      { "id": "main_world_activity_detail.back", "sources": ["main_world_activity_detail.back"] },
+      { "id": "main_world_activity_detail.close", "sources": ["main_world_activity_detail.close"] }
+    ],
+    "bindings": [
+      { "path": "activity_detail.collection_state", "scope": "owner", "value_type": { "kind": "enum", "values": ["loading", "ready", "error"] } },
+      { "path": "activity_detail.error", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "activity_detail.error_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "activity_detail.progress", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "activity_detail.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "activity_detail.time", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "activity_detail.title", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "activity_detail.version", "scope": "owner", "value_type": { "kind": "string" } }
+    ],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "floating",
+  "owner": "main_world_activity_detail",
+  "page_state": "initial",
+  "panel": "floating",
+  "protocol_version": 2,
+  "route": "main_world_activity_detail",
+  "source": { "relative_path": "activity/main_world_activity_detail.v1.json", "root": "approved" },
+  "template_version": 2,
+  "theme_tokens": []
+}

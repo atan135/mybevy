@@ -14,6 +14,12 @@ pub(in crate::game) const OWNER_MAIN_WORLD_SETTINGS_PANEL: UiOwnerId =
 /// A scene-local mail panel. It never owns the main-world scene session.
 pub(in crate::game) const OWNER_MAIN_WORLD_MAIL_PANEL: UiOwnerId =
     UiOwnerId::new("main_world_mail_panel");
+/// Activity list and detail are scene-local floating surfaces. They preserve the
+/// main-world owner and never take ownership of the scene session.
+pub(in crate::game) const OWNER_MAIN_WORLD_ACTIVITY_LIST: UiOwnerId =
+    UiOwnerId::new("main_world_activity_list");
+pub(in crate::game) const OWNER_MAIN_WORLD_ACTIVITY_DETAIL: UiOwnerId =
+    UiOwnerId::new("main_world_activity_detail");
 pub(in crate::game) const OWNER_AUDIO_SETTINGS: UiOwnerId = UiOwnerId::new("audio_settings");
 pub(in crate::game) const OWNER_AUDIO_MONITOR: UiOwnerId = UiOwnerId::new("audio_monitor");
 pub(in crate::game) const OWNER_AUDIO_GALLERY: UiOwnerId = UiOwnerId::new("audio_gallery");
