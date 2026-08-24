@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::{
     App, IntoScheduleConfigs, Message, MessageReader, MessageWriter, Plugin, Res, ResMut, Resource,
@@ -13,6 +13,8 @@ use super::types::redact_secret_fingerprint;
 use super::{MyServerEvent, MyServerSession, MyServerUpdateSet};
 
 pub const MAX_ACTIVITY_PROGRESS_JSON_BYTES: usize = 64 * 1024;
+const MAX_ACTIVITY_VIEW_STRING_BYTES: usize = 128;
+const MAX_LOGIN_REWARD_STAGES: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityRequestKind {
@@ -55,6 +57,47 @@ pub struct ActivityProgressView {
     pub type_name: String,
     pub schema_version: u32,
     pub value: Value,
+    pub player_view: ActivityPlayerView,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ActivityPlayerView {
+    LoginReward(LoginRewardPlayerView),
+    Unsupported,
+}
+
+impl ActivityPlayerView {
+    pub const fn login_reward(&self) -> Option<&LoginRewardPlayerView> {
+        match self {
+            Self::LoginReward(view) => Some(view),
+            Self::Unsupported => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginRewardPlayerView {
+    pub event_source: String,
+    pub cycle_unit: String,
+    pub progression: String,
+    pub miss_policy: String,
+    pub claim_mode: String,
+    pub current_stage_id: Option<String>,
+    pub last_period_key: Option<String>,
+    pub consecutive_days: u32,
+    pub cumulative_days: u32,
+    pub today_status: String,
+    pub stages: Vec<LoginRewardStageView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginRewardStageView {
+    pub stage_no: u32,
+    pub required_count: u32,
+    pub reward_group_key: String,
+    pub achieved: bool,
+    pub claimable: bool,
+    pub claimed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -279,10 +322,12 @@ pub enum ActivityEvent {
     ActionResolved {
         activity_id: String,
         version: u32,
+        stage_id: String,
         action_type: String,
         ok: bool,
         processing: bool,
         duplicate: bool,
+        state_revision: u64,
     },
     RequestFailed {
         kind: ActivityRequestKind,
@@ -562,6 +607,14 @@ fn apply_detail_response(
         Ok(progress) => progress,
         Err(()) => return invalid_progress(state, events, tracked.kind),
     };
+    if summary.activity_type == "login_reward"
+        && !progress
+            .as_ref()
+            .and_then(|progress| progress.player_view.login_reward())
+            .is_some()
+    {
+        return invalid_progress(state, events, tracked.kind);
+    }
     state.details.insert(
         key.clone(),
         ActivityDetail {
@@ -607,18 +660,26 @@ fn apply_progress_response(
         Err(()) => return invalid_progress(state, events, tracked.kind),
     };
     if let Some(detail) = state.details.get_mut(&key) {
-        // The server currently returns `{}` from the progress route. Preserve
-        // the last trusted detail view until that route gains a typed payload.
-        if progress.is_some() {
-            detail.progress = progress;
-        }
-        detail.state_revision = detail.state_revision.max(response.state_revision);
+        apply_progress_to_detail(detail, progress, response.state_revision);
     }
     state.last_error = None;
     events.write(ActivityEvent::ProgressUpdated {
         activity_id: key.activity_id,
         version: key.version,
     });
+}
+
+fn apply_progress_to_detail(
+    detail: &mut ActivityDetail,
+    progress: Option<ActivityProgressView>,
+    state_revision: u64,
+) {
+    // The server currently returns `{}` from the progress route. Preserve the
+    // last trusted detail view until that route gains a typed payload.
+    if progress.is_some() {
+        detail.progress = progress;
+    }
+    detail.state_revision = detail.state_revision.max(state_revision);
 }
 
 fn apply_claim_response(
@@ -655,10 +716,12 @@ fn apply_claim_response(
     events.write(ActivityEvent::ActionResolved {
         activity_id: key.activity_id,
         version: key.version,
+        stage_id: response.stage_id.clone(),
         action_type: "claim".to_owned(),
         ok: response.ok,
         processing: response.processing,
         duplicate: response.duplicate,
+        state_revision: response.state_revision,
     });
 }
 
@@ -702,10 +765,12 @@ fn apply_action_response(
     events.write(ActivityEvent::ActionResolved {
         activity_id: key.activity_id,
         version: key.version,
+        stage_id: response.stage_id.clone(),
         action_type,
         ok: response.ok,
         processing: response.processing,
         duplicate: response.duplicate,
+        state_revision: response.state_revision,
     });
 }
 
@@ -764,42 +829,212 @@ fn parse_progress_json(value: &str) -> Result<Option<ActivityProgressView>, ()> 
     }
     let value: Value = serde_json::from_str(value).map_err(|_| ())?;
     let object = value.as_object().ok_or(())?;
-    let type_name = object
-        .get("type")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or(())?
-        .to_owned();
+    let type_name = required_view_string(object, "type")?;
     let schema_version = object
         .get("schema_version")
         .and_then(Value::as_u64)
         .filter(|version| *version > 0 && *version <= u64::from(u32::MAX))
         .ok_or(())? as u32;
+    let player_view = match type_name.as_str() {
+        "login_reward" => {
+            ActivityPlayerView::LoginReward(parse_login_reward_player_view(object, schema_version)?)
+        }
+        _ => ActivityPlayerView::Unsupported,
+    };
     Ok(Some(ActivityProgressView {
         type_name,
         schema_version,
         value,
+        player_view,
     }))
+}
+
+fn parse_login_reward_player_view(
+    object: &serde_json::Map<String, Value>,
+    schema_version: u32,
+) -> Result<LoginRewardPlayerView, ()> {
+    if schema_version != 1
+        || required_view_string(object, "event_source")? != "game_entry"
+        || required_view_string(object, "cycle_unit")? != "natural_day"
+    {
+        return Err(());
+    }
+    let progression = required_view_string(object, "progression")?;
+    let miss_policy = required_view_string(object, "miss_policy")?;
+    let claim_mode = required_view_string(object, "claim_mode")?;
+    if !matches!(progression.as_str(), "consecutive" | "cumulative")
+        || !matches!(miss_policy.as_str(), "reset" | "carry")
+        || !matches!(claim_mode.as_str(), "manual" | "automatic")
+    {
+        return Err(());
+    }
+    let stages = object
+        .get("stages")
+        .and_then(Value::as_array)
+        .filter(|stages| stages.len() <= MAX_LOGIN_REWARD_STAGES)
+        .ok_or(())?
+        .iter()
+        .map(parse_login_reward_stage)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut stage_numbers = HashSet::with_capacity(stages.len());
+    if stages
+        .iter()
+        .any(|stage| !stage_numbers.insert(stage.stage_no))
+    {
+        return Err(());
+    }
+    Ok(LoginRewardPlayerView {
+        event_source: "game_entry".to_owned(),
+        cycle_unit: "natural_day".to_owned(),
+        progression,
+        miss_policy,
+        claim_mode,
+        current_stage_id: optional_view_string(object, "current_stage_id")?,
+        last_period_key: optional_view_string(object, "last_period_key")?,
+        consecutive_days: required_u32(object, "consecutive_days")?,
+        cumulative_days: required_u32(object, "cumulative_days")?,
+        today_status: required_view_string(object, "today_status")?,
+        stages,
+    })
+}
+
+fn parse_login_reward_stage(value: &Value) -> Result<LoginRewardStageView, ()> {
+    let object = value.as_object().ok_or(())?;
+    let stage_no = required_u32(object, "stage_no")?;
+    let required_count = required_u32(object, "required_count")?;
+    if stage_no == 0 || required_count == 0 {
+        return Err(());
+    }
+    Ok(LoginRewardStageView {
+        stage_no,
+        required_count,
+        reward_group_key: required_view_string(object, "reward_group_key")?,
+        achieved: required_bool(object, "achieved")?,
+        claimable: required_bool(object, "claimable")?,
+        claimed: required_bool(object, "claimed")?,
+    })
+}
+
+fn required_view_string(object: &serde_json::Map<String, Value>, key: &str) -> Result<String, ()> {
+    let value = object.get(key).and_then(Value::as_str).ok_or(())?;
+    (!value.trim().is_empty() && value.len() <= MAX_ACTIVITY_VIEW_STRING_BYTES)
+        .then(|| value.to_owned())
+        .ok_or(())
+}
+
+fn optional_view_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, ()> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value))
+            if !value.trim().is_empty() && value.len() <= MAX_ACTIVITY_VIEW_STRING_BYTES =>
+        {
+            Ok(Some(value.clone()))
+        }
+        _ => Err(()),
+    }
+}
+
+fn required_u32(object: &serde_json::Map<String, Value>, key: &str) -> Result<u32, ()> {
+    object
+        .get(key)
+        .and_then(Value::as_u64)
+        .filter(|value| *value <= u64::from(u32::MAX))
+        .map(|value| value as u32)
+        .ok_or(())
+}
+
+fn required_bool(object: &serde_json::Map<String, Value>, key: &str) -> Result<bool, ()> {
+    object.get(key).and_then(Value::as_bool).ok_or(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn login_reward_json(stages: &str) -> String {
+        format!(
+            r#"{{"type":"login_reward","schema_version":1,"contract_only":true,"event_source":"game_entry","cycle_unit":"natural_day","progression":"consecutive","miss_policy":"reset","claim_mode":"manual","stages":{stages},"current_stage_id":null,"last_period_key":"2026-08-24","consecutive_days":3,"cumulative_days":8,"today_status":"logged_in","future_field":{{"ignored":true}}}}"#
+        )
+    }
+
     #[test]
     fn progress_view_accepts_unknown_fields() {
-        let view = parse_progress_json(
-            r#"{"type":"login_reward","schema_version":1,"future_field":{"ignored":true}}"#,
-        )
+        let view = parse_progress_json(&login_reward_json(
+            r#"[{"stage_no":3,"required_count":3,"reward_group_key":"login_day_3","achieved":true,"claimable":true,"claimed":false}]"#,
+        ))
         .unwrap()
         .unwrap();
         assert_eq!(view.type_name, "login_reward");
         assert_eq!(view.schema_version, 1);
+        let player = view.player_view.login_reward().unwrap();
+        assert_eq!(player.consecutive_days, 3);
+        assert_eq!(player.stages[0].stage_no, 3);
+        assert!(player.stages[0].claimable);
+    }
+
+    #[test]
+    fn login_reward_rejects_invalid_schema_and_duplicate_stage_numbers() {
+        let unsupported_schema =
+            login_reward_json("[]").replace("\"schema_version\":1", "\"schema_version\":2");
+        assert!(parse_progress_json(&unsupported_schema).is_err());
+
+        let duplicate_stages = login_reward_json(
+            r#"[{"stage_no":1,"required_count":1,"reward_group_key":"first","achieved":true,"claimable":true,"claimed":false},{"stage_no":1,"required_count":2,"reward_group_key":"second","achieved":true,"claimable":false,"claimed":false}]"#,
+        );
+        assert!(parse_progress_json(&duplicate_stages).is_err());
+    }
+
+    #[test]
+    fn login_reward_rejects_oversized_or_invalid_stage_fields() {
+        let oversized = "x".repeat(MAX_ACTIVITY_PROGRESS_JSON_BYTES + 1);
+        assert!(parse_progress_json(&oversized).is_err());
+
+        let invalid_stage = login_reward_json(
+            r#"[{"stage_no":0,"required_count":1,"reward_group_key":"first","achieved":true,"claimable":true,"claimed":false}]"#,
+        );
+        assert!(parse_progress_json(&invalid_stage).is_err());
     }
 
     #[test]
     fn progress_route_placeholder_does_not_clear_detail() {
         assert_eq!(parse_progress_json("{}").unwrap(), None);
+    }
+
+    #[test]
+    fn placeholder_progress_preserves_a_trusted_login_reward_detail() {
+        let progress = parse_progress_json(&login_reward_json(
+            r#"[{"stage_no":3,"required_count":3,"reward_group_key":"login_day_3","achieved":true,"claimable":true,"claimed":false}]"#,
+        ))
+        .unwrap();
+        let mut detail = ActivityDetail {
+            summary: ActivitySummary {
+                activity_id: "login-reward".to_owned(),
+                version: 1,
+                activity_type: "login_reward".to_owned(),
+                status: "running".to_owned(),
+                start_at_ms: 0,
+                end_at_ms: 0,
+                claim_deadline_ms: 0,
+                timezone: "UTC".to_owned(),
+            },
+            progress,
+            state_revision: 4,
+        };
+        apply_progress_to_detail(&mut detail, parse_progress_json("{}").unwrap(), 0);
+        assert_eq!(detail.state_revision, 4);
+        assert_eq!(
+            detail
+                .progress
+                .as_ref()
+                .and_then(|progress| progress.player_view.login_reward())
+                .unwrap()
+                .stages[0]
+                .stage_no,
+            3
+        );
     }
 
     #[test]

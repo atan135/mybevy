@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "document_id": "game.main_world_login_reward_detail",
+  "metadata": { "title": "Login Rewards", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {
+    "login_reward.collection_state": { "scope": "owner", "value_type": { "kind": "enum", "values": ["loading", "ready", "error"] } },
+    "login_reward.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "login_reward.cycle": { "scope": "owner", "value_type": { "kind": "string" } },
+    "login_reward.counts": { "scope": "owner", "value_type": { "kind": "string" } },
+    "login_reward.today": { "scope": "owner", "value_type": { "kind": "string" } },
+    "login_reward.error": { "scope": "owner", "value_type": { "kind": "string" } },
+    "login_reward.error_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "login_reward.stages": { "scope": "owner", "value_type": { "kind": "list", "item": { "kind": "record", "fields": { "stage_id": { "kind": "string" }, "stage_no": { "kind": "number" }, "title": { "kind": "string" }, "reward_group_key": { "kind": "string" }, "state": { "kind": "string" }, "claim_visibility": { "kind": "visibility" }, "claim_disabled": { "kind": "bool" }, "claim_loading": { "kind": "bool" } } }, "max_items": 64 } },
+    "login_reward.item.stage_no": { "scope": "item", "value_type": { "kind": "number" } },
+    "login_reward.item.stage_id": { "scope": "item", "value_type": { "kind": "string" } },
+    "login_reward.item.title": { "scope": "item", "value_type": { "kind": "string" } },
+    "login_reward.item.reward_group_key": { "scope": "item", "value_type": { "kind": "string" } },
+    "login_reward.item.state": { "scope": "item", "value_type": { "kind": "string" } },
+    "login_reward.item.claim_visibility": { "scope": "item", "value_type": { "kind": "visibility" } },
+    "login_reward.item.claim_disabled": { "scope": "item", "value_type": { "kind": "bool" } },
+    "login_reward.item.claim_loading": { "scope": "item", "value_type": { "kind": "bool" } }
+  },
+  "styles": {
+    "login_reward_shell": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#17272bf5" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#83a5a6aa" } }, "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } } } },
+    "login_reward_section": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#20373ae8" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#4f7778cc" } } } },
+    "login_reward_stage": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#1c3135ee" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#527274cc" } } } },
+    "login_reward_error": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#3a1b20e8" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#dc666ecc" } } } }
+  },
+  "root": {
+    "type": "container", "id": "main_world_login_reward_detail.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "direction": "column" },
+    "style": { "inline": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#071014d9" } } } },
+    "children": [{
+      "type": "scroll", "id": "main_world_login_reward_detail.scroll", "block_lower": true, "max_height": 2400.0,
+      "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "overflow": { "y": "scroll" }, "align_items": "center", "justify_content": "center" },
+      "component": { "children": [{
+        "type": "container", "id": "main_world_login_reward_detail.panel",
+        "layout": { "width": { "percent": 100.0 }, "max_width": { "px": 820.0 }, "min_width": { "px": 280.0 }, "padding": { "all": { "px": 18.0 } }, "direction": "column", "gap": { "px": 12.0 }, "flex_shrink": 0.0 }, "style": { "component": "login_reward_shell" },
+        "children": [
+          { "type": "container", "id": "main_world_login_reward_detail.header", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 8.0 } }, "children": [
+            { "type": "container", "id": "main_world_login_reward_detail.heading", "layout": { "direction": "column", "gap": { "px": 3.0 }, "flex_grow": 1.0, "min_width": { "px": 180.0 } }, "children": [
+              { "type": "text", "id": "main_world_login_reward_detail.title", "content": { "i18n_key": "main_world_login_reward.title", "fallback": "LOGIN REWARDS" }, "style": { "text_role": "subtitle" } },
+              { "type": "text", "id": "main_world_login_reward_detail.status", "content": { "binding_path": "login_reward.status", "fallback": "Loading" }, "style": { "text_role": "caption" } }
+            ] },
+            { "type": "button", "id": "main_world_login_reward_detail.close", "variant": "secondary", "label": { "i18n_key": "main_world_login_reward.action.close", "fallback": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_login_reward_detail.close" } }
+          ] },
+          { "type": "container", "id": "main_world_login_reward_detail.error_panel", "layout": { "width": { "percent": 100.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "login_reward_error", "bindings": { "visibility": "login_reward.error_visibility" } }, "children": [
+            { "type": "text", "id": "main_world_login_reward_detail.error", "content": { "binding_path": "login_reward.error", "fallback": "Login reward detail could not be loaded." }, "style": { "text_role": "caption" } }
+          ] },
+          { "type": "container", "id": "main_world_login_reward_detail.summary", "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 4.0 }, "padding": { "all": { "px": 12.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "login_reward_section" }, "children": [
+            { "type": "text", "id": "main_world_login_reward_detail.cycle", "content": { "binding_path": "login_reward.cycle", "fallback": "" }, "style": { "text_role": "caption" } },
+            { "type": "text", "id": "main_world_login_reward_detail.counts", "content": { "binding_path": "login_reward.counts", "fallback": "" }, "style": { "text_role": "body" } },
+            { "type": "text", "id": "main_world_login_reward_detail.today", "content": { "binding_path": "login_reward.today", "fallback": "" }, "style": { "text_role": "caption" } }
+          ] },
+          { "type": "container", "id": "main_world_login_reward_detail.stages", "repeat": { "source": "login_reward.stages", "key": "stage_id", "item_bindings": { "login_reward.item.stage_id": "stage_id", "login_reward.item.stage_no": "stage_no", "login_reward.item.title": "title", "login_reward.item.reward_group_key": "reward_group_key", "login_reward.item.state": "state", "login_reward.item.claim_visibility": "claim_visibility", "login_reward.item.claim_disabled": "claim_disabled", "login_reward.item.claim_loading": "claim_loading" }, "state": "login_reward.collection_state", "loading": { "i18n_key": "main_world_activity_list.loading", "fallback": "Loading login rewards..." }, "empty": { "i18n_key": "main_world_activity_list.empty", "fallback": "No login reward stages are available." }, "error": { "i18n_key": "main_world_activity_list.error", "fallback": "Login rewards could not be loaded." } }, "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 8.0 } }, "children": [
+            { "type": "container", "id": "main_world_login_reward_detail.stage.row", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 10.0 }, "padding": { "all": { "px": 12.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "login_reward_stage" }, "children": [
+              { "type": "container", "id": "main_world_login_reward_detail.stage.copy", "layout": { "direction": "column", "gap": { "px": 3.0 }, "flex_grow": 1.0, "min_width": { "px": 180.0 } }, "children": [
+                { "type": "text", "id": "main_world_login_reward_detail.stage.title", "content": { "binding_path": "login_reward.item.title", "fallback": "Stage" }, "style": { "text_role": "body" } },
+                { "type": "text", "id": "main_world_login_reward_detail.stage.reward", "content": { "binding_path": "login_reward.item.reward_group_key", "fallback": "" }, "style": { "text_role": "caption" } },
+                { "type": "text", "id": "main_world_login_reward_detail.stage.state", "content": { "binding_path": "login_reward.item.state", "fallback": "" }, "style": { "text_role": "caption" } }
+              ] },
+              { "type": "button", "id": "main_world_login_reward_detail.stage.claim", "variant": "primary", "label": { "i18n_key": "main_world_login_reward.action.claim", "fallback": "Claim" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "style": { "bindings": { "visibility": "login_reward.item.claim_visibility" } }, "component": { "bindings": { "disabled": "login_reward.item.claim_disabled", "loading": "login_reward.item.claim_loading" } }, "on_click": { "action": "main_world_login_reward_detail.claim", "params": { "stage_no": { "kind": "item_binding", "value": "login_reward.item.stage_no" } } } }
+            ] }
+          ] },
+          { "type": "container", "id": "main_world_login_reward_detail.actions", "layout": { "width": { "percent": 100.0 }, "direction": "row", "justify_content": "end", "gap": { "px": 8.0 } }, "children": [
+            { "type": "button", "id": "main_world_login_reward_detail.back", "variant": "secondary", "label": { "i18n_key": "main_world_login_reward.action.back", "fallback": "Back to activities" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_login_reward_detail.back" } }
+          ] }
+        ]
+      }] }
+    }]
+  },
+  "states": [],
+  "responsive": [
+    { "id": "short_landscape", "priority": 100, "when": { "height_class": "short", "orientation": "landscape" }, "overrides": [
+      { "node_id": "main_world_login_reward_detail.scroll", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "justify_content": "start" } } },
+      { "node_id": "main_world_login_reward_detail.panel", "set": { "layout": { "padding": { "all": { "px": 12.0 } }, "gap": { "px": 8.0 } } } }
+    ] }
+  ]
+}

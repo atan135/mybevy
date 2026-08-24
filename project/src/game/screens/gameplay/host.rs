@@ -55,8 +55,9 @@ use crate::game::{
     screens::activity::ActivityScreenCommand,
     ui_ids::{
         OWNER_FANGYUAN_HOME, OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_MAIN_WORLD,
-        OWNER_MAIN_WORLD_MAIL_PANEL, OWNER_MAIN_WORLD_SETTINGS_PANEL, OWNER_ROBOT_SYNC_SCENE,
-        OWNER_SAMPLE_SCENE, OWNER_TOUCH_RIPPLE,
+        OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL, OWNER_MAIN_WORLD_MAIL_PANEL,
+        OWNER_MAIN_WORLD_SETTINGS_PANEL, OWNER_ROBOT_SYNC_SCENE, OWNER_SAMPLE_SCENE,
+        OWNER_TOUCH_RIPPLE,
     },
 };
 
@@ -152,7 +153,8 @@ impl MainWorldUiTeardownCause {
 
 /// Close scene-local panels from top to bottom, then the persistent HUD. The scene
 /// coordinator performs scene exit only after this UI cleanup has been requested.
-const MAIN_WORLD_UI_CLEANUP_OWNERS: [UiOwnerId; 5] = [
+const MAIN_WORLD_UI_CLEANUP_OWNERS: [UiOwnerId; 6] = [
+    OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL,
     crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_DETAIL,
     crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_LIST,
     OWNER_MAIN_WORLD_MAIL_PANEL,
@@ -181,6 +183,7 @@ pub(in crate::game) fn request_main_world_ui_teardown(
         });
     }
     for route in [
+        crate::game::screens::activity::LOGIN_REWARD_DETAIL_ROUTE,
         crate::game::screens::activity::ACTIVITY_DETAIL_ROUTE,
         crate::game::screens::activity::ACTIVITY_LIST_ROUTE,
         MainWorldDocumentPanel::Mail.route(),
@@ -2718,6 +2721,7 @@ mod tests {
         assert_eq!(
             main_world_ui_cleanup_owners(),
             [
+                OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL,
                 crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_DETAIL,
                 crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_LIST,
                 OWNER_MAIN_WORLD_MAIL_PANEL,

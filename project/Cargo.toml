@@ -55,6 +55,7 @@ authority-core = { path = "vendor/myserver/authority-core" }
 csv = "1"
 ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
 futures-util = "0.3"
+getrandom = "0.3"
 myserver-protocol = { path = "crates/myserver-protocol" }
 network-types = { path = "crates/network-types" }
 prost = "0.14"

@@ -7,9 +7,9 @@ mod types;
 
 #[allow(unused_imports)]
 pub(crate) use activity::{
-    ActivityClientState, ActivityError, ActivityErrorKind, ActivityEvent, ActivityKey,
-    ActivityPlugin, ActivityProgressView, ActivityRequestKind, ActivityRequestTracker,
-    ActivitySummary,
+    ActivityClientState, ActivityDetail, ActivityError, ActivityErrorKind, ActivityEvent,
+    ActivityKey, ActivityPlayerView, ActivityPlugin, ActivityProgressView, ActivityRequestKind,
+    ActivityRequestTracker, ActivitySummary, LoginRewardPlayerView, LoginRewardStageView,
 };
 pub(crate) use plugin::{MyServerPlugin, MyServerUpdateSet};
 #[cfg(test)]

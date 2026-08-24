@@ -16,7 +16,7 @@ use crate::game::{
     ui_ids::OWNER_MAIN_WORLD_ACTIVITY_DETAIL,
 };
 
-use super::host::ACTIVITY_DETAIL_DOCUMENT_ID;
+use super::host::{ACTIVITY_DETAIL_DOCUMENT_ID, ACTIVITY_DETAIL_ROUTE};
 use super::{ActivityScreenCommand, ActivityScreenState};
 
 pub(super) const ACTION_ACTIVITY_DETAIL_BACK: &str = "main_world_activity_detail.back";
@@ -73,7 +73,9 @@ pub(super) fn handle_activity_detail_document_actions(
     state: Res<ActivityScreenState>,
     mut commands: MessageWriter<ActivityScreenCommand>,
 ) {
-    if !state.detail_open || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
+    if !state.detail_open
+        || state.detail_route != Some(ACTIVITY_DETAIL_ROUTE)
+        || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
     {
         return;
     }
@@ -94,7 +96,9 @@ pub(super) fn sync_activity_detail_bindings(
     contract: Res<super::host::ActivityScreenHostContract>,
     mut values: ResMut<UiBindingValues>,
 ) {
-    if !state.detail_open || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
+    if !state.detail_open
+        || state.detail_route != Some(ACTIVITY_DETAIL_ROUTE)
+        || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
     {
         return;
     }

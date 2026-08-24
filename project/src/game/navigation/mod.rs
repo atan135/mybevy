@@ -729,8 +729,9 @@ mod tests {
     use crate::game::ui_ids::{
         OWNER_AUDIO_GALLERY, OWNER_AUDIO_SETTINGS, OWNER_CHARACTER_SELECT, OWNER_FANGYUAN_HOME,
         OWNER_FANGYUAN_PLAYER_PREVIEW, OWNER_MAIN_WORLD_ACTIVITY_DETAIL,
-        OWNER_MAIN_WORLD_ACTIVITY_LIST, OWNER_MAIN_WORLD_MAIL_PANEL,
-        OWNER_MAIN_WORLD_SETTINGS_PANEL, OWNER_ROBOT_SYNC_SCENE, OWNER_UI_GENERATED_ACCEPTANCE,
+        OWNER_MAIN_WORLD_ACTIVITY_LIST, OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL,
+        OWNER_MAIN_WORLD_MAIL_PANEL, OWNER_MAIN_WORLD_SETTINGS_PANEL, OWNER_ROBOT_SYNC_SCENE,
+        OWNER_UI_GENERATED_ACCEPTANCE,
     };
     use bevy::{ecs::message::MessageCursor, state::app::StatesPlugin};
     use std::collections::BTreeMap;
@@ -858,6 +859,7 @@ mod tests {
         assert_eq!(
             closed_owners,
             [
+                OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL.as_str(),
                 OWNER_MAIN_WORLD_ACTIVITY_DETAIL.as_str(),
                 OWNER_MAIN_WORLD_ACTIVITY_LIST.as_str(),
                 OWNER_MAIN_WORLD_MAIL_PANEL.as_str(),

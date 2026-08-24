@@ -4580,6 +4580,7 @@ dependencies = [
  "ed25519-dalek",
  "fangyuan-core",
  "futures-util",
+ "getrandom 0.3.4",
  "myserver-protocol",
  "network-types",
  "prost",

@@ -1,0 +1,43 @@
+{
+  "action_or_binding_registration": [],
+  "audit_profiles": ["desktop", "phone-landscape", "phone-1080p-landscape", "tablet-landscape"],
+  "document_id": "game.main_world_login_reward_detail",
+  "host_contract": {
+    "actions": [
+      { "id": "main_world_login_reward_detail.back", "sources": ["main_world_login_reward_detail.back"] },
+      { "id": "main_world_login_reward_detail.claim", "sources": ["main_world_login_reward_detail.stage.claim"] },
+      { "id": "main_world_login_reward_detail.close", "sources": ["main_world_login_reward_detail.close"] }
+    ],
+    "bindings": [
+      { "path": "login_reward.collection_state", "scope": "owner", "value_type": { "kind": "enum", "values": ["loading", "ready", "error"] } },
+      { "path": "login_reward.counts", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "login_reward.cycle", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "login_reward.error", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "login_reward.error_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
+      { "path": "login_reward.status", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "login_reward.stages", "scope": "owner", "value_type": { "kind": "list", "item": { "kind": "record", "fields": { "stage_id": { "kind": "string" }, "stage_no": { "kind": "number" }, "title": { "kind": "string" }, "reward_group_key": { "kind": "string" }, "state": { "kind": "string" }, "claim_visibility": { "kind": "visibility" }, "claim_disabled": { "kind": "bool" }, "claim_loading": { "kind": "bool" } } }, "max_items": 64 } },
+      { "path": "login_reward.today", "scope": "owner", "value_type": { "kind": "string" } },
+      { "path": "login_reward.item.claim_disabled", "scope": "item", "value_type": { "kind": "bool" } },
+      { "path": "login_reward.item.claim_loading", "scope": "item", "value_type": { "kind": "bool" } },
+      { "path": "login_reward.item.claim_visibility", "scope": "item", "value_type": { "kind": "visibility" } },
+      { "path": "login_reward.item.reward_group_key", "scope": "item", "value_type": { "kind": "string" } },
+      { "path": "login_reward.item.stage_id", "scope": "item", "value_type": { "kind": "string" } },
+      { "path": "login_reward.item.stage_no", "scope": "item", "value_type": { "kind": "number" } },
+      { "path": "login_reward.item.state", "scope": "item", "value_type": { "kind": "string" } },
+      { "path": "login_reward.item.title", "scope": "item", "value_type": { "kind": "string" } }
+    ],
+    "resources": [],
+    "version": 1
+  },
+  "i18n_keys": [],
+  "kind": "ui_document_promotion_registration",
+  "layer": "floating",
+  "owner": "main_world_login_reward_detail",
+  "page_state": "initial",
+  "panel": "floating",
+  "protocol_version": 2,
+  "route": "main_world_login_reward_detail",
+  "source": { "relative_path": "activity/main_world_login_reward_detail.v1.json", "root": "approved" },
+  "template_version": 2,
+  "theme_tokens": []
+}

@@ -3763,12 +3763,14 @@ mod tests {
         assert!(matches!(
             messages::<UiPanelCommand>(&app).as_slice(),
             [
+                UiPanelCommand::CloseAllForOwner(login_reward_detail),
                 UiPanelCommand::CloseAllForOwner(activity_detail),
                 UiPanelCommand::CloseAllForOwner(activity_list),
                 UiPanelCommand::CloseAllForOwner(mail),
                 UiPanelCommand::CloseAllForOwner(settings),
                 UiPanelCommand::CloseAllForOwner(hud),
-            ] if *activity_detail == crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_DETAIL
+            ] if *login_reward_detail == crate::game::ui_ids::OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL
+                && *activity_detail == crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_DETAIL
                 && *activity_list == crate::game::ui_ids::OWNER_MAIN_WORLD_ACTIVITY_LIST
                 && *mail == crate::game::ui_ids::OWNER_MAIN_WORLD_MAIL_PANEL
                 && *settings == crate::game::ui_ids::OWNER_MAIN_WORLD_SETTINGS_PANEL
@@ -3777,12 +3779,14 @@ mod tests {
         assert!(matches!(
             messages::<UiDocumentRuntimeCommand>(&app).as_slice(),
             [
+                UiDocumentRuntimeCommand::CloseAllForOwner { owner: login_reward_detail },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: activity_detail },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: activity_list },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: mail },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: settings },
                 UiDocumentRuntimeCommand::CloseAllForOwner { owner: hud },
-            ] if activity_detail == "main_world_activity_detail"
+            ] if login_reward_detail == "main_world_login_reward_detail"
+                && activity_detail == "main_world_activity_detail"
                 && activity_list == "main_world_activity_list"
                 && mail == "main_world_mail_panel"
                 && settings == "main_world_settings_panel"
@@ -3791,12 +3795,14 @@ mod tests {
         assert!(matches!(
             messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
             [
+                DeclarativeScreenHostCommand::CloseRoute { route: login_reward_detail },
                 DeclarativeScreenHostCommand::CloseRoute { route: activity_detail },
                 DeclarativeScreenHostCommand::CloseRoute { route: activity_list },
                 DeclarativeScreenHostCommand::CloseRoute { route: mail },
                 DeclarativeScreenHostCommand::CloseRoute { route: settings },
                 DeclarativeScreenHostCommand::CloseRoute { route: hud },
-            ] if activity_detail == "main_world_activity_detail"
+            ] if login_reward_detail == "main_world_login_reward_detail"
+                && activity_detail == "main_world_activity_detail"
                 && activity_list == "main_world_activity_list"
                 && mail == "main_world_mail"
                 && settings == "main_world_settings"

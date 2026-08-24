@@ -19,21 +19,30 @@ use crate::game::{
         ActivitySummary, GameConnectionState, MyServerCommand, MyServerSession,
     },
     scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
-    ui_ids::{OWNER_MAIN_WORLD_ACTIVITY_DETAIL, OWNER_MAIN_WORLD_ACTIVITY_LIST},
+    ui_ids::{
+        OWNER_MAIN_WORLD_ACTIVITY_DETAIL, OWNER_MAIN_WORLD_ACTIVITY_LIST,
+        OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL,
+    },
 };
 
-use super::{detail, list};
+use super::{detail, list, login_reward};
 
 pub(in crate::game) const ACTIVITY_LIST_DOCUMENT_ID: &str = "game.main_world_activity_list";
 pub(in crate::game) const ACTIVITY_DETAIL_DOCUMENT_ID: &str = "game.main_world_activity_detail";
+pub(in crate::game) const LOGIN_REWARD_DETAIL_DOCUMENT_ID: &str =
+    "game.main_world_login_reward_detail";
 pub(in crate::game) const ACTIVITY_LIST_ROUTE: &str = "main_world_activity_list";
 pub(in crate::game) const ACTIVITY_DETAIL_ROUTE: &str = "main_world_activity_detail";
+pub(in crate::game) const LOGIN_REWARD_DETAIL_ROUTE: &str = "main_world_login_reward_detail";
 
 pub(super) const ACTIVITY_LIST_DOCUMENT_SOURCE: &str = include_str!(
     "../../../../assets/ui/documents/approved/activity/main_world_activity_list.v1.json"
 );
 pub(super) const ACTIVITY_DETAIL_DOCUMENT_SOURCE: &str = include_str!(
     "../../../../assets/ui/documents/approved/activity/main_world_activity_detail.v1.json"
+);
+pub(super) const LOGIN_REWARD_DETAIL_DOCUMENT_SOURCE: &str = include_str!(
+    "../../../../assets/ui/documents/approved/activity/main_world_login_reward_detail.v1.json"
 );
 
 const DEFAULT_AUDIT_PROFILES: [&str; 4] = [
@@ -95,6 +104,7 @@ pub(in crate::game) struct ActivityScreenState {
     pub(super) main_world_generation: Option<u64>,
     pub(super) list_open: bool,
     pub(super) detail_open: bool,
+    pub(super) detail_route: Option<&'static str>,
     pub(super) selected: Option<ActivityKey>,
     pub(super) list_load_state: ActivityListLoadState,
     pub(super) detail_load_state: ActivityDetailLoadState,
@@ -118,6 +128,7 @@ impl ActivityScreenState {
         self.main_world_generation = None;
         self.list_open = false;
         self.detail_open = false;
+        self.detail_route = None;
         self.selected = None;
         self.list_load_state = ActivityListLoadState::Idle;
         self.detail_load_state = ActivityDetailLoadState::Idle;
@@ -127,6 +138,7 @@ impl ActivityScreenState {
 
     fn close_detail(&mut self) {
         self.detail_open = false;
+        self.detail_route = None;
         self.selected = None;
         self.detail_load_state = ActivityDetailLoadState::Idle;
         self.detail_error = None;
@@ -137,6 +149,7 @@ impl ActivityScreenState {
 pub(super) struct ActivityScreenHostContract {
     pub(super) list_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
     pub(super) detail_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
+    pub(super) login_reward_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
 }
 
 impl Default for ActivityScreenHostContract {
@@ -144,6 +157,7 @@ impl Default for ActivityScreenHostContract {
         Self {
             list_bindings: list::activity_list_binding_schema(),
             detail_bindings: detail::activity_detail_binding_schema(),
+            login_reward_bindings: login_reward::login_reward_binding_schema(),
         }
     }
 }
@@ -156,6 +170,7 @@ pub(super) fn register_activity_screen_contract(
     for descriptor in list::activity_list_action_descriptors()
         .into_iter()
         .chain(detail::activity_detail_action_descriptors())
+        .chain(login_reward::login_reward_action_descriptors())
     {
         actions
             .register(descriptor)
@@ -164,6 +179,7 @@ pub(super) fn register_activity_screen_contract(
     for host in [
         activity_list_declarative_screen_host(&contract),
         activity_detail_declarative_screen_host(&contract),
+        login_reward_detail_declarative_screen_host(&contract),
     ] {
         screens
             .register(host)
@@ -205,6 +221,25 @@ fn activity_detail_declarative_screen_host(
             detail::ACTION_ACTIVITY_DETAIL_CLOSE,
         ],
         &contract.detail_bindings,
+    )
+}
+
+fn login_reward_detail_declarative_screen_host(
+    contract: &ActivityScreenHostContract,
+) -> DeclarativeScreenHost {
+    activity_host(
+        LOGIN_REWARD_DETAIL_DOCUMENT_ID,
+        LOGIN_REWARD_DETAIL_ROUTE,
+        &[LOGIN_REWARD_DETAIL_ROUTE, "main-world-login-reward-detail"],
+        OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL,
+        "activity/main_world_login_reward_detail.v1.json",
+        LOGIN_REWARD_DETAIL_DOCUMENT_SOURCE,
+        &[
+            login_reward::ACTION_LOGIN_REWARD_CLAIM,
+            login_reward::ACTION_LOGIN_REWARD_BACK,
+            login_reward::ACTION_LOGIN_REWARD_CLOSE,
+        ],
+        &contract.login_reward_bindings,
     )
 }
 
@@ -299,6 +334,7 @@ pub(super) fn handle_activity_screen_commands(
                 state.main_world_generation = generation;
                 state.list_open = true;
                 state.detail_open = false;
+                state.detail_route = None;
                 state.selected = None;
                 state.list_load_state = ActivityListLoadState::Loading;
                 state.list_error = None;
@@ -341,17 +377,23 @@ pub(super) fn handle_activity_screen_commands(
                 {
                     continue;
                 }
+                let detail_route = detail_route_for_activity(&key, &activity)
+                    .expect("visible activity has a fixed detail route");
                 if state.detail_open {
                     screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
-                        route: ACTIVITY_DETAIL_ROUTE.to_owned(),
+                        route: state
+                            .detail_route
+                            .unwrap_or(ACTIVITY_DETAIL_ROUTE)
+                            .to_owned(),
                     });
                 }
                 state.detail_open = true;
+                state.detail_route = Some(detail_route);
                 state.selected = Some(key.clone());
                 state.detail_load_state = ActivityDetailLoadState::Loading;
                 state.detail_error = None;
                 screen_commands.write(DeclarativeScreenHostCommand::OpenDetachedRoute {
-                    route: ACTIVITY_DETAIL_ROUTE.to_owned(),
+                    route: detail_route.to_owned(),
                 });
                 myserver_commands.write(MyServerCommand::LoadActivityDetail {
                     activity_id: key.activity_id,
@@ -362,9 +404,10 @@ pub(super) fn handle_activity_screen_commands(
                 if !state.detail_open {
                     continue;
                 }
+                let detail_route = state.detail_route.unwrap_or(ACTIVITY_DETAIL_ROUTE);
                 state.close_detail();
                 screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
-                    route: ACTIVITY_DETAIL_ROUTE.to_owned(),
+                    route: detail_route.to_owned(),
                 });
                 clear_focus(&mut focus);
             }
@@ -408,9 +451,10 @@ pub(super) fn apply_activity_screen_events(
                         })
                     })
                 {
+                    let detail_route = state.detail_route.unwrap_or(ACTIVITY_DETAIL_ROUTE);
                     state.close_detail();
                     screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
-                        route: ACTIVITY_DETAIL_ROUTE.to_owned(),
+                        route: detail_route.to_owned(),
                     });
                     clear_focus(&mut focus);
                 }
@@ -448,7 +492,12 @@ pub(super) fn track_activity_screen_host_events(
 ) {
     for event in events.read() {
         match event {
-            DeclarativeScreenHostEvent::Closed { route, .. } if route == ACTIVITY_DETAIL_ROUTE => {
+            DeclarativeScreenHostEvent::Closed { route, .. }
+                if matches!(
+                    route.as_str(),
+                    ACTIVITY_DETAIL_ROUTE | LOGIN_REWARD_DETAIL_ROUTE
+                ) =>
+            {
                 state.close_detail();
             }
             DeclarativeScreenHostEvent::Closed { route, .. } if route == ACTIVITY_LIST_ROUTE => {
@@ -460,11 +509,29 @@ pub(super) fn track_activity_screen_host_events(
 }
 
 fn close_activity_routes(commands: &mut MessageWriter<DeclarativeScreenHostCommand>) {
-    for route in [ACTIVITY_DETAIL_ROUTE, ACTIVITY_LIST_ROUTE] {
+    for route in [
+        LOGIN_REWARD_DETAIL_ROUTE,
+        ACTIVITY_DETAIL_ROUTE,
+        ACTIVITY_LIST_ROUTE,
+    ] {
         commands.write(DeclarativeScreenHostCommand::CloseRoute {
             route: route.to_owned(),
         });
     }
+}
+
+fn detail_route_for_activity(
+    key: &ActivityKey,
+    activity: &ActivityClientState,
+) -> Option<&'static str> {
+    activity
+        .activities
+        .iter()
+        .find(|summary| summary.activity_id == key.activity_id && summary.version == key.version)
+        .map(|summary| match summary.activity_type.as_str() {
+            "login_reward" => LOGIN_REWARD_DETAIL_ROUTE,
+            _ => ACTIVITY_DETAIL_ROUTE,
+        })
 }
 
 fn clear_focus(focus: &mut Option<ResMut<UiFocusState>>) {
@@ -576,6 +643,45 @@ mod tests {
     }
 
     #[test]
+    fn login_reward_uses_its_dedicated_fixed_detail_route() {
+        let mut app = test_app(active_entry(9), active_session());
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(9);
+            state.list_open = true;
+        }
+        app.world_mut()
+            .resource_mut::<ActivityClientState>()
+            .activities
+            .push(ActivitySummary {
+                activity_id: "login-reward".to_owned(),
+                version: 2,
+                activity_type: "login_reward".to_owned(),
+                status: "running".to_owned(),
+                start_at_ms: 1,
+                end_at_ms: 2,
+                claim_deadline_ms: 3,
+                timezone: "UTC".to_owned(),
+            });
+        app.world_mut()
+            .write_message(ActivityScreenCommand::OpenDetail {
+                activity_id: "login-reward".to_owned(),
+                version: 2,
+            });
+        app.update();
+
+        assert!(matches!(
+            read_messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+            [DeclarativeScreenHostCommand::OpenDetachedRoute { route }]
+                if route == LOGIN_REWARD_DETAIL_ROUTE
+        ));
+        assert_eq!(
+            app.world().resource::<ActivityScreenState>().detail_route,
+            Some(LOGIN_REWARD_DETAIL_ROUTE)
+        );
+    }
+
+    #[test]
     fn retrying_a_failed_list_reuses_the_list_route_without_requesting_detail() {
         let mut app = test_app(active_entry(3), active_session());
         {
@@ -608,6 +714,7 @@ mod tests {
         for source in [
             ACTIVITY_LIST_DOCUMENT_SOURCE,
             ACTIVITY_DETAIL_DOCUMENT_SOURCE,
+            LOGIN_REWARD_DETAIL_DOCUMENT_SOURCE,
         ] {
             UiDocument::parse_and_validate_json(source)
                 .expect("activity surface must remain an approved valid UiDocument");
