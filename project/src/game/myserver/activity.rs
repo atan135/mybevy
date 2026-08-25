@@ -13,9 +13,14 @@ use super::types::redact_secret_fingerprint;
 use super::{MyServerEvent, MyServerSession, MyServerUpdateSet};
 
 pub const MAX_ACTIVITY_PROGRESS_JSON_BYTES: usize = 64 * 1024;
+pub const DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE: u32 = 20;
+pub const MAX_ACTIVITY_HISTORY_PAGE_SIZE: u32 = 50;
 const MAX_ACTIVITY_VIEW_STRING_BYTES: usize = 128;
 const MAX_ACTIVITY_ERROR_CODE_BYTES: usize = 96;
 const MAX_LOGIN_REWARD_STAGES: usize = 64;
+const MAX_ACTIVITY_HISTORY_CURSOR_BYTES: usize = 1024;
+const MAX_ACTIVITY_HISTORY_RECORDS: usize = MAX_ACTIVITY_HISTORY_PAGE_SIZE as usize;
+const MAX_ACTIVITY_HISTORY_REWARDS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityRequestKind {
@@ -24,6 +29,7 @@ pub enum ActivityRequestKind {
     Progress,
     Claim,
     Action,
+    History,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +57,103 @@ impl ActivitySummary {
             timezone: value.timezone,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivityClaimHistoryStatus {
+    Granted,
+    Processing,
+    RetryableFailure,
+    PermanentFailure,
+    ReconciliationPending,
+    BlockedCapacity,
+    ManualReview,
+}
+
+impl ActivityClaimHistoryStatus {
+    fn from_proto(value: &str) -> Option<Self> {
+        match value {
+            "granted" => Some(Self::Granted),
+            "processing" => Some(Self::Processing),
+            "retryable_failure" => Some(Self::RetryableFailure),
+            "permanent_failure" => Some(Self::PermanentFailure),
+            "reconciliation_pending" => Some(Self::ReconciliationPending),
+            "blocked_capacity" => Some(Self::BlockedCapacity),
+            "manual_review" => Some(Self::ManualReview),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivityRewardSummary {
+    pub reward_type: String,
+    pub asset_id: String,
+    pub quantity: u64,
+}
+
+impl ActivityRewardSummary {
+    fn from_proto(value: pb::ActivityRewardSummary) -> Option<Self> {
+        Some(Self {
+            reward_type: required_history_text(value.reward_type)?,
+            asset_id: required_history_text(value.asset_id)?,
+            quantity: (value.quantity > 0).then_some(value.quantity)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivityClaimHistoryRecord {
+    pub activity_id: String,
+    pub version: u32,
+    pub activity_type: String,
+    pub action_type: String,
+    pub stage_id: Option<String>,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub status: ActivityClaimHistoryStatus,
+    pub rewards: Vec<ActivityRewardSummary>,
+}
+
+impl ActivityClaimHistoryRecord {
+    fn from_proto(value: pb::ActivityClaimHistoryRecord) -> Option<Self> {
+        if value.rewards.len() > MAX_ACTIVITY_HISTORY_REWARDS || value.version == 0 {
+            return None;
+        }
+        let created_at_ms = (value.created_at_ms > 0).then_some(value.created_at_ms)?;
+        let completed_at_ms = (value.completed_at_ms > 0).then_some(value.completed_at_ms);
+        if completed_at_ms.is_some_and(|completed_at_ms| completed_at_ms < created_at_ms) {
+            return None;
+        }
+        let status = ActivityClaimHistoryStatus::from_proto(&value.status)?;
+        let rewards = value
+            .rewards
+            .into_iter()
+            .map(ActivityRewardSummary::from_proto)
+            .collect::<Option<Vec<_>>>()?;
+        if status != ActivityClaimHistoryStatus::Granted && !rewards.is_empty() {
+            return None;
+        }
+        Some(Self {
+            activity_id: required_history_text(value.activity_id)?,
+            version: value.version,
+            activity_type: required_history_text(value.activity_type)?,
+            action_type: required_history_text(value.action_type)?,
+            stage_id: optional_history_text(value.stage_id)?,
+            created_at_ms,
+            completed_at_ms,
+            status,
+            rewards,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ActivityClaimHistory {
+    pub records: Vec<ActivityClaimHistoryRecord>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub loading: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -136,6 +239,8 @@ pub struct LotteryStateView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityErrorKind {
     AuthenticationRequired,
+    InvalidRequest,
+    HistoryCursorInvalid,
     EngineUnavailable,
     QualificationNotMet,
     AlreadyClaimed,
@@ -156,6 +261,8 @@ impl ActivityErrorKind {
     pub const fn message_key(&self) -> &'static str {
         match self {
             Self::AuthenticationRequired => "activity.error.authentication_required",
+            Self::InvalidRequest => "activity.error.invalid_request",
+            Self::HistoryCursorInvalid => "activity.error.history_cursor_invalid",
             Self::EngineUnavailable => "activity.error.engine_unavailable",
             Self::QualificationNotMet => "activity.error.qualification_not_met",
             Self::AlreadyClaimed => "activity.error.already_claimed",
@@ -201,6 +308,10 @@ impl ActivityError {
             ActivityErrorKind::EngineUnavailable
         } else if error_code == "ACTIVITY_AUTH_REQUIRED" {
             ActivityErrorKind::AuthenticationRequired
+        } else if error_code == "ACTIVITY_INVALID_REQUEST" {
+            ActivityErrorKind::InvalidRequest
+        } else if error_code == "ACTIVITY_HISTORY_CURSOR_INVALID" {
+            ActivityErrorKind::HistoryCursorInvalid
         } else if error_code == "ACTIVITY_QUALIFICATION_NOT_MET" {
             ActivityErrorKind::QualificationNotMet
         } else if error_code == "ACTIVITY_ALREADY_CLAIMED" {
@@ -271,6 +382,12 @@ impl ActivityError {
 
 fn sanitize_activity_error_code(code: &str) -> String {
     let code = code.trim().to_ascii_uppercase();
+    if matches!(
+        code.as_str(),
+        "NOT_AUTHENTICATED" | "AUTH_CONTEXT_INCOMPLETE"
+    ) {
+        return "ACTIVITY_AUTH_REQUIRED".to_owned();
+    }
     let valid_activity_code = code.starts_with("ACTIVITY_")
         && code.len() <= MAX_ACTIVITY_ERROR_CODE_BYTES
         && code
@@ -309,6 +426,7 @@ struct TrackedActivityRequest {
     stage_id: Option<String>,
     action_type: Option<String>,
     request_id_fingerprint: Option<String>,
+    history_load_more: bool,
     scope: ActivityScope,
 }
 
@@ -326,6 +444,7 @@ impl ActivityRequestTracker {
         stage_id: Option<&str>,
         action_type: Option<&str>,
         client_request_id: Option<&str>,
+        history_load_more: bool,
         scope: ActivityScope,
     ) {
         self.pending.insert(
@@ -336,6 +455,7 @@ impl ActivityRequestTracker {
                 stage_id: stage_id.map(str::to_owned),
                 action_type: action_type.map(str::to_owned),
                 request_id_fingerprint: client_request_id.map(redact_secret_fingerprint),
+                history_load_more,
                 scope,
             },
         );
@@ -346,16 +466,27 @@ impl ActivityRequestTracker {
         seq: u32,
         connection_id: ConnectionId,
     ) -> Option<TrackedActivityRequest> {
-        let tracked = self.pending.remove(&seq)?;
-        (tracked.scope.connection_id == connection_id).then_some(tracked)
+        if self.pending.get(&seq)?.scope.connection_id != connection_id {
+            return None;
+        }
+        self.pending.remove(&seq)
     }
 
     fn clear(&mut self) {
         self.pending.clear();
     }
 
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.pending.is_empty()
+    }
+
+    fn remove(&mut self, seq: u32) -> Option<TrackedActivityRequest> {
+        self.pending.remove(&seq)
+    }
+
+    fn has_pending_kind(&self, kind: ActivityRequestKind) -> bool {
+        self.pending.values().any(|request| request.kind == kind)
     }
 
     #[cfg(test)]
@@ -386,6 +517,9 @@ pub enum ActivityEvent {
         duplicate: bool,
         state_revision: u64,
     },
+    ClaimHistoryUpdated {
+        appended: bool,
+    },
     RequestFailed {
         kind: ActivityRequestKind,
         activity: Option<ActivityKey>,
@@ -400,6 +534,7 @@ pub struct ActivityClientState {
     pub activities: Vec<ActivitySummary>,
     pub selected: Option<ActivityKey>,
     pub details: HashMap<ActivityKey, ActivityDetail>,
+    pub claim_history: ActivityClaimHistory,
     pub last_error: Option<ActivityError>,
     pub request_tracker: ActivityRequestTracker,
 }
@@ -423,6 +558,7 @@ impl ActivityClientState {
         self.activities.clear();
         self.selected = None;
         self.details.clear();
+        self.claim_history = ActivityClaimHistory::default();
         self.last_error = None;
         self.request_tracker.clear();
         true
@@ -437,6 +573,7 @@ impl ActivityClientState {
         stage_id: Option<&str>,
         action_type: Option<&str>,
         client_request_id: Option<&str>,
+        history_load_more: bool,
     ) {
         self.sync_scope(session);
         let Some(scope) = self.scope.clone() else {
@@ -449,8 +586,12 @@ impl ActivityClientState {
             stage_id,
             action_type,
             client_request_id,
+            history_load_more,
             scope,
         );
+        if kind == ActivityRequestKind::History {
+            self.claim_history.loading = true;
+        }
     }
 
     fn complete_request(
@@ -459,7 +600,31 @@ impl ActivityClientState {
         connection_id: ConnectionId,
     ) -> Option<TrackedActivityRequest> {
         let tracked = self.request_tracker.complete(seq, connection_id)?;
-        (self.scope.as_ref() == Some(&tracked.scope)).then_some(tracked)
+        if self.scope.as_ref() != Some(&tracked.scope) {
+            return None;
+        }
+        self.finish_request(&tracked);
+        Some(tracked)
+    }
+
+    fn take_request(&mut self, seq: u32) -> Option<TrackedActivityRequest> {
+        let tracked = self.request_tracker.remove(seq)?;
+        if self.scope.as_ref() != Some(&tracked.scope) {
+            return None;
+        }
+        self.finish_request(&tracked);
+        Some(tracked)
+    }
+
+    fn finish_request(&mut self, tracked: &TrackedActivityRequest) {
+        if tracked.kind == ActivityRequestKind::History {
+            self.claim_history.loading = false;
+        }
+    }
+
+    pub(crate) fn has_pending_history_request(&self) -> bool {
+        self.request_tracker
+            .has_pending_kind(ActivityRequestKind::History)
     }
 
     fn fail(&mut self, error: ActivityError) {
@@ -557,6 +722,17 @@ fn apply_activity_responses(
                 *connection_id,
                 response,
             ),
+            MyServerEvent::ActivityClaimHistoryResponse {
+                seq,
+                connection_id,
+                response,
+            } => apply_claim_history_response(
+                &mut state,
+                &mut activity_events,
+                *seq,
+                *connection_id,
+                response,
+            ),
             MyServerEvent::ActivityProtocolFailed {
                 seq, connection_id, ..
             } => {
@@ -584,7 +760,7 @@ fn apply_activity_responses(
                 message_type: Some(message_type),
                 ..
             } if is_activity_request(*message_type) => {
-                if let Some(tracked) = state.request_tracker.pending.remove(seq) {
+                if let Some(tracked) = state.take_request(*seq) {
                     let error = ActivityError::transport();
                     state.fail(error.clone());
                     activity_events.write(ActivityEvent::RequestFailed {
@@ -597,7 +773,7 @@ fn apply_activity_responses(
             MyServerEvent::Error {
                 seq, error_code, ..
             } => {
-                if let Some(tracked) = state.request_tracker.pending.remove(seq) {
+                if let Some(tracked) = state.take_request(*seq) {
                     let error = ActivityError::from_code(error_code);
                     state.fail(error.clone());
                     activity_events.write(ActivityEvent::RequestFailed {
@@ -860,6 +1036,58 @@ fn apply_action_response(
     });
 }
 
+fn apply_claim_history_response(
+    state: &mut ActivityClientState,
+    events: &mut MessageWriter<ActivityEvent>,
+    seq: u32,
+    connection_id: ConnectionId,
+    response: &pb::ActivityClaimHistoryRes,
+) {
+    let Some(tracked) = state.complete_request(seq, connection_id) else {
+        return;
+    };
+    if tracked.kind != ActivityRequestKind::History {
+        return response_mismatch(state, events, tracked.kind, tracked.activity);
+    }
+    if !response.ok {
+        return request_error(state, events, tracked.kind, None, &response.error_code);
+    }
+    let Some((records, next_cursor)) = parse_claim_history_response(response) else {
+        return response_mismatch(state, events, tracked.kind, None);
+    };
+
+    if tracked.history_load_more {
+        state.claim_history.records.extend(records);
+    } else {
+        state.claim_history.records = records;
+    }
+    state.claim_history.next_cursor = next_cursor;
+    state.claim_history.has_more = response.has_more;
+    state.last_error = None;
+    events.write(ActivityEvent::ClaimHistoryUpdated {
+        appended: tracked.history_load_more,
+    });
+}
+
+fn parse_claim_history_response(
+    response: &pb::ActivityClaimHistoryRes,
+) -> Option<(Vec<ActivityClaimHistoryRecord>, Option<String>)> {
+    if response.records.len() > MAX_ACTIVITY_HISTORY_RECORDS {
+        return None;
+    }
+    let next_cursor = optional_history_cursor(&response.next_cursor)?;
+    if response.has_more != next_cursor.is_some() {
+        return None;
+    }
+    let records = response
+        .records
+        .iter()
+        .cloned()
+        .map(ActivityClaimHistoryRecord::from_proto)
+        .collect::<Option<Vec<_>>>()?;
+    Some((records, next_cursor))
+}
+
 fn request_error(
     state: &mut ActivityClientState,
     events: &mut MessageWriter<ActivityEvent>,
@@ -918,7 +1146,38 @@ fn is_activity_request(message_type: super::protocol::MessageType) -> bool {
             | super::protocol::MessageType::ActivityProgressReq
             | super::protocol::MessageType::ActivityClaimReq
             | super::protocol::MessageType::ActivityActionReq
+            | super::protocol::MessageType::ActivityClaimHistoryReq
     )
+}
+
+pub(crate) fn normalize_activity_history_request_cursor(value: Option<&str>) -> Option<String> {
+    let value = value.map(str::trim).filter(|value| !value.is_empty())?;
+    (value.len() <= MAX_ACTIVITY_HISTORY_CURSOR_BYTES
+        && value.bytes().all(|byte| !byte.is_ascii_control()))
+    .then(|| value.to_owned())
+}
+
+fn optional_history_cursor(value: &str) -> Option<Option<String>> {
+    if value.is_empty() {
+        return Some(None);
+    }
+    (value.len() <= MAX_ACTIVITY_HISTORY_CURSOR_BYTES
+        && value.bytes().all(|byte| !byte.is_ascii_control()))
+    .then(|| Some(value.to_owned()))
+}
+
+fn required_history_text(value: String) -> Option<String> {
+    (!value.trim().is_empty()
+        && value.len() <= MAX_ACTIVITY_VIEW_STRING_BYTES
+        && value.bytes().all(|byte| !byte.is_ascii_control()))
+    .then_some(value)
+}
+
+fn optional_history_text(value: String) -> Option<Option<String>> {
+    if value.is_empty() {
+        return Some(None);
+    }
+    required_history_text(value).map(Some)
 }
 
 fn parse_progress_json(value: &str) -> Result<Option<ActivityProgressView>, ()> {
@@ -1259,6 +1518,7 @@ mod tests {
             None,
             None,
             Some("request-id-should-not-be-exposed"),
+            false,
             ActivityScope {
                 character_id: "character-1".to_owned(),
                 connection_id: ConnectionId::from_raw(12),
@@ -1289,6 +1549,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             old_scope,
         );
         state.scope = Some(ActivityScope {
@@ -1369,6 +1630,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         );
         assert!(!state.request_tracker.is_empty());
 
@@ -1394,6 +1656,7 @@ mod tests {
                 stage_id: Some(String::new()),
                 action_type: None,
                 request_id_fingerprint: None,
+                history_load_more: false,
                 scope: ActivityScope {
                     character_id: "character-1".to_owned(),
                     connection_id: ConnectionId::from_raw(12),
@@ -1409,5 +1672,412 @@ mod tests {
             assert!(write_response_stage_matches(&tracked, "stage-3"));
             assert!(!write_response_stage_matches(&tracked, "stage-4"));
         }
+    }
+
+    fn history_record() -> pb::ActivityClaimHistoryRecord {
+        pb::ActivityClaimHistoryRecord {
+            activity_id: "login-reward".to_owned(),
+            version: 3,
+            activity_type: "login_reward".to_owned(),
+            action_type: "claim".to_owned(),
+            stage_id: "day-7".to_owned(),
+            created_at_ms: 1_725_000_000_000,
+            completed_at_ms: 1_725_000_000_100,
+            status: "granted".to_owned(),
+            rewards: vec![pb::ActivityRewardSummary {
+                reward_type: "item".to_owned(),
+                asset_id: "coin".to_owned(),
+                quantity: 100,
+            }],
+        }
+    }
+
+    #[test]
+    fn claim_history_accepts_empty_and_paginated_pages() {
+        let empty = pb::ActivityClaimHistoryRes {
+            ok: true,
+            error_code: String::new(),
+            records: Vec::new(),
+            next_cursor: String::new(),
+            has_more: false,
+        };
+        assert_eq!(
+            parse_claim_history_response(&empty),
+            Some((Vec::new(), None))
+        );
+
+        let paginated = pb::ActivityClaimHistoryRes {
+            ok: true,
+            error_code: String::new(),
+            records: vec![history_record()],
+            next_cursor: "opaque-next-cursor".to_owned(),
+            has_more: true,
+        };
+        let (records, next_cursor) = parse_claim_history_response(&paginated).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, ActivityClaimHistoryStatus::Granted);
+        assert_eq!(records[0].rewards[0].quantity, 100);
+        assert_eq!(next_cursor.as_deref(), Some("opaque-next-cursor"));
+    }
+
+    #[test]
+    fn claim_history_accepts_every_public_server_status_without_rewards() {
+        let statuses = [
+            ("processing", ActivityClaimHistoryStatus::Processing),
+            (
+                "retryable_failure",
+                ActivityClaimHistoryStatus::RetryableFailure,
+            ),
+            (
+                "permanent_failure",
+                ActivityClaimHistoryStatus::PermanentFailure,
+            ),
+            (
+                "reconciliation_pending",
+                ActivityClaimHistoryStatus::ReconciliationPending,
+            ),
+            (
+                "blocked_capacity",
+                ActivityClaimHistoryStatus::BlockedCapacity,
+            ),
+            ("manual_review", ActivityClaimHistoryStatus::ManualReview),
+        ];
+        for (status, expected) in statuses {
+            let mut record = history_record();
+            record.status = status.to_owned();
+            record.rewards.clear();
+            let parsed = ActivityClaimHistoryRecord::from_proto(record).unwrap();
+            assert_eq!(parsed.status, expected);
+            assert!(parsed.rewards.is_empty());
+        }
+
+        let mut non_granted_with_reward = history_record();
+        non_granted_with_reward.status = "retryable_failure".to_owned();
+        assert!(ActivityClaimHistoryRecord::from_proto(non_granted_with_reward).is_none());
+    }
+
+    #[test]
+    fn claim_history_rejects_malformed_public_records_without_partial_results() {
+        let valid = history_record();
+        let oversized_page = pb::ActivityClaimHistoryRes {
+            ok: true,
+            error_code: String::new(),
+            records: vec![valid.clone(); MAX_ACTIVITY_HISTORY_RECORDS + 1],
+            next_cursor: String::new(),
+            has_more: false,
+        };
+        assert!(parse_claim_history_response(&oversized_page).is_none());
+
+        let mut oversized_rewards = valid.clone();
+        oversized_rewards.rewards = vec![oversized_rewards.rewards[0].clone(); 17];
+        assert!(
+            parse_claim_history_response(&pb::ActivityClaimHistoryRes {
+                ok: true,
+                error_code: String::new(),
+                records: vec![oversized_rewards],
+                next_cursor: String::new(),
+                has_more: false,
+            })
+            .is_none()
+        );
+
+        let mut invalid_status = valid.clone();
+        invalid_status.status = "unexpected".to_owned();
+        assert!(
+            parse_claim_history_response(&pb::ActivityClaimHistoryRes {
+                ok: true,
+                error_code: String::new(),
+                records: vec![invalid_status],
+                next_cursor: String::new(),
+                has_more: false,
+            })
+            .is_none()
+        );
+
+        let mut invalid_reward = valid;
+        invalid_reward.rewards[0].quantity = 0;
+        assert!(
+            parse_claim_history_response(&pb::ActivityClaimHistoryRes {
+                ok: true,
+                error_code: String::new(),
+                records: vec![invalid_reward],
+                next_cursor: String::new(),
+                has_more: false,
+            })
+            .is_none()
+        );
+
+        assert!(
+            parse_claim_history_response(&pb::ActivityClaimHistoryRes {
+                ok: true,
+                error_code: String::new(),
+                records: vec![history_record()],
+                next_cursor: "x".repeat(MAX_ACTIVITY_HISTORY_CURSOR_BYTES + 1),
+                has_more: true,
+            })
+            .is_none()
+        );
+        assert!(
+            parse_claim_history_response(&pb::ActivityClaimHistoryRes {
+                ok: true,
+                error_code: String::new(),
+                records: vec![history_record()],
+                next_cursor: String::new(),
+                has_more: true,
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn history_request_tracker_blocks_duplicates_and_clears_loading_on_completion() {
+        let session = MyServerSession {
+            character_id: Some("character-1".to_owned()),
+            connection_id: Some(ConnectionId::from_raw(12)),
+            authenticated: true,
+            ..Default::default()
+        };
+        let mut state = ActivityClientState::default();
+        state.record_request(
+            &session,
+            7,
+            ActivityRequestKind::History,
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(state.claim_history.loading);
+        assert!(state.has_pending_history_request());
+        assert!(
+            state
+                .complete_request(7, ConnectionId::from_raw(12))
+                .is_some()
+        );
+        assert!(!state.claim_history.loading);
+        assert!(!state.has_pending_history_request());
+    }
+
+    #[test]
+    fn history_scope_change_clears_records_cursor_loading_and_pending_requests() {
+        let old_session = MyServerSession {
+            character_id: Some("character-old".to_owned()),
+            connection_id: Some(ConnectionId::from_raw(12)),
+            authenticated: true,
+            ..Default::default()
+        };
+        let new_session = MyServerSession {
+            character_id: Some("character-new".to_owned()),
+            connection_id: Some(ConnectionId::from_raw(13)),
+            authenticated: true,
+            ..Default::default()
+        };
+        let mut state = ActivityClientState::default();
+        assert!(state.sync_scope(&old_session));
+        state.claim_history.records =
+            vec![ActivityClaimHistoryRecord::from_proto(history_record()).unwrap()];
+        state.claim_history.next_cursor = Some("opaque-cursor".to_owned());
+        state.claim_history.has_more = true;
+        state.record_request(
+            &old_session,
+            9,
+            ActivityRequestKind::History,
+            None,
+            None,
+            None,
+            None,
+            true,
+        );
+
+        assert!(state.sync_scope(&new_session));
+        assert!(state.claim_history.records.is_empty());
+        assert!(state.claim_history.next_cursor.is_none());
+        assert!(!state.claim_history.has_more);
+        assert!(!state.claim_history.loading);
+        assert!(!state.has_pending_history_request());
+        assert!(
+            state
+                .complete_request(9, ConnectionId::from_raw(12))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn history_errors_are_classified_and_common_auth_errors_are_normalized() {
+        let cursor = ActivityError::from_code("ACTIVITY_HISTORY_CURSOR_INVALID");
+        assert_eq!(cursor.kind, ActivityErrorKind::HistoryCursorInvalid);
+        assert!(!cursor.retryable);
+
+        let invalid_request = ActivityError::from_code("ACTIVITY_INVALID_REQUEST");
+        assert_eq!(invalid_request.kind, ActivityErrorKind::InvalidRequest);
+        assert!(!invalid_request.retryable);
+
+        for code in ["NOT_AUTHENTICATED", "AUTH_CONTEXT_INCOMPLETE"] {
+            let error = ActivityError::from_code(code);
+            assert_eq!(error.kind, ActivityErrorKind::AuthenticationRequired);
+            assert_eq!(error.error_code, "ACTIVITY_AUTH_REQUIRED");
+        }
+    }
+
+    #[test]
+    fn history_response_replaces_or_appends_only_after_scope_and_payload_validation() {
+        let connection_id = ConnectionId::from_raw(12);
+        let mut app = App::new();
+        app.add_plugins(bevy::prelude::MinimalPlugins)
+            .init_resource::<MyServerSession>()
+            .add_message::<MyServerEvent>()
+            .add_plugins(ActivityPlugin);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.character_id = Some("character-1".to_owned());
+            session.connection_id = Some(connection_id);
+            session.authenticated = true;
+        }
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>().clone();
+        app.world_mut()
+            .resource_mut::<ActivityClientState>()
+            .record_request(
+                &session,
+                7,
+                ActivityRequestKind::History,
+                None,
+                None,
+                None,
+                None,
+                false,
+            );
+        app.world_mut()
+            .write_message(MyServerEvent::ActivityClaimHistoryResponse {
+                seq: 7,
+                connection_id,
+                response: pb::ActivityClaimHistoryRes {
+                    ok: true,
+                    error_code: String::new(),
+                    records: vec![history_record()],
+                    next_cursor: "next-page".to_owned(),
+                    has_more: true,
+                },
+            });
+        app.update();
+        {
+            let state = app.world().resource::<ActivityClientState>();
+            assert_eq!(state.claim_history.records.len(), 1);
+            assert_eq!(
+                state.claim_history.next_cursor.as_deref(),
+                Some("next-page")
+            );
+            assert!(state.claim_history.has_more);
+            assert!(!state.claim_history.loading);
+        }
+
+        let session = app.world().resource::<MyServerSession>().clone();
+        app.world_mut()
+            .resource_mut::<ActivityClientState>()
+            .record_request(
+                &session,
+                8,
+                ActivityRequestKind::History,
+                None,
+                None,
+                None,
+                None,
+                true,
+            );
+        let mut next_record = history_record();
+        next_record.stage_id = "day-8".to_owned();
+        app.world_mut()
+            .write_message(MyServerEvent::ActivityClaimHistoryResponse {
+                seq: 8,
+                connection_id,
+                response: pb::ActivityClaimHistoryRes {
+                    ok: true,
+                    error_code: String::new(),
+                    records: vec![next_record],
+                    next_cursor: String::new(),
+                    has_more: false,
+                },
+            });
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<ActivityClientState>()
+                .claim_history
+                .records
+                .len(),
+            2
+        );
+
+        let session = app.world().resource::<MyServerSession>().clone();
+        app.world_mut()
+            .resource_mut::<ActivityClientState>()
+            .record_request(
+                &session,
+                9,
+                ActivityRequestKind::History,
+                None,
+                None,
+                None,
+                None,
+                false,
+            );
+        app.world_mut()
+            .write_message(MyServerEvent::ActivityClaimHistoryResponse {
+                seq: 9,
+                connection_id,
+                response: pb::ActivityClaimHistoryRes {
+                    ok: false,
+                    error_code: "ACTIVITY_HISTORY_CURSOR_INVALID".to_owned(),
+                    records: Vec::new(),
+                    next_cursor: String::new(),
+                    has_more: false,
+                },
+            });
+        app.update();
+        {
+            let state = app.world().resource::<ActivityClientState>();
+            assert_eq!(state.claim_history.records.len(), 2);
+            assert!(!state.claim_history.loading);
+            assert_eq!(
+                state.last_error.as_ref().map(|error| error.kind),
+                Some(ActivityErrorKind::HistoryCursorInvalid)
+            );
+        }
+
+        let session = app.world().resource::<MyServerSession>().clone();
+        app.world_mut()
+            .resource_mut::<ActivityClientState>()
+            .record_request(
+                &session,
+                10,
+                ActivityRequestKind::History,
+                None,
+                None,
+                None,
+                None,
+                false,
+            );
+        app.world_mut()
+            .write_message(MyServerEvent::ActivityClaimHistoryResponse {
+                seq: 10,
+                connection_id,
+                response: pb::ActivityClaimHistoryRes {
+                    ok: true,
+                    error_code: String::new(),
+                    records: vec![history_record(); MAX_ACTIVITY_HISTORY_RECORDS + 1],
+                    next_cursor: String::new(),
+                    has_more: false,
+                },
+            });
+        app.update();
+        let state = app.world().resource::<ActivityClientState>();
+        assert_eq!(state.claim_history.records.len(), 2);
+        assert!(!state.claim_history.loading);
+        assert_eq!(
+            state.last_error.as_ref().map(|error| error.kind),
+            Some(ActivityErrorKind::ResponseMismatch)
+        );
     }
 }

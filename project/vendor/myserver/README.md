@@ -9,12 +9,11 @@ second repository checkout:
 - `proto/chat.proto`
 
 Source repository: `atan135/myserver`
-Source commit: `f61fbc98f02f1cfac48a1ba11ebdd73e324ad1ae`
+Source commit: `13b1d9e019553400ea94cbf5d69f5ff4bbdb9677`
 
-The vendored `game.proto` hash is `297a8e226a1b4414545b7a39770d96581f10b076`.
-This snapshot includes the player activity contract (`1435-1444`); the
-character-bound claim-history query is intentionally not included because the
-server has not assigned a message type for it yet.
+The vendored `game.proto` hash is `b5b475cdedad2c97c18d7d68e912a200e3fca17d`.
+This snapshot includes the player activity contract (`1435-1446`), including
+the character-bound claim-history query (`1445/1446`).
 
 When a client-visible authority contract, deterministic simulation rule, or
 generated game/chat protocol changes in MyServer, update the affected snapshot

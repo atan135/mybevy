@@ -10,6 +10,10 @@ use crate::framework::network::{
     NetworkEvent, NetworkTransport, RequestId, TcpConnectConfig,
 };
 
+use super::activity::{
+    DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE, MAX_ACTIVITY_HISTORY_PAGE_SIZE,
+    normalize_activity_history_request_cursor,
+};
 use super::protocol::{MessageType, Packet, encode_proto_packet, pb};
 use super::types::{
     ApiErrorResponse, CharacterCreateResponse, CharacterLifecycleResponse, CharacterListResponse,
@@ -881,7 +885,53 @@ fn handle_myserver_commands(
                 None,
                 None,
                 None,
+                false,
             ),
+            MyServerCommand::LoadActivityClaimHistory { cursor, limit } => {
+                let limit = if *limit == 0 {
+                    DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE
+                } else {
+                    *limit
+                };
+                let cursor_is_nonempty = cursor
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty());
+                let Some(cursor) = normalize_activity_history_request_cursor(cursor.as_deref())
+                    .or_else(|| (!cursor_is_nonempty).then(String::new))
+                else {
+                    events.write(MyServerEvent::ActivityRequestRejected {
+                        kind: ActivityRequestKind::History,
+                        error_code: "ACTIVITY_INVALID_REQUEST".to_owned(),
+                    });
+                    continue;
+                };
+                if limit > MAX_ACTIVITY_HISTORY_PAGE_SIZE || activity.has_pending_history_request()
+                {
+                    if limit > MAX_ACTIVITY_HISTORY_PAGE_SIZE {
+                        events.write(MyServerEvent::ActivityRequestRejected {
+                            kind: ActivityRequestKind::History,
+                            error_code: "ACTIVITY_INVALID_REQUEST".to_owned(),
+                        });
+                    }
+                    continue;
+                }
+                let history_load_more = !cursor.is_empty();
+                send_activity_request(
+                    &mut session,
+                    &mut activity,
+                    &mut network_commands,
+                    &mut events,
+                    MessageType::ActivityClaimHistoryReq,
+                    MessageType::ActivityClaimHistoryRes,
+                    &pb::ActivityClaimHistoryReq { cursor, limit },
+                    ActivityRequestKind::History,
+                    None,
+                    None,
+                    None,
+                    None,
+                    history_load_more,
+                );
+            }
             MyServerCommand::LoadActivityDetail {
                 activity_id,
                 version,
@@ -904,6 +954,7 @@ fn handle_myserver_commands(
                 None,
                 None,
                 None,
+                false,
             ),
             MyServerCommand::LoadActivityProgress {
                 activity_id,
@@ -927,6 +978,7 @@ fn handle_myserver_commands(
                 None,
                 None,
                 None,
+                false,
             ),
             MyServerCommand::ClaimActivityStage {
                 activity_id,
@@ -954,6 +1006,7 @@ fn handle_myserver_commands(
                 Some(stage_id),
                 None,
                 Some(client_request_id),
+                false,
             ),
             MyServerCommand::RunActivityAction {
                 activity_id,
@@ -983,6 +1036,7 @@ fn handle_myserver_commands(
                 Some(stage_id),
                 Some(action_type),
                 Some(client_request_id),
+                false,
             ),
         }
     }
@@ -3192,6 +3246,7 @@ fn send_activity_request<M>(
     stage_id: Option<&str>,
     action_type: Option<&str>,
     client_request_id: Option<&str>,
+    history_load_more: bool,
 ) where
     M: prost::Message,
 {
@@ -3229,6 +3284,7 @@ fn send_activity_request<M>(
             version: activity_key.as_ref().map(|key| key.version),
             stage_id: stage_id.map(str::to_owned),
             request_id_fingerprint: client_request_id.map(redact_secret_fingerprint),
+            history_load_more,
             character_id,
         });
     }
@@ -3240,6 +3296,7 @@ fn send_activity_request<M>(
         stage_id,
         action_type,
         client_request_id,
+        history_load_more,
     );
 }
 
@@ -4110,6 +4167,19 @@ fn handle_response_packet(
                 response,
             },
         ),
+        MessageType::ActivityClaimHistoryRes => {
+            decode_activity_response::<pb::ActivityClaimHistoryRes, _>(
+                events,
+                connection_id,
+                packet,
+                MessageType::ActivityClaimHistoryRes,
+                |seq, connection_id, response| MyServerEvent::ActivityClaimHistoryResponse {
+                    seq,
+                    connection_id,
+                    response,
+                },
+            )
+        }
         _ => {
             write_display_error(
                 events,
@@ -6138,7 +6208,10 @@ mod tests {
         }
 
         app.world_mut()
-            .write_message(MyServerCommand::LoadActivityList);
+            .write_message(MyServerCommand::LoadActivityClaimHistory {
+                cursor: None,
+                limit: 20,
+            });
         app.update();
         app.update();
 
@@ -6157,12 +6230,56 @@ mod tests {
             matches!(
                 event,
                 ActivityEvent::RequestFailed {
-                    kind: ActivityRequestKind::List,
+                    kind: ActivityRequestKind::History,
                     error,
                     ..
                 } if error.error_code == "ACTIVITY_AUTH_REQUIRED"
             )
         }));
+    }
+
+    #[test]
+    fn history_command_sends_one_bounded_request_and_redacts_the_cursor_in_debug_output() {
+        let mut app = test_app();
+        let connection_id = ConnectionId::from_raw(782);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.connection_id = Some(connection_id);
+            session.connected = true;
+            session.authenticated = true;
+            session.character_id = Some("character-1".to_owned());
+            session.game_connection_state = GameConnectionState::Authenticated;
+        }
+
+        let command = MyServerCommand::LoadActivityClaimHistory {
+            cursor: Some("opaque-history-cursor".to_owned()),
+            limit: 20,
+        };
+        assert_eq!(format!("{command:?}"), "LoadActivityClaimHistory");
+        app.world_mut().write_message(command);
+        app.world_mut()
+            .write_message(MyServerCommand::LoadActivityClaimHistory {
+                cursor: Some("other-cursor".to_owned()),
+                limit: 20,
+            });
+        app.update();
+
+        let packets = decoded_sent_packets(&app);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].0, connection_id);
+        assert_eq!(
+            packets[0].1.message_type(),
+            Some(MessageType::ActivityClaimHistoryReq)
+        );
+        let request = packets[0]
+            .1
+            .decode::<pb::ActivityClaimHistoryReq>()
+            .unwrap();
+        assert_eq!(request.cursor, "opaque-history-cursor");
+        assert_eq!(request.limit, 20);
+        let state = app.world().resource::<ActivityClientState>();
+        assert!(state.claim_history.loading);
+        assert!(state.has_pending_history_request());
     }
 
     #[test]

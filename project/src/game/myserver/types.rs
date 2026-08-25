@@ -1324,6 +1324,7 @@ pub struct PendingActivityRequest {
     pub version: Option<u32>,
     pub stage_id: Option<String>,
     pub request_id_fingerprint: Option<String>,
+    pub history_load_more: bool,
     pub character_id: Option<String>,
 }
 
@@ -1579,6 +1580,10 @@ pub enum MyServerCommand {
         client_state: Option<MovementClientState>,
     },
     LoadActivityList,
+    LoadActivityClaimHistory {
+        cursor: Option<String>,
+        limit: u32,
+    },
     LoadActivityDetail {
         activity_id: String,
         version: u32,
@@ -1692,6 +1697,7 @@ impl fmt::Debug for MyServerCommand {
                 Self::SendPlayerInput { .. } => "SendPlayerInput",
                 Self::SendMoveInput { .. } => "SendMoveInput",
                 Self::LoadActivityList => "LoadActivityList",
+                Self::LoadActivityClaimHistory { .. } => "LoadActivityClaimHistory",
                 Self::LoadActivityDetail { .. } => "LoadActivityDetail",
                 Self::LoadActivityProgress { .. } => "LoadActivityProgress",
                 Self::ClaimActivityStage { .. } => "ClaimActivityStage",
@@ -1940,6 +1946,11 @@ pub enum MyServerEvent {
         seq: u32,
         connection_id: ConnectionId,
         response: pb::ActivityActionRes,
+    },
+    ActivityClaimHistoryResponse {
+        seq: u32,
+        connection_id: ConnectionId,
+        response: pb::ActivityClaimHistoryRes,
     },
     ActivityRequestRejected {
         kind: ActivityRequestKind,

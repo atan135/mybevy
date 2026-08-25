@@ -90,6 +90,8 @@ pub enum MessageType {
     ActivityClaimRes = 1442,
     ActivityActionReq = 1443,
     ActivityActionRes = 1444,
+    ActivityClaimHistoryReq = 1445,
+    ActivityClaimHistoryRes = 1446,
     InventoryUpdatePush = 1501,
     AttrChangePush = 1502,
     VisualChangePush = 1503,
@@ -171,6 +173,8 @@ impl MessageType {
             1442 => Some(Self::ActivityClaimRes),
             1443 => Some(Self::ActivityActionReq),
             1444 => Some(Self::ActivityActionRes),
+            1445 => Some(Self::ActivityClaimHistoryReq),
+            1446 => Some(Self::ActivityClaimHistoryRes),
             1501 => Some(Self::InventoryUpdatePush),
             1502 => Some(Self::AttrChangePush),
             1503 => Some(Self::VisualChangePush),
@@ -390,6 +394,8 @@ mod tests {
             (1442, MessageType::ActivityClaimRes),
             (1443, MessageType::ActivityActionReq),
             (1444, MessageType::ActivityActionRes),
+            (1445, MessageType::ActivityClaimHistoryReq),
+            (1446, MessageType::ActivityClaimHistoryRes),
         ];
         for (value, expected) in messages {
             assert_eq!(MessageType::from_u16(value), Some(expected));
@@ -417,5 +423,46 @@ mod tests {
         assert_eq!(decoded.activity_id, "spring-login");
         assert_eq!(decoded.action_type, "draw");
         assert_eq!(decoded.state_revision, 7);
+    }
+
+    #[test]
+    fn activity_claim_history_proto_round_trip() {
+        let request = pb::ActivityClaimHistoryReq {
+            cursor: "opaque-cursor".to_owned(),
+            limit: 20,
+        };
+        let decoded_request =
+            pb::ActivityClaimHistoryReq::decode(request.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(decoded_request.cursor, "opaque-cursor");
+        assert_eq!(decoded_request.limit, 20);
+
+        let response = pb::ActivityClaimHistoryRes {
+            ok: true,
+            error_code: String::new(),
+            records: vec![pb::ActivityClaimHistoryRecord {
+                activity_id: "spring-login".to_owned(),
+                version: 3,
+                activity_type: "login_reward".to_owned(),
+                action_type: "claim".to_owned(),
+                stage_id: "7".to_owned(),
+                created_at_ms: 1_725_000_000_000,
+                completed_at_ms: 1_725_000_000_100,
+                status: "granted".to_owned(),
+                rewards: vec![pb::ActivityRewardSummary {
+                    reward_type: "item".to_owned(),
+                    asset_id: "coin".to_owned(),
+                    quantity: 100,
+                }],
+            }],
+            next_cursor: "next-cursor".to_owned(),
+            has_more: true,
+        };
+        let decoded_response =
+            pb::ActivityClaimHistoryRes::decode(response.encode_to_vec().as_slice()).unwrap();
+        assert!(decoded_response.ok);
+        assert_eq!(decoded_response.records.len(), 1);
+        assert_eq!(decoded_response.records[0].rewards[0].quantity, 100);
+        assert_eq!(decoded_response.next_cursor, "next-cursor");
+        assert!(decoded_response.has_more);
     }
 }

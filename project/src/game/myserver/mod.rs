@@ -7,10 +7,12 @@ mod types;
 
 #[allow(unused_imports)]
 pub(crate) use activity::{
+    ActivityClaimHistory, ActivityClaimHistoryRecord, ActivityClaimHistoryStatus,
     ActivityClientState, ActivityDetail, ActivityError, ActivityErrorKind, ActivityEvent,
     ActivityKey, ActivityPlayerView, ActivityPlugin, ActivityProgressView, ActivityRequestKind,
-    ActivityRequestTracker, ActivitySummary, LoginRewardPlayerView, LoginRewardStageView,
-    LotteryPlayerView, LotteryStateView,
+    ActivityRequestTracker, ActivityRewardSummary, ActivitySummary,
+    DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE, LoginRewardPlayerView, LoginRewardStageView,
+    LotteryPlayerView, LotteryStateView, MAX_ACTIVITY_HISTORY_PAGE_SIZE,
 };
 pub(crate) use plugin::{MyServerPlugin, MyServerUpdateSet};
 #[cfg(test)]
