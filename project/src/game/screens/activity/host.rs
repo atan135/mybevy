@@ -377,6 +377,13 @@ fn activity_host(
         initial_state: UiPageState::initial(),
         binding_schema: bindings
             .iter()
+            .filter(|(_, declaration)| {
+                matches!(
+                    declaration.scope,
+                    crate::framework::ui::document::UiBindingScope::Document
+                        | crate::framework::ui::document::UiBindingScope::Owner
+                )
+            })
             .map(|(path, declaration)| {
                 (
                     UiHostBindingKey::new(declaration.scope, path.clone()),
@@ -1307,10 +1314,6 @@ mod tests {
         assert_eq!(host.route, ACTIVITY_CLAIM_HISTORY_ROUTE);
         assert_eq!(host.action_allowlist.len(), 4);
         assert_eq!(
-            host.binding_schema.len(),
-            contract.claim_history_bindings.len()
-        );
-        assert_eq!(
             registration.owner(),
             OWNER_MAIN_WORLD_ACTIVITY_CLAIM_HISTORY.as_str()
         );
@@ -1323,6 +1326,7 @@ mod tests {
                 binding.scope == crate::framework::ui::document::UiBindingScope::Owner
             })
             .count();
+        assert_eq!(host.binding_schema.len(), owner_binding_count);
         assert_eq!(audit.bindings.len(), owner_binding_count);
     }
 
@@ -1342,7 +1346,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(host.action_allowlist.len(), 4);
-        assert_eq!(host.binding_schema.len(), contract.list_bindings.len());
         assert_eq!(audit.actions.len(), 4);
         let owner_binding_count = contract
             .list_bindings
@@ -1351,6 +1354,7 @@ mod tests {
                 binding.scope == crate::framework::ui::document::UiBindingScope::Owner
             })
             .count();
+        assert_eq!(host.binding_schema.len(), owner_binding_count);
         assert_eq!(audit.bindings.len(), owner_binding_count);
     }
 
@@ -1399,6 +1403,41 @@ mod tests {
                     "{document_id} must resolve every i18n key in the packaged {locale} catalog: {errors:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn activity_hosts_match_the_runtime_binding_contract() {
+        use crate::game::declarative_screen::validate_host_source_for_test;
+
+        let contract = ActivityScreenHostContract::default();
+        let mut actions = UiActionRegistry::default();
+        for descriptor in list::activity_list_action_descriptors()
+            .into_iter()
+            .chain(detail::activity_detail_action_descriptors())
+            .chain(claim_history::activity_claim_history_action_descriptors())
+            .chain(login_reward::login_reward_action_descriptors())
+            .chain(lottery::lottery_action_descriptors())
+        {
+            actions
+                .register(descriptor)
+                .expect("activity action registration must be valid and unique");
+        }
+
+        for host in [
+            activity_list_declarative_screen_host(&contract),
+            activity_detail_declarative_screen_host(&contract),
+            activity_claim_history_declarative_screen_host(&contract),
+            login_reward_detail_declarative_screen_host(&contract),
+            lottery_detail_declarative_screen_host(&contract),
+        ] {
+            validate_host_source_for_test(&host, &host.source.source_json, &actions)
+                .unwrap_or_else(|cause| {
+                    panic!(
+                        "{} must match the declarative runtime binding contract: {cause}",
+                        host.document_id
+                    )
+                });
         }
     }
 }

@@ -273,7 +273,7 @@ fn login_reward_request_id(
 }
 
 pub(super) fn login_reward_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclaration> {
-    binding_schema([
+    let mut bindings = binding_schema([
         (
             "login_reward.collection_state",
             UiBindingType::Enum {
@@ -315,7 +315,22 @@ pub(super) fn login_reward_binding_schema() -> BTreeMap<UiBindingPath, UiBinding
         ),
         ("login_reward.item.claim_disabled", UiBindingType::Bool),
         ("login_reward.item.claim_loading", UiBindingType::Bool),
-    ])
+    ]);
+    for path in [
+        "login_reward.item.stage_no",
+        "login_reward.item.stage_id",
+        "login_reward.item.title",
+        "login_reward.item.reward_group_key",
+        "login_reward.item.state",
+        "login_reward.item.claim_visibility",
+        "login_reward.item.claim_disabled",
+        "login_reward.item.claim_loading",
+    ] {
+        if let Some(declaration) = bindings.get_mut(&UiBindingPath::from_str(path).unwrap()) {
+            declaration.scope = UiBindingScope::Item;
+        }
+    }
+    bindings
 }
 
 pub(super) fn login_reward_action_descriptors() -> Vec<UiActionDescriptor> {

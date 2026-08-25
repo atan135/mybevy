@@ -881,6 +881,15 @@ fn validate_host_source(
     Ok(())
 }
 
+#[cfg(test)]
+pub(in crate::game) fn validate_host_source_for_test(
+    host: &DeclarativeScreenHost,
+    source_json: &str,
+    actions: &UiActionRegistry,
+) -> Result<(), String> {
+    validate_host_source(host, source_json, actions)
+}
+
 fn collect_document_actions(
     node: &crate::framework::ui::document::UiNode,
     actions: &mut BTreeMap<UiActionId, BTreeSet<UiNodeId>>,
