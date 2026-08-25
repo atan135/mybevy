@@ -4,6 +4,7 @@ use super::{
     FANGYUAN_BLUEPRINT_HARD_PRIMITIVE_LIMIT, FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE,
     FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanMaterialProfileRegistry, FangyuanPrimitive,
     FangyuanPrimitiveKind, FangyuanPrimitiveRoleDistribution, FangyuanPrimitiveSet,
+    FangyuanSurfacePresetFallbackReason, FangyuanSurfacePresetRegistry,
 };
 
 /// Unified Fangyuan audit report shared by later blueprint, prefab, layout, and
@@ -76,6 +77,8 @@ impl FangyuanAuditReport {
         self.summary.emissive_count = stats.emissive_count;
         self.summary.emissive_total = stats.emissive_total;
         self.summary.unique_material_resource_count = stats.unique_material_resource_count;
+        self.summary.surface_material_preset_count = stats.surface_material_preset_count;
+        self.summary.surface_noise_enabled_count = stats.surface_noise_enabled_count;
         self.summary.lifecycle_count = stats.lifecycle_count.total_with_lifecycle;
         self.summary.role_distribution = stats.role_distribution;
     }
@@ -109,6 +112,8 @@ pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_EMISSIVE_COUNT: usize = 24;
 pub const FANGYUAN_AUDIT_DEFAULT_MAX_EMISSIVE_COUNT: usize = 96;
 pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_MATERIAL_PROFILE_COUNT: usize = 8;
 pub const FANGYUAN_AUDIT_DEFAULT_MAX_MATERIAL_PROFILE_COUNT: usize = 24;
+pub const FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_SURFACE_PRESET_COUNT: usize = 4;
+pub const FANGYUAN_AUDIT_DEFAULT_MAX_SURFACE_PRESET_COUNT: usize = 24;
 
 /// Default primitive budget profile for Fangyuan audit checks.
 ///
@@ -131,6 +136,8 @@ pub struct FangyuanAuditBudgetProfile {
     pub max_emissive_intensity: f32,
     pub recommended_material_profile_count: usize,
     pub max_material_profile_count: usize,
+    pub recommended_surface_preset_count: usize,
+    pub max_surface_preset_count: usize,
     pub role_budget: FangyuanAuditRoleBudget,
     pub element_budget_tier: FangyuanAuditReservedBudgetTier,
     pub profession_budget_tier: FangyuanAuditReservedBudgetTier,
@@ -160,6 +167,9 @@ impl Default for FangyuanAuditBudgetProfile {
             recommended_material_profile_count:
                 FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_MATERIAL_PROFILE_COUNT,
             max_material_profile_count: FANGYUAN_AUDIT_DEFAULT_MAX_MATERIAL_PROFILE_COUNT,
+            recommended_surface_preset_count:
+                FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_SURFACE_PRESET_COUNT,
+            max_surface_preset_count: FANGYUAN_AUDIT_DEFAULT_MAX_SURFACE_PRESET_COUNT,
             role_budget: FangyuanAuditRoleBudget::default(),
             element_budget_tier: FangyuanAuditReservedBudgetTier::Default,
             profession_budget_tier: FangyuanAuditReservedBudgetTier::Default,
@@ -207,6 +217,8 @@ pub struct FangyuanPrimitiveBudgetStats {
     pub emissive_total: f32,
     pub max_emissive: f32,
     pub material_profile_count: usize,
+    pub surface_material_preset_count: usize,
+    pub surface_noise_enabled_count: usize,
     pub unique_material_resource_count: usize,
     pub role_distribution: FangyuanPrimitiveRoleDistribution,
     pub lifecycle_count: FangyuanPrimitiveLifecycleCount,
@@ -244,6 +256,7 @@ impl FangyuanPrimitiveBudgetStats {
         };
         let mut colors = BTreeSet::new();
         let mut material_profiles = BTreeSet::new();
+        let mut surface_presets = BTreeSet::new();
         let mut material_resources = std::collections::HashSet::new();
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -288,6 +301,12 @@ impl FangyuanPrimitiveBudgetStats {
             if let Some(material_profile_id) = primitive.material_profile_id() {
                 material_profiles.insert(material_profile_id);
             }
+            if let Some(surface_preset_id) = primitive.surface_material_preset_id() {
+                surface_presets.insert(surface_preset_id);
+            }
+            if primitive.surface_noise_enabled() {
+                stats.surface_noise_enabled_count += 1;
+            }
 
             stats.lifecycle_count.record(primitive.lifecycle());
         }
@@ -297,6 +316,7 @@ impl FangyuanPrimitiveBudgetStats {
         }
         stats.color_count = colors.len();
         stats.material_profile_count = material_profiles.len();
+        stats.surface_material_preset_count = surface_presets.len();
         stats.unique_material_resource_count = material_resources.len();
         stats
     }
@@ -450,6 +470,18 @@ pub fn audit_fangyuan_primitive_budget(
         "material profile count exceeds the hard budget",
         FangyuanAuditSuggestionAction::ReplaceMaterialProfile,
     );
+    add_count_budget_findings(
+        &mut report,
+        stats.surface_material_preset_count,
+        profile.recommended_surface_preset_count,
+        profile.max_surface_preset_count,
+        "surface_preset_count_above_recommended",
+        "surface_preset_count_above_hard_limit",
+        "primitives[].surface_material_preset_id",
+        "surface material preset count exceeds the recommended budget",
+        "surface material preset count exceeds the hard budget",
+        FangyuanAuditSuggestionAction::ReducePrimitives,
+    );
 
     report.refresh_summary_and_status();
     report.apply_primitive_budget_stats(stats);
@@ -479,6 +511,157 @@ pub fn audit_fangyuan_primitive_set_budget_with_material_registry(
         ),
         profile,
     )
+}
+
+/// Audit atlas surface semantics without changing the existing material
+/// profile budget. The registry is optional so a missing catalog is reported
+/// per primitive instead of silently treating requested IDs as valid.
+pub fn audit_fangyuan_surface_usage(
+    primitives: &[FangyuanPrimitive],
+    registry: Option<&FangyuanSurfacePresetRegistry>,
+    source_kind: FangyuanAuditSourceKind,
+    source_path: impl Into<Option<String>>,
+) -> FangyuanAuditReport {
+    let source_path = source_path.into();
+    let stats = FangyuanPrimitiveBudgetStats::from_runtime_primitives(primitives);
+    let mut report = FangyuanAuditReport::new(source_kind, source_path.clone());
+    report.apply_primitive_budget_stats(&stats);
+
+    for (primitive_index, primitive) in primitives.iter().enumerate() {
+        let Some(requested_id) = primitive.surface_material_preset_id() else {
+            if primitive.surface_noise_enabled() {
+                let mut finding = FangyuanAuditFinding::new(
+                    FangyuanAuditSeverity::Warning,
+                    "surface_catalog_unavailable",
+                    "surface noise opt-in has no requested preset and remains disabled",
+                    source_kind,
+                );
+                finding.field_path = Some(format!(
+                    "primitives[{primitive_index}].surface_noise_enabled"
+                ));
+                finding.primitive_index = Some(primitive_index);
+                finding.source_path = source_path.clone();
+                finding.surface_fallback_reason = Some("catalog_unavailable".to_string());
+                report.add_finding(finding);
+            }
+            continue;
+        };
+
+        let Some(registry) = registry else {
+            let mut finding = FangyuanAuditFinding::new(
+                FangyuanAuditSeverity::Error,
+                "surface_catalog_unavailable",
+                "surface preset catalog is unavailable for a requested preset",
+                source_kind,
+            );
+            finding.field_path = Some(format!(
+                "primitives[{primitive_index}].surface_material_preset_id"
+            ));
+            finding.primitive_index = Some(primitive_index);
+            finding.source_path = source_path.clone();
+            finding.surface_material_preset_id = Some(requested_id.to_string());
+            finding.surface_fallback_reason = Some("catalog_unavailable".to_string());
+            report.add_finding(finding);
+            continue;
+        };
+
+        let resolution = registry.resolve_with_noise(
+            Some(requested_id),
+            primitive.surface_noise_enabled(),
+            source_path
+                .as_deref()
+                .map(|path| format!("{path}:primitives[{primitive_index}]")),
+        );
+        if let Some(reason) = resolution.fallback_reason.as_ref() {
+            let (code, severity, message) = match reason {
+                FangyuanSurfacePresetFallbackReason::UnknownPresetId => (
+                    "unknown_surface_preset",
+                    FangyuanAuditSeverity::Error,
+                    "surface preset ID is not present in the loaded catalog",
+                ),
+                FangyuanSurfacePresetFallbackReason::InvalidPresetId => (
+                    "unknown_surface_preset",
+                    FangyuanAuditSeverity::Error,
+                    "surface preset ID is invalid and resolved to the safe default",
+                ),
+                FangyuanSurfacePresetFallbackReason::NoiseSuggestionUnavailable => (
+                    "reserved_noise_tile",
+                    FangyuanAuditSeverity::Warning,
+                    "surface noise opt-in has no catalog noise suggestion and remains disabled",
+                ),
+            };
+            let mut finding = FangyuanAuditFinding::new(severity, code, message, source_kind);
+            finding.field_path = Some(format!(
+                "primitives[{primitive_index}].surface_material_preset_id"
+            ));
+            finding.primitive_index = Some(primitive_index);
+            finding.source_path = source_path.clone();
+            finding.surface_material_preset_id = Some(requested_id.to_string());
+            finding.surface_resolved_preset_id = Some(resolution.resolved_preset_id.clone());
+            finding.surface_noise_tile_id = resolution.preset.noise_tile_id.clone();
+            finding.surface_fallback_reason = Some(match reason {
+                FangyuanSurfacePresetFallbackReason::UnknownPresetId => {
+                    "unknown_preset_id".to_string()
+                }
+                FangyuanSurfacePresetFallbackReason::InvalidPresetId => {
+                    "invalid_preset_id".to_string()
+                }
+                FangyuanSurfacePresetFallbackReason::NoiseSuggestionUnavailable => {
+                    "noise_suggestion_unavailable".to_string()
+                }
+            });
+            report.add_finding(finding);
+        }
+        if resolution.preset.flags.special_render_model {
+            let mut finding = FangyuanAuditFinding::new(
+                FangyuanAuditSeverity::Warning,
+                "unsupported_surface_render_model",
+                "surface preset render model is catalog-known but not implemented by this runtime",
+                source_kind,
+            );
+            finding.field_path = Some(format!(
+                "primitives[{primitive_index}].surface_material_preset_id"
+            ));
+            finding.primitive_index = Some(primitive_index);
+            finding.source_path = source_path.clone();
+            finding.surface_material_preset_id = Some(requested_id.to_string());
+            finding.surface_resolved_preset_id = Some(resolution.resolved_preset_id.clone());
+            report.add_finding(finding);
+        }
+        if resolution.preset.projection != resolution.preset.projection_hint {
+            let mut finding = FangyuanAuditFinding::new(
+                FangyuanAuditSeverity::Warning,
+                "surface_projection_fallback",
+                "surface projection hint differs from the requested projection",
+                source_kind,
+            );
+            finding.field_path = Some(format!(
+                "primitives[{primitive_index}].surface_material_preset_id"
+            ));
+            finding.primitive_index = Some(primitive_index);
+            finding.source_path = source_path.clone();
+            finding.surface_material_preset_id = Some(requested_id.to_string());
+            finding.surface_resolved_preset_id = Some(resolution.resolved_preset_id.clone());
+            report.add_finding(finding);
+        }
+    }
+
+    add_count_budget_findings(
+        &mut report,
+        stats.surface_material_preset_count,
+        FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_SURFACE_PRESET_COUNT,
+        FANGYUAN_AUDIT_DEFAULT_MAX_SURFACE_PRESET_COUNT,
+        "surface_preset_count_above_recommended",
+        "surface_preset_count_above_hard_limit",
+        "primitives[].surface_material_preset_id",
+        "surface material preset count exceeds the recommended budget",
+        "surface material preset count exceeds the hard budget",
+        FangyuanAuditSuggestionAction::ReducePrimitives,
+    );
+    report.refresh_summary_and_status();
+    report.apply_primitive_budget_stats(&stats);
+    report.sort_findings();
+    report
 }
 
 fn add_primitive_count_findings(
@@ -745,6 +928,8 @@ pub struct FangyuanAuditSummary {
     pub emissive_count: usize,
     pub emissive_total: f32,
     pub unique_material_resource_count: usize,
+    pub surface_material_preset_count: usize,
+    pub surface_noise_enabled_count: usize,
     pub lifecycle_count: usize,
     pub role_distribution: FangyuanPrimitiveRoleDistribution,
     pub top_level_validated: bool,
@@ -818,6 +1003,10 @@ pub struct FangyuanAuditFinding {
     pub instance_id: Option<String>,
     pub instance_index: Option<usize>,
     pub prefab_primitive_index: Option<usize>,
+    pub surface_material_preset_id: Option<String>,
+    pub surface_resolved_preset_id: Option<String>,
+    pub surface_noise_tile_id: Option<String>,
+    pub surface_fallback_reason: Option<String>,
 }
 
 impl FangyuanAuditFinding {
@@ -850,6 +1039,12 @@ impl Ord for FangyuanAuditFinding {
             self.instance_id.as_deref(),
             self.instance_index,
             self.prefab_primitive_index,
+            (
+                self.surface_material_preset_id.as_deref(),
+                self.surface_resolved_preset_id.as_deref(),
+                self.surface_noise_tile_id.as_deref(),
+                self.surface_fallback_reason.as_deref(),
+            ),
             self.reason.as_str(),
         )
             .cmp(&(
@@ -863,6 +1058,12 @@ impl Ord for FangyuanAuditFinding {
                 other.instance_id.as_deref(),
                 other.instance_index,
                 other.prefab_primitive_index,
+                (
+                    other.surface_material_preset_id.as_deref(),
+                    other.surface_resolved_preset_id.as_deref(),
+                    other.surface_noise_tile_id.as_deref(),
+                    other.surface_fallback_reason.as_deref(),
+                ),
                 other.reason.as_str(),
             ))
     }
@@ -948,6 +1149,8 @@ impl FangyuanAuditSuggestionAction {
 #[cfg(test)]
 mod tests {
     use bevy::prelude::*;
+
+    use crate::framework::fangyuan::{FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole};
 
     use super::*;
 
@@ -1318,6 +1521,183 @@ mod tests {
         assert_eq!(stats.lifecycle_count.spawn_tick, 1);
         assert_eq!(stats.lifecycle_count.despawn_tick, 1);
         assert_eq!(stats.bounds_size, Vec3::new(12.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn fangyuan_budget_stats_track_surface_preset_and_noise_usage() {
+        let primitives = vec![
+            FangyuanPrimitive::with_surface_metadata(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::ZERO,
+                Vec3::ONE,
+                Color::WHITE,
+                FangyuanPrimitiveRole::Structure,
+                1.0,
+                0.0,
+                None,
+                Some("material:surface/x00/y00".to_string()),
+                true,
+                FangyuanPrimitiveLifecycle::empty(),
+            ),
+            FangyuanPrimitive::with_surface_metadata(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::X,
+                Vec3::ONE,
+                Color::WHITE,
+                FangyuanPrimitiveRole::Structure,
+                1.0,
+                0.0,
+                None,
+                Some("material:surface/x00/y00".to_string()),
+                false,
+                FangyuanPrimitiveLifecycle::empty(),
+            ),
+            FangyuanPrimitive::with_surface_metadata(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::Y,
+                Vec3::ONE,
+                Color::WHITE,
+                FangyuanPrimitiveRole::Structure,
+                1.0,
+                0.0,
+                None,
+                Some("material:surface/x00/y01".to_string()),
+                true,
+                FangyuanPrimitiveLifecycle::empty(),
+            ),
+        ];
+
+        let stats = FangyuanPrimitiveBudgetStats::from_runtime_primitives(&primitives);
+
+        assert_eq!(stats.surface_material_preset_count, 2);
+        assert_eq!(stats.surface_noise_enabled_count, 2);
+    }
+
+    #[test]
+    fn fangyuan_surface_audit_reports_catalog_and_noise_fallbacks() {
+        let paths =
+            super::super::FangyuanCatalogAssetPaths::from_fangyuan_asset_root("assets/fangyuan");
+        let registry = FangyuanSurfacePresetRegistry::load_from_paths(&paths).unwrap();
+        let no_noise_suggestion = registry
+            .preset_ids()
+            .iter()
+            .find(|id| !registry.get(id).unwrap().flags.noise_available)
+            .cloned()
+            .expect("fixture contains a preset without a noise suggestion");
+        let primitives = vec![
+            FangyuanPrimitive::with_surface_metadata(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::ZERO,
+                Vec3::ONE,
+                Color::WHITE,
+                FangyuanPrimitiveRole::Structure,
+                1.0,
+                0.0,
+                None,
+                Some("material:surface/x99/y99".to_string()),
+                false,
+                FangyuanPrimitiveLifecycle::empty(),
+            ),
+            FangyuanPrimitive::with_surface_metadata(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::X,
+                Vec3::ONE,
+                Color::WHITE,
+                FangyuanPrimitiveRole::Structure,
+                1.0,
+                0.0,
+                None,
+                Some(no_noise_suggestion),
+                true,
+                FangyuanPrimitiveLifecycle::empty(),
+            ),
+        ];
+
+        let report = audit_fangyuan_surface_usage(
+            &primitives,
+            Some(&registry),
+            FangyuanAuditSourceKind::Blueprint,
+            Some("surface_test.ron".to_string()),
+        );
+
+        assert_eq!(report.summary.surface_material_preset_count, 2);
+        assert_eq!(report.summary.surface_noise_enabled_count, 1);
+        assert!(has_finding(&report, "unknown_surface_preset"));
+        assert!(has_finding(&report, "reserved_noise_tile"));
+        assert!(report.findings.iter().any(|finding| {
+            finding.surface_material_preset_id.as_deref() == Some("material:surface/x99/y99")
+                && finding.surface_fallback_reason.as_deref() == Some("unknown_preset_id")
+        }));
+
+        let unavailable = audit_fangyuan_surface_usage(
+            &primitives[..1],
+            None,
+            FangyuanAuditSourceKind::Blueprint,
+            Some("surface_test.ron".to_string()),
+        );
+        assert!(has_finding(&unavailable, "surface_catalog_unavailable"));
+    }
+
+    #[test]
+    fn fangyuan_surface_audit_uses_recommended_and_hard_preset_budgets() {
+        let primitives = (0..5)
+            .map(|index| {
+                FangyuanPrimitive::with_surface_metadata(
+                    FangyuanPrimitiveKind::Cube,
+                    Vec3::new(index as f32, 0.0, 0.0),
+                    Vec3::ONE,
+                    Color::WHITE,
+                    FangyuanPrimitiveRole::Structure,
+                    1.0,
+                    0.0,
+                    None,
+                    Some(format!("material:surface/x{:02}/y00", index)),
+                    false,
+                    FangyuanPrimitiveLifecycle::empty(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let report = audit_fangyuan_surface_usage(
+            &primitives,
+            None,
+            FangyuanAuditSourceKind::Blueprint,
+            None,
+        );
+
+        assert!(has_finding(
+            &report,
+            "surface_preset_count_above_recommended"
+        ));
+        let hard_primitives = (0..25)
+            .map(|index| {
+                FangyuanPrimitive::with_surface_metadata(
+                    FangyuanPrimitiveKind::Cube,
+                    Vec3::new(index as f32, 0.0, 0.0),
+                    Vec3::ONE,
+                    Color::WHITE,
+                    FangyuanPrimitiveRole::Structure,
+                    1.0,
+                    0.0,
+                    None,
+                    Some(format!("material:surface/x{:02}/y00", index)),
+                    false,
+                    FangyuanPrimitiveLifecycle::empty(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let hard_report = audit_fangyuan_surface_usage(
+            &hard_primitives,
+            None,
+            FangyuanAuditSourceKind::Blueprint,
+            None,
+        );
+        assert!(has_finding(
+            &hard_report,
+            "surface_preset_count_above_hard_limit"
+        ));
+        assert_eq!(FANGYUAN_AUDIT_DEFAULT_RECOMMENDED_SURFACE_PRESET_COUNT, 4);
+        assert_eq!(FANGYUAN_AUDIT_DEFAULT_MAX_SURFACE_PRESET_COUNT, 24);
     }
 
     #[test]

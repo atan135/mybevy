@@ -21,16 +21,18 @@ pub enum FangyuanIdentityResourceKind {
     MaterialProfile,
     SkillVisual,
     BakeArtifact,
+    SurfaceMaterialPreset,
 }
 
 impl FangyuanIdentityResourceKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Blueprint,
         Self::Prefab,
         Self::Chunk,
         Self::MaterialProfile,
         Self::SkillVisual,
         Self::BakeArtifact,
+        Self::SurfaceMaterialPreset,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -41,6 +43,7 @@ impl FangyuanIdentityResourceKind {
             Self::MaterialProfile => "material_profile",
             Self::SkillVisual => "skill_visual",
             Self::BakeArtifact => "bake_artifact",
+            Self::SurfaceMaterialPreset => "surface_material_preset",
         }
     }
 
@@ -56,6 +59,7 @@ impl FangyuanIdentityResourceKind {
                 format!("skill_visual:template_schema:v{FANGYUAN_SKILL_TEMPLATE_SCHEMA_VERSION}")
             }
             Self::BakeArtifact => format!("bake_artifact:bin:v{FANGYUAN_BAKE_SCHEMA_VERSION}"),
+            Self::SurfaceMaterialPreset => "surface_material_preset:catalog:v1".to_string(),
         };
         fangyuan_identity_hash_text(&schema)
     }
@@ -407,10 +411,21 @@ pub fn fangyuan_identity_dependencies_from_bake_payload(
         FangyuanBakePayload::Blueprint { blueprint, .. } => blueprint
             .primitives
             .iter()
-            .filter_map(|primitive| primitive.material_profile_id.as_deref())
+            .filter_map(|primitive| primitive.surface_material_preset_id.as_deref())
             .map(|id| {
-                FangyuanIdentityDependency::new(FangyuanIdentityResourceKind::MaterialProfile, id)
+                FangyuanIdentityDependency::new(
+                    FangyuanIdentityResourceKind::SurfaceMaterialPreset,
+                    id,
+                )
             })
+            .chain(blueprint.primitives.iter().filter_map(|primitive| {
+                primitive.material_profile_id.as_deref().map(|id| {
+                    FangyuanIdentityDependency::new(
+                        FangyuanIdentityResourceKind::MaterialProfile,
+                        id,
+                    )
+                })
+            }))
             .collect(),
         FangyuanBakePayload::PrefabPalette { palette, .. } => palette
             .prefabs
@@ -419,13 +434,21 @@ pub fn fangyuan_identity_dependencies_from_bake_payload(
                 prefab
                     .primitives
                     .iter()
-                    .filter_map(|primitive| primitive.material_profile_id.as_deref())
+                    .filter_map(|primitive| primitive.surface_material_preset_id.as_deref())
                     .map(|id| {
                         FangyuanIdentityDependency::new(
-                            FangyuanIdentityResourceKind::MaterialProfile,
+                            FangyuanIdentityResourceKind::SurfaceMaterialPreset,
                             id,
                         )
                     })
+                    .chain(prefab.primitives.iter().filter_map(|primitive| {
+                        primitive.material_profile_id.as_deref().map(|id| {
+                            FangyuanIdentityDependency::new(
+                                FangyuanIdentityResourceKind::MaterialProfile,
+                                id,
+                            )
+                        })
+                    }))
             })
             .collect(),
         FangyuanBakePayload::SceneLayout { layout, .. } => layout
@@ -534,6 +557,9 @@ pub fn fangyuan_identity_dependencies_from_bake_table(
     );
     dependencies.extend(table.material_profile_ids.iter().map(|id| {
         FangyuanIdentityDependency::new(FangyuanIdentityResourceKind::MaterialProfile, id)
+    }));
+    dependencies.extend(table.surface_material_preset_ids.iter().map(|id| {
+        FangyuanIdentityDependency::new(FangyuanIdentityResourceKind::SurfaceMaterialPreset, id)
     }));
     dependencies.extend(
         table.skill_ids.iter().map(|id| {
@@ -673,6 +699,61 @@ mod tests {
         assert_ne!(
             fangyuan_identity_dependency_hash(&first),
             fangyuan_identity_dependency_hash(&changed)
+        );
+    }
+
+    #[test]
+    fn fangyuan_surface_preset_identity_dependency_hash_is_sensitive_and_order_independent() {
+        let first = vec![
+            FangyuanIdentityDependency::new(
+                FangyuanIdentityResourceKind::SurfaceMaterialPreset,
+                "material:surface/x00/y00",
+            ),
+            FangyuanIdentityDependency::new(
+                FangyuanIdentityResourceKind::MaterialProfile,
+                "fx/test",
+            ),
+            FangyuanIdentityDependency::new(
+                FangyuanIdentityResourceKind::SurfaceMaterialPreset,
+                "material:surface/x01/y00",
+            ),
+        ];
+        let reordered = vec![first[2].clone(), first[0].clone(), first[1].clone()];
+        let changed = vec![
+            first[0].clone(),
+            first[1].clone(),
+            FangyuanIdentityDependency::new(
+                FangyuanIdentityResourceKind::SurfaceMaterialPreset,
+                "material:surface/x02/y00",
+            ),
+        ];
+
+        assert_eq!(
+            fangyuan_identity_dependency_hash(&first),
+            fangyuan_identity_dependency_hash(&reordered)
+        );
+        assert_ne!(
+            fangyuan_identity_dependency_hash(&first),
+            fangyuan_identity_dependency_hash(&changed)
+        );
+
+        let dependencies = fangyuan_identity_dependencies_from_bake_table(
+            &super::super::FangyuanBakeDependencyTable {
+                surface_material_preset_ids: vec![
+                    "material:surface/x00/y00".to_string(),
+                    "material:surface/x01/y00".to_string(),
+                ],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            dependencies
+                .iter()
+                .filter(|dependency| {
+                    dependency.kind == FangyuanIdentityResourceKind::SurfaceMaterialPreset
+                })
+                .count(),
+            2
         );
     }
 

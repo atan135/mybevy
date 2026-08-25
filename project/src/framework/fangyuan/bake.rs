@@ -395,6 +395,8 @@ pub struct FangyuanBakeDependencyTable {
     pub palette_paths: Vec<String>,
     pub prefab_ids: Vec<String>,
     pub material_profile_ids: Vec<String>,
+    #[serde(default)]
+    pub surface_material_preset_ids: Vec<String>,
     pub blueprint_paths: Vec<String>,
     pub chunk_ids: Vec<String>,
     pub chunk_paths: Vec<String>,
@@ -423,6 +425,7 @@ pub enum FangyuanBakeDependencyKind {
     Palette,
     Prefab,
     MaterialProfile,
+    SurfaceMaterialPreset,
     Blueprint,
     Chunk,
     Skill,
@@ -1143,6 +1146,10 @@ pub fn build_fangyuan_bake_dependency_table(
                 &mut table.material_profile_ids,
                 blueprint.primitives.iter(),
             );
+            insert_surface_preset_ids_from_primitives(
+                &mut table.surface_material_preset_ids,
+                blueprint.primitives.iter(),
+            );
         }
         FangyuanBakePayload::PrefabPalette { palette, .. } => {
             insert_prefab_ids(
@@ -1152,6 +1159,10 @@ pub fn build_fangyuan_bake_dependency_table(
             for prefab in &palette.prefabs {
                 insert_material_profile_ids_from_primitives(
                     &mut table.material_profile_ids,
+                    prefab.primitives.iter(),
+                );
+                insert_surface_preset_ids_from_primitives(
+                    &mut table.surface_material_preset_ids,
                     prefab.primitives.iter(),
                 );
             }
@@ -1269,6 +1280,17 @@ fn insert_material_profile_ids_from_primitives<'a>(
     for primitive in primitives {
         if let Some(profile_id) = &primitive.material_profile_id {
             insert_sorted_unique(target, profile_id.clone());
+        }
+    }
+}
+
+fn insert_surface_preset_ids_from_primitives<'a>(
+    target: &mut Vec<String>,
+    primitives: impl IntoIterator<Item = &'a super::FangyuanPrimitiveBlueprint>,
+) {
+    for primitive in primitives {
+        if let Some(surface_preset_id) = &primitive.surface_material_preset_id {
+            insert_sorted_unique(target, surface_preset_id.clone());
         }
     }
 }
@@ -1394,6 +1416,9 @@ fn resolve_fangyuan_bake_dependencies(
                 FangyuanBakeDependencyKind::MaterialProfile => {
                     catalog.material_profile_ids.contains(&dependency.id)
                 }
+                FangyuanBakeDependencyKind::SurfaceMaterialPreset => {
+                    catalog.surface_material_preset_ids.contains(&dependency.id)
+                }
                 FangyuanBakeDependencyKind::Blueprint => {
                     catalog.blueprint_paths.contains(&dependency.id)
                 }
@@ -1425,7 +1450,9 @@ struct FangyuanBakeDependencyCatalog {
     palette_paths: BTreeSet<String>,
     prefab_ids: BTreeSet<String>,
     prefab_material_profiles: BTreeMap<String, BTreeSet<String>>,
+    prefab_surface_presets: BTreeMap<String, BTreeSet<String>>,
     material_profile_ids: BTreeSet<String>,
+    surface_material_preset_ids: BTreeSet<String>,
     blueprint_paths: BTreeSet<String>,
     chunk_ids: BTreeSet<String>,
     chunk_paths: BTreeSet<String>,
@@ -1453,6 +1480,14 @@ impl FangyuanBakeDependencyCatalog {
                     for primitive in &prefab.primitives {
                         if let Some(profile_id) = &primitive.material_profile_id {
                             profiles.insert(profile_id.clone());
+                        }
+                        if let Some(surface_preset_id) = &primitive.surface_material_preset_id {
+                            self.surface_material_preset_ids
+                                .insert(surface_preset_id.clone());
+                            self.prefab_surface_presets
+                                .entry(prefab.id.clone())
+                                .or_default()
+                                .insert(surface_preset_id.clone());
                         }
                     }
                 }
@@ -1515,6 +1550,23 @@ impl FangyuanBakeDependencyCatalog {
                             owner: prefab_id.clone(),
                             kind: FangyuanBakeDependencyKind::MaterialProfile,
                             id: profile_id.clone(),
+                        });
+                    }
+                }
+            }
+            if let Some(surface_preset_ids) = self.prefab_surface_presets.get(&prefab_id) {
+                for preset_id in surface_preset_ids {
+                    insert_sorted_unique(&mut table.surface_material_preset_ids, preset_id.clone());
+                    if !self.surface_material_preset_ids.contains(preset_id)
+                        && !table.missing.iter().any(|dependency| {
+                            dependency.kind == FangyuanBakeDependencyKind::SurfaceMaterialPreset
+                                && dependency.id == *preset_id
+                        })
+                    {
+                        table.missing.push(FangyuanBakeMissingDependency {
+                            owner: prefab_id.clone(),
+                            kind: FangyuanBakeDependencyKind::SurfaceMaterialPreset,
+                            id: preset_id.clone(),
                         });
                     }
                 }
@@ -3230,6 +3282,132 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_bake_dependency_table_accepts_legacy_artifact_without_surface_presets() {
+        let legacy = r#"
+{
+    "source_path": "fangyuan/blueprints/avatar.ron",
+    "layout_paths": [],
+    "palette_paths": [],
+    "prefab_ids": [],
+    "material_profile_ids": ["fx/test"],
+    "blueprint_paths": ["fangyuan/blueprints/avatar.ron"],
+    "chunk_ids": [],
+    "chunk_paths": [],
+    "skill_ids": [],
+    "missing": []
+}
+"#;
+
+        let table: FangyuanBakeDependencyTable = serde_json::from_str(legacy).unwrap();
+        assert_eq!(table.material_profile_ids, vec!["fx/test"]);
+        assert!(table.surface_material_preset_ids.is_empty());
+        assert!(table.is_complete());
+    }
+
+    #[test]
+    fn fangyuan_bake_dependency_table_collects_surface_material_preset_ids() {
+        let source = r#"
+(
+    version: "1",
+    name: "surface_dependency",
+    description: "",
+    max_primitives: 8,
+    bounds: (width: 4.0, depth: 4.0, height: 4.0),
+    primitives: [
+        (
+            kind: "cube",
+            position: [0.0, 1.0, 0.0],
+            size: [1.0, 1.0, 1.0],
+            color: [0.2, 0.4, 0.6, 1.0],
+            material_profile_id: Some("fx/test"),
+            surface_material_preset_id: Some("material:surface/x00/y00"),
+        ),
+        (
+            kind: "cube",
+            position: [1.0, 1.0, 0.0],
+            size: [1.0, 1.0, 1.0],
+            color: [0.2, 0.4, 0.6, 1.0],
+            surface_material_preset_id: Some("material:surface/x01/y00"),
+        ),
+    ],
+)
+"#;
+
+        let compiled = compile_fangyuan_bake_artifact(
+            FangyuanBakeArtifactKind::Blueprint,
+            source,
+            Some(PathBuf::from("fangyuan/blueprints/surface_dependency.ron")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            compiled.dependency_table.surface_material_preset_ids,
+            vec![
+                "material:surface/x00/y00".to_string(),
+                "material:surface/x01/y00".to_string(),
+            ]
+        );
+        assert_eq!(
+            compiled.dependency_table.material_profile_ids,
+            vec!["fx/test".to_string()]
+        );
+    }
+
+    #[test]
+    fn fangyuan_layout_identity_hash_includes_surface_presets_after_bake_expansion() {
+        // SceneLayout payloads name prefabs only. Bake expansion resolves each
+        // prefab's surface IDs before the table becomes identity dependencies.
+        let layout_payload = compile_fangyuan_bake_artifact(
+            FangyuanBakeArtifactKind::SceneLayout,
+            sample_layout_ron(),
+            Some(PathBuf::from("fangyuan/layouts/home_layout.ron")),
+        )
+        .unwrap()
+        .payload;
+        let mut tables = Vec::new();
+        for preset_id in ["material:surface/x00/y00", "material:surface/x01/y00"] {
+            let palette_source = sample_prefab_palette_ron().replace(
+                "material_profile_id: Some(\"fx/test\")",
+                &format!("surface_material_preset_id: Some(\"{preset_id}\")"),
+            );
+            let palette_payload = compile_fangyuan_bake_artifact(
+                FangyuanBakeArtifactKind::PrefabPalette,
+                &palette_source,
+                Some(PathBuf::from("fangyuan/palettes/home_prefabs.ron")),
+            )
+            .unwrap()
+            .payload;
+            let mut catalog = FangyuanBakeDependencyCatalog::default();
+            catalog.add_payload(
+                &palette_payload,
+                Path::new("fangyuan/palettes/home_prefabs.ron"),
+            );
+            let mut table = build_fangyuan_bake_dependency_table(
+                &layout_payload,
+                Some(&PathBuf::from("fangyuan/layouts/home_layout.ron")),
+            );
+            catalog.expand_entry_dependency_table(&mut table);
+            tables.push(table);
+        }
+
+        assert_eq!(
+            tables[0].surface_material_preset_ids,
+            vec!["material:surface/x00/y00".to_string()]
+        );
+        assert_eq!(
+            tables[1].surface_material_preset_ids,
+            vec!["material:surface/x01/y00".to_string()]
+        );
+        let first_hash = crate::framework::fangyuan::fangyuan_identity_dependency_hash(
+            &crate::framework::fangyuan::fangyuan_identity_dependencies_from_bake_table(&tables[0]),
+        );
+        let second_hash = crate::framework::fangyuan::fangyuan_identity_dependency_hash(
+            &crate::framework::fangyuan::fangyuan_identity_dependencies_from_bake_table(&tables[1]),
+        );
+        assert_ne!(first_hash, second_hash);
+    }
+
+    #[test]
     fn fangyuan_bake_artifact_reports_dependency_missing() {
         let temp = unique_temp_dir("fangyuan_bake_missing_dependency_test");
         let input = temp.join("input").join("fangyuan");
@@ -3291,6 +3469,47 @@ mod tests {
         assert_ne!(first.source_hash, second.source_hash);
         assert_ne!(first.content_hash, second.content_hash);
         assert_ne!(first.payload_bytes, second.payload_bytes);
+    }
+
+    #[test]
+    fn fangyuan_bake_typed_payload_and_hashes_are_sensitive_to_surface_preset_changes() {
+        let source_a = sample_blueprint_ron("surface_hash_avatar", [0.2, 0.4, 0.6, 1.0])
+            .replace(
+                "color: [0.2, 0.4, 0.6, 1],",
+                "color: [0.2, 0.4, 0.6, 1],\n            surface_material_preset_id: Some(\"material:surface/x00/y00\"),",
+            );
+        let source_b = source_a.replace("material:surface/x00/y00", "material:surface/x01/y00");
+        let first =
+            compile_fangyuan_bake_artifact(FangyuanBakeArtifactKind::Blueprint, &source_a, None)
+                .unwrap();
+        let second =
+            compile_fangyuan_bake_artifact(FangyuanBakeArtifactKind::Blueprint, &source_b, None)
+                .unwrap();
+
+        assert_ne!(first.payload_bytes, second.payload_bytes);
+        assert_ne!(first.content_hash, second.content_hash);
+        assert_ne!(first.normalized_source_hash, second.normalized_source_hash);
+        assert_ne!(first.dependency_table, second.dependency_table);
+        let FangyuanBakePayload::Blueprint { blueprint, .. } =
+            decode_fangyuan_bake_payload(FangyuanBakeArtifactKind::Blueprint, &first.payload_bytes)
+                .unwrap()
+        else {
+            panic!("expected blueprint payload");
+        };
+        assert_eq!(
+            blueprint.primitives[0]
+                .surface_material_preset_id
+                .as_deref(),
+            Some("material:surface/x00/y00")
+        );
+        assert_eq!(
+            first.dependency_table.surface_material_preset_ids,
+            vec!["material:surface/x00/y00".to_string()]
+        );
+        assert_eq!(
+            second.dependency_table.surface_material_preset_ids,
+            vec!["material:surface/x01/y00".to_string()]
+        );
     }
 
     #[test]

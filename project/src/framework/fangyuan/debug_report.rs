@@ -6,9 +6,10 @@ use super::{
     FangyuanAuditReport, FangyuanBakeDebugMetrics, FangyuanCacheDebugMetrics,
     FangyuanDebugMetricsSnapshot, FangyuanLodDebugMetrics, FangyuanObjectBudgetSummary,
     FangyuanPressureDebugMetrics, FangyuanPressureMetricStats, FangyuanPressureReport,
-    FangyuanPressureTestConfig, FangyuanRenderDebugMetrics, FangyuanSkillDegradeLevel,
-    FangyuanTrialDebugMetrics, FangyuanVisualReplayConsistencyReport,
-    FangyuanVisualReplayMismatchField, FangyuanVisualReplayMismatchSummary,
+    FangyuanPressureTestConfig, FangyuanPrimitive, FangyuanRenderDebugMetrics,
+    FangyuanSkillDegradeLevel, FangyuanSurfacePresetRegistry, FangyuanTrialDebugMetrics,
+    FangyuanVisualReplayConsistencyReport, FangyuanVisualReplayMismatchField,
+    FangyuanVisualReplayMismatchSummary,
 };
 
 pub const FANGYUAN_DEBUG_REPORT_SCHEMA_VERSION: u32 = 1;
@@ -51,6 +52,7 @@ pub struct FangyuanDebugReport {
     pub report_id: String,
     pub output_policy: FangyuanDebugReportOutputPolicy,
     pub audit: FangyuanDebugReportAuditSummary,
+    pub surface: FangyuanDebugReportSurfaceSummary,
     pub budget: FangyuanDebugReportBudgetSummary,
     pub render: FangyuanDebugReportRenderSummary,
     pub lod: FangyuanDebugReportLodSummary,
@@ -76,6 +78,7 @@ impl FangyuanDebugReport {
         Self {
             report_id: report_id.into(),
             audit: FangyuanDebugReportAuditSummary::from(&snapshot.audit),
+            surface: FangyuanDebugReportSurfaceSummary::default(),
             budget: FangyuanDebugReportBudgetSummary::from(&snapshot.trial),
             render: FangyuanDebugReportRenderSummary::from(&snapshot.render),
             lod: FangyuanDebugReportLodSummary::from(&snapshot.lod),
@@ -89,6 +92,15 @@ impl FangyuanDebugReport {
 
     pub fn with_audit_report(mut self, report: &FangyuanAuditReport) -> Self {
         self.audit = FangyuanDebugReportAuditSummary::from(report);
+        self
+    }
+
+    pub fn with_surface_primitives(
+        mut self,
+        primitives: &[FangyuanPrimitive],
+        registry: Option<&FangyuanSurfacePresetRegistry>,
+    ) -> Self {
+        self.surface = FangyuanDebugReportSurfaceSummary::from_primitives(primitives, registry);
         self
     }
 
@@ -119,6 +131,7 @@ impl Default for FangyuanDebugReport {
             report_id: "unspecified".to_string(),
             output_policy: FangyuanDebugReportOutputPolicy::default(),
             audit: FangyuanDebugReportAuditSummary::default(),
+            surface: FangyuanDebugReportSurfaceSummary::default(),
             budget: FangyuanDebugReportBudgetSummary::default(),
             render: FangyuanDebugReportRenderSummary::default(),
             lod: FangyuanDebugReportLodSummary::default(),
@@ -127,6 +140,100 @@ impl Default for FangyuanDebugReport {
             bake: FangyuanDebugReportBakeSummary::default(),
             pressure: FangyuanDebugReportPressureSummary::default(),
             replay: FangyuanDebugReportReplaySummary::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FangyuanDebugReportSurfaceSummary {
+    pub requested_preset_ids: Vec<String>,
+    pub resolved_preset_ids: Vec<String>,
+    pub noise_tile_ids: Vec<String>,
+    pub fallback_count: usize,
+    pub fallbacks: Vec<FangyuanDebugReportSurfaceFallback>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FangyuanDebugReportSurfaceFallback {
+    pub requested_preset_id: String,
+    pub resolved_preset_id: String,
+    pub reason: String,
+}
+
+impl FangyuanDebugReportSurfaceSummary {
+    pub fn from_primitives(
+        primitives: &[FangyuanPrimitive],
+        registry: Option<&FangyuanSurfacePresetRegistry>,
+    ) -> Self {
+        let mut summary = Self::default();
+        let mut requested = BTreeSet::new();
+        let mut resolved = BTreeSet::new();
+        let mut noise_tiles = BTreeSet::new();
+        for primitive in primitives {
+            let Some(requested_id) = primitive.surface_material_preset_id() else {
+                continue;
+            };
+            requested.insert(requested_id.to_string());
+            let resolution = registry.map(|registry| {
+                registry.resolve_with_noise(
+                    Some(requested_id),
+                    primitive.surface_noise_enabled(),
+                    None,
+                )
+            });
+            if let Some(resolution) = resolution {
+                resolved.insert(resolution.resolved_preset_id.clone());
+                if let Some(noise_tile_id) = resolution.preset.noise_tile_id {
+                    noise_tiles.insert(noise_tile_id);
+                }
+                if let Some(reason) = resolution.fallback_reason {
+                    summary.fallback_count += 1;
+                    summary.fallbacks.push(FangyuanDebugReportSurfaceFallback {
+                        requested_preset_id: requested_id.to_string(),
+                        resolved_preset_id: resolution.resolved_preset_id,
+                        reason: format_surface_fallback_reason(&reason),
+                    });
+                }
+            } else {
+                summary.fallback_count += 1;
+                summary.fallbacks.push(FangyuanDebugReportSurfaceFallback {
+                    requested_preset_id: requested_id.to_string(),
+                    resolved_preset_id: super::FANGYUAN_SURFACE_PRESET_DEFAULT_ID.to_string(),
+                    reason: "catalog_unavailable".to_string(),
+                });
+            }
+        }
+        summary.requested_preset_ids = requested.into_iter().collect();
+        summary.resolved_preset_ids = resolved.into_iter().collect();
+        summary.noise_tile_ids = noise_tiles.into_iter().collect();
+        summary.fallbacks.sort_by(|left, right| {
+            (
+                &left.requested_preset_id,
+                &left.resolved_preset_id,
+                &left.reason,
+            )
+                .cmp(&(
+                    &right.requested_preset_id,
+                    &right.resolved_preset_id,
+                    &right.reason,
+                ))
+        });
+        summary
+    }
+}
+
+fn format_surface_fallback_reason(reason: &super::FangyuanSurfacePresetFallbackReason) -> String {
+    match reason {
+        super::FangyuanSurfacePresetFallbackReason::UnknownPresetId => {
+            "unknown_preset_id".to_string()
+        }
+        super::FangyuanSurfacePresetFallbackReason::InvalidPresetId => {
+            "invalid_preset_id".to_string()
+        }
+        super::FangyuanSurfacePresetFallbackReason::NoiseSuggestionUnavailable => {
+            "noise_suggestion_unavailable".to_string()
         }
     }
 }
@@ -1224,6 +1331,7 @@ mod tests {
             "report_id",
             "output_policy",
             "audit",
+            "surface",
             "budget",
             "render",
             "lod",
@@ -1268,6 +1376,78 @@ mod tests {
         let json = serde_json::to_string_pretty(&report).unwrap();
         let round_trip: FangyuanDebugReport = serde_json::from_str(&json).unwrap();
         assert_eq!(round_trip, report);
+    }
+
+    #[test]
+    fn fangyuan_debug_report_serializes_surface_usage_and_fallbacks() {
+        let paths = crate::framework::fangyuan::FangyuanCatalogAssetPaths::from_fangyuan_asset_root(
+            "assets/fangyuan",
+        );
+        let registry =
+            crate::framework::fangyuan::FangyuanSurfacePresetRegistry::load_from_paths(&paths)
+                .unwrap();
+        let no_noise_suggestion = registry
+            .preset_ids()
+            .iter()
+            .find(|id| !registry.get(id).unwrap().flags.noise_available)
+            .cloned()
+            .expect("fixture contains a preset without a noise suggestion");
+        let primitives = vec![
+            crate::framework::fangyuan::FangyuanPrimitive::with_surface_metadata(
+                crate::framework::fangyuan::FangyuanPrimitiveKind::Cube,
+                bevy::prelude::Vec3::ZERO,
+                bevy::prelude::Vec3::ONE,
+                bevy::prelude::Color::WHITE,
+                crate::framework::fangyuan::FangyuanPrimitiveRole::Structure,
+                1.0,
+                0.0,
+                None,
+                Some("material:surface/x99/y99".to_string()),
+                false,
+                crate::framework::fangyuan::FangyuanPrimitiveLifecycle::empty(),
+            ),
+            crate::framework::fangyuan::FangyuanPrimitive::with_surface_metadata(
+                crate::framework::fangyuan::FangyuanPrimitiveKind::Cube,
+                bevy::prelude::Vec3::X,
+                bevy::prelude::Vec3::ONE,
+                bevy::prelude::Color::WHITE,
+                crate::framework::fangyuan::FangyuanPrimitiveRole::Structure,
+                1.0,
+                0.0,
+                None,
+                Some(no_noise_suggestion.clone()),
+                true,
+                crate::framework::fangyuan::FangyuanPrimitiveLifecycle::empty(),
+            ),
+        ];
+
+        let report = FangyuanDebugReport::from_metrics_snapshot(
+            "surface-fallback",
+            &FangyuanDebugMetricsSnapshot::default(),
+        )
+        .with_surface_primitives(&primitives, Some(&registry));
+
+        assert_eq!(report.surface.requested_preset_ids.len(), 2);
+        assert!(
+            report
+                .surface
+                .resolved_preset_ids
+                .iter()
+                .any(|id| id == crate::framework::fangyuan::FANGYUAN_SURFACE_PRESET_DEFAULT_ID)
+        );
+        assert_eq!(report.surface.fallback_count, 2);
+        assert!(report.surface.fallbacks.iter().any(|fallback| {
+            fallback.requested_preset_id == "material:surface/x99/y99"
+                && fallback.reason == "unknown_preset_id"
+        }));
+        assert!(report.surface.fallbacks.iter().any(|fallback| {
+            fallback.requested_preset_id == no_noise_suggestion
+                && fallback.reason == "noise_suggestion_unavailable"
+        }));
+
+        let json = serde_json::to_string(&report).unwrap();
+        let round_trip: FangyuanDebugReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_trip.surface, report.surface);
     }
 
     #[test]
