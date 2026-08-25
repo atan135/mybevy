@@ -9,7 +9,7 @@ use super::{
     FangyuanPrimitiveBudgetStats, FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle,
     FangyuanPrimitiveRole, FangyuanPrimitiveSet, audit_fangyuan_primitive_budget,
     first_package_fangyuan_asset_fs_path, validate_fangyuan_asset_path,
-    validate_fangyuan_material_profile_id,
+    validate_fangyuan_material_profile_id, validate_surface_material_preset_id,
 };
 
 pub const FANGYUAN_AVATAR_BLUEPRINT_VERSION: &str = "1";
@@ -282,6 +282,12 @@ pub struct FangyuanPrimitiveBlueprint {
     /// Optional material profile id reserved by the runtime model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material_profile_id: Option<String>,
+    /// Optional surface material preset stable ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_material_preset_id: Option<String>,
+    /// Controlled visual-noise opt-in; defaults to disabled.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub surface_noise_enabled: bool,
     /// Optional lifecycle metadata reserved by the runtime model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<FangyuanPrimitiveLifecycle>,
@@ -303,6 +309,8 @@ impl FangyuanPrimitiveBlueprint {
             alpha: None,
             emissive: None,
             material_profile_id: None,
+            surface_material_preset_id: None,
+            surface_noise_enabled: false,
             lifecycle: None,
         }
     }
@@ -325,6 +333,10 @@ impl FangyuanPrimitiveBlueprint {
     pub fn lifecycle(&self) -> FangyuanPrimitiveLifecycle {
         self.lifecycle.unwrap_or_default()
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub fn load_fangyuan_minimal_player_blueprint()
@@ -425,6 +437,11 @@ pub enum FangyuanBlueprintValidationError {
         value: String,
         reason: FangyuanPrimitiveMaterialProfileInvalidReason,
     },
+    InvalidPrimitiveSurfacePreset {
+        index: usize,
+        value: String,
+        reason: FangyuanPrimitiveSurfacePresetInvalidReason,
+    },
     InvalidPrimitiveLifecycle {
         index: usize,
         field: &'static str,
@@ -440,6 +457,15 @@ pub enum FangyuanPrimitiveMaterialProfileInvalidReason {
     Empty,
     TooLong { max_len: usize },
     InvalidCharacter,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FangyuanPrimitiveSurfacePresetInvalidReason {
+    Empty,
+    TooLong { max_len: usize },
+    NonAscii,
+    Uppercase,
+    InvalidSyntax,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -462,6 +488,7 @@ impl FangyuanBlueprintValidationError {
             Self::InvalidPrimitiveAlpha { .. } => "invalid_primitive_alpha",
             Self::InvalidPrimitiveEmissive { .. } => "invalid_primitive_emissive",
             Self::InvalidPrimitiveMaterialProfile { .. } => "invalid_primitive_material_profile",
+            Self::InvalidPrimitiveSurfacePreset { .. } => "invalid_primitive_surface_preset",
             Self::InvalidPrimitiveLifecycle { .. } => "invalid_primitive_lifecycle",
         }
     }
@@ -475,6 +502,7 @@ impl FangyuanBlueprintValidationError {
             | Self::InvalidPrimitiveAlpha { index, .. }
             | Self::InvalidPrimitiveEmissive { index, .. }
             | Self::InvalidPrimitiveMaterialProfile { index, .. }
+            | Self::InvalidPrimitiveSurfacePreset { index, .. }
             | Self::InvalidPrimitiveLifecycle { index, .. } => Some(*index),
             Self::UnsupportedVersion { .. }
             | Self::PrimitiveCountExceeded { .. }
@@ -507,6 +535,9 @@ impl FangyuanBlueprintValidationError {
             }
             Self::InvalidPrimitiveMaterialProfile { index, .. } => {
                 Cow::Owned(format!("primitives[{index}].material_profile_id"))
+            }
+            Self::InvalidPrimitiveSurfacePreset { index, .. } => {
+                Cow::Owned(format!("primitives[{index}].surface_material_preset_id"))
             }
             Self::InvalidPrimitiveLifecycle { index, field, .. } => {
                 Cow::Owned(format!("primitives[{index}].lifecycle.{field}"))
@@ -564,6 +595,23 @@ impl FangyuanBlueprintValidationError {
                 FangyuanPrimitiveMaterialProfileInvalidReason::InvalidCharacter => format!(
                     "value `{value}` may only contain ASCII letters, digits, `_`, `-`, `.`, `/`, and `:`"
                 ),
+            },
+            Self::InvalidPrimitiveSurfacePreset { value, reason, .. } => match reason {
+                FangyuanPrimitiveSurfacePresetInvalidReason::Empty => {
+                    "value must not be empty".to_string()
+                }
+                FangyuanPrimitiveSurfacePresetInvalidReason::TooLong { max_len } => {
+                    format!("value `{value}` must contain at most {max_len} ASCII identifier bytes")
+                }
+                FangyuanPrimitiveSurfacePresetInvalidReason::NonAscii => {
+                    format!("value `{value}` must contain only ASCII characters")
+                }
+                FangyuanPrimitiveSurfacePresetInvalidReason::Uppercase => {
+                    format!("value `{value}` must use lowercase ASCII characters")
+                }
+                FangyuanPrimitiveSurfacePresetInvalidReason::InvalidSyntax => {
+                    format!("value `{value}` is not a surface preset stable ID")
+                }
             },
             Self::InvalidPrimitiveLifecycle {
                 field,
@@ -671,6 +719,7 @@ pub(super) fn validate_blueprint_primitive(
     validate_primitive_emissive(index, primitive.emissive())?;
     validate_primitive_role(index, primitive.role())?;
     validate_primitive_material_profile(index, primitive.material_profile_id.as_deref())?;
+    validate_primitive_surface_preset(index, primitive.surface_material_preset_id.as_deref())?;
     validate_primitive_lifecycle(index, primitive.lifecycle())?;
     Ok(())
 }
@@ -684,7 +733,7 @@ pub(super) fn compile_blueprint_primitive_to_runtime(
         primitive.color[2],
         primitive.color[3],
     );
-    FangyuanPrimitive::with_runtime_metadata(
+    FangyuanPrimitive::with_surface_metadata(
         primitive.kind,
         Vec3::from_array(primitive.position),
         Vec3::from_array(primitive.size),
@@ -693,6 +742,8 @@ pub(super) fn compile_blueprint_primitive_to_runtime(
         primitive.alpha(),
         primitive.emissive(),
         primitive.material_profile_id.clone(),
+        primitive.surface_material_preset_id.clone(),
+        primitive.surface_noise_enabled,
         primitive.lifecycle(),
     )
 }
@@ -881,6 +932,44 @@ fn validate_primitive_material_profile(
             },
         }
     })
+}
+
+fn validate_primitive_surface_preset(
+    index: usize,
+    surface_material_preset_id: Option<&str>,
+) -> Result<(), FangyuanBlueprintValidationError> {
+    let Some(surface_material_preset_id) = surface_material_preset_id else {
+        return Ok(());
+    };
+    validate_surface_material_preset_id(
+        super::FANGYUAN_SURFACE_PRESET_CATALOG_ID,
+        &format!("primitives[{index}].surface_material_preset_id"),
+        surface_material_preset_id,
+    )
+    .map_err(
+        |error| FangyuanBlueprintValidationError::InvalidPrimitiveSurfacePreset {
+            index,
+            value: surface_material_preset_id.to_string(),
+            reason: match error.reason {
+                super::FangyuanCatalogFieldErrorReason::Empty => {
+                    FangyuanPrimitiveSurfacePresetInvalidReason::Empty
+                }
+                super::FangyuanCatalogFieldErrorReason::TooLong { max_len } => {
+                    FangyuanPrimitiveSurfacePresetInvalidReason::TooLong { max_len }
+                }
+                super::FangyuanCatalogFieldErrorReason::NonAscii => {
+                    FangyuanPrimitiveSurfacePresetInvalidReason::NonAscii
+                }
+                super::FangyuanCatalogFieldErrorReason::Uppercase => {
+                    FangyuanPrimitiveSurfacePresetInvalidReason::Uppercase
+                }
+                super::FangyuanCatalogFieldErrorReason::InvalidSyntax => {
+                    FangyuanPrimitiveSurfacePresetInvalidReason::InvalidSyntax
+                }
+                _ => FangyuanPrimitiveSurfacePresetInvalidReason::InvalidSyntax,
+            },
+        },
+    )
 }
 
 fn validate_primitive_lifecycle(
@@ -2241,6 +2330,104 @@ mod tests {
             .suggestions
             .iter()
             .any(|suggestion| suggestion.action == action)
+    }
+
+    #[test]
+    fn surface_preset_fields_default_and_compile_without_changing_legacy_materials() {
+        let legacy: FangyuanPrimitiveBlueprint = serde_json::from_str(
+            r#"{
+                "kind": "cube",
+                "position": [0.0, 0.5, 0.0],
+                "size": [1.0, 1.0, 1.0],
+                "color": [1.0, 1.0, 1.0, 1.0]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.surface_material_preset_id, None);
+        assert!(!legacy.surface_noise_enabled);
+
+        let mut authored = valid_primitive();
+        authored.surface_material_preset_id = Some("material:surface/x03/y07".to_string());
+        authored.surface_noise_enabled = true;
+        authored.material_profile_id = Some("legacy/glow".to_string());
+        let primitive = valid_avatar_blueprint(vec![authored]).compile().unwrap();
+        let primitive = &primitive.primitives()[0];
+        assert_eq!(
+            primitive.surface_material_preset_id(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(primitive.surface_noise_enabled());
+        assert_eq!(primitive.material_profile_id(), Some("legacy/glow"));
+    }
+
+    #[test]
+    fn surface_preset_unknown_syntax_valid_id_is_preserved_for_resolver_fallback() {
+        let mut primitive = valid_primitive();
+        primitive.surface_material_preset_id = Some("material:surface/x99/y99".to_string());
+        let compiled = valid_avatar_blueprint(vec![primitive]).compile().unwrap();
+        assert_eq!(
+            compiled.primitives()[0].surface_material_preset_id(),
+            Some("material:surface/x99/y99")
+        );
+    }
+
+    #[test]
+    fn surface_preset_invalid_ids_are_rejected_with_structured_field_errors() {
+        for (value, reason_part) in [
+            ("", "must not be empty"),
+            ("material:surface/X03/y07", "lowercase"),
+            ("material:surface/x3/y07", "surface preset stable ID"),
+            ("material:surface/x03/y07/extra", "surface preset stable ID"),
+            ("材料:surface/x03/y07", "ASCII"),
+        ] {
+            let mut primitive = valid_primitive();
+            primitive.surface_material_preset_id = Some(value.to_string());
+            let error = valid_avatar_blueprint(vec![primitive])
+                .validate()
+                .unwrap_err();
+            assert_validation_report(
+                &error,
+                "invalid_primitive_surface_preset",
+                Some(0),
+                "primitives[0].surface_material_preset_id",
+                &[reason_part],
+            );
+        }
+
+        let mut too_long = valid_primitive();
+        too_long.surface_material_preset_id =
+            Some(format!("material:surface/x03/y{}", "0".repeat(65)));
+        let error = valid_avatar_blueprint(vec![too_long])
+            .validate()
+            .unwrap_err();
+        assert_validation_report(
+            &error,
+            "invalid_primitive_surface_preset",
+            Some(0),
+            "primitives[0].surface_material_preset_id",
+            &["at most 64"],
+        );
+    }
+
+    #[test]
+    fn surface_preset_rejects_arbitrary_tile_and_shader_fields() {
+        let base = serde_json::json!({
+            "kind": "cube",
+            "position": [0.0, 0.5, 0.0],
+            "size": [1.0, 1.0, 1.0],
+            "color": [1.0, 1.0, 1.0, 1.0],
+            "surface_material_preset_id": "material:surface/x03/y07",
+            "surface_noise_enabled": true,
+        });
+        for field in ["noise_tile_id", "uv", "shader"] {
+            let mut value = base.clone();
+            value
+                .as_object_mut()
+                .unwrap()
+                .insert(field.to_string(), serde_json::json!("arbitrary"));
+            let result = serde_json::from_value::<FangyuanPrimitiveBlueprint>(value.clone());
+            assert_parse_error_contains(result, field, "unknown field");
+        }
     }
 
     fn valid_avatar_blueprint(

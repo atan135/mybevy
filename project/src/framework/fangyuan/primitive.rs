@@ -196,6 +196,11 @@ pub struct FangyuanPrimitive {
     /// Reserved material profile identifier. `None` means the default material
     /// profile.
     pub material_profile_id: Option<String>,
+    /// Optional surface material preset stable ID. Resolution is performed by
+    /// the independent surface preset registry.
+    pub surface_material_preset_id: Option<String>,
+    /// Controlled visual-noise opt-in; defaults to disabled.
+    pub surface_noise_enabled: bool,
     /// Reserved lifecycle metadata for future VFX/runtime playback layers.
     pub lifecycle: FangyuanPrimitiveLifecycle,
 }
@@ -247,6 +252,34 @@ impl FangyuanPrimitive {
         material_profile_id: Option<String>,
         lifecycle: FangyuanPrimitiveLifecycle,
     ) -> Self {
+        Self::with_surface_metadata(
+            kind,
+            local_position,
+            scale,
+            color,
+            role,
+            alpha,
+            emissive,
+            material_profile_id,
+            None,
+            false,
+            lifecycle,
+        )
+    }
+
+    pub fn with_surface_metadata(
+        kind: FangyuanPrimitiveKind,
+        local_position: Vec3,
+        scale: Vec3,
+        color: Color,
+        role: FangyuanPrimitiveRole,
+        alpha: f32,
+        emissive: f32,
+        material_profile_id: Option<String>,
+        surface_material_preset_id: Option<String>,
+        surface_noise_enabled: bool,
+        lifecycle: FangyuanPrimitiveLifecycle,
+    ) -> Self {
         Self {
             kind,
             local_position,
@@ -256,6 +289,8 @@ impl FangyuanPrimitive {
             alpha,
             emissive,
             material_profile_id,
+            surface_material_preset_id,
+            surface_noise_enabled,
             lifecycle,
         }
     }
@@ -290,6 +325,14 @@ impl FangyuanPrimitive {
 
     pub fn material_profile_id(&self) -> Option<&str> {
         self.material_profile_id.as_deref()
+    }
+
+    pub fn surface_material_preset_id(&self) -> Option<&str> {
+        self.surface_material_preset_id.as_deref()
+    }
+
+    pub const fn surface_noise_enabled(&self) -> bool {
+        self.surface_noise_enabled
     }
 
     pub const fn lifecycle(&self) -> FangyuanPrimitiveLifecycle {
@@ -451,6 +494,8 @@ mod tests {
         assert_eq!(primitive.alpha(), 0.8);
         assert_eq!(primitive.emissive(), FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE);
         assert_eq!(primitive.material_profile_id(), None);
+        assert_eq!(primitive.surface_material_preset_id(), None);
+        assert!(!primitive.surface_noise_enabled());
         assert_eq!(primitive.lifecycle(), FangyuanPrimitiveLifecycle::empty());
     }
 
@@ -485,7 +530,32 @@ mod tests {
         assert_eq!(primitive.alpha(), 0.5);
         assert_eq!(primitive.emissive(), 2.25);
         assert_eq!(primitive.material_profile_id(), Some("glow_edge"));
+        assert_eq!(primitive.surface_material_preset_id(), None);
+        assert!(!primitive.surface_noise_enabled());
         assert_eq!(primitive.lifecycle(), lifecycle);
+    }
+
+    #[test]
+    fn primitive_constructor_can_store_surface_preset_and_noise_opt_in() {
+        let primitive = FangyuanPrimitive::with_surface_metadata(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::ZERO,
+            Vec3::ONE,
+            Color::WHITE,
+            FangyuanPrimitiveRole::Structure,
+            1.0,
+            0.0,
+            None,
+            Some("material:surface/x03/y07".to_string()),
+            true,
+            FangyuanPrimitiveLifecycle::empty(),
+        );
+
+        assert_eq!(
+            primitive.surface_material_preset_id(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(primitive.surface_noise_enabled());
     }
 
     #[test]
