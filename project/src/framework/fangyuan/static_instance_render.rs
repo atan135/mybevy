@@ -71,6 +71,8 @@ pub struct FangyuanStaticInstanceRenderInstance {
     pub alpha: f32,
     pub emissive: f32,
     pub material_profile_id: Option<String>,
+    pub surface_material_preset_id: Option<String>,
+    pub surface_noise_enabled: bool,
     pub source: FangyuanStaticMergeSourceRef,
 }
 
@@ -272,6 +274,8 @@ fn render_batch_from_static_batch(
             alpha: instance.alpha,
             emissive: instance.emissive,
             material_profile_id: instance.material_profile_id,
+            surface_material_preset_id: instance.surface_material_preset_id,
+            surface_noise_enabled: instance.surface_noise_enabled,
             source: instance.source,
         })
         .collect();
@@ -374,6 +378,38 @@ mod tests {
             FANGYUAN_STATIC_INSTANCE_RENDER_STRIDE_BYTES
         );
         assert!(transparent_batch.debug_name.contains("cube"));
+    }
+
+    #[test]
+    fn fangyuan_static_instance_render_preserves_surface_semantics_and_hash() {
+        let mut primitive = primitive(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::ZERO,
+            Vec3::ONE,
+            Color::WHITE,
+            1.0,
+        );
+        primitive.surface_material_preset_id = Some("material:surface/x03/y07".to_string());
+        primitive.surface_noise_enabled = true;
+        let report = fangyuan_static_instance_render_report_from_primitive_set_with_source(
+            &FangyuanPrimitiveSet::from_primitives(vec![primitive]),
+            Some("surface.ron".to_string()),
+            &FangyuanStaticInstanceRenderOptions::default(),
+        )
+        .unwrap();
+
+        let instance = &report.batches[0].instances[0];
+        assert_eq!(
+            instance.surface_material_preset_id.as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(instance.surface_noise_enabled);
+        assert_eq!(
+            instance.source.surface_material_preset_id.as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(instance.source.surface_noise_enabled);
+        assert_ne!(report.stats.content_hash, 0);
     }
 
     #[test]

@@ -23,14 +23,18 @@ pub struct FangyuanStaticInstance {
     pub alpha: f32,
     pub emissive: f32,
     pub material_profile_id: Option<String>,
+    pub surface_material_preset_id: Option<String>,
+    pub surface_noise_enabled: bool,
     pub source: FangyuanStaticMergeSourceRef,
 }
 
 impl FangyuanStaticInstance {
     pub fn from_primitive(
         primitive: &FangyuanPrimitive,
-        source: FangyuanStaticMergeSourceRef,
+        mut source: FangyuanStaticMergeSourceRef,
     ) -> Self {
+        source.surface_material_preset_id = primitive.surface_material_preset_id.clone();
+        source.surface_noise_enabled = primitive.surface_noise_enabled();
         Self {
             position: primitive.local_position(),
             scale: primitive.scale(),
@@ -38,6 +42,8 @@ impl FangyuanStaticInstance {
             alpha: primitive.alpha(),
             emissive: primitive.emissive(),
             material_profile_id: primitive.material_profile_id().map(str::to_string),
+            surface_material_preset_id: primitive.surface_material_preset_id().map(str::to_string),
+            surface_noise_enabled: primitive.surface_noise_enabled(),
             source,
         }
     }
@@ -404,6 +410,8 @@ fn hash_static_instance(hash: &mut u64, instance: &FangyuanStaticInstance) {
     hash_f32(hash, instance.alpha);
     hash_f32(hash, instance.emissive);
     hash_option_str(hash, instance.material_profile_id.as_deref());
+    hash_option_str(hash, instance.surface_material_preset_id.as_deref());
+    hash_u8(hash, u8::from(instance.surface_noise_enabled));
     hash_source_ref(hash, &instance.source);
 }
 
@@ -422,6 +430,8 @@ fn hash_source_ref(hash: &mut u64, source: &FangyuanStaticMergeSourceRef) {
     hash_option_str(hash, source.field_path.as_deref());
     hash_option_str(hash, source.audit_code.as_deref());
     hash_option_str(hash, source.audit_reason.as_deref());
+    hash_option_str(hash, source.surface_material_preset_id.as_deref());
+    hash_u8(hash, u8::from(source.surface_noise_enabled));
 }
 
 fn hash_layout_instance_ref(
@@ -641,6 +651,92 @@ mod tests {
     }
 
     #[test]
+    fn fangyuan_static_instance_preserves_surface_semantics_without_batch_split() {
+        let mut first = static_primitive(
+            FangyuanPrimitiveKind::Cube,
+            FangyuanPrimitiveRole::Structure,
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.2, 0.4, 0.6, 1.0],
+            1.0,
+            0.0,
+            None,
+        );
+        first.surface_material_preset_id = Some("material:surface/x03/y07".to_string());
+        first.surface_noise_enabled = true;
+        let mut second = first.clone();
+        second.local_position.x = 2.0;
+        second.surface_material_preset_id = Some("material:surface/x04/y07".to_string());
+        second.surface_noise_enabled = false;
+
+        let report = fangyuan_static_instance_batches_from_primitive_set(
+            &FangyuanPrimitiveSet::from_primitives(vec![first, second]),
+        );
+
+        assert_eq!(report.batches.len(), 1);
+        assert_eq!(report.batches[0].instances.len(), 2);
+        assert_eq!(
+            report.batches[0].instances[0]
+                .surface_material_preset_id
+                .as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(report.batches[0].instances[0].surface_noise_enabled);
+        assert_eq!(
+            report.batches[0].instances[1]
+                .surface_material_preset_id
+                .as_deref(),
+            Some("material:surface/x04/y07")
+        );
+        assert!(!report.batches[0].instances[1].surface_noise_enabled);
+        assert_ne!(report.batches[0].buffer_source.hash, 0);
+
+        let plain = FangyuanPrimitive::new(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::ZERO,
+            Vec3::ONE,
+            Color::WHITE,
+        );
+        let plain_report = fangyuan_static_instance_batches_from_primitive_set(
+            &FangyuanPrimitiveSet::from_primitives(vec![plain]),
+        );
+        assert_ne!(
+            report.batches[0].buffer_source.hash,
+            plain_report.batches[0].buffer_source.hash
+        );
+    }
+
+    #[test]
+    fn fangyuan_static_instance_direct_constructor_syncs_surface_source_mapping() {
+        let mut primitive = FangyuanPrimitive::new(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::ZERO,
+            Vec3::ONE,
+            Color::WHITE,
+        );
+        primitive.surface_material_preset_id = Some("material:surface/x03/y07".to_string());
+        primitive.surface_noise_enabled = true;
+        let instance = FangyuanStaticInstance::from_primitive(
+            &primitive,
+            FangyuanStaticMergeSourceRef::runtime_primitive_set(None, 0),
+        );
+
+        assert_eq!(
+            instance.surface_material_preset_id.as_deref(),
+            instance.source.surface_material_preset_id.as_deref()
+        );
+        assert_eq!(
+            instance.surface_material_preset_id.as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert_eq!(
+            instance.surface_noise_enabled,
+            instance.source.surface_noise_enabled
+        );
+        assert!(instance.source.surface_noise_enabled);
+    }
+
+    #[test]
     fn fangyuan_static_instance_batch_key_separates_kind_transparency_and_profile() {
         let shared_opaque_red = static_primitive(
             FangyuanPrimitiveKind::Cube,
@@ -743,6 +839,8 @@ mod tests {
         let layout = valid_layout(vec![valid_instance("wall", Some("wall_a"))]);
         let mut cube = valid_primitive_blueprint(FangyuanPrimitiveKind::Cube);
         cube.material_profile_id = Some("stone".to_string());
+        cube.surface_material_preset_id = Some("material:surface/x03/y07".to_string());
+        cube.surface_noise_enabled = true;
         let mut sphere = valid_primitive_blueprint(FangyuanPrimitiveKind::Sphere);
         sphere.role = Some(FangyuanPrimitiveRole::Warning);
         sphere.material_profile_id = Some("warn".to_string());
@@ -773,6 +871,11 @@ mod tests {
         );
         assert_eq!(source.prefab_id.as_deref(), Some("wall"));
         assert_eq!(source.primitive_index, 0);
+        assert_eq!(
+            source.surface_material_preset_id.as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(source.surface_noise_enabled);
         assert_eq!(
             source.field_path.as_deref(),
             Some("instances[0].prefab.primitives[0]")

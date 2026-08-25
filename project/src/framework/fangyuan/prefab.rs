@@ -915,6 +915,8 @@ mod tests {
                     position: [0.0, 0.5, 0.0],
                     size: [1.0, 1.0, 1.0],
                     color: [0.4, 0.5, 0.6, 1.0],
+                    surface_material_preset_id: Some("material:surface/x03/y07"),
+                    surface_noise_enabled: true,
                 ),
             ],
         ),
@@ -950,6 +952,13 @@ mod tests {
             palette.prefabs[0].primitives[0].kind,
             FangyuanPrimitiveKind::Cube
         );
+        assert_eq!(
+            palette.prefabs[0].primitives[0]
+                .surface_material_preset_id
+                .as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(palette.prefabs[0].primitives[0].surface_noise_enabled);
     }
 
     #[test]

@@ -2022,6 +2022,8 @@ mod tests {
         primitive.alpha = Some(0.6);
         primitive.emissive = Some(2.5);
         primitive.material_profile_id = Some("fx/trail:soft".to_string());
+        primitive.surface_material_preset_id = Some("material:surface/x03/y07".to_string());
+        primitive.surface_noise_enabled = true;
         primitive.lifecycle = Some(FangyuanPrimitiveLifecycle::new(Some(10), Some(2), Some(20)));
         let palette = valid_palette(vec![valid_prefab("glow_orb", vec![primitive])]);
         let layout = valid_layout(vec![valid_instance("glow_orb")]);
@@ -2047,6 +2049,11 @@ mod tests {
             generated.material_profile_id.as_deref(),
             Some("fx/trail:soft")
         );
+        assert_eq!(
+            generated.surface_material_preset_id.as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(generated.surface_noise_enabled);
         assert_eq!(
             generated.lifecycle,
             FangyuanPrimitiveLifecycle::new(Some(10), Some(2), Some(20))

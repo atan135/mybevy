@@ -52,6 +52,11 @@ pub struct FangyuanStaticMergeSourceRef {
     pub field_path: Option<String>,
     pub audit_code: Option<String>,
     pub audit_reason: Option<String>,
+    /// Requested surface preset semantics carried with the source mapping.
+    /// These fields are metadata only and are intentionally excluded from
+    /// merge-group keys until atlas rendering is implemented.
+    pub surface_material_preset_id: Option<String>,
+    pub surface_noise_enabled: bool,
 }
 
 impl FangyuanStaticMergeSourceRef {
@@ -119,7 +124,9 @@ pub struct FangyuanStaticMergeInput {
 }
 
 impl FangyuanStaticMergeInput {
-    pub fn new(primitive: FangyuanPrimitive, source: FangyuanStaticMergeSourceRef) -> Self {
+    pub fn new(primitive: FangyuanPrimitive, mut source: FangyuanStaticMergeSourceRef) -> Self {
+        source.surface_material_preset_id = primitive.surface_material_preset_id.clone();
+        source.surface_noise_enabled = primitive.surface_noise_enabled();
         Self { primitive, source }
     }
 }
@@ -649,6 +656,50 @@ mod tests {
         assert_eq!(report.stats.cube_count, 1);
         assert_eq!(report.stats.sphere_count, 1);
         assert_eq!(report.stats.material_profile_count, 2);
+    }
+
+    #[test]
+    fn fangyuan_static_merge_source_preserves_surface_semantics_without_rebatching() {
+        let mut primitive = static_primitive(
+            FangyuanPrimitiveKind::Cube,
+            FangyuanPrimitiveRole::Structure,
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.2, 0.3, 0.4, 1.0],
+            None,
+        );
+        primitive.surface_material_preset_id = Some("material:surface/x03/y07".to_string());
+        primitive.surface_noise_enabled = true;
+        let mut plain = primitive.clone();
+        plain.local_position.x = 2.0;
+        plain.surface_material_preset_id = None;
+        plain.surface_noise_enabled = false;
+
+        let report = fangyuan_static_merge_groups_from_inputs(vec![
+            FangyuanStaticMergeInput::new(
+                primitive,
+                FangyuanStaticMergeSourceRef::runtime_primitive_set(None, 0),
+            ),
+            FangyuanStaticMergeInput::new(
+                plain,
+                FangyuanStaticMergeSourceRef::runtime_primitive_set(None, 1),
+            ),
+        ]);
+
+        assert_eq!(report.groups.len(), 1);
+        assert_eq!(report.groups[0].source_refs.len(), 2);
+        assert_eq!(
+            report.groups[0].source_refs[0]
+                .surface_material_preset_id
+                .as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(report.groups[0].source_refs[0].surface_noise_enabled);
+        assert_eq!(
+            report.groups[0].source_refs[1].surface_material_preset_id,
+            None
+        );
+        assert!(!report.groups[0].source_refs[1].surface_noise_enabled);
     }
 
     #[test]

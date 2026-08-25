@@ -718,14 +718,17 @@ mod tests {
 
     #[test]
     fn fangyuan_static_merge_cpu_builder_preserves_source_ranges_for_grouped_primitives() {
+        let mut surfaced = static_primitive(
+            FangyuanPrimitiveKind::Cube,
+            Vec3::ZERO,
+            Vec3::ONE,
+            [0.2, 0.3, 0.4, 1.0],
+        );
+        surfaced.surface_material_preset_id = Some("material:surface/x03/y07".to_string());
+        surfaced.surface_noise_enabled = true;
         let inputs = vec![
             FangyuanStaticMergeInput::new(
-                static_primitive(
-                    FangyuanPrimitiveKind::Cube,
-                    Vec3::ZERO,
-                    Vec3::ONE,
-                    [0.2, 0.3, 0.4, 1.0],
-                ),
+                surfaced,
                 FangyuanStaticMergeSourceRef::runtime_primitive_set(
                     Some("test.ron".to_string()),
                     0,
@@ -752,6 +755,11 @@ mod tests {
         let ranges = &report.meshes[0].metadata.source_ranges;
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0].source.primitive_index, 0);
+        assert_eq!(
+            ranges[0].source.surface_material_preset_id.as_deref(),
+            Some("material:surface/x03/y07")
+        );
+        assert!(ranges[0].source.surface_noise_enabled);
         assert_eq!(ranges[0].vertex_start, 0);
         assert_eq!(ranges[0].vertex_count, 24);
         assert_eq!(ranges[0].index_start, 0);
