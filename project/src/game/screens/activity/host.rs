@@ -16,24 +16,29 @@ use crate::game::{
     },
     myserver::{
         ActivityClientState, ActivityError, ActivityEvent, ActivityKey, ActivityRequestKind,
-        ActivitySummary, GameConnectionState, MyServerCommand, MyServerSession,
+        ActivitySummary, DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE, GameConnectionState,
+        MAX_ACTIVITY_HISTORY_CLIENT_RECORDS, MyServerCommand, MyServerSession,
     },
     scenes::main_world_entry::{MainWorldEntryPhase, MainWorldEntryState},
     ui_ids::{
-        OWNER_MAIN_WORLD_ACTIVITY_DETAIL, OWNER_MAIN_WORLD_ACTIVITY_LIST,
-        OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL, OWNER_MAIN_WORLD_LOTTERY_DETAIL,
+        OWNER_MAIN_WORLD_ACTIVITY_CLAIM_HISTORY, OWNER_MAIN_WORLD_ACTIVITY_DETAIL,
+        OWNER_MAIN_WORLD_ACTIVITY_LIST, OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL,
+        OWNER_MAIN_WORLD_LOTTERY_DETAIL,
     },
 };
 
-use super::{detail, list, login_reward, lottery};
+use super::{claim_history, detail, list, login_reward, lottery};
 
 pub(in crate::game) const ACTIVITY_LIST_DOCUMENT_ID: &str = "game.main_world_activity_list";
 pub(in crate::game) const ACTIVITY_DETAIL_DOCUMENT_ID: &str = "game.main_world_activity_detail";
+pub(in crate::game) const ACTIVITY_CLAIM_HISTORY_DOCUMENT_ID: &str =
+    "game.main_world_activity_claim_history";
 pub(in crate::game) const LOGIN_REWARD_DETAIL_DOCUMENT_ID: &str =
     "game.main_world_login_reward_detail";
 pub(in crate::game) const LOTTERY_DETAIL_DOCUMENT_ID: &str = "game.main_world_lottery_detail";
 pub(in crate::game) const ACTIVITY_LIST_ROUTE: &str = "main_world_activity_list";
 pub(in crate::game) const ACTIVITY_DETAIL_ROUTE: &str = "main_world_activity_detail";
+pub(in crate::game) const ACTIVITY_CLAIM_HISTORY_ROUTE: &str = "main_world_activity_claim_history";
 pub(in crate::game) const LOGIN_REWARD_DETAIL_ROUTE: &str = "main_world_login_reward_detail";
 pub(in crate::game) const LOTTERY_DETAIL_ROUTE: &str = "main_world_lottery_detail";
 
@@ -42,6 +47,9 @@ pub(super) const ACTIVITY_LIST_DOCUMENT_SOURCE: &str = include_str!(
 );
 pub(super) const ACTIVITY_DETAIL_DOCUMENT_SOURCE: &str = include_str!(
     "../../../../assets/ui/documents/approved/activity/main_world_activity_detail.v1.json"
+);
+pub(super) const ACTIVITY_CLAIM_HISTORY_DOCUMENT_SOURCE: &str = include_str!(
+    "../../../../assets/ui/documents/approved/activity/main_world_activity_claim_history.v1.json"
 );
 pub(super) const LOGIN_REWARD_DETAIL_DOCUMENT_SOURCE: &str = include_str!(
     "../../../../assets/ui/documents/approved/activity/main_world_login_reward_detail.v1.json"
@@ -63,6 +71,11 @@ pub(in crate::game) enum ActivityScreenCommand {
     RetryList,
     OpenDetail { activity_id: String, version: u32 },
     CloseDetail,
+    OpenClaimHistory,
+    RefreshClaimHistory,
+    RetryClaimHistory,
+    LoadMoreClaimHistory,
+    CloseClaimHistory,
     CloseList,
 }
 
@@ -104,6 +117,33 @@ impl ActivityDetailLoadState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum ActivityClaimHistoryLoadState {
+    #[default]
+    Idle,
+    LoadingFirstPage,
+    LoadingMore,
+    Ready,
+    Empty,
+    Failed,
+}
+
+impl ActivityClaimHistoryLoadState {
+    pub(super) const fn collection_binding_value(self, has_records: bool) -> &'static str {
+        match self {
+            Self::LoadingFirstPage => "loading",
+            Self::Failed if !has_records => "error",
+            Self::Idle | Self::LoadingMore | Self::Ready | Self::Empty | Self::Failed => "ready",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ActivityClaimHistoryRetryMode {
+    FirstPage,
+    LoadMore,
+}
+
 #[derive(Clone, Debug, Default, Resource)]
 pub(in crate::game) struct ActivityScreenState {
     pub(super) main_world_generation: Option<u64>,
@@ -111,10 +151,14 @@ pub(in crate::game) struct ActivityScreenState {
     pub(super) detail_open: bool,
     pub(super) detail_route: Option<&'static str>,
     pub(super) selected: Option<ActivityKey>,
+    pub(super) claim_history_open: bool,
     pub(super) list_load_state: ActivityListLoadState,
     pub(super) detail_load_state: ActivityDetailLoadState,
     pub(super) list_error: Option<ActivityError>,
     pub(super) detail_error: Option<ActivityError>,
+    pub(super) claim_history_load_state: ActivityClaimHistoryLoadState,
+    pub(super) claim_history_retry_mode: Option<ActivityClaimHistoryRetryMode>,
+    pub(super) claim_history_error: Option<ActivityError>,
 }
 
 impl ActivityScreenState {
@@ -135,10 +179,14 @@ impl ActivityScreenState {
         self.detail_open = false;
         self.detail_route = None;
         self.selected = None;
+        self.claim_history_open = false;
         self.list_load_state = ActivityListLoadState::Idle;
         self.detail_load_state = ActivityDetailLoadState::Idle;
         self.list_error = None;
         self.detail_error = None;
+        self.claim_history_load_state = ActivityClaimHistoryLoadState::Idle;
+        self.claim_history_retry_mode = None;
+        self.claim_history_error = None;
     }
 
     fn close_detail(&mut self) {
@@ -148,12 +196,20 @@ impl ActivityScreenState {
         self.detail_load_state = ActivityDetailLoadState::Idle;
         self.detail_error = None;
     }
+
+    fn close_claim_history(&mut self) {
+        self.claim_history_open = false;
+        self.claim_history_load_state = ActivityClaimHistoryLoadState::Idle;
+        self.claim_history_retry_mode = None;
+        self.claim_history_error = None;
+    }
 }
 
 #[derive(Resource)]
 pub(super) struct ActivityScreenHostContract {
     pub(super) list_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
     pub(super) detail_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
+    pub(super) claim_history_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
     pub(super) login_reward_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
     pub(super) lottery_bindings: BTreeMap<UiBindingPath, UiBindingDeclaration>,
 }
@@ -163,6 +219,7 @@ impl Default for ActivityScreenHostContract {
         Self {
             list_bindings: list::activity_list_binding_schema(),
             detail_bindings: detail::activity_detail_binding_schema(),
+            claim_history_bindings: claim_history::activity_claim_history_binding_schema(),
             login_reward_bindings: login_reward::login_reward_binding_schema(),
             lottery_bindings: lottery::lottery_binding_schema(),
         }
@@ -177,6 +234,7 @@ pub(super) fn register_activity_screen_contract(
     for descriptor in list::activity_list_action_descriptors()
         .into_iter()
         .chain(detail::activity_detail_action_descriptors())
+        .chain(claim_history::activity_claim_history_action_descriptors())
         .chain(login_reward::login_reward_action_descriptors())
         .chain(lottery::lottery_action_descriptors())
     {
@@ -187,6 +245,7 @@ pub(super) fn register_activity_screen_contract(
     for host in [
         activity_list_declarative_screen_host(&contract),
         activity_detail_declarative_screen_host(&contract),
+        activity_claim_history_declarative_screen_host(&contract),
         login_reward_detail_declarative_screen_host(&contract),
         lottery_detail_declarative_screen_host(&contract),
     ] {
@@ -209,9 +268,33 @@ fn activity_list_declarative_screen_host(
         &[
             list::ACTION_ACTIVITY_LIST_RETRY,
             list::ACTION_ACTIVITY_LIST_SELECT,
+            list::ACTION_ACTIVITY_LIST_CLAIM_HISTORY,
             list::ACTION_ACTIVITY_LIST_CLOSE,
         ],
         &contract.list_bindings,
+    )
+}
+
+fn activity_claim_history_declarative_screen_host(
+    contract: &ActivityScreenHostContract,
+) -> DeclarativeScreenHost {
+    activity_host(
+        ACTIVITY_CLAIM_HISTORY_DOCUMENT_ID,
+        ACTIVITY_CLAIM_HISTORY_ROUTE,
+        &[
+            ACTIVITY_CLAIM_HISTORY_ROUTE,
+            "main-world-activity-claim-history",
+        ],
+        OWNER_MAIN_WORLD_ACTIVITY_CLAIM_HISTORY,
+        "activity/main_world_activity_claim_history.v1.json",
+        ACTIVITY_CLAIM_HISTORY_DOCUMENT_SOURCE,
+        &[
+            claim_history::ACTION_ACTIVITY_CLAIM_HISTORY_REFRESH,
+            claim_history::ACTION_ACTIVITY_CLAIM_HISTORY_RETRY,
+            claim_history::ACTION_ACTIVITY_CLAIM_HISTORY_LOAD_MORE,
+            claim_history::ACTION_ACTIVITY_CLAIM_HISTORY_CLOSE,
+        ],
+        &contract.claim_history_bindings,
     )
 }
 
@@ -344,7 +427,7 @@ pub(super) fn handle_activity_screen_commands(
     mut focus: Option<ResMut<UiFocusState>>,
 ) {
     if !activity_session_is_usable(entry.as_deref(), session.as_deref()) {
-        let was_open = state.list_open || state.detail_open;
+        let was_open = state.list_open || state.detail_open || state.claim_history_open;
         state.reset_closed();
         if was_open {
             close_activity_routes(&mut screen_commands);
@@ -364,6 +447,7 @@ pub(super) fn handle_activity_screen_commands(
                 state.detail_open = false;
                 state.detail_route = None;
                 state.selected = None;
+                state.close_claim_history();
                 state.list_load_state = ActivityListLoadState::Loading;
                 state.list_error = None;
                 state.detail_load_state = ActivityDetailLoadState::Idle;
@@ -376,6 +460,7 @@ pub(super) fn handle_activity_screen_commands(
             ActivityScreenCommand::RetryList => {
                 if !state.list_open
                     || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
+                    || state.claim_history_open
                     || state.list_load_state == ActivityListLoadState::Loading
                 {
                     continue;
@@ -390,6 +475,7 @@ pub(super) fn handle_activity_screen_commands(
             } => {
                 if !state.list_open
                     || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
+                    || state.claim_history_open
                 {
                     continue;
                 }
@@ -439,8 +525,85 @@ pub(super) fn handle_activity_screen_commands(
                 });
                 clear_focus(&mut focus);
             }
+            ActivityScreenCommand::OpenClaimHistory => {
+                if !state.list_open
+                    || state.detail_open
+                    || state.claim_history_open
+                    || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
+                {
+                    continue;
+                }
+                state.claim_history_open = true;
+                request_first_claim_history_page(&mut state, &mut myserver_commands);
+                screen_commands.write(DeclarativeScreenHostCommand::OpenDetachedRoute {
+                    route: ACTIVITY_CLAIM_HISTORY_ROUTE.to_owned(),
+                });
+            }
+            ActivityScreenCommand::RefreshClaimHistory => {
+                if !state.claim_history_open
+                    || activity.claim_history.loading
+                    || matches!(
+                        state.claim_history_load_state,
+                        ActivityClaimHistoryLoadState::LoadingFirstPage
+                            | ActivityClaimHistoryLoadState::LoadingMore
+                    )
+                    || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
+                {
+                    continue;
+                }
+                request_first_claim_history_page(&mut state, &mut myserver_commands);
+            }
+            ActivityScreenCommand::RetryClaimHistory => {
+                if !state.claim_history_open
+                    || state.claim_history_load_state != ActivityClaimHistoryLoadState::Failed
+                    || activity.claim_history.loading
+                    || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
+                {
+                    continue;
+                }
+                match state.claim_history_retry_mode {
+                    Some(ActivityClaimHistoryRetryMode::FirstPage) => {
+                        request_first_claim_history_page(&mut state, &mut myserver_commands);
+                    }
+                    Some(ActivityClaimHistoryRetryMode::LoadMore) => {
+                        request_next_claim_history_page(
+                            &mut state,
+                            &activity,
+                            &mut myserver_commands,
+                        );
+                    }
+                    None => {}
+                }
+            }
+            ActivityScreenCommand::LoadMoreClaimHistory => {
+                if !state.claim_history_open
+                    || activity.claim_history.loading
+                    || !activity.claim_history.has_more
+                    || activity.claim_history.display_limit_reached
+                    || activity.claim_history.records.len() >= MAX_ACTIVITY_HISTORY_CLIENT_RECORDS
+                    || matches!(
+                        state.claim_history_load_state,
+                        ActivityClaimHistoryLoadState::LoadingFirstPage
+                            | ActivityClaimHistoryLoadState::LoadingMore
+                    )
+                    || !state.accepts_active_main_world(entry.as_deref(), session.as_deref())
+                {
+                    continue;
+                }
+                request_next_claim_history_page(&mut state, &activity, &mut myserver_commands);
+            }
+            ActivityScreenCommand::CloseClaimHistory => {
+                if !state.claim_history_open {
+                    continue;
+                }
+                state.close_claim_history();
+                screen_commands.write(DeclarativeScreenHostCommand::CloseRoute {
+                    route: ACTIVITY_CLAIM_HISTORY_ROUTE.to_owned(),
+                });
+                clear_focus(&mut focus);
+            }
             ActivityScreenCommand::CloseList => {
-                if !state.list_open && !state.detail_open {
+                if !state.list_open && !state.detail_open && !state.claim_history_open {
                     continue;
                 }
                 state.reset_closed();
@@ -461,7 +624,7 @@ pub(super) fn apply_activity_screen_events(
     for event in events.read() {
         match event {
             ActivityEvent::ScopeChanged => {
-                if state.list_open || state.detail_open {
+                if state.list_open || state.detail_open || state.claim_history_open {
                     state.reset_closed();
                     close_activity_routes(&mut screen_commands);
                     clear_focus(&mut focus);
@@ -498,6 +661,15 @@ pub(super) fn apply_activity_screen_events(
                 state.detail_load_state = ActivityDetailLoadState::Ready;
                 state.detail_error = None;
             }
+            ActivityEvent::ClaimHistoryUpdated { .. } if state.claim_history_open => {
+                state.claim_history_load_state = if activity.claim_history.records.is_empty() {
+                    ActivityClaimHistoryLoadState::Empty
+                } else {
+                    ActivityClaimHistoryLoadState::Ready
+                };
+                state.claim_history_retry_mode = None;
+                state.claim_history_error = None;
+            }
             ActivityEvent::RequestFailed {
                 kind,
                 activity: failed_activity,
@@ -515,6 +687,10 @@ pub(super) fn apply_activity_screen_events(
                 {
                     state.detail_load_state = ActivityDetailLoadState::Failed;
                     state.detail_error = Some(error.clone());
+                }
+                ActivityRequestKind::History if state.claim_history_open => {
+                    state.claim_history_load_state = ActivityClaimHistoryLoadState::Failed;
+                    state.claim_history_error = Some(error.clone());
                 }
                 _ => {}
             },
@@ -537,6 +713,11 @@ pub(super) fn track_activity_screen_host_events(
             {
                 state.close_detail();
             }
+            DeclarativeScreenHostEvent::Closed { route, .. }
+                if route == ACTIVITY_CLAIM_HISTORY_ROUTE =>
+            {
+                state.close_claim_history();
+            }
             DeclarativeScreenHostEvent::Closed { route, .. } if route == ACTIVITY_LIST_ROUTE => {
                 state.reset_closed();
             }
@@ -550,12 +731,48 @@ fn close_activity_routes(commands: &mut MessageWriter<DeclarativeScreenHostComma
         LOTTERY_DETAIL_ROUTE,
         LOGIN_REWARD_DETAIL_ROUTE,
         ACTIVITY_DETAIL_ROUTE,
+        ACTIVITY_CLAIM_HISTORY_ROUTE,
         ACTIVITY_LIST_ROUTE,
     ] {
         commands.write(DeclarativeScreenHostCommand::CloseRoute {
             route: route.to_owned(),
         });
     }
+}
+
+fn request_first_claim_history_page(
+    state: &mut ActivityScreenState,
+    commands: &mut MessageWriter<MyServerCommand>,
+) {
+    state.claim_history_load_state = ActivityClaimHistoryLoadState::LoadingFirstPage;
+    state.claim_history_retry_mode = Some(ActivityClaimHistoryRetryMode::FirstPage);
+    state.claim_history_error = None;
+    commands.write(MyServerCommand::LoadActivityClaimHistory {
+        cursor: None,
+        limit: DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE,
+    });
+}
+
+fn request_next_claim_history_page(
+    state: &mut ActivityScreenState,
+    activity: &ActivityClientState,
+    commands: &mut MessageWriter<MyServerCommand>,
+) {
+    if activity.claim_history.display_limit_reached
+        || activity.claim_history.records.len() >= MAX_ACTIVITY_HISTORY_CLIENT_RECORDS
+    {
+        return;
+    }
+    let Some(cursor) = activity.claim_history.next_cursor.clone() else {
+        return;
+    };
+    state.claim_history_load_state = ActivityClaimHistoryLoadState::LoadingMore;
+    state.claim_history_retry_mode = Some(ActivityClaimHistoryRetryMode::LoadMore);
+    state.claim_history_error = None;
+    commands.write(MyServerCommand::LoadActivityClaimHistory {
+        cursor: Some(cursor),
+        limit: DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE,
+    });
 }
 
 fn detail_route_for_activity(
@@ -829,12 +1046,322 @@ mod tests {
     }
 
     #[test]
+    fn opening_claim_history_requests_only_the_first_history_page() {
+        let mut app = test_app(active_entry(6), active_session());
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(6);
+            state.list_open = true;
+            state.list_load_state = ActivityListLoadState::Ready;
+        }
+        app.world_mut()
+            .write_message(ActivityScreenCommand::OpenClaimHistory);
+        app.update();
+
+        assert!(matches!(
+            read_messages::<MyServerCommand>(&app).as_slice(),
+            [MyServerCommand::LoadActivityClaimHistory { cursor: None, limit }]
+                if *limit == DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE
+        ));
+        assert!(matches!(
+            read_messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+            [DeclarativeScreenHostCommand::OpenDetachedRoute { route }]
+                if route == ACTIVITY_CLAIM_HISTORY_ROUTE
+        ));
+        let state = app.world().resource::<ActivityScreenState>();
+        assert!(state.list_open);
+        assert!(state.claim_history_open);
+        assert_eq!(
+            state.claim_history_load_state,
+            ActivityClaimHistoryLoadState::LoadingFirstPage
+        );
+    }
+
+    #[test]
+    fn claim_history_load_more_is_deduplicated_and_keeps_the_cursor_out_of_screen_state() {
+        let mut app = test_app(active_entry(6), active_session());
+        {
+            let mut activity = app.world_mut().resource_mut::<ActivityClientState>();
+            activity.claim_history.has_more = true;
+            activity.claim_history.next_cursor = Some("opaque-next-page".to_owned());
+        }
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(6);
+            state.list_open = true;
+            state.claim_history_open = true;
+            state.claim_history_load_state = ActivityClaimHistoryLoadState::Ready;
+        }
+        app.world_mut()
+            .write_message(ActivityScreenCommand::LoadMoreClaimHistory);
+        app.world_mut()
+            .write_message(ActivityScreenCommand::LoadMoreClaimHistory);
+        app.update();
+
+        assert_eq!(read_messages::<MyServerCommand>(&app).len(), 1);
+        assert!(matches!(
+            read_messages::<MyServerCommand>(&app).as_slice(),
+            [MyServerCommand::LoadActivityClaimHistory {
+                cursor: Some(_),
+                limit,
+            }] if *limit == DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE
+        ));
+        assert_eq!(
+            app.world()
+                .resource::<ActivityScreenState>()
+                .claim_history_load_state,
+            ActivityClaimHistoryLoadState::LoadingMore
+        );
+    }
+
+    #[test]
+    fn claim_history_load_more_at_the_display_cap_sends_no_command() {
+        let mut app = test_app(active_entry(6), active_session());
+        {
+            let mut activity = app.world_mut().resource_mut::<ActivityClientState>();
+            activity.claim_history.records = (0..MAX_ACTIVITY_HISTORY_CLIENT_RECORDS)
+                .map(|index| crate::game::myserver::ActivityClaimHistoryRecord {
+                    activity_id: format!("activity-{index}"),
+                    version: 1,
+                    activity_type: "lottery".to_owned(),
+                    action_type: "draw".to_owned(),
+                    stage_id: None,
+                    created_at_ms: index as i64 + 1,
+                    completed_at_ms: None,
+                    status: crate::game::myserver::ActivityClaimHistoryStatus::Granted,
+                    rewards: Vec::new(),
+                })
+                .collect();
+            activity.claim_history.has_more = true;
+            activity.claim_history.next_cursor = Some("opaque-next-page".to_owned());
+        }
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(6);
+            state.list_open = true;
+            state.claim_history_open = true;
+            state.claim_history_load_state = ActivityClaimHistoryLoadState::Ready;
+        }
+        app.world_mut()
+            .write_message(ActivityScreenCommand::LoadMoreClaimHistory);
+        app.update();
+
+        assert!(read_messages::<MyServerCommand>(&app).is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<ActivityScreenState>()
+                .claim_history_load_state,
+            ActivityClaimHistoryLoadState::Ready
+        );
+    }
+
+    #[test]
+    fn closing_claim_history_returns_to_the_existing_list_without_reloading_it() {
+        let mut app = test_app(active_entry(6), active_session());
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(6);
+            state.list_open = true;
+            state.list_load_state = ActivityListLoadState::Ready;
+            state.claim_history_open = true;
+            state.claim_history_load_state = ActivityClaimHistoryLoadState::Ready;
+        }
+        app.world_mut()
+            .write_message(ActivityScreenCommand::CloseClaimHistory);
+        app.update();
+
+        assert!(read_messages::<MyServerCommand>(&app).is_empty());
+        assert!(matches!(
+            read_messages::<DeclarativeScreenHostCommand>(&app).as_slice(),
+            [DeclarativeScreenHostCommand::CloseRoute { route }]
+                if route == ACTIVITY_CLAIM_HISTORY_ROUTE
+        ));
+        let state = app.world().resource::<ActivityScreenState>();
+        assert!(state.list_open);
+        assert!(!state.claim_history_open);
+        assert_eq!(state.list_load_state, ActivityListLoadState::Ready);
+    }
+
+    #[test]
+    fn empty_claim_history_response_uses_the_repeat_empty_rendering_path() {
+        let mut app = test_app(active_entry(6), active_session());
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(6);
+            state.list_open = true;
+            state.claim_history_open = true;
+            state.claim_history_load_state = ActivityClaimHistoryLoadState::LoadingFirstPage;
+        }
+        app.world_mut()
+            .write_message(ActivityEvent::ClaimHistoryUpdated { appended: false });
+        app.update();
+
+        let state = app.world().resource::<ActivityScreenState>();
+        assert_eq!(
+            state.claim_history_load_state,
+            ActivityClaimHistoryLoadState::Empty
+        );
+        assert_eq!(
+            state
+                .claim_history_load_state
+                .collection_binding_value(false),
+            "ready"
+        );
+    }
+
+    #[test]
+    fn claim_history_load_more_failure_retries_the_existing_page_without_dropping_records() {
+        let mut app = test_app(active_entry(6), active_session());
+        {
+            let mut activity = app.world_mut().resource_mut::<ActivityClientState>();
+            activity.claim_history.records.push(
+                crate::game::myserver::ActivityClaimHistoryRecord {
+                    activity_id: "activity-1".to_owned(),
+                    version: 1,
+                    activity_type: "lottery".to_owned(),
+                    action_type: "draw".to_owned(),
+                    stage_id: None,
+                    created_at_ms: 1,
+                    completed_at_ms: Some(2),
+                    status: crate::game::myserver::ActivityClaimHistoryStatus::Granted,
+                    rewards: Vec::new(),
+                },
+            );
+            activity.claim_history.has_more = true;
+            activity.claim_history.next_cursor = Some("opaque-next-page".to_owned());
+        }
+        {
+            let mut state = app.world_mut().resource_mut::<ActivityScreenState>();
+            state.main_world_generation = Some(6);
+            state.list_open = true;
+            state.claim_history_open = true;
+            state.claim_history_load_state = ActivityClaimHistoryLoadState::Ready;
+        }
+        app.world_mut()
+            .write_message(ActivityScreenCommand::LoadMoreClaimHistory);
+        app.update();
+        app.world_mut().write_message(ActivityEvent::RequestFailed {
+            kind: ActivityRequestKind::History,
+            activity: None,
+            error: ActivityError {
+                kind: crate::game::myserver::ActivityErrorKind::Transport,
+                error_code: "ACTIVITY_TRANSPORT_FAILURE".to_owned(),
+                message_key: "activity.error.transport",
+                retryable: true,
+            },
+        });
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<ActivityScreenState>()
+                .claim_history_load_state,
+            ActivityClaimHistoryLoadState::Failed
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ActivityScreenState>()
+                .claim_history_retry_mode,
+            Some(ActivityClaimHistoryRetryMode::LoadMore)
+        );
+        app.world_mut()
+            .write_message(ActivityScreenCommand::RetryClaimHistory);
+        app.update();
+
+        let state = app.world().resource::<ActivityScreenState>();
+        assert_eq!(
+            state.claim_history_load_state,
+            ActivityClaimHistoryLoadState::LoadingMore
+        );
+        assert!(state.claim_history_error.is_none());
+        assert_eq!(
+            app.world()
+                .resource::<ActivityClientState>()
+                .claim_history
+                .records
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn claim_history_promotion_registration_matches_fixed_host_contract() {
+        const REGISTRATION_SOURCE: &str = include_str!(
+            "../../../../assets/ui/documents/approved/activity/main_world_activity_claim_history.promotion.v1.json"
+        );
+        let contract = ActivityScreenHostContract::default();
+        let host = activity_claim_history_declarative_screen_host(&contract);
+        let registration = crate::framework::ui::document::parse_approved_document_registration(
+            REGISTRATION_SOURCE,
+        )
+        .unwrap();
+        let audit = registration
+            .audit_report(ACTIVITY_CLAIM_HISTORY_DOCUMENT_SOURCE)
+            .unwrap();
+
+        assert_eq!(
+            host.document_id.as_str(),
+            ACTIVITY_CLAIM_HISTORY_DOCUMENT_ID
+        );
+        assert_eq!(host.owner, OWNER_MAIN_WORLD_ACTIVITY_CLAIM_HISTORY);
+        assert_eq!(host.route, ACTIVITY_CLAIM_HISTORY_ROUTE);
+        assert_eq!(host.action_allowlist.len(), 4);
+        assert_eq!(
+            host.binding_schema.len(),
+            contract.claim_history_bindings.len()
+        );
+        assert_eq!(
+            registration.owner(),
+            OWNER_MAIN_WORLD_ACTIVITY_CLAIM_HISTORY.as_str()
+        );
+        assert_eq!(registration.route(), ACTIVITY_CLAIM_HISTORY_ROUTE);
+        assert_eq!(audit.actions.len(), 4);
+        let owner_binding_count = contract
+            .claim_history_bindings
+            .values()
+            .filter(|binding| {
+                binding.scope == crate::framework::ui::document::UiBindingScope::Owner
+            })
+            .count();
+        assert_eq!(audit.bindings.len(), owner_binding_count);
+    }
+
+    #[test]
+    fn activity_list_promotion_registration_keeps_the_claim_history_entry() {
+        const REGISTRATION_SOURCE: &str = include_str!(
+            "../../../../assets/ui/documents/approved/activity/main_world_activity_list.promotion.v1.json"
+        );
+        let contract = ActivityScreenHostContract::default();
+        let host = activity_list_declarative_screen_host(&contract);
+        let registration = crate::framework::ui::document::parse_approved_document_registration(
+            REGISTRATION_SOURCE,
+        )
+        .unwrap();
+        let audit = registration
+            .audit_report(ACTIVITY_LIST_DOCUMENT_SOURCE)
+            .unwrap();
+
+        assert_eq!(host.action_allowlist.len(), 4);
+        assert_eq!(host.binding_schema.len(), contract.list_bindings.len());
+        assert_eq!(audit.actions.len(), 4);
+        let owner_binding_count = contract
+            .list_bindings
+            .values()
+            .filter(|binding| {
+                binding.scope == crate::framework::ui::document::UiBindingScope::Owner
+            })
+            .count();
+        assert_eq!(audit.bindings.len(), owner_binding_count);
+    }
+
+    #[test]
     fn approved_activity_documents_parse_with_blocking_scroll_surfaces() {
         use crate::framework::ui::document::UiDocument;
 
         for source in [
             ACTIVITY_LIST_DOCUMENT_SOURCE,
             ACTIVITY_DETAIL_DOCUMENT_SOURCE,
+            ACTIVITY_CLAIM_HISTORY_DOCUMENT_SOURCE,
             LOGIN_REWARD_DETAIL_DOCUMENT_SOURCE,
             LOTTERY_DETAIL_DOCUMENT_SOURCE,
         ] {

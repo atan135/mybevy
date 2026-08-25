@@ -20,6 +20,8 @@ pub(in crate::game) const OWNER_MAIN_WORLD_ACTIVITY_LIST: UiOwnerId =
     UiOwnerId::new("main_world_activity_list");
 pub(in crate::game) const OWNER_MAIN_WORLD_ACTIVITY_DETAIL: UiOwnerId =
     UiOwnerId::new("main_world_activity_detail");
+pub(in crate::game) const OWNER_MAIN_WORLD_ACTIVITY_CLAIM_HISTORY: UiOwnerId =
+    UiOwnerId::new("main_world_activity_claim_history");
 pub(in crate::game) const OWNER_MAIN_WORLD_LOGIN_REWARD_DETAIL: UiOwnerId =
     UiOwnerId::new("main_world_login_reward_detail");
 pub(in crate::game) const OWNER_MAIN_WORLD_LOTTERY_DETAIL: UiOwnerId =

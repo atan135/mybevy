@@ -9,6 +9,7 @@
     "activity_list.status": { "scope": "owner", "value_type": { "kind": "string" } },
     "activity_list.retry_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
     "activity_list.retry_loading": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "activity_list.claim_history_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
     "activity_list.error": { "scope": "owner", "value_type": { "kind": "string" } },
     "activity_list.error_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
     "activity_list.item.activity_id": { "scope": "item", "value_type": { "kind": "string" } },
@@ -40,6 +41,7 @@
               { "type": "text", "id": "main_world_activity_list.title", "content": { "i18n_key": "main_world_activity_list.title", "fallback": "ACTIVITIES" }, "style": { "text_role": "subtitle" } },
               { "type": "text", "id": "main_world_activity_list.status", "content": { "binding_path": "activity_list.status", "fallback": "Activities" }, "style": { "text_role": "caption" } }
             ] },
+            { "type": "button", "id": "main_world_activity_list.claim_history", "variant": "secondary", "label": { "i18n_key": "main_world_activity_list.action.claim_history", "fallback": "My Claim History" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "activity_list.claim_history_disabled" } }, "on_click": { "action": "main_world_activity_list.claim_history" } },
             { "type": "button", "id": "main_world_activity_list.close", "variant": "secondary", "label": { "i18n_key": "main_world_activity_list.action.close", "fallback": "Close" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_activity_list.close" } }
           ] },
           { "type": "container", "id": "main_world_activity_list.error_panel", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 8.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "activity_error", "bindings": { "visibility": "activity_list.error_visibility" } }, "children": [

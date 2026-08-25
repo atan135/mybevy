@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "document_id": "game.main_world_activity_claim_history",
+  "metadata": { "title": "Claim History", "budget_profile": "mobile_baseline_v1" },
+  "assets": {},
+  "bindings": {
+    "activity_claim_history.collection_state": { "scope": "owner", "value_type": { "kind": "enum", "values": ["loading", "ready", "error"] } },
+    "activity_claim_history.items": { "scope": "owner", "value_type": { "kind": "list", "item": { "kind": "record", "fields": { "row_key": { "kind": "string" }, "activity": { "kind": "string" }, "version": { "kind": "number" }, "action": { "kind": "string" }, "time": { "kind": "string" }, "status": { "kind": "string" }, "rewards": { "kind": "string" } } }, "max_items": 60 } },
+    "activity_claim_history.status": { "scope": "owner", "value_type": { "kind": "string" } },
+    "activity_claim_history.error": { "scope": "owner", "value_type": { "kind": "string" } },
+    "activity_claim_history.error_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "activity_claim_history.refresh_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "activity_claim_history.retry_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "activity_claim_history.retry_loading": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "activity_claim_history.load_more_disabled": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "activity_claim_history.load_more_visibility": { "scope": "owner", "value_type": { "kind": "visibility" } },
+    "activity_claim_history.loading_more": { "scope": "owner", "value_type": { "kind": "bool" } },
+    "activity_claim_history.item.row_key": { "scope": "item", "value_type": { "kind": "string" } },
+    "activity_claim_history.item.activity": { "scope": "item", "value_type": { "kind": "string" } },
+    "activity_claim_history.item.version": { "scope": "item", "value_type": { "kind": "number" } },
+    "activity_claim_history.item.action": { "scope": "item", "value_type": { "kind": "string" } },
+    "activity_claim_history.item.time": { "scope": "item", "value_type": { "kind": "string" } },
+    "activity_claim_history.item.status": { "scope": "item", "value_type": { "kind": "string" } },
+    "activity_claim_history.item.rewards": { "scope": "item", "value_type": { "kind": "string" } }
+  },
+  "styles": {
+    "history_shell": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#142126f2" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#789094aa" } }, "corner_radius": { "top_left": { "kind": "literal", "value": 6.0 }, "top_right": { "kind": "literal", "value": 6.0 }, "bottom_right": { "kind": "literal", "value": 6.0 }, "bottom_left": { "kind": "literal", "value": 6.0 } } } },
+    "history_row": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#1c3035ee" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#49696dcc" } }, "corner_radius": { "top_left": { "kind": "literal", "value": 4.0 }, "top_right": { "kind": "literal", "value": 4.0 }, "bottom_right": { "kind": "literal", "value": 4.0 }, "bottom_left": { "kind": "literal", "value": 4.0 } } } },
+    "history_error": { "properties": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#3a1b20e8" } }, "border": { "width": { "kind": "literal", "value": 1.0 }, "color": { "kind": "literal", "value": "#dc666ecc" } } } }
+  },
+  "root": {
+    "type": "container", "id": "main_world_activity_claim_history.root",
+    "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "direction": "column" },
+    "style": { "inline": { "background": { "kind": "solid", "color": { "kind": "literal", "value": "#071014c7" } } } },
+    "children": [{
+      "type": "scroll", "id": "main_world_activity_claim_history.scroll", "block_lower": true, "max_height": 2400.0,
+      "layout": { "width": { "percent": 100.0 }, "height": { "percent": 100.0 }, "padding": { "all": { "px": 20.0 } }, "overflow": { "y": "scroll" }, "align_items": "center", "justify_content": "center" },
+      "component": { "children": [{
+        "type": "container", "id": "main_world_activity_claim_history.panel",
+        "layout": { "width": { "percent": 100.0 }, "max_width": { "px": 920.0 }, "min_width": { "px": 280.0 }, "padding": { "all": { "px": 18.0 } }, "direction": "column", "gap": { "px": 12.0 }, "flex_shrink": 0.0 }, "style": { "component": "history_shell" },
+        "children": [
+          { "type": "container", "id": "main_world_activity_claim_history.header", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 8.0 } }, "children": [
+            { "type": "container", "id": "main_world_activity_claim_history.heading", "layout": { "direction": "column", "gap": { "px": 3.0 }, "flex_grow": 1.0, "min_width": { "px": 180.0 } }, "children": [
+              { "type": "text", "id": "main_world_activity_claim_history.title", "content": { "i18n_key": "main_world_activity_claim_history.title", "fallback": "CLAIM HISTORY" }, "style": { "text_role": "subtitle" } },
+              { "type": "text", "id": "main_world_activity_claim_history.status", "content": { "binding_path": "activity_claim_history.status", "fallback": "Claim history" }, "style": { "text_role": "caption" } }
+            ] },
+            { "type": "button", "id": "main_world_activity_claim_history.refresh", "variant": "secondary", "label": { "i18n_key": "main_world_activity_claim_history.action.refresh", "fallback": "Refresh" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "activity_claim_history.refresh_disabled" } }, "on_click": { "action": "main_world_activity_claim_history.refresh" } },
+            { "type": "button", "id": "main_world_activity_claim_history.close", "variant": "secondary", "label": { "i18n_key": "main_world_activity_claim_history.action.close", "fallback": "Back" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "on_click": { "action": "main_world_activity_claim_history.close" } }
+          ] },
+          { "type": "container", "id": "main_world_activity_claim_history.error_panel", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 8.0 }, "padding": { "all": { "px": 10.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "history_error", "bindings": { "visibility": "activity_claim_history.error_visibility" } }, "children": [
+            { "type": "text", "id": "main_world_activity_claim_history.error", "layout": { "flex_grow": 1.0, "min_width": { "px": 170.0 } }, "content": { "binding_path": "activity_claim_history.error", "fallback": "Claim history request failed" }, "style": { "text_role": "caption" } },
+            { "type": "button", "id": "main_world_activity_claim_history.retry", "variant": "secondary", "label": { "i18n_key": "main_world_activity_claim_history.action.retry", "fallback": "Retry" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "activity_claim_history.retry_disabled", "loading": "activity_claim_history.retry_loading" } }, "on_click": { "action": "main_world_activity_claim_history.retry" } }
+          ] },
+          { "type": "container", "id": "main_world_activity_claim_history.items", "repeat": { "source": "activity_claim_history.items", "key": "row_key", "item_bindings": { "activity_claim_history.item.row_key": "row_key", "activity_claim_history.item.activity": "activity", "activity_claim_history.item.version": "version", "activity_claim_history.item.action": "action", "activity_claim_history.item.time": "time", "activity_claim_history.item.status": "status", "activity_claim_history.item.rewards": "rewards" }, "state": "activity_claim_history.collection_state", "loading": { "i18n_key": "main_world_activity_claim_history.loading", "fallback": "Loading claim history..." }, "empty": { "i18n_key": "main_world_activity_claim_history.empty", "fallback": "No claim records are available." }, "error": { "i18n_key": "main_world_activity_claim_history.error", "fallback": "Claim history could not be loaded." } }, "layout": { "width": { "percent": 100.0 }, "direction": "column", "gap": { "px": 8.0 } }, "children": [
+            { "type": "container", "id": "main_world_activity_claim_history.item.row", "layout": { "width": { "percent": 100.0 }, "direction": "row", "wrap": "wrap", "align_items": "center", "justify_content": "space_between", "gap": { "px": 10.0 }, "padding": { "all": { "px": 12.0 } }, "border": { "all": { "px": 1.0 } } }, "style": { "component": "history_row" }, "children": [
+              { "type": "container", "id": "main_world_activity_claim_history.item.copy", "layout": { "direction": "column", "gap": { "px": 3.0 }, "flex_grow": 1.0, "min_width": { "px": 180.0 } }, "children": [
+                { "type": "text", "id": "main_world_activity_claim_history.item.activity", "content": { "binding_path": "activity_claim_history.item.activity", "fallback": "Activity" }, "style": { "text_role": "body" } },
+                { "type": "text", "id": "main_world_activity_claim_history.item.version", "content": { "binding_path": "activity_claim_history.item.version", "fallback": "" }, "style": { "text_role": "caption" } },
+                { "type": "text", "id": "main_world_activity_claim_history.item.action", "content": { "binding_path": "activity_claim_history.item.action", "fallback": "" }, "style": { "text_role": "caption" } },
+                { "type": "text", "id": "main_world_activity_claim_history.item.time", "content": { "binding_path": "activity_claim_history.item.time", "fallback": "" }, "style": { "text_role": "caption" } },
+                { "type": "text", "id": "main_world_activity_claim_history.item.status", "content": { "binding_path": "activity_claim_history.item.status", "fallback": "" }, "style": { "text_role": "caption" } },
+                { "type": "text", "id": "main_world_activity_claim_history.item.rewards", "content": { "binding_path": "activity_claim_history.item.rewards", "fallback": "" }, "style": { "text_role": "caption" } }
+              ] }
+            ] }
+          ] },
+          { "type": "container", "id": "main_world_activity_claim_history.load_more_panel", "layout": { "width": { "percent": 100.0 }, "justify_content": "center", "padding": { "top": { "px": 4.0 } } }, "style": { "bindings": { "visibility": "activity_claim_history.load_more_visibility" } }, "children": [
+            { "type": "button", "id": "main_world_activity_claim_history.load_more", "variant": "secondary", "label": { "i18n_key": "main_world_activity_claim_history.action.load_more", "fallback": "Load More" }, "layout": { "height": { "px": 48.0 }, "min_height": { "px": 48.0 } }, "component": { "bindings": { "disabled": "activity_claim_history.load_more_disabled", "loading": "activity_claim_history.loading_more" } }, "on_click": { "action": "main_world_activity_claim_history.load_more" } }
+          ] }
+        ]
+      }] }
+    }]
+  },
+  "states": [],
+  "responsive": [
+    { "id": "short_landscape", "priority": 100, "when": { "height_class": "short", "orientation": "landscape" }, "overrides": [
+      { "node_id": "main_world_activity_claim_history.scroll", "set": { "layout": { "padding": { "all": { "px": 8.0 } }, "justify_content": "start" } } },
+      { "node_id": "main_world_activity_claim_history.panel", "set": { "layout": { "padding": { "all": { "px": 12.0 } }, "gap": { "px": 8.0 } } } }
+    ] }
+  ]
+}

@@ -12,7 +12,8 @@ pub(crate) use activity::{
     ActivityKey, ActivityPlayerView, ActivityPlugin, ActivityProgressView, ActivityRequestKind,
     ActivityRequestTracker, ActivityRewardSummary, ActivitySummary,
     DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE, LoginRewardPlayerView, LoginRewardStageView,
-    LotteryPlayerView, LotteryStateView, MAX_ACTIVITY_HISTORY_PAGE_SIZE,
+    LotteryPlayerView, LotteryStateView, MAX_ACTIVITY_HISTORY_CLIENT_RECORDS,
+    MAX_ACTIVITY_HISTORY_PAGE_SIZE,
 };
 pub(crate) use plugin::{MyServerPlugin, MyServerUpdateSet};
 #[cfg(test)]

@@ -22,10 +22,13 @@ use super::{ActivityScreenCommand, ActivityScreenState};
 
 pub(super) const ACTION_ACTIVITY_LIST_RETRY: &str = "main_world_activity_list.retry";
 pub(super) const ACTION_ACTIVITY_LIST_SELECT: &str = "main_world_activity_list.select";
+pub(super) const ACTION_ACTIVITY_LIST_CLAIM_HISTORY: &str =
+    "main_world_activity_list.claim_history";
 pub(super) const ACTION_ACTIVITY_LIST_CLOSE: &str = "main_world_activity_list.close";
 
 const RETRY_NODE: &str = "main_world_activity_list.retry";
 const SELECT_NODE: &str = "main_world_activity_list.item.open";
+const CLAIM_HISTORY_NODE: &str = "main_world_activity_list.claim_history";
 const CLOSE_NODE: &str = "main_world_activity_list.close";
 
 pub(super) fn activity_list_binding_schema() -> BTreeMap<UiBindingPath, UiBindingDeclaration> {
@@ -57,6 +60,7 @@ pub(super) fn activity_list_binding_schema() -> BTreeMap<UiBindingPath, UiBindin
         ("activity_list.status", UiBindingType::String),
         ("activity_list.retry_disabled", UiBindingType::Bool),
         ("activity_list.retry_loading", UiBindingType::Bool),
+        ("activity_list.claim_history_disabled", UiBindingType::Bool),
         ("activity_list.error", UiBindingType::String),
         ("activity_list.error_visibility", UiBindingType::Visibility),
     ]);
@@ -117,6 +121,13 @@ pub(super) fn activity_list_action_descriptors() -> Vec<UiActionDescriptor> {
             business_command(ACTION_ACTIVITY_LIST_CLOSE),
         )
         .with_source(UiNodeId::from_str(CLOSE_NODE).unwrap()),
+        UiActionDescriptor::new(
+            UiActionId::from_str(ACTION_ACTIVITY_LIST_CLAIM_HISTORY).unwrap(),
+            document_id(),
+            OWNER_MAIN_WORLD_ACTIVITY_LIST.as_str(),
+            business_command(ACTION_ACTIVITY_LIST_CLAIM_HISTORY),
+        )
+        .with_source(UiNodeId::from_str(CLAIM_HISTORY_NODE).unwrap()),
     ]
 }
 
@@ -157,6 +168,16 @@ pub(super) fn handle_activity_list_document_actions(
                     activity_id,
                     version,
                 });
+            }
+            ACTION_ACTIVITY_LIST_CLAIM_HISTORY
+                if matches_zero_param_action(
+                    action,
+                    ACTION_ACTIVITY_LIST_CLAIM_HISTORY,
+                    CLAIM_HISTORY_NODE,
+                ) && !state.detail_open
+                    && !state.claim_history_open =>
+            {
+                commands.write(ActivityScreenCommand::OpenClaimHistory);
             }
             ACTION_ACTIVITY_LIST_CLOSE
                 if matches_zero_param_action(action, ACTION_ACTIVITY_LIST_CLOSE, CLOSE_NODE) =>
@@ -208,6 +229,10 @@ pub(super) fn sync_activity_list_bindings(
         (
             "activity_list.retry_loading",
             UiBindingValue::Bool(list_is_loading),
+        ),
+        (
+            "activity_list.claim_history_disabled",
+            UiBindingValue::Bool(state.detail_open || state.claim_history_open),
         ),
         ("activity_list.error", UiBindingValue::String(error)),
         (

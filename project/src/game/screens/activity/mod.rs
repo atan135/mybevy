@@ -1,3 +1,4 @@
+mod claim_history;
 mod detail;
 mod host;
 mod list;
@@ -10,8 +11,8 @@ use crate::framework::ui::{core::binding::UiBindingSystems, document::UiDocument
 use crate::game::myserver::MyServerUpdateSet;
 
 pub(in crate::game) use host::{
-    ACTIVITY_DETAIL_ROUTE, ACTIVITY_LIST_ROUTE, ActivityScreenCommand, ActivityScreenState,
-    LOGIN_REWARD_DETAIL_ROUTE, LOTTERY_DETAIL_ROUTE,
+    ACTIVITY_CLAIM_HISTORY_ROUTE, ACTIVITY_DETAIL_ROUTE, ACTIVITY_LIST_ROUTE,
+    ActivityScreenCommand, ActivityScreenState, LOGIN_REWARD_DETAIL_ROUTE, LOTTERY_DETAIL_ROUTE,
 };
 
 pub(super) struct ActivityScreensPlugin;
@@ -33,6 +34,8 @@ impl Plugin for ActivityScreensPlugin {
                         .after(UiDocumentRuntimeSystems::Reconcile),
                     list::handle_activity_list_document_actions
                         .after(UiDocumentRuntimeSystems::Reconcile),
+                    claim_history::handle_activity_claim_history_document_actions
+                        .after(UiDocumentRuntimeSystems::Reconcile),
                     detail::handle_activity_detail_document_actions
                         .after(UiDocumentRuntimeSystems::Reconcile),
                     login_reward::handle_login_reward_document_actions
@@ -47,6 +50,12 @@ impl Plugin for ActivityScreensPlugin {
             .add_systems(
                 Update,
                 list::sync_activity_list_bindings
+                    .after(MyServerUpdateSet::AutoClient)
+                    .before(UiBindingSystems::Apply),
+            )
+            .add_systems(
+                Update,
+                claim_history::sync_activity_claim_history_bindings
                     .after(MyServerUpdateSet::AutoClient)
                     .before(UiBindingSystems::Apply),
             )

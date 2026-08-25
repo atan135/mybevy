@@ -6,6 +6,7 @@
     "actions": [
       { "id": "main_world_activity_list.retry", "sources": ["main_world_activity_list.retry"] },
       { "id": "main_world_activity_list.select", "sources": ["main_world_activity_list.item.open"] },
+      { "id": "main_world_activity_list.claim_history", "sources": ["main_world_activity_list.claim_history"] },
       { "id": "main_world_activity_list.close", "sources": ["main_world_activity_list.close"] }
     ],
     "bindings": [
@@ -13,15 +14,9 @@
       { "path": "activity_list.error", "scope": "owner", "value_type": { "kind": "string" } },
       { "path": "activity_list.error_visibility", "scope": "owner", "value_type": { "kind": "visibility" } },
       { "path": "activity_list.items", "scope": "owner", "value_type": { "kind": "list", "item": { "kind": "record", "fields": { "activity_id": { "kind": "string" }, "version": { "kind": "number" }, "title": { "kind": "string" }, "status": { "kind": "string" }, "time": { "kind": "string" }, "claim_deadline": { "kind": "string" }, "disabled": { "kind": "bool" } } }, "max_items": 64 } },
-      { "path": "activity_list.item.activity_id", "scope": "item", "value_type": { "kind": "string" } },
-      { "path": "activity_list.item.claim_deadline", "scope": "item", "value_type": { "kind": "string" } },
-      { "path": "activity_list.item.disabled", "scope": "item", "value_type": { "kind": "bool" } },
-      { "path": "activity_list.item.status", "scope": "item", "value_type": { "kind": "string" } },
-      { "path": "activity_list.item.time", "scope": "item", "value_type": { "kind": "string" } },
-      { "path": "activity_list.item.title", "scope": "item", "value_type": { "kind": "string" } },
-      { "path": "activity_list.item.version", "scope": "item", "value_type": { "kind": "number" } },
       { "path": "activity_list.retry_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "activity_list.retry_loading", "scope": "owner", "value_type": { "kind": "bool" } },
+      { "path": "activity_list.claim_history_disabled", "scope": "owner", "value_type": { "kind": "bool" } },
       { "path": "activity_list.status", "scope": "owner", "value_type": { "kind": "string" } }
     ],
     "resources": [],

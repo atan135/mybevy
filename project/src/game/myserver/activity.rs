@@ -15,6 +15,9 @@ use super::{MyServerEvent, MyServerSession, MyServerUpdateSet};
 pub const MAX_ACTIVITY_PROGRESS_JSON_BYTES: usize = 64 * 1024;
 pub const DEFAULT_ACTIVITY_HISTORY_PAGE_SIZE: u32 = 20;
 pub const MAX_ACTIVITY_HISTORY_PAGE_SIZE: u32 = 50;
+/// The activity history screen uses a single bounded repeat surface. Retain no
+/// more records than that surface can render across all loaded pages.
+pub const MAX_ACTIVITY_HISTORY_CLIENT_RECORDS: usize = 60;
 const MAX_ACTIVITY_VIEW_STRING_BYTES: usize = 128;
 const MAX_ACTIVITY_ERROR_CODE_BYTES: usize = 96;
 const MAX_LOGIN_REWARD_STAGES: usize = 64;
@@ -154,6 +157,7 @@ pub struct ActivityClaimHistory {
     pub next_cursor: Option<String>,
     pub has_more: bool,
     pub loading: bool,
+    pub display_limit_reached: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1056,13 +1060,24 @@ fn apply_claim_history_response(
         return response_mismatch(state, events, tracked.kind, None);
     };
 
+    let available = if tracked.history_load_more {
+        MAX_ACTIVITY_HISTORY_CLIENT_RECORDS.saturating_sub(state.claim_history.records.len())
+    } else {
+        MAX_ACTIVITY_HISTORY_CLIENT_RECORDS
+    };
+    let response_was_truncated = records.len() > available;
+    let records = records.into_iter().take(available).collect::<Vec<_>>();
     if tracked.history_load_more {
         state.claim_history.records.extend(records);
     } else {
         state.claim_history.records = records;
     }
-    state.claim_history.next_cursor = next_cursor;
-    state.claim_history.has_more = response.has_more;
+    let display_limit_reached = response_was_truncated
+        || (response.has_more
+            && state.claim_history.records.len() >= MAX_ACTIVITY_HISTORY_CLIENT_RECORDS);
+    state.claim_history.next_cursor = (!display_limit_reached).then_some(next_cursor).flatten();
+    state.claim_history.has_more = response.has_more && !display_limit_reached;
+    state.claim_history.display_limit_reached = display_limit_reached;
     state.last_error = None;
     events.write(ActivityEvent::ClaimHistoryUpdated {
         appended: tracked.history_load_more,
@@ -2079,5 +2094,86 @@ mod tests {
             state.last_error.as_ref().map(|error| error.kind),
             Some(ActivityErrorKind::ResponseMismatch)
         );
+    }
+
+    #[test]
+    fn history_cache_caps_multi_page_results_and_stops_pagination() {
+        let connection_id = ConnectionId::from_raw(12);
+        let mut app = App::new();
+        app.add_plugins(bevy::prelude::MinimalPlugins)
+            .init_resource::<MyServerSession>()
+            .add_message::<MyServerEvent>()
+            .add_plugins(ActivityPlugin);
+        {
+            let mut session = app.world_mut().resource_mut::<MyServerSession>();
+            session.character_id = Some("character-1".to_owned());
+            session.connection_id = Some(connection_id);
+            session.authenticated = true;
+        }
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>().clone();
+        app.world_mut()
+            .resource_mut::<ActivityClientState>()
+            .record_request(
+                &session,
+                11,
+                ActivityRequestKind::History,
+                None,
+                None,
+                None,
+                None,
+                false,
+            );
+        app.world_mut()
+            .write_message(MyServerEvent::ActivityClaimHistoryResponse {
+                seq: 11,
+                connection_id,
+                response: pb::ActivityClaimHistoryRes {
+                    ok: true,
+                    error_code: String::new(),
+                    records: vec![history_record(); MAX_ACTIVITY_HISTORY_RECORDS],
+                    next_cursor: "second-page".to_owned(),
+                    has_more: true,
+                },
+            });
+        app.update();
+
+        let session = app.world().resource::<MyServerSession>().clone();
+        app.world_mut()
+            .resource_mut::<ActivityClientState>()
+            .record_request(
+                &session,
+                12,
+                ActivityRequestKind::History,
+                None,
+                None,
+                None,
+                None,
+                true,
+            );
+        app.world_mut()
+            .write_message(MyServerEvent::ActivityClaimHistoryResponse {
+                seq: 12,
+                connection_id,
+                response: pb::ActivityClaimHistoryRes {
+                    ok: true,
+                    error_code: String::new(),
+                    records: vec![history_record(); MAX_ACTIVITY_HISTORY_RECORDS],
+                    next_cursor: "third-page".to_owned(),
+                    has_more: true,
+                },
+            });
+        app.update();
+
+        let state = app.world().resource::<ActivityClientState>();
+        assert_eq!(
+            state.claim_history.records.len(),
+            MAX_ACTIVITY_HISTORY_CLIENT_RECORDS
+        );
+        assert!(state.claim_history.display_limit_reached);
+        assert!(!state.claim_history.has_more);
+        assert!(state.claim_history.next_cursor.is_none());
+        assert!(!state.claim_history.loading);
     }
 }
