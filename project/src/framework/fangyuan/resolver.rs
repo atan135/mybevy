@@ -566,6 +566,11 @@ fn parse_json<T: for<'de> Deserialize<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::fangyuan::{
+        FANGYUAN_HOME_PREVIEW_BLUEPRINT_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanBlueprint,
+        FangyuanSceneLayout, load_fangyuan_home_prefab_palette,
+        load_fangyuan_minimal_player_blueprint,
+    };
     use std::path::Path;
 
     fn asset(path: &str) -> Vec<u8> {
@@ -582,6 +587,10 @@ mod tests {
     fn current_catalog_bundle_builds_separate_registry_with_canonical_indices() {
         let registry = FangyuanSurfacePresetRegistry::load_from_paths(&paths()).unwrap();
         assert_eq!(registry.len(), 256);
+        let noise: FangyuanNoiseAtlasCatalog =
+            serde_json::from_slice(&asset("assets/fangyuan/atlases/noise/noise_atlas.json"))
+                .unwrap();
+        assert_eq!(noise.tiles.len(), 122);
         assert_eq!(
             registry.preset_ids().first().unwrap(),
             "material:surface/x00/y00"
@@ -600,6 +609,122 @@ mod tests {
                 .preset_index,
             255
         );
+        assert_ne!(registry.cache_identity().content_hash, 0);
+        assert_ne!(registry.cache_identity().dependency_hash, 0);
+        assert_ne!(registry.cache_identity().cache_hash, 0);
+        assert_eq!(
+            registry.default_surface().preset_id,
+            FANGYUAN_SURFACE_PRESET_DEFAULT_ID
+        );
+        assert_eq!(registry.default_surface().preset_index, 0);
+    }
+
+    #[test]
+    fn fangyuan_atlas_integration_loads_legacy_assets_and_fixture_fallback() {
+        let player = load_fangyuan_minimal_player_blueprint().unwrap();
+        let home = FangyuanBlueprint::load_first_package_ron(FANGYUAN_HOME_PREVIEW_BLUEPRINT_PATH)
+            .unwrap();
+        let palette = load_fangyuan_home_prefab_palette().unwrap();
+        let layout =
+            FangyuanSceneLayout::load_first_package_ron(FANGYUAN_HOME_SCENE_LAYOUT_PATH).unwrap();
+        assert_eq!(player.name, "minimal_player");
+        assert_eq!(home.name, "home_preview");
+        assert_eq!(palette.name, "home_prefabs");
+        layout.validate_against_palette(&palette).unwrap();
+
+        let fixture = FangyuanBlueprint::load_first_package_ron(
+            "fangyuan/avatars/surface_contract_fixture.ron",
+        )
+        .unwrap();
+        let primitives = fixture.compile().unwrap();
+        assert_eq!(primitives.len(), 4);
+        assert_eq!(
+            primitives.primitives()[0].kind(),
+            super::super::FangyuanPrimitiveKind::Cube
+        );
+        assert_eq!(
+            primitives.primitives()[1].kind(),
+            super::super::FangyuanPrimitiveKind::Sphere
+        );
+
+        let registry = FangyuanSurfacePresetRegistry::load_from_paths(&paths()).unwrap();
+        assert_eq!(
+            registry
+                .resolve(Some("material:surface/x00/y00"))
+                .preset
+                .preset_index,
+            0
+        );
+        assert_eq!(
+            registry
+                .resolve(Some("material:surface/x01/y00"))
+                .preset
+                .preset_index,
+            1
+        );
+        assert_eq!(
+            registry
+                .resolve(Some("material:surface/x02/y00"))
+                .preset
+                .preset_index,
+            2
+        );
+        let noise = registry.resolve_with_noise(
+            Some("material:surface/x00/y00"),
+            true,
+            Some("surface_contract_fixture.ron:primitives[0]".to_string()),
+        );
+        assert!(noise.preset.flags.noise_available);
+        let fallback = registry.resolve(Some("material:surface/x99/y99"));
+        assert_eq!(
+            fallback.resolved_preset_id,
+            FANGYUAN_SURFACE_PRESET_DEFAULT_ID
+        );
+        assert_eq!(
+            fallback.fallback_reason,
+            Some(FangyuanSurfacePresetFallbackReason::UnknownPresetId)
+        );
+    }
+
+    #[test]
+    fn invalid_catalog_fails_before_registry_construction() {
+        let (mut surface, presets, noise): (
+            FangyuanSurfaceAtlasCatalog,
+            FangyuanSurfaceMaterialPresetCatalog,
+            FangyuanNoiseAtlasCatalog,
+        ) = (
+            serde_json::from_str(
+                &std::fs::read_to_string(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("assets/fangyuan/atlases/base/surface_atlas.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            serde_json::from_str(
+                &std::fs::read_to_string(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("assets/fangyuan/atlases/base/surface_material_presets.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            serde_json::from_str(
+                &std::fs::read_to_string(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("assets/fangyuan/atlases/noise/noise_atlas.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        surface.tiles[0].tile_id = "surface_x99_y99".to_string();
+        let result =
+            FangyuanSurfacePresetRegistry::from_catalog_bundle(surface, presets, noise, &paths());
+        assert!(matches!(
+            result,
+            Err(FangyuanSurfacePresetRegistryError::ValidationFailed(_))
+        ));
     }
 
     #[test]

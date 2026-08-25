@@ -1,0 +1,38 @@
+(
+    version: "1",
+    name: "surface_contract_fixture",
+    description: "Minimal atlas contract fixture for resolver integration tests.",
+    max_primitives: 8,
+    bounds: (width: 8.0, depth: 4.0, height: 6.0),
+    primitives: [
+        (
+            kind: "cube",
+            position: [-1.5, 0.5, 0.0],
+            size: [1.0, 1.0, 1.0],
+            color: [0.75, 0.25, 0.2, 1.0],
+            surface_material_preset_id: Some("material:surface/x00/y00"),
+            surface_noise_enabled: true,
+        ),
+        (
+            kind: "sphere",
+            position: [0.0, 0.75, 0.0],
+            size: [1.5, 1.5, 1.5],
+            color: [0.2, 0.55, 0.9, 1.0],
+            surface_material_preset_id: Some("material:surface/x01/y00"),
+        ),
+        (
+            kind: "cube",
+            position: [1.5, 0.5, 0.0],
+            size: [1.0, 1.0, 1.0],
+            color: [0.2, 0.8, 0.35, 1.0],
+            surface_material_preset_id: Some("material:surface/x02/y00"),
+        ),
+        (
+            kind: "sphere",
+            position: [0.0, 2.5, 0.0],
+            size: [0.75, 0.75, 0.75],
+            color: [0.95, 0.85, 0.25, 1.0],
+            surface_material_preset_id: Some("material:surface/x99/y99"),
+        ),
+    ],
+)
