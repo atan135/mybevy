@@ -157,6 +157,11 @@ impl UiI18n {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn load_ui_i18n_catalog_for_test(path: &Path) -> Result<UiI18n, String> {
+    load_ui_i18n_from_path(path, HashMap::new())
+}
+
 fn interpolate_named_placeholders(text: &str, args: &HashMap<String, String>) -> String {
     let mut rendered = String::with_capacity(text.len());
     let mut cursor = 0;

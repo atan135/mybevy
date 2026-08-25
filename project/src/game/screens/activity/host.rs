@@ -1370,4 +1370,35 @@ mod tests {
             assert!(source.contains("\"block_lower\": true"));
         }
     }
+
+    #[test]
+    fn activity_list_and_claim_history_documents_resolve_in_packaged_i18n_catalogs() {
+        use std::path::Path;
+
+        use crate::framework::ui::{document::UiDocument, i18n::load_ui_i18n_catalog_for_test};
+
+        for locale in ["en_us", "zh_cn"] {
+            let catalog_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("assets/ui/i18n")
+                .join(format!("{locale}.ron"));
+            let catalog = load_ui_i18n_catalog_for_test(&catalog_path)
+                .unwrap_or_else(|error| panic!("{locale} catalog should load: {error}"));
+
+            for (document_id, source) in [
+                (ACTIVITY_LIST_DOCUMENT_ID, ACTIVITY_LIST_DOCUMENT_SOURCE),
+                (
+                    ACTIVITY_CLAIM_HISTORY_DOCUMENT_ID,
+                    ACTIVITY_CLAIM_HISTORY_DOCUMENT_SOURCE,
+                ),
+            ] {
+                let document = UiDocument::parse_and_validate_json(source)
+                    .expect("activity surface must remain an approved valid UiDocument");
+                let errors = document.document().validate_content_with_catalog(&catalog);
+                assert!(
+                    errors.is_empty(),
+                    "{document_id} must resolve every i18n key in the packaged {locale} catalog: {errors:?}"
+                );
+            }
+        }
+    }
 }
