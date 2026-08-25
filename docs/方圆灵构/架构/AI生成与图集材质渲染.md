@@ -213,6 +213,43 @@ surface_material_preset_id
 
 `surface_atlas.json` 中的实际字段名是 `tile_id`；本文用 `surface_tile_id` 表示其跨目录语义，`surface_material_presets.json` 也使用该字段名引用 surface tile。实现 checklist 必须按各 JSON schema 的真实字段反序列化，不能只根据本文概念名猜字段。
 
+### 第一版 catalog 合同（schema v1）
+
+阶段 1 以仓库中的三个 JSON 为事实来源，不把概念字段名反推成 JSON 字段。三个 catalog 的顶层 `schema_version` 都是 `1`，`catalog_id` 固定为：
+
+| 文件 | `catalog_id` | 条目数组和真实 ID 字段 |
+| --- | --- | --- |
+| `base/surface_atlas.json` | `fangyuan.base.surface` | `tiles[]`（256 条），字段名为 `tile_id` |
+| `base/surface_material_presets.json` | `fangyuan.base.surface_material_presets` | `presets[]`（256 条），字段名为 `preset_id`，并以 `surface_tile_id` 跨目录引用 surface tile |
+| `noise/noise_atlas.json` | `fangyuan.noise.procedural` | `tiles[]`（122 条），字段名为 `tile_id` |
+
+`surface_atlas.tiles[].tile_id` 和 `noise_atlas.tiles[].tile_id` 是各自目录内的条目标识；只有 preset 使用 `surface_tile_id` 表达“该 preset 对应的 surface tile”。实现必须分别反序列化这些字段，禁止把 `surface_tile_id` 当作 surface JSON 的字段别名。
+
+当前 JSON 的字段入口也固定如下，后续 schema 代码应以此为准：
+
+- surface catalog：顶层为 `schema_version`、`catalog_id`、`display_name_zh`、`language`、`material_presets_file`、`description_zh`、`semantic_review`、`grid`、`channels`、`rendering_contract`、`ai_selection_contract`、`material_families`、`row_groups`、`tiles`；`tiles[]` 为 `tile_id`、`index`、`x`、`y`、`row_group`、`material_family`、`name_zh`、`description_zh`、`search_text_zh`。
+- surface preset catalog：顶层为 `schema_version`、`catalog_id`、`display_name_zh`、`language`、`description_zh`、`companions`、`integration_status`、`parameter_semantics`、`authoring_contract`、`family_defaults`、`presets`；`presets[]` 为 `preset_id`、`surface_tile_id`、`index`、`x`、`y`、`name_zh`、`material_family`、`pbr_constants`、`normal`、`uv`、`render_model`、`preferred_roles`、`recommended_primitive_kinds`、`noise_modulation`、`authoring`。
+- noise catalog：顶层为 `schema_version`、`catalog_id`、`display_name_zh`、`language`、`description_zh`、`semantic_review`、`source_layout`、`grid`、`texture`、`rendering_contract`、`ai_selection_contract`、`families`、`usage_profiles`、`row_groups`、`tiles`；`tiles[]` 为 `tile_id`、`index`、`x`、`y`、`row_group`、`family`、`name_zh`、`description_zh`、`channel_mode`、`frequency`、`directionality`、`recommended_filter`、`suggested_uses`、`identification`、`measured`、`source`、`search_text_zh`。
+
+v1 的 ID 规则如下：
+
+- 所有稳定 ID 使用小写 ASCII，最大长度为 64 个字节；禁止空格、Unicode、反斜杠、百分号编码、绝对路径和 URI。
+- surface tile 使用 `surface_xNN_yNN`，noise tile 使用 `noise_xNN_yNN`，preset 使用 `material:surface/xNN/yNN`；`NN` 是两位十进制坐标。
+- ID 在所属 catalog 内必须唯一；preset 的 `surface_tile_id` 必须一一对应 256 个 surface tile。ID 不因数组顺序变化而改变。
+- 条目数组按 `index` 升序（即 `y * 16 + x` 的 row-major 顺序）排列；校验器同时要求 `index`、`x`、`y` 与 ID 坐标一致。需要稳定遍历时使用 `(index, id)` 排序，不能按本地化名称排序。
+
+三份 catalog 共用固定采样规格：`1024 x 1024` 图集、`16 x 16` 网格、每格 `64 x 64`、有效内容 `60 x 60`、四边各 `2px` padding。surface 的 `base_color` 为 sRGB、`normal` 为 Linear；noise 的 `procedural_noise.png` 为 Linear 数据纹理。noise 只登记 122 个有效格，其余 134 格是 reserved cell。
+
+`surface_material_presets.json.companions` 是首包 catalog 专用的 companion 路径，不是 AI 或 blueprint 的路径输入。路径以当前 catalog 所在目录为基准做专用规范化，规范化后的最终路径必须仍位于 `fangyuan/atlases/` 受控根目录；因此 `../noise/noise_atlas.json` 合法，但普通资源仍继续使用 `fangyuan-core::validate_fangyuan_asset_path` 的 traversal 禁令，不能因为 companion 例外而放宽通用校验。
+
+v1 已知枚举集合：
+
+- `render_model`：普通表面为 `standard_pbr`、`standard_pbr_opaque_surface`；发光表面为 `standard_pbr_emissive`；水体为 `special_water`；天空为 `special_unlit_sky`。
+- `projection`：`planar`、`planar_or_triplanar`、`triplanar`、`spherical_or_background`。
+- `material_family` 的 catalog 词汇来自 `family_defaults`：`masonry`、`terrain`、`metal`、`wood_bark`、`leather`、`textile`、`foliage`、`ice_snow`、`water`、`lava`、`sky`、`electronics_scifi`、`ceramic_tile`、`composite`、`coating_polymer`、`decorative_pattern`、`other`；当前 256 条 surface/preset 实际使用其中前 15 项。
+
+未知 ID、未知 `render_model`、未知 `projection` 或未知 family 是 catalog error，顶层 catalog 不可用；已知但当前 runtime 尚未实现的能力（例如 `triplanar`、`special_water`）只产生 runtime diagnostic 并按既定 fallback 运行。
+
 ### 开发期和运行期表示
 
 开发期可以保存字符串 ID，便于人类和 AI 审查：
@@ -328,16 +365,17 @@ AI 禁止：
 
 ```text
 surface_material_preset_id: Option<String>
+surface_noise_enabled: bool
 ```
 
-缺省时使用安全默认材质，不改变现有蓝图行为。
+`surface_material_preset_id` 缺省时使用安全默认表面，不改变现有蓝图行为。`surface_noise_enabled` 缺省为 `false`；它是唯一受控的 noise opt-in，不允许蓝图直接填写 noise tile、strength 或路径。值为 `true` 但所选 preset 没有 `noise_modulation` suggestion 时产生 warning，并保持 noise disabled。
 
 第一版暂不允许蓝图直接填写：
 
 - 任意 roughness。
 - 任意 metallic。
 - 任意 atlas UV。
-- 任意 noise strength。
+- 任意 noise tile、noise strength 或 noise 路径。
 - 任意 Shader 参数。
 
 这些值全部从受控 preset 解析。这样可以先验证机制，减少 schema、审核和 batch 组合爆炸。
@@ -350,7 +388,6 @@ surface_material_preset_id: Option<String>
 roughness_delta
 normal_strength_multiplier
 uv_scale_multiplier
-noise_enabled
 emissive_override
 alpha_override
 ```
