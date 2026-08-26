@@ -6,21 +6,25 @@
 //! later canonical/audit/promotion semantics.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt, fs, io,
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use bevy::prelude::Vec3;
 use getrandom::fill as fill_random_bytes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    FangyuanCatalogAssetPaths, FangyuanCatalogProjection, FangyuanCatalogRenderModel,
+    FangyuanAuditBudgetProfile, FangyuanAuditFinding, FangyuanAuditSeverity,
+    FangyuanAuditSourceKind, FangyuanAuditSuggestion, FangyuanBlueprint, FangyuanCatalogAssetPaths,
+    FangyuanCatalogProjection, FangyuanCatalogRenderModel, FangyuanPrimitiveBlueprint,
     FangyuanPrimitiveKind, FangyuanPrimitiveRole, FangyuanSurfacePresetCacheIdentity,
     FangyuanSurfacePresetCatalogMetadata, FangyuanSurfacePresetRegistry,
+    audit_fangyuan_surface_usage,
 };
 
 pub const FANGYUAN_AUTHORING_TASK_SCHEMA_VERSION: &str = "fangyuan-generation-task/v1";
@@ -33,8 +37,14 @@ pub const FANGYUAN_AUTHORING_CATALOG_CONTEXT_SCHEMA_VERSION: &str =
     "fangyuan-generation-catalog-context/v1";
 pub const FANGYUAN_AUTHORING_CODEX_TASK_SCHEMA_VERSION: &str = "fangyuan-generation-codex-task/v1";
 pub const FANGYUAN_AUTHORING_CODEX_TASK_TEMPLATE_VERSION: &str = "fangyuan-local-codex-draft/v1";
+pub const FANGYUAN_AUTHORING_AUDIT_REPORT_SCHEMA_VERSION: &str =
+    "fangyuan-generation-audit-report/v1";
+pub const FANGYUAN_AUTHORING_PROMOTION_DECISION_SCHEMA_VERSION: &str =
+    "fangyuan-generation-promotion-decision/v1";
 pub const FANGYUAN_AUTHORING_RUN_DIRECTORY: &str = "summary/fangyuan-generation";
 pub const FANGYUAN_AUTHORING_MAX_TASK_BYTES: usize = 64 * 1024;
+
+const FANGYUAN_AUTHORING_WARNING_POLICY: &str = "warnings_allowed_when_error_count_is_zero";
 
 const RUN_MANIFEST_FILE: &str = "run-manifest.json";
 const TASK_SOURCE_FILE: &str = "input/task.source.json";
@@ -528,6 +538,7 @@ impl FangyuanAuthoringCommandName {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FangyuanAuthoringCommandStatus {
     Prepared,
+    Validated,
     Inspected,
 }
 
@@ -535,6 +546,7 @@ impl FangyuanAuthoringCommandStatus {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Prepared => "prepared",
+            Self::Validated => "validated",
             Self::Inspected => "inspected",
         }
     }
@@ -559,7 +571,7 @@ pub fn run_fangyuan_authoring_cli(
     match &options.command {
         FangyuanAuthoringCommand::PrepareTask { task } => prepare_task(&repository_root, task),
         FangyuanAuthoringCommand::ValidateDraft { run_id } => {
-            validate_draft_placeholder(&repository_root, run_id)
+            validate_draft(&repository_root, run_id)
         }
         FangyuanAuthoringCommand::Promote { run_id } => {
             promote_placeholder(&repository_root, run_id)
@@ -693,22 +705,134 @@ fn prepare_task(
     ))
 }
 
-fn validate_draft_placeholder(
+fn validate_draft(
     repository_root: &Path,
     run_id: &str,
 ) -> Result<FangyuanAuthoringCliReport, FangyuanAuthoringCliError> {
     let (run_directory, mut manifest) = open_run(repository_root, run_id)?;
-    let code = if run_file_exists(&run_directory, DRAFT_BLUEPRINT_FILE)? {
-        "validate_draft_not_implemented"
+    let inputs = load_draft_validation_inputs(repository_root, &run_directory)?;
+    let (
+        draft_sha256,
+        original_report,
+        repair_actions,
+        report,
+        canonical_bytes,
+        preset_resolutions,
+    ) = if run_file_exists(&run_directory, DRAFT_BLUEPRINT_FILE)? {
+        let draft_bytes = read_safe_run_file(&run_directory, DRAFT_BLUEPRINT_FILE)?;
+        let draft_sha256 = sha256_hex(&draft_bytes);
+        match std::str::from_utf8(&draft_bytes)
+            .ok()
+            .and_then(|draft| FangyuanBlueprint::from_ron_str(draft).ok())
+        {
+            Some(blueprint) => {
+                let original_report = collect_draft_audit_snapshot(&blueprint, &inputs);
+                let mut canonical = blueprint.clone();
+                let repair_actions = apply_limited_draft_repairs(&mut canonical, &inputs);
+                let report = collect_draft_audit_snapshot(&canonical, &inputs);
+                let canonical_bytes = (report.error_count == 0)
+                    .then(|| canonical_blueprint_ron_bytes(&canonical))
+                    .transpose()?;
+                let preset_resolutions =
+                    collect_requested_resolved_presets(&blueprint, &canonical, &inputs);
+                (
+                    Some(draft_sha256),
+                    original_report,
+                    repair_actions,
+                    report,
+                    canonical_bytes,
+                    preset_resolutions,
+                )
+            }
+            None => {
+                let report = FangyuanAuthoringAuditSnapshot::failure(
+                    "draft_ron_parse_failed",
+                    "draft must be valid UTF-8 FangyuanBlueprint RON with no unknown fields",
+                );
+                (
+                    Some(draft_sha256),
+                    report.clone(),
+                    Vec::new(),
+                    report,
+                    None,
+                    Vec::new(),
+                )
+            }
+        }
     } else {
-        "draft_missing"
+        let report = FangyuanAuthoringAuditSnapshot::failure(
+            "draft_missing",
+            "current run has no draft/blueprint.ron artifact",
+        );
+        (None, report.clone(), Vec::new(), report, None, Vec::new())
     };
-    append_run_log_event(&run_directory, run_id, "validate_draft", code, None)?;
+
+    let canonical_sha256 = canonical_bytes.as_ref().map(|bytes| sha256_hex(bytes));
+    if let Some(bytes) = canonical_bytes.as_deref() {
+        write_or_replace_run_file(&run_directory, CANONICAL_BLUEPRINT_FILE, bytes)?;
+    } else {
+        remove_run_file_if_exists(&run_directory, CANONICAL_BLUEPRINT_FILE)?;
+    }
+
+    let audit = FangyuanAuthoringAuditArtifact {
+        schema_version: FANGYUAN_AUTHORING_AUDIT_REPORT_SCHEMA_VERSION.to_string(),
+        prepared_task_sha256: inputs.prepared_task_sha256.clone(),
+        catalog_context_sha256: inputs.catalog_context_sha256.clone(),
+        draft_sha256,
+        canonical_sha256: canonical_sha256.clone(),
+        warning_policy: FANGYUAN_AUTHORING_WARNING_POLICY.to_string(),
+        repair_actions,
+        original_report,
+        report,
+        requested_resolved_presets: preset_resolutions,
+    };
+    let audit_bytes = canonical_json_bytes(&audit)?;
+    let audit_sha256 = sha256_hex(&audit_bytes);
+    write_or_replace_run_file(&run_directory, AUDIT_REPORT_FILE, &audit_bytes)?;
+
+    let status = if audit.report.error_count == 0 && canonical_sha256.is_some() {
+        FangyuanAuthoringPromotionDecisionStatus::ReadyForPromotion
+    } else {
+        FangyuanAuthoringPromotionDecisionStatus::Blocked
+    };
+    let decision = FangyuanAuthoringPromotionDecision {
+        schema_version: FANGYUAN_AUTHORING_PROMOTION_DECISION_SCHEMA_VERSION.to_string(),
+        canonical_sha256,
+        catalog_context_sha256: inputs.catalog_context_sha256,
+        audit_sha256: audit_sha256.clone(),
+        target_relative_path: generated_blueprint_target(&inputs.prepared.task.stable_id),
+        expected_target_sha256: None,
+        status,
+        warning_policy: FANGYUAN_AUTHORING_WARNING_POLICY.to_string(),
+    };
+    write_or_replace_run_file(
+        &run_directory,
+        PROMOTION_DECISION_FILE,
+        &canonical_json_bytes(&decision)?,
+    )?;
+    append_run_log_event(
+        &run_directory,
+        run_id,
+        "validate_draft",
+        match decision.status {
+            FangyuanAuthoringPromotionDecisionStatus::ReadyForPromotion => "validated_ready",
+            FangyuanAuthoringPromotionDecisionStatus::Blocked => "validated_blocked",
+            FangyuanAuthoringPromotionDecisionStatus::NotEvaluated => "validated_not_evaluated",
+        },
+        Some(audit_sha256),
+    )?;
     refresh_run_manifest(&run_directory, &mut manifest)?;
-    Err(FangyuanAuthoringCliError::OperationFailed {
-        run_id: run_id.to_string(),
-        code,
-    })
+    if decision.status != FangyuanAuthoringPromotionDecisionStatus::ReadyForPromotion {
+        return Err(FangyuanAuthoringCliError::OperationFailed {
+            run_id: run_id.to_string(),
+            code: "draft_validation_failed",
+        });
+    }
+    Ok(report_from_manifest(
+        FangyuanAuthoringCommandName::ValidateDraft,
+        FangyuanAuthoringCommandStatus::Validated,
+        &manifest,
+    ))
 }
 
 fn promote_placeholder(
@@ -831,6 +955,186 @@ struct FangyuanAuthoringCatalogNoiseSuggestion {
     parameter_status: String,
 }
 
+struct FangyuanAuthoringDraftValidationInputs {
+    prepared: FangyuanAuthoringPreparedTask,
+    context: FangyuanAuthoringCatalogContext,
+    registry: FangyuanSurfacePresetRegistry,
+    prepared_task_sha256: String,
+    catalog_context_sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringAuditArtifact {
+    schema_version: String,
+    prepared_task_sha256: String,
+    catalog_context_sha256: String,
+    draft_sha256: Option<String>,
+    canonical_sha256: Option<String>,
+    warning_policy: String,
+    repair_actions: Vec<FangyuanAuthoringRepairAction>,
+    original_report: FangyuanAuthoringAuditSnapshot,
+    report: FangyuanAuthoringAuditSnapshot,
+    requested_resolved_presets: Vec<FangyuanAuthoringPresetResolutionRecord>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringAuditSnapshot {
+    status: FangyuanAuthoringAuditSnapshotStatus,
+    error_count: usize,
+    warning_count: usize,
+    info_count: usize,
+    findings: Vec<FangyuanAuthoringFindingRecord>,
+    suggestions: Vec<FangyuanAuthoringSuggestionRecord>,
+}
+
+impl FangyuanAuthoringAuditSnapshot {
+    fn failure(code: &str, reason: &str) -> Self {
+        Self::from_findings(
+            vec![FangyuanAuthoringFindingRecord {
+                severity: FangyuanAuthoringFindingSeverity::Error,
+                code: code.to_string(),
+                field_path: None,
+                reason: reason.to_string(),
+                source_kind: "blueprint".to_string(),
+                primitive_index: None,
+                requested_preset_id: None,
+                resolved_preset_id: None,
+                noise_tile_id: None,
+                fallback_reason: None,
+            }],
+            Vec::new(),
+        )
+    }
+
+    fn from_findings(
+        mut findings: Vec<FangyuanAuthoringFindingRecord>,
+        mut suggestions: Vec<FangyuanAuthoringSuggestionRecord>,
+    ) -> Self {
+        findings.sort();
+        findings.dedup();
+        suggestions.sort();
+        suggestions.dedup();
+        let error_count = findings
+            .iter()
+            .filter(|finding| finding.severity == FangyuanAuthoringFindingSeverity::Error)
+            .count();
+        let warning_count = findings
+            .iter()
+            .filter(|finding| finding.severity == FangyuanAuthoringFindingSeverity::Warning)
+            .count();
+        let info_count = findings
+            .iter()
+            .filter(|finding| finding.severity == FangyuanAuthoringFindingSeverity::Info)
+            .count();
+        Self {
+            status: if error_count > 0 {
+                FangyuanAuthoringAuditSnapshotStatus::Failed
+            } else if warning_count > 0 {
+                FangyuanAuthoringAuditSnapshotStatus::PassedWithWarnings
+            } else {
+                FangyuanAuthoringAuditSnapshotStatus::Passed
+            },
+            error_count,
+            warning_count,
+            info_count,
+            findings,
+            suggestions,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FangyuanAuthoringAuditSnapshotStatus {
+    Passed,
+    PassedWithWarnings,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FangyuanAuthoringFindingSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringFindingRecord {
+    severity: FangyuanAuthoringFindingSeverity,
+    code: String,
+    field_path: Option<String>,
+    reason: String,
+    source_kind: String,
+    primitive_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_preset_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_preset_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    noise_tile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringSuggestionRecord {
+    action: String,
+    field_path: Option<String>,
+    reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    estimated_effect: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringRepairAction {
+    action: String,
+    primitive_index: usize,
+    field_path: String,
+    reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    after: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringPresetResolutionRecord {
+    primitive_index: usize,
+    requested_preset_id: Option<String>,
+    resolved_preset_id: Option<String>,
+    noise_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringPromotionDecision {
+    schema_version: String,
+    canonical_sha256: Option<String>,
+    catalog_context_sha256: String,
+    audit_sha256: String,
+    target_relative_path: String,
+    expected_target_sha256: Option<String>,
+    status: FangyuanAuthoringPromotionDecisionStatus,
+    warning_policy: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FangyuanAuthoringPromotionDecisionStatus {
+    NotEvaluated,
+    Blocked,
+    ReadyForPromotion,
+}
+
 fn load_catalog_context(
     repository_root: &Path,
     prepared: &FangyuanAuthoringPreparedTask,
@@ -845,6 +1149,848 @@ fn load_catalog_context(
         )
     })?;
     build_catalog_context(&prepared.task, prepared_task_sha256, &registry)
+}
+
+fn load_draft_validation_inputs(
+    repository_root: &Path,
+    run_directory: &Path,
+) -> Result<FangyuanAuthoringDraftValidationInputs, FangyuanAuthoringCliError> {
+    let prepared_bytes = read_safe_run_file(run_directory, TASK_PREPARED_FILE)?;
+    let prepared_task_sha256 = sha256_hex(&prepared_bytes);
+    let prepared = serde_json::from_slice::<FangyuanAuthoringPreparedTask>(&prepared_bytes)
+        .map_err(|_| {
+            FangyuanAuthoringCliError::Boundary(
+                "prepared task does not match the local authoring contract",
+            )
+        })?;
+    if prepared.schema_version != FANGYUAN_AUTHORING_PREPARED_TASK_SCHEMA_VERSION {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "prepared task does not match the local authoring contract",
+        ));
+    }
+    prepared
+        .task
+        .validate()
+        .map_err(FangyuanAuthoringCliError::Task)?;
+    let source_task_sha256 = sha256_hex(&read_safe_run_file(run_directory, TASK_SOURCE_FILE)?);
+    if prepared.source_task_sha256 != source_task_sha256 {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "prepared task source hash does not match the current run input",
+        ));
+    }
+
+    let catalog_context_bytes = read_safe_run_file(run_directory, CATALOG_CONTEXT_FILE)?;
+    let catalog_context_sha256 = sha256_hex(&catalog_context_bytes);
+    let context = serde_json::from_slice::<FangyuanAuthoringCatalogContext>(&catalog_context_bytes)
+        .map_err(|_| {
+            FangyuanAuthoringCliError::Boundary(
+                "catalog context does not match the local authoring contract",
+            )
+        })?;
+    if context.schema_version != FANGYUAN_AUTHORING_CATALOG_CONTEXT_SCHEMA_VERSION
+        || context.prepared_task_sha256 != prepared_task_sha256
+    {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "catalog context is not bound to the current prepared task",
+        ));
+    }
+
+    let paths = FangyuanCatalogAssetPaths::from_fangyuan_asset_root(
+        repository_root.join("project/assets/fangyuan"),
+    );
+    let registry = FangyuanSurfacePresetRegistry::load_from_paths(&paths).map_err(|_| {
+        FangyuanAuthoringCliError::Boundary(
+            "validated Fangyuan catalog bundle is unavailable for draft validation",
+        )
+    })?;
+    let expected_context = build_catalog_context(&prepared.task, &prepared_task_sha256, &registry)?;
+    if canonical_json_bytes(&expected_context)? != catalog_context_bytes {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "catalog context is stale or does not match the current validated catalog",
+        ));
+    }
+
+    Ok(FangyuanAuthoringDraftValidationInputs {
+        prepared,
+        context,
+        registry,
+        prepared_task_sha256,
+        catalog_context_sha256,
+    })
+}
+
+fn collect_draft_audit_snapshot(
+    blueprint: &FangyuanBlueprint,
+    inputs: &FangyuanAuthoringDraftValidationInputs,
+) -> FangyuanAuthoringAuditSnapshot {
+    let profile = authoring_task_budget_profile(&inputs.prepared.task);
+    let blueprint_report = blueprint.audit(&profile);
+    let mut findings: Vec<_> = blueprint_report
+        .findings
+        .iter()
+        .map(finding_record_from_audit)
+        .collect();
+    let mut suggestions: Vec<_> = blueprint_report
+        .suggestions
+        .iter()
+        .map(suggestion_record_from_audit)
+        .collect();
+
+    if let Ok(primitive_set) = blueprint.compile() {
+        let surface_report = audit_fangyuan_surface_usage(
+            primitive_set.primitives(),
+            Some(&inputs.registry),
+            FangyuanAuditSourceKind::Blueprint,
+            None,
+        );
+        findings.extend(
+            surface_report
+                .findings
+                .iter()
+                .map(finding_record_from_audit),
+        );
+        suggestions.extend(
+            surface_report
+                .suggestions
+                .iter()
+                .map(suggestion_record_from_audit),
+        );
+    }
+
+    let allowed_roles: BTreeSet<_> = inputs
+        .prepared
+        .task
+        .allowed
+        .roles
+        .iter()
+        .map(|role| role.as_str())
+        .collect();
+    let context_by_id: BTreeMap<_, _> = inputs
+        .context
+        .presets
+        .iter()
+        .map(|preset| (preset.preset_id.as_str(), preset))
+        .collect();
+    let metadata_by_id: BTreeMap<_, _> = inputs
+        .registry
+        .catalog_metadata()
+        .iter()
+        .map(|preset| (preset.preset_id.as_str(), preset))
+        .collect();
+
+    for (field, value, limit) in [
+        (
+            "width",
+            blueprint.bounds.width,
+            inputs.prepared.task.budget.bounds.width,
+        ),
+        (
+            "depth",
+            blueprint.bounds.depth,
+            inputs.prepared.task.budget.bounds.depth,
+        ),
+        (
+            "height",
+            blueprint.bounds.height,
+            inputs.prepared.task.budget.bounds.height,
+        ),
+    ] {
+        if value > limit {
+            findings.push(authoring_finding(
+                FangyuanAuthoringFindingSeverity::Error,
+                "declared_bounds_above_task_limit",
+                Some(format!("bounds.{field}")),
+                format!(
+                    "blueprint declared bounds {field} {value:.2} exceed prepared task limit {limit:.2}"
+                ),
+                None,
+            ));
+        }
+    }
+
+    for (index, primitive) in blueprint.primitives.iter().enumerate() {
+        let role = primitive.role();
+        if !allowed_roles.contains(role.as_str()) {
+            findings.push(authoring_finding(
+                FangyuanAuthoringFindingSeverity::Error,
+                "task_role_not_allowed",
+                Some(format!("primitives[{index}].role")),
+                format!(
+                    "role `{}` is not allowed by the prepared task",
+                    role.as_str()
+                ),
+                Some(index),
+            ));
+        }
+        if primitive.lifecycle.is_some() {
+            findings.push(authoring_finding(
+                FangyuanAuthoringFindingSeverity::Error,
+                "lifecycle_not_allowed",
+                Some(format!("primitives[{index}].lifecycle")),
+                "local Codex draft protocol does not allow lifecycle metadata".to_string(),
+                Some(index),
+            ));
+        }
+
+        let Some(preset_id) = primitive.surface_material_preset_id.as_deref() else {
+            findings.push(authoring_finding(
+                FangyuanAuthoringFindingSeverity::Warning,
+                "missing_surface_preset",
+                Some(format!("primitives[{index}].surface_material_preset_id")),
+                "surface preset is absent and can be deterministically filled from catalog context"
+                    .to_string(),
+                Some(index),
+            ));
+            continue;
+        };
+        if !context_by_id.contains_key(preset_id) {
+            findings.push(authoring_finding_with_surface(
+                FangyuanAuthoringFindingSeverity::Error,
+                "surface_preset_not_in_context",
+                Some(format!("primitives[{index}].surface_material_preset_id")),
+                "surface preset is not one of the current run catalog candidates".to_string(),
+                Some(index),
+                Some(preset_id.to_string()),
+                None,
+                None,
+                None,
+            ));
+        }
+        if primitive.surface_noise_enabled
+            && (!inputs
+                .prepared
+                .task
+                .material_budget
+                .allow_catalog_suggested_noise
+                || context_by_id
+                    .get(preset_id)
+                    .and_then(|preset| preset.noise_suggestion.as_ref())
+                    .is_none())
+        {
+            findings.push(authoring_finding_with_surface(
+                FangyuanAuthoringFindingSeverity::Warning,
+                "reserved_noise_tile",
+                Some(format!("primitives[{index}].surface_noise_enabled")),
+                "surface noise opt-in has no allowed current catalog suggestion and will be disabled"
+                    .to_string(),
+                Some(index),
+                Some(preset_id.to_string()),
+                None,
+                None,
+                Some("noise_suggestion_unavailable".to_string()),
+            ));
+        }
+        if let Some(metadata) = metadata_by_id.get(preset_id) {
+            if let Some((code, reason)) =
+                special_surface_violation(&inputs.prepared.task, metadata, primitive.role())
+            {
+                findings.push(authoring_finding_with_surface(
+                    FangyuanAuthoringFindingSeverity::Error,
+                    code,
+                    Some(format!("primitives[{index}].surface_material_preset_id")),
+                    reason,
+                    Some(index),
+                    Some(preset_id.to_string()),
+                    Some(preset_id.to_string()),
+                    None,
+                    None,
+                ));
+            }
+        }
+    }
+
+    let distinct_surface_presets: BTreeSet<_> = blueprint
+        .primitives
+        .iter()
+        .filter_map(|primitive| primitive.surface_material_preset_id.as_deref())
+        .collect();
+    if distinct_surface_presets.len() > inputs.prepared.task.material_budget.max_surface_presets {
+        findings.push(authoring_finding(
+            FangyuanAuthoringFindingSeverity::Error,
+            "surface_preset_count_exceeded",
+            Some("primitives[].surface_material_preset_id".to_string()),
+            format!(
+                "{} distinct surface presets exceed task limit {}",
+                distinct_surface_presets.len(),
+                inputs.prepared.task.material_budget.max_surface_presets
+            ),
+            None,
+        ));
+    }
+
+    FangyuanAuthoringAuditSnapshot::from_findings(findings, suggestions)
+}
+
+fn authoring_task_budget_profile(task: &FangyuanAuthoringTask) -> FangyuanAuditBudgetProfile {
+    let transparent_forbidden = task
+        .additional_forbidden_features
+        .contains(&FangyuanAuthoringAdditionalForbiddenFeature::Transparent);
+    let emissive_forbidden = task
+        .additional_forbidden_features
+        .contains(&FangyuanAuthoringAdditionalForbiddenFeature::Emissive);
+    FangyuanAuditBudgetProfile {
+        hard_primitive_limit: task.budget.max_primitives,
+        recommended_primitive_limit: task.budget.max_primitives,
+        max_bounds: Vec3::new(
+            task.budget.bounds.width,
+            task.budget.bounds.height,
+            task.budget.bounds.depth,
+        ),
+        max_primitive_volume: task.budget.max_primitive_volume,
+        max_total_volume: task.budget.max_total_volume,
+        recommended_alpha_count: usize::from(!transparent_forbidden) * 32,
+        max_alpha_count: usize::from(!transparent_forbidden) * 128,
+        recommended_transparent_count: usize::from(!transparent_forbidden) * 32,
+        max_transparent_count: usize::from(!transparent_forbidden) * 128,
+        recommended_emissive_count: usize::from(!emissive_forbidden) * 24,
+        max_emissive_count: usize::from(!emissive_forbidden) * 96,
+        recommended_material_profile_count: task.material_budget.max_material_profiles,
+        max_material_profile_count: task.material_budget.max_material_profiles,
+        recommended_surface_preset_count: task.material_budget.max_surface_presets,
+        max_surface_preset_count: task.material_budget.max_surface_presets,
+        ..Default::default()
+    }
+}
+
+fn finding_record_from_audit(finding: &FangyuanAuditFinding) -> FangyuanAuthoringFindingRecord {
+    let mut severity = match finding.severity {
+        FangyuanAuditSeverity::Error => FangyuanAuthoringFindingSeverity::Error,
+        FangyuanAuditSeverity::Warning => FangyuanAuthoringFindingSeverity::Warning,
+        FangyuanAuditSeverity::Info => FangyuanAuthoringFindingSeverity::Info,
+    };
+    if is_strict_blueprint_error_code(&finding.code) {
+        severity = FangyuanAuthoringFindingSeverity::Error;
+    }
+    FangyuanAuthoringFindingRecord {
+        severity,
+        code: finding.code.clone(),
+        field_path: finding.field_path.clone(),
+        reason: finding.reason.clone(),
+        source_kind: audit_source_kind_label(finding.source_kind).to_string(),
+        primitive_index: finding.primitive_index,
+        requested_preset_id: finding.surface_material_preset_id.clone(),
+        resolved_preset_id: finding.surface_resolved_preset_id.clone(),
+        noise_tile_id: finding.surface_noise_tile_id.clone(),
+        fallback_reason: finding.surface_fallback_reason.clone(),
+    }
+}
+
+fn is_strict_blueprint_error_code(code: &str) -> bool {
+    code == "unsupported_version"
+        || code == "primitive_count_exceeded"
+        || code == "primitive_below_ground"
+        || code.starts_with("invalid_")
+}
+
+fn audit_source_kind_label(source_kind: FangyuanAuditSourceKind) -> &'static str {
+    match source_kind {
+        FangyuanAuditSourceKind::Blueprint => "blueprint",
+        FangyuanAuditSourceKind::PrefabPalette => "prefab_palette",
+        FangyuanAuditSourceKind::SceneLayout => "scene_layout",
+        FangyuanAuditSourceKind::RuntimePrimitiveSet => "runtime_primitive_set",
+        FangyuanAuditSourceKind::ObjectBudget => "object_budget",
+        FangyuanAuditSourceKind::Unknown => "unknown",
+    }
+}
+
+fn suggestion_record_from_audit(
+    suggestion: &FangyuanAuditSuggestion,
+) -> FangyuanAuthoringSuggestionRecord {
+    FangyuanAuthoringSuggestionRecord {
+        action: format!("{:?}", suggestion.action).to_ascii_lowercase(),
+        field_path: suggestion.field_path.clone(),
+        reason: suggestion.reason.clone(),
+        estimated_effect: suggestion.estimated_effect.clone(),
+    }
+}
+
+fn authoring_finding(
+    severity: FangyuanAuthoringFindingSeverity,
+    code: &str,
+    field_path: Option<String>,
+    reason: String,
+    primitive_index: Option<usize>,
+) -> FangyuanAuthoringFindingRecord {
+    authoring_finding_with_surface(
+        severity,
+        code,
+        field_path,
+        reason,
+        primitive_index,
+        None,
+        None,
+        None,
+        None,
+    )
+}
+
+fn authoring_finding_with_surface(
+    severity: FangyuanAuthoringFindingSeverity,
+    code: &str,
+    field_path: Option<String>,
+    reason: String,
+    primitive_index: Option<usize>,
+    requested_preset_id: Option<String>,
+    resolved_preset_id: Option<String>,
+    noise_tile_id: Option<String>,
+    fallback_reason: Option<String>,
+) -> FangyuanAuthoringFindingRecord {
+    FangyuanAuthoringFindingRecord {
+        severity,
+        code: code.to_string(),
+        field_path,
+        reason,
+        source_kind: "blueprint".to_string(),
+        primitive_index,
+        requested_preset_id,
+        resolved_preset_id,
+        noise_tile_id,
+        fallback_reason,
+    }
+}
+
+fn apply_limited_draft_repairs(
+    blueprint: &mut FangyuanBlueprint,
+    inputs: &FangyuanAuthoringDraftValidationInputs,
+) -> Vec<FangyuanAuthoringRepairAction> {
+    let default_preset_id = default_surface_preset_id(inputs);
+    let context_ids: BTreeSet<_> = inputs
+        .context
+        .presets
+        .iter()
+        .map(|preset| preset.preset_id.as_str())
+        .collect();
+    let metadata_by_id: BTreeMap<_, _> = inputs
+        .registry
+        .catalog_metadata()
+        .iter()
+        .map(|preset| (preset.preset_id.as_str(), preset))
+        .collect();
+    let transparent_forbidden = inputs
+        .prepared
+        .task
+        .additional_forbidden_features
+        .contains(&FangyuanAuthoringAdditionalForbiddenFeature::Transparent);
+    let emissive_forbidden = inputs
+        .prepared
+        .task
+        .additional_forbidden_features
+        .contains(&FangyuanAuthoringAdditionalForbiddenFeature::Emissive);
+    let mut actions = Vec::new();
+
+    for (index, primitive) in blueprint.primitives.iter_mut().enumerate() {
+        let requested_preset_id = primitive.surface_material_preset_id.clone();
+        let must_reject_preset = requested_preset_id
+            .as_deref()
+            .and_then(|preset_id| metadata_by_id.get(preset_id).copied())
+            .and_then(|metadata| {
+                special_surface_violation(&inputs.prepared.task, metadata, primitive.role())
+            })
+            .is_some();
+        let needs_default = requested_preset_id.as_deref().is_none_or(|preset_id| {
+            inputs.registry.get(preset_id).is_none() || !context_ids.contains(preset_id)
+        });
+        if needs_default && !must_reject_preset {
+            if let Some(default_preset_id) = default_preset_id.as_ref() {
+                primitive.surface_material_preset_id = Some(default_preset_id.clone());
+                actions.push(FangyuanAuthoringRepairAction {
+                    action: if requested_preset_id.is_some() {
+                        "replace_unusable_surface_preset"
+                    } else {
+                        "assign_default_surface_preset"
+                    }
+                    .to_string(),
+                    primitive_index: index,
+                    field_path: format!("primitives[{index}].surface_material_preset_id"),
+                    reason:
+                        "use the stable first non-special preset from the current catalog context"
+                            .to_string(),
+                    before: requested_preset_id,
+                    after: Some(default_preset_id.clone()),
+                });
+            }
+        }
+
+        if primitive.surface_noise_enabled {
+            let noise_allowed = primitive
+                .surface_material_preset_id
+                .as_deref()
+                .and_then(|preset_id| {
+                    inputs
+                        .context
+                        .presets
+                        .iter()
+                        .find(|preset| preset.preset_id == preset_id)
+                })
+                .is_some_and(|preset| {
+                    inputs
+                        .prepared
+                        .task
+                        .material_budget
+                        .allow_catalog_suggested_noise
+                        && preset.noise_suggestion.is_some()
+                });
+            if !noise_allowed {
+                primitive.surface_noise_enabled = false;
+                actions.push(FangyuanAuthoringRepairAction {
+                    action: "disable_unavailable_surface_noise".to_string(),
+                    primitive_index: index,
+                    field_path: format!("primitives[{index}].surface_noise_enabled"),
+                    reason: "the selected preset has no task-authorized catalog noise suggestion"
+                        .to_string(),
+                    before: Some("true".to_string()),
+                    after: Some("false".to_string()),
+                });
+            }
+        }
+
+        let effective_alpha = primitive.alpha.unwrap_or(primitive.color[3]);
+        if transparent_forbidden
+            && primitive.color[3].is_finite()
+            && effective_alpha.is_finite()
+            && (primitive.color[3] < 1.0 || effective_alpha < 1.0)
+        {
+            primitive.color[3] = 1.0;
+            primitive.alpha = None;
+            actions.push(FangyuanAuthoringRepairAction {
+                action: "remove_forbidden_transparency".to_string(),
+                primitive_index: index,
+                field_path: format!("primitives[{index}].alpha"),
+                reason: "prepared task forbids transparent primitives".to_string(),
+                before: Some(canonical_f32(effective_alpha)),
+                after: Some("1.0".to_string()),
+            });
+        }
+
+        if emissive_forbidden
+            && primitive
+                .emissive
+                .is_some_and(|value| value.is_finite() && value > 0.0)
+        {
+            let before = primitive.emissive.take().map(canonical_f32);
+            actions.push(FangyuanAuthoringRepairAction {
+                action: "remove_forbidden_emissive".to_string(),
+                primitive_index: index,
+                field_path: format!("primitives[{index}].emissive"),
+                reason: "prepared task forbids emissive primitives".to_string(),
+                before,
+                after: Some("0.0".to_string()),
+            });
+        }
+    }
+
+    actions.sort();
+    actions.dedup();
+    actions
+}
+
+fn default_surface_preset_id(inputs: &FangyuanAuthoringDraftValidationInputs) -> Option<String> {
+    inputs.context.presets.iter().find_map(|preset| {
+        let metadata = inputs
+            .registry
+            .catalog_metadata()
+            .iter()
+            .find(|metadata| metadata.preset_id == preset.preset_id)?;
+        (!is_catalog_special_surface(metadata)).then(|| preset.preset_id.clone())
+    })
+}
+
+fn special_surface_violation(
+    task: &FangyuanAuthoringTask,
+    metadata: &FangyuanSurfacePresetCatalogMetadata,
+    role: FangyuanPrimitiveRole,
+) -> Option<(&'static str, String)> {
+    let family = metadata.material_family.as_str();
+    let is_special = is_catalog_special_surface(metadata);
+    if task
+        .additional_forbidden_features
+        .contains(&FangyuanAuthoringAdditionalForbiddenFeature::SpecialSurface)
+        && is_special
+    {
+        return Some((
+            "special_surface_forbidden",
+            "prepared task forbids special surface render models".to_string(),
+        ));
+    }
+    let specific_forbidden = match family {
+        "water" => task
+            .additional_forbidden_features
+            .contains(&FangyuanAuthoringAdditionalForbiddenFeature::WaterSurface),
+        "sky" => task
+            .additional_forbidden_features
+            .contains(&FangyuanAuthoringAdditionalForbiddenFeature::SkySurface),
+        "lava" => task
+            .additional_forbidden_features
+            .contains(&FangyuanAuthoringAdditionalForbiddenFeature::LavaSurface),
+        _ => false,
+    };
+    if specific_forbidden {
+        return Some((
+            "special_surface_forbidden",
+            format!("prepared task forbids `{family}` surfaces"),
+        ));
+    }
+    if task
+        .additional_forbidden_features
+        .contains(&FangyuanAuthoringAdditionalForbiddenFeature::TriplanarRequired)
+        && metadata.projection == FangyuanCatalogProjection::Triplanar
+    {
+        return Some((
+            "triplanar_surface_forbidden",
+            "prepared task forbids surfaces requiring triplanar projection".to_string(),
+        ));
+    }
+    if !matches!(family, "water" | "sky" | "lava") {
+        return None;
+    }
+    let prompt_mentions_family =
+        matching_material_families(&task.prompt.to_lowercase()).contains(family);
+    if !prompt_mentions_family {
+        return Some((
+            "special_surface_not_explicitly_requested",
+            format!("`{family}` preset requires the prepared task prompt to name that surface"),
+        ));
+    }
+    let required_role = format!("{family}_surface");
+    if role.as_str() != required_role {
+        return Some((
+            "special_surface_role_not_explicit",
+            format!(
+                "`{family}` preset requires role `{required_role}`, which is not available in the current v0 primitive role vocabulary"
+            ),
+        ));
+    }
+    None
+}
+
+fn is_catalog_special_surface(metadata: &FangyuanSurfacePresetCatalogMetadata) -> bool {
+    matches!(
+        metadata.render_model,
+        FangyuanCatalogRenderModel::SpecialWater | FangyuanCatalogRenderModel::SpecialUnlitSky
+    ) || matches!(metadata.material_family.as_str(), "water" | "sky" | "lava")
+}
+
+fn canonical_blueprint_ron_bytes(
+    blueprint: &FangyuanBlueprint,
+) -> Result<Vec<u8>, FangyuanAuthoringCliError> {
+    blueprint
+        .validate()
+        .map_err(|_| FangyuanAuthoringCliError::Boundary("canonical blueprint must validate"))?;
+    if blueprint
+        .primitives
+        .iter()
+        .any(|primitive| primitive.lifecycle.is_some())
+    {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "canonical blueprint must not contain lifecycle metadata",
+        ));
+    }
+    let mut primitives = blueprint
+        .primitives
+        .iter()
+        .map(canonical_primitive_ron)
+        .collect::<Result<Vec<_>, _>>()?;
+    primitives.sort();
+
+    let mut output = String::new();
+    output.push_str("(\n");
+    append_canonical_ron_field(
+        &mut output,
+        2,
+        "version",
+        &canonical_ron_string(&blueprint.version)?,
+    );
+    append_canonical_ron_field(
+        &mut output,
+        2,
+        "name",
+        &canonical_ron_string(&blueprint.name)?,
+    );
+    append_canonical_ron_field(
+        &mut output,
+        2,
+        "description",
+        &canonical_ron_string(&blueprint.description)?,
+    );
+    append_canonical_ron_field(
+        &mut output,
+        2,
+        "max_primitives",
+        &blueprint.max_primitives.to_string(),
+    );
+    output.push_str("  bounds: (\n");
+    append_canonical_ron_field(
+        &mut output,
+        4,
+        "width",
+        &canonical_f32(blueprint.bounds.width),
+    );
+    append_canonical_ron_field(
+        &mut output,
+        4,
+        "depth",
+        &canonical_f32(blueprint.bounds.depth),
+    );
+    append_canonical_ron_field(
+        &mut output,
+        4,
+        "height",
+        &canonical_f32(blueprint.bounds.height),
+    );
+    output.push_str("  ),\n");
+    output.push_str("  primitives: [\n");
+    for primitive in primitives {
+        output.push_str(&primitive);
+        output.push_str(",\n");
+    }
+    output.push_str("  ],\n");
+    output.push_str(")\n");
+    Ok(output.into_bytes())
+}
+
+fn canonical_primitive_ron(
+    primitive: &FangyuanPrimitiveBlueprint,
+) -> Result<String, FangyuanAuthoringCliError> {
+    let mut output = String::from("    (\n");
+    append_canonical_ron_field(
+        &mut output,
+        6,
+        "kind",
+        &canonical_ron_string(primitive.kind.as_str())?,
+    );
+    append_canonical_ron_field(
+        &mut output,
+        6,
+        "role",
+        &canonical_ron_string(primitive.role().as_str())?,
+    );
+    append_canonical_ron_field(
+        &mut output,
+        6,
+        "position",
+        &canonical_f32_array(&primitive.position),
+    );
+    append_canonical_ron_field(
+        &mut output,
+        6,
+        "size",
+        &canonical_f32_array(&primitive.size),
+    );
+    append_canonical_ron_field(
+        &mut output,
+        6,
+        "color",
+        &canonical_f32_array(&primitive.color),
+    );
+    if let Some(alpha) = primitive.alpha {
+        append_canonical_ron_field(
+            &mut output,
+            6,
+            "alpha",
+            &format!("Some({})", canonical_f32(alpha)),
+        );
+    }
+    if let Some(emissive) = primitive.emissive {
+        append_canonical_ron_field(
+            &mut output,
+            6,
+            "emissive",
+            &format!("Some({})", canonical_f32(emissive)),
+        );
+    }
+    if let Some(material_profile_id) = primitive.material_profile_id.as_deref() {
+        append_canonical_ron_field(
+            &mut output,
+            6,
+            "material_profile_id",
+            &format!("Some({})", canonical_ron_string(material_profile_id)?),
+        );
+    }
+    if let Some(surface_preset_id) = primitive.surface_material_preset_id.as_deref() {
+        append_canonical_ron_field(
+            &mut output,
+            6,
+            "surface_material_preset_id",
+            &format!("Some({})", canonical_ron_string(surface_preset_id)?),
+        );
+    }
+    if primitive.surface_noise_enabled {
+        append_canonical_ron_field(&mut output, 6, "surface_noise_enabled", "true");
+    }
+    output.push_str("    )");
+    Ok(output)
+}
+
+fn append_canonical_ron_field(output: &mut String, indent: usize, field: &str, value: &str) {
+    output.push_str(&" ".repeat(indent));
+    output.push_str(field);
+    output.push_str(": ");
+    output.push_str(value);
+    output.push_str(",\n");
+}
+
+fn canonical_ron_string(value: &str) -> Result<String, FangyuanAuthoringCliError> {
+    ron::ser::to_string(&value)
+        .map_err(|error| FangyuanAuthoringCliError::Serialization(error.to_string()))
+}
+
+fn canonical_f32_array<const N: usize>(values: &[f32; N]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| canonical_f32(*value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn canonical_f32(value: f32) -> String {
+    let value = if value == 0.0 { 0.0 } else { value };
+    let mut output = value.to_string();
+    if !output.contains(['.', 'e', 'E']) {
+        output.push_str(".0");
+    }
+    output
+}
+
+fn collect_requested_resolved_presets(
+    original: &FangyuanBlueprint,
+    canonical: &FangyuanBlueprint,
+    inputs: &FangyuanAuthoringDraftValidationInputs,
+) -> Vec<FangyuanAuthoringPresetResolutionRecord> {
+    original
+        .primitives
+        .iter()
+        .zip(&canonical.primitives)
+        .enumerate()
+        .map(|(primitive_index, (requested, resolved))| {
+            let requested_preset_id = requested.surface_material_preset_id.clone();
+            let resolved_preset_id = resolved.surface_material_preset_id.clone();
+            let fallback_reason = if requested_preset_id != resolved_preset_id {
+                Some("authoring_default_surface_preset".to_string())
+            } else {
+                resolved_preset_id.as_deref().and_then(|preset_id| {
+                    inputs
+                        .registry
+                        .resolve_with_noise(Some(preset_id), resolved.surface_noise_enabled, None)
+                        .fallback_reason
+                        .map(|reason| format!("{reason:?}").to_ascii_lowercase())
+                })
+            };
+            FangyuanAuthoringPresetResolutionRecord {
+                primitive_index,
+                requested_preset_id,
+                resolved_preset_id,
+                noise_enabled: resolved.surface_noise_enabled,
+                fallback_reason,
+            }
+        })
+        .collect()
+}
+
+fn generated_blueprint_target(stable_id: &str) -> String {
+    format!("project/assets/fangyuan/blueprints/generated/{stable_id}.ron")
 }
 
 fn build_catalog_context(
@@ -1569,11 +2715,17 @@ fn run_file_exists(
     relative_path: &str,
 ) -> Result<bool, FangyuanAuthoringCliError> {
     let path = run_file_path(run_directory, relative_path)?;
-    if !path.exists() {
-        return Ok(false);
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            ensure_safe_existing_run_file(run_directory, &path)?;
+            Ok(true)
+        }
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(FangyuanAuthoringCliError::Io {
+            operation: "failed to inspect authoring run artifact",
+            source,
+        }),
     }
-    ensure_safe_existing_run_file(run_directory, &path)?;
-    Ok(true)
 }
 
 fn read_safe_run_file(
@@ -1644,11 +2796,39 @@ fn write_or_replace_run_file(
 ) -> Result<(), FangyuanAuthoringCliError> {
     let path = run_file_path(run_directory, relative_path)?;
     ensure_safe_run_parent(run_directory, &path)?;
-    if path.exists() {
-        ensure_safe_existing_run_file(run_directory, &path)?;
+    match fs::symlink_metadata(&path) {
+        Ok(_) => ensure_safe_existing_run_file(run_directory, &path)?,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(FangyuanAuthoringCliError::Io {
+                operation: "failed to inspect authoring run artifact",
+                source,
+            });
+        }
     }
     fs::write(path, bytes).map_err(|source| FangyuanAuthoringCliError::Io {
         operation: "failed to write authoring run artifact",
+        source,
+    })
+}
+
+fn remove_run_file_if_exists(
+    run_directory: &Path,
+    relative_path: &str,
+) -> Result<(), FangyuanAuthoringCliError> {
+    let path = run_file_path(run_directory, relative_path)?;
+    match fs::symlink_metadata(&path) {
+        Ok(_) => ensure_safe_existing_run_file(run_directory, &path)?,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(FangyuanAuthoringCliError::Io {
+                operation: "failed to inspect authoring run artifact",
+                source,
+            });
+        }
+    }
+    fs::remove_file(path).map_err(|source| FangyuanAuthoringCliError::Io {
+        operation: "failed to remove stale authoring run artifact",
         source,
     })
 }
@@ -2038,6 +3218,43 @@ mod tests {
         entries.into_iter().next().unwrap()
     }
 
+    fn write_run_draft(run_directory: &Path, draft: impl AsRef<[u8]>) {
+        fs::create_dir_all(run_directory.join("draft")).unwrap();
+        fs::write(run_directory.join(DRAFT_BLUEPRINT_FILE), draft).unwrap();
+    }
+
+    fn write_blueprint_draft(run_directory: &Path, blueprint: &FangyuanBlueprint) {
+        write_run_draft(
+            run_directory,
+            canonical_blueprint_ron_bytes(blueprint).unwrap(),
+        );
+    }
+
+    fn validate_options(run_id: &str) -> FangyuanAuthoringCliOptions {
+        FangyuanAuthoringCliOptions::parse_from(["validate-draft", "--run", run_id]).unwrap()
+    }
+
+    fn read_audit_artifact(run_directory: &Path) -> FangyuanAuthoringAuditArtifact {
+        serde_json::from_slice(&fs::read(run_directory.join(AUDIT_REPORT_FILE)).unwrap()).unwrap()
+    }
+
+    fn read_promotion_decision(run_directory: &Path) -> FangyuanAuthoringPromotionDecision {
+        serde_json::from_slice(&fs::read(run_directory.join(PROMOTION_DECISION_FILE)).unwrap())
+            .unwrap()
+    }
+
+    fn assert_draft_validation_failed(
+        result: Result<FangyuanAuthoringCliReport, FangyuanAuthoringCliError>,
+    ) {
+        assert!(matches!(
+            result,
+            Err(FangyuanAuthoringCliError::OperationFailed {
+                code: "draft_validation_failed",
+                ..
+            })
+        ));
+    }
+
     #[test]
     fn fixture_task_matches_the_strict_rust_contract() {
         let task = FangyuanAuthoringTask::parse_json(&fixture_task_bytes()).unwrap();
@@ -2303,22 +3520,13 @@ mod tests {
     }
 
     #[test]
-    fn deferred_commands_leave_canonical_and_decision_absent() {
+    fn missing_draft_writes_blocked_audit_and_decision() {
         let repository = temporary_repository();
         write_fixture_task(&repository);
         let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
-        let validate = FangyuanAuthoringCliOptions::parse_from([
-            "validate-draft",
-            "--run",
-            prepared.run_id.as_str(),
-        ])
-        .unwrap();
-        assert!(matches!(
-            run_fangyuan_authoring_cli(&validate, repository.path()),
-            Err(FangyuanAuthoringCliError::OperationFailed {
-                code: "draft_missing",
-                ..
-            })
+        assert_draft_validation_failed(run_fangyuan_authoring_cli(
+            &validate_options(&prepared.run_id),
+            repository.path(),
         ));
         let promote =
             FangyuanAuthoringCliOptions::parse_from(["promote", "--run", prepared.run_id.as_str()])
@@ -2332,13 +3540,351 @@ mod tests {
         ));
         let run_directory = only_run_directory(&repository);
         assert!(!run_directory.join(CANONICAL_BLUEPRINT_FILE).exists());
-        assert!(!run_directory.join(PROMOTION_DECISION_FILE).exists());
+        let audit = read_audit_artifact(&run_directory);
+        assert_eq!(audit.report.error_count, 1);
+        assert_eq!(audit.report.findings[0].code, "draft_missing");
+        assert_eq!(
+            read_promotion_decision(&run_directory).status,
+            FangyuanAuthoringPromotionDecisionStatus::Blocked
+        );
         assert_eq!(
             fangyuan_authoring_cli_error_exit_code(&FangyuanAuthoringCliError::OperationFailed {
                 run_id: prepared.run_id,
-                code: "draft_missing",
+                code: "draft_validation_failed",
             }),
             1
+        );
+    }
+
+    #[test]
+    fn validate_draft_writes_canonical_audit_and_ready_decision() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+
+        let report =
+            run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path())
+                .unwrap();
+        assert_eq!(report.status, FangyuanAuthoringCommandStatus::Validated);
+        let canonical = fs::read(run_directory.join(CANONICAL_BLUEPRINT_FILE)).unwrap();
+        assert!(canonical.ends_with(b"\n"));
+        assert!(!canonical.windows(2).any(|pair| pair == b"\r\n"));
+        let canonical_blueprint =
+            FangyuanBlueprint::from_ron_str(std::str::from_utf8(&canonical).unwrap()).unwrap();
+        canonical_blueprint.validate().unwrap();
+
+        let audit = read_audit_artifact(&run_directory);
+        let decision = read_promotion_decision(&run_directory);
+        assert_eq!(audit.report.error_count, 0);
+        assert_eq!(
+            decision.status,
+            FangyuanAuthoringPromotionDecisionStatus::ReadyForPromotion
+        );
+        assert_eq!(
+            audit.canonical_sha256.as_deref(),
+            Some(sha256_hex(&canonical).as_str())
+        );
+        assert_eq!(decision.canonical_sha256, audit.canonical_sha256);
+        assert_eq!(
+            decision.target_relative_path,
+            "project/assets/fangyuan/blueprints/generated/stage1_contract_fixture.ron"
+        );
+    }
+
+    #[test]
+    fn validate_draft_repairs_unknown_preset_to_a_context_default() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        let draft = include_str!("fixtures/authoring/valid_codex_draft.ron").replacen(
+            "material:surface/x00/y00",
+            "material:surface/x99/y99",
+            1,
+        );
+        write_run_draft(&run_directory, draft);
+
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+        let audit = read_audit_artifact(&run_directory);
+        assert!(
+            audit
+                .original_report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "surface_preset_not_in_context")
+        );
+        assert!(audit.repair_actions.iter().any(|action| {
+            action.action == "replace_unusable_surface_preset"
+                && action.before.as_deref() == Some("material:surface/x99/y99")
+        }));
+        let resolution = audit
+            .requested_resolved_presets
+            .iter()
+            .find(|record| record.primitive_index == 0)
+            .unwrap();
+        assert_eq!(
+            resolution.requested_preset_id.as_deref(),
+            Some("material:surface/x99/y99")
+        );
+        assert_ne!(
+            resolution.requested_preset_id,
+            resolution.resolved_preset_id
+        );
+        assert_eq!(audit.report.error_count, 0);
+    }
+
+    #[test]
+    fn validate_draft_rejects_path_and_ron_field_injection_without_canonical() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        let draft = include_bytes!("fixtures/authoring/invalid_codex_draft.ron");
+        assert!(std::str::from_utf8(draft).unwrap().contains("asset_path"));
+        write_run_draft(&run_directory, draft);
+
+        assert_draft_validation_failed(run_fangyuan_authoring_cli(
+            &validate_options(&prepared.run_id),
+            repository.path(),
+        ));
+        assert!(!run_directory.join(CANONICAL_BLUEPRINT_FILE).exists());
+        let audit = read_audit_artifact(&run_directory);
+        assert_eq!(audit.report.findings[0].code, "draft_ron_parse_failed");
+        assert_eq!(
+            read_promotion_decision(&run_directory).status,
+            FangyuanAuthoringPromotionDecisionStatus::Blocked
+        );
+    }
+
+    #[test]
+    fn invalidated_draft_removes_a_stale_canonical_candidate() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        let options = validate_options(&prepared.run_id);
+        run_fangyuan_authoring_cli(&options, repository.path()).unwrap();
+        assert!(run_directory.join(CANONICAL_BLUEPRINT_FILE).is_file());
+
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/invalid_codex_draft.ron"),
+        );
+        assert_draft_validation_failed(run_fangyuan_authoring_cli(&options, repository.path()));
+        assert!(!run_directory.join(CANONICAL_BLUEPRINT_FILE).exists());
+        assert_eq!(
+            read_promotion_decision(&run_directory).status,
+            FangyuanAuthoringPromotionDecisionStatus::Blocked
+        );
+    }
+
+    #[test]
+    fn validate_draft_disables_noise_when_task_does_not_authorize_it() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let task_path = repository.path().join("tasks/task.json");
+        let mut task: serde_json::Value =
+            serde_json::from_slice(&fs::read(&task_path).unwrap()).unwrap();
+        task["material_budget"]["allow_catalog_suggested_noise"] = serde_json::Value::Bool(false);
+        fs::write(task_path, serde_json::to_vec(&task).unwrap()).unwrap();
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+        let audit = read_audit_artifact(&run_directory);
+        assert!(
+            audit
+                .repair_actions
+                .iter()
+                .any(|action| action.action == "disable_unavailable_surface_noise")
+        );
+        assert!(
+            audit
+                .requested_resolved_presets
+                .iter()
+                .all(|record| !record.noise_enabled)
+        );
+        let canonical = fs::read_to_string(run_directory.join(CANONICAL_BLUEPRINT_FILE)).unwrap();
+        assert!(!canonical.contains("surface_noise_enabled"));
+    }
+
+    #[test]
+    fn validate_draft_rejects_more_than_four_surface_presets() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let task_path = repository.path().join("tasks/task.json");
+        let mut task: serde_json::Value =
+            serde_json::from_slice(&fs::read(&task_path).unwrap()).unwrap();
+        task["prompt"] = serde_json::Value::String("neutral object finish".to_string());
+        task["allowed"]["roles"] = serde_json::json!(["archive"]);
+        task["additional_forbidden_features"] = serde_json::json!([]);
+        fs::write(task_path, serde_json::to_vec(&task).unwrap()).unwrap();
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        let context: FangyuanAuthoringCatalogContext =
+            serde_json::from_slice(&fs::read(run_directory.join(CATALOG_CONTEXT_FILE)).unwrap())
+                .unwrap();
+        let preset_ids: Vec<_> = context
+            .presets
+            .iter()
+            .filter(|preset| {
+                !matches!(
+                    preset.render_model,
+                    FangyuanCatalogRenderModel::SpecialWater
+                        | FangyuanCatalogRenderModel::SpecialUnlitSky
+                ) && !matches!(preset.material_family.as_str(), "water" | "sky" | "lava")
+            })
+            .take(5)
+            .map(|preset| preset.preset_id.clone())
+            .collect();
+        assert_eq!(preset_ids.len(), 5);
+        let template = FangyuanBlueprint::from_ron_str(include_str!(
+            "fixtures/authoring/valid_codex_draft.ron"
+        ))
+        .unwrap()
+        .primitives[0]
+            .clone();
+        let mut blueprint = FangyuanBlueprint::from_ron_str(include_str!(
+            "fixtures/authoring/valid_codex_draft.ron"
+        ))
+        .unwrap();
+        blueprint.max_primitives = 5;
+        blueprint.primitives = preset_ids
+            .into_iter()
+            .enumerate()
+            .map(|(index, preset_id)| {
+                let mut primitive = template.clone();
+                primitive.role = Some(FangyuanPrimitiveRole::Archive);
+                primitive.position = [-3.0 + index as f32 * 1.5, 0.5, 0.0];
+                primitive.surface_material_preset_id = Some(preset_id);
+                primitive.surface_noise_enabled = false;
+                primitive
+            })
+            .collect();
+        write_blueprint_draft(&run_directory, &blueprint);
+
+        assert_draft_validation_failed(run_fangyuan_authoring_cli(
+            &validate_options(&prepared.run_id),
+            repository.path(),
+        ));
+        let audit = read_audit_artifact(&run_directory);
+        assert!(
+            audit
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "surface_preset_count_exceeded"),
+            "{:#?}",
+            audit.report.findings
+        );
+        assert!(!run_directory.join(CANONICAL_BLUEPRINT_FILE).exists());
+    }
+
+    #[test]
+    fn validate_draft_rejects_declared_bounds_above_task_limit() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        let mut blueprint = FangyuanBlueprint::from_ron_str(include_str!(
+            "fixtures/authoring/valid_codex_draft.ron"
+        ))
+        .unwrap();
+        blueprint.bounds.width = 8.5;
+        write_blueprint_draft(&run_directory, &blueprint);
+
+        assert_draft_validation_failed(run_fangyuan_authoring_cli(
+            &validate_options(&prepared.run_id),
+            repository.path(),
+        ));
+        let audit = read_audit_artifact(&run_directory);
+        assert!(
+            audit
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "declared_bounds_above_task_limit"),
+            "{:#?}",
+            audit.report.findings
+        );
+    }
+
+    #[test]
+    fn validate_draft_rejects_task_forbidden_special_surface() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        let special_preset_id = fixture_registry()
+            .catalog_metadata()
+            .iter()
+            .find(|metadata| is_catalog_special_surface(metadata))
+            .unwrap()
+            .preset_id
+            .clone();
+        let draft = include_str!("fixtures/authoring/valid_codex_draft.ron").replacen(
+            "material:surface/x00/y00",
+            &special_preset_id,
+            1,
+        );
+        write_run_draft(&run_directory, draft);
+
+        assert_draft_validation_failed(run_fangyuan_authoring_cli(
+            &validate_options(&prepared.run_id),
+            repository.path(),
+        ));
+        let audit = read_audit_artifact(&run_directory);
+        assert!(
+            audit
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "special_surface_forbidden")
+        );
+        assert!(!run_directory.join(CANONICAL_BLUEPRINT_FILE).exists());
+    }
+
+    #[test]
+    fn validate_draft_is_byte_stable_for_the_same_run_inputs() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        let options = validate_options(&prepared.run_id);
+
+        run_fangyuan_authoring_cli(&options, repository.path()).unwrap();
+        let first_canonical = fs::read(run_directory.join(CANONICAL_BLUEPRINT_FILE)).unwrap();
+        let first_audit = fs::read(run_directory.join(AUDIT_REPORT_FILE)).unwrap();
+        let first_decision = fs::read(run_directory.join(PROMOTION_DECISION_FILE)).unwrap();
+        run_fangyuan_authoring_cli(&options, repository.path()).unwrap();
+        assert_eq!(
+            first_canonical,
+            fs::read(run_directory.join(CANONICAL_BLUEPRINT_FILE)).unwrap()
+        );
+        assert_eq!(
+            first_audit,
+            fs::read(run_directory.join(AUDIT_REPORT_FILE)).unwrap()
+        );
+        assert_eq!(
+            first_decision,
+            fs::read(run_directory.join(PROMOTION_DECISION_FILE)).unwrap()
         );
     }
 
