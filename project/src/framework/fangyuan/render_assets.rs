@@ -225,6 +225,23 @@ impl FangyuanAtlasAssetCache {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_optional_channels_missing() -> Self {
+        Self {
+            base_color: Some(Handle::default()),
+            normal: None,
+            noise: None,
+            status: FangyuanAtlasAssetStatus {
+                catalog_available: true,
+                base_color: FangyuanAtlasImageState::Loaded,
+                normal: FangyuanAtlasImageState::Missing,
+                noise: FangyuanAtlasImageState::Failed,
+                fallback_flags: FangyuanAtlasFallbackFlags::MISSING_NORMAL
+                    .union(FangyuanAtlasFallbackFlags::MISSING_NOISE),
+            },
+        }
+    }
+
     /// Load all three canonical images once, applying channel-specific color
     /// space and sampler settings. The catalog availability result comes from
     /// the already validated resolver boundary.

@@ -64,6 +64,10 @@ pub struct ResolvedFangyuanSurfacePreset {
     pub surface_tile_index: u16,
     pub noise_tile_id: Option<String>,
     pub noise_tile_index: Option<u16>,
+    /// Catalog-declared roughness modulation strength.  This is visual-only
+    /// data and never participates in deterministic gameplay state.
+    pub noise_strength: f32,
+    pub noise_uv_scale_multiplier: f32,
     pub roughness: f32,
     pub metallic: f32,
     pub ambient_occlusion: f32,
@@ -87,6 +91,8 @@ impl ResolvedFangyuanSurfacePreset {
             surface_tile_index: 0,
             noise_tile_id: None,
             noise_tile_index: None,
+            noise_strength: 0.0,
+            noise_uv_scale_multiplier: 1.0,
             roughness: FANGYUAN_SURFACE_PRESET_DEFAULT_ROUGHNESS,
             metallic: FANGYUAN_SURFACE_PRESET_DEFAULT_METALLIC,
             ambient_occlusion: FANGYUAN_SURFACE_PRESET_DEFAULT_AMBIENT_OCCLUSION,
@@ -406,16 +412,21 @@ impl FangyuanSurfacePresetRegistry {
                     .get(&preset.surface_tile_id)
                     .copied()
                     .unwrap_or(preset.index);
-                let (noise_tile_id, noise_tile_index) = preset
-                    .noise_modulation
-                    .as_ref()
-                    .and_then(|noise| {
-                        noise_indices
-                            .get(&noise.tile_id)
-                            .copied()
-                            .map(|index| (Some(noise.tile_id.clone()), Some(index)))
-                    })
-                    .unwrap_or((None, None));
+                let (noise_tile_id, noise_tile_index, noise_strength, noise_uv_scale_multiplier) =
+                    preset
+                        .noise_modulation
+                        .as_ref()
+                        .and_then(|noise| {
+                            noise_indices.get(&noise.tile_id).copied().map(|index| {
+                                (
+                                    Some(noise.tile_id.clone()),
+                                    Some(index),
+                                    noise.strength.clamp(0.0, 1.0),
+                                    noise.uv_scale_multiplier.max(f32::EPSILON),
+                                )
+                            })
+                        })
+                        .unwrap_or((None, None, 0.0, 1.0));
                 let normal_enabled = preset.normal.as_ref().is_some_and(|normal| normal.enabled);
                 let normal_strength = preset.normal.as_ref().map_or(0.0, |normal| normal.strength);
                 let flags = FangyuanSurfacePresetFlags {
@@ -447,6 +458,8 @@ impl FangyuanSurfacePresetRegistry {
                     surface_tile_index,
                     noise_tile_id,
                     noise_tile_index,
+                    noise_strength,
+                    noise_uv_scale_multiplier,
                     roughness: preset.pbr_constants.perceptual_roughness,
                     metallic: preset.pbr_constants.metallic,
                     ambient_occlusion: preset.pbr_constants.ambient_occlusion,

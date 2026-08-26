@@ -17,11 +17,11 @@ use std::collections::HashMap;
 
 use super::{
     FANGYUAN_NORMAL_SAMPLING_POLICY, FangyuanAtlasAssetCache, FangyuanAtlasChannel,
-    FangyuanAtlasImageState, FangyuanCubeFace, FangyuanMaterialProfileRegistry, FangyuanPrimitive,
-    FangyuanStandardMaterialReference, FangyuanSurfacePresetFallbackReason,
-    FangyuanSurfacePresetRegistry, fangyuan_atlas_tile_content_uv_rect,
-    fangyuan_atlas_uv_from_local, fangyuan_cube_face_repeat, fangyuan_sphere_repeat,
-    fangyuan_standard_material_reference,
+    FangyuanAtlasImageState, FangyuanCubeFace, FangyuanMaterialProfileRegistry,
+    FangyuanNormalGreenDirection, FangyuanPrimitive, FangyuanStandardMaterialReference,
+    FangyuanSurfacePresetFallbackReason, FangyuanSurfacePresetRegistry,
+    fangyuan_atlas_tile_content_uv_rect, fangyuan_atlas_uv_from_local, fangyuan_cube_face_repeat,
+    fangyuan_sphere_repeat, fangyuan_standard_material_reference,
 };
 
 /// Compute the local repeat multiplier before mapping UVs into a tile.
@@ -49,6 +49,41 @@ pub fn fangyuan_atlas_local_repeat(
 /// material makes texel-center and fract behavior testable without a GPU.
 pub fn fangyuan_atlas_material_uv(local_uv: Vec2, repeat: Vec2, tile_index: u16) -> Option<Vec2> {
     fangyuan_atlas_uv_from_local(local_uv, repeat, tile_index)
+}
+
+/// Decode a linear normal-map texel and apply the catalog strength while
+/// preserving a unit-length tangent-space normal.  A zero strength is the
+/// flat normal, so callers can use it as the disabled-channel fallback.
+pub fn fangyuan_decode_normal_sample(sample: Vec3, strength: f32, flip_y: bool) -> Vec3 {
+    let mut encoded = sample * 2.0 - Vec3::ONE;
+    if flip_y {
+        encoded.y = -encoded.y;
+    }
+    let strength = strength.clamp(0.0, 1.0);
+    let flat = Vec3::Z;
+    if strength <= f32::EPSILON {
+        return flat;
+    }
+    let blended = flat.lerp(encoded, strength);
+    if blended.length_squared() <= f32::EPSILON {
+        flat
+    } else {
+        blended.normalize()
+    }
+}
+
+/// Noise indices are row-major 16x16 cells.  The catalog validator owns the
+/// full 122-valid/134-reserved range; this local guard prevents sentinel or
+/// reserved cells from becoming texture coordinates in the shader.
+pub fn fangyuan_noise_tile_content_uv_rect(tile_index: u16) -> Option<(Vec2, Vec2)> {
+    let x = tile_index % 16;
+    let y = tile_index / 16;
+    let valid = (y <= 5 && x <= 11) || (6..=10).contains(&y) && x <= 9;
+    if !valid {
+        return None;
+    }
+    let rect = fangyuan_atlas_tile_content_uv_rect(tile_index)?;
+    Some((rect.min, rect.max))
 }
 
 /// Material flags are intentionally data, rather than shader variants.
@@ -127,7 +162,8 @@ pub struct FangyuanAtlasMaterialUniform {
     pub tile_index: u32,
     pub noise_tile_index: u32,
     pub flags: u32,
-    pub _padding: u32,
+    /// Catalog UV scale multiplier for the optional noise tile.
+    pub noise_uv_scale: f32,
 }
 
 impl FangyuanAtlasMaterialUniform {
@@ -155,6 +191,11 @@ impl FangyuanAtlasMaterialUniform {
 
     pub fn noise_strength(self) -> f32 {
         self.pbr.w
+    }
+
+    pub fn noise_tile_rect(self) -> Option<(Vec2, Vec2)> {
+        let index = u16::try_from(self.noise_tile_index).ok()?;
+        fangyuan_noise_tile_content_uv_rect(index)
     }
 }
 
@@ -284,7 +325,7 @@ impl FangyuanAtlasMaterialKey {
                 u.tile_index,
                 u.noise_tile_index,
                 u.flags,
-                u._padding,
+                u.noise_uv_scale.to_bits(),
             ],
         }
     }
@@ -390,9 +431,35 @@ pub fn fangyuan_atlas_material_with_options(
     capabilities: FangyuanAtlasMaterialCapabilities,
     debug_mode: FangyuanAtlasDebugMode,
 ) -> FangyuanAtlasMaterialBuildResult {
+    fangyuan_atlas_material_with_normal_override(
+        primitive,
+        surface_registry,
+        material_registry,
+        atlas,
+        capabilities,
+        debug_mode,
+        None,
+    )
+}
+
+/// Variant used by the diagnostic gallery to compare both normal green
+/// conventions.  Production callers should keep the default `None`, which
+/// uses the verified NegativeY catalog policy.
+pub fn fangyuan_atlas_material_with_normal_override(
+    primitive: &FangyuanPrimitive,
+    surface_registry: &FangyuanSurfacePresetRegistry,
+    material_registry: &FangyuanMaterialProfileRegistry,
+    atlas: &FangyuanAtlasAssetCache,
+    capabilities: FangyuanAtlasMaterialCapabilities,
+    debug_mode: FangyuanAtlasDebugMode,
+    normal_green_override: Option<FangyuanNormalGreenDirection>,
+) -> FangyuanAtlasMaterialBuildResult {
     let reference =
         fangyuan_standard_material_reference(primitive, surface_registry, material_registry, atlas);
 
+    let base_state = atlas.status().state(FangyuanAtlasChannel::BaseColor);
+    let normal_state = atlas.status().state(FangyuanAtlasChannel::Normal);
+    let noise_state = atlas.status().state(FangyuanAtlasChannel::Noise);
     let reason = if !capabilities.custom_material || !capabilities.texture_bindings {
         Some(FangyuanAtlasMaterialFallbackReason::UnsupportedCapability)
     } else if !capabilities.shader_available {
@@ -401,26 +468,21 @@ pub fn fangyuan_atlas_material_with_options(
         Some(FangyuanAtlasMaterialFallbackReason::CatalogUnavailable)
     } else if atlas.base_color().is_none()
         || matches!(
-            atlas.status().state(FangyuanAtlasChannel::BaseColor),
+            base_state,
             FangyuanAtlasImageState::Missing | FangyuanAtlasImageState::Failed
         )
     {
         Some(FangyuanAtlasMaterialFallbackReason::MissingBaseColorAtlas)
-    } else if atlas.normal().is_none()
+    } else if !matches!(base_state, FangyuanAtlasImageState::Loaded)
         || matches!(
-            atlas.status().state(FangyuanAtlasChannel::Normal),
-            FangyuanAtlasImageState::Missing | FangyuanAtlasImageState::Failed
+            normal_state,
+            FangyuanAtlasImageState::Uninitialized | FangyuanAtlasImageState::Loading
+        )
+        || matches!(
+            noise_state,
+            FangyuanAtlasImageState::Uninitialized | FangyuanAtlasImageState::Loading
         )
     {
-        Some(FangyuanAtlasMaterialFallbackReason::MissingNormalAtlas)
-    } else if atlas.noise().is_none()
-        || matches!(
-            atlas.status().state(FangyuanAtlasChannel::Noise),
-            FangyuanAtlasImageState::Missing | FangyuanAtlasImageState::Failed
-        )
-    {
-        Some(FangyuanAtlasMaterialFallbackReason::MissingNoiseAtlas)
-    } else if !atlas.status().is_ready() {
         Some(FangyuanAtlasMaterialFallbackReason::AtlasNotReady)
     } else {
         None
@@ -438,14 +500,23 @@ pub fn fangyuan_atlas_material_with_options(
             .unwrap_or(Vec2::ONE);
     let tint = reference.composed_params.color.to_linear();
     let emissive = reference.material.emissive;
-    let normal_enabled =
-        surface.flags.normal_enabled && surface.normal_strength > 0.0 && atlas.normal().is_some();
+    let normal_enabled = surface.flags.normal_enabled
+        && surface.normal_strength > 0.0
+        && matches!(normal_state, FangyuanAtlasImageState::Loaded)
+        && atlas.normal().is_some();
     let noise_enabled = primitive.surface_noise_enabled()
         && surface.flags.noise_available
         && surface.noise_tile_index.is_some()
+        && surface.noise_strength > 0.0
+        && surface
+            .noise_tile_index
+            .and_then(fangyuan_noise_tile_content_uv_rect)
+            .is_some()
+        && matches!(noise_state, FangyuanAtlasImageState::Loaded)
         && atlas.noise().is_some();
-    let green_flip_y =
-        FANGYUAN_NORMAL_SAMPLING_POLICY.standard_material_flip_normal_map_y(None) == Some(true);
+    let green_flip_y = FANGYUAN_NORMAL_SAMPLING_POLICY
+        .standard_material_flip_normal_map_y(normal_green_override)
+        == Some(true);
 
     let mut flags = debug_mode.flags();
     if normal_enabled {
@@ -454,7 +525,9 @@ pub fn fangyuan_atlas_material_with_options(
     if noise_enabled {
         flags = flags.union(FangyuanAtlasMaterialFlags::NOISE_ENABLED);
     }
-    if reference.diagnostic.fallback_reason.is_some() {
+    if reference.diagnostic.fallback_reason.is_some()
+        || atlas.status().fallback_flags != super::FangyuanAtlasFallbackFlags::empty()
+    {
         flags = flags.union(FangyuanAtlasMaterialFlags::FALLBACK);
     }
     if green_flip_y {
@@ -464,10 +537,14 @@ pub fn fangyuan_atlas_material_with_options(
         flags = flags.union(FangyuanAtlasMaterialFlags::ATLAS_NOT_READY);
     }
 
-    let noise_tile_index = surface
-        .noise_tile_index
-        .map(u32::from)
-        .unwrap_or(FangyuanAtlasMaterialUniform::NOISE_TILE_SENTINEL);
+    let noise_tile_index = if noise_enabled {
+        surface
+            .noise_tile_index
+            .map(u32::from)
+            .unwrap_or(FangyuanAtlasMaterialUniform::NOISE_TILE_SENTINEL)
+    } else {
+        FangyuanAtlasMaterialUniform::NOISE_TILE_SENTINEL
+    };
     let uniform = FangyuanAtlasMaterialUniform {
         tint: Vec4::new(tint.red, tint.green, tint.blue, tint.alpha),
         surface: Vec4::new(
@@ -476,21 +553,25 @@ pub fn fangyuan_atlas_material_with_options(
             surface.roughness.clamp(0.0, 1.0),
             surface.metallic.clamp(0.0, 1.0),
         ),
-        // Noise strength is intentionally a reserved v0 value.  Stage 6 will
-        // source catalog modulation constants without changing this layout.
+        // Noise strength and UV scale are catalog-resolved visual constants;
+        // they never participate in authority, collision, or replay state.
         pbr: Vec4::new(
             surface.reflectance.clamp(0.0, 1.0),
             // Catalog schema v1 requires AO=1.0. Keep the shader contract
             // explicit even if future catalogs expose a diagnostic AO value.
             1.0,
-            surface.normal_strength.max(0.0),
-            if noise_enabled { 1.0 } else { 0.0 },
+            surface.normal_strength.clamp(0.0, 1.0),
+            if noise_enabled {
+                surface.noise_strength.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
         ),
         emissive_alpha: Vec4::new(emissive.red, emissive.green, emissive.blue, tint.alpha),
         tile_index: u32::from(surface.surface_tile_index),
         noise_tile_index,
         flags: flags.bits(),
-        _padding: 0,
+        noise_uv_scale: surface.noise_uv_scale_multiplier.max(f32::EPSILON),
     };
     let material = FangyuanAtlasMaterial {
         uniform,
@@ -498,11 +579,19 @@ pub fn fangyuan_atlas_material_with_options(
             .base_color()
             .expect("validated atlas base handle")
             .clone(),
-        normal_atlas: atlas
-            .normal()
-            .expect("validated atlas normal handle")
-            .clone(),
-        noise_atlas: atlas.noise().expect("validated atlas noise handle").clone(),
+        // Missing optional channels use a default handle and remain disabled
+        // through flags. Loading/uninitialized channels have already taken the
+        // whole-material AtlasNotReady fallback above.
+        normal_atlas: if matches!(normal_state, FangyuanAtlasImageState::Loaded) {
+            atlas.normal().cloned().unwrap_or_default()
+        } else {
+            Handle::default()
+        },
+        noise_atlas: if matches!(noise_state, FangyuanAtlasImageState::Loaded) {
+            atlas.noise().cloned().unwrap_or_default()
+        } else {
+            Handle::default()
+        },
         alpha_mode: reference.material.alpha_mode,
     };
     FangyuanAtlasMaterialBuildResult::Ready(FangyuanAtlasMaterialBuild {
@@ -521,8 +610,8 @@ pub fn fangyuan_atlas_material_with_options(
 mod tests {
     use super::*;
     use crate::framework::fangyuan::{
-        FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle, FangyuanPrimitiveRole,
-        load_first_package_fangyuan_surface_preset_registry,
+        FangyuanAtlasFallbackFlags, FangyuanPrimitiveKind, FangyuanPrimitiveLifecycle,
+        FangyuanPrimitiveRole, load_first_package_fangyuan_surface_preset_registry,
     };
     use bevy::asset::AssetPlugin;
 
@@ -659,6 +748,41 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn missing_optional_channels_disable_only_their_shader_paths() {
+        let registry = load_first_package_fangyuan_surface_preset_registry().unwrap();
+        let profiles = FangyuanMaterialProfileRegistry::default();
+        let atlas = FangyuanAtlasAssetCache::test_optional_channels_missing();
+
+        let FangyuanAtlasMaterialBuildResult::Ready(build) = fangyuan_atlas_material(
+            &primitive(Some("material:surface/x06/y12"), true),
+            &registry,
+            &profiles,
+            &atlas,
+        ) else {
+            panic!("missing optional channels should not force reference fallback");
+        };
+
+        let flags = FangyuanAtlasMaterialFlags(build.material.uniform.flags);
+        assert!(!flags.contains(FangyuanAtlasMaterialFlags::NORMAL_ENABLED));
+        assert!(!flags.contains(FangyuanAtlasMaterialFlags::NOISE_ENABLED));
+        assert!(flags.contains(FangyuanAtlasMaterialFlags::FALLBACK));
+        assert!(
+            build
+                .semantic
+                .atlas_fallback_flags
+                .contains(FangyuanAtlasFallbackFlags::MISSING_NORMAL)
+        );
+        assert!(
+            build
+                .semantic
+                .atlas_fallback_flags
+                .contains(FangyuanAtlasFallbackFlags::MISSING_NOISE)
+        );
+        assert_eq!(build.material.normal_atlas, Handle::default());
+        assert_eq!(build.material.noise_atlas, Handle::default());
     }
 
     #[test]
@@ -823,6 +947,134 @@ mod tests {
         assert!(SHADER.contains("sampled * material.tint.rgb"));
         assert!(SHADER.contains("material.flags & 64u"));
         assert!(SHADER.contains("material.flags & 128u"));
+        assert!(SHADER.contains("material.noise_uv_scale"));
+        assert!(SHADER.contains("decode_normal_sample"));
+        assert!(SHADER.contains("noise_tile_is_valid"));
+        assert!(SHADER.contains("controlled_roughness"));
         assert!(SHADER.contains("no manual sRGB"));
+    }
+
+    #[test]
+    fn normal_only_and_noise_only_debug_modes_are_data_flags() {
+        assert!(
+            FangyuanAtlasDebugMode::NormalOnly
+                .flags()
+                .contains(FangyuanAtlasMaterialFlags::DEBUG_NORMAL_ONLY)
+        );
+        assert!(
+            FangyuanAtlasDebugMode::NoiseOnly
+                .flags()
+                .contains(FangyuanAtlasMaterialFlags::DEBUG_NOISE_ONLY)
+        );
+        assert!(
+            !FangyuanAtlasDebugMode::Off
+                .flags()
+                .contains(FangyuanAtlasMaterialFlags::DEBUG)
+        );
+    }
+
+    #[test]
+    fn normal_green_debug_override_switches_uniform_flag_without_shader_variant() {
+        let registry = load_first_package_fangyuan_surface_preset_registry().unwrap();
+        let profiles = FangyuanMaterialProfileRegistry::default();
+        let atlas = ready_atlas_cache();
+        let source = primitive(Some("material:surface/x00/y01"), false);
+        let FangyuanAtlasMaterialBuildResult::Ready(default_build) =
+            fangyuan_atlas_material(&source, &registry, &profiles, &atlas)
+        else {
+            panic!("expected default atlas build");
+        };
+        let FangyuanAtlasMaterialBuildResult::Ready(positive_build) =
+            fangyuan_atlas_material_with_normal_override(
+                &source,
+                &registry,
+                &profiles,
+                &atlas,
+                FangyuanAtlasMaterialCapabilities::default(),
+                FangyuanAtlasDebugMode::NormalOnly,
+                Some(FangyuanNormalGreenDirection::PositiveY),
+            )
+        else {
+            panic!("expected override atlas build");
+        };
+        let default_flags = FangyuanAtlasMaterialFlags(default_build.material.uniform.flags);
+        let positive_flags = FangyuanAtlasMaterialFlags(positive_build.material.uniform.flags);
+        assert!(default_flags.contains(FangyuanAtlasMaterialFlags::GREEN_FLIP_Y));
+        assert!(!positive_flags.contains(FangyuanAtlasMaterialFlags::GREEN_FLIP_Y));
+        assert!(positive_flags.contains(FangyuanAtlasMaterialFlags::DEBUG_NORMAL_ONLY));
+        assert_eq!(
+            default_build.material.uniform.tile_index,
+            positive_build.material.uniform.tile_index
+        );
+    }
+
+    #[test]
+    fn normal_decode_applies_negative_y_strength_and_unit_length() {
+        let flat = fangyuan_decode_normal_sample(Vec3::new(0.5, 0.5, 1.0), 0.0, true);
+        assert_eq!(flat, Vec3::Z);
+        let zero_encoded = fangyuan_decode_normal_sample(Vec3::splat(0.5), 1.0, false);
+        assert_eq!(zero_encoded, Vec3::Z);
+        let flipped = fangyuan_decode_normal_sample(Vec3::new(0.5, 0.75, 1.0), 1.0, true);
+        assert!(flipped.y < 0.0);
+        assert!((flipped.length() - 1.0).abs() < 1e-6);
+        let clamped = fangyuan_decode_normal_sample(Vec3::new(1.0, 1.0, 1.0), 4.0, false);
+        assert!((clamped.length() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn noise_rect_rejects_sentinel_and_reserved_cells() {
+        assert!(fangyuan_noise_tile_content_uv_rect(0).is_some());
+        assert!(fangyuan_noise_tile_content_uv_rect(91).is_some());
+        assert!(fangyuan_noise_tile_content_uv_rect(95).is_none());
+        assert!(fangyuan_noise_tile_content_uv_rect(96).is_some());
+        assert!(fangyuan_noise_tile_content_uv_rect(169).is_some());
+        assert!(fangyuan_noise_tile_content_uv_rect(170).is_none());
+        assert!(fangyuan_noise_tile_content_uv_rect(255).is_none());
+        assert!(
+            FangyuanAtlasMaterialUniform {
+                tint: Vec4::ONE,
+                surface: Vec4::ONE,
+                pbr: Vec4::ZERO,
+                emissive_alpha: Vec4::ZERO,
+                tile_index: 0,
+                noise_tile_index: FangyuanAtlasMaterialUniform::NOISE_TILE_SENTINEL,
+                flags: 0,
+                noise_uv_scale: 1.0,
+            }
+            .noise_tile_rect()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn noise_opt_in_and_strength_are_projected_from_catalog() {
+        let registry = load_first_package_fangyuan_surface_preset_registry().unwrap();
+        let profiles = FangyuanMaterialProfileRegistry::default();
+        let atlas = ready_atlas_cache();
+        let source = primitive(Some("material:surface/x06/y12"), true);
+        let FangyuanAtlasMaterialBuildResult::Ready(build) =
+            fangyuan_atlas_material(&source, &registry, &profiles, &atlas)
+        else {
+            panic!("expected atlas material build");
+        };
+        assert!(build.material.uniform.noise_strength() > 0.0);
+        assert_eq!(build.material.uniform.noise_uv_scale, 3.0);
+        assert!(build.material.uniform.noise_tile_rect().is_some());
+
+        let disabled = primitive(Some("material:surface/x06/y12"), false);
+        let FangyuanAtlasMaterialBuildResult::Ready(disabled) =
+            fangyuan_atlas_material(&disabled, &registry, &profiles, &atlas)
+        else {
+            panic!("expected atlas material build");
+        };
+        assert_eq!(disabled.material.uniform.noise_strength(), 0.0);
+        assert_eq!(
+            disabled.material.uniform.noise_tile_index,
+            FangyuanAtlasMaterialUniform::NOISE_TILE_SENTINEL
+        );
+        assert!(
+            !FangyuanAtlasMaterialFlags(disabled.material.uniform.flags)
+                .contains(FangyuanAtlasMaterialFlags::NOISE_ENABLED)
+        );
     }
 }

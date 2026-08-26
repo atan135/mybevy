@@ -12,7 +12,7 @@ struct FangyuanAtlasMaterialUniform {
     tile_index: u32,
     noise_tile_index: u32,
     flags: u32,
-    padding: u32,
+    noise_uv_scale: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> material: FangyuanAtlasMaterialUniform;
@@ -34,6 +34,32 @@ fn tile_content_uv(local_uv: vec2<f32>, tile_index: u32) -> vec2<f32> {
     return content_min + repeated * (content_max - content_min);
 }
 
+fn noise_tile_is_valid(tile_index: u32) -> bool {
+    if (tile_index == 0xffffffffu || tile_index >= 256u) {
+        return false;
+    }
+    let x = tile_index % 16u;
+    let y = tile_index / 16u;
+    // 122 catalog cells: rows 0..5 x 0..11, rows 6..10 x 0..9.
+    return (y <= 5u && x <= 11u) || (y >= 6u && y <= 10u && x <= 9u);
+}
+
+fn decode_normal_sample(sample: vec3<f32>, strength: f32, flip_y: bool) -> vec3<f32> {
+    var tangent_normal = sample * 2.0 - vec3<f32>(1.0);
+    if (flip_y) {
+        tangent_normal.y = -tangent_normal.y;
+    }
+    let controlled_strength = clamp(strength, 0.0, 1.0);
+    if (controlled_strength <= 0.0) {
+        return vec3<f32>(0.0, 0.0, 1.0);
+    }
+    let blended = mix(vec3<f32>(0.0, 0.0, 1.0), tangent_normal, controlled_strength);
+    if (dot(blended, blended) <= 1e-8) {
+        return vec3<f32>(0.0, 0.0, 1.0);
+    }
+    return normalize(blended);
+}
+
 @fragment
 fn fragment(vertex_output: VertexOutput) -> @location(0) vec4<f32> {
     var local_uv = vec2<f32>(0.5, 0.5);
@@ -46,6 +72,37 @@ fn fragment(vertex_output: VertexOutput) -> @location(0) vec4<f32> {
     // conversion here.
     let sampled = textureSample(color_atlas, color_sampler, uv).rgb;
     var rgb = sampled * material.tint.rgb;
+    var controlled_roughness = clamp(material.surface.z, 0.0, 1.0);
+    var tangent_normal = vec3<f32>(0.0, 0.0, 1.0);
+
+    if ((material.flags & 1u) != 0u) {
+        // Normal atlas data is linear and uses the same surface tile/local UV.
+        let normal_sample = textureSample(normal_atlas, normal_sampler, uv).rgb;
+        tangent_normal = decode_normal_sample(
+            normal_sample,
+            material.pbr.z,
+            (material.flags & 8u) != 0u,
+        );
+        // This fragment skeleton does not yet have the full Bevy PBR TBN
+        // integration. Keep the decoded normal in shader state and expose it
+        // only through the explicit normal-only debug mode below.
+    }
+
+    var noise_value = 0.5;
+    if ((material.flags & 2u) != 0u && noise_tile_is_valid(material.noise_tile_index)) {
+        let noise_uv = tile_content_uv(local_uv * material.noise_uv_scale, material.noise_tile_index);
+        // Noise atlas data is linear. It is visual-only and only modulates the
+        // already-resolved roughness constant.
+        noise_value = textureSample(noise_atlas, noise_sampler, noise_uv).r;
+        let bipolar_noise = noise_value * 2.0 - 1.0;
+        controlled_roughness = clamp(
+            controlled_roughness + bipolar_noise * clamp(material.pbr.w, 0.0, 1.0),
+            0.0,
+            1.0,
+        );
+        // The resolved roughness value is ready for the future PBR input. No
+        // default base-color change is made by noise in this skeleton.
+    }
 
     // Keep the fallback/not-ready state visible to diagnostics without a
     // shader variant.  The magenta tint is deliberately restrained so the
@@ -61,6 +118,12 @@ fn fragment(vertex_output: VertexOutput) -> @location(0) vec4<f32> {
     }
     if ((material.flags & 128u) != 0u) {
         rgb = rgb + material.emissive_alpha.rgb;
+    }
+    if ((material.flags & 256u) != 0u) {
+        rgb = tangent_normal * 0.5 + vec3<f32>(0.5);
+    }
+    if ((material.flags & 512u) != 0u) {
+        rgb = vec3<f32>(noise_value);
     }
     return vec4<f32>(rgb, material.tint.a);
 }
