@@ -41,7 +41,7 @@
 - 开始时间：2026-08-22 10:22:51 +08:00
 - 结束时间：2026-08-22 10:36:44 +08:00
 - 开发总结：完成 framework live preview core 与 game adapter 边界，建立可确定性序列化的六领域快照契约、显式缺失状态、稳定 ID/排序、受控 hub 读写与 fail-closed 启用策略；Rust View 尚未实现，留待阶段 7。
-- 验证记录：`project/` 下 `cargo fmt --check`、`cargo check --locked`、`cargo check --locked --tests` 均通过；未运行阶段 10 才允许的完整链接、测试运行、`scripts/run_fast.ps1` 或 Android 构建。主 agent 审核确认 writer 已收窄为 `pub(super)`，未修改 checklist 之外的用户既存 `CLAUDE.md`/`docs` 改动。
+- 验证记录：`project/` 下 `cargo fmt --check`、`cargo check --locked`、`cargo check --locked --tests` 均通过；未运行阶段 10 才允许的完整链接、测试运行、`scripts/run_fast.ps1` 或 Android 构建。主 agent 审核确认 writer 已收窄为 `pub(super)`，未修改 checklist 之外的用户既存 `AGENTS.md`/`docs` 改动。
 
 - [x] 确认并落地通用 live preview core、游戏 adapter 和 Rust View 的目录边界，避免 `framework/ui/debug.rs` 直接依赖 `MyServerSession` 或具体玩法组件。（验证：`framework/devtools/live_preview` 仅含通用模型，`game/devtools/live_preview` 仅暴露 adapter traits；`framework/mod.rs` 与 `game/mod.rs` 完成独立模块接入）
 - [x] 定义 `LivePreviewSnapshot` 顶层结构及 UI、Player、Scene、Network、Performance、SourceHealth section DTO。（验证：`project/src/framework/devtools/live_preview/model.rs:192-313,315-326` 定义六类 section 与顶层快照）
@@ -213,7 +213,7 @@
 - [x] 在用户参与下，从仓库根目录运行 `scripts/run_fast.ps1`，按 `2772x1280`、`3.25` device scale、`50%` window scale 完成 F3-F8、全部 Tab、主窗口/专用窗口、冻结、长文本、滚动和游戏输入隔离的人工验收。（验证：2026-08-22 16:52-16:56 +08:00 用户分阶段确认通过）
 - [x] 如本轮验收包含 Android，在桌面验收通过后运行 `scripts/build-entry.ps1 -Target android -Action build -Profile release -Locked`，验证 Android 默认关闭/主窗口回退行为。（验证：本轮仅包含桌面验收，Android 条件不适用）
 - [x] 更新 `docs/调试/实时状态预览与开发者监视器.md`，把已完成能力、实际目录、快捷键、性能数据和当前限制与代码对齐。（验证：文档列出 `framework/devtools/live_preview`、七个页面、F3-F8、4,000us/10Hz/2Hz/2s/256 上限、固定内存估算；桌面阶段 10 已完成，远程查看和 Android 真机面板留待后续）
-- [x] 更新 `docs/界面/界面调试与验收.md`、`docs/调试/README.md`、`docs/README.md`，必要时同步 `docs/引擎入门使用文档.md` 和 `CLAUDE.md`。（验证：四个相关索引/验收文档已与当前 monitor、F8 脱敏和人工验收边界对齐）
+- [x] 更新 `docs/界面/界面调试与验收.md`、`docs/调试/README.md`、`docs/README.md`，必要时同步 `docs/引擎入门使用文档.md` 和 `AGENTS.md`。（验证：四个相关索引/验收文档已与当前 monitor、F8 脱敏和人工验收边界对齐）
 - [x] 对所有新增和修改的 Markdown 相对链接执行路径检查，并运行 `git diff --check`。（验证：PowerShell Markdown relative link check 输出 `OK`；`git diff --check` 通过）
 - [x] 确认 checklist 的阶段时间、开发总结和验证记录都有真实证据后，再将完成清单归档到 `docs/调试/checklists/`。（验证：2026-08-22 16:56 +08:00 已补齐并归档）
 

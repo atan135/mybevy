@@ -16,4 +16,4 @@
 
 - 账号 `player_id` 和玩法主体 `character_id` 必须按服务端公开契约区分。
 - 生产客户端只消费 auth 下发的 service descriptor，不读取 registry 或直连内部服务。
-- 修改 `project/src/game/myserver/`、协议快照、登录环境策略或 chat/mail endpoint 时，应同步检查本目录、根 README 和 `CLAUDE.md`。
+- 修改 `project/src/game/myserver/`、协议快照、登录环境策略或 chat/mail endpoint 时，应同步检查本目录、根 README 和 `AGENTS.md`。

@@ -87,7 +87,7 @@
 - [x] 更新 UI audit 修复安全策略和 self-test：根 `target/` 必须被拒绝，旧 `project/target/` 在迁移窗口内仍被拒绝，且测试覆盖两条路径。（验证：self-test 对 `target/debug/build-output.rs` 与 `project/target/debug/build-output.rs` 分别断言拒绝；PowerShell 7 self-test exit 0）
 - [x] 扫描活跃脚本、README、`docs/引擎入门使用文档.md`、UI 工具说明和 UI 审计 fixture 中的 `project/target`、`tools/ui-generation/target`、`tools/ui-visual-audit/target` 硬编码，迁移实际运行路径和示例路径。（验证：受限检索在活动范围仅保留 UI audit 的安全拒绝策略及其测试，README、指南、fixture 和 UI audit 示例均为根 `target/`）
 - [x] 不篡改已归档 清单、历史截图、历史报告和验证记录；为保留的历史路径写明其为当时的验收证据，而非当前运行说明。（验证：`git diff --name-only` 不含 `docs/**/checklists/`；全仓旧路径命中均为历史证据、`.gitignore` 兼容项或当前安全策略）
-- [x] 更新 `CLAUDE.md`、`README.md`、`docs/引擎入门使用文档.md` 及相关 UI 工具文档，明确独立 Cargo 根和共享仓库级缓存的关系、二进制位置和清理方式。（验证：三份正式说明和 `tools/ui-visual-audit/README.md` 说明根 `.cargo/config.toml`、根 `target/`、独立 Cargo 边界及 `CARGO_TARGET_DIR` 约定；Bevy release 输出更新为 `target/release/project.exe`）
+- [x] 更新 `AGENTS.md`、`README.md`、`docs/引擎入门使用文档.md` 及相关 UI 工具文档，明确独立 Cargo 根和共享仓库级缓存的关系、二进制位置和清理方式。（验证：三份正式说明和 `tools/ui-visual-audit/README.md` 说明根 `.cargo/config.toml`、根 `target/`、独立 Cargo 边界及 `CARGO_TARGET_DIR` 约定；Bevy release 输出更新为 `target/release/project.exe`）
 - [x] 验证双客户端脚本、UI audit dry-run/self-test、UI 生成工具 `check-boundary` 和 UI 审计工具调用均不依赖旧 target 路径。（验证：两个 dry-run 和 PowerShell 7 self-test 均通过，UI audit 缓存命中 `target/debug/ui-visual-audit.exe`；`cargo run --locked --manifest-path tools/ui-generation/Cargo.toml -- check-boundary --repository-root .` 所有边界字段 true）
 
 ## 阶段 5：旧目录清理与完整重建验证
@@ -113,10 +113,10 @@
 - 开发总结：新增只指向仓库根共享缓存的受控清理脚本；默认仅预演，实际删除需要双重显式开关，支持优先清理 `target/debug/incremental`。正式说明覆盖共享 `cargo clean` 的影响、进程阻断、阈值/周期、锁等待诊断及无源码回滚步骤。
 - 验证记录：主 agent 独立运行 PowerShell 7 与 Windows PowerShell 自测、全量和 incremental 预演、未确认执行拒绝、`cargo fmt --check` 和 `cargo check --locked`；根 target 保留，三个 legacy target 均不存在。未为验证执行真实删除分支，避免清除 30+ GiB 预热缓存。
 
-- [x] 提供只清理根共享 target 的仓库级脚本或明确命令，并显式说明共享配置下任一 Cargo 根的 `cargo clean` 都会影响所有复用该目录的构建缓存。（验证：`scripts/clear-shared-cargo-target.ps1` 固定解析根 `target/`，只允许其本身或 `debug/incremental`；README、Bevy 指南和 CLAUDE.md 明确 `cargo clean` 影响全部共享缓存）
+- [x] 提供只清理根共享 target 的仓库级脚本或明确命令，并显式说明共享配置下任一 Cargo 根的 `cargo clean` 都会影响所有复用该目录的构建缓存。（验证：`scripts/clear-shared-cargo-target.ps1` 固定解析根 `target/`，只允许其本身或 `debug/incremental`；README、Bevy 指南和 AGENTS.md 明确 `cargo clean` 影响全部共享缓存）
 - [x] 明确运行中的游戏、两个 UI 工具、测试和 Android 构建期间禁止执行共享缓存清理；清理入口先检测相关进程并要求人工确认。（验证：脚本在预演和实际删除前检测 cargo/rustc/link、游戏、UI 工具、测试子进程、Gradle/ADB/关联 Java；删除需 `-Execute -ConfirmSharedTargetCleanup`，PowerShell 7/5.1 `-SelfTest` 通过）
 - [x] 约定磁盘阈值或人工周期，优先清理 stale incremental，而不是在每次构建前自动清空缓存。（验证：README 和 Bevy 指南约定根 target 超过 35 GiB、磁盘紧张或发布/大型分支后人工检查，`-IncrementalOnly` 只清理 `target/debug/incremental`）
-- [x] 记录共享 target 出现锁等待时的诊断方法，区分正常 Cargo 排队、遗留构建进程和真实死锁。（验证：README、Bevy 指南和 CLAUDE.md 说明 CPU/磁盘/日志进展、遗留进程排查与保留信息后重启构建的条件）
+- [x] 记录共享 target 出现锁等待时的诊断方法，区分正常 Cargo 排队、遗留构建进程和真实死锁。（验证：README、Bevy 指南和 AGENTS.md 说明 CPU/磁盘/日志进展、遗留进程排查与保留信息后重启构建的条件）
 - [x] 定义回滚步骤：移除根 `.cargo/config.toml`、恢复 `.gitignore` 和脚本/文档路径、删除根共享缓存后分别重建三个 Cargo 根。（验证：README 和 Bevy 指南包含按此顺序的回滚步骤及三个 Cargo 根重建命令范围）
 - [x] 验证回滚不要求修改源码、锁文件、UI 工具与正式包的依赖方向，且旧 target 路径不会被误当作仍在使用的共享缓存。（验证：三份正式说明明确不改 Rust 源码/Cargo.lock/依赖方向；脚本 self-test 拒绝 project、ui-generation、ui-visual-audit 三个 legacy target 作为清理范围）
 
@@ -148,5 +148,5 @@
 - [x] 双客户端脚本、UI audit 缓存路径与安全规则、活跃工具文档、fixture 和当前正式文档均与根 target 路径一致；历史验收记录未被篡改。（验证：阶段 4 两个 launcher dry-run、PowerShell 7 UI audit self-test 与 boundary check 通过；历史 清单 未纳入该阶段 diff）
 - [x] 主工程 `cargo check`、UI 生成工具测试、`check-boundary`、UI 审计工具测试和必要的桌面启动验证通过。（验证：阶段 5 冷序列为 project check 257.463s、ui-generation 206 passed、boundary 19.352s、ui-audit 76 passed/1 ignored、桌面运行 20 秒；阶段 6 热 `cargo check --locked` 1.74s 通过）
 - [x] 重建后的硬盘占用与阶段 1 基线相比有明确、可复现的下降，并记录冷构建、增量构建和未复用产物的代价。（验证：30.53 GiB/18,171 files 对比旧三目录 37.49 GiB/19,542 files，减少约 6.96 GiB/1,371 files；冷/热时长和 feature/profile/triple 差异均记录于阶段 5）
-- [x] 共享 target 的清理、并发锁等待、失败诊断和回滚流程有明确说明并经过验证。（验证：阶段 6 脚本双 PowerShell self-test、dry-run 与未确认删除拒绝通过；README、Bevy 指南和 CLAUDE.md 已记录维护流程）
+- [x] 共享 target 的清理、并发锁等待、失败诊断和回滚流程有明确说明并经过验证。（验证：阶段 6 脚本双 PowerShell self-test、dry-run 与未确认删除拒绝通过；README、Bevy 指南和 AGENTS.md 已记录维护流程）
 - [x] 未提交 target、PDB、rlib、APK、日志、本地配置、密钥或其他构建产物；完成的 清单 已归档到对应 `docs/<领域>/checklists/` 并随实现提交。（验证：根 target 已被 Git 忽略；本 清单 将归档到 `docs/界面/checklists/` 并在归档提交前复核暂存范围）

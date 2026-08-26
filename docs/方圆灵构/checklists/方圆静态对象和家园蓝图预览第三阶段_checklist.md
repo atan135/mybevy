@@ -179,12 +179,12 @@
 - 开始时间：2026-07-02 14:00:31 +08:00
 - 结束时间：
 - 开发总结：
-- 验证记录：worker 更新 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md` 和 `docs/世界观/方圆灵构蓝图规则.md`，主流程审核 diff 后打回一次错误路径并确认已修正为真实路径；主流程复跑 `cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo test fangyuan_home -- --nocapture`、`cargo check` 均通过，`fangyuan` 112 passed，`fangyuan_home` 37 passed，`cargo check` 仅有既有 `src/framework/ui/widgets/controls/selection.rs:32` 的 `checkbox` dead_code warning；路径检查确认 `docs/引擎入门使用文档.md` 和 `CLAUDE.md` 存在且本阶段无需更新。
+- 验证记录：worker 更新 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md` 和 `docs/世界观/方圆灵构蓝图规则.md`，主流程审核 diff 后打回一次错误路径并确认已修正为真实路径；主流程复跑 `cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo test fangyuan_home -- --nocapture`、`cargo check` 均通过，`fangyuan` 112 passed，`fangyuan_home` 37 passed，`cargo check` 仅有既有 `src/framework/ui/widgets/controls/selection.rs:32` 的 `checkbox` dead_code warning；路径检查确认 `docs/引擎入门使用文档.md` 和 `AGENTS.md` 存在且本阶段无需更新。
 
 - [x] 更新 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`，记录阶段 3 实际落地的统一模型接入边界。（验证：文档新增第三阶段已落地边界，记录 `FangyuanBlueprint`、`compile_skipping_invalid_primitives()`、`FangyuanBlueprintCompileReport`、`FangyuanHomeObject`、`FangyuanRenderAssetCache`、`FangyuanPrimitiveSetStats` 和默认家园 505/493/12 统计；主流程审核并修正错误路径为 `project/src/game/scenes/fangyuan_home.rs` 与 `project/src/framework/fangyuan/render_assets.rs`）
 - [x] 更新 `docs/世界观/方圆灵构蓝图规则.md`，说明玩家、家园和静态对象共用 RON v1 primitive 字段与禁止旋转规则。（验证：文档说明玩家、家园和静态对象共用 RON v1 primitive 字段并统一编译到 `FangyuanPrimitiveSet`，继续列出禁止 `rotation`、`quaternion`、`euler`、`angular_velocity`、`rotate`、`spin`）
 - [x] 如模块结构、启动方式或新成员理解路径变化，检查并同步 `docs/引擎入门使用文档.md`。（验证：主流程和 worker 均确认本阶段未改变项目结构、启动方式、Bevy 版本或新成员上手路径；`docs/引擎入门使用文档.md` 存在且无需修改）
-- [x] 如仓库级说明需要更新，检查并同步 `CLAUDE.md`。（验证：主流程和 worker 均确认仓库级目录约定和开发流程未变化；`CLAUDE.md` 存在且无需修改）
+- [x] 如仓库级说明需要更新，检查并同步 `AGENTS.md`。（验证：主流程和 worker 均确认仓库级目录约定和开发流程未变化；`AGENTS.md` 存在且无需修改）
 - [x] 确认文档仍明确 Prefab、Bake、mesh merge、GPU Instancing、LOD、AOI 和联网同步不是本阶段能力。（验证：两份文档均明确本阶段不实现 Prefab、Scene Layout、Chunk、Bake、mesh merge、GPU Instancing、LOD、AOI、联网同步等后续能力）
 - [ ] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/checklists/` 目录。（待确认：`multi-agent-dev` 提交规则要求提交时排除 清单 文件和 `summary/`，与仓库归档并提交 清单 的约定存在冲突）
 - [ ] 归档前确认 清单 的阶段时间、开发总结和验证记录均来自真实执行结果。（待归档前最终复核）

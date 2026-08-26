@@ -138,12 +138,12 @@
 - 开始时间：2026-08-06 00:57:00 +08:00
 - 结束时间：2026-08-06 01:08:00 +08:00
 - 开发总结：将邮件公开 endpoint、身份、单次领取/对账、分域限流、push 权威边界和联调步骤同步到 MyServer 主题文档；补齐邮箱 approved document、Floating panel、typed Repeat/fallback 和四档审计说明，并修正上手文档中 Android 网络验收的旧边界。
-- 验证记录：主审对照实现复核 endpoint、fallback 路径、host/layer、审计参数和 清单 07 路径；UI boundary 全 true，引用路径、关键词及 `git diff --check` 通过。第 1/5 轮修正已消除上手文档“Android 不承担网络验收”与 清单 07 的冲突；`CLAUDE.md` 无冲突，无需修改。
+- 验证记录：主审对照实现复核 endpoint、fallback 路径、host/layer、审计参数和 清单 07 路径；UI boundary 全 true，引用路径、关键词及 `git diff --check` 通过。第 1/5 轮修正已消除上手文档“Android 不承担网络验收”与 清单 07 的冲突；`AGENTS.md` 无冲突，无需修改。
 
 - [x] 更新 `docs/服务端/` 的邮件 endpoint、身份、通知、领取和本地/正式联调步骤。（验证：`邮件客户端公开契约.md` 记录正式 443 endpoint、Local HTTP policy、X-Game-Ticket、player/character 边界、对账与双账号步骤）
 - [x] 更新 `docs/界面/` 的邮箱 document、主世界面板、动态列表和响应式验收说明。（验证：`界面声明式业务界面迁移基线.md` 新增 `game.main_world_mail` host、approved/promotion/fallback、typed Repeat 和 stage18 四档审计）
 - [x] 记录 chat push 只是失效通知、HTTPS 列表是权威事实的架构边界。（验证：MyServer 主题文档明确 push 不得直接改写列表/未读/领取，HTTPS API 与 PostgreSQL 为权威）
-- [x] 检查 `CLAUDE.md` 和上手文档是否需要补充邮件模块、环境变量或验收命令。（验证：`docs/引擎入门使用文档.md` 修正 Windows 日常联调与 清单 07 Android 公网 HTTPS/TLS、push、触控、前后台、弱网对账边界；`CLAUDE.md` 现有模块/环境/审计入口已足够）
+- [x] 检查 `AGENTS.md` 和上手文档是否需要补充邮件模块、环境变量或验收命令。（验证：`docs/引擎入门使用文档.md` 修正 Windows 日常联调与 清单 07 Android 公网 HTTPS/TLS、push、触控、前后台、弱网对账边界；`AGENTS.md` 现有模块/环境/审计入口已足够）
 
 ## 最终完成定义
 

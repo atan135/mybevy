@@ -236,7 +236,7 @@
 
 - [x] 更新 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`，记录第二阶段实际落地的数据模型边界。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:422` 记录 `blueprint.rs`、`primitive.rs`、`object.rs`、`stats.rs` 和玩家预览 render-only 适配边界）
 - [x] 更新 `docs/世界观/方圆灵构蓝图规则.md`，把“每个 primitive 只保留静态 Transform / 挂到 root 下”的旧口径修正为 render-only 或 runtime 数据口径。（验证：`docs/世界观/方圆灵构蓝图规则.md:396` 改为 runtime primitive 数据和 render-only 子实体口径）
-- [x] 如果代码结构变化影响新成员理解，检查是否需要同步 `docs/引擎入门使用文档.md` 或根目录协作文档。（验证：已同步 `docs/引擎入门使用文档.md:231` 和 `CLAUDE.md:29`，补充 `project/src/framework/fangyuan/` 与 Fangyuan Player Preview 说明）
+- [x] 如果代码结构变化影响新成员理解，检查是否需要同步 `docs/引擎入门使用文档.md` 或根目录协作文档。（验证：已同步 `docs/引擎入门使用文档.md:231` 和 `AGENTS.md:32`，补充 `project/src/framework/fangyuan/` 与 Fangyuan Player Preview 说明）
 - [x] 确认文档仍明确禁止旋转，并明确当前阶段不实现 Prefab、Bake、mesh merge、Instancing、VFX、LOD、AOI。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:425` 明确 runtime 不含旋转字段，`:430` 明确未实现项；`docs/世界观/方圆灵构蓝图规则.md:406` 明确当前阶段未实现项）
 - [x] 运行完整相关验证命令并记录结果。（验证：`cargo fmt --check`、`cargo test fangyuan -- --nocapture`、`cargo test fangyuan_player_preview -- --nocapture`、`cargo check` 均通过）
 - [ ] 用户手动验收玩家预览页面仍可从大厅进入，并显示 cube 身体和 sphere 头部。

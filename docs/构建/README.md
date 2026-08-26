@@ -1,6 +1,6 @@
 # 构建文档
 
-本目录记录构建性能、Cargo 缓存和构建验收相关清单。统一构建入口、桌面 profile、Android target 和缓存边界以仓库根 [README](../../README.md) 与 [协作和开发约定](../../CLAUDE.md) 为准。
+本目录记录构建性能、Cargo 缓存和构建验收相关清单。统一构建入口、桌面 profile、Android target 和缓存边界以仓库根 [README](../../README.md) 与 [AI 协作和开发约定](../../AGENTS.md) 为准。
 
 ## 当前清单
 

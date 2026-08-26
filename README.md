@@ -41,7 +41,7 @@ mybevy/
 |   `-- Cargo.toml
 |-- scripts/                 # 仓库级开发脚本
 |-- summary/                 # 开发中清单，完成后归档到 docs
-|-- CLAUDE.md                # 协作和开发约定
+|-- AGENTS.md                # AI 协作和开发约定
 `-- README.md
 ```
 
@@ -248,7 +248,7 @@ project/assets/ui/fonts/MyBevyUiCjk-Regular.otf
 - [调试与自动化文档](docs/调试/README.md)
 - [构建文档](docs/构建/README.md)
 - [世界观文档](docs/世界观/README.md)
-- [协作和开发约定](CLAUDE.md)
+- [AI 协作和开发约定](AGENTS.md)
 
 ## 开发约定
 

@@ -162,7 +162,7 @@
 - [x] 验证 catalog hash 变化会使旧 run 进入 stale 状态，不能用旧审核结果 promotion。（验证：promotion stale context test 返回 `promotion_inputs_invalid` 且不写 target。）
 - [x] 从仓库根运行 project test、desktop/headless/fangyuan-bake/authoring check，并检查无构建产物进入 Git。（验证：2182 passed/1 ignored；四个 locked target 通过；Git 仅正式 RON/源码/文档。）
 - [x] 更新方圆生成文档、资源说明和 authoring CLI 使用说明，明确本地 Codex 与生产在线 AI 的区别。（验证：四份方圆/资源文档同步离线命令、stale 和运行包边界。）
-- [x] 检查 `CLAUDE.md` 是否需要增加 authoring bin、生成目录和命令；如新增统一入口则同步更新。（验证：`CLAUDE.md` 增加 authoring bin、generated 目录和 build-entry 命令。）
+- [x] 检查 `AGENTS.md` 是否需要增加 authoring bin、生成目录和命令；如新增统一入口则同步更新。（验证：`AGENTS.md` 增加 authoring bin、generated 目录和 build-entry 命令。）
 - [x] 确认下游 Shader checklist 只读取 promoted canonical blueprint 和 resolver，不读取 prompt、draft 或 AI 日志。（验证：生成/资源文档明确 Shader 仅消费 promoted canonical 与 resolver。）
 
 ## 最终完成定义

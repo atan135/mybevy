@@ -198,7 +198,7 @@
 - [ ] 检查日志中不输出 access token、ticket、密码或其他敏感凭据明文，同时保留 request id、状态转换、HTTP status、错误码、endpoint、ticket 过期/剩余时间和脱敏短指纹，保证本地调试和线上问题可串联定位。
 - [ ] 更新 `docs/引擎入门使用文档.md` 中 MyServer 登录、选角、character-bound ticket、环境变量、本地联调和常见失败路径说明。
 - [ ] 如 UI 页面行为或限制变化，更新 `docs/界面/` 下相关文档。
-- [ ] 如 MyServer 客户端模块边界、命令或事件变化，更新 `CLAUDE.md` 或相关架构说明。
+- [ ] 如 MyServer 客户端模块边界、命令或事件变化，更新 `AGENTS.md` 或相关架构说明。
 - [ ] 记录服务端最新登录/选角流程对应的客户端验收步骤，包括本地栈启动、登录、拉角色、创建角色、选角、签票、进房、断线、重连、kick 和维护模式。
 - [ ] 记录角色四属性客户端验收步骤，包括 profile 展示、`GetCharacterElementsReq/Res`、push 去重/保序、断线后快照重拉和不本地预测永久变化。
 - [ ] 记录登录链路日志与诊断字段说明，包括 request id 串联方式、凭据脱敏短指纹规则、线上日志级别和敏感信息禁止项。

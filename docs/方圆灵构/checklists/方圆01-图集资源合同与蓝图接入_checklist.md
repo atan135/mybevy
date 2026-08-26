@@ -159,7 +159,7 @@
 - 开始时间：2026-08-25 21:55:02 +08:00
 - 结束时间：2026-08-25 22:16:51 +08:00
 - 开发总结：新增 surface contract 集成 fixture 和 resolver 验收测试，覆盖真实 256 preset、122 noise tile、默认索引/hash、旧首包蓝图/Prefab/Palette/Layout、已知 preset/noise opt-in、未知 preset fallback 及坏 catalog 原子失败；同步蓝图格式、审核预算、运行时架构和资源构建文档，明确已落地边界与 Shader/GPU/在线 AI 未完成边界。
-- 验证记录：resolver 集成测试 9/9；主 agent `build-entry.ps1 -Target test -Action check -Locked` 通过（2151 passed，1 ignored）；worker 已通过 desktop/headless/fangyuan-bake locked check；`cargo fmt --all -- --check` 和 `git diff --check` 通过。`docs/引擎入门使用文档.md`、`docs/README.md`、`CLAUDE.md` 无需变更，因为项目目录、初始化、Bevy 版本和资源约定未改变。
+- 验证记录：resolver 集成测试 9/9；主 agent `build-entry.ps1 -Target test -Action check -Locked` 通过（2151 passed，1 ignored）；worker 已通过 desktop/headless/fangyuan-bake locked check；`cargo fmt --all -- --check` 和 `git diff --check` 通过。`docs/引擎入门使用文档.md`、`docs/README.md`、`AGENTS.md` 无需变更，因为项目目录、初始化、Bevy 版本和资源约定未改变。
 
 - [x] 使用当前 256 surface preset 和 122 noise tile 构建 resolver，记录数量、hash、默认索引和加载错误为零。（验证：resolver integration test 断言 registry=256、noise catalog=122、preset index 0/255、default index 0、三类 cache hash 非零，真实 bundle 构建无错误。）
 - [x] 加载现有 `minimal_player.ron`、`home_preview.ron`、默认 Prefab/Palette 和 Scene Layout，确认旧资源无需补字段即可通过。（验证：resolver integration test 加载四类现有首包资源；旧 RON 缺省字段保持 `None/false`，layout 对 palette 校验通过。）
@@ -167,7 +167,7 @@
 - [x] 验证 catalog 坏文件不会产生半份 registry，单 primitive 未知 ID 不会导致整个场景崩溃。（验证：resolver test 篡改 tile ID 后得到 `ValidationFailed`、不构造 registry；fixture 未知 ID 只由 resolver 返回 default fallback。）
 - [x] 从仓库根运行 `scripts/build-entry.ps1 -Target test -Action check -Locked`、desktop/headless/fangyuan-bake check。（验证：主 agent test locked check=2151 passed/1 ignored；worker desktop、headless、fangyuan-bake locked check 均 passed。）
 - [x] 更新 `docs/方圆灵构/规范/蓝图格式与生成约束.md`、审核规则、运行时架构和资源加载文档中的实际落地边界。（验证：四份指定方圆文档同步 surface contract、审核 finding/budget、resolver/hash/Bake 依赖和未实现边界；无相邻重复。）
-- [x] 检查 `docs/引擎入门使用文档.md`、`docs/README.md` 和 `CLAUDE.md` 是否需要同步；无变化时在验证记录说明理由。（验证：本阶段未改变目录、初始化、Bevy 版本或资源约定，三份文件无需修改，理由已记录。）
+- [x] 检查 `docs/引擎入门使用文档.md`、`docs/README.md` 和 `AGENTS.md` 是否需要同步；无变化时在验证记录说明理由。（验证：本阶段未改变目录、初始化、Bevy 版本或资源约定，三份文件无需修改，理由已记录。）
 - [x] 确认后续本地 Codex、Shader 和实例渲染 checklist 只依赖本清单公开接口，不重复定义第二套 schema。（验证：文档和 fixture 均只公开稳定 preset ID/noise bool、resolver/finding/identity/Bake 边界；明确 Shader/GPU/在线 AI 留待后续，不新增第二套字段合同。）
 
 ## 阶段 8 之后：整体验收记录

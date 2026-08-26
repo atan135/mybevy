@@ -175,7 +175,7 @@
 - 开发总结：已同步构建入口、target/profile/feature、CI 缓存和诊断约定到仓库级与 UI 工具文档，并完成 core/runtime 语义桥接、sealed fixture、普通/热点及 UI 工具增量复测。Windows Bevy dylib 链接限制已记录并改为可用的静态 `dev-fast` fallback；非 Windows 保留动态链接。
 - 验证记录：PowerShell parser、fmt、project check、core/document suite、headless、UI tooling、`check-boundary`、真实 acceptance/complex fixture、普通/热点和工具冷/增量报告均通过；`run_fast.ps1` 固定参数生成 1386x640 截图并自动退出；无 Cargo/Rust 残留进程。
 
-- [x] 更新 `CLAUDE.md`、`docs/引擎入门使用文档.md`、UI 工具文档和构建脚本说明中的 target、profile、feature 和命令约定。（验证：上述根文档、`tools/ui-generation/README.md`、`tools/ui-visual-audit/README.md` 和 `scripts/build-entry.ps1` 已同步统一入口及缓存边界。）
+- [x] 更新 `AGENTS.md`、`docs/引擎入门使用文档.md`、UI 工具文档和构建脚本说明中的 target、profile、feature 和命令约定。（验证：上述根文档、`tools/ui-generation/README.md`、`tools/ui-visual-audit/README.md` 和 `scripts/build-entry.ps1` 已同步统一入口及缓存边界。）
 - [x] 记录每次优化前后的基线数据、磁盘占用、缓存命中、锁等待和失败原因。（验证：阶段 1-10 artifacts 与 清单 保留基线、缓存审计、锁证据、构建耗时和本阶段 preview 阻塞记录。）
 - [x] 运行 `cargo fmt` 和 `cargo check`，并按改动范围补充单元、集成、headless、桌面手动和 Android 真机/模拟器验证。（验证：fmt、project check、headless、核心 crate/工具测试和既有 Android Rust/APK 构建均通过；本阶段无游戏逻辑改动，未重复真机手测。）
 - [x] 使用仓库规定的 `scripts/run_fast.ps1`、`2772x1280`、`3.25` device scale 和 `50%` window scale 完成 UI 布局回归（涉及 UI 时）。（验证：Windows 静态 `dev-fast` fallback 实际调用固定参数，输出 physical 1386x640；MainWorld 双角色 fixture 稳定 60 帧后写入截图并自动退出，画面中 HUD、导航和两名角色均清晰可见。）

@@ -29,7 +29,7 @@
 - [x] 页面节点、列表项和 action source 使用稳定 ID；reload、列表 diff、焦点和输入状态迁移不得依赖 ECS Entity 顺序。（验证：阶段 3-5 stable node/source/keyed repeat 与状态迁移测试通过，角色列表保留完整稳定 `character_id`）
 - [x] AI 工具只能修改允许的资源目录和运行产物；promotion 必须显式批准，并证明没有生成或改写 Rust 业务实现。（验证：阶段 9 host-bound generation/promotion、approval evidence 和 UI-only write scope 门禁通过）
 - [x] 每个阶段独立实现、验证和提交；涉及 Rust 的阶段至少运行 `cargo fmt`、focused tests 和 `cargo check`，不得为构建清理共享 `target/`。（验证：15 个阶段均记录独立验证和提交；本执行链 commits `6f78d44..092b512`，未运行 `cargo clean`）
-- [x] 清单 全部完成后转移到 `docs/界面/checklists/` 归档，并同步更新 `docs/界面/`、`docs/资源工作流.md`、`docs/引擎入门使用文档.md` 和 `CLAUDE.md` 中受影响的约定。（验证：阶段 7/8/15 已同步资源工作流、UI 文档、上手文档和 CLAUDE；最终文件归档到 `docs/界面/checklists/`）
+- [x] 清单 全部完成后转移到 `docs/界面/checklists/` 归档，并同步更新 `docs/界面/`、`docs/资源工作流.md`、`docs/引擎入门使用文档.md` 和 `AGENTS.md` 中受影响的约定。（验证：阶段 7/8/15 已同步资源工作流、UI 文档、上手文档和 AGENTS；最终文件归档到 `docs/界面/checklists/`）
 
 ## 阶段 1：冻结架构边界和页面迁移清单
 
@@ -309,7 +309,7 @@
 - [x] 对保留 Rust View 的开发 Gallery、审计工具页或特殊调试 UI 逐项记录例外，业务页面不得借用该例外。（验证：`CONTROLLED_RUST_VIEW_EXCEPTIONS` 仅列 AiLoginReference、AudioGallery、AudioMonitor、UiGallery 四项并绑定精确路径；真实 boundary gate 通过）
 - [x] 增加静态边界检查，阻止新的普通业务 screen 直接构建大段 Bevy UI 树；允许项必须来自受控例外清单。（验证：`DirectUiViewVisitor` AST 检测构树调用与 Node/Text/Button/ImageNode，非 legacy sentinel UI 负测和纯 3D 不误报测试通过）
 - [x] 在 CI 或本地门禁加入“UI-only fixture/promotion 不修改 Rust”和“全部业务 route 都有声明式文档或受控例外”检查。（验证：UI-only manifest 拒绝 `.rs` 正测/负测通过；`AppUiMode` AST actual set 与三类显式分类 exact-set，新增未分类 enum variant 负测通过）
-- [x] 更新全量页面迁移指标，确保没有遗漏仍由 Rust 构建的正式业务页面。（验证：boundary 报告 9 个 approved 正式业务 route、15 个实际 screen 全分类、四个 Rust View 例外 exact-set；`CLAUDE.md`、上手与 UI 架构文档同步）
+- [x] 更新全量页面迁移指标，确保没有遗漏仍由 Rust 构建的正式业务页面。（验证：boundary 报告 9 个 approved 正式业务 route、15 个实际 screen 全分类、四个 Rust View 例外 exact-set；`AGENTS.md`、上手与 UI 架构文档同步）
 - [x] 运行全量 UI audit/e2e acceptance、桌面 Release 和 Android 构建/真机可用条件下的热更新、离线、失败回滚和输入验收。（验证：initial 20/20、key states 8/8、两组 Fangyuan scroll 各 4/4，E2E `passed_with_external_android_blocker`，Release check、Android arm64/APK/安装/出帧通过；secure keyguard 与生产更新前置缺失已记录为外部阻塞，未伪报触控/IME/离线回滚通过）
 - [x] 在 `project/` 运行 `cargo fmt`、相关全量测试和 `cargo check`；在仓库根运行 UI generation 工具测试、boundary check 和 `git diff --check`。（验证：主审查 gameplay 25/25、UiDocument 108/108、navigation 20/20、fmt、Debug/Release check、audit self-test、UI generation 217/217、boundary 全 true、JSON 与 diff check 通过）
 
@@ -337,5 +337,5 @@
 - [x] desktop、phone-landscape、phone-1080p-landscape、tablet-landscape 的 initial/loading/empty/error/长文本和主要交互状态通过 UI audit。（验证：Stages 11-15 四档矩阵覆盖 Login、CharacterSelect、Lobby、Settings 与五个 HUD；重复截图一致且主审查完成代表性目视检查）
 - [ ] Android 真机条件可用时完成下载、激活、重启保持、离线 fallback、软键盘、安全区、触控和失败回滚验收；不可用时保留未勾选并记录阻塞条件。（阻塞：SM-G9730 API 31 位于 secure keyguard 后，虽已完成 arm64 Release、Debug APK、安装、Activity/PID/surface/WindowInsets/Vulkan 出帧检查，但触控、IME、安全区视觉、重启/离线/回滚不可可信执行；生产更新还未注入 app-private cache root、production trust roots、endpoint 和 `CheckNow` 触发点）
 - [x] `cargo fmt`、项目相关测试、`cargo check`、UI generation 工具测试、boundary check、UI audit/e2e acceptance 和 `git diff --check` 全部通过。（验证：最终主审查 gameplay 25/25、UiDocument 108/108、navigation 20/20、approval 正负测试、两端 fmt、Debug/Release check、audit self-test、UI generation 217/217、boundary 10 项 true、E2E external-Android-blocker 合格状态与 diff check 通过）
-- [x] `docs/界面/`、资源工作流、上手文档和 `CLAUDE.md` 已与最终架构一致，不再把开发期 reload 描述为用户端生产热更新。（验证：相关文档明确区分 desktop Debug preview/watch 与显式配置的签名 production `UiUpdateClient`，并记录默认应用/Android 尚缺的发布接线）
+- [x] `docs/界面/`、资源工作流、上手文档和 `AGENTS.md` 已与最终架构一致，不再把开发期 reload 描述为用户端生产热更新。（验证：相关文档明确区分 desktop Debug preview/watch 与显式配置的签名 production `UiUpdateClient`，并记录默认应用/Android 尚缺的发布接线）
 - [x] 本 清单 已从 `summary/` 转移到 `docs/界面/checklists/` 归档并纳入最终提交。（验证：归档路径 `docs/界面/checklists/UI声明式界面与热更新改造_checklist.md`）

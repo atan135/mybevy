@@ -1,4 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
+
+本文件是仓库级 AI 协作与开发约定，适用于所有在本仓库中工作的 AI 代理。
 
 ## 项目概况
 
@@ -140,7 +142,7 @@ cargo check
 
 ```powershell
 cargo run --locked --bin fangyuan_authoring --features fangyuan-authoring-tool -- prepare-task --task <repository-relative-task.json>
-# Codex 仅写当前 run 的 draft/blueprint.ron
+# AI 代理仅写当前 run 的 draft/blueprint.ron
 cargo run --locked --bin fangyuan_authoring --features fangyuan-authoring-tool -- inspect-run --run <run-id>
 cargo run --locked --bin fangyuan_authoring --features fangyuan-authoring-tool -- validate-draft --run <run-id>
 cargo run --locked --bin fangyuan_authoring --features fangyuan-authoring-tool -- promote --run <run-id>
@@ -217,7 +219,7 @@ cargo update
 
 - `docs/引擎入门使用文档.md`
 - `docs/界面/`
-- `CLAUDE.md`
+- `AGENTS.md`
 
 ## Git 提交规范
 

@@ -180,7 +180,7 @@
 - [x] 更新 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`，记录第五阶段实际落地的审核入口、预算 profile、report、finding 和 suggestion 边界。（验证：文档新增第五阶段审核边界段，列出 `FangyuanAuditReport`、`FangyuanAuditBudgetProfile`、finding、suggestion、blueprint/prefab/layout 审核入口、家园 HUD/日志和非目标；`git diff --check` 通过）
 - [x] 更新 `docs/世界观/方圆灵构蓝图规则.md`，补充审核规则、预算建议、错误 code、降级建议和生成提示词注意事项。（验证：文档新增默认预算推荐/硬限制、常见 blueprint/prefab/layout/runtime budget code、降级建议动作和 Codex 提示词约束；主 agent 与 `project/src/framework/fangyuan/audit.rs` 默认值及 suggestion action 复核一致）
 - [x] 如审核系统新增资源路径、开发命令或调试方式影响新成员理解，检查并同步 `docs/引擎入门使用文档.md`。（验证：文档新增 `dev.fangyuan_home` 首包场景、`MYBEVY_START_SCENE="dev.fangyuan_home"` 家园审核 HUD 验收命令和 Windows `WGPU_BACKEND="dx12"` 可视验收说明）
-- [x] 如仓库级说明需要更新，检查并同步 `CLAUDE.md`。（验证：`CLAUDE.md` 的 `project/src/framework/fangyuan/` 目录说明已补充审核 report / budget profile / finding / suggestion）
+- [x] 如仓库级说明需要更新，检查并同步 `AGENTS.md`。（验证：`AGENTS.md` 的 `project/src/framework/fangyuan/` 目录说明已补充审核 report / budget profile / finding / suggestion）
 - [x] 确认文档仍明确 Chunk、Bake、mesh merge、GPU Instancing、LOD、AOI、联网同步、正式家园编辑器、蓝图持久化、装备挂点和技能规则层不是本阶段能力。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`、`docs/世界观/方圆灵构蓝图规则.md`、`docs/引擎入门使用文档.md` 均明确第五阶段只覆盖审核和预算；`rg` 复核相关词均为后续/非目标说明）
 - [x] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/checklists/` 目录。（验证：归档目标确认为 `docs/方圆灵构/checklists/方圆蓝图审核和预算系统第五阶段_checklist.md`，移动前已确认源文件和目标目录绝对路径）
 - [x] 归档前确认 清单 的阶段时间、开发总结和验证记录均来自真实执行结果。（验证：阶段 1-10 均有开始/结束时间、总结和命令/代码/截图证据；阶段 9 记录了 DX12 可视截图和 GUI 自动点击限制，未虚构点击结果）
@@ -205,7 +205,7 @@
 - [x] 降级建议作为 report 数据返回，不自动改写 RON 或 runtime primitive。（验证：suggestion 类型和 debug formatter 仅返回 report/log 数据；worker/主审 diff 未发现 RON 写入或 runtime primitive 自动修复路径）
 - [x] 玩家预览入口和最小 cube/sphere 玩家外观不因审核系统改动回退。（验证：`cargo test fangyuan_player_preview -- --nocapture` 通过，27 passed）
 - [x] 代码、测试和文档中不存在 rotation、quaternion、euler、angular_velocity、rotate 或 spin 能力。（验证：`rg` 复核方圆实现中相关词仅为禁止字段、拒绝测试、identity transform 或既有非方圆场景能力；方圆 blueprint/prefab/layout 禁止字段测试通过）
-- [x] 文档同步记录第五阶段实际落地边界和后续阶段延后事项。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`、`docs/世界观/方圆灵构蓝图规则.md`、`docs/引擎入门使用文档.md` 和 `CLAUDE.md` 已同步）
+- [x] 文档同步记录第五阶段实际落地边界和后续阶段延后事项。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`、`docs/世界观/方圆灵构蓝图规则.md`、`docs/引擎入门使用文档.md` 和 `AGENTS.md` 已同步）
 - [x] `cargo fmt --check` 通过。（验证：主 agent 在阶段 10 执行通过）
 - [x] `cargo test fangyuan -- --nocapture` 通过。（验证：194 passed，仅既有 `checkbox` dead_code warning）
 - [x] `cargo test fangyuan_home -- --nocapture` 通过。（验证：40 passed，仅既有 `checkbox` dead_code warning）

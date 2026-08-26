@@ -149,7 +149,7 @@ Android 真机不再属于本清单执行范围。待 02-06 功能与公网准�
 - [x] 更新 `docs/服务端/服务端最新登录流程客户端验收.md` 为当前注册、进场、chat 和 mail 全链路。（验证：新增公网 WSS/HTTPS、凭据、generation、reconciliation、灰度和回滚口径，生产 game descriptor 修正为 `game.zergzerg.cn:4000/kcp`。）
 - [x] 更新 `docs/场景/` 的固定公共房间、主世界映射、ready、退出和重连说明。（验证：补充幂等 StartRoom、三重 ready、recovery snapshot、成员过期重加及公网 KCP/Android 验收边界。）
 - [x] 更新 `docs/界面/` 的主世界 HUD、场景内设置/邮箱和 approved document 页面盘点。（验证：记录三个 document/owner、Floating 清理和 mail reconciliation 生命周期，并统一为 10 个正式业务 route、16 个 screen。）
-- [x] 检查 `docs/引擎入门使用文档.md`、`CLAUDE.md` 和常用命令是否需要同步。（验证：两份文档已同步生产 descriptor、持久 mail 和 10/16 UI 门禁；Rust、Android 和工具常用命令未变化。）
+- [x] 检查 `docs/引擎入门使用文档.md`、`AGENTS.md` 和常用命令是否需要同步。（验证：两份文档已同步生产 descriptor、持久 mail 和 10/16 UI 门禁；Rust、Android 和工具常用命令未变化。）
 - [x] 汇总客户端、服务端、公网、桌面和 Android 包体准入记录以及剩余风险；真机记录由 07 清单单独归档。（验证：阶段 6-8 汇总公网、桌面、包体、灰度与回滚证据；Android 真机继续由 07 清单负责。）
 - [x] 五份前置 清单 和本 清单 完成后，按仓库约定移动到对应 `docs/<领域>/checklists/` 归档并纳入 Git 提交。（验证：01-05 归档清单均为 0 个未完成项；06 已移动到 `docs/服务端/checklists/`。）
 

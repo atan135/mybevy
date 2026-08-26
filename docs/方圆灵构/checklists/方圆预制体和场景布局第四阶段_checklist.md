@@ -196,7 +196,7 @@
 - [x] 更新 `docs/方圆灵构/方圆对象资源构建与渲染技术路线.md`，记录第四阶段实际落地的 Prefab、Palette 和 Scene Layout 边界。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:443` 记录第四阶段已落地 Prefab/Palette/Scene Layout，`:1575` 起更新阶段 4 目标、做法、验收和风险）
 - [x] 更新 `docs/世界观/方圆灵构蓝图规则.md`，补充 Prefab / Scene Layout RON v1 生成规则、路径建议、禁止字段和错误处理建议。（验证：`docs/世界观/方圆灵构蓝图规则.md:18` 更新阶段边界，`:288` 起新增 Prefab / Palette RON v1，`:341` 起新增 Scene Layout RON v1，`:548` 起更新错误处理建议）
 - [x] 如新增资源路径或开发启动方式影响新成员理解，检查并同步 `docs/引擎入门使用文档.md`。（验证：`docs/引擎入门使用文档.md:232` 更新 framework fangyuan 说明，`:250`-`:251` 记录默认 palette/layout 首包样例路径）
-- [x] 如仓库级说明需要更新，检查并同步 `CLAUDE.md`。（验证：`CLAUDE.md:30` 更新 framework fangyuan 边界，`:42`-`:43` 记录默认 palette/layout 首包样例路径）
+- [x] 如仓库级说明需要更新，检查并同步 `AGENTS.md`。（验证：`AGENTS.md:33` 更新 framework fangyuan 边界，`:45`-`:46` 记录默认 palette/layout 首包样例路径）
 - [x] 确认文档仍明确 Chunk、Bake、mesh merge、GPU Instancing、LOD、AOI、联网同步、正式家园编辑器、蓝图持久化、装备挂点和技能规则层不是本阶段能力。（验证：`docs/方圆灵构/方圆对象资源构建与渲染技术路线.md:453`、`:1608` 和 `docs/世界观/方圆灵构蓝图规则.md:18`、`:531` 明确这些能力仍不是第四阶段能力）
 - [x] 清单 全部完成后，按仓库约定将本文件从 `summary/` 归档到合适的 `docs/<领域>/checklists/` 目录。（验证：已创建 `docs/方圆灵构/checklists/方圆预制体和场景布局第四阶段_checklist.md` 作为 docs 归档副本；受 multi-agent-dev 提交规则约束，`summary/` 源文件保留为未提交进度记录，不纳入 git 提交）
 - [x] 归档前确认 清单 的阶段时间、开发总结和验证记录均来自真实执行结果。（验证：阶段 1-10 的开始/结束时间、总结和验证记录均来自主 agent、worker 和命令输出；归档副本将在最终完成定义更新后同步）
