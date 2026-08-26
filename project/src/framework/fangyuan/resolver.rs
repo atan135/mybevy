@@ -156,6 +156,38 @@ impl FangyuanSurfacePresetCacheIdentity {
     }
 }
 
+/// Read-only authoring metadata derived from the already validated catalog
+/// bundle. The runtime resolver owns the source joins so development tools do
+/// not need to parse or reconcile the three catalog JSON files themselves.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FangyuanSurfacePresetCatalogMetadata {
+    pub preset_id: String,
+    pub name_zh: String,
+    pub description_zh: String,
+    pub material_family: String,
+    pub preferred_roles: Vec<String>,
+    pub recommended_primitive_kinds: Vec<String>,
+    pub roughness: f32,
+    pub metallic: f32,
+    pub ambient_occlusion: f32,
+    pub reflectance: f32,
+    pub normal_enabled: bool,
+    pub normal_strength: f32,
+    pub alpha: f32,
+    pub emissive_intensity: f32,
+    pub projection: FangyuanCatalogProjection,
+    pub render_model: FangyuanCatalogRenderModel,
+    pub parameter_source: String,
+    pub physical_status: String,
+    pub noise_suggestion: Option<FangyuanSurfacePresetCatalogNoiseSuggestion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FangyuanSurfacePresetCatalogNoiseSuggestion {
+    pub targets: Vec<String>,
+    pub parameter_status: String,
+}
+
 /// Hash all catalog JSON and image bytes as labelled dependencies. Length
 /// prefixes avoid collisions caused by concatenating adjacent inputs.
 pub fn fangyuan_surface_preset_cache_identity_from_bytes(
@@ -231,6 +263,7 @@ fn hash_labelled_hashes(parts: &[(&str, &[u8])]) -> u64 {
 pub struct FangyuanSurfacePresetRegistry {
     presets: BTreeMap<String, ResolvedFangyuanSurfacePreset>,
     ordered_preset_ids: Vec<String>,
+    catalog_metadata: Vec<FangyuanSurfacePresetCatalogMetadata>,
     identity: FangyuanSurfacePresetCacheIdentity,
     default_surface: ResolvedFangyuanSurfacePreset,
 }
@@ -313,6 +346,11 @@ impl FangyuanSurfacePresetRegistry {
         noise: FangyuanNoiseAtlasCatalog,
         identity: FangyuanSurfacePresetCacheIdentity,
     ) -> Self {
+        let surface_descriptions: BTreeMap<String, String> = surface
+            .tiles
+            .iter()
+            .map(|tile| (tile.tile_id.clone(), tile.description_zh.clone()))
+            .collect();
         let surface_indices: BTreeMap<String, u16> = surface
             .tiles
             .iter()
@@ -328,6 +366,38 @@ impl FangyuanSurfacePresetRegistry {
         let ordered_preset_ids = ordered
             .iter()
             .map(|preset| preset.preset_id.clone())
+            .collect();
+        let catalog_metadata = ordered
+            .iter()
+            .map(|preset| FangyuanSurfacePresetCatalogMetadata {
+                preset_id: preset.preset_id.clone(),
+                name_zh: preset.name_zh.clone(),
+                description_zh: surface_descriptions
+                    .get(&preset.surface_tile_id)
+                    .cloned()
+                    .unwrap_or_default(),
+                material_family: preset.material_family.clone(),
+                preferred_roles: preset.preferred_roles.clone(),
+                recommended_primitive_kinds: preset.recommended_primitive_kinds.clone(),
+                roughness: preset.pbr_constants.perceptual_roughness,
+                metallic: preset.pbr_constants.metallic,
+                ambient_occlusion: preset.pbr_constants.ambient_occlusion,
+                reflectance: preset.pbr_constants.reflectance,
+                normal_enabled: preset.normal.as_ref().is_some_and(|normal| normal.enabled),
+                normal_strength: preset.normal.as_ref().map_or(0.0, |normal| normal.strength),
+                alpha: preset.pbr_constants.alpha,
+                emissive_intensity: preset.pbr_constants.emissive_intensity,
+                projection: preset.uv.projection,
+                render_model: preset.render_model,
+                parameter_source: preset.authoring.parameter_source.clone(),
+                physical_status: preset.authoring.physical_status.clone(),
+                noise_suggestion: preset.noise_modulation.as_ref().map(|noise| {
+                    FangyuanSurfacePresetCatalogNoiseSuggestion {
+                        targets: noise.targets.clone(),
+                        parameter_status: noise.parameter_status.clone(),
+                    }
+                }),
+            })
             .collect();
         let entries = ordered
             .into_iter()
@@ -394,6 +464,7 @@ impl FangyuanSurfacePresetRegistry {
         Self {
             presets: entries,
             ordered_preset_ids,
+            catalog_metadata,
             identity,
             default_surface: ResolvedFangyuanSurfacePreset::default_surface(),
         }
@@ -417,6 +488,13 @@ impl FangyuanSurfacePresetRegistry {
 
     pub fn preset_ids(&self) -> &[String] {
         &self.ordered_preset_ids
+    }
+
+    /// Stable catalog-order metadata for development tools. This view is
+    /// produced only after the same validator used by the runtime registry has
+    /// accepted the complete bundle.
+    pub fn catalog_metadata(&self) -> &[FangyuanSurfacePresetCatalogMetadata] {
+        &self.catalog_metadata
     }
 
     pub fn cache_identity(&self) -> &FangyuanSurfacePresetCacheIdentity {

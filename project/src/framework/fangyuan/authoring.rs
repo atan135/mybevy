@@ -17,7 +17,11 @@ use getrandom::fill as fill_random_bytes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{FangyuanPrimitiveKind, FangyuanPrimitiveRole};
+use super::{
+    FangyuanCatalogAssetPaths, FangyuanCatalogProjection, FangyuanCatalogRenderModel,
+    FangyuanPrimitiveKind, FangyuanPrimitiveRole, FangyuanSurfacePresetCacheIdentity,
+    FangyuanSurfacePresetCatalogMetadata, FangyuanSurfacePresetRegistry,
+};
 
 pub const FANGYUAN_AUTHORING_TASK_SCHEMA_VERSION: &str = "fangyuan-generation-task/v1";
 pub const FANGYUAN_AUTHORING_RUN_SCHEMA_VERSION: &str = "fangyuan-generation-run/v1";
@@ -25,6 +29,8 @@ pub const FANGYUAN_AUTHORING_PREPARED_TASK_SCHEMA_VERSION: &str =
     "fangyuan-generation-prepared-task/v1";
 pub const FANGYUAN_AUTHORING_LOG_SUMMARY_SCHEMA_VERSION: &str =
     "fangyuan-generation-log-summary/v1";
+pub const FANGYUAN_AUTHORING_CATALOG_CONTEXT_SCHEMA_VERSION: &str =
+    "fangyuan-generation-catalog-context/v1";
 pub const FANGYUAN_AUTHORING_RUN_DIRECTORY: &str = "summary/fangyuan-generation";
 pub const FANGYUAN_AUTHORING_MAX_TASK_BYTES: usize = 64 * 1024;
 
@@ -620,11 +626,33 @@ fn prepare_task(
         source_task_sha256: sha256_hex(&task_bytes),
         task,
     };
-    write_new_run_file(
-        &run_directory,
-        TASK_PREPARED_FILE,
-        &canonical_json_bytes(&prepared)?,
-    )?;
+    let prepared_bytes = canonical_json_bytes(&prepared)?;
+    let prepared_task_sha256 = sha256_hex(&prepared_bytes);
+    write_new_run_file(&run_directory, TASK_PREPARED_FILE, &prepared_bytes)?;
+
+    let catalog_context =
+        match load_catalog_context(repository_root, &prepared, &prepared_task_sha256) {
+            Ok(context) => context,
+            Err(_) => {
+                let mut manifest =
+                    FangyuanAuthoringRunManifest::new(run_id.clone(), created_at_utc);
+                append_run_log_event(
+                    &run_directory,
+                    &run_id,
+                    "prepare_task",
+                    "catalog_context_unavailable",
+                    None,
+                )?;
+                refresh_run_manifest(&run_directory, &mut manifest)?;
+                return Err(FangyuanAuthoringCliError::OperationFailed {
+                    run_id,
+                    code: "catalog_context_unavailable",
+                });
+            }
+        };
+    let catalog_context_bytes = canonical_json_bytes(&catalog_context)?;
+    let catalog_context_sha256 = sha256_hex(&catalog_context_bytes);
+    write_new_run_file(&run_directory, CATALOG_CONTEXT_FILE, &catalog_context_bytes)?;
 
     let mut manifest = FangyuanAuthoringRunManifest::new(run_id.clone(), created_at_utc);
     append_run_log_event(
@@ -633,6 +661,13 @@ fn prepare_task(
         "prepare_task",
         "prepared",
         Some(prepared.source_task_sha256.clone()),
+    )?;
+    append_run_log_event(
+        &run_directory,
+        &run_id,
+        "prepare_task",
+        "catalog_context_prepared",
+        Some(catalog_context_sha256),
     )?;
     refresh_run_manifest(&run_directory, &mut manifest)?;
     Ok(report_from_manifest(
@@ -697,6 +732,409 @@ struct FangyuanAuthoringPreparedTask {
     schema_version: String,
     source_task_sha256: String,
     task: FangyuanAuthoringTask,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringCatalogContext {
+    schema_version: String,
+    prepared_task_sha256: String,
+    catalog_content_sha256: String,
+    catalog_dependency_sha256: String,
+    sampling_contract: FangyuanAuthoringCatalogSamplingContract,
+    selection: FangyuanAuthoringCatalogSelection,
+    presets: Vec<FangyuanAuthoringCatalogPreset>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringCatalogSamplingContract {
+    surface_color_normal_coordinates: String,
+    noise_coordinates: String,
+    ambient_occlusion: f32,
+    pbr_parameter_status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringCatalogSelection {
+    strategy: FangyuanAuthoringCatalogSelectionStrategy,
+    confidence: FangyuanAuthoringCatalogSelectionConfidence,
+    reason: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FangyuanAuthoringCatalogSelectionStrategy {
+    MaterialKeyword,
+    RoleAndPurpose,
+    FullCatalogFallback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FangyuanAuthoringCatalogSelectionConfidence {
+    High,
+    Low,
+    FullFallback,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringCatalogPreset {
+    preset_id: String,
+    name_zh: String,
+    description_zh: String,
+    material_family: String,
+    preferred_roles: Vec<String>,
+    primitive_kinds: Vec<String>,
+    pbr: FangyuanAuthoringCatalogPbrSummary,
+    projection: FangyuanCatalogProjection,
+    render_model: FangyuanCatalogRenderModel,
+    noise_suggestion: Option<FangyuanAuthoringCatalogNoiseSuggestion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringCatalogPbrSummary {
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32,
+    normal_enabled: bool,
+    normal_strength: f32,
+    ambient_occlusion: f32,
+    parameter_source: String,
+    physical_status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringCatalogNoiseSuggestion {
+    targets: Vec<String>,
+    parameter_status: String,
+}
+
+fn load_catalog_context(
+    repository_root: &Path,
+    prepared: &FangyuanAuthoringPreparedTask,
+    prepared_task_sha256: &str,
+) -> Result<FangyuanAuthoringCatalogContext, FangyuanAuthoringCliError> {
+    let paths = FangyuanCatalogAssetPaths::from_fangyuan_asset_root(
+        repository_root.join("project/assets/fangyuan"),
+    );
+    let registry = FangyuanSurfacePresetRegistry::load_from_paths(&paths).map_err(|_| {
+        FangyuanAuthoringCliError::Boundary(
+            "validated Fangyuan catalog bundle is unavailable for local authoring",
+        )
+    })?;
+    build_catalog_context(&prepared.task, prepared_task_sha256, &registry)
+}
+
+fn build_catalog_context(
+    task: &FangyuanAuthoringTask,
+    prepared_task_sha256: &str,
+    registry: &FangyuanSurfacePresetRegistry,
+) -> Result<FangyuanAuthoringCatalogContext, FangyuanAuthoringCliError> {
+    build_catalog_context_from_metadata(
+        task,
+        prepared_task_sha256,
+        registry.catalog_metadata(),
+        registry.cache_identity(),
+    )
+}
+
+fn build_catalog_context_from_metadata(
+    task: &FangyuanAuthoringTask,
+    prepared_task_sha256: &str,
+    metadata: &[FangyuanSurfacePresetCatalogMetadata],
+    identity: &FangyuanSurfacePresetCacheIdentity,
+) -> Result<FangyuanAuthoringCatalogContext, FangyuanAuthoringCliError> {
+    if metadata
+        .iter()
+        .any(|preset| preset.ambient_occlusion != 1.0)
+    {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "validated Fangyuan catalog must keep ambient occlusion at 1.0",
+        ));
+    }
+    let mut allowed: Vec<_> = metadata
+        .iter()
+        .filter(|preset| catalog_preset_is_allowed_for_task(preset, task))
+        .collect();
+    allowed.sort_by(|left, right| left.preset_id.cmp(&right.preset_id));
+    if allowed.is_empty() {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "task restrictions exclude every validated Fangyuan surface preset",
+        ));
+    }
+
+    let prompt = task.prompt.to_lowercase();
+    let matched_families = matching_material_families(&prompt);
+    let (mut selected, selection) = if !matched_families.is_empty() {
+        let selected: Vec<_> = allowed
+            .iter()
+            .copied()
+            .filter(|preset| matched_families.contains(preset.material_family.as_str()))
+            .collect();
+        if selected.is_empty() {
+            full_catalog_fallback(allowed)
+        } else {
+            (
+                selected,
+                FangyuanAuthoringCatalogSelection {
+                    strategy: FangyuanAuthoringCatalogSelectionStrategy::MaterialKeyword,
+                    confidence: FangyuanAuthoringCatalogSelectionConfidence::High,
+                    reason: "task material keywords match validated catalog families".to_string(),
+                },
+            )
+        }
+    } else {
+        let role_candidates = collect_role_and_purpose_candidates(task, &allowed);
+        if role_candidates.is_empty() {
+            full_catalog_fallback(allowed)
+        } else {
+            (
+                role_candidates.into_iter().take(3).collect(),
+                FangyuanAuthoringCatalogSelection {
+                    strategy: FangyuanAuthoringCatalogSelectionStrategy::RoleAndPurpose,
+                    confidence: FangyuanAuthoringCatalogSelectionConfidence::Low,
+                    reason:
+                        "task roles and object purpose prioritize at most three catalog presets"
+                            .to_string(),
+                },
+            )
+        }
+    };
+    selected.sort_by(|left, right| left.preset_id.cmp(&right.preset_id));
+
+    let presets = selected
+        .into_iter()
+        .map(|preset| catalog_context_preset(preset, task))
+        .collect();
+
+    Ok(FangyuanAuthoringCatalogContext {
+        schema_version: FANGYUAN_AUTHORING_CATALOG_CONTEXT_SCHEMA_VERSION.to_string(),
+        prepared_task_sha256: prepared_task_sha256.to_string(),
+        catalog_content_sha256: catalog_identity_sha256("content", identity.content_hash),
+        catalog_dependency_sha256: catalog_identity_sha256("dependency", identity.dependency_hash),
+        sampling_contract: FangyuanAuthoringCatalogSamplingContract {
+            surface_color_normal_coordinates: "same_surface_preset_coordinates".to_string(),
+            noise_coordinates: "independent_registered_noise_suggestion".to_string(),
+            ambient_occlusion: 1.0,
+            pbr_parameter_status: "semantic_estimate".to_string(),
+        },
+        selection,
+        presets,
+    })
+}
+
+fn full_catalog_fallback(
+    presets: Vec<&FangyuanSurfacePresetCatalogMetadata>,
+) -> (
+    Vec<&FangyuanSurfacePresetCatalogMetadata>,
+    FangyuanAuthoringCatalogSelection,
+) {
+    (
+        presets,
+        FangyuanAuthoringCatalogSelection {
+            strategy: FangyuanAuthoringCatalogSelectionStrategy::FullCatalogFallback,
+            confidence: FangyuanAuthoringCatalogSelectionConfidence::FullFallback,
+            reason:
+                "task has no reliable catalog material or role match; exposing all allowed presets"
+                    .to_string(),
+        },
+    )
+}
+
+fn collect_role_and_purpose_candidates<'a>(
+    task: &FangyuanAuthoringTask,
+    presets: &[&'a FangyuanSurfacePresetCatalogMetadata],
+) -> Vec<&'a FangyuanSurfacePresetCatalogMetadata> {
+    let task_roles: BTreeSet<_> = task
+        .allowed
+        .roles
+        .iter()
+        .map(|role| role.as_str())
+        .collect();
+    let purpose_roles = purpose_preferred_catalog_roles(task.object_purpose);
+    let mut ranked: Vec<_> = presets
+        .iter()
+        .copied()
+        .filter_map(|preset| {
+            let task_role_matches = preset
+                .preferred_roles
+                .iter()
+                .filter(|role| task_roles.contains(role.as_str()))
+                .count();
+            let purpose_role_matches = preset
+                .preferred_roles
+                .iter()
+                .filter(|role| purpose_roles.contains(&role.as_str()))
+                .count();
+            // Object purpose only orders explicit task-role matches. Purpose
+            // alone is too broad to safely hide the remainder of the catalog.
+            (task_role_matches > 0).then_some((
+                std::cmp::Reverse(task_role_matches * 2 + purpose_role_matches),
+                preset,
+            ))
+        })
+        .collect();
+    ranked.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.preset_id.cmp(&right.1.preset_id))
+    });
+    ranked.into_iter().map(|(_, preset)| preset).collect()
+}
+
+fn purpose_preferred_catalog_roles(
+    purpose: FangyuanAuthoringObjectPurpose,
+) -> &'static [&'static str] {
+    match purpose {
+        FangyuanAuthoringObjectPurpose::AvatarAppearance => &["clothing", "prop"],
+        FangyuanAuthoringObjectPurpose::HomeDecoration => &["structure", "prop", "wall"],
+        FangyuanAuthoringObjectPurpose::EquipmentAppearance => &["prop", "structure"],
+        FangyuanAuthoringObjectPurpose::SkillVisual => &["effect_surface", "special_surface"],
+        FangyuanAuthoringObjectPurpose::NpcAppearance => &["prop", "structure"],
+        FangyuanAuthoringObjectPurpose::SceneDecoration => &["structure", "ground", "wall", "prop"],
+    }
+}
+
+fn matching_material_families(prompt: &str) -> BTreeSet<&'static str> {
+    const FAMILY_KEYWORDS: [(&str, &[&str]); 15] = [
+        (
+            "masonry",
+            &["masonry", "stone", "brick", "concrete", "石", "砖", "水泥"],
+        ),
+        ("terrain", &["terrain", "earth", "soil", "泥", "土", "地表"]),
+        (
+            "metal",
+            &["metal", "steel", "iron", "金属", "钢", "铁", "铜"],
+        ),
+        ("wood_bark", &["wood", "timber", "bark", "木", "树皮"]),
+        ("leather", &["leather", "皮革"]),
+        ("textile", &["textile", "fabric", "cloth", "布", "织物"]),
+        (
+            "foliage",
+            &["foliage", "leaf", "plant", "树叶", "植物", "草"],
+        ),
+        ("ice_snow", &["ice", "snow", "冰", "雪"]),
+        ("water", &["water", "水"]),
+        ("lava", &["lava", "熔岩", "岩浆"]),
+        ("sky", &["sky", "cloud", "天空", "云"]),
+        (
+            "electronics_scifi",
+            &["electronics", "circuit", "sci-fi", "电子", "电路", "科幻"],
+        ),
+        ("ceramic_tile", &["ceramic", "tile", "陶瓷", "瓷砖"]),
+        ("composite", &["composite", "复合"]),
+        (
+            "coating_polymer",
+            &["polymer", "plastic", "coating", "塑料", "涂层"],
+        ),
+    ];
+    FAMILY_KEYWORDS
+        .into_iter()
+        .filter_map(|(family, keywords)| {
+            keywords
+                .iter()
+                .any(|keyword| prompt.contains(keyword))
+                .then_some(family)
+        })
+        .collect()
+}
+
+fn catalog_preset_is_allowed_for_task(
+    preset: &FangyuanSurfacePresetCatalogMetadata,
+    task: &FangyuanAuthoringTask,
+) -> bool {
+    let forbidden = &task.additional_forbidden_features;
+    if forbidden.contains(&FangyuanAuthoringAdditionalForbiddenFeature::Transparent)
+        && preset.alpha < 1.0
+    {
+        return false;
+    }
+    if forbidden.contains(&FangyuanAuthoringAdditionalForbiddenFeature::Emissive)
+        && (preset.emissive_intensity > 0.0
+            || matches!(
+                preset.render_model,
+                FangyuanCatalogRenderModel::StandardPbrEmissive
+            ))
+    {
+        return false;
+    }
+    if forbidden.contains(&FangyuanAuthoringAdditionalForbiddenFeature::SpecialSurface)
+        && matches!(
+            preset.render_model,
+            FangyuanCatalogRenderModel::SpecialWater | FangyuanCatalogRenderModel::SpecialUnlitSky
+        )
+    {
+        return false;
+    }
+    if forbidden.contains(&FangyuanAuthoringAdditionalForbiddenFeature::WaterSurface)
+        && preset.material_family == "water"
+    {
+        return false;
+    }
+    if forbidden.contains(&FangyuanAuthoringAdditionalForbiddenFeature::SkySurface)
+        && preset.material_family == "sky"
+    {
+        return false;
+    }
+    if forbidden.contains(&FangyuanAuthoringAdditionalForbiddenFeature::LavaSurface)
+        && preset.material_family == "lava"
+    {
+        return false;
+    }
+    !(forbidden.contains(&FangyuanAuthoringAdditionalForbiddenFeature::TriplanarRequired)
+        && matches!(preset.projection, FangyuanCatalogProjection::Triplanar))
+}
+
+fn catalog_context_preset(
+    preset: &FangyuanSurfacePresetCatalogMetadata,
+    task: &FangyuanAuthoringTask,
+) -> FangyuanAuthoringCatalogPreset {
+    FangyuanAuthoringCatalogPreset {
+        preset_id: preset.preset_id.clone(),
+        name_zh: preset.name_zh.clone(),
+        description_zh: preset.description_zh.clone(),
+        material_family: preset.material_family.clone(),
+        preferred_roles: preset.preferred_roles.clone(),
+        primitive_kinds: preset.recommended_primitive_kinds.clone(),
+        pbr: FangyuanAuthoringCatalogPbrSummary {
+            roughness: preset.roughness,
+            metallic: preset.metallic,
+            reflectance: preset.reflectance,
+            normal_enabled: preset.normal_enabled,
+            normal_strength: preset.normal_strength,
+            ambient_occlusion: 1.0,
+            parameter_source: preset.parameter_source.clone(),
+            physical_status: preset.physical_status.clone(),
+        },
+        projection: preset.projection,
+        render_model: preset.render_model,
+        noise_suggestion: task
+            .material_budget
+            .allow_catalog_suggested_noise
+            .then(|| {
+                preset.noise_suggestion.as_ref().map(|noise| {
+                    FangyuanAuthoringCatalogNoiseSuggestion {
+                        targets: noise.targets.clone(),
+                        parameter_status: noise.parameter_status.clone(),
+                    }
+                })
+            })
+            .flatten(),
+    }
+}
+
+fn catalog_identity_sha256(kind: &str, identity: u64) -> String {
+    let mut bytes = Vec::with_capacity(kind.len() + 8 + 32);
+    bytes.extend_from_slice(b"fangyuan-authoring-catalog-identity/v1:");
+    bytes.extend_from_slice(kind.as_bytes());
+    bytes.push(b':');
+    bytes.extend_from_slice(&identity.to_be_bytes());
+    sha256_hex(&bytes)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1385,12 +1823,43 @@ mod tests {
         directory
     }
 
+    fn copy_catalog_fixture(repository: &TempDir) {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fangyuan/atlases");
+        let target = repository.path().join("project/assets/fangyuan/atlases");
+        copy_directory(&source, &target);
+    }
+
+    fn copy_directory(source: &Path, target: &Path) {
+        fs::create_dir_all(target).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let target_path = target.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_directory(&entry.path(), &target_path);
+            } else {
+                fs::copy(entry.path(), target_path).unwrap();
+            }
+        }
+    }
+
+    fn fixture_registry() -> FangyuanSurfacePresetRegistry {
+        let paths = FangyuanCatalogAssetPaths::from_fangyuan_asset_root(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fangyuan"),
+        );
+        FangyuanSurfacePresetRegistry::load_from_paths(&paths).unwrap()
+    }
+
+    fn fixture_task() -> FangyuanAuthoringTask {
+        FangyuanAuthoringTask::parse_json(&fixture_task_bytes()).unwrap()
+    }
+
     fn prepare_options() -> FangyuanAuthoringCliOptions {
         FangyuanAuthoringCliOptions::parse_from(["prepare-task", "--task", "tasks/task.json"])
             .unwrap()
     }
 
     fn write_fixture_task(repository: &TempDir) {
+        copy_catalog_fixture(repository);
         fs::write(
             repository.path().join("tasks/task.json"),
             fixture_task_bytes(),
@@ -1473,8 +1942,17 @@ mod tests {
         let run_directory = only_run_directory(&repository);
         assert!(run_directory.join(TASK_SOURCE_FILE).is_file());
         assert!(run_directory.join(TASK_PREPARED_FILE).is_file());
+        assert!(run_directory.join(CATALOG_CONTEXT_FILE).is_file());
         assert!(run_directory.join(LOG_SUMMARY_FILE).is_file());
         assert!(run_directory.join(RUN_MANIFEST_FILE).is_file());
+        let context: FangyuanAuthoringCatalogContext =
+            serde_json::from_slice(&fs::read(run_directory.join(CATALOG_CONTEXT_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(
+            context.schema_version,
+            FANGYUAN_AUTHORING_CATALOG_CONTEXT_SCHEMA_VERSION
+        );
+        assert!(!context.presets.is_empty());
         assert!(!run_directory.join(CANONICAL_BLUEPRINT_FILE).exists());
         assert!(!run_directory.join(PROMOTION_DECISION_FILE).exists());
 
@@ -1570,6 +2048,124 @@ mod tests {
             }),
             1
         );
+    }
+
+    #[test]
+    fn catalog_context_uses_validated_metadata_and_is_byte_stable() {
+        let task = fixture_task();
+        let registry = fixture_registry();
+        let prepared_task_sha256 = "a".repeat(64);
+        let first = build_catalog_context(&task, &prepared_task_sha256, &registry).unwrap();
+        let second = build_catalog_context(&task, &prepared_task_sha256, &registry).unwrap();
+        let first_bytes = canonical_json_bytes(&first).unwrap();
+        assert_eq!(first_bytes, canonical_json_bytes(&second).unwrap());
+        assert_eq!(first.catalog_content_sha256.len(), 64);
+        assert_eq!(first.catalog_dependency_sha256.len(), 64);
+        assert!(
+            first
+                .presets
+                .windows(2)
+                .all(|pair| pair[0].preset_id <= pair[1].preset_id)
+        );
+        assert!(
+            first
+                .presets
+                .iter()
+                .all(|preset| preset.pbr.ambient_occlusion == 1.0)
+        );
+
+        let encoded = String::from_utf8(first_bytes).unwrap();
+        assert!(!encoded.contains("surface_color.png"));
+        assert!(!encoded.contains("surface_normal.png"));
+        assert!(!encoded.contains("procedural_noise.png"));
+        assert!(!encoded.contains("noise_x"));
+
+        let mut changed_identity = registry.cache_identity().clone();
+        changed_identity.content_hash ^= 1;
+        let changed = build_catalog_context_from_metadata(
+            &task,
+            &prepared_task_sha256,
+            registry.catalog_metadata(),
+            &changed_identity,
+        )
+        .unwrap();
+        assert_ne!(first.catalog_content_sha256, changed.catalog_content_sha256);
+    }
+
+    #[test]
+    fn catalog_context_prefers_material_keyword_then_role_and_full_fallback() {
+        let registry = fixture_registry();
+        let prepared_task_sha256 = "b".repeat(64);
+
+        let mut keyword_task = fixture_task();
+        keyword_task.prompt = "a metal structure with a safe surface".to_string();
+        keyword_task.allowed.roles = vec![FangyuanPrimitiveRole::Archive];
+        let keyword_context =
+            build_catalog_context(&keyword_task, &prepared_task_sha256, &registry).unwrap();
+        assert_eq!(
+            keyword_context.selection.strategy,
+            FangyuanAuthoringCatalogSelectionStrategy::MaterialKeyword
+        );
+        assert_eq!(
+            keyword_context.selection.confidence,
+            FangyuanAuthoringCatalogSelectionConfidence::High
+        );
+        assert!(
+            keyword_context
+                .presets
+                .iter()
+                .all(|preset| preset.material_family == "metal")
+        );
+
+        let mut role_task = fixture_task();
+        role_task.prompt = "neutral object finish".to_string();
+        role_task.allowed.roles = vec![FangyuanPrimitiveRole::Structure];
+        let role_context =
+            build_catalog_context(&role_task, &prepared_task_sha256, &registry).unwrap();
+        assert_eq!(
+            role_context.selection.strategy,
+            FangyuanAuthoringCatalogSelectionStrategy::RoleAndPurpose
+        );
+        assert_eq!(
+            role_context.selection.confidence,
+            FangyuanAuthoringCatalogSelectionConfidence::Low
+        );
+        assert!((1..=3).contains(&role_context.presets.len()));
+
+        let mut fallback_task = fixture_task();
+        fallback_task.prompt = "neutral object finish".to_string();
+        fallback_task.allowed.roles = vec![FangyuanPrimitiveRole::Archive];
+        fallback_task.additional_forbidden_features.clear();
+        let fallback_context =
+            build_catalog_context(&fallback_task, &prepared_task_sha256, &registry).unwrap();
+        assert_eq!(
+            fallback_context.selection.strategy,
+            FangyuanAuthoringCatalogSelectionStrategy::FullCatalogFallback
+        );
+        assert_eq!(fallback_context.presets.len(), 256);
+    }
+
+    #[test]
+    fn catalog_context_excludes_task_forbidden_special_surfaces() {
+        let registry = fixture_registry();
+        let mut task = fixture_task();
+        task.prompt = "neutral object finish".to_string();
+        task.allowed.roles = vec![FangyuanPrimitiveRole::Archive];
+        task.additional_forbidden_features = vec![
+            FangyuanAuthoringAdditionalForbiddenFeature::SpecialSurface,
+            FangyuanAuthoringAdditionalForbiddenFeature::WaterSurface,
+            FangyuanAuthoringAdditionalForbiddenFeature::SkySurface,
+            FangyuanAuthoringAdditionalForbiddenFeature::LavaSurface,
+        ];
+        let context = build_catalog_context(&task, &"c".repeat(64), &registry).unwrap();
+        assert!(context.presets.len() < 256);
+        assert!(context.presets.iter().all(|preset| {
+            !matches!(
+                preset.render_model,
+                FangyuanCatalogRenderModel::SpecialWater
+                    | FangyuanCatalogRenderModel::SpecialUnlitSky
+            ) && !matches!(preset.material_family.as_str(), "water" | "sky" | "lava")
+        }));
     }
 
     #[test]
