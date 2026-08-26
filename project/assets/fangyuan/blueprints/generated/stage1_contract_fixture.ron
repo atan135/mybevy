@@ -1,0 +1,37 @@
+(
+  version: "1",
+  name: "stage1_contract_fixture",
+  description: "用于本地生成合同验证的简洁方圆场景装饰",
+  max_primitives: 24,
+  bounds: (
+    width: 8.0,
+    depth: 8.0,
+    height: 8.0,
+  ),
+  primitives: [
+    (
+      kind: "cube",
+      role: "boundary",
+      position: [0.0, 0.8, 1.45],
+      size: [0.5, 1.0, 0.5],
+      color: [0.72, 0.56, 0.34, 1.0],
+      surface_material_preset_id: Some("material:surface/x00/y02"),
+    ),
+    (
+      kind: "cube",
+      role: "structure",
+      position: [0.0, 0.3, 0.0],
+      size: [4.0, 0.6, 4.0],
+      color: [0.72, 0.56, 0.34, 1.0],
+      surface_material_preset_id: Some("material:surface/x00/y02"),
+    ),
+    (
+      kind: "sphere",
+      role: "core",
+      position: [0.0, 1.3, 0.0],
+      size: [1.4, 1.4, 1.4],
+      color: [0.62, 0.66, 0.7, 1.0],
+      surface_material_preset_id: Some("material:surface/x00/y01"),
+    ),
+  ],
+)

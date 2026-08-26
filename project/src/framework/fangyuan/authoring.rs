@@ -3803,6 +3803,49 @@ mod tests {
     }
 
     #[test]
+    fn cli_rejects_network_myserver_and_provider_controls() {
+        let usage = fangyuan_authoring_cli_usage().to_ascii_lowercase();
+        for forbidden in [
+            "network", "myserver", "provider", "model", "endpoint", "token",
+        ] {
+            assert!(
+                !usage.contains(forbidden),
+                "usage must not expose `{forbidden}` controls"
+            );
+        }
+
+        for args in [
+            vec!["network".to_string()],
+            vec!["myserver".to_string()],
+            vec![
+                "prepare-task".to_string(),
+                "--provider".to_string(),
+                "local".to_string(),
+            ],
+            vec![
+                "prepare-task".to_string(),
+                "--model".to_string(),
+                "fixture".to_string(),
+            ],
+            vec![
+                "validate-draft".to_string(),
+                "--endpoint".to_string(),
+                "https://example.invalid".to_string(),
+            ],
+            vec![
+                "promote".to_string(),
+                "--token".to_string(),
+                "secret".to_string(),
+            ],
+        ] {
+            assert!(matches!(
+                FangyuanAuthoringCliOptions::parse_from(args),
+                Err(FangyuanAuthoringCliError::InvalidArgs(_))
+            ));
+        }
+    }
+
+    #[test]
     fn prepare_task_creates_an_isolated_bundle_and_machine_report() {
         let repository = temporary_repository();
         write_fixture_task(&repository);
@@ -4282,6 +4325,39 @@ mod tests {
                 .failure_code
                 .as_deref(),
             Some("audit_not_approved")
+        );
+        assert!(!generated_target(&repository).exists());
+    }
+
+    #[test]
+    fn promote_rejects_when_catalog_context_is_stale() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+
+        let catalog_path = repository
+            .path()
+            .join("project/assets/fangyuan/atlases/base/surface_material_presets.json");
+        let mut catalog: serde_json::Value =
+            serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
+        catalog["description_zh"] = serde_json::Value::String("已修改的目录身份".to_string());
+        fs::write(&catalog_path, serde_json::to_vec(&catalog).unwrap()).unwrap();
+
+        assert_promotion_failed(
+            run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path()),
+            "promotion_inputs_invalid",
+        );
+        assert_eq!(
+            read_promotion_report(&run_directory)
+                .failure_code
+                .as_deref(),
+            Some("promotion_inputs_invalid")
         );
         assert!(!generated_target(&repository).exists());
     }

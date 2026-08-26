@@ -40,6 +40,7 @@
 - `project/`：Rust/Bevy 工程根目录
 - `project/crates/myserver-protocol/`：`project` workspace 内的 MyServer protobuf 生成和 packet codec crate；直接读取 `project/vendor/myserver/proto/` 快照，不依赖 Bevy runtime
 - `project/src/`：游戏源码
+- `project/src/bin/fangyuan_authoring.rs`：离线方圆 authoring CLI 入口；仅处理本地 task、catalog context、run bundle 与显式 promotion
 - `project/vendor/myserver/`：客户端构建所需的 MyServer `authority-core`、`sim-core` 和 game/chat proto 快照；来源 commit 与同步要求见该目录 README
 - `project/src/framework/`：框架层横向能力入口，当前包含 UI、network、scene、fight 和 fangyuan 边界
 - `project/src/framework/fangyuan/`：方圆灵构数据模型入口，包含 blueprint、prefab/palette、scene layout、runtime primitive、对象状态、primitive set 统计，以及审核 report / budget profile / finding / suggestion
@@ -108,12 +109,13 @@ Set-Location ..
 .\scripts\build-entry.ps1 -Target desktop -Action check -Locked
 .\scripts\build-entry.ps1 -Target headless -Action check -Locked
 .\scripts\build-entry.ps1 -Target fangyuan-bake -Action check -Locked
+.\scripts\build-entry.ps1 -Target fangyuan-authoring -Action check -Locked
 .\scripts\build-entry.ps1 -Target ui-preview -Action check -Locked
 .\scripts\build-entry.ps1 -Target test -Action check -Locked
 .\scripts\build-entry.ps1 -Target release -Action build -Locked
 ```
 
-`build-entry.ps1` 显式绑定 `project`、`lockstep-sim-headless`、`fangyuan_bake` 和 `ui-document-preview` bin；UI preview 额外启用 `ui-document-preview-tool`。桌面高频迭代仍使用 `run_fast.ps1` 并自动使用 `dev-fast` profile：非 Windows 启用 `bevy/dynamic_linking`，Windows 因 Bevy dylib 的 65,535 链接对象/导出限制改用静态 `dev-fast` fallback。Android 不使用动态链接，按需执行：
+`build-entry.ps1` 显式绑定 `project`、`lockstep-sim-headless`、`fangyuan_bake`、`fangyuan_authoring` 和 `ui-document-preview` bin；UI preview 额外启用 `ui-document-preview-tool`，authoring 额外启用 `fangyuan-authoring-tool`。桌面高频迭代仍使用 `run_fast.ps1` 并自动使用 `dev-fast` profile：非 Windows 启用 `bevy/dynamic_linking`，Windows 因 Bevy dylib 的 65,535 链接对象/导出限制改用静态 `dev-fast` fallback。Android 不使用动态链接，按需执行：
 
 ```powershell
 .\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked
@@ -133,6 +135,18 @@ cargo fmt
 ```powershell
 cargo check
 ```
+
+运行方圆本地 authoring CLI：
+
+```powershell
+cargo run --locked --bin fangyuan_authoring --features fangyuan-authoring-tool -- prepare-task --task <repository-relative-task.json>
+# Codex 仅写当前 run 的 draft/blueprint.ron
+cargo run --locked --bin fangyuan_authoring --features fangyuan-authoring-tool -- inspect-run --run <run-id>
+cargo run --locked --bin fangyuan_authoring --features fangyuan-authoring-tool -- validate-draft --run <run-id>
+cargo run --locked --bin fangyuan_authoring --features fangyuan-authoring-tool -- promote --run <run-id>
+```
+
+该工具仅访问本地文件系统与已验证 catalog/resolver，不提供 provider、网络、MyServer、endpoint 或 token 能力。运行包位于被忽略的 `summary/fangyuan-generation/<run-id>/`，不能被 runtime 读取；只有显式 promotion 写入 `project/assets/fangyuan/blueprints/generated/` 的 canonical RON 是首包输入。
 
 检查独立 UI 生成工具：
 

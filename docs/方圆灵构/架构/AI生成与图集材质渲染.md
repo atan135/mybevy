@@ -810,6 +810,8 @@ AI 不能通过大量不同 preset 绕过现有 material profile 预算。后续
 - normal 方向验证。
 - debug gallery 和 fallback。
 
+Shader 侧只读取已 promotion 的 canonical blueprint 和既有 resolver 输出；它绝不能读取 authoring task、draft、catalog context、audit log 或任何原始 run bundle。
+
 完成条件：标准参考路径能验证 base color 和 PBR 常量；统一 atlas Shader 能在少量 primitive 上正确显示 base、normal、noise 和最终合成结果。
 
 ### Checklist 4：统一实例渲染与规模化
