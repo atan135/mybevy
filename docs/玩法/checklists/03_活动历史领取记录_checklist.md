@@ -8,7 +8,7 @@
 
 - [x] 历史记录来自服务端，不从本地动作日志、缓存或当前进度推导。（服务端从 PostgreSQL `activity_claim_record` 查询 append-only 事实。）
 - [x] 记录查询只允许读取当前 character 有权读取的数据。（请求从已认证 character-bound ticket 推导身份，SQL 强制 `character_id` 条件，游标 HMAC 绑定 character。）
-- [x] 服务端未分配协议和 msgType 前，客户端不自行假设 wire contract。（服务端已正式分配 `1445/1446`；客户端 vendor 同步仍由后续客户端阶段完成。）
+- [x] 服务端未分配协议和 msgType 前，客户端不自行假设 wire contract。（服务端已正式分配 `1445/1446`；客户端 vendor 已同步当前协议拆分。）
 
 ## 援引文档
 
@@ -26,11 +26,11 @@
 
 - 开始时间：2026-08-24 21:37:55 +08:00
 - 结束时间：2026-08-25（服务端阶段）
-- 开发总结：已完成 MyServer 服务端历史领取记录协议、character-bound keyset 分页查询、HMAC 游标、奖励摘要脱敏、错误语义、指标、数据库索引和 mock-client 编解码；客户端 vendor proto、状态、页面和真实联调留给后续阶段。当前改动尚未创建 Git commit，不能填写来源 commit。
+- 开发总结：已完成 MyServer 服务端历史领取记录协议、character-bound keyset 分页查询、HMAC 游标、奖励摘要脱敏、错误语义、指标、数据库索引和 mock-client 编解码；客户端 vendor proto、状态和页面在后续阶段完成，真实联调仍待执行。服务端协议重构提交 `ae7c6f3adafcd364530ae4b27edb59497506da44` 后，客户端 vendor 已更新并记录来源。
 - 验证记录：`cargo test --locked --manifest-path apps/game-server/Cargo.toml activity:: -- --nocapture`（84 passed）；`npm test --prefix tools/mock-client`（20 passed）；`npm run check:proto:server`（baseline、server-only generation、breaking check、routing consistency、6 fixtures 全部通过；明确跳过 mybevy vendor）。
 
 - [x] 与服务端确认 `ActivityClaimHistoryReq/Res` 的字段、分页方式、权限和错误码。（`packages/proto/game.proto`；请求仅 `cursor/limit`，响应 `records/next_cursor/has_more`，角色从 ticket 推导。）
-- [x] 由服务端分配正式 msgType `1445/1446`，并同步 MyServer 生成代码、`myserver-protocol`、game-proxy、mock-client 和协议基线。（客户端 `project/vendor/myserver/proto/game.proto` 与来源 README 尚未同步，保留为客户端阶段项。）
+- [x] 由服务端分配正式 msgType `1445/1446`，并同步 MyServer 生成代码、`myserver-protocol`、game-proxy、mock-client 和协议基线。（客户端 `project/vendor/myserver/proto/` 已同步 `game.proto`、`game_item.proto`、`game_activity.proto` 及来源 README，来源提交为 `ae7c6f3adafcd364530ae4b27edb59497506da44`。）
 - [x] 明确活动 ID/版本、阶段或动作标识、领取时间、结果状态和奖励摘要字段。（记录不公开 `character_id`、ticket、client request id、订单快照或内部错误。）
 - [x] 明确空列表、游标失效、记录不存在、权限拒绝和存储不可用行为。（空列表成功返回；无效/篡改/跨角色游标为 `ACTIVITY_HISTORY_CURSOR_INVALID`；未鉴权连接由统一 gate 返回 `NOT_AUTHENTICATED` 或 `AUTH_CONTEXT_INCOMPLETE`，引擎上下文缺失时为 `ACTIVITY_AUTH_REQUIRED`；存储错误为 `ACTIVITY_STORAGE_UNAVAILABLE`；不存在记录不单独泄露。）
 
@@ -49,13 +49,13 @@
 2. 请求不得携带 `character_id`，从已认证的 character-bound game ticket 推导身份；字段仅包含受限分页 `cursor` 和 `limit`。
 3. 响应应返回 `records`、`next_cursor`、`has_more`；每条公开记录至少包含活动 ID/版本、阶段或动作标识、完成时间、公开结果状态和受限奖励摘要。不得暴露 ticket、完整 client request ID、订单快照、内部错误或其他角色数据。
 4. 查询必须以 `character_id` 强制隔离；补充 invalid/expired ticket、cursor invalid、空列表、storage unavailable、manual review 和 duplicate 记录的契约/集成/mock-client 测试。
-5. 服务端合入后，记录来源 commit 并同步 `project/vendor/myserver/proto/game.proto`、`myserver-protocol`、客户端状态/页面/测试。
+5. 已完成：服务端合入后记录来源 commit，并同步 `project/vendor/myserver/proto/`、`myserver-protocol`、客户端状态/页面/测试。
 
 ## 阶段 2：客户端协议与状态适配
 
 - 开始时间：2026-08-25 10:26:28 +08:00
 - 结束时间：2026-08-25 11:03:40 +08:00
-- 开发总结：已同步 MyServer `13b1d9e0` 的 1445/1446 proto 快照，接入 character/connection scoped history 状态、受限 keyset cursor 分页和请求去重；响应严格校验 7 种服务端公开状态、记录/奖励数量与字段长度，cursor 不进入 Debug 或 pending 元数据。
+- 开发总结：已同步 MyServer `13b1d9e0` 的 1445/1446 proto 快照，接入 character/connection scoped history 状态、受限 keyset cursor 分页和请求去重；响应严格校验 7 种服务端公开状态、记录/奖励数量与字段长度，cursor 不进入 Debug 或 pending 元数据。2026-08-26 按 MyServer `ae7c6f3a` 协议拆分提交重新同步 vendor 文件，消息号和字段号保持兼容。
 - 验证记录：主审发现并修复了 failure status 与服务端 `activity_claim_record` 枚举不一致的问题；`cargo fmt`、`cargo check --lib`、`cargo test activity --lib`（47 passed）、`cargo test -p myserver-protocol activity --lib`（3 passed）及 `git diff --check` 通过。
 
 - [x] 扩展 `MyServerCommand/Event`、`PendingRequest` 和 `ActivityClientState` 的历史记录查询状态。（审核：`types.rs`、`plugin.rs`、`activity.rs` 接入 1445/1446 和 typed `ActivityClaimHistory` 状态，protocol round-trip 3 项通过。）
