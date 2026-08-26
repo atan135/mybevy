@@ -663,10 +663,19 @@ mod tests {
     use bevy::asset::AssetPlugin;
 
     fn primitive(preset: Option<&str>, noise: bool) -> FangyuanPrimitive {
+        primitive_with_kind(FangyuanPrimitiveKind::Cube, Vec3::ONE, preset, noise)
+    }
+
+    fn primitive_with_kind(
+        kind: FangyuanPrimitiveKind,
+        scale: Vec3,
+        preset: Option<&str>,
+        noise: bool,
+    ) -> FangyuanPrimitive {
         FangyuanPrimitive::with_surface_metadata(
-            FangyuanPrimitiveKind::Cube,
+            kind,
             Vec3::ZERO,
-            Vec3::ONE,
+            scale,
             Color::WHITE,
             FangyuanPrimitiveRole::Decoration,
             1.0,
@@ -980,6 +989,101 @@ mod tests {
         assert_eq!(
             build.material.uniform.emissive_alpha.w,
             reference.composed_params.alpha
+        );
+    }
+
+    #[test]
+    fn fixed_reference_render_fixture_covers_geometry_presets_noise_and_unknown_fallback() {
+        let registry = load_first_package_fangyuan_surface_preset_registry().unwrap();
+        let profiles = FangyuanMaterialProfileRegistry::default();
+        let atlas = ready_atlas_cache();
+        let fixtures = [
+            (
+                FangyuanPrimitiveKind::Cube,
+                Vec3::new(2.0, 3.0, 4.0),
+                "material:surface/x00/y00",
+                false,
+            ),
+            (
+                FangyuanPrimitiveKind::Cube,
+                Vec3::new(4.0, 2.0, 3.0),
+                "material:surface/x00/y01",
+                false,
+            ),
+            (
+                FangyuanPrimitiveKind::Sphere,
+                Vec3::new(1.5, 2.0, 0.75),
+                "material:surface/x06/y12",
+                true,
+            ),
+        ];
+
+        for (kind, scale, preset_id, noise) in fixtures {
+            let source = primitive_with_kind(kind, scale, Some(preset_id), noise);
+            let reference =
+                fangyuan_standard_material_reference(&source, &registry, &profiles, &atlas);
+            assert!(reference.diagnostic.surface_tile_index < 256);
+            assert!(
+                reference
+                    .diagnostic
+                    .surface_tile_id
+                    .starts_with("surface_x")
+            );
+            assert!(reference.diagnostic.projection_fallback_reason.is_none());
+            assert!(
+                fangyuan_atlas_tile_content_uv_rect(reference.diagnostic.surface_tile_index)
+                    .is_some()
+            );
+            let repeat = fangyuan_atlas_local_repeat(kind, scale, reference.surface.repeat_size_m)
+                .expect("fixture repeat should be finite and positive");
+            assert!(repeat.is_finite() && !repeat.cmple(Vec2::ZERO).any());
+
+            let FangyuanAtlasMaterialBuildResult::Ready(build) =
+                fangyuan_atlas_material(&source, &registry, &profiles, &atlas)
+            else {
+                panic!("fixed fixture should produce a ready atlas material");
+            };
+            let flags = FangyuanAtlasMaterialFlags(build.material.uniform.flags);
+            assert!(flags.contains(FangyuanAtlasMaterialFlags::GREEN_FLIP_Y));
+            assert_eq!(
+                build.material.uniform.tile_index,
+                u32::from(reference.diagnostic.surface_tile_index)
+            );
+            assert_eq!(
+                build.material.uniform.roughness(),
+                reference.surface.roughness
+            );
+            assert_eq!(
+                build.material.uniform.metallic(),
+                reference.surface.metallic
+            );
+            if noise {
+                assert!(flags.contains(FangyuanAtlasMaterialFlags::NOISE_ENABLED));
+                assert!(build.material.uniform.noise_tile_rect().is_some());
+            } else {
+                assert!(!flags.contains(FangyuanAtlasMaterialFlags::NOISE_ENABLED));
+                assert_eq!(
+                    build.material.uniform.noise_tile_index,
+                    FangyuanAtlasMaterialUniform::NOISE_TILE_SENTINEL
+                );
+            }
+        }
+
+        let unknown = primitive(Some("material:surface/x99/y99"), false);
+        let reference =
+            fangyuan_standard_material_reference(&unknown, &registry, &profiles, &atlas);
+        assert_eq!(
+            reference.diagnostic.fallback_reason,
+            Some(FangyuanSurfacePresetFallbackReason::UnknownPresetId)
+        );
+        let FangyuanAtlasMaterialBuildResult::Ready(build) =
+            fangyuan_atlas_material(&unknown, &registry, &profiles, &atlas)
+        else {
+            panic!("unknown preset should keep the atlas path with fallback flags");
+        };
+        assert!(
+            FangyuanAtlasMaterialFlags(build.material.uniform.flags)
+                .contains(FangyuanAtlasMaterialFlags::FALLBACK)
         );
     }
 

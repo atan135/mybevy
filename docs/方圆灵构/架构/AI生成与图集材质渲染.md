@@ -1,5 +1,15 @@
 # 方圆灵构 AI 生成与图集材质渲染
 
+## 当前实现状态（2026-08-26）
+
+当前 runtime 已提供受控的 Fangyuan atlas material 数据/绑定骨架与开发期 gallery；颜色、法线和噪点图集通过共享 Bevy `Image` handle 加载，base color 使用 sRGB，normal/noise 使用 Linear 数据纹理。cube 六面和 Y-up sphere 使用稳定 mesh UV，局部 repeat 先 `fract` 再映射到带 texel-center 的 tile content rect；法线图集已确认是 DirectX authored `negative_y`，运行时以 `flip_normal_map_y`/`GREEN_FLIP_Y` 还原。固定 fixture 可验证这些语义，实际 Home ECS 实体接入和 GPU 画面仍未完成。
+
+atlas path 和 StandardMaterial reference path 共享 resolved surface 与 material profile composition。缺失 optional 通道、未知 preset、catalog 不可用、Shader/GPU 能力或图集未就绪时保留 requested ID，关闭对应 flags 并走可诊断 fallback；noise v0 只允许单一独立 tile 调制 roughness。Home 的 Reload、Clear 和场景退出会清理 atlas image handles、测试实体和 gallery state，AssetServer 仍负责 canonical path 去重。
+
+阶段 8 已有固定 CPU/WGSL contract fixture 和生命周期 focused test，覆盖 cube/sphere、非均匀 scale、多个 preset、noise、reserved/sentinel 与未知 preset fallback。当前环境从 `scripts/run_fast.ps1` 启动时，Bevy 0.18.1 在 `DenseAssetStorage::insert<Image>` 触发内部 index out of bounds（len=2、index=5），因此尚无可回收的桌面截图或 GPU 像素证据；这不应记录为视觉通过。Windows DX12、Android/Vulkan 的真实 shader pipeline 和设备显示仍需后续环境验收。
+
+当前未完成且不应误记为已实现：atlas-aware mip 生产/低 LOD 串色验收、正式 GPU instance buffer、真 triplanar、专用 water/sky/折射 Shader，以及规模性能结论。
+
 ## 文档定位
 
 本文定义方圆异构组件从 AI 生成、蓝图审核、材质解析到游戏内运行时渲染的下一阶段实现合同，供后续生成一份或多份开发 checklist。

@@ -56,7 +56,6 @@ pub(super) struct FangyuanHomePlugin;
 impl Plugin for FangyuanHomePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Assets<Mesh>>()
-            .init_asset::<Image>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<FangyuanHomeBlueprintRenderAssets>()
             .init_resource::<FangyuanHomeBlueprintRenderConfig>()
@@ -88,7 +87,15 @@ impl Plugin for FangyuanHomePlugin {
                     .chain(),
             )
             .add_systems(Update, ensure_fangyuan_home_atlas_assets)
+            .add_systems(PostUpdate, clear_fangyuan_home_atlas_on_exit)
             .add_systems(PostUpdate, instantiate_fangyuan_home_content);
+
+        // `init_asset` replaces an existing Assets resource and its allocator.
+        // DefaultPlugins already owns Image assets in production; only create
+        // the resource for lightweight test apps that do not install ImagePlugin.
+        if !app.world().contains_resource::<Assets<Image>>() {
+            app.init_asset::<Image>();
+        }
     }
 }
 
@@ -3142,6 +3149,20 @@ fn clear_fangyuan_home_render_runtime_on_exit(
     }
 }
 
+fn clear_fangyuan_home_atlas_on_exit(
+    mut scene_events: MessageReader<SceneEvent>,
+    mut blueprint_assets: ResMut<FangyuanHomeBlueprintRenderAssets>,
+) {
+    for event in scene_events.read() {
+        let SceneEvent::Exited(exited) = event else {
+            continue;
+        };
+        if exited.scene_id.as_str() == FANGYUAN_HOME_SCENE_ID {
+            blueprint_assets.atlas.clear();
+        }
+    }
+}
+
 fn centered_grid_line_positions(half_extent: f32, spacing: f32) -> Vec<f32> {
     if half_extent < 0.0 || spacing <= 0.0 {
         return Vec::new();
@@ -3417,6 +3438,77 @@ mod tests {
         assert_eq!(atlas.normal(), Some(&normal));
         assert_eq!(atlas.noise(), Some(&noise));
         assert!(atlas.status().catalog_available);
+    }
+
+    #[test]
+    fn fangyuan_home_plugin_preserves_existing_image_asset_storage() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>();
+        let image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+
+        app.add_plugins(FangyuanHomePlugin);
+
+        let images = app.world().resource::<Assets<Image>>();
+        assert!(images.contains(image.id()));
+        assert!(images.get(image.id()).is_some());
+    }
+
+    #[test]
+    fn fangyuan_home_scene_exit_releases_atlas_handles_and_gallery_state() {
+        let mut app = app_with_scene_lifecycle();
+        app.update();
+
+        let (base_color, normal, noise) = {
+            let atlas = app
+                .world()
+                .resource::<FangyuanHomeBlueprintRenderAssets>()
+                .atlas();
+            (
+                atlas.base_color().cloned().expect("base atlas handle"),
+                atlas.normal().cloned().expect("normal atlas handle"),
+                atlas.noise().cloned().expect("noise atlas handle"),
+            )
+        };
+        {
+            let mut gallery = app.world_mut().resource_mut::<FangyuanAtlasGalleryState>();
+            gallery.visible = true;
+            gallery.cycle_surface_tile(1);
+            gallery.select_reserved_noise_tile(255);
+        }
+
+        app.world_mut().write_message(SceneEvent::Exited(
+            crate::framework::scene::prelude::SceneExited {
+                scene_id: FANGYUAN_HOME_SCENE_ID.into(),
+                session_id: SceneSessionId::from("fangyuan-atlas-exit"),
+            },
+        ));
+        app.update();
+
+        let atlas = app
+            .world()
+            .resource::<FangyuanHomeBlueprintRenderAssets>()
+            .atlas();
+        assert_eq!(atlas.base_color(), None);
+        assert_eq!(atlas.normal(), None);
+        assert_eq!(atlas.noise(), None);
+        assert_eq!(
+            atlas.status(),
+            &crate::framework::fangyuan::FangyuanAtlasAssetStatus::default()
+        );
+        assert_eq!(
+            app.world().resource::<FangyuanAtlasGalleryState>(),
+            &FangyuanAtlasGalleryState::default()
+        );
+
+        // AssetServer owns canonical path de-duplication; clearing the local
+        // cache must not mutate or alias the old handles while they are gone.
+        assert_ne!(base_color, Handle::<Image>::default());
+        assert_ne!(normal, Handle::<Image>::default());
+        assert_ne!(noise, Handle::<Image>::default());
     }
 
     #[test]
