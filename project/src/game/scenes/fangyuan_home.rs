@@ -19,21 +19,23 @@ use crate::framework::{
         FangyuanObjectTrialSummary, FangyuanObjectTrialVisualPrimitive, FangyuanPrimitive,
         FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
         FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
+        FangyuanStandardMaterialReferenceCache, FangyuanStandardMaterialReferenceCacheError,
         FangyuanStaticInstanceBufferSource, FangyuanStaticInstanceRenderBatch,
         FangyuanStaticInstanceRenderError, FangyuanStaticInstanceRenderOptions,
         FangyuanStaticInstanceRenderReport, FangyuanStaticInstanceRenderStats,
         FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds, FangyuanStaticMeshBuildError,
         FangyuanStaticMeshBuildOptions, FangyuanStaticMeshBuildReport,
         FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial, FangyuanStaticMeshMetadata,
-        FangyuanTrialBudgetProfileKind, evaluate_fangyuan_hotspot,
+        FangyuanSurfacePresetRegistry, FangyuanTrialBudgetProfileKind, evaluate_fangyuan_hotspot,
         fangyuan_atlas_catalog_available, fangyuan_lod_descriptor_from_trial_visual,
         fangyuan_lod_descriptors_from_primitive_set, fangyuan_render_transform_from_primitive,
         fangyuan_standard_material_from_color, fangyuan_standard_material_from_params,
+        fangyuan_standard_material_reference,
         fangyuan_static_instance_render_report_from_primitive_set_with_source,
         fangyuan_static_meshes_from_primitive_set_with_source, format_fangyuan_audit_debug_lines,
         hotspot_metrics_from_descriptors, load_fangyuan_home_prefab_palette,
-        load_fangyuan_home_scene_layout, process_fangyuan_chunk_commands,
-        summarize_fangyuan_lod_integration_from_descriptors,
+        load_fangyuan_home_scene_layout, load_first_package_fangyuan_surface_preset_registry,
+        process_fangyuan_chunk_commands, summarize_fangyuan_lod_integration_from_descriptors,
     },
     scene::prelude::{SceneEvent, SceneOwned, SceneRuntimeRoot, SceneSessionId},
 };
@@ -45,6 +47,7 @@ pub(in crate::game) const FANGYUAN_HOME_SCENE_ID: &str = "dev.fangyuan_home";
 pub(in crate::game) const FANGYUAN_HOME_DEFAULT_BLUEPRINT_PATH: &str = "fangyuan/home_preview.ron";
 const FANGYUAN_HOME_LAYOUT_PATH: &str = "scenes/fangyuan_home/layout.ron";
 const FANGYUAN_HOME_RENDER_MODE_ENV: &str = "MYBEVY_FANGYUAN_HOME_RENDER_MODE";
+const FANGYUAN_HOME_STANDARD_REFERENCE_ENV: &str = "MYBEVY_FANGYUAN_STANDARD_REFERENCE";
 #[cfg(test)]
 const FANGYUAN_HOME_SCENE_MANIFEST_PATH: &str = "scenes/fangyuan_home/scene.ron";
 
@@ -313,6 +316,8 @@ struct FangyuanHomeBlueprintRenderAssets {
     cache: FangyuanRenderAssetCache,
     atlas: FangyuanAtlasAssetCache,
     material_registry: FangyuanMaterialProfileRegistry,
+    surface_registry: Option<FangyuanSurfacePresetRegistry>,
+    standard_reference_cache: FangyuanStandardMaterialReferenceCache,
 }
 
 impl FangyuanHomeBlueprintRenderAssets {
@@ -322,6 +327,9 @@ impl FangyuanHomeBlueprintRenderAssets {
                 .ensure_loaded(asset_server, fangyuan_atlas_catalog_available());
         }
         self.atlas.refresh(asset_server);
+        if self.surface_registry.is_none() {
+            self.surface_registry = load_first_package_fangyuan_surface_preset_registry().ok();
+        }
     }
 
     fn unit_mesh(
@@ -382,6 +390,31 @@ impl FangyuanHomeBlueprintRenderAssets {
         &self.material_registry
     }
 
+    fn standard_reference(
+        &mut self,
+        primitive: &FangyuanPrimitive,
+        meshes: &mut Assets<Mesh>,
+        materials: &mut Assets<StandardMaterial>,
+    ) -> Result<
+        (Handle<Mesh>, Handle<StandardMaterial>, String),
+        FangyuanStandardMaterialReferenceCacheError,
+    > {
+        let Some(surface_registry) = self.surface_registry.as_ref() else {
+            return Err(FangyuanStandardMaterialReferenceCacheError::InvalidSurfaceTileIndex(0));
+        };
+        let reference = fangyuan_standard_material_reference(
+            primitive,
+            surface_registry,
+            &self.material_registry,
+            &self.atlas,
+        );
+        let diagnostic = reference.diagnostic.format_line();
+        let assets = self
+            .standard_reference_cache
+            .get_or_insert(&reference, meshes, materials)?;
+        Ok((assets.mesh, assets.material, diagnostic))
+    }
+
     fn material_count(&self) -> usize {
         self.cache.material_count()
     }
@@ -418,6 +451,7 @@ pub(in crate::game) struct FangyuanHomeBlueprintRenderConfig {
     pub(in crate::game) fallback_to_standard_on_instance_failure: bool,
     pub(in crate::game) mesh_options: FangyuanStaticMeshBuildOptions,
     pub(in crate::game) instance_options: FangyuanStaticInstanceRenderOptions,
+    pub(in crate::game) standard_material_reference_enabled: bool,
 }
 
 impl Default for FangyuanHomeBlueprintRenderConfig {
@@ -428,8 +462,22 @@ impl Default for FangyuanHomeBlueprintRenderConfig {
             fallback_to_standard_on_instance_failure: true,
             mesh_options: FangyuanStaticMeshBuildOptions::default(),
             instance_options: FangyuanStaticInstanceRenderOptions::default(),
+            standard_material_reference_enabled: fangyuan_home_standard_reference_enabled_from_env(
+            ),
         }
     }
+}
+
+fn fangyuan_home_standard_reference_enabled_from_env() -> bool {
+    matches!(
+        env::var(FANGYUAN_HOME_STANDARD_REFERENCE_ENV)
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
 }
 
 fn fangyuan_home_blueprint_render_mode_from_env() -> FangyuanHomeBlueprintRenderMode {
@@ -1365,6 +1413,14 @@ struct FangyuanHomeBlueprintStaticInstanceVisual {
     debug_name: String,
 }
 
+#[derive(Clone, Debug, Component, PartialEq, Eq)]
+struct FangyuanHomeStandardReferenceVisual {
+    session_id: SceneSessionId,
+    kind: FangyuanPrimitiveKind,
+    index: usize,
+    diagnostic: String,
+}
+
 #[derive(Clone, Debug, Component, PartialEq)]
 struct FangyuanHomeObjectTrialVisual {
     session_id: SceneSessionId,
@@ -1579,6 +1635,16 @@ fn spawn_fangyuan_home_content(
         blueprint_lod_descriptors,
         trial_lod_descriptors,
     );
+    if render_config.standard_material_reference_enabled {
+        spawn_fangyuan_home_standard_reference_samples(
+            commands,
+            content,
+            session_id,
+            meshes,
+            materials,
+            blueprint_assets,
+        );
+    }
 
     content
 }
@@ -2499,6 +2565,74 @@ fn spawn_fangyuan_home_blueprint_primitive(
     entity
 }
 
+fn spawn_fangyuan_home_standard_reference_samples(
+    commands: &mut Commands,
+    parent: Entity,
+    session_id: &SceneSessionId,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    blueprint_assets: &mut FangyuanHomeBlueprintRenderAssets,
+) {
+    let samples = [
+        (
+            FangyuanPrimitiveKind::Cube,
+            Vec3::new(-2.0, 1.1, 0.0),
+            Vec3::splat(1.8),
+            Color::srgb(0.86, 0.93, 1.0),
+            "material:surface/x13/y00",
+        ),
+        (
+            FangyuanPrimitiveKind::Sphere,
+            Vec3::new(2.0, 1.1, 0.0),
+            Vec3::splat(1.8),
+            Color::srgb(1.0, 0.78, 0.52),
+            "material:surface/x06/y12",
+        ),
+    ];
+    for (index, (kind, position, scale, color, preset_id)) in samples.into_iter().enumerate() {
+        let primitive = FangyuanPrimitive::with_surface_metadata(
+            kind,
+            position,
+            scale,
+            color,
+            crate::framework::fangyuan::FangyuanPrimitiveRole::Decoration,
+            1.0,
+            0.0,
+            None,
+            Some(preset_id.to_string()),
+            false,
+            crate::framework::fangyuan::FangyuanPrimitiveLifecycle::empty(),
+        );
+        let Ok((mesh, material, diagnostic)) =
+            blueprint_assets.standard_reference(&primitive, meshes, materials)
+        else {
+            warn!("skipping Fangyuan StandardMaterial reference sample {kind:?}");
+            continue;
+        };
+        let entity = commands
+            .spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                NoAutomaticBatching,
+                fangyuan_render_transform_from_primitive(&primitive),
+                SceneOwned::new(session_id.clone()),
+                FangyuanHomeStandardReferenceVisual {
+                    session_id: session_id.clone(),
+                    kind,
+                    index,
+                    diagnostic: diagnostic.clone(),
+                },
+                Name::new(format!(
+                    "FangyuanStandardReference({}:{index})",
+                    kind.as_str()
+                )),
+            ))
+            .id();
+        commands.entity(parent).add_child(entity);
+        info!("Fangyuan StandardMaterial reference sample: {diagnostic}");
+    }
+}
+
 fn spawn_fangyuan_home_trial_visuals(
     commands: &mut Commands,
     parent: Entity,
@@ -2585,6 +2719,21 @@ fn clear_fangyuan_home_blueprint_content<'world>(
     cleared
 }
 
+fn clear_fangyuan_home_standard_reference_visuals<'world>(
+    commands: &mut Commands,
+    session_id: &SceneSessionId,
+    visuals: impl IntoIterator<Item = (Entity, &'world FangyuanHomeStandardReferenceVisual)>,
+) -> usize {
+    let mut cleared = 0;
+    for (entity, visual) in visuals {
+        if visual.session_id == *session_id {
+            commands.entity(entity).try_despawn();
+            cleared += 1;
+        }
+    }
+    cleared
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_fangyuan_home_blueprint_commands(
     mut commands: Commands,
@@ -2598,6 +2747,7 @@ fn handle_fangyuan_home_blueprint_commands(
     >,
     blueprint_content: Query<(Entity, &FangyuanHomeBlueprintContent)>,
     trial_visuals: Query<(Entity, &FangyuanHomeObjectTrialVisual)>,
+    standard_reference_visuals: Query<(Entity, &FangyuanHomeStandardReferenceVisual)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut blueprint_assets: ResMut<FangyuanHomeBlueprintRenderAssets>,
@@ -2631,6 +2781,14 @@ fn handle_fangyuan_home_blueprint_commands(
                 &session_id,
                 blueprint_content.iter(),
             );
+            clear_fangyuan_home_standard_reference_visuals(
+                &mut commands,
+                &session_id,
+                standard_reference_visuals.iter(),
+            );
+            blueprint_assets
+                .standard_reference_cache
+                .clear(&mut meshes, &mut materials);
             static_merge_runtime.clear_assets(&mut meshes, &mut materials);
             static_instance_runtime.clear();
             clear_fangyuan_home_trial_runtime(
@@ -2663,6 +2821,14 @@ fn handle_fangyuan_home_blueprint_commands(
                 &session_id,
                 blueprint_content.iter(),
             );
+            clear_fangyuan_home_standard_reference_visuals(
+                &mut commands,
+                &session_id,
+                standard_reference_visuals.iter(),
+            );
+            blueprint_assets
+                .standard_reference_cache
+                .clear(&mut meshes, &mut materials);
             static_merge_runtime.clear_assets(&mut meshes, &mut materials);
             static_instance_runtime.clear();
             clear_fangyuan_home_trial_runtime(
@@ -2932,8 +3098,10 @@ fn clear_fangyuan_home_render_runtime_on_exit(
     mut commands: Commands,
     mut scene_events: MessageReader<SceneEvent>,
     trial_visuals: Query<(Entity, &FangyuanHomeObjectTrialVisual)>,
+    standard_reference_visuals: Query<(Entity, &FangyuanHomeStandardReferenceVisual)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut blueprint_assets: ResMut<FangyuanHomeBlueprintRenderAssets>,
     mut static_merge_runtime: ResMut<FangyuanHomeStaticMergeRuntime>,
     mut static_instance_runtime: ResMut<FangyuanHomeStaticInstanceRuntime>,
     mut trial_runtime: ResMut<FangyuanObjectTrialRuntime>,
@@ -2952,6 +3120,14 @@ fn clear_fangyuan_home_render_runtime_on_exit(
         static_merge_runtime.clear_assets(&mut meshes, &mut materials);
         static_instance_runtime.clear();
         clear_fangyuan_home_trial_visuals(&mut commands, &exited.session_id, trial_visuals.iter());
+        clear_fangyuan_home_standard_reference_visuals(
+            &mut commands,
+            &exited.session_id,
+            standard_reference_visuals.iter(),
+        );
+        blueprint_assets
+            .standard_reference_cache
+            .clear(&mut meshes, &mut materials);
         trial_render_runtime.clear_assets(&mut materials);
         trial_runtime.exit_scene();
         lod_runtime.clear();
