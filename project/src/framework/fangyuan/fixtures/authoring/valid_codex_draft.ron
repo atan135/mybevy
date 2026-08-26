@@ -1,0 +1,38 @@
+(
+  version: "1",
+  name: "codex_protocol_valid_fixture",
+  description: "Hand-written legal draft for the local Codex protocol.",
+  max_primitives: 3,
+  bounds: (
+    width: 8.0,
+    depth: 8.0,
+    height: 8.0,
+  ),
+  primitives: [
+    (
+      kind: "cube",
+      role: "structure",
+      position: [0.0, 0.5, 0.0],
+      size: [2.0, 1.0, 2.0],
+      color: [0.28, 0.36, 0.42, 1.0],
+      surface_material_preset_id: Some("material:surface/x00/y00"),
+    ),
+    (
+      kind: "sphere",
+      role: "core",
+      position: [0.0, 1.5, 0.0],
+      size: [1.0, 1.0, 1.0],
+      color: [0.72, 0.84, 0.96, 1.0],
+      surface_material_preset_id: Some("material:surface/x00/y00"),
+      surface_noise_enabled: true,
+    ),
+    (
+      kind: "cube",
+      role: "boundary",
+      position: [0.0, 0.75, 1.4],
+      size: [2.4, 0.5, 0.2],
+      color: [0.22, 0.28, 0.34, 1.0],
+      surface_material_preset_id: Some("material:surface/x00/y00"),
+    ),
+  ],
+)
