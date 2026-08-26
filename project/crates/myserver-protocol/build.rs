@@ -9,9 +9,16 @@ fn main() {
         .expect("myserver-protocol is nested under project/crates");
     let proto_dir = project_dir.join("vendor").join("myserver").join("proto");
     let game_proto = proto_dir.join("game.proto");
+    let game_item_proto = proto_dir.join("game_item.proto");
+    let game_activity_proto = proto_dir.join("game_activity.proto");
     let chat_proto = proto_dir.join("chat.proto");
 
-    for proto in [&game_proto, &chat_proto] {
+    for proto in [
+        &game_proto,
+        &game_item_proto,
+        &game_activity_proto,
+        &chat_proto,
+    ] {
         if !proto.exists() {
             panic!(
                 "vendored MyServer proto not found at {}. Refresh project/vendor/myserver from MyServer.",
