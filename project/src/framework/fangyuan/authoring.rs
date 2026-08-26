@@ -3575,6 +3575,10 @@ mod tests {
         .to_vec()
     }
 
+    fn qingyu_fixture_task_bytes() -> &'static [u8] {
+        include_bytes!("fixtures/authoring/qingyu_mechanism_tower.task.json")
+    }
+
     fn temporary_repository() -> TempDir {
         let directory = tempfile::tempdir().unwrap();
         fs::create_dir_all(directory.path().join("tasks")).unwrap();
@@ -3625,6 +3629,15 @@ mod tests {
         .unwrap();
     }
 
+    fn write_qingyu_fixture_task(repository: &TempDir) {
+        copy_catalog_fixture(repository);
+        fs::write(
+            repository.path().join("tasks/task.json"),
+            qingyu_fixture_task_bytes(),
+        )
+        .unwrap();
+    }
+
     fn only_run_directory(repository: &TempDir) -> PathBuf {
         let root = repository.path().join(FANGYUAN_AUTHORING_RUN_DIRECTORY);
         let entries: Vec<_> = fs::read_dir(root)
@@ -3671,6 +3684,12 @@ mod tests {
         repository
             .path()
             .join("project/assets/fangyuan/blueprints/generated/stage1_contract_fixture.ron")
+    }
+
+    fn qingyu_generated_target(repository: &TempDir) -> PathBuf {
+        repository
+            .path()
+            .join("project/assets/fangyuan/blueprints/generated/qingyu_mechanism_tower_fixture.ron")
     }
 
     fn read_audit_artifact(run_directory: &Path) -> FangyuanAuthoringAuditArtifact {
@@ -4033,6 +4052,40 @@ mod tests {
             }),
             1
         );
+    }
+
+    #[test]
+    fn qingyu_invalid_draft_is_rejected_without_promoting_a_formal_asset() {
+        let repository = temporary_repository();
+        write_qingyu_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/qingyu_mechanism_tower_invalid_draft.ron"),
+        );
+
+        assert_draft_validation_failed(run_fangyuan_authoring_cli(
+            &validate_options(&prepared.run_id),
+            repository.path(),
+        ));
+
+        let audit = read_audit_artifact(&run_directory);
+        assert!(
+            audit
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "draft_ron_parse_failed"),
+            "{:#?}",
+            audit.report.findings
+        );
+        assert_eq!(
+            read_promotion_decision(&run_directory).status,
+            FangyuanAuthoringPromotionDecisionStatus::Blocked
+        );
+        assert!(!run_directory.join(CANONICAL_BLUEPRINT_FILE).exists());
+        assert!(!qingyu_generated_target(&repository).exists());
     }
 
     #[test]

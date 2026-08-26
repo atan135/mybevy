@@ -1,0 +1,22 @@
+(
+  version: "1",
+  name: "qingyu_mechanism_tower_fixture",
+  description: "Deliberately invalid Qingyu mechanism tower draft.",
+  max_primitives: 150,
+  bounds: (
+    width: 10.0,
+    depth: 10.0,
+    height: 16.0,
+  ),
+  primitives: [
+    (
+      kind: "cube",
+      role: "structure",
+      position: [0.0, 0.5, 0.0],
+      size: [1.0, 1.0, 1.0],
+      color: [0.34, 0.38, 0.36, 1.0],
+      surface_material_preset_id: Some("material:surface/x04/y00"),
+      rotation: [0.0, 0.0, 0.0],
+    ),
+  ],
+)

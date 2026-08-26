@@ -1095,6 +1095,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::framework::fangyuan::{FangyuanAuditStatus, FangyuanAuditSuggestionAction};
+    use std::collections::BTreeSet;
 
     use super::*;
 
@@ -1214,6 +1215,68 @@ mod tests {
         assert_eq!(
             (color.red, color.green, color.blue, color.alpha),
             (0.25, 0.45, 0.95, 1.0)
+        );
+    }
+
+    #[test]
+    fn generated_qingyu_mechanism_tower_fixture_loads_under_the_static_contract() {
+        let blueprint = FangyuanBlueprint::load_first_package_ron(
+            "fangyuan/blueprints/generated/qingyu_mechanism_tower_fixture.ron",
+        )
+        .unwrap();
+        blueprint.validate().unwrap();
+
+        assert_eq!(blueprint.primitives.len(), 72);
+        assert!((50..=150).contains(&blueprint.primitives.len()));
+        assert!(
+            blueprint
+                .primitives
+                .iter()
+                .any(|primitive| primitive.kind == FangyuanPrimitiveKind::Cube)
+        );
+        assert!(
+            blueprint
+                .primitives
+                .iter()
+                .any(|primitive| primitive.kind == FangyuanPrimitiveKind::Sphere)
+        );
+        assert!(blueprint.primitives.iter().any(|primitive| {
+            primitive.size[0] != primitive.size[1] || primitive.size[1] != primitive.size[2]
+        }));
+
+        let surface_presets: BTreeSet<_> = blueprint
+            .primitives
+            .iter()
+            .map(|primitive| primitive.surface_material_preset_id.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            surface_presets,
+            BTreeSet::from([
+                "material:surface/x00/y01",
+                "material:surface/x04/y00",
+                "material:surface/x06/y12",
+            ])
+        );
+        let noisy_presets: BTreeSet<_> = blueprint
+            .primitives
+            .iter()
+            .filter(|primitive| primitive.surface_noise_enabled)
+            .map(|primitive| primitive.surface_material_preset_id.as_deref().unwrap())
+            .collect();
+        assert_eq!(noisy_presets, BTreeSet::from(["material:surface/x04/y00"]));
+        assert!(!noisy_presets.is_empty());
+        assert!(blueprint.primitives.iter().all(|primitive| {
+            primitive.alpha.is_none()
+                && primitive.emissive.is_none()
+                && primitive.material_profile_id.is_none()
+                && primitive.lifecycle.is_none()
+                && primitive.color[3] == 1.0
+        }));
+        assert!(
+            FangyuanBlueprint::from_ron_str(include_str!(
+                "fixtures/authoring/qingyu_mechanism_tower_invalid_draft.ron"
+            ))
+            .is_err()
         );
     }
 
