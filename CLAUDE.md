@@ -122,7 +122,7 @@ Set-Location ..
 .\scripts\build-entry.ps1 -Target android -Action build -Profile release -Locked -AndroidApk
 ```
 
-Android Rust 缓存固定为 `project/target-android`，Gradle 缓存为 `android/.gradle`；二者不与桌面 `project/target` 混用。`.github/workflows/build-matrix.yml` 在 push/PR 上执行 project 和 UI generation 的编译/测试检查；UI visual audit、离线参考图审计和安全契约由独立 UI workflow 负责；桌面 release 与 Android Rust/APK 仅在 workflow_dispatch 显式勾选后执行。CI cache key 由锁文件和 manifest 决定，源码修改保留可复用的增量缓存；每个入口输出命令、状态和耗时，并上传失败阶段 transcript。旧仓库根 `target/` 只允许通过 `clear-shared-cargo-target.ps1` 预演/确认清理。
+Android Rust 缓存固定为 `project/target-android`，Gradle 缓存为 `android/.gradle`；二者不与桌面 `project/target` 混用。`.github/workflows/build-matrix.yml` 在 push/PR 上仅执行 UI generation 的编译/测试检查；主工程 bins 和测试由本地开发流程负责；UI visual audit、离线参考图审计和安全契约由独立 UI workflow 负责；桌面 release 与 Android Rust/APK 仅在 workflow_dispatch 显式勾选后执行。CI cache key 由锁文件和 manifest 决定，源码修改保留可复用的增量缓存；每个入口输出命令、状态和耗时，并上传失败阶段 transcript。旧仓库根 `target/` 只允许通过 `clear-shared-cargo-target.ps1` 预演/确认清理。
 
 格式化代码：
 
