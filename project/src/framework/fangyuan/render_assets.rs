@@ -209,6 +209,22 @@ pub struct FangyuanAtlasAssetCache {
 }
 
 impl FangyuanAtlasAssetCache {
+    #[cfg(test)]
+    pub(crate) fn test_ready() -> Self {
+        Self {
+            base_color: Some(Handle::default()),
+            normal: Some(Handle::default()),
+            noise: Some(Handle::default()),
+            status: FangyuanAtlasAssetStatus {
+                catalog_available: true,
+                base_color: FangyuanAtlasImageState::Loaded,
+                normal: FangyuanAtlasImageState::Loaded,
+                noise: FangyuanAtlasImageState::Loaded,
+                fallback_flags: FangyuanAtlasFallbackFlags::empty(),
+            },
+        }
+    }
+
     /// Load all three canonical images once, applying channel-specific color
     /// space and sampler settings. The catalog availability result comes from
     /// the already validated resolver boundary.
