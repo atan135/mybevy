@@ -11,6 +11,7 @@
 //! carry rendering responsibility.
 
 mod asset_path;
+mod atlas_geometry;
 mod audit;
 #[cfg(not(target_os = "android"))]
 mod authoring;
@@ -53,6 +54,7 @@ mod vfx;
 mod visual_replay;
 
 pub use asset_path::*;
+pub use atlas_geometry::*;
 pub use audit::*;
 #[cfg(not(target_os = "android"))]
 pub use authoring::*;

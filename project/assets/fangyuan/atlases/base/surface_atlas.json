@@ -57,7 +57,7 @@
       ],
       "color_space": "linear",
       "decode": "normalize(rgb * 2.0 - 1.0)",
-      "green_channel_direction": "unverified",
+      "green_channel_direction": "negative_y",
       "required_for_tile": false
     }
   },
@@ -66,7 +66,7 @@
     "sampling_zh": "使用 content_pixel_rect 或 texel_center_uv_formula 取样；2px padding 仅用于降低双线性过滤边缘串色，不属于有效内容。",
     "tiling_zh": "需要重复纹理时，先在局部 tile UV 内执行 repeat/fract，再映射到该 tile 的 content UV；不要让整张 atlas 的采样器直接 repeat。",
     "mipmap_zh": "通用整图 mipmap 在较低 LOD 仍可能跨格串色；正式接入前应使用 atlas-aware mipmap、限制 LOD，或迁移到 texture array。",
-    "normal_zh": "法线图按线性数据采样，不做 sRGB 解码；green_channel_direction 在运行时接入前必须通过凸凹方向样例确认。",
+    "normal_zh": "法线图按线性数据采样，不做 sRGB 解码；surface_x03_y09、surface_x06_y11、surface_x09_y05 三个明确压花/打孔/鳞片凸起样例及全图 interior 梯度核对确认绿色正方向沿 image-down，属于 DirectX authored negative_y。Bevy StandardMaterial 必须设置 flip_normal_map_y=true，自定义 Shader 必须等价反转 G。",
     "extension_zh": "只有与这 256 个语义槽严格对齐的纹理通道才能加入本目录；坐标语义独立的噪点图集应建立单独目录文件。"
   },
   "ai_selection_contract": {

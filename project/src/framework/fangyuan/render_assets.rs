@@ -4,7 +4,6 @@ use bevy::{
         Image, ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler,
         ImageSamplerDescriptor,
     },
-    mesh::{MeshBuilder, SphereKind, SphereMeshBuilder},
     prelude::*,
 };
 use std::{collections::HashMap, path::Path};
@@ -12,6 +11,7 @@ use std::{collections::HashMap, path::Path};
 use super::{
     FANGYUAN_PRIMITIVE_DEFAULT_EMISSIVE, FangyuanCatalogAssetPaths, FangyuanMaterialInstanceParams,
     FangyuanPrimitive, FangyuanPrimitiveKind, FangyuanSurfacePresetRegistry,
+    fangyuan_unit_cube_mesh, fangyuan_unit_sphere_mesh,
 };
 
 pub const FANGYUAN_RENDER_UNIT_SPHERE_SECTORS: u32 = 24;
@@ -447,21 +447,16 @@ impl FangyuanRenderAssetCache {
         match kind {
             FangyuanPrimitiveKind::Cube => self
                 .unit_cube_mesh
-                .get_or_insert_with(|| meshes.add(Cuboid::from_size(Vec3::ONE)))
+                .get_or_insert_with(|| meshes.add(fangyuan_unit_cube_mesh()))
                 .clone(),
             FangyuanPrimitiveKind::Sphere => self
                 .unit_sphere_mesh
                 .get_or_insert_with(|| {
-                    meshes.add(
-                        SphereMeshBuilder::new(
-                            0.5,
-                            SphereKind::Uv {
-                                sectors: FANGYUAN_RENDER_UNIT_SPHERE_SECTORS,
-                                stacks: FANGYUAN_RENDER_UNIT_SPHERE_STACKS,
-                            },
-                        )
-                        .build(),
-                    )
+                    meshes.add(fangyuan_unit_sphere_mesh(
+                        0.5,
+                        FANGYUAN_RENDER_UNIT_SPHERE_SECTORS,
+                        FANGYUAN_RENDER_UNIT_SPHERE_STACKS,
+                    ))
                 })
                 .clone(),
         }
