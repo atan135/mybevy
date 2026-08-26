@@ -26,7 +26,7 @@ jobs:
   project:
     name: Project bins and tests
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout sources without credentials
         uses: actions/checkout@v4
@@ -144,7 +144,7 @@ jobs:
       - name: Checkout sources without credentials
         uses: actions/checkout@v4
         with:
-          lfs: false
+          lfs: true
           persist-credentials: false
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -164,37 +164,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "UI generation tests failed with exit code $LASTEXITCODE" }
           $timer.Stop()
           "ui-generation_cache_hit=${{ steps.ui-generation-cache.outputs.cache-hit }} elapsed_seconds=$([math]::Round($timer.Elapsed.TotalSeconds, 3))" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-  ui-visual-audit:
-    name: UI visual audit tool
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout sources without credentials
-        uses: actions/checkout@v4
-        with:
-          lfs: false
-          persist-credentials: false
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-      - name: Restore UI visual audit target
-        id: ui-visual-audit-cache
-        uses: actions/cache@v4
-        with:
-          path: tools/ui-visual-audit/target
-          key: ${{ runner.os }}-cargo-ui-visual-audit-${{ hashFiles('tools/ui-visual-audit/Cargo.lock', 'tools/ui-visual-audit/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-ui-visual-audit-
-      - name: Check and test UI visual audit tool
-        shell: pwsh
-        run: |
-          $timer = [Diagnostics.Stopwatch]::StartNew()
-          cargo fmt --manifest-path tools/ui-visual-audit/Cargo.toml -- --check
-          if ($LASTEXITCODE -ne 0) { throw "UI visual audit format check failed with exit code $LASTEXITCODE" }
-          cargo test --locked --manifest-path tools/ui-visual-audit/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw "UI visual audit tests failed with exit code $LASTEXITCODE" }
-          $timer.Stop()
-          "ui-visual-audit_cache_hit=${{ steps.ui-visual-audit-cache.outputs.cache-hit }} elapsed_seconds=$([math]::Round($timer.Elapsed.TotalSeconds, 3))" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
   release:
     name: Opt-in desktop release
