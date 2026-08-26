@@ -269,6 +269,8 @@ noise_tile_index: Option<u16>
 
 ## AI 生成合同
 
+本地 Codex v0 的严格 task schema、run bundle、内容 hash 和 promotion 冲突策略已单列为 [本地生成任务与运行包合同](../规范/本地生成任务与运行包合同.md)。本节保留跨阶段的生成与渲染架构目标；它不授权绕过该离线合同。
+
 ### 输入
 
 AI 至少需要这些上下文：
