@@ -8,26 +8,27 @@ use std::{
 use crate::framework::{
     fangyuan::{
         FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanAoiConfig,
-        FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditStatus,
-        FangyuanChunkAvailablePrefabs, FangyuanChunkClearReason, FangyuanChunkCommand,
-        FangyuanChunkDebugSummary, FangyuanChunkEvent, FangyuanChunkManifestRuntime,
-        FangyuanChunkRuntime, FangyuanChunkSourceLibrary, FangyuanDebugPanelState,
-        FangyuanHotspotState, FangyuanHotspotThresholds, FangyuanLodIntegrationSummary,
-        FangyuanLodObjectKind, FangyuanLodRenderDescriptor, FangyuanLodRenderPath,
-        FangyuanMaterialInstanceParams, FangyuanMaterialProfileRegistry, FangyuanObjectClass,
-        FangyuanObjectState, FangyuanObjectTrialRuntime, FangyuanObjectTrialSummary,
-        FangyuanObjectTrialVisualPrimitive, FangyuanPrimitive, FangyuanPrimitiveKind,
-        FangyuanPrimitiveSet, FangyuanPrimitiveSetStats, FangyuanRenderAssetCache,
-        FangyuanSceneLayoutCompileReport, FangyuanStaticInstanceBufferSource,
-        FangyuanStaticInstanceRenderBatch, FangyuanStaticInstanceRenderError,
-        FangyuanStaticInstanceRenderOptions, FangyuanStaticInstanceRenderReport,
-        FangyuanStaticInstanceRenderStats, FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds,
-        FangyuanStaticMeshBuildError, FangyuanStaticMeshBuildOptions,
-        FangyuanStaticMeshBuildReport, FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial,
-        FangyuanStaticMeshMetadata, FangyuanTrialBudgetProfileKind, evaluate_fangyuan_hotspot,
-        fangyuan_lod_descriptor_from_trial_visual, fangyuan_lod_descriptors_from_primitive_set,
-        fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
-        fangyuan_standard_material_from_params,
+        FangyuanAtlasAssetCache, FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity,
+        FangyuanAuditStatus, FangyuanChunkAvailablePrefabs, FangyuanChunkClearReason,
+        FangyuanChunkCommand, FangyuanChunkDebugSummary, FangyuanChunkEvent,
+        FangyuanChunkManifestRuntime, FangyuanChunkRuntime, FangyuanChunkSourceLibrary,
+        FangyuanDebugPanelState, FangyuanHotspotState, FangyuanHotspotThresholds,
+        FangyuanLodIntegrationSummary, FangyuanLodObjectKind, FangyuanLodRenderDescriptor,
+        FangyuanLodRenderPath, FangyuanMaterialInstanceParams, FangyuanMaterialProfileRegistry,
+        FangyuanObjectClass, FangyuanObjectState, FangyuanObjectTrialRuntime,
+        FangyuanObjectTrialSummary, FangyuanObjectTrialVisualPrimitive, FangyuanPrimitive,
+        FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
+        FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
+        FangyuanStaticInstanceBufferSource, FangyuanStaticInstanceRenderBatch,
+        FangyuanStaticInstanceRenderError, FangyuanStaticInstanceRenderOptions,
+        FangyuanStaticInstanceRenderReport, FangyuanStaticInstanceRenderStats,
+        FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds, FangyuanStaticMeshBuildError,
+        FangyuanStaticMeshBuildOptions, FangyuanStaticMeshBuildReport,
+        FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial, FangyuanStaticMeshMetadata,
+        FangyuanTrialBudgetProfileKind, evaluate_fangyuan_hotspot,
+        fangyuan_atlas_catalog_available, fangyuan_lod_descriptor_from_trial_visual,
+        fangyuan_lod_descriptors_from_primitive_set, fangyuan_render_transform_from_primitive,
+        fangyuan_standard_material_from_color, fangyuan_standard_material_from_params,
         fangyuan_static_instance_render_report_from_primitive_set_with_source,
         fangyuan_static_meshes_from_primitive_set_with_source, format_fangyuan_audit_debug_lines,
         hotspot_metrics_from_descriptors, load_fangyuan_home_prefab_palette,
@@ -52,6 +53,7 @@ pub(super) struct FangyuanHomePlugin;
 impl Plugin for FangyuanHomePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Assets<Mesh>>()
+            .init_asset::<Image>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<FangyuanHomeBlueprintRenderAssets>()
             .init_resource::<FangyuanHomeBlueprintRenderConfig>()
@@ -80,8 +82,16 @@ impl Plugin for FangyuanHomePlugin {
                 )
                     .chain(),
             )
+            .add_systems(Update, ensure_fangyuan_home_atlas_assets)
             .add_systems(PostUpdate, instantiate_fangyuan_home_content);
     }
+}
+
+fn ensure_fangyuan_home_atlas_assets(
+    asset_server: Res<AssetServer>,
+    mut blueprint_assets: ResMut<FangyuanHomeBlueprintRenderAssets>,
+) {
+    blueprint_assets.ensure_atlas(&asset_server);
 }
 
 #[derive(Clone, Copy, Debug, Message, PartialEq, Eq)]
@@ -301,10 +311,19 @@ impl<'de> Deserialize<'de> for FangyuanHomeLightKind {
 #[derive(Clone, Debug, Resource, Default)]
 struct FangyuanHomeBlueprintRenderAssets {
     cache: FangyuanRenderAssetCache,
+    atlas: FangyuanAtlasAssetCache,
     material_registry: FangyuanMaterialProfileRegistry,
 }
 
 impl FangyuanHomeBlueprintRenderAssets {
+    fn ensure_atlas(&mut self, asset_server: &AssetServer) {
+        if self.atlas.base_color().is_none() {
+            self.atlas
+                .ensure_loaded(asset_server, fangyuan_atlas_catalog_available());
+        }
+        self.atlas.refresh(asset_server);
+    }
+
     fn unit_mesh(
         &mut self,
         kind: FangyuanPrimitiveKind,
@@ -365,6 +384,11 @@ impl FangyuanHomeBlueprintRenderAssets {
 
     fn material_count(&self) -> usize {
         self.cache.material_count()
+    }
+
+    #[cfg(test)]
+    fn atlas(&self) -> &FangyuanAtlasAssetCache {
+        &self.atlas
     }
 
     #[cfg(test)]
@@ -3177,6 +3201,38 @@ mod tests {
             )
             .unwrap();
         app
+    }
+
+    #[test]
+    fn fangyuan_home_plugin_reuses_shared_atlas_handles_across_updates() {
+        let mut app = app_with_scene_lifecycle();
+
+        app.update();
+        let (base_color, normal, noise) = {
+            let atlas = app
+                .world()
+                .resource::<FangyuanHomeBlueprintRenderAssets>()
+                .atlas();
+            assert!(atlas.status().catalog_available);
+            assert!(!atlas.status().fallback_flags.contains(
+                crate::framework::fangyuan::FangyuanAtlasFallbackFlags::CATALOG_UNAVAILABLE,
+            ));
+            (
+                atlas.base_color().cloned().unwrap(),
+                atlas.normal().cloned().unwrap(),
+                atlas.noise().cloned().unwrap(),
+            )
+        };
+
+        app.update();
+        let atlas = app
+            .world()
+            .resource::<FangyuanHomeBlueprintRenderAssets>()
+            .atlas();
+        assert_eq!(atlas.base_color(), Some(&base_color));
+        assert_eq!(atlas.normal(), Some(&normal));
+        assert_eq!(atlas.noise(), Some(&noise));
+        assert!(atlas.status().catalog_available);
     }
 
     #[test]
